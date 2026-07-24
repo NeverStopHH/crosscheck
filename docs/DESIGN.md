@@ -47,6 +47,17 @@ Key shell decisions (adoption-first pass, confirmed by both judges):
 - **Install** = one PR: `crosscheck init` writes `.claude/settings.json` (hooks, statusline) + `.mcp.json` (project scope) into the team repo. Every teammate is connected on next `git pull` + one `crosscheck login <url>`.
 - **Summarizer auth**: reuses the developer's existing Claude Code auth via headless `claude -p` (Haiku-class). No new API key — a silent adoption killer removed.
 
+### 2.1 Scoping & trust boundaries
+
+Who can talk to whom is decided by infrastructure, not by a toggle someone can misconfigure:
+
+- **Agents never talk to each other directly.** Everything flows through a hub. There is no global agent network and deliberately no "talk to anyone" mode — that would be the trust disaster this section exists to prevent.
+- **One hub = one trust space.** A hub is started per project or group (`npx crosscheck serve` on any teammate's machine + Tailscale, or a small VPS). Company affiliation is irrelevant: a "team" is exactly the set of people holding keys to a hub. A developer can be in any number of hubs (work team, side project with a friend) — those spaces are separate infrastructure and know nothing of each other.
+- **The repo decides where a session reports.** The connector is enabled per repository: `crosscheck init` writes the hub URL into the repo's committed config. A session in the work monorepo talks to the work hub, a session in the side-project repo talks to the side-project hub, a session in any unconnected directory talks to nobody. Nothing runs 24/7 on the developer's machine — hooks only execute while a session is active; only the hub is long-running.
+- **People join by invitation only.** Per-developer API keys (`crosscheck invite` on the hub, one-time `crosscheck login <hub-url> <key>` per developer), individually revocable.
+- **Within a hub, sharing has defaults and gates:** only structured claims, file paths, and hashed error fingerprints by default — never raw transcripts or full diffs; artifacts default to `needs_approval` (owner-only until released); per-developer presence opt-out and `mute`; local secret-scan before every upload. v0 exposes these controls via CLI, v0.5 adds the web UI (feed, member list, click-to-approve).
+- **Later, not v0: per-repo ACLs within one hub.** Until then the rule is simple: different trust requirements → different hubs.
+
 ## 3. Capture pipeline (knowledge OUT)
 
 Three-tier trust ladder (capture-first pass — "tier = trust"):
