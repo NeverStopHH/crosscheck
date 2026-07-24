@@ -1,0 +1,10 @@
+{
+  "name": "crosscheck-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bun run --filter '*' typecheck"
+  }
+}
