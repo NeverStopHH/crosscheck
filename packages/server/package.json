@@ -1,0 +1,24 @@
+{
+  "name": "@crosscheck/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@crosscheck/schema": "workspace:*",
+    "@electric-sql/pglite": "^0.3.0",
+    "drizzle-orm": "^0.44.0",
+    "hono": "^4.8.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "bun-types": "^1.2.0",
+    "typescript": "^5.8.0"
+  }
+}
