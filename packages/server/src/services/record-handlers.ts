@@ -1,0 +1,474 @@
+import { and, eq, inArray, sql } from "drizzle-orm";
+import type { Claim, ClaimEdge, Target, WorkContext } from "@crosscheck/schema";
+
+import { EVENT_KINDS } from "../constants.ts";
+import {
+  agentSessions,
+  claimEdges,
+  claims,
+  workContexts,
+  workContextTargets,
+} from "../db/schema.ts";
+import { appendEvent } from "./events.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
+import type { Clock } from "../types.ts";
+
+interface Deps {
+  readonly db: Db;
+  readonly now: Clock;
+}
+
+/** Handler dependencies bound to an open transaction (or the root db). */
+interface ExecutorDeps {
+  readonly db: DbExecutor;
+  readonly now: Clock;
+}
+
+export type RecordStatus = "accepted" | "duplicate" | "ignored" | "rejected";
+
+export interface HandlerOutcome {
+  readonly status: RecordStatus;
+  readonly id?: string;
+  readonly issues?: readonly string[];
+}
+
+export const rejectedOutcome = (issue: string): HandlerOutcome => ({
+  status: "rejected",
+  issues: [issue],
+});
+
+const accepted = (id?: string): HandlerOutcome => ({
+  status: "accepted",
+  ...(id === undefined ? {} : { id }),
+});
+
+const duplicate = (id?: string): HandlerOutcome => ({
+  status: "duplicate",
+  ...(id === undefined ? {} : { id }),
+});
+
+const resolveSessionOwner = async (
+  db: DbExecutor,
+  sessionId: string,
+): Promise<string | undefined> => {
+  const rows = await db
+    .select({ developerId: agentSessions.developerId })
+    .from(agentSessions)
+    .where(eq(agentSessions.id, sessionId))
+    .limit(1);
+  return rows[0]?.developerId;
+};
+
+const resolveWorkContextOwner = async (
+  db: DbExecutor,
+  workContextId: string,
+): Promise<string | undefined> => {
+  const rows = await db
+    .select({ developerId: agentSessions.developerId })
+    .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(eq(workContexts.id, workContextId))
+    .limit(1);
+  return rows[0]?.developerId;
+};
+
+// Deliberately does not check endedAt: author sessions MAY already be ended —
+// a spool flush from a successor session is legitimate. Only the producer
+// session must be live (enforced by checkProducerSession in records.ts).
+const checkOwnedSession = async (
+  db: DbExecutor,
+  developerId: string,
+  sessionId: string,
+  field: string,
+): Promise<string | null> => {
+  const ownerId = await resolveSessionOwner(db, sessionId);
+  if (ownerId === undefined) {
+    return `${field}: session "${sessionId}" not found`;
+  }
+  if (ownerId !== developerId) {
+    return `${field}: session belongs to another developer`;
+  }
+  return null;
+};
+
+type WorkContextRow = typeof workContexts.$inferSelect;
+
+const workContextChanges = (
+  current: WorkContextRow,
+  body: WorkContext,
+): Partial<WorkContextRow> | null => {
+  const next = {
+    title: body.title,
+    description: body.description ?? null,
+    intent: body.intent ?? null,
+    status: body.status,
+  };
+  // Accepted v0 limitation: JSON.stringify intent comparison is key-order
+  // sensitive, so a semantically equal intent with reordered keys counts as
+  // a change and triggers a harmless no-op-ish update.
+  const hasChange =
+    next.title !== current.title ||
+    next.description !== current.description ||
+    JSON.stringify(next.intent) !== JSON.stringify(current.intent) ||
+    next.status !== current.status;
+  return hasChange ? next : null;
+};
+
+const updateExistingWorkContext = async (
+  deps: ExecutorDeps,
+  developerId: string,
+  body: WorkContext,
+): Promise<HandlerOutcome> => {
+  const rows = await deps.db
+    .select({ workContext: workContexts, ownerId: agentSessions.developerId })
+    .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(eq(workContexts.id, body.id))
+    .limit(1);
+  const row = rows[0];
+  if (row === undefined) {
+    throw new Error("work context insert conflicted but row was not found");
+  }
+  if (row.ownerId !== developerId) {
+    return rejectedOutcome("id: work context belongs to another developer");
+  }
+  const changes = workContextChanges(row.workContext, body);
+  if (changes === null) {
+    return duplicate(body.id);
+  }
+  // session_id stays the creating session — updates never re-home a context.
+  await deps.db
+    .update(workContexts)
+    .set({ ...changes, updatedAt: deps.now() })
+    .where(eq(workContexts.id, body.id));
+  await appendEvent(deps, EVENT_KINDS.WORK_CONTEXT_UPDATED, {
+    workContextId: body.id,
+    developerId,
+  });
+  return accepted(body.id);
+};
+
+export const ingestWorkContext = async (
+  deps: Deps,
+  developerId: string,
+  body: WorkContext,
+): Promise<HandlerOutcome> =>
+  // One transaction so the conflict probe, the ownership check, and the
+  // update all act on the same snapshot — no TOCTOU between them.
+  deps.db.transaction(async (tx) => {
+    const txDeps: ExecutorDeps = { db: tx, now: deps.now };
+    const sessionIssue = await checkOwnedSession(
+      tx,
+      developerId,
+      body.sessionId,
+      "sessionId",
+    );
+    if (sessionIssue !== null) {
+      return rejectedOutcome(sessionIssue);
+    }
+    const inserted = await tx
+      .insert(workContexts)
+      .values({
+        id: body.id,
+        sessionId: body.sessionId,
+        title: body.title,
+        description: body.description ?? null,
+        intent: body.intent ?? null,
+        status: body.status,
+        createdAt: new Date(body.createdAt),
+        updatedAt:
+          body.updatedAt === undefined ? null : new Date(body.updatedAt),
+      })
+      .onConflictDoNothing()
+      .returning({ id: workContexts.id });
+    if (inserted[0] === undefined) {
+      return updateExistingWorkContext(txDeps, developerId, body);
+    }
+    await appendEvent(txDeps, EVENT_KINDS.WORK_CONTEXT_CREATED, {
+      workContextId: body.id,
+      sessionId: body.sessionId,
+      developerId,
+    });
+    return accepted(body.id);
+  });
+
+export const ingestTarget = async (
+  deps: Deps,
+  developerId: string,
+  body: Target,
+): Promise<HandlerOutcome> => {
+  const ownerId = await resolveWorkContextOwner(deps.db, body.workContextId);
+  if (ownerId === undefined) {
+    return rejectedOutcome(
+      `workContextId: work context "${body.workContextId}" not found`,
+    );
+  }
+  if (ownerId !== developerId) {
+    return rejectedOutcome(
+      "workContextId: work context belongs to another developer",
+    );
+  }
+  const inserted = await deps.db
+    .insert(workContextTargets)
+    .values({
+      workContextId: body.workContextId,
+      kind: body.kind,
+      value: body.value,
+    })
+    .onConflictDoNothing()
+    .returning({ workContextId: workContextTargets.workContextId });
+  // No per-target event: a busy session emits dozens of targets and would
+  // flood the outbox, drowning the signals SSE consumers care about.
+  return inserted[0] === undefined ? duplicate() : accepted();
+};
+
+// Accepted v0 limitation: homoglyph lookalikes (e.g. Cyrillic "а" for "a")
+// bypass this normalization; the similarity block's embedding dedup covers
+// visually-identical bodies.
+const normalizeClaimBody = (body: string): string =>
+  body.trim().replace(/\s+/g, " ").toLowerCase();
+
+/**
+ * Ingest dedup gate, deterministic v0 (DESIGN.md §3): same work context, same
+ * kind, same author developer, normalized-equal body. Similarity/embedding
+ * dedup arrives with the search block. NEVER dedup across developers —
+ * provenance is the product; cross-author near-duplicates become relates_to
+ * edges in the search block instead of merged rows.
+ *
+ * Accepted v0 limitation: candidates are loaded and normalized in JS; the
+ * SQL normalized column that pushes this into the query comes with the
+ * search block.
+ */
+const findDedupMatch = async (
+  db: DbExecutor,
+  developerId: string,
+  body: Claim,
+): Promise<{ readonly id: string } | undefined> => {
+  const candidates = await db
+    .select({ id: claims.id, body: claims.body })
+    .from(claims)
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(
+      and(
+        eq(claims.workContextId, body.workContextId),
+        eq(claims.kind, body.kind),
+        eq(agentSessions.developerId, developerId),
+      ),
+    );
+  const normalized = normalizeClaimBody(body.body);
+  return candidates.find(
+    (candidate) => normalizeClaimBody(candidate.body) === normalized,
+  );
+};
+
+/** A claim id can only conflict with itself (spool replay) or a foreign owner. */
+const classifyClaimIdConflict = async (
+  db: DbExecutor,
+  developerId: string,
+  claimId: string,
+): Promise<HandlerOutcome> => {
+  const rows = await db
+    .select({ ownerId: agentSessions.developerId })
+    .from(claims)
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(eq(claims.id, claimId))
+    .limit(1);
+  const ownerId = rows[0]?.ownerId;
+  if (ownerId !== undefined && ownerId !== developerId) {
+    return rejectedOutcome("id: claim id already used by another developer");
+  }
+  // Spool replay of an already-stored claim id with a drifted body.
+  return duplicate(claimId);
+};
+
+export const ingestClaim = async (
+  deps: Deps,
+  developerId: string,
+  body: Claim,
+): Promise<HandlerOutcome> =>
+  // One transaction so dedup match, INSERT, and dedup_count bump are atomic —
+  // two concurrent flushes cannot both miss the match and double-insert.
+  deps.db.transaction(async (tx) => {
+    const txDeps: ExecutorDeps = { db: tx, now: deps.now };
+    const authorIssue = await checkOwnedSession(
+      tx,
+      developerId,
+      body.authorSessionId,
+      "authorSessionId",
+    );
+    if (authorIssue !== null) {
+      return rejectedOutcome(authorIssue);
+    }
+    // The work context must exist but may belong to another developer:
+    // extending someone else's diagnosis tree is the product (DESIGN.md §3).
+    const contextRows = await tx
+      .select({ id: workContexts.id })
+      .from(workContexts)
+      .where(eq(workContexts.id, body.workContextId))
+      .limit(1);
+    if (contextRows[0] === undefined) {
+      return rejectedOutcome(
+        `workContextId: work context "${body.workContextId}" not found`,
+      );
+    }
+
+    const dedupMatch = await findDedupMatch(tx, developerId, body);
+    if (dedupMatch !== undefined) {
+      if (dedupMatch.id === body.id) {
+        // Exact spool replay: a retransmission, not a re-observation —
+        // dedup_count and last_seen_at stay untouched.
+        return duplicate(body.id);
+      }
+      await tx
+        .update(claims)
+        .set({
+          dedupCount: sql`${claims.dedupCount} + 1`,
+          lastSeenAt: deps.now(),
+        })
+        .where(eq(claims.id, dedupMatch.id));
+      return duplicate(dedupMatch.id);
+    }
+
+    const createdAt = new Date(body.createdAt);
+    // evidenceRefs are persisted as-is; materializing supports-edges from them
+    // is a follow-up — referenced claims may arrive later in the same flush.
+    const inserted = await tx
+      .insert(claims)
+      .values({
+        id: body.id,
+        workContextId: body.workContextId,
+        authorSessionId: body.authorSessionId,
+        kind: body.kind,
+        body: body.body,
+        status: body.status,
+        confidence: body.confidence,
+        captureMode: body.captureMode,
+        provenance: body.provenance,
+        evidenceRefs: body.evidenceRefs,
+        lastSeenAt: createdAt,
+        createdAt,
+      })
+      .onConflictDoNothing()
+      .returning({ id: claims.id });
+    if (inserted[0] === undefined) {
+      return classifyClaimIdConflict(tx, developerId, body.id);
+    }
+    // Outbox discipline: ids and metadata only — never the claim body text.
+    await appendEvent(txDeps, EVENT_KINDS.CLAIM_ADDED, {
+      claimId: body.id,
+      workContextId: body.workContextId,
+      authorSessionId: body.authorSessionId,
+      developerId,
+      kind: body.kind,
+      status: body.status,
+    });
+    return accepted(body.id);
+  });
+
+const findEdgeIdByTriple = async (
+  db: DbExecutor,
+  body: ClaimEdge,
+): Promise<string | undefined> => {
+  const rows = await db
+    .select({ id: claimEdges.id })
+    .from(claimEdges)
+    .where(
+      and(
+        eq(claimEdges.fromClaimId, body.fromClaimId),
+        eq(claimEdges.toClaimId, body.toClaimId),
+        eq(claimEdges.kind, body.kind),
+      ),
+    )
+    .limit(1);
+  return rows[0]?.id;
+};
+
+/** Disambiguates which unique constraint swallowed the edge INSERT. */
+const classifyEdgeConflict = async (
+  db: DbExecutor,
+  body: ClaimEdge,
+): Promise<HandlerOutcome> => {
+  const byIdRows = await db
+    .select({
+      fromClaimId: claimEdges.fromClaimId,
+      toClaimId: claimEdges.toClaimId,
+      kind: claimEdges.kind,
+    })
+    .from(claimEdges)
+    .where(eq(claimEdges.id, body.id))
+    .limit(1);
+  const existing = byIdRows[0];
+  if (existing !== undefined) {
+    const isSameTriple =
+      existing.fromClaimId === body.fromClaimId &&
+      existing.toClaimId === body.toClaimId &&
+      existing.kind === body.kind;
+    return isSameTriple
+      ? duplicate(body.id)
+      : rejectedOutcome("id: already used by a different edge");
+  }
+  return duplicate(await findEdgeIdByTriple(db, body));
+};
+
+export const ingestClaimEdge = async (
+  deps: Deps,
+  developerId: string,
+  body: ClaimEdge,
+): Promise<HandlerOutcome> => {
+  const authorIssue = await checkOwnedSession(
+    deps.db,
+    developerId,
+    body.authorSessionId,
+    "authorSessionId",
+  );
+  if (authorIssue !== null) {
+    return rejectedOutcome(authorIssue);
+  }
+  const endpointIds = [body.fromClaimId, body.toClaimId];
+  const found = await deps.db
+    .select({ id: claims.id, ownerId: agentSessions.developerId })
+    .from(claims)
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(inArray(claims.id, endpointIds));
+  const foundIds = new Set(found.map((row) => row.id));
+  const missing = endpointIds.filter((id) => !foundIds.has(id));
+  if (missing.length > 0) {
+    return rejectedOutcome(`claim(s) not found: ${missing.join(", ")}`);
+  }
+  // supersedes is same-author revision semantics (DESIGN.md §5); cross-author
+  // disagreement uses contradicts/deeper_cause_of, which stay cross-author by
+  // design (extend_diagnosis).
+  if (body.kind === "supersedes") {
+    const hasForeignEndpoint = found.some((row) => row.ownerId !== developerId);
+    if (hasForeignEndpoint) {
+      return rejectedOutcome(
+        "kind: supersedes requires ownership of both claims",
+      );
+    }
+  }
+
+  const inserted = await deps.db
+    .insert(claimEdges)
+    .values({
+      id: body.id,
+      fromClaimId: body.fromClaimId,
+      toClaimId: body.toClaimId,
+      kind: body.kind,
+      authorSessionId: body.authorSessionId,
+      note: body.note ?? null,
+      createdAt: new Date(body.createdAt),
+    })
+    .onConflictDoNothing()
+    .returning({ id: claimEdges.id });
+  if (inserted[0] === undefined) {
+    return classifyEdgeConflict(deps.db, body);
+  }
+  await appendEvent(deps, EVENT_KINDS.CLAIM_EDGE_ADDED, {
+    edgeId: body.id,
+    fromClaimId: body.fromClaimId,
+    toClaimId: body.toClaimId,
+    kind: body.kind,
+    developerId,
+  });
+  return accepted(body.id);
+};
