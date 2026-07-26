@@ -2,7 +2,7 @@ import { asc, gt } from "drizzle-orm";
 
 import { EVENTS_MAX_LIMIT } from "../constants.ts";
 import { events } from "../db/schema.ts";
-import type { Db } from "../db/client.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 export interface EventView {
@@ -28,7 +28,7 @@ const toEventView = (row: EventRow): EventView => ({
 
 /** Outbox append — payloads carry only ids and metadata, never claim bodies. */
 export const appendEvent = async (
-  deps: { readonly db: Db; readonly now: Clock },
+  deps: { readonly db: DbExecutor; readonly now: Clock },
   kind: string,
   payload: Record<string, unknown>,
 ): Promise<void> => {
