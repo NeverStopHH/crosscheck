@@ -1,5 +1,7 @@
+import { sql } from "drizzle-orm";
 import {
   bigserial,
+  check,
   doublePrecision,
   index,
   integer,
@@ -8,6 +10,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import {
   ARTIFACT_SENSITIVITIES,
@@ -15,6 +18,7 @@ import {
   CLAIM_KINDS,
   CLAIM_STATUSES,
   EDGE_KINDS,
+  MAX_CLAIM_BODY_LENGTH,
   PROVENANCES,
   SESSION_STATUSES,
   TARGET_KINDS,
@@ -59,6 +63,7 @@ export const workContexts = pgTable("work_contexts", {
     .notNull()
     .references(() => agentSessions.id),
   title: text("title").notNull(),
+  description: text("description"),
   intent: jsonb("intent").$type<Record<string, unknown>>(),
   status: text("status", { enum: SESSION_STATUSES }).notNull(),
   // tsv + embedding vector columns are added with the search block
@@ -81,42 +86,67 @@ export const workContextTargets = pgTable(
   ],
 );
 
-export const claims = pgTable("claims", {
-  id: text("id").primaryKey(),
-  workContextId: text("work_context_id")
-    .notNull()
-    .references(() => workContexts.id),
-  authorSessionId: text("author_session_id")
-    .notNull()
-    .references(() => agentSessions.id),
-  kind: text("kind", { enum: CLAIM_KINDS }).notNull(),
-  body: text("body").notNull(),
-  status: text("status", { enum: CLAIM_STATUSES }).notNull(),
-  confidence: doublePrecision("confidence").notNull(),
-  captureMode: text("capture_mode", { enum: CAPTURE_MODES }).notNull(),
-  provenance: text("provenance", { enum: PROVENANCES }).notNull(),
-  dedupCount: integer("dedup_count").notNull().default(1),
-  lastSeenAt: timestamptz("last_seen_at"),
-  staleAt: timestamptz("stale_at"),
-  // tsv + embedding vector columns are added with the search block
-  createdAt: timestamptz("created_at").notNull(),
-});
+export const claims = pgTable(
+  "claims",
+  {
+    id: text("id").primaryKey(),
+    workContextId: text("work_context_id")
+      .notNull()
+      .references(() => workContexts.id),
+    authorSessionId: text("author_session_id")
+      .notNull()
+      .references(() => agentSessions.id),
+    kind: text("kind", { enum: CLAIM_KINDS }).notNull(),
+    body: text("body").notNull(),
+    status: text("status", { enum: CLAIM_STATUSES }).notNull(),
+    confidence: doublePrecision("confidence").notNull(),
+    captureMode: text("capture_mode", { enum: CAPTURE_MODES }).notNull(),
+    provenance: text("provenance", { enum: PROVENANCES }).notNull(),
+    dedupCount: integer("dedup_count").notNull().default(1),
+    lastSeenAt: timestamptz("last_seen_at"),
+    staleAt: timestamptz("stale_at"),
+    // Persisted wire refs; materializing supports-edges from them is a
+    // follow-up because referenced claims may arrive later in the same flush.
+    evidenceRefs: jsonb("evidence_refs")
+      .$type<readonly string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    // tsv + embedding vector columns are added with the search block
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    check(
+      "claims_body_length_check",
+      sql`char_length(${table.body}) <= ${sql.raw(String(MAX_CLAIM_BODY_LENGTH))}`,
+    ),
+  ],
+);
 
-export const claimEdges = pgTable("claim_edges", {
-  id: text("id").primaryKey(),
-  fromClaimId: text("from_claim_id")
-    .notNull()
-    .references(() => claims.id),
-  toClaimId: text("to_claim_id")
-    .notNull()
-    .references(() => claims.id),
-  kind: text("kind", { enum: EDGE_KINDS }).notNull(),
-  authorSessionId: text("author_session_id")
-    .notNull()
-    .references(() => agentSessions.id),
-  note: text("note"),
-  createdAt: timestamptz("created_at").notNull(),
-});
+export const claimEdges = pgTable(
+  "claim_edges",
+  {
+    id: text("id").primaryKey(),
+    fromClaimId: text("from_claim_id")
+      .notNull()
+      .references(() => claims.id),
+    toClaimId: text("to_claim_id")
+      .notNull()
+      .references(() => claims.id),
+    kind: text("kind", { enum: EDGE_KINDS }).notNull(),
+    authorSessionId: text("author_session_id")
+      .notNull()
+      .references(() => agentSessions.id),
+    note: text("note"),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("claim_edges_from_to_kind_idx").on(
+      table.fromClaimId,
+      table.toClaimId,
+      table.kind,
+    ),
+  ],
+);
 
 export const artifacts = pgTable("artifacts", {
   id: text("id").primaryKey(),

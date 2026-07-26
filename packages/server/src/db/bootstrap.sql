@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS work_contexts (
   id text PRIMARY KEY,
   session_id text NOT NULL REFERENCES agent_sessions(id),
   title text NOT NULL,
+  description text,
   intent jsonb,
   status text NOT NULL,
   normalized_doc text,
@@ -51,7 +52,8 @@ CREATE TABLE IF NOT EXISTS claims (
   work_context_id text NOT NULL REFERENCES work_contexts(id),
   author_session_id text NOT NULL REFERENCES agent_sessions(id),
   kind text NOT NULL,
-  body text NOT NULL,
+  -- keep in sync with MAX_CLAIM_BODY_LENGTH in @crosscheck/schema
+  body text NOT NULL CONSTRAINT claims_body_length_check CHECK (char_length(body) <= 400),
   status text NOT NULL,
   confidence double precision NOT NULL,
   capture_mode text NOT NULL,
@@ -59,6 +61,7 @@ CREATE TABLE IF NOT EXISTS claims (
   dedup_count integer NOT NULL DEFAULT 1,
   last_seen_at timestamptz,
   stale_at timestamptz,
+  evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL
 );
 
@@ -71,6 +74,9 @@ CREATE TABLE IF NOT EXISTS claim_edges (
   note text,
   created_at timestamptz NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS claim_edges_from_to_kind_idx
+  ON claim_edges (from_claim_id, to_claim_id, kind);
 
 CREATE TABLE IF NOT EXISTS artifacts (
   id text PRIMARY KEY,

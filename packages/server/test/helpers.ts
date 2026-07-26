@@ -136,6 +136,168 @@ export interface EventView {
   readonly createdAt: string;
 }
 
+export const CX_VERSION = "0.1";
+export const WORK_CONTEXT_ID = "wc_01";
+
+/** Sentinel that postRecords swaps for the posting developer's real id. */
+export const PLACEHOLDER_DEVELOPER_ID = "dev_producer";
+
+export interface EnvelopeOverrides {
+  readonly id?: string;
+  readonly ts?: string;
+  readonly sessionId?: string;
+  readonly developerId?: string;
+}
+
+export const recordEnvelope = (
+  kind: string,
+  body: unknown,
+  overrides: EnvelopeOverrides = {},
+): Record<string, unknown> => ({
+  cx: CX_VERSION,
+  id: overrides.id ?? `env_${crypto.randomUUID()}`,
+  ts: overrides.ts ?? TEST_START_ISO,
+  producer: {
+    developerId: overrides.developerId ?? PLACEHOLDER_DEVELOPER_ID,
+    agentKind: "claude-code",
+    sessionId: overrides.sessionId ?? VALID_SESSION_BODY.id,
+  },
+  kind,
+  body,
+});
+
+export const validWorkContextBody = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  id: WORK_CONTEXT_ID,
+  sessionId: VALID_SESSION_BODY.id,
+  title: "Login 500s on staging",
+  description: "POST /login returns 500 after token refresh",
+  status: "analyzing",
+  createdAt: TEST_START_ISO,
+  ...overrides,
+});
+
+export const validClaimBody = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  id: "clm_01",
+  workContextId: WORK_CONTEXT_ID,
+  authorSessionId: VALID_SESSION_BODY.id,
+  kind: "observation",
+  body: "JWT validation fails after token refresh",
+  status: "proposed",
+  confidence: 0.8,
+  captureMode: "agent",
+  provenance: "declared",
+  evidenceRefs: [],
+  createdAt: TEST_START_ISO,
+  ...overrides,
+});
+
+export const validClaimEdgeBody = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  id: "edge_01",
+  fromClaimId: "clm_02",
+  toClaimId: "clm_01",
+  kind: "supports",
+  authorSessionId: VALID_SESSION_BODY.id,
+  createdAt: TEST_START_ISO,
+  ...overrides,
+});
+
+export interface RecordResultView {
+  readonly index: number;
+  readonly status: string;
+  readonly id?: string;
+  readonly issues?: string[];
+}
+
+export interface IngestResponseData {
+  readonly results: RecordResultView[];
+  readonly accepted: number;
+  readonly duplicates: number;
+  readonly ignored: number;
+  readonly rejected: number;
+}
+
+const withRealProducer = (record: unknown, developerId: string): unknown => {
+  if (typeof record !== "object" || record === null) {
+    return record;
+  }
+  const envelope = record as Record<string, unknown>;
+  const producer = envelope["producer"];
+  if (typeof producer !== "object" || producer === null) {
+    return record;
+  }
+  const producerObj = producer as Record<string, unknown>;
+  if (producerObj["developerId"] !== PLACEHOLDER_DEVELOPER_ID) {
+    return record;
+  }
+  return { ...envelope, producer: { ...producerObj, developerId } };
+};
+
+const resolveProducerIds = (body: unknown, developerId: string): unknown => {
+  if (typeof body !== "object" || body === null) {
+    return body;
+  }
+  const container = body as Record<string, unknown>;
+  if (Array.isArray(container["records"])) {
+    return {
+      ...container,
+      records: container["records"].map((record) =>
+        withRealProducer(record, developerId),
+      ),
+    };
+  }
+  return withRealProducer(body, developerId);
+};
+
+export const postRecords = async (
+  harness: TestHarness,
+  developer: TestDeveloper | null,
+  body: unknown,
+): Promise<{ status: number; data: IngestResponseData | null }> => {
+  const resolvedBody =
+    developer === null ? body : resolveProducerIds(body, developer.developerId);
+  const response = await harness.app.request(
+    "/api/records",
+    jsonRequest("POST", developer?.apiKey ?? null, resolvedBody),
+  );
+  if (response.status !== 200) {
+    return { status: response.status, data: null };
+  }
+  const json = (await response.json()) as { data: IngestResponseData };
+  return { status: response.status, data: json.data };
+};
+
+export interface HarnessWithSession {
+  readonly harness: TestHarness;
+  readonly developer: TestDeveloper;
+}
+
+export const createHarnessWithSession = async (
+  sessionOverrides: Record<string, unknown> = {},
+): Promise<HarnessWithSession> => {
+  const harness = await createTestHarness();
+  const developer = await createTestDeveloper(harness, "Nick", "nick@example.com");
+  await registerTestSession(harness, developer.apiKey, sessionOverrides);
+  return { harness, developer };
+};
+
+/** Adds a second developer with an own registered session to a harness. */
+export const addTestDeveloperWithSession = async (
+  harness: TestHarness,
+  name: string,
+  email: string,
+  sessionOverrides: Record<string, unknown> = {},
+): Promise<TestDeveloper> => {
+  const developer = await createTestDeveloper(harness, name, email);
+  await registerTestSession(harness, developer.apiKey, sessionOverrides);
+  return developer;
+};
+
 export const fetchEvents = async (
   harness: TestHarness,
   apiKey: string,
