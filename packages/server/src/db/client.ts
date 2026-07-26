@@ -6,6 +6,12 @@ import * as schema from "./schema.ts";
 
 export type Db = PgliteDatabase<typeof schema>;
 
+/** An open drizzle transaction over the same schema. */
+export type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/** Query executor accepted by data helpers: the root db or an open transaction. */
+export type DbExecutor = Db | DbTransaction;
+
 export interface CreateDbOptions {
   /** Filesystem directory for durable storage; omitted = in-memory (tests, dev). */
   readonly dataDir?: string;

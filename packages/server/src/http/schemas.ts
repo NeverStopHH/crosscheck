@@ -26,6 +26,9 @@ export const PresenceQuerySchema = z.object({
   repo: z.string().min(1),
 });
 
+/** Same shape as the presence query — every repo-scoped list uses it. */
+export const RepoQuerySchema = PresenceQuerySchema;
+
 /** Oversized limits are capped in the events service, not rejected here. */
 export const EventsQuerySchema = z.object({
   after: z.coerce.number().int().min(0).default(0),
