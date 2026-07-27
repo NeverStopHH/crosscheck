@@ -30,7 +30,7 @@ Before a line of code exists, check whether developer A's *planned* change break
 
 Two agents hold contradictory root causes for the same symptom. The system doesn't block and doesn't pick a winner; it prepares the case file: evidence for position A, evidence for position B, what each side already ruled out, and the one test that would separate them.
 
-**Why this is nearly free:** `contradicts` edges plus per-claim `evidence_refs` *are* the case file. Contradiction candidates (high similarity, opposite status) are already flagged at the ingest gate. Referee mode is largely a renderer over data the system collects anyway — which makes it the natural first item to build after the search block, since it turns those contradiction candidates into something a human can act on in thirty seconds.
+**Why this is nearly free:** `contradicts` edges plus per-claim `evidence_refs` *are* the case file, and both exist today — the edge kind is in the schema, the refs persist as jsonb on every claim. What does not exist yet is the detection: flagging contradiction candidates (high similarity, opposite status) needs similarity, so it lands with the search block, as [DESIGN.md §5](DESIGN.md) states. Referee mode is then largely a renderer over data the system already collects, which makes it the natural first item after search — it turns those candidates into something a human can act on in thirty seconds.
 
 ## Build order
 
