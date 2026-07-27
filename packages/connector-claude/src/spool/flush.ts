@@ -69,7 +69,7 @@ const pendingTotal = (spools: readonly SessionSpool[]): number =>
  * records went, or null when the hub refused them and nothing was consumed.
  *
  * The cursor move is the one part that can silently not happen: a file reaped
- * and recreated mid-flush is a different inode, and `writeCursorOffset` refuses
+ * and recreated mid-flush is a different file, and `writeCursorOffset` refuses
  * it (cursor.ts). What that costs is a re-send the hub dedups, never a skip.
  *
  * Records are stamped with the FLUSHING session, not the one that wrote them:
@@ -108,15 +108,11 @@ const flushOneBatch = async (
     "unparsable",
     ctx.now(),
   );
-  // `spool.ino`: the cursor may only move for the file this batch was read
-  // from. A spool reaped and recreated mid-flush is a different file, and its
-  // records start at offset 0.
-  await writeCursorOffset(
-    spool.dataPath,
-    spool.cursorPath,
-    consumed,
-    spool.ino,
-  );
+  // The spool as READ is the identity: the cursor may only move for the file
+  // this batch came from. A spool reaped and recreated mid-flush is a different
+  // file — same name, and on ext4 the same inode number too — and its records
+  // start at offset 0.
+  await writeCursorOffset(spool.dataPath, spool.cursorPath, consumed, spool);
   return records.length;
 };
 

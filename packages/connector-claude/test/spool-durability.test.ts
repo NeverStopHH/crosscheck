@@ -38,7 +38,7 @@ import {
   spoolDropsPath,
   spoolPendingEndPath,
 } from "../src/config/paths.ts";
-import { writeCursorOffset } from "../src/spool/cursor.ts";
+import { bytesOfLines, writeCursorOffset } from "../src/spool/cursor.ts";
 import { recordDrop } from "../src/spool/drops.ts";
 import { readSessionSpool } from "../src/spool/files.ts";
 import type { SessionSpool } from "../src/spool/files.ts";
@@ -503,16 +503,26 @@ describe("reap's own unlink window", () => {
 });
 
 describe("cursor against a spool that was recreated mid-flush", () => {
-  test("refuses to move a cursor onto a file it did not deliver from", async () => {
-    // Arrange: a flush has read the spool and sent what it found
+  /**
+   * Reap removes the spool, appenders recreate it, and only THEN does the
+   * in-flight cursor write land. Returns what is still pending afterwards.
+   *
+   * `reusesInode` is the whole point. ext4 hands a recreated file the SAME
+   * inode number back and APFS does not — 20/20 against 0/20 in 20 trials — so
+   * a test that let the filesystem decide passed on a Mac for a reason that had
+   * nothing to do with the code, and failed on ubuntu-latest. Splicing the
+   * inode the caller asks for onto the identity the flush read makes both
+   * behaviours reachable from either platform.
+   */
+  const cursorWriteAfterRecreation = async (
+    reusesInode: boolean,
+  ): Promise<{ pending: readonly string[]; dropped: number }> => {
     const path = await home();
     const dataPath = spoolDataPath(path, KEY, SLUG);
     const cursorPath = spoolCursorPath(path, KEY, SLUG);
     await appendRecords(path, KEY, SESSION, [envelope("delivered_1")], NOW);
     const asRead = await readSessionSpool(path, KEY, SLUG);
 
-    // Act: reap removes the file, appenders recreate it past the old offset,
-    // and only THEN does the in-flight cursor write land.
     await removeFile(cursorPath);
     await removeFile(dataPath);
     await appendRecords(
@@ -522,13 +532,61 @@ describe("cursor against a spool that was recreated mid-flush", () => {
       [envelope("new_1"), envelope("new_2"), envelope("new_3")],
       NOW,
     );
-    await writeCursorOffset(dataPath, cursorPath, asRead.size, asRead.ino);
+    const recreated = await stat(dataPath);
+    await writeCursorOffset(dataPath, cursorPath, asRead.size, {
+      ...asRead,
+      ino: reusesInode ? recreated.ino : asRead.ino,
+    });
+    return {
+      pending: await readSpoolLines(path, KEY),
+      dropped: (await readDropSummary(path, KEY)).records,
+    };
+  };
+
+  test("refuses to move a cursor onto a file it did not deliver from", async () => {
+    // Arrange + Act: the filesystem gave the new file a fresh inode number
+    const { pending, dropped } = await cursorWriteAfterRecreation(false);
 
     // Assert: the new file's records are not skipped by the old file's offset
-    const pending = await readSpoolLines(path, KEY);
     expect(pending).toHaveLength(3);
     expect(pending.join("\n")).toContain('"id":"new_1"');
-    expect((await readDropSummary(path, KEY)).records).toBe(0);
+    expect(dropped).toBe(0);
+  });
+
+  test("refuses it even when the new file got the old file's inode number", async () => {
+    // Arrange + Act: ext4's behaviour, forced, so the identity check is what
+    // has to catch this rather than the inode allocator
+    const { pending, dropped } = await cursorWriteAfterRecreation(true);
+
+    // Assert: still three, and the first of them is the one that used to vanish
+    // — neither delivered, nor pending, nor counted, before the fix
+    expect(pending).toHaveLength(3);
+    expect(pending.join("\n")).toContain('"id":"new_1"');
+    expect(dropped).toBe(0);
+  });
+
+  test("moves the cursor for the very file it delivered from", async () => {
+    // Arrange: nothing recreates anything — the guard must not refuse this
+    const path = await home();
+    const dataPath = spoolDataPath(path, KEY, SLUG);
+    const cursorPath = spoolCursorPath(path, KEY, SLUG);
+    await appendRecords(
+      path,
+      KEY,
+      SESSION,
+      [envelope("delivered_1"), envelope("still_pending_1")],
+      NOW,
+    );
+    const asRead = await readSessionSpool(path, KEY, SLUG);
+    const firstRecordBytes = bytesOfLines(asRead.pending, 1);
+
+    // Act
+    await writeCursorOffset(dataPath, cursorPath, firstRecordBytes, asRead);
+
+    // Assert: the delivered record is consumed, the other one is not
+    const pending = await readSpoolLines(path, KEY);
+    expect(pending).toHaveLength(1);
+    expect(pending.join("\n")).toContain('"id":"still_pending_1"');
   });
 });
 

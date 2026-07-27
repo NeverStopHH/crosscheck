@@ -5,10 +5,11 @@
  * That session's hooks are the usual writer, and not the only one: `rescueTail`
  * appends bytes back onto a file whose session is gone (reap.ts), and the
  * re-append in `appendThroughHandle` recreates a file reap unlinked (write.ts).
- * A reader therefore only ever sees an inode GROW: nothing shortens or rewrites
+ * A reader therefore only ever sees a file GROW: nothing shortens or rewrites
  * bytes it has already read. What can change under it is the NAME — `reap`
  * unlinks a data file and an appender recreates it — which is why every read
- * below carries the `ino` it came from.
+ * below carries the IDENTITY of the file it came from. That identity is not the
+ * inode number: ext4 gives the recreated file the same one back (identity.ts).
  *
  * Nothing in this module writes, renames, truncates or deletes anything.
  */
@@ -21,21 +22,21 @@ import {
   spoolDir,
 } from "../config/paths.ts";
 import { readCursorOffset, sliceFrom } from "./cursor.ts";
+import { readFileFacts } from "./identity.ts";
+import type { FileIdentity } from "./identity.ts";
 import { completeLines, lineTimestampMs, toLines } from "./lines.ts";
 
 const DATA_SUFFIX = ".jsonl";
 
-export interface SessionSpool {
+/**
+ * `FileIdentity` is satisfied structurally by `ino` + `firstLine` below, so a
+ * spool can be handed straight to anything that has to prove it is still
+ * talking about the file it read.
+ */
+export interface SessionSpool extends FileIdentity {
   readonly slug: string;
   readonly dataPath: string;
   readonly cursorPath: string;
-  /**
-   * Which file these bytes came from. A spool that `reap` removed and an
-   * appender recreated wears the same NAME with a different inode, so anything
-   * written back afterwards — the cursor above all — has to prove it is talking
-   * about the file it read.
-   */
-  readonly ino: number;
   /**
    * PHYSICAL byte size, fragments included — what `reap` compares the cursor
    * against, so a file with a trailing torn write is never seen as delivered.
@@ -49,25 +50,18 @@ export interface SessionSpool {
   readonly lines: readonly string[];
 }
 
-export interface SpoolFileFacts {
-  /** Identity of the file these facts came from — see `SessionSpool.ino`. */
-  readonly ino: number;
-  readonly size: number;
-  readonly mtimeMs: number;
-}
-
-/** Null when there is no file, which every caller reads as "nothing to do". */
-export const factsOf = async (path: string): Promise<SpoolFileFacts | null> => {
+/**
+ * Size only, so this stays one `stat` on the append hot path — `readFileFacts`
+ * would also open and read the file to fingerprint it, which an append that
+ * only needs to check the cap has no use for.
+ */
+export const sizeOf = async (path: string): Promise<number> => {
   try {
-    const info = await stat(path);
-    return { ino: info.ino, size: info.size, mtimeMs: info.mtimeMs };
+    return (await stat(path)).size;
   } catch {
-    return null;
+    return 0;
   }
 };
-
-export const sizeOf = async (path: string): Promise<number> =>
-  (await factsOf(path))?.size ?? 0;
 
 /**
  * Session slugs with a data file, sorted only so the listing is stable. This is
@@ -99,12 +93,13 @@ export const readSessionSpool = async (
   const raw = completeLines((await readTextOrNull(dataPath)) ?? "");
   const offset = await readCursorOffset(dataPath, cursorPath);
   const pending = sliceFrom(raw, offset);
-  const facts = await factsOf(dataPath);
+  const facts = await readFileFacts(dataPath);
   return {
     slug,
     dataPath,
     cursorPath,
     ino: facts?.ino ?? 0,
+    firstLine: facts?.firstLine ?? null,
     size: facts?.size ?? 0,
     mtimeMs: facts?.mtimeMs ?? 0,
     offset,
