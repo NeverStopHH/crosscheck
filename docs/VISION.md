@@ -1,6 +1,6 @@
 # Vision — beyond coordination
 
-Status: forward-looking, 2026-07-26. Nothing here is scheduled. The foundation described in [DESIGN.md](DESIGN.md) ships first; this document records where the project goes once that foundation is real, and — more usefully — **which foundation decisions were made specifically to keep these doors open**.
+Status: committed roadmap, not speculation (2026-07-27). All four capabilities below **will** be built — the open questions are sequencing and form, not whether. The foundation in [DESIGN.md](DESIGN.md) ships first, because each of these rests on it; this document records where the project goes next and — more usefully — **which foundation decisions were made specifically to keep these doors open**.
 
 The through-line: crosscheck starts as coordination (*who is doing what?*) and becomes collective intelligence (*what does the team, as a system, now know?*).
 
@@ -16,7 +16,7 @@ When a problem is solved, its diagnosis tree — symptom → hypotheses → evid
 
 When several developers are investigating entangled problems in parallel, background agent sessions cross-analyze the accumulated claims overnight and produce one synthesis for the morning: *"Three separate investigations are open. They share one root cause. Here is the evidence chain, and here is what each of you can stop doing."*
 
-**Why this is the riskiest of the four:** it inverts the injection discipline the foundation is built on. Today, unverified hypotheses are only ever offered as pointers the agent must deliberately pull, precisely so a teammate's wrong theory cannot anchor a healthy investigation (DESIGN.md §4). A synthesis document asserts a *shared* conclusion — and a confidently wrong "common root cause" delivered at standup is worse than three separate, honest investigations. If built: opt-in, scheduled, cost-capped, and formatted as the referee output of §4 (evidence for each position) rather than a verdict.
+**This one is wanted, and it is also the riskiest of the four** — because it inverts the injection discipline the foundation is built on. Today, unverified hypotheses are only ever offered as pointers the agent must deliberately pull, precisely so a teammate's wrong theory cannot anchor a healthy investigation (DESIGN.md §4). A synthesis document asserts a *shared* conclusion — and a confidently wrong "common root cause" delivered at standup is worse than three separate, honest investigations. If built: opt-in, scheduled, cost-capped, and formatted as the referee output of §4 (evidence for each position) rather than a verdict.
 
 ## 3. Ghost commits — simulating side effects at intent level
 
@@ -32,11 +32,15 @@ Two agents hold contradictory root causes for the same symptom. The system doesn
 
 **Why this is nearly free:** `contradicts` edges plus per-claim `evidence_refs` *are* the case file. Contradiction candidates (high similarity, opposite status) are already flagged at the ingest gate. Referee mode is largely a renderer over data the system collects anyway — which makes it the natural first item to build after the search block, since it turns those contradiction candidates into something a human can act on in thirty seconds.
 
-## Ordering, if and when
+## Build order
 
 1. **Referee mode** — smallest delta over the foundation, immediately useful.
 2. **Collective memory** — a ranking change over data already retained; the biggest compounding return.
 3. **Ghost commits** — gated on intent-capture quality, not on model capability.
 4. **Agent conferences** — highest cost and highest anchoring risk; only after the injection-precision telemetry (`hint_deliveries`) proves the team trusts what the system says.
+
+Sequenced this way because each step makes the next one cheaper, not because of appetite — the ordering is about dependency, and anything that can be picked up early alongside foundation work will be.
+
+**Ghost commits carry a foundation obligation.** They are gated on intent capture being reliable, which makes intent capture a load-bearing requirement of the foundation rather than a nice-to-have: `work_contexts.intent` has to be filled substantially (planned changes, APIs likely to change, expected side effects), not left empty. Simulating two vague intents against each other produces expensive noise, and noise is what destroys trust in a warning system.
 
 None of this changes the v0/v0.5/v1 roadmap in [DESIGN.md §8](DESIGN.md). The point of writing it down is narrower: when a foundation decision looks like over-engineering (append-only claims, typed edges, intent as structured data rather than prose), this is what it is buying.
