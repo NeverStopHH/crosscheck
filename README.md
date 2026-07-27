@@ -12,6 +12,7 @@ The name is the aviation ritual: *"arm doors and cross-check"* — independent o
 
 - [docs/DESIGN.md](docs/DESIGN.md) — the v0.1 architecture (synthesized from 3 independent design passes + 2 adversarial reviews)
 - [docs/RESEARCH.md](docs/RESEARCH.md) — prior-art landscape, protocol verdicts, Claude Code integration surface, storage decisions
+- [docs/VISION.md](docs/VISION.md) — where this goes after the foundation, and which foundation decisions keep those doors open
 - [docs/CONCEPT.de.md](docs/CONCEPT.de.md) — the original concept document (German)
 
 ## The one-paragraph pitch
