@@ -20,7 +20,7 @@
   "devDependencies": {
     "@crosscheck/server": "workspace:*",
     "bun-types": "^1.2.0",
-    "drizzle-orm": "^0.44.0",
+    "drizzle-orm": "^0.45.2",
     "typescript": "^5.8.0"
   }
 }
