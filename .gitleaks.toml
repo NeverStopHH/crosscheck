@@ -1,0 +1,17 @@
+# Secret-scanner configuration.
+#
+# The connector's own secret scanner is tested with one sample of every pattern
+# it guards against, so the fixture file necessarily contains strings that look
+# exactly like real credentials — that is the point of the test. Allowlisting it
+# by path keeps the scanner meaningful everywhere else instead of forcing us to
+# weaken the test or disable the scan.
+title = "crosscheck"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fixtures for the connector's own secret detector"
+paths = [
+  '''packages/connector-claude/test/secret-scan\.test\.ts''',
+]
