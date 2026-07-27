@@ -7,11 +7,53 @@ on:
 
 jobs:
   test:
+    # Both platforms, because a green suite only proves correctness for the OS it
+    # ran on: an inode-reuse bug was invisible on macOS and reliable on Linux
+    # (measured 20/20 vs 0/20 delete+recreate trials), and the team develops on Macs.
     name: Test & Typecheck
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run typecheck
+
+  concurrency:
+    # The spool defects in this repo were timing-dependent, surfacing in 3 of 13
+    # to 8 of 10 runs. One green run says little about them, so the tests that
+    # spawn real OS processes run repeatedly. A flake here is a finding, not noise.
+    name: Concurrency (repeated)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Run the timing-sensitive tests five times
+        run: |
+          for round in 1 2 3 4 5; do
+            echo "::group::round $round"
+            bun test \
+              packages/connector-claude/test/spool-concurrency.test.ts \
+              packages/connector-claude/test/spool-durability.test.ts \
+              packages/connector-claude/test/hook-budget.test.ts
+            echo "::endgroup::"
+          done
+
+  secrets:
+    # The connector handles per-developer API keys, and one path was already found
+    # that could echo one to stderr. Scans history, not just the working tree.
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD":/repo zricethezav/gitleaks:v8.28.0 \
+            detect --source=/repo --config=/repo/.gitleaks.toml --redact -v
