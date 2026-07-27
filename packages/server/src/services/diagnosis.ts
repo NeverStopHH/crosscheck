@@ -4,6 +4,7 @@ import {
   agentSessions,
   claimEdges,
   claims,
+  developers,
   workContexts,
 } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
@@ -44,6 +45,9 @@ export interface WorkContextView {
 
 export interface WorkContextListEntry extends WorkContextView {
   readonly developerId: string;
+  /** Author is a normative trust label (DESIGN.md §4), so it ships with the row
+   * instead of being looked up in the 90 s presence list by the reader. */
+  readonly developerName: string;
   readonly claimCount: number;
 }
 
@@ -136,17 +140,20 @@ export const listWorkContextsByRepo = async (
     .select({
       workContext: workContexts,
       developerId: agentSessions.developerId,
+      developerName: developers.name,
       claimCount: count(claims.id),
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .innerJoin(developers, eq(agentSessions.developerId, developers.id))
     .leftJoin(claims, eq(claims.workContextId, workContexts.id))
     .where(eq(agentSessions.repo, repo))
-    .groupBy(workContexts.id, agentSessions.developerId)
+    .groupBy(workContexts.id, agentSessions.developerId, developers.name)
     .orderBy(desc(workContexts.createdAt));
   return rows.map((row) => ({
     ...toWorkContextView(row.workContext),
     developerId: row.developerId,
+    developerName: row.developerName,
     claimCount: row.claimCount,
   }));
 };

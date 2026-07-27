@@ -1,0 +1,26 @@
+{
+  "name": "@crosscheck/connector-claude",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "crosscheck": "./src/bin/crosscheck.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@crosscheck/schema": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@crosscheck/server": "workspace:*",
+    "bun-types": "^1.2.0",
+    "drizzle-orm": "^0.44.0",
+    "typescript": "^5.8.0"
+  }
+}
