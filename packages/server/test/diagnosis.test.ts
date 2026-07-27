@@ -25,6 +25,7 @@ interface WorkContextListEntry {
   readonly id: string;
   readonly title: string;
   readonly developerId: string;
+  readonly developerName: string;
   readonly claimCount: number;
 }
 
@@ -136,6 +137,42 @@ describe("GET /api/work-contexts", () => {
     ]);
     expect(body.data.workContexts[0]?.claimCount).toBe(0);
     expect(body.data.workContexts[1]?.claimCount).toBe(2);
+  });
+
+  test("carries the author's name so readers need no presence lookup", async () => {
+    // Arrange: two developers, each with a work context on the same repo
+    const setup = await createHarnessWithSession();
+    await seedDiagnosisTree(setup);
+    const second = await addSecondDeveloper(setup);
+    await postRecords(
+      setup.harness,
+      second,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          id: "wc_can",
+          sessionId: SECOND_DEV_SESSION_ID,
+          title: "Cube rebuild is slow",
+        }),
+        { sessionId: SECOND_DEV_SESSION_ID },
+      ),
+    );
+
+    // Act
+    const response = await setup.harness.app.request(
+      REPO_QUERY,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+
+    // Assert
+    const body = (await response.json()) as {
+      data: { workContexts: WorkContextListEntry[] };
+    };
+    const byId = new Map(
+      body.data.workContexts.map((entry) => [entry.id, entry.developerName]),
+    );
+    expect(byId.get("wc_can")).toBe("Can");
+    expect(byId.get(WORK_CONTEXT_ID)).toBe("Nick");
   });
 
   test("returns 401 without an api key", async () => {
