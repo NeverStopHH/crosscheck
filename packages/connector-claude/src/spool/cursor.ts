@@ -6,36 +6,30 @@
  * write. Delivery moves this number; it never moves the records.
  */
 import { Buffer } from "node:buffer";
-import { stat } from "node:fs/promises";
 import { z } from "zod";
 
 import { readJsonOrNull, writePrivateFile } from "../config/paths.ts";
+import { isSameFile, readFileFacts } from "./identity.ts";
+import type { FileIdentity } from "./identity.ts";
 
 const CursorSchema = z.looseObject({
   /**
-   * Inode of the data file this offset belongs to. A file that `reap` removed
-   * and a later append recreated has a different inode, so its stale cursor is
-   * ignored rather than believed — which is why reap needs no cursor cleanup.
+   * WHICH data file this offset belongs to — inode plus the hash of the file's
+   * first line. A file that `reap` removed and a later append recreated is a
+   * different file, so its stale cursor is ignored rather than believed, which
+   * is why reap needs no cursor cleanup.
+   *
+   * The inode alone used to carry this, and could not: ext4 gives a recreated
+   * file the SAME inode number (spool/identity.ts). Both fields are required,
+   * so a cursor written before this field existed fails to parse and reads as
+   * offset 0 — a re-send the hub dedups, never a skip.
    */
   ino: z.number().int().min(0),
+  firstLine: z.string().min(1),
   offset: z.number().int().min(0),
 });
 
 const NOTHING_CONSUMED = 0;
-
-interface FileFacts {
-  readonly ino: number;
-  readonly size: number;
-}
-
-const factsOf = async (path: string): Promise<FileFacts | null> => {
-  try {
-    const info = await stat(path);
-    return { ino: info.ino, size: info.size };
-  } catch {
-    return null;
-  }
-};
 
 /**
  * Zero unless the cursor provably belongs to the spool that is there now, and
@@ -75,39 +69,50 @@ export const readCursorOffset = async (
   if (!parsed.success) {
     return NOTHING_CONSUMED;
   }
-  const facts = await factsOf(spoolFile);
+  const facts = await readFileFacts(spoolFile);
   return facts === null ||
-    facts.ino !== parsed.data.ino ||
+    !isSameFile(facts, parsed.data) ||
     parsed.data.offset > facts.size
     ? NOTHING_CONSUMED
     : parsed.data.offset;
 };
 
 /**
- * `deliveredFrom` is the inode the offset was computed against — the file the
- * flush actually read. Writing without it stamped whatever file happened to be
- * at the path NOW: if `reap` unlinked the spool after the flush read it and an
- * appender recreated it in between, a cursor for the old file was written
+ * `deliveredFrom` identifies the file the offset was computed against — the one
+ * the flush actually read. Writing without it stamped whatever file happened to
+ * be at the path NOW: if `reap` unlinked the spool after the flush read it and
+ * an appender recreated it in between, a cursor for the old file was written
  * against the new one, and `readCursorOffset` had every reason to believe it.
  * The records the recreated file held were then skipped — not delivered, not
  * pending, not counted. Measured at 15 records in 5760 under load.
  *
- * The read side has always refused a cursor whose inode disagrees with its
- * file; this is the same refusal on the write side.
+ * That identity was the INODE, and an inode number is not an identity where it
+ * is reused: on ext4 the recreated file gets the same number back, the check
+ * passed, and the first record of the new file was skipped exactly as before —
+ * invisible on APFS, reproduced on ubuntu-latest. What proves identity now is
+ * the file's first line (spool/identity.ts).
+ *
+ * A file with no complete first line has no identity to prove, so nothing is
+ * written for it. That costs nothing: it has no complete line to deliver
+ * either, so any offset for it is zero.
  */
 export const writeCursorOffset = async (
   spoolFile: string,
   cursorFile: string,
   offset: number,
-  deliveredFrom: number,
+  deliveredFrom: FileIdentity,
 ): Promise<void> => {
-  const facts = await factsOf(spoolFile);
-  if (facts === null || facts.ino !== deliveredFrom) {
+  const facts = await readFileFacts(spoolFile);
+  if (
+    facts === null ||
+    facts.firstLine === null ||
+    !isSameFile(facts, deliveredFrom)
+  ) {
     return;
   }
   await writePrivateFile(
     cursorFile,
-    `${JSON.stringify({ ino: facts.ino, offset })}\n`,
+    `${JSON.stringify({ ino: facts.ino, firstLine: facts.firstLine, offset })}\n`,
   );
 };
 

@@ -68,6 +68,7 @@ import {
 } from "./drops.ts";
 import { listSessionSlugs, readSessionSpool } from "./files.ts";
 import type { SessionSpool } from "./files.ts";
+import { isSameFile, readHandleFacts } from "./identity.ts";
 import { byteLength, completeLines, toLines } from "./lines.ts";
 import { withLock } from "./lock.ts";
 import { recordUnclosedSession } from "./unclosed.ts";
@@ -119,9 +120,18 @@ const isSafeToRemove = async (
   }
   // Through the HANDLE, not the path: this is the inode about to be unlinked,
   // and a path can point at a different file by the time we look again.
-  const facts = await handle.stat();
+  //
+  // The handle being pinned to one inode is what makes the READ trustworthy; it
+  // is not what makes the comparison sound. `spool.ino` came from an earlier
+  // stat of the PATH, so this is the same remembered-ino-versus-fresh-stat shape
+  // that broke the cursor, and an inode number reused by a file recreated in
+  // between would compare equal on ext4. Hence `isSameFile`, which also requires
+  // the first line to match (spool/identity.ts). Size and the quiescence grace
+  // stay: they answer a different question — whether the file GREW or was
+  // touched since it was read — which identity alone does not.
+  const facts = await readHandleFacts(handle);
   return (
-    facts.ino === spool.ino &&
+    isSameFile(facts, spool) &&
     facts.size === spool.size &&
     now.getTime() - facts.mtimeMs >= SPOOL_REAP_GRACE_MS
   );
@@ -462,9 +472,11 @@ const dropSlugs = async (
  * skip.
  *
  * A cursor left behind by a data file that is already gone needs no cleanup:
- * `readCursorOffset` only trusts a cursor whose inode matches the live data
- * file, so a recreated file — by a later session, or by the append path
- * recovering from an unlink — reads as offset 0 and re-sends rather than skips.
+ * `readCursorOffset` only trusts a cursor that provably belongs to the live
+ * data file — inode AND first line, because ext4 hands a recreated file the
+ * same inode number back (spool/identity.ts) — so a recreated file, by a later
+ * session or by the append path recovering from an unlink, reads as offset 0
+ * and re-sends rather than skips.
  *
  * `endDeferred` is optional because only a caller with a hub and a budget can
  * supply one; without it a marker cannot be spent, but it is still walked, so

@@ -82,7 +82,8 @@ export const MAX_SPOOL_BYTES = 2_000_000;
  *     into them — and each is one fixed-size line per repo, rewritten in place;
  *   - `.cursor` files are removed with the data file they belong to, and a
  *     leftover is inert rather than growing: `readCursorOffset` ignores a
- *     cursor whose inode disagrees with the file at the path (reap.ts);
+ *     cursor that cannot prove it belongs to the file at the path
+ *     (spool/identity.ts);
  *   - `flush.lock` is one fixed-size file per repo, and what has to expire on it
  *     is a dead holder's CLAIM, which SPOOL_LOCK_STALE_MS retires in seconds.
  */
@@ -148,6 +149,17 @@ export const FINGERPRINT_HASH_CHARS = 32;
 
 export const REPO_KEY_CHARS = 16;
 export const LOCAL_REPO_HASH_CHARS = 12;
+
+/**
+ * How much of a spool data file is read to fingerprint WHICH file it is
+ * (spool/identity.ts). One record's JSON, comfortably: a target's `value` is a
+ * path the OS itself caps near 4096 bytes, and a work context's title is capped
+ * at MAX_WORK_CONTEXT_TITLE_CHARS. A first line longer than this is still
+ * fingerprinted, by this many bytes of it.
+ */
+export const FIRST_LINE_PROBE_BYTES = 8192;
+/** 128 bits of SHA-256, the same truncation FINGERPRINT_HASH_CHARS uses. */
+export const FIRST_LINE_HASH_CHARS = 32;
 
 export const HOME_DIR_MODE = 0o700;
 export const PRIVATE_FILE_MODE = 0o600;
