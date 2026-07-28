@@ -23,9 +23,11 @@ import {
 } from "../src/config/paths.ts";
 import { writeSessionState } from "../src/state/session-state.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
+import { SELF_DEVELOPER_ID, startSlowHub } from "./fixtures/slow-hub.ts";
+import type { HubCalls, HubLatency } from "./fixtures/slow-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
-const DEVELOPER_ID = "dev_self";
+const DEVELOPER_ID = SELF_DEVELOPER_ID;
 /** More batches than any hook budget can pay for at this latency. */
 const BACKLOG = 600;
 /** Just under the 400 ms default request timeout, as the verifier measured it. */
@@ -47,85 +49,6 @@ afterEach(async () => {
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
   paths.length = 0;
 });
-
-interface HubCalls {
-  records: number;
-  end: number;
-}
-
-/** Mutable so a test can make the `end` call miss its timeout, then not. */
-interface HubLatency {
-  end: number;
-  /** Applies to register, presence and work-contexts: a hub slow all over. */
-  hub: number;
-}
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((done) => {
-    setTimeout(done, ms);
-  });
-
-/**
- * Only `/api/records` is slow. Everything the briefing needs answers at once,
- * so a missing briefing can only mean the drain took the hook.
- */
-const slowIngestHub = (calls: HubCalls, latency: HubLatency) =>
-  Bun.serve({
-    port: 0,
-    fetch: async (request) => {
-      const { pathname } = new URL(request.url);
-      const session = { id: "cc_x", developerId: DEVELOPER_ID };
-      if (pathname === "/api/records") {
-        await sleep(INGEST_LATENCY_MS);
-        const body = (await request.json()) as { records: readonly unknown[] };
-        calls.records += 1;
-        return Response.json({
-          ok: true,
-          data: {
-            accepted: body.records.length,
-            duplicates: 0,
-            ignored: 0,
-            rejected: 0,
-          },
-        });
-      }
-      if (pathname.endsWith("/end")) {
-        await sleep(latency.end);
-        // Counted only when the caller was still listening: an end the client
-        // abandoned mid-flight is precisely the one it must not rely on.
-        if (request.signal.aborted) {
-          return new Response(null, { status: 499 });
-        }
-        calls.end += 1;
-        return Response.json({ ok: true, data: { session } });
-      }
-      if (pathname === "/api/presence") {
-        await sleep(latency.hub);
-        return Response.json({
-          ok: true,
-          data: {
-            sessions: [
-              {
-                sessionId: "cc_other",
-                developerId: "dev_other",
-                developerName: "Teammate",
-                branch: "feat/rate-limit",
-                status: "implementing",
-                lastHeartbeatAt: new Date().toISOString(),
-                isSelf: false,
-              },
-            ],
-          },
-        });
-      }
-      if (pathname === "/api/work-contexts") {
-        await sleep(latency.hub);
-        return Response.json({ ok: true, data: { workContexts: [] } });
-      }
-      await sleep(latency.hub);
-      return Response.json({ ok: true, data: { session } });
-    },
-  });
 
 const envelope = (index: number, sessionId: string): Record<string, unknown> => ({
   cx: "0.1",
@@ -155,20 +78,18 @@ const fixture = async (label: string): Promise<Fixture> => {
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   const home = await makeHome(label);
   paths.push(repo, home);
-  const calls: HubCalls = { records: 0, end: 0 };
-  const latency: HubLatency = { end: 0, hub: 0 };
-  const server = slowIngestHub(calls, latency);
-  const hubUrl = `http://127.0.0.1:${server.port}`;
+  // Only `/api/records` starts out slow. Everything the briefing needs answers
+  // at once, so a missing briefing can only mean the drain took the hook.
+  const hub = startSlowHub({ ingest: INGEST_LATENCY_MS, end: 0, other: 0 });
+  const hubUrl = hub.url;
   return {
     repo,
     home,
     hubUrl,
     key: repoKey(hubUrl, REPO_ID),
-    calls,
-    latency,
-    stop: () => {
-      server.stop(true);
-    },
+    calls: hub.calls,
+    latency: hub.latency,
+    stop: hub.stop,
     // No CROSSCHECK_TIMEOUT_MS: the documented 400 ms default, and with it the
     // documented 1000 ms / 800 ms hook budgets.
     env: {
@@ -269,7 +190,7 @@ describe("SessionStart with a deferred end it cannot make", () => {
     // mandatory round trips leave SessionStart less than one request timeout.
     const fixed = await fixture("budget-start-deferred");
     await strandMarker(fixed, "stranded-uuid");
-    fixed.latency.hub = SLOW_HUB_MS;
+    fixed.latency.other = SLOW_HUB_MS;
     fixed.latency.end = UNANSWERABLE_MS;
 
     // Act

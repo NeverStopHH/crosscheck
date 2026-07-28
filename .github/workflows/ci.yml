@@ -22,11 +22,21 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run typecheck
+      # Runs on BOTH platforms deliberately: it walks every Unicode
+      # Default_Ignorable code point through the briefing renderer, so it is also
+      # the check that catches two runtimes disagreeing about the character
+      # database. It fails if the set of code points that still reach the reader
+      # differs from the set recorded in the script, which is what stops the
+      # counts quoted in briefing/sanitize.ts from ageing quietly.
+      - run: bun run packages/connector-claude/scripts/default-ignorable-sweep.ts
 
   concurrency:
     # The spool defects in this repo were timing-dependent, surfacing in 3 of 13
-    # to 8 of 10 runs. One green run says little about them, so the tests that
-    # spawn real OS processes run repeatedly. A flake here is a finding, not noise.
+    # to 8 of 10 runs when they were found. (HISTORICAL: those rates were
+    # measured against the defective code, which is fixed, so nothing in this
+    # tree re-derives them.) One green run says little about a race, so the tests
+    # that spawn real OS processes run repeatedly. A flake here is a finding,
+    # not noise.
     name: Concurrency (repeated)
     runs-on: ubuntu-latest
     steps:
@@ -43,6 +53,85 @@ jobs:
               packages/connector-claude/test/hook-budget.test.ts
             echo "::endgroup::"
           done
+
+  budgets:
+    # Maintenance was once handed a hook's raw remaining time instead of the
+    # reserve: against a 350 ms hub with a 600-record backlog, SessionStart went
+    # from 640 ms with a briefing to 1035 ms with none, and SessionEnd from
+    # 435 ms with the `end` sent to 831 ms with no `end` and no marker.
+    # HISTORICAL: those four figures were measured against the shipped defect,
+    # which is fixed, so no command here re-derives them. What IS re-runnable is
+    # the defect's SHAPE, by re-introducing it — the mutation job below does
+    # exactly that, and scripts/measure-ceiling-detection.ts prints the current
+    # milliseconds for every variant it re-introduces.
+    #
+    # RUN ONCE, unlike the concurrency job above, and the difference is the
+    # defect. The spool defects were races: they surfaced intermittently (the
+    # historical rates are on the concurrency job above, and are not re-derivable
+    # either), so repetition is how they get found at all. This one is a CONSTANT —
+    # HOOK_RESERVE_RATIO — and a constant is wrong on every run or on none. The
+    # mutation job below re-introduces it on every pull request and requires this
+    # file to go red, which is a stronger proof of detection than repeating an
+    # identical green run.
+    #
+    # Repetition here would only have cost. The wall-clock ceilings in this file
+    # are the first thing to fail on a starved runner, and they fail there
+    # WITHOUT any behavioural assertion failing beside them — so repeating the
+    # job would give a flaky assertion several more chances to redden a pull
+    # request for no extra signal. The test file's header carries the measured
+    # oversubscription sweep and the triage rule derived from it.
+    name: Hook budgets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun test packages/connector-claude/test/hook-time-budget.test.ts
+
+  mutation:
+    # A check nobody proved can fail is decoration. This re-introduces the
+    # budget-reserve defect and several of the sanitizer defects the injection
+    # corpus guards, one at a time, and fails if the guarding test stays green.
+    # "Several", not "each": 5 of the 7 mutations edit sanitize.ts, and the
+    # weakenings a reviewer can think of for that file number in the dozens. It
+    # is what stops the budget and corpus checks from being quietly neutered.
+    # The list of defects lives in the script, not here, so the two cannot
+    # disagree about how many there are — which they already did once.
+    #
+    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
+    # PRINTS: constants.ts 1
+    # PRINTS: render.ts 1
+    # PRINTS: sanitize.ts 5
+    name: Mutation proof
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run packages/connector-claude/scripts/mutation-check.ts
+
+  claims:
+    # Every comment in this repo that names a command and says what it prints is
+    # run here, and the job fails if any of them is wrong. It exists because
+    # three consecutive rounds of auditing that same prose BY HAND each fixed
+    # some instances and created others: the measurements were always fine, and
+    # what rotted were the quantifiers, the counts and the pointers. Those are
+    # cheap for a machine to re-check and expensive for a person to.
+    #
+    # Both platforms, like the test job and for the same reason: several of the
+    # claims are about the runtime's Unicode tables, and two runtimes that
+    # disagree would otherwise make one of them quietly wrong.
+    name: Comment claims
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run packages/connector-claude/scripts/verify-claims.ts
 
   secrets:
     # The connector handles per-developer API keys, and one path was already found
