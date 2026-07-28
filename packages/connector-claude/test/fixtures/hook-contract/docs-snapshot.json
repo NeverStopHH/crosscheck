@@ -1,0 +1,20 @@
+{
+  "event.SessionStart": true,
+  "event.PostToolUse": true,
+  "event.SessionEnd": true,
+  "common.input.session_id": true,
+  "common.input.cwd": true,
+  "common.input.hook_event_name": true,
+  "SessionStart.input.source": true,
+  "SessionStart.input.session_title": true,
+  "SessionStart.output.hookSpecificOutput": true,
+  "SessionStart.output.hookEventName": true,
+  "SessionStart.output.additionalContext": true,
+  "PostToolUse.input.tool_name": true,
+  "PostToolUse.input.tool_input": true,
+  "PostToolUse.input.tool_response": true,
+  "PostToolUse.input.file_path": true,
+  "SessionEnd.input.reason": true,
+  "statusline.input.session_id": true,
+  "statusline.input.cwd": true
+}
