@@ -136,9 +136,27 @@ const resolveBudget = async (
   return { budgetMs: timeoutMs * BUDGET_RATIOS[name], timeoutMs };
 };
 
-const hookBudget = (deadlineMs: number, timeoutMs: number): HookBudget => ({
+/**
+ * The reserve as arithmetic: what is LEFT of the hook's deadline, minus one
+ * per-request timeout, floored at zero.
+ *
+ * `now` is a parameter, and that is the only reason this is exported. The
+ * reserve used to be observable ONLY through its wall-clock side effect — take
+ * it away and maintenance eats the hook, so the briefing goes missing and the
+ * hook runs long — which makes detecting its removal a bet on how slow
+ * maintenance happens to be on the machine running the check. Pass a frozen
+ * clock and the subtraction itself is observable, with no process, no file and
+ * no real clock in the way: test/hook-reserve.test.ts. Production passes no
+ * clock and gets `Date.now`, which is what test/hook-time-budget.test.ts and
+ * test/hook-budget.test.ts exercise end to end.
+ */
+export const hookBudget = (
+  deadlineMs: number,
+  timeoutMs: number,
+  now: () => number = Date.now,
+): HookBudget => ({
   spareMs: () =>
-    Math.max(0, deadlineMs - Date.now() - timeoutMs * HOOK_RESERVE_RATIO),
+    Math.max(0, deadlineMs - now() - timeoutMs * HOOK_RESERVE_RATIO),
 });
 
 const prepareAndRun = async (
