@@ -1,0 +1,43 @@
+# Watches the hook contract we do not own.
+#
+# Every capture path depends on Claude Code's hook contract, and our hooks are
+# deliberately fail-open: an error exits 0 in silence so a developer's session is
+# never broken. That makes a contract change INVISIBLE — hooks keep exiting 0,
+# briefings simply stop arriving, and nothing reports it.
+#
+# Its own workflow rather than a job in ci.yml, because ci.yml is triggered by
+# pull_request and push. Putting a `schedule` there would run gitleaks, both test
+# matrices and the repeated timing jobs every week too, or need an `if:` guard on
+# each of them. This way each workflow's trigger says what it means, and this one
+# can be re-run on its own from the Actions tab after a fetch failure.
+#
+# Weekly is enough: the contract does not move daily, and the fixture tests in
+# packages/connector-claude/test/hook-contract.test.ts already catch US breaking
+# it on every pull request. This job only catches THEM changing it.
+name: Hook contract watch
+
+# INERT UNTIL MERGED. GitHub only ever fires `schedule` from the repository's
+# DEFAULT branch, so nothing in this file can be exercised from a pull request —
+# a green PR says nothing about whether the schedule path works. Run it once by
+# hand from the Actions tab (Run workflow → `workflow_dispatch`) after this lands
+# on main, and then check that the first Monday run actually appeared.
+on:
+  schedule:
+    # Mondays 06:17 UTC. Off the hour on purpose — the hour is when every
+    # scheduled workflow on GitHub queues at once and starts running late.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  drift:
+    name: Hook contract drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      # Exit 1 is drift: the docs and the committed snapshot disagree.
+      # Exit 2 is a source it could not read at all — reported as its own
+      # outcome, because a watcher that goes quiet when it cannot see is the
+      # exact failure it exists to prevent. Both fail the job; the log says which.
+      - run: bun run packages/connector-claude/scripts/hook-contract-watch.ts
