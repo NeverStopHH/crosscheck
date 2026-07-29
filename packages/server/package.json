@@ -2,6 +2,7 @@
   "name": "@crosscheck/server",
   "version": "0.1.0",
   "private": true,
+  "license": "LicenseRef-FSL-1.1-ALv2",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

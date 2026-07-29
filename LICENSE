@@ -1,0 +1,69 @@
+# Licensing
+
+crosscheck is **not licensed as a single unit**. The parts that run inside your
+company are permissively licensed; the hub — the part someone would resell — is
+not. Which file governs a given source file is decided by the package it lives
+in, never by this one.
+
+| Path | License | File |
+|---|---|---|
+| `packages/connector-claude/` | Apache License 2.0 | [`packages/connector-claude/LICENSE`](packages/connector-claude/LICENSE) |
+| `packages/schema/` | Apache License 2.0 | [`packages/schema/LICENSE`](packages/schema/LICENSE) |
+| `packages/server/` | Functional Source License 1.1 (ALv2 Future License) | [`packages/server/LICENSE`](packages/server/LICENSE) |
+| everything else (docs, CI, tooling) | Apache License 2.0 | [`packages/schema/LICENSE`](packages/schema/LICENSE) |
+
+Copyright 2026 Nick Jordi Nouschirvan.
+
+## What that means in practice
+
+**The connector and the schema are ordinary open source.** Apache-2.0: use them,
+fork them, ship them inside a commercial product, no obligation beyond keeping
+the notices. They are deliberately frictionless, because the connector runs
+inside other people's repositories and inside their build pipelines — a
+non-standard license there is a question for someone's legal team, and the
+answer takes weeks.
+
+**The hub is source-available, not open source.** FSL-1.1-ALv2 permits every use
+except a Competing Use: making crosscheck available to others in a commercial
+product or service that substitutes for it, substitutes for something we offer
+using it, or offers substantially the same functionality. Explicitly permitted
+by the license text itself:
+
+- internal use and access — running your own hub for your own team
+- non-commercial education and research
+- professional services you provide to someone who is themselves a licensee
+
+So for the overwhelming majority of users the hub behaves exactly like open
+source: read it, run it, modify it, contribute to it, self-host it for your
+team, free of charge. What it forbids is one thing — becoming a competing
+commercial offering of crosscheck itself.
+
+**The restriction expires on its own.** Each version of the hub becomes Apache
+License 2.0 on the second anniversary of the date it was made available. That
+date is fixed by the license text, not by us, and it moves forward with each
+release: the protection is a rolling two-year head start, not a permanent
+enclosure.
+
+## Why it is split this way
+
+A single license cannot serve both halves. The connector needs maximum adoption
+and zero legal friction; the hub is the only piece a competitor could host and
+charge for, and it is the piece that runs on our own infrastructure rather than
+in a customer's build. Splitting at that boundary buys the protection where it
+matters and pays for it nowhere else.
+
+This is the same shape used by Sentry, Grafana and GitLab, and for the same
+reason.
+
+## Contributing
+
+Contributions require a Contributor License Agreement — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CLA.md`](CLA.md). It is a one-click
+step on your first pull request. It exists so the copyright stays in one place,
+which is what makes the two-year conversion above, and any future relicensing,
+possible at all.
+
+## Not legal advice
+
+This file is a plain-language summary written for readers, not a legal
+instrument. Where it and a `LICENSE` file disagree, the `LICENSE` file governs.

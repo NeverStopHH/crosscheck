@@ -1,0 +1,10 @@
+crosscheck — Claude Code connector
+Copyright 2026 Nick Jordi Nouschirvan
+
+Licensed under the Apache License, Version 2.0. The full text is in the LICENSE
+file next to this one, byte-identical to the canonical text at
+https://www.apache.org/licenses/LICENSE-2.0.txt (md5 3b83ef96387f14655fc854ddc3c6bd57).
+
+Other packages in this repository are licensed differently — packages/server is
+under the Functional Source License 1.1. See the LICENSE file at the repository
+root for the mapping.
