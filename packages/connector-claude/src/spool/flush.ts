@@ -17,6 +17,16 @@
  * Its failure mode is "skip this time": a flush that cannot take the lock
  * returns `locked` and the next hook retries. Skipping loses nothing, which is
  * why appends are allowed to ignore the lock entirely.
+ *
+ * That second half held only while a flush stayed inside the section for less
+ * than SPOOL_LOCK_STALE_MS: past that, its claim looked abandoned and a reap
+ * took it mid-request. What the guarantee rests on now is that a claim whose
+ * holder process is still running is never taken (spool/lock.ts), so the time
+ * this drain spends no longer bounds it — and a drain runs to a wall-clock
+ * deadline that a slow hub can legitimately push past that window.
+ *
+ * VERIFY: bun test test/spool-lock.test.ts 2>&1 | grep -c '^(fail)'
+ * PRINTS: 0
  */
 import {
   MAX_FLUSH_BATCHES_PER_HOOK,
@@ -220,7 +230,6 @@ export const flushSpool = async (
   const deadlineMs = Date.now() + budgetMs;
   const locked = await withLock<FlushOutcome | null>(
     spoolFlushLockPath(ctx.home, ctx.repoKey),
-    ctx.now(),
     null,
     () => drain(ctx, input, deadlineMs),
   );

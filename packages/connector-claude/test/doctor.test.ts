@@ -1,11 +1,22 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm, writeFile } from "node:fs/promises";
+import { rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { MS_PER_DAY, recordUnclosedSession, repoKey, runCli } from "../src/index.ts";
-import { ensureDir, spoolDropsPath } from "../src/config/paths.ts";
+import {
+  DOCTOR_FLUSH_LOCK_WARN_MS,
+  MS_PER_DAY,
+  recordUnclosedSession,
+  repoKey,
+  runCli,
+} from "../src/index.ts";
+import {
+  ensureDir,
+  spoolDir,
+  spoolDropsPath,
+  spoolFlushLockPath,
+} from "../src/config/paths.ts";
 import { recordDrop } from "../src/spool/drops.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+import { makeHome, makeRepo, spawnZombie } from "./helpers.ts";
 
 /** Unreachable on purpose: the spool checks run whether the hub answers or not. */
 const HUB_URL = "http://127.0.0.1:9";
@@ -131,6 +142,107 @@ describe("crosscheck doctor spool drops check", () => {
 
     // Assert
     expect(result.stdout).toContain("PASS  spool drops  none");
+  });
+});
+
+/**
+ * The lock refuses to take a claim whose holder process is still running, which
+ * is what stops a flush being robbed mid-request. A holder that CRASHED is not
+ * running even while the process table still lists it — a zombie is retired by
+ * the lock and reported here as gone — so what is left is the narrower state
+ * that cannot resolve itself: a crashed holder's pid reused by an unrelated
+ * long-lived process, whose claim is never retired and for whose lifetime flush
+ * and reap are deferred. Failing open must not mean going silently dead, so it
+ * has to be visible here — and the warning must not talk the reader out of the
+ * case it exists for.
+ */
+describe("crosscheck doctor flush lock check", () => {
+  test("warns, and names the pid, when a live process has held the lock far too long", async () => {
+    // Arrange: a claim aged well past anything a hook could still be doing,
+    // whose pid is a process that really is running.
+    const { repo, home } = await fixture();
+    const key = repoKey(HUB_URL, REPO_ID);
+    const held = Bun.spawn({
+      cmd: ["sleep", "30"],
+      stdout: "ignore",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    await ensureDir(spoolDir(home, key));
+    const lockPath = spoolFlushLockPath(home, key);
+    await writeFile(lockPath, `${held.pid}:wedged\n`, "utf8");
+    const longAgo = new Date(Date.now() - 10 * DOCTOR_FLUSH_LOCK_WARN_MS);
+    await utimes(lockPath, longAgo, longAgo);
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+    held.kill();
+
+    // Assert: a developer can see WHICH process to go and look at, and is NOT
+    // told to stand down when that pid turns out to be a crosscheck hook —
+    // a crashed holder's pid is a crosscheck hook, and that advice sent the
+    // operator away from the one case the warning exists for.
+    expect(result.stdout).toContain("WARN  flush lock");
+    expect(result.stdout).toContain(`pid ${held.pid}`);
+    expect(result.stdout).not.toContain("if that pid is not a crosscheck hook");
+  });
+
+  test("passes when a stale lock's holder is gone, because the next flush retires it", async () => {
+    // Arrange: the same aged claim, but nobody behind it. This one resolves
+    // itself on the next acquisition and is not worth a developer's attention.
+    const { repo, home } = await fixture();
+    const key = repoKey(HUB_URL, REPO_ID);
+    const gone = Bun.spawn({
+      cmd: ["true"],
+      stdout: "ignore",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+    await gone.exited;
+    await ensureDir(spoolDir(home, key));
+    const lockPath = spoolFlushLockPath(home, key);
+    await writeFile(lockPath, `${gone.pid}:crashed\n`, "utf8");
+    const longAgo = new Date(Date.now() - 10 * DOCTOR_FLUSH_LOCK_WARN_MS);
+    await utimes(lockPath, longAgo, longAgo);
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  flush lock");
+  });
+
+  test("passes when a stale lock's holder is a zombie, not warns about it", async () => {
+    // Arrange: the holder crashed and nobody has reaped it, so its entry is
+    // still in the process table. Reported as running, this reads to an
+    // operator as a healthy lock while the spool has in fact stopped draining.
+    const { repo, home } = await fixture();
+    const key = repoKey(HUB_URL, REPO_ID);
+    const zombie = await spawnZombie();
+    await ensureDir(spoolDir(home, key));
+    const lockPath = spoolFlushLockPath(home, key);
+    await writeFile(lockPath, `${zombie.pid}:crashed\n`, "utf8");
+    const longAgo = new Date(Date.now() - 10 * DOCTOR_FLUSH_LOCK_WARN_MS);
+    await utimes(lockPath, longAgo, longAgo);
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+    zombie.release();
+
+    // Assert: the same answer any other dead holder gets.
+    expect(result.stdout).toContain("PASS  flush lock");
+    expect(result.stdout).toContain("holder that is gone");
+  });
+
+  test("passes when no flush is running", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  flush lock  free");
   });
 });
 

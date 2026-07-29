@@ -11,19 +11,25 @@
  * below carries the IDENTITY of the file it came from. That identity is not the
  * inode number: ext4 gives the recreated file the same one back (identity.ts).
  *
+ * Carrying an identity is not enough on its own: it has to be the identity of
+ * the bytes reported WITH it. `readSessionSpool` resolved the path three times
+ * and could describe two files in one answer, so its reads now go through a
+ * single handle (`readObservedFile`).
+ *
  * Nothing in this module writes, renames, truncates or deletes anything.
  */
-import { readdir, stat } from "node:fs/promises";
+import { Buffer } from "node:buffer";
+import { open, readdir, stat } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 
 import {
-  readTextOrNull,
   spoolCursorPath,
   spoolDataPath,
   spoolDir,
 } from "../config/paths.ts";
 import { readCursorOffset, sliceFrom } from "./cursor.ts";
-import { readFileFacts } from "./identity.ts";
-import type { FileIdentity } from "./identity.ts";
+import { readHandleFacts } from "./identity.ts";
+import type { FileFacts, FileIdentity } from "./identity.ts";
 import { completeLines, lineTimestampMs, toLines } from "./lines.ts";
 
 const DATA_SUFFIX = ".jsonl";
@@ -83,6 +89,76 @@ export const listSessionSlugs = async (
   }
 };
 
+interface ObservedFile {
+  readonly facts: FileFacts;
+  /** Exactly `facts.size` bytes of the same inode — never more, never fewer. */
+  readonly content: string;
+}
+
+/** The first `size` bytes of THIS handle's inode, whatever the path now names. */
+const readThrough = async (
+  handle: FileHandle,
+  size: number,
+): Promise<string> => {
+  if (size <= 0) {
+    return "";
+  }
+  const buffer = Buffer.allocUnsafe(size);
+  const { bytesRead } = await handle.read(buffer, 0, size, 0);
+  return buffer.subarray(0, bytesRead).toString("utf8");
+};
+
+/**
+ * Facts and bytes of ONE inode, taken through a single handle.
+ *
+ * They used to be three separate resolutions of the path — the content, then
+ * the cursor validated against a fresh look at the file, then the identity —
+ * with nothing pinning any of them to the same file. `reap` unlinking a data
+ * file while an appender recreates it is enough to interleave them, and the
+ * result was a `SessionSpool` reporting one file's offset beside another's
+ * size. `reapSlug` reads exactly that pair as `offset >= size`, "delivered in
+ * full", and unlinks. test/spool-read-tear.test.ts asserts the count of such
+ * self-contradictory reads is zero.
+ *
+ * The size is read before the bytes, and only that many bytes are taken, so a
+ * file that GROWS mid-read — the lock-free append path, which is legitimate and
+ * constant — is reported at its earlier length rather than half-described. That
+ * is the conservative direction for both readers: bytes not seen stay pending.
+ */
+const readObservedFile = async (
+  path: string,
+): Promise<ObservedFile | null> => {
+  try {
+    const handle = await open(path, "r");
+    try {
+      const facts = await readHandleFacts(handle);
+      return { facts, content: await readThrough(handle, facts.size) };
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+};
+
+/** What a slug with no data file reads as: nothing pending, nothing to prove. */
+const emptySpool = (
+  slug: string,
+  dataPath: string,
+  cursorPath: string,
+): SessionSpool => ({
+  slug,
+  dataPath,
+  cursorPath,
+  ino: 0,
+  firstLine: null,
+  size: 0,
+  mtimeMs: 0,
+  offset: 0,
+  pending: "",
+  lines: [],
+});
+
 export const readSessionSpool = async (
   home: string,
   key: string,
@@ -90,18 +166,22 @@ export const readSessionSpool = async (
 ): Promise<SessionSpool> => {
   const dataPath = spoolDataPath(home, key, slug);
   const cursorPath = spoolCursorPath(home, key, slug);
-  const raw = completeLines((await readTextOrNull(dataPath)) ?? "");
-  const offset = await readCursorOffset(dataPath, cursorPath);
-  const pending = sliceFrom(raw, offset);
-  const facts = await readFileFacts(dataPath);
+  const observed = await readObservedFile(dataPath);
+  if (observed === null) {
+    return emptySpool(slug, dataPath, cursorPath);
+  }
+  // Against the file just read, not against the path: a cursor is only worth
+  // anything for the file whose size and identity are reported beside it.
+  const offset = await readCursorOffset(cursorPath, observed.facts);
+  const pending = sliceFrom(completeLines(observed.content), offset);
   return {
     slug,
     dataPath,
     cursorPath,
-    ino: facts?.ino ?? 0,
-    firstLine: facts?.firstLine ?? null,
-    size: facts?.size ?? 0,
-    mtimeMs: facts?.mtimeMs ?? 0,
+    ino: observed.facts.ino,
+    firstLine: observed.facts.firstLine,
+    size: observed.facts.size,
+    mtimeMs: observed.facts.mtimeMs,
     offset,
     pending,
     lines: toLines(pending),
