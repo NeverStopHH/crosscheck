@@ -33,12 +33,12 @@
  *      them is a subdirectory that could be a mount point of its own. A
  *      symlinked CROSSCHECK_HOME relocates that directory whole, it does not
  *      split it.
- *      VERIFY: grep -c "join(spoolDir" src/config/paths.ts
+ *      VERIFY: grep -c "join(spoolDir" packages/connector-claude/src/config/paths.ts
  *      PRINTS: 8
  *   2. `ino` is never compared ACROSS files. Every comparison is two
  *      observations of the SAME path at two moments, so for `dev` to differ,
  *      the mount under one path would have to change between them.
- *      VERIFY: grep -rn "isSameFil[e](" src | grep -c .
+ *      VERIFY: grep -rn "isSameFil[e](" packages/connector-claude/src | grep -c .
  *      PRINTS: 3
  *      (the bracket keeps this line from counting itself.)
  *

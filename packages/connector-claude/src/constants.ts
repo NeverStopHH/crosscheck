@@ -207,7 +207,7 @@ export const DOCTOR_LAST_SYNC_WARN_MINUTES = 10;
  * POST_TOOL_USE_BUDGET_RATIO request timeouts, and a holder is inside the lock
  * for less than that:
  *
- * VERIFY: bun -e 'import {HTTP_TIMEOUT_MS as t, POST_TOOL_USE_BUDGET_RATIO as r} from "./src/constants.ts"; console.log(t * r)'
+ * VERIFY: bun -e 'import {HTTP_TIMEOUT_MS as t, POST_TOOL_USE_BUDGET_RATIO as r} from "./packages/connector-claude/src/constants.ts"; console.log(t * r)'
  * PRINTS: 1600
  *
  * A DEAD holder's claim is not reported: the next acquisition retires it, so it
