@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   CLAUDE_SETTINGS_DIR,
   CLAUDE_SETTINGS_FILE,
+  DOCTOR_FLUSH_LOCK_WARN_MS,
   DOCTOR_LAST_SYNC_WARN_MINUTES,
   DOCTOR_SPOOL_AGE_WARN_HOURS,
   DOCTOR_SPOOL_DEPTH_FAIL,
@@ -26,6 +27,7 @@ import {
   crosscheckHome,
   readTextOrNull,
   repoKey,
+  spoolFlushLockPath,
 } from "../config/paths.ts";
 import type { Env } from "../config/paths.ts";
 import { formatAge } from "../briefing/render.ts";
@@ -33,6 +35,7 @@ import { resolveRepoIdentity } from "../git/repo-identity.ts";
 import { hubRequest } from "../http/client.ts";
 import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
 import { oldestSpoolLineMs, spoolDepth } from "../spool/files.ts";
+import { readLockHolder } from "../spool/lock.ts";
 import { readUnclosedSummary } from "../spool/unclosed.ts";
 import { readSyncState } from "../state/sync-state.ts";
 import { isOwnedCommand } from "./settings-merge.ts";
@@ -261,7 +264,56 @@ const checkSpool = async (
               : `, oldest ${formatAge(now.getTime() - oldestUnclosedMs)} ago`),
         )
       : check("PASS", "unclosed sessions", "none");
-  return [depthCheck, ageCheck, droppedCheck, unclosedCheck];
+  return [
+    depthCheck,
+    ageCheck,
+    droppedCheck,
+    unclosedCheck,
+    await checkFlushLock(home, key),
+  ];
+};
+
+/**
+ * Whether anything is stuck holding the flush lock.
+ *
+ * The lock refuses to take a claim whose holder process is still running, which
+ * is what stops a slow flush being robbed mid-request (spool/lock.ts). A holder
+ * that has CRASHED is not running even while its entry is still in the process
+ * table: a zombie is retired as dead there and reported as gone here, which is
+ * what keeps the commonest crash — a hook that died under a parent still
+ * sitting on it — out of the warning below.
+ *
+ * The state that cannot resolve itself is the narrower one left over: a crashed
+ * holder's pid REUSED by an unrelated long-lived process, which is alive, is no
+ * zombie, and cannot be told from the holder it replaced. That claim is never
+ * retired, and flush and reap are deferred for as long as the impostor lives.
+ * Nothing else here would say so — the spool would simply stop draining, and
+ * only the depth check would eventually notice, without naming a cause.
+ *
+ * A claim whose holder is GONE passes: the next acquisition takes it over, so
+ * reporting it would be noise. The pid is named because it is the only thing a
+ * developer can act on.
+ */
+const checkFlushLock = async (home: string, key: string): Promise<Check> => {
+  const holder = await readLockHolder(spoolFlushLockPath(home, key));
+  if (holder === null) {
+    return check("PASS", "flush lock", "free");
+  }
+  const held = formatAge(holder.ageMs);
+  if (!holder.isRunning) {
+    return check(
+      "PASS",
+      "flush lock",
+      `held ${held} by a holder that is gone — the next flush takes it over`,
+    );
+  }
+  return holder.ageMs > DOCTOR_FLUSH_LOCK_WARN_MS
+    ? check(
+        "WARN",
+        "flush lock",
+        `held ${held} by pid ${holder.pid}, which the OS still reports as running — flush and reap are deferred while it is; that pid may be a crosscheck hook stuck inside the lock, a crashed one whose exit this check could not confirm, or an unrelated process that took over a crashed hook's pid, and this repo's spool has stopped draining in every one of those cases`,
+      )
+    : check("PASS", "flush lock", `held ${held} by pid ${holder.pid}`);
 };
 
 /** A live session file plus a stale sync is exactly the silent-death signature. */

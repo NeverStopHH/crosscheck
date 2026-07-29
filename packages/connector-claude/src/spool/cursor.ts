@@ -10,7 +10,7 @@ import { z } from "zod";
 
 import { readJsonOrNull, writePrivateFile } from "../config/paths.ts";
 import { isSameFile, readFileFacts } from "./identity.ts";
-import type { FileIdentity } from "./identity.ts";
+import type { FileFacts, FileIdentity } from "./identity.ts";
 
 const CursorSchema = z.looseObject({
   /**
@@ -61,18 +61,25 @@ const NOTHING_CONSUMED = 0;
  * file on, destroying undelivered records without counting them. A cursor that
  * disagrees with its file is not evidence of delivery, so it buys nothing.
  */
+/**
+ * `observed` is the file the caller has ALREADY read, not a path to go and look
+ * at again. This used to re-open the spool file to fingerprint it, so the
+ * offset was validated against whatever sat at that path at that instant while
+ * the caller's content and identity came from two other instants — three reads,
+ * three chances to be a different file. `readSessionSpool` now takes all of it
+ * through one handle and passes the result in, so "does this cursor belong to
+ * that file" is asked about the file the answer will be reported with.
+ */
 export const readCursorOffset = async (
-  spoolFile: string,
   cursorFile: string,
+  observed: FileFacts,
 ): Promise<number> => {
   const parsed = CursorSchema.safeParse(await readJsonOrNull(cursorFile));
   if (!parsed.success) {
     return NOTHING_CONSUMED;
   }
-  const facts = await readFileFacts(spoolFile);
-  return facts === null ||
-    !isSameFile(facts, parsed.data) ||
-    parsed.data.offset > facts.size
+  return !isSameFile(observed, parsed.data) ||
+    parsed.data.offset > observed.size
     ? NOTHING_CONSUMED
     : parsed.data.offset;
 };

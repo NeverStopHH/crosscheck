@@ -22,6 +22,34 @@
  * inodes is caught by the hash, and one that never reuses them merely rejects a
  * beat earlier.
  *
+ * WHY THERE IS NO `dev` HERE. An inode number is unique only within one
+ * filesystem, so `ino` without `st_dev` is not an identity across devices, and
+ * two files on two filesystems can share one — two tmpfs mounts hand out the
+ * same low inode numbers immediately. That mechanism is real. It is still not
+ * worth a field, for two reasons that are checkable rather than argued:
+ *
+ *   1. A repo's spool cannot span two filesystems. Every artifact in it is a
+ *      FILE created directly in the one directory `spoolDir` names; not one of
+ *      them is a subdirectory that could be a mount point of its own. A
+ *      symlinked CROSSCHECK_HOME relocates that directory whole, it does not
+ *      split it.
+ *      VERIFY: grep -c "join(spoolDir" src/config/paths.ts
+ *      PRINTS: 8
+ *   2. `ino` is never compared ACROSS files. Every comparison is two
+ *      observations of the SAME path at two moments, so for `dev` to differ,
+ *      the mount under one path would have to change between them.
+ *      VERIFY: grep -rn "isSameFil[e](" src | grep -c .
+ *      PRINTS: 3
+ *      (the bracket keeps this line from counting itself.)
+ *
+ * The first line also defeats the collision on its own: two files that merely
+ * share an inode number have different first records, so `isSameFile` says
+ * false. Forcing a false MATCH needs identical first lines as well, which
+ * within one path is exactly the write.ts orphan re-append named below — and a
+ * `dev` field would not catch that one either, because it is the same path on
+ * the same filesystem. Adding `dev` would be a field that can only ever reject,
+ * in a place where nothing wrong is currently accepted.
+ *
  * WHAT WOULD BREAK IT, stated plainly:
  *   - anything that prepends to, truncates or rewrites a spool data file; the
  *     first line would stop being fixed for the life of the file;

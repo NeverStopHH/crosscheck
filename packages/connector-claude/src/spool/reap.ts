@@ -36,6 +36,17 @@
  * because only this module writes them, only under the flush lock, and nothing
  * appends to them.)
  *
+ * "Under the flush lock" is load-bearing for those two, and it did not hold:
+ * the lock was taken from whoever held it once its mtime aged past
+ * SPOOL_LOCK_STALE_MS, so two reaps could be inside at once and one
+ * read-modify-write of an aggregate could lose the other's fold. It holds now
+ * because a claim whose holder process is still running is never taken
+ * (spool/lock.ts). Read that file before weakening the rule: these two
+ * rewrites are what it protects.
+ *
+ * VERIFY: bun test test/spool-lock.test.ts 2>&1 | grep -c '^(fail)'
+ * PRINTS: 0
+ *
  * Reap also retires the `.pending-end` markers SessionEnd leaves: one hub call
  * each once that session's backlog is gone, and no call at all once a marker is
  * older than MAX_SPOOL_AGE_DAYS.
@@ -490,7 +501,6 @@ export const reapSpool = async (
 ): Promise<ReapResult> =>
   withLock<ReapResult>(
     spoolFlushLockPath(home, key),
-    now,
     NOTHING_REAPED,
     async () => {
       const reaped = total(
