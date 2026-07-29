@@ -50,11 +50,18 @@ const NO_RACE: Edit = {
     );`,
 };
 
-/** The spare-time bound maintenance reads, made unbounded. */
+/**
+ * The spare-time bound maintenance reads, made unbounded.
+ *
+ * `now()` rather than `Date.now()`: hookBudget takes its clock as a parameter so
+ * the reserve can be asserted without one (test/hook-reserve.test.ts), and this
+ * quote has to match the source character for character or the script refuses to
+ * run at all.
+ */
 const NO_SPARE: Edit = {
   file: RUNNER,
   from: `  spareMs: () =>
-    Math.max(0, deadlineMs - Date.now() - timeoutMs * HOOK_RESERVE_RATIO),`,
+    Math.max(0, deadlineMs - now() - timeoutMs * HOOK_RESERVE_RATIO),`,
   to: `  spareMs: () => Number.MAX_SAFE_INTEGER,`,
 };
 
