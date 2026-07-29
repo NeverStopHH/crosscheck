@@ -1,7 +1,20 @@
 version: 2
 updates:
-  # Bun's manifests are read by the npm ecosystem provider.
-  - package-ecosystem: npm
+  # `bun`, not `npm`. The npm provider does read package.json, but it cannot
+  # write bun.lock — so it opened pull requests that bumped a version and left
+  # the lockfile untouched, and every one of them died in CI within ~10 seconds
+  # on `bun install --frozen-lockfile` with "lockfile had changes, but lockfile
+  # is frozen". Reproduce against either branch the npm provider produced:
+  #
+  #   git worktree add /tmp/cx-dep --detach \
+  #     origin/dependabot/npm_and_yarn/typescript-7.0.2
+  #   cd /tmp/cx-dep && bun install --frozen-lockfile   # the error above
+  #   git diff --name-only origin/main HEAD -- bun.lock # prints nothing
+  #
+  # Dependabot's `bun` ecosystem understands bun.lock and updates it in the same
+  # commit. Do NOT instead drop --frozen-lockfile from CI: that flag is what
+  # makes a green run mean the committed lockfile is the one that was installed.
+  - package-ecosystem: bun
     directory: "/"
     schedule:
       interval: weekly
