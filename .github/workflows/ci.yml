@@ -70,9 +70,20 @@ jobs:
     # historical rates are on the concurrency job above, and are not re-derivable
     # either), so repetition is how they get found at all. This one is a CONSTANT —
     # HOOK_RESERVE_RATIO — and a constant is wrong on every run or on none. The
-    # mutation job below re-introduces it on every pull request and requires this
-    # file to go red, which is a stronger proof of detection than repeating an
-    # identical green run.
+    # mutation job below re-introduces it on every pull request and requires a
+    # guard to go red for it, which is a stronger proof of detection than
+    # repeating an identical green run.
+    #
+    # THAT GUARD IS NO LONGER THIS FILE, and it was this runner that proved it
+    # could not be. Detection through hook-time-budget.test.ts is a wall-clock
+    # SIDE EFFECT — remove the reserve, maintenance eats the hook, the briefing
+    # goes missing — so it depends on how slow maintenance is on the host. The
+    # mutation job reported the reserve mutation NOT CAUGHT here while catching
+    # every other mutation in the same run. The detector is now
+    # test/hook-reserve.test.ts, which asserts the subtraction itself against a
+    # frozen clock and costs milliseconds. Both files run in this job: the unit
+    # one is the detector, this one is the only thing that measures the
+    # end-to-end consequence, and neither replaces the other.
     #
     # Repetition here would only have cost. The wall-clock ceilings in this file
     # are the first thing to fail on a starved runner, and they fail there
@@ -86,7 +97,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun test packages/connector-claude/test/hook-time-budget.test.ts
+      - run: |
+          bun test \
+            packages/connector-claude/test/hook-reserve.test.ts \
+            packages/connector-claude/test/hook-time-budget.test.ts
 
   mutation:
     # A check nobody proved can fail is decoration. This re-introduces the

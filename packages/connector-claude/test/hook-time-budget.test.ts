@@ -19,7 +19,31 @@
  * WHAT IS LOAD-BEARING. The behavioural assertions, not the clock. Each one is
  * a flag that flips outright under the defect: briefing SHOWN → MISSING,
  * `end` 1 → 0, marker true → false, state file gone → present, heartbeat 1 → 0.
- * They are what would catch the regression again.
+ * They are what catches the regression HERE.
+ *
+ * "HERE" IS THE WHOLE QUALIFICATION, and an earlier version of this sentence —
+ * "they are what would catch the regression again" — did not carry it. Every
+ * flag above flips through a wall-clock side effect: the reserve is gone, so
+ * maintenance eats the budget, so the briefing does not fit. Whether it does
+ * depends on how long maintenance takes on the machine running the check, which
+ * makes this file a bet on machine speed. The bet was lost where it mattered:
+ * HISTORICAL, observed once on 2026-07-29 and NOT re-derivable from this tree —
+ * the `Mutation proof` job reported HOOK_RESERVE_RATIO = 0 NOT CAUGHT by this
+ * file on GitHub's hosted runner, in a run that caught every other mutation,
+ * while the same mutation was caught in every configuration reachable from this
+ * desk. That observation is a one-off log line from a CI run; what IS re-runnable
+ * is the weakness behind it, and it is worse than one unlucky machine: this file
+ * stays GREEN under HOOK_RESERVE_RATIO set to 0.999, 0.5 and 1.0000001, and under
+ * removal of the Math.max floor. Reproduce by applying any of those to
+ * src/constants.ts and running this file. So the DETECTOR for that constant is
+ * now test/hook-reserve.test.ts,
+ * which asserts the subtraction itself against a frozen clock and is what
+ * scripts/mutation-check.ts runs.
+ *
+ * Nothing here was weakened to make room for it. This file remains the only
+ * thing that measures the CONSEQUENCE — that a hook with its reserve intact
+ * actually returns the briefing, actually sends the `end`, actually writes the
+ * marker — through the real process, which no unit test can claim.
  *
  * HOW FAR THEY HOLD ON A BUSY RUNNER, MEASURED. An earlier version of this
  * comment claimed they "cannot flake on a busy runner". They can. Swept in
@@ -75,10 +99,16 @@
  * defect (HOOK_RESERVE_RATIO = 0) on an idle machine fails 4 of the 5 tests, all
  * on BEHAVIOURAL assertions, with no timeout — the `reserve removed` row of
  * scripts/measure-ceiling-detection.ts, which prints each failure's wall time
- * beside it. Measured there this round on macOS 26 arm64: 1117, 909, 916 and
- * 1715 ms. The script had to be taught to emit those; it previously printed no
- * milliseconds at all, so the range this sentence used to quote named a source
- * that could not establish it.
+ * beside it. HISTORICAL readings, each true when taken and none re-derivable:
+ * 1117/909/916/1715 ms, then 1126/920/923/1725, then 1143/934/925/1730 — three
+ * runs of the same command on the same machine, drifting every time. Do not
+ * expect any of them back; the command reports whatever the machine is doing
+ * that minute. Two rounds already wrote one of these sets down as though it
+ * were a result, and the second round had to correct the first.
+ * What holds across both is the KIND: four failures, all behavioural, no
+ * timeout line. The script had to be taught to emit any milliseconds at all; it
+ * previously printed none, so the range this sentence used to quote named a
+ * source that could not establish it.
  *
  * WHEN THIS JOB GOES RED. The rule that used to be here was "look for bun's
  * timeout line; with it the runner was starved, without it it is a finding".

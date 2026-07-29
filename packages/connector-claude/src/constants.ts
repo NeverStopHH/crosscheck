@@ -34,6 +34,15 @@ export const POST_TOOL_USE_BUDGET_RATIO = 4;
  * The cost is that maintenance gives up sooner on a slow hub — a deferred end
  * needs a hook with a full request timeout to spare, so a hub slow enough leaves
  * the marker for later. MAX_SPOOL_AGE_DAYS is what stops "later" being forever.
+ *
+ * GUARDED IN TWO PLACES, and the split is the point. test/hook-reserve.test.ts
+ * asserts the SUBTRACTION — a frozen clock, no process, no file — and that is
+ * what scripts/mutation-check.ts runs, because setting this to 0 has to be
+ * caught on every machine rather than only on one where maintenance is slow.
+ * test/hook-time-budget.test.ts asserts the CONSEQUENCE through the real binary:
+ * briefing present, `end` sent, marker written, state file gone. Neither is
+ * redundant. The first is the detector; the second is the reason there is
+ * anything worth detecting.
  */
 export const HOOK_RESERVE_RATIO = 1;
 

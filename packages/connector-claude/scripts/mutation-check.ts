@@ -44,14 +44,30 @@ interface Mutation {
 /** Exported so the guard-count claim below can be re-derived from the data. */
 export const MUTATIONS: readonly Mutation[] = [
   {
+    // The guard here USED TO BE the process-level test/hook-time-budget.test.ts,
+    // which detects this through a wall-clock SIDE EFFECT: with the reserve gone
+    // maintenance eats the hook that hosts it, so the briefing goes missing and
+    // a ceiling is beaten. Whether that happens depends on how long maintenance
+    // takes on the machine running the check. HISTORICAL, seen once on
+    // 2026-07-29 and not re-derivable from this tree: GitHub's hosted runner
+    // reported this mutation NOT CAUGHT while catching every other mutation in
+    // the same run, and it was caught in every configuration reachable from this
+    // desk. What IS re-runnable is the weakness itself — the behavioural file
+    // stays green under ratio 0.999, 0.5 and 1.0000001, and under floor removal.
+    // A detector that reads a stopwatch cannot answer a question about a
+    // constant, so the guard is now the arithmetic itself and no machine gets a
+    // vote. The behavioural file is untouched by that: it keeps every assertion
+    // it had and still runs in CI's `budgets` job, it is simply no longer what
+    // PROVES the reserve is subtracted.
     label: "maintenance spends the hook's reserve",
     file: `${CONNECTOR}/src/constants.ts`,
     from: "export const HOOK_RESERVE_RATIO = 1;",
     to: "export const HOOK_RESERVE_RATIO = 0;",
-    test: `${CONNECTOR}/test/hook-time-budget.test.ts`,
+    test: `${CONNECTOR}/test/hook-reserve.test.ts`,
     because:
-      "spareMs() collapses to the raw remainder, which is the defect that took " +
-      "SessionStart to 1035 ms with no briefing and SessionEnd to 831 ms with no end",
+      "spareMs() collapses to the raw remainder — maintenance is handed the " +
+      "hook's whole budget, which is the defect that shipped and cost " +
+      "SessionStart its briefing and SessionEnd its `end`",
   },
   {
     label: "the sanitizer stops stripping zero-width and format characters",
@@ -173,7 +189,7 @@ interface Outcome {
  * different column of the same table, and not the one this map performs.
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
- * PRINTS: hook-time-budget.test.ts 1
+ * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
  */
 const greenGuards = new Map<string, boolean>();
@@ -184,19 +200,30 @@ const greenGuards = new Map<string, boolean>();
  * before I touched anything" — which is this script's own thesis, one level up,
  * and it had this defect itself.
  *
- * MEASURED, not hypothetical. In a container with no git installed,
- * test/helpers.ts `makeRepo` cannot create a repo, so
- * test/hook-time-budget.test.ts runs 0 pass / 5 fail UNMUTATED — and this script
- * still printed "maintenance spends the hook's reserve / caught by
+ * MEASURED, not hypothetical, and now HISTORICAL. In a container with no git
+ * installed, test/helpers.ts `makeRepo` cannot create a repo, so the reserve's
+ * guard AT THE TIME — the process-level test/hook-time-budget.test.ts — ran
+ * 0 pass / 5 fail UNMUTATED, and this script still printed "maintenance spends
+ * the hook's reserve / caught by
  * packages/connector-claude/test/hook-time-budget.test.ts" and exited 0.
- * Reproduce both that and this guard's refusal to repeat it with:
+ *
+ * That exact recipe no longer produces the trap, because the reserve's guard is
+ * now test/hook-reserve.test.ts, which spawns nothing and needs no repo.
+ * RE-MEASURED this round in oven/bun:1 aarch64 under --cpus=2 with no git
+ * installed: the budget suite 0 pass / 5 fail, test/hook-reserve.test.ts
+ * 6 pass / 0 fail, and this script "all 7 re-introduced defects were caught",
+ * exit 0. Run it and see both halves:
  *
  *   docker run --rm -v "$PWD":/w -w /w --cpus=2 oven/bun:1 sh -c '
  *     bun install --frozen-lockfile >/dev/null 2>&1
  *     bun test packages/connector-claude/test/hook-time-budget.test.ts
+ *     bun test packages/connector-claude/test/hook-reserve.test.ts
  *     bun run packages/connector-claude/scripts/mutation-check.ts'
  *
- * — the missing `apt-get install -y git` is the whole point of that recipe.
+ * No guard in the current list shells out to git — which is a property of the
+ * list as it stands today, not a rule it obeys. Point one future mutation at a
+ * guard that makes a repo and the container above is a false-positive machine
+ * again, so the check below stays.
  */
 const assertGuardIsGreen = async (testPath: string): Promise<void> => {
   if (greenGuards.get(testPath) === true) {
