@@ -86,6 +86,11 @@ export const MAX_SPOOL_BYTES = 2_000_000;
  *     (spool/identity.ts);
  *   - `flush.lock` is one fixed-size file per repo, and what has to expire on it
  *     is a dead holder's CLAIM, which SPOOL_LOCK_STALE_MS retires in seconds.
+ *     "Dead" is now checked rather than assumed: that deadline used to retire
+ *     LIVE holders' claims too, which is not expiry but theft, and it is the
+ *     holder's pid that decides (spool/lock.ts). A claim whose holder is gone
+ *     still goes in seconds; one whose holder is running does not go at all,
+ *     and DOCTOR_FLUSH_LOCK_WARN_MS is what keeps that from being silent.
  */
 export const MAX_SPOOL_AGE_DAYS = 7;
 /**
@@ -121,6 +126,12 @@ export const SPOOL_LOCK_STALE_MS = 5000;
  * The lock guards flush and reap only — appends are lock-free — so a busy lock
  * costs a deferred flush that the next hook retries, never a record. Retries ×
  * delay stays far below the smallest hook budget.
+ *
+ * That accounting covers a BUSY lock, which is the only way an acquisition may
+ * fail. A STOLEN lock was never in it: two holders inside the section at once
+ * cost concurrent rewrites of the per-repo aggregates and a reap deleting a
+ * file the flush was mid-delivery of. Stealing from a live holder is what
+ * spool/lock.ts now refuses, which is what makes the sentence above complete.
  */
 export const SPOOL_LOCK_RETRIES = 5;
 export const SPOOL_LOCK_RETRY_DELAY_MS = 20;
@@ -181,6 +192,28 @@ export const DOCTOR_SPOOL_DEPTH_WARN = 200;
 export const DOCTOR_SPOOL_DEPTH_FAIL = 1500;
 export const DOCTOR_SPOOL_AGE_WARN_HOURS = 24;
 export const DOCTOR_LAST_SYNC_WARN_MINUTES = 10;
+/**
+ * How long a flush lock may be held by a RUNNING process before `doctor` calls
+ * it wedged.
+ *
+ * The lock will not take a claim whose holder is still alive, which is what
+ * stops a slow flush being robbed mid-request (spool/lock.ts). What that buys
+ * is a claim nobody will ever retire: a crashed holder's pid reused by an
+ * unrelated long-lived process. Flush and reap are then deferred silently, and
+ * the spool stops growing only when it reaches MAX_SPOOL_BYTES.
+ *
+ * A minute is far above any legitimate hold and far below the point where the
+ * backlog matters. The longest a hook may run at all is
+ * POST_TOOL_USE_BUDGET_RATIO request timeouts, and a holder is inside the lock
+ * for less than that:
+ *
+ * VERIFY: bun -e 'import {HTTP_TIMEOUT_MS as t, POST_TOOL_USE_BUDGET_RATIO as r} from "./packages/connector-claude/src/constants.ts"; console.log(t * r)'
+ * PRINTS: 1600
+ *
+ * A DEAD holder's claim is not reported: the next acquisition retires it, so it
+ * is noise rather than news.
+ */
+export const DOCTOR_FLUSH_LOCK_WARN_MS = 60_000;
 
 export const EXIT_OK = 0;
 export const EXIT_WARN = 1;

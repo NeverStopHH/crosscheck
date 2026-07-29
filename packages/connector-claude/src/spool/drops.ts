@@ -309,6 +309,13 @@ const isEmpty = (summary: DropSummary): boolean =>
  * file the age sweep is about to remove. Only `reap` calls this, under the
  * flush lock, which is what makes rewriting the aggregate in place safe:
  * nothing else ever writes it, so there is no append to orphan.
+ *
+ * This is a read-modify-write, so "under the flush lock" has to mean ONE reap
+ * at a time, and for a while it did not: the lock was taken from a holder that
+ * was merely slow, which let two reaps fold into this file at once and lose one
+ * of the two totals — under-reporting drops, in the one file that exists
+ * precisely so a number is not quietly lost. What makes it single now is that a
+ * claim whose holder process is still running is never taken (spool/lock.ts).
  */
 export const archiveLedger = async (
   home: string,

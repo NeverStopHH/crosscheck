@@ -16,6 +16,13 @@
  * Rewritten in place rather than appended to, which is safe for exactly the
  * reason `archive.dropsummary` is: only `reap` writes it, only under the flush
  * lock, so there is no concurrent append to orphan.
+ *
+ * And for exactly the same reason it rests on ONE reap being inside that lock
+ * at a time. That did not hold while a claim could be taken from a holder that
+ * was merely slow: two reaps could each read this line, add their own marker
+ * and write back, leaving one of the two counts behind. A count that vanishes
+ * is the failure this file exists to prevent. It holds now because a claim
+ * whose holder process is still running is never taken (spool/lock.ts).
  */
 import { z } from "zod";
 

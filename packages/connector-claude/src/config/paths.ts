@@ -31,6 +31,35 @@ export const configPath = (home: string): string => join(home, "config.json");
  * from this single function — `reap` decides whether it may delete a spool file
  * by looking up the state file of the same slug, and that lookup is only sound
  * while the two namings cannot drift apart.
+ *
+ * VERIFY: grep -c "sessionSlu[g]" packages/connector-claude/src/config/paths.ts
+ * PRINTS: 2
+ * (this definition, and the single application in `sessionStatePath`; every
+ * other path takes an already-derived `slug`, which is what stops the two
+ * namings drifting. The bracket keeps this line from counting itself.)
+ *
+ * CASE. `encodeURIComponent` preserves case, so this is injective over session
+ * ids — but the FILESYSTEM need not be. On a case-insensitive one (APFS by
+ * default, so most developer Macs) two session ids differing only in case give
+ * two distinct slugs that name ONE file. Measured on macOS APFS: both sessions'
+ * records land in a single `.jsonl`, `listSessionSlugs` reports only the
+ * creator's casing, and — the severe part — the two session STATE files collide
+ * too, because they come from this same function. One session ending then
+ * deletes the other's state, and `isSessionLive` (reap.ts) answers false for a
+ * session that is still running, which retires reap's first guard. On a
+ * case-sensitive filesystem (Linux, case-sensitive HFS+) none of it happens.
+ *
+ * It is deliberately NOT fixed, because no producer is established: nothing
+ * shows Claude Code can emit two session ids differing only in case, and UUIDs
+ * are conventionally lowercase. What would make it real is one session id whose
+ * casing varies between hooks — look here first if that ever shows up.
+ *
+ * If it does, `toLowerCase()` is the wrong move: it COLLAPSES the two ids on
+ * purpose, which is the collision itself. It needs a case-free encoding or a
+ * short hash suffix of the raw id, and it needs a migration — changing this
+ * function orphans every spool already on disk, and an orphaned spool is not
+ * inert: it ages out through MAX_SPOOL_AGE_DAYS counted as `expired`, which is
+ * real record loss. Reading both names through a transition is the cheap way.
  */
 export const sessionSlug = (claudeSessionId: string): string =>
   encodeURIComponent(claudeSessionId);
