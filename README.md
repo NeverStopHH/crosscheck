@@ -83,3 +83,24 @@ Everything fails open: if the hub is down, hooks print nothing, exit 0, and spoo
 ## The one-paragraph pitch
 
 Two developers debug the same symptom in parallel. Developer A's agent concludes "the bug is in plan resolution." Developer B's agent has already discovered that plan resolution only *surfaces* the bug — the root cause is a missing entity mapping at import. Today these two investigations never meet until conflicting PRs appear. With crosscheck, B's agent extends A's diagnosis ("your root cause is my symptom"), and A's agent gets that finding injected into its context before it builds the wrong fix. GitHub sees the past; crosscheck sees the present.
+
+## License
+
+Licensed in parts, because the two halves need different things.
+
+| Part | License | In short |
+|---|---|---|
+| `packages/connector-claude`, `packages/schema` | Apache-2.0 | ordinary open source, no strings |
+| `packages/server` (the hub) | FSL-1.1-ALv2 | everything except selling crosscheck itself |
+
+The connector runs inside your repository and your build, so it is permissive on
+purpose — nothing there should need a legal review. The hub is the one piece a
+competitor could host and charge for, and the Functional Source License forbids
+exactly that and nothing else: internal use, modification, self-hosting for your
+own team, education and research are all explicitly permitted by the license
+text. Each release of the hub becomes Apache-2.0 two years after it ships.
+
+Contributions need a one-click CLA — see [CONTRIBUTING.md](CONTRIBUTING.md) and
+[CLA.md](CLA.md). [LICENSE](LICENSE) explains the split and the reasoning in full.
+
+Copyright 2026 Nick Jordi Nouschirvan.
