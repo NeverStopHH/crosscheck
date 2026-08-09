@@ -273,3 +273,98 @@ describe("crosscheck doctor unclosed sessions check", () => {
     expect(result.stdout).toContain("PASS  unclosed sessions  none");
   });
 });
+
+/**
+ * Rule 6, on the MCP surface: fail-open must never mean silently dead.
+ *
+ * A hook that cannot run is invisible by design — it exits 0 and says nothing.
+ * The MCP tools are the opposite: a failing CALL is visible to the agent, which
+ * is better, but a tool that is not REGISTERED is never called at all and so
+ * produces no message of any kind. Nothing else on this machine would say so.
+ * That is the state these checks exist for.
+ */
+describe("crosscheck doctor mcp registration", () => {
+  const initEnv = (home: string) => ({
+    CROSSCHECK_HOME: home,
+    HOME: home,
+    CROSSCHECK_HUB_URL: HUB_URL,
+    CROSSCHECK_API_KEY: "test-key",
+  });
+
+  test("fails when .mcp.json does not exist, and names the fix", async () => {
+    // Arrange: a repo where the hooks may well be installed and the tools are
+    // not — `init` predating this block leaves exactly this state
+    const { repo, home } = await fixture();
+
+    // Act
+    const result = await runCli(["doctor"], initEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("FAIL  mcp tools registered");
+    expect(result.stdout).toContain("crosscheck init");
+  });
+
+  test("passes once init has written it", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+    await runCli(["init"], initEnv(home), repo);
+
+    // Act
+    const result = await runCli(["doctor"], initEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  mcp tools registered");
+  });
+
+  test("fails when the crosscheck entry was replaced by something else", async () => {
+    // Arrange: the key is present, so a check that only looked for the KEY
+    // would call this healthy. It points somewhere else entirely.
+    const { repo, home } = await fixture();
+    await writeFile(
+      join(repo, ".mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          crosscheck: { type: "stdio", command: "npx", args: ["-y", "something-else"] },
+        },
+      }),
+      "utf8",
+    );
+
+    // Act
+    const result = await runCli(["doctor"], initEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("FAIL  mcp tools registered");
+    expect(result.stdout).toContain("not the one crosscheck init writes");
+  });
+
+  test("warns rather than failing when .mcp.json is unparseable", async () => {
+    // Arrange: distinct from "missing" because the fix is different — a
+    // developer has to look at the file rather than re-run init over it
+    const { repo, home } = await fixture();
+    await writeFile(join(repo, ".mcp.json"), "{ not json", "utf8");
+
+    // Act
+    const result = await runCli(["doctor"], initEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("mcp tools registered");
+    expect(result.stdout).toContain("not valid json");
+  });
+
+  test("says the tools cannot work at all when there is no hub or key", async () => {
+    // Arrange: the systematically-unusable case. Registration alone is not
+    // enough — a registered server with no credentials answers every call with
+    // an error, and the developer needs to know that before an agent finds out.
+    const { repo, home } = await fixture();
+    await runCli(["init"], initEnv(home), repo);
+
+    // Act: no CROSSCHECK_API_KEY, and a home with no stored config
+    const result = await runCli(["doctor"], { CROSSCHECK_HOME: home, HOME: home }, repo);
+
+    // Assert
+    expect(result.stdout).toContain("FAIL  mcp tools usable");
+    expect(result.stdout).toContain("crosscheck login");
+    expect(result.exitCode).toBe(2);
+  });
+});

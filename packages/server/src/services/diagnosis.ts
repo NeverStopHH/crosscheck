@@ -55,6 +55,21 @@ export interface ClaimView {
   readonly id: string;
   readonly workContextId: string;
   readonly authorSessionId: string;
+  /**
+   * Who wrote this claim, resolved through the author SESSION rather than
+   * through the work context's owner — the two differ exactly when the product
+   * is doing its job. `extend_diagnosis` puts B's claim inside A's context, and
+   * `workContexts.sessionId` names the creating session forever (updates never
+   * re-home a context, see record-handlers.ts), so it can only ever answer
+   * "whose tree is this", never "who said this".
+   *
+   * Shipped on the row for the same reason `WorkContextListEntry.developerName`
+   * is: author is a normative trust label (DESIGN.md §4), and a reader holding
+   * an opaque `cc_<uuid>` has no second endpoint that would turn it into a
+   * person.
+   */
+  readonly authorDeveloperId: string;
+  readonly authorDeveloperName: string;
   readonly kind: string;
   readonly body: string;
   readonly status: string;
@@ -105,10 +120,23 @@ const toWorkContextView = (row: WorkContextRow): WorkContextView => ({
   updatedAt: toIsoOrNull(row.updatedAt),
 });
 
-const toClaimView = (row: ClaimRow): ClaimView => ({
+/** A claim row joined to the developer behind its author session. */
+interface AttributedClaimRow {
+  readonly claim: ClaimRow;
+  readonly authorDeveloperId: string;
+  readonly authorDeveloperName: string;
+}
+
+const toClaimView = ({
+  claim: row,
+  authorDeveloperId,
+  authorDeveloperName,
+}: AttributedClaimRow): ClaimView => ({
   id: row.id,
   workContextId: row.workContextId,
   authorSessionId: row.authorSessionId,
+  authorDeveloperId,
+  authorDeveloperName,
   kind: row.kind,
   body: row.body,
   status: row.status,
@@ -226,13 +254,24 @@ export const getDiagnosis = async (
     return undefined;
   }
 
+  // innerJoin, not leftJoin: every claim row reaches the table through
+  // `checkOwnedSession`, which resolves the author session before the INSERT
+  // (record-handlers.ts), so a claim whose session or developer is missing
+  // cannot exist. A leftJoin would buy nullable author columns for a state the
+  // ingest path makes unreachable, and every reader would then carry the null.
   const claimRows = await db
-    .select()
+    .select({
+      claim: claims,
+      authorDeveloperId: agentSessions.developerId,
+      authorDeveloperName: developers.name,
+    })
     .from(claims)
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .innerJoin(developers, eq(agentSessions.developerId, developers.id))
     .where(eq(claims.workContextId, workContextId))
     .orderBy(asc(claims.createdAt))
     .limit(limits.maxClaims);
-  const localClaimIds = new Set(claimRows.map((row) => row.id));
+  const localClaimIds = new Set(claimRows.map((row) => row.claim.id));
   const edgeRows = await listEdgesTouching(db, [...localClaimIds], limits);
   const externalClaims = await listExternalClaimRefs(
     db,

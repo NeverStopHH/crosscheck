@@ -2,6 +2,7 @@
 import { EXIT_OK, EXIT_USAGE, STDIN_TIMEOUT_MS } from "../constants.ts";
 import { runCli } from "../cli/index.ts";
 import { isHookName, runHook } from "../hooks/index.ts";
+import { runMcpServer } from "../mcp/server.ts";
 import { runStatusline } from "../statusline/statusline.ts";
 
 /**
@@ -44,6 +45,15 @@ const main = async (): Promise<void> => {
 
   if (command === "statusline") {
     emitAndExit(await runStatusline(await readStdin(), process.env), EXIT_OK);
+  }
+
+  // NOT through `readStdin`, and that is the whole difference from the two
+  // branches above. Those read one payload under STDIN_TIMEOUT_MS, because a
+  // hook that blocks on an unclosed stdin holds the developer's session open.
+  // An MCP server's stdin stays open for the life of the session BY DESIGN —
+  // that is the transport — so the bounded read would end it after one second.
+  if (command === "mcp") {
+    process.exit(await runMcpServer(process.env, process.cwd()));
   }
 
   const result = await runCli(argv, process.env, process.cwd());

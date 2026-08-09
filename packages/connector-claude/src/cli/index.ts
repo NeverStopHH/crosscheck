@@ -18,6 +18,7 @@ const USAGE = [
   "  doctor                    diagnose the local install",
   "  statusline                one presence line (reads session json on stdin)",
   "  hook <name>               session-start | post-tool-use | session-end",
+  "  mcp                       run the mcp tool server on stdio (the agent starts it)",
   "",
 ].join("\n");
 

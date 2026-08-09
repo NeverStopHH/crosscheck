@@ -67,7 +67,7 @@
  * them, so this terminates rather than recursing.
  *
  * VERIFY: bun run packages/connector-claude/scripts/verify-claims.ts --list | wc -l | tr -d ' '
- * PRINTS: 27
+ * PRINTS: 32
  *
  *   bun run packages/connector-claude/scripts/verify-claims.ts
  *   bun run packages/connector-claude/scripts/verify-claims.ts --list
@@ -87,8 +87,8 @@
  *
  * Run here this round, that printed `FAIL packages/.../sanitize.ts:88`, the
  * command, `expected | 3739`, `actual | 3738`, a `::error file=…,line=88::`
- * annotation for the pull request, the summary `1 of 16 claims do not match
- * what their command prints`, and exit 1 — then 16 of 16 again once restored.
+ * annotation for the pull request, the summary `1 of 32 claims do not match
+ * what their command prints`, and exit 1 — then 32 of 32 again once restored.
  * It is a mutation, so it is prose with a named command rather than a directive,
  * for the reason given above: nothing that edits the tree runs from in here.
  */
