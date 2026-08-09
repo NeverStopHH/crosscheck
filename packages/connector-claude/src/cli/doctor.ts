@@ -15,6 +15,8 @@ import {
   EXIT_OK,
   EXIT_WARN,
   MAX_CLOCK_SKEW_SECONDS,
+  MCP_CONFIG_FILE,
+  MCP_SERVER_KEY,
   MINUTES_PER_HOUR,
   MS_PER_SECOND,
   PRIVATE_FILE_MODE,
@@ -38,6 +40,7 @@ import { oldestSpoolLineMs, spoolDepth } from "../spool/files.ts";
 import { readLockHolder } from "../spool/lock.ts";
 import { readUnclosedSummary } from "../spool/unclosed.ts";
 import { readSyncState } from "../state/sync-state.ts";
+import { isOwnedMcpEntry } from "./mcp-config.ts";
 import { isOwnedCommand } from "./settings-merge.ts";
 import type { CliResult } from "./login.ts";
 
@@ -199,6 +202,79 @@ const checkSettings = async (repoRoot: string): Promise<readonly Check[]> => {
           );
   return [hooksCheck, statuslineCheck];
 };
+
+/**
+ * Whether an agent in this repo can reach the diagnosis tree at all.
+ *
+ * RULE 6, ON THE SURFACE WHERE IT BITES HARDEST. A hook that cannot run is
+ * invisible by design — it exits 0 and says nothing, and `last sync` above is
+ * what notices. An MCP tool is the opposite: a failing CALL is loud, which is
+ * better, but a tool that was never REGISTERED is never called, so it produces
+ * no message of any kind and nothing else on this machine would say so. That
+ * silence is what these two checks are for.
+ *
+ * Two checks rather than one, because they have different fixes. REGISTERED is
+ * about this repo's committed `.mcp.json` and is fixed by `crosscheck init`
+ * plus committing the result. USABLE is about credentials and is fixed by
+ * `crosscheck login`. A single line saying "the tools do not work" would send
+ * half the readers to the wrong command.
+ */
+const checkMcpRegistration = async (repoRoot: string): Promise<Check> => {
+  const path = join(repoRoot, MCP_CONFIG_FILE);
+  const raw = await readTextOrNull(path);
+  if (raw === null) {
+    return check(
+      "FAIL",
+      "mcp tools registered",
+      `${path} not found — run crosscheck init, then commit the file so teammates get the tools too`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    // WARN rather than FAIL, and the difference is the fix: a missing file is
+    // re-created by `init`, whereas a corrupt one has to be read by a human —
+    // `init` deliberately refuses to overwrite it.
+    return check(
+      "WARN",
+      "mcp tools registered",
+      `${path} is not valid json — crosscheck init will refuse to touch it until that is fixed`,
+    );
+  }
+  const servers = z
+    .looseObject({ mcpServers: z.record(z.string(), z.unknown()).optional() })
+    .safeParse(parsed);
+  const entry = servers.success
+    ? servers.data.mcpServers?.[MCP_SERVER_KEY]
+    : undefined;
+  if (entry === undefined) {
+    return check(
+      "FAIL",
+      "mcp tools registered",
+      `${path} has no "${MCP_SERVER_KEY}" server — run crosscheck init`,
+    );
+  }
+  // The KEY being present is not enough: a hand-written entry under this name
+  // pointing somewhere else would otherwise be reported as a healthy install.
+  return isOwnedMcpEntry(entry)
+    ? check("PASS", "mcp tools registered", path)
+    : check(
+        "FAIL",
+        "mcp tools registered",
+        `${path} has a "${MCP_SERVER_KEY}" server, but not the one crosscheck init writes — rerun crosscheck init`,
+      );
+};
+
+/** Whether the registered tools have credentials to reach the hub with. */
+const mcpUsableCheck = (hasConfig: boolean, hubUrl: string | null): Check =>
+  hasConfig
+    ? check("PASS", "mcp tools usable", `they will call ${hubUrl ?? "the hub"}`)
+    : check(
+        "FAIL",
+        "mcp tools usable",
+        "no hub url or api key, so every tool call answers with an error — run `crosscheck login <hubUrl>`",
+      );
 
 const checkSpool = async (
   home: string,
@@ -372,10 +448,18 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
   const bunfigCheck = await checkBunfig(env, cwd, identity?.root ?? null);
   const config = await loadConfig({ env, repoRoot: identity?.root });
   if (config === null || identity === null) {
+    // The MCP checks belong in THIS branch too, and leaving them out was the
+    // first version's bug: a developer with no key would have been told the hub
+    // was unconfigured and nothing at all about the tools, which is the exact
+    // silence rule 6 exists against.
     return summarize([
       configCheck,
       identityCheck,
       check("FAIL", "hub reachable", "no hub configured"),
+      ...(identity === null
+        ? []
+        : [await checkMcpRegistration(identity.root)]),
+      mcpUsableCheck(config !== null, config?.hubUrl ?? null),
       bunfigCheck,
     ]);
   }
@@ -425,6 +509,8 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
     identityCheck,
     hubCheck,
     ...(await checkSettings(identity.root)),
+    await checkMcpRegistration(identity.root),
+    mcpUsableCheck(true, config.hubUrl),
     ...(await checkSpool(config.home, key, now)),
     await checkLastSync(config.home, key, now),
     skewCheck,

@@ -4,7 +4,12 @@ export { runStatusline } from "./statusline/statusline.ts";
 export { runCli } from "./cli/index.ts";
 export type { CliResult } from "./cli/index.ts";
 
-export { renderBriefing, formatAge, groupTeammates } from "./briefing/render.ts";
+export {
+  QUOTED_DATA_NOTICE,
+  renderBriefing,
+  formatAge,
+  groupTeammates,
+} from "./briefing/render.ts";
 export type { BriefingInput, TeammateGroup } from "./briefing/render.ts";
 export {
   resolveCommitDrift,

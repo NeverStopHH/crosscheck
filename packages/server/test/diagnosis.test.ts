@@ -41,6 +41,8 @@ interface DiagnosisData {
     readonly body: string;
     readonly dedupCount: number;
     readonly evidenceRefs: string[];
+    readonly authorDeveloperId: string;
+    readonly authorDeveloperName: string;
   }[];
   readonly edges: {
     readonly id: string;
@@ -300,6 +302,51 @@ describe("GET /api/work-contexts/:id/diagnosis", () => {
     );
 
     expect(response.status).toBe(404);
+  });
+
+  /**
+   * Author is a normative trust label (DESIGN.md §4), and a tree carrying a
+   * claim from a SECOND developer is the shape that needs it: `extend_diagnosis`
+   * puts B's claim inside A's context, so `workContexts.sessionId` — which names
+   * the CREATING session and never moves — cannot answer who wrote a given
+   * claim. Only `claims.authorSessionId` can, and it is an opaque `cc_<uuid>`
+   * that no reader can turn into a person.
+   */
+  test("labels every claim with the developer who wrote it, not just a session id", async () => {
+    // Arrange: A's tree, then B adds a claim INTO A's work context
+    const setup = await createHarnessWithSession();
+    await seedDiagnosisTree(setup);
+    const second = await addSecondDeveloper(setup);
+    await postRecords(
+      setup.harness,
+      second,
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id: "clm_robin",
+          authorSessionId: SECOND_DEV_SESSION_ID,
+          kind: "hypothesis",
+          body: "The refresh path never reloads the rotated key",
+        }),
+        { sessionId: SECOND_DEV_SESSION_ID },
+      ),
+    );
+
+    // Act
+    const response = await setup.harness.app.request(
+      `/api/work-contexts/${WORK_CONTEXT_ID}/diagnosis`,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+
+    // Assert: both authors are named, and the ids are the developers' own
+    const body = (await response.json()) as { data: DiagnosisData };
+    const byId = new Map(body.data.claims.map((claim) => [claim.id, claim]));
+    expect(byId.get("clm_01")?.authorDeveloperName).toBe("Nick");
+    expect(byId.get("clm_01")?.authorDeveloperId).toBe(
+      setup.developer.developerId,
+    );
+    expect(byId.get("clm_robin")?.authorDeveloperName).toBe("Robin");
+    expect(byId.get("clm_robin")?.authorDeveloperId).toBe(second.developerId);
   });
 });
 

@@ -240,3 +240,91 @@ export const CLAUDE_SETTINGS_DIR = ".claude";
 export const CLAUDE_SETTINGS_FILE = "settings.json";
 
 export const POST_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
+
+/**
+ * Project-scoped MCP registration, committed alongside `.claude/settings.json`
+ * so a teammate gets the tools on `git pull` (DESIGN.md §2).
+ */
+export const MCP_CONFIG_FILE = ".mcp.json";
+/** The key `init` owns inside `mcpServers`; every other key is left alone. */
+export const MCP_SERVER_KEY = "crosscheck";
+export const MCP_SERVER_NAME = "crosscheck";
+
+/**
+ * Reported in `initialize`, and kept equal to the package version rather than
+ * drifting from it.
+ *
+ * VERIFY: bun -e 'const p=await Bun.file("packages/connector-claude/package.json").json(); const c=await import("./packages/connector-claude/src/constants.ts"); console.log(p.version === c.MCP_SERVER_VERSION)'
+ * PRINTS: true
+ */
+export const MCP_SERVER_VERSION = "0.1.0";
+
+/**
+ * MCP revisions this server can speak, newest first. `initialize` echoes the
+ * client's version when it is one of these and otherwise answers with the first
+ * — the spec's own negotiation rule, which lets an older client keep talking to
+ * a newer server instead of failing the handshake.
+ */
+export const MCP_PROTOCOL_VERSIONS = [
+  "2025-06-18",
+  "2025-03-26",
+  "2024-11-05",
+] as const;
+
+/**
+ * Per-request hub timeout for MCP tools — 25× the hook timeout, deliberately.
+ *
+ * HTTP_TIMEOUT_MS exists because a hook runs inside a developer's keystroke and
+ * must fail open before it is noticed. An MCP tool call is the opposite trade on
+ * every axis: the agent ASKED for it, it is waiting for the answer, a failure is
+ * visible to it rather than swallowed, and `get_diagnosis` costs the hub four
+ * queries against a work context that may carry hundreds of claims. Holding that
+ * to 400 ms would turn an ordinary slow query into an unreachable-hub message
+ * and teach an agent that the tools do not work.
+ */
+export const MCP_TIMEOUT_MS = 10_000;
+
+/**
+ * Rendering caps for the two tools that put OTHER developers' text into the
+ * reader's context. The briefing's caps cannot be reused: MAX_BRIEFING_CHARS is
+ * sized for unsolicited injection at every SessionStart, whereas a tree is
+ * pulled once, deliberately, in answer to a question the agent asked.
+ *
+ * A claim body is capped at 400 characters by the wire contract
+ * (MAX_CLAIM_BODY_LENGTH in @crosscheck/schema), so MAX_DIAGNOSIS_CHARS is
+ * roughly thirty full-length claims — past which the tool says what it dropped
+ * instead of truncating in silence.
+ */
+export const MAX_DIAGNOSIS_CHARS = 12_000;
+export const MAX_SEARCH_RESULTS = 10;
+export const MAX_SEARCH_CHARS = 2400;
+
+/**
+ * Width of an id as the MCP renderer prints it — bare, outside the « » frame,
+ * because an agent has to pass it back into another tool.
+ *
+ * Wider than any id this connector mints and narrower than a paragraph. The
+ * deterministic ids are `cc_<uuid>` and `wc_cc_<uuid>` (state/session-state.ts),
+ * 39 and 42 characters, so a legitimate id is never truncated:
+ *
+ * VERIFY: bun -e 'const {crosscheckSessionIdFor,workContextIdFor}=await import("./packages/connector-claude/src/state/session-state.ts");const s=crosscheckSessionIdFor(crypto.randomUUID());console.log(s.length,workContextIdFor(s).length)'
+ * PRINTS: 39 42
+ */
+export const MAX_ID_CHARS = 64;
+
+/**
+ * Width of a string THE HUB chose, as a tool prints it back.
+ *
+ * A hub error message and a per-record rejection issue are not this connector's
+ * text: http/client.ts already states the threat model — "A hostile hub must not
+ * be able to inject arbitrary text into the developer's context" — and the
+ * envelope validation it describes checks the SHAPE of a response, never the
+ * contents of the strings inside it. So they are quoted and capped like any
+ * other untrusted prose.
+ *
+ * Wider than a title (MAX_TITLE_CHARS) because a rejection issue is a sentence
+ * about a rule and losing half of it would defeat the point of forwarding it;
+ * far narrower than a claim body, because nothing a hub has to say about one
+ * refused record needs a paragraph.
+ */
+export const MAX_HUB_MESSAGE_CHARS = 200;

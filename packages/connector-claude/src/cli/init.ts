@@ -7,6 +7,7 @@ import {
   EXIT_ABORTED,
   EXIT_FAIL,
   EXIT_OK,
+  MCP_CONFIG_FILE,
   POST_TOOL_USE_MATCHER,
 } from "../constants.ts";
 import { normalizeHubUrl, readStoredConfig } from "../config/config.ts";
@@ -18,6 +19,8 @@ import {
   repoConfigPath,
 } from "../config/repo-config.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
+import { mergeMcpConfig } from "./mcp-config.ts";
+import type { McpServerEntry } from "./mcp-config.ts";
 import { mergeClaudeSettings } from "./settings-merge.ts";
 import type { MatcherGroup, SettingsPlan } from "./settings-merge.ts";
 import type { CliResult } from "./login.ts";
@@ -84,6 +87,41 @@ export const resolveCommandPrefix = async (
   return `${shellQuote(process.execPath)} ${shellQuote(BIN_ENTRY_PATH)}`;
 };
 
+/**
+ * The MCP launcher, as `command` plus `args` rather than as a shell string.
+ *
+ * SAME NO-FETCHABLE-NAME PROPERTY AS `resolveCommandPrefix`, and it has to be
+ * restated rather than reused: `.mcp.json` takes an argv, not a command line, so
+ * the shell-quoted string that file produces cannot be dropped in. Everything
+ * else about the decision is identical — an unpublished package name here would
+ * be the same dependency-confusion hole, in a file that gets COMMITTED and so
+ * reaches every teammate rather than only the machine that ran `init`.
+ *
+ * The `sh -c` branch is only for an explicit `--command-prefix`. An operator's
+ * arbitrary launcher cannot be split into argv by guessing at quoting, and the
+ * string is theirs, given in the open — the same trade `resolveCommandPrefix`
+ * makes when it passes an override through untouched.
+ */
+export const resolveMcpLauncher = async (
+  override: string | undefined,
+  env: Env,
+): Promise<McpServerEntry> => {
+  if (override !== undefined && override.length > 0) {
+    return { type: "stdio", command: "sh", args: ["-c", `${override} mcp`] };
+  }
+  if (isOnPath("crosscheck", env)) {
+    return { type: "stdio", command: "crosscheck", args: ["mcp"] };
+  }
+  if (!(await Bun.file(BIN_ENTRY_PATH).exists())) {
+    return { type: "stdio", command: "crosscheck", args: ["mcp"] };
+  }
+  return {
+    type: "stdio",
+    command: process.execPath,
+    args: [BIN_ENTRY_PATH, "mcp"],
+  };
+};
+
 export const buildSettingsPlan = (
   prefix: string,
   forceStatusline: boolean,
@@ -119,6 +157,46 @@ export const buildSettingsPlan = (
 
 const renderSettings = (settings: Record<string, unknown>): string =>
   `${JSON.stringify(settings, null, 2)}\n`;
+
+type ReadJson =
+  | { readonly ok: true; readonly value: Record<string, unknown>; readonly raw: string | null }
+  | { readonly ok: false };
+
+/**
+ * Reads a JSON config `init` is going to rewrite, or refuses.
+ *
+ * Refusing is the point. A file that cannot be parsed is a file whose contents
+ * cannot be preserved, and overwriting it would silently delete a teammate's
+ * configuration — so `init` changes NOTHING and says which file stopped it. Both
+ * `.claude/settings.json` and `.mcp.json` obey this, which is why it is one
+ * function rather than two copies of the same four lines.
+ */
+const readJsonConfig = async (path: string): Promise<ReadJson> => {
+  const raw = await readTextOrNull(path);
+  if (raw === null) {
+    return { ok: true, value: {}, raw: null };
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return {
+      ok: true,
+      value:
+        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : {},
+      raw,
+    };
+  } catch {
+    return { ok: false };
+  }
+};
+
+/** Timestamped backup beside the original, so a bad merge is recoverable. */
+const backUp = async (path: string, raw: string | null): Promise<void> => {
+  if (raw !== null) {
+    await writeFile(`${path}.bak-${String(Date.now())}`, raw, "utf8");
+  }
+};
 
 type ResolvedInputs = { readonly hubUrl: string } | { readonly error: string };
 
@@ -174,35 +252,42 @@ export const runInit = async (
 
   const settingsDir = join(identity.root, CLAUDE_SETTINGS_DIR);
   const settingsPath = join(settingsDir, CLAUDE_SETTINGS_FILE);
-  const existingRaw = await readTextOrNull(settingsPath);
-  let existing: Record<string, unknown> = {};
-  if (existingRaw !== null) {
-    try {
-      const parsed = JSON.parse(existingRaw) as unknown;
-      existing =
-        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
-          : {};
-    } catch {
-      return {
-        stdout: `${settingsPath} is not valid json — nothing was changed\n`,
-        exitCode: EXIT_ABORTED,
-      };
-    }
-    await writeFile(
-      `${settingsPath}.bak-${Date.now()}`,
-      existingRaw,
-      "utf8",
-    );
+  const mcpPath = join(identity.root, MCP_CONFIG_FILE);
+
+  // BOTH files are read and validated BEFORE either is written. `init` writing
+  // settings.json and then aborting on an unparseable .mcp.json would leave the
+  // repo half-installed — hooks registered, tools not — which is the state
+  // `doctor` has the hardest time explaining.
+  const settingsRead = await readJsonConfig(settingsPath);
+  if (!settingsRead.ok) {
+    return {
+      stdout: `${settingsPath} is not valid json — nothing was changed\n`,
+      exitCode: EXIT_ABORTED,
+    };
   }
+  const mcpRead = await readJsonConfig(mcpPath);
+  if (!mcpRead.ok) {
+    return {
+      stdout: `${mcpPath} is not valid json — nothing was changed\n`,
+      exitCode: EXIT_ABORTED,
+    };
+  }
+  await backUp(settingsPath, settingsRead.raw);
+  await backUp(mcpPath, mcpRead.raw);
 
   const prefix = await resolveCommandPrefix(options.commandPrefix, env);
   const merged = mergeClaudeSettings(
-    existing,
+    settingsRead.value,
     buildSettingsPlan(prefix, options.forceStatusline),
   );
+  const mcpEntry = await resolveMcpLauncher(options.commandPrefix, env);
   await ensureDir(settingsDir);
   await writeFile(settingsPath, renderSettings(merged.settings), "utf8");
+  await writeFile(
+    mcpPath,
+    renderSettings(mergeMcpConfig(mcpRead.value, mcpEntry)),
+    "utf8",
+  );
   await writeFile(
     repoConfigPath(identity.root),
     renderRepoConfig(hubUrl),
@@ -218,7 +303,12 @@ export const runInit = async (
     stdout: [
       `wrote ${repoConfigPath(identity.root)}`,
       `wrote ${settingsPath}`,
+      `wrote ${mcpPath}`,
       `hooks use launcher: ${prefix}`,
+      // Said explicitly because it is the ONLY delivery mechanism: a teammate
+      // gets the tools from this file arriving in their checkout, and nowhere
+      // else. An uncommitted .mcp.json is an install that works for one person.
+      `commit ${MCP_CONFIG_FILE} so teammates get the mcp tools on git pull`,
       ...notes,
       "",
     ].join("\n"),
