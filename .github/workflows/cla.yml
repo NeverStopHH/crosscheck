@@ -6,10 +6,13 @@
 # every future licensing decision would need every past contributor's agreement,
 # and a single unreachable person could freeze the project permanently.
 #
-# Signatures are stored IN THIS REPOSITORY at .github/cla/signatures.json, not
-# with a third party — a contributor can read exactly what was recorded about
-# them, in the same place they read the agreement. That is also why this uses the
-# action rather than a hosted service.
+# Signatures are stored IN THIS REPOSITORY at .github/cla/signatures.json on the
+# dedicated `cla-signatures` branch, not with a third party — a contributor can
+# read exactly what was recorded about them, in the same place they read the
+# agreement. That is also why this uses the action rather than a hosted service.
+# A dedicated branch, not `main`: main's protection rules refuse direct pushes,
+# so a signature commit to main is rejected and the run fails — observed on
+# PR #19, where the bot read the signature but could not record it.
 #
 # `pull_request_target` is required, not an oversight: a pull request from a fork
 # runs with a read-only token under `pull_request`, and the bot has to write a
@@ -35,10 +38,14 @@ jobs:
   cla:
     name: CLA signed
     runs-on: ubuntu-latest
-    # Only react to the signing sentence, or to pull-request events themselves.
+    # Only react to the signing sentence or a recheck request, or to
+    # pull-request events themselves. 'recheck' must be listed here: the job-level
+    # condition runs before the action, so without it a recheck comment is
+    # skipped entirely and a stale failing status can never be re-evaluated.
     if: >-
       (github.event.issue.pull_request
-        && contains(github.event.comment.body, 'I have read the CLA Document and I hereby sign the CLA'))
+        && (contains(github.event.comment.body, 'I have read the CLA Document and I hereby sign the CLA')
+          || contains(github.event.comment.body, 'recheck')))
       || github.event_name == 'pull_request_target'
     steps:
       # Dependabot cannot agree to a legal document, and its pull requests carry
@@ -50,7 +57,9 @@ jobs:
         with:
           path-to-signatures: .github/cla/signatures.json
           path-to-document: https://github.com/NeverStopHH/crosscheck/blob/main/CLA.md
-          branch: main
+          # Unprotected, dedicated branch — the action creates it on first
+          # signature. Never point this at main: protected, push is refused.
+          branch: cla-signatures
           allowlist: dependabot[bot]
           custom-notsigned-prcomment: >-
             Thank you for the pull request. Before it can be merged, please read
