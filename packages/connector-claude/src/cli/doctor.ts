@@ -173,7 +173,13 @@ const checkSettings = async (repoRoot: string): Promise<readonly Check[]> => {
     }),
   );
 
-  const required = ["SessionStart", "PostToolUse", "SessionEnd"];
+  const required = [
+    "SessionStart",
+    "PostToolUse",
+    "SessionEnd",
+    "UserPromptSubmit",
+    "PreToolUse",
+  ];
   const missing = required.filter(
     (event) => !ownedCommands.some((entry) => entry.event === event),
   );

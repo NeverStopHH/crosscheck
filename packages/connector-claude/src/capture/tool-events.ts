@@ -14,6 +14,14 @@ export const HookPayloadSchema = z.looseObject({
   source: z.string().optional().catch(undefined),
   session_title: z.string().optional().catch(undefined),
   reason: z.string().optional().catch(undefined),
+  /**
+   * UserPromptSubmit only: the prompt text the hint fast path searches with.
+   * Tolerant like every field here — if Claude Code renames it, hints degrade
+   * to silence (fail open); the hook-contract watcher does not yet probe it
+   * (recorded deferral: extending the probe list needs a snapshot re-record
+   * against the live docs).
+   */
+  prompt: z.string().optional().catch(undefined),
   tool_name: z.string().optional().catch(undefined),
   tool_input: z.unknown().optional(),
   tool_response: z.unknown().optional(),

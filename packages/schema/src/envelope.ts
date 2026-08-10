@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { ClaimEdgeSchema, ClaimSchema } from "./claim.ts";
 import { CommitEvidenceSchema } from "./commit-evidence.ts";
-import { HintSchema } from "./hint.ts";
+import { HintDeliverySchema, HintSchema } from "./hint.ts";
 import {
   AgentSessionSchema,
   TargetSchema,
@@ -44,6 +44,7 @@ const RECORD_BODY_SCHEMAS = {
   work_context: WorkContextSchema,
   target: TargetSchema,
   hint: HintSchema,
+  hint_delivery: HintDeliverySchema,
 } as const;
 
 export type KnownRecordKind = keyof typeof RECORD_BODY_SCHEMAS;

@@ -42,8 +42,14 @@ export {
 } from "./session.ts";
 export type { AgentSession, Target, WorkContext } from "./session.ts";
 
-export { HintSchema, HintTrustSchema, MAX_HINT_TEXT_LENGTH } from "./hint.ts";
-export type { Hint, HintTrust } from "./hint.ts";
+export {
+  HINT_REF_KINDS,
+  HintDeliverySchema,
+  HintSchema,
+  HintTrustSchema,
+  MAX_HINT_TEXT_LENGTH,
+} from "./hint.ts";
+export type { Hint, HintDelivery, HintTrust } from "./hint.ts";
 
 export {
   CommitAuthorEvidenceSchema,

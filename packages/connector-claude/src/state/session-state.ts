@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { MAX_SEEN_TARGETS } from "../constants.ts";
+import { MAX_SEEN_TARGETS, MAX_TRIPWIRE_ASKED_FILES } from "../constants.ts";
 import {
   readJsonOrNull,
   removeFile,
@@ -19,9 +19,27 @@ export const SessionStateSchema = z.looseObject({
   startedAt: z.string().min(1),
   lastHeartbeatAt: z.string().nullable().default(null),
   seenTargets: z.array(z.string().min(1)).default([]),
+  /**
+   * Hint state that must survive hook process restarts (DESIGN.md §4): the
+   * refs already delivered (seen-set dedup + the 5/session cap counts this),
+   * the normalized-body hashes of delivered substance (echo-loop exclusion,
+   * §3), and the files the tripwire already asked about (ask once). Defaults
+   * keep every pre-hints state file parsing unchanged.
+   */
+  deliveredHintRefs: z.array(z.string().min(1)).default([]),
+  deliveredHintHashes: z.array(z.string().min(1)).default([]),
+  tripwireAskedFiles: z.array(z.string().min(1)).default([]),
 });
 
 export type SessionState = z.infer<typeof SessionStateSchema>;
+
+/**
+ * What a WRITER may pass: the defaulted fields are optional, exactly as they
+ * are for a state file already on disk from before they existed. Readers
+ * always see the full SessionState — readSessionState parses through the
+ * schema, which fills the defaults.
+ */
+export type SessionStateInput = z.input<typeof SessionStateSchema>;
 
 /** Deterministic ids survive a crash: no lookup, no id table, no drift. */
 export const crosscheckSessionIdFor = (claudeSessionId: string): string =>
@@ -42,7 +60,7 @@ export const readSessionState = async (
 
 export const writeSessionState = async (
   home: string,
-  state: SessionState,
+  state: SessionStateInput,
 ): Promise<void> => {
   await writePrivateFile(
     sessionStatePath(home, state.claudeSessionId),
@@ -69,6 +87,40 @@ export const withSeenTargets = (
       merged.length <= MAX_SEEN_TARGETS
         ? merged
         : merged.slice(merged.length - MAX_SEEN_TARGETS),
+  };
+};
+
+/**
+ * One delivered hint, remembered forever within the session: the ref for the
+ * seen-set and the cap, the body hash (substance only — pointers carry no
+ * body) for the echo-loop exclusion. No cap on these arrays beyond
+ * MAX_HINTS_PER_SESSION itself, which the selector enforces before any append.
+ */
+export const withDeliveredHint = (
+  state: SessionState,
+  refId: string,
+  bodyHash: string | null,
+): SessionState => ({
+  ...state,
+  deliveredHintRefs: [...state.deliveredHintRefs, refId],
+  deliveredHintHashes:
+    bodyHash === null
+      ? state.deliveredHintHashes
+      : [...state.deliveredHintHashes, bodyHash],
+});
+
+/** FIFO cap, same shape as withSeenTargets: asks are once per file. */
+export const withTripwireAsked = (
+  state: SessionState,
+  file: string,
+): SessionState => {
+  const merged = [...state.tripwireAskedFiles, file];
+  return {
+    ...state,
+    tripwireAskedFiles:
+      merged.length <= MAX_TRIPWIRE_ASKED_FILES
+        ? merged
+        : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
   };
 };
 
@@ -101,5 +153,8 @@ export const deriveSessionState = (
     startedAt: input.startedAt,
     lastHeartbeatAt: null,
     seenTargets: [],
+    deliveredHintRefs: [],
+    deliveredHintHashes: [],
+    tripwireAskedFiles: [],
   };
 };

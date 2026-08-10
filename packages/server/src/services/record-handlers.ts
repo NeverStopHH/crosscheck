@@ -84,7 +84,9 @@ const resolveWorkContextOwner = async (
 // Deliberately does not check endedAt: author sessions MAY already be ended —
 // a spool flush from a successor session is legitimate. Only the producer
 // session must be live (enforced by checkProducerSession in records.ts).
-const checkOwnedSession = async (
+// Exported for the hint-delivery handler, which asks the identical question
+// about the RECEIVING session (services/hint-deliveries.ts).
+export const checkOwnedSession = async (
   db: DbExecutor,
   developerId: string,
   sessionId: string,

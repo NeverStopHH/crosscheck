@@ -5,6 +5,7 @@ import { absencesRoutes } from "./routes/absences.ts";
 import { contradictionsRoutes } from "./routes/contradictions.ts";
 import { developersRoutes } from "./routes/developers.ts";
 import { eventsRoutes } from "./routes/events.ts";
+import { hintsRoutes } from "./routes/hints.ts";
 import { presenceRoutes } from "./routes/presence.ts";
 import { recordsRoutes } from "./routes/records.ts";
 import { searchRoutes } from "./routes/search.ts";
@@ -22,6 +23,7 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/records", recordsRoutes(deps));
   app.route("/api/work-contexts", workContextsRoutes(deps));
   app.route("/api/search", searchRoutes(deps));
+  app.route("/api/hints", hintsRoutes(deps));
   app.route("/api/contradictions", contradictionsRoutes(deps));
   app.route("/api/absences", absencesRoutes(deps));
 

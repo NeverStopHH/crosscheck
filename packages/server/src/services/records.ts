@@ -4,6 +4,7 @@ import type {
   Claim,
   ClaimEdge,
   CommitEvidence,
+  HintDelivery,
   KnownRecordKind,
   Target,
   WorkContext,
@@ -11,6 +12,7 @@ import type {
 
 import { agentSessions } from "../db/schema.ts";
 import { ingestCommitEvidence } from "./commit-evidence.ts";
+import { ingestHintDelivery } from "./hint-deliveries.ts";
 import { embedContextDoc } from "./normalized-doc.ts";
 import {
   ingestClaim,
@@ -103,6 +105,8 @@ const dispatchRecord = (
       return ingestClaimEdge(deps, developerId, body as ClaimEdge);
     case "commit_evidence":
       return ingestCommitEvidence(deps, developerId, body as CommitEvidence);
+    case "hint_delivery":
+      return ingestHintDelivery(deps, developerId, body as HintDelivery);
   }
 };
 
@@ -122,6 +126,9 @@ const touchedContextId = (
       return undefined;
     // Commit evidence touches no work context and therefore no doc to re-embed.
     case "commit_evidence":
+      return undefined;
+    // Delivery telemetry references a context but changes nothing about it.
+    case "hint_delivery":
       return undefined;
   }
 };

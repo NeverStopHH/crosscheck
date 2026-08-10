@@ -77,6 +77,37 @@ describe("crosscheck init", () => {
     expect(repoConfig.hubUrl).toBe(HUB_URL);
   });
 
+  test("registers the hint hooks: UserPromptSubmit and edit-only PreToolUse", async () => {
+    // Arrange
+    const { repo, env, settingsPath } = await fixture();
+
+    // Act
+    const result = await runCli(
+      ["init", "--command-prefix", "crosscheck"],
+      env,
+      repo,
+    );
+
+    // Assert — the injection pipeline's two hooks (DESIGN.md §4)
+    expect(result.exitCode).toBe(0);
+    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(hookCommand(settings, "UserPromptSubmit")).toBe(
+      "crosscheck hook user-prompt-submit",
+    );
+    expect(hookCommand(settings, "PreToolUse")).toBe(
+      "crosscheck hook pre-tool-use",
+    );
+    // The tripwire fires on writes only — Bash carries no file to overlap on.
+    const hooks = settings["hooks"] as Record<string, readonly Record<string, unknown>[]>;
+    const preToolUse = hooks["PreToolUse"] ?? [];
+    expect(preToolUse[preToolUse.length - 1]?.["matcher"]).toBe(
+      "Edit|Write|MultiEdit|NotebookEdit",
+    );
+  });
+
   test("running init twice produces a byte-identical settings file", async () => {
     // Arrange
     const { repo, env, settingsPath } = await fixture();

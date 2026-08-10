@@ -32,3 +32,24 @@ export const HintSchema = z.looseObject({
 
 export type HintTrust = z.infer<typeof HintTrustSchema>;
 export type Hint = z.infer<typeof HintSchema>;
+
+export const HINT_REF_KINDS = ["claim", "work_context"] as const;
+
+/**
+ * Delivery telemetry for one injected hint (DESIGN.md §4): refs only, never
+ * the rendered text — the hub already holds the claim, and what the precision
+ * loop needs is WHICH ref reached WHICH session, not a second copy of the
+ * words. Produced by the connector's UserPromptSubmit hook and spooled like
+ * any other record; the deterministic `id` is what makes a spool replay a
+ * duplicate instead of a second delivery.
+ */
+export const HintDeliverySchema = z.looseObject({
+  id: nonEmptyId,
+  /** The RECEIVING session — the one whose prompt the hint landed in. */
+  sessionId: nonEmptyId,
+  refKind: z.enum(HINT_REF_KINDS),
+  refId: nonEmptyId,
+  deliveredAt: z.iso.datetime(),
+});
+
+export type HintDelivery = z.infer<typeof HintDeliverySchema>;

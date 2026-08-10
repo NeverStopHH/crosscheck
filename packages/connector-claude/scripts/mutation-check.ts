@@ -290,6 +290,81 @@ export const MUTATIONS: readonly Mutation[] = [
       "agent asking about authentication is handed the cache work context " +
       "and told the hub searched by meaning",
   },
+  // The six below guard the in-session hint pipeline (DESIGN.md §4). The
+  // anchoring asymmetry and the budgets are STRUCTURE in the selector and
+  // constants, so each load-bearing predicate gets a mutation: weaken it and
+  // the pinning test must notice, or the asymmetry is prompt-wording after all.
+  {
+    label: "an evidence-free claim becomes proactively injectable",
+    file: `${CONNECTOR}/src/hints/select.ts`,
+    from: "  hasEvidence(claim) &&\n",
+    to: "",
+    test: `${CONNECTOR}/test/hint-select.test.ts`,
+    because:
+      "the anchoring asymmetry's evidence requirement is deleted — an " +
+      "unsupported likely_root_cause theory lands unasked in a healthy " +
+      "session, which is precisely the anchoring §4 exists to prevent",
+  },
+  {
+    label: "a bare proposed hypothesis becomes injectable substance",
+    file: `${CONNECTOR}/src/hints/select.ts`,
+    from: '  "likely_root_cause",\n  "partially_confirmed",\n]);',
+    to: '  "likely_root_cause",\n  "partially_confirmed",\n  "proposed",\n]);',
+    test: `${CONNECTOR}/test/hint-select.test.ts`,
+    because:
+      "proposed joins the injectable statuses, so a teammate's guess with a " +
+      "couple of self-referential evidence refs is pushed as substance " +
+      "instead of a pointer — negative-knowledge-first becomes decoration",
+  },
+  {
+    label: "the per-session hint cap quietly widens",
+    file: `${CONNECTOR}/src/constants.ts`,
+    from: "export const MAX_HINTS_PER_SESSION = 5;",
+    to: "export const MAX_HINTS_PER_SESSION = 500;",
+    test: `${CONNECTOR}/test/hint-budget.test.ts`,
+    because:
+      "the noise budget of §10 risk 1 stops binding — the arithmetic guard " +
+      "is the detector because the behavioural cap test measures against the " +
+      "constant itself and would follow it to 500",
+  },
+  {
+    label: "the prompt hook budget quietly widens",
+    file: `${CONNECTOR}/src/constants.ts`,
+    from: "export const USER_PROMPT_SUBMIT_BUDGET_RATIO = 2;",
+    to: "export const USER_PROMPT_SUBMIT_BUDGET_RATIO = 10;",
+    test: `${CONNECTOR}/test/hint-budget.test.ts`,
+    because:
+      "the specified 800 ms sync budget becomes 4 s and every prompt waits " +
+      "on it — the latency test measures through a fast hub and cannot see " +
+      "a widened ceiling, so the arithmetic is the guard",
+  },
+  {
+    label: "the hint stops labelling quoted text as data",
+    file: `${CONNECTOR}/src/hints/render.ts`,
+    from:
+      "const CLAIM_HEADER = `crosscheck hint: a teammate's recorded finding may relate to this prompt. ${QUOTED_DATA_NOTICE}`;",
+    to:
+      "const CLAIM_HEADER = `crosscheck hint: a teammate's recorded finding may relate to this prompt.`;",
+    test: `${CONNECTOR}/test/hint-render.test.ts`,
+    because:
+      "the sentence naming the quoted text as data is the last defence for " +
+      "every payload the phrase filter misses, and a hint lands UNASKED — " +
+      "this surface needs it more than either surface that already has it",
+  },
+  {
+    // This guard shells out to git (makeRepo), re-enabling the container
+    // caveat documented on assertGuardIsGreen — which is exactly why that
+    // check exists and stays.
+    label: "the tripwire escalates past ask",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: 'const ASK_DECISION = "ask";',
+    to: 'const ASK_DECISION = "deny";',
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "the escalation ladder's ceiling (§4: never deny) is breached — a " +
+      "teammate merely editing the same file now BLOCKS the developer's " +
+      "tool call instead of asking",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -332,11 +407,15 @@ interface Outcome {
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
+ * PRINTS: hint-budget.test.ts 2
+ * PRINTS: hint-render.test.ts 1
+ * PRINTS: hint-select.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-render.test.ts 1
  * PRINTS: search.test.ts 3
+ * PRINTS: tripwire-hook.test.ts 1
  */
 const greenGuards = new Map<string, boolean>();
 
@@ -366,10 +445,11 @@ const greenGuards = new Map<string, boolean>();
  *     bun test packages/connector-claude/test/hook-reserve.test.ts
  *     bun run packages/connector-claude/scripts/mutation-check.ts'
  *
- * No guard in the current list shells out to git — which is a property of the
- * list as it stands today, not a rule it obeys. Point one future mutation at a
- * guard that makes a repo and the container above is a false-positive machine
- * again, so the check below stays.
+ * One guard in the current list DOES shell out to git now —
+ * tripwire-hook.test.ts, whose fixture makes a repo — so the container above
+ * is exactly the false-positive machine this check exists for: without git
+ * that guard is red unmutated, and the run aborts here instead of reporting
+ * "caught".
  */
 const assertGuardIsGreen = async (testPath: string): Promise<void> => {
   if (greenGuards.get(testPath) === true) {

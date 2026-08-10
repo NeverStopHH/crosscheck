@@ -187,6 +187,9 @@ export const handleSessionStart = async (
     startedAt: now.toISOString(),
     lastHeartbeatAt: now.toISOString(),
     seenTargets: [],
+    deliveredHintRefs: [],
+    deliveredHintHashes: [],
+    tripwireAskedFiles: [],
   });
   await appendRecords(
     ctx.config.home,

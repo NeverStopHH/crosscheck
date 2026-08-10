@@ -398,3 +398,101 @@ export const searchWorkContexts = (
     schema: SearchResponseSchema,
   });
 };
+
+/**
+ * One claim as the hints endpoint sends it: enough for the selector's
+ * anchoring rules and the renderer's trust labels, never the whole tree.
+ * `evidenceRefCount` (not the refs) because the selector only asks "any?".
+ */
+export const HintClaimCandidateSchema = z.looseObject({
+  id: z.string().min(1),
+  workContextId: z.string().min(1),
+  kind: z.string().min(1),
+  status: z.string().min(1),
+  confidence: z.number(),
+  provenance: z.string().min(1),
+  captureMode: z.string().min(1).optional(),
+  evidenceRefCount: z.number().int().min(0).default(0),
+  authorDeveloperId: z.string().min(1),
+  authorDeveloperName: z.string().min(1).optional(),
+  body: z.string(),
+  createdAt: z.string().min(1),
+});
+
+export type HintClaimCandidate = z.infer<typeof HintClaimCandidateSchema>;
+
+const HintContextSchema = z.looseObject({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  status: z.string().min(1),
+  /** Optional: an older hub sends no tier, and no tier means no precision. */
+  tier: z.string().min(1).optional(),
+  developerId: z.string().min(1),
+  developerName: z.string().min(1).optional(),
+  /** For the drift label; "" from the hub means unknown. */
+  baseCommit: z.string().optional(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().nullable().optional(),
+});
+
+export const HintContextCandidateSchema = z
+  .looseObject({
+    workContext: HintContextSchema,
+    claims: z.array(z.unknown()).default([]),
+  })
+  .transform((value) => ({
+    workContext: value.workContext,
+    // Tolerant rows, silent drop — candidates are advisory, like search rows.
+    claims: parseRows(value.claims, HintClaimCandidateSchema).rows,
+  }));
+
+export type HintContextCandidate = z.infer<typeof HintContextCandidateSchema>;
+
+export interface HintCandidatesRequest {
+  readonly query: string;
+  /** Relevance filter, never a boundary (DESIGN.md §2.1). */
+  readonly repo: string;
+}
+
+/** The UserPromptSubmit fast path's ONE bounded hub call (DESIGN.md §4). */
+export const getHintCandidates = (
+  ctx: HubContext,
+  request: HintCandidatesRequest,
+): Promise<HubResult<readonly HintContextCandidate[]>> => {
+  const params = new URLSearchParams({
+    query: request.query,
+    repo: request.repo,
+  });
+  return hubRequest(ctx, {
+    method: "GET",
+    path: `/api/hints/candidates?${params.toString()}`,
+    schema: tolerantList("candidates", HintContextCandidateSchema),
+  });
+};
+
+export const TripwireSessionSchema = z.looseObject({
+  sessionId: z.string().min(1),
+  developerId: z.string().min(1),
+  developerName: z.string().min(1),
+  branch: z.string().min(1),
+  status: z.string().min(1),
+  lastHeartbeatAt: z.string().min(1),
+  workContextId: z.string().min(1),
+  workContextTitle: z.string().min(1),
+});
+
+export type TripwireSession = z.infer<typeof TripwireSessionSchema>;
+
+/** The PreToolUse tripwire's ONE bounded hub call (DESIGN.md §4). */
+export const getTripwireSessions = (
+  ctx: HubContext,
+  repo: string,
+  value: string,
+): Promise<HubResult<readonly TripwireSession[]>> => {
+  const params = new URLSearchParams({ repo, value });
+  return hubRequest(ctx, {
+    method: "GET",
+    path: `/api/hints/tripwire?${params.toString()}`,
+    schema: tolerantList("sessions", TripwireSessionSchema),
+  });
+};

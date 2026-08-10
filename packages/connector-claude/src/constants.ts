@@ -46,6 +46,46 @@ export const POST_TOOL_USE_BUDGET_RATIO = 4;
  */
 export const HOOK_RESERVE_RATIO = 1;
 
+/**
+ * ── In-session hints (DESIGN.md §4) ─────────────────────────────────────────
+ *
+ * UserPromptSubmit runs inside the developer's keystroke-to-first-token wait,
+ * so its TOTAL budget — preparation, one hub call, one bounded git call,
+ * rendering — is the §4-specified 800 ms at the default request timeout:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-claude/src/constants.ts");console.log(c.USER_PROMPT_SUBMIT_BUDGET_RATIO*c.HTTP_TIMEOUT_MS, c.PRE_TOOL_USE_BUDGET_RATIO*c.HTTP_TIMEOUT_MS)'
+ * PRINTS: 800 800
+ *
+ * Guarded twice, the hook-reserve split: test/hint-budget.test.ts is the
+ * arithmetic detector (runs identically on every machine, and what
+ * scripts/mutation-check.ts re-breaks), test/hint-hook-latency.test.ts is the
+ * measured consequence through the real runHook.
+ */
+export const USER_PROMPT_SUBMIT_BUDGET_RATIO = 2;
+/** PreToolUse blocks a tool call — the same keystroke-grade bound applies. */
+export const PRE_TOOL_USE_BUDGET_RATIO = 2;
+/**
+ * Noise budgets (DESIGN.md §10 risk 1): at most one hint per prompt and five
+ * per session, then silence for the rest of the session. MAX_HINTS_PER_PROMPT
+ * is enforced structurally — the selector returns ONE selection, never a list
+ * (src/hints/select.ts) — and this constant is the number tests pin that to.
+ */
+export const MAX_HINTS_PER_PROMPT = 1;
+export const MAX_HINTS_PER_SESSION = 5;
+/**
+ * Substance requires evidence (§4 anchoring asymmetry): claims below this
+ * many evidence refs are pointer-only, whatever their status claims.
+ */
+export const HINT_MIN_EVIDENCE_REFS = 1;
+/**
+ * Words shorter than this carry grammar, not meaning — the same floor the hub
+ * search applies (SEARCH_MIN_TOKEN_CHARS). Checked BEFORE the hub call: a
+ * prompt with no searchable word costs zero HTTP.
+ */
+export const HINT_MIN_TOKEN_CHARS = 3;
+/** Tripwire asks once per file per session; FIFO cap on the remembered set. */
+export const MAX_TRIPWIRE_ASKED_FILES = 100;
+
 /** git is spawned per hook; a hung repo must never hold the session hostage. */
 export const GIT_TIMEOUT_MS = 1500;
 
@@ -274,6 +314,8 @@ export const CLAUDE_SETTINGS_DIR = ".claude";
 export const CLAUDE_SETTINGS_FILE = "settings.json";
 
 export const POST_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
+/** Tripwire fires on writes only — Bash carries no file to overlap on. */
+export const PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
 
 /**
  * Project-scoped MCP registration, committed alongside `.claude/settings.json`
