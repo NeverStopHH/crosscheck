@@ -61,7 +61,11 @@ const select = (
     candidates,
     seenRefIds: overrides.seenRefIds ?? [],
     deliveredCount: overrides.deliveredCount ?? 0,
-    selfDeveloperId: overrides.selfDeveloperId ?? SELF_DEVELOPER,
+    // Not `??` — an EXPLICIT null must reach the selector (unknown identity).
+    selfDeveloperId:
+      overrides.selfDeveloperId === undefined
+        ? SELF_DEVELOPER
+        : overrides.selfDeveloperId,
   });
 
 describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
@@ -140,10 +144,20 @@ describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
 });
 
 describe("self-session exclusion", () => {
-  test("skips claims the reader authored, whatever context they sit in", () => {
+  test("a context carrying only the reader's own claims is silence", () => {
+    // Not merely "not substance": pointing the reader at their own words
+    // would be self-noise (§10 risk 1), so the whole context is skipped.
     const own = claim({ id: "clm_mine", authorDeveloperId: SELF_DEVELOPER });
     const selection = select([context({}, [own])]);
-    expect(selection.kind).not.toBe("claim");
+    expect(selection.kind).toBe("silence");
+  });
+
+  test("an unknown reader identity is silence, never all-foreign", () => {
+    // With selfDeveloperId null the selector cannot prove ANY claim is
+    // foreign — including one the reader authored into a teammate's tree via
+    // extend_diagnosis in an earlier session. Fail closed (§4 self-exclusion).
+    const selection = select([context()], { selfDeveloperId: null });
+    expect(selection.kind).toBe("silence");
   });
 });
 

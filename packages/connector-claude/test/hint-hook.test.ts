@@ -18,6 +18,7 @@ import {
   CANDIDATE_CLAIM_ID,
   CANDIDATE_CONTEXT_ID,
   proposedOnlyCandidate,
+  rejectedApproachCandidate,
   startHintHub,
 } from "./fixtures/hint-hub.ts";
 import type { HintHub } from "./fixtures/hint-hub.ts";
@@ -201,6 +202,23 @@ describe("silence is the default", () => {
     const { repo, hub, env } = await fixture("empty");
     hub.setCandidates([]);
     const stdout = await runHook("user-prompt-submit", promptPayload(repo, PROMPT), env);
+    expect(stdout).toBe("");
+  });
+
+  test("a hub-served confidence outside [0,1] is dropped at the boundary", async () => {
+    // Arrange — a hostile or buggy hub labels a claim `confidence 1e+30`;
+    // every other hub field is validated tightly and this one must be too
+    const { repo, hub, env } = await fixture("confidence");
+    const base = rejectedApproachCandidate();
+    const claims = base["claims"] as readonly Record<string, unknown>[];
+    hub.setCandidates([
+      { ...base, claims: [{ ...claims[0], confidence: 1e30 }] },
+    ]);
+
+    // Act
+    const stdout = await runHook("user-prompt-submit", promptPayload(repo, PROMPT), env);
+
+    // Assert — a trust label the schema cannot vouch for is never rendered
     expect(stdout).toBe("");
   });
 

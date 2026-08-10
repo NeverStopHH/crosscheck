@@ -23,7 +23,18 @@ import {
 } from "../constants.ts";
 import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
 
-/** Tiers where the prompt provably matched — recency/vector filler never hints. */
+/**
+ * Tiers where the prompt provably matched — recency/vector filler never hints.
+ * The hub applies the same floor server-side (HINT_ELIGIBLE_TIERS in
+ * packages/server/src/services/hints.ts); the two literals sit on opposite
+ * sides of an HTTP boundary where an import cannot reach, so their equality
+ * is pinned rather than assumed — silent drift would move the floor to
+ * whichever side is looser:
+ *
+ * VERIFY: grep -c '\["exact", "fts"\]' packages/connector-claude/src/hints/select.ts packages/server/src/services/hints.ts
+ * PRINTS: packages/connector-claude/src/hints/select.ts:1
+ * PRINTS: packages/server/src/services/hints.ts:1
+ */
 const HINT_ELIGIBLE_TIERS: ReadonlySet<string> = new Set(["exact", "fts"]);
 
 /** Statuses that mark a claim settled enough to inject (with evidence). */
@@ -81,12 +92,20 @@ const isEligibleContext = (context: HintContextCandidate): boolean =>
 /** Not the reader's own words, however the context they sit in matched. */
 const isForeignClaim = (
   claim: HintClaimCandidate,
-  selfDeveloperId: string | null,
-): boolean =>
-  selfDeveloperId === null || claim.authorDeveloperId !== selfDeveloperId;
+  selfDeveloperId: string,
+): boolean => claim.authorDeveloperId !== selfDeveloperId;
 
 export const selectHint = (input: SelectHintInput): HintSelection => {
   if (input.deliveredCount >= MAX_HINTS_PER_SESSION) {
+    return SILENCE;
+  }
+  // No identity, no hints — fail closed (§4 self-exclusion). With a null
+  // selfDeveloperId every claim would count as foreign, INCLUDING one the
+  // reader authored into a teammate's tree via extend_diagnosis before the
+  // config lost its developerId; being hinted your own words is self-noise
+  // (§10 risk 1), and silence is the direction every doubt resolves to.
+  const selfDeveloperId = input.selfDeveloperId;
+  if (selfDeveloperId === null) {
     return SILENCE;
   }
   const seen = new Set(input.seenRefIds);
@@ -98,7 +117,7 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     // Negatives are privileged (§4): scan rejected approaches before settled
     // positives within a context, in the hub's claim order otherwise.
     const foreign = context.claims.filter((claim) =>
-      isForeignClaim(claim, input.selfDeveloperId),
+      isForeignClaim(claim, selfDeveloperId),
     );
     const injectable = [
       ...foreign.filter(isNegativeKnowledge),
@@ -115,7 +134,7 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
   // noise, not news.
   for (const context of eligible) {
     const foreignCount = context.claims.filter((claim) =>
-      isForeignClaim(claim, input.selfDeveloperId),
+      isForeignClaim(claim, selfDeveloperId),
     ).length;
     const anyClaimSeen = context.claims.some((claim) => seen.has(claim.id));
     if (foreignCount > 0 && !seen.has(context.workContext.id) && !anyClaimSeen) {

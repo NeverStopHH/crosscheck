@@ -409,7 +409,10 @@ export const HintClaimCandidateSchema = z.looseObject({
   workContextId: z.string().min(1),
   kind: z.string().min(1),
   status: z.string().min(1),
-  confidence: z.number(),
+  // Bounded like the canonical ClaimSchema (@crosscheck/schema): rendered as
+  // a trust label, so `confidence 1e+30` from a hostile hub is a forged
+  // credential, not a number — the row is dropped, silence follows.
+  confidence: z.number().min(0).max(1),
   provenance: z.string().min(1),
   captureMode: z.string().min(1).optional(),
   evidenceRefCount: z.number().int().min(0).default(0),
