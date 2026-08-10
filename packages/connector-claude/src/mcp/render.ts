@@ -31,18 +31,24 @@ import {
   MAX_TITLE_CHARS,
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
-import { QUOTED_DATA_NOTICE, formatAge } from "../briefing/render.ts";
+import {
+  QUOTED_DATA_NOTICE,
+  formatAge,
+  formatSolvedAge,
+} from "../briefing/render.ts";
 import {
   bareUntrusted as bare,
   safeId,
   sanitizeUntrusted,
 } from "../briefing/sanitize.ts";
+import type { CommitDrift } from "../git/commit-drift.ts";
+import type { SolvedFileDrift } from "../git/solved-staleness.ts";
 import type {
   Diagnosis,
   DiagnosisClaim,
   DiagnosisEdge,
   ExternalClaimRef,
-  WorkContextEntry,
+  SearchResultEntry,
 } from "../http/hub.ts";
 
 /**
@@ -244,6 +250,111 @@ const completenessNotes = (diagnosis: Diagnosis): readonly string[] => [
     : []),
 ];
 
+/** Same-author revision edge; its TARGET is the retracted claim. */
+const SUPERSEDES_EDGE_KIND = "supersedes";
+
+/** The one claim status that can mark a tree solved. */
+const SOLVED_CLAIM_STATUS = "likely_root_cause";
+
+/**
+ * When this tree was SOLVED — the newest non-superseded likely_root_cause
+ * claim WITH evidence refs — or null.
+ *
+ * Derived from the VERY TREE being rendered, deliberately, rather than
+ * shipped as a hub field: the label then cannot disagree with the claims the
+ * reader sees under it, and a hostile hub cannot mint "solved" without also
+ * minting the claim rows that justify it. This mirrors the hub's own rule
+ * (packages/server/src/services/solved.ts — same status, same evidence
+ * floor, same supersedes probe); the two sit on opposite sides of the wire
+ * where an import cannot reach, so each side's tests pin its half. A tree
+ * the hub truncated may hide the solving claim — that fails toward
+ * NOT-solved, the honest direction for a label readers treat as settled.
+ */
+export const solvedAtFromTree = (
+  diagnosis: Pick<Diagnosis, "claims" | "edges">,
+): number | null => {
+  const supersededIds = new Set(
+    diagnosis.edges
+      .filter((edge) => edge.kind === SUPERSEDES_EDGE_KIND)
+      .map((edge) => edge.toClaimId),
+  );
+  const solvedTimes = diagnosis.claims
+    .filter(
+      (claim) =>
+        claim.status === SOLVED_CLAIM_STATUS &&
+        claim.evidenceRefs.length > 0 &&
+        !supersededIds.has(claim.id),
+    )
+    .map((claim) => Date.parse(claim.createdAt))
+    .filter((ms) => !Number.isNaN(ms));
+  return solvedTimes.length === 0 ? null : Math.max(...solvedTimes);
+};
+
+/**
+ * What the pull-time git checks learned about a solved tree — computed by
+ * the TOOL (only it has a repo to ask) and rendered here. Every field is
+ * fail-open: null drift and "unknown" fileDrift render honest absence.
+ */
+export interface SolvedPresentation {
+  readonly now: Date;
+  readonly drift: CommitDrift | null;
+  readonly fileDrift: SolvedFileDrift;
+}
+
+/** DESIGN.md §4's drift phrasing, against the READER's HEAD. */
+const diagnosisDriftLine = (drift: CommitDrift | null): readonly string[] => {
+  if (drift === null || (drift.ahead === 0 && drift.behind === 0)) {
+    return [];
+  }
+  return drift.behind > 0
+    ? [`The diagnosis is based on a commit ${String(drift.behind)} behind your HEAD.`]
+    : [`The diagnosis is based on a commit ${String(drift.ahead)} ahead of your HEAD.`];
+};
+
+const FILE_DRIFT_SENTENCES: Readonly<Record<SolvedFileDrift, string>> = {
+  changed:
+    "Files this diagnosis referenced have changed on the default branch since it was recorded.",
+  unchanged:
+    "Files this diagnosis referenced have not changed on the default branch since it was recorded.",
+  unknown:
+    "Whether the files this diagnosis referenced have since changed is unknown.",
+};
+
+/**
+ * The honest-presentation block for a solved tree (VISION.md §1): age stated
+ * plainly, drift where available, staleness in three states, and the
+ * lead-not-answer framing. Factual statements only — never imperatives —
+ * and every character renderer-built (ages via formatSolvedAge, sentences
+ * from this file), so no new untrusted path opens here.
+ */
+const solvedBlock = (
+  diagnosis: Diagnosis,
+  presentation: SolvedPresentation | undefined,
+): readonly string[] => {
+  if (presentation === undefined) {
+    return [];
+  }
+  const solvedAtMs = solvedAtFromTree(diagnosis);
+  if (solvedAtMs === null) {
+    return [];
+  }
+  const age = formatSolvedAge(
+    Math.max(0, presentation.now.getTime() - solvedAtMs),
+  );
+  const landed =
+    diagnosis.workContext.landedAt === null ||
+    diagnosis.workContext.landedAt === undefined
+      ? []
+      : ["The owning session's base commit is on the repo's default branch."];
+  return [
+    `Solved: a root cause claim with recorded evidence was added ${age} ago — ` +
+      "an old diagnosis is a recorded lead, not a statement about the current code.",
+    ...landed,
+    ...diagnosisDriftLine(presentation.drift),
+    FILE_DRIFT_SENTENCES[presentation.fileDrift],
+  ];
+};
+
 /**
  * One diagnosis tree, as markdown-ish text for an agent to read.
  *
@@ -275,16 +386,20 @@ const completenessNotes = (diagnosis: Diagnosis): readonly string[] => [
  * of them is the wrong trade, and the residual is bounded: a display name is
  * sanitized, phrase-filtered, capped at MAX_TITLE_CHARS and structurally inert.
  */
-export const renderDiagnosis = (diagnosis: Diagnosis): string => {
+export const renderDiagnosis = (
+  diagnosis: Diagnosis,
+  solvedPresentation?: SolvedPresentation,
+): string => {
   const index = authorIndex(diagnosis.claims);
   const context = diagnosis.workContext;
   const header = `crosscheck diagnosis for work context ${safeId(context.id)}. ${QUOTED_DATA_NOTICE}`;
   const contextLine = `Work context ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} · status ${bare(context.status)} · opened by ${authorLabel(index, context.sessionId)}`;
+  const solvedLines = solvedBlock(diagnosis, solvedPresentation);
 
   const opening =
     diagnosis.claims.length === 0
-      ? [header, contextLine, "Claims: no claims recorded yet."]
-      : [header, contextLine];
+      ? [header, contextLine, ...solvedLines, "Claims: no claims recorded yet."]
+      : [header, contextLine, ...solvedLines];
 
   const sections: readonly Section[] = [
     {
@@ -335,11 +450,27 @@ export const renderDiagnosis = (diagnosis: Diagnosis): string => {
   return [...body, ...notes].join("\n");
 };
 
-/** One work context the lexical search matched, with its age at query time. */
+/** One work context the hub search matched, with its ages at query time. */
 export interface SearchHit {
-  readonly entry: WorkContextEntry;
+  readonly entry: SearchResultEntry;
   readonly ageMs: number;
+  /** Age of the solving claim, for solved results; the tool computes it. */
+  readonly solvedAgeMs?: number | undefined;
 }
+
+/**
+ * The solved marker (VISION.md §1): strict equality on the wire value, a
+ * renderer-built label — the hub's string is never printed, so no fourth
+ * untrusted path. Empty for open results and unknown kinds.
+ */
+const solvedFact = (hit: SearchHit): readonly string[] =>
+  hit.entry.resultKind === "solved"
+    ? [
+        hit.solvedAgeMs === undefined
+          ? "solved"
+          : `solved (diagnosed ${formatSolvedAge(hit.solvedAgeMs)} ago)`,
+      ]
+    : [];
 
 const searchLine = (hit: SearchHit): string => {
   const author =
@@ -349,6 +480,7 @@ const searchLine = (hit: SearchHit): string => {
     author.length === 0 ? UNNAMED_AUTHOR : author,
     `${formatAge(hit.ageMs)} ago`,
     `status ${bare(hit.entry.status)}`,
+    ...solvedFact(hit),
   ];
   return `${facts.join(" · ")}: ${quoted(hit.entry.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
 };

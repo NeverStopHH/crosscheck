@@ -221,3 +221,40 @@ describe("seen-set dedup and session cap", () => {
     }
   });
 });
+
+describe("solved trees compose with the anchoring rules (VISION.md §1)", () => {
+  // Pins, deliberately green before the solved block existed: the task is
+  // that solved-tree delivery COMPOSES with §4's existing allowance —
+  // confirmed root cause with evidence — rather than adding a new one. These
+  // hold that door shut in both directions.
+  test("a solved tree's evidenced root cause is substance through the existing rule", () => {
+    const selection = select([
+      context({ resultKind: "solved", solvedAt: "2026-03-10T08:00:00.000Z" }, [
+        claim({
+          id: "clm_rc",
+          kind: "root_cause",
+          status: "likely_root_cause",
+          evidenceRefCount: 1,
+        }),
+      ]),
+    ]);
+    expect(selection.kind).toBe("claim");
+    if (selection.kind === "claim") {
+      expect(selection.claim.id).toBe("clm_rc");
+    }
+  });
+
+  test("the solved label alone cannot push a bare proposed hypothesis", () => {
+    const selection = select([
+      context({ resultKind: "solved", solvedAt: "2026-03-10T08:00:00.000Z" }, [
+        claim({
+          id: "clm_hypo",
+          kind: "hypothesis",
+          status: "proposed",
+          evidenceRefCount: 0,
+        }),
+      ]),
+    ]);
+    expect(selection.kind).toBe("pointer");
+  });
+});

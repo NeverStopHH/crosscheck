@@ -231,6 +231,32 @@ export const ABSENCE_EVIDENCE_NOTE_AGE_HOURS = 24;
  */
 export const STATUS_MAX_ABSENCE_LINES = 20;
 
+// ── Collective memory (VISION.md §1) ────────────────────────────────────────
+
+/**
+ * Landed detection (DESIGN.md §5) is a nice-to-have like drift: a slow git
+ * loses the report, never the briefing. The default-branch resolution rides
+ * INSIDE the SessionStart parallel hub-fetch block (its timeout below the
+ * per-request hub timeout, same free ride as COMMIT_EVIDENCE_GIT_TIMEOUT_MS),
+ * and the ancestry fan-out runs in parallel with the drift lookups — both
+ * bounded by this, so the block's wall clock does not grow.
+ */
+export const LANDED_GIT_TIMEOUT_MS = 250;
+/** Most base commits one SessionStart checks for ancestry — one git each. */
+export const MAX_LANDED_ANCESTRY_CHECKS = 10;
+/** The solved staleness probe is one git call at MCP pull time, bounded. */
+export const STALENESS_GIT_TIMEOUT_MS = 250;
+/** Most referenced files one staleness probe hands git as pathspecs. */
+export const STALENESS_MAX_PATHS = 20;
+/**
+ * "Solved before" pointers one briefing may spend — pointer discipline like
+ * MAX_CONTRADICTION_POINTERS: title + id + age, the tree is a pull.
+ */
+export const MAX_SOLVED_POINTERS = 2;
+/** Solved ages render as days up to here, months beyond ("diagnosed 5mo ago"). */
+export const SOLVED_AGE_MONTHS_THRESHOLD_DAYS = 60;
+export const DAYS_PER_MONTH_APPROX = 30;
+
 export const PRESENCE_CACHE_TTL_MS = 10_000;
 export const STATUSLINE_MAX_CHARS = 90;
 export const STATUSLINE_MAX_NAMES = 3;

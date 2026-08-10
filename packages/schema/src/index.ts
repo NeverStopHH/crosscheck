@@ -63,6 +63,12 @@ export type {
 } from "./commit-evidence.ts";
 
 export {
+  LandedEvidenceSchema,
+  MAX_LANDED_COMMITS,
+} from "./landed-evidence.ts";
+export type { LandedEvidence } from "./landed-evidence.ts";
+
+export {
   EnvelopeSchema,
   KNOWN_RECORD_KINDS,
   PROTOCOL_VERSION,

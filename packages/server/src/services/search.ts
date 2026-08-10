@@ -39,6 +39,7 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
+import { listSolvedInfo } from "./solved.ts";
 import type { Db } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
 import type { Clock } from "../types.ts";
@@ -117,11 +118,51 @@ const DECAY_HALF_LIFE_DAYS = 14;
  */
 const MIN_VECTOR_SIMILARITY = 0.3;
 
+/**
+ * Decay floor for SOLVED trees the query lexically matched (VISION.md §1):
+ * a confirmed, evidence-backed answer from months ago must stay findable, so
+ * its decay factor never drops below this — while fresh work on the same
+ * ground still wins on equal terms.
+ *
+ * WHY 0.7, worked through the RRF arithmetic above. The strongest score a
+ * fresh context can reach without owning an exact target is rank 1 in BOTH
+ * text tiers: 2·TEXT_TIER_WEIGHT/(RRF_K+1) = 2/61 ≈ 0.0328. A solved tree
+ * owning the exact target contributes at least EXACT_TIER_WEIGHT/(RRF_K+1) =
+ * 3/61 ≈ 0.0492 before decay, so any floor above 2/3 keeps the solved exact
+ * match ahead of every fresh text-only row — 0.7 clears that with margin,
+ * while a fresh row that ALSO owns the exact target still outranks the old
+ * one (0.0492 > 0.0344), which is right: current work on the same file is
+ * not noise. Without the floor, a 60-day-old solved tree decays to
+ * 0.5^(60/14) ≈ 0.051 of its score and loses to any fresh text match.
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/services/search.ts");const solvedExact=s.SOLVED_DECAY_FLOOR*s.EXACT_TIER_WEIGHT/(s.RRF_K+1);const freshTextCeiling=2*s.TEXT_TIER_WEIGHT/(s.RRF_K+1);console.log(solvedExact.toFixed(4),freshTextCeiling.toFixed(4),solvedExact>freshTextCeiling,(0.5**(60/14)).toFixed(3))'
+ * PRINTS: 0.0344 0.0328 true 0.051
+ *
+ * Applied ONLY when the match is a fact — the exact and FTS tiers, the same
+ * floor the hints path draws (HINT_ELIGIBLE_TIERS): a vector-only "match" is
+ * a similarity guess, and boosting stale guesses is how a ranking loses the
+ * trust the floor exists to protect. Mutation-guarded like the other ranking
+ * constants (scripts/mutation-check.ts → test/solved-ranking.test.ts).
+ */
+export const SOLVED_DECAY_FLOOR = 0.7;
+
+/** The tiers whose match is a fact — where the solved floor may apply. */
+const SOLVED_FLOOR_TIERS: ReadonlySet<SearchTier> = new Set(["exact", "fts"]);
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /** Tier precedence for the label a result carries — most precise wins. */
 const TIER_ORDER = ["exact", "fts", "vector", "recency"] as const;
 export type SearchTier = (typeof TIER_ORDER)[number];
+
+/**
+ * What a result IS: live coordination state, or a solved diagnosis retained
+ * as team memory (VISION.md §1). Distinct from `tier`, which says how the
+ * query matched it — surfaces present solved trees differently, and a label
+ * that rode on the tier would be lost the moment a solved tree also matched
+ * lexically.
+ */
+export type SearchResultKind = "open" | "solved";
 
 export interface SearchResultView {
   readonly id: string;
@@ -133,6 +174,9 @@ export interface SearchResultView {
   readonly updatedAt: string | null;
   readonly tier: SearchTier;
   readonly score: number;
+  readonly resultKind: SearchResultKind;
+  /** When the solving claim was recorded; null for open results. */
+  readonly solvedAt: string | null;
 }
 
 export interface SearchResponse {
@@ -413,10 +457,15 @@ const decayFactor = (row: TierRow, nowMs: number): number => {
   return 0.5 ** (ageDays / DECAY_HALF_LIFE_DAYS);
 };
 
+/** True when any of the entry's matched tiers is a lexical fact. */
+const hasFactTier = (tiers: ReadonlySet<SearchTier>): boolean =>
+  [...tiers].some((tier) => SOLVED_FLOOR_TIERS.has(tier));
+
 /** Weighted RRF, then decay — new objects only, nothing mutated in place. */
 const fuseTiers = (
   tiers: readonly TierList[],
   nowMs: number,
+  solvedIds: ReadonlySet<string>,
 ): readonly FusedEntry[] => {
   const fused = new Map<string, FusedEntry>();
   for (const { tier, weight, rows } of tiers) {
@@ -431,10 +480,18 @@ const fuseTiers = (
     });
   }
   return [...fused.values()]
-    .map((entry) => ({
-      ...entry,
-      score: entry.score * decayFactor(entry.row, nowMs),
-    }))
+    .map((entry) => {
+      // The solved floor (SOLVED_DECAY_FLOOR): only for solved trees, and
+      // only when a lexical tier matched — see the constant's rationale.
+      const floor =
+        solvedIds.has(entry.row.id) && hasFactTier(entry.tiers)
+          ? SOLVED_DECAY_FLOOR
+          : 0;
+      return {
+        ...entry,
+        score: entry.score * Math.max(decayFactor(entry.row, nowMs), floor),
+      };
+    })
     .sort((left, right) => right.score - left.score);
 };
 
@@ -445,6 +502,7 @@ const tierLabel = (tiers: ReadonlySet<SearchTier>): SearchTier =>
 const hydrate = async (
   db: Db,
   entries: readonly FusedEntry[],
+  solvedInfo: ReadonlyMap<string, Date>,
 ): Promise<readonly SearchResultView[]> => {
   if (entries.length === 0) {
     return [];
@@ -470,6 +528,7 @@ const hydrate = async (
     if (row === undefined) {
       return [];
     }
+    const solvedAt = solvedInfo.get(row.id);
     return [
       {
         id: row.id,
@@ -481,6 +540,10 @@ const hydrate = async (
         updatedAt: row.updatedAt === null ? null : row.updatedAt.toISOString(),
         tier: tierLabel(entry.tiers),
         score: entry.score,
+        resultKind: (solvedAt === undefined
+          ? "open"
+          : "solved") as SearchResultKind,
+        solvedAt: solvedAt === undefined ? null : solvedAt.toISOString(),
       },
     ];
   });
@@ -523,15 +586,22 @@ export const searchWorkContexts = async (
     excludeDeveloperId: input.excludeDeveloperId,
   };
 
-  // A blank query asks "what is happening" — answered by recency alone.
+  // A blank query asks "what is happening" — answered by recency alone. The
+  // solved lookup still runs for the LABEL; the floor cannot apply (recency
+  // is not a fact tier), so a listing keeps its pure activity order.
   if (query.trim().length === 0) {
     const rows = await listRecencyTier(deps.db, scope);
+    const solvedInfo = await listSolvedInfo(
+      deps.db,
+      rows.map((row) => row.id),
+    );
     const fused = fuseTiers(
       [{ tier: "recency", weight: TEXT_TIER_WEIGHT, rows }],
       nowMs,
+      new Set(solvedInfo.keys()),
     );
     return {
-      results: await hydrate(deps.db, fused.slice(0, limit)),
+      results: await hydrate(deps.db, fused.slice(0, limit), solvedInfo),
       vectorTierActive: false,
     };
   }
@@ -542,6 +612,16 @@ export const searchWorkContexts = async (
     tryVectorTier(deps, query, scope),
   ]);
 
+  // One bounded lookup over every candidate id (each tier list is already
+  // capped at TIER_CANDIDATES) — the floor needs solvedness BEFORE fusion
+  // ranks, and the label needs it for every hydrated row.
+  const candidateIds = [
+    ...new Set(
+      [...exactRows, ...ftsRows, ...vector.rows].map((row) => row.id),
+    ),
+  ];
+  const solvedInfo = await listSolvedInfo(deps.db, candidateIds);
+
   const fused = fuseTiers(
     [
       { tier: "exact", weight: EXACT_TIER_WEIGHT, rows: exactRows },
@@ -549,9 +629,10 @@ export const searchWorkContexts = async (
       { tier: "vector", weight: TEXT_TIER_WEIGHT, rows: vector.rows },
     ],
     nowMs,
+    new Set(solvedInfo.keys()),
   );
   return {
-    results: await hydrate(deps.db, fused.slice(0, limit)),
+    results: await hydrate(deps.db, fused.slice(0, limit), solvedInfo),
     vectorTierActive: vector.active,
   };
 };

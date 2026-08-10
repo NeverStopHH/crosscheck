@@ -149,8 +149,14 @@ export const handleUserPromptSubmit = async (
     return "";
   }
   const selection = selectHint({
+    // Briefing solved pointers join the seen-set — the same tree must not be
+    // re-pointed — but NOT deliveredCount: they were the briefing's budget,
+    // and spending prompt-hint slots on them would starve real hints. A
+    // solved tree's evidence-backed claims stay deliverable as substance
+    // (the seen-set suppresses pointers to a seen context, never unseen
+    // claims inside it — hints/select.ts).
     candidates: result.data,
-    seenRefIds: state.deliveredHintRefs,
+    seenRefIds: [...state.deliveredHintRefs, ...state.briefingSolvedRefs],
     deliveredCount: state.deliveredHintRefs.length,
     selfDeveloperId: state.developerId,
   });

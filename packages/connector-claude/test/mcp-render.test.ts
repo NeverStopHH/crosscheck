@@ -80,6 +80,7 @@ const diagnosis = (overrides: Partial<Diagnosis> = {}): Diagnosis => ({
   claims: [claim()],
   edges: [],
   externalClaims: [],
+  targets: [],
   truncated: false,
   droppedRows: 0,
   ...overrides,

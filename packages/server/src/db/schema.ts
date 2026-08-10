@@ -86,6 +86,14 @@ export const workContexts = pgTable("work_contexts", {
   /** Null until an embedder is configured and has embedded the current doc. */
   embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
   embeddingModel: text("embedding_model"),
+  /**
+   * When the hub first learned the owning session's base commit is an
+   * ancestor of the default branch (DESIGN.md §5 merged-branch detection) —
+   * null while unobserved. A COLUMN, not a status transition, and monotonic:
+   * git ancestry never un-happens, and the status enum keeps recording what
+   * the session was doing (services/landed.ts states the full reasoning).
+   */
+  landedAt: timestamptz("landed_at"),
   createdAt: timestamptz("created_at").notNull(),
   updatedAt: timestamptz("updated_at"),
 });

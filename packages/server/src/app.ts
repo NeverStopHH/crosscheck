@@ -10,6 +10,7 @@ import { presenceRoutes } from "./routes/presence.ts";
 import { recordsRoutes } from "./routes/records.ts";
 import { searchRoutes } from "./routes/search.ts";
 import { sessionsRoutes } from "./routes/sessions.ts";
+import { solvedMatchesRoutes } from "./routes/solved-matches.ts";
 import { workContextsRoutes } from "./routes/work-contexts.ts";
 import type { AppDeps, AppEnv } from "./types.ts";
 
@@ -26,6 +27,7 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/hints", hintsRoutes(deps));
   app.route("/api/contradictions", contradictionsRoutes(deps));
   app.route("/api/absences", absencesRoutes(deps));
+  app.route("/api/solved-matches", solvedMatchesRoutes(deps));
 
   app.notFound((c) => fail(c, 404, "not_found", "route not found"));
   app.onError((error, c) => {

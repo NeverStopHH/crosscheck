@@ -44,6 +44,19 @@ export const ABSENCE_MAX_FINDINGS = 20;
 /** Read bound on evidence rows considered per absence query. */
 export const ABSENCE_MAX_EVIDENCE_ROWS = 200;
 
+// ── Solved-tree matching (VISION.md §1 collective memory) ───────────────────
+
+/**
+ * How recently a live context must have been active for a solved tree
+ * sharing its target to count as "matching current work". Mirrors the
+ * briefing's related-work window (CONTEXT_MAX_AGE_DAYS in the connector).
+ */
+export const SOLVED_MATCH_ACTIVE_WINDOW_DAYS = 14;
+/** Upper bound on findings per response; fingerprint matches win the slots. */
+export const SOLVED_MATCH_MAX_FINDINGS = 5;
+/** Read bound on shared-target pair rows considered per query. */
+export const SOLVED_MATCH_MAX_PAIR_ROWS = 200;
+
 export const EVENT_KINDS = {
   DEVELOPER_CREATED: "developer_created",
   SESSION_STARTED: "session_started",

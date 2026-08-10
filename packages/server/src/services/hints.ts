@@ -36,7 +36,7 @@ import {
 } from "../db/schema.ts";
 import { presenceCutoff } from "./presence.ts";
 import { searchWorkContexts } from "./search.ts";
-import type { SearchTier } from "./search.ts";
+import type { SearchResultKind, SearchTier } from "./search.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -104,6 +104,13 @@ export interface HintContextCandidate {
     readonly developerId: string;
     readonly developerName: string;
     readonly baseCommit: string;
+    /**
+     * Solved trees are presented differently (VISION.md §1) — the fact rides
+     * the search row (services/solved.ts computes it there) so this endpoint
+     * stays one bounded call.
+     */
+    readonly resultKind: SearchResultKind;
+    readonly solvedAt: string | null;
     readonly createdAt: string;
     readonly updatedAt: string | null;
   };
@@ -239,6 +246,8 @@ export const listHintCandidates = async (
       developerId: row.developerId,
       developerName: row.developerName,
       baseCommit: baseCommits.get(row.id) ?? "",
+      resultKind: row.resultKind,
+      solvedAt: row.solvedAt,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     },

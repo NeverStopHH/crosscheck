@@ -25,6 +25,7 @@ import {
   QUOTED_DATA_NOTICE,
   UNKNOWN_AUTHOR,
   formatAge,
+  formatSolvedAge,
 } from "../briefing/render.ts";
 import { bareUntrusted as bare } from "../briefing/sanitize.ts";
 import { quoted, safeId } from "../mcp/render.ts";
@@ -59,6 +60,28 @@ const driftLabel = (drift: CommitDrift | null): string => {
 const authorLabel = (name: string | undefined): string => {
   const sanitized = name === undefined ? "" : bare(name);
   return sanitized.length === 0 ? UNKNOWN_AUTHOR : sanitized;
+};
+
+/**
+ * The solved fact, with its plain age (VISION.md §1 honest presentation).
+ * Strict equality on the wire value and a renderer-built sentence — the kind
+ * string itself is never printed, so no fourth untrusted path opens here.
+ * Empty for open contexts, unknown kinds, and unparseable timestamps: an
+ * undecorated hint, never a wrong label.
+ */
+const solvedLabel = (context: HintContext, now: Date): string => {
+  if (context.resultKind !== "solved") {
+    return "";
+  }
+  const solvedMs =
+    context.solvedAt === null || context.solvedAt === undefined
+      ? Number.NaN
+      : Date.parse(context.solvedAt);
+  if (Number.isNaN(solvedMs)) {
+    return "";
+  }
+  const age = formatSolvedAge(Math.max(0, now.getTime() - solvedMs));
+  return ` · from a diagnosis marked solved ${age} ago`;
 };
 
 const ageLabel = (iso: string, now: Date): string => {
@@ -102,7 +125,7 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     `provenance ${bare(claim.provenance)}`,
     ageLabel(claim.createdAt, now),
   ];
-  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}: ${quoted(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
+  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quoted(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
   const contextLine =
     `Recorded on work context ${safeId(context.id)} ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} — ` +
     "the full tree is readable with get_diagnosis.";
@@ -130,7 +153,7 @@ export const renderPointerHint = (input: PointerHintInput): string => {
     `status ${bare(context.status)}`,
     ageLabel(context.updatedAt ?? context.createdAt, now),
   ];
-  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}: ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
+  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
   const tailLine =
     `It carries ${String(claimCount)} claim${claimCount === 1 ? "" : "s"} crosscheck does not ` +
     "inject unasked (substance is pushed only for evidence-backed findings); the tree is " +

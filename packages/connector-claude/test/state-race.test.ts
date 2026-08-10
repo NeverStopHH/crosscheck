@@ -64,6 +64,7 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   deliveredHintRefs: [],
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
+  briefingSolvedRefs: [],
 });
 
 interface Fixture {

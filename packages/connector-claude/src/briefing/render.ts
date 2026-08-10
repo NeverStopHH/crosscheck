@@ -2,21 +2,25 @@ import {
   ABSENCE_EVIDENCE_NOTE_AGE_HOURS,
   AGE_HOURS_BEFORE_DAYS,
   CONTEXT_MAX_AGE_DAYS,
+  DAYS_PER_MONTH_APPROX,
   MAX_ABSENCE_LINES,
   MAX_BRIEFING_CHARS,
   MAX_CONTEXTS,
   MAX_CONTRADICTION_POINTERS,
+  MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
   MINUTES_PER_HOUR,
   MS_PER_DAY,
   MS_PER_SECOND,
   SECONDS_PER_MINUTE,
+  SOLVED_AGE_MONTHS_THRESHOLD_DAYS,
 } from "../constants.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import type {
   ContradictionEntry,
   ContradictionSide,
   PresenceEntry,
+  SolvedMatchEntry,
   WorkContextEntry,
 } from "../http/hub.ts";
 import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
@@ -80,6 +84,8 @@ export interface BriefingInput {
   readonly absences?: readonly AbsenceEntry[] | undefined;
   /** Open contradictions; omitted or empty renders no section (fail open). */
   readonly contradictions?: readonly ContradictionEntry[] | undefined;
+  /** Solved-before matches; omitted or empty renders no section (fail open). */
+  readonly solvedMatches?: readonly SolvedMatchEntry[] | undefined;
 }
 
 interface Section {
@@ -307,6 +313,78 @@ const renderContradictionSection = (input: BriefingInput): Section => {
   };
 };
 
+/**
+ * A solved diagnosis's age, stated plainly (honest presentation): days up to
+ * SOLVED_AGE_MONTHS_THRESHOLD_DAYS, months beyond — "diagnosed 5mo ago"
+ * reads at a glance where "152d" asks the reader to divide.
+ */
+export const formatSolvedAge = (ageMs: number): string => {
+  const days = Math.floor(Math.max(0, ageMs) / MS_PER_DAY);
+  if (days >= SOLVED_AGE_MONTHS_THRESHOLD_DAYS) {
+    return `${String(Math.floor(days / DAYS_PER_MONTH_APPROX))}mo`;
+  }
+  return formatAge(ageMs);
+};
+
+/**
+ * What the shared target kind means, as this renderer's OWN words — mapped
+ * by strict equality, never printed from the wire. An unknown kind drops the
+ * line (null): guessing a sentence for it would put crosscheck's voice
+ * behind a fact it does not understand — mirror of the absence section's
+ * unknown-kind rule.
+ */
+const SOLVED_MATCH_KIND_LABELS: Readonly<Record<string, string>> = {
+  error_fingerprint: "shared error fingerprint with current work",
+  file: "shared file with current work",
+};
+
+/**
+ * One solved-before pointer: author, plain age, what is shared, and the pull
+ * call — NEVER a claim body (§4 pointer discipline; an old answer asserted
+ * at SessionStart would anchor). Exported because the SessionStart hook must
+ * know which pointers the emitted briefing actually shows, to record their
+ * deliveries — two spellings of this line would drift.
+ * Null = a row this renderer will not vouch for.
+ */
+export const formatSolvedLine = (
+  entry: SolvedMatchEntry,
+  now: Date,
+): string | null => {
+  const id = safeId(entry.workContextId);
+  const title = sanitizeUntrusted(entry.title);
+  const ageMs = ageMsFrom(entry.solvedAt, now);
+  const kindLabel = SOLVED_MATCH_KIND_LABELS[entry.matchedTargetKind];
+  if (id.length === 0 || title.length === 0 || ageMs === null || kindLabel === undefined) {
+    return null;
+  }
+  const name =
+    entry.developerName === undefined ? "" : bareUntrusted(entry.developerName);
+  const author = name.length === 0 ? UNKNOWN_AUTHOR : name;
+  // U+00B7-separated like the absence and MCP lines — the structure the BARE
+  // class strips from names, so an author cannot mint a field. A comma-shaped
+  // line here would be structure no character class covers.
+  return `- ${author} · diagnosed ${formatSolvedAge(ageMs)} ago · ${kindLabel}: «${title}» · get_diagnosis ${id}`;
+};
+
+/**
+ * Placed AFTER contradictions and BEFORE absences: an old confirmed answer
+ * is a lead for the work at hand — worth more than ambient absence context,
+ * less urgent than a live conflict between open theories. With the briefing
+ * full, solved pointers give way before conflicts do, and absences give way
+ * before solved pointers.
+ */
+const renderSolvedSection = (input: BriefingInput): Section => {
+  const rendered = (input.solvedMatches ?? []).flatMap((entry) => {
+    const line = formatSolvedLine(entry, input.now);
+    return line === null ? [] : [line];
+  });
+  return {
+    header: "Previously solved on this repo (get_diagnosis reads the tree):",
+    lines: rendered.slice(0, MAX_SOLVED_POINTERS),
+    total: rendered.length,
+  };
+};
+
 const MS_PER_HOUR = MS_PER_SECOND * SECONDS_PER_MINUTE * MINUTES_PER_HOUR;
 
 const ABSENCE_HEADER_BASE =
@@ -447,6 +525,7 @@ export const renderBriefing = (input: BriefingInput): string => {
     renderPresenceSection(input),
     renderContextSection(input),
     renderContradictionSection(input),
+    renderSolvedSection(input),
     renderAbsenceSection(input),
   ];
   if (sections.every((section) => section.lines.length === 0)) {

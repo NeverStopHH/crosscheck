@@ -159,6 +159,54 @@ describe("GET /api/hints/candidates", () => {
     expect(rejected?.authorDeveloperName).toBe("Nick");
   });
 
+  test("a solved candidate context carries the solved kind and diagnosis age", async () => {
+    // Arrange: Nick's tree gains an evidenced, non-superseded root cause —
+    // the solved rule (services/solved.ts). The hints surface must hand the
+    // renderer the same fact search results carry, so the hint can say
+    // "from a solved diagnosis" with its age.
+    const { harness, nick, robin } = await setupTwoDevelopers();
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_root",
+            kind: "root_cause",
+            status: "likely_root_cause",
+            confidence: 0.9,
+            evidenceRefs: ["clm_01"],
+            body: "The rotation job drops the key id before re-signing",
+          }),
+        ),
+      ],
+    });
+
+    // Act
+    const result = await fetchCandidates(harness, robin, "refresh.ts");
+
+    // Assert
+    const context = result.candidates[0]?.workContext as
+      | { resultKind?: string; solvedAt?: string | null }
+      | undefined;
+    expect(context?.resultKind).toBe("solved");
+    expect(typeof context?.solvedAt).toBe("string");
+  });
+
+  test("an unsolved candidate context is marked open", async () => {
+    // Arrange
+    const { harness, robin } = await setupTwoDevelopers();
+
+    // Act
+    const result = await fetchCandidates(harness, robin, "refresh.ts");
+
+    // Assert
+    const context = result.candidates[0]?.workContext as
+      | { resultKind?: string; solvedAt?: string | null }
+      | undefined;
+    expect(context?.resultKind).toBe("open");
+    expect(context?.solvedAt).toBeNull();
+  });
+
   test("excludes the caller's own work contexts", async () => {
     // Arrange
     const { harness, nick } = await setupTwoDevelopers();

@@ -41,6 +41,9 @@ export const WorkContextEntrySchema = z.looseObject({
   developerName: z.string().min(1).optional(),
   title: z.string().min(1),
   status: z.string().min(1),
+  /** Optional: an older hub omits both, and landed detection simply skips. */
+  baseCommit: z.string().min(1).optional(),
+  landedAt: z.string().nullable().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
 });
@@ -207,6 +210,34 @@ export const getAbsences = (
   });
 
 /**
+ * One "solved before" match (VISION.md §1): a solved tree sharing a strong
+ * target with current work on this repo. A POINTER on the wire by
+ * construction — title, author, ages and the id to pull, never a claim body.
+ */
+export const SolvedMatchEntrySchema = z.looseObject({
+  workContextId: z.string().min(1),
+  title: z.string().min(1),
+  developerName: z.string().min(1).optional(),
+  solvedAt: z.string().min(1),
+  landedAt: z.string().nullable().optional(),
+  /** Open string: an unknown kind renders nothing (briefing/render.ts). */
+  matchedTargetKind: z.string().min(1),
+});
+
+export type SolvedMatchEntry = z.infer<typeof SolvedMatchEntrySchema>;
+
+/** One more parallel GET inside the SessionStart fetch block (fail open). */
+export const getSolvedMatches = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<readonly SolvedMatchEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/solved-matches${encodeRepo(repo)}`,
+    schema: tolerantList("matches", SolvedMatchEntrySchema),
+  });
+
+/**
  * One claim of a diagnosis tree.
  *
  * `authorDeveloperName` is the field that makes a tree readable by somebody who
@@ -261,17 +292,34 @@ export const DiagnosisWorkContextSchema = z.looseObject({
   title: z.string().min(1),
   description: z.string().nullable().optional(),
   status: z.string().min(1),
+  /** Optional: an older hub omits both — drift and the landed line simply skip. */
+  baseCommit: z.string().min(1).optional(),
+  landedAt: z.string().nullable().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
 });
 
 export type DiagnosisWorkContext = z.infer<typeof DiagnosisWorkContextSchema>;
 
+/** One deterministic target of the tree — the staleness check reads files. */
+export const DiagnosisTargetSchema = z.looseObject({
+  kind: z.string().min(1),
+  value: z.string().min(1),
+});
+
+export type DiagnosisTarget = z.infer<typeof DiagnosisTargetSchema>;
+
 export interface Diagnosis {
   readonly workContext: DiagnosisWorkContext;
   readonly claims: readonly DiagnosisClaim[];
   readonly edges: readonly DiagnosisEdge[];
   readonly externalClaims: readonly ExternalClaimRef[];
+  /**
+   * The tree's targets (hub-bounded). Counted into droppedRows when rows do
+   * not parse: a dropped FILE target silently narrows the staleness check,
+   * and the diagnosis is the surface where degradation must be said.
+   */
+  readonly targets: readonly DiagnosisTarget[];
   /** The hub hit its own 500/1000 bound — the tree returned is partial. */
   readonly truncated: boolean;
   /**
@@ -310,19 +358,23 @@ const DiagnosisEnvelopeSchema = z
     claims: z.array(z.unknown()).default([]),
     edges: z.array(z.unknown()).default([]),
     externalClaims: z.array(z.unknown()).default([]),
+    targets: z.array(z.unknown()).default([]),
     truncated: z.boolean().default(false),
   })
   .transform((value): Diagnosis => {
     const claims = parseRows(value.claims, DiagnosisClaimSchema);
     const edges = parseRows(value.edges, DiagnosisEdgeSchema);
     const external = parseRows(value.externalClaims, ExternalClaimRefSchema);
+    const targets = parseRows(value.targets, DiagnosisTargetSchema);
     return {
       workContext: value.workContext,
       claims: claims.rows,
       edges: edges.rows,
       externalClaims: external.rows,
+      targets: targets.rows,
       truncated: value.truncated,
-      droppedRows: claims.dropped + edges.dropped + external.dropped,
+      droppedRows:
+        claims.dropped + edges.dropped + external.dropped + targets.dropped,
     };
   });
 
@@ -351,6 +403,9 @@ export const SearchResultEntrySchema = z.looseObject({
   updatedAt: z.string().nullable().optional(),
   tier: z.string().min(1).optional(),
   score: z.number().optional(),
+  /** Solved-tree marker (VISION.md §1); optional — older hubs send neither. */
+  resultKind: z.string().min(1).optional(),
+  solvedAt: z.string().nullable().optional(),
 });
 
 export type SearchResultEntry = z.infer<typeof SearchResultEntrySchema>;
@@ -434,6 +489,12 @@ const HintContextSchema = z.looseObject({
   developerName: z.string().min(1).optional(),
   /** For the drift label; "" from the hub means unknown. */
   baseCommit: z.string().optional(),
+  /**
+   * Solved-tree presentation (VISION.md §1). Optional: an older hub sends
+   * neither, and no label renders — the hint is merely undecorated.
+   */
+  resultKind: z.string().min(1).optional(),
+  solvedAt: z.string().nullable().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
 });

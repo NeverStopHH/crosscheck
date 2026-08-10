@@ -30,6 +30,14 @@ export const SessionStateSchema = z.looseObject({
   deliveredHintRefs: z.array(z.string().min(1)).default([]),
   deliveredHintHashes: z.array(z.string().min(1)).default([]),
   tripwireAskedFiles: z.array(z.string().min(1)).default([]),
+  /**
+   * Work contexts the SessionStart briefing already pointed at as "solved
+   * before" (VISION.md §1). A SEPARATE list from deliveredHintRefs on
+   * purpose: the prompt path folds these into its seen-set so the same tree
+   * is never re-pointed, but they must not spend the 5/session hint cap —
+   * a briefing pointer is the briefing's budget, not the prompt path's.
+   */
+  briefingSolvedRefs: z.array(z.string().min(1)).default([]),
 });
 
 export type SessionState = z.infer<typeof SessionStateSchema>;
@@ -151,6 +159,18 @@ export const withDeliveredHint = (
       : [...state.deliveredHintHashes, bodyHash],
 });
 
+/**
+ * Briefing solved pointers, appended once at SessionStart. No cap beyond
+ * MAX_SOLVED_POINTERS itself, which the briefing enforces before any append.
+ */
+export const withBriefingSolvedRefs = (
+  state: SessionState,
+  refIds: readonly string[],
+): SessionState => ({
+  ...state,
+  briefingSolvedRefs: [...state.briefingSolvedRefs, ...refIds],
+});
+
 /** FIFO cap, same shape as withSeenTargets: asks are once per file. */
 export const withTripwireAsked = (
   state: SessionState,
@@ -198,5 +218,6 @@ export const deriveSessionState = (
     deliveredHintRefs: [],
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
+    briefingSolvedRefs: [],
   };
 };

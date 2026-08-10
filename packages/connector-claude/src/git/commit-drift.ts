@@ -9,8 +9,12 @@ export interface CommitDrift {
   readonly behind: number;
 }
 
-/** Only a plain object name reaches git — never a value that could read as a flag. */
-const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;
+/**
+ * Only a plain object name reaches git — never a value that could read as a
+ * flag. Exported: the landed ancestry check (capture/landed.ts) guards its
+ * commits with the same alphabet, and two copies would be two things to widen.
+ */
+export const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;
 
 const RADIX = 10;
 

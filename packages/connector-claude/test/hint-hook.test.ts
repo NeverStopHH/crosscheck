@@ -65,6 +65,7 @@ const sessionState = (
   deliveredHintRefs: [],
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
+  briefingSolvedRefs: [],
   ...overrides,
 });
 
@@ -169,6 +170,41 @@ describe("user-prompt-submit delivers one labelled hint", () => {
     expect(context).toContain(CANDIDATE_CONTEXT_ID);
     expect(context).not.toContain(CANDIDATE_BODY);
     expect(context).toContain("get_diagnosis");
+  });
+
+  test("a context the briefing already pointed at as solved is not re-pointed", async () => {
+    // Arrange: the SessionStart briefing delivered this context as a
+    // solved-before pointer; the prompt path's pointer for the same tree
+    // would be a repeat, which is noise (§10 risk 1).
+    const { repo, hub, env } = await fixture("solved-seen", {
+      briefingSolvedRefs: [CANDIDATE_CONTEXT_ID],
+    });
+    hub.setCandidates([proposedOnlyCandidate()]);
+
+    // Act
+    const stdout = await runHook("user-prompt-submit", promptPayload(repo, PROMPT), env);
+
+    // Assert
+    expect(stdout).toBe("");
+  });
+
+  test("a briefing solved pointer neither spends the cap nor blocks substance", async () => {
+    // Pin, deliberately green before the seeding change too: the solved
+    // pointer joins the SEEN-SET only. An evidence-backed claim inside the
+    // pointed-at tree is still injectable substance (the §4 allowance the
+    // solved path composes with rather than extends), and the pointer must
+    // not count against MAX_HINTS_PER_SESSION.
+    const { repo, env } = await fixture("solved-substance", {
+      briefingSolvedRefs: [CANDIDATE_CONTEXT_ID],
+    });
+
+    // Act: default candidates — Nick's evidence-backed rejected approach in
+    // the same context the briefing pointed at.
+    const stdout = await runHook("user-prompt-submit", promptPayload(repo, PROMPT), env);
+
+    // Assert
+    const context = contextOf(stdout);
+    expect(context).toContain(`«${CANDIDATE_BODY}»`);
   });
 });
 

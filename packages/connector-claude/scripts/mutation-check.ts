@@ -331,6 +331,18 @@ export const MUTATIONS: readonly Mutation[] = [
       "agent asking about authentication is handed the cache work context " +
       "and told the hub searched by meaning",
   },
+  {
+    label: "the solved decay floor stops protecting old answers",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "export const SOLVED_DECAY_FLOOR = 0.7;",
+    to: "export const SOLVED_DECAY_FLOOR = 0;",
+    test: `${SERVER}/test/solved-ranking.test.ts`,
+    because:
+      "a 60-day-old solved tree owning the exact target decays to ~5% of " +
+      "its score and loses to any fresh text match — the collective-memory " +
+      "answer (VISION.md §1) stays retained but becomes unfindable, with " +
+      "every other search test green",
+  },
   // The six below guard the in-session hint pipeline (DESIGN.md §4). The
   // anchoring asymmetry and the budgets are STRUCTURE in the selector and
   // constants, so each load-bearing predicate gets a mutation: weaken it and
@@ -514,6 +526,7 @@ interface Outcome {
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
  * PRINTS: search.test.ts 3
+ * PRINTS: solved-ranking.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1
  */
 const greenGuards = new Map<string, boolean>();

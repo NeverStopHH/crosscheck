@@ -166,6 +166,13 @@ CREATE INDEX IF NOT EXISTS claims_embedding_hnsw_idx
 UPDATE work_contexts SET normalized_doc = title || ' ' || status
   WHERE normalized_doc IS NULL;
 
+-- ── Collective memory (VISION.md §1) ────────────────────────────────────────
+
+-- Merged-branch detection (DESIGN.md §5): stamped when landed_evidence maps
+-- the owning session's base commit onto the default branch. ALTER so one
+-- statement covers fresh databases and ones created before this column.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS landed_at timestamptz;
+
 -- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
 -- A TABLE for these, and only these: they exist only while an embedder is
 -- configured, and recomputing pairwise cosine at read time would be O(n²) over

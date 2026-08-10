@@ -147,10 +147,22 @@ export const run = async (
   // and hiding its own tree would make `get_diagnosis` on itself unreachable.
   const hits: readonly SearchHit[] = searched.data.results
     .slice(0, parsed.value.limit)
-    .map((entry) => ({
-      entry,
-      ageMs: Math.max(0, nowMs - timestampOf(entry)),
-    }));
+    .map((entry) => {
+      const solvedMs =
+        entry.solvedAt === null || entry.solvedAt === undefined
+          ? Number.NaN
+          : Date.parse(entry.solvedAt);
+      return {
+        entry,
+        ageMs: Math.max(0, nowMs - timestampOf(entry)),
+        // The solved marker's age (VISION.md §1) — undefined when the hub
+        // sent none or an unparseable one; the renderer then says "solved"
+        // without a wrong number.
+        solvedAgeMs: Number.isNaN(solvedMs)
+          ? undefined
+          : Math.max(0, nowMs - solvedMs),
+      };
+    });
 
   return toolText(
     renderSearchResults(hits, query, {

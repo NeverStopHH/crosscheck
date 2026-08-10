@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ClaimEdgeSchema, ClaimSchema } from "./claim.ts";
 import { CommitEvidenceSchema } from "./commit-evidence.ts";
 import { HintDeliverySchema, HintSchema } from "./hint.ts";
+import { LandedEvidenceSchema } from "./landed-evidence.ts";
 import {
   AgentSessionSchema,
   TargetSchema,
@@ -40,6 +41,7 @@ const RECORD_BODY_SCHEMAS = {
   claim: ClaimSchema,
   claim_edge: ClaimEdgeSchema,
   commit_evidence: CommitEvidenceSchema,
+  landed_evidence: LandedEvidenceSchema,
   session: AgentSessionSchema,
   work_context: WorkContextSchema,
   target: TargetSchema,
