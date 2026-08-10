@@ -273,7 +273,16 @@ export const formatContradictionLine = (
   if (id.length === 0) {
     return null;
   }
-  return `- ${contradictionSideLabel(entry.claimA)} vs ${contradictionSideLabel(entry.claimB)} · get_referee_brief ${id}`;
+  // Canonical side order by claim id, matching the brief's A/B labels
+  // (mcp/render-referee.ts canonicalPair): who is NAMED FIRST must not be
+  // the hub's pair order — the derived source always lists its open side
+  // first, which would give the still-open theory the first word on every
+  // pointer.
+  const [first, second] =
+    entry.claimA.id <= entry.claimB.id
+      ? [entry.claimA, entry.claimB]
+      : [entry.claimB, entry.claimA];
+  return `- ${contradictionSideLabel(first)} vs ${contradictionSideLabel(second)} · get_referee_brief ${id}`;
 };
 
 /**
@@ -289,8 +298,10 @@ const renderContradictionSection = (input: BriefingInput): Section => {
     return line === null ? [] : [line];
   });
   return {
-    header:
-      "Conflicting teammate positions (get_referee_brief reads the case file):",
+    // "Conflicting positions", not "conflicting teammates": a similarity
+    // pair can hold one developer's own opposite-status claims, and the
+    // names on the line already say who holds what.
+    header: "Conflicting positions (get_referee_brief reads the case file):",
     lines: rendered.slice(0, MAX_CONTRADICTION_POINTERS),
     total: rendered.length,
   };

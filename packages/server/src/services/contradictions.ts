@@ -3,9 +3,11 @@
  *
  * TWO SOURCES, ONE ANSWER — and the storage split is deliberate:
  *
- *   DERIVED (deterministic, keyless): claims of theory kinds whose work
- *   contexts share a target and whose statuses sit on opposite sides of
- *   open-vs-rejected. Recomputed fresh per read rather than stored, because
+ *   DERIVED (deterministic, keyless): claims of theory kinds by two DIFFERENT
+ *   developers whose work contexts share a target and whose statuses sit on
+ *   opposite sides of open-vs-rejected (one developer's own opposite-status
+ *   theories are self-revision, not a deadlock — the where clause says why).
+ *   Recomputed fresh per read rather than stored, because
  *   the signal has no ingest-order: the target that completes the overlap may
  *   arrive long after both claims, and a stored row written at claim-ingest
  *   time would simply never exist. The (kind, value) self-join is served by
@@ -34,7 +36,7 @@
  */
 import { createHash } from "node:crypto";
 
-import { and, eq, inArray, ne, notExists, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, notExists, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import type { ClaimKind } from "@crosscheck/schema";
@@ -61,6 +63,17 @@ const CONTRADICTION_ID_PREFIX = "cx_";
 const CONTRADICTION_ID_HASH_CHARS = 32;
 
 /**
+ * INJECTIVE canonical form of an unordered claim-id pair — the one string
+ * both the pair id and the listing's dedup key derive from. Claim ids carry
+ * no charset restriction (schema `nonEmptyId`), so a bare-delimiter join is
+ * ambiguous: ("x","y:z") and ("x:y","z") would collapse, colliding two real
+ * pairs into one id and letting the dedup drop a real deadlock. JSON string
+ * escaping makes the boundary unambiguous for every possible id byte.
+ */
+const canonicalPairKey = (claimAId: string, claimBId: string): string =>
+  JSON.stringify([claimAId, claimBId].sort());
+
+/**
  * The pair's id: deterministic, order-independent, and STATELESS — derived
  * pairs have no stored row a foreign key could point at (see the header), so
  * the id has to be recomputable from the pair alone. Resolution reverses it by
@@ -68,17 +81,19 @@ const CONTRADICTION_ID_HASH_CHARS = 32;
  * bounded by the same CONTRADICTIONS_MAX_LIMIT the listing itself obeys.
  *
  * Prefix + 32 hex chars = 35, inside the connector's MAX_ID_CHARS (64) and its
- * id alphabet, so a briefing can print it bare and a tool can accept it back:
+ * id alphabet, so a briefing can print it bare and a tool can accept it back —
+ * and ids of colon-carrying claim pairs stay distinct:
  *
- * VERIFY: bun -e 'const m=await import("./packages/server/src/services/contradictions.ts");const a=m.contradictionIdFor("clm_a","clm_b");console.log(a.length, a === m.contradictionIdFor("clm_b","clm_a"), /^cx_[0-9a-f]{32}$/.test(a))'
- * PRINTS: 35 true true
+ * VERIFY: bun -e 'const m=await import("./packages/server/src/services/contradictions.ts");const a=m.contradictionIdFor("clm_a","clm_b");console.log(a.length, a === m.contradictionIdFor("clm_b","clm_a"), /^cx_[0-9a-f]{32}$/.test(a), m.contradictionIdFor("x","y:z") !== m.contradictionIdFor("x:y","z"))'
+ * PRINTS: 35 true true true
  */
 export const contradictionIdFor = (
   claimAId: string,
   claimBId: string,
 ): string => {
-  const pairKey = [claimAId, claimBId].sort().join(":");
-  const digest = createHash("sha256").update(pairKey).digest("hex");
+  const digest = createHash("sha256")
+    .update(canonicalPairKey(claimAId, claimBId))
+    .digest("hex");
   return `${CONTRADICTION_ID_PREFIX}${digest.slice(0, CONTRADICTION_ID_HASH_CHARS)}`;
 };
 
@@ -240,6 +255,10 @@ const listDerivedCandidates = async (
       aStatus: openSide.status,
       aBody: openSide.body,
       aAuthorName: developersOpen.name,
+      // In the select list because SELECT DISTINCT may only ORDER BY selected
+      // expressions; functionally dependent on aId, so distinctness is
+      // unchanged.
+      aCreatedAt: openSide.createdAt,
       bId: rejectedSide.id,
       bWorkContextId: rejectedSide.workContextId,
       bKind: rejectedSide.kind,
@@ -283,12 +302,24 @@ const listDerivedCandidates = async (
         inArray(rejectedSide.kind, [...THEORY_KINDS]),
         inArray(openSide.status, [...OPEN_THEORY_STATUSES]),
         eq(rejectedSide.status, "rejected"),
+        // A deadlock needs two people: one developer's own opposite-status
+        // theories are self-revision (the formal channel is a supersedes
+        // edge), not a conflict a referee could brief. Stored similarity
+        // pairs deliberately keep same-developer hits — similarity-gate.ts
+        // flags a developer against their own history — so this condition
+        // belongs to the derived join only.
+        ne(sessionsOpen.developerId, sessionsRejected.developerId),
         repoTouchCondition(repo, openSide, rejectedSide),
         ...(includeRetired
           ? []
           : [sideIsLive(db, openSide), sideIsLive(db, rejectedSide)]),
       ),
     )
+    // Deterministic under LIMIT, matching the stored source's newest-first:
+    // without an ORDER BY, which pairs fit the cap — and therefore which cx_
+    // ids stay resolvable, and which pointers a briefing shows — would be
+    // query-plan luck that varies per call.
+    .orderBy(desc(openSide.createdAt), asc(openSide.id), asc(rejectedSide.id))
     .limit(limit);
   return rows.map((row) => ({
     id: contradictionIdFor(row.aId, row.bId),
@@ -314,7 +345,7 @@ const listDerivedCandidates = async (
 };
 
 const pairKey = (view: ContradictionView): string =>
-  [view.claimA.id, view.claimB.id].sort().join(":");
+  canonicalPairKey(view.claimA.id, view.claimB.id);
 
 export interface ListContradictionsInput {
   readonly repo?: string | undefined;
@@ -355,20 +386,36 @@ export const listContradictions = async (
  * Resolves a cx_ id back to its pair by recomputing ids over the candidate
  * pool — the hash is not invertible and derived pairs have no row to look up,
  * so re-listing IS the index. Hub-wide (no repo filter) because the id scopes
- * the call, exactly like get_diagnosis; retired pairs stay resolvable so the
- * brief can report the retirement instead of 404ing (retirement honesty).
+ * the call, exactly like get_diagnosis.
  *
- * Accepted bound: a pair pushed past CONTRADICTIONS_MAX_LIMIT by newer
- * candidates becomes unresolvable. The listing that minted the id is bounded
- * the same way, so an id an agent holds came from a pool that contained it.
+ * TWO POOLS, LIVE FIRST. The live pool is the universe every listing draws
+ * from, so a pair a listing currently shows always resolves — one shared cap
+ * over live AND retired pairs would let retired rows evict a live pair from
+ * resolution while the listing still offers its id. The retired-inclusive
+ * pool is only consulted after a live miss, so a retired pair's brief can
+ * report the retirement instead of 404ing (retirement honesty).
+ *
+ * Accepted bound: a pair pushed past CONTRADICTIONS_MAX_LIMIT of its own
+ * pool by newer candidates becomes unresolvable. The listing that minted the
+ * id is bounded the same way, so an id an agent holds came from a pool that
+ * contained it.
  */
 export const findContradictionById = async (
   db: Db,
   contradictionId: string,
 ): Promise<ContradictionView | undefined> => {
-  const candidates = await listContradictions(db, {
+  const matches = (candidate: ContradictionView): boolean =>
+    candidate.id === contradictionId;
+  const live = await listContradictions(db, {
+    limit: CONTRADICTIONS_MAX_LIMIT,
+  });
+  const liveMatch = live.find(matches);
+  if (liveMatch !== undefined) {
+    return liveMatch;
+  }
+  const withRetired = await listContradictions(db, {
     limit: CONTRADICTIONS_MAX_LIMIT,
     includeRetired: true,
   });
-  return candidates.find((candidate) => candidate.id === contradictionId);
+  return withRetired.find(matches);
 };

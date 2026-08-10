@@ -251,7 +251,7 @@ const renderRefereeWith = (slot: McpRefereeSlot, payload: string): string =>
 
 const REFEREE_HEADER = /^crosscheck referee brief for contradiction [\w.:-]*\. /;
 const REFEREE_NEUTRALITY_LINE =
-  /^Two developers hold conflicting positions; this is the case file — crosscheck does not rank them\.$/;
+  /^Two positions conflict; this is the case file — crosscheck does not rank them\.$/;
 const REFEREE_DETECTION_LINE =
   /^Detected by (a shared target held with opposite statuses|semantic similarity \d\.\d\d|the hub's contradiction gate)\.$/;
 const REFEREE_POSITION_HEADER =

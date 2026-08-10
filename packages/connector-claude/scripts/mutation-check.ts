@@ -210,6 +210,27 @@ export const MUTATIONS: readonly Mutation[] = [
       "wants a side favoured) changes the document two readers compare",
   },
   {
+    // The SECOND leg of referee neutrality: equal per-section funding. The
+    // swap test cannot see this one — labels are canonical, so an
+    // underfunded "B" hits the same position on both renders and the swap
+    // stays byte-exact. The guard is the equal-funding test: identical
+    // content on both sides must render identical blocks.
+    label: "referee position B renders under a smaller budget than position A",
+    file: `${CONNECTOR}/src/mcp/render-referee.ts`,
+    from:
+      '    { header, lines, total: lines.length, noun: "line" },\n' +
+      "    MAX_REFEREE_POSITION_CHARS,",
+    to:
+      '    { header, lines, total: lines.length, noun: "line" },\n' +
+      '    label === "A" ? MAX_REFEREE_POSITION_CHARS : MAX_REFEREE_SHARED_CHARS,',
+    test: `${CONNECTOR}/test/mcp-referee-render.test.ts`,
+    because:
+      "one side's case renders fuller than the other's on every brief while " +
+      "the byte-exact swap test stays green — the labels are canonical, so " +
+      "the same position is shortchanged on both renders and no swap can " +
+      "surface the asymmetry",
+  },
+  {
     label: "the mcp diagnosis stops labelling quoted text as data",
     file: `${CONNECTOR}/src/mcp/render.ts`,
     from:
@@ -490,7 +511,7 @@ interface Outcome {
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: mcp-injection.test.ts 4
- * PRINTS: mcp-referee-render.test.ts 1
+ * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: tripwire-hook.test.ts 1

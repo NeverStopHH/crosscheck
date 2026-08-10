@@ -30,6 +30,7 @@ import {
   validWorkContextBody,
 } from "./helpers.ts";
 import type { TestHarness, TestDeveloper } from "./helpers.ts";
+import { contradictionIdFor } from "../src/services/contradictions.ts";
 import { createFakeEmbedder } from "./fixtures/fake-embedder.ts";
 
 const SECOND_SESSION_ID = "ses_02";
@@ -271,6 +272,230 @@ describe("GET /api/contradictions", () => {
     expect(result.candidates.length).toBe(1);
     expect(result.candidates[0]?.reason).toBe("similarity");
     expect(result.candidates[0]?.similarity ?? 0).toBeGreaterThan(0.93);
+  });
+
+  test("one developer's own opposite-status theories are not a derived conflict", async () => {
+    // Arrange: Nick alone holds proposed in wc_01 and rejected in wc_02 on a
+    // shared fingerprint — that is one person's investigation evolving (the
+    // formal channel for it is a supersedes edge), not a teammate deadlock
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope("target", {
+          workContextId: "wc_01",
+          kind: "error_fingerprint",
+          value: FINGERPRINT,
+        }),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            kind: "hypothesis",
+            status: "proposed",
+            body: "The rotation job overruns its window and drops the key",
+          }),
+        ),
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({ id: "wc_02", title: "Second look" }),
+        ),
+        recordEnvelope("target", {
+          workContextId: "wc_02",
+          kind: "error_fingerprint",
+          value: FINGERPRINT,
+        }),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_02",
+            workContextId: "wc_02",
+            kind: "hypothesis",
+            status: "rejected",
+            body: "Rotation finished inside its window on every sampled failure",
+          }),
+        ),
+      ],
+    });
+
+    // Act + Assert
+    const result = await fetchContradictions(harness, nick.apiKey);
+    expect(result.candidates).toEqual([]);
+  });
+
+  test("pair ids of claims carrying a colon cannot collide", () => {
+    // Arrange: claim ids have no charset restriction (schema nonEmptyId), so
+    // a join delimiter that can appear IN an id is not injective —
+    // ("x","y:z") and ("x:y","z") must never share a pair id
+    const first = contradictionIdFor("x", "y:z");
+    const second = contradictionIdFor("x:y", "z");
+
+    // Assert
+    expect(first).not.toBe(second);
+  });
+
+  test("two distinct pairs whose ids join ambiguously both stay listed", async () => {
+    // Arrange: pair (x, y:z) on FP1 and pair (x:y, z) on FP2 — under a
+    // colon-joined pair key both collapse to "x:y:z" and the listing dedup
+    // silently drops one real deadlock
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    const robin = await addTestDeveloperWithSession(
+      harness,
+      "Robin",
+      "robin@example.com",
+      { id: SECOND_SESSION_ID },
+    );
+    const secondFingerprint = "ffffc3d4e5f60718293a4b5c6d7e8f90";
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope("target", {
+          workContextId: "wc_01",
+          kind: "error_fingerprint",
+          value: FINGERPRINT,
+        }),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "x",
+            kind: "hypothesis",
+            status: "proposed",
+            body: "The rotation job overruns its window and drops the key",
+          }),
+        ),
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({ id: "wc_03", title: "Cache stampede" }),
+        ),
+        recordEnvelope("target", {
+          workContextId: "wc_03",
+          kind: "error_fingerprint",
+          value: secondFingerprint,
+        }),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "x:y",
+            workContextId: "wc_03",
+            kind: "hypothesis",
+            status: "proposed",
+            body: "The cache warms twice and stampedes the origin",
+          }),
+        ),
+      ],
+    });
+    await postRecords(harness, robin, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_02",
+            sessionId: SECOND_SESSION_ID,
+            title: "Key rotation timing audit",
+          }),
+          { sessionId: SECOND_SESSION_ID },
+        ),
+        recordEnvelope(
+          "target",
+          {
+            workContextId: "wc_02",
+            kind: "error_fingerprint",
+            value: FINGERPRINT,
+          },
+          { sessionId: SECOND_SESSION_ID },
+        ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "y:z",
+            workContextId: "wc_02",
+            authorSessionId: SECOND_SESSION_ID,
+            kind: "hypothesis",
+            status: "rejected",
+            body: "Rotation finished inside its window on every sampled failure",
+          }),
+          { sessionId: SECOND_SESSION_ID },
+        ),
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_04",
+            sessionId: SECOND_SESSION_ID,
+            title: "Origin load audit",
+          }),
+          { sessionId: SECOND_SESSION_ID },
+        ),
+        recordEnvelope(
+          "target",
+          {
+            workContextId: "wc_04",
+            kind: "error_fingerprint",
+            value: secondFingerprint,
+          },
+          { sessionId: SECOND_SESSION_ID },
+        ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "z",
+            workContextId: "wc_04",
+            authorSessionId: SECOND_SESSION_ID,
+            kind: "hypothesis",
+            status: "rejected",
+            body: "Origin load stayed flat through every stampede window",
+          }),
+          { sessionId: SECOND_SESSION_ID },
+        ),
+      ],
+    });
+
+    // Act
+    const result = await fetchContradictions(harness, nick.apiKey);
+
+    // Assert: both real pairs listed, under distinct ids
+    expect(result.candidates.length).toBe(2);
+    const ids = result.candidates.map((candidate) =>
+      [candidate.claimA.id, candidate.claimB.id].sort().join("|"),
+    );
+    expect([...ids].sort()).toEqual(["x:y|z", "x|y:z"]);
+  });
+
+  test("derived candidates order newest open side first, ids breaking ties", async () => {
+    // Arrange: two open theories against one rejection — the NEWER open
+    // claim ingested last AND sorting last by id, so both physical scan order
+    // and an incidental DISTINCT sort would list the older pair first. Which
+    // pairs survive a limit (and which cx_ ids stay resolvable) must not be
+    // query-plan luck.
+    const { harness, nick } = await seedSharedFingerprint(
+      "proposed",
+      "rejected",
+    );
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_zz_newer",
+            kind: "hypothesis",
+            status: "proposed",
+            body: "The rotation lease is lost to a second claimant",
+            createdAt: "2026-07-25T09:00:00.000Z",
+          }),
+        ),
+      ],
+    });
+
+    // Act
+    const result = await fetchContradictions(harness, nick.apiKey);
+
+    // Assert: (clm_zz_newer, clm_02) precedes the older (clm_01, clm_02)
+    const openSides = result.candidates.map((candidate) =>
+      [candidate.claimA.id, candidate.claimB.id].filter((id) => id !== "clm_02"),
+    );
+    expect(openSides).toEqual([["clm_zz_newer"], ["clm_01"]]);
   });
 
   test("the derived join is backed by a (kind, value) index on targets", async () => {

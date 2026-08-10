@@ -58,7 +58,7 @@ describe("briefing contradiction pointers", () => {
     const briefing = render([contradictionEntry()]);
 
     // Assert
-    expect(briefing).toContain("Conflicting teammate positions");
+    expect(briefing).toContain("Conflicting positions");
     expect(briefing).toContain(
       "- Nick (hypothesis, proposed) vs Robin (hypothesis, rejected) · get_referee_brief cx_0123456789abcdef0123456789abcdef",
     );
@@ -93,6 +93,37 @@ describe("briefing contradiction pointers", () => {
       );
     expect(pointerLines.length).toBe(MAX_CONTRADICTION_POINTERS);
     expect(briefing).toContain("(+2 more not shown)");
+  });
+
+  test("pointer sides order canonically by claim id, never by the hub's pair order", () => {
+    // Arrange: the hub happens to list Zoe's side first, but her claim id
+    // sorts second — who is NAMED FIRST must not be the hub's (or the derived
+    // query's open-side-first) choice, for the same reason the brief assigns
+    // its A/B labels canonically
+    const entry = contradictionEntry({
+      claimA: {
+        id: "clm_z",
+        workContextId: "wc_a",
+        kind: "hypothesis",
+        status: "proposed",
+        authorDeveloperName: "Zoe",
+      },
+      claimB: {
+        id: "clm_a",
+        workContextId: "wc_b",
+        kind: "hypothesis",
+        status: "rejected",
+        authorDeveloperName: "Amy",
+      },
+    });
+
+    // Act
+    const briefing = render([entry]);
+
+    // Assert
+    expect(briefing).toContain(
+      "- Amy (hypothesis, rejected) vs Zoe (hypothesis, proposed) · get_referee_brief cx_0123456789abcdef0123456789abcdef",
+    );
   });
 
   test("a hostile id is reduced by the allowlist, and an empty survivor drops the line", () => {

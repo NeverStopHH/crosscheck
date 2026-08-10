@@ -168,7 +168,7 @@ describe("session-start contradiction integration", () => {
 
     // Assert
     const briefing = briefingOf(stdout);
-    expect(briefing).toContain("Conflicting teammate positions");
+    expect(briefing).toContain("Conflicting positions");
     expect(briefing).toContain(
       `- Alice (hypothesis, proposed) vs Robin (hypothesis, rejected) · get_referee_brief ${PAIR_ID}`,
     );
@@ -185,6 +185,6 @@ describe("session-start contradiction integration", () => {
     // Assert: presence still renders; no contradiction section, no crash
     const briefing = briefingOf(stdout);
     expect(briefing).toContain("Alice");
-    expect(briefing).not.toContain("Conflicting teammate positions");
+    expect(briefing).not.toContain("Conflicting positions");
   });
 });

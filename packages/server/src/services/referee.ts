@@ -23,7 +23,12 @@
  * queries carry LIMIT cap+1 so truncation is detected rather than silent, and
  * the evidence walk is depth-capped (REFEREE_EVIDENCE_WALK_DEPTH) and
  * count-capped (REFEREE_MAX_EVIDENCE_PER_SIDE) — at most two edge queries and
- * two claim loads per side, whatever the graph looks like.
+ * two claim loads per side, whatever the graph looks like, because the walk's
+ * loop body awaits exactly two reads (one edge query, one claim load) and the
+ * depth cap bounds its iterations at 2:
+ *
+ * VERIFY: bun -e 'const src=await Bun.file("packages/server/src/services/referee.ts").text();const body=src.split("const walk"+"Evidence")[1].split("\n};")[0];console.log((body.match(/await /g)??[]).length,(await import("./packages/server/src/services/referee.ts")).REFEREE_EVIDENCE_WALK_DEPTH)'
+ * PRINTS: 2 2
  */
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -188,14 +193,19 @@ const walkEvidence = async (
         ...supporterRows.map((row) => row.fromClaimId),
       ]),
     ].filter((id) => !seen.has(id));
-    // room+1 keeps the load bounded while still proving an overflow even when
-    // some refs point at claims that never arrived on this hub.
+    // Truncation is decided on the CANDIDATE count, never on what resolved:
+    // refs may name claims that never arrived on this hub (DESIGN.md §5 —
+    // they can land later in the same spool flush), and a dead ref inside the
+    // bounded room+1 load window would otherwise spend the slot that proves
+    // overflow — reporting the case file whole while a live cited claim past
+    // the window was dropped. The load itself stays bounded at room+1 ids;
+    // the flag says the list MAY be incomplete, which is exactly the truth.
+    if (candidateIds.length > room) {
+      truncated = true;
+    }
     const loaded = [
       ...(await loadClaims(db, candidateIds.slice(0, room + 1))),
     ].sort(byCreatedAtThenId);
-    if (loaded.length > room) {
-      truncated = true;
-    }
     const kept = loaded.slice(0, room);
     for (const entry of kept) {
       seen.add(entry.view.id);
@@ -263,12 +273,22 @@ interface SharedTargetsResult {
   readonly truncated: boolean;
 }
 
-/** Targets BOTH work contexts declare — the ground the two sides share. */
+/**
+ * Targets BOTH work contexts declare — the ground the two sides share.
+ * A similarity-detected pair can hold both sides in ONE context (the gate
+ * flags a developer against their own history); the self-join would then
+ * present every target of that context as jointly-held "shared ground",
+ * so a same-context pair reports none — there is no second context to
+ * share anything with.
+ */
 const listSharedTargets = async (
   db: Db,
   workContextIdA: string,
   workContextIdB: string,
 ): Promise<SharedTargetsResult> => {
+  if (workContextIdA === workContextIdB) {
+    return { sharedTargets: [], truncated: false };
+  }
   const targetsA = alias(workContextTargets, "referee_targets_a");
   const targetsB = alias(workContextTargets, "referee_targets_b");
   const rows = await db

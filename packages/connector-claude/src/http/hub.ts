@@ -594,7 +594,12 @@ const RefereeBriefEnvelopeSchema = z
     brief: z.looseObject({
       id: z.string().min(1),
       reason: z.string().min(1),
-      similarity: z.number().nullable().optional(),
+      // Bounded like every confidence: cosine similarity lives in [0, 1],
+      // the renderer prints it as a fact, and a hub-forged 1e+30 stated in
+      // crosscheck's own voice would misstate the detector. Fails the whole
+      // call (like a forged position confidence) — the case file is the
+      // thing a human decides from.
+      similarity: z.number().min(0).max(1).nullable().optional(),
       positionA: RefereePositionSchema,
       positionB: RefereePositionSchema,
       sharedTargets: z.array(z.unknown()).default([]),

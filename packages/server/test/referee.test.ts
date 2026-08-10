@@ -25,7 +25,9 @@ import {
   validWorkContextBody,
 } from "./helpers.ts";
 import type { TestHarness, TestDeveloper } from "./helpers.ts";
+import { CONTRADICTIONS_MAX_LIMIT } from "../src/services/contradictions.ts";
 import { REFEREE_MAX_EVIDENCE_PER_SIDE } from "../src/services/referee.ts";
+import { createFakeEmbedder } from "./fixtures/fake-embedder.ts";
 
 const SECOND_SESSION_ID = "ses_02";
 const FINGERPRINT = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
@@ -270,6 +272,90 @@ const seedDeadlock = async (): Promise<Deadlock> => {
   return { harness, nick, robin };
 };
 
+/**
+ * Nick's clm_01 (open) citing `refIds` as evidence — only `existingRefIds`
+ * are ingested as claims, the rest stay dead refs — against Robin's rejected
+ * clm_02 on a shared fingerprint.
+ */
+const seedEvidenceRefsPair = async (
+  refIds: readonly string[],
+  existingRefIds: readonly string[],
+): Promise<Deadlock> => {
+  const harness = await createTestHarness();
+  const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+  await registerTestSession(harness, nick.apiKey);
+  const robin = await addTestDeveloperWithSession(
+    harness,
+    "Robin",
+    "robin@example.com",
+    { id: SECOND_SESSION_ID },
+  );
+  await postRecords(harness, nick, {
+    records: [
+      recordEnvelope("work_context", validWorkContextBody()),
+      recordEnvelope("target", {
+        workContextId: "wc_01",
+        kind: "error_fingerprint",
+        value: FINGERPRINT,
+      }),
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          kind: "hypothesis",
+          status: "proposed",
+          body: "Every shard sees the same stale key",
+          evidenceRefs: refIds,
+        }),
+      ),
+      ...existingRefIds.map((id, index) =>
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id,
+            kind: "evidence",
+            body: `Shard ${String(index)} log shows the stale key`,
+          }),
+        ),
+      ),
+    ],
+  });
+  await postRecords(harness, robin, {
+    records: [
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          id: "wc_02",
+          sessionId: SECOND_SESSION_ID,
+          title: "Stale key audit",
+        }),
+        { sessionId: SECOND_SESSION_ID },
+      ),
+      recordEnvelope(
+        "target",
+        {
+          workContextId: "wc_02",
+          kind: "error_fingerprint",
+          value: FINGERPRINT,
+        },
+        { sessionId: SECOND_SESSION_ID },
+      ),
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id: "clm_02",
+          workContextId: "wc_02",
+          authorSessionId: SECOND_SESSION_ID,
+          kind: "hypothesis",
+          status: "rejected",
+          body: "Keys are fresh on every shard sampled",
+        }),
+        { sessionId: SECOND_SESSION_ID },
+      ),
+    ],
+  });
+  return { harness, nick, robin };
+};
+
 const sideOf = (brief: BriefView, claimId: string): BriefPosition => {
   const side =
     brief.positionA.claim.id === claimId ? brief.positionA : brief.positionB;
@@ -460,8 +546,65 @@ describe("GET /api/contradictions/:id/brief", () => {
     );
   });
 
-  test("evidence is capped per side and the cap is reported, not silent", async () => {
-    // Arrange: one open claim citing more refs than the per-side bound
+  test("a same-context pair never bills the context's own targets as shared ground", async () => {
+    // Arrange: the similarity gate deliberately flags a developer against
+    // their own history, so a stored pair can have BOTH sides in one work
+    // context (same developer, different kinds, opposite statuses). Joining
+    // that context's targets against themselves would present every one of
+    // them as jointly-held "shared ground" — there is no second context to
+    // share anything with.
+    const harness = await createTestHarness({ embedder: createFakeEmbedder() });
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    await postRecords(harness, nick, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope("target", {
+          workContextId: "wc_01",
+          kind: "error_fingerprint",
+          value: FINGERPRINT,
+        }),
+        recordEnvelope("target", {
+          workContextId: "wc_01",
+          kind: "file",
+          value: "src/auth/rotate.ts",
+        }),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            kind: "hypothesis",
+            status: "rejected",
+            body: "Login endpoint returns 500 after a token refresh",
+          }),
+        ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_03",
+            kind: "root_cause",
+            status: "partially_confirmed",
+            body: "The signin flow answers HTTP 500 following refresh",
+          }),
+        ),
+      ],
+    });
+    const [candidate] = await listCandidates(harness, nick.apiKey);
+    expect(candidate?.id).toMatch(PAIR_ID_PATTERN);
+
+    // Act
+    const { brief } = await fetchBrief(harness, nick.apiKey, candidate?.id ?? "");
+
+    // Assert
+    expect(brief?.sharedTargets).toEqual([]);
+    expect(brief?.sharedTargetsTruncated).toBe(false);
+  });
+
+  test("a pair the live listing shows resolves, however many retired pairs exist", async () => {
+    // Arrange: one LIVE pair whose open claim is the oldest, buried behind a
+    // full candidate pool of NEWER retired pairs. The live listing excludes
+    // the retired ones and shows the pair — so its id must resolve; a
+    // resolution pool that re-admits retired pairs under the same cap would
+    // evict it and 404 an id the reader is looking at.
     const harness = await createTestHarness();
     const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
     await registerTestSession(harness, nick.apiKey);
@@ -471,8 +614,10 @@ describe("GET /api/contradictions/:id/brief", () => {
       "robin@example.com",
       { id: SECOND_SESSION_ID },
     );
-    const overCap = REFEREE_MAX_EVIDENCE_PER_SIDE + 1;
-    const refIds = Array.from({ length: overCap }, (_, i) => `clm_ref_${i}`);
+    const retiredIds = Array.from(
+      { length: CONTRADICTIONS_MAX_LIMIT },
+      (_, i) => `clm_r${String(i).padStart(3, "0")}`,
+    );
     await postRecords(harness, nick, {
       records: [
         recordEnvelope("work_context", validWorkContextBody()),
@@ -484,24 +629,54 @@ describe("GET /api/contradictions/:id/brief", () => {
         recordEnvelope(
           "claim",
           validClaimBody({
+            id: "clm_live",
             kind: "hypothesis",
             status: "proposed",
-            body: "Every shard sees the same stale key",
-            evidenceRefs: refIds,
+            body: "The rotation job overruns its window and drops the key",
+            createdAt: "2026-07-20T09:00:00.000Z",
           }),
         ),
-        ...refIds.map((id, index) =>
-          recordEnvelope(
-            "claim",
-            validClaimBody({
-              id,
-              kind: "evidence",
-              body: `Shard ${String(index)} log shows the stale key`,
-            }),
-          ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_rev",
+            kind: "observation",
+            body: "Revision that retired every abandoned theory below",
+          }),
         ),
       ],
     });
+    const retiredClaims = retiredIds.map((id, index) =>
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id,
+          kind: "hypothesis",
+          status: "proposed",
+          body: `Abandoned theory ${String(index)} about the same failure`,
+          createdAt: "2026-07-25T09:00:00.000Z",
+        }),
+      ),
+    );
+    const supersedeEdges = retiredIds.map((id, index) =>
+      recordEnvelope(
+        "claim_edge",
+        validClaimEdgeBody({
+          id: `edge_r${String(index).padStart(3, "0")}`,
+          fromClaimId: "clm_rev",
+          toClaimId: id,
+          kind: "supersedes",
+        }),
+      ),
+    );
+    const INGEST_CHUNK = 100;
+    for (const batch of [retiredClaims, supersedeEdges]) {
+      for (let at = 0; at < batch.length; at += INGEST_CHUNK) {
+        await postRecords(harness, nick, {
+          records: batch.slice(at, at + INGEST_CHUNK),
+        });
+      }
+    }
     await postRecords(harness, robin, {
       records: [
         recordEnvelope(
@@ -509,7 +684,7 @@ describe("GET /api/contradictions/:id/brief", () => {
           validWorkContextBody({
             id: "wc_02",
             sessionId: SECOND_SESSION_ID,
-            title: "Stale key audit",
+            title: "Key rotation timing audit",
           }),
           { sessionId: SECOND_SESSION_ID },
         ),
@@ -530,12 +705,28 @@ describe("GET /api/contradictions/:id/brief", () => {
             authorSessionId: SECOND_SESSION_ID,
             kind: "hypothesis",
             status: "rejected",
-            body: "Keys are fresh on every shard sampled",
+            body: "Rotation finished inside its window on every sampled failure",
           }),
           { sessionId: SECOND_SESSION_ID },
         ),
       ],
     });
+
+    // Act
+    const listed = await listCandidates(harness, nick.apiKey);
+    const { status } = await fetchBrief(harness, nick.apiKey, listed[0]?.id ?? "");
+
+    // Assert: the one live pair is listed, and the id it shows resolves
+    expect(listed.length).toBe(1);
+    expect(listed[0]?.claimA.id === "clm_live" || listed[0]?.claimB.id === "clm_live").toBe(true);
+    expect(status).toBe(200);
+  });
+
+  test("evidence is capped per side and the cap is reported, not silent", async () => {
+    // Arrange: one open claim citing more refs than the per-side bound
+    const overCap = REFEREE_MAX_EVIDENCE_PER_SIDE + 1;
+    const refIds = Array.from({ length: overCap }, (_, i) => `clm_ref_${i}`);
+    const { harness, nick } = await seedEvidenceRefsPair(refIds, refIds);
     const [candidate] = await listCandidates(harness, nick.apiKey);
 
     // Act
@@ -545,5 +736,51 @@ describe("GET /api/contradictions/:id/brief", () => {
     const side = sideOf(brief as BriefView, "clm_01");
     expect(side.evidence.length).toBe(REFEREE_MAX_EVIDENCE_PER_SIDE);
     expect(side.evidenceTruncated).toBe(true);
+  });
+
+  test("a ref that never arrived cannot mask the truncation of live evidence", async () => {
+    // Arrange: a dead ref AHEAD of more live refs than the per-side bound.
+    // The dead id spends a slot of the bounded load window, so a live claim
+    // past the window is dropped — the flag must still say so (DESIGN.md §5:
+    // referenced claims may arrive later, so dead refs are a designed state).
+    const liveIds = Array.from(
+      { length: REFEREE_MAX_EVIDENCE_PER_SIDE + 1 },
+      (_, i) => `clm_ref_${i}`,
+    );
+    const { harness, nick } = await seedEvidenceRefsPair(
+      ["clm_never_arrived", ...liveIds],
+      liveIds,
+    );
+    const [candidate] = await listCandidates(harness, nick.apiKey);
+
+    // Act
+    const { brief } = await fetchBrief(harness, nick.apiKey, candidate?.id ?? "");
+
+    // Assert: fewer live claims shown than cited — never reported as whole
+    const side = sideOf(brief as BriefView, "clm_01");
+    expect(side.evidence.length).toBe(REFEREE_MAX_EVIDENCE_PER_SIDE);
+    expect(side.evidenceTruncated).toBe(true);
+  });
+
+  test("dead refs alone claim no truncation while every live claim is shown", async () => {
+    // Arrange: a dead ref plus fewer live refs than the bound — everything
+    // resolvable fits, so the honest flag is false
+    const liveIds = Array.from(
+      { length: REFEREE_MAX_EVIDENCE_PER_SIDE - 1 },
+      (_, i) => `clm_ref_${i}`,
+    );
+    const { harness, nick } = await seedEvidenceRefsPair(
+      ["clm_never_arrived", ...liveIds],
+      liveIds,
+    );
+    const [candidate] = await listCandidates(harness, nick.apiKey);
+
+    // Act
+    const { brief } = await fetchBrief(harness, nick.apiKey, candidate?.id ?? "");
+
+    // Assert
+    const side = sideOf(brief as BriefView, "clm_01");
+    expect(side.evidence.length).toBe(liveIds.length);
+    expect(side.evidenceTruncated).toBe(false);
   });
 });

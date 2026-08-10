@@ -36,7 +36,7 @@ export const ArgsSchema = z.object({
 export const definition = {
   name: "get_referee_brief",
   description:
-    "Read the structured case file for one open contradiction between two developers' " +
+    "Read the structured case file for one open contradiction between two recorded " +
     "positions: each position's claim with author, status and confidence, the evidence " +
     "each side cites, what each side has ruled out, the shared ground, and a timeline. " +
     "crosscheck does not pick a winner — the brief is symmetric and states facts only; " +

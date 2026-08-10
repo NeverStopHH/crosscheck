@@ -180,6 +180,84 @@ describe("renderRefereeBrief", () => {
     expect(original.length).toBeLessThanOrEqual(MAX_REFEREE_BRIEF_CHARS);
   });
 
+  test("never claims two developers hold the pair — the gate flags self-conflicts too", () => {
+    // Arrange: a similarity-detected pair can carry ONE developer's own
+    // opposite-status claims (the hub's gate deliberately flags a developer
+    // against their own history), so an opening that asserts "two
+    // developers" would state a fact the wire never carried
+    const brief = baseBrief();
+    const selfConflict: RefereeBrief = {
+      ...brief,
+      positionB: {
+        ...brief.positionB,
+        claim: { ...brief.positionB.claim, authorDeveloperName: "Nick" },
+      },
+    };
+
+    // Act
+    const output = renderRefereeBrief(selfConflict, NOW);
+
+    // Assert
+    expect(output).not.toContain("Two developers");
+    expect(output).toContain("does not rank them");
+  });
+
+  test("funds both positions equally: identical content renders identical blocks", () => {
+    // Arrange: both sides carry same-length claims and the SAME heavy
+    // evidence, far past the per-position budget — any asymmetry in budget
+    // or formatting between the A and B renderings becomes a byte diff once
+    // the labels and ids are normalized. The swap test cannot see this:
+    // labels are canonical, so a poorer "B" budget hits the same position
+    // on both renders and the swap stays byte-exact.
+    const longBody = "y".repeat(380);
+    const sharedEvidence = Array.from({ length: 10 }, (_, index) =>
+      claim({
+        id: `clm_shared_${String(index)}`,
+        kind: "evidence",
+        body: `${longBody} ${String(index)}`,
+      }),
+    );
+    const brief = baseBrief();
+    const balanced: RefereeBrief = {
+      ...brief,
+      sharedTargets: [],
+      positionA: {
+        ...brief.positionA,
+        claim: claim({ id: "clm_a" }),
+        evidence: sharedEvidence,
+        ruledOut: [],
+      },
+      positionB: {
+        ...brief.positionA,
+        claim: claim({ id: "clm_b", workContextId: "wc_b" }),
+        evidence: sharedEvidence,
+        ruledOut: [],
+      },
+    };
+
+    // Act
+    const lines = renderRefereeBrief(balanced, NOW).split("\n");
+    const startA = lines.findIndex((line) => line.startsWith("Position A ·"));
+    const startB = lines.findIndex((line) => line.startsWith("Position B ·"));
+    const endB = lines.findIndex(
+      (line, index) => index > startB && line.startsWith("No shared targets"),
+    );
+
+    // Assert
+    expect(startA).toBeGreaterThan(-1);
+    expect(startB).toBeGreaterThan(startA);
+    expect(endB).toBeGreaterThan(startB);
+    const blockA = lines.slice(startA, startB).join("\n");
+    const blockB = lines
+      .slice(startB, endB)
+      .join("\n")
+      .replaceAll("Position B", "Position A")
+      .replaceAll("position B", "position A")
+      .replaceAll("clm_b", "clm_a")
+      .replaceAll("wc_b", "wc_a");
+    expect(blockB).toBe(blockA);
+  });
+
   test("never uses verdict language, whatever the evidence asymmetry", () => {
     // Arrange: the base case file is already lopsided (2 evidence vs 0)
     const output = renderRefereeBrief(baseBrief(), NOW).toLowerCase();
