@@ -16,7 +16,7 @@
  *     instead of an edge (the §1 "diagnostic conflict" signal).
  */
 import { describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import {
   claimEdges,
@@ -35,7 +35,10 @@ import {
   validWorkContextBody,
 } from "./helpers.ts";
 import type { TestHarness, TestDeveloper } from "./helpers.ts";
-import { createFakeEmbedder } from "./fixtures/fake-embedder.ts";
+import {
+  createFakeEmbedder,
+  createRecordingEmbedder,
+} from "./fixtures/fake-embedder.ts";
 
 const SECOND_SESSION_ID = "ses_02";
 
@@ -296,6 +299,49 @@ describe("cross-context near-duplicates", () => {
     expect(await harness.db.select().from(claimEdges)).toEqual([]);
   });
 
+  test("a developer's own cross-kind contradiction in one context is flagged", async () => {
+    // Arrange: same developer, same context — but different KINDS, so the
+    // dedup gate (kind-scoped) never sees the pair. A rejected root cause and
+    // a near-identical fresh hypothesis are exactly the "two contradictory
+    // theories" signal, and DESIGN.md §3 restricts only MERGING across
+    // authors, not flagging a developer against their own history.
+    const { harness, developer } = await createGateHarness();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          kind: "root_cause",
+          status: "rejected",
+          body: LOGIN_OBSERVATION,
+        }),
+      ),
+    );
+
+    // Act
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id: "clm_02",
+          kind: "hypothesis",
+          status: "proposed",
+          body: LOGIN_REWORDED,
+        }),
+      ),
+    );
+
+    // Assert: both rows (kinds differ — nothing to dedup), one candidate
+    expect(await countClaims(harness)).toBe(2);
+    const candidates = await harness.db.select().from(contradictionCandidates);
+    expect(candidates.length).toBe(1);
+    const pair = [candidates[0]?.claimAId, candidates[0]?.claimBId].sort();
+    expect(pair).toEqual(["clm_01", "clm_02"]);
+  });
+
   test("a spool replay of a stored claim never re-triggers gate work", async () => {
     // Arrange
     const { harness, developer } = await createGateHarness();
@@ -325,5 +371,191 @@ describe("cross-context near-duplicates", () => {
     expect(await countClaims(harness)).toBe(1);
     expect(await harness.db.select().from(claimEdges)).toEqual([]);
     expect(await harness.db.select().from(contradictionCandidates)).toEqual([]);
+  });
+});
+
+describe("gate scans are index-backed", () => {
+  test("claims.embedding carries an hnsw cosine index", async () => {
+    // Arrange: the cross-similarity probe is a nearest-neighbor over every
+    // embedded claim, inside the ingest transaction on the single connection.
+    // Without an ANN index that is a sequential scan per ingest — O(n²) for
+    // the store as it grows.
+    const { harness } = await createGateHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT indexname FROM pg_indexes WHERE tablename = 'claims'`,
+    );
+
+    // Assert
+    const names = rows.rows.map(
+      (row) => (row as { indexname: string }).indexname,
+    );
+    expect(names).toContain("claims_embedding_hnsw_idx");
+  });
+});
+
+describe("the 0.93 threshold is a boundary, not a suggestion", () => {
+  test("cosine just above the threshold dedups", async () => {
+    // Arrange: the fixture embeds a `neardup94` body at cosine 0.94 to the
+    // login axis — barely inside the gate.
+    const { harness, developer } = await createGateHarness();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("claim", validClaimBody({ body: LOGIN_OBSERVATION })),
+    );
+
+    // Act
+    const second = await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id: "clm_02",
+          body: "neardup94 wording of the same re-observed failure",
+        }),
+      ),
+    );
+
+    // Assert
+    expect(second.data?.duplicates).toBe(1);
+    expect(await countClaims(harness)).toBe(1);
+  });
+
+  test("cosine just below the threshold stays a second row", async () => {
+    // Arrange: `neardup92` embeds at cosine 0.92 — barely outside the gate.
+    const { harness, developer } = await createGateHarness();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("claim", validClaimBody({ body: LOGIN_OBSERVATION })),
+    );
+
+    // Act
+    const second = await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id: "clm_02",
+          body: "neardup92 wording of a merely similar observation",
+        }),
+      ),
+    );
+
+    // Assert
+    expect(second.data?.accepted).toBe(1);
+    expect(await countClaims(harness)).toBe(2);
+  });
+});
+
+describe("embedding cost at the gate", () => {
+  const claimEnvelope = (
+    id: string,
+    body: string,
+  ): Record<string, unknown> =>
+    recordEnvelope("claim", validClaimBody({ id, body }));
+
+  test("a spool replay of a stored claim is classified without re-embedding", async () => {
+    // Arrange: a slow provider must not be paid again for a claim the hub
+    // already holds — replays are the NORMAL path when a flush times out.
+    const embedder = createRecordingEmbedder();
+    const harness = await createTestHarness({ embedder });
+    const developer = await createTestDeveloper(
+      harness,
+      "Nick",
+      "nick@example.com",
+    );
+    await registerTestSession(harness, developer.apiKey);
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    await postRecords(harness, developer, claimEnvelope("clm_01", LOGIN_OBSERVATION));
+    const bodyEmbeds = (): number =>
+      embedder.embeddedTexts.filter((text) => text === LOGIN_OBSERVATION).length;
+    const afterFirst = bodyEmbeds();
+
+    // Act: exact replay — same id, same body
+    const replay = await postRecords(
+      harness,
+      developer,
+      claimEnvelope("clm_01", LOGIN_OBSERVATION),
+    );
+
+    // Assert: classified as duplicate, body not embedded a second time
+    expect(replay.data?.duplicates).toBe(1);
+    expect(bodyEmbeds()).toBe(afterFirst);
+  });
+
+  test("a deterministic re-observation is deduped without embedding it", async () => {
+    // Arrange
+    const embedder = createRecordingEmbedder();
+    const harness = await createTestHarness({ embedder });
+    const developer = await createTestDeveloper(
+      harness,
+      "Nick",
+      "nick@example.com",
+    );
+    await registerTestSession(harness, developer.apiKey);
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    await postRecords(harness, developer, claimEnvelope("clm_01", LOGIN_OBSERVATION));
+
+    // Act: different id, same body up to whitespace/case normalization
+    const rewrapped = LOGIN_OBSERVATION.toUpperCase();
+    const second = await postRecords(
+      harness,
+      developer,
+      claimEnvelope("clm_02", rewrapped),
+    );
+
+    // Assert: deduped by the deterministic gate, never sent to the embedder
+    expect(second.data?.duplicates).toBe(1);
+    expect(embedder.embeddedTexts).not.toContain(rewrapped);
+  });
+
+  test("a batch of claims embeds the context doc once, not per claim", async () => {
+    // Arrange: the doc only matters in its final state — re-embedding it after
+    // every claim in a flush is N−1 wasted provider calls and writes.
+    const embedder = createRecordingEmbedder();
+    const harness = await createTestHarness({ embedder });
+    const developer = await createTestDeveloper(
+      harness,
+      "Nick",
+      "nick@example.com",
+    );
+    await registerTestSession(harness, developer.apiKey);
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    // The doc always opens with the context title (normalized-doc.ts).
+    const docEmbeds = (): number =>
+      embedder.embeddedTexts.filter((text) =>
+        text.startsWith("Login 500s on staging"),
+      ).length;
+    const beforeBatch = docEmbeds();
+
+    // Act: one flush, three claims on distinct topic axes (nothing dedups)
+    const posted = await postRecords(harness, developer, {
+      records: [
+        claimEnvelope("clm_a", LOGIN_OBSERVATION),
+        claimEnvelope("clm_b", "Cache warm path drops entries on deploy"),
+        claimEnvelope("clm_c", "Rate limit burst window is misconfigured"),
+      ],
+    });
+
+    // Assert: all accepted, one doc embed for the whole flush
+    expect(posted.data?.accepted).toBe(3);
+    expect(docEmbeds() - beforeBatch).toBe(1);
   });
 });

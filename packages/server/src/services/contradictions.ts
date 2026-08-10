@@ -8,16 +8,26 @@
  *   open-vs-rejected. Recomputed fresh per read rather than stored, because
  *   the signal has no ingest-order: the target that completes the overlap may
  *   arrive long after both claims, and a stored row written at claim-ingest
- *   time would simply never exist. Recomputation is cheap — it is one join
- *   over indexed targets — and nothing can go stale.
+ *   time would simply never exist. The (kind, value) self-join is served by
+ *   work_context_targets_kind_value_idx (bootstrap.sql; the targets PK leads
+ *   with work_context_id and cannot serve it), and nothing can go stale.
  *
  *   STORED (similarity-detected): rows the ingest gate wrote while an
  *   embedder was configured (similarity-gate.ts). Stored because recomputing
  *   pairwise cosine at read time would be O(n²) over the claim store; the
- *   gate meets each new claim once, at ingest, where the comparison is O(n).
+ *   gate meets each new claim once, at ingest, where the probe is a single
+ *   nearest-neighbor lookup backed by claims_embedding_hnsw_idx.
  *
  * A pair found by both sources is reported once, as "similarity" — the
  * stronger signal, since it carries a measured score.
+ *
+ * BOTH SIDES SHIP RAW CLAIM BODIES, hub-convention (the hub returns raw, the
+ * connector frames). No connector consumes this endpoint yet; the consumer
+ * that DESIGN.md §4 plans — "open contradictions in this area" in the
+ * SessionStart briefing — puts two author-written bodies side by side in an
+ * agent's context, so it MUST route every body through the renderer's PROSE
+ * class (« » framing, sanitized) like every other teammate text. Do not
+ * interpolate these fields into agent-visible text directly.
  */
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";

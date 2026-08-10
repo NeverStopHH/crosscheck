@@ -10,7 +10,7 @@ import {
   workContextTargets,
 } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
-import { embedContextDoc, refreshNormalizedDoc } from "./normalized-doc.ts";
+import { refreshNormalizedDoc } from "./normalized-doc.ts";
 import {
   applyCrossSimilarity,
   embedClaimBody,
@@ -158,18 +158,6 @@ const updateExistingWorkContext = async (
   return accepted(body.id);
 };
 
-/** After an accepted write, embed the context doc — outside the transaction. */
-const embedAfterAccept = async (
-  deps: Deps,
-  outcome: HandlerOutcome,
-  workContextId: string,
-): Promise<HandlerOutcome> => {
-  if (outcome.status === "accepted" && deps.embedder != null) {
-    await embedContextDoc(deps.db, deps.embedder, workContextId);
-  }
-  return outcome;
-};
-
 export const ingestWorkContext = async (
   deps: Deps,
   developerId: string,
@@ -177,7 +165,9 @@ export const ingestWorkContext = async (
 ): Promise<HandlerOutcome> => {
   // One transaction so the conflict probe, the ownership check, and the
   // update all act on the same snapshot — no TOCTOU between them.
-  const outcome = await deps.db.transaction(async (tx) => {
+  // Context-doc embedding happens ONCE PER FLUSH in ingestRecords, not here:
+  // a batch touching one context must not re-embed it per record.
+  return deps.db.transaction(async (tx) => {
     const txDeps: ExecutorDeps = { db: tx, now: deps.now };
     const sessionIssue = await checkOwnedSession(
       tx,
@@ -214,7 +204,6 @@ export const ingestWorkContext = async (
     });
     return accepted(body.id);
   });
-  return embedAfterAccept(deps, outcome, body.id);
 };
 
 export const ingestTarget = async (
@@ -314,21 +303,49 @@ const classifyClaimIdConflict = async (
   return duplicate(claimId);
 };
 
+/**
+ * Pre-transaction probe: will the transaction classify this claim as a
+ * duplicate without needing its vector? Advisory only — the transaction
+ * re-checks under its own snapshot — but it decides whether an embedding
+ * provider gets paid: a spool replay (the NORMAL path when a flush times out)
+ * and a deterministic re-observation must not cost an HTTP call each.
+ */
+const isDeterministicDuplicate = async (
+  db: DbExecutor,
+  developerId: string,
+  body: Claim,
+): Promise<boolean> => {
+  const byIdRows = await db
+    .select({ id: claims.id })
+    .from(claims)
+    .where(eq(claims.id, body.id))
+    .limit(1);
+  if (byIdRows[0] !== undefined) {
+    return true;
+  }
+  return (await findDedupMatch(db, developerId, body)) !== undefined;
+};
+
 export const ingestClaim = async (
   deps: Deps,
   developerId: string,
   body: Claim,
 ): Promise<HandlerOutcome> => {
   // Embedded BEFORE the transaction: an external HTTP call must never hold a
-  // transaction open on single-connection PGlite. Null = keyless install or a
-  // failed embed — either way the similarity gate silently stands down and
-  // the deterministic gate below still runs (DESIGN.md §6 degradation).
+  // transaction open on single-connection PGlite. Null = keyless install, a
+  // failed embed, or a claim the deterministic gate will classify anyway —
+  // in every case the similarity gate silently stands down and the
+  // deterministic gate below still runs (DESIGN.md §6 degradation).
   const embedder = deps.embedder ?? null;
   const claimVector =
-    embedder === null ? null : await embedClaimBody(embedder, body.body);
+    embedder === null ||
+    (await isDeterministicDuplicate(deps.db, developerId, body))
+      ? null
+      : await embedClaimBody(embedder, body.body);
   // One transaction so dedup match, INSERT, and dedup_count bump are atomic —
   // two concurrent flushes cannot both miss the match and double-insert.
-  const outcome = await deps.db.transaction(async (tx) => {
+  // Context-doc embedding happens once per flush in ingestRecords.
+  return deps.db.transaction(async (tx) => {
     const txDeps: ExecutorDeps = { db: tx, now: deps.now };
     const authorIssue = await checkOwnedSession(
       tx,
@@ -444,7 +461,6 @@ export const ingestClaim = async (
     });
     return accepted(body.id);
   });
-  return embedAfterAccept(deps, outcome, body.workContextId);
 };
 
 const findEdgeIdByTriple = async (

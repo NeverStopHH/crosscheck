@@ -15,6 +15,7 @@ import { describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 
 import { workContexts } from "../src/db/schema.ts";
+import { NORMALIZED_DOC_MAX_TARGETS } from "../src/services/normalized-doc.ts";
 import {
   createHarnessWithSession,
   postRecords,
@@ -130,6 +131,46 @@ describe("normalized_doc generation on ingest", () => {
     const doc = await readNormalizedDoc(harness);
     expect(doc).toContain("Login 500s trace to key rotation");
     expect(doc).not.toContain("Login 500s on staging");
+  });
+
+  test("the doc folds in at most NORMALIZED_DOC_MAX_TARGETS target values", async () => {
+    // Arrange: tier-0 capture records a file target per touched file, and a
+    // long monorepo session accumulates thousands — the doc query runs inside
+    // every ingest transaction and must stay bounded. First-in-sort-order
+    // wins, deterministically.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    const targetCount = NORMALIZED_DOC_MAX_TARGETS + 20;
+    const valueAt = (index: number): string =>
+      `src/pkg/${String(index).padStart(4, "0")}.ts`;
+    const BATCH = 50;
+    for (let start = 0; start < targetCount; start += BATCH) {
+      const records = Array.from(
+        { length: Math.min(BATCH, targetCount - start) },
+        (_, offset) =>
+          recordEnvelope("target", {
+            workContextId: WORK_CONTEXT_ID,
+            kind: "file",
+            value: valueAt(start + offset),
+          }),
+      );
+      await postRecords(harness, developer, { records });
+    }
+
+    // Act
+    const doc = await readNormalizedDoc(harness);
+
+    // Assert: exactly the cap, from the front of the sort order
+    const includedCount = Array.from({ length: targetCount }, (_, index) =>
+      valueAt(index),
+    ).filter((value) => doc?.includes(value) === true).length;
+    expect(includedCount).toBe(NORMALIZED_DOC_MAX_TARGETS);
+    expect(doc).toContain(valueAt(0));
+    expect(doc).not.toContain(valueAt(targetCount - 1));
   });
 });
 

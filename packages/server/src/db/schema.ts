@@ -101,6 +101,10 @@ export const workContextTargets = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.workContextId, table.kind, table.value] }),
+    // The PK leads with work_context_id; the derived-contradictions join
+    // matches on (kind, value) alone (services/contradictions.ts), which the
+    // PK cannot serve.
+    index("work_context_targets_kind_value_idx").on(table.kind, table.value),
   ],
 );
 
@@ -139,6 +143,12 @@ export const claims = pgTable(
     check(
       "claims_body_length_check",
       sql`char_length(${table.body}) <= ${sql.raw(String(MAX_CLAIM_BODY_LENGTH))}`,
+    ),
+    // ANN index for the ingest gate's nearest-neighbor probes — without it
+    // every claim ingest seq-scans all embedded claims (similarity-gate.ts).
+    index("claims_embedding_hnsw_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
     ),
   ],
 );

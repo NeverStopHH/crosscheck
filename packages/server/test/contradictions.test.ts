@@ -16,6 +16,7 @@
  * here first-class, on a harness with no embedder at all.
  */
 import { describe, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
 
 import {
   addTestDeveloperWithSession,
@@ -270,5 +271,21 @@ describe("GET /api/contradictions", () => {
     expect(result.candidates.length).toBe(1);
     expect(result.candidates[0]?.reason).toBe("similarity");
     expect(result.candidates[0]?.similarity ?? 0).toBeGreaterThan(0.93);
+  });
+
+  test("the derived join is backed by a (kind, value) index on targets", async () => {
+    // Arrange: the derived-candidates join matches targets on (kind, value)
+    // with the leading PK column unconstrained — without this index every
+    // read of the endpoint scans and sorts the whole targets table twice.
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT indexname FROM pg_indexes WHERE tablename = 'work_context_targets'`,
+    );
+
+    // Assert
+    const names = rows.rows.map((row) => (row as { indexname: string }).indexname);
+    expect(names).toContain("work_context_targets_kind_value_idx");
   });
 });

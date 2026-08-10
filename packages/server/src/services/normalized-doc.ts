@@ -29,8 +29,19 @@ import type { Embedder } from "./embedder.ts";
 export const NORMALIZED_DOC_MAX_CLAIMS = 50;
 
 /**
- * Hard cap on the stored doc so the tsv it generates stays bounded. Roughly
- * MAX_CLAIM_BODY_LENGTH × 20 claims of prose — far more than ranking needs.
+ * Target values folded into the doc, first in sort order. Tier-0 capture
+ * records a file target per touched file, and a long monorepo session
+ * accumulates thousands — this query runs inside every ingest transaction on
+ * the single connection, so it is bounded like the claims query above.
+ */
+export const NORMALIZED_DOC_MAX_TARGETS = 100;
+
+/**
+ * Hard cap on the stored doc so the tsv it generates stays bounded — twenty
+ * full-length claim bodies of prose, far more than ranking needs:
+ *
+ * VERIFY: bun -e 'const d=await import("./packages/server/src/services/normalized-doc.ts");const s=await import("./packages/schema/src/index.ts");console.log(d.NORMALIZED_DOC_MAX_CHARS, 20*s.MAX_CLAIM_BODY_LENGTH)'
+ * PRINTS: 8000 8000
  */
 export const NORMALIZED_DOC_MAX_CHARS = 8000;
 
@@ -85,7 +96,8 @@ export const refreshNormalizedDoc = async (
     .select({ value: workContextTargets.value })
     .from(workContextTargets)
     .where(eq(workContextTargets.workContextId, workContextId))
-    .orderBy(asc(workContextTargets.value));
+    .orderBy(asc(workContextTargets.value))
+    .limit(NORMALIZED_DOC_MAX_TARGETS);
   const claimRows = await db
     .select({ kind: claims.kind, body: claims.body })
     .from(claims)

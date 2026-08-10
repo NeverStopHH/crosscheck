@@ -2,7 +2,9 @@
 -- drizzle-kit migrations are a follow-up once the schema changes between releases.
 -- Search-block columns (tsv, embedding) are added via ALTER TABLE ... IF NOT
 -- EXISTS below the base tables, so one statement covers both a fresh database
--- and one created before the search block existed.
+-- and one created before the search block existed. The upgrade half is
+-- exercised against a real pre-search-block persistent dir by
+-- test/upgrade.test.ts (fixture: test/fixtures/pre-search-block-bootstrap.sql).
 
 -- pgvector: bundled with PGlite (db/client.ts loads it); a real-Postgres
 -- deployment via DATABASE_URL needs the extension installed (DESIGN.md §2).
@@ -52,6 +54,12 @@ CREATE TABLE IF NOT EXISTS work_context_targets (
   value text NOT NULL,
   PRIMARY KEY (work_context_id, kind, value)
 );
+
+-- The derived-contradictions join matches targets on (kind, value) with the
+-- PK's leading column unconstrained (services/contradictions.ts) — without
+-- this, every read of GET /api/contradictions scans the whole targets table.
+CREATE INDEX IF NOT EXISTS work_context_targets_kind_value_idx
+  ON work_context_targets (kind, value);
 
 CREATE TABLE IF NOT EXISTS claims (
   id text PRIMARY KEY,
@@ -134,6 +142,16 @@ ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS embedding vector(768);
 ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS embedding_model text;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS embedding vector(768);
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS embedding_model text;
+
+-- ANN index for the ingest gate's nearest-neighbor probes over claim
+-- embeddings (similarity-gate.ts): without it every claim ingest runs a
+-- sequential scan over all embedded claims, inside the transaction, on the
+-- single connection — O(n²) for the store. hnsw is supported by the pgvector
+-- build bundled with the pinned PGlite (proved by the index assertion in
+-- similarity-gate.test.ts); creation on an existing table is cheap and
+-- inserts pay a few ms of graph maintenance only when a row has a vector.
+CREATE INDEX IF NOT EXISTS claims_embedding_hnsw_idx
+  ON claims USING hnsw (embedding vector_cosine_ops);
 
 -- Backfill for contexts created before the search block existed: title +
 -- status only. The full doc regenerates on the next ingest that touches the

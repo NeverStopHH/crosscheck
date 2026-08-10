@@ -110,7 +110,8 @@ export const findSimilarOwnClaim = async (
 
 /**
  * After the new claim is inserted: its nearest neighbor OUTSIDE the dedup
- * scope (another work context, or another developer in the same one).
+ * scope (another work context, another developer, or another claim kind in
+ * the same context).
  *
  *   opposite status → contradiction candidate row — the §1 "two open,
  *   contradictory theories" signal, similarity-detected;
@@ -143,9 +144,14 @@ export const applyCrossSimilarity = async (
         ne(claims.id, body.id),
         isNotNull(claims.embedding),
         eq(claims.embeddingModel, model),
-        // The dedup scope (same context AND same developer) was already
-        // handled by findSimilarOwnClaim; everything else is cross-session.
-        sql`NOT (${claims.workContextId} = ${body.workContextId} AND ${agentSessions.developerId} = ${developerId})`,
+        // Exactly the dedup scope of findSimilarOwnClaim is excluded — same
+        // context AND same developer AND same KIND. A different-kind
+        // near-duplicate by the same developer in the same context is
+        // cross-similarity territory: a rejected root_cause and a fresh
+        // near-identical hypothesis must still meet as a contradiction
+        // (DESIGN.md §3 restricts only MERGING across authors, not flagging
+        // a developer against their own history).
+        sql`NOT (${claims.workContextId} = ${body.workContextId} AND ${agentSessions.developerId} = ${developerId} AND ${claims.kind} = ${body.kind})`,
       ),
     )
     .orderBy(distance)
