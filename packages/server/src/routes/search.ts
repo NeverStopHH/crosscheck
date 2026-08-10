@@ -14,13 +14,19 @@ import { formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import {
   SEARCH_DEFAULT_LIMIT,
+  SEARCH_MAX_QUERY_CHARS,
   searchWorkContexts,
 } from "../services/search.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
-/** Oversized limits are capped in the search service, not rejected here. */
+/**
+ * Oversized limits are capped in the search service, not rejected here — but
+ * an oversized QUERY is rejected: unbounded token lists can fault the embedded
+ * database (SEARCH_MAX_QUERY_CHARS in the service), and a client that sends
+ * 34 KB of query deserves an answer naming the bound, not a truncated search.
+ */
 const SearchQuerySchema = z.object({
-  query: z.string().default(""),
+  query: z.string().max(SEARCH_MAX_QUERY_CHARS).default(""),
   repo: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).default(SEARCH_DEFAULT_LIMIT),
 });

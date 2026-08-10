@@ -300,6 +300,14 @@ export const MAX_SEARCH_RESULTS = 10;
 export const MAX_SEARCH_CHARS = 2400;
 
 /**
+ * Mirrors the hub's SEARCH_MAX_QUERY_CHARS (server search route rejects
+ * longer queries with 400). The tool description invites "distinctive words
+ * of the problem" and agents oblige with whole stack traces; truncating here
+ * keeps that call answerable instead of bouncing it off the hub's boundary.
+ */
+export const MAX_SEARCH_QUERY_CHARS = 2_000;
+
+/**
  * Width of an id as the MCP renderer prints it — bare, outside the « » frame,
  * because an agent has to pass it back into another tool.
  *

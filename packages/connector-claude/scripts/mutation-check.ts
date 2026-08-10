@@ -29,6 +29,7 @@ import { resolve } from "node:path";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const CONNECTOR = "packages/connector-claude";
+const SERVER = "packages/server";
 
 interface Mutation {
   /** Names the incident, not the edit. */
@@ -230,6 +231,46 @@ export const MUTATIONS: readonly Mutation[] = [
       "every character in it is legitimate, so no check that reads characters " +
       "can see it",
   },
+  // The three below guard the HUB's search ranking constants. They exist
+  // because the constants were once "pinned by the search tests" only in
+  // prose: neutralizing the exact-tier weight, deleting decay and removing the
+  // vector noise floor each left all then-existing search tests green (the
+  // exact-above-fts assertion survived by stable-sort tie-break, the decay
+  // assertion by the FTS tier's own activity ordering). Each mutation now has
+  // a test whose scenario ONLY the mutated constant can decide.
+  {
+    label: "an exact target match stops outranking the combined text tiers",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "export const EXACT_TIER_WEIGHT = 3;",
+    to: "export const EXACT_TIER_WEIGHT = 1;",
+    test: `${SERVER}/test/search.test.ts`,
+    because:
+      "a context that owns the exact file target ranks below one that merely " +
+      "mentions the topic in prose — the highest-precision signal the search " +
+      "block has is silently demoted to just another word match",
+  },
+  {
+    label: "time decay stops demoting stale results",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "const DECAY_HALF_LIFE_DAYS = 14;",
+    to: "const DECAY_HALF_LIFE_DAYS = 14_000_000;",
+    test: `${SERVER}/test/search.test.ts`,
+    because:
+      "a 60-day-old exact match outranks this week's work forever — the " +
+      "staleness model of DESIGN.md §5 is disconnected from ranking with " +
+      "every other test green",
+  },
+  {
+    label: "the vector noise floor stops filtering orthogonal matches",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "const MIN_VECTOR_SIMILARITY = 0.3;",
+    to: "const MIN_VECTOR_SIMILARITY = -1;",
+    test: `${SERVER}/test/search.test.ts`,
+    because:
+      "any embedded row becomes a \"semantic\" result for any query — an " +
+      "agent asking about authentication is handed the cache work context " +
+      "and told the hub searched by meaning",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -275,6 +316,7 @@ interface Outcome {
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-render.test.ts 1
+ * PRINTS: search.test.ts 3
  */
 const greenGuards = new Map<string, boolean>();
 
@@ -293,10 +335,10 @@ const greenGuards = new Map<string, boolean>();
  *
  * That exact recipe no longer produces the trap, because the reserve's guard is
  * now test/hook-reserve.test.ts, which spawns nothing and needs no repo.
- * RE-MEASURED this round in oven/bun:1 aarch64 under --cpus=2 with no git
- * installed: the budget suite 0 pass / 5 fail, test/hook-reserve.test.ts
- * 6 pass / 0 fail, and this script "all 12 re-introduced defects were caught",
- * exit 0. Run it and see both halves:
+ * RE-MEASURED in oven/bun:1 aarch64 under --cpus=2 with no git installed (the
+ * list held 12 mutations at the time): the budget suite 0 pass / 5 fail,
+ * test/hook-reserve.test.ts 6 pass / 0 fail, and this script "all 12
+ * re-introduced defects were caught", exit 0. Run it and see both halves:
  *
  *   docker run --rm -v "$PWD":/w -w /w --cpus=2 oven/bun:1 sh -c '
  *     bun install --frozen-lockfile >/dev/null 2>&1

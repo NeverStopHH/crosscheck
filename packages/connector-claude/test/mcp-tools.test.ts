@@ -18,6 +18,8 @@ import { createDb, createServer } from "@crosscheck/server";
 import type { Db, Embedder } from "@crosscheck/server";
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
+import { MAX_SEARCH_QUERY_CHARS } from "../src/constants.ts";
+
 import { prepareMcp } from "../src/mcp/context.ts";
 import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
@@ -427,6 +429,21 @@ describe("search_related_work", () => {
     const result = await call(bob, "search_related_work", { query: "" });
 
     // Assert
+    expect(result.text).toContain(alice.workContextId);
+  });
+
+  test("truncates an oversized query instead of bouncing off the hub cap", async () => {
+    // Arrange: the tool invites "distinctive words of the problem" and agents
+    // paste whole stack traces. The hub rejects queries past its boundary
+    // (server SEARCH_MAX_QUERY_CHARS → 400); the connector sends the first
+    // MAX_SEARCH_QUERY_CHARS characters instead of relaying that refusal.
+    const pasted = `login ${"y".repeat(3 * MAX_SEARCH_QUERY_CHARS)}`;
+
+    // Act
+    const result = await call(bob, "search_related_work", { query: pasted });
+
+    // Assert: searched and answered — the leading words still matched
+    expect(result.isError).toBe(false);
     expect(result.text).toContain(alice.workContextId);
   });
 

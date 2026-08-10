@@ -53,25 +53,67 @@ export const SEARCH_MAX_LIMIT = 25;
  */
 export const SEARCH_MIN_TOKEN_CHARS = 3;
 
+/**
+ * Hard cap on the query STRING, enforced at the route (400) and clamped again
+ * here for callers that bypass it. PGlite is an embedded single-connection
+ * WASM database: a ~34 KB query (5000 distinct tokens OR-joined into one
+ * tsquery) does not error, it faults the WASM heap and takes the whole hub
+ * down until restart — the search test "a query bypassing the route cannot
+ * kill the embedded database" holds the door shut.
+ */
+export const SEARCH_MAX_QUERY_CHARS = 2000;
+
+/**
+ * Most distinct tokens a query contributes to matching, per tokenizer.
+ * Sixteen meaningful words describe any problem this tool answers; beyond
+ * that, OR-joined tokens only add noise to ts_rank — and unbounded they add
+ * WASM heap pressure (see SEARCH_MAX_QUERY_CHARS).
+ */
+export const SEARCH_MAX_QUERY_TOKENS = 16;
+
+/**
+ * How long a search waits for the query embedding before degrading to
+ * lexical. Must sit well under the connector's per-request MCP_TIMEOUT_MS
+ * (10 000 ms) — if the embed deadline loses that race, a hanging embedder
+ * turns "degrades to FTS + exact" (DESIGN.md §6) into a hub failure for
+ * every search. The premise is machine-checked:
+ *
+ * VERIFY: grep -c "MCP_TIMEOUT_MS = 10_000" packages/connector-claude/src/constants.ts
+ * PRINTS: 1
+ */
+export const SEARCH_EMBED_DEADLINE_MS = 2_000;
+
 /** Standard RRF constant — dampens the gap between neighboring ranks. */
-const RRF_K = 60;
+export const RRF_K = 60;
 
 /**
  * Weight math for "exact above FTS at equal age": each tier list holds at most
  * TIER_CANDIDATES rows, so the weakest exact contribution is
  * 3/(60+30) ≈ 0.0333, while the strongest a non-exact row can reach is
  * rank 1 in BOTH other tiers: 2/(60+1) ≈ 0.0328. Widening TIER_CANDIDATES
- * past 31 or touching a weight breaks that inequality — the search tests
- * pin the consequence.
+ * past 31 or touching a weight breaks that inequality. The margin is checked
+ * below from the exported constants, and the search tests pin the behavior
+ * ("an exact match outranks a context leading both text tiers" — re-broken on
+ * every pull request by mutation-check.ts).
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/services/search.ts");const floor=s.EXACT_TIER_WEIGHT/(s.RRF_K+s.TIER_CANDIDATES);const ceiling=2*s.TEXT_TIER_WEIGHT/(s.RRF_K+1);console.log(floor.toFixed(5),ceiling.toFixed(5),floor>ceiling)'
+ * PRINTS: 0.03333 0.03279 true
  */
-const EXACT_TIER_WEIGHT = 3;
-const TEXT_TIER_WEIGHT = 1;
-const TIER_CANDIDATES = 30;
+export const EXACT_TIER_WEIGHT = 3;
+export const TEXT_TIER_WEIGHT = 1;
+export const TIER_CANDIDATES = 30;
 
-/** Half-life of the fused score (DESIGN.md §5: time-decay ranking). */
+/**
+ * Half-life of the fused score (DESIGN.md §5: time-decay ranking). Pinned by
+ * "time decay demotes a stale exact match below a fresh text match" — decay
+ * is the only mechanism that can flip that ordering.
+ */
 const DECAY_HALF_LIFE_DAYS = 14;
 
-/** Below this cosine similarity a vector "match" is noise, not a neighbor. */
+/**
+ * Below this cosine similarity a vector "match" is noise, not a neighbor.
+ * Pinned by "the vector noise floor keeps orthogonal rows out of the results".
+ */
 const MIN_VECTOR_SIMILARITY = 0.3;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -110,22 +152,30 @@ export interface SearchQuery {
   readonly limit: number;
 }
 
+/** Dedupe (a pasted trace repeats itself) and cap — see SEARCH_MAX_QUERY_TOKENS. */
+const boundTokens = (tokens: readonly string[]): readonly string[] =>
+  [...new Set(tokens)].slice(0, SEARCH_MAX_QUERY_TOKENS);
+
 /** Letter/digit words for FTS — split on everything else, floor applied. */
 const ftsTokens = (query: string): readonly string[] =>
-  query
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((token) => token.length >= SEARCH_MIN_TOKEN_CHARS);
+  boundTokens(
+    query
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((token) => token.length >= SEARCH_MIN_TOKEN_CHARS),
+  );
 
 /**
  * Whitespace words for the exact tier — a file path or fingerprint hash is
  * one "word" to a human but many to the letter/digit splitter.
  */
 const exactTokens = (query: string): readonly string[] =>
-  query
-    .toLowerCase()
-    .split(/\s+/u)
-    .filter((token) => token.length >= SEARCH_MIN_TOKEN_CHARS);
+  boundTokens(
+    query
+      .toLowerCase()
+      .split(/\s+/u)
+      .filter((token) => token.length >= SEARCH_MIN_TOKEN_CHARS),
+  );
 
 /** LIKE treats % _ \ as syntax; a query word must arrive as literal text. */
 const escapeLike = (token: string): string =>
@@ -238,13 +288,46 @@ const listFtsTier = async (
     .slice(0, TIER_CANDIDATES);
 };
 
+/**
+ * Rejects when `work` outlasts the deadline. The work itself is NOT cancelled
+ * (the Embedder interface carries no abort signal); its own transport timeout
+ * settles it in the background while the search proceeds without it.
+ */
+const withDeadline = async <T>(
+  work: Promise<T>,
+  deadlineMs: number,
+  label: string,
+): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(`${label} exceeded the ${String(deadlineMs)}ms deadline`),
+            ),
+          deadlineMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const listVectorTier = async (
   db: Db,
   embedder: Embedder,
   query: string,
   repo: string | undefined,
 ): Promise<readonly TierRow[]> => {
-  const [queryVector] = await embedder.embed([query]);
+  const [queryVector] = await withDeadline(
+    embedder.embed([query]),
+    SEARCH_EMBED_DEADLINE_MS,
+    "query embedding",
+  );
   if (queryVector === undefined) {
     return [];
   }
@@ -404,11 +487,14 @@ export const searchWorkContexts = async (
 ): Promise<SearchResponse> => {
   const limit = Math.min(Math.max(1, input.limit), SEARCH_MAX_LIMIT);
   const nowMs = deps.now().getTime();
-  const wordTokens = ftsTokens(input.query);
-  const pathTokens = exactTokens(input.query);
+  // Clamped even though the route already rejects: this service is the layer
+  // whose queries can fault the embedded database, so the bound lives here too.
+  const query = input.query.slice(0, SEARCH_MAX_QUERY_CHARS);
+  const wordTokens = ftsTokens(query);
+  const pathTokens = exactTokens(query);
 
   // A blank query asks "what is happening" — answered by recency alone.
-  if (input.query.trim().length === 0) {
+  if (query.trim().length === 0) {
     const rows = await listRecencyTier(deps.db, input.repo);
     const fused = fuseTiers(
       [{ tier: "recency", weight: TEXT_TIER_WEIGHT, rows }],
@@ -423,7 +509,7 @@ export const searchWorkContexts = async (
   const [exactRows, ftsRows, vector] = await Promise.all([
     listExactTier(deps.db, pathTokens, input.repo),
     listFtsTier(deps.db, wordTokens, input.repo),
-    tryVectorTier(deps, input.query, input.repo),
+    tryVectorTier(deps, query, input.repo),
   ]);
 
   const fused = fuseTiers(

@@ -12,7 +12,9 @@
  * silent absence (no embedder, failing embedder).
  */
 import { describe, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
 
+import { searchWorkContexts } from "../src/services/search.ts";
 import {
   createTestDeveloper,
   createTestHarness,
@@ -29,6 +31,7 @@ import type { TestDeveloper, TestHarness } from "./helpers.ts";
 import {
   createFailingEmbedder,
   createFakeEmbedder,
+  createHangingEmbedder,
 } from "./fixtures/fake-embedder.ts";
 
 const API_REPO = VALID_SESSION_BODY.repo;
@@ -413,5 +416,166 @@ describe("the vector tier and its honest absence", () => {
     expect(result.status).toBe(200);
     expect(result.results[0]?.id).toBe("wc_login");
     expect(result.vectorTierActive).toBe(false);
+  });
+
+  test("a hanging embedder degrades to lexical on the search deadline", async () => {
+    // Arrange: an embed call that never settles (cold-loading Ollama, host
+    // asleep) exactly when the search asks. Search must answer lexically on
+    // its own deadline instead of hanging until the connector's timeout turns
+    // it into a hub failure.
+    const { harness, developer } = await createSearchHarness({
+      embedder: createHangingEmbedder("signing key"),
+    });
+    await seedContext(harness, developer, {
+      id: "wc_login",
+      title: "Login 500s on staging",
+      claimBodies: ["The refresh path reads a rotated signing key"],
+    });
+
+    // Act
+    const result = await search(harness, developer.apiKey, {
+      query: "signing key",
+    });
+
+    // Assert: lexical results, vector tier honestly reported absent
+    expect(result.status).toBe(200);
+    expect(result.results[0]?.id).toBe("wc_login");
+    expect(result.vectorTierActive).toBe(false);
+  });
+});
+
+describe("query bounds that keep the hub alive", () => {
+  /** Distinct ≥3-char tokens, the shape that killed PGlite unbounded. */
+  const hugeQuery = (tokenCount: number): string =>
+    Array.from({ length: tokenCount }, (_, index) => `tok${String(index)}xyz`).join(
+      " ",
+    );
+
+  test("rejects an oversized query with 400 and answers the next search", async () => {
+    // Arrange
+    const { harness, developer } = await createSearchHarness();
+    await seedContext(harness, developer, {
+      id: "wc_alive",
+      title: "Cache stampede on deploy",
+    });
+
+    // Act: ~34 KB of query, then a normal search on the same hub
+    const oversized = await search(harness, developer.apiKey, {
+      query: hugeQuery(5000),
+    });
+    const followUp = await search(harness, developer.apiKey, {
+      query: "stampede",
+    });
+
+    // Assert: boundary rejection, and the embedded database survived it
+    expect(oversized.status).toBe(400);
+    expect(followUp.status).toBe(200);
+    expect(followUp.results[0]?.id).toBe("wc_alive");
+  });
+
+  test("a query bypassing the route cannot kill the embedded database", async () => {
+    // Arrange: call the service directly — the route cap must not be the only
+    // thing standing between a long token list and a dead WASM heap.
+    const { harness, developer } = await createSearchHarness();
+    await seedContext(harness, developer, {
+      id: "wc_alive",
+      title: "Cache stampede on deploy",
+    });
+
+    // Act
+    const result = await searchWorkContexts(
+      { db: harness.db, now: harness.clock.now, embedder: null },
+      { query: hugeQuery(5000), limit: 10 },
+    );
+
+    // Assert: resolved (not crashed), and the database still answers
+    expect(Array.isArray(result.results)).toBe(true);
+    const probe = await harness.db.execute(
+      sql`SELECT count(*)::int AS n FROM work_contexts`,
+    );
+    expect((probe.rows[0] as { n: number }).n).toBe(1);
+  });
+});
+
+describe("ranking constants, each pinned by a behavior it alone produces", () => {
+  test("an exact match outranks a context leading both text tiers", async () => {
+    // Arrange: wc_exact appears ONLY in the exact tier (its path target is a
+    // single tsvector file token, so "refresh"/"login" cannot FTS-match it,
+    // and its title sits on no fake-embedder topic axis). wc_both is rank 1
+    // in BOTH fts and vector. Same age everywhere, so only the exact-tier
+    // weight separates 3/(60+1) from 1/(60+1) + 1/(60+1).
+    const { harness, developer } = await createSearchHarness({
+      embedder: createFakeEmbedder(),
+    });
+    await seedContext(harness, developer, {
+      id: "wc_exact",
+      title: "Token rotation window overrun",
+      targetValues: ["src/auth/refresh.ts"],
+    });
+    await seedContext(harness, developer, {
+      id: "wc_both",
+      title: "Login refresh flow keeps failing",
+    });
+
+    // Act
+    const result = await search(harness, developer.apiKey, {
+      query: "refresh.ts login",
+    });
+
+    // Assert: weakest-exact beats strongest-non-exact at equal age
+    expect(result.results[0]?.id).toBe("wc_exact");
+    expect(result.results[0]?.tier).toBe("exact");
+    expect(result.results[1]?.id).toBe("wc_both");
+  });
+
+  test("time decay demotes a stale exact match below a fresh text match", async () => {
+    // Arrange: the stale context owns the exact file target (weight 3) but is
+    // 60 days old; the fresh context merely FTS-matches (weight 1) today.
+    // Without decay 3/61 beats 1/61 outright — decay is the ONLY thing that
+    // can flip this ordering (0.5^(60/14) ≈ 0.05).
+    const { harness, developer } = await createSearchHarness();
+    await seedContext(harness, developer, {
+      id: "wc_stale_exact",
+      title: "Token rotation window overrun",
+      targetValues: ["src/auth/refresh.ts"],
+      createdAt: OLD_CREATED_ISO,
+    });
+    await seedContext(harness, developer, {
+      id: "wc_fresh_text",
+      title: "Refresh flow returns stale key",
+    });
+
+    // Act
+    const result = await search(harness, developer.apiKey, {
+      query: "refresh.ts",
+    });
+
+    // Assert: DESIGN.md §5 staleness — fresh text above stale exact
+    expect(result.results.map((entry) => entry.id)).toEqual([
+      "wc_fresh_text",
+      "wc_stale_exact",
+    ]);
+  });
+
+  test("the vector noise floor keeps orthogonal rows out of the results", async () => {
+    // Arrange: cache topic context, authentication topic query — cosine 0,
+    // no shared lexeme. Only the MIN_VECTOR_SIMILARITY floor stands between
+    // this query and a nonsense "semantic" result.
+    const { harness, developer } = await createSearchHarness({
+      embedder: createFakeEmbedder(),
+    });
+    await seedContext(harness, developer, {
+      id: "wc_cache",
+      title: "Cache stampede on deploy",
+    });
+
+    // Act
+    const result = await search(harness, developer.apiKey, {
+      query: "authentication timeouts",
+    });
+
+    // Assert: the vector tier ran and honestly found nothing
+    expect(result.vectorTierActive).toBe(true);
+    expect(result.results).toEqual([]);
   });
 });

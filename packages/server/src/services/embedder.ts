@@ -34,9 +34,15 @@ const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 
 /**
- * Generous by hook standards because no hook ever waits on this: embedding
- * runs hub-side, and the one ingest path that calls it does so outside its
- * transaction (record-handlers.ts).
+ * Transport-level ceiling on one embedding call. Hooks never wait on this
+ * (embedding runs hub-side, outside ingest transactions), but the SEARCH
+ * path does — which is why search stops waiting long before this fires:
+ * services/search.ts SEARCH_EMBED_DEADLINE_MS (2 s) races the embed and
+ * degrades to lexical, while this timeout merely settles the abandoned call
+ * in the background. Ingest keeps the full ceiling: a claim that misses its
+ * vector loses similarity-dedup for good (append-only rows are never
+ * re-embedded), so ingest trades latency for coverage — and pays it only for
+ * claims the deterministic gate cannot already classify (record-handlers.ts).
  */
 const EMBED_TIMEOUT_MS = 10_000;
 
@@ -97,8 +103,11 @@ export const createOpenAiEmbedder = (apiKey: string): Embedder => {
         {
           model: OPENAI_EMBED_MODEL,
           input: texts,
-          // The API truncates AND re-normalizes when asked for fewer
-          // dimensions than the model's native width.
+          // HISTORICAL (OpenAI embeddings guide, read 2026-08; not verifiable
+          // from this repo): the API truncates and re-normalizes when asked
+          // for fewer dimensions than the model's native width. What IS
+          // enforced here is the width itself — checkDimensions below rejects
+          // any response that is not EMBEDDING_DIMENSIONS wide.
           dimensions: EMBEDDING_DIMENSIONS,
         },
       );

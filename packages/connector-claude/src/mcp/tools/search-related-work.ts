@@ -34,7 +34,10 @@
  */
 import { z } from "zod";
 
-import { MAX_SEARCH_RESULTS } from "../../constants.ts";
+import {
+  MAX_SEARCH_QUERY_CHARS,
+  MAX_SEARCH_RESULTS,
+} from "../../constants.ts";
 import { toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
@@ -112,20 +115,24 @@ export const run = async (
     return parsed.result;
   }
 
-  const tokens = tokenize(parsed.value.query);
+  // Truncated BEFORE the unusable-query check so the words examined are the
+  // words sent: the hub rejects longer queries at its boundary (400), and a
+  // pasted stack trace should come back with its first 2000 characters
+  // searched rather than as a hub failure.
+  const query = parsed.value.query.slice(0, MAX_SEARCH_QUERY_CHARS);
+
+  const tokens = tokenize(query);
   // An EMPTY query means "show me the recent work" and the hub answers it by
   // recency. A query that had words but lost them all to the length floor
   // means the opposite, and answering it with everything — or with "nothing
   // matched" — would both claim a question was asked that never was.
-  if (tokens.length === 0 && parsed.value.query.trim().length > 0) {
-    return toolText(
-      renderUnusableQuery(parsed.value.query, MIN_QUERY_TOKEN_CHARS),
-    );
+  if (tokens.length === 0 && query.trim().length > 0) {
+    return toolText(renderUnusableQuery(query, MIN_QUERY_TOKEN_CHARS));
   }
 
   // Repo is a relevance filter, never a boundary (see the header).
   const searched = await searchWorkContexts(ctx.hub, {
-    query: parsed.value.query,
+    query,
     repo: ctx.identity.repoId,
     limit: parsed.value.limit,
   });
@@ -146,7 +153,7 @@ export const run = async (
     }));
 
   return toolText(
-    renderSearchResults(hits, parsed.value.query, {
+    renderSearchResults(hits, query, {
       semanticTier: searched.data.vectorTierActive,
     }),
   );
