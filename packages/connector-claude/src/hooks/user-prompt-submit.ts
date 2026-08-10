@@ -32,8 +32,8 @@ import type { HintSelection } from "../hints/select.ts";
 import { appendRecords } from "../spool/append.ts";
 import {
   readSessionState,
+  updateSessionState,
   withDeliveredHint,
-  writeSessionState,
 } from "../state/session-state.ts";
 import type { SessionState } from "../state/session-state.ts";
 import type { HookContext } from "./runner.ts";
@@ -87,12 +87,13 @@ const renderSelection = async (
   };
 };
 
+/** False when the seen-set could not be updated — then nothing may be emitted. */
 const recordDelivery = async (
   ctx: HookContext,
   state: SessionState,
   delivery: Delivery,
   now: Date,
-): Promise<void> => {
+): Promise<boolean> => {
   const producer: Producer = {
     developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
     agentKind: ctx.config.agentKind,
@@ -115,9 +116,11 @@ const recordDelivery = async (
     ],
     now,
   );
-  await writeSessionState(
-    ctx.config.home,
-    withDeliveredHint(state, delivery.refId, delivery.bodyHash),
+  // Freshest state, under the state lock: a previous turn's PostToolUse still
+  // flushing must not have this write erase its markers, nor erase this ref
+  // with its own stale snapshot (state/session-state.ts, updateSessionState).
+  return updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
+    withDeliveredHint(fresh, delivery.refId, delivery.bodyHash),
   );
 };
 
@@ -156,7 +159,12 @@ export const handleUserPromptSubmit = async (
   if (delivery === null || delivery.text.length === 0) {
     return "";
   }
-  await recordDelivery(ctx, state, delivery, now);
+  // Unremembered means unemitted — the honest direction: a state write that
+  // fails (no file, busy lock) costs one hint slot, never a repeat delivery.
+  const remembered = await recordDelivery(ctx, state, delivery, now);
+  if (!remembered) {
+    return "";
+  }
   return JSON.stringify({
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",

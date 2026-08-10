@@ -27,6 +27,7 @@ import { flushSpool } from "../spool/flush.ts";
 import {
   deriveSessionState,
   readSessionState,
+  updateSessionState,
   withSeenTargets,
   writeSessionState,
 } from "../state/session-state.ts";
@@ -259,9 +260,13 @@ export const handlePostToolUse = async (
   );
 
   const didHeartbeat = await maybeHeartbeat(ctx, state, now);
-  await writeSessionState(ctx.config.home, {
-    ...withSeenTargets(state, files),
+  // Transform the FRESHEST state under the lock, never write back the whole
+  // snapshot read before the flush: a sibling PreToolUse recorded its
+  // tripwire marker inside this hook's window, and a stale whole-file write
+  // here would erase it (test/state-race.test.ts).
+  await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
+    ...withSeenTargets(fresh, files),
     ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
-  });
+  }));
   return "";
 };

@@ -21,8 +21,8 @@ import { getTripwireSessions } from "../http/hub.ts";
 import { renderTripwireReason } from "../hints/render.ts";
 import {
   readSessionState,
+  updateSessionState,
   withTripwireAsked,
-  writeSessionState,
 } from "../state/session-state.ts";
 import { toRepoRelative } from "./post-tool-use.ts";
 import type { HookContext } from "./runner.ts";
@@ -72,9 +72,23 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
     return "";
   }
   const reason = renderTripwireReason(teammate, file, ctx.now());
-  // Remembered BEFORE emitting, same honest direction as the hint delivery:
-  // a crash between the two costs one ask, never a nag loop.
-  await writeSessionState(ctx.config.home, withTripwireAsked(state, file));
+  // The marker is CLAIMED atomically — check-and-set under the state lock, on
+  // the freshest state: a sibling PreToolUse racing this one finds the marker
+  // already present and stays silent, and a slower PostToolUse writing after
+  // us can no longer erase it (test/state-race.test.ts). Claimed BEFORE
+  // emitting, same honest direction as the hint delivery: a crash between the
+  // two costs one ask, never a nag loop.
+  const claimed = await updateSessionState(
+    ctx.config.home,
+    ctx.payload.session_id,
+    (fresh) =>
+      fresh.tripwireAskedFiles.includes(file)
+        ? null
+        : withTripwireAsked(fresh, file),
+  );
+  if (!claimed) {
+    return "";
+  }
   return JSON.stringify({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",

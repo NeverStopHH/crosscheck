@@ -17,6 +17,8 @@ export interface HintHubLatency {
   candidates: number;
   /** GET /api/hints/tripwire. */
   tripwire: number;
+  /** POST /api/records — holds a PostToolUse flush open (state-race tests). */
+  records?: number;
 }
 
 export interface HintHub {
@@ -125,6 +127,7 @@ export const startHintHub = (
       if (pathname === "/api/records") {
         const body = (await request.json()) as { records: readonly unknown[] };
         calls.records += 1;
+        await sleep(latency.records ?? 0);
         return Response.json({
           ok: true,
           data: {

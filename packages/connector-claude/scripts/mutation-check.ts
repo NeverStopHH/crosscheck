@@ -365,6 +365,55 @@ export const MUTATIONS: readonly Mutation[] = [
       "teammate merely editing the same file now BLOCKS the developer's " +
       "tool call instead of asking",
   },
+  // The four below guard the fixer round on the hint pipeline: the hub-side
+  // pool and revision filters, and the connector-side boundary and identity
+  // guards. Each is a predicate whose deletion leaves everything else green.
+  {
+    label: "a retracted claim is served to readers again",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: 'const SUPERSEDES_EDGE_KIND = "supersedes";',
+    to: 'const SUPERSEDES_EDGE_KIND = "never_matches";',
+    test: `${SERVER}/test/hints.test.ts`,
+    because:
+      "the notSuperseded probe matches no edge, so a theory its author " +
+      "revised away arrives in a teammate's context under full trust labels " +
+      "— the §4 anchoring failure the filter exists to prevent",
+  },
+  {
+    label: "the caller's own contexts crowd the candidate pool again",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "      : ne(agentSessions.developerId, scope.excludeDeveloperId),",
+    to: "      : undefined,",
+    test: `${SERVER}/test/hints.test.ts`,
+    because:
+      "exclusion falls back to a filter AFTER the pool bound, so a reader's " +
+      "ten fresh contexts fill SEARCH_POOL_LIMIT and the teammate finding " +
+      "the endpoint exists to surface is silently blanked",
+  },
+  {
+    label: "an unknown reader identity treats every claim as foreign",
+    file: `${CONNECTOR}/src/hints/select.ts`,
+    from: "  if (selfDeveloperId === null) {\n    return SILENCE;\n  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/hint-select.test.ts`,
+    because:
+      "with the fail-closed gate gone a null selfDeveloperId cannot exclude " +
+      "anything, and a reader whose config lost its developerId is hinted " +
+      "claims they authored into a teammate's tree — self-noise (§10 risk 1)",
+  },
+  {
+    // Like tripwire-hook.test.ts, this guard shells out to git (makeRepo) —
+    // the assertGuardIsGreen container caveat applies to it too.
+    label: "a hub-forged confidence renders as a trust label",
+    file: `${CONNECTOR}/src/http/hub.ts`,
+    from: "  confidence: z.number().min(0).max(1),",
+    to: "  confidence: z.number(),",
+    test: `${CONNECTOR}/test/hint-hook.test.ts`,
+    because:
+      "every other hub field is validated tightly; unbounded, a hostile hub " +
+      "labels its claim `confidence 1e+30` and the forged credential lands " +
+      "unasked in the reader's context",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -408,8 +457,10 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
  * PRINTS: hint-budget.test.ts 2
+ * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 1
- * PRINTS: hint-select.test.ts 2
+ * PRINTS: hint-select.test.ts 3
+ * PRINTS: hints.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: mcp-injection.test.ts 4

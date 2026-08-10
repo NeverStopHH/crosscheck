@@ -7,6 +7,7 @@ import {
   sessionStatePath,
   writePrivateFile,
 } from "../config/paths.ts";
+import { withLock } from "../spool/lock.ts";
 
 export const SessionStateSchema = z.looseObject({
   claudeSessionId: z.string().min(1),
@@ -74,6 +75,47 @@ export const deleteSessionState = async (
 ): Promise<void> => {
   await removeFile(sessionStatePath(home, claudeSessionId));
 };
+
+const sessionStateLockPath = (home: string, claudeSessionId: string): string =>
+  `${sessionStatePath(home, claudeSessionId)}.lock`;
+
+/**
+ * Read-transform-write under the state file's own lock — how every MID-SESSION
+ * writer must update state. Claude Code runs tools in parallel, so sibling
+ * hooks overlap; a hook that wrote back the whole state it read at its start
+ * would erase whatever a faster sibling recorded in between (a tripwire
+ * marker, a seen target — test/state-race.test.ts pins both interleavings).
+ * The transform runs on the FRESHEST state, inside the lock, so nothing read
+ * before the lock can leak into the write.
+ *
+ * `transform` returning null declines the write — that is how PreToolUse's
+ * "one ask per file" check-and-set is atomic rather than check-then-set.
+ *
+ * Fail-open like everything on a hook path: no state file, an unparseable
+ * one, or a lock that stays busy past its retries all return false and write
+ * nothing. The lock is the spool's own (spool/lock.ts): holder-identified,
+ * steal only from the provably dead, worst case ~100 ms of retries
+ * (SPOOL_LOCK_RETRIES × SPOOL_LOCK_RETRY_DELAY_MS) inside budgets that allow
+ * for it. writeSessionState stays for the CREATE paths (SessionStart,
+ * recovery), which run before any sibling exists.
+ */
+export const updateSessionState = async (
+  home: string,
+  claudeSessionId: string,
+  transform: (fresh: SessionState) => SessionState | null,
+): Promise<boolean> =>
+  withLock(sessionStateLockPath(home, claudeSessionId), false, async () => {
+    const fresh = await readSessionState(home, claudeSessionId);
+    if (fresh === null) {
+      return false;
+    }
+    const next = transform(fresh);
+    if (next === null) {
+      return false;
+    }
+    await writeSessionState(home, next);
+    return true;
+  });
 
 /** FIFO cap: the oldest targets fall out, the session never grows unbounded. */
 export const withSeenTargets = (
