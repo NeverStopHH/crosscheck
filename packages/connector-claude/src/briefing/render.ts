@@ -360,10 +360,20 @@ export const formatSolvedLine = (
   const name =
     entry.developerName === undefined ? "" : bareUntrusted(entry.developerName);
   const author = name.length === 0 ? UNKNOWN_AUTHOR : name;
+  // The landed fact (DESIGN.md §5): a renderer literal, shown only when the
+  // hub's landedAt parses as a date — junk from a broken or hostile hub buys
+  // no vouch. "landed" = the owning session's base commit reached the
+  // default branch, the same fact get_diagnosis states in full.
+  const landedFact =
+    entry.landedAt !== null &&
+    entry.landedAt !== undefined &&
+    ageMsFrom(entry.landedAt, now) !== null
+      ? " · landed"
+      : "";
   // U+00B7-separated like the absence and MCP lines — the structure the BARE
   // class strips from names, so an author cannot mint a field. A comma-shaped
   // line here would be structure no character class covers.
-  return `- ${author} · diagnosed ${formatSolvedAge(ageMs)} ago · ${kindLabel}: «${title}» · get_diagnosis ${id}`;
+  return `- ${author} · diagnosed ${formatSolvedAge(ageMs)} ago${landedFact} · ${kindLabel}: «${title}» · get_diagnosis ${id}`;
 };
 
 /**

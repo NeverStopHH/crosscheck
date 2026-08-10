@@ -53,6 +53,8 @@ import type { HookBudget, HookContext } from "./runner.ts";
 
 const INITIAL_STATUS = "analyzing";
 
+const MS_PER_DAY = 86_400_000;
+
 /** A resumed session whose crosscheck session was closed gets a fresh suffix. */
 const RETRY_SUFFIXES = ["", "~r1", "~r2"] as const;
 
@@ -306,11 +308,21 @@ export const handleSessionStart = async (
       ? (entry.baseCommit === undefined ? [] : [entry.baseCommit])
       : [],
   );
+  // The rotation is the day number: every SessionStart on one day probes the
+  // same window (idempotent replays), and the window advances daily so a
+  // backlog larger than the ancestry cap is fully covered across days
+  // instead of starving its tail (capture/landed.ts).
+  const landedRotation = Math.floor(now.getTime() / MS_PER_DAY);
   const [drift, landedCommits] = await Promise.all([
     resolveDriftByBaseCommit(ctx.identity.root, shownBaseCommits),
     defaultBranchRef === null || openBaseCommits.length === 0
       ? Promise.resolve([] as readonly string[])
-      : collectLandedCommits(ctx.identity.root, defaultBranchRef, openBaseCommits),
+      : collectLandedCommits(
+          ctx.identity.root,
+          defaultBranchRef,
+          openBaseCommits,
+          landedRotation,
+        ),
   ]);
 
   const producer: Producer = {

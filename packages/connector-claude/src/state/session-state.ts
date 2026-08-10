@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { MAX_SEEN_TARGETS, MAX_TRIPWIRE_ASKED_FILES } from "../constants.ts";
+import {
+  MAX_BRIEFING_SOLVED_REFS,
+  MAX_SEEN_TARGETS,
+  MAX_TRIPWIRE_ASKED_FILES,
+} from "../constants.ts";
 import {
   readJsonOrNull,
   removeFile,
@@ -160,16 +164,24 @@ export const withDeliveredHint = (
 });
 
 /**
- * Briefing solved pointers, appended once at SessionStart. No cap beyond
- * MAX_SOLVED_POINTERS itself, which the briefing enforces before any append.
+ * Briefing solved pointers, appended at SessionStart — which re-fires with
+ * the SAME session id on resume/clear, so one briefing's MAX_SOLVED_POINTERS
+ * is not this list's bound. Deduplicated (a re-pointed tree is one fact) and
+ * FIFO-capped like the sibling lists above.
  */
 export const withBriefingSolvedRefs = (
   state: SessionState,
   refIds: readonly string[],
-): SessionState => ({
-  ...state,
-  briefingSolvedRefs: [...state.briefingSolvedRefs, ...refIds],
-});
+): SessionState => {
+  const merged = [...new Set([...state.briefingSolvedRefs, ...refIds])];
+  return {
+    ...state,
+    briefingSolvedRefs:
+      merged.length <= MAX_BRIEFING_SOLVED_REFS
+        ? merged
+        : merged.slice(merged.length - MAX_BRIEFING_SOLVED_REFS),
+  };
+};
 
 /** FIFO cap, same shape as withSeenTargets: asks are once per file. */
 export const withTripwireAsked = (

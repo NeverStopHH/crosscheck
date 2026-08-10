@@ -52,6 +52,33 @@ describe("briefing solved-before section", () => {
     expect(briefing).toContain("Nick");
   });
 
+  test("a landed diagnosis carries the landed fact on its pointer line", async () => {
+    // The hub sends landedAt so the reader can tell a recorded lead whose
+    // fix REACHED the default branch from one still in flight — a renderer
+    // literal gated on the field parsing as a date, never wire text.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          landedAt: new Date(NOW.getTime() - 140 * DAY_MS).toISOString(),
+        }),
+      ]),
+    );
+
+    // Assert
+    expect(briefing).toContain("diagnosed 5mo ago · landed");
+  });
+
+  test("an unparseable landedAt renders no landed fact", async () => {
+    // Act: a hostile or broken hub cannot buy the landed vouch with junk.
+    const briefing = renderBriefing(
+      baseInput([solvedMatch({ landedAt: "not-a-date" })]),
+    );
+
+    // Assert
+    expect(briefing).toContain("get_diagnosis wc_solved");
+    expect(briefing).not.toContain("landed");
+  });
+
   test("younger diagnoses state their age in days", async () => {
     // Act
     const briefing = renderBriefing(

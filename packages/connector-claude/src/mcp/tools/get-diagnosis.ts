@@ -113,10 +113,11 @@ export const isNotFound = (result: HubResult<unknown>): boolean =>
 /**
  * The pull-time facts for a SOLVED tree (VISION.md §1 honest presentation):
  * drift of the tree's base commit against the reader's HEAD, and whether its
- * referenced files changed on the default branch since the diagnosis. Two
- * bounded git calls after one bounded ref resolution, inside the MCP budget
- * (not a hook path), every leg fail-open — a repo that cannot answer renders
- * "unknown", never a guess.
+ * referenced files changed on the default branch since the diagnosis. At
+ * most three bounded git calls after one bounded ref resolution (the
+ * staleness leg spends a second call to prove its pathspecs resolve before
+ * vouching "unchanged"), inside the MCP budget (not a hook path), every leg
+ * fail-open — a repo that cannot answer renders "unknown", never a guess.
  */
 const solvedPresentationFor = async (
   ctx: McpContext,

@@ -140,6 +140,48 @@ describe("collectLandedCommits", () => {
     // Assert: one distinct commit in, one out.
     expect(landed).toEqual([mainSha]);
   });
+
+  test("the rotation walks the window so no candidate starves behind the cap", async () => {
+    // Arrange: two more distinct candidates than one probe may check. A
+    // fixed window would probe the same first ten on every SessionStart and
+    // the overflow pair would present as open forever, however long ago it
+    // merged. All twelve are real ancestors, so whichever the window covers
+    // are provably landed — the RESULT reveals the window.
+    const { root } = await makeRepoWithOrigin();
+    const overflow = 2;
+    const candidates: string[] = [];
+    for (let i = 0; i < MAX_LANDED_ANCESTRY_CHECKS + overflow; i += 1) {
+      await writeFile(join(root, "walk.ts"), `export const step = ${String(i)};\n`, "utf8");
+      await git(root, ["add", "."]);
+      await git(root, ["commit", "-q", "-m", `step ${String(i)}`]);
+      candidates.push(await revParse(root, "HEAD"));
+    }
+    await git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    const overflowPair = candidates.slice(MAX_LANDED_ANCESTRY_CHECKS);
+
+    // Act: day zero's window, then the day the rotation reaches the tail.
+    const dayZero = await collectLandedCommits(
+      root,
+      "origin/main",
+      candidates,
+      0,
+    );
+    const laterDay = await collectLandedCommits(
+      root,
+      "origin/main",
+      candidates,
+      MAX_LANDED_ANCESTRY_CHECKS,
+    );
+
+    // Assert: the cap holds on both days, and the candidates day zero's
+    // window missed are exactly what the rotated window reaches.
+    expect(dayZero.length).toBe(MAX_LANDED_ANCESTRY_CHECKS);
+    expect(laterDay.length).toBe(MAX_LANDED_ANCESTRY_CHECKS);
+    for (const sha of overflowPair) {
+      expect(dayZero).not.toContain(sha);
+      expect(laterDay).toContain(sha);
+    }
+  });
 });
 
 describe("landedEvidenceRecord", () => {

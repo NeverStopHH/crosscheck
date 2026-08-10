@@ -343,6 +343,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "answer (VISION.md §1) stays retained but becomes unfindable, with " +
       "every other search test green",
   },
+  {
+    label: "the solved floor leaks into similarity guesses",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "solvedIds.has(entry.row.id) && hasFactTier(entry.tiers)",
+    to: "solvedIds.has(entry.row.id)",
+    test: `${SERVER}/test/solved-ranking.test.ts`,
+    because:
+      "a stale solved tree earns the decay floor on a vector-only match — " +
+      "boosted anchoring on similarity guesses, the exact regression the " +
+      "SOLVED_FLOOR_TIERS gate exists to prevent, and the ordering " +
+      "assertions stay green because even a floored vector-only row ranks " +
+      "below a fresh two-tier match; only the score assertion notices",
+  },
   // The six below guard the in-session hint pipeline (DESIGN.md §4). The
   // anchoring asymmetry and the budgets are STRUCTURE in the selector and
   // constants, so each load-bearing predicate gets a mutation: weaken it and
@@ -526,7 +539,7 @@ interface Outcome {
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
  * PRINTS: search.test.ts 3
- * PRINTS: solved-ranking.test.ts 1
+ * PRINTS: solved-ranking.test.ts 2
  * PRINTS: tripwire-hook.test.ts 1
  */
 const greenGuards = new Map<string, boolean>();

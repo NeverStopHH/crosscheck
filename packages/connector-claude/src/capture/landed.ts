@@ -47,17 +47,35 @@ const isAncestorOf = async (
  * probe under its own timeout, resolved in parallel so the whole collection
  * costs one git timeout of wall clock (the resolveDriftByBaseCommit shape).
  * An unanswerable probe is dropped — a missed report, never a false one.
+ *
+ * THE CAP ROTATES. A capped window with a fixed start starves: the hub lists
+ * open contexts newest first, so with more candidates than the cap and the
+ * newest ones never landing (abandoned branches), the older candidates would
+ * never be probed by ANY session and would present as open forever. The
+ * caller passes a `rotation` — SessionStart uses the day number — the window
+ * starts at rotation % n and wraps, so every candidate is probed within
+ * ⌈n / MAX_LANDED_ANCESTRY_CHECKS⌉ days while every SessionStart on one day
+ * probes the same window (replays stay idempotent).
  */
 export const collectLandedCommits = async (
   root: string,
   defaultRef: string,
   commits: readonly string[],
+  rotation = 0,
 ): Promise<readonly string[]> => {
-  const distinct = [...new Set(commits)]
-    .filter((sha) => COMMIT_SHA_PATTERN.test(sha))
-    .slice(0, MAX_LANDED_ANCESTRY_CHECKS);
+  const distinct = [...new Set(commits)].filter((sha) =>
+    COMMIT_SHA_PATTERN.test(sha),
+  );
+  const start =
+    distinct.length === 0
+      ? 0
+      : Math.trunc(Math.abs(rotation)) % distinct.length;
+  const window = [...distinct.slice(start), ...distinct.slice(0, start)].slice(
+    0,
+    MAX_LANDED_ANCESTRY_CHECKS,
+  );
   const resolved = await Promise.all(
-    distinct.map(
+    window.map(
       async (sha) => [sha, await isAncestorOf(root, sha, defaultRef)] as const,
     ),
   );

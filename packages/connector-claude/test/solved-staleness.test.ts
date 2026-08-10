@@ -114,6 +114,44 @@ describe("checkSolvedFileDrift", () => {
     expect(state).toBe("unchanged");
   });
 
+  test("paths absent from the default branch read as unknown, never unchanged", async () => {
+    // Arrange: get_diagnosis reads cross-repo trees, so the author's file
+    // paths may not exist on the READER's default branch at all. rev-list
+    // prints 0 for such a pathspec exactly as it does for an untouched file —
+    // "unchanged" here would vouch for files this repo has never held.
+    const root = await makeOriginRepo();
+    const sinceIso = new Date(Date.now() + HOUR_MS).toISOString();
+
+    // Act
+    const state = await checkSolvedFileDrift(
+      root,
+      "origin/main",
+      ["src/auth/refresh.ts", "packages/api/token.ts"],
+      sinceIso,
+    );
+
+    // Assert
+    expect(state).toBe("unknown");
+  });
+
+  test("one resolvable path is enough for the untouched answer to stand", async () => {
+    // Arrange: a mixed set — one path this branch holds, one it never did.
+    // The check answered for the file it could see, so the answer stands.
+    const root = await makeOriginRepo();
+    const sinceIso = new Date(Date.now() + HOUR_MS).toISOString();
+
+    // Act
+    const state = await checkSolvedFileDrift(
+      root,
+      "origin/main",
+      ["src/auth/refresh.ts", "README.md"],
+      sinceIso,
+    );
+
+    // Assert
+    expect(state).toBe("unchanged");
+  });
+
   test("outside a repo the answer is unknown, not a guess", async () => {
     // Act
     const state = await checkSolvedFileDrift(

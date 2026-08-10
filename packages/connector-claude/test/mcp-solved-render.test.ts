@@ -48,6 +48,29 @@ const supersedesEdge = (): DiagnosisEdge => ({
   createdAt: SOLVED_ISO,
 });
 
+/** A second evidence-backed root cause, another author's standing answer. */
+const rivalRootCauseClaim = (
+  overrides: Partial<DiagnosisClaim> = {},
+): DiagnosisClaim =>
+  rootCauseClaim({
+    id: "clm_rc2",
+    authorSessionId: "cc_maya",
+    authorDeveloperName: "Maya",
+    body: "The session cache, not the mapping, serves the stale key",
+    evidenceRefs: ["clm_ev2"],
+    ...overrides,
+  });
+
+const contradictsEdge = (): DiagnosisEdge => ({
+  id: "edge_dl",
+  fromClaimId: "clm_rc2",
+  toClaimId: "clm_rc",
+  kind: "contradicts",
+  authorSessionId: "cc_maya",
+  note: null,
+  createdAt: SOLVED_ISO,
+});
+
 const diagnosis = (
   claims: readonly DiagnosisClaim[],
   edges: readonly DiagnosisEdge[] = [],
@@ -96,6 +119,72 @@ describe("solvedAtFromTree", () => {
     const solvedAtMs = solvedAtFromTree(
       diagnosis([rootCauseClaim({ evidenceRefs: [] })]),
     );
+
+    // Assert
+    expect(solvedAtMs).toBeNull();
+  });
+
+  test("two evidenced root causes in open contradiction do not read solved", () => {
+    // The referee-mode deadlock (DESIGN.md §4): two standing evidence-backed
+    // answers joined by a contradicts edge are a live dispute, not a settled
+    // tree — mirror of the hub rule in services/solved.ts.
+    const solvedAtMs = solvedAtFromTree(
+      diagnosis(
+        [rootCauseClaim(), rivalRootCauseClaim()],
+        [contradictsEdge()],
+      ),
+    );
+
+    // Assert
+    expect(solvedAtMs).toBeNull();
+  });
+
+  test("a contradiction from a non-qualifying peer does not unsolve the tree", () => {
+    // An evidence-free rival is a theory, not a standing answer — one
+    // drive-by contradicts edge from it must not strip the solved label.
+    const solvedAtMs = solvedAtFromTree(
+      diagnosis(
+        [rootCauseClaim(), rivalRootCauseClaim({ evidenceRefs: [] })],
+        [contradictsEdge()],
+      ),
+    );
+
+    // Assert
+    expect(solvedAtMs).toBe(Date.parse(SOLVED_ISO));
+  });
+
+  test("a deadlock resolved by superseding one side reads solved again", () => {
+    // Pin for the rule's escape hatch: a superseded rival stops qualifying,
+    // so the surviving root cause settles the tree once more.
+    const rivalRetracted: DiagnosisEdge = {
+      id: "edge_2",
+      fromClaimId: "clm_rc3",
+      toClaimId: "clm_rc2",
+      kind: "supersedes",
+      authorSessionId: "cc_maya",
+      note: null,
+      createdAt: SOLVED_ISO,
+    };
+    const solvedAtMs = solvedAtFromTree(
+      diagnosis(
+        [rootCauseClaim(), rivalRootCauseClaim()],
+        [contradictsEdge(), rivalRetracted],
+      ),
+    );
+
+    // Assert
+    expect(solvedAtMs).toBe(Date.parse(SOLVED_ISO));
+  });
+
+  test("a truncated tree never reads solved", () => {
+    // The hub's edge cap keeps the OLDEST edges: a late supersedes or
+    // contradicts edge that would disqualify the solving claim can be the
+    // one that fell off, and a label computed over partial edges would vouch
+    // too much. Truncation therefore fails toward not-solved on BOTH caps.
+    const solvedAtMs = solvedAtFromTree({
+      ...diagnosis([rootCauseClaim()]),
+      truncated: true,
+    });
 
     // Assert
     expect(solvedAtMs).toBeNull();

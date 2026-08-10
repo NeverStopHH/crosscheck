@@ -10,7 +10,7 @@
  * Derived fresh per read like the deterministic contradictions — no stored
  * pairs, no ingest-order dependence, nothing to go stale.
  */
-import { and, eq, gte, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import {
@@ -103,6 +103,18 @@ const listSharedTargetPairs = async (
           cutoff,
         ),
       ),
+    )
+    // LIMIT without ORDER BY hands the planner the choice of WHICH pairs
+    // survive the cap — nondeterministic, and worst for exactly the rows
+    // that matter most (one hot shared file can fill the window by itself).
+    // Highest-precision kind first — "error_fingerprint" sorts before
+    // "file", pinned by the crowded-window test — then stable id order so
+    // repeated calls answer alike. SELECT DISTINCT restricts ORDER BY to
+    // selected columns, which is why precedence rides on the kind value.
+    .orderBy(
+      asc(workContextTargets.kind),
+      asc(workContextTargets.workContextId),
+      asc(liveTargets.workContextId),
     )
     .limit(SOLVED_MATCH_MAX_PAIR_ROWS);
 };

@@ -19,17 +19,27 @@ const isSafePath = (path: string): boolean =>
 
 /**
  * Have any of `paths` been touched by a commit on `defaultRef` since
- * `sinceIso`? ONE bounded git call at MCP pull time (the reader asked for
- * the tree; this is not a hook budget):
+ * `sinceIso`? At most TWO bounded git calls at MCP pull time (the reader
+ * asked for the tree; this is not a hook budget):
  *
  *   rev-list --count --since=<iso> <ref> -- <paths>
+ *   ls-tree --name-only <ref> -- <paths>        (only when the count is 0)
  *
  * `--count` always prints a number on success, so runGit's null-on-empty
  * contract cannot swallow the "no commits" answer — zero prints "0". The
  * `--since` filter runs on commit dates, which is the right axis here: what
  * changed ON THE BRANCH after the diagnosis was recorded, whoever authored
- * it when. Every failure — bad ref, no repo, slow git, all paths filtered —
- * lands on "unknown".
+ * it when.
+ *
+ * THE ZERO IS AMBIGUOUS AND MUST NOT BE VOUCHED FOR AS-IS: rev-list prints 0
+ * both for an untouched file and for a pathspec that does not exist on `ref`
+ * at all — and get_diagnosis explicitly serves cross-repo reads, where the
+ * AUTHOR's file paths need not exist in the READER's repo. So "unchanged" is
+ * only reported after ls-tree proves at least one of the paths resolves on
+ * that ref; its output is the matching paths and nothing for absent ones, so
+ * the null-on-empty contract turns "this branch never held any of these
+ * files" into "unknown". Every failure — bad ref, no repo, slow git, all
+ * paths filtered or absent — lands on "unknown".
  */
 export const checkSolvedFileDrift = async (
   root: string,
@@ -62,5 +72,13 @@ export const checkSolvedFileDrift = async (
   if (Number.isNaN(count)) {
     return "unknown";
   }
-  return count > 0 ? "changed" : "unchanged";
+  if (count > 0) {
+    return "changed";
+  }
+  const present = await runGit(
+    ["ls-tree", "--name-only", defaultRef, "--", ...safePaths],
+    root,
+    STALENESS_GIT_TIMEOUT_MS,
+  );
+  return present === null ? "unknown" : "unchanged";
 };

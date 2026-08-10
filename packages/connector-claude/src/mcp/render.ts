@@ -253,38 +253,71 @@ const completenessNotes = (diagnosis: Diagnosis): readonly string[] => [
 /** Same-author revision edge; its TARGET is the retracted claim. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
 
+/**
+ * Disagreement edge: two QUALIFYING root causes joined by one are the
+ * referee-mode deadlock (DESIGN.md §4), a live dispute — not settled.
+ */
+const CONTRADICTS_EDGE_KIND = "contradicts";
+
 /** The one claim status that can mark a tree solved. */
 const SOLVED_CLAIM_STATUS = "likely_root_cause";
 
 /**
- * When this tree was SOLVED — the newest non-superseded likely_root_cause
- * claim WITH evidence refs — or null.
+ * When this tree was SOLVED — the newest likely_root_cause claim WITH
+ * evidence refs that is neither superseded nor deadlocked — or null.
  *
  * Derived from the VERY TREE being rendered, deliberately, rather than
  * shipped as a hub field: the label then cannot disagree with the claims the
  * reader sees under it, and a hostile hub cannot mint "solved" without also
  * minting the claim rows that justify it. This mirrors the hub's own rule
  * (packages/server/src/services/solved.ts — same status, same evidence
- * floor, same supersedes probe); the two sit on opposite sides of the wire
- * where an import cannot reach, so each side's tests pin its half. A tree
- * the hub truncated may hide the solving claim — that fails toward
- * NOT-solved, the honest direction for a label readers treat as settled.
+ * floor, same supersedes probe, same deadlock probe); the two sit on
+ * opposite sides of the wire where an import cannot reach, so each side's
+ * tests pin its half, and an intentional rule change must touch both files.
+ *
+ * DEADLOCK: a qualifying root cause loses its standing while a contradicts
+ * edge joins it to another QUALIFYING root cause — two standing answers that
+ * cannot both be right are a dispute, and a dispute must not read settled.
+ * A rival that is evidence-free or superseded does not count: a drive-by
+ * theory cannot unsolve a tree.
+ *
+ * TRUNCATED TREES NEVER READ SOLVED. The hub's caps keep the OLDEST rows,
+ * so a late supersedes or contradicts edge — exactly the rows that would
+ * DISQUALIFY the solving claim — can be what fell off; a label computed
+ * over partial data would vouch too much. Claims-side truncation already
+ * failed toward not-solved; the truncated gate makes the edge side fail
+ * the same honest direction.
  */
 export const solvedAtFromTree = (
-  diagnosis: Pick<Diagnosis, "claims" | "edges">,
+  diagnosis: Pick<Diagnosis, "claims" | "edges" | "truncated">,
 ): number | null => {
+  if (diagnosis.truncated) {
+    return null;
+  }
   const supersededIds = new Set(
     diagnosis.edges
       .filter((edge) => edge.kind === SUPERSEDES_EDGE_KIND)
       .map((edge) => edge.toClaimId),
   );
-  const solvedTimes = diagnosis.claims
-    .filter(
-      (claim) =>
-        claim.status === SOLVED_CLAIM_STATUS &&
-        claim.evidenceRefs.length > 0 &&
-        !supersededIds.has(claim.id),
-    )
+  const qualifying = diagnosis.claims.filter(
+    (claim) =>
+      claim.status === SOLVED_CLAIM_STATUS &&
+      claim.evidenceRefs.length > 0 &&
+      !supersededIds.has(claim.id),
+  );
+  const qualifyingIds = new Set(qualifying.map((claim) => claim.id));
+  const deadlockedIds = new Set(
+    diagnosis.edges
+      .filter(
+        (edge) =>
+          edge.kind === CONTRADICTS_EDGE_KIND &&
+          qualifyingIds.has(edge.fromClaimId) &&
+          qualifyingIds.has(edge.toClaimId),
+      )
+      .flatMap((edge) => [edge.fromClaimId, edge.toClaimId]),
+  );
+  const solvedTimes = qualifying
+    .filter((claim) => !deadlockedIds.has(claim.id))
     .map((claim) => Date.parse(claim.createdAt))
     .filter((ms) => !Number.isNaN(ms));
   return solvedTimes.length === 0 ? null : Math.max(...solvedTimes);

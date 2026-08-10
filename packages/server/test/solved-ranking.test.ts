@@ -12,6 +12,13 @@ import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 
 import {
+  RRF_K,
+  SOLVED_DECAY_FLOOR,
+  TEXT_TIER_WEIGHT,
+  TIER_CANDIDATES,
+} from "../src/services/search.ts";
+
+import {
   createTestDeveloper,
   createTestHarness,
   jsonRequest,
@@ -37,6 +44,7 @@ const FRESH_SESSION = "ses_fresh";
 interface ResultView {
   readonly id: string;
   readonly tier: string;
+  readonly score?: number;
   readonly resultKind?: string;
   readonly solvedAt?: string | null;
 }
@@ -111,6 +119,52 @@ const solvedTreeRecords = (): readonly Record<string, unknown>[] => [
       body: "The ingestion mapping drops the key id on rotation",
       createdAt: OLD_CREATED_ISO,
     }),
+    { sessionId: SOLVED_SESSION },
+  ),
+];
+
+/**
+ * A rival evidence-backed root cause on wc_solved, in open contradiction
+ * with clm_solved_root — the two-standing-answers deadlock.
+ */
+const deadlockRecords = (): readonly Record<string, unknown>[] => [
+  recordEnvelope(
+    "claim",
+    validClaimBody({
+      id: "clm_rival_evidence",
+      workContextId: "wc_solved",
+      authorSessionId: SOLVED_SESSION,
+      kind: "evidence",
+      body: "Cache trace shows the stale token surviving rotation",
+      createdAt: OLD_CREATED_ISO,
+    }),
+    { sessionId: SOLVED_SESSION },
+  ),
+  recordEnvelope(
+    "claim",
+    validClaimBody({
+      id: "clm_solved_rival",
+      workContextId: "wc_solved",
+      authorSessionId: SOLVED_SESSION,
+      kind: "root_cause",
+      status: "likely_root_cause",
+      confidence: 0.8,
+      evidenceRefs: ["clm_rival_evidence"],
+      body: "The session cache, not the mapping, serves the stale key",
+      createdAt: OLD_CREATED_ISO,
+    }),
+    { sessionId: SOLVED_SESSION },
+  ),
+  recordEnvelope(
+    "claim_edge",
+    {
+      id: "edge_solved_deadlock",
+      fromClaimId: "clm_solved_rival",
+      toClaimId: "clm_solved_root",
+      kind: "contradicts",
+      authorSessionId: SOLVED_SESSION,
+      createdAt: OLD_CREATED_ISO,
+    },
     { sessionId: SOLVED_SESSION },
   ),
 ];
@@ -227,6 +281,74 @@ describe("solved trees in search", () => {
     expect(results[0]?.id).toBe("wc_fresh");
   });
 
+  test("two evidenced root causes in open contradiction read as deadlocked, not solved", async () => {
+    // Arrange: the referee-mode deadlock (DESIGN.md §4) — a second
+    // evidence-backed likely_root_cause joined to the first by a contradicts
+    // edge. Nobody retracted anything, so the tree holds two standing
+    // answers that cannot both be right: that is a live dispute, and a
+    // dispute must not earn the solved floor, the solved label, or the
+    // solved-before pointer.
+    const { harness, developer } = await createSolvedHarness();
+    await seed(harness, developer, solvedTreeRecords());
+    await seed(harness, developer, freshNoiseRecords());
+    await seed(harness, developer, deadlockRecords());
+
+    // Act
+    const results = await search(harness, developer.apiKey, "refresh.ts login");
+
+    // Assert
+    const solved = results.find((entry) => entry.id === "wc_solved");
+    expect(solved?.resultKind).toBe("open");
+    expect(results[0]?.id).toBe("wc_fresh");
+  });
+
+  test("a deadlock resolved by superseding one side reads solved again", async () => {
+    // Pin, not a red-first test: green before the deadlock rule existed
+    // (everything read solved then) and green after — it exists to pin the
+    // rule's escape hatch. A superseded rival is no longer a QUALIFYING
+    // peer, so the surviving root cause settles the tree again; without
+    // this, one contradicts edge would unsolve a tree forever.
+    const { harness, developer } = await createSolvedHarness();
+    await seed(harness, developer, solvedTreeRecords());
+    await seed(harness, developer, freshNoiseRecords());
+    await seed(harness, developer, deadlockRecords());
+    await seed(harness, developer, [
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id: "clm_rival_retraction",
+          workContextId: "wc_solved",
+          authorSessionId: SOLVED_SESSION,
+          kind: "root_cause",
+          status: "proposed",
+          body: "Retracting the cache theory — the trace was from stage",
+          createdAt: OLD_CREATED_ISO,
+        }),
+        { sessionId: SOLVED_SESSION },
+      ),
+      recordEnvelope(
+        "claim_edge",
+        {
+          id: "edge_rival_retracted",
+          fromClaimId: "clm_rival_retraction",
+          toClaimId: "clm_solved_rival",
+          kind: "supersedes",
+          authorSessionId: SOLVED_SESSION,
+          createdAt: OLD_CREATED_ISO,
+        },
+        { sessionId: SOLVED_SESSION },
+      ),
+    ]);
+
+    // Act
+    const results = await search(harness, developer.apiKey, "refresh.ts login");
+
+    // Assert
+    const solved = results.find((entry) => entry.id === "wc_solved");
+    expect(solved?.resultKind).toBe("solved");
+    expect(results[0]?.id).toBe("wc_solved");
+  });
+
   test("an evidence-free likely_root_cause on the hub does not mark the tree solved", async () => {
     // Arrange: the wire schema already refuses evidence-free likely_root_cause
     // claims, so this state is unreachable through ingest — it is planted
@@ -320,5 +442,21 @@ describe("solved trees in search", () => {
     expect(solved?.tier).toBe("vector");
     expect(solved?.resultKind).toBe("solved");
     expect(results[0]?.id).toBe("wc_fresh");
+
+    // The ORDER above cannot pin the tier gate on its own: even floored, a
+    // vector-only row scores below the fresh two-tier row, so the ordering
+    // stays put with the gate deleted. The SCORE can — the floored and
+    // unfloored ranges are disjoint at any vector rank: a floored vector-only
+    // row scores at least SOLVED_DECAY_FLOOR·TEXT_TIER_WEIGHT/(RRF_K +
+    // TIER_CANDIDATES), while this 60-day-old unfloored one scores at most
+    // TEXT_TIER_WEIGHT/(RRF_K + 1)·0.5^(60/14), an order of magnitude less.
+    //
+    // VERIFY: bun -e 'const s=await import("./packages/server/src/services/search.ts");const floored=s.SOLVED_DECAY_FLOOR*s.TEXT_TIER_WEIGHT/(s.RRF_K+s.TIER_CANDIDATES);const unfloored=s.TEXT_TIER_WEIGHT/(s.RRF_K+1)*0.5**(60/14);console.log(floored.toFixed(4),unfloored.toFixed(4),floored>unfloored)'
+    // PRINTS: 0.0078 0.0008 true
+    const flooredMinimum =
+      (SOLVED_DECAY_FLOOR * TEXT_TIER_WEIGHT) / (RRF_K + TIER_CANDIDATES);
+    expect(solved?.score ?? Number.POSITIVE_INFINITY).toBeLessThan(
+      flooredMinimum,
+    );
   });
 });

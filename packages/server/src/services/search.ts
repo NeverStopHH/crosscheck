@@ -143,6 +143,13 @@ const MIN_VECTOR_SIMILARITY = 0.3;
  * a similarity guess, and boosting stale guesses is how a ranking loses the
  * trust the floor exists to protect. Mutation-guarded like the other ranking
  * constants (scripts/mutation-check.ts → test/solved-ranking.test.ts).
+ *
+ * THE FLOOR IS PER-ROW, NOT CAPPED PER PAGE — accepted deliberately: enough
+ * stale solved trees owning the queried target can fill a page ahead of a
+ * fresh TEXT-ONLY match (a fresh exact-owner still outranks every floored
+ * row, so live coordination on the shared target is never buried). Rows
+ * that own the queried target ARE the more relevant answer; revisit only if
+ * real usage shows solved history crowding out work someone needed to see.
  */
 export const SOLVED_DECAY_FLOOR = 0.7;
 

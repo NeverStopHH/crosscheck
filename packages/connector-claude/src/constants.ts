@@ -90,6 +90,14 @@ export const MAX_TRIPWIRE_ASKED_FILES = 100;
 export const GIT_TIMEOUT_MS = 1500;
 
 /**
+ * Grace between the deadline's SIGTERM and the SIGKILL escalation for a git
+ * that outlived its budget (git/git.ts). SIGTERM first so git can remove its
+ * lock files; the escalation covers a git that ignores it. Nothing waits on
+ * either signal — the caller already has its null by the time they fire.
+ */
+export const GIT_KILL_GRACE_MS = 500;
+
+/**
  * Reading the hook payload happens before any budget exists, and SessionStart /
  * SessionEnd are synchronous hooks: an stdin that is never closed would block
  * the developer's session forever.
@@ -240,6 +248,9 @@ export const STATUS_MAX_ABSENCE_LINES = 20;
  * per-request hub timeout, same free ride as COMMIT_EVIDENCE_GIT_TIMEOUT_MS),
  * and the ancestry fan-out runs in parallel with the drift lookups — both
  * bounded by this, so the block's wall clock does not grow.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-claude/src/constants.ts");console.log(c.LANDED_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true
  */
 export const LANDED_GIT_TIMEOUT_MS = 250;
 /** Most base commits one SessionStart checks for ancestry — one git each. */
@@ -253,6 +264,12 @@ export const STALENESS_MAX_PATHS = 20;
  * MAX_CONTRADICTION_POINTERS: title + id + age, the tree is a pull.
  */
 export const MAX_SOLVED_POINTERS = 2;
+/**
+ * FIFO cap on the remembered briefing pointers (state/session-state.ts):
+ * SessionStart re-fires with the same session id on resume/clear, so the
+ * list grows across fires — bounded like its sibling state lists.
+ */
+export const MAX_BRIEFING_SOLVED_REFS = 20;
 /** Solved ages render as days up to here, months beyond ("diagnosed 5mo ago"). */
 export const SOLVED_AGE_MONTHS_THRESHOLD_DAYS = 60;
 export const DAYS_PER_MONTH_APPROX = 30;

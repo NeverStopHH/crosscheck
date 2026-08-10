@@ -250,6 +250,60 @@ describe("GET /api/solved-matches", () => {
     expect(result.matches).toHaveLength(0);
   });
 
+  test("a fingerprint match survives a pair window crowded past the cap", async () => {
+    // Arrange: one hot shared file (a lockfile shape) across enough unsolved
+    // contexts that the (candidate, live, kind) pairs alone exceed
+    // SOLVED_MATCH_MAX_PAIR_ROWS — 16 contexts sharing one file make 240
+    // ordered pairs. The solved tree's fingerprint pair is seeded LAST: with
+    // LIMIT and no ORDER BY the planner chooses which rows survive the cap,
+    // and the highest-precision pair is exactly what must never be its
+    // choice to drop.
+    const context = await setup();
+    const hotFile = { kind: "file", value: "bun.lock" };
+    const noiseContexts = 15;
+    for (let i = 0; i < noiseContexts; i += 1) {
+      await seed(context, [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: `wc_noise_${String(i)}`,
+            sessionId: LIVE_SESSION,
+            title: `Lockfile churn investigation ${String(i)}`,
+            description: undefined,
+            createdAt: TEST_START_ISO,
+          }),
+          { sessionId: LIVE_SESSION },
+        ),
+        recordEnvelope(
+          "target",
+          { workContextId: `wc_noise_${String(i)}`, ...hotFile },
+          { sessionId: LIVE_SESSION },
+        ),
+      ]);
+    }
+    await seed(
+      context,
+      solvedTreeRecords([
+        hotFile,
+        { kind: "error_fingerprint", value: FINGERPRINT },
+      ]),
+    );
+    await seed(
+      context,
+      liveContextRecords([{ kind: "error_fingerprint", value: FINGERPRINT }]),
+    );
+
+    // Act
+    const result = await fetchMatches(context.harness, context.developer.apiKey);
+
+    // Assert: the solved tree surfaces, and through its fingerprint.
+    expect(result.status).toBe(200);
+    const match = result.matches.find(
+      (entry) => entry.workContextId === "wc_solved",
+    );
+    expect(match?.matchedTargetKind).toBe("error_fingerprint");
+  });
+
   test("an unsolved old tree never surfaces here", async () => {
     // Arrange: same shape, but no evidenced root cause — not solved.
     const context = await setup();
