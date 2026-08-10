@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { createRecordingEmbedder } from "./fixtures/fake-embedder.ts";
+import { HINT_MAX_CLAIMS_PER_CONTEXT } from "../src/services/hints.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -11,6 +12,7 @@ import {
   recordEnvelope,
   registerTestSession,
   validClaimBody,
+  validClaimEdgeBody,
   validWorkContextBody,
   VALID_SESSION_BODY,
   WORK_CONTEXT_ID,
@@ -210,6 +212,230 @@ describe("GET /api/hints/candidates", () => {
     const { harness, robin } = await setupTwoDevelopers();
     const result = await fetchCandidates(harness, robin, "x".repeat(2001));
     expect(result.status).toBe(400);
+  });
+});
+
+/** A timestamp strictly after every record TEST_START_ISO stamps. */
+const LATER_ISO = "2026-07-24T10:00:00.000Z";
+
+describe("candidate pool integrity", () => {
+  test("a claim revised away by a supersedes edge is no longer served", async () => {
+    // Arrange — Nick publishes a theory, then revises it: append-only,
+    // revision = new claim + supersedes edge (DESIGN.md §5)
+    const { harness, nick, robin } = await setupTwoDevelopers();
+    const revised = await postRecords(harness, nick, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_old_theory",
+            kind: "root_cause",
+            body: "The cache TTL is the root cause of the refresh 500s",
+            status: "likely_root_cause",
+            evidenceRefs: ["clm_01"],
+          }),
+        ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_new_theory",
+            kind: "root_cause",
+            body: "The rotated key never reached the refresh worker",
+            status: "likely_root_cause",
+            evidenceRefs: ["clm_01"],
+            createdAt: LATER_ISO,
+          }),
+        ),
+        recordEnvelope(
+          "claim_edge",
+          validClaimEdgeBody({
+            id: "edge_supersede",
+            fromClaimId: "clm_new_theory",
+            toClaimId: "clm_old_theory",
+            kind: "supersedes",
+          }),
+        ),
+      ],
+    });
+    expect(revised.data?.accepted).toBe(3);
+
+    // Act — Robin's prompt touches the context after the revision landed
+    const result = await fetchCandidates(harness, robin, "why does refresh.ts 500");
+
+    // Assert — the retracted theory must never reach a reader's context
+    const ids = result.candidates[0]?.claims.map((claim) => claim.id) ?? [];
+    expect(ids).toContain("clm_new_theory");
+    expect(ids).not.toContain("clm_old_theory");
+  });
+
+  test("the caller's own contexts cannot crowd a teammate's out of the pool", async () => {
+    // Arrange — Nick's finding is two months old (decay ranks it below any
+    // fresh context); Robin then fills a whole search pool with his own fresh
+    // contexts on the same file. The teammate row must be excluded from the
+    // SEARCH, not filtered after the pool bound.
+    const OLD_ISO = "2026-05-25T09:00:00.000Z";
+    const { harness, developer: nick } = await createHarnessWithSession();
+    const seeded = await postRecords(harness, nick, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            title: "Refresh 500s after key rotation",
+            createdAt: OLD_ISO,
+          }),
+        ),
+        recordEnvelope("target", {
+          workContextId: WORK_CONTEXT_ID,
+          kind: "file",
+          value: TARGET_FILE,
+        }),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_rejected",
+            kind: "rejected_approach",
+            body: "Retrying the refresh call does not help; the key is gone",
+            status: "rejected",
+            evidenceRefs: ["clm_01"],
+            createdAt: OLD_ISO,
+          }),
+        ),
+      ],
+    });
+    expect(seeded.data?.accepted).toBe(3);
+    const robin = await addTestDeveloperWithSession(
+      harness,
+      "Robin",
+      "robin@example.com",
+      { id: SECOND_SESSION_ID },
+    );
+    const OWN_CONTEXTS = 10;
+    const ownRecords = Array.from({ length: OWN_CONTEXTS }, (_, index) => {
+      const id = `wc_robin_${String(index).padStart(2, "0")}`;
+      return [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id,
+            sessionId: SECOND_SESSION_ID,
+            title: `Robin session number ${String(index)}`,
+          }),
+          { sessionId: SECOND_SESSION_ID },
+        ),
+        recordEnvelope(
+          "target",
+          { workContextId: id, kind: "file", value: TARGET_FILE },
+          { sessionId: SECOND_SESSION_ID },
+        ),
+      ];
+    }).flat();
+    const posted = await postRecords(harness, robin, { records: ownRecords });
+    expect(posted.data?.accepted).toBe(OWN_CONTEXTS * 2);
+
+    // Act
+    const result = await fetchCandidates(harness, robin, "why does refresh.ts 500");
+
+    // Assert — Nick's context must survive however active Robin is
+    const ids = result.candidates.map((candidate) => candidate.workContext.id);
+    expect(ids).toContain(WORK_CONTEXT_ID);
+  });
+
+  test("a claim-heavy context cannot starve a sibling context's claim window", async () => {
+    // Arrange — Nick's first context holds two whole windows of older claims;
+    // his second context on the same file holds one fresh claim
+    const { harness, nick, robin } = await setupTwoDevelopers();
+    const fillers = Array.from(
+      { length: HINT_MAX_CLAIMS_PER_CONTEXT * 2 },
+      (_, index) =>
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: `clm_filler_${String(index).padStart(2, "0")}`,
+            body: `Observation number ${String(index)} about the refresh handler`,
+          }),
+        ),
+    );
+    const seeded = await postRecords(harness, nick, {
+      records: [
+        ...fillers,
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_sibling",
+            title: "Key rotation window during refresh",
+          }),
+        ),
+        recordEnvelope("target", {
+          workContextId: "wc_sibling",
+          kind: "file",
+          value: TARGET_FILE,
+        }),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_sibling",
+            workContextId: "wc_sibling",
+            body: "The sibling context's only claim",
+            createdAt: LATER_ISO,
+          }),
+        ),
+      ],
+    });
+    expect(seeded.data?.accepted).toBe(HINT_MAX_CLAIMS_PER_CONTEXT * 2 + 3);
+
+    // Act
+    const result = await fetchCandidates(harness, robin, "why does refresh.ts 500");
+
+    // Assert — each context's claim window is its own
+    const sibling = result.candidates.find(
+      (candidate) => candidate.workContext.id === "wc_sibling",
+    );
+    expect(sibling?.claims.map((claim) => claim.id)).toContain("clm_sibling");
+  });
+
+  test("the newest claims survive when a context outgrows its window", async () => {
+    // Arrange — append-only revision means the most settled claim is the
+    // NEWEST; bury it under one whole window of older observations
+    const { harness, nick, robin } = await setupTwoDevelopers();
+    const fillers = Array.from(
+      { length: HINT_MAX_CLAIMS_PER_CONTEXT },
+      (_, index) =>
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: `clm_early_${String(index).padStart(2, "0")}`,
+            body: `Early observation number ${String(index)}`,
+          }),
+        ),
+    );
+    const seeded = await postRecords(harness, nick, {
+      records: [
+        ...fillers,
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_settled_late",
+            kind: "root_cause",
+            status: "likely_root_cause",
+            evidenceRefs: ["clm_01"],
+            body: "Settled on day five: the rotated key never propagated",
+            createdAt: LATER_ISO,
+          }),
+        ),
+      ],
+    });
+    expect(seeded.data?.accepted).toBe(HINT_MAX_CLAIMS_PER_CONTEXT + 1);
+
+    // Act
+    const result = await fetchCandidates(harness, robin, "why does refresh.ts 500");
+
+    // Assert — the window keeps the newest claims, not the oldest
+    const candidate = result.candidates.find(
+      (row) => row.workContext.id === WORK_CONTEXT_ID,
+    );
+    expect(candidate?.claims.map((claim) => claim.id)).toContain(
+      "clm_settled_late",
+    );
   });
 });
 

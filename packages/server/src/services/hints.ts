@@ -24,10 +24,11 @@
  * with this note rather than half-built. The lexical fast path (exact targets +
  * FTS) is the one the design names normative for the sync budget.
  */
-import { and, eq, gt, inArray, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, ne, notExists, sql } from "drizzle-orm";
 
 import {
   agentSessions,
+  claimEdges,
   claims,
   developers,
   workContexts,
@@ -57,12 +58,24 @@ export const HINT_MAX_CONTEXTS = 3;
 
 /**
  * Most claims per candidate context — the selector needs enough to find one
- * settled or negative claim, not the whole tree.
+ * settled or negative claim, not the whole tree. Applied PER CONTEXT, newest
+ * first: claims are append-only and revision means a NEW claim (DESIGN.md
+ * §5), so the settled findings are the latest rows, and a shared
+ * oldest-first window would regress every long context to its day-one
+ * observations while a claim-heavy sibling starved the others entirely.
  */
 export const HINT_MAX_CLAIMS_PER_CONTEXT = 30;
 
-/** How many search rows are fetched before the tier/self filters run. */
+/**
+ * How many search rows are fetched before the tier floor runs. The CALLER's
+ * own contexts are excluded inside the search itself (excludeDeveloperId) —
+ * filtered after this bound, a busy reader's own fresh contexts would fill
+ * the pool and crowd out the teammate rows it exists to find.
+ */
 const SEARCH_POOL_LIMIT = 10;
+
+/** Same-author revision edge (DESIGN.md §5); its TARGET is the retracted claim. */
+const SUPERSEDES_EDGE_KIND = "supersedes";
 
 /** Most sessions one tripwire response names — one is enough to ask. */
 export const TRIPWIRE_MAX_SESSIONS = 5;
@@ -97,13 +110,32 @@ export interface HintContextCandidate {
   readonly claims: readonly HintClaimCandidate[];
 }
 
-const listContextClaims = async (
+/**
+ * A claim revised away by its author is not knowledge to inject: the hub
+ * never mutates the row (claims are append-only), so "retracted" is a
+ * supersedes edge POINTING AT the claim, and serving the target row verbatim
+ * would hand the reader the old theory under full trust labels — precisely
+ * the anchoring §4 exists to prevent. The selector's own `superseded` status
+ * guard stays as defense in depth against a forging hub; THIS filter is the
+ * one real revision data exercises.
+ */
+const notSuperseded = (db: Db) =>
+  notExists(
+    db
+      .select({ one: sql`1` })
+      .from(claimEdges)
+      .where(
+        and(
+          eq(claimEdges.toClaimId, claims.id),
+          eq(claimEdges.kind, SUPERSEDES_EDGE_KIND),
+        ),
+      ),
+  );
+
+const listClaimsForContext = async (
   db: Db,
-  workContextIds: readonly string[],
-): Promise<ReadonlyMap<string, readonly HintClaimCandidate[]>> => {
-  if (workContextIds.length === 0) {
-    return new Map();
-  }
+  workContextId: string,
+): Promise<readonly HintClaimCandidate[]> => {
   const rows = await db
     .select({
       claim: claims,
@@ -113,34 +145,39 @@ const listContextClaims = async (
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
-    .where(inArray(claims.workContextId, workContextIds))
-    .orderBy(claims.createdAt)
-    .limit(HINT_MAX_CLAIMS_PER_CONTEXT * workContextIds.length);
-  const byContext = new Map<string, readonly HintClaimCandidate[]>();
-  for (const row of rows) {
-    const list = byContext.get(row.claim.workContextId) ?? [];
-    if (list.length >= HINT_MAX_CLAIMS_PER_CONTEXT) {
-      continue;
-    }
-    byContext.set(row.claim.workContextId, [
-      ...list,
-      {
-        id: row.claim.id,
-        workContextId: row.claim.workContextId,
-        kind: row.claim.kind,
-        status: row.claim.status,
-        confidence: row.claim.confidence,
-        provenance: row.claim.provenance,
-        captureMode: row.claim.captureMode,
-        evidenceRefCount: row.claim.evidenceRefs.length,
-        authorDeveloperId: row.authorDeveloperId,
-        authorDeveloperName: row.authorDeveloperName,
-        body: row.claim.body,
-        createdAt: row.claim.createdAt.toISOString(),
-      },
-    ]);
-  }
-  return byContext;
+    .where(and(eq(claims.workContextId, workContextId), notSuperseded(db)))
+    .orderBy(desc(claims.createdAt))
+    .limit(HINT_MAX_CLAIMS_PER_CONTEXT);
+  return rows.map((row) => ({
+    id: row.claim.id,
+    workContextId: row.claim.workContextId,
+    kind: row.claim.kind,
+    status: row.claim.status,
+    confidence: row.claim.confidence,
+    provenance: row.claim.provenance,
+    captureMode: row.claim.captureMode,
+    evidenceRefCount: row.claim.evidenceRefs.length,
+    authorDeveloperId: row.authorDeveloperId,
+    authorDeveloperName: row.authorDeveloperName,
+    body: row.claim.body,
+    createdAt: row.claim.createdAt.toISOString(),
+  }));
+};
+
+/**
+ * One bounded query PER CONTEXT — at most HINT_MAX_CONTEXTS of them — so a
+ * claim-heavy context can never consume a sibling's window (a single global
+ * LIMIT did exactly that; test/hints.test.ts "cannot starve a sibling
+ * context's claim window").
+ */
+const listContextClaims = async (
+  db: Db,
+  workContextIds: readonly string[],
+): Promise<ReadonlyMap<string, readonly HintClaimCandidate[]>> => {
+  const lists = await Promise.all(
+    workContextIds.map((id) => listClaimsForContext(db, id)),
+  );
+  return new Map(workContextIds.map((id, index) => [id, lists[index] ?? []]));
 };
 
 /** The base commit of each context's owning session, for the drift label. */
@@ -174,10 +211,18 @@ export const listHintCandidates = async (
     // Lexical by construction — see the header. The hub's real embedder must
     // not be reachable from this path.
     { db: deps.db, now: deps.now, embedder: null },
-    { query: input.query, repo: input.repo, limit: SEARCH_POOL_LIMIT },
+    {
+      query: input.query,
+      repo: input.repo,
+      // In the search's own WHERE, before its bounds — a busy caller's own
+      // contexts must not crowd teammates out of the pool (SEARCH_POOL_LIMIT).
+      excludeDeveloperId: callerDeveloperId,
+      limit: SEARCH_POOL_LIMIT,
+    },
   );
   const eligible = searched.results
     .filter((row) => HINT_ELIGIBLE_TIERS.includes(row.tier))
+    // Defense in depth only — exclusion already happened inside the search.
     .filter((row) => row.developerId !== callerDeveloperId)
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = eligible.map((row) => row.id);

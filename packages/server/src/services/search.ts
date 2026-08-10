@@ -27,6 +27,7 @@ import {
   eq,
   inArray,
   isNotNull,
+  ne,
   or,
   sql,
 } from "drizzle-orm";
@@ -149,6 +150,12 @@ export interface SearchDeps {
 export interface SearchQuery {
   readonly query: string;
   readonly repo?: string | undefined;
+  /**
+   * Excludes contexts owned by this developer INSIDE every tier query — see
+   * SearchScope. Omitted on the search route (a developer may search their
+   * own work); the hints endpoint passes the caller.
+   */
+  readonly excludeDeveloperId?: string | undefined;
   readonly limit: number;
 }
 
@@ -187,15 +194,34 @@ interface TierRow {
   readonly updatedAt: Date | null;
 }
 
-const repoCondition = (repo: string | undefined) =>
-  repo === undefined ? undefined : eq(agentSessions.repo, repo);
+/**
+ * The relevance scope every tier applies IN ITS OWN WHERE, never as a filter
+ * after a LIMIT: each tier list is bounded (TIER_CANDIDATES), so a row
+ * filtered afterwards was a row that crowded an includable one out of the
+ * bound. The hints endpoint learned this the hard way — its caller's own
+ * fresh contexts filled the whole pool and blanked the teammate finding the
+ * pool existed to surface (test/hints.test.ts "cannot crowd a teammate's
+ * out of the pool").
+ */
+interface SearchScope {
+  readonly repo: string | undefined;
+  readonly excludeDeveloperId: string | undefined;
+}
+
+const scopeCondition = (scope: SearchScope) =>
+  and(
+    scope.repo === undefined ? undefined : eq(agentSessions.repo, scope.repo),
+    scope.excludeDeveloperId === undefined
+      ? undefined
+      : ne(agentSessions.developerId, scope.excludeDeveloperId),
+  );
 
 const activityDesc = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) DESC`;
 
 const listExactTier = async (
   db: Db,
   tokens: readonly string[],
-  repo: string | undefined,
+  scope: SearchScope,
 ): Promise<readonly TierRow[]> => {
   if (tokens.length === 0) {
     return [];
@@ -218,7 +244,7 @@ const listExactTier = async (
       eq(workContextTargets.workContextId, workContexts.id),
     )
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(repoCondition(repo), or(...tokenConditions)))
+    .where(and(scopeCondition(scope), or(...tokenConditions)))
     .groupBy(workContexts.id, workContexts.createdAt, workContexts.updatedAt)
     .orderBy(sql`count(*) DESC`, activityDesc)
     .limit(TIER_CANDIDATES);
@@ -231,7 +257,7 @@ interface RankedRow extends TierRow {
 const listFtsTier = async (
   db: Db,
   tokens: readonly string[],
-  repo: string | undefined,
+  scope: SearchScope,
 ): Promise<readonly TierRow[]> => {
   if (tokens.length === 0) {
     return [];
@@ -251,7 +277,7 @@ const listFtsTier = async (
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(repoCondition(repo), sql`${workContexts.tsv} @@ ${tsquery}`))
+    .where(and(scopeCondition(scope), sql`${workContexts.tsv} @@ ${tsquery}`))
     .orderBy(sql`ts_rank(${workContexts.tsv}, ${tsquery}) DESC`, activityDesc)
     .limit(TIER_CANDIDATES);
 
@@ -267,7 +293,7 @@ const listFtsTier = async (
     .from(claims)
     .innerJoin(workContexts, eq(claims.workContextId, workContexts.id))
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(repoCondition(repo), sql`${claims.tsv} @@ ${tsquery}`))
+    .where(and(scopeCondition(scope), sql`${claims.tsv} @@ ${tsquery}`))
     .groupBy(
       claims.workContextId,
       workContexts.createdAt,
@@ -321,7 +347,7 @@ const listVectorTier = async (
   db: Db,
   embedder: Embedder,
   query: string,
-  repo: string | undefined,
+  scope: SearchScope,
 ): Promise<readonly TierRow[]> => {
   const [queryVector] = await withDeadline(
     embedder.embed([query]),
@@ -343,7 +369,7 @@ const listVectorTier = async (
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(
       and(
-        repoCondition(repo),
+        scopeCondition(scope),
         isNotNull(workContexts.embedding),
         eq(workContexts.embeddingModel, embedder.model),
       ),
@@ -355,7 +381,7 @@ const listVectorTier = async (
 
 const listRecencyTier = async (
   db: Db,
-  repo: string | undefined,
+  scope: SearchScope,
 ): Promise<readonly TierRow[]> =>
   db
     .select({
@@ -365,7 +391,7 @@ const listRecencyTier = async (
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(repoCondition(repo))
+    .where(scopeCondition(scope))
     .orderBy(activityDesc)
     .limit(TIER_CANDIDATES);
 
@@ -467,13 +493,13 @@ const hydrate = async (
 const tryVectorTier = async (
   deps: SearchDeps,
   query: string,
-  repo: string | undefined,
+  scope: SearchScope,
 ): Promise<{ rows: readonly TierRow[]; active: boolean }> => {
   if (deps.embedder === null) {
     return { rows: [], active: false };
   }
   try {
-    const rows = await listVectorTier(deps.db, deps.embedder, query, repo);
+    const rows = await listVectorTier(deps.db, deps.embedder, query, scope);
     return { rows, active: true };
   } catch (error) {
     console.error("[crosscheck] vector search tier failed, degrading", error);
@@ -492,10 +518,14 @@ export const searchWorkContexts = async (
   const query = input.query.slice(0, SEARCH_MAX_QUERY_CHARS);
   const wordTokens = ftsTokens(query);
   const pathTokens = exactTokens(query);
+  const scope: SearchScope = {
+    repo: input.repo,
+    excludeDeveloperId: input.excludeDeveloperId,
+  };
 
   // A blank query asks "what is happening" — answered by recency alone.
   if (query.trim().length === 0) {
-    const rows = await listRecencyTier(deps.db, input.repo);
+    const rows = await listRecencyTier(deps.db, scope);
     const fused = fuseTiers(
       [{ tier: "recency", weight: TEXT_TIER_WEIGHT, rows }],
       nowMs,
@@ -507,9 +537,9 @@ export const searchWorkContexts = async (
   }
 
   const [exactRows, ftsRows, vector] = await Promise.all([
-    listExactTier(deps.db, pathTokens, input.repo),
-    listFtsTier(deps.db, wordTokens, input.repo),
-    tryVectorTier(deps, query, input.repo),
+    listExactTier(deps.db, pathTokens, scope),
+    listFtsTier(deps.db, wordTokens, scope),
+    tryVectorTier(deps, query, scope),
   ]);
 
   const fused = fuseTiers(

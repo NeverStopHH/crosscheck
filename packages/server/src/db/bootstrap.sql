@@ -92,6 +92,12 @@ CREATE TABLE IF NOT EXISTS claim_edges (
 CREATE UNIQUE INDEX IF NOT EXISTS claim_edges_from_to_kind_idx
   ON claim_edges (from_claim_id, to_claim_id, kind);
 
+-- The hints candidates path probes "is this claim a supersedes TARGET" per
+-- candidate row (services/hints.ts notSuperseded); the unique index above
+-- leads on from_claim_id and cannot serve a to_claim_id lookup.
+CREATE INDEX IF NOT EXISTS claim_edges_to_kind_idx
+  ON claim_edges (to_claim_id, kind);
+
 CREATE TABLE IF NOT EXISTS artifacts (
   id text PRIMARY KEY,
   claim_id text NOT NULL REFERENCES claims(id),

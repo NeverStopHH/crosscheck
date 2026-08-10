@@ -176,6 +176,9 @@ export const claimEdges = pgTable(
       table.toClaimId,
       table.kind,
     ),
+    // Serves the hints path's "is this claim a supersedes target" probe —
+    // the unique index leads on from_claim_id and cannot.
+    index("claim_edges_to_kind_idx").on(table.toClaimId, table.kind),
   ],
 );
 
