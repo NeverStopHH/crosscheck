@@ -12,6 +12,7 @@ import { containsSecret } from "../capture/secret-scan.ts";
 import {
   endSession,
   getAbsences,
+  getContradictions,
   getPresence,
   getWorkContexts,
   registerSession,
@@ -211,18 +212,29 @@ export const handleSessionStart = async (
   // Commit-evidence collection rides INSIDE the parallel hub-fetch block: its
   // git timeout is below the per-request hub timeout the block already waits
   // for (see COMMIT_EVIDENCE_GIT_TIMEOUT_MS), so it adds no wall clock of its
-  // own. Absences are one more parallel GET under the same per-request bound.
-  // Either failing costs its section, never the briefing (fail open).
-  const [presenceResult, contextsResult, absencesResult, commitAuthors] =
-    await Promise.all([
-      getPresence(ctx.hub, ctx.identity.repoId),
-      getWorkContexts(ctx.hub, ctx.identity.repoId),
-      getAbsences(ctx.hub, ctx.identity.repoId),
-      collectCommitEvidence(ctx.identity.root, now),
-    ]);
+  // own. Absences and contradictions are two more parallel GETs under the
+  // same per-request bound — the block's wall clock stays one request timeout
+  // however many rides in it. Any failing costs its section, never the
+  // briefing (fail open).
+  const [
+    presenceResult,
+    contextsResult,
+    absencesResult,
+    contradictionsResult,
+    commitAuthors,
+  ] = await Promise.all([
+    getPresence(ctx.hub, ctx.identity.repoId),
+    getWorkContexts(ctx.hub, ctx.identity.repoId),
+    getAbsences(ctx.hub, ctx.identity.repoId),
+    getContradictions(ctx.hub, ctx.identity.repoId),
+    collectCommitEvidence(ctx.identity.root, now),
+  ]);
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
   const absences = absencesResult.ok ? absencesResult.data : [];
+  const contradictions = contradictionsResult.ok
+    ? contradictionsResult.data
+    : [];
 
   if (developerId !== null) {
     await rememberDeveloper(ctx.config, developerId, selfName(presence, developerId));
@@ -271,6 +283,7 @@ export const handleSessionStart = async (
     now,
     drift,
     absences,
+    contradictions,
   });
 
   // Maintenance last, on the leftover budget: the briefing above is what this

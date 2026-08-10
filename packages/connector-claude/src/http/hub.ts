@@ -473,6 +473,161 @@ export const getHintCandidates = (
   });
 };
 
+/**
+ * One side of a listed contradiction — just enough for a one-line pointer:
+ * who holds it, what kind of theory, in what status. Bodies are deliberately
+ * absent from the pointer path; the case file is a pull (get_referee_brief).
+ */
+export const ContradictionSideSchema = z.looseObject({
+  id: z.string().min(1),
+  workContextId: z.string().min(1),
+  kind: z.string().min(1),
+  status: z.string().min(1),
+  authorDeveloperName: z.string().min(1).optional(),
+});
+
+export type ContradictionSide = z.infer<typeof ContradictionSideSchema>;
+
+/**
+ * `id` is REQUIRED even though an older hub omits it: a pointer whose whole
+ * job is to name `get_referee_brief cx_…` is useless without the id, so a row
+ * with none is dropped by the tolerant list rather than rendered crippled.
+ */
+export const ContradictionEntrySchema = z.looseObject({
+  id: z.string().min(1),
+  claimA: ContradictionSideSchema,
+  claimB: ContradictionSideSchema,
+  reason: z.string().min(1),
+  similarity: z.number().nullable().optional(),
+});
+
+export type ContradictionEntry = z.infer<typeof ContradictionEntrySchema>;
+
+/** One more parallel GET inside the SessionStart fetch block (fail open). */
+export const getContradictions = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<readonly ContradictionEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/contradictions${encodeRepo(repo)}`,
+    schema: tolerantList("candidates", ContradictionEntrySchema),
+  });
+
+/**
+ * One claim of a referee brief. Confidence is bounded like the hint
+ * candidates' (a forged `confidence 1e+30` is a credential, not a number) and
+ * the row is dropped when it does not hold — counted, not swallowed, because
+ * a case file is the thing a human decides FROM.
+ */
+export const RefereeClaimSchema = z.looseObject({
+  id: z.string().min(1),
+  workContextId: z.string().min(1),
+  kind: z.string().min(1),
+  status: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+  body: z.string(),
+  authorDeveloperName: z.string().min(1).optional(),
+  createdAt: z.string().min(1),
+});
+
+export type RefereeClaim = z.infer<typeof RefereeClaimSchema>;
+
+const SharedTargetSchema = z.looseObject({
+  kind: z.string().min(1),
+  value: z.string().min(1),
+});
+
+export type SharedTarget = z.infer<typeof SharedTargetSchema>;
+
+export interface RefereePosition {
+  readonly claim: RefereeClaim;
+  readonly workContextTitle: string;
+  readonly evidence: readonly RefereeClaim[];
+  readonly evidenceTruncated: boolean;
+  readonly ruledOut: readonly RefereeClaim[];
+  readonly ruledOutTruncated: boolean;
+  readonly supersededByClaimId: string | null;
+  /** Rows of THIS position the client could not parse and dropped. */
+  readonly droppedRows: number;
+}
+
+const RefereePositionSchema = z
+  .looseObject({
+    claim: RefereeClaimSchema,
+    workContextTitle: z.string().default(""),
+    evidence: z.array(z.unknown()).default([]),
+    evidenceTruncated: z.boolean().default(false),
+    ruledOut: z.array(z.unknown()).default([]),
+    ruledOutTruncated: z.boolean().default(false),
+    supersededByClaimId: z.string().nullable().optional(),
+  })
+  .transform((value): RefereePosition => {
+    const evidence = parseRows(value.evidence, RefereeClaimSchema);
+    const ruledOut = parseRows(value.ruledOut, RefereeClaimSchema);
+    return {
+      claim: value.claim,
+      workContextTitle: value.workContextTitle,
+      evidence: evidence.rows,
+      evidenceTruncated: value.evidenceTruncated,
+      ruledOut: ruledOut.rows,
+      ruledOutTruncated: value.ruledOutTruncated,
+      supersededByClaimId: value.supersededByClaimId ?? null,
+      droppedRows: evidence.dropped + ruledOut.dropped,
+    };
+  });
+
+export interface RefereeBrief {
+  readonly id: string;
+  readonly reason: string;
+  readonly similarity: number | null;
+  readonly positionA: RefereePosition;
+  readonly positionB: RefereePosition;
+  readonly sharedTargets: readonly SharedTarget[];
+  readonly sharedTargetsTruncated: boolean;
+  /** Rows the hub sent that this client dropped — the renderer says so. */
+  readonly droppedRows: number;
+}
+
+const RefereeBriefEnvelopeSchema = z
+  .looseObject({
+    brief: z.looseObject({
+      id: z.string().min(1),
+      reason: z.string().min(1),
+      similarity: z.number().nullable().optional(),
+      positionA: RefereePositionSchema,
+      positionB: RefereePositionSchema,
+      sharedTargets: z.array(z.unknown()).default([]),
+      sharedTargetsTruncated: z.boolean().default(false),
+    }),
+  })
+  .transform((value): RefereeBrief => {
+    const shared = parseRows(value.brief.sharedTargets, SharedTargetSchema);
+    return {
+      id: value.brief.id,
+      reason: value.brief.reason,
+      similarity: value.brief.similarity ?? null,
+      positionA: value.brief.positionA,
+      positionB: value.brief.positionB,
+      sharedTargets: shared.rows,
+      sharedTargetsTruncated: value.brief.sharedTargetsTruncated,
+      droppedRows:
+        value.brief.positionA.droppedRows +
+        value.brief.positionB.droppedRows +
+        shared.dropped,
+    };
+  });
+
+export const getRefereeBrief = (
+  ctx: HubContext,
+  contradictionId: string,
+): Promise<HubResult<RefereeBrief>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/contradictions/${encodeURIComponent(contradictionId)}/brief`,
+    schema: RefereeBriefEnvelopeSchema,
+  });
+
 export const TripwireSessionSchema = z.looseObject({
   sessionId: z.string().min(1),
   developerId: z.string().min(1),

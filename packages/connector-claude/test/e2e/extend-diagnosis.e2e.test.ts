@@ -242,7 +242,7 @@ describe("two developers, one diagnosis", () => {
   let aliceContextId: string;
   let aliceClaimId: string;
 
-  test("the server Claude Code would start offers all four tools", async () => {
+  test("the server Claude Code would start offers all five tools", async () => {
     // Arrange + Act: the same binary and argv `.mcp.json` names, spawned the
     // same way — this is what proves the wiring, not a unit test of the registry
     const names = await alice.mcp.listTools();
@@ -252,6 +252,7 @@ describe("two developers, one diagnosis", () => {
       "publish_claim",
       "extend_diagnosis",
       "get_diagnosis",
+      "get_referee_brief",
       "search_related_work",
     ]);
   });

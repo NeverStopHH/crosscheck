@@ -15,7 +15,7 @@
  * context id is a `wc_cc_<uuid>` an agent has no other way to learn.
  *
  * THE REPO SCOPE IS RELEVANCE, NOT A BOUNDARY, and the distinction is load-
- * bearing enough to write down. This is the only one of the four tools that
+ * bearing enough to write down. This is the only one of the five tools that
  * looks at `ctx.identity.repoId`, which makes it the easiest place in the
  * codebase to mistake for an access control. It is not one, on two counts.
  *

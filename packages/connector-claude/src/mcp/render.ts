@@ -19,21 +19,24 @@
  * WHAT IS NOT FRAMED, AND WHY. Ids are printed bare, because an agent has to
  * pass them back into `get_diagnosis` and `extend_diagnosis` — an id inside « »
  * would arrive back with the guillemets attached. They are still untrusted, and
- * `safeId` below is what makes printing them bare safe: it is an allowlist, so
- * it is strictly narrower than the sanitizer rather than a second, weaker copy
- * of it.
+ * `safeId` (briefing/sanitize.ts, re-exported below) is what makes printing
+ * them bare safe: it is an allowlist, so it is strictly narrower than the
+ * sanitizer rather than a second, weaker copy of it.
  */
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
 import {
   MAX_DIAGNOSIS_CHARS,
-  MAX_ID_CHARS,
   MAX_SEARCH_CHARS,
   MAX_TITLE_CHARS,
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
 import { QUOTED_DATA_NOTICE, formatAge } from "../briefing/render.ts";
-import { bareUntrusted as bare, sanitizeUntrusted } from "../briefing/sanitize.ts";
+import {
+  bareUntrusted as bare,
+  safeId,
+  sanitizeUntrusted,
+} from "../briefing/sanitize.ts";
 import type {
   Diagnosis,
   DiagnosisClaim,
@@ -51,33 +54,16 @@ import type {
  * still — this is a diagnosis, and a silently shorter one is the failure this
  * whole file is trying to avoid.
  */
-const UNNAMED_AUTHOR = "an unnamed teammate";
+export const UNNAMED_AUTHOR = "an unnamed teammate";
 
 /**
- * Characters an id may carry, written once and used in both directions.
- *
- * `ID_ALPHABET` is the negated form the renderer strips WITH; `SAFE_ID_PATTERN`
- * is the positive form the tool schemas validate AGAINST, so an id an agent
- * supplies has to already be what an id the renderer prints would be reduced to.
- * Two literals for one alphabet would be two things to widen, and widening only
- * the schema is exactly how an unprintable id becomes an unanswerable call.
+ * The ID class — `safeId`, the allowlist, and `SAFE_ID_PATTERN`, its positive
+ * form — lives in briefing/sanitize.ts beside the PROSE and BARE classes since
+ * the briefing grew its first bare-id field (the contradiction pointer).
+ * Re-exported here because the tools and their tests reach the class through
+ * this module, which is still where every character of tool output is made.
  */
-const ID_ALPHABET_SOURCE = "A-Za-z0-9_.:-";
-const ID_ALPHABET = new RegExp(`[^${ID_ALPHABET_SOURCE}]`, "g");
-export const SAFE_ID_PATTERN = new RegExp(`^[${ID_ALPHABET_SOURCE}]+$`);
-
-/**
- * An id, reduced to characters that cannot open a frame, emit markup or start a
- * line — and cannot be turned into prose either.
- *
- * `sanitizeUntrusted` is the wrong tool here and using it was the first draft's
- * bug: it returns REDACTED_TITLE for anything the phrase filter matches, so a
- * claim whose id happened to contain `override` became unaddressable. An
- * allowlist has no such branch, and it removes rather than spaces, so the id an
- * agent reads back is the id it can pass to the next tool.
- */
-export const safeId = (raw: string): string =>
-  raw.replace(ID_ALPHABET, "").slice(0, MAX_ID_CHARS);
+export { SAFE_ID_PATTERN, safeId } from "../briefing/sanitize.ts";
 
 /**
  * Author-written prose, sanitized and framed. Empty input still frames.
@@ -116,7 +102,7 @@ export const quotingText = (...sentences: readonly string[]): string =>
  * two things to weaken — same rule as QUOTED_DATA_NOTICE in the header above.
  * `bare` is not used for titles: a title lands inside the frame.
  */
-const CONFIDENCE_DECIMALS = 2;
+export const CONFIDENCE_DECIMALS = 2;
 
 /**
  * Who wrote a record, resolved through the author SESSION.
@@ -180,7 +166,7 @@ const edgeLine = (
 const externalLine = (ref: ExternalClaimRef): string =>
   `- ${safeId(ref.id)} · ${bare(ref.kind)} · in work context ${safeId(ref.workContextId)}`;
 
-interface Section {
+export interface Section {
   readonly header: string;
   readonly lines: readonly string[];
   /** What the section WOULD have shown, so a drop can be counted honestly. */
@@ -209,7 +195,7 @@ const moreLine = (count: number, noun: string): string =>
  * monotonic in its count, so reserving for the total guarantees the real line
  * fits and costs at most one item that would otherwise have been shown.
  */
-const appendSection = (
+export const appendSection = (
   accumulated: readonly string[],
   section: Section,
   cap: number,
@@ -235,7 +221,7 @@ const appendSection = (
     : [...fitted, moreLine(hidden, section.noun)];
 };
 
-const countHeader = (label: string, total: number): string =>
+export const countHeader = (label: string, total: number): string =>
   `${label} (${String(total)}):`;
 
 /**

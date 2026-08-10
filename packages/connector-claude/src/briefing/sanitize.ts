@@ -1,4 +1,4 @@
-import { MAX_TITLE_CHARS } from "../constants.ts";
+import { MAX_ID_CHARS, MAX_TITLE_CHARS } from "../constants.ts";
 
 export const REDACTED_TITLE = "[redacted: title looked like an instruction]";
 
@@ -338,3 +338,37 @@ export const bareUntrusted = (
     .replace(RENDERER_STRUCTURE, "")
     .replace(/\s+/g, " ")
     .trim();
+
+/**
+ * Characters an id may carry, written once and used in both directions.
+ *
+ * `ID_ALPHABET` is the negated form `safeId` strips WITH; `SAFE_ID_PATTERN` is
+ * the positive form the tool schemas validate AGAINST, so an id an agent
+ * supplies has to already be what an id the renderer prints would be reduced
+ * to. Two literals for one alphabet would be two things to widen, and widening
+ * only the schema is exactly how an unprintable id becomes an unanswerable
+ * call.
+ *
+ * MOVED HERE FROM mcp/render.ts when the briefing grew its first bare-id field
+ * (the contradiction pointer's cx_ id): this file already holds the other two
+ * untrusted-text classes — PROSE (`sanitizeUntrusted`) and BARE
+ * (`bareUntrusted`) — and importing the ID class the other way round would
+ * have made briefing/render.ts and mcp/render.ts a cycle.
+ */
+const ID_ALPHABET_SOURCE = "A-Za-z0-9_.:-";
+const ID_ALPHABET = new RegExp(`[^${ID_ALPHABET_SOURCE}]`, "g");
+export const SAFE_ID_PATTERN = new RegExp(`^[${ID_ALPHABET_SOURCE}]+$`);
+
+/**
+ * An id, reduced to characters that cannot open a frame, emit markup or start
+ * a line — and cannot be turned into prose either.
+ *
+ * `sanitizeUntrusted` is the wrong tool here and using it was the first
+ * draft's bug: it returns REDACTED_TITLE for anything the phrase filter
+ * matches, so a claim whose id happened to contain `override` became
+ * unaddressable. An allowlist has no such branch, and it removes rather than
+ * spaces, so the id an agent reads back is the id it can pass to the next
+ * tool.
+ */
+export const safeId = (raw: string): string =>
+  raw.replace(ID_ALPHABET, "").slice(0, MAX_ID_CHARS);

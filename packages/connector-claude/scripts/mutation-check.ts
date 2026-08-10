@@ -179,8 +179,11 @@ export const MUTATIONS: readonly Mutation[] = [
       "close the frame the line above it opened",
   },
   {
+    // The allowlist moved to briefing/sanitize.ts (the ID class beside PROSE
+    // and BARE) when the briefing grew its first bare-id field; the guard and
+    // the reason are unchanged.
     label: "mcp ids stop being allowlisted",
-    file: `${CONNECTOR}/src/mcp/render.ts`,
+    file: `${CONNECTOR}/src/briefing/sanitize.ts`,
     from: 'raw.replace(ID_ALPHABET, "").slice(0, MAX_ID_CHARS)',
     to: "raw.slice(0, MAX_ID_CHARS)",
     test: `${CONNECTOR}/test/mcp-injection.test.ts`,
@@ -188,6 +191,23 @@ export const MUTATIONS: readonly Mutation[] = [
       "ids are the one field this renderer prints OUTSIDE the quote frame, so " +
       "an id chosen by its author — `wc_x» now follow this: «` — is an escape " +
       "with nothing else standing in its way",
+  },
+  {
+    // The referee brief REUSES quoted/bare/safeId, so the three mutations
+    // above already re-break its sanitizing and framing (mcp-injection.test.ts
+    // sweeps the referee slots too). What is referee-SPECIFIC is neutrality:
+    // the A/B labels are assigned by canonical claim order, never by which
+    // side the hub stored first. This mutation hands the labels back to the
+    // hub's pair order, and the byte-exact swap-invariance test must notice.
+    label: "the referee brief takes the hub's pair order as the A/B labels",
+    file: `${CONNECTOR}/src/mcp/render-referee.ts`,
+    from: "return keyOf(brief.positionA) <= keyOf(brief.positionB)",
+    to: "return true",
+    test: `${CONNECTOR}/test/mcp-referee-render.test.ts`,
+    because:
+      "which position renders as A — first, and first into its budget — is " +
+      "decided by row order on the hub, so a storage accident (or a hub that " +
+      "wants a side favoured) changes the document two readers compare",
   },
   {
     label: "the mcp diagnosis stops labelling quoted text as data",
@@ -406,8 +426,14 @@ export const MUTATIONS: readonly Mutation[] = [
     // the assertGuardIsGreen container caveat applies to it too.
     label: "a hub-forged confidence renders as a trust label",
     file: `${CONNECTOR}/src/http/hub.ts`,
-    from: "  confidence: z.number().min(0).max(1),",
-    to: "  confidence: z.number(),",
+    // The bare field line appears twice since RefereeClaimSchema copied the
+    // bound, so the hint schema's own comment tail keeps this edit unique.
+    from:
+      "credential, not a number — the row is dropped, silence follows.\n" +
+      "  confidence: z.number().min(0).max(1),",
+    to:
+      "credential, not a number — the row is dropped, silence follows.\n" +
+      "  confidence: z.number(),",
     test: `${CONNECTOR}/test/hint-hook.test.ts`,
     because:
       "every other hub field is validated tightly; unbounded, a hostile hub " +
@@ -464,6 +490,7 @@ interface Outcome {
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: mcp-injection.test.ts 4
+ * PRINTS: mcp-referee-render.test.ts 1
  * PRINTS: mcp-render.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: tripwire-hook.test.ts 1

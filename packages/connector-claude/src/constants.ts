@@ -376,6 +376,28 @@ export const MAX_SEARCH_RESULTS = 10;
 export const MAX_SEARCH_CHARS = 2400;
 
 /**
+ * Rendering caps for `get_referee_brief` — PER SECTION, not one document cap,
+ * and that is the neutrality mechanism: a single document budget spends itself
+ * on whichever position renders first, so the later side would truncate
+ * earlier exactly when the case file is fullest. Equal per-position budgets
+ * keep the A/B swap invariance (test/mcp-referee-render.test.ts) true even
+ * under truncation. A position is one claim line plus up to ten evidence and
+ * ten ruled-out lines (hub caps, server referee.ts), each line bounded by the
+ * 400-char claim-body cap — the budget covers the common case and the "(+N
+ * lines not shown)" line says when it did not.
+ */
+export const MAX_REFEREE_POSITION_CHARS = 4000;
+export const MAX_REFEREE_SHARED_CHARS = 800;
+export const MAX_REFEREE_TIMELINE_CHARS = 1600;
+
+/**
+ * Contradiction pointers one briefing may spend — pointer discipline
+ * (DESIGN.md §4): a one-line pointer naming get_referee_brief and the pair
+ * id, never the case file itself, and never more than this many.
+ */
+export const MAX_CONTRADICTION_POINTERS = 2;
+
+/**
  * Mirrors the hub's SEARCH_MAX_QUERY_CHARS (server search route rejects
  * longer queries with 400). The tool description invites "distinctive words
  * of the problem" and agents oblige with whole stack traces; truncating here

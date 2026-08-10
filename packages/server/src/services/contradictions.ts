@@ -22,20 +22,29 @@
  * stronger signal, since it carries a measured score.
  *
  * BOTH SIDES SHIP RAW CLAIM BODIES, hub-convention (the hub returns raw, the
- * connector frames). No connector consumes this endpoint yet; the consumer
- * that DESIGN.md §4 plans — "open contradictions in this area" in the
- * SessionStart briefing — puts two author-written bodies side by side in an
- * agent's context, so it MUST route every body through the renderer's PROSE
- * class (« » framing, sanitized) like every other teammate text. Do not
- * interpolate these fields into agent-visible text directly.
+ * connector frames). The SessionStart briefing consumes this endpoint now,
+ * and deliberately renders NO bodies — its pointer lines carry authors,
+ * kinds, statuses and the pair id only (briefing/render.ts
+ * formatContradictionLine), because two author-written bodies side by side
+ * would anchor the reader on whichever paraphrase reads better. Any consumer
+ * that DOES render these bodies must route them through the renderer's PROSE
+ * class (« » framing, sanitized) like every other teammate text — the referee
+ * brief renderer (connector mcp/render-referee.ts) is the worked example. Do
+ * not interpolate these fields into agent-visible text directly.
  */
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+
+import { and, eq, inArray, ne, notExists, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import type { PgColumn } from "drizzle-orm/pg-core";
 import type { ClaimKind } from "@crosscheck/schema";
 
 import {
+  agentSessions,
+  claimEdges,
   claims,
   contradictionCandidates,
+  developers,
   workContextTargets,
 } from "../db/schema.ts";
 import { OPEN_THEORY_STATUSES } from "./similarity-gate.ts";
@@ -43,6 +52,35 @@ import type { Db } from "../db/client.ts";
 
 export const CONTRADICTIONS_DEFAULT_LIMIT = 50;
 export const CONTRADICTIONS_MAX_LIMIT = 200;
+
+/** Same-author revision edge (DESIGN.md §5); its TARGET is the retracted claim. */
+export const SUPERSEDES_EDGE_KIND = "supersedes";
+
+const CONTRADICTION_ID_PREFIX = "cx_";
+/** 128 bits of SHA-256 — the truncation the connector's fingerprints use too. */
+const CONTRADICTION_ID_HASH_CHARS = 32;
+
+/**
+ * The pair's id: deterministic, order-independent, and STATELESS — derived
+ * pairs have no stored row a foreign key could point at (see the header), so
+ * the id has to be recomputable from the pair alone. Resolution reverses it by
+ * re-listing candidates and matching (findContradictionById below), which is
+ * bounded by the same CONTRADICTIONS_MAX_LIMIT the listing itself obeys.
+ *
+ * Prefix + 32 hex chars = 35, inside the connector's MAX_ID_CHARS (64) and its
+ * id alphabet, so a briefing can print it bare and a tool can accept it back:
+ *
+ * VERIFY: bun -e 'const m=await import("./packages/server/src/services/contradictions.ts");const a=m.contradictionIdFor("clm_a","clm_b");console.log(a.length, a === m.contradictionIdFor("clm_b","clm_a"), /^cx_[0-9a-f]{32}$/.test(a))'
+ * PRINTS: 35 true true
+ */
+export const contradictionIdFor = (
+  claimAId: string,
+  claimBId: string,
+): string => {
+  const pairKey = [claimAId, claimBId].sort().join(":");
+  const digest = createHash("sha256").update(pairKey).digest("hex");
+  return `${CONTRADICTION_ID_PREFIX}${digest.slice(0, CONTRADICTION_ID_HASH_CHARS)}`;
+};
 
 /** Kinds that carry a theory; observations and evidence cannot contradict. */
 const THEORY_KINDS = [
@@ -56,14 +94,45 @@ export interface CandidateSide {
   readonly kind: string;
   readonly status: string;
   readonly body: string;
+  /** Trust label (DESIGN.md §4) — the briefing pointer says WHO disagrees. */
+  readonly authorDeveloperName: string;
 }
 
 export interface ContradictionView {
+  /** Deterministic pair id (contradictionIdFor) — the brief's handle. */
+  readonly id: string;
   readonly claimA: CandidateSide;
   readonly claimB: CandidateSide;
   readonly reason: "similarity" | "shared_target";
   readonly similarity: number | null;
 }
+
+/**
+ * A side whose claim was revised away by its own author no longer holds a
+ * position: same signal the hints path filters on (hints.ts `notSuperseded`) —
+ * a supersedes edge POINTING AT the claim, plus the `superseded` status as
+ * defense in depth against a hub that forged the status without the edge.
+ * Retired pairs leave the LISTING only; findContradictionById keeps resolving
+ * them so a brief can say the deadlock is over instead of vanishing.
+ */
+const sideIsLive = (
+  db: Db,
+  side: { readonly id: PgColumn; readonly status: PgColumn },
+) =>
+  and(
+    ne(side.status, "superseded"),
+    notExists(
+      db
+        .select({ one: sql`1` })
+        .from(claimEdges)
+        .where(
+          and(
+            eq(claimEdges.toClaimId, side.id),
+            eq(claimEdges.kind, SUPERSEDES_EDGE_KIND),
+          ),
+        ),
+    ),
+  );
 
 /** "Touches the repo": either side's work context reports from it. */
 const repoTouchCondition = (
@@ -84,9 +153,14 @@ const listStoredCandidates = async (
   db: Db,
   repo: string | undefined,
   limit: number,
+  includeRetired: boolean,
 ): Promise<readonly ContradictionView[]> => {
   const claimsA = alias(claims, "stored_a");
   const claimsB = alias(claims, "stored_b");
+  const sessionsA = alias(agentSessions, "stored_a_ses");
+  const sessionsB = alias(agentSessions, "stored_b_ses");
+  const developersA = alias(developers, "stored_a_dev");
+  const developersB = alias(developers, "stored_b_dev");
   const rows = await db
     .select({
       similarity: contradictionCandidates.similarity,
@@ -95,25 +169,40 @@ const listStoredCandidates = async (
       aKind: claimsA.kind,
       aStatus: claimsA.status,
       aBody: claimsA.body,
+      aAuthorName: developersA.name,
       bId: claimsB.id,
       bWorkContextId: claimsB.workContextId,
       bKind: claimsB.kind,
       bStatus: claimsB.status,
       bBody: claimsB.body,
+      bAuthorName: developersB.name,
     })
     .from(contradictionCandidates)
     .innerJoin(claimsA, eq(contradictionCandidates.claimAId, claimsA.id))
     .innerJoin(claimsB, eq(contradictionCandidates.claimBId, claimsB.id))
-    .where(repoTouchCondition(repo, claimsA, claimsB))
+    .innerJoin(sessionsA, eq(claimsA.authorSessionId, sessionsA.id))
+    .innerJoin(sessionsB, eq(claimsB.authorSessionId, sessionsB.id))
+    .innerJoin(developersA, eq(sessionsA.developerId, developersA.id))
+    .innerJoin(developersB, eq(sessionsB.developerId, developersB.id))
+    .where(
+      and(
+        repoTouchCondition(repo, claimsA, claimsB),
+        ...(includeRetired
+          ? []
+          : [sideIsLive(db, claimsA), sideIsLive(db, claimsB)]),
+      ),
+    )
     .orderBy(sql`${contradictionCandidates.createdAt} DESC`)
     .limit(limit);
   return rows.map((row) => ({
+    id: contradictionIdFor(row.aId, row.bId),
     claimA: {
       id: row.aId,
       workContextId: row.aWorkContextId,
       kind: row.aKind,
       status: row.aStatus,
       body: row.aBody,
+      authorDeveloperName: row.aAuthorName,
     },
     claimB: {
       id: row.bId,
@@ -121,6 +210,7 @@ const listStoredCandidates = async (
       kind: row.bKind,
       status: row.bStatus,
       body: row.bBody,
+      authorDeveloperName: row.bAuthorName,
     },
     reason: "similarity" as const,
     similarity: row.similarity,
@@ -131,11 +221,16 @@ const listDerivedCandidates = async (
   db: Db,
   repo: string | undefined,
   limit: number,
+  includeRetired: boolean,
 ): Promise<readonly ContradictionView[]> => {
   const openSide = alias(claims, "open_side");
   const rejectedSide = alias(claims, "rejected_side");
   const targetsOpen = alias(workContextTargets, "targets_open");
   const targetsRejected = alias(workContextTargets, "targets_rejected");
+  const sessionsOpen = alias(agentSessions, "open_ses");
+  const sessionsRejected = alias(agentSessions, "rejected_ses");
+  const developersOpen = alias(developers, "open_dev");
+  const developersRejected = alias(developers, "rejected_dev");
 
   const rows = await db
     .selectDistinct({
@@ -144,11 +239,13 @@ const listDerivedCandidates = async (
       aKind: openSide.kind,
       aStatus: openSide.status,
       aBody: openSide.body,
+      aAuthorName: developersOpen.name,
       bId: rejectedSide.id,
       bWorkContextId: rejectedSide.workContextId,
       bKind: rejectedSide.kind,
       bStatus: rejectedSide.status,
       bBody: rejectedSide.body,
+      bAuthorName: developersRejected.name,
     })
     .from(openSide)
     .innerJoin(
@@ -167,6 +264,19 @@ const listDerivedCandidates = async (
       rejectedSide,
       eq(rejectedSide.workContextId, targetsRejected.workContextId),
     )
+    .innerJoin(sessionsOpen, eq(openSide.authorSessionId, sessionsOpen.id))
+    .innerJoin(
+      sessionsRejected,
+      eq(rejectedSide.authorSessionId, sessionsRejected.id),
+    )
+    .innerJoin(
+      developersOpen,
+      eq(sessionsOpen.developerId, developersOpen.id),
+    )
+    .innerJoin(
+      developersRejected,
+      eq(sessionsRejected.developerId, developersRejected.id),
+    )
     .where(
       and(
         inArray(openSide.kind, [...THEORY_KINDS]),
@@ -174,16 +284,21 @@ const listDerivedCandidates = async (
         inArray(openSide.status, [...OPEN_THEORY_STATUSES]),
         eq(rejectedSide.status, "rejected"),
         repoTouchCondition(repo, openSide, rejectedSide),
+        ...(includeRetired
+          ? []
+          : [sideIsLive(db, openSide), sideIsLive(db, rejectedSide)]),
       ),
     )
     .limit(limit);
   return rows.map((row) => ({
+    id: contradictionIdFor(row.aId, row.bId),
     claimA: {
       id: row.aId,
       workContextId: row.aWorkContextId,
       kind: row.aKind,
       status: row.aStatus,
       body: row.aBody,
+      authorDeveloperName: row.aAuthorName,
     },
     claimB: {
       id: row.bId,
@@ -191,6 +306,7 @@ const listDerivedCandidates = async (
       kind: row.bKind,
       status: row.bStatus,
       body: row.bBody,
+      authorDeveloperName: row.bAuthorName,
     },
     reason: "shared_target" as const,
     similarity: null,
@@ -200,14 +316,26 @@ const listDerivedCandidates = async (
 const pairKey = (view: ContradictionView): string =>
   [view.claimA.id, view.claimB.id].sort().join(":");
 
+export interface ListContradictionsInput {
+  readonly repo?: string | undefined;
+  readonly limit: number;
+  /**
+   * Keep pairs a supersedes edge (or status) has retired. The LISTING never
+   * wants them — a settled deadlock is not an open conflict — but the brief
+   * resolver must still find them to say the deadlock is over (referee.ts).
+   */
+  readonly includeRetired?: boolean;
+}
+
 export const listContradictions = async (
   db: Db,
-  input: { readonly repo?: string | undefined; readonly limit: number },
+  input: ListContradictionsInput,
 ): Promise<readonly ContradictionView[]> => {
   const limit = Math.min(Math.max(1, input.limit), CONTRADICTIONS_MAX_LIMIT);
+  const includeRetired = input.includeRetired === true;
   const [stored, derived] = await Promise.all([
-    listStoredCandidates(db, input.repo, limit),
-    listDerivedCandidates(db, input.repo, limit),
+    listStoredCandidates(db, input.repo, limit, includeRetired),
+    listDerivedCandidates(db, input.repo, limit, includeRetired),
   ]);
   const seen = new Set<string>();
   const merged: ContradictionView[] = [];
@@ -221,4 +349,26 @@ export const listContradictions = async (
     }
   }
   return merged.slice(0, limit);
+};
+
+/**
+ * Resolves a cx_ id back to its pair by recomputing ids over the candidate
+ * pool — the hash is not invertible and derived pairs have no row to look up,
+ * so re-listing IS the index. Hub-wide (no repo filter) because the id scopes
+ * the call, exactly like get_diagnosis; retired pairs stay resolvable so the
+ * brief can report the retirement instead of 404ing (retirement honesty).
+ *
+ * Accepted bound: a pair pushed past CONTRADICTIONS_MAX_LIMIT by newer
+ * candidates becomes unresolvable. The listing that minted the id is bounded
+ * the same way, so an id an agent holds came from a pool that contained it.
+ */
+export const findContradictionById = async (
+  db: Db,
+  contradictionId: string,
+): Promise<ContradictionView | undefined> => {
+  const candidates = await listContradictions(db, {
+    limit: CONTRADICTIONS_MAX_LIMIT,
+    includeRetired: true,
+  });
+  return candidates.find((candidate) => candidate.id === contradictionId);
 };

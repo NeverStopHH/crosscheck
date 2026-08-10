@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 26
+    # PRINTS: 27
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -126,13 +126,14 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-claude/src/",""),v)'
     # PRINTS: briefing/render.ts 2
-    # PRINTS: briefing/sanitize.ts 6
+    # PRINTS: briefing/sanitize.ts 7
     # PRINTS: constants.ts 3
     # PRINTS: hints/render.ts 1
     # PRINTS: hints/select.ts 3
     # PRINTS: hooks/pre-tool-use.ts 1
     # PRINTS: http/hub.ts 1
-    # PRINTS: mcp/render.ts 4
+    # PRINTS: mcp/render-referee.ts 1
+    # PRINTS: mcp/render.ts 3
     # PRINTS: packages/server/src/services/hints.ts 1
     # PRINTS: packages/server/src/services/search.ts 4
     #
@@ -141,8 +142,9 @@ jobs:
     # PRINTS: hints.ts 1
     # PRINTS: hub.ts 1
     # PRINTS: pre-tool-use.ts 1
-    # PRINTS: render.ts 7
-    # PRINTS: sanitize.ts 6
+    # PRINTS: render-referee.ts 1
+    # PRINTS: render.ts 6
+    # PRINTS: sanitize.ts 7
     # PRINTS: search.ts 4
     # PRINTS: select.ts 3
     name: Mutation proof

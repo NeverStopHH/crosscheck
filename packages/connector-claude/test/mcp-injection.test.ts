@@ -41,14 +41,21 @@ import {
 import { renderDiagnosis, renderSearchResults } from "../src/mcp/render.ts";
 import type { SearchHit } from "../src/mcp/render.ts";
 import {
+  MAX_REFEREE_BRIEF_CHARS,
+  renderRefereeBrief,
+} from "../src/mcp/render-referee.ts";
+import {
   INJECTION_CORPUS,
   MCP_DIAGNOSIS_SLOTS,
+  MCP_REFEREE_SLOTS,
   MCP_SEARCH_SLOTS,
   mcpDiagnosisWith,
+  mcpRefereeWith,
   mcpSearchWith,
 } from "./fixtures/injection-corpus.ts";
 import type {
   McpDiagnosisSlot,
+  McpRefereeSlot,
   McpSearchSlot,
 } from "./fixtures/injection-corpus.ts";
 import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
@@ -230,6 +237,93 @@ describe("search invariants over the injection corpus", () => {
 
         // Assert
         expect(lines.length, `${entry.id}/${slot}`).toBe(EXPECTED_SEARCH_LINES);
+      }
+    }
+  });
+});
+
+// ─── The referee brief, the THIRD reading surface ───────────────────────────
+
+const REFEREE_NOW = new Date("2026-07-25T09:00:00.000Z");
+
+const renderRefereeWith = (slot: McpRefereeSlot, payload: string): string =>
+  renderRefereeBrief(mcpRefereeWith(slot, payload), REFEREE_NOW);
+
+const REFEREE_HEADER = /^crosscheck referee brief for contradiction [\w.:-]*\. /;
+const REFEREE_NEUTRALITY_LINE =
+  /^Two developers hold conflicting positions; this is the case file — crosscheck does not rank them\.$/;
+const REFEREE_DETECTION_LINE =
+  /^Detected by (a shared target held with opposite statuses|semantic similarity \d\.\d\d|the hub's contradiction gate)\.$/;
+const REFEREE_POSITION_HEADER =
+  /^Position [AB] · .+ · work context [\w.:-]*: «[^«»]*»$/;
+const REFEREE_COUNT_LINE =
+  /^Position [AB] (cites no evidence claims\.|cites \d+ evidence claims?:|ruled out \d+ approach(es)?:|has no ruled-out approaches recorded\.)$/;
+const REFEREE_CAP_LINE = /^\(the hub capped .+\)$/;
+const REFEREE_SHARED_HEADER =
+  /^Shared ground — targets both work contexts touch \(\d+\):$/;
+const REFEREE_SHARED_LINE = /^- [^«»]* · [^«»]*$/;
+const REFEREE_NO_SHARED_LINE =
+  /^No shared targets between the two work contexts\.$/;
+const REFEREE_TIMELINE_HEADER = /^Timeline, oldest first \(\d+\):$/;
+const REFEREE_TIMELINE_LINE =
+  /^- \d+[smhd] ago · .+ · (stated|cited for|ruled out for) position [AB] · [^«»]* [\w.:-]*$/;
+
+const REFEREE_LINE_SHAPES = [
+  REFEREE_NEUTRALITY_LINE,
+  REFEREE_DETECTION_LINE,
+  REFEREE_POSITION_HEADER,
+  REFEREE_COUNT_LINE,
+  REFEREE_CAP_LINE,
+  REFEREE_SHARED_HEADER,
+  REFEREE_SHARED_LINE,
+  REFEREE_NO_SHARED_LINE,
+  REFEREE_TIMELINE_HEADER,
+  REFEREE_TIMELINE_LINE,
+  CLAIM_LINE,
+  MORE_LINE,
+  NOTE_LINE,
+];
+
+/**
+ * The fixture's shape: opening (header, neutrality, detection, one
+ * retirement note), the payload-carrying position (header, claim, two count
+ * lines, one evidence, one ruled-out), the clean position (header, claim,
+ * two empty-count lines), shared ground (header + one target), timeline
+ * (header + four events). Which position renders first may flip with a
+ * payload in `positionClaimId` — the renderer orders the pair canonically —
+ * but the totals cannot.
+ */
+const EXPECTED_REFEREE_LINES = 21;
+
+describe("referee brief invariants over the injection corpus", () => {
+  test("hold for every payload in every untrusted field of a case file", () => {
+    for (const entry of INJECTION_CORPUS) {
+      for (const slot of MCP_REFEREE_SLOTS) {
+        // Act
+        const output = renderRefereeWith(slot, entry.payload);
+
+        // Assert
+        assertDocument(
+          output,
+          `${entry.id}/${slot}`,
+          REFEREE_HEADER,
+          REFEREE_LINE_SHAPES,
+          MAX_REFEREE_BRIEF_CHARS,
+        );
+      }
+    }
+  });
+
+  test("no payload can add, remove or split a line of the case file", () => {
+    for (const entry of INJECTION_CORPUS) {
+      for (const slot of MCP_REFEREE_SLOTS) {
+        // Act
+        const lines = renderRefereeWith(slot, entry.payload).split("\n");
+
+        // Assert
+        expect(lines.length, `${entry.id}/${slot}`).toBe(
+          EXPECTED_REFEREE_LINES,
+        );
       }
     }
   });

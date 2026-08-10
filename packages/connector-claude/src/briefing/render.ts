@@ -5,6 +5,7 @@ import {
   MAX_ABSENCE_LINES,
   MAX_BRIEFING_CHARS,
   MAX_CONTEXTS,
+  MAX_CONTRADICTION_POINTERS,
   MAX_TEAMMATES,
   MINUTES_PER_HOUR,
   MS_PER_DAY,
@@ -12,8 +13,13 @@ import {
   SECONDS_PER_MINUTE,
 } from "../constants.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
-import type { PresenceEntry, WorkContextEntry } from "../http/hub.ts";
-import { bareUntrusted, sanitizeUntrusted } from "./sanitize.ts";
+import type {
+  ContradictionEntry,
+  ContradictionSide,
+  PresenceEntry,
+  WorkContextEntry,
+} from "../http/hub.ts";
+import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
 
 /**
  * Exported because the MCP tools put the SAME untrusted text into the same
@@ -72,6 +78,8 @@ export interface BriefingInput {
   readonly drift?: Readonly<Record<string, CommitDrift>> | undefined;
   /** Absence findings; omitted or empty renders no section (fail open). */
   readonly absences?: readonly AbsenceEntry[] | undefined;
+  /** Open contradictions; omitted or empty renders no section (fail open). */
+  readonly contradictions?: readonly ContradictionEntry[] | undefined;
 }
 
 interface Section {
@@ -234,6 +242,60 @@ const renderContextSection = (input: BriefingInput): Section => {
   };
 };
 
+/**
+ * One side of a contradiction pointer: `Nick (hypothesis, proposed)`. Name
+ * BARE (it sits outside any frame, same position as the absence lines' names),
+ * kind and status BARE too — they are wire enums from an honest hub but
+ * teammate-writable bytes from a hostile one.
+ */
+const contradictionSideLabel = (side: ContradictionSide): string => {
+  const name =
+    side.authorDeveloperName === undefined
+      ? ""
+      : bareUntrusted(side.authorDeveloperName);
+  const shown = name.length === 0 ? UNKNOWN_AUTHOR : name;
+  return `${shown} (${bareUntrusted(side.kind)}, ${bareUntrusted(side.status)})`;
+};
+
+/**
+ * ONE LINE per contradiction — the pointer discipline (DESIGN.md §4): who
+ * disagrees, and the exact tool call that reads the case file. NEVER the
+ * claim bodies; a conflict summary asserted at SessionStart would anchor the
+ * reader on whichever side it paraphrased better, which is precisely what
+ * referee mode exists to avoid. The cx_ id goes through the id allowlist
+ * because it prints bare beside a tool name; an id reduced to nothing drops
+ * the line (null), since a pointer that cannot be followed is noise.
+ */
+export const formatContradictionLine = (
+  entry: ContradictionEntry,
+): string | null => {
+  const id = safeId(entry.id);
+  if (id.length === 0) {
+    return null;
+  }
+  return `- ${contradictionSideLabel(entry.claimA)} vs ${contradictionSideLabel(entry.claimB)} · get_referee_brief ${id}`;
+};
+
+/**
+ * Placed AFTER presence and related work — those answer "who is doing what",
+ * the briefing's first job — and BEFORE absences, because an open conflict
+ * about live theories is actionable while absence is context. The budget
+ * consequence is deliberate: with the briefing full, pointers give way before
+ * presence does, and absences give way before pointers.
+ */
+const renderContradictionSection = (input: BriefingInput): Section => {
+  const rendered = (input.contradictions ?? []).flatMap((entry) => {
+    const line = formatContradictionLine(entry);
+    return line === null ? [] : [line];
+  });
+  return {
+    header:
+      "Conflicting teammate positions (get_referee_brief reads the case file):",
+    lines: rendered.slice(0, MAX_CONTRADICTION_POINTERS),
+    total: rendered.length,
+  };
+};
+
 const MS_PER_HOUR = MS_PER_SECOND * SECONDS_PER_MINUTE * MINUTES_PER_HOUR;
 
 const ABSENCE_HEADER_BASE =
@@ -373,6 +435,7 @@ export const renderBriefing = (input: BriefingInput): string => {
   const sections = [
     renderPresenceSection(input),
     renderContextSection(input),
+    renderContradictionSection(input),
     renderAbsenceSection(input),
   ];
   if (sections.every((section) => section.lines.length === 0)) {
