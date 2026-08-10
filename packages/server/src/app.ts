@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 
 import { fail } from "./http/envelope.ts";
+import { absencesRoutes } from "./routes/absences.ts";
 import { contradictionsRoutes } from "./routes/contradictions.ts";
 import { developersRoutes } from "./routes/developers.ts";
 import { eventsRoutes } from "./routes/events.ts";
@@ -22,6 +23,7 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/work-contexts", workContextsRoutes(deps));
   app.route("/api/search", searchRoutes(deps));
   app.route("/api/contradictions", contradictionsRoutes(deps));
+  app.route("/api/absences", absencesRoutes(deps));
 
   app.notFound((c) => fail(c, 404, "not_found", "route not found"));
   app.onError((error, c) => {

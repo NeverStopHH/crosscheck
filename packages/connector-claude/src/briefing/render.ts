@@ -1,6 +1,8 @@
 import {
+  ABSENCE_EVIDENCE_NOTE_AGE_HOURS,
   AGE_HOURS_BEFORE_DAYS,
   CONTEXT_MAX_AGE_DAYS,
+  MAX_ABSENCE_LINES,
   MAX_BRIEFING_CHARS,
   MAX_CONTEXTS,
   MAX_TEAMMATES,
@@ -51,6 +53,15 @@ const ageMsFrom = (iso: string, now: Date): number | null => {
   return Number.isNaN(ms) ? null : now.getTime() - ms;
 };
 
+/** One absence finding as the hub reports it (GET /api/absences). */
+export interface AbsenceEntry {
+  readonly kind: string;
+  readonly name: string;
+  readonly latestCommitAt: string;
+  readonly lastSessionAt?: string | null | undefined;
+  readonly evidenceCollectedAt: string;
+}
+
 export interface BriefingInput {
   readonly repoId: string;
   readonly selfDeveloperId: string | null;
@@ -59,6 +70,8 @@ export interface BriefingInput {
   readonly now: Date;
   /** Drift per teammate base commit; absent entries simply render no label. */
   readonly drift?: Readonly<Record<string, CommitDrift>> | undefined;
+  /** Absence findings; omitted or empty renders no section (fail open). */
+  readonly absences?: readonly AbsenceEntry[] | undefined;
 }
 
 interface Section {
@@ -221,6 +234,102 @@ const renderContextSection = (input: BriefingInput): Section => {
   };
 };
 
+const MS_PER_HOUR = MS_PER_SECOND * SECONDS_PER_MINUTE * MINUTES_PER_HOUR;
+
+const ABSENCE_HEADER_BASE =
+  "Commit authors on this repo without a recent agent session";
+
+/**
+ * PHRASING CONTRACT (DESIGN.md §10 risk 3): each tail is a factual
+ * observation about what was and was not REPORTED — never an inference about
+ * what somebody did. We see agent sessions, not keystrokes.
+ */
+const absenceTail = (entry: AbsenceEntry, now: Date): string | null => {
+  if (entry.kind === "unconnected") {
+    return "no crosscheck account for this author";
+  }
+  if (entry.kind !== "inactive") {
+    // A kind this renderer does not know (newer hub): skipping is honest,
+    // guessing a sentence for it is not — mirror of unknown-kind ingest.
+    return null;
+  }
+  if (entry.lastSessionAt === null || entry.lastSessionAt === undefined) {
+    return "no reported session on this repo";
+  }
+  const sessionAgeMs = ageMsFrom(entry.lastSessionAt, now);
+  return sessionAgeMs === null
+    ? null
+    : `last reported session ${formatAge(sessionAgeMs)} ago`;
+};
+
+/**
+ * One absence finding as a line: name BARE but sanitized, every date a
+ * renderer-built literal. Exported because `crosscheck status` prints the
+ * same fact to a human — two spellings of one observation would drift.
+ * Null = a row this renderer will not vouch for (empty-after-sanitize name,
+ * unparseable timestamp, unknown kind).
+ */
+export const formatAbsenceLine = (
+  entry: AbsenceEntry,
+  now: Date,
+): string | null => {
+  const name = sanitizeUntrusted(entry.name);
+  const commitAgeMs = ageMsFrom(entry.latestCommitAt, now);
+  const tail = absenceTail(entry, now);
+  if (name.length === 0 || commitAgeMs === null || tail === null) {
+    return null;
+  }
+  return `- ${name} · last commit ${formatAge(commitAgeMs)} ago · ${tail}`;
+};
+
+interface AbsenceLine {
+  readonly line: string;
+  readonly evidenceAgeMs: number;
+}
+
+const toAbsenceLine = (entry: AbsenceEntry, now: Date): AbsenceLine | null => {
+  const line = formatAbsenceLine(entry, now);
+  if (line === null) {
+    return null;
+  }
+  return {
+    line,
+    evidenceAgeMs: ageMsFrom(entry.evidenceCollectedAt, now) ?? 0,
+  };
+};
+
+/**
+ * Absence findings, capped hard at MAX_ABSENCE_LINES and rendered LAST so the
+ * briefing's char budget spends itself on presence and related work first —
+ * absence is context, not a hint (§4 briefing budget).
+ *
+ * Staleness honesty (task item 4): evidence ages between collections, and a
+ * line rendered from old evidence must say so — the header carries the age of
+ * the oldest evidence behind a shown line once it passes
+ * ABSENCE_EVIDENCE_NOTE_AGE_HOURS. The hub already refuses to fire findings
+ * from evidence older than its own harder bound (server constants).
+ */
+const renderAbsenceSection = (input: BriefingInput): Section => {
+  const rendered = (input.absences ?? []).flatMap((entry) => {
+    const line = toAbsenceLine(entry, input.now);
+    return line === null ? [] : [line];
+  });
+  const shown = rendered.slice(0, MAX_ABSENCE_LINES);
+  const oldestEvidenceMs = shown.reduce(
+    (oldest, line) => Math.max(oldest, line.evidenceAgeMs),
+    0,
+  );
+  const suffix =
+    oldestEvidenceMs > ABSENCE_EVIDENCE_NOTE_AGE_HOURS * MS_PER_HOUR
+      ? ` (commit evidence ${formatAge(oldestEvidenceMs)} old)`
+      : "";
+  return {
+    header: `${ABSENCE_HEADER_BASE}${suffix}:`,
+    lines: shown.map((line) => line.line),
+    total: rendered.length,
+  };
+};
+
 const joinedLength = (lines: readonly string[]): number =>
   lines.length === 0 ? 0 : lines.join("\n").length;
 
@@ -258,7 +367,11 @@ const appendSection = (
  * injected context trip Claude Code's prompt-injection defences (DESIGN.md §4).
  */
 export const renderBriefing = (input: BriefingInput): string => {
-  const sections = [renderPresenceSection(input), renderContextSection(input)];
+  const sections = [
+    renderPresenceSection(input),
+    renderContextSection(input),
+    renderAbsenceSection(input),
+  ];
   if (sections.every((section) => section.lines.length === 0)) {
     return "";
   }

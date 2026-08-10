@@ -15,6 +15,35 @@ export const MAX_INGEST_BATCH = 100;
 
 export const DEFAULT_PORT = 7100;
 
+// ── Absence detection (roadmap item 3) ──────────────────────────────────────
+
+/**
+ * Commit-evidence rows whose newest commit is older than this are pruned on
+ * the next ingest for their repo — the bound on commit_evidence table growth.
+ */
+export const COMMIT_EVIDENCE_RETENTION_DAYS = 30;
+/**
+ * Evidence older than this never fires a finding. Every SessionStart of every
+ * connected teammate refreshes collection, so evidence this stale means nobody
+ * connected has run a session in a week — at which point per-developer absence
+ * lines would indict everyone and say nothing; silence is the honest output
+ * (staleness honesty, task item 4).
+ */
+export const ABSENCE_EVIDENCE_MAX_AGE_DAYS = 7;
+/** A commit older than the connector's scan window is history, not absence. */
+export const ABSENCE_COMMIT_MAX_AGE_DAYS = 14;
+/**
+ * Committing right after (or during) an agent session is the normal workflow,
+ * not a reporting gap — the motivating incident was DAYS of unreported work.
+ * A finding fires only when the newest commit postdates the last reported
+ * session by more than this.
+ */
+export const ABSENCE_MIN_GAP_HOURS = 24;
+/** Upper bound on findings per response; commit-freshest win the slots. */
+export const ABSENCE_MAX_FINDINGS = 20;
+/** Read bound on evidence rows considered per absence query. */
+export const ABSENCE_MAX_EVIDENCE_ROWS = 200;
+
 export const EVENT_KINDS = {
   DEVELOPER_CREATED: "developer_created",
   SESSION_STARTED: "session_started",

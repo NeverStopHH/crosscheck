@@ -1,10 +1,10 @@
-import { EXIT_OK, EXIT_UNREACHABLE } from "../constants.ts";
+import { EXIT_OK, EXIT_UNREACHABLE, STATUS_MAX_ABSENCE_LINES } from "../constants.ts";
 import { loadConfig } from "../config/config.ts";
 import { repoKey } from "../config/paths.ts";
 import type { Env } from "../config/paths.ts";
-import { formatAge } from "../briefing/render.ts";
+import { formatAbsenceLine, formatAge } from "../briefing/render.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
-import { getPresence } from "../http/hub.ts";
+import { getAbsences, getPresence } from "../http/hub.ts";
 import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
 import { spoolDepth } from "../spool/files.ts";
 import { readSyncState } from "../state/sync-state.ts";
@@ -48,17 +48,25 @@ export const runStatus = async (
   // A batch the ledger itself could not take is recorded as a marker, not a count,
   // so the summed total understates it. `doctor` says the same; both must agree.
   const unrecorded = await readUnrecordedDrop(config.home, key);
-  const presence = await getPresence(
-    {
-      hubUrl: config.hubUrl,
-      apiKey: config.apiKey,
-      timeoutMs: config.timeoutMs,
-      home: config.home,
-      repoKey: key,
-      now: () => now,
-    },
-    identity.repoId,
-  );
+  const hubCtx = {
+    hubUrl: config.hubUrl,
+    apiKey: config.apiKey,
+    timeoutMs: config.timeoutMs,
+    home: config.home,
+    repoKey: key,
+    now: () => now,
+  };
+  const presence = await getPresence(hubCtx, identity.repoId);
+  // Absence findings share the briefing's line formatter, so both surfaces
+  // state the same facts the same way. A hub without the endpoint (or any
+  // failure) simply prints no section — same fail-open as the briefing.
+  const absences = await getAbsences(hubCtx, identity.repoId);
+  const absenceLines = (absences.ok ? absences.data : [])
+    .slice(0, STATUS_MAX_ABSENCE_LINES)
+    .flatMap((entry) => {
+      const line = formatAbsenceLine(entry, now);
+      return line === null ? [] : [`  ${line}`];
+    });
 
   const teammates = presence.ok
     ? presence.data
@@ -73,6 +81,9 @@ export const runStatus = async (
       `developer: ${config.developerName ?? "unknown"} (${config.developerId ?? "unknown"})`,
       "teammates:",
       ...(teammates.length === 0 ? ["  (none)"] : teammates),
+      ...(absenceLines.length === 0
+        ? []
+        : ["commit authors without a recent session:", ...absenceLines]),
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
       "",

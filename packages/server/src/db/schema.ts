@@ -226,6 +226,34 @@ export const contradictionCandidates = pgTable(
   ],
 );
 
+/**
+ * Latest commit-authorship evidence per (repo, commit author) — the absence
+ * check's ground truth (roadmap item 3). UPSERT-only, never append: one row per
+ * author per repo, so the table is bounded by how many people commit, not by
+ * how often connectors report. Ingest prunes rows whose newest commit fell out
+ * of COMMIT_EVIDENCE_RETENTION_DAYS, which is the rest of the retention story.
+ *
+ * `author_email` is stored lowercased and is the matching key against
+ * `developers.email`. It never leaves the hub: absence responses carry names
+ * only (services/absences.ts).
+ */
+export const commitEvidence = pgTable(
+  "commit_evidence",
+  {
+    repo: text("repo").notNull(),
+    authorEmail: text("author_email").notNull(),
+    authorName: text("author_name").notNull(),
+    latestCommitAt: timestamptz("latest_commit_at").notNull(),
+    commitCount: integer("commit_count").notNull(),
+    windowDays: integer("window_days").notNull(),
+    collectedAt: timestamptz("collected_at").notNull(),
+    reportedBy: text("reported_by")
+      .notNull()
+      .references(() => developers.id),
+  },
+  (table) => [primaryKey({ columns: [table.repo, table.authorEmail] })],
+);
+
 export const hintDeliveries = pgTable("hint_deliveries", {
   id: text("id").primaryKey(),
   sessionId: text("session_id")

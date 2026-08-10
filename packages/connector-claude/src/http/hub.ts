@@ -181,6 +181,32 @@ export const getWorkContexts = (
   });
 
 /**
+ * One absence finding (roadmap item 3). Names only — the hub keeps commit
+ * author emails to itself as its matching key. `kind` is an open string on
+ * the wire: a kind this client does not know renders nothing rather than
+ * failing the row (briefing/render.ts skips it).
+ */
+export const AbsenceEntrySchema = z.looseObject({
+  kind: z.string().min(1),
+  name: z.string().min(1),
+  latestCommitAt: z.string().min(1),
+  lastSessionAt: z.string().nullable().optional(),
+  evidenceCollectedAt: z.string().min(1),
+});
+
+export type AbsenceEntry = z.infer<typeof AbsenceEntrySchema>;
+
+export const getAbsences = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<readonly AbsenceEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/absences${encodeRepo(repo)}`,
+    schema: tolerantList("absences", AbsenceEntrySchema),
+  });
+
+/**
  * One claim of a diagnosis tree.
  *
  * `authorDeveloperName` is the field that makes a tree readable by somebody who

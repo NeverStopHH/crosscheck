@@ -3,12 +3,14 @@ import { parseRecord } from "@crosscheck/schema";
 import type {
   Claim,
   ClaimEdge,
+  CommitEvidence,
   KnownRecordKind,
   Target,
   WorkContext,
 } from "@crosscheck/schema";
 
 import { agentSessions } from "../db/schema.ts";
+import { ingestCommitEvidence } from "./commit-evidence.ts";
 import { embedContextDoc } from "./normalized-doc.ts";
 import {
   ingestClaim,
@@ -99,6 +101,8 @@ const dispatchRecord = (
       return ingestClaim(deps, developerId, body as Claim);
     case "claim_edge":
       return ingestClaimEdge(deps, developerId, body as ClaimEdge);
+    case "commit_evidence":
+      return ingestCommitEvidence(deps, developerId, body as CommitEvidence);
   }
 };
 
@@ -115,6 +119,9 @@ const touchedContextId = (
     case "claim":
       return (body as Claim).workContextId;
     case "claim_edge":
+      return undefined;
+    // Commit evidence touches no work context and therefore no doc to re-embed.
+    case "commit_evidence":
       return undefined;
   }
 };

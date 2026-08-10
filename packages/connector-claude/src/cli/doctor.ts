@@ -35,6 +35,8 @@ import type { Env } from "../config/paths.ts";
 import { formatAge } from "../briefing/render.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
 import { hubRequest } from "../http/client.ts";
+import type { HubContext } from "../http/client.ts";
+import { getAbsences } from "../http/hub.ts";
 import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
 import { oldestSpoolLineMs, spoolDepth } from "../spool/files.ts";
 import { readLockHolder } from "../spool/lock.ts";
@@ -392,6 +394,48 @@ const checkFlushLock = async (home: string, key: string): Promise<Check> => {
     : check("PASS", "flush lock", `held ${held} by pid ${holder.pid}`);
 };
 
+/**
+ * The team-level version of rule 6: a teammate's connector dying is silent BY
+ * DESIGN on their machine, so the place it becomes visible is everyone else's
+ * doctor. Counts only, per finding kind — the names belong to `crosscheck
+ * status`, where a human asked for the list rather than a health check.
+ *
+ * "not measured" is a PASS, not a WARN: an older hub without the endpoint (or
+ * an unreachable one — the hub check above already reports that) says nothing
+ * about THIS install's health, and a warning nobody can act on teaches people
+ * to ignore doctor.
+ */
+const checkAbsences = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<Check> => {
+  const result = await getAbsences(ctx, repoId);
+  if (!result.ok) {
+    return check("PASS", "absence findings", "not measured");
+  }
+  if (result.data.length === 0) {
+    return check("PASS", "absence findings", "none");
+  }
+  const inactive = result.data.filter((entry) => entry.kind === "inactive").length;
+  const unconnected = result.data.filter(
+    (entry) => entry.kind === "unconnected",
+  ).length;
+  const parts = [
+    ...(inactive > 0
+      ? [`${inactive} hub member${inactive === 1 ? "" : "s"}`]
+      : []),
+    ...(unconnected > 0
+      ? [`${unconnected} without a crosscheck account`]
+      : []),
+  ];
+  return check(
+    "WARN",
+    "absence findings",
+    `${result.data.length} recent commit author${result.data.length === 1 ? "" : "s"} ` +
+      `with no matching reported session (${parts.join(", ")}) — crosscheck status has the lines`,
+  );
+};
+
 /** A live session file plus a stale sync is exactly the silent-death signature. */
 const hasLiveSessionState = async (home: string): Promise<boolean> => {
   try {
@@ -465,21 +509,19 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
   }
 
   const key = repoKey(config.hubUrl, identity.repoId);
-  const probe = await hubRequest(
-    {
-      hubUrl: config.hubUrl,
-      apiKey: config.apiKey,
-      timeoutMs: config.timeoutMs,
-      home: config.home,
-      repoKey: key,
-      now: () => now,
-    },
-    {
-      method: "GET",
-      path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
-      schema: z.unknown(),
-    },
-  );
+  const hubCtx: HubContext = {
+    hubUrl: config.hubUrl,
+    apiKey: config.apiKey,
+    timeoutMs: config.timeoutMs,
+    home: config.home,
+    repoKey: key,
+    now: () => now,
+  };
+  const probe = await hubRequest(hubCtx, {
+    method: "GET",
+    path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
+    schema: z.unknown(),
+  });
   const hubCheck = probe.ok
     ? check("PASS", "hub reachable", config.hubUrl)
     : check(
@@ -513,6 +555,7 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
     mcpUsableCheck(true, config.hubUrl),
     ...(await checkSpool(config.home, key, now)),
     await checkLastSync(config.home, key, now),
+    await checkAbsences(hubCtx, identity.repoId),
     skewCheck,
     bunfigCheck,
   ]);

@@ -46,6 +46,16 @@ export { HintSchema, HintTrustSchema, MAX_HINT_TEXT_LENGTH } from "./hint.ts";
 export type { Hint, HintTrust } from "./hint.ts";
 
 export {
+  CommitAuthorEvidenceSchema,
+  CommitEvidenceSchema,
+  MAX_COMMIT_EVIDENCE_AUTHORS,
+} from "./commit-evidence.ts";
+export type {
+  CommitAuthorEvidence,
+  CommitEvidence,
+} from "./commit-evidence.ts";
+
+export {
   EnvelopeSchema,
   KNOWN_RECORD_KINDS,
   PROTOCOL_VERSION,

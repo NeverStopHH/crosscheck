@@ -177,3 +177,22 @@ CREATE TABLE IF NOT EXISTS contradiction_candidates (
 
 CREATE UNIQUE INDEX IF NOT EXISTS contradiction_candidates_pair_idx
   ON contradiction_candidates (claim_a_id, claim_b_id);
+-- ── Absence detection (roadmap item 3) ──────────────────────────────────────
+
+-- Latest commit-authorship evidence per (repo, commit author): the absence
+-- check's ground truth. Upsert-only — one row per author per repo, bounded by
+-- team size; ingest prunes rows older than the retention window
+-- (services/commit-evidence.ts). author_email is stored lowercased and is the
+-- matching key against developers.email; it never leaves the hub — absence
+-- responses carry names only (services/absences.ts).
+CREATE TABLE IF NOT EXISTS commit_evidence (
+  repo text NOT NULL,
+  author_email text NOT NULL,
+  author_name text NOT NULL,
+  latest_commit_at timestamptz NOT NULL,
+  commit_count integer NOT NULL,
+  window_days integer NOT NULL,
+  collected_at timestamptz NOT NULL,
+  reported_by text NOT NULL REFERENCES developers(id),
+  PRIMARY KEY (repo, author_email)
+);

@@ -18,6 +18,10 @@ export {
 export type { CommitDrift } from "./git/commit-drift.ts";
 export { sanitizeUntrusted, REDACTED_TITLE } from "./briefing/sanitize.ts";
 export { containsSecret } from "./capture/secret-scan.ts";
+export {
+  collectCommitEvidence,
+  commitEvidenceRecord,
+} from "./capture/commit-evidence.ts";
 export { fingerprint, normalizeFailureText } from "./capture/fingerprint.ts";
 export {
   DEFAULT_DENYLIST,

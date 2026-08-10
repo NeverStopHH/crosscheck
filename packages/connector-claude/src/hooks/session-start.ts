@@ -3,10 +3,15 @@ import { rememberDeveloper } from "../config/config.ts";
 import { sanitizeUntrusted } from "../briefing/sanitize.ts";
 import { groupTeammates, renderBriefing } from "../briefing/render.ts";
 import { resolveDriftByBaseCommit } from "../git/commit-drift.ts";
+import {
+  collectCommitEvidence,
+  commitEvidenceRecord,
+} from "../capture/commit-evidence.ts";
 import { UNKNOWN_DEVELOPER_ID, workContextRecord } from "../capture/records.ts";
 import { containsSecret } from "../capture/secret-scan.ts";
 import {
   endSession,
+  getAbsences,
   getPresence,
   getWorkContexts,
   registerSession,
@@ -200,18 +205,50 @@ export const handleSessionStart = async (
     ],
     now,
   );
-  const [presenceResult, contextsResult] = await Promise.all([
-    getPresence(ctx.hub, ctx.identity.repoId),
-    getWorkContexts(ctx.hub, ctx.identity.repoId),
-  ]);
+  // Commit-evidence collection rides INSIDE the parallel hub-fetch block: its
+  // git timeout is below the per-request hub timeout the block already waits
+  // for (see COMMIT_EVIDENCE_GIT_TIMEOUT_MS), so it adds no wall clock of its
+  // own. Absences are one more parallel GET under the same per-request bound.
+  // Either failing costs its section, never the briefing (fail open).
+  const [presenceResult, contextsResult, absencesResult, commitAuthors] =
+    await Promise.all([
+      getPresence(ctx.hub, ctx.identity.repoId),
+      getWorkContexts(ctx.hub, ctx.identity.repoId),
+      getAbsences(ctx.hub, ctx.identity.repoId),
+      collectCommitEvidence(ctx.identity.root, now),
+    ]);
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
+  const absences = absencesResult.ok ? absencesResult.data : [];
 
   if (developerId !== null) {
     await rememberDeveloper(ctx.config, developerId, selfName(presence, developerId));
   }
   if (presenceResult.ok) {
     await writePresenceCache(ctx.config.home, ctx.repoKey, presence, now);
+  }
+  // A local append, microseconds: the maintenance flush below ships it, and a
+  // dead hub leaves it spooled like any other record. Appended after the work
+  // context record, so a spool replay keeps its create-before-reference order.
+  if (commitAuthors !== null && commitAuthors.length > 0) {
+    await appendRecords(
+      ctx.config.home,
+      ctx.repoKey,
+      ctx.payload.session_id,
+      [
+        commitEvidenceRecord(
+          ctx.identity.repoId,
+          commitAuthors,
+          {
+            developerId: developerId ?? UNKNOWN_DEVELOPER_ID,
+            agentKind: ctx.config.agentKind,
+            sessionId: crosscheckSessionId,
+          },
+          now,
+        ),
+      ],
+      now,
+    );
   }
 
   // Only the teammates that will actually be shown cost a git process.
@@ -230,6 +267,7 @@ export const handleSessionStart = async (
     workContexts,
     now,
     drift,
+    absences,
   });
 
   // Maintenance last, on the leftover budget: the briefing above is what this

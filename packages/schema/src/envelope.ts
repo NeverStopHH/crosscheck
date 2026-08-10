@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { ClaimEdgeSchema, ClaimSchema } from "./claim.ts";
+import { CommitEvidenceSchema } from "./commit-evidence.ts";
 import { HintSchema } from "./hint.ts";
 import {
   AgentSessionSchema,
@@ -38,6 +39,7 @@ export type Envelope = z.infer<typeof EnvelopeSchema>;
 const RECORD_BODY_SCHEMAS = {
   claim: ClaimSchema,
   claim_edge: ClaimEdgeSchema,
+  commit_evidence: CommitEvidenceSchema,
   session: AgentSessionSchema,
   work_context: WorkContextSchema,
   target: TargetSchema,

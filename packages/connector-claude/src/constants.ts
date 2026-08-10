@@ -157,6 +157,36 @@ export const DRIFT_GIT_TIMEOUT_MS = 250;
 export const MAX_WORK_CONTEXT_TITLE_CHARS = 120;
 export const CONTEXT_MAX_AGE_DAYS = 14;
 
+// ── Absence detection (roadmap item 3) ──────────────────────────────────────
+
+/** How far back the SessionStart commit-authorship scan looks. */
+export const COMMIT_EVIDENCE_WINDOW_DAYS = 14;
+/** Hard cap on commits one scan reads — the count bound on the git walk. */
+export const COMMIT_EVIDENCE_MAX_COMMITS = 400;
+/**
+ * Evidence is a nice-to-have like drift: a slow git loses it, never the
+ * briefing. Runs inside SessionStart's parallel hub-fetch block, and this
+ * bound keeps it below the per-request hub timeout that block already waits
+ * for, so collection adds no wall clock of its own:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-claude/src/constants.ts");console.log(c.COMMIT_EVIDENCE_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true
+ */
+export const COMMIT_EVIDENCE_GIT_TIMEOUT_MS = 250;
+/**
+ * Absence lines the briefing may spend, LAST in section order on purpose:
+ * absence is context, not a hint, and must never crowd out presence or
+ * related work (§4 briefing budget).
+ */
+export const MAX_ABSENCE_LINES = 3;
+/** Evidence older than this gets its age said in the absence header. */
+export const ABSENCE_EVIDENCE_NOTE_AGE_HOURS = 24;
+/**
+ * `crosscheck status` shows more than the briefing (a human asked), but still
+ * bounded: the row count is hub-controlled input.
+ */
+export const STATUS_MAX_ABSENCE_LINES = 20;
+
 export const PRESENCE_CACHE_TTL_MS = 10_000;
 export const STATUSLINE_MAX_CHARS = 90;
 export const STATUSLINE_MAX_NAMES = 3;
