@@ -1,6 +1,12 @@
 -- Idempotent bootstrap executed on every server start (kept in sync with schema.ts).
 -- drizzle-kit migrations are a follow-up once the schema changes between releases.
--- vector/embedding + tsv columns arrive with the search block.
+-- Search-block columns (tsv, embedding) are added via ALTER TABLE ... IF NOT
+-- EXISTS below the base tables, so one statement covers both a fresh database
+-- and one created before the search block existed.
+
+-- pgvector: bundled with PGlite (db/client.ts loads it); a real-Postgres
+-- deployment via DATABASE_URL needs the extension installed (DESIGN.md §2).
+CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS developers (
   id text PRIMARY KEY,
@@ -103,3 +109,53 @@ CREATE TABLE IF NOT EXISTS hint_deliveries (
   delivered_at timestamptz NOT NULL,
   pulled_at timestamptz
 );
+
+-- ── Search block (DESIGN.md §6) ─────────────────────────────────────────────
+
+-- FTS over the normalized doc (title + status + target values + claim-kind
+-- summaries, services/normalized-doc.ts) and over claim bodies. GENERATED
+-- columns so the tsv can never drift from the text it indexes.
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS tsv tsvector
+  GENERATED ALWAYS AS (to_tsvector('english', coalesce(normalized_doc, ''))) STORED;
+CREATE INDEX IF NOT EXISTS work_contexts_tsv_idx
+  ON work_contexts USING gin (tsv);
+
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS tsv tsvector
+  GENERATED ALWAYS AS (to_tsvector('english', body)) STORED;
+CREATE INDEX IF NOT EXISTS claims_tsv_idx
+  ON claims USING gin (tsv);
+
+-- Optional vector tier: null until an embedder is configured AND has embedded
+-- the row. embedding_model records WHICH embedder minted the vector, because
+-- vectors from different models are not comparable — a model change makes old
+-- rows invisible to the vector tier instead of silently mis-ranked (§6:
+-- "model change = re-embed migration").
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS embedding vector(768);
+ALTER TABLE work_contexts ADD COLUMN IF NOT EXISTS embedding_model text;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS embedding vector(768);
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS embedding_model text;
+
+-- Backfill for contexts created before the search block existed: title +
+-- status only. The full doc regenerates on the next ingest that touches the
+-- context (services/normalized-doc.ts is the single builder; this is the one
+-- place that cannot call it, so it stores the minimal honest subset).
+UPDATE work_contexts SET normalized_doc = title || ' ' || status
+  WHERE normalized_doc IS NULL;
+
+-- Similarity-detected contradiction candidates (DESIGN.md §3 ingest gate).
+-- A TABLE for these, and only these: they exist only while an embedder is
+-- configured, and recomputing pairwise cosine at read time would be O(n²) over
+-- the claim store. The DETERMINISTIC candidates (shared target + opposite
+-- status) are deliberately NOT stored — services/contradictions.ts derives
+-- them fresh per read, so a target that arrives after both claims still forms
+-- the pair, with no ingest-order dependence and nothing to go stale.
+CREATE TABLE IF NOT EXISTS contradiction_candidates (
+  id text PRIMARY KEY,
+  claim_a_id text NOT NULL REFERENCES claims(id),
+  claim_b_id text NOT NULL REFERENCES claims(id),
+  similarity double precision NOT NULL,
+  created_at timestamptz NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS contradiction_candidates_pair_idx
+  ON contradiction_candidates (claim_a_id, claim_b_id);

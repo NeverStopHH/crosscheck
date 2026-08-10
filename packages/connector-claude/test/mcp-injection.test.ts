@@ -103,7 +103,9 @@ const DIAGNOSIS_LINE_SHAPES = [
 
 const SEARCH_HEADER = /^crosscheck work contexts on this repo\. /;
 const SEARCH_QUERY_LINE = /^Query: «[^«»]*»$/;
-const SEARCH_METHOD_LINE = /^Lexical match on title and status only, /;
+/** Both method variants: keyless ("Hybrid lexical match — …") and semantic. */
+const SEARCH_METHOD_LINE =
+  /^Hybrid (lexical )?match — exact file\/symbol\/fingerprint targets ranked above full-text /;
 const SEARCH_COUNT_LINE = /^Work contexts \(\d+\):$/;
 const SEARCH_LINE = /^- [\w.:-]* · .+ · \d+[smhd] ago · status .*: «[^«»]*»$/;
 const SEARCH_EMPTY_LINE = /^No work context on this repo matched that query\.$/;

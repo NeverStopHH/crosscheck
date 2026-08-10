@@ -18,11 +18,14 @@ import {
 } from "./record-handlers.ts";
 import type { HandlerOutcome, RecordStatus } from "./record-handlers.ts";
 import type { Db } from "../db/client.ts";
+import type { Embedder } from "./embedder.ts";
 import type { Clock } from "../types.ts";
 
 interface Deps {
   readonly db: Db;
   readonly now: Clock;
+  /** Enables the ingest-side embedding work; absent = keyless install. */
+  readonly embedder?: Embedder | null;
 }
 
 export interface RecordResult {

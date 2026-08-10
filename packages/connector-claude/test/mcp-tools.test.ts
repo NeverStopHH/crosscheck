@@ -15,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
-import type { Db } from "@crosscheck/server";
+import type { Db, Embedder } from "@crosscheck/server";
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
 import { prepareMcp } from "../src/mcp/context.ts";
@@ -646,5 +646,159 @@ describe("a repo with no crosscheck session", () => {
     // Assert
     expect(result.isError).toBe(false);
     expect(result.text).toContain("«Login 500s on staging»");
+  });
+});
+
+describe("search_related_work runs on the hub's search block", () => {
+  test("reaches words that live only in claim bodies", async () => {
+    // Arrange: "keystore" appears in no title and no status — a client-side
+    // title match cannot find it; the hub's FTS over claim summaries can
+    await call(alice, "publish_claim", {
+      kind: "observation",
+      body: "The keystore rotation drops the active alias",
+    });
+
+    // Act
+    const result = await call(bob, "search_related_work", {
+      query: "keystore",
+    });
+
+    // Assert
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain(alice.workContextId);
+  });
+
+  test("announces the semantic tier only when the hub has an embedder", async () => {
+    // Arrange keyless half: the shared hub has no embedder, so the method
+    // line must keep saying so
+    const keyless = await call(bob, "search_related_work", { query: "login" });
+    expect(keyless.text.toLowerCase()).toContain("not a semantic search");
+
+    // Arrange semantic half: a second hub WITH an embedder. The fake maps
+    // login-flavored text onto one axis, everything else onto another, so
+    // "authentication timeouts" is a pure cross-vocabulary match — zero
+    // shared lexemes with "Login 500s on staging".
+    const embedder: Embedder = {
+      model: "fake:test-axes@768d",
+      embed: (texts) =>
+        Promise.resolve(
+          texts.map((text) => {
+            const vector = new Array<number>(768).fill(0);
+            vector[/login|authentication|signin/i.test(text) ? 0 : 1] = 1;
+            return vector;
+          }),
+        ),
+    };
+    const semanticDb = await createDb();
+    const semanticApp = createServer({
+      db: semanticDb,
+      adminToken: ADMIN_TOKEN,
+      embedder,
+    });
+    const semanticServer = Bun.serve({ port: 0, fetch: semanticApp.fetch });
+    const semanticHubUrl = `http://127.0.0.1:${String(semanticServer.port)}`;
+    try {
+      const response = await fetch(`${semanticHubUrl}/api/developers`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ADMIN_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: "Eve", email: "eve-mcp@example.com" }),
+      });
+      const created = (await response.json()) as {
+        data: { developer: { id: string }; apiKey: string };
+      };
+      const apiKey = created.data.apiKey;
+      const sessionId = "cc_eve-uuid";
+      const workContextId = `wc_${sessionId}`;
+      const startedAt = new Date().toISOString();
+      await fetch(`${semanticHubUrl}/api/sessions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: sessionId,
+          agentKind: "claude-code",
+          repo: REPO_ID,
+          branch: "main",
+          baseCommit: "a1b2c3d4",
+          status: "analyzing",
+        }),
+      });
+      await fetch(`${semanticHubUrl}/api/records`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          cx: "0.1",
+          id: `env_${crypto.randomUUID()}`,
+          ts: startedAt,
+          producer: {
+            developerId: created.data.developer.id,
+            agentKind: "claude-code",
+            sessionId,
+          },
+          kind: "work_context",
+          body: {
+            id: workContextId,
+            sessionId,
+            title: "Login 500s on staging",
+            status: "analyzing",
+            createdAt: startedAt,
+          },
+        }),
+      });
+      const home = await makeHome("mcp-semantic");
+      const repo = await makeRepo("mcp-semantic", {
+        remote: "git@github.com:acme/api.git",
+      });
+      cleanups.push(home, repo);
+      await writeSessionState(home, {
+        claudeSessionId: "eve-uuid",
+        crosscheckSessionId: sessionId,
+        workContextId,
+        repoId: REPO_ID,
+        repoRoot: repo,
+        hubUrl: semanticHubUrl,
+        developerId: created.data.developer.id,
+        startedAt,
+        lastHeartbeatAt: startedAt,
+        seenTargets: [],
+      });
+      const eve: Developer = {
+        developerId: created.data.developer.id,
+        apiKey,
+        home,
+        repo,
+        env: {
+          CROSSCHECK_HOME: home,
+          CROSSCHECK_HUB_URL: semanticHubUrl,
+          CROSSCHECK_API_KEY: apiKey,
+        },
+        sessionId,
+        workContextId,
+      };
+
+      // Act: zero lexical overlap — only the vector tier can find this
+      const semantic = await call(eve, "search_related_work", {
+        query: "authentication timeouts",
+      });
+
+      // Assert: found across vocabulary, and the method line stops denying
+      // semantic search
+      expect(semantic.isError).toBe(false);
+      expect(semantic.text).toContain(workContextId);
+      expect(semantic.text.toLowerCase()).not.toContain(
+        "not a semantic search",
+      );
+      expect(semantic.text.toLowerCase()).toContain("semantic");
+    } finally {
+      semanticServer.stop(true);
+    }
   });
 });

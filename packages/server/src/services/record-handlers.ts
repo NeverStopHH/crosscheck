@@ -10,12 +10,21 @@ import {
   workContextTargets,
 } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
+import { embedContextDoc, refreshNormalizedDoc } from "./normalized-doc.ts";
+import {
+  applyCrossSimilarity,
+  embedClaimBody,
+  findSimilarOwnClaim,
+} from "./similarity-gate.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
+import type { Embedder } from "./embedder.ts";
 import type { Clock } from "../types.ts";
 
 interface Deps {
   readonly db: Db;
   readonly now: Clock;
+  /** Optional so handler unit tests without a vector tier stay minimal. */
+  readonly embedder?: Embedder | null;
 }
 
 /** Handler dependencies bound to an open transaction (or the root db). */
@@ -141,6 +150,7 @@ const updateExistingWorkContext = async (
     .update(workContexts)
     .set({ ...changes, updatedAt: deps.now() })
     .where(eq(workContexts.id, body.id));
+  await refreshNormalizedDoc(deps.db, body.id);
   await appendEvent(deps, EVENT_KINDS.WORK_CONTEXT_UPDATED, {
     workContextId: body.id,
     developerId,
@@ -148,14 +158,26 @@ const updateExistingWorkContext = async (
   return accepted(body.id);
 };
 
+/** After an accepted write, embed the context doc — outside the transaction. */
+const embedAfterAccept = async (
+  deps: Deps,
+  outcome: HandlerOutcome,
+  workContextId: string,
+): Promise<HandlerOutcome> => {
+  if (outcome.status === "accepted" && deps.embedder != null) {
+    await embedContextDoc(deps.db, deps.embedder, workContextId);
+  }
+  return outcome;
+};
+
 export const ingestWorkContext = async (
   deps: Deps,
   developerId: string,
   body: WorkContext,
-): Promise<HandlerOutcome> =>
+): Promise<HandlerOutcome> => {
   // One transaction so the conflict probe, the ownership check, and the
   // update all act on the same snapshot — no TOCTOU between them.
-  deps.db.transaction(async (tx) => {
+  const outcome = await deps.db.transaction(async (tx) => {
     const txDeps: ExecutorDeps = { db: tx, now: deps.now };
     const sessionIssue = await checkOwnedSession(
       tx,
@@ -184,6 +206,7 @@ export const ingestWorkContext = async (
     if (inserted[0] === undefined) {
       return updateExistingWorkContext(txDeps, developerId, body);
     }
+    await refreshNormalizedDoc(tx, body.id);
     await appendEvent(txDeps, EVENT_KINDS.WORK_CONTEXT_CREATED, {
       workContextId: body.id,
       sessionId: body.sessionId,
@@ -191,6 +214,8 @@ export const ingestWorkContext = async (
     });
     return accepted(body.id);
   });
+  return embedAfterAccept(deps, outcome, body.id);
+};
 
 export const ingestTarget = async (
   deps: Deps,
@@ -217,9 +242,17 @@ export const ingestTarget = async (
     })
     .onConflictDoNothing()
     .returning({ workContextId: workContextTargets.workContextId });
+  if (inserted[0] === undefined) {
+    return duplicate();
+  }
+  // The doc regenerates so the new target value is searchable. Not wrapped in
+  // a transaction with the insert: a crash between the two leaves a doc one
+  // target short until the next ingest touches the context — self-healing,
+  // and the record itself is already durable.
+  await refreshNormalizedDoc(deps.db, body.workContextId);
   // No per-target event: a busy session emits dozens of targets and would
   // flood the outbox, drowning the signals SSE consumers care about.
-  return inserted[0] === undefined ? duplicate() : accepted();
+  return accepted();
 };
 
 // Accepted v0 limitation: homoglyph lookalikes (e.g. Cyrillic "а" for "a")
@@ -285,10 +318,17 @@ export const ingestClaim = async (
   deps: Deps,
   developerId: string,
   body: Claim,
-): Promise<HandlerOutcome> =>
+): Promise<HandlerOutcome> => {
+  // Embedded BEFORE the transaction: an external HTTP call must never hold a
+  // transaction open on single-connection PGlite. Null = keyless install or a
+  // failed embed — either way the similarity gate silently stands down and
+  // the deterministic gate below still runs (DESIGN.md §6 degradation).
+  const embedder = deps.embedder ?? null;
+  const claimVector =
+    embedder === null ? null : await embedClaimBody(embedder, body.body);
   // One transaction so dedup match, INSERT, and dedup_count bump are atomic —
   // two concurrent flushes cannot both miss the match and double-insert.
-  deps.db.transaction(async (tx) => {
+  const outcome = await deps.db.transaction(async (tx) => {
     const txDeps: ExecutorDeps = { db: tx, now: deps.now };
     const authorIssue = await checkOwnedSession(
       tx,
@@ -329,6 +369,30 @@ export const ingestClaim = async (
       return duplicate(dedupMatch.id);
     }
 
+    // Similarity dedup (DESIGN.md §3): same scope as the deterministic gate —
+    // same developer, same context, same kind — with cosine > 0.93 standing in
+    // for body equality. 15 rewordings of one re-observed error become one
+    // weighted claim, not 15 rows.
+    if (claimVector !== null && embedder !== null) {
+      const similar = await findSimilarOwnClaim(
+        tx,
+        developerId,
+        body,
+        claimVector,
+        embedder.model,
+      );
+      if (similar !== undefined) {
+        await tx
+          .update(claims)
+          .set({
+            dedupCount: sql`${claims.dedupCount} + 1`,
+            lastSeenAt: deps.now(),
+          })
+          .where(eq(claims.id, similar.id));
+        return duplicate(similar.id);
+      }
+    }
+
     const createdAt = new Date(body.createdAt);
     // evidenceRefs are persisted as-is; materializing supports-edges from them
     // is a follow-up — referenced claims may arrive later in the same flush.
@@ -345,6 +409,9 @@ export const ingestClaim = async (
         captureMode: body.captureMode,
         provenance: body.provenance,
         evidenceRefs: body.evidenceRefs,
+        embedding: claimVector === null ? null : [...claimVector],
+        embeddingModel:
+          claimVector === null || embedder === null ? null : embedder.model,
         lastSeenAt: createdAt,
         createdAt,
       })
@@ -353,6 +420,19 @@ export const ingestClaim = async (
     if (inserted[0] === undefined) {
       return classifyClaimIdConflict(tx, developerId, body.id);
     }
+    // Cross-session similarity: relates_to edge or contradiction candidate
+    // (similarity-gate.ts). After the insert so both edge endpoints exist.
+    if (claimVector !== null && embedder !== null) {
+      await applyCrossSimilarity(
+        tx,
+        deps.now,
+        developerId,
+        body,
+        claimVector,
+        embedder.model,
+      );
+    }
+    await refreshNormalizedDoc(tx, body.workContextId);
     // Outbox discipline: ids and metadata only — never the claim body text.
     await appendEvent(txDeps, EVENT_KINDS.CLAIM_ADDED, {
       claimId: body.id,
@@ -364,6 +444,8 @@ export const ingestClaim = async (
     });
     return accepted(body.id);
   });
+  return embedAfterAccept(deps, outcome, body.workContextId);
+};
 
 const findEdgeIdByTriple = async (
   db: DbExecutor,

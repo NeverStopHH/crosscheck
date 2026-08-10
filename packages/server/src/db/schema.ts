@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigserial,
   check,
+  customType,
   doublePrecision,
   index,
   integer,
@@ -11,6 +12,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  vector,
 } from "drizzle-orm/pg-core";
 import {
   ARTIFACT_SENSITIVITIES,
@@ -26,6 +28,17 @@ import {
 
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
+
+/**
+ * Vectors from different models are not comparable, so every embedding carries
+ * one dimensionality: OpenAI text-embedding-3-small truncated to 768 and
+ * Ollama nomic-embed-text's native 768 (DESIGN.md §6). Kept in sync with the
+ * vector(768) columns in bootstrap.sql.
+ */
+export const EMBEDDING_DIMENSIONS = 768;
+
+/** drizzle has no first-class tsvector; the column is GENERATED, never written. */
+const tsvector = customType<{ data: string }>({ dataType: () => "tsvector" });
 
 export const developers = pgTable("developers", {
   id: text("id").primaryKey(),
@@ -66,8 +79,13 @@ export const workContexts = pgTable("work_contexts", {
   description: text("description"),
   intent: jsonb("intent").$type<Record<string, unknown>>(),
   status: text("status", { enum: SESSION_STATUSES }).notNull(),
-  // tsv + embedding vector columns are added with the search block
   normalizedDoc: text("normalized_doc"),
+  tsv: tsvector("tsv").generatedAlwaysAs(
+    sql`to_tsvector('english', coalesce(normalized_doc, ''))`,
+  ),
+  /** Null until an embedder is configured and has embedded the current doc. */
+  embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+  embeddingModel: text("embedding_model"),
   createdAt: timestamptz("created_at").notNull(),
   updatedAt: timestamptz("updated_at"),
 });
@@ -111,7 +129,10 @@ export const claims = pgTable(
       .$type<readonly string[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
-    // tsv + embedding vector columns are added with the search block
+    tsv: tsvector("tsv").generatedAlwaysAs(sql`to_tsvector('english', body)`),
+    /** Null until an embedder is configured; written once at ingest (append-only). */
+    embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+    embeddingModel: text("embedding_model"),
     createdAt: timestamptz("created_at").notNull(),
   },
   (table) => [
@@ -167,6 +188,33 @@ export const events = pgTable("events", {
   payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
   createdAt: timestamptz("created_at").notNull().defaultNow(),
 });
+
+/**
+ * Similarity-detected contradiction candidates only (ingest gate, DESIGN.md
+ * §3). Deterministic candidates — shared target + opposite status — are NOT
+ * rows here: services/contradictions.ts derives them fresh per read, so they
+ * have no ingest-order dependence and nothing to go stale.
+ */
+export const contradictionCandidates = pgTable(
+  "contradiction_candidates",
+  {
+    id: text("id").primaryKey(),
+    claimAId: text("claim_a_id")
+      .notNull()
+      .references(() => claims.id),
+    claimBId: text("claim_b_id")
+      .notNull()
+      .references(() => claims.id),
+    similarity: doublePrecision("similarity").notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("contradiction_candidates_pair_idx").on(
+      table.claimAId,
+      table.claimBId,
+    ),
+  ],
+);
 
 export const hintDeliveries = pgTable("hint_deliveries", {
   id: text("id").primaryKey(),

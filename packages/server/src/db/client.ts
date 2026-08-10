@@ -1,4 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite/vector";
 import { drizzle } from "drizzle-orm/pglite";
 import type { PgliteDatabase } from "drizzle-orm/pglite";
 
@@ -25,7 +26,12 @@ const runBootstrap = async (client: PGlite): Promise<void> => {
 };
 
 export const createDb = async (options: CreateDbOptions = {}): Promise<Db> => {
-  const client = options.dataDir ? new PGlite(options.dataDir) : new PGlite();
+  // The vector extension is bundled with the pinned PGlite 0.3.x — loading it
+  // here is what lets bootstrap.sql's CREATE EXTENSION succeed. A real-Postgres
+  // deployment needs pgvector installed instead (DESIGN.md §2).
+  const client = options.dataDir
+    ? new PGlite(options.dataDir, { extensions: { vector } })
+    : new PGlite({ extensions: { vector } });
   await client.waitReady;
   await runBootstrap(client);
   return drizzle(client, { schema });

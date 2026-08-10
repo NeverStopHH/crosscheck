@@ -1,5 +1,5 @@
 import { createDb, createServer } from "../src/index.ts";
-import type { Db } from "../src/index.ts";
+import type { Db, Embedder } from "../src/index.ts";
 
 export const TEST_ADMIN_TOKEN = "test-admin-token";
 export const TEST_START_ISO = "2026-07-24T09:00:00.000Z";
@@ -29,6 +29,8 @@ export interface TestHarness {
 
 export interface TestHarnessOptions {
   readonly adminToken?: string | null;
+  /** Omitted = keyless harness, the default install (DESIGN.md §6). */
+  readonly embedder?: Embedder | null;
 }
 
 export const createTestHarness = async (
@@ -38,7 +40,12 @@ export const createTestHarness = async (
   const clock = createFakeClock();
   const adminToken =
     options.adminToken === undefined ? TEST_ADMIN_TOKEN : options.adminToken;
-  const app = createServer({ db, now: clock.now, adminToken });
+  const app = createServer({
+    db,
+    now: clock.now,
+    adminToken,
+    embedder: options.embedder ?? null,
+  });
   return { app, clock, db };
 };
 

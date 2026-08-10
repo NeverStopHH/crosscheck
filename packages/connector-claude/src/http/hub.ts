@@ -309,3 +309,66 @@ export const getDiagnosis = (
     path: `/api/work-contexts/${encodeURIComponent(workContextId)}/diagnosis`,
     schema: DiagnosisEnvelopeSchema,
   });
+
+/**
+ * One hub search result. A superset of WorkContextEntry: the hub adds the
+ * match tier and fused score. Both optional on the wire so an older hub's
+ * plain rows still parse — the renderer never prints them anyway.
+ */
+export const SearchResultEntrySchema = z.looseObject({
+  id: z.string().min(1),
+  developerId: z.string().min(1),
+  developerName: z.string().min(1).optional(),
+  title: z.string().min(1),
+  status: z.string().min(1),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().nullable().optional(),
+  tier: z.string().min(1).optional(),
+  score: z.number().optional(),
+});
+
+export type SearchResultEntry = z.infer<typeof SearchResultEntrySchema>;
+
+export interface SearchOutcome {
+  readonly results: readonly SearchResultEntry[];
+  /** True only when the hub's vector tier ran for this search (DESIGN.md §6). */
+  readonly vectorTierActive: boolean;
+}
+
+const SearchResponseSchema = z
+  .looseObject({
+    results: z.array(z.unknown()).default([]),
+    vectorTierActive: z.boolean().default(false),
+  })
+  .transform(
+    (value): SearchOutcome => ({
+      // Tolerant rows, silent drop — a listing, like tolerantList above; the
+      // diagnosis path counts its drops because a TREE must not silently
+      // shrink, a search result list is advisory by nature.
+      results: parseRows(value.results, SearchResultEntrySchema).rows,
+      vectorTierActive: value.vectorTierActive,
+    }),
+  );
+
+export interface SearchRequest {
+  readonly query: string;
+  /** Relevance filter, never a boundary (DESIGN.md §2.1). */
+  readonly repo: string;
+  readonly limit: number;
+}
+
+export const searchWorkContexts = (
+  ctx: HubContext,
+  request: SearchRequest,
+): Promise<HubResult<SearchOutcome>> => {
+  const params = new URLSearchParams({
+    query: request.query,
+    repo: request.repo,
+    limit: String(request.limit),
+  });
+  return hubRequest(ctx, {
+    method: "GET",
+    path: `/api/search?${params.toString()}`,
+    schema: SearchResponseSchema,
+  });
+};

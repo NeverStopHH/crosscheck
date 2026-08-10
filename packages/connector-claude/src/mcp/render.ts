@@ -414,8 +414,33 @@ const searchHeader = (): string =>
 
 const queryLine = (framedQuery: string): string => `Query: ${framedQuery}`;
 
-const SEARCH_METHOD =
-  "Lexical match on title and status only, this repo only, newest first — not a semantic search.";
+/**
+ * What the hub search IS, in one line — because a model that believes it ran
+ * something else will draw conclusions an empty result does not support.
+ *
+ * Two variants, chosen by what the hub REPORTED it did for this search
+ * (`vectorTierActive`), never by what this client hopes is configured: the
+ * keyless install has no semantic tier and must say so, and a hub with an
+ * embedder must stop denying it.
+ */
+const SEARCH_METHOD_LEXICAL =
+  "Hybrid lexical match — exact file/symbol/fingerprint targets ranked above full-text " +
+  "over titles, statuses and claim summaries, this repo only, recent work ranked higher — " +
+  "not a semantic search.";
+const SEARCH_METHOD_SEMANTIC =
+  "Hybrid match — exact file/symbol/fingerprint targets ranked above full-text over " +
+  "titles, statuses and claim summaries, plus a semantic similarity tier, this repo only, " +
+  "recent work ranked higher.";
+
+export interface SearchRenderOptions {
+  /** The hub reported its vector tier ran for this search. */
+  readonly semanticTier?: boolean;
+}
+
+const searchMethodLine = (options: SearchRenderOptions): string =>
+  options.semanticTier === true
+    ? SEARCH_METHOD_SEMANTIC
+    : SEARCH_METHOD_LEXICAL;
 
 /**
  * A query that could not be searched for at all, as distinct from one that was
@@ -425,6 +450,10 @@ const SEARCH_METHOD =
  * that costs most: "nothing matched" tells a model its question was ASKED, so it
  * concludes nobody has worked on the problem and goes off to redo the work. This
  * says the question was never asked, and why.
+ *
+ * NO METHOD LINE HERE, deliberately: nothing was searched, so there is no
+ * method to describe — and this client never called the hub, so it cannot know
+ * which method sentence would even be true.
  */
 export const renderUnusableQuery = (
   query: string,
@@ -434,27 +463,26 @@ export const renderUnusableQuery = (
   return [
     searchHeader(),
     queryLine(framedQuery),
-    SEARCH_METHOD,
     `Nothing was searched for: no word in the query is at least ${String(minChars)} ` +
-      "characters long, and shorter words are dropped because a substring match on them hits " +
-      "almost every title. Ask again with the distinctive words of the problem.",
+      "characters long, and shorter words are dropped because they carry grammar rather " +
+      "than meaning. Ask again with the distinctive words of the problem.",
   ].join("\n");
 };
 
 /**
- * Lexical search results.
- *
- * The header states what this search IS — title and status, this repo, newest
- * first — because a model that believes it ran a semantic search over the whole
- * team's history will draw conclusions from an empty result that the empty
- * result does not support.
+ * Hub search results, in the hub's fused ranking order.
  */
 export const renderSearchResults = (
   hits: readonly SearchHit[],
   query: string,
+  options: SearchRenderOptions = {},
 ): string => {
   const framedQuery = quoted(query);
-  const opening = [searchHeader(), queryLine(framedQuery), SEARCH_METHOD];
+  const opening = [
+    searchHeader(),
+    queryLine(framedQuery),
+    searchMethodLine(options),
+  ];
   if (hits.length === 0) {
     return [...opening, "No work context on this repo matched that query."].join(
       "\n",
