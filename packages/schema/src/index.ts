@@ -48,6 +48,7 @@ export type { Hint, HintTrust } from "./hint.ts";
 export {
   CommitAuthorEvidenceSchema,
   CommitEvidenceSchema,
+  MAX_COMMIT_CLOCK_SKEW_MS,
   MAX_COMMIT_EVIDENCE_AUTHORS,
 } from "./commit-evidence.ts";
 export type {

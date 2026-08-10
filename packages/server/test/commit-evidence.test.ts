@@ -99,8 +99,12 @@ describe("commit_evidence ingest", () => {
   test("a fresher collection updates the row but keeps the newest commit timestamp", async () => {
     // Arrange: the older collection saw a commit the fresher one no longer
     // covers (its window slid); the newest commit timestamp must survive.
+    // The hub clock advances with the fresher collection — a collectedAt
+    // ahead of the hub's own clock would be clamped as skew, deliberately
+    // (commit-evidence-clock.test.ts).
     const setup = await createHarnessWithSession();
     await postEvidence(setup, evidenceBody());
+    setup.harness.clock.advanceSeconds(3600);
 
     // Act
     const status = await postEvidence(

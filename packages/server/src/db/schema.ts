@@ -228,10 +228,14 @@ export const contradictionCandidates = pgTable(
 
 /**
  * Latest commit-authorship evidence per (repo, commit author) — the absence
- * check's ground truth (roadmap item 3). UPSERT-only, never append: one row per
- * author per repo, so the table is bounded by how many people commit, not by
- * how often connectors report. Ingest prunes rows whose newest commit fell out
- * of COMMIT_EVIDENCE_RETENTION_DAYS, which is the rest of the retention story.
+ * check's ground truth (absence detection). UPSERT-only, never append: one row
+ * per author per repo, so the table is bounded by how many people commit, not
+ * by how often connectors report. Ingest prunes rows whose newest commit fell
+ * out of COMMIT_EVIDENCE_RETENTION_DAYS — and rows claiming a timestamp past
+ * the hub's own clock plus skew, which the age test alone could never retire
+ * and which ingest also clamps on write (services/commit-evidence.ts), so
+ * retention cannot be outrun by a forged date. Together that is the whole
+ * retention story.
  *
  * `author_email` is stored lowercased and is the matching key against
  * `developers.email`. It never leaves the hub: absence responses carry names

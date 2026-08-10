@@ -181,7 +181,7 @@ export const getWorkContexts = (
   });
 
 /**
- * One absence finding (roadmap item 3). Names only — the hub keeps commit
+ * One absence finding. Names only — the hub keeps commit
  * author emails to itself as its matching key. `kind` is an open string on
  * the wire: a kind this client does not know renders nothing rather than
  * failing the row (briefing/render.ts skips it).

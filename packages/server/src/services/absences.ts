@@ -15,7 +15,7 @@ const MS_PER_HOUR = 3_600_000;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
 
 /**
- * The two findings the design insists stay distinct (roadmap item 3):
+ * The two findings the design insists stay distinct (absence detection):
  * `inactive` — a hub member whose commits postdate their last reported agent
  * session on this repo; `unconnected` — a commit author no hub member's email
  * matches at all. Conflating them would send half the readers to the wrong

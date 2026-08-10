@@ -15,7 +15,7 @@ export const MAX_INGEST_BATCH = 100;
 
 export const DEFAULT_PORT = 7100;
 
-// ── Absence detection (roadmap item 3) ──────────────────────────────────────
+// ── Absence detection ───────────────────────────────────────────────────────
 
 /**
  * Commit-evidence rows whose newest commit is older than this are pruned on

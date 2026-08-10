@@ -101,4 +101,33 @@ describe("commit_evidence record kind", () => {
     // Assert
     expect(parsed.ok).toBe(false);
   });
+
+  test("rejects an author whose latestCommitAt outruns collectedAt beyond clock skew", () => {
+    // Arrange: collected at TS, but the author's newest commit claims a full
+    // day later — an author-controlled forgery or a badly wrong clock, and the
+    // hub keeps the newest commit timestamp per author, so an unbounded future
+    // date would be stored forever.
+    const future = new Date(Date.parse(TS) + 25 * 3_600_000).toISOString();
+
+    // Act
+    const parsed = parseRecord(
+      envelope(body({ authors: [author({ latestCommitAt: future })] })),
+    );
+
+    // Assert
+    expect(parsed.ok).toBe(false);
+  });
+
+  test("accepts an author whose latestCommitAt sits within clock skew of collectedAt", () => {
+    // Arrange: one second ahead of collection — ordinary cross-machine drift.
+    const nearFuture = new Date(Date.parse(TS) + 1000).toISOString();
+
+    // Act
+    const parsed = parseRecord(
+      envelope(body({ authors: [author({ latestCommitAt: nearFuture })] })),
+    );
+
+    // Assert
+    expect(parsed.ok).toBe(true);
+  });
 });

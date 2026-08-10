@@ -157,7 +157,7 @@ export const DRIFT_GIT_TIMEOUT_MS = 250;
 export const MAX_WORK_CONTEXT_TITLE_CHARS = 120;
 export const CONTEXT_MAX_AGE_DAYS = 14;
 
-// ── Absence detection (roadmap item 3) ──────────────────────────────────────
+// ── Absence detection ───────────────────────────────────────────────────────
 
 /** How far back the SessionStart commit-authorship scan looks. */
 export const COMMIT_EVIDENCE_WINDOW_DAYS = 14;
@@ -167,7 +167,11 @@ export const COMMIT_EVIDENCE_MAX_COMMITS = 400;
  * Evidence is a nice-to-have like drift: a slow git loses it, never the
  * briefing. Runs inside SessionStart's parallel hub-fetch block, and this
  * bound keeps it below the per-request hub timeout that block already waits
- * for, so collection adds no wall clock of its own:
+ * for, so collection adds no wall clock of its own — at the DEFAULT timeouts:
+ * the directive below compares constants, and a CROSSCHECK_TIMEOUT_MS override
+ * that pushes the per-request hub timeout under this git bound inverts the
+ * relation, leaving git the longest leg of the parallel block (still bounded,
+ * no longer free):
  *
  * VERIFY: bun -e 'const c=await import("./packages/connector-claude/src/constants.ts");console.log(c.COMMIT_EVIDENCE_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
  * PRINTS: true

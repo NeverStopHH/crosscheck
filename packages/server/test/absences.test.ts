@@ -197,6 +197,45 @@ describe("GET /api/absences", () => {
     expect(absences).toEqual([]);
   });
 
+  test("a forged future commit date cannot pin a member absent once honest evidence returns", async () => {
+    // Arrange: Nick has a live session at T0. A forged record — internally
+    // consistent, so the wire schema passes — claims his newest commit is a
+    // year ahead. Then an honest re-scan reports the real newest commit.
+    const setup = await createHarnessWithSession();
+    await ingestEvidence(
+      setup,
+      [
+        {
+          name: "Nick",
+          email: "nick@example.com",
+          latestCommitAt: isoAt(365 * MS_PER_DAY),
+          commitCount: 1,
+        },
+      ],
+      isoAt(365 * MS_PER_DAY),
+    );
+    setup.harness.clock.advanceSeconds(3600);
+    await ingestEvidence(
+      setup,
+      [
+        {
+          name: "Nick",
+          email: "nick@example.com",
+          latestCommitAt: TEST_START_ISO,
+          commitCount: 1,
+        },
+      ],
+      isoAt(1 * MS_PER_HOUR),
+    );
+
+    // Act
+    const { absences } = await fetchAbsences(setup);
+
+    // Assert: the forged timestamp must not outlive the honest report — a
+    // commit inside the grace window of his session stays silent.
+    expect(absences).toEqual([]);
+  });
+
   test("the response never carries an email address", async () => {
     // Arrange: both finding kinds present
     const setup = await createHarnessWithSession();

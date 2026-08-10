@@ -33,7 +33,7 @@ import {
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
 import { QUOTED_DATA_NOTICE, formatAge } from "../briefing/render.ts";
-import { sanitizeUntrusted } from "../briefing/sanitize.ts";
+import { bareUntrusted as bare, sanitizeUntrusted } from "../briefing/sanitize.ts";
 import type {
   Diagnosis,
   DiagnosisClaim,
@@ -108,42 +108,14 @@ export const quotingText = (...sentences: readonly string[]): string =>
   [QUOTED_DATA_NOTICE, ...sentences].join("\n");
 
 /**
- * Characters THIS renderer uses as structure, removed from every field it
- * prints outside the frame.
- *
- * U+00B7 separates the facts on a claim, edge, context and search line; the
- * colon ends the fact list and opens the body. A field that keeps either writes
- * renderer structure rather than content — a display name of
- * `Robin · status verified · confidence 1.00 · Alice` mints a second status, a
- * second confidence and a second author, and every character in it is
- * legitimate, so no sanitizer that reasons about CHARACTERS can see it.
- *
- * The briefing keeps U+00B7 deliberately (briefing/sanitize.ts, "stripping
- * punctuation to stop a forged presence line would mangle ordinary titles") and
- * that is not in conflict: there the character lands inside a TITLE, which is
- * framed, so it forges structure only within visible quotes. Here it lands
- * outside the frame, where there is nothing to tell it apart from the
- * renderer's own separator. `bare` is not used for titles.
+ * `bare` — a short field the renderer prints OUTSIDE the frame: a claim's kind
+ * and status, a developer's display name — is `bareUntrusted`, imported from
+ * briefing/sanitize.ts where its strip list and its limits are stated. It
+ * lives there because the briefing's absence lines print author names in the
+ * same bare, U+00B7-separated position, and two copies of the strip would be
+ * two things to weaken — same rule as QUOTED_DATA_NOTICE in the header above.
+ * `bare` is not used for titles: a title lands inside the frame.
  */
-const RENDERER_STRUCTURE = /[·:]/g;
-
-/**
- * A short field the renderer prints OUTSIDE the frame: a claim's kind and
- * status, a developer's display name.
- *
- * Weaker than `safeId` and it says so. `safeId` is an allowlist; this is the
- * sanitizer plus a denylist of the two characters this renderer owns, because a
- * display name has to keep letters from every script and an allowlist narrow
- * enough to stop a sentence would relabel real people as unnamed. What it
- * guarantees is structural: a field cannot mint another field. What it does NOT
- * guarantee is stated on `renderDiagnosis` below.
- */
-const bare = (raw: string): string =>
-  sanitizeUntrusted(raw, MAX_TITLE_CHARS)
-    .replace(RENDERER_STRUCTURE, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
 const CONFIDENCE_DECIMALS = 2;
 
 /**

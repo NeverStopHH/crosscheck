@@ -14,6 +14,22 @@ import { z } from "zod";
  */
 export const MAX_COMMIT_EVIDENCE_AUTHORS = 50;
 
+/**
+ * How far a commit timestamp may sit AHEAD of its own collection time before
+ * the record is rejected — ordinary cross-machine clock drift, nothing more.
+ *
+ * The bound exists because a git author date is author-controlled free text:
+ * the hub keeps the newest commit timestamp per author (greatest() on upsert)
+ * and prunes rows by age, so an unbounded future date could neither be
+ * overtaken by honest evidence nor fall out of retention — one forged
+ * `--date` would pin its victim absent for good. The hub additionally clamps
+ * both timestamps against its own clock at ingest (the sender controls both
+ * sides of this relative bound), and the connector drops future-dated commits
+ * at collection; this schema bound is the wire contract's share of that
+ * defence.
+ */
+export const MAX_COMMIT_CLOCK_SKEW_MS = 120_000;
+
 /** Longest git window a connector may claim to have scanned. */
 const MAX_WINDOW_DAYS = 90;
 
@@ -28,17 +44,31 @@ export const CommitAuthorEvidenceSchema = z.looseObject({
   commitCount: z.number().int().min(1),
 });
 
-export const CommitEvidenceSchema = z.looseObject({
-  repo: z.string().min(1),
-  collectedAt: z.iso.datetime(),
-  windowDays: z.number().int().min(1).max(MAX_WINDOW_DAYS),
-  // min(1): a repo with no recent commits produces no record at all — an empty
-  // author list carries no evidence and would only cost an ingest round trip.
-  authors: z
-    .array(CommitAuthorEvidenceSchema)
-    .min(1)
-    .max(MAX_COMMIT_EVIDENCE_AUTHORS),
-});
+export const CommitEvidenceSchema = z
+  .looseObject({
+    repo: z.string().min(1),
+    collectedAt: z.iso.datetime(),
+    windowDays: z.number().int().min(1).max(MAX_WINDOW_DAYS),
+    // min(1): a repo with no recent commits produces no record at all — an empty
+    // author list carries no evidence and would only cost an ingest round trip.
+    authors: z
+      .array(CommitAuthorEvidenceSchema)
+      .min(1)
+      .max(MAX_COMMIT_EVIDENCE_AUTHORS),
+  })
+  .refine(
+    (body) =>
+      body.authors.every(
+        (author) =>
+          Date.parse(author.latestCommitAt) <=
+          Date.parse(body.collectedAt) + MAX_COMMIT_CLOCK_SKEW_MS,
+      ),
+    {
+      message:
+        "latestCommitAt outruns collectedAt beyond tolerated clock skew",
+      path: ["authors"],
+    },
+  );
 
 export type CommitAuthorEvidence = z.infer<typeof CommitAuthorEvidenceSchema>;
 export type CommitEvidence = z.infer<typeof CommitEvidenceSchema>;

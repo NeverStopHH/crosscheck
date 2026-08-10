@@ -112,6 +112,70 @@ describe("collectCommitEvidence", () => {
     );
   });
 
+  test("drops a commit authored in the future — a forged date is not evidence", async () => {
+    // Arrange: author dates are author-controlled free text to git; a date far
+    // enough ahead would be stored by the hub as the newest commit forever.
+    const root = await repo("future");
+    await commitAs(root, "Robin", "robin@example.com", isoAt(1));
+    await commitAs(
+      root,
+      "Forger",
+      "victim@example.com",
+      new Date(NOW.getTime() + 300 * MS_PER_DAY).toISOString(),
+    );
+
+    // Act
+    const authors = await collectCommitEvidence(root, NOW);
+
+    // Assert
+    expect(authors?.some((author) => author.email === "victim@example.com")).toBe(
+      false,
+    );
+    expect(authors?.some((author) => author.email === "robin@example.com")).toBe(
+      true,
+    );
+  });
+
+  test("keeps a commit within ordinary clock skew ahead of now", async () => {
+    // Arrange: thirty seconds ahead — a fast local clock, not a forgery.
+    const root = await repo("skew");
+    await commitAs(
+      root,
+      "Robin",
+      "robin@example.com",
+      new Date(NOW.getTime() + 30_000).toISOString(),
+    );
+
+    // Act
+    const authors = await collectCommitEvidence(root, NOW);
+
+    // Assert
+    expect(authors?.some((author) => author.email === "robin@example.com")).toBe(
+      true,
+    );
+  });
+
+  test("skips bot authors and GitHub noreply emails — automation is not a teammate", async () => {
+    // Arrange: a bot commits continuously and can never have an agent session,
+    // and the noreply alias surfaces real members as unconnected strangers.
+    const root = await repo("bots");
+    await commitAs(
+      root,
+      "renovate[bot]",
+      "29139614+renovate[bot]@users.noreply.github.com",
+      isoAt(1),
+    );
+    await commitAs(root, "Nick", "12345+nick@users.noreply.github.com", isoAt(2));
+    await commitAs(root, "Robin", "robin@example.com", isoAt(3));
+
+    // Act
+    const authors = await collectCommitEvidence(root, NOW);
+
+    // Assert: only the plainly-addressed human remains
+    expect(authors?.length).toBe(1);
+    expect(authors?.[0]?.email).toBe("robin@example.com");
+  });
+
   test("returns null outside a git repository — fail open, never throw", async () => {
     // Arrange
     const plainDir = await mkdtemp(join(tmpdir(), "cx-no-repo-"));

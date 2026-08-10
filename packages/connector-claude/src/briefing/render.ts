@@ -13,7 +13,7 @@ import {
 } from "../constants.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import type { PresenceEntry, WorkContextEntry } from "../http/hub.ts";
-import { sanitizeUntrusted } from "./sanitize.ts";
+import { bareUntrusted, sanitizeUntrusted } from "./sanitize.ts";
 
 /**
  * Exported because the MCP tools put the SAME untrusted text into the same
@@ -263,9 +263,12 @@ const absenceTail = (entry: AbsenceEntry, now: Date): string | null => {
 };
 
 /**
- * One absence finding as a line: name BARE but sanitized, every date a
- * renderer-built literal. Exported because `crosscheck status` prints the
- * same fact to a human — two spellings of one observation would drift.
+ * One absence finding as a line: name BARE through `bareUntrusted` — it sits
+ * outside any « » frame in the same ·-separated position as the MCP claim
+ * lines, and an unconnected author's name is writable by ANY commit author on
+ * any fetched ref, so it must not be able to mint the line's own fields; every
+ * date a renderer-built literal. Exported because `crosscheck status` prints
+ * the same fact to a human — two spellings of one observation would drift.
  * Null = a row this renderer will not vouch for (empty-after-sanitize name,
  * unparseable timestamp, unknown kind).
  */
@@ -273,7 +276,7 @@ export const formatAbsenceLine = (
   entry: AbsenceEntry,
   now: Date,
 ): string | null => {
-  const name = sanitizeUntrusted(entry.name);
+  const name = bareUntrusted(entry.name);
   const commitAgeMs = ageMsFrom(entry.latestCommitAt, now);
   const tail = absenceTail(entry, now);
   if (name.length === 0 || commitAgeMs === null || tail === null) {
