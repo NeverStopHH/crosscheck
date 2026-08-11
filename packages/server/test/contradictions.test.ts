@@ -78,12 +78,15 @@ interface TwoContextSetup {
 
 /**
  * Nick's wc_01 and Robin's wc_02 sharing one error fingerprint, each holding
- * one hypothesis — statuses supplied per test.
+ * one hypothesis — statuses supplied per test, extra claim fields (provenance,
+ * captureMode, confidence) per side where a test needs them.
  */
 const seedSharedFingerprint = async (
   statusA: string,
   statusB: string,
   kindB: string = "hypothesis",
+  claimOverridesA: Record<string, unknown> = {},
+  claimOverridesB: Record<string, unknown> = {},
 ): Promise<TwoContextSetup> => {
   const harness = await createTestHarness();
   const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
@@ -109,6 +112,7 @@ const seedSharedFingerprint = async (
           kind: "hypothesis",
           status: statusA,
           body: "The rotation job overruns its window and drops the key",
+          ...claimOverridesA,
         }),
       ),
     ],
@@ -142,6 +146,7 @@ const seedSharedFingerprint = async (
           kind: kindB,
           status: statusB,
           body: "Rotation finished inside its window on every sampled failure",
+          ...claimOverridesB,
         }),
         { sessionId: SECOND_SESSION_ID },
       ),
@@ -149,6 +154,13 @@ const seedSharedFingerprint = async (
   });
   return { harness, nick, robin };
 };
+
+/** A Tier-1 summarizer draft's trust fields — machine-minted, never vouched. */
+const DERIVED_DRAFT_FIELDS = {
+  captureMode: "auto",
+  provenance: "derived",
+  confidence: 0.4,
+} as const;
 
 describe("GET /api/contradictions", () => {
   test("requires an api key like every other route", async () => {
@@ -320,6 +332,60 @@ describe("GET /api/contradictions", () => {
     });
 
     // Act + Assert
+    const result = await fetchContradictions(harness, nick.apiKey);
+    expect(result.candidates).toEqual([]);
+  });
+
+  test("an unreviewed derived draft cannot hold the open side of a deadlock", async () => {
+    // Arrange: Nick's open theory is a Tier-1 summarizer draft — nobody ever
+    // vouched for it. A briefing pointer built from this pair would tell Robin
+    // that Nick HOLDS a conflicting position Nick never authored (DESIGN.md §3
+    // Tier 1: drafts are never proactively injected to teammates).
+    const { harness, nick } = await seedSharedFingerprint(
+      "proposed",
+      "rejected",
+      "hypothesis",
+      DERIVED_DRAFT_FIELDS,
+    );
+
+    // Act + Assert: no manufactured conflict from a machine guess
+    const result = await fetchContradictions(harness, nick.apiKey);
+    expect(result.candidates).toEqual([]);
+  });
+
+  test("a derived discard revision cannot hold the rejected side either", async () => {
+    // Arrange: the rejected side is a derived draft's discard revision —
+    // provenance stays derived on discard because nobody vouched for the
+    // content, so it cannot anchor a deadlock any more than the open form
+    const { harness, nick } = await seedSharedFingerprint(
+      "proposed",
+      "rejected",
+      "hypothesis",
+      {},
+      DERIVED_DRAFT_FIELDS,
+    );
+
+    // Act + Assert
+    const result = await fetchContradictions(harness, nick.apiKey);
+    expect(result.candidates).toEqual([]);
+  });
+
+  test("a stored candidate row naming a derived claim leaves the listing", async () => {
+    // Arrange: a contradiction_candidates row that references a derived draft
+    // — written before the exclusion existed, or by an older hub. The listing
+    // must filter it even though the row is already on disk.
+    const { harness, nick } = await seedSharedFingerprint(
+      "proposed",
+      "rejected",
+      "hypothesis",
+      DERIVED_DRAFT_FIELDS,
+    );
+    await harness.db.execute(
+      sql`INSERT INTO contradiction_candidates (id, claim_a_id, claim_b_id, similarity, created_at)
+          VALUES ('ccd_stored_derived', 'clm_01', 'clm_02', 0.99, NOW())`,
+    );
+
+    // Act + Assert: neither the stored source nor the derived one lists it
     const result = await fetchContradictions(harness, nick.apiKey);
     expect(result.candidates).toEqual([]);
   });

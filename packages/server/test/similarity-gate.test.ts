@@ -299,6 +299,60 @@ describe("cross-context near-duplicates", () => {
     expect(await harness.db.select().from(claimEdges)).toEqual([]);
   });
 
+  test("a derived draft near a declared rejection relates, never deadlocks", async () => {
+    // Arrange: a declared, rejected theory in an older context — then a
+    // Tier-1 summarizer draft (provenance derived) restates it as open in a
+    // fresh context. A machine guess nobody vouched for must not mint a
+    // contradiction candidate (the briefing's proactive surface); the real
+    // similarity is still recorded, as a pull-only relates_to edge.
+    const { harness, developer } = await createGateHarness();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          kind: "hypothesis",
+          status: "rejected",
+          body: LOGIN_OBSERVATION,
+        }),
+      ),
+    );
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({ id: "wc_02", title: "Signin flow audit" }),
+      ),
+    );
+
+    // Act
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id: "clm_02",
+          workContextId: "wc_02",
+          kind: "hypothesis",
+          status: "proposed",
+          captureMode: "auto",
+          provenance: "derived",
+          confidence: 0.4,
+          body: LOGIN_REWORDED,
+        }),
+      ),
+    );
+
+    // Assert: no candidate row; one relates_to edge instead
+    expect(await harness.db.select().from(contradictionCandidates)).toEqual([]);
+    const edges = await harness.db.select().from(claimEdges);
+    expect(edges.length).toBe(1);
+    expect(edges[0]?.kind).toBe("relates_to");
+  });
+
   test("a developer's own cross-kind contradiction in one context is flagged", async () => {
     // Arrange: same developer, same context — but different KINDS, so the
     // dedup gate (kind-scoped) never sees the pair. A rejected root cause and

@@ -39,6 +39,16 @@ export const OPEN_THEORY_STATUSES = [
   "likely_root_cause",
 ] as const satisfies readonly ClaimStatus[];
 
+/**
+ * The provenance a claim needs before it may hold a SIDE of a contradiction.
+ * A derived claim is a machine draft nobody vouched for (DESIGN.md §3 Tier 1:
+ * "never proactively injected"), and contradiction candidates feed the
+ * briefing — a proactive surface that names its authors as holding positions.
+ * Positive equality, not `!= 'derived'`: an unknown provenance value stays
+ * out, the same fail-closed direction as the hint selector's isDeclared.
+ */
+export const DECLARED_PROVENANCE = "declared";
+
 /** Widened view so membership checks accept any string. */
 const OPEN_STATUS_STRINGS: readonly string[] = OPEN_THEORY_STATUSES;
 
@@ -142,6 +152,7 @@ export const applyCrossSimilarity = async (
     .select({
       id: claims.id,
       status: claims.status,
+      provenance: claims.provenance,
       similarity: sql<number>`1 - (${distance})`,
     })
     .from(claims)
@@ -171,7 +182,15 @@ export const applyCrossSimilarity = async (
     return;
   }
 
-  if (isOppositeStatus(body.status, nearest.status)) {
+  // A deadlock needs two VOUCHED positions: a derived draft on either side
+  // (this claim or its neighbor) relates, it never contradicts — a machine
+  // guess must not put "X holds a conflicting theory" into a briefing
+  // (DESIGN.md §3 Tier 1). The similarity itself is still real, so such a
+  // pair falls through to the pull-only relates_to edge below.
+  const bothDeclared =
+    body.provenance === DECLARED_PROVENANCE &&
+    nearest.provenance === DECLARED_PROVENANCE;
+  if (bothDeclared && isOppositeStatus(body.status, nearest.status)) {
     // Canonical pair order makes the unique index direction-agnostic.
     const [claimAId, claimBId] = [body.id, nearest.id].sort() as [
       string,

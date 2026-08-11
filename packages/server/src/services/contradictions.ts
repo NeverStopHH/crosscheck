@@ -23,6 +23,14 @@
  * A pair found by both sources is reported once, as "similarity" — the
  * stronger signal, since it carries a measured score.
  *
+ * BOTH SOURCES REQUIRE DECLARED PROVENANCE ON BOTH SIDES. A derived claim is
+ * a Tier-1 summarizer draft nobody vouched for (DESIGN.md §3: drafts are
+ * "never proactively injected"), and these pairs feed the briefing's
+ * contradiction pointers — lines that name their authors as HOLDING the
+ * positions. The ingest gate stopped writing derived candidate rows for the
+ * same reason (similarity-gate.ts applyCrossSimilarity); the filter here also
+ * covers rows that predate that rule.
+ *
  * BOTH SIDES SHIP RAW CLAIM BODIES, hub-convention (the hub returns raw, the
  * connector frames). The SessionStart briefing consumes this endpoint now,
  * and deliberately renders NO bodies — its pointer lines carry authors,
@@ -49,7 +57,10 @@ import {
   developers,
   workContextTargets,
 } from "../db/schema.ts";
-import { OPEN_THEORY_STATUSES } from "./similarity-gate.ts";
+import {
+  DECLARED_PROVENANCE,
+  OPEN_THEORY_STATUSES,
+} from "./similarity-gate.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 
@@ -220,6 +231,12 @@ const listStoredCandidates = async (
     .innerJoin(developersB, eq(sessionsB.developerId, developersB.id))
     .where(
       and(
+        // Derived exclusion, defense in depth: the gate no longer WRITES
+        // candidate rows for derived claims (similarity-gate.ts), but rows
+        // from before that rule — or from an older hub — are already on
+        // disk, and a machine draft must not surface as a held position.
+        eq(claimsA.provenance, DECLARED_PROVENANCE),
+        eq(claimsB.provenance, DECLARED_PROVENANCE),
         repoTouchCondition(repo, claimsA, claimsB),
         bothSidesUnmuted(
           excludeMutedForDeveloperId,
@@ -327,6 +344,13 @@ const listDerivedCandidates = async (
         inArray(rejectedSide.kind, [...THEORY_KINDS]),
         inArray(openSide.status, [...OPEN_THEORY_STATUSES]),
         eq(rejectedSide.status, "rejected"),
+        // BOTH sides must be vouched for. A derived draft (Tier-1 summarizer,
+        // DESIGN.md §3: "never proactively injected") holds no position — an
+        // open draft would tell a teammate its author asserts a theory the
+        // author never saw, and a derived discard revision was rejected by
+        // nobody. Same fail-closed equality as the hint path's isDeclared.
+        eq(openSide.provenance, DECLARED_PROVENANCE),
+        eq(rejectedSide.provenance, DECLARED_PROVENANCE),
         // A deadlock needs two people: one developer's own opposite-status
         // theories are self-revision (the formal channel is a supersedes
         // edge), not a conflict a referee could brief. Stored similarity
