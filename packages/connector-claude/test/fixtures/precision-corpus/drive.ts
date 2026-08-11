@@ -48,7 +48,7 @@ const ADMIN_TOKEN = "corpus-admin-token";
  * hook's fail-open budget into a false silence — the same widening the
  * two-developer e2e applies, for the same reason.
  */
-const CORPUS_TIMEOUT_MS = "4000";
+const HUB_TIMEOUT_MS = "4000";
 
 /** How the rendered surfaces begin — the classification markers. */
 const CLAIM_MARKER = "crosscheck hint:";
@@ -277,38 +277,52 @@ const ingestRecord = async (
   }
 };
 
-const ingestScenario = async (
+/** One scenario's seeding environment, shared by the per-record-type loops. */
+interface ScenarioSeed {
+  readonly hub: Hub;
+  readonly scenario: CorpusScenario;
+  readonly authorOf: (sessionId: string) => SeededDeveloper;
+  readonly sessionOfContext: (workContextId: string) => string;
+}
+
+const makeScenarioSeed = (
   hub: Hub,
   scenario: CorpusScenario,
   owners: ReadonlyMap<string, string>,
   developers: ReadonlyMap<string, SeededDeveloper>,
-): Promise<void> => {
-  const authorOf = (sessionId: string): SeededDeveloper => {
-    const owner = owners.get(sessionId);
-    if (owner === undefined) {
-      throw new Error(
-        `corpus: scenario ${scenario.id} references unknown session "${sessionId}"`,
-      );
-    }
-    return keyOf(developers, owner);
-  };
+): ScenarioSeed => {
   const contextSession = new Map(
     scenario.workContexts.map((context) => [context.id, context.sessionId]),
   );
-  const sessionOfContext = (workContextId: string): string => {
-    const sessionId = contextSession.get(workContextId);
-    if (sessionId === undefined) {
-      throw new Error(
-        `corpus: scenario ${scenario.id} references unknown context "${workContextId}"`,
-      );
-    }
-    return sessionId;
+  return {
+    hub,
+    scenario,
+    authorOf: (sessionId) => {
+      const owner = owners.get(sessionId);
+      if (owner === undefined) {
+        throw new Error(
+          `corpus: scenario ${scenario.id} references unknown session "${sessionId}"`,
+        );
+      }
+      return keyOf(developers, owner);
+    },
+    sessionOfContext: (workContextId) => {
+      const sessionId = contextSession.get(workContextId);
+      if (sessionId === undefined) {
+        throw new Error(
+          `corpus: scenario ${scenario.id} references unknown context "${workContextId}"`,
+        );
+      }
+      return sessionId;
+    },
   };
+};
 
-  for (const context of scenario.workContexts) {
+const ingestContexts = async (seed: ScenarioSeed): Promise<void> => {
+  for (const context of seed.scenario.workContexts) {
     await ingestRecord(
-      hub,
-      authorOf(context.sessionId),
+      seed.hub,
+      seed.authorOf(context.sessionId),
       context.sessionId,
       "work_context",
       {
@@ -324,14 +338,17 @@ const ingestScenario = async (
           ? {}
           : { updatedAt: context.updatedAt }),
       },
-      `${scenario.id} context ${context.id}`,
+      `${seed.scenario.id} context ${context.id}`,
     );
   }
-  for (const target of scenario.targets) {
-    const sessionId = sessionOfContext(target.workContextId);
+};
+
+const ingestTargets = async (seed: ScenarioSeed): Promise<void> => {
+  for (const target of seed.scenario.targets) {
+    const sessionId = seed.sessionOfContext(target.workContextId);
     await ingestRecord(
-      hub,
-      authorOf(sessionId),
+      seed.hub,
+      seed.authorOf(sessionId),
       sessionId,
       "target",
       {
@@ -339,13 +356,16 @@ const ingestScenario = async (
         kind: target.kind,
         value: target.value,
       },
-      `${scenario.id} target ${target.workContextId}/${target.value}`,
+      `${seed.scenario.id} target ${target.workContextId}/${target.value}`,
     );
   }
-  for (const claim of scenario.claims) {
+};
+
+const ingestClaims = async (seed: ScenarioSeed): Promise<void> => {
+  for (const claim of seed.scenario.claims) {
     await ingestRecord(
-      hub,
-      authorOf(claim.authorSessionId),
+      seed.hub,
+      seed.authorOf(claim.authorSessionId),
       claim.authorSessionId,
       "claim",
       {
@@ -361,13 +381,16 @@ const ingestScenario = async (
         evidenceRefs: claim.evidenceRefs,
         createdAt: claim.createdAt,
       },
-      `${scenario.id} claim ${claim.id}`,
+      `${seed.scenario.id} claim ${claim.id}`,
     );
   }
-  for (const edge of scenario.edges) {
+};
+
+const ingestEdges = async (seed: ScenarioSeed): Promise<void> => {
+  for (const edge of seed.scenario.edges) {
     await ingestRecord(
-      hub,
-      authorOf(edge.authorSessionId),
+      seed.hub,
+      seed.authorOf(edge.authorSessionId),
       edge.authorSessionId,
       "claim_edge",
       {
@@ -379,9 +402,23 @@ const ingestScenario = async (
         ...(edge.note === undefined ? {} : { note: edge.note }),
         createdAt: edge.createdAt,
       },
-      `${scenario.id} edge ${edge.id}`,
+      `${seed.scenario.id} edge ${edge.id}`,
     );
   }
+};
+
+/** Dependency order — the hub rejects forward references between the arrays. */
+const ingestScenario = async (
+  hub: Hub,
+  scenario: CorpusScenario,
+  owners: ReadonlyMap<string, string>,
+  developers: ReadonlyMap<string, SeededDeveloper>,
+): Promise<void> => {
+  const seed = makeScenarioSeed(hub, scenario, owners, developers);
+  await ingestContexts(seed);
+  await ingestTargets(seed);
+  await ingestClaims(seed);
+  await ingestEdges(seed);
 };
 
 /** Sessions flagged `ended` end AFTER ingest — live hubs reject late writes. */
@@ -554,7 +591,7 @@ const runProbe = async (
       CROSSCHECK_HOME: home,
       CROSSCHECK_HUB_URL: hub.url,
       CROSSCHECK_API_KEY: reader.apiKey,
-      CROSSCHECK_TIMEOUT_MS: CORPUS_TIMEOUT_MS,
+      CROSSCHECK_TIMEOUT_MS: HUB_TIMEOUT_MS,
     };
     const stdout =
       probe.kind === "prompt"

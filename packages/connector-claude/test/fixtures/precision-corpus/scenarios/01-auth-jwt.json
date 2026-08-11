@@ -126,7 +126,7 @@
       "reader": "Riley",
       "prompt": "checkout cart totals drift when discount codes stack",
       "expect": "silence",
-      "rationale": "No lexical tier matches any teammate context: recency filler must never hint (HINT_ELIGIBLE_TIERS), so an unrelated prompt gets silence, not the freshest context."
+      "rationale": "No lexical tier matches any teammate context, and a NON-blank miss returns zero search rows (recency rows are only emitted for a blank query) — so this silence is empty results, not the tier floor. HINT_ELIGIBLE_TIERS itself is pinned where it is load-bearing, the route-reachable blank query, by packages/server/test/hints.test.ts."
     },
     {
       "id": "pr_auth_nearmiss",
@@ -134,7 +134,7 @@
       "reader": "Riley",
       "prompt": "intermittent sign-in trouble after the midnight rollout",
       "expect": "silence",
-      "rationale": "Semantically the same incident as wc_auth, lexically below the provable-match floor: no shared exact target, no shared FTS stem. No hint beats a weak hint (DESIGN.md 4), and the keyless default install has no vector tier to guess with."
+      "rationale": "Semantically the same incident as wc_auth, lexically invisible: no shared exact target, and its one shared word ('after') is an FTS stopword, so the search returns zero rows and silence is empty results. No hint beats a weak hint (DESIGN.md 4), and the keyless default install has no vector tier to guess with."
     },
     {
       "id": "pr_auth_tripwire",

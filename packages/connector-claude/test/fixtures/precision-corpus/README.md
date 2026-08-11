@@ -20,13 +20,24 @@ the corpus updated in the same change. Never silently tune a threshold to
 make the corpus pass, and never lower a floor without a written rationale
 here.
 
+The floor VALUES are machine-pinned, not just governance-pinned: a VERIFY
+directive in `test/precision-corpus.test.ts` greps for all five `FLOOR_* = 1`
+literals, so a lowered floor fails the claims job unless the change travels
+with that rationale-bearing comment. This exists because any floor in
+(2/3, 1] passes every other gate (mutation entry #33's measured worst metric
+is 0.667) — demonstrated 2026-08-11: floors at 0.7 plus a genuine ranking
+regression (`SOLVED_DECAY_FLOOR = 0`) ran 6 pass / 0 fail.
+
 Where current behavior is defensible but debatable, the probe says so in its
 rationale instead of the corpus pretending the question is settled. Current
 debatable probes:
 
 - `pr_contra_debatable` (09): one side of a live cross-author deadlock is
   injected as substance — the tree is correctly unsolved for ranking, but the
-  selector has no dispute gate.
+  selector has no dispute gate, and the side is chosen purely by recency (in
+  a deadlock one side is wrong). `services/solved.ts`'s own header rule ("a
+  dispute must not read settled on any surface") argues for the gate; when it
+  lands, this probe relabels to silence with the gate's change.
 - `pr_limits_oneword_debatable` (04): a prompt sharing exactly ONE
   mid-frequency word with one claim body receives full substance. Today's
   precision floor is tier membership alone (exact/fts), with no
@@ -51,6 +62,13 @@ right reason. Two proofs, both against this corpus:
   70-day solved tree decayed below the three fresh noise contexts and fell
   out of `HINT_MAX_CONTEXTS`. Both edits were reverted; the suite is green
   at HEAD.
+- Recorded 2026-08-11, for the two review-added probes: hollowing
+  `notSuperseded` (services/hints.ts) turned exactly `pr_pipe_revision_seen`
+  red — the RETRACTED `clm_pipe_old` served as substance under full trust
+  labels ("expected silence, observed substance"); removing
+  `isNull(agentSessions.endedAt)` from the tripwire WHERE turned exactly
+  `pr_idx_ended_tripwire` red ("expected silence, observed pointer"). Both
+  edits reverted, suite green.
 
 ## What the harness drives
 
@@ -66,6 +84,34 @@ Determinism: the hub clock is frozen at `CORPUS_NOW_ISO`
 tier eligibility, presence and the solved floor are identical on every run
 and platform. The connector's wall clock feeds only display ages, which
 classification never reads.
+
+## What this instrument cannot see
+
+Known blind spots, so nobody mistakes corpus-green for full coverage:
+
+- **The SessionStart briefing is not driven.** DESIGN.md §4 names it first
+  among injection surfaces (teammates, related contexts, open
+  contradictions, outcomes) — and it is where the design says contradictions
+  surface, the design-correct counterpart of `pr_contra_debatable`. The
+  corpus drives only UserPromptSubmit and PreToolUse; briefing behavior is
+  pinned by the briefing unit/e2e tests, not here.
+- **Heartbeat-lapsed ghosts are inexpressible.** Sessions register at the
+  frozen now, so a session whose presence TTL expired (DESIGN.md §5) cannot
+  be seeded; `ended: true` is the only inactive form, and
+  `pr_idx_ended_tripwire` pins it.
+- **The vector tier and the hub's tier-floor filter are structurally
+  unreachable for non-blank prompts** — inherent to pinning the keyless
+  default (no embedder, and the connector never sends a blank query). The
+  tier floor where it IS load-bearing — the route-reachable blank query — is
+  pinned server-side in `packages/server/test/hints.test.ts`.
+- **Silence probes can false-green through fail-open death.** A hook that
+  dies inside its budget emits empty stdout, which classifies as silence.
+  The widened `HUB_TIMEOUT_MS` makes this unlikely, but `classify()` cannot
+  distinguish decision-silence from death-silence on a pathologically slow
+  runner.
+- **A muted author's claim inside an unmuted teammate's tree** (claims-level
+  `notMutedCondition`) is in no scenario — pinned by
+  `packages/server/test/mute.test.ts`.
 
 ## File format
 

@@ -147,7 +147,16 @@
       "expect": "substance",
       "expectClaimId": "clm_pipe_new",
       "expectContextId": "wc_pipeline",
-      "rationale": "A superseded theory is filtered hub-side (notSuperseded in services/hints.ts): the standing revision arrives under trust labels, never the theory its author retracted."
+      "rationale": "The standing revision arrives under trust labels. This probe alone does NOT discriminate the hub-side notSuperseded filter: newest-first claim order picks clm_pipe_new even with the filter hollowed. pr_pipe_revision_seen is the probe that pins the filter."
+    },
+    {
+      "id": "pr_pipe_revision_seen",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "deploy pipeline wedges on the migration step",
+      "expect": "silence",
+      "seenClaimIds": ["clm_pipe_new"],
+      "rationale": "Pins notSuperseded (services/hints.ts) where ordering cannot mask it: with the standing revision already seen, a hollowed filter serves the RETRACTED clm_pipe_old as substance under full trust labels — the anchoring DESIGN.md 4 exists to prevent. Intact, the retracted theory never reaches the selector, the bare observation is not injectable, and the pointer pass dedups on the seen claim inside wc_pipeline — silence. Also the corpus's one exercise of that pointer-pass seen-dedup."
     },
     {
       "id": "pr_contra_debatable",
@@ -157,7 +166,7 @@
       "expect": "substance",
       "expectClaimId": "clm_exp_robin",
       "expectContextId": "wc_contra",
-      "rationale": "DEBATABLE BY DESIGN: this tree is a live deadlock (two evidence-backed root causes joined by contradicts), correctly unsolved for ranking, yet the selector has no dispute gate and injects the newest side under full trust labels. Recorded as today's behavior, not endorsed — hint_deliveries telemetry from the trial decides whether a dispute gate earns its silence."
+      "rationale": "DEBATABLE BY DESIGN: this tree is a live deadlock (two evidence-backed root causes joined by contradicts), correctly unsolved for ranking, yet the selector has no dispute gate and injects the newest side under full trust labels — side chosen purely by recency, and in a deadlock one side is wrong. services/solved.ts's own header rule ('a dispute must not read settled on any surface') excludes this tree from SOLVED for exactly that reason, so the hint surface is out of step with the codebase's stated principle here. Recorded as today's behavior, not endorsed — hint_deliveries telemetry from the trial decides whether a dispute gate earns its silence; when the gate lands, this probe relabels to silence."
     }
   ]
 }

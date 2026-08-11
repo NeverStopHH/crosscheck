@@ -226,7 +226,26 @@ describe("GET /api/hints/candidates", () => {
     // Act
     const result = await fetchCandidates(harness, robin, "quantum chromodynamics");
 
-    // Assert
+    // Assert — a NON-blank miss returns zero search rows, so this silence
+    // does not exercise the tier floor; the blank-query test below is the
+    // one that does.
+    expect(result.status).toBe(200);
+    expect(result.candidates.length).toBe(0);
+  });
+
+  test("a blank query yields no candidates although recency rows exist", async () => {
+    // Arrange — Nick's fresh context would top a recency listing
+    const { harness, robin } = await setupTwoDevelopers();
+
+    // Act — blank is route-reachable (the route defaults query to ""), and
+    // the connector's own hasSearchableWord gate never fires for a non-Claude
+    // consumer of /api/hints/candidates
+    const result = await fetchCandidates(harness, robin, "");
+
+    // Assert — a blank query DOES return recency rows from the search, so
+    // HINT_ELIGIBLE_TIERS is the only thing standing between this endpoint
+    // and the filler feed its comment names; widening the server's tier
+    // floor to include "recency" turns this red
     expect(result.status).toBe(200);
     expect(result.candidates.length).toBe(0);
   });

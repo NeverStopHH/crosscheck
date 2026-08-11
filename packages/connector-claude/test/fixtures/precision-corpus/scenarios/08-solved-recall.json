@@ -134,6 +134,14 @@
       "expectClaimId": "clm_idx_root",
       "expectContextId": "wc_indexer_solved",
       "rationale": "Solved-tree recall (VISION.md 1): SOLVED_DECAY_FLOOR keeps the 70-day evidence-backed answer ranked above three fresh prose-only matches that would otherwise crowd it out of HINT_MAX_CONTEXTS. With the floor removed the solved tree ranks fourth, is sliced out, and the probe reds to a pointer at a noise context."
+    },
+    {
+      "id": "pr_idx_ended_tripwire",
+      "kind": "file-touch",
+      "reader": "Riley",
+      "file": "src/search/indexer.ts",
+      "expect": "silence",
+      "rationale": "Only the ENDED session s_priya_indexer targets this file, so the tripwire must stay silent: a finished session is not an active teammate to collide with (isNull(endedAt) in listTargetSessions, services/hints.ts). Removing that predicate turns this probe into a pointer — the ended session's heartbeat sits at the frozen now, inside the presence TTL, so the endedAt check is the ONLY thing keeping it out. A heartbeat-lapsed ghost is inexpressible in this corpus (sessions register at the frozen now); ended is the one inactive form it pins."
     }
   ]
 }

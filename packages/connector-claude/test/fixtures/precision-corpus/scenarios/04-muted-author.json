@@ -1,6 +1,6 @@
 {
   "id": "muted-author",
-  "summary": "Morgan muted Vic. Vic's evidence-backed finding must reach an unmuted reader as substance and must never reach Morgan on any unasked surface — prompt hint or tripwire. The unmuted probe is the control that proves the muted silences are silent for the right reason.",
+  "summary": "Morgan muted Vic. Vic's evidence-backed finding must reach an unmuted reader as substance and must never reach Morgan on any unasked surface — prompt hint or tripwire. The unmuted probe is the control that proves the muted silences are silent for the right reason. Covers Vic's OWN tree only: a muted author's claim inside an unmuted teammate's tree (claims-level notMutedCondition) is pinned by packages/server/test/mute.test.ts, not this corpus.",
   "sessions": [
     {
       "id": "s_vic_limits",
