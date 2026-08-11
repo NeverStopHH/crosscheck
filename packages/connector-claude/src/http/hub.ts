@@ -620,6 +620,10 @@ export const RefereeClaimSchema = z.looseObject({
   status: z.string().min(1),
   confidence: z.number().min(0).max(1),
   body: z.string(),
+  // Required like DiagnosisClaimSchema's: provenance is a trust label
+  // (DESIGN.md §4), and a hub that will not state it does not get the row
+  // rendered — a derived draft must never pass for a vouched claim.
+  provenance: z.string().min(1),
   authorDeveloperName: z.string().min(1).optional(),
   createdAt: z.string().min(1),
 });

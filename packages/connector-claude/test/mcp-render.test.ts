@@ -155,6 +155,31 @@ describe("renderDiagnosis", () => {
     expect(rendered).not.toContain("«clm_01»");
   });
 
+  test("claim lines state provenance — a derived draft must not read as vouched", () => {
+    // Arrange: §3 sanctions drafts appearing on deliberate get_diagnosis
+    // pulls, and §4 wants trust labels on every surface — without the label a
+    // machine draft renders identically to a human-vouched declared claim
+    const tree = diagnosis({
+      claims: [
+        claim(),
+        claim({
+          id: "clm_02",
+          captureMode: "auto",
+          provenance: "derived",
+          confidence: 0.4,
+          body: "The rotation job writes the key after the cache warms",
+        }),
+      ],
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree);
+
+    // Assert: both labels present, bare like kind and status
+    expect(rendered).toContain("provenance declared");
+    expect(rendered).toContain("provenance derived");
+  });
+
   test("names the developer behind each claim, never a bare session id", () => {
     // Arrange: a tree with a claim from a SECOND developer is the shape that
     // needs this — extend_diagnosis is the product's headline move, so a reader

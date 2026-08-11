@@ -485,6 +485,7 @@ describe("a hub that forges the pair-level similarity", () => {
       status: "proposed",
       confidence: 0.8,
       body: "The refresh path never reloads the rotated key",
+      provenance: "declared",
       authorDeveloperName: "Mara",
       createdAt: CREATED,
     },

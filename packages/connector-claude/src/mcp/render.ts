@@ -153,6 +153,10 @@ const claimLine = (
     bare(claim.kind),
     `status ${bare(claim.status)}`,
     `confidence ${claim.confidence.toFixed(CONFIDENCE_DECIMALS)}`,
+    // Trust label (DESIGN.md §4), bare like kind and status: §3 sanctions
+    // derived drafts on this deliberate pull, so the reader must be able to
+    // tell one from a human-vouched declared claim.
+    `provenance ${bare(claim.provenance)}`,
     authorLabel(index, claim.authorSessionId),
   ];
   return `${facts.join(" · ")}${evidence}${seen}: ${quoted(claim.body, MAX_CLAIM_BODY_LENGTH)}`;

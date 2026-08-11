@@ -74,6 +74,8 @@ export interface RefereeClaimView {
   readonly status: string;
   readonly confidence: number;
   readonly body: string;
+  /** Trust label (DESIGN.md §4): a derived draft must not read as vouched. */
+  readonly provenance: string;
   readonly authorDeveloperId: string;
   readonly authorDeveloperName: string;
   readonly createdAt: string;
@@ -137,6 +139,7 @@ const loadClaims = async (
       status: row.claim.status,
       confidence: row.claim.confidence,
       body: row.claim.body,
+      provenance: row.claim.provenance,
       authorDeveloperId: row.authorDeveloperId,
       authorDeveloperName: row.authorDeveloperName,
       createdAt: row.claim.createdAt.toISOString(),
@@ -260,6 +263,7 @@ const listRuledOut = async (
       status: row.claim.status,
       confidence: row.claim.confidence,
       body: row.claim.body,
+      provenance: row.claim.provenance,
       authorDeveloperId: row.authorDeveloperId,
       authorDeveloperName: row.authorDeveloperName,
       createdAt: row.claim.createdAt.toISOString(),

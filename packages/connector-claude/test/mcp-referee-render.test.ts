@@ -38,6 +38,7 @@ const claim = (
   body: "The rotation job overruns its window and drops the key",
   authorDeveloperName: "Nick",
   createdAt: CREATED_AT,
+  provenance: "declared",
   ...overrides,
 });
 
@@ -138,6 +139,35 @@ describe("renderRefereeBrief", () => {
       "«The rotation job overruns its window and drops the key»",
     );
     expect(output).toContain("«Login 500s on staging»");
+  });
+
+  test("claim lines carry the provenance trust label, declared and derived alike", () => {
+    // Arrange: a case file whose position B claim is a machine draft — the
+    // reader must see that nobody vouched for it (DESIGN.md §4 trust labels)
+    const brief = baseBrief();
+    const withDerived: RefereeBrief = {
+      ...brief,
+      positionB: {
+        ...brief.positionB,
+        claim: claim({
+          id: "clm_b",
+          workContextId: "wc_b",
+          status: "rejected",
+          authorDeveloperName: "Robin",
+          createdAt: LATER_AT,
+          provenance: "derived",
+          confidence: 0.4,
+          body: "Rotation finished inside its window on every sampled failure",
+        }),
+      },
+    };
+
+    // Act
+    const output = renderRefereeBrief(withDerived, NOW);
+
+    // Assert: both labels, bare like kind and status
+    expect(output).toContain("provenance declared");
+    expect(output).toContain("provenance derived");
   });
 
   test("is A/B swap invariant: exchanged positions render the byte-identical document", () => {

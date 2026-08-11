@@ -89,7 +89,7 @@ const CONTEXT_LINE = /^Work context «[^«»]*» · status .* · opened by .+$/;
 const NO_CLAIMS_LINE = /^Claims: no claims recorded yet\.$/;
 const SECTION_HEADER =
   /^(Claims|Edges|Claims in other work contexts referenced here) \(\d+\):$/;
-/** id · kind · status X · confidence N.NN · author [· evidence …][· seen N×]: «body» */
+/** id · kind · status X · confidence N.NN · provenance P · author [· evidence …][· seen N×]: «body» */
 const CLAIM_LINE =
   /^- [\w.:-]* · .* · status .* · confidence \d\.\d\d · .*: «[^«»]*»$/;
 const EDGE_LINE = /^- [\w.:-]* .* [\w.:-]* · by .+?(: «[^«»]*»)?$/;

@@ -42,6 +42,7 @@ interface BriefClaim {
   readonly body: string;
   readonly authorDeveloperName: string;
   readonly createdAt: string;
+  readonly provenance?: string;
 }
 
 interface BriefPosition {
@@ -454,6 +455,32 @@ describe("GET /api/contradictions/:id/brief", () => {
     ];
     for (const claim of allClaims) {
       expect(Date.parse(claim.createdAt)).not.toBeNaN();
+    }
+  });
+
+  test("every brief claim carries provenance — the reader's trust label", async () => {
+    // Arrange: DESIGN.md §4 wants provenance on every surface that renders a
+    // claim; without it on the wire a derived draft reads exactly like a
+    // human-vouched declared claim in the case file
+    const { harness, nick } = await seedDeadlock();
+    const [candidate] = await listCandidates(harness, nick.apiKey);
+
+    // Act
+    const { brief } = await fetchBrief(harness, nick.apiKey, candidate?.id ?? "");
+
+    // Assert: position claims, evidence and ruled-out all ship the field
+    const nickSide = sideOf(brief as BriefView, "clm_01");
+    const robinSide = sideOf(brief as BriefView, "clm_02");
+    expect(nickSide.claim.provenance).toBe("declared");
+    expect(robinSide.claim.provenance).toBe("declared");
+    const listed = [
+      ...nickSide.evidence,
+      ...nickSide.ruledOut,
+      ...robinSide.ruledOut,
+    ];
+    expect(listed.length).toBeGreaterThan(0);
+    for (const claim of listed) {
+      expect(claim.provenance).toBe("declared");
     }
   });
 
