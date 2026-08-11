@@ -487,6 +487,24 @@ export const MUTATIONS: readonly Mutation[] = [
       "unasked in the reader's context",
   },
   {
+    // The golden-fixture corpus's own guard (DESIGN.md §4 telemetry bullet).
+    // hint-select.test.ts pins this predicate at the unit level; the corpus
+    // entry exists so the END-TO-END harness itself cannot be hollowed out —
+    // a corpus that stayed green under this weakening would be measuring
+    // nothing. Like tripwire-hook.test.ts, this guard shells out to git
+    // (makeRepo) — the assertGuardIsGreen container caveat applies to it too.
+    label: "a summarizer draft reaches the corpus reader as substance",
+    file: `${CONNECTOR}/src/hints/select.ts`,
+    from: '  claim.provenance === "declared";',
+    to: "  claim.provenance.length > 0;",
+    test: `${CONNECTOR}/test/precision-corpus.test.ts`,
+    because:
+      "derived provenance counts as vouched, so the corpus's Tier-1 draft " +
+      "(likely_root_cause, evidence refs, confidence at the 0.5 cap) is " +
+      "injected under trust labels — pr_thumbs_derived must red on pointer " +
+      "discipline, or the precision harness is decoration",
+  },
+  {
     label: "the summarizer's per-session fire cap is quietly raised",
     file: `${CONNECTOR}/src/constants.ts`,
     from: "export const SUMMARIZER_MAX_FIRES_PER_SESSION = 6;",
@@ -564,6 +582,7 @@ interface Outcome {
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
+ * PRINTS: precision-corpus.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1

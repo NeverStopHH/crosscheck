@@ -1,0 +1,13 @@
+{
+  "developers": [
+    { "name": "Riley", "email": "riley@corpus.test" },
+    { "name": "Morgan", "email": "morgan@corpus.test" },
+    { "name": "Robin", "email": "robin@corpus.test" },
+    { "name": "Sam", "email": "sam@corpus.test" },
+    { "name": "Vic", "email": "vic@corpus.test" },
+    { "name": "Quinn", "email": "quinn@corpus.test", "presenceOptOut": true },
+    { "name": "Priya", "email": "priya@corpus.test" },
+    { "name": "Noah", "email": "noah@corpus.test" }
+  ],
+  "mutes": [{ "reader": "Morgan", "muted": "Vic" }]
+}

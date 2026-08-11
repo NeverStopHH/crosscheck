@@ -1,0 +1,149 @@
+{
+  "id": "auth-jwt",
+  "summary": "Flagship diagnosis tree: observation, evidence-backed negative, evidence-backed root cause. Probes cover negatives-first substance, fingerprint exact match, the seen-set, the session cap, self-exclusion, an unrelated prompt, a below-threshold near-match, and the tripwire.",
+  "sessions": [
+    {
+      "id": "s_robin_auth",
+      "developer": "Robin",
+      "branch": "fix/jwt-rotation",
+      "baseCommit": "c0ffee01",
+      "status": "analyzing"
+    }
+  ],
+  "workContexts": [
+    {
+      "id": "wc_auth",
+      "sessionId": "s_robin_auth",
+      "title": "Login 500s after JWT key rotation",
+      "description": "POST /login answers 500 for a tenth of requests after the JWKS cutover",
+      "status": "analyzing",
+      "createdAt": "2026-07-30T12:00:00.000Z",
+      "updatedAt": "2026-08-01T08:00:00.000Z"
+    }
+  ],
+  "targets": [
+    { "workContextId": "wc_auth", "kind": "file", "value": "src/auth/refresh.ts" },
+    { "workContextId": "wc_auth", "kind": "symbol", "value": "verifyToken" },
+    {
+      "workContextId": "wc_auth",
+      "kind": "error_fingerprint",
+      "value": "sha256:9c1e6f2a8b4d0e7f9c1e6f2a8b4d0e7f"
+    }
+  ],
+  "claims": [
+    {
+      "id": "clm_auth_obs",
+      "workContextId": "wc_auth",
+      "authorSessionId": "s_robin_auth",
+      "kind": "observation",
+      "body": "POST /login answers 500 for roughly one request in ten after the JWKS cutover",
+      "status": "proposed",
+      "confidence": 0.7,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-07-30T12:05:00.000Z"
+    },
+    {
+      "id": "clm_auth_neg",
+      "workContextId": "wc_auth",
+      "authorSessionId": "s_robin_auth",
+      "kind": "rejected_approach",
+      "body": "Reverting the edge proxy config does not stop the login 500s",
+      "status": "rejected",
+      "confidence": 0.8,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_auth_obs"],
+      "createdAt": "2026-07-31T09:00:00.000Z"
+    },
+    {
+      "id": "clm_auth_root",
+      "workContextId": "wc_auth",
+      "authorSessionId": "s_robin_auth",
+      "kind": "root_cause",
+      "body": "verifyToken rejects tokens minted under the rotated JWKS key because the key cache never refetches",
+      "status": "likely_root_cause",
+      "confidence": 0.85,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_auth_obs"],
+      "createdAt": "2026-08-01T08:00:00.000Z"
+    }
+  ],
+  "probes": [
+    {
+      "id": "pr_auth_substance",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "why does src/auth/refresh.ts still 500 after the key rotation",
+      "expect": "substance",
+      "expectClaimId": "clm_auth_neg",
+      "expectContextId": "wc_auth",
+      "rationale": "Negatives are privileged (DESIGN.md 4): the evidence-backed rejected_approach is scanned before the settled positive inside the same context, and negative knowledge cannot anchor a wrong theory."
+    },
+    {
+      "id": "pr_auth_fingerprint",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "bun runs explode with sha256:9c1e6f2a8b4d0e7f9c1e6f2a8b4d0e7f anyone met this before",
+      "expect": "substance",
+      "expectClaimId": "clm_auth_neg",
+      "expectContextId": "wc_auth",
+      "rationale": "A hashed error fingerprint in the prompt is the highest-precision exact-tier signal; the same negatives-first pick as the plain prompt."
+    },
+    {
+      "id": "pr_auth_seen",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "why does src/auth/refresh.ts still 500 after the key rotation",
+      "expect": "substance",
+      "expectClaimId": "clm_auth_root",
+      "expectContextId": "wc_auth",
+      "seenClaimIds": ["clm_auth_neg"],
+      "rationale": "Seen-set dedup: the already-delivered negative is skipped and the next unseen injectable claim (the evidence-backed root cause) arrives instead of a repeat."
+    },
+    {
+      "id": "pr_auth_cap",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "why does src/auth/refresh.ts still 500 after the key rotation",
+      "expect": "silence",
+      "atSessionCap": true,
+      "rationale": "MAX_HINTS_PER_SESSION is a hard noise budget (DESIGN.md 10 risk 1): at the cap the hook stays silent before the hub is even asked, whatever the prompt matches."
+    },
+    {
+      "id": "pr_auth_self",
+      "kind": "prompt",
+      "reader": "Robin",
+      "prompt": "why does src/auth/refresh.ts still 500 after the key rotation",
+      "expect": "silence",
+      "rationale": "Self-exclusion (DESIGN.md 4): the author's own contexts are excluded inside the hub's search WHERE — a developer's own findings are knowledge, never hints."
+    },
+    {
+      "id": "pr_auth_unrelated",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "checkout cart totals drift when discount codes stack",
+      "expect": "silence",
+      "rationale": "No lexical tier matches any teammate context: recency filler must never hint (HINT_ELIGIBLE_TIERS), so an unrelated prompt gets silence, not the freshest context."
+    },
+    {
+      "id": "pr_auth_nearmiss",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "intermittent sign-in trouble after the midnight rollout",
+      "expect": "silence",
+      "rationale": "Semantically the same incident as wc_auth, lexically below the provable-match floor: no shared exact target, no shared FTS stem. No hint beats a weak hint (DESIGN.md 4), and the keyless default install has no vector tier to guess with."
+    },
+    {
+      "id": "pr_auth_tripwire",
+      "kind": "file-touch",
+      "reader": "Riley",
+      "file": "src/auth/refresh.ts",
+      "expect": "pointer",
+      "expectContextId": "wc_auth",
+      "rationale": "Active-teammate file overlap asks and never denies (escalation ladder ceiling): the ask names the teammate and the context id — pointer-class, no claim body crosses."
+    }
+  ]
+}

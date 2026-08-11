@@ -1,0 +1,65 @@
+{
+  "id": "derived-drafts",
+  "summary": "A context holding only Tier-1 summarizer drafts (provenance derived), including a likely_root_cause WITH evidence refs at the derived confidence cap. Derived is never substance, whatever status and evidence it carries.",
+  "sessions": [
+    {
+      "id": "s_priya_thumbs",
+      "developer": "Priya",
+      "branch": "fix/resize-queue",
+      "baseCommit": "c0ffee03",
+      "status": "implementing"
+    }
+  ],
+  "workContexts": [
+    {
+      "id": "wc_thumbs",
+      "sessionId": "s_priya_thumbs",
+      "title": "Thumbnail resizer floods its queue on burst uploads",
+      "status": "analyzing",
+      "createdAt": "2026-08-01T04:00:00.000Z",
+      "updatedAt": "2026-08-01T07:00:00.000Z"
+    }
+  ],
+  "targets": [
+    { "workContextId": "wc_thumbs", "kind": "file", "value": "src/media/resize.ts" }
+  ],
+  "claims": [
+    {
+      "id": "clm_th_obs",
+      "workContextId": "wc_thumbs",
+      "authorSessionId": "s_priya_thumbs",
+      "kind": "observation",
+      "body": "Resize queue depth spikes past ten thousand during burst uploads",
+      "status": "proposed",
+      "confidence": 0.3,
+      "captureMode": "auto",
+      "provenance": "derived",
+      "evidenceRefs": [],
+      "createdAt": "2026-08-01T04:05:00.000Z"
+    },
+    {
+      "id": "clm_th_root",
+      "workContextId": "wc_thumbs",
+      "authorSessionId": "s_priya_thumbs",
+      "kind": "root_cause",
+      "body": "Each upload enqueues one resize job per preset with no coalescing",
+      "status": "likely_root_cause",
+      "confidence": 0.5,
+      "captureMode": "auto",
+      "provenance": "derived",
+      "evidenceRefs": ["clm_th_obs"],
+      "createdAt": "2026-08-01T07:00:00.000Z"
+    }
+  ],
+  "probes": [
+    {
+      "id": "pr_thumbs_derived",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "thumbnail resizer flooding its queue on burst uploads",
+      "expect": "pointer",
+      "expectContextId": "wc_thumbs",
+      "rationale": "Tier-1 drafts are never proactively injected (DESIGN.md 3): a machine-derived likely_root_cause with evidence refs at the 0.5 cap still arrives as a pull-able pointer only — a summarizer guess must not land under trust labels."
+    }
+  ]
+}

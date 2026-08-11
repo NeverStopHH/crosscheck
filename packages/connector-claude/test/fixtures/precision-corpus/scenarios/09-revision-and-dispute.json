@@ -1,0 +1,163 @@
+{
+  "id": "revision-and-dispute",
+  "summary": "Two trees: one where the author revised their root cause (supersedes edge — only the standing revision may arrive), and one cross-author deadlock (two evidence-backed root causes joined by contradicts — unsolved for ranking, yet the selector injects the newest side; recorded as today's debatable behavior).",
+  "sessions": [
+    {
+      "id": "s_sam_pipeline",
+      "developer": "Sam",
+      "branch": "fix/migration-lock",
+      "baseCommit": "c0ffee12",
+      "status": "testing"
+    },
+    {
+      "id": "s_robin_pipeline",
+      "developer": "Robin",
+      "branch": "fix/ingestion-bytes",
+      "baseCommit": "c0ffee13",
+      "status": "analyzing"
+    }
+  ],
+  "workContexts": [
+    {
+      "id": "wc_pipeline",
+      "sessionId": "s_sam_pipeline",
+      "title": "Deploy pipeline wedges on the migration step",
+      "status": "analyzing",
+      "createdAt": "2026-07-27T12:00:00.000Z",
+      "updatedAt": "2026-07-31T12:00:00.000Z"
+    },
+    {
+      "id": "wc_contra",
+      "sessionId": "s_sam_pipeline",
+      "title": "Nightly export truncates unicode rows",
+      "status": "analyzing",
+      "createdAt": "2026-07-29T12:00:00.000Z",
+      "updatedAt": "2026-07-31T13:00:00.000Z"
+    }
+  ],
+  "targets": [
+    { "workContextId": "wc_pipeline", "kind": "file", "value": "ops/migrate.sh" },
+    { "workContextId": "wc_contra", "kind": "file", "value": "src/export/nightly.ts" }
+  ],
+  "claims": [
+    {
+      "id": "clm_pipe_obs",
+      "workContextId": "wc_pipeline",
+      "authorSessionId": "s_sam_pipeline",
+      "kind": "observation",
+      "body": "The deploy job hangs at the migration step until its runner is recycled",
+      "status": "proposed",
+      "confidence": 0.7,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-07-27T12:05:00.000Z"
+    },
+    {
+      "id": "clm_pipe_old",
+      "workContextId": "wc_pipeline",
+      "authorSessionId": "s_sam_pipeline",
+      "kind": "root_cause",
+      "body": "The migration step waits on a lock held by the previous deploy",
+      "status": "likely_root_cause",
+      "confidence": 0.7,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_pipe_obs"],
+      "createdAt": "2026-07-28T12:00:00.000Z"
+    },
+    {
+      "id": "clm_pipe_new",
+      "workContextId": "wc_pipeline",
+      "authorSessionId": "s_sam_pipeline",
+      "kind": "root_cause",
+      "body": "Two replicas run the same migration concurrently and wedge each other",
+      "status": "likely_root_cause",
+      "confidence": 0.85,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_pipe_obs"],
+      "createdAt": "2026-07-31T12:00:00.000Z"
+    },
+    {
+      "id": "clm_exp_obs",
+      "workContextId": "wc_contra",
+      "authorSessionId": "s_sam_pipeline",
+      "kind": "observation",
+      "body": "Rows containing four-byte characters vanish from the nightly export",
+      "status": "proposed",
+      "confidence": 0.7,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-07-29T12:05:00.000Z"
+    },
+    {
+      "id": "clm_exp_sam",
+      "workContextId": "wc_contra",
+      "authorSessionId": "s_sam_pipeline",
+      "kind": "root_cause",
+      "body": "The export encoder truncates at a byte boundary inside multibyte characters",
+      "status": "likely_root_cause",
+      "confidence": 0.75,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_exp_obs"],
+      "createdAt": "2026-07-30T13:00:00.000Z"
+    },
+    {
+      "id": "clm_exp_robin",
+      "workContextId": "wc_contra",
+      "authorSessionId": "s_robin_pipeline",
+      "kind": "root_cause",
+      "body": "The truncation happens at ingestion, not in the encoder — the export is faithful to already-broken rows",
+      "status": "likely_root_cause",
+      "confidence": 0.75,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_exp_obs"],
+      "createdAt": "2026-07-31T13:00:00.000Z"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_pipe_super",
+      "fromClaimId": "clm_pipe_new",
+      "toClaimId": "clm_pipe_old",
+      "kind": "supersedes",
+      "authorSessionId": "s_sam_pipeline",
+      "createdAt": "2026-07-31T12:05:00.000Z"
+    },
+    {
+      "id": "edge_exp_contra",
+      "fromClaimId": "clm_exp_robin",
+      "toClaimId": "clm_exp_sam",
+      "kind": "contradicts",
+      "authorSessionId": "s_robin_pipeline",
+      "note": "ingestion-side truncation, not encoder-side",
+      "createdAt": "2026-07-31T13:05:00.000Z"
+    }
+  ],
+  "probes": [
+    {
+      "id": "pr_pipe_revision",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "deploy pipeline wedges on the migration step",
+      "expect": "substance",
+      "expectClaimId": "clm_pipe_new",
+      "expectContextId": "wc_pipeline",
+      "rationale": "A superseded theory is filtered hub-side (notSuperseded in services/hints.ts): the standing revision arrives under trust labels, never the theory its author retracted."
+    },
+    {
+      "id": "pr_contra_debatable",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "nightly export truncates unicode rows",
+      "expect": "substance",
+      "expectClaimId": "clm_exp_robin",
+      "expectContextId": "wc_contra",
+      "rationale": "DEBATABLE BY DESIGN: this tree is a live deadlock (two evidence-backed root causes joined by contradicts), correctly unsolved for ranking, yet the selector has no dispute gate and injects the newest side under full trust labels. Recorded as today's behavior, not endorsed — hint_deliveries telemetry from the trial decides whether a dispute gate earns its silence."
+    }
+  ]
+}

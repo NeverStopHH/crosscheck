@@ -1,0 +1,109 @@
+{
+  "id": "stale-vs-fresh",
+  "summary": "Two contexts own the same file target with injectable partially_confirmed findings: one 65 days old, one from yesterday. Time decay (14-day half-life) must rank the fresh tree first, so its claim is the one that arrives. Both partially_confirmed on purpose: no solved floor interferes with the pure decay ordering.",
+  "sessions": [
+    {
+      "id": "s_priya_pool",
+      "developer": "Priya",
+      "branch": "fix/pool-batch",
+      "baseCommit": "c0ffee08",
+      "status": "analyzing",
+      "ended": true
+    },
+    {
+      "id": "s_noah_pool",
+      "developer": "Noah",
+      "branch": "fix/pool-workers",
+      "baseCommit": "c0ffee09",
+      "status": "analyzing"
+    }
+  ],
+  "workContexts": [
+    {
+      "id": "wc_pool_stale",
+      "sessionId": "s_priya_pool",
+      "title": "Connection pool exhaustion during the batch window",
+      "status": "analyzing",
+      "createdAt": "2026-05-28T12:00:00.000Z",
+      "updatedAt": "2026-05-28T14:00:00.000Z"
+    },
+    {
+      "id": "wc_pool_fresh",
+      "sessionId": "s_noah_pool",
+      "title": "Connection pool exhaustion returns under morning traffic",
+      "status": "analyzing",
+      "createdAt": "2026-07-31T12:00:00.000Z",
+      "updatedAt": "2026-07-31T15:00:00.000Z"
+    }
+  ],
+  "targets": [
+    { "workContextId": "wc_pool_stale", "kind": "file", "value": "src/db/pool.ts" },
+    { "workContextId": "wc_pool_fresh", "kind": "file", "value": "src/db/pool.ts" }
+  ],
+  "claims": [
+    {
+      "id": "clm_pool_stale_obs",
+      "workContextId": "wc_pool_stale",
+      "authorSessionId": "s_priya_pool",
+      "kind": "observation",
+      "body": "Acquiring a connection times out while the batch import is active",
+      "status": "proposed",
+      "confidence": 0.6,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-05-28T12:05:00.000Z"
+    },
+    {
+      "id": "clm_pool_stale_find",
+      "workContextId": "wc_pool_stale",
+      "authorSessionId": "s_priya_pool",
+      "kind": "hypothesis",
+      "body": "Pool connections are checked out by the batch import and never returned",
+      "status": "partially_confirmed",
+      "confidence": 0.7,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_pool_stale_obs"],
+      "createdAt": "2026-05-28T14:00:00.000Z"
+    },
+    {
+      "id": "clm_pool_fresh_obs",
+      "workContextId": "wc_pool_fresh",
+      "authorSessionId": "s_noah_pool",
+      "kind": "observation",
+      "body": "Connection acquisition stalls every weekday around nine",
+      "status": "proposed",
+      "confidence": 0.6,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-07-31T12:05:00.000Z"
+    },
+    {
+      "id": "clm_pool_fresh_find",
+      "workContextId": "wc_pool_fresh",
+      "authorSessionId": "s_noah_pool",
+      "kind": "hypothesis",
+      "body": "The pool cap is sized for one worker but four workers share it since the split",
+      "status": "partially_confirmed",
+      "confidence": 0.7,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_pool_fresh_obs"],
+      "createdAt": "2026-07-31T15:00:00.000Z"
+    }
+  ],
+  "probes": [
+    {
+      "id": "pr_pool_fresh_wins",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "connection pool exhaustion in src/db/pool.ts",
+      "expect": "substance",
+      "expectClaimId": "clm_pool_fresh_find",
+      "expectContextId": "wc_pool_fresh",
+      "rationale": "Stale-vs-fresh ranking (DESIGN.md 5): both trees are injectable and own the exact target, and the 14-day half-life decay ranks yesterday's tree above the 65-day one, so the fresh finding is what arrives."
+    }
+  ]
+}

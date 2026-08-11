@@ -1,0 +1,74 @@
+{
+  "id": "optout-author",
+  "summary": "Quinn opted out of presence. Published knowledge still hints (opt-out is not retraction), but the tripwire — a live-presence surface — must stay silent about Quinn's active session.",
+  "sessions": [
+    {
+      "id": "s_quinn_flags",
+      "developer": "Quinn",
+      "branch": "fix/flag-expiry",
+      "baseCommit": "c0ffee05",
+      "status": "analyzing"
+    }
+  ],
+  "workContexts": [
+    {
+      "id": "wc_flags",
+      "sessionId": "s_quinn_flags",
+      "title": "Feature flag cache keeps serving stale variants",
+      "status": "analyzing",
+      "createdAt": "2026-08-01T00:00:00.000Z",
+      "updatedAt": "2026-08-01T05:00:00.000Z"
+    }
+  ],
+  "targets": [
+    { "workContextId": "wc_flags", "kind": "file", "value": "src/flags/cache.ts" }
+  ],
+  "claims": [
+    {
+      "id": "clm_fl_obs",
+      "workContextId": "wc_flags",
+      "authorSessionId": "s_quinn_flags",
+      "kind": "observation",
+      "body": "Stale flag variants keep serving hours after an update",
+      "status": "proposed",
+      "confidence": 0.7,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-08-01T00:05:00.000Z"
+    },
+    {
+      "id": "clm_fl_root",
+      "workContextId": "wc_flags",
+      "authorSessionId": "s_quinn_flags",
+      "kind": "root_cause",
+      "body": "Variant cache entries are written without an expiry so updates never propagate",
+      "status": "likely_root_cause",
+      "confidence": 0.75,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_fl_obs"],
+      "createdAt": "2026-08-01T05:00:00.000Z"
+    }
+  ],
+  "probes": [
+    {
+      "id": "pr_flags_optout_hint",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "feature flag cache serving stale variants",
+      "expect": "substance",
+      "expectClaimId": "clm_fl_root",
+      "expectContextId": "wc_flags",
+      "rationale": "Presence opt-out hides the surveillance surfaces, never published knowledge (DESIGN.md 2.1, services/visibility.ts): the evidence-backed claim still hints, attributed to its author."
+    },
+    {
+      "id": "pr_flags_optout_tripwire",
+      "kind": "file-touch",
+      "reader": "Riley",
+      "file": "src/flags/cache.ts",
+      "expect": "silence",
+      "rationale": "The tripwire IS a live-presence surface: an opted-out developer's active session must never trigger asks about them (visiblePresenceCondition in the tripwire WHERE)."
+    }
+  ]
+}

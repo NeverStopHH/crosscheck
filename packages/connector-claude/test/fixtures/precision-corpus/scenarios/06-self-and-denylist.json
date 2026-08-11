@@ -1,0 +1,95 @@
+{
+  "id": "self-and-denylist",
+  "summary": "Riley's own parallel session must never hint or tripwire Riley (self-exclusion), and a denylisted hot file stays silent on the reader side even though a teammate context targets it server-side (as a legacy or hostile connector could plant).",
+  "sessions": [
+    {
+      "id": "s_riley_pay",
+      "developer": "Riley",
+      "branch": "fix/double-capture",
+      "baseCommit": "c0ffee06",
+      "status": "implementing"
+    },
+    {
+      "id": "s_sam_lock",
+      "developer": "Sam",
+      "branch": "chore/vendored-deps",
+      "baseCommit": "c0ffee07",
+      "status": "analyzing"
+    }
+  ],
+  "workContexts": [
+    {
+      "id": "wc_pay",
+      "sessionId": "s_riley_pay",
+      "title": "Payment capture retries double charge the ledger",
+      "status": "analyzing",
+      "createdAt": "2026-08-01T03:00:00.000Z",
+      "updatedAt": "2026-08-01T03:30:00.000Z"
+    },
+    {
+      "id": "wc_lock",
+      "sessionId": "s_sam_lock",
+      "title": "Vendored dependency lockfile churn",
+      "status": "analyzing",
+      "createdAt": "2026-07-29T12:00:00.000Z"
+    }
+  ],
+  "targets": [
+    { "workContextId": "wc_pay", "kind": "file", "value": "src/pay/checkout.ts" },
+    { "workContextId": "wc_lock", "kind": "file", "value": "bun.lock" }
+  ],
+  "claims": [
+    {
+      "id": "clm_pay_obs",
+      "workContextId": "wc_pay",
+      "authorSessionId": "s_riley_pay",
+      "kind": "observation",
+      "body": "A retried capture posts the same charge twice to the ledger",
+      "status": "proposed",
+      "confidence": 0.7,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-08-01T03:05:00.000Z"
+    },
+    {
+      "id": "clm_pay_root",
+      "workContextId": "wc_pay",
+      "authorSessionId": "s_riley_pay",
+      "kind": "root_cause",
+      "body": "The capture retry path skips the idempotency check that the first attempt performs",
+      "status": "likely_root_cause",
+      "confidence": 0.8,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_pay_obs"],
+      "createdAt": "2026-08-01T03:30:00.000Z"
+    }
+  ],
+  "probes": [
+    {
+      "id": "pr_pay_self_prompt",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "payment capture retries double charging the ledger",
+      "expect": "silence",
+      "rationale": "Self-exclusion on the prompt path: the reader's own parallel-session context is excluded inside the hub's search WHERE, so their own evidence-backed finding never comes back at them as a hint."
+    },
+    {
+      "id": "pr_pay_self_tripwire",
+      "kind": "file-touch",
+      "reader": "Riley",
+      "file": "src/pay/checkout.ts",
+      "expect": "silence",
+      "rationale": "Self-session exclusion (DESIGN.md 4): a developer's own sessions and worktrees never trip their own wire — the exclusion is the hub's developer-id filter, not client-side."
+    },
+    {
+      "id": "pr_lock_denylist",
+      "kind": "file-touch",
+      "reader": "Riley",
+      "file": "bun.lock",
+      "expect": "silence",
+      "rationale": "Hot-file denylist: bun.lock matches **/*.lock, so the hook stays silent before any hub call — even though a teammate context really targets it hub-side, planted here exactly to prove the reader-side gate is what silences it."
+    }
+  ]
+}
