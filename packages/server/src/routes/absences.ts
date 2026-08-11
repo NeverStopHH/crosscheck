@@ -22,7 +22,11 @@ export const absencesRoutes = (deps: AppDeps): Hono<AppEnv> => {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
 
-    const absences = await listAbsences(deps, parsed.data.repo);
+    const absences = await listAbsences(
+      deps,
+      c.get("developer").id,
+      parsed.data.repo,
+    );
     return ok(c, { absences });
   });
 

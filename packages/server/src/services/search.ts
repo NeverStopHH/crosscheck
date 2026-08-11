@@ -40,6 +40,7 @@ import {
   workContexts,
 } from "../db/schema.ts";
 import { listSolvedInfo } from "./solved.ts";
+import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
 import type { Clock } from "../types.ts";
@@ -207,6 +208,12 @@ export interface SearchQuery {
    * own work); the hints endpoint passes the caller.
    */
   readonly excludeDeveloperId?: string | undefined;
+  /**
+   * Excludes contexts whose owner THIS developer has muted (visibility.ts).
+   * Only the hints endpoint passes it — the search route is a deliberate
+   * pull, and mute controls the unasked surfaces, never the pull.
+   */
+  readonly excludeMutedForDeveloperId?: string | undefined;
   readonly limit: number;
 }
 
@@ -257,6 +264,7 @@ interface TierRow {
 interface SearchScope {
   readonly repo: string | undefined;
   readonly excludeDeveloperId: string | undefined;
+  readonly excludeMutedForDeveloperId: string | undefined;
 }
 
 const scopeCondition = (scope: SearchScope) =>
@@ -265,6 +273,12 @@ const scopeCondition = (scope: SearchScope) =>
     scope.excludeDeveloperId === undefined
       ? undefined
       : ne(agentSessions.developerId, scope.excludeDeveloperId),
+    scope.excludeMutedForDeveloperId === undefined
+      ? undefined
+      : notMutedCondition(
+          scope.excludeMutedForDeveloperId,
+          agentSessions.developerId,
+        ),
   );
 
 const activityDesc = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) DESC`;
@@ -591,6 +605,7 @@ export const searchWorkContexts = async (
   const scope: SearchScope = {
     repo: input.repo,
     excludeDeveloperId: input.excludeDeveloperId,
+    excludeMutedForDeveloperId: input.excludeMutedForDeveloperId,
   };
 
   // A blank query asks "what is happening" — answered by recency alone. The

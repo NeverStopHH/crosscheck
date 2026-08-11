@@ -4,6 +4,7 @@ import { runDoctor } from "./doctor.ts";
 import { runInit } from "./init.ts";
 import { readSecretFromStdin, runLogin } from "./login.ts";
 import type { CliResult, SecretReader } from "./login.ts";
+import { runMute, runPresence, runUnmute } from "./privacy.ts";
 import { runStatus } from "./status.ts";
 
 export type { CliResult, SecretReader } from "./login.ts";
@@ -16,6 +17,9 @@ const USAGE = [
   "  init [--command-prefix <p>] [--hub <url>] [--force-statusline]",
   "  status                    hub, repo, teammates, spool, last sync",
   "  doctor                    diagnose the local install",
+  "  presence [off|on]         hide/show your live presence to teammates",
+  "  mute <developer>          stop seeing hints/pointers about them (mute list to review)",
+  "  unmute <developer>        see their hints/pointers again",
   "  statusline                one presence line (reads session json on stdin)",
   "  hook <name>               session-start | post-tool-use | session-end",
   "  mcp                       run the mcp tool server on stdio (the agent starts it)",
@@ -38,6 +42,12 @@ export const runCli = async (
       return runStatus(env, cwd);
     case "doctor":
       return runDoctor(env, cwd);
+    case "presence":
+      return runPresence(rest, env, cwd);
+    case "mute":
+      return runMute(rest, env, cwd);
+    case "unmute":
+      return runUnmute(rest, env, cwd);
     default:
       return { stdout: USAGE, exitCode: EXIT_USAGE };
   }

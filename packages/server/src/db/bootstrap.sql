@@ -209,3 +209,22 @@ CREATE TABLE IF NOT EXISTS commit_evidence (
   reported_by text NOT NULL REFERENCES developers(id),
   PRIMARY KEY (repo, author_email)
 );
+
+-- ── Presence opt-out + mute (DESIGN.md §2.1, §10 risk 3) ────────────────────
+
+-- Presence opt-out: while true, this developer's LIVE presence is hidden from
+-- every OTHER developer's reads (services/visibility.ts names the surfaces).
+-- ALTER so one statement covers fresh databases and ones created before the
+-- column existed. Published knowledge is deliberately NOT touched by it.
+ALTER TABLE developers ADD COLUMN IF NOT EXISTS presence_opt_out boolean NOT NULL DEFAULT false;
+
+-- Reader-side mutes: one row per (reader, muted) pair, filtering the READER's
+-- unasked surfaces only. Hub-side so a mute follows the reader across
+-- machines; bounded per reader by MAX_MUTES_PER_READER at write time
+-- (services/developer-settings.ts).
+CREATE TABLE IF NOT EXISTS developer_mutes (
+  reader_developer_id text NOT NULL REFERENCES developers(id),
+  muted_developer_id text NOT NULL REFERENCES developers(id),
+  created_at timestamptz NOT NULL,
+  PRIMARY KEY (reader_developer_id, muted_developer_id)
+);

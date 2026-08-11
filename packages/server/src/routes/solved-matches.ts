@@ -22,7 +22,11 @@ export const solvedMatchesRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const matches = await listSolvedMatches(deps, parsed.data.repo);
+    const matches = await listSolvedMatches(
+      deps,
+      c.get("developer").id,
+      parsed.data.repo,
+    );
     return ok(c, { matches });
   });
 

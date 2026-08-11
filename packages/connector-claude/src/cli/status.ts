@@ -4,7 +4,8 @@ import { repoKey } from "../config/paths.ts";
 import type { Env } from "../config/paths.ts";
 import { formatAbsenceLine, formatAge } from "../briefing/render.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
-import { getAbsences, getPresence } from "../http/hub.ts";
+import { getAbsences, getPresence, getPrivacySettings } from "../http/hub.ts";
+import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
 import { spoolDepth } from "../spool/files.ts";
 import { readSyncState } from "../state/sync-state.ts";
@@ -61,6 +62,20 @@ export const runStatus = async (
   // state the same facts the same way. A hub without the endpoint (or any
   // failure) simply prints no section — same fail-open as the briefing.
   const absences = await getAbsences(hubCtx, identity.repoId);
+  // Own privacy state (DESIGN.md §2.1) — so "why can't anyone see me" and
+  // "why do I never see Robin" are answered here instead of chasing ghosts.
+  // An older hub without the endpoint prints no lines, same fail-open.
+  const privacy = await getPrivacySettings(hubCtx);
+  const privacyLines = privacy.ok
+    ? [
+        presenceStateLine(privacy.data.presenceOptOut),
+        `muted: ${
+          privacy.data.mutes.length === 0
+            ? "(none)"
+            : privacy.data.mutes.map((mute) => mute.name).join(", ")
+        }`,
+      ]
+    : [];
   const absenceLines = (absences.ok ? absences.data : [])
     .slice(0, STATUS_MAX_ABSENCE_LINES)
     .flatMap((entry) => {
@@ -79,6 +94,7 @@ export const runStatus = async (
       `hub: ${config.hubUrl}`,
       `repo: ${identity.repoId} (${identity.branch})`,
       `developer: ${config.developerName ?? "unknown"} (${config.developerId ?? "unknown"})`,
+      ...privacyLines,
       "teammates:",
       ...(teammates.length === 0 ? ["  (none)"] : teammates),
       ...(absenceLines.length === 0

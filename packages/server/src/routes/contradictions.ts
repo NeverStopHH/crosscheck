@@ -36,7 +36,10 @@ export const contradictionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const candidates = await listContradictions(deps.db, parsed.data);
+    const candidates = await listContradictions(deps.db, {
+      ...parsed.data,
+      excludeMutedForDeveloperId: c.get("developer").id,
+    });
     return ok(c, { candidates });
   });
 

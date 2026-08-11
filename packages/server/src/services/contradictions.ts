@@ -50,6 +50,7 @@ import {
   workContextTargets,
 } from "../db/schema.ts";
 import { OPEN_THEORY_STATUSES } from "./similarity-gate.ts";
+import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 
 export const CONTRADICTIONS_DEFAULT_LIMIT = 50;
@@ -164,11 +165,29 @@ const repoTouchCondition = (
                 WHERE wc.id = ${sideB.workContextId} AND s.repo = ${repo})
       )`;
 
+/**
+ * The viewer's mute filter for one pair: a pointer names BOTH authors, so a
+ * pair leaves the listing when either side's developer is muted. Undefined
+ * (the brief resolver's path) filters nothing — mute is not a boundary.
+ */
+const bothSidesUnmuted = (
+  excludeMutedForDeveloperId: string | undefined,
+  sideADeveloperId: PgColumn,
+  sideBDeveloperId: PgColumn,
+) =>
+  excludeMutedForDeveloperId === undefined
+    ? undefined
+    : and(
+        notMutedCondition(excludeMutedForDeveloperId, sideADeveloperId),
+        notMutedCondition(excludeMutedForDeveloperId, sideBDeveloperId),
+      );
+
 const listStoredCandidates = async (
   db: Db,
   repo: string | undefined,
   limit: number,
   includeRetired: boolean,
+  excludeMutedForDeveloperId: string | undefined,
 ): Promise<readonly ContradictionView[]> => {
   const claimsA = alias(claims, "stored_a");
   const claimsB = alias(claims, "stored_b");
@@ -202,6 +221,11 @@ const listStoredCandidates = async (
     .where(
       and(
         repoTouchCondition(repo, claimsA, claimsB),
+        bothSidesUnmuted(
+          excludeMutedForDeveloperId,
+          sessionsA.developerId,
+          sessionsB.developerId,
+        ),
         ...(includeRetired
           ? []
           : [sideIsLive(db, claimsA), sideIsLive(db, claimsB)]),
@@ -237,6 +261,7 @@ const listDerivedCandidates = async (
   repo: string | undefined,
   limit: number,
   includeRetired: boolean,
+  excludeMutedForDeveloperId: string | undefined,
 ): Promise<readonly ContradictionView[]> => {
   const openSide = alias(claims, "open_side");
   const rejectedSide = alias(claims, "rejected_side");
@@ -310,6 +335,11 @@ const listDerivedCandidates = async (
         // belongs to the derived join only.
         ne(sessionsOpen.developerId, sessionsRejected.developerId),
         repoTouchCondition(repo, openSide, rejectedSide),
+        bothSidesUnmuted(
+          excludeMutedForDeveloperId,
+          sessionsOpen.developerId,
+          sessionsRejected.developerId,
+        ),
         ...(includeRetired
           ? []
           : [sideIsLive(db, openSide), sideIsLive(db, rejectedSide)]),
@@ -356,6 +386,13 @@ export interface ListContradictionsInput {
    * resolver must still find them to say the deadlock is over (referee.ts).
    */
   readonly includeRetired?: boolean;
+  /**
+   * Drop pairs naming a developer THIS reader muted (visibility.ts). The
+   * listing route passes the caller — its rows are briefing pointers, an
+   * unasked surface. findContradictionById never passes it: the brief is a
+   * deliberate pull by id, and mute is not a boundary.
+   */
+  readonly excludeMutedForDeveloperId?: string | undefined;
 }
 
 export const listContradictions = async (
@@ -365,8 +402,20 @@ export const listContradictions = async (
   const limit = Math.min(Math.max(1, input.limit), CONTRADICTIONS_MAX_LIMIT);
   const includeRetired = input.includeRetired === true;
   const [stored, derived] = await Promise.all([
-    listStoredCandidates(db, input.repo, limit, includeRetired),
-    listDerivedCandidates(db, input.repo, limit, includeRetired),
+    listStoredCandidates(
+      db,
+      input.repo,
+      limit,
+      includeRetired,
+      input.excludeMutedForDeveloperId,
+    ),
+    listDerivedCandidates(
+      db,
+      input.repo,
+      limit,
+      includeRetired,
+      input.excludeMutedForDeveloperId,
+    ),
   ]);
   const seen = new Set<string>();
   const merged: ContradictionView[] = [];

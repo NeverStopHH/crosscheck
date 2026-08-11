@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigserial,
+  boolean,
   check,
   customType,
   doublePrecision,
@@ -45,8 +46,38 @@ export const developers = pgTable("developers", {
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   apiKeyHash: text("api_key_hash").notNull().unique(),
+  /**
+   * Presence opt-out (DESIGN.md §2.1, §10 risk 3): while true, this
+   * developer's LIVE presence is hidden from every OTHER developer's reads —
+   * services/visibility.ts names the exact surfaces. A column rather than a
+   * settings table: it is one boolean per developer, and the developer row is
+   * already read on every authenticated request.
+   */
+  presenceOptOut: boolean("presence_opt_out").notNull().default(false),
   createdAt: timestamptz("created_at").notNull().defaultNow(),
 });
+
+/**
+ * Reader-side mutes (DESIGN.md §2.1): "I do not want hints/pointers about
+ * developer X" — one row per (reader, muted) pair, filtering the READER's
+ * unasked surfaces only (services/visibility.ts). Hub-side rather than in the
+ * reader's local config so the mute follows the reader across machines.
+ */
+export const developerMutes = pgTable(
+  "developer_mutes",
+  {
+    readerDeveloperId: text("reader_developer_id")
+      .notNull()
+      .references(() => developers.id),
+    mutedDeveloperId: text("muted_developer_id")
+      .notNull()
+      .references(() => developers.id),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.readerDeveloperId, table.mutedDeveloperId] }),
+  ],
+);
 
 export const agentSessions = pgTable(
   "agent_sessions",

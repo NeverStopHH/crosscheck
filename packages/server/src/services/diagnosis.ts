@@ -1,4 +1,4 @@
-import { asc, count, desc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, or } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -8,6 +8,7 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
+import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 
 /** Upper bound on claims returned per diagnosis tree; excess sets `truncated`. */
@@ -194,6 +195,7 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
 
 export const listWorkContextsByRepo = async (
   db: Db,
+  viewerDeveloperId: string,
   repo: string,
 ): Promise<readonly WorkContextListEntry[]> => {
   const rows = await db
@@ -208,7 +210,16 @@ export const listWorkContextsByRepo = async (
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
     .leftJoin(claims, eq(claims.workContextId, workContexts.id))
-    .where(eq(agentSessions.repo, repo))
+    // The viewer's mutes apply — this listing feeds the briefing's related-
+    // work pointers (an unasked surface). Opt-out does NOT: these rows are
+    // published knowledge, not live presence (services/visibility.ts). The
+    // by-id diagnosis read below stays unfiltered — that is the pull.
+    .where(
+      and(
+        eq(agentSessions.repo, repo),
+        notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+      ),
+    )
     .groupBy(
       workContexts.id,
       agentSessions.developerId,

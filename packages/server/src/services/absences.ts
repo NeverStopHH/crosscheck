@@ -8,6 +8,7 @@ import {
   ABSENCE_MIN_GAP_HOURS,
 } from "../constants.ts";
 import { agentSessions, commitEvidence, developers } from "../db/schema.ts";
+import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -91,11 +92,14 @@ const lastSessionByDeveloper = async (
  * this is a surveillance-adjacent surface, renderers must keep the phrasing
  * factual).
  *
- * OPEN ITEM, deliberately not invented here: presence visibility opt-out is a
- * v0.5 requirement (DESIGN.md §10 risk 3) and has no data model yet — there is
- * no developers column to respect. When it lands, a developer who opts out of
- * presence must be excluded from `inactive` findings too, since both surfaces
- * report the same person's activity to teammates.
+ * PRIVACY (DESIGN.md §10 risk 3, services/visibility.ts): `inactive` findings
+ * report the same person's activity presence does, so an opted-out member is
+ * excluded from every viewer's findings but their own, and a member the
+ * VIEWER muted is excluded from that viewer's. Both conditions sit in the
+ * evidence query's WHERE — after the LIMIT they could crowd includable rows
+ * out of the bound. `unconnected` rows are exempt by construction: they exist
+ * precisely because no developer row matches, so there is nobody whose
+ * setting could apply.
  *
  * Every bound is a named constant: evidence read LIMIT, per-response finding
  * cap, evidence staleness cutoff, commit-age cutoff, and the grace gap that
@@ -103,6 +107,7 @@ const lastSessionByDeveloper = async (
  */
 export const listAbsences = async (
   deps: Deps,
+  viewerDeveloperId: string,
   repo: string,
 ): Promise<readonly AbsenceFinding[]> => {
   const now = deps.now();
@@ -130,6 +135,9 @@ export const listAbsences = async (
         eq(commitEvidence.repo, repo),
         gte(commitEvidence.collectedAt, evidenceCutoff),
         gte(commitEvidence.latestCommitAt, commitCutoff),
+        // Privacy (header): matched members respect opt-out and the viewer's
+        // mutes; unmatched rows (developers.id NULL) have no subject to check.
+        sql`(${developers.id} IS NULL OR (${visiblePresenceCondition(viewerDeveloperId, developers.id)} AND ${notMutedCondition(viewerDeveloperId, developers.id)}))`,
       ),
     )
     .orderBy(desc(commitEvidence.latestCommitAt))

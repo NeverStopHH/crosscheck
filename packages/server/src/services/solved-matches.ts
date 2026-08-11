@@ -25,6 +25,7 @@ import {
   workContextTargets,
 } from "../db/schema.ts";
 import { listSolvedInfo } from "./solved.ts";
+import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -63,6 +64,7 @@ interface PairRow {
  */
 const listSharedTargetPairs = async (
   deps: Deps,
+  viewerDeveloperId: string,
   repo: string,
 ): Promise<readonly PairRow[]> => {
   const liveTargets = alias(workContextTargets, "live_targets");
@@ -102,6 +104,11 @@ const listSharedTargetPairs = async (
           sql`coalesce(${liveContexts.updatedAt}, ${liveContexts.createdAt})`,
           cutoff,
         ),
+        // The viewer's mutes apply to the CANDIDATE side — the solved author
+        // this pointer would name in the briefing (services/visibility.ts).
+        // The live side is not filtered: it is never named in the pointer.
+        // Opt-out does not apply — a solved tree is published knowledge.
+        notMutedCondition(viewerDeveloperId, agentSessions.developerId),
       ),
     )
     // LIMIT without ORDER BY hands the planner the choice of WHICH pairs
@@ -163,9 +170,10 @@ const hydrateMatches = async (
  */
 export const listSolvedMatches = async (
   deps: Deps,
+  viewerDeveloperId: string,
   repo: string,
 ): Promise<readonly SolvedMatchView[]> => {
-  const pairs = await listSharedTargetPairs(deps, repo);
+  const pairs = await listSharedTargetPairs(deps, viewerDeveloperId, repo);
   if (pairs.length === 0) {
     return [];
   }

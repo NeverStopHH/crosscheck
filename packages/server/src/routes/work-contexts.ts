@@ -18,7 +18,11 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
 
-    const workContexts = await listWorkContextsByRepo(deps.db, parsed.data.repo);
+    const workContexts = await listWorkContextsByRepo(
+      deps.db,
+      c.get("developer").id,
+      parsed.data.repo,
+    );
     return ok(c, { workContexts });
   });
 

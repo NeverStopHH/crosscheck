@@ -62,7 +62,11 @@ export const eventsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
 
-    const eventPage = await listEventsAfter(deps.db, parsed.data);
+    const eventPage = await listEventsAfter(
+      deps.db,
+      c.get("developer").id,
+      parsed.data,
+    );
     return ok(c, { events: eventPage });
   });
 
@@ -73,7 +77,7 @@ export const eventsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         let cursor = parseEventCursor(c.req.header("Last-Event-ID"));
         let lastKeepAliveMs = deps.now().getTime();
         while (!stream.aborted) {
-          const batch = await listEventsAfter(deps.db, {
+          const batch = await listEventsAfter(deps.db, c.get("developer").id, {
             after: cursor,
             limit: EVENTS_MAX_LIMIT,
           });

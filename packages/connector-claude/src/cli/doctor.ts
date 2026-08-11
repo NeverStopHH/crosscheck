@@ -36,7 +36,7 @@ import { formatAge } from "../briefing/render.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
 import { hubRequest } from "../http/client.ts";
 import type { HubContext } from "../http/client.ts";
-import { getAbsences } from "../http/hub.ts";
+import { getAbsences, getPrivacySettings } from "../http/hub.ts";
 import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
 import { oldestSpoolLineMs, spoolDepth } from "../spool/files.ts";
 import { readLockHolder } from "../spool/lock.ts";
@@ -442,6 +442,29 @@ const checkAbsences = async (
   );
 };
 
+/**
+ * Own privacy state (DESIGN.md §2.1), counts only — names belong to
+ * `crosscheck status`. Always PASS: both states are deliberate choices, not
+ * defects; the check exists so "why does nobody see me" / "why do I never
+ * see them" is answered before anyone chases a connector ghost. "not
+ * measured" (an older hub, or unreachable) is a PASS for the same reason
+ * the absence check's is.
+ */
+const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
+  const result = await getPrivacySettings(ctx);
+  if (!result.ok) {
+    return check("PASS", "privacy settings", "not measured");
+  }
+  const presencePart = result.data.presenceOptOut
+    ? "presence hidden (opt-out)"
+    : "presence visible";
+  return check(
+    "PASS",
+    "privacy settings",
+    `${presencePart}, ${result.data.mutes.length} muted`,
+  );
+};
+
 /** A live session file plus a stale sync is exactly the silent-death signature. */
 const hasLiveSessionState = async (home: string): Promise<boolean> => {
   try {
@@ -562,6 +585,7 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
     ...(await checkSpool(config.home, key, now)),
     await checkLastSync(config.home, key, now),
     await checkAbsences(hubCtx, identity.repoId),
+    await checkPrivacy(hubCtx),
     skewCheck,
     bunfigCheck,
   ]);

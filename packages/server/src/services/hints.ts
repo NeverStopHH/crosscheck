@@ -36,6 +36,7 @@ import {
 } from "../db/schema.ts";
 import { presenceCutoff } from "./presence.ts";
 import { searchWorkContexts } from "./search.ts";
+import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import type { SearchResultKind, SearchTier } from "./search.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -141,6 +142,7 @@ const notSuperseded = (db: Db) =>
 
 const listClaimsForContext = async (
   db: Db,
+  readerDeveloperId: string,
   workContextId: string,
 ): Promise<readonly HintClaimCandidate[]> => {
   const rows = await db
@@ -152,7 +154,16 @@ const listClaimsForContext = async (
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
-    .where(and(eq(claims.workContextId, workContextId), notSuperseded(db)))
+    .where(
+      and(
+        eq(claims.workContextId, workContextId),
+        notSuperseded(db),
+        // In the WHERE, before the claim window: extend_diagnosis puts a
+        // muted author's claims inside an unmuted teammate's tree, and a
+        // hint must not carry them to this reader (services/visibility.ts).
+        notMutedCondition(readerDeveloperId, agentSessions.developerId),
+      ),
+    )
     .orderBy(desc(claims.createdAt))
     .limit(HINT_MAX_CLAIMS_PER_CONTEXT);
   return rows.map((row) => ({
@@ -179,10 +190,13 @@ const listClaimsForContext = async (
  */
 const listContextClaims = async (
   db: Db,
+  readerDeveloperId: string,
   workContextIds: readonly string[],
 ): Promise<ReadonlyMap<string, readonly HintClaimCandidate[]>> => {
   const lists = await Promise.all(
-    workContextIds.map((id) => listClaimsForContext(db, id)),
+    workContextIds.map((id) =>
+      listClaimsForContext(db, readerDeveloperId, id),
+    ),
   );
   return new Map(workContextIds.map((id, index) => [id, lists[index] ?? []]));
 };
@@ -224,6 +238,10 @@ export const listHintCandidates = async (
       // In the search's own WHERE, before its bounds — a busy caller's own
       // contexts must not crowd teammates out of the pool (SEARCH_POOL_LIMIT).
       excludeDeveloperId: callerDeveloperId,
+      // Same WHERE-not-after-the-bound rule for the caller's mutes: this is
+      // the UserPromptSubmit injection path, a muted developer's contexts
+      // must neither surface nor crowd (services/visibility.ts).
+      excludeMutedForDeveloperId: callerDeveloperId,
       limit: SEARCH_POOL_LIMIT,
     },
   );
@@ -234,7 +252,7 @@ export const listHintCandidates = async (
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = eligible.map((row) => row.id);
   const [claimsByContext, baseCommits] = await Promise.all([
-    listContextClaims(deps.db, ids),
+    listContextClaims(deps.db, callerDeveloperId, ids),
     listBaseCommits(deps.db, ids),
   ]);
   return eligible.map((row) => ({
@@ -304,6 +322,11 @@ export const listTargetSessions = async (
         ne(agentSessions.developerId, callerDeveloperId),
         isNull(agentSessions.endedAt),
         gt(agentSessions.lastHeartbeatAt, cutoff),
+        // Privacy filters (services/visibility.ts): an opted-out developer's
+        // sessions must never trigger asks on teammates, and a developer the
+        // CALLER muted must not interrupt this caller.
+        visiblePresenceCondition(callerDeveloperId, agentSessions.developerId),
+        notMutedCondition(callerDeveloperId, agentSessions.developerId),
       ),
     )
     .limit(TRIPWIRE_MAX_SESSIONS);

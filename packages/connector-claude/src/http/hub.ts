@@ -694,6 +694,92 @@ export const getRefereeBrief = (
     schema: RefereeBriefEnvelopeSchema,
   });
 
+/** One muted developer as the settings endpoint names them. */
+export const MutedDeveloperSchema = z.looseObject({
+  id: z.string().min(1),
+  name: z.string().min(1),
+});
+
+export type MutedDeveloper = z.infer<typeof MutedDeveloperSchema>;
+
+/**
+ * The developer's OWN privacy settings (DESIGN.md §2.1): presence opt-out +
+ * mute list. Mutes are tolerant rows — one malformed entry must not cost the
+ * whole settings read that status/doctor depend on.
+ */
+export const PrivacySettingsSchema = z
+  .looseObject({
+    presenceOptOut: z.boolean(),
+    mutes: z.array(z.unknown()).default([]),
+  })
+  .transform((value) => ({
+    presenceOptOut: value.presenceOptOut,
+    mutes: value.mutes
+      .map((item) => MutedDeveloperSchema.safeParse(item))
+      .filter((parsed) => parsed.success)
+      .map((parsed) => parsed.data),
+  }));
+
+export interface PrivacySettings {
+  readonly presenceOptOut: boolean;
+  readonly mutes: readonly MutedDeveloper[];
+}
+
+export const getPrivacySettings = (
+  ctx: HubContext,
+): Promise<HubResult<PrivacySettings>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/settings",
+    schema: PrivacySettingsSchema,
+  });
+
+export const putPresenceOptOut = (
+  ctx: HubContext,
+  optOut: boolean,
+): Promise<HubResult<unknown>> =>
+  hubRequest(ctx, {
+    method: "PUT",
+    path: "/api/settings/presence",
+    schema: z.unknown(),
+    body: { optOut },
+  });
+
+const MuteResponseSchema = z.looseObject({
+  muted: MutedDeveloperSchema,
+  alreadyMuted: z.boolean().default(false),
+});
+
+export type MuteResponse = z.infer<typeof MuteResponseSchema>;
+
+export const postMute = (
+  ctx: HubContext,
+  developerRef: string,
+): Promise<HubResult<MuteResponse>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/settings/mutes",
+    schema: MuteResponseSchema,
+    body: { developer: developerRef },
+  });
+
+const UnmuteResponseSchema = z.looseObject({
+  unmuted: MutedDeveloperSchema,
+  wasMuted: z.boolean().default(true),
+});
+
+export type UnmuteResponse = z.infer<typeof UnmuteResponseSchema>;
+
+export const deleteMute = (
+  ctx: HubContext,
+  developerRef: string,
+): Promise<HubResult<UnmuteResponse>> =>
+  hubRequest(ctx, {
+    method: "DELETE",
+    path: `/api/settings/mutes/${encodeURIComponent(developerRef)}`,
+    schema: UnmuteResponseSchema,
+  });
+
 export const TripwireSessionSchema = z.looseObject({
   sessionId: z.string().min(1),
   developerId: z.string().min(1),
