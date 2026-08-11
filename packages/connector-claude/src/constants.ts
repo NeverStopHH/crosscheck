@@ -272,9 +272,11 @@ export const STALENESS_MAX_PATHS = 20;
  */
 export const MAX_SOLVED_POINTERS = 2;
 /**
- * FIFO cap on the remembered briefing pointers (state/session-state.ts):
- * SessionStart re-fires with the same session id on resume/clear, so the
- * list grows across fires — bounded like its sibling state lists.
+ * FIFO cap on the remembered briefing pointers (state/session-state.ts).
+ * Defensive: one SessionStart fire appends at most MAX_SOLVED_POINTERS, and
+ * a re-fire re-creates the state file fresh (hooks/session-start.ts), so the
+ * list never accumulates across fires — the cap bounds it like its sibling
+ * state lists so no future second writer can grow it unbounded.
  */
 export const MAX_BRIEFING_SOLVED_REFS = 20;
 /** Solved ages render as days up to here, months beyond ("diagnosed 5mo ago"). */

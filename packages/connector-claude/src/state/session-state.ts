@@ -175,10 +175,14 @@ export const withDeliveredHint = (
 });
 
 /**
- * Briefing solved pointers, appended at SessionStart — which re-fires with
- * the SAME session id on resume/clear, so one briefing's MAX_SOLVED_POINTERS
- * is not this list's bound. Deduplicated (a re-pointed tree is one fact) and
- * FIFO-capped like the sibling lists above.
+ * Briefing solved pointers, appended once per SessionStart fire. PER-FIRE,
+ * not cumulative: a re-fire (resume/clear, same session id) re-CREATES the
+ * state file with the schema defaults (hooks/session-start.ts
+ * writeSessionState) — this list starts empty again, exactly like
+ * deliveredHintRefs and the session cap beside it, and is repopulated with
+ * what THAT fire's briefing showed. Dedup (a re-pointed tree is one fact)
+ * and the FIFO cap are the transform's own defensive bounds, the
+ * withSeenTargets shape — not cross-fire bookkeeping.
  */
 export const withBriefingSolvedRefs = (
   state: SessionState,

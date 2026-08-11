@@ -26,14 +26,17 @@ import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
 /**
  * Tiers where the prompt provably matched — recency/vector filler never hints.
  * The hub applies the same floor server-side (HINT_ELIGIBLE_TIERS in
- * packages/server/src/services/hints.ts); the two literals sit on opposite
- * sides of an HTTP boundary where an import cannot reach, so their equality
- * is pinned rather than assumed — silent drift would move the floor to
- * whichever side is looser:
+ * packages/server/src/services/hints.ts), and search ranking draws the same
+ * "match is a fact" line (SOLVED_FLOOR_TIERS in
+ * packages/server/src/services/search.ts). This copy sits across an HTTP
+ * boundary no import can reach and search.ts keeps its own unexported, so
+ * the three literals' equality is pinned rather than assumed — silent drift
+ * would move the floor to whichever copy is loosest:
  *
- * VERIFY: grep -c '\["exact", "fts"\]' packages/connector-claude/src/hints/select.ts packages/server/src/services/hints.ts
+ * VERIFY: grep -c '\["exact", "fts"\]' packages/connector-claude/src/hints/select.ts packages/server/src/services/hints.ts packages/server/src/services/search.ts
  * PRINTS: packages/connector-claude/src/hints/select.ts:1
  * PRINTS: packages/server/src/services/hints.ts:1
+ * PRINTS: packages/server/src/services/search.ts:1
  */
 const HINT_ELIGIBLE_TIERS: ReadonlySet<string> = new Set(["exact", "fts"]);
 
@@ -84,9 +87,15 @@ const isSettled = (claim: HintClaimCandidate): boolean =>
  * "appear only as pull-able pointers") — a summarizer's guess must not be
  * proactively injected into a teammate's context under trust labels, whatever
  * status or evidence count it carries.
+ *
+ * Positive equality, not `!== "derived"`: the boundary schema admits any
+ * non-empty provenance string (http/hub.ts z.string().min(1)), and an unknown
+ * value is one nobody vouched for — it stays out (fail closed), the same
+ * direction as DECLARED_PROVENANCE on the hub's contradiction surfaces
+ * (packages/server/src/services/similarity-gate.ts).
  */
 const isDeclared = (claim: HintClaimCandidate): boolean =>
-  claim.provenance !== "derived";
+  claim.provenance === "declared";
 
 /** The asymmetry, in one predicate: provenance and evidence first, then kind or status. */
 const isInjectable = (claim: HintClaimCandidate): boolean =>

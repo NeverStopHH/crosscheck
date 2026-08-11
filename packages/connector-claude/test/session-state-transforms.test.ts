@@ -1,9 +1,10 @@
 /**
  * The pure session-state transforms: every remembered list is bounded and
  * duplicate-free where its consumer assumes so. briefingSolvedRefs seeds the
- * prompt path's seen-set on every resume — SessionStart re-fires with the
- * SAME session id on resume/clear, so the transform, not the caller, owns
- * dedup and the FIFO cap (the withSeenTargets shape).
+ * prompt path's seen-set (hooks/user-prompt-submit.ts); the list is per-fire
+ * — a SessionStart re-fire re-creates the state file fresh — so the
+ * transform, not the caller, owns dedup and the FIFO cap as defensive
+ * bounds (the withSeenTargets shape).
  */
 import { describe, expect, test } from "bun:test";
 
@@ -33,12 +34,12 @@ const baseState = (): SessionState => ({
 });
 
 describe("withBriefingSolvedRefs", () => {
-  test("a resume re-pointing the same tree does not duplicate its ref", () => {
+  test("appending the same tree twice does not duplicate its ref", () => {
     // Arrange
     const once = withBriefingSolvedRefs(baseState(), ["wc_prev", "wc_other"]);
 
-    // Act: SessionStart fires again for the same session with the same
-    // pointers — the resume/clear path.
+    // Act: the same pointers appended again — the transform owns dedup
+    // whatever its caller does (a re-pointed tree is one fact).
     const twice = withBriefingSolvedRefs(once, ["wc_prev", "wc_other"]);
 
     // Assert

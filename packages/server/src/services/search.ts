@@ -154,7 +154,12 @@ const MIN_VECTOR_SIMILARITY = 0.3;
  */
 export const SOLVED_DECAY_FLOOR = 0.7;
 
-/** The tiers whose match is a fact — where the solved floor may apply. */
+/**
+ * The tiers whose match is a fact — where the solved floor may apply. The
+ * literal is pinned against its two siblings (services/hints.ts
+ * HINT_ELIGIBLE_TIERS, connector hints/select.ts) by the drift-grep VERIFY
+ * in packages/connector-claude/src/hints/select.ts.
+ */
 const SOLVED_FLOOR_TIERS: ReadonlySet<SearchTier> = new Set(["exact", "fts"]);
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;

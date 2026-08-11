@@ -147,6 +147,15 @@ describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
     expect(select([context({}, [derivedSettled])]).kind).toBe("pointer");
   });
 
+  test("an unknown provenance value is never substance — fail closed", () => {
+    // The boundary schema admits ANY non-empty provenance string (hub.ts
+    // z.string().min(1)), so a value this connector has never heard of can
+    // arrive here. Only the positive "declared" — someone vouched — may be
+    // injected; everything else degrades to a pointer, not substance.
+    const unknownProvenance = claim({ id: "clm_weird", provenance: "weird" });
+    expect(select([context({}, [unknownProvenance])]).kind).toBe("pointer");
+  });
+
   test("substance in a lower-ranked context beats a pointer in a higher one", () => {
     const weak = context(
       { id: "wc_weak" },

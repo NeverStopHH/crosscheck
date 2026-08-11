@@ -348,7 +348,8 @@ const listDerivedCandidates = async (
         // DESIGN.md §3: "never proactively injected") holds no position — an
         // open draft would tell a teammate its author asserts a theory the
         // author never saw, and a derived discard revision was rejected by
-        // nobody. Same fail-closed equality as the hint path's isDeclared.
+        // nobody. Same fail-closed positive equality as the hint path's
+        // isDeclared (connector-claude hints/select.ts, === "declared").
         eq(openSide.provenance, DECLARED_PROVENANCE),
         eq(rejectedSide.provenance, DECLARED_PROVENANCE),
         // A deadlock needs two people: one developer's own opposite-status

@@ -37,6 +37,9 @@ export const SUMMARIZER_PROMPT =
  * git/git.ts abandonProcess (the figure is its own: 1000 ms here vs
  * GIT_KILL_GRACE_MS 500, because a model process gets more shutdown grace
  * than a local git).
+ *
+ * VERIFY: grep -c "GIT_KILL_GRACE_MS = 500" packages/connector-claude/src/constants.ts
+ * PRINTS: 1
  */
 const KILL_GRACE_MS = 1000;
 
