@@ -1,0 +1,78 @@
+{
+  "id": "ws-proposed",
+  "summary": "A fresh context carrying only bare proposed hypotheses and one settled-status claim with zero evidence refs. The strongest prompt match must arrive as a pointer, never substance.",
+  "sessions": [
+    {
+      "id": "s_sam_ws",
+      "developer": "Sam",
+      "branch": "fix/reconnect",
+      "baseCommit": "c0ffee02",
+      "status": "analyzing"
+    }
+  ],
+  "workContexts": [
+    {
+      "id": "wc_ws",
+      "sessionId": "s_sam_ws",
+      "title": "Websocket reconnect storm after each canary release",
+      "status": "analyzing",
+      "createdAt": "2026-07-31T12:00:00.000Z",
+      "updatedAt": "2026-08-01T06:00:00.000Z"
+    }
+  ],
+  "targets": [
+    { "workContextId": "wc_ws", "kind": "file", "value": "src/ws/reconnect.ts" }
+  ],
+  "claims": [
+    {
+      "id": "clm_ws_obs",
+      "workContextId": "wc_ws",
+      "authorSessionId": "s_sam_ws",
+      "kind": "observation",
+      "body": "Reconnect attempts triple for two minutes after each canary release",
+      "status": "proposed",
+      "confidence": 0.6,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-07-31T12:10:00.000Z"
+    },
+    {
+      "id": "clm_ws_hyp",
+      "workContextId": "wc_ws",
+      "authorSessionId": "s_sam_ws",
+      "kind": "hypothesis",
+      "body": "Backoff jitter seed is shared between tabs so reconnect timers synchronize",
+      "status": "proposed",
+      "confidence": 0.6,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-07-31T16:00:00.000Z"
+    },
+    {
+      "id": "clm_ws_partial",
+      "workContextId": "wc_ws",
+      "authorSessionId": "s_sam_ws",
+      "kind": "hypothesis",
+      "body": "The reconnect scheduler skips its cooldown when the socket closes mid-handshake",
+      "status": "partially_confirmed",
+      "confidence": 0.7,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-08-01T06:00:00.000Z"
+    }
+  ],
+  "probes": [
+    {
+      "id": "pr_ws_pointer",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "reconnect storm hammering src/ws/reconnect.ts after the canary release",
+      "expect": "pointer",
+      "expectContextId": "wc_ws",
+      "rationale": "Anchoring asymmetry (DESIGN.md 4): bare proposed hypotheses reach the reader as a pointer at most, and the partially_confirmed claim carries zero evidence refs so HINT_MIN_EVIDENCE_REFS keeps it out of substance too."
+    }
+  ]
+}

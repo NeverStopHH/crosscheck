@@ -104,10 +104,11 @@ jobs:
 
   mutation:
     # A check nobody proved can fail is decoration. This re-introduces the
-    # budget-reserve defect, the sanitizer defects the injection corpus guards
-    # and the renderer defects the MCP tools' own tests guard, one at a time,
-    # and fails if the guarding test stays green. It is what stops those checks
-    # from being quietly neutered.
+    # budget-reserve defect, the sanitizer defects the injection corpus guards,
+    # the renderer defects the MCP tools' own tests guard and the hub's
+    # search-ranking defects its search tests guard, one at a time, and fails
+    # if the guarding test stays green. It is what stops those checks from
+    # being quietly neutered.
     #
     # The list of defects lives in the script, not here, so the two cannot
     # disagree about how many there are — which they already did once, and did
@@ -116,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 12
+    # PRINTS: 33
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -124,15 +125,30 @@ jobs:
     # sentence somebody has to keep in step by hand:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-claude/src/",""),v)'
-    # PRINTS: briefing/render.ts 1
-    # PRINTS: briefing/sanitize.ts 5
-    # PRINTS: constants.ts 1
-    # PRINTS: mcp/render.ts 5
+    # PRINTS: briefing/render.ts 2
+    # PRINTS: briefing/sanitize.ts 7
+    # PRINTS: constants.ts 4
+    # PRINTS: hints/render.ts 1
+    # PRINTS: hints/select.ts 4
+    # PRINTS: hooks/pre-tool-use.ts 1
+    # PRINTS: hooks/stop.ts 1
+    # PRINTS: http/hub.ts 1
+    # PRINTS: mcp/render-referee.ts 2
+    # PRINTS: mcp/render.ts 3
+    # PRINTS: packages/server/src/services/hints.ts 1
+    # PRINTS: packages/server/src/services/search.ts 6
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
-    # PRINTS: constants.ts 1
+    # PRINTS: constants.ts 4
+    # PRINTS: hints.ts 1
+    # PRINTS: hub.ts 1
+    # PRINTS: pre-tool-use.ts 1
+    # PRINTS: render-referee.ts 2
     # PRINTS: render.ts 6
-    # PRINTS: sanitize.ts 5
+    # PRINTS: sanitize.ts 7
+    # PRINTS: search.ts 6
+    # PRINTS: select.ts 4
+    # PRINTS: stop.ts 1
     name: Mutation proof
     runs-on: ubuntu-latest
     steps:

@@ -175,6 +175,14 @@ export const spoolFlushLockPath = (home: string, key: string): string =>
 export const syncStatePath = (home: string, key: string): string =>
   join(home, "state", `${key}.json`);
 
+/**
+ * Per-repo delivered-hint hashes (hints/delivered-store.ts): truncated
+ * SHA-256 of normalized bodies, never the bodies. The `-delivered-hints`
+ * suffix cannot collide with syncStatePath — repo keys are bare hex.
+ */
+export const deliveredHintsPath = (home: string, key: string): string =>
+  join(home, "state", `${key}-delivered-hints.json`);
+
 export const presenceCachePath = (home: string, key: string): string =>
   join(home, "cache", `${key}-presence.json`);
 

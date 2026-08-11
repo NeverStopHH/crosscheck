@@ -1,17 +1,32 @@
 import {
+  ABSENCE_EVIDENCE_NOTE_AGE_HOURS,
   AGE_HOURS_BEFORE_DAYS,
   CONTEXT_MAX_AGE_DAYS,
+  DAYS_PER_MONTH_APPROX,
+  MAX_ABSENCE_LINES,
   MAX_BRIEFING_CHARS,
   MAX_CONTEXTS,
+  MAX_CONTRADICTION_POINTERS,
+  MAX_DRAFT_POINTERS,
+  MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
+  MAX_TITLE_CHARS,
   MINUTES_PER_HOUR,
   MS_PER_DAY,
   MS_PER_SECOND,
   SECONDS_PER_MINUTE,
+  SOLVED_AGE_MONTHS_THRESHOLD_DAYS,
 } from "../constants.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
-import type { PresenceEntry, WorkContextEntry } from "../http/hub.ts";
-import { sanitizeUntrusted } from "./sanitize.ts";
+import type {
+  ContradictionEntry,
+  ContradictionSide,
+  DraftEntry,
+  PresenceEntry,
+  SolvedMatchEntry,
+  WorkContextEntry,
+} from "../http/hub.ts";
+import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
 
 /**
  * Exported because the MCP tools put the SAME untrusted text into the same
@@ -51,6 +66,15 @@ const ageMsFrom = (iso: string, now: Date): number | null => {
   return Number.isNaN(ms) ? null : now.getTime() - ms;
 };
 
+/** One absence finding as the hub reports it (GET /api/absences). */
+export interface AbsenceEntry {
+  readonly kind: string;
+  readonly name: string;
+  readonly latestCommitAt: string;
+  readonly lastSessionAt?: string | null | undefined;
+  readonly evidenceCollectedAt: string;
+}
+
 export interface BriefingInput {
   readonly repoId: string;
   readonly selfDeveloperId: string | null;
@@ -59,6 +83,14 @@ export interface BriefingInput {
   readonly now: Date;
   /** Drift per teammate base commit; absent entries simply render no label. */
   readonly drift?: Readonly<Record<string, CommitDrift>> | undefined;
+  /** Absence findings; omitted or empty renders no section (fail open). */
+  readonly absences?: readonly AbsenceEntry[] | undefined;
+  /** Open contradictions; omitted or empty renders no section (fail open). */
+  readonly contradictions?: readonly ContradictionEntry[] | undefined;
+  /** Solved-before matches; omitted or empty renders no section (fail open). */
+  readonly solvedMatches?: readonly SolvedMatchEntry[] | undefined;
+  /** The reader's OWN unreviewed drafts; omitted or empty renders no section. */
+  readonly drafts?: readonly DraftEntry[] | undefined;
 }
 
 interface Section {
@@ -221,6 +253,296 @@ const renderContextSection = (input: BriefingInput): Section => {
   };
 };
 
+/**
+ * One side of a contradiction pointer: `Nick (hypothesis, proposed)`. Name
+ * BARE (it sits outside any frame, same position as the absence lines' names),
+ * kind and status BARE too — they are wire enums from an honest hub but
+ * teammate-writable bytes from a hostile one.
+ */
+const contradictionSideLabel = (side: ContradictionSide): string => {
+  const name =
+    side.authorDeveloperName === undefined
+      ? ""
+      : bareUntrusted(side.authorDeveloperName);
+  const shown = name.length === 0 ? UNKNOWN_AUTHOR : name;
+  return `${shown} (${bareUntrusted(side.kind)}, ${bareUntrusted(side.status)})`;
+};
+
+/**
+ * ONE LINE per contradiction — the pointer discipline (DESIGN.md §4): who
+ * disagrees, and the exact tool call that reads the case file. NEVER the
+ * claim bodies; a conflict summary asserted at SessionStart would anchor the
+ * reader on whichever side it paraphrased better, which is precisely what
+ * referee mode exists to avoid. The cx_ id goes through the id allowlist
+ * because it prints bare beside a tool name; an id reduced to nothing drops
+ * the line (null), since a pointer that cannot be followed is noise.
+ */
+export const formatContradictionLine = (
+  entry: ContradictionEntry,
+): string | null => {
+  const id = safeId(entry.id);
+  if (id.length === 0) {
+    return null;
+  }
+  // Canonical side order by claim id, matching the brief's A/B labels
+  // (mcp/render-referee.ts canonicalPair): who is NAMED FIRST must not be
+  // the hub's pair order — the derived source always lists its open side
+  // first, which would give the still-open theory the first word on every
+  // pointer.
+  const [first, second] =
+    entry.claimA.id <= entry.claimB.id
+      ? [entry.claimA, entry.claimB]
+      : [entry.claimB, entry.claimA];
+  return `- ${contradictionSideLabel(first)} vs ${contradictionSideLabel(second)} · get_referee_brief ${id}`;
+};
+
+/**
+ * Placed AFTER presence and related work — those answer "who is doing what",
+ * the briefing's first job — and BEFORE absences, because an open conflict
+ * about live theories is actionable while absence is context. The budget
+ * consequence is deliberate: with the briefing full, pointers give way before
+ * presence does, and absences give way before pointers.
+ */
+const renderContradictionSection = (input: BriefingInput): Section => {
+  const rendered = (input.contradictions ?? []).flatMap((entry) => {
+    const line = formatContradictionLine(entry);
+    return line === null ? [] : [line];
+  });
+  return {
+    // "Conflicting positions", not "conflicting teammates": a similarity
+    // pair can hold one developer's own opposite-status claims, and the
+    // names on the line already say who holds what.
+    header: "Conflicting positions (get_referee_brief reads the case file):",
+    lines: rendered.slice(0, MAX_CONTRADICTION_POINTERS),
+    total: rendered.length,
+  };
+};
+
+/**
+ * A solved diagnosis's age, stated plainly (honest presentation): days up to
+ * SOLVED_AGE_MONTHS_THRESHOLD_DAYS, months beyond — "diagnosed 5mo ago"
+ * reads at a glance where "152d" asks the reader to divide.
+ */
+export const formatSolvedAge = (ageMs: number): string => {
+  const days = Math.floor(Math.max(0, ageMs) / MS_PER_DAY);
+  if (days >= SOLVED_AGE_MONTHS_THRESHOLD_DAYS) {
+    return `${String(Math.floor(days / DAYS_PER_MONTH_APPROX))}mo`;
+  }
+  return formatAge(ageMs);
+};
+
+/**
+ * What the shared target kind means, as this renderer's OWN words — mapped
+ * by strict equality, never printed from the wire. An unknown kind drops the
+ * line (null): guessing a sentence for it would put crosscheck's voice
+ * behind a fact it does not understand — mirror of the absence section's
+ * unknown-kind rule.
+ */
+const SOLVED_MATCH_KIND_LABELS: Readonly<Record<string, string>> = {
+  error_fingerprint: "shared error fingerprint with current work",
+  file: "shared file with current work",
+};
+
+/**
+ * One solved-before pointer: author, plain age, what is shared, and the pull
+ * call — NEVER a claim body (§4 pointer discipline; an old answer asserted
+ * at SessionStart would anchor). Exported because the SessionStart hook must
+ * know which pointers the emitted briefing actually shows, to record their
+ * deliveries — two spellings of this line would drift.
+ * Null = a row this renderer will not vouch for.
+ */
+export const formatSolvedLine = (
+  entry: SolvedMatchEntry,
+  now: Date,
+): string | null => {
+  const id = safeId(entry.workContextId);
+  const title = sanitizeUntrusted(entry.title);
+  const ageMs = ageMsFrom(entry.solvedAt, now);
+  const kindLabel = SOLVED_MATCH_KIND_LABELS[entry.matchedTargetKind];
+  if (id.length === 0 || title.length === 0 || ageMs === null || kindLabel === undefined) {
+    return null;
+  }
+  const name =
+    entry.developerName === undefined ? "" : bareUntrusted(entry.developerName);
+  const author = name.length === 0 ? UNKNOWN_AUTHOR : name;
+  // The landed fact (DESIGN.md §5): a renderer literal, shown only when the
+  // hub's landedAt parses as a date — junk from a broken or hostile hub buys
+  // no vouch. "landed" = the owning session's base commit reached the
+  // default branch, the same fact get_diagnosis states in full.
+  const landedFact =
+    entry.landedAt !== null &&
+    entry.landedAt !== undefined &&
+    ageMsFrom(entry.landedAt, now) !== null
+      ? " · landed"
+      : "";
+  // U+00B7-separated like the absence and MCP lines — the structure the BARE
+  // class strips from names, so an author cannot mint a field. A comma-shaped
+  // line here would be structure no character class covers.
+  return `- ${author} · diagnosed ${formatSolvedAge(ageMs)} ago${landedFact} · ${kindLabel}: «${title}» · get_diagnosis ${id}`;
+};
+
+/**
+ * Placed AFTER contradictions and BEFORE absences: an old confirmed answer
+ * is a lead for the work at hand — worth more than ambient absence context,
+ * less urgent than a live conflict between open theories. With the briefing
+ * full, solved pointers give way before conflicts do, and absences give way
+ * before solved pointers.
+ */
+const renderSolvedSection = (input: BriefingInput): Section => {
+  const rendered = (input.solvedMatches ?? []).flatMap((entry) => {
+    const line = formatSolvedLine(entry, input.now);
+    return line === null ? [] : [line];
+  });
+  return {
+    header: "Previously solved on this repo (get_diagnosis reads the tree):",
+    lines: rendered.slice(0, MAX_SOLVED_POINTERS),
+    total: rendered.length,
+  };
+};
+
+/**
+ * One own-draft reminder line (DESIGN.md §3 Tier 1 promotion loop): kind,
+ * age, the body in the « » frame, and the exact review_draft call. The body
+ * IS shown — unlike solved/contradiction pointers this is the READER'S OWN
+ * machine-captured text, and the whole point of the reminder is deciding
+ * confirm/edit/discard, which needs the assertion in front of the agent.
+ * Still sanitized and capped: it is LLM-derived text, not trusted bytes.
+ * Null = a row this renderer will not vouch for.
+ */
+export const formatDraftLine = (
+  entry: DraftEntry,
+  now: Date,
+): string | null => {
+  const id = safeId(entry.id);
+  const body = sanitizeUntrusted(entry.body, MAX_TITLE_CHARS);
+  const ageMs = ageMsFrom(entry.createdAt, now);
+  if (id.length === 0 || body.length === 0 || ageMs === null) {
+    return null;
+  }
+  const kind = bareUntrusted(entry.kind);
+  return `- ${kind}, ${formatAge(ageMs)} ago: «${body}» · review_draft ${id}`;
+};
+
+/**
+ * Placed AFTER solved pointers and BEFORE absences: the reminder is
+ * actionable by the agent (review_draft) but it is self-directed
+ * housekeeping, not team knowledge — with the briefing full, draft
+ * reminders give way before every teammate-facing section, and only
+ * absences give way before them.
+ */
+const renderDraftSection = (input: BriefingInput): Section => {
+  const rendered = (input.drafts ?? []).flatMap((entry) => {
+    const line = formatDraftLine(entry, input.now);
+    return line === null ? [] : [line];
+  });
+  return {
+    header:
+      "Your own unreviewed draft claims, auto-captured " +
+      "(review_draft confirms, edits or discards):",
+    lines: rendered.slice(0, MAX_DRAFT_POINTERS),
+    total: rendered.length,
+  };
+};
+
+const MS_PER_HOUR = MS_PER_SECOND * SECONDS_PER_MINUTE * MINUTES_PER_HOUR;
+
+const ABSENCE_HEADER_BASE =
+  "Commit authors on this repo without a recent agent session";
+
+/**
+ * PHRASING CONTRACT (DESIGN.md §10 risk 3): each tail is a factual
+ * observation about what was and was not REPORTED — never an inference about
+ * what somebody did. We see agent sessions, not keystrokes.
+ */
+const absenceTail = (entry: AbsenceEntry, now: Date): string | null => {
+  if (entry.kind === "unconnected") {
+    return "no crosscheck account for this author";
+  }
+  if (entry.kind !== "inactive") {
+    // A kind this renderer does not know (newer hub): skipping is honest,
+    // guessing a sentence for it is not — mirror of unknown-kind ingest.
+    return null;
+  }
+  if (entry.lastSessionAt === null || entry.lastSessionAt === undefined) {
+    return "no reported session on this repo";
+  }
+  const sessionAgeMs = ageMsFrom(entry.lastSessionAt, now);
+  return sessionAgeMs === null
+    ? null
+    : `last reported session ${formatAge(sessionAgeMs)} ago`;
+};
+
+/**
+ * One absence finding as a line: name BARE through `bareUntrusted` — it sits
+ * outside any « » frame in the same ·-separated position as the MCP claim
+ * lines, and an unconnected author's name is writable by ANY commit author on
+ * any fetched ref, so it must not be able to mint the line's own fields; every
+ * date a renderer-built literal. Exported because `crosscheck status` prints
+ * the same fact to a human — two spellings of one observation would drift.
+ * Null = a row this renderer will not vouch for (empty-after-sanitize name,
+ * unparseable timestamp, unknown kind).
+ */
+export const formatAbsenceLine = (
+  entry: AbsenceEntry,
+  now: Date,
+): string | null => {
+  const name = bareUntrusted(entry.name);
+  const commitAgeMs = ageMsFrom(entry.latestCommitAt, now);
+  const tail = absenceTail(entry, now);
+  if (name.length === 0 || commitAgeMs === null || tail === null) {
+    return null;
+  }
+  return `- ${name} · last commit ${formatAge(commitAgeMs)} ago · ${tail}`;
+};
+
+interface AbsenceLine {
+  readonly line: string;
+  readonly evidenceAgeMs: number;
+}
+
+const toAbsenceLine = (entry: AbsenceEntry, now: Date): AbsenceLine | null => {
+  const line = formatAbsenceLine(entry, now);
+  if (line === null) {
+    return null;
+  }
+  return {
+    line,
+    evidenceAgeMs: ageMsFrom(entry.evidenceCollectedAt, now) ?? 0,
+  };
+};
+
+/**
+ * Absence findings, capped hard at MAX_ABSENCE_LINES and rendered LAST so the
+ * briefing's char budget spends itself on presence and related work first —
+ * absence is context, not a hint (§4 briefing budget).
+ *
+ * Staleness honesty (task item 4): evidence ages between collections, and a
+ * line rendered from old evidence must say so — the header carries the age of
+ * the oldest evidence behind a shown line once it passes
+ * ABSENCE_EVIDENCE_NOTE_AGE_HOURS. The hub already refuses to fire findings
+ * from evidence older than its own harder bound (server constants).
+ */
+const renderAbsenceSection = (input: BriefingInput): Section => {
+  const rendered = (input.absences ?? []).flatMap((entry) => {
+    const line = toAbsenceLine(entry, input.now);
+    return line === null ? [] : [line];
+  });
+  const shown = rendered.slice(0, MAX_ABSENCE_LINES);
+  const oldestEvidenceMs = shown.reduce(
+    (oldest, line) => Math.max(oldest, line.evidenceAgeMs),
+    0,
+  );
+  const suffix =
+    oldestEvidenceMs > ABSENCE_EVIDENCE_NOTE_AGE_HOURS * MS_PER_HOUR
+      ? ` (commit evidence ${formatAge(oldestEvidenceMs)} old)`
+      : "";
+  return {
+    header: `${ABSENCE_HEADER_BASE}${suffix}:`,
+    lines: shown.map((line) => line.line),
+    total: rendered.length,
+  };
+};
+
 const joinedLength = (lines: readonly string[]): number =>
   lines.length === 0 ? 0 : lines.join("\n").length;
 
@@ -258,7 +580,14 @@ const appendSection = (
  * injected context trip Claude Code's prompt-injection defences (DESIGN.md §4).
  */
 export const renderBriefing = (input: BriefingInput): string => {
-  const sections = [renderPresenceSection(input), renderContextSection(input)];
+  const sections = [
+    renderPresenceSection(input),
+    renderContextSection(input),
+    renderContradictionSection(input),
+    renderSolvedSection(input),
+    renderDraftSection(input),
+    renderAbsenceSection(input),
+  ];
   if (sections.every((section) => section.lines.length === 0)) {
     return "";
   }

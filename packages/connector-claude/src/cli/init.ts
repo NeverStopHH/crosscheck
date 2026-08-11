@@ -9,6 +9,7 @@ import {
   EXIT_OK,
   MCP_CONFIG_FILE,
   POST_TOOL_USE_MATCHER,
+  PRE_TOOL_USE_MATCHER,
 } from "../constants.ts";
 import { normalizeHubUrl, readStoredConfig } from "../config/config.ts";
 import { crosscheckHome, ensureDir, readTextOrNull } from "../config/paths.ts";
@@ -149,6 +150,15 @@ export const buildSettingsPlan = (
         true,
       ),
       SessionEnd: group(`${prefix} hook session-end`),
+      // The injection pipeline (DESIGN.md §4): both SYNC, deliberately — one
+      // returns additionalContext, the other a permission decision, and an
+      // async hook can deliver neither.
+      UserPromptSubmit: group(`${prefix} hook user-prompt-submit`),
+      PreToolUse: group(`${prefix} hook pre-tool-use`, PRE_TOOL_USE_MATCHER),
+      // The Tier-1 summarizer gate (DESIGN.md §3 Tier 1): ASYNC, because the
+      // hook returns nothing — it gates deterministically and spawns the
+      // detached worker; the model must never wait on it.
+      Stop: group(`${prefix} hook stop`, undefined, true),
     },
     statusLine: { type: "command", command: `${prefix} statusline` },
     forceStatusline,

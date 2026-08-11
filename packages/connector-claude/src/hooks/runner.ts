@@ -1,8 +1,11 @@
 import {
   HOOK_RESERVE_RATIO,
   POST_TOOL_USE_BUDGET_RATIO,
+  PRE_TOOL_USE_BUDGET_RATIO,
   SESSION_END_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
+  STOP_BUDGET_RATIO,
+  USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "../constants.ts";
 import {
   isDisabled,
@@ -19,7 +22,13 @@ import type { HubContext } from "../http/client.ts";
 import { parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
 
-export type HookName = "session-start" | "post-tool-use" | "session-end";
+export type HookName =
+  | "session-start"
+  | "post-tool-use"
+  | "session-end"
+  | "user-prompt-submit"
+  | "pre-tool-use"
+  | "stop";
 
 export interface HookContext {
   readonly payload: HookPayload;
@@ -28,6 +37,13 @@ export interface HookContext {
   readonly hub: HubContext;
   readonly repoKey: string;
   readonly now: () => Date;
+  /**
+   * The environment the hook was invoked with — NOT process.env, which in
+   * tests belongs to the test runner. The one consumer is the Stop hook,
+   * which must forward selected variables (summarizer override, PATH) into
+   * the detached worker it spawns.
+   */
+  readonly env: Env;
 }
 
 /**
@@ -56,6 +72,9 @@ const BUDGET_RATIOS: Readonly<Record<HookName, number>> = {
   "session-start": SESSION_START_BUDGET_RATIO,
   "post-tool-use": POST_TOOL_USE_BUDGET_RATIO,
   "session-end": SESSION_END_BUDGET_RATIO,
+  "user-prompt-submit": USER_PROMPT_SUBMIT_BUDGET_RATIO,
+  "pre-tool-use": PRE_TOOL_USE_BUDGET_RATIO,
+  stop: STOP_BUDGET_RATIO,
 };
 
 /**
@@ -89,6 +108,7 @@ export const prepareHook = async (
     config,
     repoKey: key,
     now,
+    env,
     hub: {
       hubUrl: config.hubUrl,
       apiKey: config.apiKey,

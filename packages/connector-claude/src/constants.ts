@@ -46,8 +46,63 @@ export const POST_TOOL_USE_BUDGET_RATIO = 4;
  */
 export const HOOK_RESERVE_RATIO = 1;
 
+/**
+ * ── In-session hints (DESIGN.md §4) ─────────────────────────────────────────
+ *
+ * UserPromptSubmit runs inside the developer's keystroke-to-first-token wait,
+ * so its TOTAL budget — preparation, one hub call, one bounded git call,
+ * rendering — is the §4-specified 800 ms at the default request timeout:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-claude/src/constants.ts");console.log(c.USER_PROMPT_SUBMIT_BUDGET_RATIO*c.HTTP_TIMEOUT_MS, c.PRE_TOOL_USE_BUDGET_RATIO*c.HTTP_TIMEOUT_MS)'
+ * PRINTS: 800 800
+ *
+ * Guarded twice, the hook-reserve split: test/hint-budget.test.ts is the
+ * arithmetic detector (runs identically on every machine, and what
+ * scripts/mutation-check.ts re-breaks), test/hint-hook-latency.test.ts is the
+ * measured consequence through the real runHook.
+ */
+export const USER_PROMPT_SUBMIT_BUDGET_RATIO = 2;
+/** PreToolUse blocks a tool call — the same keystroke-grade bound applies. */
+export const PRE_TOOL_USE_BUDGET_RATIO = 2;
+/**
+ * Noise budgets (DESIGN.md §10 risk 1): at most one hint per prompt and five
+ * per session, then silence for the rest of the session. MAX_HINTS_PER_PROMPT
+ * is enforced structurally — the selector returns ONE selection, never a list
+ * (src/hints/select.ts) — and this constant is the number tests pin that to.
+ */
+export const MAX_HINTS_PER_PROMPT = 1;
+export const MAX_HINTS_PER_SESSION = 5;
+/**
+ * Substance requires evidence (§4 anchoring asymmetry): claims below this
+ * many evidence refs are pointer-only, whatever their status claims.
+ */
+export const HINT_MIN_EVIDENCE_REFS = 1;
+/**
+ * Words shorter than this carry grammar, not meaning — the same floor the hub
+ * search applies (SEARCH_MIN_TOKEN_CHARS). Checked BEFORE the hub call: a
+ * prompt with no searchable word costs zero HTTP.
+ */
+export const HINT_MIN_TOKEN_CHARS = 3;
+/** Tripwire asks once per file per session; FIFO cap on the remembered set. */
+export const MAX_TRIPWIRE_ASKED_FILES = 100;
+/**
+ * Echo-loop exclusion across sessions (DESIGN.md §3): delivered-hint body
+ * hashes persist per repo so yesterday's hint cannot come back as today's
+ * derived draft. FIFO like MAX_SEEN_TARGETS — at 5 substance hints/session
+ * this holds ~100 sessions of deliveries, and the oldest fall out first.
+ */
+export const MAX_DELIVERED_HINT_HASHES_PER_REPO = 512;
+
 /** git is spawned per hook; a hung repo must never hold the session hostage. */
 export const GIT_TIMEOUT_MS = 1500;
+
+/**
+ * Grace between the deadline's SIGTERM and the SIGKILL escalation for a git
+ * that outlived its budget (git/git.ts). SIGTERM first so git can remove its
+ * lock files; the escalation covers a git that ignores it. Nothing waits on
+ * either signal — the caller already has its null by the time they fire.
+ */
+export const GIT_KILL_GRACE_MS = 500;
 
 /**
  * Reading the hook payload happens before any budget exists, and SessionStart /
@@ -157,6 +212,136 @@ export const DRIFT_GIT_TIMEOUT_MS = 250;
 export const MAX_WORK_CONTEXT_TITLE_CHARS = 120;
 export const CONTEXT_MAX_AGE_DAYS = 14;
 
+// ── Absence detection ───────────────────────────────────────────────────────
+
+/** How far back the SessionStart commit-authorship scan looks. */
+export const COMMIT_EVIDENCE_WINDOW_DAYS = 14;
+/** Hard cap on commits one scan reads — the count bound on the git walk. */
+export const COMMIT_EVIDENCE_MAX_COMMITS = 400;
+/**
+ * Evidence is a nice-to-have like drift: a slow git loses it, never the
+ * briefing. Runs inside SessionStart's parallel hub-fetch block, and this
+ * bound keeps it below the per-request hub timeout that block already waits
+ * for, so collection adds no wall clock of its own — at the DEFAULT timeouts:
+ * the directive below compares constants, and a CROSSCHECK_TIMEOUT_MS override
+ * that pushes the per-request hub timeout under this git bound inverts the
+ * relation, leaving git the longest leg of the parallel block (still bounded,
+ * no longer free):
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-claude/src/constants.ts");console.log(c.COMMIT_EVIDENCE_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true
+ */
+export const COMMIT_EVIDENCE_GIT_TIMEOUT_MS = 250;
+/**
+ * Absence lines the briefing may spend, LAST in section order on purpose:
+ * absence is context, not a hint, and must never crowd out presence or
+ * related work (§4 briefing budget).
+ */
+export const MAX_ABSENCE_LINES = 3;
+/** Evidence older than this gets its age said in the absence header. */
+export const ABSENCE_EVIDENCE_NOTE_AGE_HOURS = 24;
+/**
+ * `crosscheck status` shows more than the briefing (a human asked), but still
+ * bounded: the row count is hub-controlled input.
+ */
+export const STATUS_MAX_ABSENCE_LINES = 20;
+
+// ── Collective memory (VISION.md §1) ────────────────────────────────────────
+
+/**
+ * Landed detection (DESIGN.md §5) is a nice-to-have like drift: a slow git
+ * loses the report, never the briefing. The default-branch resolution rides
+ * INSIDE the SessionStart parallel hub-fetch block (its timeout below the
+ * per-request hub timeout, same free ride as COMMIT_EVIDENCE_GIT_TIMEOUT_MS),
+ * and the ancestry fan-out runs in parallel with the drift lookups — both
+ * bounded by this, so the block's wall clock does not grow.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-claude/src/constants.ts");console.log(c.LANDED_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true
+ */
+export const LANDED_GIT_TIMEOUT_MS = 250;
+/** Most base commits one SessionStart checks for ancestry — one git each. */
+export const MAX_LANDED_ANCESTRY_CHECKS = 10;
+/** The solved staleness probe is one git call at MCP pull time, bounded. */
+export const STALENESS_GIT_TIMEOUT_MS = 250;
+/** Most referenced files one staleness probe hands git as pathspecs. */
+export const STALENESS_MAX_PATHS = 20;
+/**
+ * "Solved before" pointers one briefing may spend — pointer discipline like
+ * MAX_CONTRADICTION_POINTERS: title + id + age, the tree is a pull.
+ */
+export const MAX_SOLVED_POINTERS = 2;
+/**
+ * FIFO cap on the remembered briefing pointers (state/session-state.ts).
+ * Defensive: one SessionStart fire appends at most MAX_SOLVED_POINTERS, and
+ * a re-fire re-creates the state file fresh (hooks/session-start.ts), so the
+ * list never accumulates across fires — the cap bounds it like its sibling
+ * state lists so no future second writer can grow it unbounded.
+ */
+export const MAX_BRIEFING_SOLVED_REFS = 20;
+/** Solved ages render as days up to here, months beyond ("diagnosed 5mo ago"). */
+export const SOLVED_AGE_MONTHS_THRESHOLD_DAYS = 60;
+export const DAYS_PER_MONTH_APPROX = 30;
+
+// ── Tier-1 summarizer (DESIGN.md §3 Tier 1, §10 risks 4 + 7) ────────────────
+
+/**
+ * Hard per-session cap on summarizer fires — the spec'd 6/session. Every fire
+ * spends the developer's OWN Claude quota (§10 risk 7), so the cap is a hard
+ * budget, not a tuning knob. Guarded by scripts/mutation-check.ts through
+ * test/stop-gate.test.ts ("refuses fire number cap+1 exactly"), which pins the
+ * arithmetic on every machine rather than a stopwatch.
+ */
+export const SUMMARIZER_MAX_FIRES_PER_SESSION = 6;
+/** Debounce: a fire needs at least this many Stop turns since the last one. */
+export const SUMMARIZER_DEBOUNCE_TURNS = 2;
+/**
+ * How much of the transcript file's tail the gate reads — one bounded local
+ * read on the Stop hook's path, no hub, no LLM. 128 KiB covers a long turn
+ * comfortably; a turn larger than this is gated on its most recent part.
+ */
+export const SUMMARIZER_TAIL_BYTES = 131_072;
+/**
+ * Ceiling on the extracted slice text handed to the summarizer prompt — the
+ * token bill's other bound (≈ SUMMARIZER_SLICE_MAX_CHARS / 4 tokens at the
+ * CHARS_PER_TOKEN_ESTIMATE rate the cost estimate uses).
+ */
+export const SUMMARIZER_SLICE_MAX_CHARS = 24_000;
+/** Per content block, so one giant tool result cannot eat the whole slice. */
+export const SUMMARIZER_BLOCK_MAX_CHARS = 2_000;
+/**
+ * Hard wall-clock timeout on the detached summarizer process. It runs OUTSIDE
+ * any hook budget (the Stop hook only spawns and exits), so this is generous —
+ * but it is a kill, not a wait: a hung claude binary must never accumulate.
+ * CROSSCHECK_SUMMARIZER_TIMEOUT_MS overrides it (tests, slow machines).
+ */
+export const SUMMARIZER_TIMEOUT_MS = 30_000;
+/** Ceiling on captured summarizer stdout — a claim is one sentence, not a log. */
+export const SUMMARIZER_OUTPUT_MAX_BYTES = 16_384;
+/**
+ * Confidence a draft gets when the summarizer omits one. Well under the
+ * DERIVED_CONFIDENCE_CAP (0.5, @crosscheck/schema), which the worker ALSO
+ * clamps to client-side so an honest connector never sends more.
+ */
+export const SUMMARIZER_DEFAULT_CONFIDENCE = 0.3;
+/**
+ * The ~4 chars/token rule of thumb the briefing budget already uses
+ * (MAX_BRIEFING_CHARS). Cost figures derived from it are ESTIMATES and every
+ * surface printing them says so.
+ */
+export const CHARS_PER_TOKEN_ESTIMATE = 4;
+/** Haiku-class, per DESIGN.md §2: cheap capture on the developer's own auth. */
+export const SUMMARIZER_MODEL = "haiku";
+/**
+ * The Stop hook does no hub round trip of its own (gate + spawn are local);
+ * the budget exists for the state lock and the maintenance flush it hosts.
+ */
+export const STOP_BUDGET_RATIO = 2;
+/** Draft pointers one briefing may spend — pointer discipline like solved. */
+export const MAX_DRAFT_POINTERS = 2;
+/** Most session state files one cost scan reads (status/doctor, bounded). */
+export const STATUS_MAX_SESSION_STATES = 50;
+
 export const PRESENCE_CACHE_TTL_MS = 10_000;
 export const STATUSLINE_MAX_CHARS = 90;
 export const STATUSLINE_MAX_NAMES = 3;
@@ -240,6 +425,8 @@ export const CLAUDE_SETTINGS_DIR = ".claude";
 export const CLAUDE_SETTINGS_FILE = "settings.json";
 
 export const POST_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
+/** Tripwire fires on writes only — Bash carries no file to overlap on. */
+export const PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
 
 /**
  * Project-scoped MCP registration, committed alongside `.claude/settings.json`
@@ -298,6 +485,36 @@ export const MCP_TIMEOUT_MS = 10_000;
 export const MAX_DIAGNOSIS_CHARS = 12_000;
 export const MAX_SEARCH_RESULTS = 10;
 export const MAX_SEARCH_CHARS = 2400;
+
+/**
+ * Rendering caps for `get_referee_brief` — PER SECTION, not one document cap,
+ * and that is the neutrality mechanism: a single document budget spends itself
+ * on whichever position renders first, so the later side would truncate
+ * earlier exactly when the case file is fullest. Equal per-position budgets
+ * keep the A/B swap invariance (test/mcp-referee-render.test.ts) true even
+ * under truncation. A position is one claim line plus up to ten evidence and
+ * ten ruled-out lines (hub caps, server referee.ts), each line bounded by the
+ * 400-char claim-body cap — the budget covers the common case and the "(+N
+ * lines not shown)" line says when it did not.
+ */
+export const MAX_REFEREE_POSITION_CHARS = 4000;
+export const MAX_REFEREE_SHARED_CHARS = 800;
+export const MAX_REFEREE_TIMELINE_CHARS = 1600;
+
+/**
+ * Contradiction pointers one briefing may spend — pointer discipline
+ * (DESIGN.md §4): a one-line pointer naming get_referee_brief and the pair
+ * id, never the case file itself, and never more than this many.
+ */
+export const MAX_CONTRADICTION_POINTERS = 2;
+
+/**
+ * Mirrors the hub's SEARCH_MAX_QUERY_CHARS (server search route rejects
+ * longer queries with 400). The tool description invites "distinctive words
+ * of the problem" and agents oblige with whole stack traces; truncating here
+ * keeps that call answerable instead of bouncing it off the hub's boundary.
+ */
+export const MAX_SEARCH_QUERY_CHARS = 2_000;
 
 /**
  * Width of an id as the MCP renderer prints it — bare, outside the « » frame,

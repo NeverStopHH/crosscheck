@@ -1,12 +1,17 @@
 import { z } from "zod";
 
-import { MAX_SEEN_TARGETS } from "../constants.ts";
+import {
+  MAX_BRIEFING_SOLVED_REFS,
+  MAX_SEEN_TARGETS,
+  MAX_TRIPWIRE_ASKED_FILES,
+} from "../constants.ts";
 import {
   readJsonOrNull,
   removeFile,
   sessionStatePath,
   writePrivateFile,
 } from "../config/paths.ts";
+import { withLock } from "../spool/lock.ts";
 
 export const SessionStateSchema = z.looseObject({
   claudeSessionId: z.string().min(1),
@@ -19,9 +24,46 @@ export const SessionStateSchema = z.looseObject({
   startedAt: z.string().min(1),
   lastHeartbeatAt: z.string().nullable().default(null),
   seenTargets: z.array(z.string().min(1)).default([]),
+  /**
+   * Hint state that must survive hook process restarts (DESIGN.md §4): the
+   * refs already delivered (seen-set dedup + the 5/session cap counts this),
+   * the normalized-body hashes of delivered substance (echo-loop exclusion,
+   * §3), and the files the tripwire already asked about (ask once). Defaults
+   * keep every pre-hints state file parsing unchanged.
+   */
+  deliveredHintRefs: z.array(z.string().min(1)).default([]),
+  deliveredHintHashes: z.array(z.string().min(1)).default([]),
+  tripwireAskedFiles: z.array(z.string().min(1)).default([]),
+  /**
+   * Work contexts the SessionStart briefing already pointed at as "solved
+   * before" (VISION.md §1). A SEPARATE list from deliveredHintRefs on
+   * purpose: the prompt path folds these into its seen-set so the same tree
+   * is never re-pointed, but they must not spend the 5/session hint cap —
+   * a briefing pointer is the briefing's budget, not the prompt path's.
+   */
+  briefingSolvedRefs: z.array(z.string().min(1)).default([]),
+  /**
+   * Tier-1 summarizer bookkeeping (DESIGN.md §3 Tier 1): the Stop-turn
+   * counter the debounce is measured against, the fires already spent
+   * against SUMMARIZER_MAX_FIRES_PER_SESSION, and the rough token estimate
+   * `crosscheck status`/`doctor` surface (§10 risk 7 — the cost is never
+   * invisible). Defaults keep every pre-summarizer state file parsing.
+   */
+  stopTurnCount: z.number().int().min(0).default(0),
+  summarizerFireCount: z.number().int().min(0).default(0),
+  summarizerLastFireTurn: z.number().int().min(0).nullable().default(null),
+  summarizerEstimatedTokens: z.number().int().min(0).default(0),
 });
 
 export type SessionState = z.infer<typeof SessionStateSchema>;
+
+/**
+ * What a WRITER may pass: the defaulted fields are optional, exactly as they
+ * are for a state file already on disk from before they existed. Readers
+ * always see the full SessionState — readSessionState parses through the
+ * schema, which fills the defaults.
+ */
+export type SessionStateInput = z.input<typeof SessionStateSchema>;
 
 /** Deterministic ids survive a crash: no lookup, no id table, no drift. */
 export const crosscheckSessionIdFor = (claudeSessionId: string): string =>
@@ -42,7 +84,7 @@ export const readSessionState = async (
 
 export const writeSessionState = async (
   home: string,
-  state: SessionState,
+  state: SessionStateInput,
 ): Promise<void> => {
   await writePrivateFile(
     sessionStatePath(home, state.claudeSessionId),
@@ -57,6 +99,47 @@ export const deleteSessionState = async (
   await removeFile(sessionStatePath(home, claudeSessionId));
 };
 
+const sessionStateLockPath = (home: string, claudeSessionId: string): string =>
+  `${sessionStatePath(home, claudeSessionId)}.lock`;
+
+/**
+ * Read-transform-write under the state file's own lock — how every MID-SESSION
+ * writer must update state. Claude Code runs tools in parallel, so sibling
+ * hooks overlap; a hook that wrote back the whole state it read at its start
+ * would erase whatever a faster sibling recorded in between (a tripwire
+ * marker, a seen target — test/state-race.test.ts pins both interleavings).
+ * The transform runs on the FRESHEST state, inside the lock, so nothing read
+ * before the lock can leak into the write.
+ *
+ * `transform` returning null declines the write — that is how PreToolUse's
+ * "one ask per file" check-and-set is atomic rather than check-then-set.
+ *
+ * Fail-open like everything on a hook path: no state file, an unparseable
+ * one, or a lock that stays busy past its retries all return false and write
+ * nothing. The lock is the spool's own (spool/lock.ts): holder-identified,
+ * steal only from the provably dead, worst case ~100 ms of retries
+ * (SPOOL_LOCK_RETRIES × SPOOL_LOCK_RETRY_DELAY_MS) inside budgets that allow
+ * for it. writeSessionState stays for the CREATE paths (SessionStart,
+ * recovery), which run before any sibling exists.
+ */
+export const updateSessionState = async (
+  home: string,
+  claudeSessionId: string,
+  transform: (fresh: SessionState) => SessionState | null,
+): Promise<boolean> =>
+  withLock(sessionStateLockPath(home, claudeSessionId), false, async () => {
+    const fresh = await readSessionState(home, claudeSessionId);
+    if (fresh === null) {
+      return false;
+    }
+    const next = transform(fresh);
+    if (next === null) {
+      return false;
+    }
+    await writeSessionState(home, next);
+    return true;
+  });
+
 /** FIFO cap: the oldest targets fall out, the session never grows unbounded. */
 export const withSeenTargets = (
   state: SessionState,
@@ -69,6 +152,64 @@ export const withSeenTargets = (
       merged.length <= MAX_SEEN_TARGETS
         ? merged
         : merged.slice(merged.length - MAX_SEEN_TARGETS),
+  };
+};
+
+/**
+ * One delivered hint, remembered forever within the session: the ref for the
+ * seen-set and the cap, the body hash (substance only — pointers carry no
+ * body) for the echo-loop exclusion. No cap on these arrays beyond
+ * MAX_HINTS_PER_SESSION itself, which the selector enforces before any append.
+ */
+export const withDeliveredHint = (
+  state: SessionState,
+  refId: string,
+  bodyHash: string | null,
+): SessionState => ({
+  ...state,
+  deliveredHintRefs: [...state.deliveredHintRefs, refId],
+  deliveredHintHashes:
+    bodyHash === null
+      ? state.deliveredHintHashes
+      : [...state.deliveredHintHashes, bodyHash],
+});
+
+/**
+ * Briefing solved pointers, appended once per SessionStart fire. PER-FIRE,
+ * not cumulative: a re-fire (resume/clear, same session id) re-CREATES the
+ * state file with the schema defaults (hooks/session-start.ts
+ * writeSessionState) — this list starts empty again, exactly like
+ * deliveredHintRefs and the session cap beside it, and is repopulated with
+ * what THAT fire's briefing showed. Dedup (a re-pointed tree is one fact)
+ * and the FIFO cap are the transform's own defensive bounds, the
+ * withSeenTargets shape — not cross-fire bookkeeping.
+ */
+export const withBriefingSolvedRefs = (
+  state: SessionState,
+  refIds: readonly string[],
+): SessionState => {
+  const merged = [...new Set([...state.briefingSolvedRefs, ...refIds])];
+  return {
+    ...state,
+    briefingSolvedRefs:
+      merged.length <= MAX_BRIEFING_SOLVED_REFS
+        ? merged
+        : merged.slice(merged.length - MAX_BRIEFING_SOLVED_REFS),
+  };
+};
+
+/** FIFO cap, same shape as withSeenTargets: asks are once per file. */
+export const withTripwireAsked = (
+  state: SessionState,
+  file: string,
+): SessionState => {
+  const merged = [...state.tripwireAskedFiles, file];
+  return {
+    ...state,
+    tripwireAskedFiles:
+      merged.length <= MAX_TRIPWIRE_ASKED_FILES
+        ? merged
+        : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
   };
 };
 
@@ -101,5 +242,13 @@ export const deriveSessionState = (
     startedAt: input.startedAt,
     lastHeartbeatAt: null,
     seenTargets: [],
+    deliveredHintRefs: [],
+    deliveredHintHashes: [],
+    tripwireAskedFiles: [],
+    briefingSolvedRefs: [],
+    stopTurnCount: 0,
+    summarizerFireCount: 0,
+    summarizerLastFireTurn: null,
+    summarizerEstimatedTokens: 0,
   };
 };

@@ -17,7 +17,11 @@ import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
 import { quoted, quotingText } from "../render.ts";
-import { renderDiagnosis } from "../render.ts";
+import { renderDiagnosis, solvedAtFromTree } from "../render.ts";
+import type { SolvedPresentation } from "../render.ts";
+import { resolveCommitDrift } from "../../git/commit-drift.ts";
+import { resolveDefaultBranchRef } from "../../git/default-branch.ts";
+import { checkSolvedFileDrift } from "../../git/solved-staleness.ts";
 import { getDiagnosis } from "../../http/hub.ts";
 import type { Diagnosis, HubResult } from "../../http/hub.ts";
 import { hubFailure, idArg, parseArgs } from "./shared.ts";
@@ -106,6 +110,41 @@ export const fetchDiagnosis = (
 export const isNotFound = (result: HubResult<unknown>): boolean =>
   !result.ok && result.status === HTTP_NOT_FOUND;
 
+/**
+ * The pull-time facts for a SOLVED tree (VISION.md §1 honest presentation):
+ * drift of the tree's base commit against the reader's HEAD, and whether its
+ * referenced files changed on the default branch since the diagnosis. At
+ * most three bounded git calls after one bounded ref resolution (the
+ * staleness leg spends a second call to prove its pathspecs resolve before
+ * vouching "unchanged"), inside the MCP budget (not a hook path), every leg
+ * fail-open — a repo that cannot answer renders "unknown", never a guess.
+ */
+const solvedPresentationFor = async (
+  ctx: McpContext,
+  diagnosis: Diagnosis,
+  solvedAtMs: number,
+): Promise<SolvedPresentation> => {
+  const root = ctx.identity.root;
+  const defaultRef = await resolveDefaultBranchRef(root);
+  const files = diagnosis.targets
+    .filter((target) => target.kind === "file")
+    .map((target) => target.value);
+  const [fileDrift, drift] = await Promise.all([
+    defaultRef === null
+      ? Promise.resolve("unknown" as const)
+      : checkSolvedFileDrift(
+          root,
+          defaultRef,
+          files,
+          new Date(solvedAtMs).toISOString(),
+        ),
+    diagnosis.workContext.baseCommit === undefined
+      ? Promise.resolve(null)
+      : resolveCommitDrift(root, diagnosis.workContext.baseCommit),
+  ]);
+  return { now: ctx.now(), drift, fileDrift };
+};
+
 export const run = async (
   ctx: McpContext,
   args: unknown,
@@ -120,5 +159,12 @@ export const run = async (
       ? toolFailure(notFoundText(parsed.value.workContextId))
       : hubFailure(ctx, result);
   }
-  return toolText(renderDiagnosis(result.data));
+  // Solved trees get the honest-presentation block; the git legs run only
+  // when the tree IS solved — an open tree costs no process.
+  const solvedAtMs = solvedAtFromTree(result.data);
+  const presentation =
+    solvedAtMs === null
+      ? undefined
+      : await solvedPresentationFor(ctx, result.data, solvedAtMs);
+  return toolText(renderDiagnosis(result.data, presentation));
 };

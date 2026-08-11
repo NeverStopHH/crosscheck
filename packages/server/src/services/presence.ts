@@ -2,6 +2,7 @@ import { and, eq, gt, isNull } from "drizzle-orm";
 
 import { PRESENCE_TTL_SECONDS } from "../constants.ts";
 import { agentSessions, developers } from "../db/schema.ts";
+import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -40,6 +41,11 @@ export const listPresence = async (
         eq(agentSessions.repo, repo),
         isNull(agentSessions.endedAt),
         gt(agentSessions.lastHeartbeatAt, cutoff),
+        // Privacy filters (services/visibility.ts): an opted-out developer is
+        // hidden from every viewer but themself, and a developer the VIEWER
+        // muted is hidden from this viewer's briefing/statusline lines.
+        visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId),
+        notMutedCondition(viewerDeveloperId, agentSessions.developerId),
       ),
     );
 

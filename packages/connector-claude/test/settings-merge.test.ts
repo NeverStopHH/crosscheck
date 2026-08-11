@@ -16,6 +16,17 @@ const FOREIGN_SETTINGS = {
   permissions: { allow: ["Bash(bun test)"] },
 } as const;
 
+describe("buildSettingsPlan", () => {
+  test("registers the Stop hook, async, for the Tier-1 summarizer gate", () => {
+    // DESIGN.md §3 Tier 1: the gated Stop-hook summarizer needs the Stop
+    // event; async because the hook returns nothing — it gates and spawns.
+    const stop = PLAN.hooks["Stop"];
+    expect(stop).toBeDefined();
+    expect(JSON.stringify(stop)).toContain("crosscheck hook stop");
+    expect(stop?.hooks[0]?.async).toBe(true);
+  });
+});
+
 describe("mergeClaudeSettings", () => {
   test("preserves foreign PostToolUse hooks", () => {
     // Act

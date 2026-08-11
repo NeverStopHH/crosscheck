@@ -67,7 +67,7 @@
  * them, so this terminates rather than recursing.
  *
  * VERIFY: bun run packages/connector-claude/scripts/verify-claims.ts --list | wc -l | tr -d ' '
- * PRINTS: 32
+ * PRINTS: 49
  *
  *   bun run packages/connector-claude/scripts/verify-claims.ts
  *   bun run packages/connector-claude/scripts/verify-claims.ts --list
@@ -79,10 +79,10 @@
  * checks are decoration, so it would be absurd for its own failure path to be
  * one. Plant a wrong expected value, run it, put the value back:
  *
- *   perl -0pi -e 's/^ \* PRINTS: 3738$/ * PRINTS: 3739/m' \
+ *   perl -0pi -e 's/^ \* PRINTS: 3738$/ * PRINTS: 3839/m' \
  *     packages/connector-claude/src/briefing/sanitize.ts
  *   bun run packages/connector-claude/scripts/verify-claims.ts   # exits 1
- *   perl -0pi -e 's/^ \* PRINTS: 3739$/ * PRINTS: 3738/m' \
+ *   perl -0pi -e 's/^ \* PRINTS: 3739$/ * PRINTS: 3838/m' \
  *     packages/connector-claude/src/briefing/sanitize.ts
  *
  * Run here this round, that printed `FAIL packages/.../sanitize.ts:88`, the

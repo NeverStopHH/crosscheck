@@ -1,0 +1,92 @@
+{
+  "id": "muted-author",
+  "summary": "Morgan muted Vic. Vic's evidence-backed finding must reach an unmuted reader as substance and must never reach Morgan on any unasked surface — prompt hint or tripwire. The unmuted probe is the control that proves the muted silences are silent for the right reason. Covers Vic's OWN tree only: a muted author's claim inside an unmuted teammate's tree (claims-level notMutedCondition) is pinned by packages/server/test/mute.test.ts, not this corpus.",
+  "sessions": [
+    {
+      "id": "s_vic_limits",
+      "developer": "Vic",
+      "branch": "fix/tenant-limits",
+      "baseCommit": "c0ffee04",
+      "status": "analyzing"
+    }
+  ],
+  "workContexts": [
+    {
+      "id": "wc_limits",
+      "sessionId": "s_vic_limits",
+      "title": "Rate limiter counters leak across tenants",
+      "status": "analyzing",
+      "createdAt": "2026-08-01T02:00:00.000Z",
+      "updatedAt": "2026-08-01T06:00:00.000Z"
+    }
+  ],
+  "targets": [
+    { "workContextId": "wc_limits", "kind": "file", "value": "src/limits/counter.ts" }
+  ],
+  "claims": [
+    {
+      "id": "clm_lim_obs",
+      "workContextId": "wc_limits",
+      "authorSessionId": "s_vic_limits",
+      "kind": "observation",
+      "body": "One tenant exhausting its quota throttles unrelated tenants too",
+      "status": "proposed",
+      "confidence": 0.7,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-08-01T02:05:00.000Z"
+    },
+    {
+      "id": "clm_lim_root",
+      "workContextId": "wc_limits",
+      "authorSessionId": "s_vic_limits",
+      "kind": "root_cause",
+      "body": "Tenant id is omitted from the counter name when the header arrives lowercase",
+      "status": "likely_root_cause",
+      "confidence": 0.8,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_lim_obs"],
+      "createdAt": "2026-08-01T06:00:00.000Z"
+    }
+  ],
+  "probes": [
+    {
+      "id": "pr_limits_muted",
+      "kind": "prompt",
+      "reader": "Morgan",
+      "prompt": "rate limiter counters leak across tenants",
+      "expect": "silence",
+      "rationale": "Mute covers the unasked surfaces hub-side, inside the search WHERE (services/visibility.ts): a muted author's contexts neither surface nor crowd the candidate pool."
+    },
+    {
+      "id": "pr_limits_muted_tripwire",
+      "kind": "file-touch",
+      "reader": "Morgan",
+      "file": "src/limits/counter.ts",
+      "expect": "silence",
+      "rationale": "Mute covers the tripwire too — a muted developer's active session must not interrupt this reader's tool call."
+    },
+    {
+      "id": "pr_limits_unmuted",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "rate limiter counters leak across tenants",
+      "expect": "substance",
+      "expectClaimId": "clm_lim_root",
+      "expectContextId": "wc_limits",
+      "rationale": "Control probe: the same scenario is deliverable to a reader who did not mute — which proves the two muted probes are silent because of the mute, not because the scenario is undetectable."
+    },
+    {
+      "id": "pr_limits_oneword_debatable",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "does anything mangle the http header on ingress",
+      "expect": "substance",
+      "expectClaimId": "clm_lim_root",
+      "expectContextId": "wc_limits",
+      "rationale": "DEBATABLE BY DESIGN: the prompt shares exactly ONE mid-frequency word (header) with one claim body, and that single OR-joined FTS token qualifies the context as a provable lexical match, so the evidence-backed root cause arrives as full substance. Today's precision floor is tier membership alone — no matched-token minimum, no rank floor. Recorded as today's behavior, not endorsed: building this corpus surfaced the same single-token path delivering cross-domain noise (key, across, retries), and hint_deliveries telemetry decides whether substance should demand more than one shared word."
+    }
+  ]
+}

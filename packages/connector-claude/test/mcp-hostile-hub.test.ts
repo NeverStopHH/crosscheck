@@ -471,3 +471,65 @@ describe("extend_diagnosis on a tree that came back partial", () => {
     expect(text).toContain("get_diagnosis");
   });
 });
+
+describe("a hub that forges the pair-level similarity", () => {
+  /** A minimal, otherwise-valid referee brief the wire schema accepts. */
+  const refereePosition = (
+    claimId: string,
+    workContextId: string,
+  ): Record<string, unknown> => ({
+    claim: {
+      id: claimId,
+      workContextId,
+      kind: "hypothesis",
+      status: "proposed",
+      confidence: 0.8,
+      body: "The refresh path never reloads the rotated key",
+      provenance: "declared",
+      authorDeveloperName: "Mara",
+      createdAt: CREATED,
+    },
+    workContextTitle: "Login 500s on staging",
+    evidence: [],
+    evidenceTruncated: false,
+    ruledOut: [],
+    ruledOutTruncated: false,
+    supersededByClaimId: null,
+  });
+
+  const briefWithSimilarity = (similarity: number): Response =>
+    ok({
+      brief: {
+        id: "cx_11111111111111111111111111111111",
+        reason: "similarity",
+        similarity,
+        positionA: refereePosition("clm_a", "wc_a"),
+        positionB: refereePosition("clm_b", "wc_b"),
+        sharedTargets: [],
+        sharedTargetsTruncated: false,
+      },
+    });
+
+  test("an out-of-range similarity fails the call closed, like a forged confidence", async () => {
+    // Arrange: cosine similarity lives in [0, 1] exactly like confidence, and
+    // the renderer prints it as a fact — `similarity 1e+30` stated in
+    // crosscheck's own voice would misstate the detector to the reader
+    respond = (): Response => briefWithSimilarity(1e30);
+
+    // Act
+    const forged = await call("get_referee_brief", {
+      contradictionId: "cx_11111111111111111111111111111111",
+    });
+
+    // Arrange a control: the same brief with an honest score renders
+    respond = (): Response => briefWithSimilarity(0.97);
+    const honest = await call("get_referee_brief", {
+      contradictionId: "cx_11111111111111111111111111111111",
+    });
+
+    // Assert
+    expect(forged).toContain("could not read");
+    expect(forged).not.toContain("semantic similarity");
+    expect(honest).toContain("Detected by semantic similarity 0.97.");
+  });
+});

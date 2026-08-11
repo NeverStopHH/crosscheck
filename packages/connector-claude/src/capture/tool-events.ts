@@ -14,9 +14,25 @@ export const HookPayloadSchema = z.looseObject({
   source: z.string().optional().catch(undefined),
   session_title: z.string().optional().catch(undefined),
   reason: z.string().optional().catch(undefined),
+  /**
+   * UserPromptSubmit only: the prompt text the hint fast path searches with.
+   * Tolerant like every field here — if Claude Code renames it, hints degrade
+   * to silence (fail open); the hook-contract watcher does not yet probe it
+   * (recorded deferral: extending the probe list needs a snapshot re-record
+   * against the live docs).
+   */
+  prompt: z.string().optional().catch(undefined),
   tool_name: z.string().optional().catch(undefined),
   tool_input: z.unknown().optional(),
   tool_response: z.unknown().optional(),
+  /**
+   * Stop only: where Claude Code keeps this session's JSONL transcript (the
+   * Tier-1 summarizer's input) and whether this Stop was itself forced by a
+   * stop hook (the summarizer skips those — one logical turn, one gate run).
+   * Tolerant like every field: renamed upstream, the summarizer goes silent.
+   */
+  transcript_path: z.string().optional().catch(undefined),
+  stop_hook_active: z.boolean().optional().catch(undefined),
 });
 
 export type HookPayload = z.infer<typeof HookPayloadSchema>;

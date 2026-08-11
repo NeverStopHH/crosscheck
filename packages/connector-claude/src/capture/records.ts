@@ -54,6 +54,47 @@ export const workContextRecord = (
 
 export type TargetKind = "file" | "symbol" | "component" | "error_fingerprint";
 
+export type HintRefKind = "claim" | "work_context";
+
+/** 128 bits of SHA-256 — the id stays deterministic AND filename-short. */
+const HINT_DELIVERY_ID_HASH_CHARS = 32;
+
+/**
+ * DETERMINISTIC, from (receiving session, ref): the seen-set already
+ * guarantees one delivery per ref per session, so this pair is unique — and a
+ * spool replay of the same envelope re-sends the same primary key, which the
+ * hub answers with `duplicate` instead of a second telemetry row.
+ */
+export const hintDeliveryId = (
+  receiverSessionId: string,
+  refId: string,
+): string =>
+  `hd_${new Bun.CryptoHasher("sha256")
+    .update(`${receiverSessionId}\n${refId}`)
+    .digest("hex")
+    .slice(0, HINT_DELIVERY_ID_HASH_CHARS)}`;
+
+/** Delivery telemetry (DESIGN.md §4): refs only, never the rendered text. */
+export const hintDeliveryRecord = (
+  receiverSessionId: string,
+  refKind: HintRefKind,
+  refId: string,
+  producer: Producer,
+  now: Date,
+): Envelope =>
+  buildEnvelope(
+    "hint_delivery",
+    {
+      id: hintDeliveryId(receiverSessionId, refId),
+      sessionId: receiverSessionId,
+      refKind,
+      refId,
+      deliveredAt: now.toISOString(),
+    },
+    producer,
+    now,
+  );
+
 export const targetRecord = (
   workContextId: string,
   kind: TargetKind,

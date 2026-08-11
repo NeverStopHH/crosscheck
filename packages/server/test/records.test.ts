@@ -356,6 +356,97 @@ describe("POST /api/records", () => {
     expect(claimAdds).toHaveLength(1);
   });
 
+  test("a promotion revision is not deduplicated into the draft it supersedes", async () => {
+    // Arrange: a Tier-1 draft — machine-derived, capped confidence (DESIGN.md §3)
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_draft",
+            captureMode: "auto",
+            provenance: "derived",
+            confidence: 0.4,
+          }),
+        ),
+      ],
+    });
+
+    // Act: the promotion — SAME body, provenance now declared, plus the
+    // supersedes edge onto the draft, in one batch (append-only revision).
+    const { data } = await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("claim", validClaimBody({ id: "clm_promoted" })),
+        recordEnvelope(
+          "claim_edge",
+          validClaimEdgeBody({
+            id: "edge_promote",
+            fromClaimId: "clm_promoted",
+            toClaimId: "clm_draft",
+            kind: "supersedes",
+          }),
+        ),
+      ],
+    });
+
+    // Assert: dedup collapses re-observations, not provenance upgrades — a
+    // declared restatement of a derived draft must mint its own row, or the
+    // promotion loop cannot exist.
+    expect(data?.results[0]?.status).toBe("accepted");
+    expect(data?.results[0]?.id).toBe("clm_promoted");
+    expect(data?.results[1]?.status).toBe("accepted");
+  });
+
+  test("a discard revision (status rejected) is not deduplicated into the draft", async () => {
+    // Arrange: the same draft
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_draft",
+            captureMode: "auto",
+            provenance: "derived",
+            confidence: 0.4,
+          }),
+        ),
+      ],
+    });
+
+    // Act: discard — same body, same provenance, but status rejected, plus edge
+    const { data } = await postRecords(harness, developer, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_discard",
+            captureMode: "auto",
+            provenance: "derived",
+            confidence: 0.4,
+            status: "rejected",
+          }),
+        ),
+        recordEnvelope(
+          "claim_edge",
+          validClaimEdgeBody({
+            id: "edge_discard",
+            fromClaimId: "clm_discard",
+            toClaimId: "clm_draft",
+            kind: "supersedes",
+          }),
+        ),
+      ],
+    });
+
+    // Assert: a status-change revision is not a re-observation
+    expect(data?.results[0]?.status).toBe("accepted");
+    expect(data?.results[1]?.status).toBe("accepted");
+  });
+
   test("does not dedup the same body from a different developer", async () => {
     // Arrange: Robin has his own session and extends Nick's work context
     const { harness, developer } = await createHarnessWithSession();

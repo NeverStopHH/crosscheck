@@ -1,4 +1,4 @@
-import { asc, count, desc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, or } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -6,7 +6,9 @@ import {
   claims,
   developers,
   workContexts,
+  workContextTargets,
 } from "../db/schema.ts";
+import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 
 /** Upper bound on claims returned per diagnosis tree; excess sets `truncated`. */
@@ -14,6 +16,13 @@ export const DIAGNOSIS_MAX_CLAIMS = 500;
 
 /** Upper bound on edges returned per diagnosis tree; excess sets `truncated`. */
 export const DIAGNOSIS_MAX_EDGES = 1000;
+
+/**
+ * Upper bound on targets returned with a diagnosis — the connector's solved
+ * staleness check reads the FILE targets, and its own path cap is far below
+ * this (STALENESS_MAX_PATHS in the connector).
+ */
+export const DIAGNOSIS_MAX_TARGETS = 100;
 
 export interface DiagnosisLimits {
   readonly maxClaims: number;
@@ -39,6 +48,14 @@ export interface WorkContextView {
   readonly description: string | null;
   readonly intent: Record<string, unknown> | null;
   readonly status: string;
+  /**
+   * The owning session's base commit — what the connector's drift label and
+   * landed ancestry check run against. "" only if the join ever misses
+   * (unreachable through ingest, same argument as the claim author join).
+   */
+  readonly baseCommit: string;
+  /** Merged-branch detection (DESIGN.md §5); null while unobserved. */
+  readonly landedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string | null;
 }
@@ -100,22 +117,38 @@ export interface ExternalClaimRef {
   readonly workContextId: string;
 }
 
+/** One deterministic target of the tree (file, symbol, fingerprint …). */
+export interface DiagnosisTargetView {
+  readonly kind: string;
+  readonly value: string;
+}
+
 export interface Diagnosis {
   readonly workContext: WorkContextView;
   readonly claims: readonly ClaimView[];
   readonly edges: readonly ClaimEdgeView[];
   readonly externalClaims: readonly ExternalClaimRef[];
+  /**
+   * The tree's targets, bounded by DIAGNOSIS_MAX_TARGETS — what the solved
+   * staleness check reads at pull time (which files this diagnosis was about).
+   */
+  readonly targets: readonly DiagnosisTargetView[];
   /** True when the claims or edges query hit its limit — the tree is partial. */
   readonly truncated: boolean;
 }
 
-const toWorkContextView = (row: WorkContextRow): WorkContextView => ({
+const toWorkContextView = (
+  row: WorkContextRow,
+  baseCommit: string,
+): WorkContextView => ({
   id: row.id,
   sessionId: row.sessionId,
   title: row.title,
   description: row.description,
   intent: row.intent ?? null,
   status: row.status,
+  baseCommit,
+  landedAt: toIsoOrNull(row.landedAt),
   createdAt: row.createdAt.toISOString(),
   updatedAt: toIsoOrNull(row.updatedAt),
 });
@@ -162,6 +195,7 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
 
 export const listWorkContextsByRepo = async (
   db: Db,
+  viewerDeveloperId: string,
   repo: string,
 ): Promise<readonly WorkContextListEntry[]> => {
   const rows = await db
@@ -169,22 +203,52 @@ export const listWorkContextsByRepo = async (
       workContext: workContexts,
       developerId: agentSessions.developerId,
       developerName: developers.name,
+      baseCommit: agentSessions.baseCommit,
       claimCount: count(claims.id),
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
     .leftJoin(claims, eq(claims.workContextId, workContexts.id))
-    .where(eq(agentSessions.repo, repo))
-    .groupBy(workContexts.id, agentSessions.developerId, developers.name)
+    // The viewer's mutes apply — this listing feeds the briefing's related-
+    // work pointers (an unasked surface). Opt-out does NOT: these rows are
+    // published knowledge, not live presence (services/visibility.ts). The
+    // by-id diagnosis read below stays unfiltered — that is the pull.
+    .where(
+      and(
+        eq(agentSessions.repo, repo),
+        notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+      ),
+    )
+    .groupBy(
+      workContexts.id,
+      agentSessions.developerId,
+      developers.name,
+      agentSessions.baseCommit,
+    )
     .orderBy(desc(workContexts.createdAt));
   return rows.map((row) => ({
-    ...toWorkContextView(row.workContext),
+    ...toWorkContextView(row.workContext, row.baseCommit),
     developerId: row.developerId,
     developerName: row.developerName,
     claimCount: row.claimCount,
   }));
 };
+
+/** The tree's targets, bounded, in deterministic (kind, value) order. */
+const listDiagnosisTargets = async (
+  db: Db,
+  workContextId: string,
+): Promise<readonly DiagnosisTargetView[]> =>
+  db
+    .select({
+      kind: workContextTargets.kind,
+      value: workContextTargets.value,
+    })
+    .from(workContextTargets)
+    .where(eq(workContextTargets.workContextId, workContextId))
+    .orderBy(asc(workContextTargets.kind), asc(workContextTargets.value))
+    .limit(DIAGNOSIS_MAX_TARGETS);
 
 const listEdgesTouching = async (
   db: Db,
@@ -244,9 +308,15 @@ export const getDiagnosis = async (
   workContextId: string,
   limits: DiagnosisLimits = DEFAULT_DIAGNOSIS_LIMITS,
 ): Promise<Diagnosis | undefined> => {
+  // innerJoin for the base commit: every context reaches the table through
+  // checkOwnedSession (record-handlers.ts), so its session always exists.
   const contextRows = await db
-    .select()
+    .select({
+      workContext: workContexts,
+      baseCommit: agentSessions.baseCommit,
+    })
     .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(eq(workContexts.id, workContextId))
     .limit(1);
   const contextRow = contextRows[0];
@@ -279,12 +349,14 @@ export const getDiagnosis = async (
     localClaimIds,
     limits,
   );
+  const targets = await listDiagnosisTargets(db, workContextId);
 
   return {
-    workContext: toWorkContextView(contextRow),
+    workContext: toWorkContextView(contextRow.workContext, contextRow.baseCommit),
     claims: claimRows.map(toClaimView),
     edges: edgeRows.map(toClaimEdgeView),
     externalClaims,
+    targets,
     truncated:
       claimRows.length >= limits.maxClaims ||
       edgeRows.length >= limits.maxEdges,

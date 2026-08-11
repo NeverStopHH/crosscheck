@@ -2,6 +2,7 @@ import { generateApiKey, hashApiKey } from "../auth/keys.ts";
 import { EVENT_KINDS } from "../constants.ts";
 import { developers } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
+import { normalizeEmail } from "./commit-evidence.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -32,12 +33,17 @@ export const createDeveloper = async (
 ): Promise<CreateDeveloperResult> => {
   const apiKey = generateApiKey();
   const id = `${DEVELOPER_ID_PREFIX}${crypto.randomUUID()}`;
+  // Stored lowercased: the absence check joins case-insensitively on this
+  // column (services/absences.ts), and the UNIQUE guard must agree with that
+  // join — two case-variant accounts would each match the same commit author
+  // and yield duplicate findings for one person.
+  const email = normalizeEmail(input.email);
   const inserted = await deps.db
     .insert(developers)
     .values({
       id,
       name: input.name,
-      email: input.email,
+      email,
       apiKeyHash: hashApiKey(apiKey),
       createdAt: deps.now(),
     })
@@ -50,7 +56,7 @@ export const createDeveloper = async (
 
   return {
     outcome: "created",
-    developer: { id, name: input.name, email: input.email },
+    developer: { id, name: input.name, email },
     apiKey,
   };
 };

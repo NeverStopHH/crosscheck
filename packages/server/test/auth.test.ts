@@ -142,6 +142,37 @@ describe("admin developer bootstrap", () => {
     expect(response.status).toBe(409);
   });
 
+  test("stores developer emails lowercased and rejects a case-variant duplicate", async () => {
+    // Arrange: the absence check joins case-insensitively on this column, so
+    // two case-variant accounts would each match the same commit author and
+    // yield duplicate findings — the unique guard must agree with the join.
+    const harness = await createTestHarness();
+
+    // Act
+    const first = await harness.app.request(
+      "/api/developers",
+      jsonRequest("POST", TEST_ADMIN_TOKEN, {
+        name: "Robin Upper",
+        email: "Robin@Example.com",
+      }),
+    );
+    const duplicate = await harness.app.request(
+      "/api/developers",
+      jsonRequest("POST", TEST_ADMIN_TOKEN, {
+        name: "robin lower",
+        email: "robin@example.com",
+      }),
+    );
+
+    // Assert: one identity, one account
+    expect(first.status).toBe(200);
+    const body = (await first.json()) as {
+      data: { developer: { email: string } };
+    };
+    expect(body.data.developer.email).toBe("robin@example.com");
+    expect(duplicate.status).toBe(409);
+  });
+
   test("rejects an invalid developer payload with 400", async () => {
     const harness = await createTestHarness();
 

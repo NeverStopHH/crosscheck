@@ -5,6 +5,7 @@ import { formatIssues } from "../http/request.ts";
 import { RepoQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { getDiagnosis, listWorkContextsByRepo } from "../services/diagnosis.ts";
+import { markHintsPulled } from "../services/hint-deliveries.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
@@ -17,7 +18,11 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
 
-    const workContexts = await listWorkContextsByRepo(deps.db, parsed.data.repo);
+    const workContexts = await listWorkContextsByRepo(
+      deps.db,
+      c.get("developer").id,
+      parsed.data.repo,
+    );
     return ok(c, { workContexts });
   });
 
@@ -25,6 +30,14 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const diagnosis = await getDiagnosis(deps.db, c.req.param("id"));
     if (diagnosis === undefined) {
       return fail(c, 404, "not_found", "work context not found");
+    }
+    // The precision loop (DESIGN.md §4): a read of a hinted tree is the
+    // "hint was useful" signal. Telemetry rides on the read and must never
+    // fail it — hence the catch around what is otherwise two bounded queries.
+    try {
+      await markHintsPulled(deps, c.get("developer").id, c.req.param("id"));
+    } catch (error) {
+      console.error("[crosscheck] marking hint deliveries pulled failed", error);
     }
     return ok(c, diagnosis);
   });

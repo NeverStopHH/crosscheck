@@ -31,7 +31,7 @@ export type HubResult<T> =
     };
 
 export interface HubRequest<T> {
-  readonly method: "GET" | "POST";
+  readonly method: "GET" | "POST" | "PUT" | "DELETE";
   readonly path: string;
   readonly schema: z.ZodType<T>;
   readonly body?: unknown;

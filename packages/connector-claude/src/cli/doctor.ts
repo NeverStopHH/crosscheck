@@ -35,11 +35,17 @@ import type { Env } from "../config/paths.ts";
 import { formatAge } from "../briefing/render.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
 import { hubRequest } from "../http/client.ts";
+import type { HubContext } from "../http/client.ts";
+import { getAbsences, getPrivacySettings } from "../http/hub.ts";
 import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
 import { oldestSpoolLineMs, spoolDepth } from "../spool/files.ts";
 import { readLockHolder } from "../spool/lock.ts";
 import { readUnclosedSummary } from "../spool/unclosed.ts";
 import { readSyncState } from "../state/sync-state.ts";
+import {
+  formatSummarizerCost,
+  readSummarizerCost,
+} from "../summarizer/cost.ts";
 import { isOwnedMcpEntry } from "./mcp-config.ts";
 import { isOwnedCommand } from "./settings-merge.ts";
 import type { CliResult } from "./login.ts";
@@ -171,7 +177,14 @@ const checkSettings = async (repoRoot: string): Promise<readonly Check[]> => {
     }),
   );
 
-  const required = ["SessionStart", "PostToolUse", "SessionEnd"];
+  const required = [
+    "SessionStart",
+    "PostToolUse",
+    "SessionEnd",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "Stop",
+  ];
   const missing = required.filter(
     (event) => !ownedCommands.some((entry) => entry.event === event),
   );
@@ -392,6 +405,86 @@ const checkFlushLock = async (home: string, key: string): Promise<Check> => {
     : check("PASS", "flush lock", `held ${held} by pid ${holder.pid}`);
 };
 
+/**
+ * The team-level version of rule 6: a teammate's connector dying is silent BY
+ * DESIGN on their machine, so the place it becomes visible is everyone else's
+ * doctor. Counts only, per finding kind — the names belong to `crosscheck
+ * status`, where a human asked for the list rather than a health check.
+ *
+ * "not measured" is a PASS, not a WARN: an older hub without the endpoint (or
+ * an unreachable one — the hub check above already reports that) says nothing
+ * about THIS install's health, and a warning nobody can act on teaches people
+ * to ignore doctor.
+ */
+const checkAbsences = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<Check> => {
+  const result = await getAbsences(ctx, repoId);
+  if (!result.ok) {
+    return check("PASS", "absence findings", "not measured");
+  }
+  if (result.data.length === 0) {
+    return check("PASS", "absence findings", "none");
+  }
+  const inactive = result.data.filter((entry) => entry.kind === "inactive").length;
+  const unconnected = result.data.filter(
+    (entry) => entry.kind === "unconnected",
+  ).length;
+  const parts = [
+    ...(inactive > 0
+      ? [`${inactive} hub member${inactive === 1 ? "" : "s"}`]
+      : []),
+    ...(unconnected > 0
+      ? [`${unconnected} without a crosscheck account`]
+      : []),
+  ];
+  return check(
+    "WARN",
+    "absence findings",
+    `${result.data.length} recent commit author${result.data.length === 1 ? "" : "s"} ` +
+      `with no matching reported session (${parts.join(", ")}) — crosscheck status has the lines`,
+  );
+};
+
+/**
+ * Own privacy state (DESIGN.md §2.1), counts only — names belong to
+ * `crosscheck status`. Always PASS: both states are deliberate choices, not
+ * defects; the check exists so "why does nobody see me" / "why do I never
+ * see them" is answered before anyone chases a connector ghost. "not
+ * measured" (an older hub, or unreachable) is a PASS for the same reason
+ * the absence check's is.
+ */
+const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
+  const result = await getPrivacySettings(ctx);
+  if (!result.ok) {
+    return check("PASS", "privacy settings", "not measured");
+  }
+  const presencePart = result.data.presenceOptOut
+    ? "presence hidden (opt-out)"
+    : "presence visible";
+  return check(
+    "PASS",
+    "privacy settings",
+    `${presencePart}, ${result.data.mutes.length} muted`,
+  );
+};
+
+/**
+ * Summarizer cost (DESIGN.md §10 risk 7), always PASS: spending inside the
+ * hard caps is a designed behaviour, not a defect — the check exists so the
+ * spend on the developer's own quota is never invisible. Figures are
+ * estimates (~4 chars/token) and the line says so.
+ */
+const checkSummarizerCost = async (
+  home: string,
+  hubUrl: string,
+  repoId: string,
+): Promise<Check> => {
+  const cost = await readSummarizerCost(home, hubUrl, repoId);
+  return check("PASS", "summarizer cost", formatSummarizerCost(cost));
+};
+
 /** A live session file plus a stale sync is exactly the silent-death signature. */
 const hasLiveSessionState = async (home: string): Promise<boolean> => {
   try {
@@ -465,21 +558,19 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
   }
 
   const key = repoKey(config.hubUrl, identity.repoId);
-  const probe = await hubRequest(
-    {
-      hubUrl: config.hubUrl,
-      apiKey: config.apiKey,
-      timeoutMs: config.timeoutMs,
-      home: config.home,
-      repoKey: key,
-      now: () => now,
-    },
-    {
-      method: "GET",
-      path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
-      schema: z.unknown(),
-    },
-  );
+  const hubCtx: HubContext = {
+    hubUrl: config.hubUrl,
+    apiKey: config.apiKey,
+    timeoutMs: config.timeoutMs,
+    home: config.home,
+    repoKey: key,
+    now: () => now,
+  };
+  const probe = await hubRequest(hubCtx, {
+    method: "GET",
+    path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
+    schema: z.unknown(),
+  });
   const hubCheck = probe.ok
     ? check("PASS", "hub reachable", config.hubUrl)
     : check(
@@ -512,7 +603,10 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
     await checkMcpRegistration(identity.root),
     mcpUsableCheck(true, config.hubUrl),
     ...(await checkSpool(config.home, key, now)),
+    await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
     await checkLastSync(config.home, key, now),
+    await checkAbsences(hubCtx, identity.repoId),
+    await checkPrivacy(hubCtx),
     skewCheck,
     bunfigCheck,
   ]);

@@ -4,6 +4,7 @@ import { runCli } from "../cli/index.ts";
 import { isHookName, runHook } from "../hooks/index.ts";
 import { runMcpServer } from "../mcp/server.ts";
 import { runStatusline } from "../statusline/statusline.ts";
+import { runSummarizeWorker } from "../summarizer/worker.ts";
 
 /**
  * Bounded: this read runs before the hook budget exists, so an stdin the caller
@@ -45,6 +46,13 @@ const main = async (): Promise<void> => {
 
   if (command === "statusline") {
     emitAndExit(await runStatusline(await readStdin(), process.env), EXIT_OK);
+  }
+
+  // The detached Tier-1 summarizer worker (summarizer/worker.ts): spawned by
+  // the Stop hook, never by a person. No stdin read — its input is named by
+  // flags — and exit 0 always, because nothing downstream reads the code.
+  if (command === "summarize-turn") {
+    process.exit(await runSummarizeWorker(rest, process.env));
   }
 
   // NOT through `readStdin`, and that is the whole difference from the two

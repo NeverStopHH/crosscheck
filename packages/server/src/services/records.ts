@@ -3,12 +3,19 @@ import { parseRecord } from "@crosscheck/schema";
 import type {
   Claim,
   ClaimEdge,
+  CommitEvidence,
+  HintDelivery,
   KnownRecordKind,
+  LandedEvidence,
   Target,
   WorkContext,
 } from "@crosscheck/schema";
 
 import { agentSessions } from "../db/schema.ts";
+import { ingestCommitEvidence } from "./commit-evidence.ts";
+import { ingestHintDelivery } from "./hint-deliveries.ts";
+import { ingestLandedEvidence } from "./landed.ts";
+import { embedContextDoc } from "./normalized-doc.ts";
 import {
   ingestClaim,
   ingestClaimEdge,
@@ -18,11 +25,14 @@ import {
 } from "./record-handlers.ts";
 import type { HandlerOutcome, RecordStatus } from "./record-handlers.ts";
 import type { Db } from "../db/client.ts";
+import type { Embedder } from "./embedder.ts";
 import type { Clock } from "../types.ts";
 
 interface Deps {
   readonly db: Db;
   readonly now: Clock;
+  /** Enables the ingest-side embedding work; absent = keyless install. */
+  readonly embedder?: Embedder | null;
 }
 
 export interface RecordResult {
@@ -95,31 +105,71 @@ const dispatchRecord = (
       return ingestClaim(deps, developerId, body as Claim);
     case "claim_edge":
       return ingestClaimEdge(deps, developerId, body as ClaimEdge);
+    case "commit_evidence":
+      return ingestCommitEvidence(deps, developerId, body as CommitEvidence);
+    case "landed_evidence":
+      return ingestLandedEvidence(deps, developerId, body as LandedEvidence);
+    case "hint_delivery":
+      return ingestHintDelivery(deps, developerId, body as HintDelivery);
   }
 };
+
+/** Work context whose normalized doc an ACCEPTED record regenerated. */
+const touchedContextId = (
+  kind: IngestableKind,
+  body: unknown,
+): string | undefined => {
+  switch (kind) {
+    case "work_context":
+      return (body as WorkContext).id;
+    case "target":
+      return (body as Target).workContextId;
+    case "claim":
+      return (body as Claim).workContextId;
+    case "claim_edge":
+      return undefined;
+    // Commit evidence touches no work context and therefore no doc to re-embed.
+    case "commit_evidence":
+      return undefined;
+    // Landing stamps a timestamp; the searchable doc is unchanged.
+    case "landed_evidence":
+      return undefined;
+    // Delivery telemetry references a context but changes nothing about it.
+    case "hint_delivery":
+      return undefined;
+  }
+};
+
+interface IngestOneResult {
+  readonly outcome: HandlerOutcome;
+  /** Set only when the record was accepted and regenerated a context's doc. */
+  readonly touched?: string;
+}
 
 const ingestOne = async (
   deps: Deps,
   developerId: string,
   input: unknown,
-): Promise<HandlerOutcome> => {
+): Promise<IngestOneResult> => {
   const parsed = parseRecord(input);
   if (!parsed.ok) {
-    return { status: "rejected", issues: parsed.issues };
+    return { outcome: { status: "rejected", issues: parsed.issues } };
   }
   if (parsed.unknownKind) {
     // Forward compatibility (DESIGN.md §5): unknown kinds are never an error.
-    return { status: "ignored" };
+    return { outcome: { status: "ignored" } };
   }
   const kind = parsed.envelope.kind as KnownRecordKind;
   const notIngestableNote = NOT_INGESTABLE_NOTES[kind];
   if (notIngestableNote !== undefined) {
-    return { status: "ignored", issues: [notIngestableNote] };
+    return { outcome: { status: "ignored", issues: [notIngestableNote] } };
   }
   if (parsed.envelope.producer.developerId !== developerId) {
-    return rejectedOutcome(
-      "producer.developerId: does not match authenticated developer",
-    );
+    return {
+      outcome: rejectedOutcome(
+        "producer.developerId: does not match authenticated developer",
+      ),
+    };
   }
   const gateIssue = await checkProducerSession(
     deps.db,
@@ -127,9 +177,20 @@ const ingestOne = async (
     parsed.envelope.producer.sessionId,
   );
   if (gateIssue !== null) {
-    return rejectedOutcome(gateIssue);
+    return { outcome: rejectedOutcome(gateIssue) };
   }
-  return dispatchRecord(deps, developerId, kind as IngestableKind, parsed.body);
+  const ingestableKind = kind as IngestableKind;
+  const outcome = await dispatchRecord(
+    deps,
+    developerId,
+    ingestableKind,
+    parsed.body,
+  );
+  if (outcome.status !== "accepted") {
+    return { outcome };
+  }
+  const touched = touchedContextId(ingestableKind, parsed.body);
+  return touched === undefined ? { outcome } : { outcome, touched };
 };
 
 const countByStatus = (
@@ -141,6 +202,12 @@ const countByStatus = (
  * Processes a spool flush strictly in input order, so a batch that creates a
  * work context and then its targets/claims succeeds in a single request.
  * Failures are per-record (partial success) — spool semantics.
+ *
+ * Context docs are EMBEDDED ONCE PER FLUSH, after the loop: only the final
+ * doc state matters, so a 100-claim batch to one context costs one provider
+ * call, not 100. This also covers targets-only flushes — a context whose
+ * latest ingest was a target is re-embedded here rather than staying
+ * invisible to the vector tier until the next claim.
  */
 export const ingestRecords = async (
   deps: Deps,
@@ -148,9 +215,23 @@ export const ingestRecords = async (
   inputs: readonly unknown[],
 ): Promise<IngestSummary> => {
   const results: RecordResult[] = [];
+  const touchedContexts = new Set<string>();
   for (let index = 0; index < inputs.length; index += 1) {
-    const outcome = await ingestOne(deps, developerId, inputs[index]);
+    const { outcome, touched } = await ingestOne(
+      deps,
+      developerId,
+      inputs[index],
+    );
     results.push({ index, ...outcome });
+    if (touched !== undefined) {
+      touchedContexts.add(touched);
+    }
+  }
+  const embedder = deps.embedder ?? null;
+  if (embedder !== null) {
+    for (const workContextId of touchedContexts) {
+      await embedContextDoc(deps.db, embedder, workContextId);
+    }
   }
   return {
     results,

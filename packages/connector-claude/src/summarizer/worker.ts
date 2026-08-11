@@ -1,0 +1,182 @@
+/**
+ * The detached summarizer worker (DESIGN.md §3 Tier 1) — the process the Stop
+ * hook spawns and never waits for. The spool-flush pattern, one step earlier:
+ * this worker only APPENDS the draft to the spool; the next hook's flush
+ * ships it, and a dead hub costs nothing but disk.
+ *
+ * PRIVACY IS THE SHAPE OF THIS FILE (§3, §10 risk 3): the transcript slice is
+ * read locally, summarized locally, and thrown away. The ONLY thing that can
+ * leave this function is a claim that survived, in order: tolerant parse,
+ * echo-loop exclusion, secret scan, and the shared wire contract's checkClaim
+ * — the same validator the MCP publish path and the hub apply, reused rather
+ * than duplicated, derived-confidence cap included.
+ *
+ * Fail open everywhere: every early return is silent, exit code always 0.
+ */
+import { DEFAULT_AGENT_KIND, EXIT_OK } from "../constants.ts";
+import { crosscheckHome, repoKey } from "../config/paths.ts";
+import type { Env } from "../config/paths.ts";
+import { buildEnvelope, UNKNOWN_DEVELOPER_ID } from "../capture/records.ts";
+import { containsSecret } from "../capture/secret-scan.ts";
+import { readDeliveredHintHashes } from "../hints/delivered-store.ts";
+import { isEchoOfDeliveredHint } from "../hints/echo.ts";
+import { checkClaim } from "../mcp/violations.ts";
+import { mintClaimId } from "../mcp/tools/shared.ts";
+import { appendRecords } from "../spool/append.ts";
+import { readSessionState } from "../state/session-state.ts";
+import { parseSummarizerOutput } from "./parse.ts";
+import {
+  resolveSummarizerArgv,
+  resolveSummarizerTimeoutMs,
+  runSummarizer,
+} from "./runner.ts";
+import { extractSliceText, readSliceRange } from "./transcript.ts";
+
+interface WorkerArgs {
+  readonly transcriptPath: string;
+  readonly claudeSessionId: string;
+  readonly sliceStart: number;
+  readonly sliceEnd: number;
+}
+
+const flagValue = (
+  args: readonly string[],
+  flag: string,
+): string | undefined => {
+  const index = args.indexOf(flag);
+  return index === -1 ? undefined : args[index + 1];
+};
+
+export const parseWorkerArgs = (
+  args: readonly string[],
+): WorkerArgs | null => {
+  const transcriptPath = flagValue(args, "--transcript");
+  const claudeSessionId = flagValue(args, "--session");
+  const sliceStart = Number(flagValue(args, "--slice-start"));
+  const sliceEnd = Number(flagValue(args, "--slice-end"));
+  if (
+    transcriptPath === undefined ||
+    claudeSessionId === undefined ||
+    !Number.isSafeInteger(sliceStart) ||
+    !Number.isSafeInteger(sliceEnd)
+  ) {
+    return null;
+  }
+  return { transcriptPath, claudeSessionId, sliceStart, sliceEnd };
+};
+
+const summarizeTurn = async (args: WorkerArgs, env: Env): Promise<void> => {
+  const home = crosscheckHome(env);
+  const state = await readSessionState(home, args.claudeSessionId);
+  if (state === null) {
+    return;
+  }
+  const raw = await readSliceRange(
+    args.transcriptPath,
+    args.sliceStart,
+    args.sliceEnd,
+  );
+  if (raw === null) {
+    return;
+  }
+  const slice = extractSliceText(raw);
+  if (slice.length === 0) {
+    return;
+  }
+
+  const stdout = await runSummarizer(
+    resolveSummarizerArgv(env),
+    slice,
+    resolveSummarizerTimeoutMs(env),
+    env,
+  );
+  if (stdout === null) {
+    return;
+  }
+  const draft = parseSummarizerOutput(stdout);
+  if (draft === null) {
+    return;
+  }
+
+  // FRESH state for the exclusions: hints may have been delivered while the
+  // model ran, and a session that ended meanwhile has nothing to attribute
+  // to — its state file is gone and the draft dies with it (honest).
+  const fresh = await readSessionState(home, args.claudeSessionId);
+  if (fresh === null) {
+    return;
+  }
+  // Echo-loop exclusion (§3, judge-mandated, no session qualifier): a body a
+  // teammate hint delivered — this session (state) OR any earlier one in this
+  // repo (the per-repo store) — must never come back as this session's own
+  // independent observation.
+  const persistedHashes = await readDeliveredHintHashes(
+    home,
+    repoKey(fresh.hubUrl, fresh.repoId),
+  );
+  const deliveredHashes = [...fresh.deliveredHintHashes, ...persistedHashes];
+  if (isEchoOfDeliveredHint(draft.body, deliveredHashes)) {
+    return;
+  }
+  // Secret scan before anything can leave the machine: a hit DROPS the
+  // draft, never redacts it (capture/secret-scan.ts states why).
+  if (containsSecret(draft.body)) {
+    return;
+  }
+
+  const now = new Date();
+  const claim = {
+    id: mintClaimId(),
+    workContextId: fresh.workContextId,
+    authorSessionId: fresh.crosscheckSessionId,
+    kind: draft.kind,
+    body: draft.body,
+    // Draft semantics, non-negotiable (§3 Tier 1): the model chose kind and
+    // body; everything that carries TRUST is forced here.
+    status: "proposed",
+    confidence: draft.confidence,
+    captureMode: "auto",
+    provenance: "derived",
+    evidenceRefs: [],
+    createdAt: now.toISOString(),
+  };
+  // The shared wire contract, reused not duplicated: ClaimSchema behind
+  // checkClaim enforces the derived-confidence cap the same way the hub does.
+  if (!checkClaim(claim).ok) {
+    return;
+  }
+
+  await appendRecords(
+    home,
+    repoKey(fresh.hubUrl, fresh.repoId),
+    args.claudeSessionId,
+    [
+      buildEnvelope(
+        "claim",
+        claim,
+        {
+          developerId: fresh.developerId ?? UNKNOWN_DEVELOPER_ID,
+          agentKind: env["CROSSCHECK_AGENT_KIND"] ?? DEFAULT_AGENT_KIND,
+          sessionId: fresh.crosscheckSessionId,
+        },
+        now,
+      ),
+    ],
+    now,
+  );
+};
+
+/** Entry point behind `crosscheck summarize-turn` — always exits 0. */
+export const runSummarizeWorker = async (
+  args: readonly string[],
+  env: Env,
+): Promise<number> => {
+  try {
+    const parsed = parseWorkerArgs(args);
+    if (parsed !== null) {
+      await summarizeTurn(parsed, env);
+    }
+  } catch {
+    // Fail open: a lost draft is the cheap outcome.
+  }
+  return EXIT_OK;
+};

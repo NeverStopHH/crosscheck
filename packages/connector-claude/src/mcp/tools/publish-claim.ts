@@ -17,6 +17,8 @@ import { quotingText, safeId } from "../render.ts";
 import { resolveOwnWorkContext } from "../session.ts";
 import type { OwnWorkContext } from "../session.ts";
 import { checkClaim, explainRejection } from "../violations.ts";
+import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
+import { readSessionState } from "../../state/session-state.ts";
 import { postRecords } from "../../http/hub.ts";
 import {
   envelopeFor,
@@ -101,6 +103,39 @@ export const contractFailure = (messages: readonly string[]): ToolResult =>
       .join("\n")}`,
   );
 
+/**
+ * Echo-loop exclusion (DESIGN.md §3, judge-mandated). The body arrived IN
+ * THIS SESSION as a teammate hint, so publishing it would mint the teammate's
+ * finding as this session's independent observation — the exact laundering
+ * §3 forbids. The refusal names the honest alternative: extending THEIR tree.
+ *
+ * Deterministic and honestly bounded: normalized-equality only (the same v0
+ * limit the hub's ingest dedup documents) — a paraphrase is not caught.
+ */
+export const ECHO_REFUSAL =
+  "That text arrived in this session as a crosscheck hint — it is a teammate's " +
+  "recorded claim, not this session's independent observation, so publishing it as a " +
+  "new claim is refused (echo-loop exclusion). To build on it, read the teammate's " +
+  "tree with get_diagnosis and add your claim there with extend_diagnosis, which " +
+  "keeps the provenance chain honest.";
+
+/**
+ * Whether this session's delivered hints contain the body. Read fresh per
+ * call: hooks may have delivered another hint since the MCP server started.
+ * Missing state fails OPEN (no refusal) — the marker can only exist where a
+ * hint was actually delivered, and a hint delivery guarantees the state file.
+ */
+const isDeliveredHintEcho = async (
+  ctx: McpContext,
+  own: OwnWorkContext,
+  body: string,
+): Promise<boolean> => {
+  const state = await readSessionState(ctx.config.home, own.claudeSessionId);
+  return (
+    state !== null && isEchoOfDeliveredHint(body, state.deliveredHintHashes)
+  );
+};
+
 export const run = async (
   ctx: McpContext,
   args: unknown,
@@ -112,6 +147,9 @@ export const run = async (
   const own = await requireOwnContext(ctx);
   if (own === null) {
     return toolFailure(NO_SESSION);
+  }
+  if (await isDeliveredHintEcho(ctx, own, parsed.value.body)) {
+    return toolFailure(ECHO_REFUSAL);
   }
 
   const claim = {

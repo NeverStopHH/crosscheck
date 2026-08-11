@@ -19,27 +19,36 @@
  * WHAT IS NOT FRAMED, AND WHY. Ids are printed bare, because an agent has to
  * pass them back into `get_diagnosis` and `extend_diagnosis` — an id inside « »
  * would arrive back with the guillemets attached. They are still untrusted, and
- * `safeId` below is what makes printing them bare safe: it is an allowlist, so
- * it is strictly narrower than the sanitizer rather than a second, weaker copy
- * of it.
+ * `safeId` (briefing/sanitize.ts, re-exported below) is what makes printing
+ * them bare safe: it is an allowlist, so it is strictly narrower than the
+ * sanitizer rather than a second, weaker copy of it.
  */
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
 import {
   MAX_DIAGNOSIS_CHARS,
-  MAX_ID_CHARS,
   MAX_SEARCH_CHARS,
   MAX_TITLE_CHARS,
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
-import { QUOTED_DATA_NOTICE, formatAge } from "../briefing/render.ts";
-import { sanitizeUntrusted } from "../briefing/sanitize.ts";
+import {
+  QUOTED_DATA_NOTICE,
+  formatAge,
+  formatSolvedAge,
+} from "../briefing/render.ts";
+import {
+  bareUntrusted as bare,
+  safeId,
+  sanitizeUntrusted,
+} from "../briefing/sanitize.ts";
+import type { CommitDrift } from "../git/commit-drift.ts";
+import type { SolvedFileDrift } from "../git/solved-staleness.ts";
 import type {
   Diagnosis,
   DiagnosisClaim,
   DiagnosisEdge,
   ExternalClaimRef,
-  WorkContextEntry,
+  SearchResultEntry,
 } from "../http/hub.ts";
 
 /**
@@ -51,33 +60,16 @@ import type {
  * still — this is a diagnosis, and a silently shorter one is the failure this
  * whole file is trying to avoid.
  */
-const UNNAMED_AUTHOR = "an unnamed teammate";
+export const UNNAMED_AUTHOR = "an unnamed teammate";
 
 /**
- * Characters an id may carry, written once and used in both directions.
- *
- * `ID_ALPHABET` is the negated form the renderer strips WITH; `SAFE_ID_PATTERN`
- * is the positive form the tool schemas validate AGAINST, so an id an agent
- * supplies has to already be what an id the renderer prints would be reduced to.
- * Two literals for one alphabet would be two things to widen, and widening only
- * the schema is exactly how an unprintable id becomes an unanswerable call.
+ * The ID class — `safeId`, the allowlist, and `SAFE_ID_PATTERN`, its positive
+ * form — lives in briefing/sanitize.ts beside the PROSE and BARE classes since
+ * the briefing grew its first bare-id field (the contradiction pointer).
+ * Re-exported here because the tools and their tests reach the class through
+ * this module, which is still where every character of tool output is made.
  */
-const ID_ALPHABET_SOURCE = "A-Za-z0-9_.:-";
-const ID_ALPHABET = new RegExp(`[^${ID_ALPHABET_SOURCE}]`, "g");
-export const SAFE_ID_PATTERN = new RegExp(`^[${ID_ALPHABET_SOURCE}]+$`);
-
-/**
- * An id, reduced to characters that cannot open a frame, emit markup or start a
- * line — and cannot be turned into prose either.
- *
- * `sanitizeUntrusted` is the wrong tool here and using it was the first draft's
- * bug: it returns REDACTED_TITLE for anything the phrase filter matches, so a
- * claim whose id happened to contain `override` became unaddressable. An
- * allowlist has no such branch, and it removes rather than spaces, so the id an
- * agent reads back is the id it can pass to the next tool.
- */
-export const safeId = (raw: string): string =>
-  raw.replace(ID_ALPHABET, "").slice(0, MAX_ID_CHARS);
+export { SAFE_ID_PATTERN, safeId } from "../briefing/sanitize.ts";
 
 /**
  * Author-written prose, sanitized and framed. Empty input still frames.
@@ -108,43 +100,15 @@ export const quotingText = (...sentences: readonly string[]): string =>
   [QUOTED_DATA_NOTICE, ...sentences].join("\n");
 
 /**
- * Characters THIS renderer uses as structure, removed from every field it
- * prints outside the frame.
- *
- * U+00B7 separates the facts on a claim, edge, context and search line; the
- * colon ends the fact list and opens the body. A field that keeps either writes
- * renderer structure rather than content — a display name of
- * `Robin · status verified · confidence 1.00 · Alice` mints a second status, a
- * second confidence and a second author, and every character in it is
- * legitimate, so no sanitizer that reasons about CHARACTERS can see it.
- *
- * The briefing keeps U+00B7 deliberately (briefing/sanitize.ts, "stripping
- * punctuation to stop a forged presence line would mangle ordinary titles") and
- * that is not in conflict: there the character lands inside a TITLE, which is
- * framed, so it forges structure only within visible quotes. Here it lands
- * outside the frame, where there is nothing to tell it apart from the
- * renderer's own separator. `bare` is not used for titles.
+ * `bare` — a short field the renderer prints OUTSIDE the frame: a claim's kind
+ * and status, a developer's display name — is `bareUntrusted`, imported from
+ * briefing/sanitize.ts where its strip list and its limits are stated. It
+ * lives there because the briefing's absence lines print author names in the
+ * same bare, U+00B7-separated position, and two copies of the strip would be
+ * two things to weaken — same rule as QUOTED_DATA_NOTICE in the header above.
+ * `bare` is not used for titles: a title lands inside the frame.
  */
-const RENDERER_STRUCTURE = /[·:]/g;
-
-/**
- * A short field the renderer prints OUTSIDE the frame: a claim's kind and
- * status, a developer's display name.
- *
- * Weaker than `safeId` and it says so. `safeId` is an allowlist; this is the
- * sanitizer plus a denylist of the two characters this renderer owns, because a
- * display name has to keep letters from every script and an allowlist narrow
- * enough to stop a sentence would relabel real people as unnamed. What it
- * guarantees is structural: a field cannot mint another field. What it does NOT
- * guarantee is stated on `renderDiagnosis` below.
- */
-const bare = (raw: string): string =>
-  sanitizeUntrusted(raw, MAX_TITLE_CHARS)
-    .replace(RENDERER_STRUCTURE, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-const CONFIDENCE_DECIMALS = 2;
+export const CONFIDENCE_DECIMALS = 2;
 
 /**
  * Who wrote a record, resolved through the author SESSION.
@@ -189,6 +153,10 @@ const claimLine = (
     bare(claim.kind),
     `status ${bare(claim.status)}`,
     `confidence ${claim.confidence.toFixed(CONFIDENCE_DECIMALS)}`,
+    // Trust label (DESIGN.md §4), bare like kind and status: §3 sanctions
+    // derived drafts on this deliberate pull, so the reader must be able to
+    // tell one from a human-vouched declared claim.
+    `provenance ${bare(claim.provenance)}`,
     authorLabel(index, claim.authorSessionId),
   ];
   return `${facts.join(" · ")}${evidence}${seen}: ${quoted(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
@@ -208,7 +176,7 @@ const edgeLine = (
 const externalLine = (ref: ExternalClaimRef): string =>
   `- ${safeId(ref.id)} · ${bare(ref.kind)} · in work context ${safeId(ref.workContextId)}`;
 
-interface Section {
+export interface Section {
   readonly header: string;
   readonly lines: readonly string[];
   /** What the section WOULD have shown, so a drop can be counted honestly. */
@@ -237,7 +205,7 @@ const moreLine = (count: number, noun: string): string =>
  * monotonic in its count, so reserving for the total guarantees the real line
  * fits and costs at most one item that would otherwise have been shown.
  */
-const appendSection = (
+export const appendSection = (
   accumulated: readonly string[],
   section: Section,
   cap: number,
@@ -263,7 +231,7 @@ const appendSection = (
     : [...fitted, moreLine(hidden, section.noun)];
 };
 
-const countHeader = (label: string, total: number): string =>
+export const countHeader = (label: string, total: number): string =>
   `${label} (${String(total)}):`;
 
 /**
@@ -285,6 +253,144 @@ const completenessNotes = (diagnosis: Diagnosis): readonly string[] => [
       ]
     : []),
 ];
+
+/** Same-author revision edge; its TARGET is the retracted claim. */
+const SUPERSEDES_EDGE_KIND = "supersedes";
+
+/**
+ * Disagreement edge: two QUALIFYING root causes joined by one are the
+ * referee-mode deadlock (DESIGN.md §4), a live dispute — not settled.
+ */
+const CONTRADICTS_EDGE_KIND = "contradicts";
+
+/** The one claim status that can mark a tree solved. */
+const SOLVED_CLAIM_STATUS = "likely_root_cause";
+
+/**
+ * When this tree was SOLVED — the newest likely_root_cause claim WITH
+ * evidence refs that is neither superseded nor deadlocked — or null.
+ *
+ * Derived from the VERY TREE being rendered, deliberately, rather than
+ * shipped as a hub field: the label then cannot disagree with the claims the
+ * reader sees under it, and a hostile hub cannot mint "solved" without also
+ * minting the claim rows that justify it. This mirrors the hub's own rule
+ * (packages/server/src/services/solved.ts — same status, same evidence
+ * floor, same supersedes probe, same deadlock probe); the two sit on
+ * opposite sides of the wire where an import cannot reach, so each side's
+ * tests pin its half, and an intentional rule change must touch both files.
+ *
+ * DEADLOCK: a qualifying root cause loses its standing while a contradicts
+ * edge joins it to another QUALIFYING root cause — two standing answers that
+ * cannot both be right are a dispute, and a dispute must not read settled.
+ * A rival that is evidence-free or superseded does not count: a drive-by
+ * theory cannot unsolve a tree.
+ *
+ * TRUNCATED TREES NEVER READ SOLVED. The hub's caps keep the OLDEST rows,
+ * so a late supersedes or contradicts edge — exactly the rows that would
+ * DISQUALIFY the solving claim — can be what fell off; a label computed
+ * over partial data would vouch too much. Claims-side truncation already
+ * failed toward not-solved; the truncated gate makes the edge side fail
+ * the same honest direction.
+ */
+export const solvedAtFromTree = (
+  diagnosis: Pick<Diagnosis, "claims" | "edges" | "truncated">,
+): number | null => {
+  if (diagnosis.truncated) {
+    return null;
+  }
+  const supersededIds = new Set(
+    diagnosis.edges
+      .filter((edge) => edge.kind === SUPERSEDES_EDGE_KIND)
+      .map((edge) => edge.toClaimId),
+  );
+  const qualifying = diagnosis.claims.filter(
+    (claim) =>
+      claim.status === SOLVED_CLAIM_STATUS &&
+      claim.evidenceRefs.length > 0 &&
+      !supersededIds.has(claim.id),
+  );
+  const qualifyingIds = new Set(qualifying.map((claim) => claim.id));
+  const deadlockedIds = new Set(
+    diagnosis.edges
+      .filter(
+        (edge) =>
+          edge.kind === CONTRADICTS_EDGE_KIND &&
+          qualifyingIds.has(edge.fromClaimId) &&
+          qualifyingIds.has(edge.toClaimId),
+      )
+      .flatMap((edge) => [edge.fromClaimId, edge.toClaimId]),
+  );
+  const solvedTimes = qualifying
+    .filter((claim) => !deadlockedIds.has(claim.id))
+    .map((claim) => Date.parse(claim.createdAt))
+    .filter((ms) => !Number.isNaN(ms));
+  return solvedTimes.length === 0 ? null : Math.max(...solvedTimes);
+};
+
+/**
+ * What the pull-time git checks learned about a solved tree — computed by
+ * the TOOL (only it has a repo to ask) and rendered here. Every field is
+ * fail-open: null drift and "unknown" fileDrift render honest absence.
+ */
+export interface SolvedPresentation {
+  readonly now: Date;
+  readonly drift: CommitDrift | null;
+  readonly fileDrift: SolvedFileDrift;
+}
+
+/** DESIGN.md §4's drift phrasing, against the READER's HEAD. */
+const diagnosisDriftLine = (drift: CommitDrift | null): readonly string[] => {
+  if (drift === null || (drift.ahead === 0 && drift.behind === 0)) {
+    return [];
+  }
+  return drift.behind > 0
+    ? [`The diagnosis is based on a commit ${String(drift.behind)} behind your HEAD.`]
+    : [`The diagnosis is based on a commit ${String(drift.ahead)} ahead of your HEAD.`];
+};
+
+const FILE_DRIFT_SENTENCES: Readonly<Record<SolvedFileDrift, string>> = {
+  changed:
+    "Files this diagnosis referenced have changed on the default branch since it was recorded.",
+  unchanged:
+    "Files this diagnosis referenced have not changed on the default branch since it was recorded.",
+  unknown:
+    "Whether the files this diagnosis referenced have since changed is unknown.",
+};
+
+/**
+ * The honest-presentation block for a solved tree (VISION.md §1): age stated
+ * plainly, drift where available, staleness in three states, and the
+ * lead-not-answer framing. Factual statements only — never imperatives —
+ * and every character renderer-built (ages via formatSolvedAge, sentences
+ * from this file), so no new untrusted path opens here.
+ */
+const solvedBlock = (
+  diagnosis: Diagnosis,
+  presentation: SolvedPresentation | undefined,
+): readonly string[] => {
+  if (presentation === undefined) {
+    return [];
+  }
+  const solvedAtMs = solvedAtFromTree(diagnosis);
+  if (solvedAtMs === null) {
+    return [];
+  }
+  const age = formatSolvedAge(
+    Math.max(0, presentation.now.getTime() - solvedAtMs),
+  );
+  const landed =
+    diagnosis.workContext.landedAt === null ||
+    diagnosis.workContext.landedAt === undefined
+      ? []
+      : ["The owning session's base commit is on the repo's default branch."];
+  return [
+    `Solved: a root cause claim with recorded evidence was added ${age} ago — ` +
+      "an old diagnosis is a recorded lead, not a statement about the current code.",
+    ...landed,
+    ...diagnosisDriftLine(presentation.drift),
+    FILE_DRIFT_SENTENCES[presentation.fileDrift],
+  ];
+};
 
 /**
  * One diagnosis tree, as markdown-ish text for an agent to read.
@@ -317,16 +423,20 @@ const completenessNotes = (diagnosis: Diagnosis): readonly string[] => [
  * of them is the wrong trade, and the residual is bounded: a display name is
  * sanitized, phrase-filtered, capped at MAX_TITLE_CHARS and structurally inert.
  */
-export const renderDiagnosis = (diagnosis: Diagnosis): string => {
+export const renderDiagnosis = (
+  diagnosis: Diagnosis,
+  solvedPresentation?: SolvedPresentation,
+): string => {
   const index = authorIndex(diagnosis.claims);
   const context = diagnosis.workContext;
   const header = `crosscheck diagnosis for work context ${safeId(context.id)}. ${QUOTED_DATA_NOTICE}`;
   const contextLine = `Work context ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} · status ${bare(context.status)} · opened by ${authorLabel(index, context.sessionId)}`;
+  const solvedLines = solvedBlock(diagnosis, solvedPresentation);
 
   const opening =
     diagnosis.claims.length === 0
-      ? [header, contextLine, "Claims: no claims recorded yet."]
-      : [header, contextLine];
+      ? [header, contextLine, ...solvedLines, "Claims: no claims recorded yet."]
+      : [header, contextLine, ...solvedLines];
 
   const sections: readonly Section[] = [
     {
@@ -377,11 +487,27 @@ export const renderDiagnosis = (diagnosis: Diagnosis): string => {
   return [...body, ...notes].join("\n");
 };
 
-/** One work context the lexical search matched, with its age at query time. */
+/** One work context the hub search matched, with its ages at query time. */
 export interface SearchHit {
-  readonly entry: WorkContextEntry;
+  readonly entry: SearchResultEntry;
   readonly ageMs: number;
+  /** Age of the solving claim, for solved results; the tool computes it. */
+  readonly solvedAgeMs?: number | undefined;
 }
+
+/**
+ * The solved marker (VISION.md §1): strict equality on the wire value, a
+ * renderer-built label — the hub's string is never printed, so no fourth
+ * untrusted path. Empty for open results and unknown kinds.
+ */
+const solvedFact = (hit: SearchHit): readonly string[] =>
+  hit.entry.resultKind === "solved"
+    ? [
+        hit.solvedAgeMs === undefined
+          ? "solved"
+          : `solved (diagnosed ${formatSolvedAge(hit.solvedAgeMs)} ago)`,
+      ]
+    : [];
 
 const searchLine = (hit: SearchHit): string => {
   const author =
@@ -391,6 +517,7 @@ const searchLine = (hit: SearchHit): string => {
     author.length === 0 ? UNNAMED_AUTHOR : author,
     `${formatAge(hit.ageMs)} ago`,
     `status ${bare(hit.entry.status)}`,
+    ...solvedFact(hit),
   ];
   return `${facts.join(" · ")}: ${quoted(hit.entry.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
 };
@@ -414,8 +541,33 @@ const searchHeader = (): string =>
 
 const queryLine = (framedQuery: string): string => `Query: ${framedQuery}`;
 
-const SEARCH_METHOD =
-  "Lexical match on title and status only, this repo only, newest first — not a semantic search.";
+/**
+ * What the hub search IS, in one line — because a model that believes it ran
+ * something else will draw conclusions an empty result does not support.
+ *
+ * Two variants, chosen by what the hub REPORTED it did for this search
+ * (`vectorTierActive`), never by what this client hopes is configured: the
+ * keyless install has no semantic tier and must say so, and a hub with an
+ * embedder must stop denying it.
+ */
+const SEARCH_METHOD_LEXICAL =
+  "Hybrid lexical match — exact file/symbol/fingerprint targets ranked above full-text " +
+  "over titles, statuses and claim summaries, this repo only, recent work ranked higher — " +
+  "not a semantic search.";
+const SEARCH_METHOD_SEMANTIC =
+  "Hybrid match — exact file/symbol/fingerprint targets ranked above full-text over " +
+  "titles, statuses and claim summaries, plus a semantic similarity tier, this repo only, " +
+  "recent work ranked higher.";
+
+export interface SearchRenderOptions {
+  /** The hub reported its vector tier ran for this search. */
+  readonly semanticTier?: boolean;
+}
+
+const searchMethodLine = (options: SearchRenderOptions): string =>
+  options.semanticTier === true
+    ? SEARCH_METHOD_SEMANTIC
+    : SEARCH_METHOD_LEXICAL;
 
 /**
  * A query that could not be searched for at all, as distinct from one that was
@@ -425,6 +577,10 @@ const SEARCH_METHOD =
  * that costs most: "nothing matched" tells a model its question was ASKED, so it
  * concludes nobody has worked on the problem and goes off to redo the work. This
  * says the question was never asked, and why.
+ *
+ * NO METHOD LINE HERE, deliberately: nothing was searched, so there is no
+ * method to describe — and this client never called the hub, so it cannot know
+ * which method sentence would even be true.
  */
 export const renderUnusableQuery = (
   query: string,
@@ -434,27 +590,26 @@ export const renderUnusableQuery = (
   return [
     searchHeader(),
     queryLine(framedQuery),
-    SEARCH_METHOD,
     `Nothing was searched for: no word in the query is at least ${String(minChars)} ` +
-      "characters long, and shorter words are dropped because a substring match on them hits " +
-      "almost every title. Ask again with the distinctive words of the problem.",
+      "characters long, and shorter words are dropped because they carry grammar rather " +
+      "than meaning. Ask again with the distinctive words of the problem.",
   ].join("\n");
 };
 
 /**
- * Lexical search results.
- *
- * The header states what this search IS — title and status, this repo, newest
- * first — because a model that believes it ran a semantic search over the whole
- * team's history will draw conclusions from an empty result that the empty
- * result does not support.
+ * Hub search results, in the hub's fused ranking order.
  */
 export const renderSearchResults = (
   hits: readonly SearchHit[],
   query: string,
+  options: SearchRenderOptions = {},
 ): string => {
   const framedQuery = quoted(query);
-  const opening = [searchHeader(), queryLine(framedQuery), SEARCH_METHOD];
+  const opening = [
+    searchHeader(),
+    queryLine(framedQuery),
+    searchMethodLine(options),
+  ];
   if (hits.length === 0) {
     return [...opening, "No work context on this repo matched that query."].join(
       "\n",

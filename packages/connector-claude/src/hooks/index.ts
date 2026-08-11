@@ -1,7 +1,10 @@
 import type { Env } from "../config/paths.ts";
 import { handlePostToolUse } from "./post-tool-use.ts";
+import { handlePreToolUse } from "./pre-tool-use.ts";
 import { handleSessionEnd } from "./session-end.ts";
 import { handleSessionStart } from "./session-start.ts";
+import { handleStop } from "./stop.ts";
+import { handleUserPromptSubmit } from "./user-prompt-submit.ts";
 import { runHookWith } from "./runner.ts";
 import type { HookHandler, HookName } from "./runner.ts";
 
@@ -9,6 +12,9 @@ const HANDLERS: Readonly<Record<HookName, HookHandler>> = {
   "session-start": handleSessionStart,
   "post-tool-use": handlePostToolUse,
   "session-end": handleSessionEnd,
+  "user-prompt-submit": handleUserPromptSubmit,
+  "pre-tool-use": handlePreToolUse,
+  stop: handleStop,
 };
 
 export const isHookName = (value: string): value is HookName =>

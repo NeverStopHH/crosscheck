@@ -1,13 +1,18 @@
-import { EXIT_OK, EXIT_UNREACHABLE } from "../constants.ts";
+import { EXIT_OK, EXIT_UNREACHABLE, STATUS_MAX_ABSENCE_LINES } from "../constants.ts";
 import { loadConfig } from "../config/config.ts";
 import { repoKey } from "../config/paths.ts";
 import type { Env } from "../config/paths.ts";
-import { formatAge } from "../briefing/render.ts";
+import { formatAbsenceLine, formatAge } from "../briefing/render.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
-import { getPresence } from "../http/hub.ts";
+import { getAbsences, getPresence, getPrivacySettings } from "../http/hub.ts";
+import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
 import { spoolDepth } from "../spool/files.ts";
 import { readSyncState } from "../state/sync-state.ts";
+import {
+  formatSummarizerCost,
+  readSummarizerCost,
+} from "../summarizer/cost.ts";
 import type { CliResult } from "./login.ts";
 
 const ageOrNever = (iso: string | null, now: Date): string => {
@@ -44,21 +49,50 @@ export const runStatus = async (
   const key = repoKey(config.hubUrl, identity.repoId);
   const sync = await readSyncState(config.home, key);
   const depth = await spoolDepth(config.home, key);
+  // Cost visibility (DESIGN.md §10 risk 7): a local fact, printed whether or
+  // not the hub answers; the figure is an estimate and the line says so.
+  const summarizerCost = await readSummarizerCost(
+    config.home,
+    config.hubUrl,
+    identity.repoId,
+  );
   const drops = await readDropSummary(config.home, key);
   // A batch the ledger itself could not take is recorded as a marker, not a count,
   // so the summed total understates it. `doctor` says the same; both must agree.
   const unrecorded = await readUnrecordedDrop(config.home, key);
-  const presence = await getPresence(
-    {
-      hubUrl: config.hubUrl,
-      apiKey: config.apiKey,
-      timeoutMs: config.timeoutMs,
-      home: config.home,
-      repoKey: key,
-      now: () => now,
-    },
-    identity.repoId,
-  );
+  const hubCtx = {
+    hubUrl: config.hubUrl,
+    apiKey: config.apiKey,
+    timeoutMs: config.timeoutMs,
+    home: config.home,
+    repoKey: key,
+    now: () => now,
+  };
+  const presence = await getPresence(hubCtx, identity.repoId);
+  // Absence findings share the briefing's line formatter, so both surfaces
+  // state the same facts the same way. A hub without the endpoint (or any
+  // failure) simply prints no section — same fail-open as the briefing.
+  const absences = await getAbsences(hubCtx, identity.repoId);
+  // Own privacy state (DESIGN.md §2.1) — so "why can't anyone see me" and
+  // "why do I never see Robin" are answered here instead of chasing ghosts.
+  // An older hub without the endpoint prints no lines, same fail-open.
+  const privacy = await getPrivacySettings(hubCtx);
+  const privacyLines = privacy.ok
+    ? [
+        presenceStateLine(privacy.data.presenceOptOut),
+        `muted: ${
+          privacy.data.mutes.length === 0
+            ? "(none)"
+            : privacy.data.mutes.map((mute) => mute.name).join(", ")
+        }`,
+      ]
+    : [];
+  const absenceLines = (absences.ok ? absences.data : [])
+    .slice(0, STATUS_MAX_ABSENCE_LINES)
+    .flatMap((entry) => {
+      const line = formatAbsenceLine(entry, now);
+      return line === null ? [] : [`  ${line}`];
+    });
 
   const teammates = presence.ok
     ? presence.data
@@ -71,9 +105,14 @@ export const runStatus = async (
       `hub: ${config.hubUrl}`,
       `repo: ${identity.repoId} (${identity.branch})`,
       `developer: ${config.developerName ?? "unknown"} (${config.developerId ?? "unknown"})`,
+      ...privacyLines,
       "teammates:",
       ...(teammates.length === 0 ? ["  (none)"] : teammates),
+      ...(absenceLines.length === 0
+        ? []
+        : ["commit authors without a recent session:", ...absenceLines]),
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
+      `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
       "",
     ].join("\n"),

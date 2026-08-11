@@ -5,7 +5,10 @@ import {
   createTestHarness,
   fetchEvents,
   jsonRequest,
+  postRecords,
+  recordEnvelope,
   registerTestSession,
+  validWorkContextBody,
   VALID_SESSION_BODY,
 } from "./helpers.ts";
 
@@ -102,5 +105,53 @@ describe("GET /api/events/stream", () => {
     await reader.cancel();
     expect(text).toContain("event: developer_created");
     expect(text).toContain("event: session_started");
+  });
+
+  test("the stream hides every event attributed to an opted-out developer", async () => {
+    // Arrange: Robin publishes a work context, then opts out. Nick's own
+    // session_started is appended AFTER Robin's rows, so once its frame
+    // arrives the stream has already passed everything about Robin.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const robin = await createTestDeveloper(
+      harness,
+      "Robin",
+      "robin@example.com",
+    );
+    await registerTestSession(harness, robin.apiKey, { id: "ses_robin" });
+    const seeded = await postRecords(harness, robin, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({ id: "wc_robin", sessionId: "ses_robin" }),
+          { sessionId: "ses_robin" },
+        ),
+      ],
+    });
+    expect(seeded.data?.accepted).toBe(1);
+    const optOut = await harness.app.request(
+      "/api/settings/presence",
+      jsonRequest("PUT", robin.apiKey, { optOut: true }),
+    );
+    expect(optOut.status).toBe(200);
+    await registerTestSession(harness, nick.apiKey);
+
+    // Act
+    const response = await harness.app.request("/api/events/stream", {
+      headers: { Authorization: `Bearer ${nick.apiKey}` },
+    });
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    const text = await readStreamUntil(reader, (t) =>
+      t.includes("event: session_started"),
+    );
+    await reader.cancel();
+
+    // Assert: Nick's own marker frame arrived; no frame about Robin did —
+    // knowledge kinds included, they carry Robin's developerId and a server
+    // timestamp (the live-activity leak the polled-GET pin also guards).
+    expect(text).toContain("event: session_started");
+    expect(text).not.toContain("event: work_context_created");
+    expect(text).not.toContain("ses_robin");
   });
 });

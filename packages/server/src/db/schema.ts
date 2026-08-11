@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
 import {
   bigserial,
+  boolean,
   check,
+  customType,
   doublePrecision,
   index,
   integer,
@@ -11,6 +13,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  vector,
 } from "drizzle-orm/pg-core";
 import {
   ARTIFACT_SENSITIVITIES,
@@ -27,13 +30,54 @@ import {
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
 
+/**
+ * Vectors from different models are not comparable, so every embedding carries
+ * one dimensionality: OpenAI text-embedding-3-small truncated to 768 and
+ * Ollama nomic-embed-text's native 768 (DESIGN.md §6). Kept in sync with the
+ * vector(768) columns in bootstrap.sql.
+ */
+export const EMBEDDING_DIMENSIONS = 768;
+
+/** drizzle has no first-class tsvector; the column is GENERATED, never written. */
+const tsvector = customType<{ data: string }>({ dataType: () => "tsvector" });
+
 export const developers = pgTable("developers", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   apiKeyHash: text("api_key_hash").notNull().unique(),
+  /**
+   * Presence opt-out (DESIGN.md §2.1, §10 risk 3): while true, this
+   * developer's LIVE presence is hidden from every OTHER developer's reads —
+   * services/visibility.ts names the exact surfaces. A column rather than a
+   * settings table: it is one boolean per developer, and the developer row is
+   * already read on every authenticated request.
+   */
+  presenceOptOut: boolean("presence_opt_out").notNull().default(false),
   createdAt: timestamptz("created_at").notNull().defaultNow(),
 });
+
+/**
+ * Reader-side mutes (DESIGN.md §2.1): "I do not want hints/pointers about
+ * developer X" — one row per (reader, muted) pair, filtering the READER's
+ * unasked surfaces only (services/visibility.ts). Hub-side rather than in the
+ * reader's local config so the mute follows the reader across machines.
+ */
+export const developerMutes = pgTable(
+  "developer_mutes",
+  {
+    readerDeveloperId: text("reader_developer_id")
+      .notNull()
+      .references(() => developers.id),
+    mutedDeveloperId: text("muted_developer_id")
+      .notNull()
+      .references(() => developers.id),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.readerDeveloperId, table.mutedDeveloperId] }),
+  ],
+);
 
 export const agentSessions = pgTable(
   "agent_sessions",
@@ -66,8 +110,21 @@ export const workContexts = pgTable("work_contexts", {
   description: text("description"),
   intent: jsonb("intent").$type<Record<string, unknown>>(),
   status: text("status", { enum: SESSION_STATUSES }).notNull(),
-  // tsv + embedding vector columns are added with the search block
   normalizedDoc: text("normalized_doc"),
+  tsv: tsvector("tsv").generatedAlwaysAs(
+    sql`to_tsvector('english', coalesce(normalized_doc, ''))`,
+  ),
+  /** Null until an embedder is configured and has embedded the current doc. */
+  embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+  embeddingModel: text("embedding_model"),
+  /**
+   * When the hub first learned the owning session's base commit is an
+   * ancestor of the default branch (DESIGN.md §5 merged-branch detection) —
+   * null while unobserved. A COLUMN, not a status transition, and monotonic:
+   * git ancestry never un-happens, and the status enum keeps recording what
+   * the session was doing (services/landed.ts states the full reasoning).
+   */
+  landedAt: timestamptz("landed_at"),
   createdAt: timestamptz("created_at").notNull(),
   updatedAt: timestamptz("updated_at"),
 });
@@ -83,6 +140,10 @@ export const workContextTargets = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.workContextId, table.kind, table.value] }),
+    // The PK leads with work_context_id; the derived-contradictions join
+    // matches on (kind, value) alone (services/contradictions.ts), which the
+    // PK cannot serve.
+    index("work_context_targets_kind_value_idx").on(table.kind, table.value),
   ],
 );
 
@@ -111,13 +172,22 @@ export const claims = pgTable(
       .$type<readonly string[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
-    // tsv + embedding vector columns are added with the search block
+    tsv: tsvector("tsv").generatedAlwaysAs(sql`to_tsvector('english', body)`),
+    /** Null until an embedder is configured; written once at ingest (append-only). */
+    embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+    embeddingModel: text("embedding_model"),
     createdAt: timestamptz("created_at").notNull(),
   },
   (table) => [
     check(
       "claims_body_length_check",
       sql`char_length(${table.body}) <= ${sql.raw(String(MAX_CLAIM_BODY_LENGTH))}`,
+    ),
+    // ANN index for the ingest gate's nearest-neighbor probes — without it
+    // every claim ingest seq-scans all embedded claims (similarity-gate.ts).
+    index("claims_embedding_hnsw_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
     ),
   ],
 );
@@ -145,6 +215,9 @@ export const claimEdges = pgTable(
       table.toClaimId,
       table.kind,
     ),
+    // Serves the hints path's "is this claim a supersedes target" probe —
+    // the unique index leads on from_claim_id and cannot.
+    index("claim_edges_to_kind_idx").on(table.toClaimId, table.kind),
   ],
 );
 
@@ -167,6 +240,65 @@ export const events = pgTable("events", {
   payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
   createdAt: timestamptz("created_at").notNull().defaultNow(),
 });
+
+/**
+ * Similarity-detected contradiction candidates only (ingest gate, DESIGN.md
+ * §3). Deterministic candidates — shared target + opposite status — are NOT
+ * rows here: services/contradictions.ts derives them fresh per read, so they
+ * have no ingest-order dependence and nothing to go stale.
+ */
+export const contradictionCandidates = pgTable(
+  "contradiction_candidates",
+  {
+    id: text("id").primaryKey(),
+    claimAId: text("claim_a_id")
+      .notNull()
+      .references(() => claims.id),
+    claimBId: text("claim_b_id")
+      .notNull()
+      .references(() => claims.id),
+    similarity: doublePrecision("similarity").notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("contradiction_candidates_pair_idx").on(
+      table.claimAId,
+      table.claimBId,
+    ),
+  ],
+);
+
+/**
+ * Latest commit-authorship evidence per (repo, commit author) — the absence
+ * check's ground truth (absence detection). UPSERT-only, never append: one row
+ * per author per repo, so the table is bounded by how many people commit, not
+ * by how often connectors report. Ingest prunes rows whose newest commit fell
+ * out of COMMIT_EVIDENCE_RETENTION_DAYS — and rows claiming a timestamp past
+ * the hub's own clock plus skew, which the age test alone could never retire
+ * and which ingest also clamps on write (services/commit-evidence.ts), so
+ * retention cannot be outrun by a forged date. Together that is the whole
+ * retention story.
+ *
+ * `author_email` is stored lowercased and is the matching key against
+ * `developers.email`. It never leaves the hub: absence responses carry names
+ * only (services/absences.ts).
+ */
+export const commitEvidence = pgTable(
+  "commit_evidence",
+  {
+    repo: text("repo").notNull(),
+    authorEmail: text("author_email").notNull(),
+    authorName: text("author_name").notNull(),
+    latestCommitAt: timestamptz("latest_commit_at").notNull(),
+    commitCount: integer("commit_count").notNull(),
+    windowDays: integer("window_days").notNull(),
+    collectedAt: timestamptz("collected_at").notNull(),
+    reportedBy: text("reported_by")
+      .notNull()
+      .references(() => developers.id),
+  },
+  (table) => [primaryKey({ columns: [table.repo, table.authorEmail] })],
+);
 
 export const hintDeliveries = pgTable("hint_deliveries", {
   id: text("id").primaryKey(),
