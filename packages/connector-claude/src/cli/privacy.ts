@@ -45,12 +45,15 @@ const OPT_OUT_SCOPE = [
   "",
   "Hidden from other developers: active-teammate briefing lines, statusline",
   "presence, PreToolUse same-file asks, absence (\"connector inactive\")",
-  "lines, and session start/end events. Your own view of your own activity",
-  "is unaffected.",
+  "lines, and every activity-feed event attributed to you — session",
+  "start/end and knowledge events alike, since feed timestamps reveal when",
+  "you work. Your own view of your own activity is unaffected.",
   "",
   "NOT retracted: claims, diagnoses and solved trees you published",
   "stay visible and attributed — opt-out covers live presence, not",
-  "authorship.",
+  "authorship. Caveat: commits under a git email the hub cannot match to",
+  "your account may still appear to teammates as \"not connected\" absence",
+  "lines under that git name.",
   "",
 ].join("\n");
 

@@ -170,8 +170,12 @@ describe("crosscheck presence", () => {
     expect(result.stdout).toContain("presence: hidden from teammates");
     expect(result.stdout).toContain("statusline");
     expect(result.stdout).toContain("absence");
-    expect(result.stdout).toContain("session start/end events");
+    expect(result.stdout).toContain("every activity-feed event attributed to you");
     expect(result.stdout).toContain("stay visible and attributed");
+    // The one loophole the hub cannot close, stated where the §10-risk-3
+    // audience reads the contract: commit evidence under an unmatchable git
+    // email still surfaces as an "unconnected" absence line.
+    expect(result.stdout).toContain("git email the hub cannot match");
   });
 
   test("`presence on` opts back in", async () => {

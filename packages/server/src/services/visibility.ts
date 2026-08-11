@@ -16,9 +16,15 @@
  *   3. GET /api/absences          — "inactive" findings about me (absence
  *                                   reporting IS presence surveillance: it
  *                                   reports when I last ran an agent)
- *   4. GET /api/events(+/stream)  — session_started / session_ended rows
- *                                   about my sessions (the raw feed a
- *                                   modified connector would read instead)
+ *   4. GET /api/events(+/stream)  — EVERY row attributed to me via payload
+ *                                   developerId, knowledge kinds included:
+ *                                   each row carries a server timestamp, so
+ *                                   the feed is a live activity timeline
+ *                                   (work_context_created fires when I
+ *                                   START a piece of work) and a kind-scoped
+ *                                   filter would leave the raw feed a
+ *                                   modified connector reads as a presence
+ *                                   bypass
  *
  * The subject's OWN reads are unaffected on every surface — the control is
  * over what OTHERS see. Deliberately NOT covered, because opt-out hides live
@@ -26,7 +32,8 @@
  * is the product; the control is over the surveillance surface, not over
  * authorship): work contexts, claims, edges, search results, diagnosis
  * trees, solved matches, contradictions, referee briefs — all stay visible
- * and attributed. Also not coverable: an "unconnected" absence line for a
+ * and attributed on every PULL surface. Hiding an event ROW about a claim
+ * hides its timing from the feed, never the claim itself. Also not coverable: an "unconnected" absence line for a
  * git author email the hub cannot match to any account — the hub cannot
  * know it is the opted-out developer. Opt-out is a live switch, not
  * retroactive redaction: opting back in restores surfaces, including

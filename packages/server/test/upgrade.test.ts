@@ -119,6 +119,61 @@ describe("persistent-dir upgrade from the pre-search-block release", () => {
   );
 
   test(
+    "the privacy DDL lands on an old dir and its state survives a restart",
+    async () => {
+      // Arrange: an old-format dir the privacy block has never touched
+      const dataDir = await makeOldFormatDir();
+
+      // Act: the upgrade runs bootstrap.sql's ALTER ... IF NOT EXISTS branch
+      const db = await createDb({ dataDir });
+
+      // Assert: the pre-existing developer backfills to VISIBLE — the
+      // committed default. A refactor that lands the column with the wrong
+      // default would silently opt existing hubs' members out (or worse,
+      // in) on exactly the works-council control.
+      const backfilled = await db.execute(
+        sql`SELECT presence_opt_out FROM developers WHERE id = 'dev_old'`,
+      );
+      expect(
+        (backfilled.rows[0] as { presence_opt_out: boolean }).presence_opt_out,
+      ).toBe(false);
+
+      // Act: flip the switch, record one mute, restart the hub (close +
+      // reopen re-runs the idempotent bootstrap against the upgraded dir)
+      await db.execute(
+        sql`UPDATE developers SET presence_opt_out = true WHERE id = 'dev_old'`,
+      );
+      await db.execute(
+        sql`INSERT INTO developers (id, name, email, api_key_hash)
+            VALUES ('dev_two', 'Robin', 'robin@example.com', 'hash_two')`,
+      );
+      await db.execute(
+        sql`INSERT INTO developer_mutes
+              (reader_developer_id, muted_developer_id, created_at)
+            VALUES ('dev_old', 'dev_two', now())`,
+      );
+      await (db as unknown as { $client: PGlite }).$client.close();
+      const reopened = await createDb({ dataDir });
+
+      // Assert: both privacy settings survived the restart
+      const optOut = await reopened.execute(
+        sql`SELECT presence_opt_out FROM developers WHERE id = 'dev_old'`,
+      );
+      expect(
+        (optOut.rows[0] as { presence_opt_out: boolean }).presence_opt_out,
+      ).toBe(true);
+      const mutes = await reopened.execute(
+        sql`SELECT muted_developer_id FROM developer_mutes
+            WHERE reader_developer_id = 'dev_old'`,
+      );
+      expect(
+        mutes.rows.map((row) => (row as { muted_developer_id: string }).muted_developer_id),
+      ).toEqual(["dev_two"]);
+    },
+    UPGRADE_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "a dir written by a different PostgreSQL major is refused, by name",
     async () => {
       // Arrange: the poisoned-dir shape a mixed-version install leaves behind.

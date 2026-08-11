@@ -2,7 +2,9 @@
  * Presence opt-out enforcement (DESIGN.md §2.1, §10 risk 3): an opted-out
  * developer's LIVE presence disappears from every surface OTHER developers
  * see — the presence list, the PreToolUse tripwire, absence "inactive"
- * findings, and session start/end events. Their own view of themselves is
+ * findings, and every event-feed row attributed to them (knowledge kinds
+ * included — feed timestamps are an activity timeline). Their own view of
+ * themselves is
  * unaffected, and published knowledge (work contexts, claims, search rows)
  * is NOT retracted — the control covers the surveillance surface, not
  * authorship.
@@ -232,20 +234,79 @@ describe("presence opt-out: session lifecycle events", () => {
     const nickEvents = await fetchEvents(harness, nick.apiKey);
     const robinEvents = await fetchEvents(harness, robin.apiKey);
 
-    // Assert: Nick sees no session lifecycle rows about Robin, but still the
-    // non-presence kinds; Robin's own view keeps their own lifecycle rows.
+    // Assert: Nick sees no session lifecycle rows about Robin, while rows
+    // attributed to HIMSELF keep flowing (the attributed-feed pin below
+    // covers the knowledge kinds); Robin's own view keeps their own rows.
     const sessionKinds = ["session_started", "session_ended"];
     const nickSessionRows = nickEvents.filter((event) =>
       sessionKinds.includes(event.kind),
     );
     expect(nickSessionRows).toEqual([]);
     expect(
-      nickEvents.filter((event) => event.kind === "developer_created").length,
-    ).toBeGreaterThan(0);
+      nickEvents.filter(
+        (event) =>
+          event.kind === "developer_created" &&
+          event.payload["developerId"] === nick.developerId,
+      ).length,
+    ).toBe(1);
     const robinSessionRows = robinEvents.filter((event) =>
       sessionKinds.includes(event.kind),
     );
     expect(robinSessionRows.length).toBe(2);
+  });
+});
+
+describe("presence opt-out: the whole attributed event feed", () => {
+  /** Rows on the events feed attributed to one developer, any kind. */
+  const attributedTo = (
+    eventRows: readonly { kind: string; payload: Record<string, unknown> }[],
+    developerId: string,
+  ): readonly { kind: string; payload: Record<string, unknown> }[] =>
+    eventRows.filter((event) => event.payload["developerId"] === developerId);
+
+  const ROBIN_FEED_KINDS = [
+    "developer_created",
+    "session_started",
+    "work_context_created",
+    "claim_added",
+  ];
+
+  test("knowledge events of an opted-out developer stop leaking their live activity timeline", async () => {
+    // Arrange: Robin's session publishes a work context and a claim — every
+    // one of those rows carries Robin's developerId and a server timestamp,
+    // so together they ARE a live activity timeline, session kinds or not.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const robin = await seedRobinSession(harness);
+    const before = await fetchEvents(harness, nick.apiKey);
+    expect(
+      attributedTo(before, robin.developerId).map((event) => event.kind),
+    ).toEqual(ROBIN_FEED_KINDS);
+
+    // Act
+    await setOptOut(harness, robin, true);
+
+    // Assert: NO row attributed to Robin — of ANY kind — reaches Nick; a
+    // kind-scoped filter would leave work_context_created as a start-of-work
+    // presence signal on the raw feed a modified connector reads.
+    const after = await fetchEvents(harness, nick.apiKey);
+    expect(attributedTo(after, robin.developerId)).toEqual([]);
+    // Nick's own rows keep flowing ...
+    expect(
+      attributedTo(after, nick.developerId).length,
+    ).toBeGreaterThan(0);
+    // ... and Robin's own view of their own feed is unaffected.
+    const own = await fetchEvents(harness, robin.apiKey);
+    expect(
+      attributedTo(own, robin.developerId).map((event) => event.kind),
+    ).toEqual(ROBIN_FEED_KINDS);
+
+    // Act + Assert: live switch — opting back in restores every hidden row.
+    await setOptOut(harness, robin, false);
+    const restored = await fetchEvents(harness, nick.apiKey);
+    expect(
+      attributedTo(restored, robin.developerId).map((event) => event.kind),
+    ).toEqual(ROBIN_FEED_KINDS);
   });
 });
 
