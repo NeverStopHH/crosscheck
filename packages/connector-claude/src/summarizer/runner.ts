@@ -32,8 +32,16 @@ export const SUMMARIZER_PROMPT =
   "The body must state the finding itself, not narrate the session. " +
   "If there is no clear diagnostic finding, answer with exactly NONE.";
 
-/** SIGKILL follow-up after the polite kill, mirroring GIT_KILL_GRACE_MS. */
+/**
+ * SIGKILL follow-up after the polite kill — the same escalation PATTERN as
+ * git/git.ts abandonProcess (the figure is its own: 1000 ms here vs
+ * GIT_KILL_GRACE_MS 500, because a model process gets more shutdown grace
+ * than a local git).
+ */
 const KILL_GRACE_MS = 1000;
+
+/** Race winner when the deadline beats the summarizer. */
+const TIMED_OUT = Symbol("crosscheck.summarizer.timed-out");
 
 /**
  * The argv to spawn: the override executable alone, or headless claude. The
@@ -84,11 +92,49 @@ const readBounded = async (
   return Buffer.concat(chunks).toString().slice(0, maxBytes);
 };
 
+interface SummarizerOutcome {
+  readonly stdout: string;
+  readonly exitCode: number;
+}
+
+/**
+ * Signal a timed-out summarizer without waiting on it: SIGTERM now, SIGKILL
+ * after KILL_GRACE_MS for a binary that ignores the first. The escalation
+ * timer is unref'd so nothing is held open by it, and both kills are no-ops
+ * on a process already gone — git/git.ts abandonProcess, same shape.
+ */
+const abandonProcess = (proc: ReturnType<typeof Bun.spawn>): void => {
+  try {
+    proc.kill();
+  } catch {
+    // Already exited.
+  }
+  const escalation = setTimeout(() => {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      // Already exited.
+    }
+  }, KILL_GRACE_MS);
+  escalation.unref();
+};
+
 /**
  * Runs the summarizer over one slice: slice on stdin, stdout captured and
- * bounded, the process killed hard at `timeoutMs`. Null on ANY failure —
+ * bounded, the whole CALL bounded by `timeoutMs`. Null on ANY failure —
  * missing binary, non-zero exit, timeout — because a lost draft costs
  * nothing and a loud one costs trust (fail open, like every capture path).
+ *
+ * THE DEADLINE BOUNDS THE CALL, NOT THE CHILD — the runGit lesson
+ * (git/git.ts), relearned here after this runner shipped without it. A
+ * `claude` that is a wrapper or tee can leave a DESCENDANT holding the
+ * inherited stdout pipe after the direct child exits; a read awaited past
+ * the kill then pends for that descendant's whole lifetime — one stranded
+ * worker process per fire, invisible to doctor. So the deadline races the
+ * read: when it fires the caller gets null immediately, the child is
+ * signalled without being waited on, and the abandoned read settles quietly
+ * whenever the pipe finally closes. Pinned by the descendant test in
+ * test/summarizer-worker.test.ts.
  */
 export const runSummarizer = async (
   argv: readonly string[],
@@ -96,8 +142,6 @@ export const runSummarizer = async (
   timeoutMs: number,
   env: Env,
 ): Promise<string | null> => {
-  let killTimer: ReturnType<typeof setTimeout> | undefined;
-  let graceTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     const proc = Bun.spawn({
       cmd: [...argv],
@@ -106,20 +150,31 @@ export const runSummarizer = async (
       stderr: "ignore",
       env: { ...env },
     });
-    let timedOut = false;
-    killTimer = setTimeout(() => {
-      timedOut = true;
-      proc.kill();
-      // A binary that ignores SIGTERM still dies; nothing waits on this.
-      graceTimer = setTimeout(() => proc.kill(9), KILL_GRACE_MS);
-    }, timeoutMs);
-    const stdout = await readBounded(proc.stdout, SUMMARIZER_OUTPUT_MAX_BYTES);
-    const exitCode = await proc.exited;
-    return timedOut || exitCode !== 0 ? null : stdout;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<typeof TIMED_OUT>((resolveDeadline) => {
+      timer = setTimeout(() => {
+        resolveDeadline(TIMED_OUT);
+      }, timeoutMs);
+    });
+    const readAll: Promise<SummarizerOutcome> = (async () => {
+      const stdout = await readBounded(proc.stdout, SUMMARIZER_OUTPUT_MAX_BYTES);
+      const exitCode = await proc.exited;
+      return { stdout, exitCode };
+    })();
+    // An abandoned read that later rejects must not surface as an unhandled
+    // rejection; the race path below still sees the original settlement.
+    readAll.catch(() => undefined);
+    try {
+      const outcome = await Promise.race([readAll, deadline]);
+      if (outcome === TIMED_OUT) {
+        abandonProcess(proc);
+        return null;
+      }
+      return outcome.exitCode !== 0 ? null : outcome.stdout;
+    } finally {
+      clearTimeout(timer);
+    }
   } catch {
     return null;
-  } finally {
-    clearTimeout(killTimer);
-    clearTimeout(graceTimer);
   }
 };

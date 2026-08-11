@@ -25,6 +25,7 @@ import type { HintRefKind, Producer } from "../capture/records.ts";
 import { resolveCommitDrift } from "../git/commit-drift.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import { getHintCandidates } from "../http/hub.ts";
+import { recordDeliveredHintHash } from "../hints/delivered-store.ts";
 import { hintBodyHash } from "../hints/echo.ts";
 import { renderClaimHint, renderPointerHint } from "../hints/render.ts";
 import { selectHint } from "../hints/select.ts";
@@ -119,9 +120,23 @@ const recordDelivery = async (
   // Freshest state, under the state lock: a previous turn's PostToolUse still
   // flushing must not have this write erase its markers, nor erase this ref
   // with its own stale snapshot (state/session-state.ts, updateSessionState).
-  return updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
-    withDeliveredHint(fresh, delivery.refId, delivery.bodyHash),
+  const remembered = await updateSessionState(
+    ctx.config.home,
+    ctx.payload.session_id,
+    (fresh) => withDeliveredHint(fresh, delivery.refId, delivery.bodyHash),
   );
+  // Substance hashes also persist per repo (hints/delivered-store.ts): the
+  // echo-loop exclusion carries no session qualifier, and session state dies
+  // at SessionEnd. Best-effort — the session-state copy above already covers
+  // this session, so a busy lock here must not cost the hint.
+  if (remembered && delivery.bodyHash !== null) {
+    await recordDeliveredHintHash(
+      ctx.config.home,
+      ctx.repoKey,
+      delivery.bodyHash,
+    );
+  }
+  return remembered;
 };
 
 export const handleUserPromptSubmit = async (

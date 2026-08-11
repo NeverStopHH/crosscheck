@@ -277,6 +277,38 @@ describe("stop hook gates, spawns detached, and never blocks", () => {
     await Bun.sleep(NEGATIVE_SETTLE_MS);
     expect(await spooledClaims(fix)).toHaveLength(0);
   });
+
+  test(
+    "a worker whose summarizer binary is missing still spends the slot",
+    async () => {
+      // Arrange: the fire path's contract — the slot is recorded BEFORE the
+      // spawn, and a worker that dies produces nothing and is never retried
+      // (a crash costs one unspent fire, the honest direction).
+      const fix = await fixture("missing-binary");
+      const env = {
+        ...fix.env,
+        CROSSCHECK_SUMMARIZER_CMD: "/nonexistent/claude",
+      };
+
+      // Act: two Stop turns on the same diagnosis transcript. The fire is
+      // recorded synchronously by the hook, so the state reads need no
+      // settle; only the final negative spool assert does.
+      await runHook("stop", stopPayload(fix), env);
+      const afterFirst = await readSessionState(fix.home, SESSION_ID);
+      await runHook("stop", stopPayload(fix), env);
+      await Bun.sleep(NEGATIVE_SETTLE_MS);
+
+      // Assert: slot spent on turn one, nothing spooled, no retry on turn
+      // two — the debounce holds because the fire WAS recorded before the
+      // worker failed.
+      expect(afterFirst?.summarizerFireCount).toBe(1);
+      const state = await readSessionState(fix.home, SESSION_ID);
+      expect(state?.summarizerFireCount).toBe(1);
+      expect(state?.stopTurnCount).toBe(2);
+      expect(await spooledClaims(fix)).toHaveLength(0);
+    },
+    15_000,
+  );
 });
 
 describe("echo-loop exclusion, end to end (DESIGN.md §3, judge-mandated)", () => {
@@ -335,4 +367,74 @@ describe("echo-loop exclusion, end to end (DESIGN.md §3, judge-mandated)", () =
     expect(state?.summarizerFireCount).toBe(1);
     expect(await spooledClaims(fix)).toHaveLength(0);
   });
+
+  test("a hint delivered in an EARLIER session is excluded in the next one", async () => {
+    // Arrange: same repo, but the summarizing session is a NEW one whose
+    // state never saw the delivery — the exact judge-mandated scenario
+    // across a session boundary (DESIGN.md §3 has no session qualifier).
+    const hub = startHintHub();
+    hubs.push(hub);
+    const fix = await fixture("echo-across-sessions", {
+      hubUrl: hub.url,
+      transcriptContent:
+        transcriptLine("user", [
+          { type: "text", text: "why does the refresh test still fail" },
+        ]) +
+        transcriptLine("assistant", [
+          {
+            type: "tool_use",
+            name: "Bash",
+            input: { command: "bun test packages/api" },
+          },
+        ]) +
+        transcriptLine("user", [
+          { type: "tool_result", content: "FAIL refresh.test.ts — 500 error" },
+        ]) +
+        transcriptLine("assistant", [
+          {
+            type: "text",
+            text: `Turns out a teammate already found it: ${CANDIDATE_BODY}`,
+          },
+        ]),
+      summarizerOutput: draftJson(CANDIDATE_BODY),
+    });
+
+    // Act 1: SESSION ONE delivers the hint, then ends
+    await runHook(
+      "user-prompt-submit",
+      JSON.stringify({
+        session_id: SESSION_ID,
+        cwd: fix.repo,
+        hook_event_name: "UserPromptSubmit",
+        prompt: "why does the refresh call fail after key rotation",
+      }),
+      fix.env,
+    );
+    await rm(join(fix.home, "sessions"), { recursive: true, force: true });
+
+    // Act 2: SESSION TWO (fresh state, zero delivered hashes) summarizes a
+    // turn quoting the hint, with the faked summarizer echoing its body
+    const nextSessionId = "stop-session-uuid-next";
+    await writeSessionState(fix.home, {
+      claudeSessionId: nextSessionId,
+      crosscheckSessionId: `cc_${nextSessionId}`,
+      workContextId: `wc_cc_${nextSessionId}`,
+      repoId: REPO_ID,
+      repoRoot: fix.repo,
+      hubUrl: fix.hubUrl,
+      developerId: "dev_self",
+      startedAt: new Date().toISOString(),
+    });
+    await runHook(
+      "stop",
+      stopPayload(fix, { session_id: nextSessionId }),
+      fix.env,
+    );
+
+    // Assert: fire recorded on the new session, zero claims spooled
+    await Bun.sleep(NEGATIVE_SETTLE_MS);
+    const state = await readSessionState(fix.home, nextSessionId);
+    expect(state?.summarizerFireCount).toBe(1);
+    expect(await spooledClaims(fix)).toHaveLength(0);
+  }, 15_000);
 });

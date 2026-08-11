@@ -12,6 +12,7 @@ import { join } from "node:path";
 import {
   SUMMARIZER_DEBOUNCE_TURNS,
   SUMMARIZER_MAX_FIRES_PER_SESSION,
+  SUMMARIZER_TAIL_BYTES,
 } from "../src/constants.ts";
 import {
   hasErrorOutput,
@@ -24,6 +25,7 @@ import {
 } from "../src/summarizer/gate.ts";
 import {
   extractSliceText,
+  readSliceRange,
   readTurnSlice,
 } from "../src/summarizer/transcript.ts";
 import type { SessionState } from "../src/state/session-state.ts";
@@ -241,5 +243,47 @@ describe("turn slice from the transcript tail", () => {
     const slice = await readTurnSlice(path);
     expect(slice?.start).toBe(Buffer.byteLength(before));
     expect(slice?.end).toBe(Buffer.byteLength(before + current));
+  });
+
+  test("a tail boundary splitting a multibyte char cannot shift the offsets", async () => {
+    // Arrange: a transcript past the tail window whose window boundary lands
+    // MID-EMOJI. Offsets computed from the DECODED tail drift here — U+FFFD
+    // replacement bytes are not the original bytes — and the worker would
+    // re-read different bytes than the gate saw.
+    const emoji = String.fromCodePoint(0x1f642); // 4 bytes in UTF-8
+    const makeContent = (fill: string): string =>
+      assistantText(`pad-${emoji.repeat(33_000)}`) +
+      userText(`why does bun test fail ${fill}`) +
+      assistantText("the stale cursor id is the root cause");
+    let content = makeContent("");
+    const runStart = Buffer.from(content).indexOf(Buffer.from(emoji));
+    // Nudge the tail boundary off 4-byte alignment with filler in the LAST
+    // turn, so the window provably starts inside one emoji's bytes.
+    for (let filler = 1; filler <= 3; filler += 1) {
+      const boundary = Buffer.byteLength(content) - SUMMARIZER_TAIL_BYTES;
+      if ((boundary - runStart) % 4 !== 0) {
+        break;
+      }
+      content = makeContent("z".repeat(filler));
+    }
+    const size = Buffer.byteLength(content);
+    const boundary = size - SUMMARIZER_TAIL_BYTES;
+    expect(boundary).toBeGreaterThan(runStart);
+    expect((boundary - runStart) % 4).not.toBe(0);
+    const path = await writeTranscript(content);
+
+    // Act
+    const slice = await readTurnSlice(path);
+
+    // Assert: the end is exactly EOF, never past it …
+    expect(slice).not.toBeNull();
+    expect(slice?.end).toBe(size);
+    // … the worker's re-read of [start, end) sees the SAME text the gate
+    // gated on …
+    const reread = await readSliceRange(path, slice?.start ?? 0, slice?.end ?? 0);
+    expect(reread).toBe(slice?.raw ?? "");
+    // … and the slice begins at a real line start: the user prompt parses.
+    const firstLine = (slice?.raw ?? "").split("\n")[0] ?? "";
+    expect((JSON.parse(firstLine) as { type?: string }).type).toBe("user");
   });
 });

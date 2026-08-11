@@ -18,6 +18,7 @@ import { SUMMARIZER_DEFAULT_CONFIDENCE } from "../src/constants.ts";
 import { parseSummarizerOutput } from "../src/summarizer/parse.ts";
 import { resolveSummarizerArgv, runSummarizer } from "../src/summarizer/runner.ts";
 import { runSummarizeWorker } from "../src/summarizer/worker.ts";
+import { recordDeliveredHintHash } from "../src/hints/delivered-store.ts";
 import { hintBodyHash } from "../src/hints/echo.ts";
 import { readSpoolLines, repoKey } from "../src/index.ts";
 import { writeSessionState } from "../src/state/session-state.ts";
@@ -144,6 +145,41 @@ describe("runSummarizer (injectable runner, hard timeout)", () => {
 
   test("a missing binary is null, never a throw", async () => {
     expect(await runSummarizer(["/nonexistent/claude"], "slice", 1000, {})).toBeNull();
+  });
+
+  /** Longer than any plausible CI wobble, far past the ceiling below. */
+  const DESCENDANT_LIFETIME_S = 6;
+  const DESCENDANT_TIMEOUT_MS = 500;
+  /** The deadline bounds the call; the descendant's lifetime must not. */
+  const BOUNDED_CEILING_MS = 3000;
+  /** Below this the wrapper cannot have run — the deadline made the null. */
+  const DEADLINE_FLOOR_MS = 200;
+
+  test("a descendant holding stdout cannot hold the call past the deadline", async () => {
+    // Arrange: a summarizer whose background child inherits the stdout pipe
+    // and outlives it — the wrapper/tee shape git/git.ts documents ("THE
+    // DEADLINE BOUNDS THE CALL, NOT THE CHILD"). Killing the direct child
+    // does nothing here: it exits instantly on its own.
+    const dir = await tempDir();
+    const wrapper = join(dir, "hung-summarizer.sh");
+    await writeFile(
+      wrapper,
+      `#!/bin/sh\n/bin/sleep ${String(DESCENDANT_LIFETIME_S)} &\nexit 0\n`,
+      "utf8",
+    );
+    await chmod(wrapper, 0o755);
+
+    // Act
+    const startedAt = Date.now();
+    const output = await runSummarizer([wrapper], "slice", DESCENDANT_TIMEOUT_MS, {});
+    const elapsed = Date.now() - startedAt;
+
+    // Assert: null at the deadline — not after the descendant's 6 s lifetime.
+    // The floor proves the wrapper genuinely ran and the DEADLINE produced
+    // the null, not an instant exec failure.
+    expect(output).toBeNull();
+    expect(elapsed).toBeLessThan(BOUNDED_CEILING_MS);
+    expect(elapsed).toBeGreaterThan(DEADLINE_FLOOR_MS);
   });
 
   test("without an override the argv is headless claude -p on a haiku-class model", () => {
@@ -295,6 +331,32 @@ describe("runSummarizeWorker (end to end, faked binary)", () => {
     });
 
     // Assert: refused (DESIGN.md §3, judge-mandated)
+    expect(await spooledClaims(fixture)).toHaveLength(0);
+  });
+
+  test("a hint delivered in an EARLIER session is still excluded", async () => {
+    // Arrange: the session state carries NO delivered hashes — the hint
+    // arrived in a previous session, whose state died at SessionEnd. Only
+    // the per-repo store remembers it (DESIGN.md §3 carries no session
+    // qualifier on the echo-loop exclusion).
+    const echoedBody = "The refresh 500s trace back to the rotated signing key";
+    const fixture = await workerFixture();
+    await recordDeliveredHintHash(
+      fixture.home,
+      fixture.key,
+      hintBodyHash(echoedBody),
+    );
+    const fake = await makeFakeSummarizer({
+      output: draftJson({ body: echoedBody }),
+    });
+
+    // Act
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+    });
+
+    // Assert: yesterday's hint cannot be laundered into today's own draft
     expect(await spooledClaims(fixture)).toHaveLength(0);
   });
 

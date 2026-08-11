@@ -87,15 +87,24 @@ const isRealUserPrompt = (entry: TranscriptEntry): boolean => {
   );
 };
 
+const NEWLINE_BYTE = 0x0a;
+
 /**
- * The tail of the file as text, plus the absolute offset of its first WHOLE
+ * The tail of the file as BYTES, plus the absolute offset of its first WHOLE
  * line. A read that starts mid-file lands mid-line; the fragment before the
  * first newline belongs to a line whose beginning was not read, so it is
  * dropped and the offset advanced past it.
+ *
+ * All offset arithmetic stays on the raw bytes, never the decoded text: a
+ * tail boundary that splits a multibyte UTF-8 character decodes to U+FFFD
+ * replacement characters whose byte length differs from the original bytes,
+ * and offsets computed from that decoding drift — the worker would then
+ * re-read DIFFERENT bytes than the gate saw. Pinned by the multibyte
+ * boundary test in test/stop-gate.test.ts.
  */
-const readTail = async (
+const readTailBytes = async (
   path: string,
-): Promise<{ readonly offset: number; readonly text: string } | null> => {
+): Promise<{ readonly offset: number; readonly bytes: Buffer } | null> => {
   try {
     const file = Bun.file(path);
     const size = file.size;
@@ -103,17 +112,17 @@ const readTail = async (
       return null;
     }
     const tailStart = Math.max(0, size - SUMMARIZER_TAIL_BYTES);
-    const text = await file.slice(tailStart, size).text();
+    const bytes = Buffer.from(await file.slice(tailStart, size).arrayBuffer());
     if (tailStart === 0) {
-      return { offset: 0, text };
+      return { offset: 0, bytes };
     }
-    const firstNewline = text.indexOf("\n");
+    const firstNewline = bytes.indexOf(NEWLINE_BYTE);
     if (firstNewline === -1) {
       return null;
     }
     return {
-      offset: tailStart + Buffer.byteLength(text.slice(0, firstNewline + 1)),
-      text: text.slice(firstNewline + 1),
+      offset: tailStart + firstNewline + 1,
+      bytes: bytes.subarray(firstNewline + 1),
     };
   } catch {
     return null;
@@ -125,29 +134,34 @@ const readTail = async (
  * tail to the end of what was read. No user prompt in the tail (a turn
  * longer than the tail window) degrades to the whole tail — still bounded,
  * still only the most recent activity. Null on any failure (fail open).
+ *
+ * Line walking is byte-indexed (readTailBytes says why); each line is
+ * decoded only to PARSE it, never to measure it.
  */
 export const readTurnSlice = async (
   path: string,
 ): Promise<TurnSlice | null> => {
-  const tail = await readTail(path);
-  if (tail === null || tail.text.length === 0) {
+  const tail = await readTailBytes(path);
+  if (tail === null || tail.bytes.length === 0) {
     return null;
   }
-  const lines = tail.text.split("\n");
-  let cursor = tail.offset;
-  let sliceStart = tail.offset;
-  for (const lineText of lines) {
+  let cursor = 0;
+  let sliceStartRelative = 0;
+  while (cursor < tail.bytes.length) {
+    const newlineAt = tail.bytes.indexOf(NEWLINE_BYTE, cursor);
+    const lineEnd = newlineAt === -1 ? tail.bytes.length : newlineAt;
+    const lineText = tail.bytes.subarray(cursor, lineEnd).toString();
     const entry = lineText.length === 0 ? null : parseEntry(lineText);
     if (entry !== null && isRealUserPrompt(entry)) {
-      sliceStart = cursor;
+      sliceStartRelative = cursor;
     }
-    cursor += Buffer.byteLength(lineText) + 1;
+    cursor = lineEnd + 1;
   }
-  const end = tail.offset + Buffer.byteLength(tail.text);
-  const skipBytes = sliceStart - tail.offset;
-  // Byte-indexed slice of the utf8 text: re-encode once, cut, decode.
-  const rawBytes = Buffer.from(tail.text).subarray(skipBytes);
-  return { start: sliceStart, end, raw: rawBytes.toString() };
+  return {
+    start: tail.offset + sliceStartRelative,
+    end: tail.offset + tail.bytes.length,
+    raw: tail.bytes.subarray(sliceStartRelative).toString(),
+  };
 };
 
 /** The worker's re-read of the exact bytes the gate decided on. */

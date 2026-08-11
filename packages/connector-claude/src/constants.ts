@@ -85,6 +85,13 @@ export const HINT_MIN_EVIDENCE_REFS = 1;
 export const HINT_MIN_TOKEN_CHARS = 3;
 /** Tripwire asks once per file per session; FIFO cap on the remembered set. */
 export const MAX_TRIPWIRE_ASKED_FILES = 100;
+/**
+ * Echo-loop exclusion across sessions (DESIGN.md §3): delivered-hint body
+ * hashes persist per repo so yesterday's hint cannot come back as today's
+ * derived draft. FIFO like MAX_SEEN_TARGETS — at 5 substance hints/session
+ * this holds ~100 sessions of deliveries, and the oldest fall out first.
+ */
+export const MAX_DELIVERED_HINT_HASHES_PER_REPO = 512;
 
 /** git is spawned per hook; a hung repo must never hold the session hostage. */
 export const GIT_TIMEOUT_MS = 1500;

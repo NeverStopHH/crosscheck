@@ -498,6 +498,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "arithmetic detector must catch a raised cap on every machine — " +
       "no stopwatch gets a vote",
   },
+  {
+    // Like tripwire-hook.test.ts, this guard shells out to git (makeRepo) —
+    // the assertGuardIsGreen container caveat applies to it too.
+    label: "the Stop hook waits for the summarizer worker",
+    file: `${CONNECTOR}/src/hooks/stop.ts`,
+    from: "    const proc = Bun.spawn({",
+    to: "    const proc = Bun.spawnSync({",
+    test: `${CONNECTOR}/test/stop-latency.test.ts`,
+    because:
+      "every Stop then blocks until the model returns — up to " +
+      "SUMMARIZER_TIMEOUT_MS on the developer's keyboard — and every other " +
+      "Stop test stays green because its fakes answer instantly; only the " +
+      "slow-fake wall clock can see this",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -553,6 +567,7 @@ interface Outcome {
  * PRINTS: search.test.ts 3
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1
+ * PRINTS: stop-latency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1
  */
 const greenGuards = new Map<string, boolean>();

@@ -18,6 +18,7 @@ import { crosscheckHome, repoKey } from "../config/paths.ts";
 import type { Env } from "../config/paths.ts";
 import { buildEnvelope, UNKNOWN_DEVELOPER_ID } from "../capture/records.ts";
 import { containsSecret } from "../capture/secret-scan.ts";
+import { readDeliveredHintHashes } from "../hints/delivered-store.ts";
 import { isEchoOfDeliveredHint } from "../hints/echo.ts";
 import { checkClaim } from "../mcp/violations.ts";
 import { mintClaimId } from "../mcp/tools/shared.ts";
@@ -104,10 +105,16 @@ const summarizeTurn = async (args: WorkerArgs, env: Env): Promise<void> => {
   if (fresh === null) {
     return;
   }
-  // Echo-loop exclusion (§3, judge-mandated): a body a teammate hint
-  // delivered THIS session must never come back as this session's own
+  // Echo-loop exclusion (§3, judge-mandated, no session qualifier): a body a
+  // teammate hint delivered — this session (state) OR any earlier one in this
+  // repo (the per-repo store) — must never come back as this session's own
   // independent observation.
-  if (isEchoOfDeliveredHint(draft.body, fresh.deliveredHintHashes)) {
+  const persistedHashes = await readDeliveredHintHashes(
+    home,
+    repoKey(fresh.hubUrl, fresh.repoId),
+  );
+  const deliveredHashes = [...fresh.deliveredHintHashes, ...persistedHashes];
+  if (isEchoOfDeliveredHint(draft.body, deliveredHashes)) {
     return;
   }
   // Secret scan before anything can leave the machine: a hit DROPS the
