@@ -155,6 +155,10 @@ export const buildSettingsPlan = (
       // async hook can deliver neither.
       UserPromptSubmit: group(`${prefix} hook user-prompt-submit`),
       PreToolUse: group(`${prefix} hook pre-tool-use`, PRE_TOOL_USE_MATCHER),
+      // The Tier-1 summarizer gate (DESIGN.md §3 Tier 1): ASYNC, because the
+      // hook returns nothing — it gates deterministically and spawns the
+      // detached worker; the model must never wait on it.
+      Stop: group(`${prefix} hook stop`, undefined, true),
     },
     statusLine: { type: "command", command: `${prefix} statusline` },
     forceStatusline,

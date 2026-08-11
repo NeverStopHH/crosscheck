@@ -126,8 +126,11 @@ export interface HintContextCandidate {
  * the anchoring §4 exists to prevent. The selector's own `superseded` status
  * guard stays as defense in depth against a forging hub; THIS filter is the
  * one real revision data exercises.
+ *
+ * Exported for services/drafts.ts, which asks the identical graph question
+ * ("has a revision retired this row?") about the caller's own drafts.
  */
-const notSuperseded = (db: Db) =>
+export const notSuperseded = (db: Db) =>
   notExists(
     db
       .select({ one: sql`1` })

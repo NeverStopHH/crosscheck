@@ -127,6 +127,26 @@ describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
     expect(select([context({}, [superseded])]).kind).toBe("pointer");
   });
 
+  test("a derived claim is NEVER substance, whatever its status or evidence", () => {
+    // DESIGN.md §3/§4: Tier-1 drafts are machine-derived and appear only as
+    // pull-able pointers — even a derived rejected_approach with evidence, or
+    // a derived partially_confirmed claim, must not be proactively injected.
+    const derivedNegative = claim({
+      id: "clm_drv_neg",
+      provenance: "derived",
+      captureMode: "auto",
+    });
+    const derivedSettled = claim({
+      id: "clm_drv_set",
+      kind: "root_cause",
+      status: "partially_confirmed",
+      provenance: "derived",
+      captureMode: "auto",
+    });
+    expect(select([context({}, [derivedNegative])]).kind).toBe("pointer");
+    expect(select([context({}, [derivedSettled])]).kind).toBe("pointer");
+  });
+
   test("substance in a lower-ranked context beats a pointer in a higher one", () => {
     const weak = context(
       { id: "wc_weak" },

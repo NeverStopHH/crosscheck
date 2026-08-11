@@ -74,6 +74,11 @@ interface SimilarClaim {
 /**
  * Nearest same-developer claim of the same kind in the same work context —
  * the dedup candidate. One row, by distance, above the threshold or nothing.
+ *
+ * Scoped to same provenance and status like the deterministic gate
+ * (record-handlers.ts findDedupMatch): a promotion or discard revision
+ * restates the draft's body verbatim (cosine 1.0) and must not be collapsed
+ * into the row it exists to supersede.
  */
 export const findSimilarOwnClaim = async (
   db: DbExecutor,
@@ -95,6 +100,8 @@ export const findSimilarOwnClaim = async (
         eq(claims.workContextId, body.workContextId),
         eq(claims.kind, body.kind),
         eq(agentSessions.developerId, developerId),
+        eq(claims.provenance, body.provenance),
+        eq(claims.status, body.status),
         isNotNull(claims.embedding),
         eq(claims.embeddingModel, model),
       ),

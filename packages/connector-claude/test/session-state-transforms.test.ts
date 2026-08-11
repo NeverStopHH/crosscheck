@@ -26,6 +26,10 @@ const baseState = (): SessionState => ({
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   briefingSolvedRefs: [],
+  stopTurnCount: 0,
+  summarizerFireCount: 0,
+  summarizerLastFireTurn: null,
+  summarizerEstimatedTokens: 0,
 });
 
 describe("withBriefingSolvedRefs", () => {

@@ -9,6 +9,10 @@ import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
 import { spoolDepth } from "../spool/files.ts";
 import { readSyncState } from "../state/sync-state.ts";
+import {
+  formatSummarizerCost,
+  readSummarizerCost,
+} from "../summarizer/cost.ts";
 import type { CliResult } from "./login.ts";
 
 const ageOrNever = (iso: string | null, now: Date): string => {
@@ -45,6 +49,13 @@ export const runStatus = async (
   const key = repoKey(config.hubUrl, identity.repoId);
   const sync = await readSyncState(config.home, key);
   const depth = await spoolDepth(config.home, key);
+  // Cost visibility (DESIGN.md §10 risk 7): a local fact, printed whether or
+  // not the hub answers; the figure is an estimate and the line says so.
+  const summarizerCost = await readSummarizerCost(
+    config.home,
+    config.hubUrl,
+    identity.repoId,
+  );
   const drops = await readDropSummary(config.home, key);
   // A batch the ledger itself could not take is recorded as a marker, not a count,
   // so the summed total understates it. `doctor` says the same; both must agree.
@@ -101,6 +112,7 @@ export const runStatus = async (
         ? []
         : ["commit authors without a recent session:", ...absenceLines]),
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
+      `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
       "",
     ].join("\n"),

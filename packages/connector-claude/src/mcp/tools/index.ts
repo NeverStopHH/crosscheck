@@ -13,6 +13,7 @@ import * as extendDiagnosis from "./extend-diagnosis.ts";
 import * as getDiagnosis from "./get-diagnosis.ts";
 import * as getRefereeBrief from "./get-referee-brief.ts";
 import * as publishClaim from "./publish-claim.ts";
+import * as reviewDraft from "./review-draft.ts";
 import * as searchRelatedWork from "./search-related-work.ts";
 
 export interface ToolDefinition {
@@ -28,6 +29,7 @@ export interface McpTool {
 
 export const TOOLS: readonly McpTool[] = [
   publishClaim,
+  reviewDraft,
   extendDiagnosis,
   getDiagnosis,
   getRefereeBrief,

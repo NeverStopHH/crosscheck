@@ -486,6 +486,18 @@ export const MUTATIONS: readonly Mutation[] = [
       "labels its claim `confidence 1e+30` and the forged credential lands " +
       "unasked in the reader's context",
   },
+  {
+    label: "the summarizer's per-session fire cap is quietly raised",
+    file: `${CONNECTOR}/src/constants.ts`,
+    from: "export const SUMMARIZER_MAX_FIRES_PER_SESSION = 6;",
+    to: "export const SUMMARIZER_MAX_FIRES_PER_SESSION = 999;",
+    test: `${CONNECTOR}/test/stop-gate.test.ts`,
+    because:
+      "every fire spends the developer's own Claude quota (DESIGN.md §10 " +
+      "risk 7); the 6/session budget is the spec's hard cap, and the " +
+      "arithmetic detector must catch a raised cap on every machine — " +
+      "no stopwatch gets a vote",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -540,6 +552,7 @@ interface Outcome {
  * PRINTS: mcp-render.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: solved-ranking.test.ts 2
+ * PRINTS: stop-gate.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1
  */
 const greenGuards = new Map<string, boolean>();

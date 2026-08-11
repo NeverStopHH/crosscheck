@@ -42,6 +42,17 @@ export const SessionStateSchema = z.looseObject({
    * a briefing pointer is the briefing's budget, not the prompt path's.
    */
   briefingSolvedRefs: z.array(z.string().min(1)).default([]),
+  /**
+   * Tier-1 summarizer bookkeeping (DESIGN.md §3 Tier 1): the Stop-turn
+   * counter the debounce is measured against, the fires already spent
+   * against SUMMARIZER_MAX_FIRES_PER_SESSION, and the rough token estimate
+   * `crosscheck status`/`doctor` surface (§10 risk 7 — the cost is never
+   * invisible). Defaults keep every pre-summarizer state file parsing.
+   */
+  stopTurnCount: z.number().int().min(0).default(0),
+  summarizerFireCount: z.number().int().min(0).default(0),
+  summarizerLastFireTurn: z.number().int().min(0).nullable().default(null),
+  summarizerEstimatedTokens: z.number().int().min(0).default(0),
 });
 
 export type SessionState = z.infer<typeof SessionStateSchema>;
@@ -231,5 +242,9 @@ export const deriveSessionState = (
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
     briefingSolvedRefs: [],
+    stopTurnCount: 0,
+    summarizerFireCount: 0,
+    summarizerLastFireTurn: null,
+    summarizerEstimatedTokens: 0,
   };
 };

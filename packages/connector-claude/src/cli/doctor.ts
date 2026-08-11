@@ -42,6 +42,10 @@ import { oldestSpoolLineMs, spoolDepth } from "../spool/files.ts";
 import { readLockHolder } from "../spool/lock.ts";
 import { readUnclosedSummary } from "../spool/unclosed.ts";
 import { readSyncState } from "../state/sync-state.ts";
+import {
+  formatSummarizerCost,
+  readSummarizerCost,
+} from "../summarizer/cost.ts";
 import { isOwnedMcpEntry } from "./mcp-config.ts";
 import { isOwnedCommand } from "./settings-merge.ts";
 import type { CliResult } from "./login.ts";
@@ -179,6 +183,7 @@ const checkSettings = async (repoRoot: string): Promise<readonly Check[]> => {
     "SessionEnd",
     "UserPromptSubmit",
     "PreToolUse",
+    "Stop",
   ];
   const missing = required.filter(
     (event) => !ownedCommands.some((entry) => entry.event === event),
@@ -465,6 +470,21 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
   );
 };
 
+/**
+ * Summarizer cost (DESIGN.md §10 risk 7), always PASS: spending inside the
+ * hard caps is a designed behaviour, not a defect — the check exists so the
+ * spend on the developer's own quota is never invisible. Figures are
+ * estimates (~4 chars/token) and the line says so.
+ */
+const checkSummarizerCost = async (
+  home: string,
+  hubUrl: string,
+  repoId: string,
+): Promise<Check> => {
+  const cost = await readSummarizerCost(home, hubUrl, repoId);
+  return check("PASS", "summarizer cost", formatSummarizerCost(cost));
+};
+
 /** A live session file plus a stale sync is exactly the silent-death signature. */
 const hasLiveSessionState = async (home: string): Promise<boolean> => {
   try {
@@ -583,6 +603,7 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
     await checkMcpRegistration(identity.root),
     mcpUsableCheck(true, config.hubUrl),
     ...(await checkSpool(config.home, key, now)),
+    await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
     await checkLastSync(config.home, key, now),
     await checkAbsences(hubCtx, identity.repoId),
     await checkPrivacy(hubCtx),

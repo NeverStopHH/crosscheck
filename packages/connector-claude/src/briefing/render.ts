@@ -7,8 +7,10 @@ import {
   MAX_BRIEFING_CHARS,
   MAX_CONTEXTS,
   MAX_CONTRADICTION_POINTERS,
+  MAX_DRAFT_POINTERS,
   MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
+  MAX_TITLE_CHARS,
   MINUTES_PER_HOUR,
   MS_PER_DAY,
   MS_PER_SECOND,
@@ -19,6 +21,7 @@ import type { CommitDrift } from "../git/commit-drift.ts";
 import type {
   ContradictionEntry,
   ContradictionSide,
+  DraftEntry,
   PresenceEntry,
   SolvedMatchEntry,
   WorkContextEntry,
@@ -86,6 +89,8 @@ export interface BriefingInput {
   readonly contradictions?: readonly ContradictionEntry[] | undefined;
   /** Solved-before matches; omitted or empty renders no section (fail open). */
   readonly solvedMatches?: readonly SolvedMatchEntry[] | undefined;
+  /** The reader's OWN unreviewed drafts; omitted or empty renders no section. */
+  readonly drafts?: readonly DraftEntry[] | undefined;
 }
 
 interface Section {
@@ -395,6 +400,50 @@ const renderSolvedSection = (input: BriefingInput): Section => {
   };
 };
 
+/**
+ * One own-draft reminder line (DESIGN.md §3 Tier 1 promotion loop): kind,
+ * age, the body in the « » frame, and the exact review_draft call. The body
+ * IS shown — unlike solved/contradiction pointers this is the READER'S OWN
+ * machine-captured text, and the whole point of the reminder is deciding
+ * confirm/edit/discard, which needs the assertion in front of the agent.
+ * Still sanitized and capped: it is LLM-derived text, not trusted bytes.
+ * Null = a row this renderer will not vouch for.
+ */
+export const formatDraftLine = (
+  entry: DraftEntry,
+  now: Date,
+): string | null => {
+  const id = safeId(entry.id);
+  const body = sanitizeUntrusted(entry.body, MAX_TITLE_CHARS);
+  const ageMs = ageMsFrom(entry.createdAt, now);
+  if (id.length === 0 || body.length === 0 || ageMs === null) {
+    return null;
+  }
+  const kind = bareUntrusted(entry.kind);
+  return `- ${kind}, ${formatAge(ageMs)} ago: «${body}» · review_draft ${id}`;
+};
+
+/**
+ * Placed AFTER solved pointers and BEFORE absences: the reminder is
+ * actionable by the agent (review_draft) but it is self-directed
+ * housekeeping, not team knowledge — with the briefing full, draft
+ * reminders give way before every teammate-facing section, and only
+ * absences give way before them.
+ */
+const renderDraftSection = (input: BriefingInput): Section => {
+  const rendered = (input.drafts ?? []).flatMap((entry) => {
+    const line = formatDraftLine(entry, input.now);
+    return line === null ? [] : [line];
+  });
+  return {
+    header:
+      "Your own unreviewed draft claims, auto-captured " +
+      "(review_draft confirms, edits or discards):",
+    lines: rendered.slice(0, MAX_DRAFT_POINTERS),
+    total: rendered.length,
+  };
+};
+
 const MS_PER_HOUR = MS_PER_SECOND * SECONDS_PER_MINUTE * MINUTES_PER_HOUR;
 
 const ABSENCE_HEADER_BASE =
@@ -536,6 +585,7 @@ export const renderBriefing = (input: BriefingInput): string => {
     renderContextSection(input),
     renderContradictionSection(input),
     renderSolvedSection(input),
+    renderDraftSection(input),
     renderAbsenceSection(input),
   ];
   if (sections.every((section) => section.lines.length === 0)) {

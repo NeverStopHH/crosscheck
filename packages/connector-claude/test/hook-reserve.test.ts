@@ -42,11 +42,12 @@
  * PRINTS: packages/connector-claude/src/hooks/runner.ts
  *
  * — and `spareMs` is in turn the sole accessor on HookBudget, taken as a whole
- * deadline by the drain in each of the three hooks and read once more by
- * SessionStart's deferred end:
+ * deadline by the drain in each of the four hooks that host one (SessionStart,
+ * SessionEnd, PostToolUse, Stop) and read once more by SessionStart's
+ * deferred end:
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 4
+ * PRINTS: 5
  */
 import { describe, expect, test } from "bun:test";
 

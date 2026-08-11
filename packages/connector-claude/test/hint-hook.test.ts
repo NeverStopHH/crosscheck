@@ -66,6 +66,10 @@ const sessionState = (
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   briefingSolvedRefs: [],
+  stopTurnCount: 0,
+  summarizerFireCount: 0,
+  summarizerLastFireTurn: null,
+  summarizerEstimatedTokens: 0,
   ...overrides,
 });
 

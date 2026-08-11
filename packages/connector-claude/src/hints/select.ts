@@ -79,8 +79,18 @@ const isNegativeKnowledge = (claim: HintClaimCandidate): boolean =>
 const isSettled = (claim: HintClaimCandidate): boolean =>
   INJECTABLE_STATUSES.has(claim.status);
 
-/** The asymmetry, in one predicate: evidence first, then kind or status. */
+/**
+ * Machine-derived claims are never substance (DESIGN.md §3: Tier-1 drafts
+ * "appear only as pull-able pointers") — a summarizer's guess must not be
+ * proactively injected into a teammate's context under trust labels, whatever
+ * status or evidence count it carries.
+ */
+const isDeclared = (claim: HintClaimCandidate): boolean =>
+  claim.provenance !== "derived";
+
+/** The asymmetry, in one predicate: provenance and evidence first, then kind or status. */
 const isInjectable = (claim: HintClaimCandidate): boolean =>
+  isDeclared(claim) &&
   hasEvidence(claim) &&
   claim.status !== "superseded" &&
   (isNegativeKnowledge(claim) || isSettled(claim));

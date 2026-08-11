@@ -57,6 +57,16 @@ export const SOLVED_MATCH_MAX_FINDINGS = 5;
 /** Read bound on shared-target pair rows considered per query. */
 export const SOLVED_MATCH_MAX_PAIR_ROWS = 200;
 
+/**
+ * Most unreviewed Tier-1 drafts one GET /api/drafts response carries
+ * (DESIGN.md §3 Tier 1 promotion loop). Well above what the summarizer cap
+ * lets one session mint, and bounded like every list query:
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");const c=await import("./packages/connector-claude/src/constants.ts");console.log(s.MAX_DRAFTS_LISTED > c.SUMMARIZER_MAX_FIRES_PER_SESSION)'
+ * PRINTS: true
+ */
+export const MAX_DRAFTS_LISTED = 20;
+
 export const EVENT_KINDS = {
   DEVELOPER_CREATED: "developer_created",
   SESSION_STARTED: "session_started",

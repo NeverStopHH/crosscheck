@@ -274,6 +274,65 @@ export const MAX_BRIEFING_SOLVED_REFS = 20;
 export const SOLVED_AGE_MONTHS_THRESHOLD_DAYS = 60;
 export const DAYS_PER_MONTH_APPROX = 30;
 
+// ── Tier-1 summarizer (DESIGN.md §3 Tier 1, §10 risks 4 + 7) ────────────────
+
+/**
+ * Hard per-session cap on summarizer fires — the spec'd 6/session. Every fire
+ * spends the developer's OWN Claude quota (§10 risk 7), so the cap is a hard
+ * budget, not a tuning knob. Guarded by scripts/mutation-check.ts through
+ * test/stop-gate.test.ts ("refuses fire number cap+1 exactly"), which pins the
+ * arithmetic on every machine rather than a stopwatch.
+ */
+export const SUMMARIZER_MAX_FIRES_PER_SESSION = 6;
+/** Debounce: a fire needs at least this many Stop turns since the last one. */
+export const SUMMARIZER_DEBOUNCE_TURNS = 2;
+/**
+ * How much of the transcript file's tail the gate reads — one bounded local
+ * read on the Stop hook's path, no hub, no LLM. 128 KiB covers a long turn
+ * comfortably; a turn larger than this is gated on its most recent part.
+ */
+export const SUMMARIZER_TAIL_BYTES = 131_072;
+/**
+ * Ceiling on the extracted slice text handed to the summarizer prompt — the
+ * token bill's other bound (≈ SUMMARIZER_SLICE_MAX_CHARS / 4 tokens at the
+ * CHARS_PER_TOKEN_ESTIMATE rate the cost estimate uses).
+ */
+export const SUMMARIZER_SLICE_MAX_CHARS = 24_000;
+/** Per content block, so one giant tool result cannot eat the whole slice. */
+export const SUMMARIZER_BLOCK_MAX_CHARS = 2_000;
+/**
+ * Hard wall-clock timeout on the detached summarizer process. It runs OUTSIDE
+ * any hook budget (the Stop hook only spawns and exits), so this is generous —
+ * but it is a kill, not a wait: a hung claude binary must never accumulate.
+ * CROSSCHECK_SUMMARIZER_TIMEOUT_MS overrides it (tests, slow machines).
+ */
+export const SUMMARIZER_TIMEOUT_MS = 30_000;
+/** Ceiling on captured summarizer stdout — a claim is one sentence, not a log. */
+export const SUMMARIZER_OUTPUT_MAX_BYTES = 16_384;
+/**
+ * Confidence a draft gets when the summarizer omits one. Well under the
+ * DERIVED_CONFIDENCE_CAP (0.5, @crosscheck/schema), which the worker ALSO
+ * clamps to client-side so an honest connector never sends more.
+ */
+export const SUMMARIZER_DEFAULT_CONFIDENCE = 0.3;
+/**
+ * The ~4 chars/token rule of thumb the briefing budget already uses
+ * (MAX_BRIEFING_CHARS). Cost figures derived from it are ESTIMATES and every
+ * surface printing them says so.
+ */
+export const CHARS_PER_TOKEN_ESTIMATE = 4;
+/** Haiku-class, per DESIGN.md §2: cheap capture on the developer's own auth. */
+export const SUMMARIZER_MODEL = "haiku";
+/**
+ * The Stop hook does no hub round trip of its own (gate + spawn are local);
+ * the budget exists for the state lock and the maintenance flush it hosts.
+ */
+export const STOP_BUDGET_RATIO = 2;
+/** Draft pointers one briefing may spend — pointer discipline like solved. */
+export const MAX_DRAFT_POINTERS = 2;
+/** Most session state files one cost scan reads (status/doctor, bounded). */
+export const STATUS_MAX_SESSION_STATES = 50;
+
 export const PRESENCE_CACHE_TTL_MS = 10_000;
 export const STATUSLINE_MAX_CHARS = 90;
 export const STATUSLINE_MAX_NAMES = 3;

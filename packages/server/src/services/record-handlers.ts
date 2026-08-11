@@ -254,10 +254,18 @@ const normalizeClaimBody = (body: string): string =>
 
 /**
  * Ingest dedup gate, deterministic v0 (DESIGN.md §3): same work context, same
- * kind, same author developer, normalized-equal body. Similarity/embedding
- * dedup arrives with the search block. NEVER dedup across developers —
- * provenance is the product; cross-author near-duplicates become relates_to
- * edges in the search block instead of merged rows.
+ * kind, same author developer, same provenance, same status, normalized-equal
+ * body. Similarity/embedding dedup arrives with the search block. NEVER dedup
+ * across developers — provenance is the product; cross-author near-duplicates
+ * become relates_to edges in the search block instead of merged rows.
+ *
+ * PROVENANCE AND STATUS ARE PART OF THE SCOPE, and the promotion loop is why
+ * (DESIGN.md §3 Tier 1): promoting a draft posts a DECLARED claim with the
+ * draft's exact body plus a supersedes edge, and discarding posts the same
+ * body with status REJECTED. Dedup exists to collapse re-observations — which
+ * arrive with identical provenance and status — not append-only revisions;
+ * without this scope the revision collapsed into the draft row and the edge
+ * bounced off a claim id that was never inserted.
  *
  * Accepted v0 limitation: candidates are loaded and normalized in JS; the
  * SQL normalized column that pushes this into the query comes with the
@@ -277,6 +285,8 @@ const findDedupMatch = async (
         eq(claims.workContextId, body.workContextId),
         eq(claims.kind, body.kind),
         eq(agentSessions.developerId, developerId),
+        eq(claims.provenance, body.provenance),
+        eq(claims.status, body.status),
       ),
     );
   const normalized = normalizeClaimBody(body.body);

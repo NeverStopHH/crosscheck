@@ -31,6 +31,7 @@ import {
   endSession,
   getAbsences,
   getContradictions,
+  getDrafts,
   getPresence,
   getSolvedMatches,
   getWorkContexts,
@@ -246,6 +247,7 @@ export const handleSessionStart = async (
     absencesResult,
     contradictionsResult,
     solvedMatchesResult,
+    draftsResult,
     commitAuthors,
     defaultBranchRef,
   ] = await Promise.all([
@@ -254,6 +256,7 @@ export const handleSessionStart = async (
     getAbsences(ctx.hub, ctx.identity.repoId),
     getContradictions(ctx.hub, ctx.identity.repoId),
     getSolvedMatches(ctx.hub, ctx.identity.repoId),
+    getDrafts(ctx.hub, ctx.identity.repoId),
     collectCommitEvidence(ctx.identity.root, now),
     resolveDefaultBranchRef(ctx.identity.root),
   ]);
@@ -264,6 +267,7 @@ export const handleSessionStart = async (
     ? contradictionsResult.data
     : [];
   const solvedMatches = solvedMatchesResult.ok ? solvedMatchesResult.data : [];
+  const drafts = draftsResult.ok ? draftsResult.data : [];
 
   if (developerId !== null) {
     await rememberDeveloper(ctx.config, developerId, selfName(presence, developerId));
@@ -359,6 +363,7 @@ export const handleSessionStart = async (
     absences,
     contradictions,
     solvedMatches,
+    drafts,
   });
 
   // Solved-pointer telemetry (VISION.md §1 + §4 precision loop): exactly the

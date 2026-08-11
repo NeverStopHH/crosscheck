@@ -238,6 +238,38 @@ export const getSolvedMatches = (
   });
 
 /**
+ * One of the developer's OWN unreviewed Tier-1 drafts (DESIGN.md §3 Tier 1
+ * promotion loop). The hub only ever serves the CALLER's drafts here, so a
+ * body is self-directed text — still sanitized at render like everything
+ * machine-derived. `captureMode`/`dedupCount` optional: an older shape stays
+ * parseable and the renderer does not use them.
+ */
+export const DraftEntrySchema = z.looseObject({
+  id: z.string().min(1),
+  workContextId: z.string().min(1),
+  kind: z.string().min(1),
+  body: z.string(),
+  status: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+  captureMode: z.string().min(1).optional(),
+  dedupCount: z.number().int().min(0).optional(),
+  createdAt: z.string().min(1),
+});
+
+export type DraftEntry = z.infer<typeof DraftEntrySchema>;
+
+/** One more parallel GET inside the SessionStart fetch block (fail open). */
+export const getDrafts = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<readonly DraftEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/drafts${encodeRepo(repo)}`,
+    schema: tolerantList("drafts", DraftEntrySchema),
+  });
+
+/**
  * One claim of a diagnosis tree.
  *
  * `authorDeveloperName` is the field that makes a tree readable by somebody who
