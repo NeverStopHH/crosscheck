@@ -20,12 +20,30 @@ export const viewerChrome = (
   csrfToken: csrfTokenFor(deps.uiSessionSecret, c.get("uiSessionToken")),
 });
 
+/**
+ * `parseBody` that never throws on a hostile Content-Type. Hono's parser
+ * raises ERR_FORMDATA_PARSE_ERROR on, for instance, a `multipart/form-data`
+ * body with no boundary — an unhandled 500 straight from one crafted header,
+ * and on the PUBLIC login route an UNAUTHENTICATED one. A malformed body
+ * carries no fields, so it degrades to `{}` and each caller's own validation
+ * then answers cleanly (login 400, a CSRF-checked POST 403).
+ */
+export const parseFormBody = async (
+  c: Context<AppEnv>,
+): Promise<Record<string, unknown>> => {
+  try {
+    return await c.req.parseBody();
+  } catch {
+    return {};
+  }
+};
+
 /** All POSTs except login verify the session-bound CSRF token (item 6). */
 export const isPostedCsrfValid = async (
   c: Context<AppEnv>,
   deps: AppDeps,
 ): Promise<boolean> => {
-  const body = await c.req.parseBody();
+  const body = await parseFormBody(c);
   const presented = body["_csrf"];
   return (
     typeof presented === "string" &&

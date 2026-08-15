@@ -41,7 +41,11 @@ import {
   verifySessionToken,
 } from "../ui/session.ts";
 import { UI_STYLESHEET } from "../ui/styles.ts";
-import { forbidden, isPostedCsrfValid } from "../ui/route-helpers.tsx";
+import {
+  forbidden,
+  isPostedCsrfValid,
+  parseFormBody,
+} from "../ui/route-helpers.tsx";
 import { LoginPage } from "../ui/pages/login.tsx";
 import { uiPagesRoutes } from "./ui-pages.tsx";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -52,6 +56,27 @@ const FEED_PATH = "/ui/feed";
 
 const LOGIN_FAILED_MESSAGE = "That key was not recognized.";
 const LOGIN_INVALID_MESSAGE = "Enter your developer API key.";
+const LOGIN_CROSS_SITE_MESSAGE = "This login request was blocked as cross-site.";
+
+/**
+ * Login has no session yet, so it cannot carry the session-bound CSRF token
+ * every other POST uses. Fetch-metadata is the dependency-free stand-in: a
+ * browser tags a genuine same-origin form submit `same-origin`; a cross-site
+ * (or same-site) auto-submit — the request that would log a victim into the
+ * ATTACKER's session — is refused. An absent header (non-browser clients, the
+ * `crosscheck login` CLI, curl) is allowed: CSRF is a browser-only threat and
+ * the CLI authenticates over /api, never here.
+ */
+const SEC_FETCH_SITE_HEADER = "sec-fetch-site";
+const CROSS_ORIGIN_FETCH_SITES: ReadonlySet<string> = new Set([
+  "cross-site",
+  "same-site",
+]);
+
+const isCrossSiteRequest = (c: Context<AppEnv>): boolean => {
+  const fetchSite = c.req.header(SEC_FETCH_SITE_HEADER);
+  return fetchSite !== undefined && CROSS_ORIGIN_FETCH_SITES.has(fetchSite);
+};
 
 const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.header("Content-Security-Policy", UI_CSP);
@@ -118,7 +143,10 @@ export const uiRoutes = (deps: AppDeps): Hono<AppEnv> => {
   router.get("/login", (c) => c.html(<LoginPage />));
 
   router.post("/login", async (c) => {
-    const body = await c.req.parseBody();
+    if (isCrossSiteRequest(c)) {
+      return forbidden(c, LOGIN_CROSS_SITE_MESSAGE);
+    }
+    const body = await parseFormBody(c);
     const apiKey = body["apiKey"];
     if (
       typeof apiKey !== "string" ||
