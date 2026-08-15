@@ -85,10 +85,12 @@ export const isCsrfValid = (
 const COOKIE_ATTRIBUTES = "HttpOnly; SameSite=Strict; Path=/ui";
 
 /**
- * The session Set-Cookie value. `Secure` rides along when the hub itself
- * terminates TLS; behind a TLS-terminating proxy or Tailscale the transport
- * is encrypted upstream of the hub, and hard-coding Secure would strand
- * plain-HTTP LAN installs at the login page.
+ * The session Set-Cookie value. `Secure` rides along when the browser
+ * reached the hub over https — the hub terminating TLS itself, or a proxy /
+ * Tailscale serve in front of it announcing `X-Forwarded-Proto: https`
+ * (routes/ui.tsx isSecureTransport). Only the proxyless plain-HTTP LAN
+ * install stays non-Secure: hard-coding the flag would strand it at the
+ * login page, because its cookie would never be sent back.
  */
 export const sessionCookieHeader = (
   token: string,

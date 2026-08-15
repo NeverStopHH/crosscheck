@@ -45,13 +45,33 @@ export interface CreateServerOptions {
   readonly uiSessionSecret?: string;
 }
 
+/**
+ * Omitted → fresh random secret per process. Provided → must have substance:
+ * `CROSSCHECK_UI_SECRET=` (empty) is not nullish, so without this guard it
+ * would flow through `??` and sign every session cookie with "" — a signing
+ * secret misconfiguration must fail fast at startup, not silently weaken auth.
+ */
+const resolveUiSessionSecret = (secret: string | undefined): string => {
+  if (secret === undefined) {
+    return generateApiKey();
+  }
+  if (secret.trim().length === 0) {
+    throw new Error(
+      "uiSessionSecret (CROSSCHECK_UI_SECRET) must be non-empty: it is the " +
+        "HMAC key signing /ui session cookies. Unset it entirely for a " +
+        "random per-process secret.",
+    );
+  }
+  return secret;
+};
+
 export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
   createApp({
     db: options.db,
     now: options.now ?? (() => new Date()),
     adminToken: options.adminToken ?? null,
     embedder: options.embedder ?? null,
-    uiSessionSecret: options.uiSessionSecret ?? generateApiKey(),
+    uiSessionSecret: resolveUiSessionSecret(options.uiSessionSecret),
   });
 
 const MIN_PORT = 1;

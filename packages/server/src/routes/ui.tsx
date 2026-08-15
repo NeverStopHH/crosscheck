@@ -89,8 +89,31 @@ const securityHeaders: MiddlewareHandler<AppEnv> = async (c, next) => {
 const redirectToLogin = (c: Context<AppEnv>): Response =>
   c.redirect(LOGIN_PATH, 303);
 
-const isSecureTransport = (c: Context<AppEnv>): boolean =>
-  new URL(c.req.url).protocol === "https:";
+/**
+ * Https either at the hub itself or at a TLS-terminating proxy in front of it
+ * (Caddy/nginx/Tailscale serve), signalled by the standard `X-Forwarded-Proto`
+ * — chained proxies append, so the first (client-facing) value decides.
+ * Trusting the header is safe here because it can only ADD the cookie's
+ * `Secure` flag: a client spoofing it over direct plain http gets a cookie
+ * its own browser refuses to send back, stranding nobody but the spoofer.
+ * Absent header over plain http (the proxyless LAN install) stays non-Secure
+ * so that login keeps working.
+ */
+const FORWARDED_PROTO_HEADER = "x-forwarded-proto";
+const HTTPS_URL_PROTOCOL = "https:";
+const HTTPS_FORWARDED_PROTO = "https";
+
+const isSecureTransport = (c: Context<AppEnv>): boolean => {
+  if (new URL(c.req.url).protocol === HTTPS_URL_PROTOCOL) {
+    return true;
+  }
+  const forwardedProto = c.req.header(FORWARDED_PROTO_HEADER);
+  if (forwardedProto === undefined) {
+    return false;
+  }
+  const clientFacingProto = forwardedProto.split(",")[0]?.trim().toLowerCase();
+  return clientFacingProto === HTTPS_FORWARDED_PROTO;
+};
 
 /**
  * Session middleware: valid signed cookie → the developer row it names is
