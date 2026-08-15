@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 
 import { createApp } from "./app.ts";
+import { generateApiKey } from "./auth/keys.ts";
 import { DEFAULT_PORT } from "./constants.ts";
 import { createDb } from "./db/client.ts";
 import { createEmbedderFromEnv } from "./services/embedder.ts";
@@ -35,6 +36,13 @@ export interface CreateServerOptions {
   readonly adminToken?: string | null;
   /** Omitted/null = keyless: the vector tier is silently absent (DESIGN.md §6). */
   readonly embedder?: Embedder | null;
+  /**
+   * HMAC secret for /ui session cookies. Omitted = a fresh random secret per
+   * process: nothing secret at rest, and a restart logs every browser out
+   * (ui/session.ts documents the rotation story). Set CROSSCHECK_UI_SECRET
+   * to keep sessions across restarts.
+   */
+  readonly uiSessionSecret?: string;
 }
 
 export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
@@ -43,6 +51,7 @@ export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
     now: options.now ?? (() => new Date()),
     adminToken: options.adminToken ?? null,
     embedder: options.embedder ?? null,
+    uiSessionSecret: options.uiSessionSecret ?? generateApiKey(),
   });
 
 const MIN_PORT = 1;
@@ -67,10 +76,12 @@ const startServer = async (): Promise<void> => {
   // Throws on explicit misconfiguration (e.g. openai chosen, no key) — a hub
   // that silently dropped its vector tier would be DESIGN.md §10 "silent death".
   const embedder = createEmbedderFromEnv(process.env);
+  const uiSessionSecret = process.env["CROSSCHECK_UI_SECRET"];
   const app = createServer({
     db,
     adminToken: process.env["ADMIN_TOKEN"] ?? null,
     embedder,
+    ...(uiSessionSecret === undefined ? {} : { uiSessionSecret }),
   });
   const port = parsePort(process.env["PORT"]);
   Bun.serve({ port, fetch: app.fetch });

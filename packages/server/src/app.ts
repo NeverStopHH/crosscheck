@@ -13,6 +13,7 @@ import { searchRoutes } from "./routes/search.ts";
 import { sessionsRoutes } from "./routes/sessions.ts";
 import { settingsRoutes } from "./routes/settings.ts";
 import { solvedMatchesRoutes } from "./routes/solved-matches.ts";
+import { uiRoutes } from "./routes/ui.tsx";
 import { workContextsRoutes } from "./routes/work-contexts.ts";
 import type { AppDeps, AppEnv } from "./types.ts";
 
@@ -32,6 +33,9 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/solved-matches", solvedMatchesRoutes(deps));
   app.route("/api/drafts", draftsRoutes(deps));
   app.route("/api/settings", settingsRoutes(deps));
+  // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
+  // visibility rules, session-cookie auth instead of bearer keys.
+  app.route("/ui", uiRoutes(deps));
 
   app.notFound((c) => fail(c, 404, "not_found", "route not found"));
   app.onError((error, c) => {

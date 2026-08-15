@@ -132,13 +132,21 @@ crosscheck/
                         (PGlite embedded | DATABASE_URL → Postgres)
     connector-claude/   hook scripts · MCP server · summarizer runner · spool
     cli/                crosscheck: serve|init|login|status|approve|mute|doctor
-  apps/
-    web/                v0.5: read-only feed + approvals UI
   docs/
   examples/
 ```
 
 TypeScript-only (Bun). Python appears only ever as a generated HTTP client, later.
+
+The v0.5 web UI (feed, member list, click-to-approve) is NOT a separate app:
+the hub serves it itself under `/ui/*` from `packages/server` — server-rendered
+hono/jsx, zero client JS, no build step, strict CSP, session-cookie auth
+(`packages/server/src/routes/ui.tsx` documents auth and headers;
+`src/ui/session.ts` documents the cookie, secret and rotation). It reads the
+same services under the same visibility rules as the API, so presence opt-out
+and the artifact approval gate cannot diverge between the two surfaces. The
+reader's mute list deliberately does not apply to /ui pages — a page the
+reader opens is a pull, and §2.1 scopes mute to unasked surfaces.
 
 ## 8. Roadmap
 
