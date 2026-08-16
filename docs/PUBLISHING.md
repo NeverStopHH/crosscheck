@@ -17,7 +17,10 @@ absent.
 - On `main`, green CI. The packed tarball is proven on every test run by
   `packages/connector-claude/test/e2e/npm-package.e2e.test.ts` (clean-dir
   install, `--help`, `serve` + HTTP 200 + clean SIGTERM, `doctor`, both the
-  Node-shim and Bun paths, license/file audit).
+  Node-shim and Bun paths, license/file audit). That e2e needs node + npm on
+  PATH and — on a cold npm cache — the registry; where those are missing it
+  skips with a loud warning instead of failing, so a green offline run proves
+  nothing about the tarball. CI has all three.
 - All three workspace `package.json` versions identical — the pack script
   refuses to pack otherwise, and `--version` reports this number.
 - Name still free (it was on 2026-08-16):
@@ -47,6 +50,10 @@ ADMIN_TOKEN=t CROSSCHECK_DATA_DIR=/tmp/cx-smoke npx crosscheck@latest serve
 # expect: "crosscheck server listening on :7100 · search: exact+fts (keyless)"
 # then:   curl -s -o /dev/null -w '%{http_code}\n' http://localhost:7100/ui/login  -> 200
 # Ctrl+C must end it cleanly.
+
+npm install -g crosscheck@latest && crosscheck --version   # the connector flow —
+# `init` must be run from a PERMANENT install like this one; it refuses to
+# wire hooks from an npx/bunx cache (the launcher would die with the cache).
 ```
 
 Then tag: `git tag v0.5.0 && git push origin v0.5.0`.

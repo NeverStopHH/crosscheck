@@ -111,6 +111,17 @@ export const GIT_KILL_GRACE_MS = 500;
  */
 export const STDIN_TIMEOUT_MS = 1000;
 
+/**
+ * How long `crosscheck login` waits on a piped (non-tty) stdin before giving
+ * up. Hooks bound their read with STDIN_TIMEOUT_MS because they hold a
+ * session open; login is a human-run command whose pipe may legitimately be
+ * slow (a secret manager decrypting), so its patience is measured in tens of
+ * seconds — but a wrapper that hands it an open pipe it never writes (npm
+ * lifecycle scripts, Makefiles) must end in a clear "no api key supplied",
+ * not a silent forever-hang (cli/login.ts).
+ */
+export const LOGIN_STDIN_TIMEOUT_MS = 60_000;
+
 export const HEARTBEAT_MIN_INTERVAL_MS = 20_000;
 
 export const MAX_TARGETS_PER_INVOCATION = 20;

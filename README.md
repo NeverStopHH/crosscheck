@@ -48,12 +48,14 @@ curl -sX POST http://localhost:7100/api/developers \
 # -> {"ok":true,"data":{"developer":{"id":"..."},"apiKey":"..."}}   (shown once)
 ```
 
-**3. Each developer logs in once, then wires up the repo:**
+**3. Each developer installs the connector permanently, logs in once, then wires up the repo:**
 
 ```bash
+npm install -g crosscheck        # or: bun add -g crosscheck — hooks outlive npx, so `init` refuses to run from an npx/bunx cache
+
 crosscheck login http://localhost:7100 < api-key.txt   # writes ~/.crosscheck/config.json (0600)
 crosscheck init                                        # writes .crosscheck.json + .claude/settings.json
-crosscheck doctor                                      # verifies config, hooks, hub, spool, clock
+crosscheck doctor                                      # verifies config, hooks, launcher, hub, spool, clock
 ```
 
 `login` reads the key from stdin, or from `CROSSCHECK_API_KEY`. Passing it as an argument (`crosscheck login <hubUrl> <apiKey>`) still works but is discouraged — the key ends up in your shell history.

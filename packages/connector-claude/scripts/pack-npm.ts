@@ -193,8 +193,9 @@ const buildManifest = (
   type: "module",
   bin: { crosscheck: "./bin/crosscheck.cjs" },
   // The bin shim runs under any Node >= 18; everything real needs Bun. npm
-  // only warns on engines, so the shim re-checks at runtime and says how to
-  // install Bun instead of stack-tracing.
+  // only warns on engines, so the shim probes for a bun BINARY at runtime
+  // (presence, not version) and says how to install it instead of
+  // stack-tracing; the version floor below is advisory metadata only.
   engines: { node: ">=18", bun: ">=1.3.0" },
   exports: {
     ".": "./packages/connector-claude/src/index.ts",

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 
 import { runCli } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
+import { resolveLauncher } from "../src/cli/init.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
 const HUB_URL = "https://hub.example.com";
@@ -38,6 +40,16 @@ afterEach(async () => {
 
 const unquote = (value: string): string =>
   value.startsWith("'") && value.endsWith("'") ? value.slice(1, -1) : value;
+
+/** A directory holding an executable named `crosscheck` that runs `script`. */
+const makeFakeBin = async (label: string, script: string): Promise<string> => {
+  const dir = await mkdtemp(join(tmpdir(), `cx-fakebin-${label}-`));
+  paths.push(dir);
+  const bin = join(dir, "crosscheck");
+  await writeFile(bin, `#!/bin/sh\n${script}\n`, "utf8");
+  await chmod(bin, 0o755);
+  return dir;
+};
 
 /** Last group is the one `init` appends; foreign groups keep their place. */
 const hookCommand = (settings: unknown, event: string): string => {
@@ -156,6 +168,96 @@ describe("crosscheck init", () => {
 
     // Assert
     expect(await readFile(settingsPath, "utf8")).toBe(first);
+  });
+
+  test("never blesses a foreign PATH binary that answers to crosscheck", async () => {
+    // Arrange: `crosscheck` on PATH is a DIFFERENT tool — npm's crosscheck-cli
+    // package installs a bin of exactly this name. Hooks wired to it would
+    // pipe session json into a stranger's binary on every prompt.
+    const { repo, env, settingsPath } = await fixture();
+    const foreignDir = await makeFakeBin("foreign", 'echo "othertool 1.2.3"');
+
+    // Act
+    const result = await runCli(["init"], { ...env, PATH: foreignDir }, repo);
+
+    // Assert: the absolute entry launcher is used instead, in both files
+    expect(result.exitCode).toBe(0);
+    const raw = await readFile(settingsPath, "utf8");
+    expect(raw).not.toContain('"crosscheck hook session-start"');
+    const mcp = JSON.parse(await readFile(join(repo, ".mcp.json"), "utf8")) as {
+      mcpServers: Record<string, { command: string }>;
+    };
+    expect(mcp.mcpServers["crosscheck"]?.command).not.toBe("crosscheck");
+  });
+
+  test("does not write a bare name resolved from an npx cache", async () => {
+    // Arrange: the binary IS ours (identity passes), but it sits in npm's npx
+    // cache — the PATH prefix that made the bare name resolve is gone the
+    // moment npx exits, so every hook would die with `command not found`.
+    const { repo, env, settingsPath } = await fixture();
+    const cacheRoot = await mkdtemp(join(tmpdir(), "cx-npxcache-"));
+    paths.push(cacheRoot);
+    const binDir = join(cacheRoot, "_npx", "0123abc", "node_modules", ".bin");
+    await mkdir(binDir, { recursive: true });
+    await writeFile(
+      join(binDir, "crosscheck"),
+      '#!/bin/sh\necho "crosscheck 0.5.0"\n',
+      "utf8",
+    );
+    await chmod(join(binDir, "crosscheck"), 0o755);
+
+    // Act
+    const result = await runCli(["init"], { ...env, PATH: binDir }, repo);
+
+    // Assert
+    expect(result.exitCode).toBe(0);
+    expect(await readFile(settingsPath, "utf8")).not.toContain(
+      '"crosscheck hook session-start"',
+    );
+  });
+
+  test("blesses a durable PATH crosscheck that passes the identity probe", async () => {
+    // Arrange: the global-install flow — this must keep working untouched
+    const { repo, env, settingsPath } = await fixture();
+    const binDir = await makeFakeBin("genuine", 'echo "crosscheck 9.9.9"');
+
+    // Act
+    const result = await runCli(["init"], { ...env, PATH: binDir }, repo);
+
+    // Assert
+    expect(result.exitCode).toBe(0);
+    expect(await readFile(settingsPath, "utf8")).toContain(
+      "crosscheck hook session-start",
+    );
+  });
+
+  test("refuses outright when even its own entry lives in an npx cache", async () => {
+    // Arrange: how `npx crosscheck init` actually runs — BOTH the PATH hit and
+    // the running entry sit inside the cache; there is nothing durable to
+    // write, so init must say so instead of wiring hooks that die with it.
+    const cacheRoot = await mkdtemp(join(tmpdir(), "cx-npxentry-"));
+    paths.push(cacheRoot);
+    const entry = join(
+      cacheRoot,
+      "_npx",
+      "0abc",
+      "node_modules",
+      "crosscheck",
+      "src",
+      "bin",
+      "crosscheck.ts",
+    );
+    await mkdir(dirname(entry), { recursive: true });
+    await writeFile(entry, "// entry fixture\n", "utf8");
+
+    // Act
+    const launcher = await resolveLauncher(undefined, { PATH: "" }, entry);
+
+    // Assert
+    expect(launcher.kind).toBe("refused");
+    if (launcher.kind === "refused") {
+      expect(launcher.reason).toContain("npm install -g crosscheck");
+    }
   });
 
   test("names the api key, not the hub url, when only the key is missing", async () => {

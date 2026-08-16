@@ -47,13 +47,20 @@ curl -sX POST http://localhost:7100/api/developers \
 
 ## Connect a developer
 
+The connector needs a PERMANENT install — hooks run long after the install
+command exits, so `crosscheck init` refuses to wire them from an npx/bunx
+cache (a launcher in there dies with the cache, and hooks fail silently):
+
 ```bash
-npm install -g crosscheck        # or run everything through npx/bunx
+npm install -g crosscheck        # or: bun add -g crosscheck
 
 crosscheck login http://hub-host:7100 < api-key.txt   # key from stdin, stored 0600
 crosscheck init      # writes .crosscheck.json, .claude/settings.json, .mcp.json
-crosscheck doctor    # verifies config, hooks, hub, spool, clock
+crosscheck doctor    # verifies config, hooks, launcher, hub, spool, clock
 ```
+
+(`npx crosscheck serve` stays fine — a hub is a foreground process, not a
+hook. It is `init` that must not run from a cache.)
 
 `crosscheck init` is meant to be committed: the hub URL and the hook
 registration live in the repo, so every teammate is connected after `git pull`

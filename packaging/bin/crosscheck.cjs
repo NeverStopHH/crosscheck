@@ -10,6 +10,9 @@
  *   2. Under Node with bun findable (PATH, then ~/.bun/bin — the default
  *      install location, which login-shell-less environments omit from PATH):
  *      re-exec the TS entry under bun, stdio inherited, signals forwarded.
+ *      Bun is spawned DIRECTLY — a failed spawn falls through to the next
+ *      location — because a separate `bun --version` pre-probe would add a
+ *      whole process launch to every hook invocation through this shim.
  *   3. Under Node with no bun anywhere: ONE clear install instruction on
  *      stderr and exit 1 — never a stack trace.
  *
@@ -41,35 +44,10 @@ if (process.versions.bun !== undefined) {
     process.exit(EXIT_INTERNAL);
   });
 } else {
-  const { spawn, spawnSync } = require("node:child_process");
+  const { spawn } = require("node:child_process");
   const { homedir } = require("node:os");
 
-  const findBun = function () {
-    const candidates = ["bun", path.join(homedir(), ".bun", "bin", "bun")];
-    for (const candidate of candidates) {
-      const probe = spawnSync(candidate, ["--version"], { stdio: "ignore" });
-      if (probe.error === undefined && probe.status === 0) {
-        return candidate;
-      }
-    }
-    return null;
-  };
-
-  const bunExe = findBun();
-  if (bunExe === null) {
-    console.error(
-      "crosscheck runs on the Bun runtime (https://bun.sh) — the hub, the " +
-        "hooks and the MCP server all use it — and bun was not found on " +
-        "this machine.",
-    );
-    console.error("Install it, then re-run the same command:");
-    console.error("  curl -fsSL https://bun.sh/install | bash");
-    process.exit(1);
-  }
-
-  const child = spawn(bunExe, [ENTRY].concat(process.argv.slice(2)), {
-    stdio: "inherit",
-  });
+  const CANDIDATES = ["bun", path.join(homedir(), ".bun", "bin", "bun")];
 
   /*
    * Forward what a terminal or supervisor sends, so killing the npx wrapper
@@ -77,18 +55,55 @@ if (process.versions.bun !== undefined) {
    * convention 128 + signal number, applied when the CHILD dies by signal.
    */
   const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
+  let child = null;
   for (const signal of Object.keys(SIGNAL_EXIT_CODES)) {
     process.on(signal, function () {
-      child.kill(signal);
+      if (child !== null) {
+        child.kill(signal);
+      }
     });
   }
-  child.on("exit", function (code, signal) {
-    process.exit(
-      code !== null ? code : SIGNAL_EXIT_CODES[signal] || EXIT_INTERNAL,
+
+  /* A spawn error meaning "this candidate is not runnable here, try the next". */
+  const RETRIABLE_SPAWN_ERRORS = ["ENOENT", "ENOTDIR", "EACCES"];
+
+  const startWith = function (index) {
+    if (index >= CANDIDATES.length) {
+      console.error(
+        "crosscheck runs on the Bun runtime (https://bun.sh) — the hub, the " +
+          "hooks and the MCP server all use it — and bun was not found on " +
+          "this machine.",
+      );
+      console.error("Install it, then re-run the same command:");
+      console.error("  curl -fsSL https://bun.sh/install | bash");
+      process.exit(1);
+    }
+    const current = spawn(
+      CANDIDATES[index],
+      [ENTRY].concat(process.argv.slice(2)),
+      { stdio: "inherit" },
     );
-  });
-  child.on("error", function (error) {
-    console.error("crosscheck failed to start bun: " + error.message);
-    process.exit(EXIT_INTERNAL);
-  });
+    child = current;
+    let retried = false;
+    current.on("error", function (error) {
+      if (RETRIABLE_SPAWN_ERRORS.indexOf(error.code) !== -1) {
+        retried = true;
+        startWith(index + 1);
+        return;
+      }
+      console.error("crosscheck failed to start bun: " + error.message);
+      process.exit(EXIT_INTERNAL);
+    });
+    current.on("exit", function (code, signal) {
+      /* A failed spawn can emit both `error` and `exit`; `error` already
+       * moved on to the next candidate, so this event is not an answer. */
+      if (retried) {
+        return;
+      }
+      process.exit(
+        code !== null ? code : SIGNAL_EXIT_CODES[signal] || EXIT_INTERNAL,
+      );
+    });
+  };
+  startWith(0);
 }
