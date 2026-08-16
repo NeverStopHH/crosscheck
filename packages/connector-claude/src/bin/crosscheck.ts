@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { EXIT_OK, EXIT_USAGE, STDIN_TIMEOUT_MS } from "../constants.ts";
+import { EXIT_FAIL, EXIT_OK, EXIT_USAGE, STDIN_TIMEOUT_MS } from "../constants.ts";
 import { runCli } from "../cli/index.ts";
 import { isHookName, runHook } from "../hooks/index.ts";
 import { runMcpServer } from "../mcp/server.ts";
@@ -62,6 +62,27 @@ const main = async (): Promise<void> => {
   // that is the transport — so the bounded read would end it after one second.
   if (command === "mcp") {
     process.exit(await runMcpServer(process.env, process.cwd()));
+  }
+
+  // DYNAMIC import, and only here: the hub pulls in hono, drizzle and the
+  // PGlite WASM runtime, none of which a hook or the statusline may pay for —
+  // those run inside a session-latency budget on every invocation. After
+  // startServer resolves, Bun.serve keeps the process alive; no exit call.
+  //
+  // Its own catch, because main()'s silent-exit catch is for HOOKS, where any
+  // output would corrupt the session. An operator whose hub refuses to boot —
+  // bad PORT, a data dir another PostgreSQL major wrote — needs the reason.
+  if (command === "serve") {
+    try {
+      const { startServer } = await import("@crosscheck/server");
+      await startServer();
+      return;
+    } catch (error) {
+      console.error(
+        `crosscheck serve failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exit(EXIT_FAIL);
+    }
   }
 
   const result = await runCli(argv, process.env, process.cwd());

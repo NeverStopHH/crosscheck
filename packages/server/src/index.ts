@@ -90,7 +90,12 @@ const parsePort = (raw: string | undefined): number => {
   return parsed;
 };
 
-const startServer = async (): Promise<void> => {
+/**
+ * Boot the hub from process env, exactly as `bun run packages/server/src/index.ts`
+ * always has. Exported so the `crosscheck serve` CLI command (DESIGN.md §2's
+ * `npx crosscheck serve`) is this same code path rather than a second copy.
+ */
+export const startServer = async (): Promise<void> => {
   const dataDir = process.env["CROSSCHECK_DATA_DIR"];
   const db = await createDb(dataDir === undefined ? {} : { dataDir });
   // Throws on explicit misconfiguration (e.g. openai chosen, no key) — a hub

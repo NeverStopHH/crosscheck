@@ -27,14 +27,17 @@ Background reading:
 
 ## Quick start
 
-Requires [Bun](https://bun.sh). One person hosts the hub; everyone else runs two commands.
+Requires [Bun](https://bun.sh) — the hub and the hooks run on it. The `crosscheck` npm package re-launches itself under Bun automatically, so `npx` works too; when Bun is missing it prints the one install command (`curl -fsSL https://bun.sh/install | bash`) instead of a stack trace. One person hosts the hub; everyone else runs two commands.
 
 **1. Host the hub** (any teammate's machine, a VPS, or behind Tailscale):
 
 ```bash
-bun install
-ADMIN_TOKEN=<pick-one> bun run packages/server/src/index.ts   # listens on :7100
+ADMIN_TOKEN=<pick-one> bunx crosscheck serve      # or: npx crosscheck serve — listens on :7100
 ```
+
+Set `CROSSCHECK_DATA_DIR` for durable storage (unset = in-memory, for trying it out). From a checkout of this repo the same hub is `bun install && ADMIN_TOKEN=<pick-one> bun run packages/server/src/index.ts`.
+
+The npm package is assembled by `bun packages/connector-claude/scripts/pack-npm.ts` and proven by installing the packed tarball into a clean directory and driving the binary end to end ([`npm-package.e2e.test.ts`](packages/connector-claude/test/e2e/npm-package.e2e.test.ts)); the release runbook is [docs/PUBLISHING.md](docs/PUBLISHING.md).
 
 **2. Issue one API key per developer** — provenance is a core feature, so keys are never shared:
 

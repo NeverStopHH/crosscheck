@@ -249,6 +249,53 @@ describe("crosscheck cli surface", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stdout).toContain("invalid hub url");
   });
+
+  test("--help prints usage and exits 0, unlike an unknown command", async () => {
+    // Arrange
+    const { repo, env } = await fixture();
+
+    // Act
+    const long = await runCli(["--help"], env, repo);
+    const short = await runCli(["-h"], env, repo);
+    const bare = await runCli(["help"], env, repo);
+
+    // Assert: asking for help is not an error — npx/bunx users probe with it
+    for (const result of [long, short, bare]) {
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("usage: crosscheck <command>");
+    }
+  });
+
+  test("usage lists the serve command", async () => {
+    // Arrange
+    const { repo, env } = await fixture();
+
+    // Act
+    const result = await runCli(["--help"], env, repo);
+
+    // Assert: DESIGN.md §2 promises `npx crosscheck serve`; the usage screen
+    // is where a stranger discovers it.
+    expect(result.stdout).toMatch(/^\s+serve\s/m);
+  });
+
+  test("--version prints the version from the nearest package.json", async () => {
+    // Arrange
+    const { repo, env } = await fixture();
+    const packageJson = JSON.parse(
+      await readFile(
+        join(import.meta.dir, "..", "package.json"),
+        "utf8",
+      ),
+    ) as { version: string };
+
+    // Act
+    const result = await runCli(["--version"], env, repo);
+
+    // Assert: read from package.json at runtime, so publish bumps cannot
+    // drift from what the binary reports.
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe(`crosscheck ${packageJson.version}`);
+  });
 });
 
 describe("crosscheck login without a key in argv", () => {
