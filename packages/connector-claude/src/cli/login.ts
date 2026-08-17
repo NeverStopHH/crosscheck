@@ -6,6 +6,8 @@ import {
   EXIT_UNREACHABLE,
   EXIT_USAGE,
   HTTP_TIMEOUT_MS,
+  LOGIN_STDIN_TIMEOUT_MS,
+  MS_PER_SECOND,
   PROBE_REPO,
 } from "../constants.ts";
 import { normalizeHubUrl, readStoredConfig, saveConfig } from "../config/config.ts";
@@ -54,18 +56,48 @@ export type SecretReader = () => Promise<string | null>;
 /**
  * Piped stdin only. An interactive terminal would block on a read the user was
  * never told to make, so a TTY yields nothing and the usage text explains why.
+ *
+ * A NON-tty stdin that stays open (npm lifecycle scripts, Makefiles,
+ * provisioning wrappers all pass one) must not hang either: the reader says
+ * on stderr what it is waiting for, then gives up after `timeoutMs` so
+ * `runLogin` can answer "no api key supplied" instead of blocking forever.
+ * The seams exist for the tests; callers use `readSecretFromStdin` below.
  */
-export const readSecretFromStdin: SecretReader = async () => {
-  if (process.stdin.isTTY === true) {
-    return null;
-  }
-  try {
-    const trimmed = (await Bun.stdin.text()).trim();
-    return trimmed.length === 0 ? null : trimmed;
-  } catch {
-    return null;
-  }
+export const stdinSecretReader = (
+  timeoutMs: number,
+  readText: () => Promise<string> = () => Bun.stdin.text(),
+  isTty: () => boolean = () => process.stdin.isTTY === true,
+  warn: (line: string) => void = (line) => {
+    process.stderr.write(line);
+  },
+): SecretReader => {
+  return async () => {
+    if (isTty()) {
+      return null;
+    }
+    warn(
+      `reading api key from stdin (giving up in ${String(Math.round(timeoutMs / MS_PER_SECOND))}s) — pipe it, or set CROSSCHECK_API_KEY\n`,
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expiry = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    });
+    try {
+      const text = await Promise.race([readText().catch(() => ""), expiry]);
+      if (text === null) {
+        return null;
+      }
+      const trimmed = text.trim();
+      return trimmed.length === 0 ? null : trimmed;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 };
+
+export const readSecretFromStdin: SecretReader = stdinSecretReader(
+  LOGIN_STDIN_TIMEOUT_MS,
+);
 
 /** Safe forms first — a positional key is written to the shell history file. */
 export const LOGIN_USAGE = [

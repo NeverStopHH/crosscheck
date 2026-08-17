@@ -1,4 +1,4 @@
-import { EXIT_USAGE } from "../constants.ts";
+import { EXIT_OK, EXIT_USAGE } from "../constants.ts";
 import type { Env } from "../config/paths.ts";
 import { runDoctor } from "./doctor.ts";
 import { runInit } from "./init.ts";
@@ -6,12 +6,15 @@ import { readSecretFromStdin, runLogin } from "./login.ts";
 import type { CliResult, SecretReader } from "./login.ts";
 import { runMute, runPresence, runUnmute } from "./privacy.ts";
 import { runStatus } from "./status.ts";
+import { resolveVersion } from "./version.ts";
 
 export type { CliResult, SecretReader } from "./login.ts";
 
 const USAGE = [
   "usage: crosscheck <command>",
   "",
+  "  serve                     run the team hub on this machine (env: PORT,",
+  "                            CROSSCHECK_DATA_DIR, ADMIN_TOKEN, CROSSCHECK_UI_SECRET)",
   "  login <hubUrl>            store credentials; key from stdin or CROSSCHECK_API_KEY",
   "  login <hubUrl> <apiKey>   discouraged: the key lands in your shell history",
   "  init [--command-prefix <p>] [--hub <url>] [--force-statusline]",
@@ -34,6 +37,17 @@ export const runCli = async (
 ): Promise<CliResult> => {
   const [command, ...rest] = argv;
   switch (command) {
+    // Exit 0, unlike an unknown command: asking for help is not an error,
+    // and `npx crosscheck --help` is the first thing a stranger runs.
+    case "--help":
+    case "-h":
+    case "help":
+      return { stdout: USAGE, exitCode: EXIT_OK };
+    case "--version":
+      return {
+        stdout: `crosscheck ${await resolveVersion(import.meta.dir)}\n`,
+        exitCode: EXIT_OK,
+      };
     case "login":
       return runLogin(rest, env, readSecret);
     case "init":

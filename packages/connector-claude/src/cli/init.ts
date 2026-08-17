@@ -1,5 +1,5 @@
-import { join, resolve } from "node:path";
-import { writeFile } from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
+import { realpath, writeFile } from "node:fs/promises";
 
 import {
   CLAUDE_SETTINGS_DIR,
@@ -56,71 +56,166 @@ const shellQuote = (value: string): string =>
     ? value
     : `'${value.split("'").join(`'\\''`)}'`;
 
-const isOnPath = (command: string, env: Env): boolean => {
+const whichOnPath = (command: string, env: Env): string | null => {
   try {
-    return Bun.which(command, { PATH: env["PATH"] ?? "" }) !== null;
+    return Bun.which(command, { PATH: env["PATH"] ?? "" });
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * A launcher path inside a package-runner cache. npm's npx keeps installs
+ * under a `_npx` cache segment, bun's bunx under `bunx-<uid>-<pkg>` temp dirs
+ * (HISTORICAL: observed 2026-08-16 as ~/.npm/_npx/<hash>/node_modules/.bin/
+ * crosscheck and $TMPDIR/bunx-501-crosscheck@latest/node_modules/.bin/…).
+ * Both die on cache eviction — and the PATH prefix that made a bare name
+ * resolve is gone the moment the runner exits — so nothing under them may be
+ * written into hooks that must still run next month.
+ */
+export const isEphemeralInstallPath = (path: string): boolean =>
+  path
+    .split(sep)
+    .some((segment) => segment === "_npx" || segment.startsWith("bunx-"));
+
+/** Symlinks (npm's .bin) resolved so the cache test sees the real location. */
+export const realpathOrSelf = async (path: string): Promise<string> => {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
+  }
+};
+
+/** What our own bin prints for `--version`; a foreign tool prints anything else. */
+const OWN_VERSION_PATTERN = /^crosscheck \d+\.\d+\.\d+/;
+/** Plenty for `crosscheck --version` even through the node shim's re-exec hop. */
+const IDENTITY_PROBE_TIMEOUT_MS = 3_000;
+
+/**
+ * Executes `<bin> --version` and accepts only our own banner. The NAME
+ * `crosscheck` on a PATH proves nothing: npm's `crosscheck-cli` package
+ * installs a bin of exactly this name, and hooks wired to a stranger's
+ * binary would pipe session json into it on every prompt — silently, because
+ * hooks never print. Identity is proven by execution, not by name.
+ */
+export const isOwnCrosscheckBin = async (binPath: string): Promise<boolean> => {
+  try {
+    const probe = Bun.spawn({
+      cmd: [binPath, "--version"],
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: IDENTITY_PROBE_TIMEOUT_MS,
+    });
+    const stdout = await new Response(probe.stdout).text();
+    return (await probe.exited) === 0 && OWN_VERSION_PATTERN.test(stdout.trim());
   } catch {
     return false;
   }
 };
 
 /**
- * Never emits a package name of its own accord. An unpublished one is a
- * dependency-confusion vector: whoever claims it on npm gets code execution in
- * every hook of every machine that ran `init`. Without `crosscheck` on PATH the
- * hooks are pointed at the absolute path of the entry point that is running
- * right now. An explicit `--command-prefix` is passed through as given — that
- * one is the operator's choice, made in the open.
+ * The one launcher decision both files are derived from. Everything below is
+ * a way of NOT writing a command that dies after `init` returns:
+ *
+ *   - `override`: the operator's word, passed through untouched.
+ *   - `bare`: `crosscheck` on PATH — only after it survives BOTH guards:
+ *     it is not resolved out of an npx/bunx cache (the PATH prefix that found
+ *     it disappears with the runner), and its `--version` identifies as ours
+ *     (a foreign tool owning the name must never receive our session json).
+ *   - `entry`: the absolute path of the entry point that is running right
+ *     now — never a package name, because an unpublished name is a
+ *     dependency-confusion vector: whoever claims it on npm gets code
+ *     execution in every hook of every machine that ran `init`.
+ *   - `refused`: even the running entry sits in an npx/bunx cache (this is
+ *     `npx crosscheck init`), so every writable path dies with the cache.
+ *     Hooks fail silently by design, which is why this refuses loudly here.
  */
-export const resolveCommandPrefix = async (
+export type Launcher =
+  | { readonly kind: "override"; readonly prefix: string }
+  | { readonly kind: "bare" }
+  | { readonly kind: "entry"; readonly runtime: string; readonly entry: string }
+  | { readonly kind: "refused"; readonly reason: string };
+
+type UsableLauncher = Exclude<Launcher, { kind: "refused" }>;
+
+const CACHE_REFUSAL =
+  "refusing to wire hooks from an npx/bunx cache: every launcher path " +
+  "available here dies with the cache, and hooks fail silently by design. " +
+  "Install it permanently first — npm install -g crosscheck (or bun add -g " +
+  "crosscheck) — then rerun crosscheck init; or pass --command-prefix.";
+
+const NO_LAUNCHER_REFUSAL =
+  "no usable launcher: nothing named crosscheck on PATH and the running " +
+  "entry point is gone — npm install -g crosscheck (or bun add -g " +
+  "crosscheck), then rerun crosscheck init.";
+
+export const resolveLauncher = async (
   override: string | undefined,
   env: Env,
-): Promise<string> => {
+  entryPath: string = BIN_ENTRY_PATH,
+): Promise<Launcher> => {
   if (override !== undefined && override.length > 0) {
-    return override;
+    return { kind: "override", prefix: override };
   }
-  if (isOnPath("crosscheck", env)) {
-    return "crosscheck";
+  const hit = whichOnPath("crosscheck", env);
+  if (
+    hit !== null &&
+    !isEphemeralInstallPath(await realpathOrSelf(hit)) &&
+    (await isOwnCrosscheckBin(hit))
+  ) {
+    return { kind: "bare" };
   }
-  if (!(await Bun.file(BIN_ENTRY_PATH).exists())) {
-    return "crosscheck";
+  // A rejected PATH hit falls THROUGH rather than erroring: the absolute
+  // entry launcher works regardless of what else answers to the name.
+  if (await Bun.file(entryPath).exists()) {
+    if (isEphemeralInstallPath(await realpathOrSelf(entryPath))) {
+      return { kind: "refused", reason: CACHE_REFUSAL };
+    }
+    return { kind: "entry", runtime: process.execPath, entry: entryPath };
   }
-  return `${shellQuote(process.execPath)} ${shellQuote(BIN_ENTRY_PATH)}`;
+  return { kind: "refused", reason: NO_LAUNCHER_REFUSAL };
+};
+
+/** The hook/statusline command prefix, as one shell string. */
+export const resolveCommandPrefix = (launcher: UsableLauncher): string => {
+  switch (launcher.kind) {
+    case "override":
+      return launcher.prefix;
+    case "bare":
+      return "crosscheck";
+    case "entry":
+      return `${shellQuote(launcher.runtime)} ${shellQuote(launcher.entry)}`;
+  }
 };
 
 /**
- * The MCP launcher, as `command` plus `args` rather than as a shell string.
- *
- * SAME NO-FETCHABLE-NAME PROPERTY AS `resolveCommandPrefix`, and it has to be
- * restated rather than reused: `.mcp.json` takes an argv, not a command line, so
- * the shell-quoted string that file produces cannot be dropped in. Everything
- * else about the decision is identical — an unpublished package name here would
- * be the same dependency-confusion hole, in a file that gets COMMITTED and so
- * reaches every teammate rather than only the machine that ran `init`.
+ * The MCP launcher, as `command` plus `args` rather than as a shell string:
+ * `.mcp.json` takes an argv, so the shell-quoted prefix cannot be dropped in.
  *
  * The `sh -c` branch is only for an explicit `--command-prefix`. An operator's
  * arbitrary launcher cannot be split into argv by guessing at quoting, and the
  * string is theirs, given in the open — the same trade `resolveCommandPrefix`
  * makes when it passes an override through untouched.
  */
-export const resolveMcpLauncher = async (
-  override: string | undefined,
-  env: Env,
-): Promise<McpServerEntry> => {
-  if (override !== undefined && override.length > 0) {
-    return { type: "stdio", command: "sh", args: ["-c", `${override} mcp`] };
+export const resolveMcpLauncher = (launcher: UsableLauncher): McpServerEntry => {
+  switch (launcher.kind) {
+    case "override":
+      return {
+        type: "stdio",
+        command: "sh",
+        args: ["-c", `${launcher.prefix} mcp`],
+      };
+    case "bare":
+      return { type: "stdio", command: "crosscheck", args: ["mcp"] };
+    case "entry":
+      return {
+        type: "stdio",
+        command: launcher.runtime,
+        args: [launcher.entry, "mcp"],
+      };
   }
-  if (isOnPath("crosscheck", env)) {
-    return { type: "stdio", command: "crosscheck", args: ["mcp"] };
-  }
-  if (!(await Bun.file(BIN_ENTRY_PATH).exists())) {
-    return { type: "stdio", command: "crosscheck", args: ["mcp"] };
-  }
-  return {
-    type: "stdio",
-    command: process.execPath,
-    args: [BIN_ENTRY_PATH, "mcp"],
-  };
 };
 
 export const buildSettingsPlan = (
@@ -260,6 +355,13 @@ export const runInit = async (
   }
   const { hubUrl } = resolved;
 
+  // Resolved BEFORE anything is read or written: a refused launcher must
+  // leave the repo exactly as it found it.
+  const launcher = await resolveLauncher(options.commandPrefix, env);
+  if (launcher.kind === "refused") {
+    return { stdout: `${launcher.reason}\n`, exitCode: EXIT_FAIL };
+  }
+
   const settingsDir = join(identity.root, CLAUDE_SETTINGS_DIR);
   const settingsPath = join(settingsDir, CLAUDE_SETTINGS_FILE);
   const mcpPath = join(identity.root, MCP_CONFIG_FILE);
@@ -285,12 +387,12 @@ export const runInit = async (
   await backUp(settingsPath, settingsRead.raw);
   await backUp(mcpPath, mcpRead.raw);
 
-  const prefix = await resolveCommandPrefix(options.commandPrefix, env);
+  const prefix = resolveCommandPrefix(launcher);
   const merged = mergeClaudeSettings(
     settingsRead.value,
     buildSettingsPlan(prefix, options.forceStatusline),
   );
-  const mcpEntry = await resolveMcpLauncher(options.commandPrefix, env);
+  const mcpEntry = resolveMcpLauncher(launcher);
   await ensureDir(settingsDir);
   await writeFile(settingsPath, renderSettings(merged.settings), "utf8");
   await writeFile(
@@ -304,11 +406,21 @@ export const runInit = async (
     "utf8",
   );
 
-  const notes = merged.statuslineInstalled
-    ? []
-    : [
-        "statusline not installed (existing statusline preserved) — rerun with --force-statusline to replace",
-      ];
+  const notes = [
+    ...(merged.statuslineInstalled
+      ? []
+      : [
+          "statusline not installed (existing statusline preserved) — rerun with --force-statusline to replace",
+        ]),
+    // The entry launcher is an absolute path of THIS machine. It runs here —
+    // that is the point — but the committed .mcp.json will not run for a
+    // teammate until they rerun init (or put crosscheck on PATH) themselves.
+    ...(launcher.kind === "entry"
+      ? [
+          "launcher is an absolute path on this machine — teammates must run crosscheck init once too (or npm install -g crosscheck)",
+        ]
+      : []),
+  ];
   return {
     stdout: [
       `wrote ${repoConfigPath(identity.root)}`,

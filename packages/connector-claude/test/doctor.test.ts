@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -366,5 +367,95 @@ describe("crosscheck doctor mcp registration", () => {
     expect(result.stdout).toContain("FAIL  mcp tools usable");
     expect(result.stdout).toContain("crosscheck login");
     expect(result.exitCode).toBe(2);
+  });
+});
+
+/**
+ * The launcher check: hooks and .mcp.json can pass every TEXTUAL check above
+ * while calling a launcher that does not resolve (written from an npx cache)
+ * or resolves to a FOREIGN binary that happens to be named `crosscheck`
+ * (npm's crosscheck-cli ships one). Both are silent in the hooks by design,
+ * so doctor must resolve and identify the launcher the way a hook would.
+ */
+describe("crosscheck doctor hook launcher check", () => {
+  const launcherEnv = (home: string, pathDir?: string) => ({
+    CROSSCHECK_HOME: home,
+    HOME: home,
+    CROSSCHECK_HUB_URL: HUB_URL,
+    CROSSCHECK_API_KEY: "test-key",
+    ...(pathDir === undefined ? {} : { PATH: pathDir }),
+  });
+
+  const fakeBin = async (script: string): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "cx-doctor-bin-"));
+    paths.push(dir);
+    const bin = join(dir, "crosscheck");
+    await writeFile(bin, `#!/bin/sh\n${script}\n`, "utf8");
+    await chmod(bin, 0o755);
+    return dir;
+  };
+
+  test("fails when hooks call a bare crosscheck that is not on PATH", async () => {
+    // Arrange: exactly what `npx crosscheck init` used to leave behind
+    const { repo, home } = await fixture();
+    await runCli(
+      ["init", "--command-prefix", "crosscheck"],
+      launcherEnv(home),
+      repo,
+    );
+
+    // Act: a PATH without crosscheck — the hooks' world after npx exits
+    const result = await runCli(["doctor"], launcherEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("FAIL  hook launcher");
+    expect(result.stdout).toContain("nothing by that name is on PATH");
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("fails when the crosscheck on PATH is a different tool", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+    const dir = await fakeBin('echo "othertool 1.2.3"');
+    await runCli(
+      ["init", "--command-prefix", "crosscheck"],
+      launcherEnv(home, dir),
+      repo,
+    );
+
+    // Act
+    const result = await runCli(["doctor"], launcherEnv(home, dir), repo);
+
+    // Assert
+    expect(result.stdout).toContain("FAIL  hook launcher");
+  });
+
+  test("passes when the launcher resolves and identifies as crosscheck", async () => {
+    // Arrange: the healthy global-install state
+    const { repo, home } = await fixture();
+    const dir = await fakeBin('echo "crosscheck 9.9.9"');
+    await runCli(
+      ["init", "--command-prefix", "crosscheck"],
+      launcherEnv(home, dir),
+      repo,
+    );
+
+    // Act
+    const result = await runCli(["doctor"], launcherEnv(home, dir), repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  hook launcher");
+  });
+
+  test("passes on the absolute-path launcher init writes without a PATH hit", async () => {
+    // Arrange: the repo-checkout flow — runtime and entry both exist here
+    const { repo, home } = await fixture();
+    await runCli(["init"], launcherEnv(home), repo);
+
+    // Act
+    const result = await runCli(["doctor"], launcherEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  hook launcher");
   });
 });

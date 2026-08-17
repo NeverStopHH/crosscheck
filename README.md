@@ -27,14 +27,17 @@ Background reading:
 
 ## Quick start
 
-Requires [Bun](https://bun.sh). One person hosts the hub; everyone else runs two commands.
+Requires [Bun](https://bun.sh) — the hub and the hooks run on it. The `crosscheck` npm package re-launches itself under Bun automatically, so `npx` works too; when Bun is missing it prints the one install command (`curl -fsSL https://bun.sh/install | bash`) instead of a stack trace. One person hosts the hub; everyone else runs two commands.
 
 **1. Host the hub** (any teammate's machine, a VPS, or behind Tailscale):
 
 ```bash
-bun install
-ADMIN_TOKEN=<pick-one> bun run packages/server/src/index.ts   # listens on :7100
+ADMIN_TOKEN=<pick-one> bunx crosscheck serve      # or: npx crosscheck serve — listens on :7100
 ```
+
+Set `CROSSCHECK_DATA_DIR` for durable storage (unset = in-memory, for trying it out). From a checkout of this repo the same hub is `bun install && ADMIN_TOKEN=<pick-one> bun run packages/server/src/index.ts`.
+
+The npm package is assembled by `bun packages/connector-claude/scripts/pack-npm.ts` and proven by installing the packed tarball into a clean directory and driving the binary end to end ([`npm-package.e2e.test.ts`](packages/connector-claude/test/e2e/npm-package.e2e.test.ts)); the release runbook is [docs/PUBLISHING.md](docs/PUBLISHING.md).
 
 **2. Issue one API key per developer** — provenance is a core feature, so keys are never shared:
 
@@ -45,12 +48,14 @@ curl -sX POST http://localhost:7100/api/developers \
 # -> {"ok":true,"data":{"developer":{"id":"..."},"apiKey":"..."}}   (shown once)
 ```
 
-**3. Each developer logs in once, then wires up the repo:**
+**3. Each developer installs the connector permanently, logs in once, then wires up the repo:**
 
 ```bash
+npm install -g crosscheck        # or: bun add -g crosscheck — hooks outlive npx, so `init` refuses to run from an npx/bunx cache
+
 crosscheck login http://localhost:7100 < api-key.txt   # writes ~/.crosscheck/config.json (0600)
 crosscheck init                                        # writes .crosscheck.json + .claude/settings.json
-crosscheck doctor                                      # verifies config, hooks, hub, spool, clock
+crosscheck doctor                                      # verifies config, hooks, launcher, hub, spool, clock
 ```
 
 `login` reads the key from stdin, or from `CROSSCHECK_API_KEY`. Passing it as an argument (`crosscheck login <hubUrl> <apiKey>`) still works but is discouraged — the key ends up in your shell history.

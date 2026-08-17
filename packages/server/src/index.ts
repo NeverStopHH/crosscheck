@@ -90,7 +90,56 @@ const parsePort = (raw: string | undefined): number => {
   return parsed;
 };
 
-const startServer = async (): Promise<void> => {
+/** Localhost answers fast either way; an unanswered probe is read as free. */
+const PORT_PROBE_TIMEOUT_MS = 500;
+
+/**
+ * "Address already in use" is the commonest first-run error, and Bun.serve on
+ * macOS cannot report it against a FOREIGN listener: it binds over one with
+ * reuse semantics, prints the healthy banner, and the kernel splits traffic
+ * between two servers — intermittent 401s instead of a sentence. (Two BUN
+ * listeners do collide loudly; the foreign case is the silent one.) So the
+ * port is probed by CONNECTING first: anything answering on localhost means
+ * taken, said here, before a database is booted for nothing. The probe is
+ * best-effort — an unanswered connect (timeout) proceeds, and the tiny
+ * check-to-bind race is accepted.
+ */
+const assertPortFree = async (port: number): Promise<void> => {
+  const taken = await Promise.race([
+    Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: { data: () => {} },
+    }).then(
+      (socket) => {
+        socket.end();
+        return true;
+      },
+      () => false,
+    ),
+    new Promise<boolean>((resolveProbe) => {
+      setTimeout(() => resolveProbe(false), PORT_PROBE_TIMEOUT_MS);
+    }),
+  ]);
+  if (taken) {
+    throw new Error(
+      `port ${port} is already in use — something is listening there ` +
+        "(another crosscheck hub, or a different server). Stop it, or set " +
+        "PORT to a free one.",
+    );
+  }
+};
+
+/**
+ * Boot the hub from process env, exactly as `bun run packages/server/src/index.ts`
+ * always has. Exported so the `crosscheck serve` CLI command (DESIGN.md §2's
+ * `npx crosscheck serve`) is this same code path rather than a second copy.
+ */
+export const startServer = async (): Promise<void> => {
+  // Port checks come FIRST: a taken port must refuse before PGlite writes a
+  // single byte, not after a full database boot.
+  const port = parsePort(process.env["PORT"]);
+  await assertPortFree(port);
   const dataDir = process.env["CROSSCHECK_DATA_DIR"];
   const db = await createDb(dataDir === undefined ? {} : { dataDir });
   // Throws on explicit misconfiguration (e.g. openai chosen, no key) — a hub
@@ -103,7 +152,6 @@ const startServer = async (): Promise<void> => {
     embedder,
     ...(uiSessionSecret === undefined ? {} : { uiSessionSecret }),
   });
-  const port = parsePort(process.env["PORT"]);
   Bun.serve({ port, fetch: app.fetch });
   const searchMode =
     embedder === null ? "exact+fts (keyless)" : `exact+fts+vector (${embedder.model})`;

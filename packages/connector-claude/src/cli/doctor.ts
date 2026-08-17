@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 
 import {
@@ -46,6 +46,11 @@ import {
   formatSummarizerCost,
   readSummarizerCost,
 } from "../summarizer/cost.ts";
+import {
+  isEphemeralInstallPath,
+  isOwnCrosscheckBin,
+  realpathOrSelf,
+} from "./init.ts";
 import { isOwnedMcpEntry } from "./mcp-config.ts";
 import { isOwnedCommand } from "./settings-merge.ts";
 import type { CliResult } from "./login.ts";
@@ -134,23 +139,34 @@ const checkBunfig = async (
   return check("PASS", "bun request logging", "no debug logLevel found");
 };
 
-const checkSettings = async (repoRoot: string): Promise<readonly Check[]> => {
+interface SettingsInspection {
+  readonly checks: readonly Check[];
+  /** The first owned hook command — what `checkLauncher` resolves and runs. */
+  readonly launcherCommand: string | null;
+}
+
+const settingsOnly = (checks: readonly Check[]): SettingsInspection => ({
+  checks,
+  launcherCommand: null,
+});
+
+const checkSettings = async (repoRoot: string): Promise<SettingsInspection> => {
   const path = join(repoRoot, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE);
   const raw = await readTextOrNull(path);
   if (raw === null) {
-    return [
+    return settingsOnly([
       check("FAIL", "hooks registered", `${path} not found — run crosscheck init`),
       check("WARN", "statusline registered", "no settings file"),
-    ];
+    ]);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
   } catch {
-    return [
+    return settingsOnly([
       check("FAIL", "hooks registered", `${path} is not valid json`),
       check("WARN", "statusline registered", "settings unparseable"),
-    ];
+    ]);
   }
 
   const settings = z
@@ -160,10 +176,10 @@ const checkSettings = async (repoRoot: string): Promise<readonly Check[]> => {
     })
     .safeParse(parsed);
   if (!settings.success) {
-    return [
+    return settingsOnly([
       check("FAIL", "hooks registered", "settings shape unrecognised"),
       check("WARN", "statusline registered", "settings shape unrecognised"),
-    ];
+    ]);
   }
 
   const hooks = settings.data.hooks ?? {};
@@ -213,7 +229,107 @@ const checkSettings = async (repoRoot: string): Promise<readonly Check[]> => {
             "statusline registered",
             `foreign statusline: ${statuslineCommand}`,
           );
-  return [hooksCheck, statuslineCheck];
+  return {
+    checks: [hooksCheck, statuslineCheck],
+    launcherCommand: ownedCommands[0]?.command ?? null,
+  };
+};
+
+/**
+ * Splits a hook command on whitespace, honouring the single-quoting that
+ * `init`'s shellQuote produces (a path with an embedded quote tokenises
+ * wrong — accepted: shellQuote's `'\''` escape is beyond a health check).
+ */
+const splitLauncherTokens = (command: string): readonly string[] =>
+  (command.match(/'[^']*'|\S+/g) ?? []).map((token) =>
+    token.startsWith("'") && token.endsWith("'") && token.length >= 2
+      ? token.slice(1, -1)
+      : token,
+  );
+
+/**
+ * Whether the launcher the hooks call would actually RUN, checked the way a
+ * hook resolves it. Every check above this one is textual, and the two
+ * states that defeat textual checks are exactly the ones `init` now guards
+ * against at write time: a bare `crosscheck` that no longer resolves (hooks
+ * written from an npx cache whose PATH prefix is gone), and a PATH
+ * `crosscheck` that is a FOREIGN tool wearing the name (npm's crosscheck-cli
+ * ships one). Hooks are silent by design, so doctor is the only place either
+ * state ever becomes a sentence.
+ */
+const checkLauncher = async (command: string, env: Env): Promise<Check> => {
+  const tokens = splitLauncherTokens(command);
+  const keyword = tokens.findIndex(
+    (token) => token === "hook" || token === "statusline",
+  );
+  const launcherTokens = keyword === -1 ? tokens : tokens.slice(0, keyword);
+  const head = launcherTokens[0];
+  if (head === undefined) {
+    return check("FAIL", "hook launcher", "empty hook command");
+  }
+
+  if (head === "crosscheck") {
+    const hit = ((): string | null => {
+      try {
+        return Bun.which("crosscheck", { PATH: env["PATH"] ?? "" });
+      } catch {
+        return null;
+      }
+    })();
+    if (hit === null) {
+      return check(
+        "FAIL",
+        "hook launcher",
+        'hooks call "crosscheck" but nothing by that name is on PATH — every hook dies silently; npm install -g crosscheck (or bun add -g crosscheck), or rerun crosscheck init',
+      );
+    }
+    if (!(await isOwnCrosscheckBin(hit))) {
+      return check(
+        "FAIL",
+        "hook launcher",
+        `${hit} does not identify as the crosscheck cli (--version) — a different tool owns the name on this PATH and would receive the hooks' session json; remove it or rerun crosscheck init --command-prefix with an explicit launcher`,
+      );
+    }
+    const real = await realpathOrSelf(hit);
+    if (isEphemeralInstallPath(real)) {
+      return check(
+        "WARN",
+        "hook launcher",
+        `${hit} resolves into a package-runner cache (${real}) — it dies on cache eviction; install permanently and rerun crosscheck init`,
+      );
+    }
+    return check("PASS", "hook launcher", hit);
+  }
+
+  // Absolute-path launcher (`<runtime> <entry>`, as init writes without a
+  // PATH hit) — plus whatever an operator's --command-prefix contains: the
+  // absolute tokens are checkable, the rest is their word.
+  const absoluteTokens = launcherTokens.filter((token) => isAbsolute(token));
+  for (const token of absoluteTokens) {
+    if (!(await Bun.file(token).exists())) {
+      return check(
+        "FAIL",
+        "hook launcher",
+        `${token} does not exist — rerun crosscheck init`,
+      );
+    }
+  }
+  for (const token of absoluteTokens) {
+    if (isEphemeralInstallPath(await realpathOrSelf(token))) {
+      return check(
+        "WARN",
+        "hook launcher",
+        `${token} sits in a package-runner cache — it dies on cache eviction; install permanently and rerun crosscheck init`,
+      );
+    }
+  }
+  return absoluteTokens.length > 0
+    ? check("PASS", "hook launcher", launcherTokens.join(" "))
+    : check(
+        "PASS",
+        "hook launcher",
+        `custom launcher not verified: ${launcherTokens.join(" ")}`,
+      );
 };
 
 /**
@@ -595,11 +711,15 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
       : check("PASS", "clock skew", `${Math.round(skewSeconds)}s vs hub`);
   })();
 
+  const settingsInspection = await checkSettings(identity.root);
   return summarize([
     configCheck,
     identityCheck,
     hubCheck,
-    ...(await checkSettings(identity.root)),
+    ...settingsInspection.checks,
+    ...(settingsInspection.launcherCommand === null
+      ? []
+      : [await checkLauncher(settingsInspection.launcherCommand, env)]),
     await checkMcpRegistration(identity.root),
     mcpUsableCheck(true, config.hubUrl),
     ...(await checkSpool(config.home, key, now)),
