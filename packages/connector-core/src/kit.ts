@@ -1,0 +1,165 @@
+/**
+ * The connector kit (DESIGN-agent-agnostic.md §1.3) — the narrow, documented
+ * surface a NEW connector programs against. README.md in this package is the
+ * prose half of this contract: what a connector must provide, what core gives
+ * back, and the five session flows composed from these exports.
+ *
+ * A FACADE, DELIBERATELY: re-exports and types only, no wrapping and no new
+ * behavior. Every binding here is reference-identical to its home module's
+ * (test/kit.test.ts pins that), so there is exactly one implementation of
+ * everything — the same one-copy rule the render classes live by.
+ *
+ * The design also names flow-level helpers (`registerSessionFlow`,
+ * `captureFileTargets`, `endSessionFlow`, …): those are today's Claude
+ * hook-handler bodies with payload parsing peeled off, and they get EXTRACTED
+ * here when the first non-Claude connector lands (extraction, not invention —
+ * the same rule that kept the summarizer Claude-side). Until then the README
+ * documents each flow as a recipe over these primitives, so the seam is
+ * already named without rewriting working hooks.
+ */
+
+// ── Identity ────────────────────────────────────────────────────────────────
+export {
+  crosscheckSessionIdFor,
+  deleteSessionState,
+  deriveSessionState,
+  readSessionState,
+  updateSessionState,
+  withBriefingSolvedRefs,
+  withDeliveredHint,
+  withSeenTargets,
+  withTripwireAsked,
+  workContextIdFor,
+  writeSessionState,
+  SessionStateSchema,
+} from "./state/session-state.ts";
+export type {
+  DeriveSessionStateInput,
+  SessionState,
+  SessionStateInput,
+} from "./state/session-state.ts";
+export {
+  ACP_AGENT_KIND_FALLBACK,
+  ACP_AGENT_KIND_PREFIX,
+  ACP_HOST_KEY_PREFIX,
+  CURSOR_AGENT_KIND,
+  CURSOR_HOST_KEY_PREFIX,
+  acpAgentKind,
+  acpHostSessionKey,
+  agentSlug,
+  cursorHostSessionKey,
+} from "./state/host-session-key.ts";
+
+// ── Config + paths ──────────────────────────────────────────────────────────
+export {
+  isDisabled,
+  loadConfig,
+  normalizeHubUrl,
+  readStoredConfig,
+  rememberDeveloper,
+  resolveTimeoutMs,
+  saveConfig,
+} from "./config/config.ts";
+export type {
+  Config,
+  LoadConfigOptions,
+  ResolvedConfig,
+} from "./config/config.ts";
+export { crosscheckHome, repoKey, sessionSlug } from "./config/paths.ts";
+export type { Env } from "./config/paths.ts";
+export { isOwnedMcpEntry, mergeMcpConfig } from "./config/mcp-config.ts";
+export type { McpServerEntry } from "./config/mcp-config.ts";
+export { DEFAULT_AGENT_KIND } from "./constants.ts";
+
+// ── Repo identity ───────────────────────────────────────────────────────────
+export { normalizeRemoteUrl, resolveRepoIdentity } from "./git/repo-identity.ts";
+export type { RepoIdentity } from "./git/repo-identity.ts";
+export {
+  resolveCommitDrift,
+  resolveDriftByBaseCommit,
+} from "./git/commit-drift.ts";
+export type { CommitDrift } from "./git/commit-drift.ts";
+
+// ── Spool ───────────────────────────────────────────────────────────────────
+export { appendRecords } from "./spool/append.ts";
+export type { AppendResult } from "./spool/append.ts";
+export { flushSpool } from "./spool/flush.ts";
+export type { FlushInput, FlushOutcome } from "./spool/flush.ts";
+export { reapSpool } from "./spool/reap.ts";
+export type { DeferredEnder, ReapResult } from "./spool/reap.ts";
+
+// ── Hub client ──────────────────────────────────────────────────────────────
+export {
+  endSession,
+  getAbsences,
+  getContradictions,
+  getDrafts,
+  getHintCandidates,
+  getPresence,
+  getSolvedMatches,
+  getWorkContexts,
+  heartbeatSession,
+  registerSession,
+} from "./http/hub.ts";
+export type {
+  HintClaimCandidate,
+  HintContextCandidate,
+  HubContext,
+  HubResult,
+  PresenceEntry,
+  RegisterSessionInput,
+  SolvedMatchEntry,
+  WorkContextEntry,
+} from "./http/hub.ts";
+
+// ── Capture ─────────────────────────────────────────────────────────────────
+export {
+  UNKNOWN_DEVELOPER_ID,
+  buildEnvelope,
+  hintDeliveryRecord,
+  targetRecord,
+  withProducer,
+  workContextRecord,
+} from "./capture/records.ts";
+export type { Producer, TargetKind } from "./capture/records.ts";
+export { fingerprint, normalizeFailureText } from "./capture/fingerprint.ts";
+export { containsSecret } from "./capture/secret-scan.ts";
+export {
+  DEFAULT_DENYLIST,
+  isDenied,
+  resolveDenylist,
+} from "./capture/denylist.ts";
+export type { DenylistConfig } from "./capture/denylist.ts";
+export {
+  collectCommitEvidence,
+  commitEvidenceRecord,
+} from "./capture/commit-evidence.ts";
+
+// ── Render discipline: the three classes, then the finished renderers ───────
+export {
+  bareUntrusted,
+  safeId,
+  sanitizeUntrusted,
+} from "./briefing/sanitize.ts";
+export { quoted } from "./mcp/render.ts";
+export {
+  QUOTED_DATA_NOTICE,
+  groupTeammates,
+  renderBriefing,
+} from "./briefing/render.ts";
+export type { BriefingInput } from "./briefing/render.ts";
+export {
+  renderClaimHint,
+  renderPointerHint,
+  renderTripwireReason,
+} from "./hints/render.ts";
+
+// ── Hints ───────────────────────────────────────────────────────────────────
+export { selectHint } from "./hints/select.ts";
+export type { HintSelection, SelectHintInput } from "./hints/select.ts";
+export { hintBodyHash, isEchoOfDeliveredHint } from "./hints/echo.ts";
+
+// ── MCP ─────────────────────────────────────────────────────────────────────
+export { runMcpServer } from "./mcp/server.ts";
+export { resolveOwnWorkContext } from "./mcp/session.ts";
+export type { OwnWorkContext } from "./mcp/session.ts";
