@@ -167,6 +167,46 @@ describe("pin (a): a pre-change state file parses and resolves identically", () 
     }
   });
 
+  test("a half-migrated file with a null hostSessionKey folds to the legacy key like ??", () => {
+    // Arrange: no shipped writer produces this shape (old writers never wrote
+    // hostSessionKey, new writers write strings) — but the design writes the
+    // precedence as `hostSessionKey ?? claudeSessionId`, and ?? folds null.
+    // A hand-edited or half-corrupt file recovers instead of failing open.
+    const parsed = SessionStateSchema.safeParse({
+      hostSessionKey: null,
+      claudeSessionId: "old-key",
+      crosscheckSessionId: "cc_old-key",
+      workContextId: "wc_cc_old-key",
+      repoId: "github.com/acme/api",
+      repoRoot: "/work/checkouts/acme-api",
+      hubUrl: "https://hub.example.com",
+      startedAt: "2026-08-18T09:30:00.000Z",
+    });
+
+    // Assert: resolves to the legacy key, and the null never survives.
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.hostSessionKey).toBe("old-key");
+      expect("claudeSessionId" in parsed.data).toBe(false);
+    }
+  });
+
+  test("a null hostSessionKey with NO legacy key still fails open, exactly like ??", () => {
+    // Arrange: null ?? undefined is undefined — a required key missing.
+    const parsed = SessionStateSchema.safeParse({
+      hostSessionKey: null,
+      crosscheckSessionId: "cc_x",
+      workContextId: "wc_cc_x",
+      repoId: "github.com/acme/api",
+      repoRoot: "/work/checkouts/acme-api",
+      hubUrl: "https://hub.example.com",
+      startedAt: "2026-08-18T09:30:00.000Z",
+    });
+
+    // Assert
+    expect(parsed.success).toBe(false);
+  });
+
   test("a mid-flight upgrade write-back keeps the filename and writes only the new key", async () => {
     // Arrange: the frozen legacy file on disk, then a routine mid-session
     // update — the exact moment a session written by old code is first

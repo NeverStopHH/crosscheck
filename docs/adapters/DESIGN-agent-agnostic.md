@@ -114,9 +114,22 @@ extracted in Block 8 when the third connector proves the shape (one npm artifact
   `session_id`**, so existing spools, state files and `cc_<uuid>` session ids are
   byte-identical across the upgrade. No user-visible migration.
 - Connector prefixes prevent cross-host collisions without touching Claude's compat:
-  ACP uses `acp-<agentSlug>-<acpSessionId>`, Cursor uses `cur-<conversation_id>`.
+  ACP uses `acp-<agentSlug>--<acpSessionId>`, Cursor uses `cur-<conversation_id>`.
+  The `--` between slug and id is the boundary marker: a slug joins alphanumeric
+  runs with single dashes and never carries an edge dash, so `--` cannot occur
+  inside it and every key parses back to exactly one (slug, id) pair — without
+  it, ("Gemini", "cli-x") and ("Gemini CLI", "x") both mint `acp-gemini-cli-x`
+  and merge two sessions. Decided in Block 2, while zero ACP keys exist on any
+  disk; after Block 4 it would be an on-disk migration.
   `crosscheckSessionIdFor` stays `cc_${hostSessionKey}` — e.g.
-  `cc_acp-gemini-cli-sess_abc123`.
+  `cc_acp-gemini-cli--sess_abc123`.
+- Rollout note (one-way upgrade window): the write path emits ONLY
+  `hostSessionKey` — by design, so a file never carries both keys. The cost is
+  that a state file the NEW code has touched no longer parses under OLD-era
+  builds (they fail open and can silently resolve a different same-root session
+  for MCP attribution). Old files under new code are flawless; new files under
+  old code are not. Do not run pre-Block-2 and post-Block-2 builds against the
+  same `~/.crosscheck` concurrently — upgrade every install in one step.
 - `agent_kind` on the wire (already free-form in `@crosscheck/schema`'s
   `AgentSessionSchema`): `claude-code` (unchanged), `acp:<agentInfo.name>` (from the
   `initialize` response, e.g. `acp:gemini-cli`, `acp:cursor-agent`; fallback

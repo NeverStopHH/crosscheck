@@ -26,11 +26,32 @@ import {
 import { makeHome } from "./helpers.ts";
 
 describe("connector host-session-key prefixes", () => {
-  test("ACP keys carry the acp- prefix and the slugged agent name", () => {
-    // Act + Assert: the design's own worked example — cc_acp-gemini-cli-sess_abc123.
+  test("ACP keys carry the acp- prefix, the slugged agent name, and the -- delimiter", () => {
+    // Act + Assert: the design's worked example, with the slug/id boundary
+    // marked by `--` — a run a slug can never contain (single dashes only, no
+    // edge dashes), so the key parses back to exactly one (slug, id) pair.
     const key = acpHostSessionKey("Gemini CLI", "sess_abc123");
-    expect(key).toBe("acp-gemini-cli-sess_abc123");
-    expect(crosscheckSessionIdFor(key)).toBe("cc_acp-gemini-cli-sess_abc123");
+    expect(key).toBe("acp-gemini-cli--sess_abc123");
+    expect(crosscheckSessionIdFor(key)).toBe("cc_acp-gemini-cli--sess_abc123");
+  });
+
+  test("two ACP hosts can never mint the same key across the slug/id boundary", () => {
+    // Arrange: without a delimiter these two collide on acp-gemini-cli-x and
+    // would merge two sessions' spools, state files and cc_ ids.
+    const pairs: readonly (readonly [string, string])[] = [
+      ["Gemini", "cli-x"],
+      ["Gemini CLI", "x"],
+      ["Gemini", "-x"],
+      ["Gemini", "cli--x"],
+      ["Gemini CLI", "-x"],
+    ];
+
+    // Act
+    const keys = pairs.map(([name, id]) => acpHostSessionKey(name, id));
+
+    // Assert: all distinct — the delimiter makes the parse unique because a
+    // slug never contains `--` and never ends with `-`.
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   test("Cursor keys carry the cur- prefix around the raw conversation id", () => {

@@ -10,8 +10,15 @@
  *     and `cc_<uuid>` on disk derives from the raw id — a prefix here would
  *     orphan all of them. Uniqueness holds because the other prefixes are
  *     reserved: no Claude UUID starts with `acp-` or `cur-`.
- *   - ACP proxy: `acp-<agentSlug>-<acpSessionId>` — the agent's name from the
- *     `initialize` response, slugged, then the agent's own session id.
+ *   - ACP proxy: `acp-<agentSlug>--<acpSessionId>` — the agent's name from the
+ *     `initialize` response, slugged, then `--`, then the agent's own session
+ *     id. The double dash is the slug/id boundary, and it is unambiguous
+ *     BECAUSE of the slug's shape: a slug joins alphanumeric runs with single
+ *     dashes and never starts or ends with one, so `--` cannot appear inside
+ *     it — the first `--` after the prefix always splits the key back into
+ *     exactly one (slug, id) pair. Without it, ("Gemini", "cli-x") and
+ *     ("Gemini CLI", "x") would both mint acp-gemini-cli-x and merge two
+ *     sessions (agent-kind.test.ts pins the distinctness).
  *   - Cursor IDE: `cur-<conversation_id>`.
  *
  * The agent_kind values that ride to the hub beside these keys live here too:
@@ -52,11 +59,18 @@ export const agentSlug = (agentName: string): string => {
   return slugged.length === 0 ? UNKNOWN_AGENT_SLUG : slugged;
 };
 
-/** `acp-<agentSlug>-<acpSessionId>` — e.g. `acp-gemini-cli-sess_abc123`. */
+/**
+ * The slug/id boundary inside an ACP key. A slug can never contain this run
+ * (single dashes only, no edge dashes), so the key parses back uniquely.
+ */
+export const ACP_KEY_DELIMITER = "--";
+
+/** `acp-<agentSlug>--<acpSessionId>` — e.g. `acp-gemini-cli--sess_abc123`. */
 export const acpHostSessionKey = (
   agentName: string,
   acpSessionId: string,
-): string => `${ACP_HOST_KEY_PREFIX}${agentSlug(agentName)}-${acpSessionId}`;
+): string =>
+  `${ACP_HOST_KEY_PREFIX}${agentSlug(agentName)}${ACP_KEY_DELIMITER}${acpSessionId}`;
 
 /** `cur-<conversation_id>` — Cursor conversation ids are already opaque. */
 export const cursorHostSessionKey = (conversationId: string): string =>

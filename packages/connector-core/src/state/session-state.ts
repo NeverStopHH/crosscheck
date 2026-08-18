@@ -36,7 +36,11 @@ const foldLegacySessionKey = (value: unknown): unknown => {
     return value;
   }
   const { [LEGACY_SESSION_KEY]: legacy, ...rest } = record;
-  return rest["hostSessionKey"] === undefined
+  // Exactly `hostSessionKey ?? claudeSessionId`: ?? folds null as well as
+  // absent, so a half-migrated `hostSessionKey: null` recovers to the legacy
+  // key instead of failing open (identity-compat.test.ts pins both shapes).
+  const host = rest["hostSessionKey"];
+  return host === undefined || host === null
     ? { ...rest, hostSessionKey: legacy }
     : rest;
 };
