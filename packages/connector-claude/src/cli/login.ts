@@ -166,9 +166,16 @@ const renderLatencyLine = (
   if (owner === "manual") {
     return `${away} — keeping timeoutMs ${String(stored?.timeoutMs)} ms (set by hand; login only rewrites values it measured itself)\n`;
   }
-  return decision.kind === "store"
-    ? `${away} — storing timeoutMs ${String(decision.timeoutMs)} ms (the default ${String(HTTP_TIMEOUT_MS)} ms is too tight this far out)\n`
-    : `${away} — the default ${String(HTTP_TIMEOUT_MS)} ms timeout fits\n`;
+  if (decision.kind === "store") {
+    return `${away} — storing timeoutMs ${String(decision.timeoutMs)} ms (the default ${String(HTTP_TIMEOUT_MS)} ms is too tight this far out)\n`;
+  }
+  // Reset: when a stale measured value is being REMOVED, say so — a silently
+  // vanished timeoutMs would make the config diff inexplicable.
+  const retired =
+    stored?.timeoutMs === undefined
+      ? ""
+      : ` (retiring stored ${String(stored.timeoutMs)} ms)`;
+  return `${away} — the default ${String(HTTP_TIMEOUT_MS)} ms timeout fits${retired}\n`;
 };
 
 const resolveApiKey = async (

@@ -185,10 +185,12 @@ describe("login never overwrites a timeout it did not write", () => {
     const result = await login(home, hubUrl, measured(2));
     server.stop(true);
 
-    // Assert: login retires the value it wrote itself — back to the default
+    // Assert: login retires the value it wrote itself — back to the default —
+    // and SAYS it removed the stored value, so the config diff is explicable
     const config = await storedConfig(home);
     expect("timeoutMs" in config).toBe(false);
     expect("timeoutSource" in config).toBe(false);
+    expect(result.stdout).toContain("retiring stored 2200 ms");
     expect(result.exitCode).toBe(0);
   });
 });

@@ -47,6 +47,11 @@ export const decideTimeoutUpdate = (
   recommendedMs: number,
 ): TimeoutDecision => {
   if (owner === "env" || owner === "manual") {
+    // Known trade, kept deliberately: under env ownership a stored measured
+    // value from an earlier login survives even though this login could
+    // retire it. The stored layer is invisible while the env var governs,
+    // retiring it would need the policy to peek past the owner, and the next
+    // env-less login self-heals it anyway.
     return { kind: "keep" };
   }
   return recommendedMs > HTTP_TIMEOUT_MS

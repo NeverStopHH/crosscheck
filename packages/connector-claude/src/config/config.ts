@@ -11,10 +11,18 @@ const DenylistSchema = z.object({
 });
 
 /**
- * Written beside timeoutMs when LOGIN measured the value; absent means a human
- * set it by hand. The marker is what lets login rewrite its own measurement on
- * the next run without ever silently overwriting a deliberate choice
- * (config/timeout-policy.ts).
+ * Written beside timeoutMs when LOGIN measured the value; absent — or any
+ * other value — means a human set it by hand. The marker is what lets login
+ * rewrite its own measurement on the next run without ever silently
+ * overwriting a deliberate choice (config/timeout-policy.ts).
+ *
+ * The schema deliberately does NOT pin the field to this literal: doctor
+ * teaches the field's semantics in prose ("set by hand"), which invites
+ * edits like "manual" — and a strict parse would turn that one word into
+ * readStoredConfig -> null, silently re-creating the tight-timeout incident
+ * and letting the next login rebuild the file without developerId or
+ * denylist. A junk value degrades to undefined (hand-set) instead
+ * (test/config-parse.test.ts).
  */
 export const MEASURED_TIMEOUT_SOURCE = "measured";
 
@@ -26,7 +34,7 @@ export const ConfigSchema = z.looseObject({
   developerName: z.string().min(1).optional(),
   denylist: DenylistSchema.optional(),
   timeoutMs: z.number().int().positive().optional(),
-  timeoutSource: z.literal(MEASURED_TIMEOUT_SOURCE).optional(),
+  timeoutSource: z.string().optional().catch(undefined),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

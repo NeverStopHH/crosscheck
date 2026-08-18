@@ -52,6 +52,21 @@ describe("timeoutOwner", () => {
     expect(timeoutOwner({}, null)).toBe("none");
     expect(timeoutOwner({}, BASE_CONFIG)).toBe("none");
   });
+
+  test("a dangling measured marker without a value is nobody's, and a write strips it", () => {
+    // Arrange: timeoutSource "measured" with no timeoutMs — a half-state no
+    // writer produces, but a hand-edit can.
+    const dangling: Config = { ...BASE_CONFIG, timeoutSource: MEASURED_TIMEOUT_SOURCE };
+
+    // Act + Assert: no value means nobody owns a timeout, and either write
+    // path removes the dangling marker rather than leaving it to confuse the
+    // next read.
+    expect(timeoutOwner({}, dangling)).toBe("none");
+    expect("timeoutSource" in withTimeoutDecision(dangling, { kind: "reset" })).toBe(false);
+    const stored = withTimeoutDecision(dangling, { kind: "store", timeoutMs: RAISED_MS });
+    expect(stored.timeoutMs).toBe(RAISED_MS);
+    expect(stored.timeoutSource).toBe(MEASURED_TIMEOUT_SOURCE);
+  });
 });
 
 describe("decideTimeoutUpdate", () => {

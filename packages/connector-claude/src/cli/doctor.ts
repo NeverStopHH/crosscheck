@@ -15,6 +15,7 @@ import {
   EXIT_OK,
   EXIT_WARN,
   LATENCY_PROBE_TIMEOUT_MS,
+  LATENCY_TIMEOUT_MAX_MS,
   MAX_CLOCK_SKEW_SECONDS,
   MCP_CONFIG_FILE,
   MCP_SERVER_KEY,
@@ -39,7 +40,11 @@ import { formatAge } from "../briefing/render.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
 import { hubRequest } from "../http/client.ts";
 import type { HubContext } from "../http/client.ts";
-import { isFlapRisk, measureHubLatency } from "../http/latency.ts";
+import {
+  isFlapRisk,
+  measureHubLatency,
+  recommendedTimeoutMs,
+} from "../http/latency.ts";
 import type { LatencyMeasurement } from "../http/latency.ts";
 import { getAbsences, getPrivacySettings } from "../http/hub.ts";
 import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
@@ -654,28 +659,62 @@ const defaultMeasureLatency: MeasureLatency = (ctx) =>
   );
 
 /**
+ * The WARN's remedy must name a knob that actually moves THIS timeout.
+ * "Rerun crosscheck login" is a guaranteed no-op for an env or hand-set
+ * owner (the policy keeps both, config/timeout-policy.ts) and for a
+ * login-measured value the recommendation can no longer exceed — advising it
+ * would loop: WARN, rerun, identical WARN.
+ */
+const flapRemedy = (
+  owner: TimeoutOwner,
+  medianRttMs: number,
+  effectiveTimeoutMs: number,
+): string => {
+  if (owner === "env") {
+    return "raise CROSSCHECK_TIMEOUT_MS";
+  }
+  if (owner === "manual") {
+    return "raise your hand-set timeoutMs in config.json (login never rewrites it), or set CROSSCHECK_TIMEOUT_MS";
+  }
+  // "none" always improves (any WARN-able median recommends above the
+  // default); a login-measured value improves until the recommendation hits
+  // the cap it is already stored at.
+  return recommendedTimeoutMs(medianRttMs) > effectiveTimeoutMs
+    ? "rerun crosscheck login to store a measured timeout, or set CROSSCHECK_TIMEOUT_MS"
+    : `login already stores its cap (${String(LATENCY_TIMEOUT_MAX_MS)} ms); set CROSSCHECK_TIMEOUT_MS`;
+};
+
+/**
  * The honest half of the latency-aware timeout: when the hub sits within the
  * flap margin, the FIRST casualties are the surfaces that fail open silently
  * (prompt hints, the tripwire — silence over delay, hook budgets being ratios
  * of this same timeout), so nothing else on this machine would say why they
- * went quiet. This line is where that state becomes a sentence, with both
- * remedies named.
+ * went quiet. This line is where that state becomes a sentence, with a remedy
+ * that fits who owns the timeout — and when the median itself is past the
+ * timeout, it says the incident's name ("calls die") rather than "may flap".
  */
 const latencyCheck = (
   measurement: LatencyMeasurement | null,
   effectiveTimeoutMs: number,
+  owner: TimeoutOwner,
 ): Check => {
   if (measurement === null) {
     return check("PASS", "hub latency", "not measured");
   }
   const distance = `hub is ${String(measurement.medianRttMs)} ms away, timeout ${String(effectiveTimeoutMs)} ms`;
-  return isFlapRisk(measurement.medianRttMs, effectiveTimeoutMs)
-    ? check(
-        "WARN",
-        "hub latency",
-        `${distance} — calls may flap: in-session hints go silent first (hooks fail open — silence over delay), briefings and cli follow; rerun crosscheck login to store a measured timeout, or set CROSSCHECK_TIMEOUT_MS`,
-      )
-    : check("PASS", "hub latency", distance);
+  if (!isFlapRisk(measurement.medianRttMs, effectiveTimeoutMs)) {
+    return check("PASS", "hub latency", distance);
+  }
+  const consequence =
+    measurement.medianRttMs >= effectiveTimeoutMs
+      ? "past the timeout, calls die as unreachable"
+      : "calls may flap";
+  const remedy = flapRemedy(owner, measurement.medianRttMs, effectiveTimeoutMs);
+  return check(
+    "WARN",
+    "hub latency",
+    `${distance} — ${consequence}: in-session hints go silent first (hooks fail open — silence over delay), briefings and cli follow; ${remedy}`,
+  );
 };
 
 /** A live session file plus a stale sync is exactly the silent-death signature. */
@@ -792,17 +831,24 @@ export const runDoctor = async (
       : check("PASS", "clock skew", `${Math.round(skewSeconds)}s vs hub`);
   })();
 
-  // Measured only when the hub answered at all: a dead hub has no distance
-  // worth printing, and the reachability FAIL above already owns that story.
-  const measurement = probe.ok ? await measureLatency(hubCtx) : null;
+  // Measured when the hub answered OR when the probe died network-shaped: the
+  // reachability probe runs at the TIGHT effective timeout, so a hub past that
+  // timeout — the incident this feature exists for — fails it, and the patient
+  // probes (LATENCY_PROBE_TIMEOUT_MS) are the only way its distance still gets
+  // printed with the remedies. A refused or dead hub fails those probes too,
+  // instantly, degrading to null ("not measured"); an answered denial
+  // (http/malformed) is the reachability FAIL's story alone.
+  const measurement =
+    probe.ok || probe.kind === "network" ? await measureLatency(hubCtx) : null;
 
+  const owner = timeoutOwner(env, config.stored);
   const settingsInspection = await checkSettings(identity.root);
   return summarize([
     configCheck,
     identityCheck,
     hubCheck,
-    timeoutCheck(config.timeoutMs, timeoutOwner(env, config.stored)),
-    latencyCheck(measurement, config.timeoutMs),
+    timeoutCheck(config.timeoutMs, owner),
+    latencyCheck(measurement, config.timeoutMs, owner),
     ...settingsInspection.checks,
     ...(settingsInspection.launcherCommand === null
       ? []

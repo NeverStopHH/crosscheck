@@ -554,6 +554,37 @@ export const MUTATIONS: readonly Mutation[] = [
       "flakier after the very command that is supposed to fix flapping",
   },
   {
+    // Guard shells out to git (makeRepo) — the assertGuardIsGreen container
+    // caveat applies. This re-introduces the review finding that shipped in
+    // the feature's first cut: measurement gated on probe.ok.
+    label: "doctor goes quiet in the exact state it exists to name",
+    file: `${CONNECTOR}/src/cli/doctor.ts`,
+    from:
+      "  const measurement =\n" +
+      '    probe.ok || probe.kind === "network" ? await measureLatency(hubCtx) : null;',
+    to: "  const measurement = probe.ok ? await measureLatency(hubCtx) : null;",
+    test: `${CONNECTOR}/test/doctor-latency.test.ts`,
+    because:
+      "the reachability probe runs at the TIGHT effective timeout, so a hub " +
+      "past that timeout — the incident itself — fails it, and gating " +
+      "measurement on probe.ok leaves doctor printing FAIL unreachable plus " +
+      "latency not measured with neither remedy named, while login seconds " +
+      "later measures the same hub fine",
+  },
+  {
+    label: "one hand-typed word bricks the whole stored config",
+    file: `${CONNECTOR}/src/config/config.ts`,
+    from: "  timeoutSource: z.string().optional().catch(undefined),",
+    to: "  timeoutSource: z.literal(MEASURED_TIMEOUT_SOURCE).optional(),",
+    test: `${CONNECTOR}/test/config-parse.test.ts`,
+    because:
+      'a config carrying timeoutSource "manual" — a word doctor itself ' +
+      'teaches ("set by hand") — fails a literal parse, so readStoredConfig ' +
+      "returns null: hooks silently fall back to the 400 ms default and the " +
+      "next login rebuilds the file, dropping developerId, denylist and any " +
+      "hand-set timeoutMs",
+  },
+  {
     // Like tripwire-hook.test.ts, this guard shells out to git (makeRepo) —
     // the assertGuardIsGreen container caveat applies to it too.
     label: "the Stop hook waits for the summarizer worker",
@@ -609,6 +640,8 @@ interface Outcome {
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
+ * PRINTS: config-parse.test.ts 1
+ * PRINTS: doctor-latency.test.ts 1
  * PRINTS: hint-budget.test.ts 2
  * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 1
