@@ -232,7 +232,7 @@ describe("crosscheck init", () => {
   });
 
   test("refuses outright when even its own entry lives in an npx cache", async () => {
-    // Arrange: how `npx crosscheck init` actually runs — BOTH the PATH hit and
+    // Arrange: how `npx crosscheck-hub init` actually runs — BOTH the PATH hit and
     // the running entry sit inside the cache; there is nothing durable to
     // write, so init must say so instead of wiring hooks that die with it.
     const cacheRoot = await mkdtemp(join(tmpdir(), "cx-npxentry-"));
@@ -242,7 +242,7 @@ describe("crosscheck init", () => {
       "_npx",
       "0abc",
       "node_modules",
-      "crosscheck",
+      "crosscheck-hub",
       "src",
       "bin",
       "crosscheck.ts",
@@ -256,7 +256,7 @@ describe("crosscheck init", () => {
     // Assert
     expect(launcher.kind).toBe("refused");
     if (launcher.kind === "refused") {
-      expect(launcher.reason).toContain("npm install -g crosscheck");
+      expect(launcher.reason).toContain("npm install -g crosscheck-hub");
     }
   });
 
@@ -375,7 +375,7 @@ describe("crosscheck cli surface", () => {
     // Act
     const result = await runCli(["--help"], env, repo);
 
-    // Assert: DESIGN.md §2 promises `npx crosscheck serve`; the usage screen
+    // Assert: DESIGN.md §2 promises `npx crosscheck-hub serve`; the usage screen
     // is where a stranger discovers it.
     expect(result.stdout).toMatch(/^\s+serve\s/m);
   });

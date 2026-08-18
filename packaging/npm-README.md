@@ -1,6 +1,9 @@
-# crosscheck
+# crosscheck-hub
 
 > Your agent talks to your teammates' agents — before the code exists.
+
+The package is named `crosscheck-hub` (npm's similarity rule refused the bare
+name); everything it installs answers to `crosscheck` — the command below.
 
 Crosscheck is a coordination layer for teams where every developer works with a
 local coding agent (Claude Code first). It shares what git cannot see: who is
@@ -29,7 +32,7 @@ Node is only needed by whatever invokes the bin (`npx` brings it).
 One teammate (or a small VPS, or a machine behind Tailscale) runs:
 
 ```bash
-ADMIN_TOKEN=<pick-one> npx crosscheck serve     # or: bunx crosscheck serve
+ADMIN_TOKEN=<pick-one> npx crosscheck-hub serve     # or: bunx crosscheck-hub serve
 ```
 
 The hub listens on `:7100` (`PORT` overrides) and stores everything in
@@ -52,14 +55,14 @@ command exits, so `crosscheck init` refuses to wire them from an npx/bunx
 cache (a launcher in there dies with the cache, and hooks fail silently):
 
 ```bash
-npm install -g crosscheck        # or: bun add -g crosscheck
+npm install -g crosscheck-hub    # or: bun add -g crosscheck-hub — installs the `crosscheck` command
 
 crosscheck login http://hub-host:7100 < api-key.txt   # key from stdin, stored 0600
 crosscheck init      # writes .crosscheck.json, .claude/settings.json, .mcp.json
 crosscheck doctor    # verifies config, hooks, launcher, hub, spool, clock
 ```
 
-(`npx crosscheck serve` stays fine — a hub is a foreground process, not a
+(`npx crosscheck-hub serve` stays fine — a hub is a foreground process, not a
 hook. It is `init` that must not run from a cache.)
 
 `crosscheck init` is meant to be committed: the hub URL and the hook

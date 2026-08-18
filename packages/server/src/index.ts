@@ -133,7 +133,7 @@ const assertPortFree = async (port: number): Promise<void> => {
 /**
  * Boot the hub from process env, exactly as `bun run packages/server/src/index.ts`
  * always has. Exported so the `crosscheck serve` CLI command (DESIGN.md §2's
- * `npx crosscheck serve`) is this same code path rather than a second copy.
+ * `npx crosscheck-hub serve`) is this same code path rather than a second copy.
  */
 export const startServer = async (): Promise<void> => {
   // Port checks come FIRST: a taken port must refuse before PGlite writes a

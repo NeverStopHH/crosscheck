@@ -1,7 +1,16 @@
-# Publishing `crosscheck` to npm
+# Publishing `crosscheck-hub` to npm
 
-One unscoped package, `crosscheck`, assembled from the three workspace
-packages by [`pack-npm.ts`](../packages/connector-claude/scripts/pack-npm.ts). Why one package
+One unscoped package, `crosscheck-hub`, assembled from the three workspace
+packages by [`pack-npm.ts`](../packages/connector-claude/scripts/pack-npm.ts).
+
+Why `crosscheck-hub` and not `crosscheck`: npm refused `crosscheck` at publish
+time — its similarity rule against the existing package `cross-check`
+("Package name too similar to existing package cross-check"). Only the
+PACKAGE name changed: the installed bin is still `crosscheck`, so every
+`crosscheck <command>` below is unchanged; only what `npx`/`npm install -g`
+name is different.
+
+Why one package
 and not three scoped ones: the `@crosscheck` scope's availability cannot be
 verified read-only (any npm user or org named `crosscheck` blocks it), a
 3-person-team tool gains nothing from three coordinated publishes, and the
@@ -23,8 +32,8 @@ absent.
   nothing about the tarball. CI has all three.
 - All three workspace `package.json` versions identical — the pack script
   refuses to pack otherwise, and `--version` reports this number.
-- Name still free (it was on 2026-08-16):
-  `curl -s -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/crosscheck`
+- Name still free (it was on 2026-08-18):
+  `curl -s -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/crosscheck-hub`
   → `404` means free.
 
 ## Publish
@@ -44,14 +53,14 @@ there is exactly one package.
 ## Verify afterwards (machine without the repo)
 
 ```bash
-npx crosscheck@latest --version    # -> crosscheck 0.5.0
-bunx crosscheck@latest --help      # usage screen, exit 0
-ADMIN_TOKEN=t CROSSCHECK_DATA_DIR=/tmp/cx-smoke npx crosscheck@latest serve
+npx crosscheck-hub@latest --version    # -> crosscheck 0.5.0 (the CLI keeps its name)
+bunx crosscheck-hub@latest --help      # usage screen, exit 0
+ADMIN_TOKEN=t CROSSCHECK_DATA_DIR=/tmp/cx-smoke npx crosscheck-hub@latest serve
 # expect: "crosscheck server listening on :7100 · search: exact+fts (keyless)"
 # then:   curl -s -o /dev/null -w '%{http_code}\n' http://localhost:7100/ui/login  -> 200
 # Ctrl+C must end it cleanly.
 
-npm install -g crosscheck@latest && crosscheck --version   # the connector flow —
+npm install -g crosscheck-hub@latest && crosscheck --version   # the connector flow —
 # `init` must be run from a PERMANENT install like this one; it refuses to
 # wire hooks from an npx/bunx cache (the launcher would die with the cache).
 ```

@@ -68,7 +68,9 @@ const whichOnPath = (command: string, env: Env): string | null => {
  * A launcher path inside a package-runner cache. npm's npx keeps installs
  * under a `_npx` cache segment, bun's bunx under `bunx-<uid>-<pkg>` temp dirs
  * (HISTORICAL: observed 2026-08-16 as ~/.npm/_npx/<hash>/node_modules/.bin/
- * crosscheck and $TMPDIR/bunx-501-crosscheck@latest/node_modules/.bin/…).
+ * crosscheck and $TMPDIR/bunx-501-crosscheck@latest/node_modules/.bin/…;
+ * since the publish rename the bunx dir is bunx-501-crosscheck-hub@latest —
+ * only the `bunx-` prefix is matched, so the rename changed nothing here).
  * Both die on cache eviction — and the PATH prefix that made a bare name
  * resolve is gone the moment the runner exits — so nothing under them may be
  * written into hooks that must still run next month.
@@ -129,7 +131,7 @@ export const isOwnCrosscheckBin = async (binPath: string): Promise<boolean> => {
  *     dependency-confusion vector: whoever claims it on npm gets code
  *     execution in every hook of every machine that ran `init`.
  *   - `refused`: even the running entry sits in an npx/bunx cache (this is
- *     `npx crosscheck init`), so every writable path dies with the cache.
+ *     `npx crosscheck-hub init`), so every writable path dies with the cache.
  *     Hooks fail silently by design, which is why this refuses loudly here.
  */
 export type Launcher =
@@ -140,16 +142,20 @@ export type Launcher =
 
 type UsableLauncher = Exclude<Launcher, { kind: "refused" }>;
 
+// The install commands name the npm PACKAGE (`crosscheck-hub` — npm's
+// similarity rule refused `crosscheck`); the installed COMMAND stays
+// `crosscheck`, which is why `rerun crosscheck init` follows unchanged.
 const CACHE_REFUSAL =
   "refusing to wire hooks from an npx/bunx cache: every launcher path " +
   "available here dies with the cache, and hooks fail silently by design. " +
-  "Install it permanently first — npm install -g crosscheck (or bun add -g " +
-  "crosscheck) — then rerun crosscheck init; or pass --command-prefix.";
+  "Install it permanently first — npm install -g crosscheck-hub (or bun " +
+  "add -g crosscheck-hub) — then rerun crosscheck init; or pass " +
+  "--command-prefix.";
 
 const NO_LAUNCHER_REFUSAL =
   "no usable launcher: nothing named crosscheck on PATH and the running " +
-  "entry point is gone — npm install -g crosscheck (or bun add -g " +
-  "crosscheck), then rerun crosscheck init.";
+  "entry point is gone — npm install -g crosscheck-hub (or bun add -g " +
+  "crosscheck-hub), then rerun crosscheck init.";
 
 export const resolveLauncher = async (
   override: string | undefined,
@@ -417,7 +423,7 @@ export const runInit = async (
     // teammate until they rerun init (or put crosscheck on PATH) themselves.
     ...(launcher.kind === "entry"
       ? [
-          "launcher is an absolute path on this machine — teammates must run crosscheck init once too (or npm install -g crosscheck)",
+          "launcher is an absolute path on this machine — teammates must run crosscheck init once too (or npm install -g crosscheck-hub)",
         ]
       : []),
   ];

@@ -1,7 +1,7 @@
 /**
  * Proof by execution for the published npm package: pack the real tarball,
  * install it into a clean temp dir far from this workspace, and drive the
- * installed binary the way a stranger would — `npx crosscheck --help`,
+ * installed binary the way a stranger would — `npx crosscheck-hub --help`,
  * `crosscheck serve`, `crosscheck doctor` — through BOTH runtimes: the Node
  * shim (the npx path) and Bun directly. Reading package.json proves nothing;
  * this file is what makes the README one-liner a tested claim.
@@ -19,7 +19,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..", "..");
 const PACK_SCRIPT = join(
@@ -159,7 +159,9 @@ const setup = async (): Promise<Setup> => {
     }
     throw new Error(`npm install failed:\n${install.stdout}\n${install.stderr}`);
   }
-  const packageDir = join(installDir, "node_modules", "crosscheck");
+  // The npm PACKAGE is `crosscheck-hub` (npm's similarity rule refused
+  // `crosscheck`), so that is the install directory; the BIN stays `crosscheck`.
+  const packageDir = join(installDir, "node_modules", "crosscheck-hub");
   return {
     ok: true,
     tarballPath,
@@ -241,6 +243,14 @@ describe("packed npm tarball", () => {
     }
     const tarball = await stat(tarballPath);
     expect(tarball.size).toBeLessThan(TARBALL_SIZE_CAP_BYTES);
+    // npm pack names the tarball after the manifest's `name` — pinning the
+    // basename pins the PUBLISHED name (e.g. crosscheck-hub-0.5.0.tgz).
+    const workspaceVersion = (
+      JSON.parse(
+        await readFile(join(REPO_ROOT, "packages", "connector-claude", "package.json"), "utf8"),
+      ) as { version: string }
+    ).version;
+    expect(basename(tarballPath)).toBe(`crosscheck-hub-${workspaceVersion}.tgz`);
   }, SETUP_TIMEOUT_MS);
 
   test("npx path: node runs the shim, the shim re-execs under bun", async () => {
@@ -270,7 +280,7 @@ describe("packed npm tarball", () => {
   }, DRIVE_TIMEOUT_MS);
 
   test("bun path: the shim imports the TS entry in-process under bun", async () => {
-    // Arrange: `bunx crosscheck` runs bin scripts under BUN (and plain bunx
+    // Arrange: `bunx crosscheck-hub` runs bin scripts under BUN (and plain bunx
     // substitutes bun for the node shebang on node-less machines) — that is
     // shim path 1, which none of the node-driven tests above can reach.
     const installed = await getInstalled();

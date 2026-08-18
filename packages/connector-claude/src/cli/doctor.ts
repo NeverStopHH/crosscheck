@@ -280,7 +280,7 @@ const checkLauncher = async (command: string, env: Env): Promise<Check> => {
       return check(
         "FAIL",
         "hook launcher",
-        'hooks call "crosscheck" but nothing by that name is on PATH — every hook dies silently; npm install -g crosscheck (or bun add -g crosscheck), or rerun crosscheck init',
+        'hooks call "crosscheck" but nothing by that name is on PATH — every hook dies silently; npm install -g crosscheck-hub (or bun add -g crosscheck-hub), or rerun crosscheck init',
       );
     }
     if (!(await isOwnCrosscheckBin(hit))) {

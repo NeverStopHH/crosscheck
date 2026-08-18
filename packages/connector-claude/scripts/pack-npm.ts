@@ -1,17 +1,23 @@
 /**
- * Assembles the ONE publishable npm package — `crosscheck`, unscoped — into
- * dist/npm/ and runs `npm pack` there. Prints the absolute tarball path as
- * the LAST stdout line; the e2e test and the publish runbook both rely on it.
+ * Assembles the ONE publishable npm package — `crosscheck-hub`, unscoped —
+ * into dist/npm/ and runs `npm pack` there. Prints the absolute tarball path
+ * as the LAST stdout line; the e2e test and the publish runbook rely on it.
+ *
+ * WHY `crosscheck-hub` AND NOT `crosscheck`. npm REFUSED `crosscheck` at
+ * publish time — its similarity rule against the existing package
+ * `cross-check` ("Package name too similar") — so only the PACKAGE name
+ * changed; the installed bin stays `crosscheck` (see `bin` below).
+ * `crosscheck-hub` returned 404 on the registry on 2026-08-18; re-check
+ * before the first publish.
  *
  * WHY ONE PACKAGE. The @crosscheck npm scope's availability is unknowable
  * read-only (a user or org of that name blocks it), so nothing here may
- * depend on it. A single unscoped package needs one free name — `crosscheck`
- * (HISTORICAL: registry returned 404 for it on 2026-08-16; re-check before
- * the first publish) — and turns the workspace-only `@crosscheck/*`
- * specifiers into a solved problem: they are rewritten at pack time to
- * `crosscheck/...` subpaths of the package itself, which plain node_modules
- * resolution finds because the package IS installed under that name. No
- * build, no bundler: Bun runs the shipped TypeScript sources directly.
+ * depend on it. A single unscoped package needs one free name, and turns the
+ * workspace-only `@crosscheck/*` specifiers into a solved problem: they are
+ * rewritten at pack time to `crosscheck-hub/...` subpaths of the package
+ * itself, which plain node_modules resolution finds because the package IS
+ * installed under that name. No build, no bundler: Bun runs the shipped
+ * TypeScript sources directly.
  *
  * WHAT SHIPS. Per package: src/ (the .sql runtime asset included), LICENSE,
  * NOTICE — the FSL/Apache split stays legible per shipped directory, with the
@@ -25,6 +31,14 @@ import { join, resolve } from "node:path";
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const STAGING = join(REPO_ROOT, "dist", "npm");
 const WORKSPACE_PACKAGES = ["schema", "server", "connector-claude"] as const;
+
+/**
+ * The PUBLISHED name — the one thing npm's similarity rule forced away from
+ * `crosscheck`. Everything user-visible at runtime (the bin, `--version`,
+ * hook launchers) keeps the `crosscheck` name; this constant is what npm
+ * installs under node_modules/ and what the specifier rewrite targets.
+ */
+const PUBLISH_NAME = "crosscheck-hub";
 
 interface Manifest {
   readonly name: string;
@@ -75,23 +89,24 @@ const mergeDependencies = (
 };
 
 /**
- * `"@crosscheck/schema"` → `"crosscheck/schema"` (and server alike), single
- * and double quotes, static and dynamic imports — a flat string replacement
- * is exact here because the workspace only ever uses bare specifiers, and
- * `assertNoSubpathSpecifiers` REFUSES to pack the day that stops being true.
+ * `"@crosscheck/schema"` → `"crosscheck-hub/schema"` (and server alike),
+ * single and double quotes, static and dynamic imports — a flat string
+ * replacement is exact here because the workspace only ever uses bare
+ * specifiers, and `assertNoSubpathSpecifiers` REFUSES to pack the day that
+ * stops being true.
  */
 const rewriteSpecifiers = (source: string): string =>
   source
     .split('"@crosscheck/')
-    .join('"crosscheck/')
+    .join(`"${PUBLISH_NAME}/`)
     .split("'@crosscheck/")
-    .join("'crosscheck/");
+    .join(`'${PUBLISH_NAME}/`);
 
 const isRewritableSource = (name: string): boolean => /\.(ts|tsx)$/.test(name);
 
 /**
  * A subpath import (`@crosscheck/schema/foo`) would survive the flat rewrite
- * as `crosscheck/schema/foo`, which the exports map does not expose — a
+ * as `crosscheck-hub/schema/foo`, which the exports map does not expose — a
  * failure only a USER's runtime would report. Refuse at pack time instead.
  */
 const SUBPATH_SPECIFIER_PATTERN = /["']@crosscheck\/[a-z-]+\//;
@@ -166,7 +181,7 @@ const buildManifest = (
   version: string,
   dependencies: Record<string, string>,
 ): Record<string, unknown> => ({
-  name: "crosscheck",
+  name: PUBLISH_NAME,
   version,
   description:
     "Team coordination for local coding agents: a self-hosted hub with " +

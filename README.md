@@ -27,12 +27,12 @@ Background reading:
 
 ## Quick start
 
-Requires [Bun](https://bun.sh) — the hub and the hooks run on it. The `crosscheck` npm package re-launches itself under Bun automatically, so `npx` works too; when Bun is missing it prints the one install command (`curl -fsSL https://bun.sh/install | bash`) instead of a stack trace. One person hosts the hub; everyone else runs two commands.
+Requires [Bun](https://bun.sh) — the hub and the hooks run on it. The `crosscheck-hub` npm package (npm's similarity rule refused the bare name; the installed command is still `crosscheck`) re-launches itself under Bun automatically, so `npx` works too; when Bun is missing it prints the one install command (`curl -fsSL https://bun.sh/install | bash`) instead of a stack trace. One person hosts the hub; everyone else runs two commands.
 
 **1. Host the hub** (any teammate's machine, a VPS, or behind Tailscale):
 
 ```bash
-ADMIN_TOKEN=<pick-one> bunx crosscheck serve      # or: npx crosscheck serve — listens on :7100
+ADMIN_TOKEN=<pick-one> bunx crosscheck-hub serve      # or: npx crosscheck-hub serve — listens on :7100
 ```
 
 Set `CROSSCHECK_DATA_DIR` for durable storage (unset = in-memory, for trying it out). From a checkout of this repo the same hub is `bun install && ADMIN_TOKEN=<pick-one> bun run packages/server/src/index.ts`.
@@ -51,7 +51,7 @@ curl -sX POST http://localhost:7100/api/developers \
 **3. Each developer installs the connector permanently, logs in once, then wires up the repo:**
 
 ```bash
-npm install -g crosscheck        # or: bun add -g crosscheck — hooks outlive npx, so `init` refuses to run from an npx/bunx cache
+npm install -g crosscheck-hub    # or: bun add -g crosscheck-hub — installs the `crosscheck` command; hooks outlive npx, so `init` refuses to run from an npx/bunx cache
 
 crosscheck login http://localhost:7100 < api-key.txt   # writes ~/.crosscheck/config.json (0600)
 crosscheck init                                        # writes .crosscheck.json + .claude/settings.json
