@@ -18,7 +18,7 @@ A connector is the host-specific shell. It owns exactly four things:
 
 1. **A host session key** — the host's own id for the session, minted once and used everywhere:
    - Claude Code: the **raw** `session_id`, unprefixed (pre-rename compat: every existing spool slug, state filename and `cc_<uuid>` derives from it, byte-identically).
-   - ACP proxy: `acpHostSessionKey(agentName, acpSessionId)` → `acp-<agentSlug>-<acpSessionId>`.
+   - ACP proxy: `acpHostSessionKey(agentName, acpSessionId)` → `acp-<agentSlug>--<acpSessionId>` (the `--` marks the slug/id boundary — a slug can never contain it, so keys parse back uniquely).
    - Cursor IDE: `cursorHostSessionKey(conversationId)` → `cur-<conversation_id>`.
 
    Prefixes are what keep two hosts from ever minting the same key. Never invent a fourth shape without reserving its prefix here (`state/host-session-key.ts`).
@@ -39,23 +39,32 @@ A connector is the host-specific shell. It owns exactly four things:
 | State | `readSessionState`, `writeSessionState`, `updateSessionState` (locked read-transform-write), `deriveSessionState`, `with*` transforms | tolerant schema: files with the legacy `claudeSessionId` key parse forever; new writes carry `hostSessionKey` only |
 | Spool | `appendRecords`, `flushSpool`, `reapSpool` | append-only JSONL per (hub, repo); on disk, delivered, or **counted** — no fourth outcome |
 | Hub client | `registerSession`, `heartbeatSession`, `endSession`, `getPresence`, `getWorkContexts`, `getHintCandidates`, … | typed, budgeted, fail-open `HubResult` |
-| Capture | `buildEnvelope`, `workContextRecord`, `targetRecord`, `hintDeliveryRecord`, `fingerprint`, `containsSecret`, `resolveDenylist`/`isDenied`, `collectCommitEvidence` | `fingerprint()` is the cross-agent match signal — one implementation, so the same failure text hashes identically from every host |
+| Capture | `buildEnvelope`, `workContextRecord`, `targetRecord`, `hintDeliveryRecord`, `fingerprint`, `containsSecret`, `resolveDenylist`/`isDenied`, `collectCommitEvidence`, `toRepoRelative` | `fingerprint()` and `toRepoRelative()` are the cross-agent match signals — one implementation each, so the same failure text and the same file hash/derive identically from every host (symlinked worktrees included) |
 | Render | `sanitizeUntrusted`, `bareUntrusted`, `safeId`, `quoted`, `QUOTED_DATA_NOTICE`, `renderBriefing`, `renderClaimHint`, `renderPointerHint`, `renderTripwireReason` | the three classes and the finished renderers — see *Render discipline* |
 | Hints | `selectHint`, `hintBodyHash`, `isEchoOfDeliveredHint` | seen-set, session cap, echo-loop exclusion |
 | MCP | `runMcpServer`, `resolveOwnWorkContext` | stdio MCP; session resolution reads the state files — any connector that writes state gets the whole Tier-2 tool surface for free |
 
 ## The five flows
 
-The design (§1.3) names flow helpers; they are **documented recipes today** and become extracted functions when the first non-Claude connector lands (extraction, not invention). Reference implementation for each: the Claude hooks named below.
+The design (§1.3) names flow helpers; they are **documented recipes today** and become extracted functions when the first non-Claude connector lands (extraction, not invention). **Scheduling note:** that extraction is the ENTRY STEP of whichever connector block (3-7) starts first — two parallel connector builders must not each hand-roll these flows or both extract them concurrently. Reference implementation for each: the Claude hooks named below.
 
 | Flow | Recipe | Reference |
 |---|---|---|
 | `registerSessionFlow` | `registerSession` with `cc_<hostSessionKey>` (+ `~r1`/`~r2` retry on 409) → `writeSessionState` **before any append** (reap infers "writer alive" from state) → spool a `workContextRecord` | `connector-claude/src/hooks/session-start.ts` |
-| `captureFileTargets` | repo-relative path → `isDenied` → seen-set (`withSeenTargets`) → `containsSecret` → spool `targetRecord`s | `hooks/post-tool-use.ts` |
+| `captureFileTargets` | `toRepoRelative` → `isDenied` → seen-set (`withSeenTargets`) → `containsSecret` → spool `targetRecord`s | `hooks/post-tool-use.ts` |
 | `captureFailure` | extract failure text → `fingerprint()` → spool an `error_fingerprint` target | `hooks/post-tool-use.ts` |
-| `heartbeatMaybe` | 20 s throttle off `lastHeartbeatAt` → `heartbeatSession` | `hooks/post-tool-use.ts` |
+| `heartbeatMaybe` | `HEARTBEAT_MIN_INTERVAL_MS` throttle off `lastHeartbeatAt` → `heartbeatSession` | `hooks/post-tool-use.ts` |
 | `assembleBriefing` / `selectAndRenderHint` | parallel hub GETs → `renderBriefing` / `selectHint` → `renderClaimHint`·`renderPointerHint` → record `hintDeliveryRecord` | `hooks/session-start.ts`, `hooks/user-prompt-submit.ts` |
 | `endSessionFlow` | `endSession` → `flushSpool` on the spare budget → `reapSpool` (deferred end if the backlog outlives the budget) | `hooks/session-end.ts` |
+
+### Cross-connector invariants (single-implementation once extracted)
+
+Until the flows are extracted, these live here as WORDS, and every connector must hold them:
+
+- **State before spool**: `writeSessionState` runs before the first `appendRecords` — the reaper decides "writer alive" by the state file's existence, so a spool without state is an orphan on sight.
+- **409 retry suffix**: a session-id conflict on register retries with the `~r1`, then `~r2` suffix — deterministic, so recovery after a crash re-derives the same retried id.
+- **Heartbeat throttle**: at most one `heartbeatSession` per `HEARTBEAT_MIN_INTERVAL_MS` (kit export — never copy the number), measured off state's `lastHeartbeatAt`.
+- **Tripwire**: candidates come from `getTripwireSessions` (kit export), rendered ONLY through `renderTripwireReason`, one ask per file (`withTripwireAsked`).
 
 ## Render discipline — non-negotiable
 

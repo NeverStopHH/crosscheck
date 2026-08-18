@@ -42,6 +42,7 @@ export {
   ACP_AGENT_KIND_FALLBACK,
   ACP_AGENT_KIND_PREFIX,
   ACP_HOST_KEY_PREFIX,
+  ACP_KEY_DELIMITER,
   CURSOR_AGENT_KIND,
   CURSOR_HOST_KEY_PREFIX,
   acpAgentKind,
@@ -69,7 +70,10 @@ export { crosscheckHome, repoKey, sessionSlug } from "./config/paths.ts";
 export type { Env } from "./config/paths.ts";
 export { isOwnedMcpEntry, mergeMcpConfig } from "./config/mcp-config.ts";
 export type { McpServerEntry } from "./config/mcp-config.ts";
-export { DEFAULT_AGENT_KIND } from "./constants.ts";
+export {
+  DEFAULT_AGENT_KIND,
+  HEARTBEAT_MIN_INTERVAL_MS,
+} from "./constants.ts";
 
 // ── Repo identity ───────────────────────────────────────────────────────────
 export { normalizeRemoteUrl, resolveRepoIdentity } from "./git/repo-identity.ts";
@@ -97,6 +101,7 @@ export {
   getHintCandidates,
   getPresence,
   getSolvedMatches,
+  getTripwireSessions,
   getWorkContexts,
   heartbeatSession,
   registerSession,
@@ -109,6 +114,7 @@ export type {
   PresenceEntry,
   RegisterSessionInput,
   SolvedMatchEntry,
+  TripwireSession,
   WorkContextEntry,
 } from "./http/hub.ts";
 
@@ -134,6 +140,7 @@ export {
   collectCommitEvidence,
   commitEvidenceRecord,
 } from "./capture/commit-evidence.ts";
+export { toRepoRelative } from "./capture/target-paths.ts";
 
 // ── Render discipline: the three classes, then the finished renderers ───────
 export {

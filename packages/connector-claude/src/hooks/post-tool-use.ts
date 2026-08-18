@@ -1,10 +1,8 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
-
 import {
   HEARTBEAT_MIN_INTERVAL_MS,
   MAX_TARGETS_PER_INVOCATION,
 } from "@crosscheck/connector-core/constants.ts";
-import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
+import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
 import { isDenied, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { fingerprint } from "@crosscheck/connector-core/capture/fingerprint.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
@@ -37,33 +35,6 @@ import type { HookBudget, HookContext } from "./runner.ts";
 
 const IMPLEMENTING_STATUS = "implementing";
 const HTTP_CONFLICT = 409;
-
-/** POSIX separators on the wire: a Windows target must match a macOS one. */
-const toPosix = (path: string): string => path.split(sep).join("/");
-
-/** Exported for the PreToolUse tripwire, which asks about the same paths. */
-export const toRepoRelative = async (
-  repoRoot: string,
-  cwd: string,
-  filePath: string,
-): Promise<string | null> => {
-  const absolute = isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
-  const direct = relative(repoRoot, absolute);
-  if (direct.length > 0 && !direct.startsWith("..") && !isAbsolute(direct)) {
-    return toPosix(direct);
-  }
-  const resolvedRoot = await realpathBestEffort(repoRoot);
-  const resolvedFile = await realpathBestEffort(absolute);
-  const viaRealpath = relative(resolvedRoot, resolvedFile);
-  if (
-    viaRealpath.length === 0 ||
-    viaRealpath.startsWith("..") ||
-    isAbsolute(viaRealpath)
-  ) {
-    return null;
-  }
-  return toPosix(viaRealpath);
-};
 
 const collectFileTargets = async (
   ctx: HookContext,

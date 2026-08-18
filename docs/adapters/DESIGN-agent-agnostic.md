@@ -551,7 +551,12 @@ leaves the product shippable.
 | 7 | **Cursor injection** | `sessionStart`/`postToolUse` `additional_context` briefing + hints; caps/seen-set/echo-exclusion parity; corpus registration. | Corpus + handler pins green; live Cursor session shows the briefing (manual verify recorded). |
 | 8 | **Cross-connector E2E + CLI extraction + docs** | §4.5 E2E; extract `packages/cli` (bin fronting three connectors + server, ending Block 1's named debt); per-editor install docs + `acp setup` snippets; DESIGN.md §7/§8 updated to match reality. | E2E green; npm artifact ships one `crosscheck` bin; docs merged in the same PR as the code they describe. |
 
-Blocks 3–5 (ACP) and 6–7 (Cursor) are parallelizable after Block 2 if two people build.
+Blocks 3–5 (ACP) and 6–7 (Cursor) are parallelizable after Block 2 if two people build —
+with ONE serialization point Block 2 added: the §1.3 flow helpers shipped as documented
+recipes, not extracted functions (extraction, not invention — no consumer existed yet), so
+**extracting them from the Claude hooks is the entry step of whichever connector block
+starts first**. Two parallel builders must not both extract (conflict) or both hand-roll
+(drift); after that first extraction lands, the remaining blocks parallelize as stated.
 
 ---
 

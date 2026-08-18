@@ -24,7 +24,7 @@ import {
   updateSessionState,
   withTripwireAsked,
 } from "@crosscheck/connector-core/state/session-state.ts";
-import { toRepoRelative } from "./post-tool-use.ts";
+import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
 import type { HookContext } from "./runner.ts";
 
 /** The ONLY decision this connector can emit — the ladder's ceiling (§4). */
