@@ -10,6 +10,14 @@ const DenylistSchema = z.object({
   patterns: z.array(z.string().min(1)),
 });
 
+/**
+ * Written beside timeoutMs when LOGIN measured the value; absent means a human
+ * set it by hand. The marker is what lets login rewrite its own measurement on
+ * the next run without ever silently overwriting a deliberate choice
+ * (config/timeout-policy.ts).
+ */
+export const MEASURED_TIMEOUT_SOURCE = "measured";
+
 export const ConfigSchema = z.looseObject({
   version: z.literal(1),
   hubUrl: z.string().min(1),
@@ -18,6 +26,7 @@ export const ConfigSchema = z.looseObject({
   developerName: z.string().min(1).optional(),
   denylist: DenylistSchema.optional(),
   timeoutMs: z.number().int().positive().optional(),
+  timeoutSource: z.literal(MEASURED_TIMEOUT_SOURCE).optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -77,14 +86,16 @@ const parsePositiveInt = (raw: string | undefined): number | null => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
+/** The explicit env override, or null — the head of the precedence below. */
+export const envTimeoutMs = (env: Env): number | null =>
+  parsePositiveInt(env["CROSSCHECK_TIMEOUT_MS"]);
+
 /**
  * Exported because the hook budget must be known before repo identity spawns
  * git, i.e. before a fully resolved config exists.
  */
 export const resolveTimeoutMs = (env: Env, stored: Config | null): number =>
-  parsePositiveInt(env["CROSSCHECK_TIMEOUT_MS"]) ??
-  stored?.timeoutMs ??
-  HTTP_TIMEOUT_MS;
+  envTimeoutMs(env) ?? stored?.timeoutMs ?? HTTP_TIMEOUT_MS;
 
 export interface LoadConfigOptions {
   readonly env: Env;

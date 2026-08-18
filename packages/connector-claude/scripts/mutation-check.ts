@@ -516,6 +516,43 @@ export const MUTATIONS: readonly Mutation[] = [
       "arithmetic detector must catch a raised cap on every machine — " +
       "no stopwatch gets a vote",
   },
+  // The three below guard the latency-aware timeout (login + doctor). Their
+  // guard is test/latency.test.ts, an arithmetic detector with scripted clocks
+  // and probes — no process, no network — because each defect is a constant,
+  // and a constant is wrong on every machine or on none.
+  {
+    label: "a far hub's measured timeout collapses to the floor",
+    file: `${CONNECTOR}/src/constants.ts`,
+    from: "export const LATENCY_TIMEOUT_MULTIPLIER = 4;",
+    to: "export const LATENCY_TIMEOUT_MULTIPLIER = 0;",
+    test: `${CONNECTOR}/test/latency.test.ts`,
+    because:
+      "recommendedTimeoutMs degenerates to the fixed floor, which clamps to " +
+      "the default — the remote teammate the feature exists for logs in and " +
+      "keeps the 400 ms timeout that killed every call in the incident",
+  },
+  {
+    label: "doctor stops warning about a flap-risk timeout",
+    file: `${CONNECTOR}/src/constants.ts`,
+    from: "export const LATENCY_FLAP_WARN_RATIO = 2;",
+    to: "export const LATENCY_FLAP_WARN_RATIO = 0;",
+    test: `${CONNECTOR}/test/latency.test.ts`,
+    because:
+      "isFlapRisk is never true, so a hub 500 ms away on a 400 ms timeout " +
+      "reads PASS — the silent-death state the WARN exists to name, on the " +
+      "one surface that would ever say it",
+  },
+  {
+    label: "login stores a timeout below the LAN default",
+    file: `${CONNECTOR}/src/http/latency.ts`,
+    from: "    Math.max(\n      HTTP_TIMEOUT_MS,",
+    to: "    Math.max(\n      0,",
+    test: `${CONNECTOR}/test/latency.test.ts`,
+    because:
+      "the never-lower clamp is gone: a 2 ms LAN median recommends ~208 ms, " +
+      "which login would store below the 400 ms default — making NEARBY hubs " +
+      "flakier after the very command that is supposed to fix flapping",
+  },
   {
     // Like tripwire-hook.test.ts, this guard shells out to git (makeRepo) —
     // the assertGuardIsGreen container caveat applies to it too.
@@ -579,6 +616,7 @@ interface Outcome {
  * PRINTS: hints.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
+ * PRINTS: latency.test.ts 3
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1

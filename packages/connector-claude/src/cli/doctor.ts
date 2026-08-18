@@ -14,6 +14,7 @@ import {
   EXIT_FAIL,
   EXIT_OK,
   EXIT_WARN,
+  LATENCY_PROBE_TIMEOUT_MS,
   MAX_CLOCK_SKEW_SECONDS,
   MCP_CONFIG_FILE,
   MCP_SERVER_KEY,
@@ -24,6 +25,8 @@ import {
   SECONDS_PER_MINUTE,
 } from "../constants.ts";
 import { loadConfig } from "../config/config.ts";
+import { timeoutOwner } from "../config/timeout-policy.ts";
+import type { TimeoutOwner } from "../config/timeout-policy.ts";
 import {
   configPath,
   crosscheckHome,
@@ -36,6 +39,8 @@ import { formatAge } from "../briefing/render.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
 import { hubRequest } from "../http/client.ts";
 import type { HubContext } from "../http/client.ts";
+import { isFlapRisk, measureHubLatency } from "../http/latency.ts";
+import type { LatencyMeasurement } from "../http/latency.ts";
 import { getAbsences, getPrivacySettings } from "../http/hub.ts";
 import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
 import { oldestSpoolLineMs, spoolDepth } from "../spool/files.ts";
@@ -601,6 +606,78 @@ const checkSummarizerCost = async (
   return check("PASS", "summarizer cost", formatSummarizerCost(cost));
 };
 
+/**
+ * The effective per-request timeout and WHO set it — the source tells the
+ * reader which knob moves it: the default is raised by `crosscheck login`
+ * (measured) or CROSSCHECK_TIMEOUT_MS; a hand-set stored value is theirs to
+ * edit; login rewrites only values it measured itself (timeout-policy.ts).
+ */
+const TIMEOUT_SOURCE_LABELS: Readonly<Record<TimeoutOwner, string>> = {
+  env: "CROSSCHECK_TIMEOUT_MS",
+  login: "stored config, measured at login",
+  manual: "stored config, set by hand",
+  none: "default",
+};
+
+const timeoutCheck = (effectiveTimeoutMs: number, owner: TimeoutOwner): Check =>
+  check(
+    "PASS",
+    "timeout",
+    `${String(effectiveTimeoutMs)} ms (${TIMEOUT_SOURCE_LABELS[owner]})`,
+  );
+
+/** Measures the hub's distance; injectable so tests never time real network. */
+export type MeasureLatency = (
+  ctx: HubContext,
+) => Promise<LatencyMeasurement | null>;
+
+/**
+ * Probes wait LATENCY_PROBE_TIMEOUT_MS (a human is watching), not the
+ * effective timeout — a hub SLOWER than the effective timeout is exactly the
+ * state the WARN below exists to name, so the probe must outlast it.
+ * repoKey "" keeps the probes out of the last-sync record, like login's.
+ */
+const defaultMeasureLatency: MeasureLatency = (ctx) =>
+  measureHubLatency(
+    async () =>
+      (
+        await hubRequest(
+          { ...ctx, timeoutMs: LATENCY_PROBE_TIMEOUT_MS, repoKey: "" },
+          {
+            method: "GET",
+            path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
+            schema: z.unknown(),
+          },
+        )
+      ).ok,
+    () => Date.now(),
+  );
+
+/**
+ * The honest half of the latency-aware timeout: when the hub sits within the
+ * flap margin, the FIRST casualties are the surfaces that fail open silently
+ * (prompt hints, the tripwire — silence over delay, hook budgets being ratios
+ * of this same timeout), so nothing else on this machine would say why they
+ * went quiet. This line is where that state becomes a sentence, with both
+ * remedies named.
+ */
+const latencyCheck = (
+  measurement: LatencyMeasurement | null,
+  effectiveTimeoutMs: number,
+): Check => {
+  if (measurement === null) {
+    return check("PASS", "hub latency", "not measured");
+  }
+  const distance = `hub is ${String(measurement.medianRttMs)} ms away, timeout ${String(effectiveTimeoutMs)} ms`;
+  return isFlapRisk(measurement.medianRttMs, effectiveTimeoutMs)
+    ? check(
+        "WARN",
+        "hub latency",
+        `${distance} — calls may flap: in-session hints go silent first (hooks fail open — silence over delay), briefings and cli follow; rerun crosscheck login to store a measured timeout, or set CROSSCHECK_TIMEOUT_MS`,
+      )
+    : check("PASS", "hub latency", distance);
+};
+
 /** A live session file plus a stale sync is exactly the silent-death signature. */
 const hasLiveSessionState = async (home: string): Promise<boolean> => {
   try {
@@ -644,7 +721,11 @@ const summarize = (checks: readonly Check[]): CliResult => {
   };
 };
 
-export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
+export const runDoctor = async (
+  env: Env,
+  cwd: string,
+  measureLatency: MeasureLatency = defaultMeasureLatency,
+): Promise<CliResult> => {
   const now = new Date();
   const home = crosscheckHome(env);
   const configCheck = await checkConfig(home);
@@ -711,11 +792,17 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
       : check("PASS", "clock skew", `${Math.round(skewSeconds)}s vs hub`);
   })();
 
+  // Measured only when the hub answered at all: a dead hub has no distance
+  // worth printing, and the reachability FAIL above already owns that story.
+  const measurement = probe.ok ? await measureLatency(hubCtx) : null;
+
   const settingsInspection = await checkSettings(identity.root);
   return summarize([
     configCheck,
     identityCheck,
     hubCheck,
+    timeoutCheck(config.timeoutMs, timeoutOwner(env, config.stored)),
+    latencyCheck(measurement, config.timeoutMs),
     ...settingsInspection.checks,
     ...(settingsInspection.launcherCommand === null
       ? []
