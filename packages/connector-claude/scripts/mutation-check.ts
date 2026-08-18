@@ -598,6 +598,37 @@ export const MUTATIONS: readonly Mutation[] = [
       "Stop test stays green because its fakes answer instantly; only the " +
       "slow-fake wall clock can see this",
   },
+  {
+    label: "identity tests answer to whichever machine runs them",
+    file: `${CONNECTOR}/src/git/ssh-hostname.ts`,
+    from:
+      "  if (process.env[SSH_CANONICALIZE_ENV] === SSH_CANONICALIZE_OFF) {\n" +
+      "    return Promise.resolve(null);\n" +
+      "  }",
+    to:
+      "  if (process.env[SSH_CANONICALIZE_ENV] === `${SSH_CANONICALIZE_OFF}-never`) {\n" +
+      "    return Promise.resolve(null);\n" +
+      "  }",
+    test: `${CONNECTOR}/test/repo-ssh-determinism.test.ts`,
+    because:
+      "the off-switch is the suite's only isolation from the developer's " +
+      "~/.ssh/config — with it dead, a config that rewrites github.com forks " +
+      "dozens of github.com/acme/api assertions and every run spawns " +
+      "hundreds of real ssh processes; the hostile-config probe and the " +
+      "in-process null pin both go red",
+  },
+  {
+    label: "the MCP server pays one ssh spawn per tool call",
+    file: `${CONNECTOR}/src/git/ssh-hostname.ts`,
+    from: "  const cached = hostnameByHost.get(host);",
+    to: "  const cached = hostnameByHost.get(`${host}-never`);",
+    test: `${CONNECTOR}/test/repo-ssh-determinism.test.ts`,
+    because:
+      "identity resolution runs on every tool call of the long-lived server, " +
+      "and without the memo each call re-evaluates the same host — worst " +
+      "case SSH_RESOLVE_TIMEOUT_MS every time under a pathological config; " +
+      "the spawn-count pin sees three spawns where two are allowed",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -654,6 +685,7 @@ interface Outcome {
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
+ * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search.test.ts 3
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1

@@ -19,6 +19,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { SSH_CANONICALIZE_ENV } from "../src/constants.ts";
 import { resolveRepoIdentity } from "../src/git/repo-identity.ts";
 import { makeRepo } from "./helpers.ts";
 
@@ -158,13 +159,17 @@ describe("the default resolver is bounded and fail-open", () => {
 
   const runProbe = async (pathPrefix: string): Promise<ProbeReport> => {
     const probe = join(import.meta.dir, "fixtures", "ssh-hostname-probe.ts");
+    // The suite preload sets the canonicalization off-switch; this probe
+    // exercises the REAL spawn machinery, so it opts back in by dropping the
+    // variable (test/preload.ts names this contract).
+    const { [SSH_CANONICALIZE_ENV]: _omitted, ...envOptedIn } = process.env;
     const proc = Bun.spawn({
       cmd: [process.execPath, probe],
       cwd: import.meta.dir,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "ignore",
-      env: { ...process.env, PATH: `${pathPrefix}:${process.env.PATH ?? ""}` },
+      env: { ...envOptedIn, PATH: `${pathPrefix}:${process.env.PATH ?? ""}` },
     });
     const [stdout, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),

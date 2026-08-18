@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 38
+    # PRINTS: 40
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -130,6 +130,7 @@ jobs:
     # PRINTS: cli/doctor.ts 1
     # PRINTS: config/config.ts 1
     # PRINTS: constants.ts 6
+    # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/render.ts 1
     # PRINTS: hints/select.ts 4
     # PRINTS: hooks/pre-tool-use.ts 1
@@ -154,6 +155,7 @@ jobs:
     # PRINTS: sanitize.ts 7
     # PRINTS: search.ts 6
     # PRINTS: select.ts 4
+    # PRINTS: ssh-hostname.ts 2
     # PRINTS: stop.ts 1
     name: Mutation proof
     runs-on: ubuntu-latest

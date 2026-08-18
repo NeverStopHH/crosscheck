@@ -1,0 +1,6 @@
+# Test preload: forces ssh identity canonicalization off for the suite so no
+# test consults the machine's ~/.ssh/config (see the preload's header). Bun
+# reads bunfig.toml from the invocation cwd only — the copy in
+# packages/connector-claude covers runs started from inside the package.
+[test]
+preload = ["./packages/connector-claude/test/preload.ts"]

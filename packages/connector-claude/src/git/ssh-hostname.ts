@@ -30,7 +30,11 @@
  * itself (our teammate did, by hand, the day of the incident) — both paths
  * converge on the canonical id.
  */
-import { SSH_RESOLVE_TIMEOUT_MS } from "../constants.ts";
+import {
+  SSH_CANONICALIZE_ENV,
+  SSH_CANONICALIZE_OFF,
+  SSH_RESOLVE_TIMEOUT_MS,
+} from "../constants.ts";
 import { runBoundedCommand } from "./git.ts";
 
 /** The `hostname <value>` line of an `ssh -G` dump; keys print lowercased. */
@@ -44,19 +48,48 @@ export const parseSshHostname = (output: string): string | null => {
 export type SshHostnameResolver = (host: string) => Promise<string | null>;
 
 /**
- * One bounded `ssh -G` per identity resolution. The leading-dash guard keeps
+ * One answer per host per PROCESS. `ssh -G` is pure config evaluation, so
+ * within one process the answer cannot change, and re-spawning it billed the
+ * long-lived surfaces per call — the MCP server resolves identity on every
+ * tool call — at ~10 ms typical, SSH_RESOLVE_TIMEOUT_MS worst case under a
+ * pathological config. Memoizing the PROMISE also collapses concurrent
+ * callers onto one spawn. Failures (null) are cached too: a config that ran
+ * out the deadline once would otherwise re-bill the full deadline on every
+ * call for the rest of the process's life. Hook and statusline processes are
+ * one-shot, so they pay at most one bounded spawn per run; a config edit is
+ * picked up by the next process (for the MCP server: on restart). The first
+ * caller's timeoutMs governs — later per-call overrides cannot re-run a
+ * host that already answered.
+ */
+const hostnameByHost = new Map<string, Promise<string | null>>();
+
+/**
+ * One bounded `ssh -G` per host per process. The leading-dash guard keeps
  * a hostile "host" from ever reaching ssh as an option; `--` is not used
  * because `ssh -G -- <host>` is fine but older ssh quirks are not worth the
- * bet when null is a safe answer.
+ * bet when null is a safe answer. CROSSCHECK_SSH_CANONICALIZE=off answers
+ * null before consulting the cache or spawning anything (src/constants.ts
+ * names both audiences: pathological user configs, and the test suite's
+ * preload) — checked per call, so flipping the variable mid-process wins.
  */
-export const resolveSshHostname = async (
+export const resolveSshHostname = (
   host: string,
   cwd: string,
   timeoutMs: number = SSH_RESOLVE_TIMEOUT_MS,
 ): Promise<string | null> => {
   if (host.length === 0 || host.startsWith("-")) {
-    return null;
+    return Promise.resolve(null);
   }
-  const output = await runBoundedCommand(["ssh", "-G", host], cwd, timeoutMs);
-  return output === null ? null : parseSshHostname(output);
+  if (process.env[SSH_CANONICALIZE_ENV] === SSH_CANONICALIZE_OFF) {
+    return Promise.resolve(null);
+  }
+  const cached = hostnameByHost.get(host);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const resolved = runBoundedCommand(["ssh", "-G", host], cwd, timeoutMs).then(
+    (output) => (output === null ? null : parseSshHostname(output)),
+  );
+  hostnameByHost.set(host, resolved);
+  return resolved;
 };

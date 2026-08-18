@@ -107,6 +107,24 @@ export const GIT_TIMEOUT_MS = 1500;
 export const SSH_RESOLVE_TIMEOUT_MS = 500;
 
 /**
+ * Environment switch that disables ssh identity canonicalization outright:
+ * when the variable holds "off", the default resolver answers null without
+ * spawning anything and every remote keeps its LITERAL host — fail-open,
+ * identical to ssh being absent. Two audiences:
+ *
+ *   - a developer whose ssh config rewrites real forge hosts to unrelated
+ *     proxies (a corporate `Host *` HostName override) and who would rather
+ *     keep the literal identity than have it follow the proxy's name;
+ *   - the test suite, whose preload (test/preload.ts) sets it so no identity
+ *     assertion ever consults the machine's ~/.ssh/config — tests exercising
+ *     the real resolution opt back in per spawned subprocess.
+ *
+ * Values other than "off" (including unset) leave canonicalization on.
+ */
+export const SSH_CANONICALIZE_ENV = "CROSSCHECK_SSH_CANONICALIZE";
+export const SSH_CANONICALIZE_OFF = "off";
+
+/**
  * Grace between the deadline's SIGTERM and the SIGKILL escalation for a git
  * that outlived its budget (git/git.ts). SIGTERM first so git can remove its
  * lock files; the escalation covers a git that ignores it. Nothing waits on
