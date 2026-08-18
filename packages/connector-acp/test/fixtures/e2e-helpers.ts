@@ -34,6 +34,7 @@ export const spawnProxy = (
   home: string,
   proxyFlags: readonly string[],
   agentArgs: readonly string[],
+  extraEnv: Readonly<Record<string, string>> = {},
 ) =>
   Bun.spawn({
     cmd: [
@@ -46,7 +47,7 @@ export const spawnProxy = (
       FAKE_AGENT_PATH,
       ...agentArgs,
     ],
-    env: { ...process.env, CROSSCHECK_HOME: home },
+    env: { ...process.env, CROSSCHECK_HOME: home, ...extraEnv },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

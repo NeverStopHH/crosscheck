@@ -557,6 +557,9 @@ recipes, not extracted functions (extraction, not invention — no consumer exis
 **extracting them from the Claude hooks is the entry step of whichever connector block
 starts first**. Two parallel builders must not both extract (conflict) or both hand-roll
 (drift); after that first extraction lands, the remaining blocks parallelize as stated.
+Status note (2026-08-19): Block 3 started first but consumed ZERO flows — a transparent
+pipe calls none — so the entry step is still undischarged and belongs to the first of
+Blocks 4–7 that needs a flow; two of those parallelizing must serialize on it.
 
 ---
 

@@ -9,6 +9,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { ACP_MAX_PARSE_LINE_BYTES } from "../src/constants.ts";
 import { createAcpRecorder } from "../src/recorder.ts";
 import type { ObservedLine } from "../src/observer.ts";
 
@@ -112,5 +113,77 @@ describe("failure degrades to drop counters", () => {
     recorder.record("c2a", line("z".repeat(50), false), 3);
 
     expect(recorder.drops()).toBeGreaterThan(0);
+  });
+});
+
+describe("pending-cap drops are never silent holes", () => {
+  test("the write after a burst drop is preceded by an in-band gap marker", async () => {
+    // Arrange: append promises the test resolves by hand, so entry A is
+    // still pending when B arrives (drop) and when C arrives (fits).
+    const written: string[] = [];
+    const recorder = createAcpRecorder("unused-path", {
+      maxPendingBytes: 200,
+      append: (_path, data) => {
+        written.push(data);
+        return Promise.resolve();
+      },
+    });
+
+    // Act: A fits, B blows the cap while A is still pending, C fits again.
+    recorder.record("c2a", line("a".repeat(40), false), 1);
+    recorder.record("c2a", line("b".repeat(200), false), 2);
+    recorder.record("c2a", line("c", false), 3);
+    await recorder.flush();
+
+    // Assert: B is counted AND the transcript says where the hole is.
+    expect(recorder.drops()).toBe(1);
+    expect(written).toHaveLength(2);
+    const resumed = (written[1] ?? "")
+      .trimEnd()
+      .split("\n")
+      .map((raw) => JSON.parse(raw) as Record<string, unknown>);
+    expect(resumed[0]).toEqual({ t: 3, gap: 1 });
+    expect(resumed[1]?.["line"]).toBe("c");
+  });
+
+  test("drops with no later write get a trailing gap marker at flush", async () => {
+    // Arrange
+    const path = join(await makeDir(), "wire.ndjson");
+    const recorder = createAcpRecorder(path, { maxPendingBytes: 100 });
+
+    // Act: A fits, B is dropped, nothing else arrives before the flush.
+    recorder.record("c2a", line("a".repeat(30), false), 1);
+    recorder.record("c2a", line("b".repeat(100), false), 2);
+    await recorder.flush();
+
+    // Assert: the recording ends with the marker, not with a silent hole.
+    const entries = (await readFile(path, "utf8"))
+      .trimEnd()
+      .split("\n")
+      .map((raw) => JSON.parse(raw) as Record<string, unknown>);
+    expect(entries).toHaveLength(2);
+    expect(entries[1]?.["gap"]).toBe(1);
+  });
+
+  test("a maximally-escaped line at the observer cap still fits the pending cap", async () => {
+    // Arrange: NUL characters escape 6x (-> backslash-u0000) in the JSON envelope — the
+    // worst case. A line the observer can emit must be recordable on an
+    // idle disk, or --record lies about lines it could never write.
+    const written: string[] = [];
+    const recorder = createAcpRecorder("unused-path", {
+      append: (_path, data) => {
+        written.push(data);
+        return Promise.resolve();
+      },
+    });
+    const giant = "\u0000".repeat(ACP_MAX_PARSE_LINE_BYTES - 1);
+
+    // Act
+    recorder.record("a2c", line(giant, false), 5);
+    await recorder.flush();
+
+    // Assert
+    expect(recorder.drops()).toBe(0);
+    expect(written).toHaveLength(1);
   });
 });

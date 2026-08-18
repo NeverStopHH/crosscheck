@@ -7,7 +7,9 @@
  * passthrough, partial-frame forwarding, the log file, and `--record`.
  */
 import { describe, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, utimes } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { DIE_MID_FRAME_PARTIAL, SLEEP_READY_LINE } from "./fixtures/fake-agent.ts";
@@ -24,6 +26,8 @@ import {
 } from "./fixtures/e2e-helpers.ts";
 
 const E2E_TIMEOUT_MS = 20_000;
+/** @crosscheck/connector-core's EXIT_FAIL — the loud internal-failure code. */
+const EXIT_FAIL = 2;
 const EXIT_USAGE = 64;
 const EXIT_SPAWN_FAILURE = 127;
 
@@ -144,7 +148,7 @@ describe("exit codes and signals, faithful in both directions", () => {
     E2E_TIMEOUT_MS,
   );
 
-  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     test(
       `${signal} to the proxy is relayed to the agent, whose graceful exit is mirrored`,
       async () => {
@@ -187,6 +191,91 @@ describe("exit codes and signals, faithful in both directions", () => {
 
       // Assert: the client's waitpid sees a signal death, not an exit code.
       expect(proxy.signalCode).toBe("SIGKILL");
+    },
+    E2E_TIMEOUT_MS,
+  );
+
+  test(
+    "death by a RELAYED signal is mirrored too: the proxy's own handler must not swallow it",
+    async () => {
+      // Arrange: SIGTERM is one the proxy handles (relay) — mirroring its
+      // death requires stripping that handler first, or the re-raise is
+      // swallowed and the client sees exit 143 instead of a signal death.
+      const home = await makeTempHome();
+      const proxy = spawnProxy(home, [], ["--kill-self", "SIGTERM"]);
+
+      // Act
+      await writeToSink(proxy.stdin, '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n');
+      await proxy.exited;
+
+      // Assert
+      expect(proxy.signalCode).toBe("SIGTERM");
+    },
+    E2E_TIMEOUT_MS,
+  );
+});
+
+describe("internal failures are contained — never a session-killing silent exit", () => {
+  test(
+    "a post-spawn internal failure reports loudly, terminates the agent, exits EXIT_FAIL",
+    async () => {
+      // Arrange: the deterministic fault seam — the proxy throws right
+      // after spawning the agent, standing in for fd exhaustion or any
+      // internal bug on the wiring path.
+      const home = await makeTempHome();
+      const proxy = spawnProxy(home, [], ["--sleep"], {
+        CROSSCHECK_ACP_TEST_FAULT: "post-spawn",
+      });
+
+      // Act
+      proxy.stdin.end();
+      const stderr = new TextDecoder().decode(await readAll(proxy.stderr));
+      const exit = await proxy.exited;
+
+      // Assert: loud failure (never the silent usage 64), log line present.
+      expect(exit).toBe(EXIT_FAIL);
+      expect(stderr).toContain("internal proxy failure");
+      const log = await readLogFile(home, proxy.pid);
+      expect(log).toContain("internal-failure");
+
+      // And the spawned agent is reaped, not orphaned.
+      const pidMatch = log.match(/spawned pid=(\d+)/);
+      expect(pidMatch).not.toBeNull();
+      const agentPid = Number(pidMatch?.[1] ?? "0");
+      const deadline = Date.now() + 5_000;
+      let agentGone = false;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(agentPid, 0);
+        } catch {
+          agentGone = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(agentGone).toBe(true);
+    },
+    E2E_TIMEOUT_MS,
+  );
+
+  test(
+    "aged FIFO dirs leaked by abnormally dead proxies are swept at the next startup",
+    async () => {
+      // Arrange: a leaked FIFO dir (the literal on-disk prefix is the
+      // contract — src/constants.ts ACP_FIFO_DIR_PREFIX), aged past the
+      // sweep window; nothing in-process cleans up after a SIGKILL.
+      const stale = await mkdtemp(join(tmpdir(), "crosscheck-acp-fifo-"));
+      const aged = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+      await utimes(stale, aged, aged);
+
+      // Act: any later proxy run sweeps it.
+      const home = await makeTempHome();
+      const proxy = spawnProxy(home, [], []);
+      proxy.stdin.end();
+      await proxy.exited;
+
+      // Assert
+      expect(existsSync(stale)).toBe(false);
     },
     E2E_TIMEOUT_MS,
   );

@@ -64,6 +64,24 @@ export const MUTATIONS: readonly Mutation[] = [
       "promised never to touch",
   },
   {
+    // The ACP proxy's exit mirroring (§2.2): mirrorSignalDeath must strip
+    // the proxy's OWN relay handler before re-raising the child's fatal
+    // signal, or the still-installed handler swallows the re-raise and the
+    // 128+n fallback turns a signal death into exit 143. The suite had
+    // exactly this blind spot — every signal-death test used SIGKILL, the
+    // one signal that never has a handler — until the relayed-signal
+    // mirror test pinned SIGTERM.
+    label: "the acp proxy's own relay handler swallows the death-by-signal mirror",
+    file: `${ACP}/src/proxy.ts`,
+    from: "    process.removeAllListeners(signalCode as NodeJS.Signals);\n",
+    to: "",
+    test: `${ACP}/test/proxy-e2e.test.ts`,
+    because:
+      "an agent killed by SIGTERM makes the proxy exit with code 143 " +
+      "instead of dying by SIGTERM itself — the client's waitpid can now " +
+      "tell the proxy was there",
+  },
+  {
     // The guard here USED TO BE the process-level test/hook-time-budget.test.ts,
     // which detects this through a wall-clock SIDE EFFECT: with the reserve gone
     // maintenance eats the hook that hosts it, so the briefing goes missing and
@@ -602,6 +620,7 @@ interface Outcome {
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
+ * PRINTS: proxy-e2e.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1

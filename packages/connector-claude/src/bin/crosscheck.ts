@@ -69,9 +69,21 @@ const main = async (): Promise<void> => {
   // DYNAMIC import like `serve`: hooks and the statusline must not pay its
   // load. NOT through `readStdin` either — stdin IS the client half of the
   // wire the proxy forwards, open for the life of the session BY DESIGN.
+  // Its own catch, like `serve` below: main()'s silent usage-exit catch is
+  // for HOOKS. The proxy contains its own post-spawn failures already
+  // (proxy.ts); this net is for what runs before that containment exists —
+  // an import failure, a logger-construction crash — which must still be
+  // LOUD and EXIT_FAIL, never a silent 64 with an agent left running.
   if (command === "acp") {
-    const { runAcpProxy } = await import("@crosscheck/connector-acp");
-    process.exit(await runAcpProxy(rest, process.env));
+    try {
+      const { runAcpProxy } = await import("@crosscheck/connector-acp");
+      process.exit(await runAcpProxy(rest, process.env));
+    } catch (error) {
+      console.error(
+        `crosscheck acp: internal proxy failure (${error instanceof Error ? error.message : String(error)})`,
+      );
+      process.exit(EXIT_FAIL);
+    }
   }
 
   // DYNAMIC import, and only here: the hub pulls in hono, drizzle and the

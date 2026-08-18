@@ -32,6 +32,25 @@ export const STDERR_FD = 2;
 /** One kernel-pipe-sized read at a time — the whole in-flight window. */
 export const FD_READ_CHUNK_BYTES = 65_536;
 
+/**
+ * Retry delay when an fd unexpectedly reports EAGAIN: something set
+ * O_NONBLOCK on the SHARED open file description — a sibling process
+ * inheriting our stdio can (the classic "a tool flips stdin nonblocking"
+ * pipeline bug class). EAGAIN means "no data yet / no room yet", never
+ * end-of-stream: a source treating it as EOF silently ends a live
+ * direction (and the session with it), and a sink treating it as a hangup
+ * silently DROPS bytes — both prime-directive violations. So both sides
+ * retry after this delay; genuine errors still end the stream. Pinned in
+ * test/fd-io.test.ts on O_NONBLOCK FIFO ends.
+ */
+export const FD_EAGAIN_RETRY_DELAY_MS = 5;
+
+const isEagain = (error: unknown): boolean =>
+  (error as NodeJS.ErrnoException | null)?.code === "EAGAIN";
+
+const delayMs = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 /** Open a path (FIFO ends included — these BLOCK until the peer opens). */
 export const openFd = async (path: string, flags: "r" | "w"): Promise<number> => {
   const handle = await openPromise(path, flags);
@@ -56,7 +75,9 @@ const readFd = (fd: number, buffer: Buffer): Promise<number> =>
  * chunk contract: a chunk is valid only until the sink's write resolves,
  * and the pump neither pulls the next chunk before that nor lets the
  * observer see anything but its own copy. A read error (fd closed under us
- * at teardown) ends the stream like EOF would.
+ * at teardown) ends the stream like EOF would — except EAGAIN, which is
+ * retried: it reports fd MODE, not stream state (header of
+ * FD_EAGAIN_RETRY_DELAY_MS).
  */
 export async function* fdSource(fd: number): AsyncIterable<Uint8Array> {
   const buffer = Buffer.allocUnsafe(FD_READ_CHUNK_BYTES);
@@ -64,7 +85,11 @@ export async function* fdSource(fd: number): AsyncIterable<Uint8Array> {
     let bytesRead: number;
     try {
       bytesRead = await readFd(fd, buffer);
-    } catch {
+    } catch (error) {
+      if (isEagain(error)) {
+        await delayMs(FD_EAGAIN_RETRY_DELAY_MS);
+        continue;
+      }
       return;
     }
     if (bytesRead === 0) return; // EOF: every writer closed
@@ -84,6 +109,12 @@ export const fdByteSink = (fd: number): ByteSink => ({
       const writeFrom = (offset: number): void => {
         fsWrite(fd, chunk, offset, chunk.byteLength - offset, null, (error, written) => {
           if (error) {
+            if (isEagain(error)) {
+              // Full-but-alive pipe on a nonblocking fd: retry from the
+              // same offset — rejecting here would DROP the chunk's tail.
+              setTimeout(() => writeFrom(offset), FD_EAGAIN_RETRY_DELAY_MS);
+              return;
+            }
             reject(error);
             return;
           }

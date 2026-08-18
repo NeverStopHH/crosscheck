@@ -5,6 +5,8 @@
  * model: pipes only, bytes verbatim, stderr passthrough, exit codes and
  * signals faithful in both directions, and observability (log, `--record`,
  * drop counters) that rides a COPY of the wire and can never touch it.
+ * Internal failures past the spawn are CONTAINED (runAcpProxy's catch:
+ * loud stderr + log line, agent reaped, EXIT_FAIL) — never a silent exit.
  *
  * PLUMBING, measured not chosen (fd-io.ts header carries the numbers), one
  * lane per direction because each is the only shape that both applies real
@@ -47,11 +49,17 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { crosscheckHome } from "@crosscheck/connector-core/kit.ts";
 
 import { ACP_USAGE, isUsageError, parseAcpArgs } from "./cli.ts";
+import type { AcpInvocation } from "./cli.ts";
 import {
   ACP_EXIT_FLUSH_TIMEOUT_MS,
+  ACP_FIFO_DIR_PREFIX,
+  ACP_LOG_MAX_AGE_DAYS,
+  ACP_TEST_FAULT_ENV_VAR,
+  ACP_TEST_FAULT_POST_SPAWN,
   EXIT_SPAWN_FAILURE,
   SIGNAL_EXIT_BASE,
 } from "./constants.ts";
+import { sweepStaleFifoDirs } from "./fifo-sweep.ts";
 import {
   STDERR_FD,
   STDIN_FD,
@@ -169,6 +177,33 @@ const mirrorSignalDeath = (signalCode: string): number => {
   return SIGNAL_EXIT_BASE + (SIGNAL_NUMBERS[signalCode] ?? FALLBACK_SIGNAL_NUMBER);
 };
 
+/**
+ * Polite reap for a contained internal failure. An agent that ignores it
+ * self-limits anyway: once the proxy is gone its stdin pipe EOFs and its
+ * FIFO writes EPIPE — the ordinary dead-peer world.
+ */
+const CONTAINMENT_KILL_SIGNAL = "SIGTERM";
+
+/**
+ * What the containment catch must release — mutable by necessity, like the
+ * pump's counters: the catch needs exactly what existed at the moment of
+ * the throw, however far the wiring got.
+ */
+interface SpawnedResources {
+  child: ChildProcess | null;
+  fifoDir: string | null;
+}
+
+/**
+ * Deterministic internal failure for the E2E containment proof (see
+ * constants.ACP_TEST_FAULT_ENV_VAR). Inert without the exact env value.
+ */
+const throwInjectedFault = (env: Env): void => {
+  if (env[ACP_TEST_FAULT_ENV_VAR] === ACP_TEST_FAULT_POST_SPAWN) {
+    throw new Error("injected post-spawn fault (test seam)");
+  }
+};
+
 const summarize = (
   logger: AcpLogger,
   label: RecordDirection,
@@ -235,6 +270,45 @@ export const runAcpProxy = async (
     parsed.recordPath === undefined ? null : createAcpRecorder(parsed.recordPath);
   logger.line(`start pid=${process.pid} agent=${JSON.stringify(parsed.command)}`);
 
+  // CONTAINMENT — the prime directive's last line of defense: an internal
+  // failure past this point (fd exhaustion at the FIFO opens, a tmp reaper
+  // racing mkdtemp, our own bug) must never escape to the bin's top-level
+  // catch, where it would become a SILENT usage-style exit with the agent
+  // left running. It reports on stderr and in the log, reaps the agent,
+  // and exits EXIT_FAIL. Pinned by the E2E fault-seam test.
+  const resources: SpawnedResources = { child: null, fifoDir: null };
+  try {
+    return await wireAndRun(parsed, env, logger, recorder, resources);
+  } catch (error) {
+    const reason = describeError(error);
+    process.stderr.write(
+      `crosscheck acp: internal proxy failure (${reason}); agent terminated\n`,
+    );
+    logger.line(`internal-failure ${reason}`);
+    if (resources.child !== null) {
+      try {
+        resources.child.kill(CONTAINMENT_KILL_SIGNAL);
+      } catch {
+        // child already gone
+      }
+    }
+    if (resources.fifoDir !== null) {
+      await rm(resources.fifoDir, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
+    }
+    await flushObservability(logger, recorder);
+    return EXIT_FAIL;
+  }
+};
+
+const wireAndRun = async (
+  parsed: AcpInvocation,
+  env: Env,
+  logger: AcpLogger,
+  recorder: AcpRecorder | null,
+  resources: SpawnedResources,
+): Promise<number> => {
   const [executable, ...agentArgs] = parsed.command;
   if (executable === undefined || !isSpawnable(executable)) {
     const reason = `not found or not executable: ${executable ?? ""}`;
@@ -245,7 +319,11 @@ export const runAcpProxy = async (
   }
 
   // The outbound wire: two FIFOs in a private temp dir (header says why).
-  const fifoDir = await mkdtemp(join(tmpdir(), "crosscheck-acp-"));
+  // Aged dirs from ABNORMALLY dead proxies are reaped first — nothing
+  // in-process survives a SIGKILL to run cleanupFifos (fifo-sweep.ts).
+  await sweepStaleFifoDirs(tmpdir(), ACP_LOG_MAX_AGE_DAYS, Date.now());
+  const fifoDir = await mkdtemp(join(tmpdir(), ACP_FIFO_DIR_PREFIX));
+  resources.fifoDir = fifoDir;
   const a2cPath = join(fifoDir, "a2c");
   const errPath = join(fifoDir, "err");
   const cleanupFifos = (): Promise<void> =>
@@ -264,6 +342,7 @@ export const runAcpProxy = async (
     ["-c", SHELL_EXEC_SCRIPT(a2cPath, errPath), executable, ...agentArgs],
     { stdio: ["pipe", "ignore", "ignore"] },
   );
+  resources.child = child;
   const childEnd = watchChildEnd(child);
   if (child.stdin === null) {
     // Cannot happen with stdio[0] = "pipe"; belt for the type system.
@@ -275,6 +354,8 @@ export const runAcpProxy = async (
   // An 'error' event with no listener crashes the process — the pump sees
   // failures through its own write callbacks instead.
   agentStdin.on("error", () => {});
+  logger.line(`spawned pid=${child.pid ?? "none"}`);
+  throwInjectedFault(env);
 
   for (const signal of RELAYED_SIGNALS) {
     process.on(signal, () => {
@@ -354,6 +435,13 @@ export const runAcpProxy = async (
    *
    * VERIFY: grep -ro "fdByteSink(STDOUT_F[D])" packages/connector-acp/src | wc -l | tr -d ' '
    * PRINTS: 1
+   *
+   * …and no OTHER stdout writer exists to bypass it — a stray logging call
+   * or a direct write through the runtime's stdout globals is the
+   * spec-cited session killer the count above cannot see:
+   *
+   * VERIFY: grep -rEn "console\.(lo[g]|inf[o]|erro[r])|process\.stdou[t]|Bun\.stdou[t]" packages/connector-acp/src | wc -l | tr -d ' '
+   * PRINTS: 0
    */
   const a2cPump = pumpBytes(
     fdSource(agentStdoutFd),
@@ -373,7 +461,13 @@ export const runAcpProxy = async (
 
   const ended = await childEnd;
   // Drain what the agent left in its pipes — transparency includes the
-  // tail; the FIFOs EOF once the dead agent's ends are gone.
+  // tail; the FIFOs EOF once the dead agent's ends are gone. UNBOUNDED on
+  // purpose: a helper process that inherited the agent's stdout can hold
+  // the FIFO open past the agent's death and defer our exit (a timing
+  // divergence a spec-violating agent buys itself) — but a deadline here
+  // would TRUNCATE tail bytes the unproxied client would have received (a
+  // content divergence). Content transparency outranks exit timing, and a
+  // client that hangs up unblocks these pumps promptly via EPIPE.
   const [a2cOutcome] = await Promise.all([a2cPump, stderrPump]);
   // The c2a pump may legitimately never finish (a client holding stdin open
   // past the child's death); take its outcome only if it already has one.

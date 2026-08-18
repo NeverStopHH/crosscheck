@@ -96,6 +96,14 @@ export const createAcpLogger = async (
   }
   if (usable) {
     await sweepOldLogs(dir, limits.maxAgeDays ?? ACP_LOG_MAX_AGE_DAYS, Date.now());
+    try {
+      // Pids recycle well inside the sweep window: park a dead proxy's
+      // same-pid log as `.1` so this proxy neither interleaves with it nor
+      // starts its size baseline against a file it never measured.
+      await rename(path, `${path}.1`);
+    } catch {
+      // no pre-existing log — the common case
+    }
   }
 
   let chain: Promise<void> = Promise.resolve();

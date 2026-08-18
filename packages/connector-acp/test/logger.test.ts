@@ -63,6 +63,28 @@ describe("log file lifecycle", () => {
     expect(rotated).toContain("a".repeat(60));
   });
 
+  test("a recycled pid's pre-existing log rotates aside instead of interleaving", async () => {
+    // Arrange: a dead proxy's log under the SAME pid (pids recycle well
+    // inside the 7-day sweep window).
+    const home = await makeHome();
+    const dir = join(home, ACP_LOG_DIR_NAME);
+    const dead = await createAcpLogger(home, FAKE_PID);
+    dead.line("dead proxy line");
+    await dead.flush();
+
+    // Act: the recycled pid's proxy starts a logger of its own.
+    const logger = await createAcpLogger(home, FAKE_PID);
+    logger.line("fresh proxy line");
+    await logger.flush();
+
+    // Assert: fresh file starts empty (size baseline intact), dead log kept.
+    const fresh = await readFile(join(dir, `acp-${FAKE_PID}.log`), "utf8");
+    expect(fresh).not.toContain("dead proxy line");
+    expect(fresh).toContain("fresh proxy line");
+    const parked = await readFile(join(dir, `acp-${FAKE_PID}.log.1`), "utf8");
+    expect(parked).toContain("dead proxy line");
+  });
+
   test("sweeps logs from dead proxies past the age cap, keeps young ones", async () => {
     // Arrange: one ancient log, one fresh log, one non-log bystander.
     const home = await makeHome();

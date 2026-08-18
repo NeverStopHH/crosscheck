@@ -24,7 +24,8 @@ export const ACP_USAGE = [
   "  spawned as the agent, arguments untouched, environment inherited.",
   "",
   "  --record <file>   append every observed NDJSON line to <file>",
-  "                    (development aid for capture work; never required)",
+  "                    (development aid for capture work; never required;",
+  "                    entries dropped under load leave {gap: n} markers)",
 ].join("\n");
 
 export const isUsageError = (

@@ -46,7 +46,7 @@ A connector is the host-specific shell. It owns exactly four things:
 
 ## The five flows
 
-The design (§1.3) names flow helpers; they are **documented recipes today** and become extracted functions when the first non-Claude connector lands (extraction, not invention). **Scheduling note:** that extraction is the ENTRY STEP of whichever connector block (3-7) starts first — two parallel connector builders must not each hand-roll these flows or both extract them concurrently. Reference implementation for each: the Claude hooks named below.
+The design (§1.3) names flow helpers; they are **documented recipes today** and become extracted functions when the first non-Claude connector lands (extraction, not invention). **Scheduling note:** that extraction is the ENTRY STEP of whichever connector block (3-7) starts first — two parallel connector builders must not each hand-roll these flows or both extract them concurrently. Block 3 (the ACP skeleton) started first but consumed zero flows — a transparent pipe calls none — so the entry step remains undischarged: it belongs to the first of Blocks 4-7 that needs a flow. Reference implementation for each: the Claude hooks named below.
 
 | Flow | Recipe | Reference |
 |---|---|---|
