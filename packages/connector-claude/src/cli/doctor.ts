@@ -131,9 +131,12 @@ const bunfigCandidates = (env: Env, cwd: string, repoRoot: string | null): reado
 
 /**
  * Bun's verbose logging prints the whole request, Authorization header
- * included, to hook stderr — a leak of OUR credential caused by the runtime.
- * The connector cannot switch that off from inside its own process, so the
- * honest answer is to name the file and say the key has to be rotated.
+ * included, to the stderr of every bun process in that cwd. The connector's
+ * OWN hub calls are shielded — the one fetch in http/client.ts passes
+ * `verbose: false`, which is the only mechanism that beats the bunfig
+ * (measured; test/bunfig-leak.test.ts) — so the WARN stays for what the
+ * shield cannot cover: other bun processes in the repo printing THEIR
+ * headers, and any older connector version that ran here before the shield.
  */
 const checkBunfig = async (
   env: Env,
@@ -146,7 +149,7 @@ const checkBunfig = async (
       return check(
         "WARN",
         "bun request logging",
-        `${path} enables debug logging — bun then prints the api key (Authorization header) to hook stderr; rotate the key if it was logged`,
+        `${path} enables debug logging — this connector's own hub calls are shielded (fetch verbose:false), but bun prints request headers for every other process here, and a connector older than the shield leaked the api key: rotate the key if one ran in this repo`,
       );
     }
   }

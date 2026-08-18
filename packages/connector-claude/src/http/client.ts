@@ -148,6 +148,15 @@ const performRequest = async <T>(
         ? {}
         : { body: JSON.stringify(request.body) }),
       signal: AbortSignal.timeout(ctx.timeoutMs),
+      // The api-key shield. A repo bunfig with logLevel="debug" makes bun
+      // print every request VERBATIM to stderr, `Authorization: Bearer
+      // <key>` included, for every process in that cwd — our hooks and MCP
+      // server run there. Measured on Bun 1.3.13: NO env var overrides the
+      // bunfig (BUN_CONFIG_VERBOSE_FETCH=0 in the spawn env and set at
+      // runtime both still leak); this per-request option provably wins.
+      // Pinned through the real hook binary by test/bunfig-leak.test.ts,
+      // whose control arm fails first if a future bun changes the mechanism.
+      verbose: false,
     });
   } catch (error) {
     // Classified rather than passed through: "hub unreachable" hiding a plain
