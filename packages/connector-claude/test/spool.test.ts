@@ -2,7 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { appendFile, rm, utimes, writeFile } from "node:fs/promises";
 
 import {
+  MAX_SPOOL_AGE_DAYS,
   MAX_SPOOL_BYTES,
+  MS_PER_DAY,
   SPOOL_REAP_GRACE_MS,
   appendRecords,
   flushSpool,
@@ -418,10 +420,16 @@ describe("spool reap", () => {
   });
 
   test("counts the records of an undelivered file it removes for age", async () => {
-    // Arrange: a dead session's file, untouched for longer than the age cap
+    // Arrange: a dead session's file, untouched for longer than the age cap.
+    // Age must be measured on ONE clock: append stamps the ledger with NOW but
+    // the data file's mtime with the wall clock of the run, so an unpinned
+    // fixture's age shrinks by a day every day — this one crossed under the
+    // 7-day cap on 2026-08-18 and turned red on green code. Pin the mtime onto
+    // the fixture clock and the age is 30 days on any date this test runs.
     const path = await home();
     await appendRecords(path, KEY, SESSION, [envelope(1), envelope(2)], NOW);
-    const muchLater = new Date(NOW.getTime() + 30 * 24 * 60 * 60 * 1000);
+    await utimes(spoolDataPath(path, KEY, SLUG), NOW, NOW);
+    const muchLater = new Date(NOW.getTime() + 30 * MS_PER_DAY);
 
     // Act
     const result = await reapSpool(path, KEY, muchLater);
@@ -430,6 +438,32 @@ describe("spool reap", () => {
     expect(result).toEqual({ delivered: 0, expired: 1, dropped: 2 });
     expect(await Bun.file(spoolDataPath(path, KEY, SLUG)).exists()).toBe(false);
     expect((await readDropSummary(path, KEY)).records).toBe(2);
+  });
+
+  test("holds a file at exactly the age cap, expires one a tick past it", async () => {
+    // Arrange: two dead sessions pinned to the two sides of the expiry
+    // boundary — one whose age IS the cap, one a second older. Both mtimes and
+    // the reap clock live on the fixture clock, so neither side ever drifts
+    // with the calendar the way the unpinned fixture above once did.
+    const path = await home();
+    const capMs = MAX_SPOOL_AGE_DAYS * MS_PER_DAY;
+    const atCap = new Date(NOW.getTime() - capMs);
+    const pastCap = new Date(NOW.getTime() - capMs - 1000);
+    await appendRecords(path, KEY, "session-at-cap", [envelope(1)], NOW);
+    await appendRecords(path, KEY, "session-past-cap", [envelope(2)], NOW);
+    const atCapPath = spoolDataPath(path, KEY, sessionSlug("session-at-cap"));
+    const pastCapPath = spoolDataPath(path, KEY, sessionSlug("session-past-cap"));
+    await utimes(atCapPath, atCap, atCap);
+    await utimes(pastCapPath, pastCap, pastCap);
+
+    // Act: one reap sees both files
+    const result = await reapSpool(path, KEY, NOW);
+
+    // Assert: strict ">" in the age rule keeps the file AT the cap — reap errs
+    // late, never early, because early is the direction records are lost in
+    expect(result).toEqual({ delivered: 0, expired: 1, dropped: 1 });
+    expect(await Bun.file(atCapPath).exists()).toBe(true);
+    expect(await Bun.file(pastCapPath).exists()).toBe(false);
   });
 
   test("keeps the drops ledger after the data file it belongs to is reaped", async () => {
