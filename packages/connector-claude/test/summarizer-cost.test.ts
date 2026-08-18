@@ -33,13 +33,13 @@ const env = (home: string) => ({
 const seedSession = async (
   home: string,
   repoRoot: string,
-  claudeSessionId: string,
+  hostSessionKey: string,
   overrides: Record<string, unknown> = {},
 ): Promise<void> => {
   await writeSessionState(home, {
-    claudeSessionId,
-    crosscheckSessionId: `cc_${claudeSessionId}`,
-    workContextId: `wc_cc_${claudeSessionId}`,
+    hostSessionKey,
+    crosscheckSessionId: `cc_${hostSessionKey}`,
+    workContextId: `wc_cc_${hostSessionKey}`,
     repoId: REPO_ID,
     repoRoot,
     hubUrl: HUB_URL,

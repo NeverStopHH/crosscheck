@@ -116,7 +116,7 @@ const setUpDeveloper = async (
     createdAt: startedAt,
   });
   await writeSessionState(home, {
-    claudeSessionId: `${label}-uuid`,
+    hostSessionKey: `${label}-uuid`,
     crosscheckSessionId: sessionId,
     workContextId,
     repoId: REPO_ID,

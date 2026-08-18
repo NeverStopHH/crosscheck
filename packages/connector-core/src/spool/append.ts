@@ -78,14 +78,14 @@ const refuse = async (
 export const appendRecords = async (
   home: string,
   key: string,
-  claudeSessionId: string,
+  hostSessionKey: string,
   records: readonly unknown[],
   now: Date,
 ): Promise<AppendResult> => {
   if (records.length === 0) {
     return PERSISTED_NOTHING;
   }
-  const slug = sessionSlug(claudeSessionId);
+  const slug = sessionSlug(hostSessionKey);
   const path = spoolDataPath(home, key, slug);
   if ((await sizeOf(path)) >= MAX_SPOOL_BYTES) {
     return refuse(home, key, slug, records.length, "cap", now);

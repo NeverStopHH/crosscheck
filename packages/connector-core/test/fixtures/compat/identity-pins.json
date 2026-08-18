@@ -1,0 +1,45 @@
+{
+  "frozenAt": "2026-08-18",
+  "frozenFromCommit": "57362fe (pre-Block-2, claudeSessionId era)",
+  "fixtureSessionId": "0b30fb1c-9f2a-4571-b0e0-3c405f6b7d3a",
+  "fixtureStateFileName": "0b30fb1c-9f2a-4571-b0e0-3c405f6b7d3a.json",
+  "repoKeyInputs": {
+    "hubUrl": "https://hub.example.com",
+    "repoId": "github.com/acme/api"
+  },
+  "repoKey": "582947b609da5a46",
+  "derivations": [
+    {
+      "sessionId": "0b30fb1c-9f2a-4571-b0e0-3c405f6b7d3a",
+      "sessionSlug": "0b30fb1c-9f2a-4571-b0e0-3c405f6b7d3a",
+      "sessionStatePathRelative": "sessions/0b30fb1c-9f2a-4571-b0e0-3c405f6b7d3a.json",
+      "spoolDataPathRelative": "spool/582947b609da5a46/0b30fb1c-9f2a-4571-b0e0-3c405f6b7d3a.jsonl",
+      "crosscheckSessionId": "cc_0b30fb1c-9f2a-4571-b0e0-3c405f6b7d3a",
+      "workContextId": "wc_cc_0b30fb1c-9f2a-4571-b0e0-3c405f6b7d3a"
+    },
+    {
+      "sessionId": "0B30FB1C-9F2A-4571-B0E0-3C405F6B7D3A",
+      "sessionSlug": "0B30FB1C-9F2A-4571-B0E0-3C405F6B7D3A",
+      "sessionStatePathRelative": "sessions/0B30FB1C-9F2A-4571-B0E0-3C405F6B7D3A.json",
+      "spoolDataPathRelative": "spool/582947b609da5a46/0B30FB1C-9F2A-4571-B0E0-3C405F6B7D3A.jsonl",
+      "crosscheckSessionId": "cc_0B30FB1C-9F2A-4571-B0E0-3C405F6B7D3A",
+      "workContextId": "wc_cc_0B30FB1C-9F2A-4571-B0E0-3C405F6B7D3A"
+    },
+    {
+      "sessionId": "abc.def_ghi-jkl~mno",
+      "sessionSlug": "abc.def_ghi-jkl~mno",
+      "sessionStatePathRelative": "sessions/abc.def_ghi-jkl~mno.json",
+      "spoolDataPathRelative": "spool/582947b609da5a46/abc.def_ghi-jkl~mno.jsonl",
+      "crosscheckSessionId": "cc_abc.def_ghi-jkl~mno",
+      "workContextId": "wc_cc_abc.def_ghi-jkl~mno"
+    },
+    {
+      "sessionId": "weird id/with?chars%20&stuff",
+      "sessionSlug": "weird%20id%2Fwith%3Fchars%2520%26stuff",
+      "sessionStatePathRelative": "sessions/weird%20id%2Fwith%3Fchars%2520%26stuff.json",
+      "spoolDataPathRelative": "spool/582947b609da5a46/weird%20id%2Fwith%3Fchars%2520%26stuff.jsonl",
+      "crosscheckSessionId": "cc_weird id/with?chars%20&stuff",
+      "workContextId": "wc_cc_weird id/with?chars%20&stuff"
+    }
+  ]
+}

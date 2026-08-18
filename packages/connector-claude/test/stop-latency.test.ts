@@ -111,7 +111,7 @@ const fixture = async (): Promise<Fixture> => {
   const transcript = join(dir, "transcript.jsonl");
   await writeFile(transcript, diagnosisTranscript(), "utf8");
   await writeSessionState(home, {
-    claudeSessionId: SESSION_ID,
+    hostSessionKey: SESSION_ID,
     crosscheckSessionId: `cc_${SESSION_ID}`,
     workContextId: `wc_cc_${SESSION_ID}`,
     repoId: REPO_ID,

@@ -456,7 +456,7 @@ const probeSessionState = (
   hubUrl: string,
   developerId: string,
 ): SessionState => ({
-  claudeSessionId: `corpus-${probe.id}`,
+  hostSessionKey: `corpus-${probe.id}`,
   crosscheckSessionId: `cc_corpus-${probe.id}`,
   workContextId: `wc_cc_corpus-${probe.id}`,
   repoId: CORPUS_REPO_ID,

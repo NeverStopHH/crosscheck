@@ -48,7 +48,7 @@ const main = async (): Promise<number> => {
   const hub = startSlowHub({ ingest: 0, end: 0, other: 0 });
   try {
     await writeSessionState(home, {
-      claudeSessionId: SESSION_ID,
+      hostSessionKey: SESSION_ID,
       crosscheckSessionId: `cc_${SESSION_ID}`,
       workContextId: `wc_cc_${SESSION_ID}`,
       repoId: REPO_ID,

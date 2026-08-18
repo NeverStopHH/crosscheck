@@ -121,7 +121,7 @@ const liveSession = async (
   sessionId: string,
 ): Promise<void> => {
   await writeSessionState(fixed.home, {
-    claudeSessionId: sessionId,
+    hostSessionKey: sessionId,
     crosscheckSessionId: `cc_${sessionId}`,
     workContextId: `wc_cc_${sessionId}`,
     repoId: REPO_ID,
@@ -172,13 +172,13 @@ describe("SessionStart under a backlog", () => {
 describe("SessionStart with a deferred end it cannot make", () => {
   const strandMarker = async (
     fixed: Fixture,
-    claudeSessionId: string,
+    hostSessionKey: string,
   ): Promise<void> => {
     await ensureDir(spoolDir(fixed.home, fixed.key));
     await writeFile(
-      spoolPendingEndPath(fixed.home, fixed.key, sessionSlug(claudeSessionId)),
+      spoolPendingEndPath(fixed.home, fixed.key, sessionSlug(hostSessionKey)),
       `${JSON.stringify({
-        crosscheckSessionId: `cc_${claudeSessionId}`,
+        crosscheckSessionId: `cc_${hostSessionKey}`,
         at: new Date().toISOString(),
       })}\n`,
       "utf8",

@@ -31,7 +31,7 @@ import {
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
-  claudeSessionId: "s1",
+  hostSessionKey: "s1",
   crosscheckSessionId: "cc_s1",
   workContextId: "wc_cc_s1",
   repoId: "github.com/acme/api",

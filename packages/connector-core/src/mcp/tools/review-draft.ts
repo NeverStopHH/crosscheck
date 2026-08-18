@@ -149,7 +149,7 @@ const editBodyRefusal = async (
   if (containsSecret(body)) {
     return SECRET_REFUSAL;
   }
-  const state = await readSessionState(ctx.config.home, own.claudeSessionId);
+  const state = await readSessionState(ctx.config.home, own.hostSessionKey);
   if (state !== null && isEchoOfDeliveredHint(body, state.deliveredHintHashes)) {
     return ECHO_REFUSAL_EDIT;
   }

@@ -116,7 +116,7 @@ const idlePastGrace = async (path: string): Promise<void> => {
 
 const liveSession = async (path: string, sessionId: string): Promise<void> => {
   await writeSessionState(path, {
-    claudeSessionId: sessionId,
+    hostSessionKey: sessionId,
     crosscheckSessionId: `cc_${sessionId}`,
     workContextId: `wc_cc_${sessionId}`,
     repoId: REPO_ID,

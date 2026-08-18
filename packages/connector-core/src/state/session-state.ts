@@ -13,8 +13,42 @@ import {
 } from "../config/paths.ts";
 import { withLock } from "../spool/lock.ts";
 
-export const SessionStateSchema = z.looseObject({
-  claudeSessionId: z.string().min(1),
+/**
+ * The legacy spelling of `hostSessionKey`, accepted on READ forever.
+ *
+ * Before Block 2 (DESIGN-agent-agnostic.md §1.3) every state file on disk
+ * named the host's session id `claudeSessionId`, because Claude Code was the
+ * only host. Those files keep parsing: the preprocess below folds the old key
+ * into the new one (`hostSessionKey ?? claudeSessionId`) and DROPS the legacy
+ * key, so a mid-flight write-back emits only the new spelling — a session
+ * upgraded between two hooks reads old, writes new, and never carries both.
+ * test/identity-compat.test.ts pins this against a state file frozen from the
+ * pre-change code.
+ */
+const LEGACY_SESSION_KEY = "claudeSessionId";
+
+const foldLegacySessionKey = (value: unknown): unknown => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  if (!(LEGACY_SESSION_KEY in record)) {
+    return value;
+  }
+  const { [LEGACY_SESSION_KEY]: legacy, ...rest } = record;
+  return rest["hostSessionKey"] === undefined
+    ? { ...rest, hostSessionKey: legacy }
+    : rest;
+};
+
+const SessionStateObjectSchema = z.looseObject({
+  /**
+   * The HOST's own id for this session — for Claude Code the raw `session_id`
+   * (unchanged since before the rename, so every existing spool slug, state
+   * filename and cc_<uuid> still derives byte-identically), for other
+   * connectors a prefixed key (state/host-session-key.ts).
+   */
+  hostSessionKey: z.string().min(1),
   crosscheckSessionId: z.string().min(1),
   workContextId: z.string().min(1),
   repoId: z.string().min(1),
@@ -55,29 +89,40 @@ export const SessionStateSchema = z.looseObject({
   summarizerEstimatedTokens: z.number().int().min(0).default(0),
 });
 
-export type SessionState = z.infer<typeof SessionStateSchema>;
+/**
+ * The read schema: the object schema behind a preprocess that folds the
+ * legacy key. Writers never need the fold — they pass `hostSessionKey`.
+ */
+export const SessionStateSchema = z.preprocess(
+  foldLegacySessionKey,
+  SessionStateObjectSchema,
+);
+
+export type SessionState = z.infer<typeof SessionStateObjectSchema>;
 
 /**
  * What a WRITER may pass: the defaulted fields are optional, exactly as they
  * are for a state file already on disk from before they existed. Readers
  * always see the full SessionState — readSessionState parses through the
- * schema, which fills the defaults.
+ * schema, which fills the defaults. Typed off the OBJECT schema, because
+ * `z.input` of a preprocess is `unknown` — a writer's input is always
+ * new-shape.
  */
-export type SessionStateInput = z.input<typeof SessionStateSchema>;
+export type SessionStateInput = z.input<typeof SessionStateObjectSchema>;
 
 /** Deterministic ids survive a crash: no lookup, no id table, no drift. */
-export const crosscheckSessionIdFor = (claudeSessionId: string): string =>
-  `cc_${claudeSessionId}`;
+export const crosscheckSessionIdFor = (hostSessionKey: string): string =>
+  `cc_${hostSessionKey}`;
 
 export const workContextIdFor = (crosscheckSessionId: string): string =>
   `wc_${crosscheckSessionId}`;
 
 export const readSessionState = async (
   home: string,
-  claudeSessionId: string,
+  hostSessionKey: string,
 ): Promise<SessionState | null> => {
   const parsed = SessionStateSchema.safeParse(
-    await readJsonOrNull(sessionStatePath(home, claudeSessionId)),
+    await readJsonOrNull(sessionStatePath(home, hostSessionKey)),
   );
   return parsed.success ? parsed.data : null;
 };
@@ -87,20 +132,20 @@ export const writeSessionState = async (
   state: SessionStateInput,
 ): Promise<void> => {
   await writePrivateFile(
-    sessionStatePath(home, state.claudeSessionId),
+    sessionStatePath(home, state.hostSessionKey),
     `${JSON.stringify(state, null, 2)}\n`,
   );
 };
 
 export const deleteSessionState = async (
   home: string,
-  claudeSessionId: string,
+  hostSessionKey: string,
 ): Promise<void> => {
-  await removeFile(sessionStatePath(home, claudeSessionId));
+  await removeFile(sessionStatePath(home, hostSessionKey));
 };
 
-const sessionStateLockPath = (home: string, claudeSessionId: string): string =>
-  `${sessionStatePath(home, claudeSessionId)}.lock`;
+const sessionStateLockPath = (home: string, hostSessionKey: string): string =>
+  `${sessionStatePath(home, hostSessionKey)}.lock`;
 
 /**
  * Read-transform-write under the state file's own lock — how every MID-SESSION
@@ -124,11 +169,11 @@ const sessionStateLockPath = (home: string, claudeSessionId: string): string =>
  */
 export const updateSessionState = async (
   home: string,
-  claudeSessionId: string,
+  hostSessionKey: string,
   transform: (fresh: SessionState) => SessionState | null,
 ): Promise<boolean> =>
-  withLock(sessionStateLockPath(home, claudeSessionId), false, async () => {
-    const fresh = await readSessionState(home, claudeSessionId);
+  withLock(sessionStateLockPath(home, hostSessionKey), false, async () => {
+    const fresh = await readSessionState(home, hostSessionKey);
     if (fresh === null) {
       return false;
     }
@@ -214,7 +259,7 @@ export const withTripwireAsked = (
 };
 
 export interface DeriveSessionStateInput {
-  readonly claudeSessionId: string;
+  readonly hostSessionKey: string;
   readonly repoId: string;
   readonly repoRoot: string;
   readonly hubUrl: string;
@@ -230,9 +275,9 @@ export interface DeriveSessionStateInput {
 export const deriveSessionState = (
   input: DeriveSessionStateInput,
 ): SessionState => {
-  const crosscheckSessionId = crosscheckSessionIdFor(input.claudeSessionId);
+  const crosscheckSessionId = crosscheckSessionIdFor(input.hostSessionKey);
   return {
-    claudeSessionId: input.claudeSessionId,
+    hostSessionKey: input.hostSessionKey,
     crosscheckSessionId,
     workContextId: workContextIdFor(crosscheckSessionId),
     repoId: input.repoId,

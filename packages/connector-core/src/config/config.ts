@@ -90,6 +90,13 @@ export interface LoadConfigOptions {
   readonly env: Env;
   /** Repo root, so the committed .crosscheck.json can supply the hub URL. */
   readonly repoRoot?: string | undefined;
+  /**
+   * The calling CONNECTOR's declared kind (DESIGN-agent-agnostic.md §1.3) —
+   * e.g. `acp:gemini-cli`, `cursor-ide`. Omitted by the Claude connector, so
+   * the default stays DEFAULT_AGENT_KIND (claude-code) exactly as before.
+   * The CROSSCHECK_AGENT_KIND env override outranks it either way.
+   */
+  readonly defaultAgentKind?: string | undefined;
 }
 
 /**
@@ -124,7 +131,10 @@ export const loadConfig = async (
     developerName: stored?.developerName ?? null,
     denylist: stored?.denylist ?? null,
     timeoutMs: resolveTimeoutMs(env, stored),
-    agentKind: env["CROSSCHECK_AGENT_KIND"] ?? DEFAULT_AGENT_KIND,
+    agentKind:
+      env["CROSSCHECK_AGENT_KIND"] ??
+      options.defaultAgentKind ??
+      DEFAULT_AGENT_KIND,
     stored,
   };
 };

@@ -160,7 +160,7 @@ const setUpDeveloper = async (
     }),
   });
   await writeSessionState(home, {
-    claudeSessionId: `${label}-uuid`,
+    hostSessionKey: `${label}-uuid`,
     crosscheckSessionId: sessionId,
     workContextId,
     repoId,

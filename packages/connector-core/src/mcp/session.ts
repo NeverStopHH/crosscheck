@@ -33,7 +33,7 @@ import type { SessionState } from "../state/session-state.ts";
 import type { RepoIdentity } from "../git/repo-identity.ts";
 
 export interface OwnWorkContext {
-  readonly claudeSessionId: string;
+  readonly hostSessionKey: string;
   readonly crosscheckSessionId: string;
   readonly workContextId: string;
   /**
@@ -108,7 +108,7 @@ export const resolveOwnWorkContext = async (
     return null;
   }
   return {
-    claudeSessionId: chosen.claudeSessionId,
+    hostSessionKey: chosen.hostSessionKey,
     crosscheckSessionId: chosen.crosscheckSessionId,
     workContextId: chosen.workContextId,
     developerId: chosen.developerId,

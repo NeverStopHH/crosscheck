@@ -202,7 +202,7 @@ export const handleSessionStart = async (
   // writer left by finding no session state file for it, and that inference is
   // only sound while state is published before any record is written.
   await writeSessionState(ctx.config.home, {
-    claudeSessionId: ctx.payload.session_id,
+    hostSessionKey: ctx.payload.session_id,
     crosscheckSessionId,
     workContextId,
     repoId: ctx.identity.repoId,

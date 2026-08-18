@@ -356,7 +356,7 @@ const seedBacklog = async (
 
 const liveSession = async (fixed: Fixture, sessionId: string): Promise<void> => {
   await writeSessionState(fixed.home, {
-    claudeSessionId: sessionId,
+    hostSessionKey: sessionId,
     crosscheckSessionId: `cc_${sessionId}`,
     workContextId: `wc_cc_${sessionId}`,
     repoId: REPO_ID,

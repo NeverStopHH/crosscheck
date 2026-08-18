@@ -52,7 +52,7 @@ const sessionState = (
   fixture: { repo: string; hubUrl: string },
   overrides: Partial<SessionState> = {},
 ): SessionState => ({
-  claudeSessionId: SESSION_ID,
+  hostSessionKey: SESSION_ID,
   crosscheckSessionId: `cc_${SESSION_ID}`,
   workContextId: `wc_cc_${SESSION_ID}`,
   repoId: REPO_ID,

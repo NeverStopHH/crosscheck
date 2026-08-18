@@ -134,7 +134,7 @@ const setUpDeveloper = async (
     }),
   });
   await writeSessionState(home, {
-    claudeSessionId: `${label}-uuid`,
+    hostSessionKey: `${label}-uuid`,
     crosscheckSessionId: sessionId,
     workContextId,
     repoId: REPO_ID,
@@ -694,7 +694,7 @@ describe("a hub that is not answering", () => {
     const deadHub = `http://127.0.0.1:${String(DEAD_PORT)}`;
     const startedAt = new Date().toISOString();
     await writeSessionState(alice.home, {
-      claudeSessionId: "dead-uuid",
+      hostSessionKey: "dead-uuid",
       crosscheckSessionId: "cc_dead-uuid",
       workContextId: "wc_cc_dead-uuid",
       repoId: REPO_ID,
@@ -908,7 +908,7 @@ describe("search_related_work runs on the hub's search block", () => {
       });
       cleanups.push(home, repo);
       await writeSessionState(home, {
-        claudeSessionId: "eve-uuid",
+        hostSessionKey: "eve-uuid",
         crosscheckSessionId: sessionId,
         workContextId,
         repoId: REPO_ID,

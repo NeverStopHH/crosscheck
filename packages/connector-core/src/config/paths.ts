@@ -61,16 +61,16 @@ export const configPath = (home: string): string => join(home, "config.json");
  * inert: it ages out through MAX_SPOOL_AGE_DAYS counted as `expired`, which is
  * real record loss. Reading both names through a transition is the cheap way.
  */
-export const sessionSlug = (claudeSessionId: string): string =>
-  encodeURIComponent(claudeSessionId);
+export const sessionSlug = (hostSessionKey: string): string =>
+  encodeURIComponent(hostSessionKey);
 
 export const sessionStatePathForSlug = (home: string, slug: string): string =>
   join(home, "sessions", `${slug}.json`);
 
 export const sessionStatePath = (
   home: string,
-  claudeSessionId: string,
-): string => sessionStatePathForSlug(home, sessionSlug(claudeSessionId));
+  hostSessionKey: string,
+): string => sessionStatePathForSlug(home, sessionSlug(hostSessionKey));
 
 /** One directory per repo, one data file per session inside it. */
 export const spoolDir = (home: string, key: string): string =>

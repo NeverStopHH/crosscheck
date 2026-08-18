@@ -38,7 +38,7 @@ const fixture = async (label: string): Promise<McpContext> => {
   const hub = startHintHub();
   hubs.push(hub);
   await writeSessionState(home, {
-    claudeSessionId: SESSION_ID,
+    hostSessionKey: SESSION_ID,
     crosscheckSessionId: `cc_${SESSION_ID}`,
     workContextId: `wc_cc_${SESSION_ID}`,
     repoId: REPO_ID,

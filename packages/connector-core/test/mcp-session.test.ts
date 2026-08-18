@@ -57,13 +57,13 @@ interface SeedOptions {
 
 const seed = async (
   home: string,
-  claudeSessionId: string,
+  hostSessionKey: string,
   options: SeedOptions,
 ): Promise<void> => {
   await writeSessionState(home, {
-    claudeSessionId,
-    crosscheckSessionId: `cc_${claudeSessionId}`,
-    workContextId: `wc_cc_${claudeSessionId}`,
+    hostSessionKey,
+    crosscheckSessionId: `cc_${hostSessionKey}`,
+    workContextId: `wc_cc_${hostSessionKey}`,
     repoId: options.repoId ?? REPO_ID,
     repoRoot: options.repoRoot ?? ROOT,
     hubUrl: options.hubUrl ?? HUB,
@@ -97,7 +97,7 @@ describe("resolveOwnWorkContext", () => {
     // Assert
     expect(own?.crosscheckSessionId).toBe("cc_a-uuid");
     expect(own?.workContextId).toBe("wc_cc_a-uuid");
-    expect(own?.claudeSessionId).toBe("a-uuid");
+    expect(own?.hostSessionKey).toBe("a-uuid");
   });
 
   test("carries the developer id the hub will check the producer against", async () => {

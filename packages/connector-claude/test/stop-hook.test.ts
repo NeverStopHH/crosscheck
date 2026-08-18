@@ -115,7 +115,7 @@ const fixture = async (
   await writeFile(transcript, options.transcriptContent ?? diagnosisTranscript(), "utf8");
   const hubUrl = options.hubUrl ?? DEAD_HUB_URL;
   await writeSessionState(home, {
-    claudeSessionId: SESSION_ID,
+    hostSessionKey: SESSION_ID,
     crosscheckSessionId: `cc_${SESSION_ID}`,
     workContextId: `wc_cc_${SESSION_ID}`,
     repoId: REPO_ID,
@@ -416,7 +416,7 @@ describe("echo-loop exclusion, end to end (DESIGN.md §3, judge-mandated)", () =
     // turn quoting the hint, with the faked summarizer echoing its body
     const nextSessionId = "stop-session-uuid-next";
     await writeSessionState(fix.home, {
-      claudeSessionId: nextSessionId,
+      hostSessionKey: nextSessionId,
       crosscheckSessionId: `cc_${nextSessionId}`,
       workContextId: `wc_cc_${nextSessionId}`,
       repoId: REPO_ID,

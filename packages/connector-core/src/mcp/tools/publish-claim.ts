@@ -130,7 +130,7 @@ const isDeliveredHintEcho = async (
   own: OwnWorkContext,
   body: string,
 ): Promise<boolean> => {
-  const state = await readSessionState(ctx.config.home, own.claudeSessionId);
+  const state = await readSessionState(ctx.config.home, own.hostSessionKey);
   return (
     state !== null && isEchoOfDeliveredHint(body, state.deliveredHintHashes)
   );

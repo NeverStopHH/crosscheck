@@ -40,7 +40,7 @@ const pad = "x".repeat(Number.parseInt(padRaw, 10));
 const now = new Date();
 
 await writeSessionState(home, {
-  claudeSessionId: sessionId,
+  hostSessionKey: sessionId,
   crosscheckSessionId: `cc_${sessionId}`,
   workContextId: `wc_cc_${sessionId}`,
   repoId: "github.com/acme/api",

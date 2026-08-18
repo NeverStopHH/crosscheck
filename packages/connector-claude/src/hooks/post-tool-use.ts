@@ -122,7 +122,7 @@ const shouldHeartbeat = (state: SessionState, now: Date): boolean => {
  */
 const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
   const derived = deriveSessionState({
-    claudeSessionId: ctx.payload.session_id,
+    hostSessionKey: ctx.payload.session_id,
     repoId: ctx.identity.repoId,
     repoRoot: ctx.identity.root,
     hubUrl: ctx.config.hubUrl,

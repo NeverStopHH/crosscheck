@@ -13,7 +13,7 @@ import { withBriefingSolvedRefs } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 
 const baseState = (): SessionState => ({
-  claudeSessionId: "s1",
+  hostSessionKey: "s1",
   crosscheckSessionId: "cc_s1",
   workContextId: "wc_cc_s1",
   repoId: "github.com/acme/api",

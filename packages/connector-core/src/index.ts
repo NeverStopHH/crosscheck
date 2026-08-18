@@ -58,4 +58,15 @@ export { loadConfig, normalizeHubUrl, saveConfig } from "./config/config.ts";
 export type { Config, ResolvedConfig } from "./config/config.ts";
 export { readSyncState } from "./state/sync-state.ts";
 export { readSessionState } from "./state/session-state.ts";
+export {
+  ACP_AGENT_KIND_FALLBACK,
+  ACP_AGENT_KIND_PREFIX,
+  ACP_HOST_KEY_PREFIX,
+  CURSOR_AGENT_KIND,
+  CURSOR_HOST_KEY_PREFIX,
+  acpAgentKind,
+  acpHostSessionKey,
+  agentSlug,
+  cursorHostSessionKey,
+} from "./state/host-session-key.ts";
 export * from "./constants.ts";

@@ -179,7 +179,7 @@ beforeAll(async () => {
   };
   const startedAt = new Date().toISOString();
   await writeSessionState(home, {
-    claudeSessionId: "hostile-uuid",
+    hostSessionKey: "hostile-uuid",
     crosscheckSessionId: SESSION_ID,
     workContextId: WORK_CONTEXT_ID,
     repoId: REPO_ID,

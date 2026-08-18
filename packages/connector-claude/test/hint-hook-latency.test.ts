@@ -60,7 +60,7 @@ const fixture = async (
   const hub = startHintHub({ candidates: candidateLatencyMs, tripwire: 0 });
   hubs.push(hub);
   await writeSessionState(home, {
-    claudeSessionId: SESSION_ID,
+    hostSessionKey: SESSION_ID,
     crosscheckSessionId: `cc_${SESSION_ID}`,
     workContextId: `wc_cc_${SESSION_ID}`,
     repoId: REPO_ID,
