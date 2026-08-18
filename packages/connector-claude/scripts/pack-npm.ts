@@ -68,7 +68,7 @@ const resolvePublishVersion = (manifests: readonly Manifest[]): string => {
 };
 
 /**
- * Union of the three packages' RUNTIME deps, minus the internal ones the
+ * Union of the four packages' RUNTIME deps, minus the internal ones the
  * rewrite absorbs. A range conflict is a packing error, not a coin toss.
  */
 const mergeDependencies = (

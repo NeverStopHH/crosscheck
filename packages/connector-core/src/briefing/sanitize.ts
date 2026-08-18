@@ -41,7 +41,7 @@ const SEPARATOR_PATTERN = new RegExp(
  * say what the rendered string said. Re-run that specific bypass, and the same
  * one through U+2060, U+034F and the Mongolian selectors, with:
  *
- *   bun test packages/connector-claude/test/injection-corpus.test.ts
+ *   bun test packages/connector-core/test/injection-corpus.test.ts
  *
  * HOW WIDE THIS IS, MEASURED RATHER THAN ASSERTED. Unicode's own name for
  * "renders as nothing" is the Default_Ignorable_Code_Point property, 4174 code

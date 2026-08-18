@@ -86,7 +86,7 @@
  *    which of appendSection's three cap comparisons can be pinned at all — one
  *    of them provably cannot. Re-derive the 550 with:
  *
- *      bun test packages/connector-claude/test/injection-corpus.test.ts
+ *      bun test packages/connector-core/test/injection-corpus.test.ts
  *
  *    whose `the corpus alone cannot reach MAX_BRIEFING_CHARS` test asserts it.
  *
