@@ -396,7 +396,7 @@ describe("crosscheck doctor hook launcher check", () => {
   };
 
   test("fails when hooks call a bare crosscheck that is not on PATH", async () => {
-    // Arrange: exactly what `npx crosscheck init` used to leave behind
+    // Arrange: exactly what `npx crosscheck-hub init` used to leave behind
     const { repo, home } = await fixture();
     await runCli(
       ["init", "--command-prefix", "crosscheck"],
@@ -410,6 +410,8 @@ describe("crosscheck doctor hook launcher check", () => {
     // Assert
     expect(result.stdout).toContain("FAIL  hook launcher");
     expect(result.stdout).toContain("nothing by that name is on PATH");
+    // The remedy names the npm PACKAGE (crosscheck-hub), not the bin.
+    expect(result.stdout).toContain("npm install -g crosscheck-hub");
     expect(result.exitCode).toBe(2);
   });
 

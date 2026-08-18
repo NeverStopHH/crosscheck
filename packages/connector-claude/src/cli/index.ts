@@ -38,7 +38,7 @@ export const runCli = async (
   const [command, ...rest] = argv;
   switch (command) {
     // Exit 0, unlike an unknown command: asking for help is not an error,
-    // and `npx crosscheck --help` is the first thing a stranger runs.
+    // and `npx crosscheck-hub --help` is the first thing a stranger runs.
     case "--help":
     case "-h":
     case "help":

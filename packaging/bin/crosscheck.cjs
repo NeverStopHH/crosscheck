@@ -5,7 +5,7 @@
  * run, because npx invokes bins with Node and the real CLI is TypeScript that
  * only Bun executes. Three paths, in order:
  *
- *   1. Already under Bun (`bunx --bun crosscheck`, or bun ran this file):
+ *   1. Already under Bun (`bunx --bun crosscheck-hub`, or bun ran this file):
  *      import the TS entry in-process — no second process, no PATH probing.
  *   2. Under Node with bun findable (PATH, then ~/.bun/bin — the default
  *      install location, which login-shell-less environments omit from PATH):

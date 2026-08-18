@@ -31,7 +31,7 @@ Hub-and-spoke. No peer-to-peer agent messaging (wrong topology per protocol rese
       HTTPS + SSE (Last-Event-Id cursor)         HTTPS + SSE
            └───────────────┬──────────────────────────┘
                  ┌─────────▼──────────────────────┐
-                 │ `npx crosscheck serve`         │
+                 │ `npx crosscheck-hub serve`     │
                  │ Hono API · SSE · outbox events │
                  │ PGlite+pgvector │ or Postgres  │
                  │ presence · claims · hybrid RRF │
@@ -40,7 +40,7 @@ Hub-and-spoke. No peer-to-peer agent messaging (wrong topology per protocol rese
 
 Key shell decisions (adoption-first pass, confirmed by both judges):
 
-- **Server**: single process, `npx crosscheck serve`, with **PGlite + pgvector embedded** — no Docker, no DB install. `DATABASE_URL` flips the same Drizzle code to real Postgres for larger teams. One Postgres dialect, two runtimes. *Open validation item: PGlite is single-connection WASM — load-test concurrent ingest + SSE + vector search before v0 ships; if it can't hold the hook latency budget, docker-compose Postgres becomes the default and PGlite the solo-trial mode.*
+- **Server**: single process, `npx crosscheck-hub serve`, with **PGlite + pgvector embedded** — no Docker, no DB install. `DATABASE_URL` flips the same Drizzle code to real Postgres for larger teams. One Postgres dialect, two runtimes. *Open validation item: PGlite is single-connection WASM — load-test concurrent ingest + SSE + vector search before v0 ships; if it can't hold the hook latency budget, docker-compose Postgres becomes the default and PGlite the solo-trial mode.*
 - **No local daemon.** The connector is hook scripts + an MCP server — short-lived processes only. Offline writes spool to `~/.crosscheck/` and flush on the next hook invocation.
 - **Realtime**: SSE with `Last-Event-Id` cursor over an **events outbox table** (durable replay; NOTIFY/in-process emitter is only a latency optimization). No Redis, no WebSockets, no queues.
 - **Auth**: per-developer API keys (provenance is a core feature; shared team tokens destroy attribution and revocability). TLS via reverse proxy or Tailscale — documented, not built.
@@ -52,7 +52,7 @@ Key shell decisions (adoption-first pass, confirmed by both judges):
 Who can talk to whom is decided by infrastructure, not by a toggle someone can misconfigure:
 
 - **Agents never talk to each other directly.** Everything flows through a hub. There is no global agent network and deliberately no "talk to anyone" mode — that would be the trust disaster this section exists to prevent.
-- **One hub = one trust space.** A hub is started per project or group (`npx crosscheck serve` on any teammate's machine + Tailscale, or a small VPS). Company affiliation is irrelevant: a "team" is exactly the set of people holding keys to a hub. A developer can be in any number of hubs (work team, side project with a friend) — those spaces are separate infrastructure and know nothing of each other.
+- **One hub = one trust space.** A hub is started per project or group (`npx crosscheck-hub serve` on any teammate's machine + Tailscale, or a small VPS). Company affiliation is irrelevant: a "team" is exactly the set of people holding keys to a hub. A developer can be in any number of hubs (work team, side project with a friend) — those spaces are separate infrastructure and know nothing of each other.
 - **The repo decides where a session reports.** The connector is enabled per repository: `crosscheck init` writes the hub URL into the repo's committed config. A session in the work monorepo talks to the work hub, a session in the side-project repo talks to the side-project hub, a session in any unconnected directory talks to nobody. Nothing runs 24/7 on the developer's machine — hooks only execute while a session is active; only the hub is long-running.
 - **People join by invitation only.** Per-developer API keys (`crosscheck invite` on the hub, one-time `crosscheck login <hub-url> <key>` per developer), individually revocable.
 - **Within a hub, sharing has defaults and gates:** only structured claims, file paths, and hashed error fingerprints by default — never raw transcripts or full diffs; artifacts default to `needs_approval` (owner-only until released); per-developer presence opt-out and `mute`; local secret-scan before every upload. v0 exposes these controls via CLI, v0.5 adds the web UI (feed, member list, click-to-approve). Work contexts, claims, and claim edges are team-visible to every authenticated hub member by design — cross-developer read inside a hub is the product (see the extend_diagnosis flow); only artifacts carry per-item sensitivity gates.
