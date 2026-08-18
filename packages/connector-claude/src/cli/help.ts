@@ -23,23 +23,29 @@ export interface HelpSpec {
 
 /**
  * Returns the intercepted result, or null when the command should run.
- * Help wins over an unknown flag (`init --hepl --help` prints usage, exit 0):
- * the human is asking what the command takes, which is exactly the answer.
+ *
+ * Help is EAGER: a --help/-h ANYWHERE in argv wins, checked before the
+ * value-flag skip below. `init --command-prefix --help` must print usage, not
+ * consume `--help` as the prefix VALUE and run a full init writing a launcher
+ * literally named `--help` — the F4 incident (init running on --help) moved
+ * one token right. Help winning over an unknown flag (`init --hepl --help`
+ * prints usage, exit 0) falls out of the same rule: the human is asking what
+ * the command takes, which is exactly the answer.
  */
 export const interceptHelpOrUnknownFlag = (
   command: string,
   args: readonly string[],
   spec: HelpSpec,
 ): CliResult | null => {
+  if (args.some((token) => HELP_FLAGS.has(token))) {
+    return { stdout: spec.usage, exitCode: EXIT_OK };
+  }
   const valueFlags = new Set(spec.valueFlags ?? []);
   const booleanFlags = new Set(spec.booleanFlags ?? []);
   let index = 0;
   let firstUnknown: string | null = null;
   while (index < args.length) {
     const token = args[index] ?? "";
-    if (HELP_FLAGS.has(token)) {
-      return { stdout: spec.usage, exitCode: EXIT_OK };
-    }
     if (valueFlags.has(token)) {
       index += 2;
       continue;

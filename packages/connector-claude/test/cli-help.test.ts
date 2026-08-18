@@ -168,6 +168,73 @@ describe("unknown flags error with usage instead of being ignored", () => {
   });
 });
 
+/**
+ * Help is EAGER — a --help anywhere in argv wins, even after a value-flag.
+ *
+ * The gap (found reviewing F4 as the Asia teammate): the value-flag skip ran
+ * BEFORE the help check, so `init --command-prefix --help` consumed `--help`
+ * as the prefix VALUE and ran a full init — writing hooks whose launcher is
+ * literally `--help hook session-start` (every hook then dies silently) and an
+ * mcp entry `sh -c "--help mcp"`. That is the exact incident F4 fixed, moved
+ * one token to the right: a human typing --help got init instead of usage, and
+ * a BROKEN install committed into the repo.
+ */
+describe("help is eager: a value flag must not swallow --help", () => {
+  test("init --command-prefix --help prints usage and writes nothing", async () => {
+    // Arrange: --command-prefix is a value flag; --help is its "value"
+    const { repo, env, stop } = await fixture("eager-prefix");
+
+    // Act
+    const result = await runCli(["init", "--command-prefix", "--help"], env, repo);
+    stop();
+
+    // Assert: help won, and not one init artifact exists
+    expect(result.exitCode).toBe(EXIT_OK);
+    expect(result.stdout).toContain("usage:");
+    expect(result.stdout).not.toContain("wrote");
+    for (const artifact of initArtifacts(repo)) {
+      expect(await Bun.file(artifact).exists(), artifact).toBe(false);
+    }
+  });
+
+  test("init --command-prefix -h is help too, not a prefix named -h", async () => {
+    // Arrange
+    const { repo, env, stop } = await fixture("eager-prefix-h");
+
+    // Act
+    const result = await runCli(["init", "--command-prefix", "-h"], env, repo);
+    stop();
+
+    // Assert
+    expect(result.exitCode).toBe(EXIT_OK);
+    expect(result.stdout).toContain("usage:");
+    for (const artifact of initArtifacts(repo)) {
+      expect(await Bun.file(artifact).exists(), artifact).toBe(false);
+    }
+  });
+
+  test("a real prefix value is still consumed, help still eager after it", async () => {
+    // Arrange: --command-prefix takes 'mytool', THEN --help — usage wins and
+    // the real value is not mistaken for the flag.
+    const { repo, env, stop } = await fixture("eager-prefix-real");
+
+    // Act
+    const result = await runCli(
+      ["init", "--command-prefix", "mytool", "--help"],
+      env,
+      repo,
+    );
+    stop();
+
+    // Assert
+    expect(result.exitCode).toBe(EXIT_OK);
+    expect(result.stdout).toContain("usage:");
+    for (const artifact of initArtifacts(repo)) {
+      expect(await Bun.file(artifact).exists(), artifact).toBe(false);
+    }
+  });
+});
+
 describe("crosscheck serve answers --help without booting the hub", () => {
   const BIN_PATH = join(import.meta.dir, "..", "src", "bin", "crosscheck.ts");
 
