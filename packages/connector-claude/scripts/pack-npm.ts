@@ -30,7 +30,12 @@ import { join, resolve } from "node:path";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const STAGING = join(REPO_ROOT, "dist", "npm");
-const WORKSPACE_PACKAGES = ["schema", "server", "connector-claude"] as const;
+const WORKSPACE_PACKAGES = [
+  "schema",
+  "server",
+  "connector-core",
+  "connector-claude",
+] as const;
 
 /**
  * The PUBLISHED name — the one thing npm's similarity rule forced away from
@@ -108,8 +113,11 @@ const isRewritableSource = (name: string): boolean => /\.(ts|tsx)$/.test(name);
  * A subpath import (`@crosscheck/schema/foo`) would survive the flat rewrite
  * as `crosscheck-hub/schema/foo`, which the exports map does not expose — a
  * failure only a USER's runtime would report. Refuse at pack time instead.
+ * `@crosscheck/connector-core/...` subpaths are the one sanctioned exception:
+ * the published exports map carries a `./connector-core/*` wildcard for them,
+ * mirroring the workspace package's own `./*` export.
  */
-const SUBPATH_SPECIFIER_PATTERN = /["']@crosscheck\/[a-z-]+\//;
+const SUBPATH_SPECIFIER_PATTERN = /["']@crosscheck\/(?!connector-core\/)[a-z-]+\//;
 
 const assertNoSubpathSpecifiers = async (dir: string): Promise<void> => {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -216,6 +224,8 @@ const buildManifest = (
     ".": "./packages/connector-claude/src/index.ts",
     "./schema": "./packages/schema/src/index.ts",
     "./server": "./packages/server/src/index.ts",
+    "./connector-core": "./packages/connector-core/src/index.ts",
+    "./connector-core/*": "./packages/connector-core/src/*",
   },
   dependencies,
   files: ["bin", "packages"],

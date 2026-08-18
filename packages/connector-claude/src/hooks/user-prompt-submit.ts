@@ -19,24 +19,24 @@ import {
   HINT_MIN_TOKEN_CHARS,
   MAX_HINTS_PER_SESSION,
   MAX_SEARCH_QUERY_CHARS,
-} from "../constants.ts";
-import { hintDeliveryRecord, UNKNOWN_DEVELOPER_ID } from "../capture/records.ts";
-import type { HintRefKind, Producer } from "../capture/records.ts";
-import { resolveCommitDrift } from "../git/commit-drift.ts";
-import type { CommitDrift } from "../git/commit-drift.ts";
-import { getHintCandidates } from "../http/hub.ts";
-import { recordDeliveredHintHash } from "../hints/delivered-store.ts";
-import { hintBodyHash } from "../hints/echo.ts";
-import { renderClaimHint, renderPointerHint } from "../hints/render.ts";
-import { selectHint } from "../hints/select.ts";
-import type { HintSelection } from "../hints/select.ts";
-import { appendRecords } from "../spool/append.ts";
+} from "@crosscheck/connector-core/constants.ts";
+import { hintDeliveryRecord, UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
+import type { HintRefKind, Producer } from "@crosscheck/connector-core/capture/records.ts";
+import { resolveCommitDrift } from "@crosscheck/connector-core/git/commit-drift.ts";
+import type { CommitDrift } from "@crosscheck/connector-core/git/commit-drift.ts";
+import { getHintCandidates } from "@crosscheck/connector-core/http/hub.ts";
+import { recordDeliveredHintHash } from "@crosscheck/connector-core/hints/delivered-store.ts";
+import { hintBodyHash } from "@crosscheck/connector-core/hints/echo.ts";
+import { renderClaimHint, renderPointerHint } from "@crosscheck/connector-core/hints/render.ts";
+import { selectHint } from "@crosscheck/connector-core/hints/select.ts";
+import type { HintSelection } from "@crosscheck/connector-core/hints/select.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import {
   readSessionState,
   updateSessionState,
   withDeliveredHint,
-} from "../state/session-state.ts";
-import type { SessionState } from "../state/session-state.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { HookContext } from "./runner.ts";
 
 /** The same meaning floor the hub applies — zero HTTP for an empty question. */

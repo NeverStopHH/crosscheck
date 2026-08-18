@@ -23,7 +23,7 @@ import type { Db } from "@crosscheck/server";
 
 import { runHook } from "../../src/index.ts";
 import type { Env } from "../../src/index.ts";
-import { makeHome, makeRepo } from "../helpers.ts";
+import { makeHome, makeRepo } from "../../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "e2e-mcp-admin-token";
 /** Wide enough that a cold PGlite query never trips the hook's fail-open budget. */

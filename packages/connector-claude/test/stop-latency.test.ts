@@ -20,8 +20,8 @@ import type { Env } from "../src/index.ts";
 import {
   readSessionState,
   writeSessionState,
-} from "../src/state/session-state.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "stop-latency-session-uuid";

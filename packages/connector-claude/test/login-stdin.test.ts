@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { LOGIN_STDIN_TIMEOUT_MS } from "../src/constants.ts";
+import { LOGIN_STDIN_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
 import { stdinSecretReader } from "../src/cli/login.ts";
 
 /**

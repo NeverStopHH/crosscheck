@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { runCli } from "../src/index.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const MS_PER_DAY = 86_400_000;
 

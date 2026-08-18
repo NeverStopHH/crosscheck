@@ -15,15 +15,15 @@
  * TTL the presence endpoint applies. One bounded hub call, one ask per file
  * per session (state file), fail-open everywhere.
  */
-import { isDenied, resolveDenylist } from "../capture/denylist.ts";
+import { isDenied, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { extractFilePaths, isEditTool } from "../capture/tool-events.ts";
-import { getTripwireSessions } from "../http/hub.ts";
-import { renderTripwireReason } from "../hints/render.ts";
+import { getTripwireSessions } from "@crosscheck/connector-core/http/hub.ts";
+import { renderTripwireReason } from "@crosscheck/connector-core/hints/render.ts";
 import {
   readSessionState,
   updateSessionState,
   withTripwireAsked,
-} from "../state/session-state.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { toRepoRelative } from "./post-tool-use.ts";
 import type { HookContext } from "./runner.ts";
 

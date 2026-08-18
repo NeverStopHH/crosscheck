@@ -2,31 +2,31 @@ import {
   MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
   MAX_WORK_CONTEXT_TITLE_CHARS,
-} from "../constants.ts";
-import { rememberDeveloper } from "../config/config.ts";
-import { sanitizeUntrusted } from "../briefing/sanitize.ts";
+} from "@crosscheck/connector-core/constants.ts";
+import { rememberDeveloper } from "@crosscheck/connector-core/config/config.ts";
+import { sanitizeUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import {
   formatSolvedLine,
   groupTeammates,
   renderBriefing,
-} from "../briefing/render.ts";
-import { resolveDriftByBaseCommit } from "../git/commit-drift.ts";
-import { resolveDefaultBranchRef } from "../git/default-branch.ts";
+} from "@crosscheck/connector-core/briefing/render.ts";
+import { resolveDriftByBaseCommit } from "@crosscheck/connector-core/git/commit-drift.ts";
+import { resolveDefaultBranchRef } from "@crosscheck/connector-core/git/default-branch.ts";
 import {
   collectCommitEvidence,
   commitEvidenceRecord,
-} from "../capture/commit-evidence.ts";
+} from "@crosscheck/connector-core/capture/commit-evidence.ts";
 import {
   collectLandedCommits,
   landedEvidenceRecord,
-} from "../capture/landed.ts";
+} from "@crosscheck/connector-core/capture/landed.ts";
 import {
   hintDeliveryRecord,
   UNKNOWN_DEVELOPER_ID,
   workContextRecord,
-} from "../capture/records.ts";
-import type { Producer } from "../capture/records.ts";
-import { containsSecret } from "../capture/secret-scan.ts";
+} from "@crosscheck/connector-core/capture/records.ts";
+import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
+import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
 import {
   endSession,
   getAbsences,
@@ -36,20 +36,20 @@ import {
   getSolvedMatches,
   getWorkContexts,
   registerSession,
-} from "../http/hub.ts";
-import type { PresenceEntry, SolvedMatchEntry, WorkContextEntry } from "../http/hub.ts";
-import { appendRecords } from "../spool/append.ts";
-import { flushSpool } from "../spool/flush.ts";
-import { reapSpool } from "../spool/reap.ts";
-import type { DeferredEnder } from "../spool/reap.ts";
+} from "@crosscheck/connector-core/http/hub.ts";
+import type { PresenceEntry, SolvedMatchEntry, WorkContextEntry } from "@crosscheck/connector-core/http/hub.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
+import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
+import { reapSpool } from "@crosscheck/connector-core/spool/reap.ts";
+import type { DeferredEnder } from "@crosscheck/connector-core/spool/reap.ts";
 import {
   crosscheckSessionIdFor,
   updateSessionState,
   withBriefingSolvedRefs,
   workContextIdFor,
   writeSessionState,
-} from "../state/session-state.ts";
-import { writePresenceCache } from "../state/presence-cache.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
+import { writePresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const INITIAL_STATUS = "analyzing";

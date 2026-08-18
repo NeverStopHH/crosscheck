@@ -54,7 +54,7 @@ const SEPARATOR_PATTERN = new RegExp(
  * this sweep's universe at all. Reproduce the whole sweep, including that count
  * and the survivor list, with:
  *
- *   bun run packages/connector-claude/scripts/default-ignorable-sweep.ts
+ *   bun run packages/connector-core/scripts/default-ignorable-sweep.ts
  *
  * HISTORICAL, and not re-derivable from this tree: before the round that
  * widened the pattern, the figure was 3748 rather than 6. The pattern that
@@ -91,10 +91,10 @@ const SEPARATOR_PATTERN = new RegExp(
  *   and the sweep's listing is 6 lines, none of them in plane 14 — the half of
  *   the paragraph above that a reader would otherwise have to take on trust:
  *
- * VERIFY: bun run packages/connector-claude/scripts/default-ignorable-sweep.ts --verbose | grep -cE '^(survives|spaced|transformed)'
+ * VERIFY: bun run packages/connector-core/scripts/default-ignorable-sweep.ts --verbose | grep -cE '^(survives|spaced|transformed)'
  * PRINTS: 6
  *
- * VERIFY: bun run packages/connector-claude/scripts/default-ignorable-sweep.ts --verbose | grep -c 'U+E0'
+ * VERIFY: bun run packages/connector-core/scripts/default-ignorable-sweep.ts --verbose | grep -c 'U+E0'
  * PRINTS: 0
  *
  * COVERED
@@ -122,7 +122,7 @@ const SEPARATOR_PATTERN = new RegExp(
  *                     `tag-characters-unassigned` corpus payload is built from
  *                     them so that deleting the range turns the corpus red. That
  *                     is re-proved on every pull request by:
- *                       bun run packages/connector-claude/scripts/mutation-check.ts
+ *                       bun run packages/connector-core/scripts/mutation-check.ts
  *   U+E0080-U+E00FF   the rest of plane 14. Every code point in U+E0000-U+E0FFF
  *   U+E01F0-U+E0FFF   is Default_Ignorable and none is assigned outside Cf/Mn —
  *                     the FIRST command above prints `0 0` for exactly those two

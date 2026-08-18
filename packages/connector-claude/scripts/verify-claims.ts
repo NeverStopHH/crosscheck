@@ -80,10 +80,10 @@
  * one. Plant a wrong expected value, run it, put the value back:
  *
  *   perl -0pi -e 's/^ \* PRINTS: 3738$/ * PRINTS: 3839/m' \
- *     packages/connector-claude/src/briefing/sanitize.ts
+ *     packages/connector-core/src/briefing/sanitize.ts
  *   bun run packages/connector-claude/scripts/verify-claims.ts   # exits 1
  *   perl -0pi -e 's/^ \* PRINTS: 3739$/ * PRINTS: 3838/m' \
- *     packages/connector-claude/src/briefing/sanitize.ts
+ *     packages/connector-core/src/briefing/sanitize.ts
  *
  * Run here this round, that printed `FAIL packages/.../sanitize.ts:88`, the
  * command, `expected | 3739`, `actual | 3738`, a `::error file=…,line=88::`

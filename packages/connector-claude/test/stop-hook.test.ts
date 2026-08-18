@@ -10,17 +10,17 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { SUMMARIZER_MAX_FIRES_PER_SESSION } from "../src/constants.ts";
+import { SUMMARIZER_MAX_FIRES_PER_SESSION } from "@crosscheck/connector-core/constants.ts";
 import { readSpoolLines, repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import {
   readSessionState,
   writeSessionState,
-} from "../src/state/session-state.ts";
-import type { SessionStateInput } from "../src/state/session-state.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
-import { CANDIDATE_BODY, startHintHub } from "./fixtures/hint-hub.ts";
-import type { HintHub } from "./fixtures/hint-hub.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionStateInput } from "@crosscheck/connector-core/state/session-state.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import { CANDIDATE_BODY, startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
+import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "stop-session-uuid";

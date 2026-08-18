@@ -9,17 +9,17 @@
  * say pulled content stays reachable — otherwise the first surprise erodes
  * trust in the whole privacy story.
  */
-import { EXIT_FAIL, EXIT_OK, EXIT_UNREACHABLE, EXIT_USAGE } from "../constants.ts";
-import { loadConfig } from "../config/config.ts";
-import type { Env } from "../config/paths.ts";
-import { resolveRepoIdentity } from "../git/repo-identity.ts";
+import { EXIT_FAIL, EXIT_OK, EXIT_UNREACHABLE, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
+import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import {
   deleteMute,
   getPrivacySettings,
   postMute,
   putPresenceOptOut,
-} from "../http/hub.ts";
-import type { HubContext } from "../http/hub.ts";
+} from "@crosscheck/connector-core/http/hub.ts";
+import type { HubContext } from "@crosscheck/connector-core/http/hub.ts";
 import type { CliResult } from "./login.ts";
 
 export const PRESENCE_USAGE = [

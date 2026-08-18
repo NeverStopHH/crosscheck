@@ -81,7 +81,7 @@ export const SEARCH_MAX_QUERY_TOKENS = 16;
  * turns "degrades to FTS + exact" (DESIGN.md §6) into a hub failure for
  * every search. The premise is machine-checked:
  *
- * VERIFY: grep -c "MCP_TIMEOUT_MS = 10_000" packages/connector-claude/src/constants.ts
+ * VERIFY: grep -c "MCP_TIMEOUT_MS = 10_000" packages/connector-core/src/constants.ts
  * PRINTS: 1
  */
 export const SEARCH_EMBED_DEADLINE_MS = 2_000;
@@ -158,7 +158,7 @@ export const SOLVED_DECAY_FLOOR = 0.7;
  * The tiers whose match is a fact — where the solved floor may apply. The
  * literal is pinned against its two siblings (services/hints.ts
  * HINT_ELIGIBLE_TIERS, connector hints/select.ts) by the drift-grep VERIFY
- * in packages/connector-claude/src/hints/select.ts.
+ * in packages/connector-core/src/hints/select.ts.
  */
 const SOLVED_FLOOR_TIERS: ReadonlySet<SearchTier> = new Set(["exact", "fts"]);
 

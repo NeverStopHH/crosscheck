@@ -16,12 +16,12 @@
  */
 import { resolve } from "node:path";
 
-import { CHARS_PER_TOKEN_ESTIMATE } from "../constants.ts";
-import { flushSpool } from "../spool/flush.ts";
+import { CHARS_PER_TOKEN_ESTIMATE } from "@crosscheck/connector-core/constants.ts";
+import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
   readSessionState,
   updateSessionState,
-} from "../state/session-state.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
 import {
   isDiagnosisMoment,
   summarizerFireAllowed,

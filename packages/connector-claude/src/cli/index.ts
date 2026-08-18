@@ -1,5 +1,5 @@
-import { EXIT_OK, EXIT_USAGE } from "../constants.ts";
-import type { Env } from "../config/paths.ts";
+import { EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { runDoctor } from "./doctor.ts";
 import { runInit } from "./init.ts";
 import { readSecretFromStdin, runLogin } from "./login.ts";

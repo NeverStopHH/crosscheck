@@ -15,9 +15,9 @@ import {
   spoolDir,
   spoolDropsPath,
   spoolFlushLockPath,
-} from "../src/config/paths.ts";
-import { recordDrop } from "../src/spool/drops.ts";
-import { makeHome, makeRepo, spawnZombie } from "./helpers.ts";
+} from "@crosscheck/connector-core/config/paths.ts";
+import { recordDrop } from "@crosscheck/connector-core/spool/drops.ts";
+import { makeHome, makeRepo, spawnZombie } from "../../connector-core/test/helpers.ts";
 
 /** Unreachable on purpose: the spool checks run whether the hub answers or not. */
 const HUB_URL = "http://127.0.0.1:9";

@@ -46,7 +46,7 @@ export const OPEN_THEORY_STATUSES = [
  * briefing — a proactive surface that names its authors as holding positions.
  * Positive equality, not `!= 'derived'`: an unknown provenance value stays
  * out — the same fail-closed `=== "declared"` equality the hint selector's
- * isDeclared uses (packages/connector-claude/src/hints/select.ts).
+ * isDeclared uses (packages/connector-core/src/hints/select.ts).
  */
 export const DECLARED_PROVENANCE = "declared";
 

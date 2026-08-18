@@ -14,8 +14,8 @@ import {
   SUMMARIZER_MODEL,
   SUMMARIZER_OUTPUT_MAX_BYTES,
   SUMMARIZER_TIMEOUT_MS,
-} from "../constants.ts";
-import type { Env } from "../config/paths.ts";
+} from "@crosscheck/connector-core/constants.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 
 /**
  * What the model is asked, verbatim. One assertion or NONE — the tolerant
@@ -38,7 +38,7 @@ export const SUMMARIZER_PROMPT =
  * GIT_KILL_GRACE_MS 500, because a model process gets more shutdown grace
  * than a local git).
  *
- * VERIFY: grep -c "GIT_KILL_GRACE_MS = 500" packages/connector-claude/src/constants.ts
+ * VERIFY: grep -c "GIT_KILL_GRACE_MS = 500" packages/connector-core/src/constants.ts
  * PRINTS: 1
  */
 const KILL_GRACE_MS = 1000;

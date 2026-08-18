@@ -15,9 +15,9 @@
  * message", not "the violations publish_claim happens to be able to cause". The
  * unreachability is checkable rather than asserted:
  *
- * VERIFY: grep -c 'provenance: "declared"' packages/connector-claude/src/mcp/tools/publish-claim.ts packages/connector-claude/src/mcp/tools/extend-diagnosis.ts
- * PRINTS: packages/connector-claude/src/mcp/tools/publish-claim.ts:1
- * PRINTS: packages/connector-claude/src/mcp/tools/extend-diagnosis.ts:1
+ * VERIFY: grep -c 'provenance: "declared"' packages/connector-core/src/mcp/tools/publish-claim.ts packages/connector-core/src/mcp/tools/extend-diagnosis.ts
+ * PRINTS: packages/connector-core/src/mcp/tools/publish-claim.ts:1
+ * PRINTS: packages/connector-core/src/mcp/tools/extend-diagnosis.ts:1
  */
 import { describe, expect, test } from "bun:test";
 

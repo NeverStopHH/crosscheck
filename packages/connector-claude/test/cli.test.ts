@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { runCli } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import { resolveLauncher } from "../src/cli/init.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const HUB_URL = "https://hub.example.com";
 

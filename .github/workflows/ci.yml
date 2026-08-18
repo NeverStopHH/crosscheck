@@ -28,7 +28,7 @@ jobs:
       # database. It fails if the set of code points that still reach the reader
       # differs from the set recorded in the script, which is what stops the
       # counts quoted in briefing/sanitize.ts from ageing quietly.
-      - run: bun run packages/connector-claude/scripts/default-ignorable-sweep.ts
+      - run: bun run packages/connector-core/scripts/default-ignorable-sweep.ts
 
   concurrency:
     # The spool defects in this repo were timing-dependent, surfacing in 3 of 13
@@ -48,8 +48,8 @@ jobs:
           for round in 1 2 3 4 5; do
             echo "::group::round $round"
             bun test \
-              packages/connector-claude/test/spool-concurrency.test.ts \
-              packages/connector-claude/test/spool-durability.test.ts \
+              packages/connector-core/test/spool-concurrency.test.ts \
+              packages/connector-core/test/spool-durability.test.ts \
               packages/connector-claude/test/hook-budget.test.ts
             echo "::endgroup::"
           done
@@ -116,7 +116,7 @@ jobs:
     # the script had grown four MCP renderer mutations, and neither number was
     # written by hand after that.
     #
-    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
+    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
     # PRINTS: 33
     #
     # Both renderers are covered, and the split is not even — the newer surface
@@ -124,21 +124,21 @@ jobs:
     # basename hides that, so the split is its own directive rather than a
     # sentence somebody has to keep in step by hand:
     #
-    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-claude/src/",""),v)'
+    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
+    # PRINTS: hooks/pre-tool-use.ts 1
+    # PRINTS: hooks/stop.ts 1
     # PRINTS: briefing/render.ts 2
     # PRINTS: briefing/sanitize.ts 7
     # PRINTS: constants.ts 4
     # PRINTS: hints/render.ts 1
     # PRINTS: hints/select.ts 4
-    # PRINTS: hooks/pre-tool-use.ts 1
-    # PRINTS: hooks/stop.ts 1
     # PRINTS: http/hub.ts 1
     # PRINTS: mcp/render-referee.ts 2
     # PRINTS: mcp/render.ts 3
     # PRINTS: packages/server/src/services/hints.ts 1
     # PRINTS: packages/server/src/services/search.ts 6
     #
-    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
+    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
     # PRINTS: constants.ts 4
     # PRINTS: hints.ts 1
     # PRINTS: hub.ts 1
@@ -155,7 +155,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run packages/connector-claude/scripts/mutation-check.ts
+      - run: bun run packages/connector-core/scripts/mutation-check.ts
 
   claims:
     # Every comment in this repo that names a command and says what it prints is

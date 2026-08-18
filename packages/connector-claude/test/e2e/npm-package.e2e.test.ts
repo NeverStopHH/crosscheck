@@ -214,22 +214,28 @@ describe("packed npm tarball", () => {
       "packages/server/src/index.ts",
       "packages/server/src/db/bootstrap.sql", // non-TS runtime asset
       "packages/server/src/ui/pages/login.tsx",
+      "packages/connector-core/LICENSE",
+      "packages/connector-core/NOTICE",
+      "packages/connector-core/src/mcp/server.ts",
+      "packages/connector-core/src/spool/append.ts",
       "packages/connector-claude/LICENSE",
       "packages/connector-claude/NOTICE",
       "packages/connector-claude/src/bin/crosscheck.ts",
-      "packages/connector-claude/src/mcp/server.ts",
       "packages/connector-claude/src/hooks/index.ts",
     ];
     const mustNotShip = [
       "packages/connector-claude/test",
+      "packages/connector-core/test",
       "packages/server/test",
       "packages/schema/test",
       "packages/connector-claude/scripts",
+      "packages/connector-core/scripts",
       "docs",
       "bun.lock",
-      // One package, one manifest — ALL THREE guarded: a nested package.json
+      // One package, one manifest — ALL FOUR guarded: a nested package.json
       // would also change self-name resolution for everything beneath it.
       "packages/connector-claude/package.json",
+      "packages/connector-core/package.json",
       "packages/schema/package.json",
       "packages/server/package.json",
     ];

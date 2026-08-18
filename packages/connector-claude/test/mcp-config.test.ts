@@ -21,10 +21,10 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { MCP_CONFIG_FILE, MCP_SERVER_KEY, runCli } from "../src/index.ts";
-import { isOwnedMcpEntry, mergeMcpConfig } from "../src/cli/mcp-config.ts";
-import type { McpServerEntry } from "../src/cli/mcp-config.ts";
+import { isOwnedMcpEntry, mergeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
+import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import type { Env } from "../src/index.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const HUB_URL = "https://hub.example.com";
 const cleanups: string[] = [];

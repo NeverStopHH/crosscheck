@@ -9,8 +9,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { runCli } from "../src/index.ts";
-import { EXIT_FAIL, EXIT_OK, EXIT_USAGE } from "../src/constants.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+import { EXIT_FAIL, EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 interface SeenRequest {
   readonly method: string;

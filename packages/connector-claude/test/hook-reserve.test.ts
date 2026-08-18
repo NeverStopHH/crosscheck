@@ -37,9 +37,9 @@
  * constant read in two places can be defeated in one and survive in the other.
  * hooks/runner.ts is the only reader outside the constant's own declaration —
  *
- * VERIFY: grep -rl HOOK_RESERVE_RATIO packages/connector-claude/src | sort
- * PRINTS: packages/connector-claude/src/constants.ts
+ * VERIFY: grep -rl HOOK_RESERVE_RATIO packages/connector-claude/src packages/connector-core/src | sort
  * PRINTS: packages/connector-claude/src/hooks/runner.ts
+ * PRINTS: packages/connector-core/src/constants.ts
  *
  * — and `spareMs` is in turn the sole accessor on HookBudget, taken as a whole
  * deadline by the drain in each of the four hooks that host one (SessionStart,
@@ -51,7 +51,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { HTTP_TIMEOUT_MS } from "../src/constants.ts";
+import { HTTP_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
 import { hookBudget } from "../src/hooks/runner.ts";
 
 /** A frozen clock. The reserve is arithmetic; asserting it needs no real one. */

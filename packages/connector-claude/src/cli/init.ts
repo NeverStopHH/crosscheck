@@ -10,18 +10,18 @@ import {
   MCP_CONFIG_FILE,
   POST_TOOL_USE_MATCHER,
   PRE_TOOL_USE_MATCHER,
-} from "../constants.ts";
-import { normalizeHubUrl, readStoredConfig } from "../config/config.ts";
-import { crosscheckHome, ensureDir, readTextOrNull } from "../config/paths.ts";
-import type { Env } from "../config/paths.ts";
+} from "@crosscheck/connector-core/constants.ts";
+import { normalizeHubUrl, readStoredConfig } from "@crosscheck/connector-core/config/config.ts";
+import { crosscheckHome, ensureDir, readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
   readRepoConfig,
   renderRepoConfig,
   repoConfigPath,
-} from "../config/repo-config.ts";
-import { resolveRepoIdentity } from "../git/repo-identity.ts";
-import { mergeMcpConfig } from "./mcp-config.ts";
-import type { McpServerEntry } from "./mcp-config.ts";
+} from "@crosscheck/connector-core/config/repo-config.ts";
+import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import { mergeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
+import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { mergeClaudeSettings } from "./settings-merge.ts";
 import type { MatcherGroup, SettingsPlan } from "./settings-merge.ts";
 import type { CliResult } from "./login.ts";

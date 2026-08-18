@@ -53,7 +53,7 @@ export const HOOK_RESERVE_RATIO = 1;
  * so its TOTAL budget — preparation, one hub call, one bounded git call,
  * rendering — is the §4-specified 800 ms at the default request timeout:
  *
- * VERIFY: bun -e 'const c=await import("./packages/connector-claude/src/constants.ts");console.log(c.USER_PROMPT_SUBMIT_BUDGET_RATIO*c.HTTP_TIMEOUT_MS, c.PRE_TOOL_USE_BUDGET_RATIO*c.HTTP_TIMEOUT_MS)'
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.USER_PROMPT_SUBMIT_BUDGET_RATIO*c.HTTP_TIMEOUT_MS, c.PRE_TOOL_USE_BUDGET_RATIO*c.HTTP_TIMEOUT_MS)'
  * PRINTS: 800 800
  *
  * Guarded twice, the hook-reserve split: test/hint-budget.test.ts is the
@@ -239,7 +239,7 @@ export const COMMIT_EVIDENCE_MAX_COMMITS = 400;
  * relation, leaving git the longest leg of the parallel block (still bounded,
  * no longer free):
  *
- * VERIFY: bun -e 'const c=await import("./packages/connector-claude/src/constants.ts");console.log(c.COMMIT_EVIDENCE_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.COMMIT_EVIDENCE_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
  * PRINTS: true
  */
 export const COMMIT_EVIDENCE_GIT_TIMEOUT_MS = 250;
@@ -267,7 +267,7 @@ export const STATUS_MAX_ABSENCE_LINES = 20;
  * and the ancestry fan-out runs in parallel with the drift lookups — both
  * bounded by this, so the block's wall clock does not grow.
  *
- * VERIFY: bun -e 'const c=await import("./packages/connector-claude/src/constants.ts");console.log(c.LANDED_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.LANDED_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
  * PRINTS: true
  */
 export const LANDED_GIT_TIMEOUT_MS = 250;
@@ -412,7 +412,7 @@ export const DOCTOR_LAST_SYNC_WARN_MINUTES = 10;
  * POST_TOOL_USE_BUDGET_RATIO request timeouts, and a holder is inside the lock
  * for less than that:
  *
- * VERIFY: bun -e 'import {HTTP_TIMEOUT_MS as t, POST_TOOL_USE_BUDGET_RATIO as r} from "./packages/connector-claude/src/constants.ts"; console.log(t * r)'
+ * VERIFY: bun -e 'import {HTTP_TIMEOUT_MS as t, POST_TOOL_USE_BUDGET_RATIO as r} from "./packages/connector-core/src/constants.ts"; console.log(t * r)'
  * PRINTS: 1600
  *
  * A DEAD holder's claim is not reported: the next acquisition retires it, so it
@@ -452,7 +452,7 @@ export const MCP_SERVER_NAME = "crosscheck";
  * Reported in `initialize`, and kept equal to the package version rather than
  * drifting from it.
  *
- * VERIFY: bun -e 'const p=await Bun.file("packages/connector-claude/package.json").json(); const c=await import("./packages/connector-claude/src/constants.ts"); console.log(p.version === c.MCP_SERVER_VERSION)'
+ * VERIFY: bun -e 'const p=await Bun.file("packages/connector-claude/package.json").json(); const c=await import("./packages/connector-core/src/constants.ts"); console.log(p.version === c.MCP_SERVER_VERSION)'
  * PRINTS: true
  */
 export const MCP_SERVER_VERSION = "0.5.0";
@@ -535,7 +535,7 @@ export const MAX_SEARCH_QUERY_CHARS = 2_000;
  * deterministic ids are `cc_<uuid>` and `wc_cc_<uuid>` (state/session-state.ts),
  * 39 and 42 characters, so a legitimate id is never truncated:
  *
- * VERIFY: bun -e 'const {crosscheckSessionIdFor,workContextIdFor}=await import("./packages/connector-claude/src/state/session-state.ts");const s=crosscheckSessionIdFor(crypto.randomUUID());console.log(s.length,workContextIdFor(s).length)'
+ * VERIFY: bun -e 'const {crosscheckSessionIdFor,workContextIdFor}=await import("./packages/connector-core/src/state/session-state.ts");const s=crosscheckSessionIdFor(crypto.randomUUID());console.log(s.length,workContextIdFor(s).length)'
  * PRINTS: 39 42
  */
 export const MAX_ID_CHARS = 64;

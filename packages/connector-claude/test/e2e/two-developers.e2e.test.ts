@@ -15,7 +15,7 @@ import {
   runStatusline,
 } from "../../src/index.ts";
 import type { Env } from "../../src/index.ts";
-import { git, makeHome, makeRepo, writeRepoFile } from "../helpers.ts";
+import { git, makeHome, makeRepo, writeRepoFile } from "../../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "e2e-admin-token";
 const REPO_ID = "github.com/acme/api";

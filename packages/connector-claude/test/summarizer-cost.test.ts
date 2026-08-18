@@ -9,8 +9,8 @@ import { rm } from "node:fs/promises";
 
 import { runCli } from "../src/index.ts";
 import { readSummarizerCost } from "../src/summarizer/cost.ts";
-import { writeSessionState } from "../src/state/session-state.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 /** Unreachable on purpose: cost lines are local facts, no hub needed. */
 const HUB_URL = "http://127.0.0.1:9";

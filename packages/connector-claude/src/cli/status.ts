@@ -1,14 +1,14 @@
-import { EXIT_OK, EXIT_UNREACHABLE, STATUS_MAX_ABSENCE_LINES } from "../constants.ts";
-import { loadConfig } from "../config/config.ts";
-import { repoKey } from "../config/paths.ts";
-import type { Env } from "../config/paths.ts";
-import { formatAbsenceLine, formatAge } from "../briefing/render.ts";
-import { resolveRepoIdentity } from "../git/repo-identity.ts";
-import { getAbsences, getPresence, getPrivacySettings } from "../http/hub.ts";
+import { EXIT_OK, EXIT_UNREACHABLE, STATUS_MAX_ABSENCE_LINES } from "@crosscheck/connector-core/constants.ts";
+import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
+import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { formatAbsenceLine, formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import { getAbsences, getPresence, getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
 import { presenceStateLine } from "./privacy.ts";
-import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
-import { spoolDepth } from "../spool/files.ts";
-import { readSyncState } from "../state/sync-state.ts";
+import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
+import { spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
+import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import {
   formatSummarizerCost,
   readSummarizerCost,

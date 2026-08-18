@@ -11,7 +11,7 @@
  * nothing", so it is the honest universe to sweep, and sweeping all of it is
  * cheap enough to do on every CI run.
  *
- *   bun run packages/connector-claude/scripts/default-ignorable-sweep.ts
+ *   bun run packages/connector-core/scripts/default-ignorable-sweep.ts
  *   ... --verbose      # list every altered code point rather than the first few
  *
  * Exit 0 when the observed altered set equals RECORDED_ALTERATIONS below, 1 when

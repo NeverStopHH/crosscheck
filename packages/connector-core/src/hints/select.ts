@@ -33,8 +33,8 @@ import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
  * the three literals' equality is pinned rather than assumed — silent drift
  * would move the floor to whichever copy is loosest:
  *
- * VERIFY: grep -c '\["exact", "fts"\]' packages/connector-claude/src/hints/select.ts packages/server/src/services/hints.ts packages/server/src/services/search.ts
- * PRINTS: packages/connector-claude/src/hints/select.ts:1
+ * VERIFY: grep -c '\["exact", "fts"\]' packages/connector-core/src/hints/select.ts packages/server/src/services/hints.ts packages/server/src/services/search.ts
+ * PRINTS: packages/connector-core/src/hints/select.ts:1
  * PRINTS: packages/server/src/services/hints.ts:1
  * PRINTS: packages/server/src/services/search.ts:1
  */

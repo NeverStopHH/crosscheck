@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import { EXIT_FAIL, EXIT_OK, EXIT_USAGE, STDIN_TIMEOUT_MS } from "../constants.ts";
+import { EXIT_FAIL, EXIT_OK, EXIT_USAGE, STDIN_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
 import { runCli } from "../cli/index.ts";
 import { isHookName, runHook } from "../hooks/index.ts";
-import { runMcpServer } from "../mcp/server.ts";
+import { runMcpServer } from "@crosscheck/connector-core/mcp/server.ts";
 import { runStatusline } from "../statusline/statusline.ts";
 import { runSummarizeWorker } from "../summarizer/worker.ts";
 

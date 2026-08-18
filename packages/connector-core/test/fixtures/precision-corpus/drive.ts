@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { createDb, createServer } from "@crosscheck/server";
 
 import { MAX_HINTS_PER_SESSION } from "../../../src/constants.ts";
-import { runHook } from "../../../src/index.ts";
+import { runHook } from "../../../../connector-claude/src/index.ts";
 import type { Env } from "../../../src/index.ts";
 import { writeSessionState } from "../../../src/state/session-state.ts";
 import type { SessionState } from "../../../src/state/session-state.ts";

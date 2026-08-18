@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { FINGERPRINT_SOURCE_CHARS } from "../constants.ts";
+import { FINGERPRINT_SOURCE_CHARS } from "@crosscheck/connector-core/constants.ts";
 
 /**
  * Hook payloads come from a tool we do not version-control. Unknown fields are

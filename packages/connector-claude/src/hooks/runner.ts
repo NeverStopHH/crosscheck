@@ -6,19 +6,19 @@ import {
   SESSION_START_BUDGET_RATIO,
   STOP_BUDGET_RATIO,
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
-} from "../constants.ts";
+} from "@crosscheck/connector-core/constants.ts";
 import {
   isDisabled,
   loadConfig,
   readStoredConfig,
   resolveTimeoutMs,
-} from "../config/config.ts";
-import type { ResolvedConfig } from "../config/config.ts";
-import type { Env } from "../config/paths.ts";
-import { crosscheckHome, repoKey } from "../config/paths.ts";
-import { resolveRepoIdentity } from "../git/repo-identity.ts";
-import type { RepoIdentity } from "../git/repo-identity.ts";
-import type { HubContext } from "../http/client.ts";
+} from "@crosscheck/connector-core/config/config.ts";
+import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
 

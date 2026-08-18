@@ -9,11 +9,11 @@ import {
   LOGIN_STDIN_TIMEOUT_MS,
   MS_PER_SECOND,
   PROBE_REPO,
-} from "../constants.ts";
-import { normalizeHubUrl, readStoredConfig, saveConfig } from "../config/config.ts";
-import { crosscheckHome, ensureDir } from "../config/paths.ts";
-import type { Env } from "../config/paths.ts";
-import { hubRequest } from "../http/client.ts";
+} from "@crosscheck/connector-core/constants.ts";
+import { normalizeHubUrl, readStoredConfig, saveConfig } from "@crosscheck/connector-core/config/config.ts";
+import { crosscheckHome, ensureDir } from "@crosscheck/connector-core/config/paths.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
 
 export interface CliResult {
   readonly stdout: string;

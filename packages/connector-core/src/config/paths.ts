@@ -32,7 +32,7 @@ export const configPath = (home: string): string => join(home, "config.json");
  * by looking up the state file of the same slug, and that lookup is only sound
  * while the two namings cannot drift apart.
  *
- * VERIFY: grep -c "sessionSlu[g]" packages/connector-claude/src/config/paths.ts
+ * VERIFY: grep -c "sessionSlu[g]" packages/connector-core/src/config/paths.ts
  * PRINTS: 2
  * (this definition, and the single application in `sessionStatePath`; every
  * other path takes an already-derived `slug`, which is what stops the two

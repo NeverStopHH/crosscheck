@@ -3,15 +3,15 @@ import {
   sessionSlug,
   spoolPendingEndPath,
   writePrivateFile,
-} from "../config/paths.ts";
-import { endSession } from "../http/hub.ts";
-import { readSessionSpool } from "../spool/files.ts";
-import { flushSpool } from "../spool/flush.ts";
+} from "@crosscheck/connector-core/config/paths.ts";
+import { endSession } from "@crosscheck/connector-core/http/hub.ts";
+import { readSessionSpool } from "@crosscheck/connector-core/spool/files.ts";
+import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
   crosscheckSessionIdFor,
   deleteSessionState,
   readSessionState,
-} from "../state/session-state.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 interface SessionIdentity {

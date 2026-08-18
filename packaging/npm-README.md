@@ -77,6 +77,7 @@ This package is **not licensed as a single unit** — see the `LICENSE` file
 | Shipped directory | License |
 |---|---|
 | `packages/schema/` | Apache-2.0 |
+| `packages/connector-core/` | Apache-2.0 |
 | `packages/connector-claude/` | Apache-2.0 |
 | `packages/server/` | Functional Source License 1.1 (ALv2 future license) |
 

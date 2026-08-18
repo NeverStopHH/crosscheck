@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@crosscheck/connector-core": "workspace:*",
     "@crosscheck/schema": "workspace:*",
     "@crosscheck/server": "workspace:*",
     "zod": "^4.0.0"

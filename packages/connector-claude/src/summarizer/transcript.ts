@@ -18,7 +18,7 @@ import {
   SUMMARIZER_BLOCK_MAX_CHARS,
   SUMMARIZER_SLICE_MAX_CHARS,
   SUMMARIZER_TAIL_BYTES,
-} from "../constants.ts";
+} from "@crosscheck/connector-core/constants.ts";
 
 export interface TurnSlice {
   /** Absolute byte offset of the current turn's first transcript line. */

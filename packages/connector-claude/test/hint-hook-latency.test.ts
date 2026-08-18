@@ -18,11 +18,11 @@ import type { Env } from "../src/index.ts";
 import {
   HTTP_TIMEOUT_MS,
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
-} from "../src/constants.ts";
-import { writeSessionState } from "../src/state/session-state.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
-import { startHintHub } from "./fixtures/hint-hub.ts";
-import type { HintHub } from "./fixtures/hint-hub.ts";
+} from "@crosscheck/connector-core/constants.ts";
+import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import { startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
+import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "latency-uuid";

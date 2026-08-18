@@ -16,7 +16,7 @@
  *
  * Corpus size, derived from the data so this header cannot rot:
  *
- * VERIFY: bun -e 'const {loadCorpus}=await import("./packages/connector-claude/test/fixtures/precision-corpus/format.ts");const c=await loadCorpus();const p=c.scenarios.flatMap(s=>s.probes);const by=k=>p.filter(x=>x.expect===k).length;console.log(c.scenarios.length,p.length,by("substance"),by("pointer"),by("silence"))'
+ * VERIFY: bun -e 'const {loadCorpus}=await import("./packages/connector-core/test/fixtures/precision-corpus/format.ts");const c=await loadCorpus();const p=c.scenarios.flatMap(s=>s.probes);const by=k=>p.filter(x=>x.expect===k).length;console.log(c.scenarios.length,p.length,by("substance"),by("pointer"),by("silence"))'
  * PRINTS: 9 25 10 3 12
  *
  * THE HARNESS CAN FAIL — proven, not assumed, in two ways. Continuously:
@@ -45,7 +45,7 @@ import type { CorpusRun } from "./fixtures/precision-corpus/drive.ts";
  * all stayed green. The directive below makes a lowered floor travel with
  * this rationale-bearing comment or fail CI.
  *
- * VERIFY: grep -c 'FLOOR_[A-Z_]* = 1;' packages/connector-claude/test/precision-corpus.test.ts
+ * VERIFY: grep -c 'FLOOR_[A-Z_]* = 1;' packages/connector-core/test/precision-corpus.test.ts
  * PRINTS: 5
  */
 export const FLOOR_SUBSTANCE_PRECISION = 1;

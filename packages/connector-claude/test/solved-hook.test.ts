@@ -10,9 +10,9 @@ import { rm } from "node:fs/promises";
 
 import { runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
-import { readSessionState } from "../src/state/session-state.ts";
-import { runGit } from "../src/git/git.ts";
-import { git, makeHome, makeRepo } from "./helpers.ts";
+import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { runGit } from "@crosscheck/connector-core/git/git.ts";
+import { git, makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const DAY_MS = 86_400_000;
 const SOLVED_CONTEXT_ID = "wc_prev";

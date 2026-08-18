@@ -20,9 +20,9 @@ import {
   sessionStatePath,
   spoolDir,
   spoolPendingEndPath,
-} from "../src/config/paths.ts";
-import { writeSessionState } from "../src/state/session-state.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+} from "@crosscheck/connector-core/config/paths.ts";
+import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 import { SELF_DEVELOPER_ID, startSlowHub } from "./fixtures/slow-hub.ts";
 import type { HubCalls, HubLatency } from "./fixtures/slow-hub.ts";
 

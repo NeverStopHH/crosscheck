@@ -22,26 +22,26 @@ import {
   PRIVATE_FILE_MODE,
   PROBE_REPO,
   SECONDS_PER_MINUTE,
-} from "../constants.ts";
-import { loadConfig } from "../config/config.ts";
+} from "@crosscheck/connector-core/constants.ts";
+import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import {
   configPath,
   crosscheckHome,
   readTextOrNull,
   repoKey,
   spoolFlushLockPath,
-} from "../config/paths.ts";
-import type { Env } from "../config/paths.ts";
-import { formatAge } from "../briefing/render.ts";
-import { resolveRepoIdentity } from "../git/repo-identity.ts";
-import { hubRequest } from "../http/client.ts";
-import type { HubContext } from "../http/client.ts";
-import { getAbsences, getPrivacySettings } from "../http/hub.ts";
-import { readDropSummary, readUnrecordedDrop } from "../spool/drops.ts";
-import { oldestSpoolLineMs, spoolDepth } from "../spool/files.ts";
-import { readLockHolder } from "../spool/lock.ts";
-import { readUnclosedSummary } from "../spool/unclosed.ts";
-import { readSyncState } from "../state/sync-state.ts";
+} from "@crosscheck/connector-core/config/paths.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
+import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
+import { getAbsences, getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
+import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
+import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
+import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
+import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
+import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import {
   formatSummarizerCost,
   readSummarizerCost,
@@ -51,7 +51,7 @@ import {
   isOwnCrosscheckBin,
   realpathOrSelf,
 } from "./init.ts";
-import { isOwnedMcpEntry } from "./mcp-config.ts";
+import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { isOwnedCommand } from "./settings-merge.ts";
 import type { CliResult } from "./login.ts";
 

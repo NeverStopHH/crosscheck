@@ -3,17 +3,17 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
   HEARTBEAT_MIN_INTERVAL_MS,
   MAX_TARGETS_PER_INVOCATION,
-} from "../constants.ts";
-import { realpathBestEffort } from "../config/paths.ts";
-import { isDenied, resolveDenylist } from "../capture/denylist.ts";
-import { fingerprint } from "../capture/fingerprint.ts";
-import { containsSecret } from "../capture/secret-scan.ts";
+} from "@crosscheck/connector-core/constants.ts";
+import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
+import { isDenied, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
+import { fingerprint } from "@crosscheck/connector-core/capture/fingerprint.ts";
+import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
 import {
   UNKNOWN_DEVELOPER_ID,
   targetRecord,
   workContextRecord,
-} from "../capture/records.ts";
-import type { Producer } from "../capture/records.ts";
+} from "@crosscheck/connector-core/capture/records.ts";
+import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import {
   extractFailureText,
   extractFilePaths,
@@ -21,17 +21,17 @@ import {
   isEditTool,
   isFailureResponse,
 } from "../capture/tool-events.ts";
-import { heartbeatSession, registerSession } from "../http/hub.ts";
-import { appendRecords } from "../spool/append.ts";
-import { flushSpool } from "../spool/flush.ts";
+import { heartbeatSession, registerSession } from "@crosscheck/connector-core/http/hub.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
+import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
   deriveSessionState,
   readSessionState,
   updateSessionState,
   withSeenTargets,
   writeSessionState,
-} from "../state/session-state.ts";
-import type { SessionState } from "../state/session-state.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { resolveWorkContextTitle } from "./session-start.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 

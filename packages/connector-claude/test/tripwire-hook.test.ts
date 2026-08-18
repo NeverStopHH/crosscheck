@@ -11,11 +11,11 @@ import type { Env } from "../src/index.ts";
 import {
   readSessionState,
   writeSessionState,
-} from "../src/state/session-state.ts";
-import type { SessionState } from "../src/state/session-state.ts";
-import { makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
-import { activeTeammateSession, startHintHub } from "./fixtures/hint-hub.ts";
-import type { HintHub } from "./fixtures/hint-hub.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
+import { activeTeammateSession, startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
+import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "tripwire-uuid";

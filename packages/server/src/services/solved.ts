@@ -33,7 +33,7 @@ export const SOLVED_CLAIM_STATUS = "likely_root_cause";
 
 /**
  * Evidence floor for the solving claim — mirrors the connector's
- * HINT_MIN_EVIDENCE_REFS (packages/connector-claude/src/constants.ts) and the
+ * HINT_MIN_EVIDENCE_REFS (packages/connector-core/src/constants.ts) and the
  * wire rule in @crosscheck/schema (likely_root_cause requires ≥1 evidence
  * ref); enforced here too so a row that bypassed ingest cannot count.
  */
