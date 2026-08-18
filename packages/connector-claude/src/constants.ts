@@ -173,6 +173,15 @@ export const LATENCY_TIMEOUT_MAX_MS = 5_000;
  */
 export const LATENCY_FLAP_WARN_RATIO = 2;
 
+/**
+ * Bound on the one node:dns lookup that splits Bun's collapsed "could not
+ * connect" into its DNS half (http/connection-error.ts). Only login and
+ * doctor refine — a human is waiting there — and a resolver that is itself
+ * behind the dead VPN must not hang the CLI: the deadline races the lookup
+ * and the answer falls back to the unrefined cause.
+ */
+export const DNS_REFINE_TIMEOUT_MS = 1_000;
+
 export const HEARTBEAT_MIN_INTERVAL_MS = 20_000;
 
 export const MAX_TARGETS_PER_INVOCATION = 20;

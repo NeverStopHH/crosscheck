@@ -41,6 +41,10 @@ import { resolveRepoIdentity } from "../git/repo-identity.ts";
 import { hubRequest } from "../http/client.ts";
 import type { HubContext } from "../http/client.ts";
 import {
+  describeConnectionFailure,
+  refineRefusedCause,
+} from "../http/connection-error.ts";
+import {
   isFlapRisk,
   measureHubLatency,
   recommendedTimeoutMs,
@@ -807,6 +811,10 @@ export const runDoctor = async (
     path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
     schema: z.unknown(),
   });
+  // A connection-level failure names what actually happened and the remedy
+  // that moves it (http/connection-error.ts) — "unreachable" hid a plain
+  // timeout for an hour of a real onboarding. The bounded DNS refinement is
+  // fine here: doctor is a human-run command, not a hook.
   const hubCheck = probe.ok
     ? check("PASS", "hub reachable", config.hubUrl)
     : check(
@@ -814,7 +822,13 @@ export const runDoctor = async (
         "hub reachable",
         probe.status === HTTP_UNAUTHORIZED
           ? "invalid api key"
-          : `${config.hubUrl}: ${probe.message}`,
+          : probe.kind === "network"
+            ? describeConnectionFailure(
+                await refineRefusedCause(probe.cause ?? "unknown", config.hubUrl),
+                { hubUrl: config.hubUrl, timeoutMs: config.timeoutMs },
+                probe.message,
+              )
+            : `${config.hubUrl}: ${probe.message}`,
       );
 
   const skewCheck = ((): Check => {

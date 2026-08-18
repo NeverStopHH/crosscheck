@@ -28,6 +28,11 @@ import type { TimeoutDecision, TimeoutOwner } from "../config/timeout-policy.ts"
 import { crosscheckHome, ensureDir } from "../config/paths.ts";
 import type { Env } from "../config/paths.ts";
 import { hubRequest } from "../http/client.ts";
+import {
+  describeConnectionFailure,
+  refineRefusedCause,
+} from "../http/connection-error.ts";
+import type { ConnectionCause } from "../http/connection-error.ts";
 import { measureHubLatency, recommendedTimeoutMs } from "../http/latency.ts";
 import type { LatencyMeasurement } from "../http/latency.ts";
 
@@ -38,6 +43,14 @@ export interface CliResult {
 
 const HTTP_UNAUTHORIZED = 401;
 
+export interface CredentialProbe {
+  readonly ok: boolean;
+  readonly status: number;
+  /** What the runtime error was, for network failures (connection-error.ts). */
+  readonly cause?: ConnectionCause;
+  readonly message: string;
+}
+
 /**
  * Auth is checked before the repo lookup, so a nonsense repo name is the
  * cheapest possible credential probe.
@@ -46,7 +59,7 @@ export const probeCredentials = async (
   hubUrl: string,
   apiKey: string,
   timeoutMs: number,
-): Promise<{ readonly ok: boolean; readonly status: number }> => {
+): Promise<CredentialProbe> => {
   const result = await hubRequest(
     {
       hubUrl,
@@ -62,9 +75,15 @@ export const probeCredentials = async (
       schema: z.unknown(),
     },
   );
-  return result.ok
-    ? { ok: true, status: 200 }
-    : { ok: false, status: result.status };
+  if (result.ok) {
+    return { ok: true, status: 200, message: "" };
+  }
+  return {
+    ok: false,
+    status: result.status,
+    ...(result.cause === undefined ? {} : { cause: result.cause }),
+    message: result.message,
+  };
 };
 
 export type SecretReader = () => Promise<string | null>;
@@ -217,17 +236,22 @@ export const runLogin = async (
 
   const home = crosscheckHome(env);
   const existing = await readStoredConfig(home);
-  const probe = await probeCredentials(
-    hubUrl,
-    apiKey,
-    loginProbeTimeoutMs(env, existing),
-  );
+  const probeTimeoutMs = loginProbeTimeoutMs(env, existing);
+  const probe = await probeCredentials(hubUrl, apiKey, probeTimeoutMs);
   if (!probe.ok) {
     if (probe.status === HTTP_UNAUTHORIZED) {
       return { stdout: "invalid api key\n", exitCode: EXIT_FAIL };
     }
+    // Say what actually happened, not "unreachable": a human is watching, so
+    // the collapsed could-not-connect is worth one bounded DNS refinement
+    // before the sentence is chosen (http/connection-error.ts).
+    const cause = await refineRefusedCause(probe.cause ?? "unknown", hubUrl);
     return {
-      stdout: `hub unreachable: ${hubUrl}\n`,
+      stdout: `${describeConnectionFailure(
+        cause,
+        { hubUrl, timeoutMs: probeTimeoutMs },
+        probe.message,
+      )}\n`,
       exitCode: EXIT_UNREACHABLE,
     };
   }
