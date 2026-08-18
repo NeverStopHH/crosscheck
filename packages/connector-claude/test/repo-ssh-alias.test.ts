@@ -114,6 +114,44 @@ describe("resolution is fail-open — today's identity is the floor", () => {
     expect(identity?.repoId).toBe("github.com-toandiep/acme/api");
   });
 
+  test("a file:// remote never consults ssh config at all", async () => {
+    // Arrange: a colon before the path made this LOOK scp-shaped, so every
+    // resolution used to spawn a wasted bounded `ssh -G file` (identity was
+    // unchanged either way — the spawn is the defect).
+    const repo = await makeRepo("file-url", {
+      remote: "file:///srv/git/api.git",
+    });
+    paths.push(repo);
+    let consulted = 0;
+
+    // Act
+    const identity = await resolveRepoIdentity(repo, async (host) => {
+      consulted += 1;
+      return host;
+    });
+
+    // Assert
+    expect(identity?.repoId).toBeDefined();
+    expect(consulted).toBe(0);
+  });
+
+  test("a Windows drive-letter remote never consults ssh config at all", async () => {
+    // Arrange: C:\repo parses as scp host "C" — a drive, not a host
+    const repo = await makeRepo("drive-path", { remote: "C:\\projects\\api" });
+    paths.push(repo);
+    let consulted = 0;
+
+    // Act
+    const identity = await resolveRepoIdentity(repo, async (host) => {
+      consulted += 1;
+      return host;
+    });
+
+    // Assert
+    expect(identity?.repoId).toBeDefined();
+    expect(consulted).toBe(0);
+  });
+
   test("an https remote never consults ssh config at all", async () => {
     // Arrange: https hosts are DNS names; the user's ssh aliases must not
     // touch them

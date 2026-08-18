@@ -50,16 +50,23 @@ export const normalizeRemoteUrl = (raw: string): string | null => {
 /** ssh-shaped by scheme; a bare scp-like `[user@]host:path` is ssh too. */
 const SSH_SCHEME_PATTERN = /^(?:ssh|git\+ssh):\/\//i;
 
+/** ANY url scheme at all — a remote carrying one is never scp-shaped. */
+const ANY_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:\/\//i;
+
 /**
  * The LITERAL host of an ssh-shaped remote, pre-normalization — the token a
  * user's ssh config would match. Null for anything ssh config cannot touch:
- * http(s)/git:// remotes (their hosts are DNS names), local paths, and
- * anything unparseable.
+ * every non-ssh url scheme (http(s)/git:// hosts are DNS names; file:// and
+ * the rest have no host for ssh at all), local and Windows drive-letter
+ * paths, and anything unparseable. Null means the caller never spawns
+ * `ssh -G` for it — before the scheme check was generalized, `file:///…`
+ * read as scp host "file" and every resolution paid one wasted bounded
+ * spawn.
  */
 export const sshHostOf = (raw: string): string | null => {
   const trimmed = raw.trim();
   const isSshUrl = SSH_SCHEME_PATTERN.test(trimmed);
-  if (!isSshUrl && SCHEME_PATTERN.test(trimmed)) {
+  if (!isSshUrl && ANY_SCHEME_PATTERN.test(trimmed)) {
     return null;
   }
   const withoutScheme = trimmed.replace(SCHEME_PATTERN, "");
@@ -70,7 +77,8 @@ export const sshHostOf = (raw: string): string | null => {
   }
   const scpMatch = SCP_PATTERN.exec(withoutUserinfo);
   const host = scpMatch?.[1] ?? "";
-  return host.length === 0 ? null : host;
+  // A one-character "host" is a Windows drive letter (C:\repo), not a host.
+  return host.length <= 1 ? null : host;
 };
 
 /**
