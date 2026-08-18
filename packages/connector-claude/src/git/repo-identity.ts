@@ -97,10 +97,30 @@ const withCanonicalHost = (
 };
 
 /**
+ * A resolved host that IS the literal host, or a subdomain of it, is a
+ * TRANSPORT override, not an identity: the vendors' own documented
+ * port-22-firewall workarounds map `github.com` -> `ssh.github.com` and
+ * `gitlab.com` -> `altssh.gitlab.com`, and rewriting the repo id to the
+ * transport host would fork it away from every plain teammate — the exact
+ * silent-mismatch F5 exists to KILL, and one a firewalled remote teammate is
+ * FAR likelier to hit than a multi-account alias. A genuine alias
+ * (`github.com-toandiep`) resolves to an UNRELATED host and is not caught here,
+ * so it still canonicalizes. Dot-boundary endsWith so `evilgithub.com` is not
+ * mistaken for a subdomain of `github.com`.
+ */
+const isTransportVariant = (literalHost: string, resolvedHost: string): boolean => {
+  const literal = literalHost.toLowerCase();
+  const resolved = resolvedHost.toLowerCase();
+  return resolved === literal || resolved.endsWith(`.${literal}`);
+};
+
+/**
  * An ssh-shaped remote with its alias resolved through the user's own ssh
  * config; every other remote — and every resolution failure — passes through
  * untouched. See git/ssh-hostname.ts for the incident and the migration
  * story. Case-insensitive comparison because ssh lowercases what it echoes.
+ * A transport-only HostName override (the forge's port-443 workaround) is
+ * detected and left as the literal host — see isTransportVariant.
  */
 export const canonicalizeSshRemote = async (
   raw: string,
@@ -114,7 +134,7 @@ export const canonicalizeSshRemote = async (
   if (
     canonicalHost === null ||
     canonicalHost.length === 0 ||
-    canonicalHost.toLowerCase() === literalHost.toLowerCase()
+    isTransportVariant(literalHost, canonicalHost)
   ) {
     return raw;
   }
