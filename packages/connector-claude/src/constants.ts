@@ -97,6 +97,16 @@ export const MAX_DELIVERED_HINT_HASHES_PER_REPO = 512;
 export const GIT_TIMEOUT_MS = 1500;
 
 /**
+ * Bound on the one `ssh -G <host>` that resolves an ssh ALIAS to the real
+ * hostname during repo identity resolution (git/ssh-hostname.ts). Tighter
+ * than GIT_TIMEOUT_MS because identity runs on EVERY hook invocation and
+ * `ssh -G` is local config evaluation (~10 ms measured) — a config whose
+ * Match exec outlives half a second loses its aliasing for that call
+ * (fail-open to the literal host), never the hook.
+ */
+export const SSH_RESOLVE_TIMEOUT_MS = 500;
+
+/**
  * Grace between the deadline's SIGTERM and the SIGKILL escalation for a git
  * that outlived its budget (git/git.ts). SIGTERM first so git can remove its
  * lock files; the escalation covers a git that ignores it. Nothing waits on

@@ -3,6 +3,8 @@ import { realpath } from "node:fs/promises";
 
 import { LOCAL_REPO_HASH_CHARS } from "../constants.ts";
 import { runGit } from "./git.ts";
+import { resolveSshHostname } from "./ssh-hostname.ts";
+import type { SshHostnameResolver } from "./ssh-hostname.ts";
 
 export interface RepoIdentity {
   readonly repoId: string;
@@ -43,6 +45,80 @@ export const normalizeRemoteUrl = (raw: string): string | null => {
     .replace(/\/+$/, "")
     .toLowerCase();
   return normalized.length === 0 ? null : normalized;
+};
+
+/** ssh-shaped by scheme; a bare scp-like `[user@]host:path` is ssh too. */
+const SSH_SCHEME_PATTERN = /^(?:ssh|git\+ssh):\/\//i;
+
+/**
+ * The LITERAL host of an ssh-shaped remote, pre-normalization — the token a
+ * user's ssh config would match. Null for anything ssh config cannot touch:
+ * http(s)/git:// remotes (their hosts are DNS names), local paths, and
+ * anything unparseable.
+ */
+export const sshHostOf = (raw: string): string | null => {
+  const trimmed = raw.trim();
+  const isSshUrl = SSH_SCHEME_PATTERN.test(trimmed);
+  if (!isSshUrl && SCHEME_PATTERN.test(trimmed)) {
+    return null;
+  }
+  const withoutScheme = trimmed.replace(SCHEME_PATTERN, "");
+  const withoutUserinfo = withoutScheme.replace(USERINFO_PATTERN, "");
+  if (isSshUrl) {
+    const host = /^[^/:]+/.exec(withoutUserinfo)?.[0] ?? "";
+    return host.length === 0 ? null : host;
+  }
+  const scpMatch = SCP_PATTERN.exec(withoutUserinfo);
+  const host = scpMatch?.[1] ?? "";
+  return host.length === 0 ? null : host;
+};
+
+/**
+ * The raw remote with its literal ssh host replaced by the canonical one.
+ * Index-based, not a string replace: after stripping the scheme and userinfo
+ * prefixes the remainder STARTS with the host by construction (sshHostOf
+ * derived it as exactly that prefix), so the splice can never touch a host
+ * lookalike inside the path or the userinfo.
+ */
+const withCanonicalHost = (
+  raw: string,
+  literalHost: string,
+  canonicalHost: string,
+): string => {
+  const trimmed = raw.trim();
+  const afterScheme = trimmed.replace(SCHEME_PATTERN, "");
+  const afterUserinfo = afterScheme.replace(USERINFO_PATTERN, "");
+  const hostStart = trimmed.length - afterUserinfo.length;
+  return (
+    trimmed.slice(0, hostStart) +
+    canonicalHost +
+    trimmed.slice(hostStart + literalHost.length)
+  );
+};
+
+/**
+ * An ssh-shaped remote with its alias resolved through the user's own ssh
+ * config; every other remote — and every resolution failure — passes through
+ * untouched. See git/ssh-hostname.ts for the incident and the migration
+ * story. Case-insensitive comparison because ssh lowercases what it echoes.
+ */
+export const canonicalizeSshRemote = async (
+  raw: string,
+  resolveHost: SshHostnameResolver,
+): Promise<string> => {
+  const literalHost = sshHostOf(raw);
+  if (literalHost === null) {
+    return raw;
+  }
+  const canonicalHost = await resolveHost(literalHost).catch(() => null);
+  if (
+    canonicalHost === null ||
+    canonicalHost.length === 0 ||
+    canonicalHost.toLowerCase() === literalHost.toLowerCase()
+  ) {
+    return raw;
+  }
+  return withCanonicalHost(raw, literalHost, canonicalHost);
 };
 
 const sha256Hex = (input: string): string =>
@@ -135,16 +211,25 @@ const resolveBranch = async (cwd: string): Promise<string> => {
   return shortSha === null ? "HEAD" : `detached@${shortSha}`;
 };
 
-/** Returns null outside a git repo — every hook then silently no-ops. */
+/**
+ * Returns null outside a git repo — every hook then silently no-ops.
+ * `resolveHost` is injectable for tests; the default asks the user's own ssh
+ * config (bounded, fail-open) so an ssh ALIAS in the remote cannot fork the
+ * repo's identity across machines (git/ssh-hostname.ts).
+ */
 export const resolveRepoIdentity = async (
   cwd: string,
+  resolveHost: SshHostnameResolver = (host) => resolveSshHostname(host, cwd),
 ): Promise<RepoIdentity | null> => {
   const root = await runGit(["rev-parse", "--show-toplevel"], cwd);
   if (root === null) {
     return null;
   }
   const remoteUrl = await resolveRemoteUrl(cwd);
-  const fromRemote = remoteUrl === null ? null : normalizeRemoteUrl(remoteUrl);
+  const canonicalRemote =
+    remoteUrl === null ? null : await canonicalizeSshRemote(remoteUrl, resolveHost);
+  const fromRemote =
+    canonicalRemote === null ? null : normalizeRemoteUrl(canonicalRemote);
   const repoId = fromRemote ?? (await resolveLocalRepoId(cwd, root));
   return {
     repoId,
