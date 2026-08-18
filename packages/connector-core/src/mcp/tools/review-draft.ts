@@ -19,12 +19,12 @@
  *             not worth keeping, and a discard must not look like knowledge.
  */
 import { z } from "zod";
-import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
+import { DERIVED_CONFIDENCE_CAP, MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
-import { safeId } from "../render.ts";
+import { quoted, quotingText, safeId } from "../render.ts";
 import { checkClaim, explainRejection } from "../violations.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
@@ -169,10 +169,14 @@ const successText = (
     );
   }
   const verb = action === "edit" ? "Promoted (edited)" : "Promoted";
-  return (
+  // The body is untrusted twice over — a derived draft's body came FROM the
+  // hub, and an edit body is agent text — so it goes through `quoted`
+  // (sanitize + frame), and the sentence that contains a frame travels under
+  // the notice that names it (quotingText), like every framed tool answer.
+  return quotingText(
     `${verb} draft ${safeId(draftId)} as your declared claim ${claimId} ` +
-    `(a supersedes edge marks the draft reviewed): «${body}». ` +
-    "Pass this id as an evidenceRefs entry when you publish what supports it."
+      `(a supersedes edge marks the draft reviewed): ${quoted(body, MAX_CLAIM_BODY_LENGTH)}. ` +
+      "Pass this id as an evidenceRefs entry when you publish what supports it.",
   );
 };
 

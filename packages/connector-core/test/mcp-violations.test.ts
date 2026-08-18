@@ -31,6 +31,8 @@ import {
   checkClaimEdge,
   explainRejection,
 } from "../src/mcp/violations.ts";
+import { INJECTION_CORPUS } from "./fixtures/injection-corpus.ts";
+import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
 
 const CREATED = "2026-07-24T09:00:00.000Z";
 
@@ -253,5 +255,26 @@ describe("explainRejection", () => {
     const explained = explainRejection([]);
 
     expect(explained.length).toBeGreaterThan(0);
+  });
+
+  test("holds the frame against every corpus payload — issues are hub-chosen text", () => {
+    // Arrange: the unrecognised-issue branch forwards hub text on purpose,
+    // through quoted(); the recognised branches append it as "(hub said: «…»)".
+    // Both paths carry hostile bytes, so the whole corpus runs through both.
+    for (const { id, payload } of INJECTION_CORPUS) {
+      for (const issue of [
+        payload,
+        `kind: supersedes requires ownership of both claims ${payload}`,
+      ]) {
+        // Act
+        const explained = explainRejection([issue]);
+
+        // Assert: the shared character invariants on every printed line —
+        // one issue must never become a second line or a forged frame.
+        for (const line of explained.split("\n")) {
+          assertUntrustedCharacters(line, `explainRejection/${id}`);
+        }
+      }
+    }
   });
 });

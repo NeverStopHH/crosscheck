@@ -9,38 +9,49 @@
  *    per line; `sanitized` output additionally carries no frame characters
  *    at all.
  *
- * 2. THE META-TEST. Every src module of every connector package is walked
+ * 2. THE META-TEST. Every src module of EVERY workspace package is walked
  *    for calls into the render layer — an import whose specifier is a
- *    render-layer module, or whose imported names include a render-layer
- *    identifier. Every such module must be the render layer itself, a
- *    re-export barrel, or REGISTERED in its package's RENDER_SURFACES.
- *    A new render file that skips registration is a red build — which is
- *    what §1.4's "non-negotiable" means mechanically. (Proven to bite
- *    during Block 2: a scratch src/scratch-render.ts importing
- *    sanitizeUntrusted turned exactly this test red before it was removed.)
+ *    render-layer module (static, dynamic `import()` or `require()`), whose
+ *    imported names include a render-layer identifier, or a namespace import
+ *    of a local barrel whose members reach one. Every such module must be
+ *    the render layer itself, a re-export barrel, or REGISTERED in its
+ *    package's RENDER_SURFACES. A new render file that skips registration is
+ *    a red build — which is what §1.4's "non-negotiable" means mechanically.
+ *    (Proven to bite during Block 2 twice: a scratch src/scratch-render.ts
+ *    importing sanitizeUntrusted, and — after the review — a scratch package
+ *    packages/connector-acp plus a namespace-through-barrel dodge, both red
+ *    before removal.)
+ *
+ * PACKAGES ARE DISCOVERED, NOT ENUMERATED: the walk reads packages/* off the
+ * filesystem, so the connector Blocks 3-7 create is enforced the day its
+ * directory appears — registering surfaces means exporting RENDER_SURFACES
+ * from its own src/render-surfaces.ts, which this file auto-imports.
+ *
+ * COMPOSITE REGISTRATIONS ARE VERIFIED, NOT TRUSTED: a composite's claim to
+ * corpus coverage lives in `corpusCoveredBy`, and every file named there must
+ * exist and actually run the corpus or the shared invariants. The prose
+ * `note` may not smuggle the claim ("corpus-covered" is banned from notes),
+ * and any test file a note names must exist.
  *
  * Type-only imports are exempt: a type cannot render.
  */
 import { describe, expect, test } from "bun:test";
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import {
   RENDER_BARREL_MODULES,
   RENDER_LAYER_MODULES,
-  RENDER_SURFACES,
 } from "../src/render-surfaces.ts";
 import type {
   CorpusRenderSurface,
   RenderSurface,
 } from "../src/render-surfaces.ts";
-import { RENDER_SURFACES as CLAUDE_RENDER_SURFACES } from "../../connector-claude/src/render-surfaces.ts";
 import { INJECTION_CORPUS } from "./fixtures/injection-corpus.ts";
 import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
 
-const CORE_ROOT = join(import.meta.dir, "..");
-const CLAUDE_ROOT = join(import.meta.dir, "..", "..", "connector-claude");
+const WORKSPACE_PACKAGES_ROOT = join(import.meta.dir, "..", "..");
 
 /**
  * Import specifiers that ARE the render layer, however they are reached —
@@ -83,6 +94,20 @@ const RENDER_IDENTIFIERS: ReadonlySet<string> = new Set([
 const IMPORT_PATTERN =
   /(?:import|export)\s+(type\s+)?([\s\S]*?)\s+from\s+["']([^"']+)["']/g;
 
+/** Dynamic `import("…")` / `require("…")` — no `from`, still a reach. */
+const DYNAMIC_IMPORT_PATTERN =
+  /\b(?:import|require)\s*\(\s*["'`]([^"'`]+)["'`]/g;
+
+/** `* as alias` inside an import clause. */
+const NAMESPACE_CLAUSE = /\*\s+as\s+([A-Za-z_$][\w$]*)/;
+
+/**
+ * Specifiers the render layer is reachable through: this workspace's own
+ * modules. Namespace-member detection is scoped to these so `z.string` off
+ * `import * as z from "zod"` cannot false-positive.
+ */
+const LOCAL_SPECIFIER = /^(?:\.|@crosscheck\/)/;
+
 const importedNames = (clause: string): readonly string[] => {
   const braced = /\{([\s\S]*?)\}/.exec(clause);
   if (braced?.[1] === undefined) {
@@ -96,21 +121,42 @@ const importedNames = (clause: string): readonly string[] => {
     .map((entry) => entry.trim());
 };
 
-/** True when the module imports render-layer VALUES (type-only is exempt). */
+/** True when the module reaches render-layer VALUES (type-only is exempt). */
 const touchesRenderLayer = (source: string): boolean => {
+  const namespaceAliases: string[] = [];
   for (const match of source.matchAll(IMPORT_PATTERN)) {
     const [, typeOnly, clause, specifier] = match;
     if (typeOnly !== undefined || clause === undefined || specifier === undefined) {
       continue;
     }
-    const names = importedNames(clause);
     if (RENDER_LAYER_SPECIFIER.test(specifier)) {
       // A value import from a render-layer module; names may be empty for
       // namespace imports (`* as`), which flag too.
       return true;
     }
-    if (names.some((name) => RENDER_IDENTIFIERS.has(name))) {
+    if (importedNames(clause).some((name) => RENDER_IDENTIFIERS.has(name))) {
       return true;
+    }
+    const namespace = NAMESPACE_CLAUSE.exec(clause);
+    if (namespace?.[1] !== undefined && LOCAL_SPECIFIER.test(specifier)) {
+      namespaceAliases.push(namespace[1]);
+    }
+  }
+  for (const match of source.matchAll(DYNAMIC_IMPORT_PATTERN)) {
+    const specifier = match[1];
+    if (specifier !== undefined && RENDER_LAYER_SPECIFIER.test(specifier)) {
+      return true;
+    }
+  }
+  // `import * as core from "./index.ts"; core.sanitizeUntrusted(…)` — the
+  // barrel dodge: the specifier is a barrel, the braced names are empty, and
+  // only the member access names the render layer.
+  for (const alias of namespaceAliases) {
+    const memberPattern = new RegExp(`\\b${alias}\\.([A-Za-z_$][\\w$]*)`, "g");
+    for (const member of source.matchAll(memberPattern)) {
+      if (member[1] !== undefined && RENDER_IDENTIFIERS.has(member[1])) {
+        return true;
+      }
     }
   }
   return false;
@@ -137,27 +183,60 @@ interface PackageRegistration {
   readonly exempt: readonly string[];
 }
 
-const PACKAGES: readonly PackageRegistration[] = [
-  {
-    label: "connector-core",
-    root: CORE_ROOT,
-    surfaces: RENDER_SURFACES,
-    exempt: [...RENDER_LAYER_MODULES, ...RENDER_BARREL_MODULES],
-  },
-  {
-    label: "connector-claude",
-    root: CLAUDE_ROOT,
-    surfaces: CLAUDE_RENDER_SURFACES,
-    // Its registry file names render identifiers in comments/adapters and is
-    // the registration itself — the one structural exemption it gets.
-    exempt: ["src/render-surfaces.ts"],
-  },
-];
+/**
+ * Per-package exemptions beyond the default. connector-core is the render
+ * layer's home, so the layer and its barrels are exempt there; every other
+ * package gets exactly one structural exemption — its own registry file,
+ * which names render identifiers in comments/adapters and IS the
+ * registration. A new package wanting more has to say so here, loudly.
+ */
+const KNOWN_EXEMPT: Readonly<Record<string, readonly string[]>> = {
+  "connector-core": [...RENDER_LAYER_MODULES, ...RENDER_BARREL_MODULES],
+};
+const DEFAULT_EXEMPT: readonly string[] = ["src/render-surfaces.ts"];
 
-const ALL_SURFACES: readonly RenderSurface[] = [
-  ...RENDER_SURFACES,
-  ...CLAUDE_RENDER_SURFACES,
-];
+const isDirectory = async (path: string): Promise<boolean> => {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/** Every packages/* directory with a src tree, off the filesystem. */
+const discoverPackages = async (): Promise<readonly PackageRegistration[]> => {
+  const entries = await readdir(WORKSPACE_PACKAGES_ROOT, { withFileTypes: true });
+  const labels = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const registrations: PackageRegistration[] = [];
+  for (const label of labels) {
+    const root = join(WORKSPACE_PACKAGES_ROOT, label);
+    if (!(await isDirectory(join(root, "src")))) {
+      continue;
+    }
+    const registryPath = join(root, "src", "render-surfaces.ts");
+    const surfaces = (await Bun.file(registryPath).exists())
+      ? (((await import(registryPath)) as {
+          RENDER_SURFACES?: readonly RenderSurface[];
+        }).RENDER_SURFACES ?? [])
+      : [];
+    registrations.push({
+      label,
+      root,
+      surfaces,
+      exempt: KNOWN_EXEMPT[label] ?? DEFAULT_EXEMPT,
+    });
+  }
+  return registrations;
+};
+
+const PACKAGES: readonly PackageRegistration[] = await discoverPackages();
+
+const ALL_SURFACES: readonly RenderSurface[] = PACKAGES.flatMap(
+  (pkg) => pkg.surfaces,
+);
 
 const CORPUS_SURFACES: readonly CorpusRenderSurface[] = ALL_SURFACES.filter(
   (surface): surface is CorpusRenderSurface => surface.kind === "corpus",
@@ -217,6 +296,14 @@ describe("§4.4: the corpus runs on every registered surface", () => {
 });
 
 describe("§4.4: unregistered render surfaces are a red build", () => {
+  test("package discovery found the workspace — the walk cannot silently go blind", () => {
+    // The floor: the two packages that exist today. A discovery that lost
+    // them (moved root, renamed dirs) must fail HERE, not pass vacuously.
+    const labels = PACKAGES.map((pkg) => pkg.label);
+    expect(labels).toContain("connector-core");
+    expect(labels).toContain("connector-claude");
+  });
+
   test.each(PACKAGES.map((pkg) => [pkg.label, pkg] as const))(
     "every %s module that touches the render layer is registered",
     async (_label, pkg) => {
@@ -273,5 +360,56 @@ describe("§4.4: unregistered render surfaces are a red build", () => {
   test("surface names are unique across packages", () => {
     const names = ALL_SURFACES.map((surface) => surface.name);
     expect(new Set(names).size).toBe(names.length);
+  });
+});
+
+describe("§4.4: composite registrations are verified, not trusted", () => {
+  const CORPUS_MARKERS = /INJECTION_CORPUS|assertUntrustedCharacters/;
+  const TEST_FILE_IN_NOTE = /test\/[\w.-]+\.test\.ts/g;
+
+  test("every corpusCoveredBy file exists and really runs the corpus or invariants", async () => {
+    // A composite's exemption from corpus iteration rests on this claim, so
+    // the claim is machine-checked: the named test file must exist AND import
+    // the corpus or the shared invariant assertions. A registration pointing
+    // at a contract-message test would be a lie the build now catches.
+    for (const pkg of PACKAGES) {
+      for (const surface of pkg.surfaces) {
+        if (surface.kind !== "composite") {
+          continue;
+        }
+        for (const file of surface.corpusCoveredBy ?? []) {
+          const named = Bun.file(join(pkg.root, file));
+          const where = `${pkg.label}: ${surface.name} → ${file}`;
+          expect(await named.exists(), `${where} does not exist`).toBe(true);
+          expect(
+            CORPUS_MARKERS.test(await named.text()),
+            `${where} runs neither INJECTION_CORPUS nor assertUntrustedCharacters`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  test("prose notes cannot smuggle the coverage claim past the check", async () => {
+    for (const pkg of PACKAGES) {
+      for (const surface of pkg.surfaces) {
+        if (surface.kind !== "composite") {
+          continue;
+        }
+        // The phrase is banned from prose — the claim lives ONLY in
+        // corpusCoveredBy, where the test above verifies it.
+        expect(
+          surface.note.includes("corpus-covered"),
+          `${pkg.label}: ${surface.name} claims corpus coverage in prose — move it to corpusCoveredBy`,
+        ).toBe(false);
+        // Any test file a note names must at least exist (staleness guard).
+        for (const named of surface.note.match(TEST_FILE_IN_NOTE) ?? []) {
+          expect(
+            await Bun.file(join(pkg.root, named)).exists(),
+            `${pkg.label}: ${surface.name} note names missing ${named}`,
+          ).toBe(true);
+        }
+      }
+    }
   });
 });

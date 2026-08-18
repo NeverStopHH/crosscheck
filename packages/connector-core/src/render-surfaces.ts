@@ -65,14 +65,21 @@ export interface CorpusRenderSurface {
  * A module that renders untrusted text ONLY through registered corpus
  * surfaces or the render-layer primitives — its own strings are
  * renderer-owned literals. §4.4 calls this "renderer-owned literal, listed
- * as such": it is registered so the meta-test can see it, and the note says
- * where its composition is corpus-covered.
+ * as such": it is registered so the meta-test can see it.
+ *
+ * `corpusCoveredBy` is the VERIFIED half of the registration: the test files
+ * where this module's own composition is exercised against the injection
+ * corpus or the shared invariants. The registry test checks each named file
+ * exists and really runs them — a claim of coverage is machine-checked, never
+ * prose (the phrase "corpus-covered" is banned from notes for that reason).
  */
 export interface CompositeRenderSurface {
   readonly kind: "composite";
   readonly name: string;
   readonly module: string;
   readonly note: string;
+  /** Package-relative test files that attack this module's composition. */
+  readonly corpusCoveredBy?: readonly string[];
 }
 
 export type RenderSurface = CorpusRenderSurface | CompositeRenderSurface;
@@ -329,13 +336,15 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     kind: "composite",
     name: "mcp-violations",
     module: "src/mcp/violations.ts",
-    note: "hub-sent issue strings through quoted(); corpus-covered in test/mcp-violations.test.ts",
+    note: "hub-sent issue strings through quoted()",
+    corpusCoveredBy: ["test/mcp-violations.test.ts", "test/mcp-hostile-hub.test.ts"],
   },
   {
     kind: "composite",
     name: "mcp-tools-shared",
     module: "src/mcp/tools/shared.ts",
-    note: "hub failure codes through safeId, messages through quoted; corpus-covered in test/mcp-hostile-hub.test.ts",
+    note: "hub failure codes through safeId, messages through quoted",
+    corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
   },
   {
     kind: "composite",
@@ -347,13 +356,15 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     kind: "composite",
     name: "mcp-tool-get-diagnosis",
     module: "src/mcp/tools/get-diagnosis.ts",
-    note: "renders through renderDiagnosis (registered above); not-found echo through quoted; corpus-covered in test/mcp-injection.test.ts",
+    note: "renders through renderDiagnosis (registered above); not-found echo through quoted",
+    corpusCoveredBy: ["test/mcp-injection.test.ts", "test/mcp-hostile-hub.test.ts"],
   },
   {
     kind: "composite",
     name: "mcp-tool-extend-diagnosis",
     module: "src/mcp/tools/extend-diagnosis.ts",
-    note: "ids through safeId, caller echo through quoted; corpus-covered in test/mcp-injection.test.ts",
+    note: "ids through safeId, caller echo through quoted",
+    corpusCoveredBy: ["test/mcp-injection.test.ts", "test/mcp-hostile-hub.test.ts"],
   },
   {
     kind: "composite",
@@ -365,13 +376,15 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     kind: "composite",
     name: "mcp-tool-publish-claim",
     module: "src/mcp/tools/publish-claim.ts",
-    note: "ids through safeId under quotingText; corpus-covered in test/mcp-tools.test.ts",
+    note: "ids through safeId under quotingText",
+    corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
   },
   {
     kind: "composite",
     name: "mcp-tool-review-draft",
     module: "src/mcp/tools/review-draft.ts",
-    note: "ids through safeId; corpus-covered in test/review-draft.test.ts",
+    note: "ids through safeId; promoted body through quoted under quotingText",
+    corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
   },
   {
     kind: "composite",
