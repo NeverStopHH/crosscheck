@@ -9,6 +9,7 @@ in, never by this one.
 |---|---|---|
 | `packages/connector-claude/` | Apache License 2.0 | [`packages/connector-claude/LICENSE`](packages/connector-claude/LICENSE) |
 | `packages/connector-core/` | Apache License 2.0 | [`packages/connector-core/LICENSE`](packages/connector-core/LICENSE) |
+| `packages/connector-acp/` | Apache License 2.0 | [`packages/connector-acp/LICENSE`](packages/connector-acp/LICENSE) |
 | `packages/schema/` | Apache License 2.0 | [`packages/schema/LICENSE`](packages/schema/LICENSE) |
 | `packages/server/` | Functional Source License 1.1 (ALv2 Future License) | [`packages/server/LICENSE`](packages/server/LICENSE) |
 | everything else (docs, CI, tooling) | Apache License 2.0 | [`packages/schema/LICENSE`](packages/schema/LICENSE) |

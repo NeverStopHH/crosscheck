@@ -26,6 +26,9 @@ const USAGE = [
   "  statusline                one presence line (reads session json on stdin)",
   "  hook <name>               session-start | post-tool-use | session-end",
   "  mcp                       run the mcp tool server on stdio (the agent starts it)",
+  "  acp [--record <file>] -- <agent cmd…>",
+  "                            transparent ACP proxy: wrap an ACP agent",
+  "                            (Zed/JetBrains custom agent command)",
   "",
 ].join("\n");
 

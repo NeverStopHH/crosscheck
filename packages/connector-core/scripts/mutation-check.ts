@@ -31,6 +31,7 @@ const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const CONNECTOR = "packages/connector-claude";
 const CORE = "packages/connector-core";
 const SERVER = "packages/server";
+const ACP = "packages/connector-acp";
 
 interface Mutation {
   /** Names the incident, not the edit. */
@@ -45,6 +46,23 @@ interface Mutation {
 
 /** Exported so the guard-count claim below can be re-derived from the data. */
 export const MUTATIONS: readonly Mutation[] = [
+  {
+    // The ACP proxy's prime directive (adapters design verdict 2): no
+    // observer failure may reach the forward path. This strips the
+    // catch-all off the observer call, so the first hostile-observer throw
+    // aborts the pump mid-stream — forwarded bytes stop matching input and
+    // the wrapped session dies with them, which is exactly the defect class
+    // Block 3 exists to make impossible.
+    label: "the acp pump lets an observer exception reach the forward path",
+    file: `${ACP}/src/pump.ts`,
+    from: "observeSafely(observe, copy, counters);",
+    to: "observe(copy);",
+    test: `${ACP}/test/transparency.test.ts`,
+    because:
+      "a crashing observer stops forwarding mid-stream: output bytes no " +
+      "longer equal input bytes and the proxy has killed the session it " +
+      "promised never to touch",
+  },
   {
     // The guard here USED TO BE the process-level test/hook-time-budget.test.ts,
     // which detects this through a wall-clock SIDE EFFECT: with the reserve gone
@@ -588,6 +606,7 @@ interface Outcome {
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1
  * PRINTS: stop-latency.test.ts 1
+ * PRINTS: transparency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1
  */
 const greenGuards = new Map<string, boolean>();

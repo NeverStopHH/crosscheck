@@ -5,6 +5,17 @@
     "": {
       "name": "crosscheck-workspace",
     },
+    "packages/connector-acp": {
+      "name": "@crosscheck/connector-acp",
+      "version": "0.5.0",
+      "dependencies": {
+        "@crosscheck/connector-core": "workspace:*",
+      },
+      "devDependencies": {
+        "bun-types": "^1.2.0",
+        "typescript": "^7.0.2",
+      },
+    },
     "packages/connector-claude": {
       "name": "@crosscheck/connector-claude",
       "version": "0.5.0",
@@ -12,6 +23,7 @@
         "crosscheck": "./src/bin/crosscheck.ts",
       },
       "dependencies": {
+        "@crosscheck/connector-acp": "workspace:*",
         "@crosscheck/connector-core": "workspace:*",
         "@crosscheck/schema": "workspace:*",
         "@crosscheck/server": "workspace:*",
@@ -64,6 +76,8 @@
     },
   },
   "packages": {
+    "@crosscheck/connector-acp": ["@crosscheck/connector-acp@workspace:packages/connector-acp"],
+
     "@crosscheck/connector-claude": ["@crosscheck/connector-claude@workspace:packages/connector-claude"],
 
     "@crosscheck/connector-core": ["@crosscheck/connector-core@workspace:packages/connector-core"],

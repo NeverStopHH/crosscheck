@@ -218,6 +218,9 @@ describe("packed npm tarball", () => {
       "packages/connector-core/NOTICE",
       "packages/connector-core/src/mcp/server.ts",
       "packages/connector-core/src/spool/append.ts",
+      "packages/connector-acp/LICENSE",
+      "packages/connector-acp/NOTICE",
+      "packages/connector-acp/src/proxy.ts",
       "packages/connector-claude/LICENSE",
       "packages/connector-claude/NOTICE",
       "packages/connector-claude/src/bin/crosscheck.ts",
@@ -226,16 +229,18 @@ describe("packed npm tarball", () => {
     const mustNotShip = [
       "packages/connector-claude/test",
       "packages/connector-core/test",
+      "packages/connector-acp/test",
       "packages/server/test",
       "packages/schema/test",
       "packages/connector-claude/scripts",
       "packages/connector-core/scripts",
       "docs",
       "bun.lock",
-      // One package, one manifest — ALL FOUR guarded: a nested package.json
+      // One package, one manifest — ALL FIVE guarded: a nested package.json
       // would also change self-name resolution for everything beneath it.
       "packages/connector-claude/package.json",
       "packages/connector-core/package.json",
+      "packages/connector-acp/package.json",
       "packages/schema/package.json",
       "packages/server/package.json",
     ];
@@ -310,6 +315,24 @@ describe("packed npm tarball", () => {
     expect(version.stderr).not.toContain("failed to start");
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("usage: crosscheck <command>");
+  }, DRIVE_TIMEOUT_MS);
+
+  test("packed acp subcommand resolves its dynamic import and refuses bad args", async () => {
+    // Arrange: `acp` lives in a SEPARATE workspace package reached through a
+    // dynamic import — the one specifier the static rewrite audit cannot
+    // execute. Driving it proves crosscheck-hub/connector-acp resolves in
+    // the installed tree; the missing `--` makes it exit before any spawn.
+    const installed = await getInstalled();
+    if (!installed.ok) {
+      return warnSkip(installed.reason);
+    }
+
+    // Act
+    const refusal = await run([process.execPath, installed.shimPath, "acp"]);
+
+    // Assert: the acp usage text can only come from the packed connector-acp.
+    expect(refusal.exitCode).toBe(64);
+    expect(refusal.stderr).toContain("usage: crosscheck acp");
   }, DRIVE_TIMEOUT_MS);
 
   test("without bun the shim prints one install line, never a stack trace", async () => {

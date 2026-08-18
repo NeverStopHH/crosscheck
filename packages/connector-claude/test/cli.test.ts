@@ -380,6 +380,19 @@ describe("crosscheck cli surface", () => {
     expect(result.stdout).toMatch(/^\s+serve\s/m);
   });
 
+  test("usage lists the acp command", async () => {
+    // Arrange
+    const { repo, env } = await fixture();
+
+    // Act
+    const result = await runCli(["--help"], env, repo);
+
+    // Assert: the ACP proxy (packages/connector-acp) fronts through this
+    // bin until Block 8 extracts packages/cli — the usage screen is where
+    // a stranger discovers the wrap command.
+    expect(result.stdout).toMatch(/^\s+acp\s/m);
+  });
+
   test("--version prints the version from the nearest package.json", async () => {
     // Arrange
     const { repo, env } = await fixture();

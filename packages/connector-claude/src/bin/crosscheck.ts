@@ -64,6 +64,16 @@ const main = async (): Promise<void> => {
     process.exit(await runMcpServer(process.env, process.cwd()));
   }
 
+  // The ACP transparent proxy (packages/connector-acp; this bin fronting it
+  // is design §1.2's named debt until Block 8 extracts packages/cli).
+  // DYNAMIC import like `serve`: hooks and the statusline must not pay its
+  // load. NOT through `readStdin` either — stdin IS the client half of the
+  // wire the proxy forwards, open for the life of the session BY DESIGN.
+  if (command === "acp") {
+    const { runAcpProxy } = await import("@crosscheck/connector-acp");
+    process.exit(await runAcpProxy(rest, process.env));
+  }
+
   // DYNAMIC import, and only here: the hub pulls in hono, drizzle and the
   // PGlite WASM runtime, none of which a hook or the statusline may pay for —
   // those run inside a session-latency budget on every invocation. After

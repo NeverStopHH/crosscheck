@@ -34,6 +34,7 @@ const WORKSPACE_PACKAGES = [
   "schema",
   "server",
   "connector-core",
+  "connector-acp",
   "connector-claude",
 ] as const;
 
@@ -68,7 +69,7 @@ const resolvePublishVersion = (manifests: readonly Manifest[]): string => {
 };
 
 /**
- * Union of the four packages' RUNTIME deps, minus the internal ones the
+ * Union of the five packages' RUNTIME deps, minus the internal ones the
  * rewrite absorbs. A range conflict is a packing error, not a coin toss.
  */
 const mergeDependencies = (
@@ -226,6 +227,7 @@ const buildManifest = (
     "./server": "./packages/server/src/index.ts",
     "./connector-core": "./packages/connector-core/src/index.ts",
     "./connector-core/*": "./packages/connector-core/src/*",
+    "./connector-acp": "./packages/connector-acp/src/index.ts",
   },
   dependencies,
   files: ["bin", "packages"],
