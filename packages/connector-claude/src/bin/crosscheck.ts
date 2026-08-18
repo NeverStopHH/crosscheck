@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { EXIT_FAIL, EXIT_OK, EXIT_USAGE, STDIN_TIMEOUT_MS } from "../constants.ts";
 import { runCli } from "../cli/index.ts";
+import { interceptHelpOrUnknownFlag } from "../cli/help.ts";
 import { isHookName, runHook } from "../hooks/index.ts";
 import { runMcpServer } from "../mcp/server.ts";
 import { runStatusline } from "../statusline/statusline.ts";
@@ -23,6 +24,14 @@ const readStdin = async (): Promise<string> => {
     clearTimeout(timer);
   }
 };
+
+const SERVE_USAGE = [
+  "usage: crosscheck serve",
+  "",
+  "  runs the team hub on this machine (env: PORT, CROSSCHECK_DATA_DIR,",
+  "  ADMIN_TOKEN, CROSSCHECK_UI_SECRET)",
+  "",
+].join("\n");
 
 /** Hooks and the statusline must never fail the developer's session: exit 0. */
 const emitAndExit = (text: string, exitCode: number): never => {
@@ -73,6 +82,15 @@ const main = async (): Promise<void> => {
   // output would corrupt the session. An operator whose hub refuses to boot —
   // bad PORT, a data dir another PostgreSQL major wrote — needs the reason.
   if (command === "serve") {
+    // The help gate runs BEFORE the dynamic import: `serve --help` must
+    // answer with usage, not boot a hub — the same incident class as
+    // `init --help` running a full init (cli/help.ts).
+    const intercepted = interceptHelpOrUnknownFlag(command, rest, {
+      usage: SERVE_USAGE,
+    });
+    if (intercepted !== null) {
+      emitAndExit(intercepted.stdout, intercepted.exitCode);
+    }
     try {
       const { startServer } = await import("@crosscheck/server");
       await startServer();

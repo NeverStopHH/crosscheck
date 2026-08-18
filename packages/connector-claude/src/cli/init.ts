@@ -32,6 +32,23 @@ const BIN_ENTRY_PATH = resolve(import.meta.dir, "..", "bin", "crosscheck.ts");
 /** Characters a POSIX shell passes through untouched. */
 const SHELL_SAFE_PATTERN = /^[\w@%+=:,./-]+$/;
 
+/** The flag names in one place: the help gate (cli/index.ts) reuses them. */
+export const INIT_COMMAND_PREFIX_FLAG = "--command-prefix";
+export const INIT_HUB_FLAG = "--hub";
+export const INIT_FORCE_STATUSLINE_FLAG = "--force-statusline";
+
+export const INIT_USAGE = [
+  `usage: crosscheck init [${INIT_COMMAND_PREFIX_FLAG} <prefix>] [${INIT_HUB_FLAG} <url>] [${INIT_FORCE_STATUSLINE_FLAG}]`,
+  "",
+  "  wires this repo: hooks and statusline into .claude/settings.json, the",
+  "  mcp server into .mcp.json, and the hub url into .crosscheck.json",
+  "",
+  `  ${INIT_COMMAND_PREFIX_FLAG} <prefix>   launcher prefix for hook commands (advanced)`,
+  `  ${INIT_HUB_FLAG} <url>            hub url to write (default: stored login / repo config)`,
+  `  ${INIT_FORCE_STATUSLINE_FLAG}     replace an existing statusline`,
+  "",
+].join("\n");
+
 export interface InitOptions {
   readonly commandPrefix?: string | undefined;
   readonly hubUrl?: string | undefined;
@@ -44,9 +61,9 @@ export const parseInitArgs = (args: readonly string[]): InitOptions => {
     return index === -1 ? undefined : args[index + 1];
   };
   return {
-    commandPrefix: flagValue("--command-prefix"),
-    hubUrl: flagValue("--hub"),
-    forceStatusline: args.includes("--force-statusline"),
+    commandPrefix: flagValue(INIT_COMMAND_PREFIX_FLAG),
+    hubUrl: flagValue(INIT_HUB_FLAG),
+    forceStatusline: args.includes(INIT_FORCE_STATUSLINE_FLAG),
   };
 };
 

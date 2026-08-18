@@ -1,10 +1,24 @@
 import { EXIT_OK, EXIT_USAGE } from "../constants.ts";
 import type { Env } from "../config/paths.ts";
 import { runDoctor } from "./doctor.ts";
-import { runInit } from "./init.ts";
-import { readSecretFromStdin, runLogin } from "./login.ts";
+import { interceptHelpOrUnknownFlag } from "./help.ts";
+import type { HelpSpec } from "./help.ts";
+import {
+  INIT_COMMAND_PREFIX_FLAG,
+  INIT_FORCE_STATUSLINE_FLAG,
+  INIT_HUB_FLAG,
+  INIT_USAGE,
+  runInit,
+} from "./init.ts";
+import { LOGIN_USAGE, readSecretFromStdin, runLogin } from "./login.ts";
 import type { CliResult, SecretReader } from "./login.ts";
-import { runMute, runPresence, runUnmute } from "./privacy.ts";
+import {
+  MUTE_USAGE,
+  PRESENCE_USAGE,
+  runMute,
+  runPresence,
+  runUnmute,
+} from "./privacy.ts";
 import { runStatus } from "./status.ts";
 import { resolveVersion } from "./version.ts";
 
@@ -29,6 +43,40 @@ const USAGE = [
   "",
 ].join("\n");
 
+const STATUS_USAGE = [
+  "usage: crosscheck status",
+  "",
+  "  shows hub, repo, teammates, spool depth and last sync for this repo",
+  "",
+].join("\n");
+
+const DOCTOR_USAGE = [
+  "usage: crosscheck doctor",
+  "",
+  "  diagnoses the local install; exit 0 healthy, 1 warnings, 2 failures",
+  "",
+].join("\n");
+
+/**
+ * Every user-facing subcommand and what its argv may carry. The gate
+ * (cli/help.ts) runs BEFORE dispatch: --help/-h answers with the usage here
+ * and does nothing else, an unlisted flag is a usage error — `init --help`
+ * once RAN a full init because nothing stood in front of the command.
+ */
+const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
+  login: { usage: LOGIN_USAGE },
+  init: {
+    usage: INIT_USAGE,
+    valueFlags: [INIT_COMMAND_PREFIX_FLAG, INIT_HUB_FLAG],
+    booleanFlags: [INIT_FORCE_STATUSLINE_FLAG],
+  },
+  status: { usage: STATUS_USAGE },
+  doctor: { usage: DOCTOR_USAGE },
+  presence: { usage: PRESENCE_USAGE },
+  mute: { usage: MUTE_USAGE },
+  unmute: { usage: MUTE_USAGE },
+};
+
 export const runCli = async (
   argv: readonly string[],
   env: Env,
@@ -36,6 +84,13 @@ export const runCli = async (
   readSecret: SecretReader = readSecretFromStdin,
 ): Promise<CliResult> => {
   const [command, ...rest] = argv;
+  const helpSpec = command === undefined ? undefined : SUBCOMMAND_HELP[command];
+  if (helpSpec !== undefined) {
+    const intercepted = interceptHelpOrUnknownFlag(command ?? "", rest, helpSpec);
+    if (intercepted !== null) {
+      return intercepted;
+    }
+  }
   switch (command) {
     // Exit 0, unlike an unknown command: asking for help is not an error,
     // and `npx crosscheck-hub --help` is the first thing a stranger runs.
