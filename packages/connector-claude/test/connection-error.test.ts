@@ -68,6 +68,12 @@ describe("classifyConnectionError pins the injected shapes", () => {
       [new Error("SSL routines: wrong version number"), "tls"],
       [new Error("something else entirely"), "unknown"],
       ["not even an error", "unknown"],
+      // Nullish must classify, not crash: classification runs inside
+      // performRequest's catch but OUTSIDE its try, so a runtime that ever
+      // throws null would otherwise turn a login failure into a stack trace
+      // instead of a sentence.
+      [null, "unknown"],
+      [undefined, "unknown"],
     ];
 
     // Act + Assert
@@ -114,6 +120,28 @@ describe("the live runtime still throws the researched shapes", () => {
     }
 
     // Assert
+    expect(classifyConnectionError(caught)).toBe("refused");
+  });
+
+  test("https against a plain-http port collapses to refused — the (!) row", async () => {
+    // Arrange: a plain http listener; the client insists on TLS at it. This
+    // is the one collapsed row a loopback socket CAN pin (the unresolvable-
+    // name row would need real DNS) — and the collapse is the entire reason
+    // the "refused" message hedges and login/doctor refine via node:dns.
+    const plain = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+
+    // Act
+    let caught: unknown;
+    try {
+      await fetch(`https://127.0.0.1:${plain.port}/`, {
+        signal: AbortSignal.timeout(2_000),
+      });
+    } catch (error) {
+      caught = error;
+    }
+    plain.stop(true);
+
+    // Assert: Bun cannot tell this from refused — not a tls classification
     expect(classifyConnectionError(caught)).toBe("refused");
   });
 

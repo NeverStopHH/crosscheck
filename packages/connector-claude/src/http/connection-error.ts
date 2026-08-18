@@ -5,9 +5,12 @@
  * Tailscale DERP relay): the honest sentence — "timed out after 400 ms", plus
  * the knob that moves it — was one classification away the whole time.
  *
- * THE SHAPES ARE EMPIRICAL, measured on Bun 1.3.13 and pinned against the
- * live runtime by test/connection-error.test.ts (an upgrade that changes them
- * fails a pin instead of silently degrading every message to "unknown"):
+ * THE SHAPES ARE EMPIRICAL, measured on Bun 1.3.13. Five of the six rows are
+ * pinned against the LIVE runtime by test/connection-error.test.ts over
+ * loopback sockets — an upgrade that changes them fails a pin instead of
+ * silently degrading every message to "unknown". The unresolvable-hostname
+ * row alone is pinned on shape only: a live pin would need real DNS, and the
+ * refinement below covers that row wherever a human is watching:
  *
  *   AbortSignal.timeout fired        DOMException, name "TimeoutError"
  *   connection refused               Error, code "ConnectionRefused"
@@ -39,6 +42,13 @@ export type ConnectionCause =
   | "unknown";
 
 const stringProp = (error: unknown, key: string): string => {
+  // Nullish throws on property access; anything else (primitives included,
+  // via boxing) indexes safely. Classification must never crash — it runs
+  // inside performRequest's catch, where a throw would replace the honest
+  // sentence with a stack trace.
+  if (error === null || error === undefined) {
+    return "";
+  }
   const value = (error as Record<string, unknown>)[key];
   return typeof value === "string" ? value : "";
 };
