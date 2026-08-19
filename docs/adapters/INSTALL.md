@@ -125,6 +125,12 @@ a dependency-confusion vector), never an npx/bunx cache path (ephemeral
 installs refuse; the doctor flags them). The ACP mcpServers injection uses
 the same durable-install rules.
 
+**Dev-checkout upgrade across Block 8**: installs written before the bin
+moved may embed the old absolute entry path
+(`packages/connector-claude/src/bin/crosscheck.ts`, gone since the move) —
+hooks then fail silently until you rerun `crosscheck init`. `crosscheck
+doctor` names the dead launcher ("does not exist — rerun crosscheck init").
+
 ---
 
 # Dogfood checklists — what only real installs can answer

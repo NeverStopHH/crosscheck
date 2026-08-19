@@ -655,18 +655,28 @@ complete. (1) The §4.5 cross-connector E2E exists as a CI test
 (`packages/cli/test/e2e/cross-connector.e2e.test.ts`): one real hub, all
 three connectors as real subprocesses of the one bin — the Claude developer
 publishes an evidence-backed diagnosis over real MCP, the ACP developer's
-FIRST prompt block carries that briefing and his targets land, the Cursor
-developer's briefing arrives as `additional_context` and the shared failure
-triggers the hint quoting the published claim; the same failure text through
-three wire shapes lands as ONE hub fingerprint across three work contexts;
-presence lists three agent kinds; the §2.1 opt-out and mute rules hold
-across connectors; every rendered surface passes a framing seal. Bounded
-(~4 s against the in-process hub), it rides the normal test lane. One
-scenario finding worth naming: an evidence-backed `likely_root_cause` makes
-the tree SOLVED (services/solved.ts, derived per read), so briefings in the
-scenario legitimately record solved-pointer `hint_deliveries` rows
-(ref_kind work_context) beside the hint pipeline's claim row — the E2E
-asserts both precisely. (2) `packages/cli` extraction per §1.2's discharge
+FIRST prompt block carries that briefing (held until the proxy log's
+`briefing-prefetch-ready` signal, polled — no fixed sleep) and his targets
+land, the Cursor developer's briefing arrives as `additional_context` and
+the shared failure triggers the failure-matched hint (the hub's FTS over
+the failure text) quoting the published claim; the same failure text
+through three wire shapes lands as ONE hub fingerprint across three work
+contexts, and that fingerprint is CAUSALLY load-bearing: the solved-matches
+fingerprint tier is the only strong target the solved tree shares with the
+others' live work, so the solved pointer in their briefings — and its
+`work_context` delivery row — go red if the tier breaks (verified by
+mutating the tier); presence lists three agent kinds; the §2.1 opt-out and
+mute rules hold across connectors, with an unmute step re-delivering the
+same hint to a fresh session as the positive control; every rendered
+agent-facing surface passes a framing seal (the statusline is pinned by
+shape as a corpus-registered surface). Bounded (~3-8 s wall observed, every
+step capped at 30 s), it rides the normal test lane. One scenario finding
+worth naming: an evidence-backed `likely_root_cause` makes the tree SOLVED
+(services/solved.ts, derived per read), so briefings in the scenario
+legitimately record solved-pointer `hint_deliveries` rows (ref_kind
+work_context) beside the hint pipeline's claim row — the E2E asserts the
+claim row exactly and the solved-pointer row positively (session-scoped).
+(2) `packages/cli` extraction per §1.2's discharge
 note above; the npm artifact ships all seven packages (connector-cursor and
 cli joined pack-npm + the tarball ship-audit; the launcher shim's ENTRY
 moved with the bin). (3) Docs: per-editor install + the consolidated
