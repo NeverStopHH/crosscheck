@@ -64,6 +64,32 @@ const main = async (): Promise<void> => {
     process.exit(await runMcpServer(process.env, process.cwd()));
   }
 
+  // Cursor IDE hooks (packages/connector-cursor; this bin fronting it is the
+  // same §1.2 named debt as `acp` below). DYNAMIC import — Claude hooks and
+  // the statusline must not pay its load. Reads ONE payload under
+  // STDIN_TIMEOUT_MS exactly like `hook`: a cursor hook that blocks on an
+  // unclosed stdin holds the developer's session open. UNLIKE `acp`, every
+  // failure here — unknown event, import crash — exits 0: Cursor reads
+  // non-zero exits as hook failures worth logging (exit 2 even BLOCKS the
+  // action), and this connector is never allowed to be either.
+  if (command === "cursor-hook") {
+    try {
+      const { isCursorHookEvent, runCursorHook, CURSOR_NO_OP_OUTPUT } =
+        await import("@crosscheck/connector-cursor");
+      const event = rest[0];
+      if (event === undefined || !isCursorHookEvent(event)) {
+        process.stdout.write(`${CURSOR_NO_OP_OUTPUT}\n`);
+        process.exit(EXIT_OK);
+      }
+      emitAndExit(
+        await runCursorHook(event, await readStdin(), process.env),
+        EXIT_OK,
+      );
+    } catch {
+      process.exit(EXIT_OK);
+    }
+  }
+
   // The ACP transparent proxy (packages/connector-acp; this bin fronting it
   // is design §1.2's named debt until Block 8 extracts packages/cli).
   // DYNAMIC import like `serve`: hooks and the statusline must not pay its

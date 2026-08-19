@@ -38,6 +38,8 @@ export interface InitOptions {
   readonly commandPrefix?: string | undefined;
   readonly hubUrl?: string | undefined;
   readonly forceStatusline: boolean;
+  /** COMPOSABLE with the default install (design §3.4): adds Cursor's files. */
+  readonly cursor: boolean;
 }
 
 export const parseInitArgs = (args: readonly string[]): InitOptions => {
@@ -49,6 +51,7 @@ export const parseInitArgs = (args: readonly string[]): InitOptions => {
     commandPrefix: flagValue("--command-prefix"),
     hubUrl: flagValue("--hub"),
     forceStatusline: args.includes("--force-statusline"),
+    cursor: args.includes("--cursor"),
   };
 };
 
@@ -223,10 +226,11 @@ export const runInit = async (
   const settingsPath = join(settingsDir, CLAUDE_SETTINGS_FILE);
   const mcpPath = join(identity.root, MCP_CONFIG_FILE);
 
-  // BOTH files are read and validated BEFORE either is written. `init` writing
-  // settings.json and then aborting on an unparseable .mcp.json would leave the
-  // repo half-installed — hooks registered, tools not — which is the state
-  // `doctor` has the hardest time explaining.
+  // ALL files are read and validated BEFORE any is written — the Cursor pair
+  // included when --cursor rides along. `init` writing settings.json and then
+  // aborting on an unparseable .mcp.json (or .cursor/hooks.json) would leave
+  // the repo half-installed — hooks registered, tools not — which is the
+  // state `doctor` has the hardest time explaining.
   const settingsRead = await readJsonConfig(settingsPath);
   if (!settingsRead.ok) {
     return {
@@ -241,15 +245,33 @@ export const runInit = async (
       exitCode: EXIT_ABORTED,
     };
   }
+  const prefix = resolveCommandPrefix(launcher);
+  const mcpEntry = resolveMcpLauncher(launcher);
+  // DYNAMIC import like the bin's cursor-hook branch: hooks and the
+  // statusline must not pay connector-cursor's load. Prepare/apply split so
+  // the Cursor files are validated HERE, written only after the Claude
+  // writes below succeed (all-or-nothing across both connectors).
+  const cursorPlan = options.cursor
+    ? await (async () => {
+        const { prepareCursorInit } = await import(
+          "@crosscheck/connector-cursor"
+        );
+        return prepareCursorInit(identity.root, prefix, mcpEntry);
+      })()
+    : null;
+  if (cursorPlan !== null && !cursorPlan.ok) {
+    return {
+      stdout: `${cursorPlan.reason}\n`,
+      exitCode: EXIT_ABORTED,
+    };
+  }
   await backUp(settingsPath, settingsRead.raw);
   await backUp(mcpPath, mcpRead.raw);
 
-  const prefix = resolveCommandPrefix(launcher);
   const merged = mergeClaudeSettings(
     settingsRead.value,
     buildSettingsPlan(prefix, options.forceStatusline),
   );
-  const mcpEntry = resolveMcpLauncher(launcher);
   await ensureDir(settingsDir);
   await writeFile(settingsPath, renderSettings(merged.settings), "utf8");
   await writeFile(
@@ -262,6 +284,8 @@ export const runInit = async (
     renderRepoConfig(hubUrl),
     "utf8",
   );
+  const cursorPaths =
+    cursorPlan !== null && cursorPlan.ok ? await cursorPlan.apply() : [];
 
   const notes = [
     ...(merged.statuslineInstalled
@@ -283,11 +307,20 @@ export const runInit = async (
       `wrote ${repoConfigPath(identity.root)}`,
       `wrote ${settingsPath}`,
       `wrote ${mcpPath}`,
+      ...cursorPaths.map((path) => `wrote ${path}`),
       `hooks use launcher: ${prefix}`,
       // Said explicitly because it is the ONLY delivery mechanism: a teammate
       // gets the tools from this file arriving in their checkout, and nowhere
       // else. An uncommitted .mcp.json is an install that works for one person.
       `commit ${MCP_CONFIG_FILE} so teammates get the mcp tools on git pull`,
+      // The same one-PR rule for the Cursor pair — and the gitignore warning
+      // the design's rules-file rejection earned: an ignored .cursor/ is an
+      // install that silently works for one person only.
+      ...(cursorPaths.length > 0
+        ? [
+            "commit the .cursor files too (Cursor loads project hooks from version control in trusted workspaces) — if .cursor/ is gitignored, unignore hooks.json + mcp.json or teammates never get them",
+          ]
+        : []),
       ...notes,
       "",
     ].join("\n"),

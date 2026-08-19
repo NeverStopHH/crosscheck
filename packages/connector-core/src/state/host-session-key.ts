@@ -33,6 +33,13 @@ export const CURSOR_HOST_KEY_PREFIX = "cur-";
 export const ACP_AGENT_KIND_PREFIX = "acp:";
 export const ACP_AGENT_KIND_FALLBACK = "acp:unknown";
 export const CURSOR_AGENT_KIND = "cursor-ide";
+/**
+ * A Cursor session whose payload says `is_background_agent: true` (design
+ * §3.2): registered under its own kind so presence readers can tell a
+ * background run from a person's IDE session. Same `cur-` key prefix — the
+ * conversation id namespace is one namespace either way.
+ */
+export const CURSOR_BACKGROUND_AGENT_KIND = "cursor-background";
 
 /** What an unidentifiable agent name slugs to — mirrors acp:unknown. */
 const UNKNOWN_AGENT_SLUG = "unknown";

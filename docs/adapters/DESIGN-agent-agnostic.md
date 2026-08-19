@@ -584,6 +584,18 @@ rewired `session-start.ts` and `user-prompt-submit.ts` onto them, and consumed t
 the ACP injector. The launcher-resolution rules moved from `cli/init.ts` to
 `connector-core/src/config/launcher.ts` for the same reason (the mcpServers entry needs
 them; connector-claude re-exports). Blocks 6–7 now parallelize freely.
+Status note (2026-08-19, updated in Block 6): row 6 LANDED — `packages/connector-cursor`
+with the seven §3.2 handlers over the kit flows, docs-excerpt contract fixtures
+(source + fetch date in the headers), the contract-drift ledger + doctor section,
+`init --cursor` (all-or-nothing with the Claude pair), and the `cursor-hook` bin
+subcommand per the §1.2 named-debt arrangement. Two more mechanical extractions rode
+ahead of it, same move-first rule: the hook budget family
+(`connector-core/config/hook-budget.ts`) and the launcher health probes
+(`config/launcher-check.ts`), both re-exported/wrapped by connector-claude with zero
+assertion changes. Block 6 renders nothing (§4.4: no registered surfaces — the
+registry meta-test verifies the claim); injection is Block 7. The §6 q4/q5 manual
+dogfood on a real Cursor build remains OPEN and is a human's duty — checklist in the
+package README.
 
 ---
 
@@ -622,8 +634,21 @@ them; connector-claude re-exports). Blocks 6–7 now parallelize freely.
    the tool result — verify it reaches the model mid-turn (not next turn), and whether
    `postToolUse` fires on failed tools or only `postToolUseFailure` does (determines
    where the fingerprint-matched hint attaches). Verify on the teammate's exact build.
+   *Block 6 implementation (2026-08-19), conservative until dogfood answers:* capture
+   fingerprints failures on EVERY documented signal — `postToolUseFailure`'s
+   `error_message`, a non-zero `exitCode` inside `postToolUse`'s stringified
+   `tool_output`, and a TOLERATED (undocumented) numeric exit field on
+   `afterShellExecution` — all through the one shared extractor, so whichever event
+   reality fires produces the same hash and the hub's natural-key dedup absorbs
+   overlap. The manual checklist a human must run on a real build is in
+   `packages/connector-cursor/README.md` ("Manual dogfood"); a green CI is NOT that
+   verification.
 5. **Cursor event completeness per surface** (IDE vs cloud agents): the docs claim
    near-full cloud support; the six §3.2 events need a per-surface checklist run.
+   *Block 6 note (2026-08-19):* the per-surface run is step 5 of the README
+   checklist; the contract-drift ledger (`state/cursor-drift.jsonl`, doctor-visible)
+   is the instrument — a payload lacking a mapped field degrades silently AND
+   counts, so the checklist reads facts instead of impressions.
 6. **Zed project-scoped `agent_servers`**: if `.zed/settings.json` honors it, the ACP
    proxy gains a committed-to-repo install path ("install = one PR") for Zed teams —
    test in Block 3, and if it works, `init --zed` becomes a cheap follow-up.

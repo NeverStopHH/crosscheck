@@ -18,6 +18,13 @@ export const SyncStateSchema = z.looseObject({
   lastSyncAt: z.string().nullable().default(null),
   lastOkAt: z.string().nullable().default(null),
   lastError: z.string().nullable().default(null),
+  /**
+   * Last `cursor_version` a Cursor sessionStart hook reported for this repo
+   * (design §3.2) — `doctor`'s evidence that the observed Cursor build is one
+   * whose hooks API exists (≥ 1.7). A last-writer-wins string like its
+   * siblings: a lost update costs a slightly stale version, never a count.
+   */
+  cursorVersion: z.string().nullable().default(null),
 });
 
 export type SyncState = z.infer<typeof SyncStateSchema>;
@@ -26,6 +33,7 @@ export const EMPTY_SYNC_STATE: SyncState = {
   lastSyncAt: null,
   lastOkAt: null,
   lastError: null,
+  cursorVersion: null,
 };
 
 export const readSyncState = async (

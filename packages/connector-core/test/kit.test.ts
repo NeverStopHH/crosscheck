@@ -36,6 +36,7 @@ import * as endFlow from "../src/flows/end-session.ts";
 import * as briefingFlow from "../src/flows/briefing.ts";
 import * as hintFlow from "../src/flows/hint.ts";
 import * as launcher from "../src/config/launcher.ts";
+import * as hookBudgetModule from "../src/config/hook-budget.ts";
 import * as secretScan from "../src/capture/secret-scan.ts";
 import * as denylist from "../src/capture/denylist.ts";
 import * as commitEvidence from "../src/capture/commit-evidence.ts";
@@ -72,6 +73,7 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["ACP_HOST_KEY_PREFIX", hostKey.ACP_HOST_KEY_PREFIX],
   ["ACP_KEY_DELIMITER", hostKey.ACP_KEY_DELIMITER],
   ["CURSOR_AGENT_KIND", hostKey.CURSOR_AGENT_KIND],
+  ["CURSOR_BACKGROUND_AGENT_KIND", hostKey.CURSOR_BACKGROUND_AGENT_KIND],
   ["CURSOR_HOST_KEY_PREFIX", hostKey.CURSOR_HOST_KEY_PREFIX],
   // Config
   ["loadConfig", config.loadConfig],
@@ -93,6 +95,9 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["realpathOrSelf", launcher.realpathOrSelf],
   ["DEFAULT_AGENT_KIND", constants.DEFAULT_AGENT_KIND],
   ["HEARTBEAT_MIN_INTERVAL_MS", constants.HEARTBEAT_MIN_INTERVAL_MS],
+  ["hookBudget", hookBudgetModule.hookBudget],
+  ["withBudget", hookBudgetModule.withBudget],
+  ["resolveHookBudget", hookBudgetModule.resolveHookBudget],
   // Repo identity
   ["resolveRepoIdentity", repoIdentity.resolveRepoIdentity],
   ["normalizeRemoteUrl", repoIdentity.normalizeRemoteUrl],

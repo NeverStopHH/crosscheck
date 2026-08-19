@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { z } from "zod";
 
 import {
@@ -42,15 +42,11 @@ import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
 import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
+import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher-check.ts";
 import {
   formatSummarizerCost,
   readSummarizerCost,
 } from "../summarizer/cost.ts";
-import {
-  isEphemeralInstallPath,
-  isOwnCrosscheckBin,
-  realpathOrSelf,
-} from "./init.ts";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { isOwnedCommand } from "./settings-merge.ts";
 import type { CliResult } from "./login.ts";
@@ -236,100 +232,19 @@ const checkSettings = async (repoRoot: string): Promise<SettingsInspection> => {
 };
 
 /**
- * Splits a hook command on whitespace, honouring the single-quoting that
- * `init`'s shellQuote produces (a path with an embedded quote tokenises
- * wrong — accepted: shellQuote's `'\''` escape is beyond a health check).
- */
-const splitLauncherTokens = (command: string): readonly string[] =>
-  (command.match(/'[^']*'|\S+/g) ?? []).map((token) =>
-    token.startsWith("'") && token.endsWith("'") && token.length >= 2
-      ? token.slice(1, -1)
-      : token,
-  );
-
-/**
  * Whether the launcher the hooks call would actually RUN, checked the way a
- * hook resolves it. Every check above this one is textual, and the two
- * states that defeat textual checks are exactly the ones `init` now guards
- * against at write time: a bare `crosscheck` that no longer resolves (hooks
- * written from an npx cache whose PATH prefix is gone), and a PATH
- * `crosscheck` that is a FOREIGN tool wearing the name (npm's crosscheck-cli
- * ships one). Hooks are silent by design, so doctor is the only place either
- * state ever becomes a sentence.
+ * hook resolves it. The probe bodies MOVED to core for Block 6
+ * (@crosscheck/connector-core/config/launcher-check.ts) — the Cursor doctor
+ * section runs the identical checks on `.cursor/hooks.json` commands and
+ * cannot import from this package. What stays here is the Claude keyword
+ * list and the Check envelope.
  */
 const checkLauncher = async (command: string, env: Env): Promise<Check> => {
-  const tokens = splitLauncherTokens(command);
-  const keyword = tokens.findIndex(
-    (token) => token === "hook" || token === "statusline",
-  );
-  const launcherTokens = keyword === -1 ? tokens : tokens.slice(0, keyword);
-  const head = launcherTokens[0];
-  if (head === undefined) {
-    return check("FAIL", "hook launcher", "empty hook command");
-  }
-
-  if (head === "crosscheck") {
-    const hit = ((): string | null => {
-      try {
-        return Bun.which("crosscheck", { PATH: env["PATH"] ?? "" });
-      } catch {
-        return null;
-      }
-    })();
-    if (hit === null) {
-      return check(
-        "FAIL",
-        "hook launcher",
-        'hooks call "crosscheck" but nothing by that name is on PATH — every hook dies silently; npm install -g crosscheck-hub (or bun add -g crosscheck-hub), or rerun crosscheck init',
-      );
-    }
-    if (!(await isOwnCrosscheckBin(hit))) {
-      return check(
-        "FAIL",
-        "hook launcher",
-        `${hit} does not identify as the crosscheck cli (--version) — a different tool owns the name on this PATH and would receive the hooks' session json; remove it or rerun crosscheck init --command-prefix with an explicit launcher`,
-      );
-    }
-    const real = await realpathOrSelf(hit);
-    if (isEphemeralInstallPath(real)) {
-      return check(
-        "WARN",
-        "hook launcher",
-        `${hit} resolves into a package-runner cache (${real}) — it dies on cache eviction; install permanently and rerun crosscheck init`,
-      );
-    }
-    return check("PASS", "hook launcher", hit);
-  }
-
-  // Absolute-path launcher (`<runtime> <entry>`, as init writes without a
-  // PATH hit) — plus whatever an operator's --command-prefix contains: the
-  // absolute tokens are checkable, the rest is their word.
-  const absoluteTokens = launcherTokens.filter((token) => isAbsolute(token));
-  for (const token of absoluteTokens) {
-    if (!(await Bun.file(token).exists())) {
-      return check(
-        "FAIL",
-        "hook launcher",
-        `${token} does not exist — rerun crosscheck init`,
-      );
-    }
-  }
-  for (const token of absoluteTokens) {
-    if (isEphemeralInstallPath(await realpathOrSelf(token))) {
-      return check(
-        "WARN",
-        "hook launcher",
-        `${token} sits in a package-runner cache — it dies on cache eviction; install permanently and rerun crosscheck init`,
-      );
-    }
-  }
-  return absoluteTokens.length > 0
-    ? check("PASS", "hook launcher", launcherTokens.join(" "))
-    : check(
-        "PASS",
-        "hook launcher",
-        `custom launcher not verified: ${launcherTokens.join(" ")}`,
-      );
+  const result = await checkLauncherCommand(command, env, [
+    "hook",
+    "statusline",
+  ]);
+  return check(result.level, "hook launcher", result.detail);
 };
 
 /**
@@ -729,5 +644,32 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
     await checkPrivacy(hubCtx),
     skewCheck,
     bunfigCheck,
+    ...(await checkCursor(identity.root, env, config.home, key)),
   ]);
+};
+
+/**
+ * The Cursor section (design §3.4), owned by connector-cursor: hooks file +
+ * entries + launcher + mcp entry + observed version + contract-drift
+ * counters. DYNAMIC import like the bin's cursor-hook branch, and its
+ * failure is contained — a broken cursor package must cost its section,
+ * never the doctor.
+ */
+const checkCursor = async (
+  repoRoot: string,
+  env: Env,
+  home: string,
+  key: string,
+): Promise<readonly Check[]> => {
+  try {
+    const { cursorDoctorChecks } = await import(
+      "@crosscheck/connector-cursor"
+    );
+    const checks = await cursorDoctorChecks({ repoRoot, env, home, repoKey: key });
+    return checks.map((entry) => check(entry.level, entry.name, entry.detail));
+  } catch {
+    return [
+      check("WARN", "cursor hooks", "cursor section unavailable (connector-cursor failed to load)"),
+    ];
+  }
 };
