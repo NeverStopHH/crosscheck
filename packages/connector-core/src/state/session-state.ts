@@ -81,6 +81,15 @@ const SessionStateObjectSchema = z.looseObject({
    */
   briefingSolvedRefs: z.array(z.string().min(1)).default([]),
   /**
+   * Touches of files in a DIFFERENT connected repo, dropped under the
+   * first-wins rule (trial finding #9): one agent session is ONE crosscheck
+   * session, bound at registration to one repo — a multi-project workspace
+   * editing a second connected repo has those targets dropped, and this is
+   * the count that keeps the drop honest. Default keeps every existing
+   * state file parsing.
+   */
+  foreignRepoDrops: z.number().int().min(0).default(0),
+  /**
    * Tier-1 summarizer bookkeeping (DESIGN.md §3 Tier 1): the Stop-turn
    * counter the debounce is measured against, the fires already spent
    * against SUMMARIZER_MAX_FIRES_PER_SESSION, and the rough token estimate
@@ -295,6 +304,7 @@ export const deriveSessionState = (
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
     briefingSolvedRefs: [],
+    foreignRepoDrops: 0,
     stopTurnCount: 0,
     summarizerFireCount: 0,
     summarizerLastFireTurn: null,

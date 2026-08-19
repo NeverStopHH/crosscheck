@@ -27,6 +27,7 @@ const baseState = (): SessionState => ({
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   briefingSolvedRefs: [],
+  foreignRepoDrops: 0,
   stopTurnCount: 0,
   summarizerFireCount: 0,
   summarizerLastFireTurn: null,

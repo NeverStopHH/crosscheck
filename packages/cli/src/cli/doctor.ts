@@ -42,6 +42,7 @@ import {
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
+import { readRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
 import { runBoundedCommand } from "@crosscheck/connector-core/git/git.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
@@ -268,6 +269,66 @@ const checkLauncher = async (command: string, env: Env): Promise<Check> => {
     "statusline",
   ]);
   return check(result.level, "hook launcher", result.detail);
+};
+
+/**
+ * ── Workspace-root check (trial finding #9) ────────────────────────────────
+ *
+ * A developer whose editor workspace is rooted at the PARENT folder of the
+ * repo (~/dev above ~/dev/monorepo) has panel sessions start with cwd at
+ * the workspace root — where there is no repo config — and those sessions
+ * were silently invisible while terminal sessions reported fine. The
+ * capture side now derives the repo from the touched file
+ * (connector-core/config/connected-repo.ts), but the SessionStart briefing
+ * and presence still only begin at the first file touch — so when doctor is
+ * run in exactly that spot, it says so instead of printing an unexplained
+ * "not a git repository". One level deep, bounded entries, read-only.
+ */
+const DOCTOR_SUBDIR_SCAN_MAX_ENTRIES = 200;
+const DOCTOR_SUBDIR_MAX_NAMED = 3;
+
+const connectedSubdirs = async (cwd: string): Promise<readonly string[]> => {
+  try {
+    const entries = await readdir(cwd, { withFileTypes: true });
+    const hits: string[] = [];
+    for (const entry of entries.slice(0, DOCTOR_SUBDIR_SCAN_MAX_ENTRIES)) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      if ((await readRepoConfig(join(cwd, entry.name))) !== null) {
+        hits.push(entry.name);
+        if (hits.length >= DOCTOR_SUBDIR_MAX_NAMED) {
+          break;
+        }
+      }
+    }
+    return hits;
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Emitted only when the cwd is NOT a connected repo but a DIRECT
+ * subdirectory is — the exact "workspace above the repo" spot. Empty
+ * findings render nothing: a plain folder above nothing connected is not
+ * news, and inside a connected repo the check does not run at all.
+ */
+const workspaceRootChecks = async (cwd: string): Promise<readonly Check[]> => {
+  const subdirs = await connectedSubdirs(cwd);
+  if (subdirs.length === 0) {
+    return [];
+  }
+  const first = subdirs[0] ?? "";
+  const others =
+    subdirs.length > 1 ? ` (also: ${subdirs.slice(1).join(", ")})` : "";
+  return [
+    check(
+      "WARN",
+      "workspace root",
+      `you are above the connected repo ${first} — sessions starting here are invisible until they touch a file inside it; open ${first} as your workspace${others}`,
+    ),
+  ];
 };
 
 /**
@@ -889,6 +950,12 @@ export const runDoctor = async (
 
   const bunfigCheck = await checkBunfig(env, cwd, identity?.root ?? null);
   const config = await loadConfig({ env, repoRoot: identity?.root });
+  // "Connected" in the committed sense (DESIGN.md §2.1): the repo root
+  // carries .crosscheck.json. Only when the cwd is NOT that does the
+  // workspace-root scan run — the parent-folder trap it exists to name.
+  const isConnectedHere =
+    identity !== null && (await readRepoConfig(identity.root)) !== null;
+  const workspaceChecks = isConnectedHere ? [] : await workspaceRootChecks(cwd);
   if (config === null || identity === null) {
     // The MCP checks belong in THIS branch too, and leaving them out was the
     // first version's bug: a developer with no key would have been told the hub
@@ -897,6 +964,7 @@ export const runDoctor = async (
     return summarize([
       configCheck,
       identityCheck,
+      ...workspaceChecks,
       check("FAIL", "hub reachable", "no hub configured"),
       ...(identity === null
         ? []
@@ -969,6 +1037,7 @@ export const runDoctor = async (
   return summarize([
     configCheck,
     identityCheck,
+    ...workspaceChecks,
     hubCheck,
     timeoutCheck(config.timeoutMs, owner),
     latencyCheck(measurement, config.timeoutMs, owner),

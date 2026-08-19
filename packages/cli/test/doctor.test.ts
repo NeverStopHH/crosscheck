@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -101,6 +101,49 @@ describe("crosscheck doctor bun logging check", () => {
 
     // Assert
     expect(result.stdout).toContain("PASS  bun request logging");
+  });
+});
+
+describe("crosscheck doctor workspace-root check (trial finding #9)", () => {
+  test("warns when run ABOVE a connected repo — sessions starting here are invisible", async () => {
+    // Arrange: a plain workspace folder with a connected repo one level down
+    const workspace = await mkdtemp(join(tmpdir(), "cx-doctor-workspace-"));
+    paths.push(workspace);
+    const child = join(workspace, "monorepo");
+    await mkdir(child, { recursive: true });
+    await writeFile(
+      join(child, ".crosscheck.json"),
+      `${JSON.stringify({ hubUrl: HUB_URL })}\n`,
+      "utf8",
+    );
+    const home = await makeHome("doctor-workspace");
+    paths.push(home);
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), workspace);
+
+    // Assert
+    expect(result.stdout).toContain("WARN  workspace root");
+    expect(result.stdout).toContain("monorepo");
+    expect(result.stdout).toContain("invisible");
+  });
+
+  test("stays quiet inside a repo and above folders without configs", async () => {
+    // Arrange: a workspace whose subdirs carry no crosscheck config
+    const workspace = await mkdtemp(join(tmpdir(), "cx-doctor-plain-"));
+    paths.push(workspace);
+    await mkdir(join(workspace, "notes"), { recursive: true });
+    const home = await makeHome("doctor-plain");
+    paths.push(home);
+
+    // Act
+    const above = await runCli(["doctor"], doctorEnv(home), workspace);
+    const { repo, home: home2 } = await fixture();
+    const inside = await runCli(["doctor"], doctorEnv(home2), repo);
+
+    // Assert
+    expect(above.stdout).not.toContain("workspace root");
+    expect(inside.stdout).not.toContain("WARN  workspace root");
   });
 });
 

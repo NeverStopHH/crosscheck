@@ -10,7 +10,10 @@
  * `~r1` retry mints the fresh session Claude's recovery cannot).
  */
 import { fallbackWorkContextTitle, registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
-import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  readSessionState,
+  updateSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import type { CursorHookContext } from "../runner.ts";
@@ -19,13 +22,25 @@ export const IMPLEMENTING_STATUS = "implementing";
 
 /**
  * The stored state, or the state a fresh register just wrote — null only
- * when even the flow could not produce one (fail open, capture skipped).
+ * when even the flow could not produce one (fail open, capture skipped) or
+ * when the touch belongs to a DIFFERENT repo than the session registered
+ * with (first-wins, trial finding #9 — the Claude post-tool-use guard's
+ * twin): one conversation is ONE crosscheck session bound to one repo, so a
+ * foreign-repo touch is dropped and counted rather than captured under the
+ * wrong repo.
  */
 export const requireSessionState = async (
   ctx: CursorHookContext,
 ): Promise<SessionState | null> => {
   const stored = await readSessionState(ctx.config.home, ctx.hostSessionKey);
   if (stored !== null) {
+    if (stored.repoId !== ctx.identity.repoId) {
+      await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
+        ...fresh,
+        foreignRepoDrops: fresh.foreignRepoDrops + 1,
+      }));
+      return null;
+    }
     return stored;
   }
   await registerSessionFlow({

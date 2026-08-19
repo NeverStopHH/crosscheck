@@ -11,8 +11,10 @@
  *   missing mapped fields (drift-counted, §10 risk 5's named-death rule) →
  *   no workspace root (drift-counted — CURSOR_PROJECT_DIR is documented
  *   always-present) → conversation id with nothing printable after the
- *   shared shape rule (drift-counted as conversation_id) → not a git repo
- *   (normal non-install) → no config
+ *   shared shape rule (drift-counted as conversation_id) → no reportable
+ *   repo from the workspace root NOR from the touched file's path
+ *   (resolveCursorRepo — the path-derived fallback, trial finding #9;
+ *   normal non-install) → no config
  *   (no login on this machine — exactly how cloud agents running project
  *   hooks stay silent, no special-casing) → handler.
  *
@@ -36,11 +38,13 @@ import {
   loadConfig,
 } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
+import { findConnectedRepoRootForPaths } from "@crosscheck/connector-core/config/connected-repo.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
   crosscheckHome,
   repoKey,
 } from "@crosscheck/connector-core/config/paths.ts";
+import { readRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
@@ -96,6 +100,63 @@ const BUDGET_RATIOS: Readonly<Record<CursorHookEvent, number>> = {
 /** Marker the drift ledger uses for stdin that was not JSON at all. */
 const UNPARSEABLE_MARKER = "(unparseable)";
 
+interface ResolvedCursorRepo {
+  readonly identity: RepoIdentity;
+  readonly config: ResolvedConfig;
+}
+
+/**
+ * The repo this hook reports for: workspace root first, touched file second.
+ *
+ * The fallback is trial finding #9 — THE Cursor incident: a workspace
+ * rooted at the PARENT folder of the repo (~/dev above ~/dev/monorepo)
+ * makes every panel session invisible, because workspace-root resolution
+ * finds no repo there while terminal sessions (cwd inside the repo) report
+ * fine. When the workspace root says nothing, the edited file's own path is
+ * walked up to its repo (core config/connected-repo.ts). The trust rule
+ * (DESIGN.md §2.1) holds by construction — stricter than root resolution,
+ * not looser: only a repo whose root carries the committed .crosscheck.json
+ * resolves, re-checked at the resolved identity's root; events without a
+ * file path (sessionStart, stop, shell) have nothing to derive from and
+ * stay silent, so registration happens on the first connected-file touch
+ * through the handlers' existing recovery (handlers/recover.ts).
+ */
+const resolveCursorRepo = async (
+  payload: CursorPayload,
+  workspaceRoot: string,
+  env: Env,
+  agentKind: string,
+): Promise<ResolvedCursorRepo | null> => {
+  const identity = await resolveRepoIdentity(workspaceRoot);
+  if (identity !== null) {
+    const config = await loadConfig({
+      env,
+      repoRoot: identity.root,
+      defaultAgentKind: agentKind,
+    });
+    if (config !== null) {
+      return { identity, config };
+    }
+  }
+  const derivedRoot = await findConnectedRepoRootForPaths(
+    payload.cwd ?? workspaceRoot,
+    payload.file_path === undefined ? [] : [payload.file_path],
+  );
+  if (derivedRoot === null) {
+    return null;
+  }
+  const derived = await resolveRepoIdentity(derivedRoot);
+  if (derived === null || (await readRepoConfig(derived.root)) === null) {
+    return null;
+  }
+  const config = await loadConfig({
+    env,
+    repoRoot: derived.root,
+    defaultAgentKind: agentKind,
+  });
+  return config === null ? null : { identity: derived, config };
+};
+
 /**
  * Resolves everything a handler needs, or null when the connector must stay
  * silent. Drift-counting happens HERE — the one choke point every payload
@@ -145,21 +206,15 @@ export const prepareCursorHook = async (
     await recordContractDrift(home, event, ["conversation_id"]);
     return null;
   }
-  const identity = await resolveRepoIdentity(workspaceRoot);
-  if (identity === null) {
+  const agentKind =
+    payload.is_background_agent === true
+      ? CURSOR_BACKGROUND_AGENT_KIND
+      : CURSOR_AGENT_KIND;
+  const resolved = await resolveCursorRepo(payload, workspaceRoot, env, agentKind);
+  if (resolved === null) {
     return null;
   }
-  const config = await loadConfig({
-    env,
-    repoRoot: identity.root,
-    defaultAgentKind:
-      payload.is_background_agent === true
-        ? CURSOR_BACKGROUND_AGENT_KIND
-        : CURSOR_AGENT_KIND,
-  });
-  if (config === null) {
-    return null;
-  }
+  const { identity, config } = resolved;
   const now = (): Date => new Date();
   const key = repoKey(config.hubUrl, identity.repoId);
   return {

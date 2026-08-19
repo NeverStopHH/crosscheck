@@ -133,6 +133,23 @@ export const handlePostToolUse = async (
     return "";
   }
 
+  // FIRST WINS across connected repos (trial finding #9): one agent session
+  // is ONE crosscheck session, bound at registration to one repo — the
+  // session model has a single repo column, reap keys one state file per
+  // host session, and the deterministic cc_<session> id cannot exist twice.
+  // A touch resolving to a DIFFERENT repo (multi-project workspace, or a
+  // mid-session cd) is therefore dropped and COUNTED, never captured under
+  // the wrong repo and never re-homing the session: capture, heartbeat and
+  // flush all belong to the repo this hook resolved, which is not the one
+  // this session reports to. The count is what keeps the drop honest.
+  if (state.repoId !== ctx.identity.repoId) {
+    await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
+      ...fresh,
+      foreignRepoDrops: fresh.foreignRepoDrops + 1,
+    }));
+    return "";
+  }
+
   const now = ctx.now();
   const producer: Producer = {
     developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
