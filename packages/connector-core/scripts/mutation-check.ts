@@ -1092,8 +1092,11 @@ interface Outcome {
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
+ * PRINTS: agent-restart.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
  * PRINTS: config-parse.test.ts 1
+ * PRINTS: connected-repo.test.ts 2
+ * PRINTS: developer-emails.test.ts 1
  * PRINTS: doctor-latency.test.ts 1
  * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2
@@ -1111,11 +1114,14 @@ interface Outcome {
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
+ * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
  * PRINTS: proxy-e2e.test.ts 1
+ * PRINTS: recovery-race.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search.test.ts 3
+ * PRINTS: sessions.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1
  * PRINTS: stop-latency.test.ts 1
