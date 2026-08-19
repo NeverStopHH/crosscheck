@@ -201,7 +201,7 @@ describe("crosscheck init", () => {
     await mkdir(binDir, { recursive: true });
     await writeFile(
       join(binDir, "crosscheck"),
-      '#!/bin/sh\necho "crosscheck 0.5.1"\n',
+      '#!/bin/sh\necho "crosscheck 0.6.0"\n',
       "utf8",
     );
     await chmod(join(binDir, "crosscheck"), 0o755);
