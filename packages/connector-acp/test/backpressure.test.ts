@@ -114,9 +114,11 @@ describe("§4.2: floods with a slow peer stay bounded and byte-perfect", () => {
       // Assert: every byte arrived, in order, and memory stayed bounded.
       expect(received).toBe(expected.bytes);
       expect(hasher.digest("hex")).toBe(expected.sha256);
+      // A bound over zero samples proves nothing — measurement death is loud.
+      expect(rss.samples).toBeGreaterThan(0);
       const deltaKb = rss.peakKb - rss.baselineKb;
       console.log(
-        `a2c flood: ${received} bytes, proxy RSS baseline ${rss.baselineKb} KB, peak ${rss.peakKb} KB, delta ${deltaKb} KB (bound ${RSS_DELTA_BOUND_KB} KB)`,
+        `a2c flood: ${received} bytes, proxy RSS baseline ${rss.baselineKb} KB, peak ${rss.peakKb} KB, delta ${deltaKb} KB (bound ${RSS_DELTA_BOUND_KB} KB, ${rss.samples} samples)`,
       );
       expect(deltaKb).toBeLessThan(RSS_DELTA_BOUND_KB);
     },
@@ -159,9 +161,11 @@ describe("§4.2: floods with a slow peer stay bounded and byte-perfect", () => {
       expect((await readFile(hashFile, "utf8")).trim()).toBe(
         `${expected.bytes} ${expected.sha256}`,
       );
+      // A bound over zero samples proves nothing — measurement death is loud.
+      expect(rss.samples).toBeGreaterThan(0);
       const deltaKb = rss.peakKb - rss.baselineKb;
       console.log(
-        `c2a flood: ${expected.bytes} bytes, proxy RSS baseline ${rss.baselineKb} KB, peak ${rss.peakKb} KB, delta ${deltaKb} KB (bound ${RSS_DELTA_BOUND_KB} KB)`,
+        `c2a flood: ${expected.bytes} bytes, proxy RSS baseline ${rss.baselineKb} KB, peak ${rss.peakKb} KB, delta ${deltaKb} KB (bound ${RSS_DELTA_BOUND_KB} KB, ${rss.samples} samples)`,
       );
       expect(deltaKb).toBeLessThan(RSS_DELTA_BOUND_KB);
     },

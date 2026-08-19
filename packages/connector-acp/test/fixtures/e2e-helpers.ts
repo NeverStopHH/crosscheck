@@ -153,6 +153,11 @@ export const collectDrive = async (
  * (the ci.yml `cpu-starved` lane runs this suite in oven/bun, which ships
  * no `ps`) and any other Linux have it for free — with `ps` as the macOS
  * path. VmRSS is already in KB.
+ *
+ * Both layers return null instead of throwing: on Linux a pid that exits
+ * between samples takes the procfs read to ENOENT and lands here, where a
+ * `ps`-less image would otherwise turn a teardown race into a crash — the
+ * exact failure the ci.yml cpu-starved lane hit on the hosted runner.
  */
 export const rssKb = async (pid: number): Promise<number | null> => {
   try {
@@ -163,24 +168,37 @@ export const rssKb = async (pid: number): Promise<number | null> => {
       if (Number.isFinite(value)) return value;
     }
   } catch {
-    // no procfs (macOS): fall through to ps
+    // no procfs (macOS) or the pid already exited: fall through to ps
   }
-  const proc = Bun.spawn({
-    cmd: ["ps", "-o", "rss=", "-p", String(pid)],
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  const text = await new Response(proc.stdout).text();
-  await proc.exited;
-  const value = Number.parseInt(text.trim(), 10);
-  return Number.isFinite(value) ? value : null;
+  try {
+    const proc = Bun.spawn({
+      cmd: ["ps", "-o", "rss=", "-p", String(pid)],
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const text = await new Response(proc.stdout).text();
+    await proc.exited;
+    const value = Number.parseInt(text.trim(), 10);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    // no ps either (oven/bun image): no sample, never a crash
+    return null;
+  }
 };
 
 const RSS_SAMPLE_INTERVAL_MS = 50;
 
 export interface RssWatch {
-  stop(): Promise<{ readonly baselineKb: number; readonly peakKb: number }>;
+  stop(): Promise<{
+    readonly baselineKb: number;
+    readonly peakKb: number;
+    /**
+     * How many samples actually landed. A bound asserted over zero samples
+     * proves nothing — callers must fail loudly on 0, not pass vacuously.
+     */
+    readonly samples: number;
+  }>;
 }
 
 /** Samples a pid's RSS until stopped; first successful sample is the baseline. */
@@ -188,12 +206,14 @@ export const watchRss = (pid: number): RssWatch => {
   let running = true;
   let baseline: number | null = null;
   let peak = 0;
+  let samples = 0;
   const loop = (async () => {
     while (running) {
       const sample = await rssKb(pid);
       if (sample !== null) {
         baseline ??= sample;
         if (sample > peak) peak = sample;
+        samples += 1;
       }
       await new Promise((resolve) => setTimeout(resolve, RSS_SAMPLE_INTERVAL_MS));
     }
@@ -202,7 +222,7 @@ export const watchRss = (pid: number): RssWatch => {
     async stop() {
       running = false;
       await loop;
-      return { baselineKb: baseline ?? 0, peakKb: peak };
+      return { baselineKb: baseline ?? 0, peakKb: peak, samples };
     },
   };
 };
