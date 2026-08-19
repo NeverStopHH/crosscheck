@@ -1,11 +1,15 @@
-import { readdir, stat } from "node:fs/promises";
+import { readdir, readlink, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { z } from "zod";
 
 import {
   CLAUDE_SETTINGS_DIR,
   CLAUDE_SETTINGS_FILE,
+  DOCTOR_AGENT_CWD_TIMEOUT_MS,
+  DOCTOR_AGENT_MAX_CWD_PROBES,
+  DOCTOR_AGENT_PS_MAX_LINES,
+  DOCTOR_AGENT_PS_TIMEOUT_MS,
   DOCTOR_FLUSH_LOCK_WARN_MS,
   DOCTOR_LAST_SYNC_WARN_MINUTES,
   DOCTOR_SPOOL_AGE_WARN_HOURS,
@@ -37,6 +41,8 @@ import {
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
+import { runBoundedCommand } from "@crosscheck/connector-core/git/git.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
@@ -263,6 +269,180 @@ const checkLauncher = async (command: string, env: Env): Promise<Check> => {
   ]);
   return check(result.level, "hook launcher", result.detail);
 };
+
+/**
+ * ── Agent-restart check (trial finding #8) ─────────────────────────────────
+ *
+ * Hooks load at agent/editor process start, so a session already running
+ * when `crosscheck init` wrote the settings keeps running WITHOUT them —
+ * silently, hooks failing open by design. A teammate lost a morning to it.
+ * This check turns that state into a sentence: a known agent process, in
+ * THIS repo, started before the settings file was written.
+ *
+ * "In THIS repo" is the load-bearing half. An agent running in a different
+ * repo is untouched by this repo's hooks — a name-and-age match alone would
+ * warn on every developer machine with two projects, and that noise is how
+ * doctors get ignored. So each age-matched candidate's working directory is
+ * resolved (readlink /proc/<pid>/cwd on Linux, one bounded lsof on macOS)
+ * and only a cwd inside the repo root convicts. Every resolution failure is
+ * fail-open: a missed warning over a wrong one. GUI editors whose cwd is
+ * "/" (Cursor's app process) are therefore never flagged — acceptable,
+ * because Cursor hot-reloads its hook files; the CLI agents this check can
+ * see are exactly the ones that need the restart.
+ */
+export interface AgentProcessProbe {
+  /** Raw `ps -axo pid=,etime=,comm=` output, or null = not measurable. */
+  readonly listProcesses: () => Promise<string | null>;
+  /** The process's working directory, or null when it cannot be known. */
+  readonly resolveCwd: (pid: number) => Promise<string | null>;
+}
+
+/** Process names that are coding agents whose hooks load at start. */
+const AGENT_PROCESS_NAMES = new Set(["claude", "cursor"]);
+
+const SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR;
+const SECONDS_PER_DAY = SECONDS_PER_HOUR * 24;
+
+/** `ps` etime — [[dd-]hh:]mm:ss — as seconds, or null for anything else. */
+export const parsePsEtime = (etime: string): number | null => {
+  const match = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(etime.trim());
+  if (match === null) {
+    return null;
+  }
+  const days = match[1] === undefined ? 0 : Number.parseInt(match[1], 10);
+  const hours = match[2] === undefined ? 0 : Number.parseInt(match[2], 10);
+  const minutes = Number.parseInt(match[3] ?? "0", 10);
+  const seconds = Number.parseInt(match[4] ?? "0", 10);
+  if (seconds >= 60 || minutes >= 60 || hours >= 24) {
+    return null;
+  }
+  return (
+    days * SECONDS_PER_DAY +
+    hours * SECONDS_PER_HOUR +
+    minutes * SECONDS_PER_MINUTE +
+    seconds
+  );
+};
+
+interface AgentCandidate {
+  readonly pid: number;
+  readonly name: string;
+  readonly startedAtMs: number;
+}
+
+/** One ps line — "<pid> <etime> <comm…>" — or null for anything unparseable. */
+const parsePsLine = (line: string, nowMs: number): AgentCandidate | null => {
+  const tokens = line.trim().split(/\s+/);
+  const [pidToken, etimeToken, ...commTokens] = tokens;
+  if (pidToken === undefined || etimeToken === undefined || commTokens.length === 0) {
+    return null;
+  }
+  const pid = Number.parseInt(pidToken, 10);
+  const elapsedSeconds = parsePsEtime(etimeToken);
+  if (!Number.isSafeInteger(pid) || pid <= 0 || elapsedSeconds === null) {
+    return null;
+  }
+  const name = basename(commTokens.join(" ")).toLowerCase();
+  if (!AGENT_PROCESS_NAMES.has(name)) {
+    return null;
+  }
+  return { pid, name, startedAtMs: nowMs - elapsedSeconds * MS_PER_SECOND };
+};
+
+const isInsideRepo = async (repoRoot: string, cwd: string): Promise<boolean> => {
+  const root = await realpathBestEffort(repoRoot);
+  const resolved = await realpathBestEffort(cwd);
+  const rel = relative(root, resolved);
+  return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
+};
+
+export const checkAgentRestart = async (
+  repoRoot: string,
+  settingsPath: string,
+  probe: AgentProcessProbe,
+  nowMs: number,
+): Promise<Check> => {
+  const name = "agent restart";
+  try {
+    const settingsMtimeMs = await stat(settingsPath).then(
+      (info) => info.mtimeMs,
+      () => null,
+    );
+    if (settingsMtimeMs === null) {
+      return check("PASS", name, "not measured (no settings file)");
+    }
+    const raw = await probe.listProcesses();
+    if (raw === null) {
+      return check("PASS", name, "not measured");
+    }
+    // Age first, cwd second: the pre-filter keeps the per-pid probes (a
+    // spawn each on macOS) to the handful that could matter at all.
+    const candidates = raw
+      .split("\n")
+      .slice(0, DOCTOR_AGENT_PS_MAX_LINES)
+      .flatMap((line) => {
+        const parsed = parsePsLine(line, nowMs);
+        return parsed === null || parsed.startedAtMs >= settingsMtimeMs
+          ? []
+          : [parsed];
+      })
+      .slice(0, DOCTOR_AGENT_MAX_CWD_PROBES);
+    const offenders: AgentCandidate[] = [];
+    for (const candidate of candidates) {
+      const cwd = await probe.resolveCwd(candidate.pid).catch(() => null);
+      if (cwd !== null && (await isInsideRepo(repoRoot, cwd))) {
+        offenders.push(candidate);
+      }
+    }
+    if (offenders.length === 0) {
+      return check("PASS", name, "no running agent predates the hooks");
+    }
+    const listed = offenders
+      .map((entry) => `pid ${String(entry.pid)} (${entry.name})`)
+      .join(", ");
+    return check(
+      "WARN",
+      name,
+      `a running agent predates your hooks — restart it: ${listed} in this repo started before ${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE} was written, and hooks load only at process start`,
+    );
+  } catch {
+    // Never crashes doctor: any surprise is a "not measured", not a report.
+    return check("PASS", name, "not measured");
+  }
+};
+
+/** The real probe: ps once, then /proc (Linux) or bounded lsof (macOS). */
+const defaultAgentProbe = (cwd: string): AgentProcessProbe => ({
+  listProcesses: async () =>
+    process.platform === "linux" || process.platform === "darwin"
+      ? runBoundedCommand(
+          ["ps", "-axo", "pid=,etime=,comm="],
+          cwd,
+          DOCTOR_AGENT_PS_TIMEOUT_MS,
+        )
+      : null,
+  resolveCwd: async (pid) => {
+    if (process.platform === "linux") {
+      try {
+        return await readlink(`/proc/${String(pid)}/cwd`);
+      } catch {
+        return null;
+      }
+    }
+    if (process.platform === "darwin") {
+      const output = await runBoundedCommand(
+        ["lsof", "-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+        cwd,
+        DOCTOR_AGENT_CWD_TIMEOUT_MS,
+      );
+      const nameLine = output
+        ?.split("\n")
+        .find((line) => line.startsWith("n"));
+      return nameLine === undefined ? null : nameLine.slice(1);
+    }
+    return null;
+  },
+});
 
 /**
  * Whether an agent in this repo can reach the diagnosis tree at all.
@@ -696,6 +876,7 @@ export const runDoctor = async (
   env: Env,
   cwd: string,
   measureLatency: MeasureLatency = defaultMeasureLatency,
+  agentProbe?: AgentProcessProbe,
 ): Promise<CliResult> => {
   const now = new Date();
   const home = crosscheckHome(env);
@@ -795,6 +976,12 @@ export const runDoctor = async (
     ...(settingsInspection.launcherCommand === null
       ? []
       : [await checkLauncher(settingsInspection.launcherCommand, env)]),
+    await checkAgentRestart(
+      identity.root,
+      join(identity.root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
+      agentProbe ?? defaultAgentProbe(cwd),
+      now.getTime(),
+    ),
     await checkMcpRegistration(identity.root),
     mcpUsableCheck(true, config.hubUrl),
     ...(await checkSpool(config.home, key, now)),

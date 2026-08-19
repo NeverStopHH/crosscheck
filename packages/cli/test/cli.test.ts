@@ -120,6 +120,26 @@ describe("crosscheck init", () => {
     );
   });
 
+  test("init ends with the restart hint — hooks load at process start", async () => {
+    // Arrange (trial finding #8: a teammate lost a morning to an
+    // already-running editor that never loaded the fresh hooks)
+    const { repo, env } = await fixture();
+
+    // Act
+    const result = await runCli(
+      ["init", "--command-prefix", "crosscheck"],
+      env,
+      repo,
+    );
+
+    // Assert: the line is the LAST note, after every "wrote ..." line
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "hooks load when an agent or editor process starts",
+    );
+    expect(result.stdout).toContain("restart");
+  });
+
   test("running init twice produces a byte-identical settings file", async () => {
     // Arrange
     const { repo, env, settingsPath } = await fixture();

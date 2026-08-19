@@ -508,6 +508,28 @@ export const DOCTOR_LAST_SYNC_WARN_MINUTES = 10;
  */
 export const DOCTOR_FLUSH_LOCK_WARN_MS = 60_000;
 
+/**
+ * ── Doctor's agent-restart check (trial finding #8) ─────────────────────────
+ *
+ * Hooks load at agent/editor process start, so an agent already running when
+ * `crosscheck init` writes the settings keeps running WITHOUT them —
+ * silently, hooks failing open by design. The check lists processes once
+ * (`ps`, bounded below), keeps the ones whose NAME matches a known agent and
+ * whose start predates the settings file, and then resolves each candidate's
+ * WORKING DIRECTORY (readlink /proc/<pid>/cwd on Linux, one bounded lsof on
+ * macOS) — because an agent running in a DIFFERENT repo is not affected by
+ * this repo's hooks, and warning about it would be the false positive that
+ * teaches people to ignore doctor. A cwd that cannot be resolved is NOT an
+ * offender: fail-open, a missed warning over a wrong one.
+ */
+export const DOCTOR_AGENT_PS_TIMEOUT_MS = 1500;
+/** Bound on ONE cwd resolution (lsof can be slow; doctor is human-run). */
+export const DOCTOR_AGENT_CWD_TIMEOUT_MS = 1000;
+/** Most candidate processes whose cwd is probed — one spawn each on macOS. */
+export const DOCTOR_AGENT_MAX_CWD_PROBES = 8;
+/** Parse bound on ps output — a runaway process table stays a bounded read. */
+export const DOCTOR_AGENT_PS_MAX_LINES = 4096;
+
 export const EXIT_OK = 0;
 export const EXIT_WARN = 1;
 /** `init` refused to touch a file it could not parse — nothing was changed. */

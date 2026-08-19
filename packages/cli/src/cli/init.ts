@@ -37,6 +37,17 @@ export const INIT_HUB_FLAG = "--hub";
 export const INIT_FORCE_STATUSLINE_FLAG = "--force-statusline";
 export const INIT_CURSOR_FLAG = "--cursor";
 
+/**
+ * The last line of every successful init (trial finding #8): hooks are read
+ * when an agent or editor process starts, so a session already running keeps
+ * running WITHOUT them — silently, because hooks fail open by design. A
+ * teammate lost a morning to exactly this. One line, every variant, last so
+ * it is the thing left on screen. (Cursor hot-reloads its own hook files in
+ * trusted workspaces; Claude Code and everything else load at start.)
+ */
+export const RESTART_HINT_LINE =
+  "hooks load when an agent or editor process starts — restart agents/editors already running in this repo now (Cursor hot-reloads its hook files; Claude Code sessions must be restarted)";
+
 export const INIT_USAGE = [
   `usage: crosscheck init [${INIT_COMMAND_PREFIX_FLAG} <prefix>] [${INIT_HUB_FLAG} <url>] [${INIT_FORCE_STATUSLINE_FLAG}] [${INIT_CURSOR_FLAG}]`,
   "",
@@ -296,6 +307,7 @@ export const runInit = async (
           ]
         : []),
       ...notes,
+      RESTART_HINT_LINE,
       "",
     ].join("\n"),
     exitCode: EXIT_OK,
