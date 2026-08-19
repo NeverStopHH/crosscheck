@@ -15,6 +15,7 @@ import {
   jsonRequest,
 } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
+import { MAX_EMAILS_PER_DEVELOPER } from "../src/services/developers.ts";
 
 interface EmailView {
   readonly email: string;
@@ -163,6 +164,51 @@ describe("developer alias emails (admin)", () => {
       }),
     );
     expect(again.status).toBe(200);
+  });
+
+  test("the per-developer cap refuses the email past MAX_EMAILS_PER_DEVELOPER", async () => {
+    // Arrange: fill the list — primary plus aliases up to the cap
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    for (let index = 1; index < MAX_EMAILS_PER_DEVELOPER; index += 1) {
+      const added = await addEmail(
+        harness,
+        nick.developerId,
+        `alias${String(index)}@example.com`,
+      );
+      expect(added.status).toBe(200);
+    }
+
+    // Act: one past the cap
+    const overflow = await addEmail(
+      harness,
+      nick.developerId,
+      "one-too-many@example.com",
+    );
+
+    // Assert: refused with the DISTINCT code, list bounded at the cap —
+    // and re-adding an email already on the full list stays idempotent 200
+    // (the cap bounds NEW rows, not recognition of existing ones).
+    expect(overflow.status).toBe(409);
+    const error = overflow.body["error"] as { code: string };
+    expect(error.code).toBe("email_limit_reached");
+    const { emails } = await listEmails(harness, nick.developerId);
+    expect(emails.length).toBe(MAX_EMAILS_PER_DEVELOPER);
+    const reAdd = await addEmail(harness, nick.developerId, "alias1@example.com");
+    expect(reAdd.status).toBe(200);
+    expect((reAdd.body["data"] as { alreadyLinked: boolean }).alreadyLinked).toBe(true);
+  });
+
+  test("a body that is not an email is a 400, before any lookup", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+
+    // Act + Assert: schema-refused shapes never reach the service
+    expect((await addEmail(harness, nick.developerId, "not-an-email")).status).toBe(400);
+    expect((await addEmail(harness, nick.developerId, "")).status).toBe(400);
+    const { emails } = await listEmails(harness, nick.developerId);
+    expect(emails).toEqual([{ email: "nick@example.com", isPrimary: true }]);
   });
 
   test("removing an alias works; removing the primary is refused", async () => {

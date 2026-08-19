@@ -213,6 +213,63 @@ describe("persistent-dir upgrade from the pre-search-block release", () => {
   );
 
   test(
+    "case-variant legacy emails: the fold loser still gets an email row",
+    async () => {
+      // Arrange: two developers whose emails differ only by CASE — reachable
+      // on any hub created before createDeveloper normalized (the v0
+      // foundation stored input.email raw; developers.email UNIQUE is
+      // case-sensitive). Pass 1's lower() fold makes them collide: without
+      // the second pass the loser ended with ZERO email rows — invisible to
+      // GET /:id/emails and regressed in absence matching (review finding).
+      const dataDir = await makeTempDir("upgrade-case");
+      const client = new PGlite(dataDir);
+      await client.waitReady;
+      await client.exec(await Bun.file(FIXTURE_DDL_URL).text());
+      await client.exec(`
+        INSERT INTO developers (id, name, email, api_key_hash) VALUES
+          ('dev_case_a', 'Casey Upper', 'Casey@Example.com', 'hash_a'),
+          ('dev_case_b', 'Casey Lower', 'casey@example.com', 'hash_b');
+      `);
+      await client.close();
+
+      // Act: the upgrade runs both backfill passes
+      const db = await createDb({ dataDir });
+
+      // Assert: EVERY developer owns exactly one primary row — the fold
+      // winner the lowercased identity, the loser its stored email verbatim
+      // (visible and admin-repairable; it cannot take the winner's row, the
+      // PK is the invariant).
+      const rows = await db.execute(
+        sql`SELECT developer_id, email, is_primary FROM developer_emails
+            ORDER BY developer_id`,
+      );
+      expect(rows.rows).toHaveLength(2);
+      const byDeveloper = rows.rows as {
+        developer_id: string;
+        email: string;
+        is_primary: boolean;
+      }[];
+      expect(byDeveloper.map((row) => row.developer_id)).toEqual([
+        "dev_case_a",
+        "dev_case_b",
+      ]);
+      expect(byDeveloper.every((row) => row.is_primary)).toBe(true);
+      const emails = byDeveloper.map((row) => row.email).sort();
+      expect(emails).toContain("casey@example.com");
+      expect(new Set(emails).size).toBe(2);
+
+      // Act + Assert: a restart re-runs both passes without duplicating
+      await (db as unknown as { $client: PGlite }).$client.close();
+      const reopened = await createDb({ dataDir });
+      const after = await reopened.execute(
+        sql`SELECT count(*)::int AS n FROM developer_emails`,
+      );
+      expect((after.rows[0] as { n: number }).n).toBe(2);
+    },
+    UPGRADE_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "a dir written by a different PostgreSQL major is refused, by name",
     async () => {
       // Arrange: the poisoned-dir shape a mixed-version install leaves behind.

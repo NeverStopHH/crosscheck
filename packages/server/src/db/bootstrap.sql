@@ -231,8 +231,37 @@ CREATE INDEX IF NOT EXISTS developer_emails_developer_idx
 -- single stored email becomes their primary row (test/upgrade.test.ts drives
 -- this against a real pre-alias persistent dir). Idempotent on every boot —
 -- ON CONFLICT covers both the re-run and a developer created mid-upgrade.
+-- DISTINCT ON makes the case-fold DETERMINISTIC: when two legacy developers'
+-- emails differ only by case, the one already stored lowercase wins the
+-- folded row (then oldest, then id — never insert order). That guarantee is
+-- what the second pass below leans on: every loser's verbatim email carries
+-- an uppercase letter, so it can never collide with any lower() output.
 INSERT INTO developer_emails (email, developer_id, is_primary, created_at)
-  SELECT lower(email), id, true, created_at FROM developers
+  SELECT DISTINCT ON (lower(email)) lower(email), id, true, created_at
+  FROM developers
+  ORDER BY lower(email), (email = lower(email)) DESC, created_at, id
+  ON CONFLICT (email) DO NOTHING;
+
+-- Case-variant legacy edge (adversarial review): two pre-normalization
+-- developers whose stored emails differ only by case (reachable — the v0
+-- foundation stored input.email raw, and developers.email UNIQUE is
+-- case-sensitive) FOLD to one row above; the loser would own ZERO rows —
+-- invisible to GET /:id/emails and regressed in absence matching. Give every
+-- developer still empty their stored email VERBATIM as primary: the account
+-- stays visible and admin-repairable. Deliberately not lowercased — the
+-- lowercased identity belongs to the fold winner (the PK is the "at most one
+-- developer per email" invariant), and a non-normalized row never matches
+-- the absence join (which compares lowercased evidence), which is exactly
+-- honest: that email's commits belong to the winner. This insert cannot
+-- itself conflict (losers carry an uppercase letter; every existing row is a
+-- lower() output or a unique verbatim), but ON CONFLICT stays as belt and
+-- braces. Idempotent: NOT EXISTS makes re-runs no-ops. Driven by
+-- test/upgrade.test.ts against a real pre-alias dir.
+INSERT INTO developer_emails (email, developer_id, is_primary, created_at)
+  SELECT d.email, d.id, true, d.created_at FROM developers d
+  WHERE NOT EXISTS (
+    SELECT 1 FROM developer_emails de WHERE de.developer_id = d.id
+  )
   ON CONFLICT (email) DO NOTHING;
 
 -- ── Presence opt-out + mute (DESIGN.md §2.1, §10 risk 3) ────────────────────
