@@ -17,8 +17,10 @@
  * postToolUse that now runs the hint fast path must still exit within
  * their budgets against a hung hub — the briefing degrades to silence via
  * per-request timeouts (fail open, its facts surface as later hints), and
- * the hint's one candidates call is bounded the same way, with the shared
- * race as backstop. Both are MEASURED below through the real runner.
+ * the hint's one candidates call is bounded the same way. Both are MEASURED
+ * below through the real runner; the per-request timeouts are what carry
+ * these bounds — the race backstop for non-HTTP wedges has its own
+ * deterministic pin in connector-claude/test/hook-budget.test.ts.
  */
 import { describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
@@ -32,12 +34,19 @@ import { writeSessionState } from "@crosscheck/connector-core/state/session-stat
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import { runCursorHook } from "../src/index.ts";
+import { prepareCursorHook } from "../src/runner.ts";
+import { handleCursorPostToolUse } from "../src/handlers/post-tool-use.ts";
+import { deliveredAdditionalContext } from "../src/inject/output.ts";
 import {
   POST_TOOL_USE_FAILING_COMMAND,
   SESSION_START_INPUT,
 } from "./fixtures/cursor-contract/payloads.ts";
 import { startSlowHub } from "../../connector-claude/test/fixtures/slow-hub.ts";
-import { startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
+import {
+  CANDIDATE_BODY,
+  rejectedApproachCandidate,
+  startHintHub,
+} from "../../connector-core/test/fixtures/hint-hub.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const REMOTE = "git@github.com:acme/api.git";
@@ -133,13 +142,189 @@ describe("fail-open within budget", () => {
       );
       const elapsedMs = performance.now() - startedAt;
 
-      // Assert: abandoned by the shared race, never hung on the hub.
+      // Assert: inside the budget — the per-request timeouts carry it (the
+      // race, pinned in hook-budget.test.ts, is the backstop if they could
+      // not) — never hung on the hub.
       expect(out).toBe("{}");
       expect(elapsedMs).toBeLessThan(
         timeoutMs * SESSION_START_BUDGET_RATIO + MARGIN_MS,
       );
     } finally {
       hub.stop();
+      await rm(repo, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("the emission reserve is never spent on the heartbeat: spareMs 0 → hint delivered, ZERO heartbeat calls", async () => {
+    // Arrange: a hub that answers candidates instantly and counts heartbeat
+    // hits; a due heartbeat (lastHeartbeatAt null). The fake budget is the
+    // state after a slow flush: nothing spare — exactly when an unclamped
+    // heartbeat would eat the reserve that carries the hint out of the hook.
+    let heartbeats = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: (request) => {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/api/hints/candidates") {
+          return Response.json({
+            ok: true,
+            data: { candidates: [rejectedApproachCandidate()] },
+          });
+        }
+        if (pathname.endsWith("/heartbeat")) {
+          heartbeats += 1;
+        }
+        return Response.json({
+          ok: true,
+          data: { session: { id: "cc_x", developerId: "dev_self" } },
+        });
+      },
+    });
+    const hubUrl = `http://127.0.0.1:${server.port}`;
+    const repo = await makeRepo("reserve-skip", { remote: REMOTE });
+    const home = await makeHome("reserve-skip");
+    const conv = "conv-reserve-skip";
+    try {
+      await writeSessionState(home, {
+        hostSessionKey: `cur-${conv}`,
+        crosscheckSessionId: `cc_cur-${conv}`,
+        workContextId: `wc_cc_cur-${conv}`,
+        repoId: "github.com/acme/api",
+        repoRoot: repo,
+        hubUrl,
+        developerId: "dev_self",
+        startedAt: new Date().toISOString(),
+        lastHeartbeatAt: null,
+        seenTargets: [],
+        deliveredHintRefs: [],
+        deliveredHintHashes: [],
+        tripwireAskedFiles: [],
+        briefingSolvedRefs: [],
+        stopTurnCount: 0,
+        summarizerFireCount: 0,
+        summarizerLastFireTurn: null,
+        summarizerEstimatedTokens: 0,
+      } satisfies SessionState);
+      const ctx = await prepareCursorHook(
+        "postToolUse",
+        JSON.stringify({
+          ...POST_TOOL_USE_FAILING_COMMAND,
+          conversation_id: conv,
+          workspace_roots: [repo],
+        }),
+        {
+          CROSSCHECK_HOME: home,
+          CROSSCHECK_HUB_URL: hubUrl,
+          CROSSCHECK_API_KEY: "test-key",
+        },
+      );
+      if (ctx === null) {
+        throw new Error("cursor hook context did not resolve");
+      }
+
+      // Act
+      const out = await handleCursorPostToolUse(ctx, { spareMs: () => 0 });
+
+      // Assert: the hint survived, and the reserve was not spent.
+      expect(deliveredAdditionalContext(out)).toContain(CANDIDATE_BODY);
+      expect(heartbeats).toBe(0);
+    } finally {
+      server.stop(true);
+      await rm(repo, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a due heartbeat against a HANGING hub is clamped to the spare budget — the hint still leaves promptly", async () => {
+    // Arrange: heartbeat hangs far past the per-request timeout; the spare
+    // budget is small. Unclamped, the heartbeat runs a full request timeout
+    // AFTER the hint is in hand — precisely the reserve. Clamped, it aborts
+    // at the room left and the hint is out well inside the detector bound.
+    const HEARTBEAT_HANG_MS = 5000;
+    const ROOM_MS = 100;
+    /** Far above room + overhead, far below the unclamped request timeout. */
+    const PROMPT_EXIT_BOUND_MS = 1500;
+    const REQUEST_TIMEOUT_MS = "3000";
+    let heartbeats = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/api/hints/candidates") {
+          return Response.json({
+            ok: true,
+            data: { candidates: [rejectedApproachCandidate()] },
+          });
+        }
+        if (pathname.endsWith("/heartbeat")) {
+          heartbeats += 1;
+          await new Promise((done) => {
+            setTimeout(done, HEARTBEAT_HANG_MS);
+          });
+        }
+        return Response.json({
+          ok: true,
+          data: { session: { id: "cc_x", developerId: "dev_self" } },
+        });
+      },
+    });
+    const hubUrl = `http://127.0.0.1:${server.port}`;
+    const repo = await makeRepo("reserve-clamp", { remote: REMOTE });
+    const home = await makeHome("reserve-clamp");
+    const conv = "conv-reserve-clamp";
+    try {
+      await writeSessionState(home, {
+        hostSessionKey: `cur-${conv}`,
+        crosscheckSessionId: `cc_cur-${conv}`,
+        workContextId: `wc_cc_cur-${conv}`,
+        repoId: "github.com/acme/api",
+        repoRoot: repo,
+        hubUrl,
+        developerId: "dev_self",
+        startedAt: new Date().toISOString(),
+        lastHeartbeatAt: null,
+        seenTargets: [],
+        deliveredHintRefs: [],
+        deliveredHintHashes: [],
+        tripwireAskedFiles: [],
+        briefingSolvedRefs: [],
+        stopTurnCount: 0,
+        summarizerFireCount: 0,
+        summarizerLastFireTurn: null,
+        summarizerEstimatedTokens: 0,
+      } satisfies SessionState);
+      const ctx = await prepareCursorHook(
+        "postToolUse",
+        JSON.stringify({
+          ...POST_TOOL_USE_FAILING_COMMAND,
+          conversation_id: conv,
+          workspace_roots: [repo],
+        }),
+        {
+          CROSSCHECK_HOME: home,
+          CROSSCHECK_HUB_URL: hubUrl,
+          CROSSCHECK_API_KEY: "test-key",
+          CROSSCHECK_TIMEOUT_MS: REQUEST_TIMEOUT_MS,
+        },
+      );
+      if (ctx === null) {
+        throw new Error("cursor hook context did not resolve");
+      }
+
+      // Act
+      const startedAt = performance.now();
+      const out = await handleCursorPostToolUse(ctx, {
+        spareMs: () => ROOM_MS,
+      });
+      const elapsedMs = performance.now() - startedAt;
+
+      // Assert: heartbeat attempted but clamped; the hint left promptly.
+      expect(deliveredAdditionalContext(out)).toContain(CANDIDATE_BODY);
+      expect(heartbeats).toBe(1);
+      expect(elapsedMs).toBeLessThan(PROMPT_EXIT_BOUND_MS);
+    } finally {
+      server.stop(true);
       await rm(repo, { recursive: true, force: true });
       await rm(home, { recursive: true, force: true });
     }

@@ -21,6 +21,7 @@ import {
   spoolDir,
   spoolPendingEndPath,
 } from "@crosscheck/connector-core/config/paths.ts";
+import { withBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 import { SELF_DEVELOPER_ID, startSlowHub } from "./fixtures/slow-hub.ts";
@@ -320,5 +321,38 @@ describe("SessionEnd under a backlog", () => {
       false,
     );
     fixed.stop();
+  });
+});
+
+/** The race budget the pin runs at — small so the test is fast. */
+const RACE_BUDGET_MS = 50;
+/**
+ * How long the pin waits before declaring the race dead. 40× the budget: a
+ * loaded machine can delay the 50 ms timer, but with the race deleted the
+ * work below NEVER settles, so only the detector can end the test.
+ */
+const HUNG_DETECTOR_MS = 2_000;
+
+describe("the race backstop itself (withBudget)", () => {
+  test("work that never settles is abandoned at the budget with the silent no-op", async () => {
+    // Arrange: a promise no per-request timeout can save — a hung git spawn,
+    // a wedged lock loop, a stuck disk; nothing HTTP. Every measured bound in
+    // the budget suites rides the per-request timeouts; THIS is the only pin
+    // on the backstop that answers when those cannot (the mutation-check
+    // entry re-deletes the race and requires this file to notice).
+    const hungWork = new Promise<string>(() => {});
+
+    // Act
+    const result = await Promise.race([
+      withBudget(hungWork, RACE_BUDGET_MS),
+      new Promise<string>((resolve) => {
+        setTimeout(() => {
+          resolve("the race never resolved");
+        }, HUNG_DETECTOR_MS);
+      }),
+    ]);
+
+    // Assert: the budget answered — silence, not a hang.
+    expect(result).toBe("");
   });
 });

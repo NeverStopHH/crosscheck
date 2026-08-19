@@ -165,6 +165,26 @@ describe("selectAndRenderHint (the extracted UserPromptSubmit recipe)", () => {
     expect(second).toBe("");
   });
 
+  test("CONCURRENT duplicate attempts deliver exactly once — the seen-set claim is a locked check-and-set, not luck", async () => {
+    // Arrange: the cursor connector's open-q4 dual-signal case lands here as
+    // two racing flow calls for ONE failure — both pass the lockless
+    // pre-checks before either records, so only a first-writer-wins decision
+    // inside the state lock can keep the guarantee.
+    const f = await fixture("hf-concurrent");
+
+    // Act
+    const [first, second] = await Promise.all([
+      selectAndRenderHint(flowInput(f)),
+      selectAndRenderHint(flowInput(f)),
+    ]);
+
+    // Assert: one winner, one silent loser, ONE cap slot spent.
+    const delivered = [first, second].filter((text) => text.length > 0);
+    expect(delivered.length).toBe(1);
+    const state = await readSessionState(f.home, HOST_KEY);
+    expect(state?.deliveredHintRefs).toEqual([CANDIDATE_CLAIM_ID]);
+  });
+
   test("no state file means silence and zero candidate calls", async () => {
     const f = await fixture("hf-nostate");
     await rm(`${f.home}/sessions`, { recursive: true, force: true });
@@ -180,6 +200,26 @@ describe("selectAndRenderHint (the extracted UserPromptSubmit recipe)", () => {
 
     const text = await selectAndRenderHint(flowInput(f, "ok ?? !!"));
 
+    expect(text).toBe("");
+    expect(f.hub.calls.candidates).toBe(0);
+  });
+
+  test("SECRET GATE: a credential-bearing prompt buys zero HTTP — the query never leaves the machine", async () => {
+    // Arrange: on the Cursor connector the prompt IS captured tool output
+    // (the failure text), exactly the text class capture/secret-scan.ts
+    // refuses to spool. The same scan must gate the QUERY, which would
+    // otherwise leave as a GET string — into the hub's access logs.
+    const f = await fixture("hf-secret");
+
+    // Act
+    const text = await selectAndRenderHint(
+      flowInput(
+        f,
+        "deploy failed: credential AKIAIOSFODNN7EXAMPLE rejected by endpoint",
+      ),
+    );
+
+    // Assert: dropped, never redacted-and-sent (the scan's own rule).
     expect(text).toBe("");
     expect(f.hub.calls.candidates).toBe(0);
   });

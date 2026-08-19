@@ -14,7 +14,10 @@
  *
  * PRIVACY (Block 4's pin extends here): the prompt is an EPHEMERAL search
  * query. It is sliced for the hub call and never stored, spooled, or logged —
- * nothing in this module writes it anywhere.
+ * nothing in this module writes it anywhere. And it is SECRET-GATED before
+ * the one hub call: `containsSecret` on the whole prompt, a hit means the
+ * attempt is dropped — the query is the one place this text goes on the
+ * wire, and the wire-level pin lives in connector-cursor/test/privacy.test.ts.
  *
  * ORDER AT THE END IS THE CONTRACT: telemetry spool append, then session
  * state (seen-set + echo hash), then the caller emits. A crash — or a
@@ -30,6 +33,7 @@ import {
   MAX_HINTS_PER_SESSION,
   MAX_SEARCH_QUERY_CHARS,
 } from "../constants.ts";
+import { containsSecret } from "../capture/secret-scan.ts";
 import { hintDeliveryRecord, UNKNOWN_DEVELOPER_ID } from "../capture/records.ts";
 import type { HintRefKind, Producer } from "../capture/records.ts";
 import { resolveCommitDrift } from "../git/commit-drift.ts";
@@ -141,13 +145,25 @@ const recordDelivery = async (
     ],
     input.now,
   );
-  // Freshest state, under the state lock: a concurrent capture flush must not
-  // have this write erase its markers, nor erase this ref with its own stale
-  // snapshot (state/session-state.ts, updateSessionState).
+  // Freshest state, under the state lock — and FIRST WRITER WINS, decided on
+  // that fresh state: two hook processes can race ONE failure (the cursor
+  // dual-signal case fires postToolUse and postToolUseFailure concurrently),
+  // and both pass the lockless pre-checks in selectAndRenderHint before
+  // either records. The transform is therefore a check-AND-set, the
+  // tripwire's own shape: a ref already present, or a cap already reached by
+  // a racing sibling, DECLINES the write — and unremembered means unemitted,
+  // so the loser is silence, never a second copy of the same teammate
+  // finding in one turn (§10 risk 1). The loser's spool append above carries
+  // the winner's deterministic delivery id, so the hub absorbs it as a
+  // duplicate — never a second telemetry row.
   const remembered = await updateSessionState(
     input.home,
     input.hostSessionKey,
-    (fresh) => withDeliveredHint(fresh, delivery.refId, delivery.bodyHash),
+    (fresh) =>
+      fresh.deliveredHintRefs.includes(delivery.refId) ||
+      fresh.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION
+        ? null
+        : withDeliveredHint(fresh, delivery.refId, delivery.bodyHash),
   );
   // Substance hashes also persist per repo (hints/delivered-store.ts): the
   // echo-loop exclusion carries no session qualifier, and session state dies
@@ -167,6 +183,16 @@ export const selectAndRenderHint = async (
   input: SelectAndRenderHintInput,
 ): Promise<string> => {
   if (!hasSearchableWord(input.prompt)) {
+    return "";
+  }
+  // SECRET GATE — the capture scan's sibling, on the QUERY. The prompt goes
+  // on the wire as a GET string (into a shared hub's request path and access
+  // logs), and on the Cursor connector it is captured tool output — a failing
+  // `curl -H "Authorization: …"`, a dumped DSN, a printed JWT — exactly the
+  // text class capture/secret-scan.ts refuses to spool. Same rule here: a
+  // hit means drop the whole attempt, never redact-and-send. Defense in
+  // depth for the prompt-text connectors too (a pasted credential).
+  if (containsSecret(input.prompt)) {
     return "";
   }
   // No state file means no session was registered here: no session to

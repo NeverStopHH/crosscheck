@@ -20,8 +20,11 @@
  * and where does the hint attach?". A build that ignores the field degrades
  * silently — capture is untouched — and the injection ledger records which
  * event delivered, so the manual dogfood reads the answer off `doctor`
- * instead of guessing. If BOTH events fire for one failure, the shared
- * seen-set makes the second attempt silent: never a double delivery.
+ * instead of guessing. If BOTH events fire for one failure — sequentially
+ * OR concurrently — the seen-set claim in the shared flow is a locked
+ * check-and-set (first writer wins, flows/hint.ts recordDelivery), so the
+ * second attempt is silent: never a double delivery. The concurrent case is
+ * pinned in test/injection.test.ts.
  */
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";

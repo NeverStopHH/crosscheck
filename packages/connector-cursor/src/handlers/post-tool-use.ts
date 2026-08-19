@@ -108,12 +108,21 @@ export const handleCursorPostToolUse = async (
     { sessionId: state.crosscheckSessionId, developerId: state.developerId },
     budget.spareMs(),
   );
-  const didHeartbeat = await heartbeatMaybe({
-    hub: ctx.hub,
-    crosscheckSessionId: state.crosscheckSessionId,
-    lastHeartbeatAt: state.lastHeartbeatAt,
-    now,
-  });
+  // The heartbeat runs AFTER the hint is in hand, so it may spend the spare
+  // budget only — clamped like the deferred ender (session-start.ts): handed
+  // the raw request timeout it can eat exactly the reserve, and the runner's
+  // race then discards the delivered text it exists to carry out
+  // (budget.test.ts pins both halves: skip at zero, clamp when hung).
+  const roomMs = budget.spareMs();
+  const didHeartbeat =
+    roomMs <= 0
+      ? false
+      : await heartbeatMaybe({
+          hub: { ...ctx.hub, timeoutMs: Math.min(ctx.hub.timeoutMs, roomMs) },
+          crosscheckSessionId: state.crosscheckSessionId,
+          lastHeartbeatAt: state.lastHeartbeatAt,
+          now,
+        });
   if (didHeartbeat) {
     await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
       ...fresh,

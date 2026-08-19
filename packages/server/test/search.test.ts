@@ -143,7 +143,10 @@ interface SeededHarness {
 }
 
 const createSearchHarness = async (
-  options: { readonly embedder?: unknown } = {},
+  options: {
+    readonly embedder?: unknown;
+    readonly embedDeadlineMs?: number;
+  } = {},
 ): Promise<SeededHarness> => {
   const harness = await createTestHarness(
     options as Parameters<typeof createTestHarness>[0],
@@ -422,9 +425,14 @@ describe("the vector tier and its honest absence", () => {
     // Arrange: an embed call that never settles (cold-loading Ollama, host
     // asleep) exactly when the search asks. Search must answer lexically on
     // its own deadline instead of hanging until the connector's timeout turns
-    // it into a hub failure.
+    // it into a hub failure. The deadline is INJECTED small: what is proven
+    // is degrade-on-deadline, not the production constant's 2 s of wall
+    // wait, which under a loaded full-suite run pushed this test past its
+    // own timeout — the one nondeterministic failure the gauntlet had.
+    const HANG_DEADLINE_MS = 250;
     const { harness, developer } = await createSearchHarness({
       embedder: createHangingEmbedder("signing key"),
+      embedDeadlineMs: HANG_DEADLINE_MS,
     });
     await seedContext(harness, developer, {
       id: "wc_login",

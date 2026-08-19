@@ -720,6 +720,61 @@ export const MUTATIONS: readonly Mutation[] = [
       "unbounded spool growth on a dead-hub day, and the hub-side dedup that " +
       "hides it in tests does not exist in the spool",
   },
+  // The three below guard the Block-7 fixer round (the adversarial review's
+  // findings 1 and 2, and the rigor review's F2), each proven by watching
+  // its guard go red before the fix landed.
+  {
+    // Review finding 1 (CRITICAL): the capture path drops secret-bearing
+    // failure text (fingerprint() refuses it), but the SAME text doubled as
+    // the hint query and went to the hub unscanned — in a GET string, into
+    // access logs. The gate is one containsSecret call in the shared flow;
+    // this entry keeps it there for every connector.
+    label: "the hint query ships to the hub with no secret scan",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: '  if (containsSecret(input.prompt)) {\n    return "";\n  }\n',
+    to: "",
+    test: `${CORE}/test/hint-flow.test.ts`,
+    because:
+      "a failing curl with an Authorization header, a dumped DSN, a printed " +
+      "JWT — captured tool output the secret scan refuses to spool — is " +
+      "sent to a shared hub as a query string and lands in its access logs",
+  },
+  {
+    // Review finding 2: the seen-set + cap are read locklessly before the
+    // candidates round trip, so two hook processes racing ONE failure (the
+    // cursor dual-signal case) both selected and both emitted. First writer
+    // wins is decided INSIDE the locked transform; deleting the check-and-set
+    // reverts to the blind append and the concurrent pin must notice.
+    label: "concurrent failure signals deliver the same hint twice",
+    file: `${CORE}/src/flows/hint.ts`,
+    from:
+      "    (fresh) =>\n" +
+      "      fresh.deliveredHintRefs.includes(delivery.refId) ||\n" +
+      "      fresh.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION\n" +
+      "        ? null\n" +
+      "        : withDeliveredHint(fresh, delivery.refId, delivery.bodyHash),\n",
+    to: "    (fresh) => withDeliveredHint(fresh, delivery.refId, delivery.bodyHash),\n",
+    test: `${CORE}/test/hint-flow.test.ts`,
+    because:
+      "the model receives the same teammate finding twice in one turn (the " +
+      "noise §10 risk 1 forbids), one hint burns two cap slots, and the " +
+      "injection ledger over-counts the §6-q4 instrument",
+  },
+  {
+    // Rigor review F2: deleting this race left every budget suite green —
+    // all measured bounds ride the per-request timeouts, so the backstop
+    // against non-HTTP wedges (hung spawn, lock loop, stuck disk) was
+    // decoration. The deterministic hung-work pin is the guard now.
+    label: "the hook budget race stops abandoning hung work",
+    file: `${CORE}/src/config/hook-budget.ts`,
+    from: "    return await Promise.race([work, budget]);",
+    to: "    return await work;",
+    test: `${CONNECTOR}/test/hook-budget.test.ts`,
+    because:
+      "a hook whose work wedges anywhere outside an HTTP call holds the " +
+      "developer's session for as long as the host tolerates it — the exact " +
+      "hang the budget family exists to make impossible",
+  },
   // The two below guard Block 7's Cursor injection.
   {
     // §3.2 row 1: background agents register but get NO injection output.
@@ -801,12 +856,15 @@ interface Outcome {
  * PRINTS: capture-hardening.test.ts 2
  * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2
+ * PRINTS: hint-flow.test.ts 2
  * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 1
  * PRINTS: hint-select.test.ts 3
  * PRINTS: hints.test.ts 2
+ * PRINTS: hook-budget.test.ts 1
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
+ * PRINTS: injection.test.ts 2
  * PRINTS: injector.test.ts 4
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2

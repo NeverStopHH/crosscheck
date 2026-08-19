@@ -16,7 +16,9 @@
  * Open-q4 discipline: the hint attaches at EVERY documented failure signal
  * — postToolUse's embedded exitCode encoding and postToolUseFailure's
  * error_message — through the one shared flow, so whichever event reality
- * fires delivers it, and the seen-set makes double delivery impossible.
+ * fires delivers it, and the seen-set claim — a locked check-and-set in the
+ * core flow, first writer wins — makes double delivery impossible even when
+ * both events fire CONCURRENTLY for one failure (pinned below).
  * The injection ledger records WHICH event delivered: the §6-q4 instrument
  * the dogfood checklist reads.
  */
@@ -447,6 +449,58 @@ describe("failure-matched hints (§3.3 + open-q4): every documented failure sign
       const summary = await readInjectionLedger(f.home);
       expect(summary.hints.delivered).toBe(1);
       expect(summary.hints.suppressed).toBe(1);
+    } finally {
+      canned.stop();
+    }
+  });
+
+  test("BOTH failure signals firing CONCURRENTLY for one failure deliver exactly one hint — first writer wins under the state lock", async () => {
+    // Arrange: the open-q4 both-fire case, actually concurrent — two hook
+    // processes racing one failure, which sequential runs cannot see.
+    const canned = startCapturingHub();
+    try {
+      const f = await fixture("hint-concurrent", canned.url);
+      const conv = "conv-hint-concurrent";
+      await writeSessionState(f.home, seededState(f, canned.url, conv));
+
+      // Act
+      const [ptu, ptuf] = await Promise.all([
+        run(
+          "postToolUse",
+          inRepo(POST_TOOL_USE_FAILING_COMMAND, f.repo, conv),
+          f.env,
+        ),
+        run(
+          "postToolUseFailure",
+          inRepo(POST_TOOL_USE_FAILURE_INPUT, f.repo, conv),
+          f.env,
+        ),
+      ]);
+
+      // Assert: exactly ONE of the two outputs carried the hint…
+      const delivered = [ptu, ptuf].filter(
+        (out) => typeof parsedOutput(out)["additional_context"] === "string",
+      );
+      expect(delivered.length).toBe(1);
+      // …one cap slot spent, no doubled ref…
+      const state = await readSessionState(f.home, `cur-${conv}`);
+      expect(state?.deliveredHintRefs).toEqual([CANDIDATE_CLAIM_ID]);
+      // …telemetry converges on ONE deterministic delivery id (a loser that
+      // raced far enough to spool appends the SAME primary key — the real
+      // hub dedups it; the id set makes that visible here)…
+      const deliveryIds = new Set(
+        canned.postedRecords
+          .filter(
+            (record) => (record as { kind?: string }).kind === "hint_delivery",
+          )
+          .map(
+            (record) => (record as { body?: { id?: string } }).body?.id,
+          ),
+      );
+      expect(deliveryIds.size).toBe(1);
+      // …and the §6-q4 instrument counts what the hub counts: one delivery.
+      const summary = await readInjectionLedger(f.home);
+      expect(summary.hints.delivered).toBe(1);
     } finally {
       canned.stop();
     }

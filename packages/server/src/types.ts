@@ -25,6 +25,11 @@ export interface AppDeps {
   readonly adminToken: string | null;
   /** Null = keyless install: the vector tier is silently absent (DESIGN.md §6). */
   readonly embedder: Embedder | null;
+  /**
+   * Test seam for the embed deadline — omitted (production, always) means
+   * SEARCH_EMBED_DEADLINE_MS; services/search.ts SearchDeps says why.
+   */
+  readonly embedDeadlineMs?: number;
   /** HMAC secret for /ui session cookies — ui/session.ts documents rotation. */
   readonly uiSessionSecret: string;
 }

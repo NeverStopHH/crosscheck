@@ -13,15 +13,18 @@
  * extends): Cursor has no injectable prompt-time event — `beforeSubmitPrompt`
  * documents no context output (§3.2) — so the failure text the handler
  * already extracted for the fingerprint doubles as the search query. It is
- * passed in memory, sliced inside the flow for the hub call, and never
+ * passed in memory, sliced inside the flow for the hub call — where it is
+ * SECRET-GATED first, by the same scan that gates capture: a credential in
+ * a failing command's output means silence, never a query — and never
  * stored, spooled, or logged; the ledger row carries outcome slugs only.
  *
  * FAST PATH ONLY: no attempt without a detected failure (a successful tool
  * result has no query and buys no hub call), and the flow's own gates run
- * before any HTTP — meaning floor, session cap, seen-set. The per-request
- * hub timeout bounds the one candidates call; the runner's budget race is
- * the backstop (budget.test.ts measures it against a hub slower than every
- * budget).
+ * before any HTTP — meaning floor, secret gate, session cap, seen-set. The
+ * per-request hub timeout bounds the one candidates call (budget.test.ts
+ * measures that against a hub slower than every budget); the runner's
+ * budget race is the backstop for non-HTTP wedges, pinned deterministically
+ * in connector-claude/test/hook-budget.test.ts.
  */
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
 import { CURSOR_BACKGROUND_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";

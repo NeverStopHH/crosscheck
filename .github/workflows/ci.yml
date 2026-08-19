@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 44
+    # PRINTS: 49
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -133,14 +133,18 @@ jobs:
     # PRINTS: hooks/stop.ts 1
     # PRINTS: briefing/render.ts 2
     # PRINTS: briefing/sanitize.ts 7
+    # PRINTS: config/hook-budget.ts 1
     # PRINTS: constants.ts 4
+    # PRINTS: flows/hint.ts 2
     # PRINTS: hints/render.ts 1
     # PRINTS: hints/select.ts 4
     # PRINTS: http/hub.ts 1
     # PRINTS: mcp/render-referee.ts 2
     # PRINTS: mcp/render.ts 3
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 1
+    # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 2
+    # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/server/src/services/hints.ts 1
     # PRINTS: packages/server/src/services/search.ts 6
     #
@@ -148,9 +152,12 @@ jobs:
     # PRINTS: constants.ts 4
     # PRINTS: engine.ts 3
     # PRINTS: file-edit.ts 1
+    # PRINTS: hint.ts 2
     # PRINTS: hints.ts 1
+    # PRINTS: hook-budget.ts 1
     # PRINTS: hub.ts 1
     # PRINTS: injector.ts 3
+    # PRINTS: output.ts 1
     # PRINTS: pre-tool-use.ts 1
     # PRINTS: proxy.ts 1
     # PRINTS: pump.ts 1
@@ -159,6 +166,7 @@ jobs:
     # PRINTS: sanitize.ts 7
     # PRINTS: search.ts 6
     # PRINTS: select.ts 4
+    # PRINTS: session-start.ts 1
     # PRINTS: stop.ts 1
     # PRINTS: tool-failure.ts 2
     name: Mutation proof

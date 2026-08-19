@@ -202,6 +202,16 @@ export interface SearchDeps {
   readonly db: Db;
   readonly now: Clock;
   readonly embedder: Embedder | null;
+  /**
+   * How long to wait for the query embedding before degrading to lexical.
+   * Omitted = SEARCH_EMBED_DEADLINE_MS, always, in production. A TEST seam
+   * only: the hanging-embedder suite waits the full deadline on a real
+   * clock, and 2 s of mandatory wall wait under a loaded full-suite run put
+   * the test over its own timeout — the one nondeterministic failure the
+   * gauntlet had. Injecting a small deadline removes the wall wait without
+   * weakening what is proven (degrade-on-deadline, not degrade-at-2s).
+   */
+  readonly embedDeadlineMs?: number;
 }
 
 export interface SearchQuery {
@@ -418,10 +428,11 @@ const listVectorTier = async (
   embedder: Embedder,
   query: string,
   scope: SearchScope,
+  embedDeadlineMs: number,
 ): Promise<readonly TierRow[]> => {
   const [queryVector] = await withDeadline(
     embedder.embed([query]),
-    SEARCH_EMBED_DEADLINE_MS,
+    embedDeadlineMs,
     "query embedding",
   );
   if (queryVector === undefined) {
@@ -588,7 +599,13 @@ const tryVectorTier = async (
     return { rows: [], active: false };
   }
   try {
-    const rows = await listVectorTier(deps.db, deps.embedder, query, scope);
+    const rows = await listVectorTier(
+      deps.db,
+      deps.embedder,
+      query,
+      scope,
+      deps.embedDeadlineMs ?? SEARCH_EMBED_DEADLINE_MS,
+    );
     return { rows, active: true };
   } catch (error) {
     console.error("[crosscheck] vector search tier failed, degrading", error);

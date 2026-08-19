@@ -627,6 +627,22 @@ parity is structural, and pinned through the cursor path in
 real Cursor build remains OPEN (checklist steps 6-8 in the package README);
 budget discipline against a hung hub is measured in
 `connector-cursor/test/budget.test.ts`.
+Status note (2026-08-19, Block-7 fixer round — adversarial review findings):
+(1) the ephemeral hint query is now SECRET-GATED in the shared flow
+(`containsSecret` before the one hub call, a hit means silence): the failure
+text is captured tool output, and the review proved a credential in a failing
+command's stderr reached the hub's candidates endpoint while the capture path
+correctly refused it — the wire-level pin lives in
+`connector-cursor/test/privacy.test.ts`. (2) the seen-set claim is a locked
+check-and-set (first writer wins) — the review reproduced a double delivery
+under CONCURRENT dual-signal firing (both failure events, one failure), which
+sequential tests could not see; pinned concurrently at flow and handler level.
+(3) the postToolUse heartbeat is clamped to `spareMs` like the deferred ender
+— unclamped it could spend exactly the emission reserve after the hint was in
+hand. (4) the budget RACE has its own deterministic hung-work pin
+(`connector-claude/test/hook-budget.test.ts`) plus a mutation entry — every
+measured budget bound rides the per-request timeouts, and deleting the race
+had left all budget suites green.
 
 ---
 
@@ -679,7 +695,10 @@ budget discipline against a hung hub is measured in
    documented `additional_context`, and `postToolUseFailure` in the same response
    shape although its documented output lists no fields (an ignored field
    degrades silently; capture is untouched). If both events fire for one
-   failure, the shared seen-set silences the second attempt — never a double
+   failure — sequentially or CONCURRENTLY — the seen-set claim in the shared
+   flow is a locked check-and-set (first writer wins, added by the Block-7
+   fixer round after the review proved the lockless version double-delivered
+   under concurrent firing), so the second attempt is silent: never a double
    delivery. The injection ledger records which event delivered, so the dogfood
    answers this question by reading `doctor` (README steps 6-8), not by
    guessing. `afterShellExecution` deliberately carries NO injection output: its

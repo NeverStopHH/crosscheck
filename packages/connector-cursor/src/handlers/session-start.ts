@@ -13,7 +13,10 @@
  * measurements live on HOOK_RESERVE_RATIO). The briefing itself is
  * `assembleBriefing`: six parallel hub GETs each bounded by the per-request
  * timeout, fail-open per section — a hung hub costs sections, never the
- * hook (budget.test.ts measures the race backstop).
+ * hook. budget.test.ts measures that degraded path; the per-request
+ * timeouts carry those bounds, and the race backstop itself is pinned
+ * deterministically in connector-claude/test/hook-budget.test.ts (held by
+ * a mutation-check entry).
  *
  * `additional_context` is the documented sessionStart output; the emitted
  * stdout is `cursorInjectionOutput` — the registered §4.4 surface module —

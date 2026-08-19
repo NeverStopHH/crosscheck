@@ -1,7 +1,7 @@
 /**
  * The privacy pins (Block 6 item 5): content-bearing Cursor payload fields
  * — edit old/new strings, terminal output, tool output, the user's email —
- * are NEVER stored, spooled, or logged. Two enforcement halves:
+ * are NEVER stored, spooled, or logged. Three enforcement legs:
  *
  *   1. BEHAVIORAL: run the real handlers with sentinel content against a
  *      DEAD hub (so everything that would ever touch disk is still on
@@ -12,7 +12,13 @@
  *      privacy pin), and the injection ledger is one of the files swept —
  *      so this suite now also proves the query and the delivered/suppressed
  *      telemetry carry no content.
- *   2. STRUCTURAL (the Block-4 grep-pin shape): the package source never
+ *   2. WIRE (Block-7 fixer round): the disk sweep runs against a dead hub,
+ *      so it can say nothing about what goes ON THE WIRE — and the hint
+ *      query is wire-only by design. A live recording hub proves the query
+ *      really travels (control run), and that a secret-shaped failure
+ *      produces NO request carrying it: the shared flow's containsSecret
+ *      gate, the capture scan's sibling.
+ *   3. STRUCTURAL (the Block-4 grep-pin shape): the package source never
  *      names the content field accessors at all — what is never read
  *      cannot leak, and a future handler that starts reading
  *      `payload.edits` turns this test red.
@@ -21,13 +27,20 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
+import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+
 import { runCursorHook } from "../src/index.ts";
 import {
   AFTER_FILE_EDIT_INPUT,
   AFTER_SHELL_EXECUTION_WITH_EXIT,
+  POST_TOOL_USE_FAILING_COMMAND,
   POST_TOOL_USE_FAILURE_INPUT,
+  POST_TOOL_USE_INPUT,
   SESSION_START_INPUT,
 } from "./fixtures/cursor-contract/payloads.ts";
+import { rejectedApproachCandidate } from "../../connector-core/test/fixtures/hint-hub.ts";
 import {
   makeHome,
   makeRepo,
@@ -43,6 +56,7 @@ const SENTINEL_NEW = "SENTINEL-NEW-CONTENT-88bb22";
 const SENTINEL_OUTPUT = "SENTINEL-TERMINAL-OUTPUT-99cc33";
 const SENTINEL_ERROR = "SENTINEL-ERROR-DETAIL-00dd44";
 const SENTINEL_EMAIL = "sentinel-email-11ee55@example.com";
+const SENTINEL_TOOL_OUTPUT = "SENTINEL-TOOL-OUTPUT-22ff66";
 
 const cleanups: string[] = [];
 
@@ -113,6 +127,21 @@ describe("behavioral pin: sentinels never reach disk", () => {
       }),
       env,
     );
+    // The FOURTH failure signal: a failing embedded exitCode on postToolUse —
+    // its stderr feeds the fingerprint AND the ephemeral hint query, so the
+    // sweep must cover the tool_output pipeline too, not only error_message.
+    await runCursorHook(
+      "postToolUse",
+      withSentinels({
+        ...POST_TOOL_USE_INPUT,
+        tool_output: JSON.stringify({
+          exitCode: 1,
+          stdout: "",
+          stderr: `${SENTINEL_TOOL_OUTPUT} error: bundling failed at entry src/main.ts`,
+        }),
+      }),
+      env,
+    );
 
     // Assert: something was written (the pin is not vacuous)…
     const files = await listFilesRecursively(home);
@@ -127,6 +156,7 @@ describe("behavioral pin: sentinels never reach disk", () => {
         SENTINEL_OUTPUT,
         SENTINEL_ERROR,
         SENTINEL_EMAIL,
+        SENTINEL_TOOL_OUTPUT,
       ]) {
         expect(content.includes(sentinel), `${sentinel} leaked into ${file}`).toBe(
           false,
@@ -143,6 +173,146 @@ describe("behavioral pin: sentinels never reach disk", () => {
     ).join("\n");
     expect(spoolText).toContain("error_fingerprint");
     expect(spoolText).toContain("sha256:");
+  });
+});
+
+describe("wire-level pin: the ephemeral hint query is secret-gated before it leaves the machine", () => {
+  /**
+   * The disk sweep above runs against a DEAD hub, so it can prove nothing
+   * about the WIRE — and Block 7's hint query is wire-only by design. This
+   * hub records every request line and body; the control run proves the log
+   * really captures queries, the secret run proves the gate.
+   */
+  interface WireHub {
+    readonly url: string;
+    readonly wireLog: string[];
+    readonly calls: { candidates: number };
+    readonly stop: () => void;
+  }
+
+  const startWireHub = (): WireHub => {
+    const wireLog: string[] = [];
+    const calls = { candidates: 0 };
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const body = await request.text();
+        // Decoded, so a percent-encoded query cannot hide from the sweep.
+        wireLog.push(
+          `${request.method} ${decodeURIComponent(request.url)} ${body}`,
+        );
+        const { pathname } = new URL(request.url);
+        if (pathname === "/api/hints/candidates") {
+          calls.candidates += 1;
+          return Response.json({
+            ok: true,
+            data: { candidates: [rejectedApproachCandidate()] },
+          });
+        }
+        if (pathname === "/api/records") {
+          return Response.json({
+            ok: true,
+            data: { accepted: 0, duplicates: 0, ignored: 0, rejected: 0 },
+          });
+        }
+        return Response.json({
+          ok: true,
+          data: { session: { id: "cc_x", developerId: "dev_self" } },
+        });
+      },
+    });
+    return {
+      url: `http://127.0.0.1:${server.port}`,
+      wireLog,
+      calls,
+      stop: () => {
+        server.stop(true);
+      },
+    };
+  };
+
+  const seededState = (
+    repo: string,
+    hubUrl: string,
+    conversationId: string,
+  ): SessionState => ({
+    hostSessionKey: `cur-${conversationId}`,
+    crosscheckSessionId: `cc_cur-${conversationId}`,
+    workContextId: `wc_cc_cur-${conversationId}`,
+    repoId: "github.com/acme/api",
+    repoRoot: repo,
+    hubUrl,
+    developerId: "dev_self",
+    startedAt: new Date().toISOString(),
+    lastHeartbeatAt: new Date().toISOString(),
+    seenTargets: [],
+    deliveredHintRefs: [],
+    deliveredHintHashes: [],
+    tripwireAskedFiles: [],
+    briefingSolvedRefs: [],
+    stopTurnCount: 0,
+    summarizerFireCount: 0,
+    summarizerLastFireTurn: null,
+    summarizerEstimatedTokens: 0,
+  });
+
+  test("a failing tool output carrying a credential produces NO request containing it — and no candidates query at all", async () => {
+    // Arrange
+    const hub = startWireHub();
+    const repo = await makeRepo("privacy-wire", { remote: REMOTE });
+    const home = await makeHome("privacy-wire");
+    cleanups.push(repo, home);
+    const env = {
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: hub.url,
+      CROSSCHECK_API_KEY: "test-key",
+      CROSSCHECK_TIMEOUT_MS: "4000",
+    };
+    const failingPayload = (
+      conversationId: string,
+      stderr: string,
+    ): string =>
+      JSON.stringify({
+        ...POST_TOOL_USE_FAILING_COMMAND,
+        conversation_id: conversationId,
+        workspace_roots: [repo],
+        tool_output: JSON.stringify({ exitCode: 1, stdout: "", stderr }),
+      });
+
+    try {
+      // Act 1 — CONTROL: a secret-free failure. Its stderr must reach the
+      // wire as the candidates query, or this test could not see a leak.
+      await writeSessionState(home, seededState(repo, hub.url, "conv-wire-a"));
+      await runCursorHook(
+        "postToolUse",
+        failingPayload("conv-wire-a", "error: expected 200, got 429 at src/rate-limit.test.ts:41"),
+        env,
+      );
+      expect(hub.calls.candidates).toBe(1);
+      // The stderr really travelled as the query (space-free token: the
+      // wire spells spaces as `+`) — the log demonstrably captures queries.
+      expect(hub.wireLog.join("\n")).toContain("src/rate-limit.test.ts:41");
+
+      // Act 2 — a fresh session, the same failure shape carrying an AWS key.
+      await writeSessionState(home, seededState(repo, hub.url, "conv-wire-b"));
+      await runCursorHook(
+        "postToolUse",
+        failingPayload(
+          "conv-wire-b",
+          "deploy failed: credential AKIAIOSFODNN7EXAMPLE rejected by endpoint",
+        ),
+        env,
+      );
+
+      // Assert: zero further candidate calls, and NOTHING on the wire —
+      // no URL, no body — carries the credential or anything secret-shaped.
+      expect(hub.calls.candidates).toBe(1);
+      const wire = hub.wireLog.join("\n");
+      expect(wire).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(containsSecret(wire)).toBe(false);
+    } finally {
+      hub.stop();
+    }
   });
 });
 
