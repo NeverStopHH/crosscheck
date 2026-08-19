@@ -10,6 +10,8 @@ export interface CursorTestHub {
   readonly server: ReturnType<typeof Bun.serve>;
   readonly hubUrl: string;
   readonly apiKey: string;
+  /** Stops the server AND releases the PGlite instance (suite stability). */
+  readonly close: () => Promise<void>;
 }
 
 export const bootCursorHub = async (label: string): Promise<CursorTestHub> => {
@@ -26,6 +28,22 @@ export const bootCursorHub = async (label: string): Promise<CursorTestHub> => {
     },
     body: JSON.stringify({ name: "Cursor Dev", email: `${label}@example.com` }),
   });
+  // Named failure over an unreadable one (suite-stability finding).
+  if (!response.ok) {
+    throw new Error(
+      `bootCursorHub developer create failed: ${String(response.status)} ${await response.text()}`,
+    );
+  }
   const body = (await response.json()) as { data: { apiKey: string } };
-  return { server, hubUrl, apiKey: body.data.apiKey };
+  return {
+    server,
+    hubUrl,
+    apiKey: body.data.apiKey,
+    close: async () => {
+      server.stop(true);
+      await (db as unknown as { $client: { close: () => Promise<void> } }).$client
+        .close()
+        .catch(() => undefined);
+    },
+  };
 };

@@ -60,6 +60,14 @@ const createDeveloper = async (name: string, email: string): Promise<{
     },
     body: JSON.stringify({ name, email }),
   });
+  // Named failure over an unreadable one: under full-suite memory pressure a
+  // 500 here surfaced as "Failed to parse JSON" with no status attached
+  // (adversarial review, suite-stability finding).
+  if (!response.ok) {
+    throw new Error(
+      `createDeveloper failed: ${String(response.status)} ${await response.text()}`,
+    );
+  }
   const body = (await response.json()) as {
     data: { developer: { id: string }; apiKey: string };
   };
@@ -116,6 +124,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
   server.stop(true);
+  // Release the PGlite WASM instance instead of leaving it to process
+  // teardown — the full suite accumulates ~150 of them, and this file was
+  // where the pressure first broke through (suite-stability finding).
+  await (db as unknown as { $client: { close: () => Promise<void> } }).$client
+    .close()
+    .catch(() => undefined);
   await Promise.all(
     cleanups.map((path) => rm(path, { recursive: true, force: true })),
   );

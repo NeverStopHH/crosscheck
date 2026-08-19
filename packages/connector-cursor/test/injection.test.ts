@@ -89,7 +89,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  hub.server.stop(true);
+  await hub.close();
 });
 
 afterEach(async () => {
@@ -347,7 +347,7 @@ describe("sessionStart briefing (§3.3): additional_context per the documented h
       expect(summary.briefings.delivered).toBe(0);
       expect(summary.briefings.suppressed).toBe(1);
     } finally {
-      solo.server.stop(true);
+      await solo.close();
     }
   });
 

@@ -65,7 +65,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  hub.server.stop(true);
+  await hub.close();
   await Promise.all(
     cleanups.map((path) => rm(path, { recursive: true, force: true })),
   );

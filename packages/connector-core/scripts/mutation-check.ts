@@ -944,6 +944,112 @@ export const MUTATIONS: readonly Mutation[] = [
       "hand-rolled shape emits invalid JSON exactly when there is something " +
       "to deliver, and Cursor logs a failed hook instead of injecting",
   },
+  {
+    // The nested-repo trust pin of the path-derived walk (trial finding
+    // #9): the walk must STOP at the first git boundary whether or not that
+    // repo is connected. This makes an unconnected boundary transparent —
+    // the walk climbs on and a connected OUTER repo captures files
+    // belonging to an unconnected repo nested inside it, the exact §2.1
+    // crossing the boundary stop exists to forbid.
+    label: "the connected-root walk climbs past an unconnected repo boundary",
+    file: `${CORE}/src/config/connected-repo.ts`,
+    from: "      return (await readRepoConfig(dir)) === null ? null : dir;",
+    to: "      if ((await readRepoConfig(dir)) !== null) { return dir; }",
+    test: `${CORE}/test/connected-repo.test.ts`,
+    because:
+      "a connected outer repo silently absorbs a nested unconnected repo's " +
+      "files — sessions and targets minted for a repo that never opted in",
+  },
+  {
+    // The normalization the adversarial review's repro attacked: judging a
+    // path along its SPELLING lets `<repo>/../outside/x.md` route through
+    // the connected repo's directories and mint a walk target for a file
+    // that lives outside any repo.
+    label: "the connected-root walk trusts unnormalized dot-dot spellings again",
+    file: `${CORE}/src/config/connected-repo.ts`,
+    from: "  const absolute = resolve(cwd, filePath);",
+    to:
+      '  const absolute = filePath.startsWith("/") ? filePath : resolve(cwd, filePath);',
+    test: `${CORE}/test/connected-repo.test.ts`,
+    because:
+      "a hostile or accidental `..` spelling registers presence for a " +
+      "connected repo whose files the session never touched",
+  },
+  {
+    // First-wins (trial finding #9): one crosscheck session is bound to ONE
+    // repo. Stripping the guard lets a multi-repo workspace's foreign
+    // touches walk on into capture/heartbeat/flush under the wrong repo's
+    // session — and the drop counter that keeps the silence honest never
+    // ticks.
+    label: "the post-tool-use foreign-repo drop guard is disconnected",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  if (state.repoId !== ctx.identity.repoId) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/e2e/parent-workspace.e2e.test.ts`,
+    because:
+      "a second connected repo's edits stop being dropped-and-counted; the " +
+      "session flaps across repos and the count that keeps the drop honest " +
+      "stays zero",
+  },
+  {
+    // The recovery-race serialization: a loser that behaves as if it had
+    // claimed appends a SECOND work-context record and captures under its
+    // own repo although a sibling already bound the session elsewhere —
+    // the pre-claim defect verbatim.
+    label: "the recovery claim's loser proceeds as if it had won",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  const claim = await claimSessionState(ctx.config.home, recovered);",
+    to:
+      "  await claimSessionState(ctx.config.home, recovered);\n" +
+      "  const claim = { claimed: true, state: recovered } as const;",
+    test: `${CONNECTOR}/test/recovery-race.test.ts`,
+    because:
+      "two racing state-less recoveries both spool work contexts and the " +
+      "foreign one captures targets its repo never owned",
+  },
+  {
+    // The hub half of the same invariant: re-registering a LIVE session
+    // under a different repo must refuse, not re-home. Disabling the guard
+    // restores the silent repo rewrite the review confirmed (the update no
+    // longer carries `repo`, so the visible defect is the vanished 409).
+    label: "the hub accepts a live session's re-register under another repo",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  if (existing.repo !== input.repo) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/sessions.test.ts`,
+    because:
+      "the state-less recovery race and mid-session identity changes stop " +
+      "being refused — the distinct 409 the register ladder stops on is " +
+      "never emitted",
+  },
+  {
+    // The DB-fact half of trial finding #7: an email belongs to AT MOST one
+    // developer, and the caller must HEAR about a cross-developer duplicate
+    // — a silent success leaves absence matching attributing commits to the
+    // wrong person.
+    label: "a cross-developer alias duplicate reports success instead of 409",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: '    return { outcome: "taken_by_other" };',
+    to: '    return { outcome: "added", alreadyLinked: true, emails: existing };',
+    test: `${SERVER}/test/developer-emails.test.ts`,
+    because:
+      "an admin linking an email another developer already owns is told it " +
+      "worked; the alias silently is not theirs and their teammate's commits " +
+      "keep matching somebody else",
+  },
+  {
+    // The load-bearing half of the agent-restart check (trial finding #8):
+    // "in THIS repo". A name-and-age match alone warns on every two-project
+    // dev machine, and that noise is how doctors get ignored.
+    label: "the agent-restart check convicts on name and age alone",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      if (cwd !== null && (await isInsideRepo(repoRoot, cwd))) {",
+    to: "      if (cwd !== null) {",
+    test: `${CLI}/test/agent-restart.test.ts`,
+    because:
+      "an agent running in a DIFFERENT repo is flagged as predating this " +
+      "repo's hooks — the false positive the cwd gate exists to prevent",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

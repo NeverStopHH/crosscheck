@@ -84,6 +84,12 @@ beforeAll(async () => {
     },
     body: JSON.stringify({ name: "Ken", email: "ken@example.com" }),
   });
+  // Named failure over an unreadable one (suite-stability finding).
+  if (!response.ok) {
+    throw new Error(
+      `createDeveloper failed: ${String(response.status)} ${await response.text()}`,
+    );
+  }
   const body = (await response.json()) as { data: { apiKey: string } };
 
   workspace = await mkdtemp(join(tmpdir(), "cx-workspace-"));
@@ -106,6 +112,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   server.stop(true);
+  // Release the PGlite WASM instance (suite-stability finding).
+  await (db as unknown as { $client: { close: () => Promise<void> } }).$client
+    .close()
+    .catch(() => undefined);
   await Promise.all(
     cleanups.map((path) => rm(path, { recursive: true, force: true })),
   );
