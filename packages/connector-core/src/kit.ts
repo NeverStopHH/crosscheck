@@ -86,6 +86,12 @@ export {
   DEFAULT_AGENT_KIND,
   HEARTBEAT_MIN_INTERVAL_MS,
 } from "./constants.ts";
+export {
+  hookBudget,
+  resolveHookBudget,
+  withBudget,
+} from "./config/hook-budget.ts";
+export type { HookBudget, ResolvedHookBudget } from "./config/hook-budget.ts";
 
 // ── Repo identity ───────────────────────────────────────────────────────────
 export { normalizeRemoteUrl, resolveRepoIdentity } from "./git/repo-identity.ts";
