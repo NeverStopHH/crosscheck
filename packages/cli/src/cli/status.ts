@@ -12,7 +12,7 @@ import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import {
   formatSummarizerCost,
   readSummarizerCost,
-} from "../summarizer/cost.ts";
+} from "@crosscheck/connector-claude";
 import type { CliResult } from "./login.ts";
 
 const ageOrNever = (iso: string | null, now: Date): string => {

@@ -1,7 +1,7 @@
 /**
  * The bin dispatch, end to end: `crosscheck cursor-hook <event>` through the
- * REAL binary (the named-debt arrangement — connector-claude's bin fronts
- * this package). Exit 0 ALWAYS — Cursor reads exit 2 as a block and other
+ * REAL binary (`packages/cli` since Block 8 — the one bin fronting this
+ * package). Exit 0 ALWAYS — Cursor reads exit 2 as a block and other
  * non-zero exits as failures worth logging; this connector is never either
  * — and stdout is always parseable directive-free JSON.
  */
@@ -16,7 +16,7 @@ const BIN = resolve(
   import.meta.dir,
   "..",
   "..",
-  "connector-claude",
+  "cli",
   "src",
   "bin",
   "crosscheck.ts",

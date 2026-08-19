@@ -38,16 +38,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/statusline/statusline.ts",
     note: "teammate names via groupTeammates (sanitize inside toGroup); a terminal line, capped and joined from sanitized fields",
   },
-  {
-    kind: "composite",
-    name: "claude-cli-doctor",
-    module: "src/cli/doctor.ts",
-    note: "formatAge only — renderer-built ages, no untrusted interpolation",
-  },
-  {
-    kind: "composite",
-    name: "claude-cli-status",
-    module: "src/cli/status.ts",
-    note: "formatAbsenceLine + formatAge from the core render layer; absence names sanitized inside the renderer",
-  },
+  // doctor/status moved to packages/cli in Block 8; their composite
+  // registrations (cli-doctor, cli-status) moved with them into that
+  // package's own src/render-surfaces.ts.
 ];

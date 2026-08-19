@@ -46,9 +46,9 @@ import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher
 import {
   formatSummarizerCost,
   readSummarizerCost,
-} from "../summarizer/cost.ts";
+} from "@crosscheck/connector-claude";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
-import { isOwnedCommand } from "./settings-merge.ts";
+import { isOwnedCommand } from "@crosscheck/connector-claude";
 import type { CliResult } from "./login.ts";
 
 export type CheckLevel = "PASS" | "WARN" | "FAIL";

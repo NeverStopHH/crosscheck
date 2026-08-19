@@ -33,8 +33,19 @@ import { extractSliceText, readTurnSlice } from "../summarizer/transcript.ts";
 import type { TurnSlice } from "../summarizer/transcript.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
-/** The connector's own entry point — same resolution as cli/init.ts. */
-const BIN_ENTRY_PATH = resolve(import.meta.dir, "..", "bin", "crosscheck.ts");
+/**
+ * The worker's own entry, INSIDE this package (summarizer/worker-entry.ts).
+ * Before Block 8 this was the `crosscheck` bin's `summarize-turn` branch;
+ * the bin now lives in packages/cli, and the hook must not depend on the
+ * CLI package's location — the summarizer is Claude-specific code and its
+ * entry lives beside it.
+ */
+const WORKER_ENTRY_PATH = resolve(
+  import.meta.dir,
+  "..",
+  "summarizer",
+  "worker-entry.ts",
+);
 
 /**
  * What the worker inherits: never the hook's whole environment (in tests
@@ -74,8 +85,7 @@ const spawnSummarizeWorker = (
     const proc = Bun.spawn({
       cmd: [
         process.execPath,
-        BIN_ENTRY_PATH,
-        "summarize-turn",
+        WORKER_ENTRY_PATH,
         "--transcript",
         transcriptPath,
         "--session",

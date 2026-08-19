@@ -18,7 +18,7 @@
  *
  * No TypeScript, no Bun APIs, no dependencies in this file — it must run
  * exactly where nothing else of ours can. Proven end-to-end (all three paths)
- * by packages/connector-claude/test/e2e/npm-package.e2e.test.ts.
+ * by packages/cli/test/e2e/npm-package.e2e.test.ts.
  */
 const path = require("node:path");
 
@@ -26,7 +26,7 @@ const ENTRY = path.join(
   __dirname,
   "..",
   "packages",
-  "connector-claude",
+  "cli",
   "src",
   "bin",
   "crosscheck.ts",

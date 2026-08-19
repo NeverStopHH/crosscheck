@@ -215,7 +215,7 @@ import {
 } from "./fixtures/slow-hub.ts";
 import type { MockHub } from "./fixtures/slow-hub.ts";
 
-const BIN_PATH = resolve(import.meta.dir, "..", "src", "bin", "crosscheck.ts");
+const BIN_PATH = resolve(import.meta.dir, "..", "..", "cli", "src", "bin", "crosscheck.ts");
 
 const REPO_ID = "github.com/acme/api";
 const REPO_REMOTE = "git@github.com:acme/api.git";

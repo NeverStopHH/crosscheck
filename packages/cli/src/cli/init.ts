@@ -8,8 +8,6 @@ import {
   EXIT_FAIL,
   EXIT_OK,
   MCP_CONFIG_FILE,
-  POST_TOOL_USE_MATCHER,
-  PRE_TOOL_USE_MATCHER,
 } from "@crosscheck/connector-core/constants.ts";
 import { normalizeHubUrl, readStoredConfig } from "@crosscheck/connector-core/config/config.ts";
 import { crosscheckHome, ensureDir, readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
@@ -27,8 +25,7 @@ import {
   resolveMcpLauncher,
 } from "@crosscheck/connector-core/config/launcher.ts";
 import type { Launcher } from "@crosscheck/connector-core/config/launcher.ts";
-import { mergeClaudeSettings } from "./settings-merge.ts";
-import type { MatcherGroup, SettingsPlan } from "./settings-merge.ts";
+import { buildSettingsPlan, mergeClaudeSettings } from "@crosscheck/connector-claude";
 import type { CliResult } from "./login.ts";
 
 /** The connector's own entry point, resolved from this module's location. */
@@ -77,48 +74,6 @@ export const resolveLauncher = async (
   env: Env,
   entryPath: string = BIN_ENTRY_PATH,
 ): Promise<Launcher> => resolveLauncherWithEntry(override, env, entryPath);
-
-export const buildSettingsPlan = (
-  prefix: string,
-  forceStatusline: boolean,
-): SettingsPlan => {
-  const group = (
-    command: string,
-    matcher?: string,
-    isAsync?: boolean,
-  ): MatcherGroup => ({
-    ...(matcher === undefined ? {} : { matcher }),
-    hooks: [
-      {
-        type: "command",
-        command,
-        ...(isAsync === true ? { async: true } : {}),
-      },
-    ],
-  });
-  return {
-    hooks: {
-      SessionStart: group(`${prefix} hook session-start`),
-      PostToolUse: group(
-        `${prefix} hook post-tool-use`,
-        POST_TOOL_USE_MATCHER,
-        true,
-      ),
-      SessionEnd: group(`${prefix} hook session-end`),
-      // The injection pipeline (DESIGN.md §4): both SYNC, deliberately — one
-      // returns additionalContext, the other a permission decision, and an
-      // async hook can deliver neither.
-      UserPromptSubmit: group(`${prefix} hook user-prompt-submit`),
-      PreToolUse: group(`${prefix} hook pre-tool-use`, PRE_TOOL_USE_MATCHER),
-      // The Tier-1 summarizer gate (DESIGN.md §3 Tier 1): ASYNC, because the
-      // hook returns nothing — it gates deterministically and spawns the
-      // detached worker; the model must never wait on it.
-      Stop: group(`${prefix} hook stop`, undefined, true),
-    },
-    statusLine: { type: "command", command: `${prefix} statusline` },
-    forceStatusline,
-  };
-};
 
 const renderSettings = (settings: Record<string, unknown>): string =>
   `${JSON.stringify(settings, null, 2)}\n`;

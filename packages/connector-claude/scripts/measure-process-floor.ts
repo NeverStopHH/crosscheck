@@ -31,7 +31,7 @@ import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 import { SELF_DEVELOPER_ID, startSlowHub } from "../test/fixtures/slow-hub.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
-const BIN_PATH = resolve(import.meta.dir, "..", "src", "bin", "crosscheck.ts");
+const BIN_PATH = resolve(import.meta.dir, "..", "..", "cli", "src", "bin", "crosscheck.ts");
 const REPO_ID = "github.com/acme/api";
 const REPO_REMOTE = "git@github.com:acme/api.git";
 const DEFAULT_ROUNDS = 10;

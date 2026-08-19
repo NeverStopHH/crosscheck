@@ -1,9 +1,9 @@
 /**
  * Shared plumbing for the subprocess E2E tests: spawn the REAL crosscheck bin
- * (the `acp` subcommand lives in connector-claude until Block 8 extracts
- * `packages/cli` — design §1.2's named debt; tests reach it by path, not by a
- * manifest edge, so no dependency cycle exists), drive a scripted client
- * conversation over its stdio, and hash what came back.
+ * (in `packages/cli` since Block 8 ended design §1.2's named debt; tests
+ * reach it by path, not by a manifest edge, so no dependency cycle exists),
+ * drive a scripted client conversation over its stdio, and hash what came
+ * back.
  */
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +14,7 @@ export const BIN_PATH = join(
   "..",
   "..",
   "..",
-  "connector-claude",
+  "cli",
   "src",
   "bin",
   "crosscheck.ts",

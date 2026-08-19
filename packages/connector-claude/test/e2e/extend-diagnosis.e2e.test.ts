@@ -28,7 +28,7 @@ import { makeHome, makeRepo } from "../../../connector-core/test/helpers.ts";
 const ADMIN_TOKEN = "e2e-mcp-admin-token";
 /** Wide enough that a cold PGlite query never trips the hook's fail-open budget. */
 const TEST_TIMEOUT_MS = "4000";
-const BIN = resolve(import.meta.dir, "..", "..", "src", "bin", "crosscheck.ts");
+const BIN = resolve(import.meta.dir, "..", "..", "..", "cli", "src", "bin", "crosscheck.ts");
 const CALL_TIMEOUT_MS = 20_000;
 
 let db: Db;

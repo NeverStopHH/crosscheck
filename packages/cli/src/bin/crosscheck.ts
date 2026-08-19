@@ -1,10 +1,13 @@
 #!/usr/bin/env bun
 import { EXIT_FAIL, EXIT_OK, EXIT_USAGE, STDIN_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
-import { runCli } from "../cli/index.ts";
-import { isHookName, runHook } from "../hooks/index.ts";
+import {
+  isHookName,
+  runHook,
+  runStatusline,
+  runSummarizeWorker,
+} from "@crosscheck/connector-claude";
 import { runMcpServer } from "@crosscheck/connector-core/mcp/server.ts";
-import { runStatusline } from "../statusline/statusline.ts";
-import { runSummarizeWorker } from "../summarizer/worker.ts";
+import { runCli } from "../cli/index.ts";
 
 /**
  * Bounded: this read runs before the hook budget exists, so an stdin the caller
@@ -64,8 +67,8 @@ const main = async (): Promise<void> => {
     process.exit(await runMcpServer(process.env, process.cwd()));
   }
 
-  // Cursor IDE hooks (packages/connector-cursor; this bin fronting it is the
-  // same §1.2 named debt as `acp` below). DYNAMIC import — Claude hooks and
+  // Cursor IDE hooks (packages/connector-cursor; fronted from packages/cli
+  // since Block 8 ended the §1.2 named debt). DYNAMIC import — Claude hooks and
   // the statusline must not pay its load. Reads ONE payload under
   // STDIN_TIMEOUT_MS exactly like `hook`: a cursor hook that blocks on an
   // unclosed stdin holds the developer's session open. UNLIKE `acp`, every
@@ -95,8 +98,8 @@ const main = async (): Promise<void> => {
     }
   }
 
-  // The ACP transparent proxy (packages/connector-acp; this bin fronting it
-  // is design §1.2's named debt until Block 8 extracts packages/cli).
+  // The ACP transparent proxy (packages/connector-acp; fronted from
+  // packages/cli since Block 8 ended design §1.2's named debt).
   // DYNAMIC import like `serve`: hooks and the statusline must not pay its
   // load. NOT through `readStdin` either — stdin IS the client half of the
   // wire the proxy forwards, open for the life of the session BY DESIGN.

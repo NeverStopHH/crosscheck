@@ -25,7 +25,7 @@ const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..", "..");
 const PACK_SCRIPT = join(
   REPO_ROOT,
   "packages",
-  "connector-claude",
+  "cli",
   "scripts",
   "pack-npm.ts",
 );
@@ -223,24 +223,34 @@ describe("packed npm tarball", () => {
       "packages/connector-acp/src/proxy.ts",
       "packages/connector-claude/LICENSE",
       "packages/connector-claude/NOTICE",
-      "packages/connector-claude/src/bin/crosscheck.ts",
       "packages/connector-claude/src/hooks/index.ts",
+      "packages/connector-cursor/LICENSE",
+      "packages/connector-cursor/NOTICE",
+      "packages/connector-cursor/src/index.ts",
+      "packages/cli/LICENSE",
+      "packages/cli/src/bin/crosscheck.ts",
+      "packages/cli/src/cli/index.ts",
     ];
     const mustNotShip = [
       "packages/connector-claude/test",
       "packages/connector-core/test",
       "packages/connector-acp/test",
+      "packages/connector-cursor/test",
+      "packages/cli/test",
       "packages/server/test",
       "packages/schema/test",
       "packages/connector-claude/scripts",
       "packages/connector-core/scripts",
+      "packages/cli/scripts",
       "docs",
       "bun.lock",
-      // One package, one manifest — ALL FIVE guarded: a nested package.json
+      // One package, one manifest — ALL SEVEN guarded: a nested package.json
       // would also change self-name resolution for everything beneath it.
       "packages/connector-claude/package.json",
       "packages/connector-core/package.json",
       "packages/connector-acp/package.json",
+      "packages/connector-cursor/package.json",
+      "packages/cli/package.json",
       "packages/schema/package.json",
       "packages/server/package.json",
     ];
