@@ -32,6 +32,17 @@ export const sessionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (result.outcome === "already_ended") {
       return fail(c, 409, "conflict", "session has already ended");
     }
+    if (result.outcome === "repo_mismatch") {
+      // DISTINCT code on purpose: the register flow's ~r1 retry must stop
+      // here (a live session must not spawn a sibling bound to another
+      // repo), while "already ended" keeps minting the reopened-session id.
+      return fail(
+        c,
+        409,
+        "repo_mismatch",
+        "session is registered to a different repo",
+      );
+    }
     return ok(c, { session: result.session });
   });
 

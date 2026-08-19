@@ -20,6 +20,7 @@ import {
   workContextRecord,
 } from "../capture/records.ts";
 import {
+  claimSessionState,
   crosscheckSessionIdFor,
   workContextIdFor,
   writeSessionState,
@@ -29,6 +30,18 @@ import {
 const RETRY_SUFFIXES = ["", "~r1", "~r2"] as const;
 
 const HTTP_CONFLICT = 409;
+
+/**
+ * The hub's DISTINCT conflict code for "this id is a LIVE session bound to
+ * another repo" (server routes/sessions.ts). In recovery mode the ladder
+ * must stop on it — minting `~r1` for the foreign repo would be a re-home
+ * by another name — while the generic "conflict" (somebody else's id, or an
+ * ended session being reopened) keeps walking the suffixes.
+ */
+const REPO_MISMATCH_CODE = "repo_mismatch";
+
+/** Sentinel: registration refused because a live sibling owns another repo. */
+const REPO_MISMATCH = Symbol("crosscheck.register.repo-mismatch");
 
 const LOCAL_REPO_PREFIX = "local:";
 
@@ -76,6 +89,18 @@ export interface RegisterSessionFlowInput {
   readonly title: string;
   readonly status: string;
   readonly now: Date;
+  /**
+   * State-less MID-SESSION reconstruction (Claude's recoverState twin,
+   * Cursor's requireSessionState): the caller read no state file and is
+   * rebuilding one. Three behaviors flip together, all pinned in
+   * session-flows.test.ts: the retry ladder STOPS on `repo_mismatch`
+   * (first-wins — a live session must not spawn a foreign-repo sibling),
+   * the state file is CLAIMED rather than overwritten (a sibling recovery
+   * that published first keeps its binding), and a lost claim appends no
+   * second work-context record. SessionStart callers stay on the overwrite
+   * path: re-creating state on a re-fire is deliberate there.
+   */
+  readonly recovery?: boolean;
 }
 
 export interface RegisterSessionFlowResult {
@@ -94,7 +119,7 @@ interface Registration {
 const registerWithRetry = async (
   input: RegisterSessionFlowInput,
   baseId: string,
-): Promise<Registration | null> => {
+): Promise<Registration | typeof REPO_MISMATCH | null> => {
   for (const suffix of RETRY_SUFFIXES) {
     const sessionId = `${baseId}${suffix}`;
     const result = await registerSession(input.hub, {
@@ -111,6 +136,9 @@ const registerWithRetry = async (
     if (result.status !== HTTP_CONFLICT) {
       return null;
     }
+    if (input.recovery === true && result.code === REPO_MISMATCH_CODE) {
+      return REPO_MISMATCH;
+    }
   }
   return null;
 };
@@ -121,6 +149,18 @@ export const registerSessionFlow = async (
 ): Promise<RegisterSessionFlowResult> => {
   const baseSessionId = crosscheckSessionIdFor(input.hostSessionKey);
   const registration = await registerWithRetry(input, baseSessionId);
+  if (registration === REPO_MISMATCH) {
+    // First-wins (trial finding #9): a LIVE session with this id is bound to
+    // another repo. NOTHING is written — a state file would re-home the
+    // binding, and a spooled work context would be ingested against the
+    // other repo's session on the next flush. Silence is the contract.
+    return {
+      crosscheckSessionId: baseSessionId,
+      workContextId: workContextIdFor(baseSessionId),
+      developerId: input.fallbackDeveloperId,
+      registered: false,
+    };
+  }
   const crosscheckSessionId = registration?.sessionId ?? baseSessionId;
   const developerId = registration?.developerId ?? input.fallbackDeveloperId;
   const workContextId = workContextIdFor(crosscheckSessionId);
@@ -128,7 +168,7 @@ export const registerSessionFlow = async (
   // BEFORE the first append, always: `reap` decides that a spool file has no
   // writer left by finding no session state file for it, and that inference
   // is only sound while state is published before any record is written.
-  await writeSessionState(input.home, {
+  const stateInput = {
     hostSessionKey: input.hostSessionKey,
     crosscheckSessionId,
     workContextId,
@@ -142,7 +182,24 @@ export const registerSessionFlow = async (
     deliveredHintRefs: [],
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
-  });
+  };
+  if (input.recovery === true) {
+    // CLAIM, never overwrite: a sibling recovery that published first keeps
+    // its binding (the caller re-reads and judges the repo), and the loser
+    // appends no second work-context record. A busy lock is fail-open —
+    // nothing written, nothing appended, silence this invocation.
+    const claim = await claimSessionState(input.home, stateInput);
+    if (claim === null || !claim.claimed) {
+      return {
+        crosscheckSessionId,
+        workContextId,
+        developerId,
+        registered: registration !== null,
+      };
+    }
+  } else {
+    await writeSessionState(input.home, stateInput);
+  }
   await appendRecords(
     input.home,
     input.repoKey,

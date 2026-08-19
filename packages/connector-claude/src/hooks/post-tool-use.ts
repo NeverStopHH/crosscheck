@@ -19,11 +19,11 @@ import { registerSession } from "@crosscheck/connector-core/http/hub.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
+  claimSessionState,
   deriveSessionState,
   readSessionState,
   updateSessionState,
   withSeenTargets,
-  writeSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { resolveWorkContextTitle } from "./session-start.ts";
@@ -57,7 +57,9 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     baseCommit: ctx.identity.baseCommit,
     status: IMPLEMENTING_STATUS,
   });
-  // A conflict means the id belongs to somebody else — nothing to recover.
+  // A conflict means the id belongs to somebody else, OR to a live session
+  // this developer already bound to ANOTHER repo (the hub's repo_mismatch,
+  // first-wins) — either way, nothing to recover.
   if (!result.ok && result.status === HTTP_CONFLICT) {
     return null;
   }
@@ -69,7 +71,18 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
   // BEFORE the first append, always: `reap` infers "no writer left" from the
   // absence of a session state file, so a hook that appends without publishing
   // state first could have its records reaped out from under it.
-  await writeSessionState(ctx.config.home, recovered);
+  //
+  // CLAIMED, never overwritten (recovery-race.test.ts): a sibling recovery
+  // that published state during our register round-trip keeps its binding —
+  // we adopt it (the caller's foreign-repo guard judges the repo) and append
+  // no second work context. A busy lock is fail-open silence.
+  const claim = await claimSessionState(ctx.config.home, recovered);
+  if (claim === null) {
+    return null;
+  }
+  if (!claim.claimed) {
+    return claim.state;
+  }
   // The work context must exist before its targets, or ingest rejects them.
   await appendRecords(
     ctx.config.home,

@@ -19,7 +19,11 @@ import { getDiagnosis, getPresence } from "@crosscheck/connector-core/http/hub.t
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { readSpoolLines } from "@crosscheck/connector-core/spool/files.ts";
 import { safeHostSessionId } from "@crosscheck/connector-core/state/host-session-key.ts";
-import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  deriveSessionState,
+  readSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 
 import { runCursorHook } from "../src/index.ts";
@@ -231,6 +235,86 @@ describe("a Cursor workspace rooted at the PARENT of the repo (trial finding #9)
         .filter((target) => target.kind === "file")
         .map((target) => target.value),
     ).toEqual(["src/panel.ts"]);
+  });
+
+  test("a sibling recovery bound to ANOTHER repo wins the race: dropped, not captured", async () => {
+    // Arrange: the Claude recovery-race parity pin. A hub whose register
+    // endpoint publishes a SIBLING's state (bound to other/web) mid-call —
+    // the exact window between requireSessionState's read and the flow's
+    // state publish. The loser must adopt, count the drop, capture nothing.
+    const workspace = await mkdtemp(join(tmpdir(), "cx-cursor-race-"));
+    cleanups.push(workspace);
+    const home = await makeHome("cursor-race");
+    cleanups.push(home);
+    const conv = "conv-race-1";
+    const hostKey = `cur-${conv}`;
+    let raceHubUrl = "";
+    const raceServer = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/api/sessions" && request.method === "POST") {
+          await writeSessionState(
+            home,
+            deriveSessionState({
+              hostSessionKey: hostKey,
+              repoId: "github.com/other/web",
+              repoRoot: "/tmp/web",
+              hubUrl: raceHubUrl,
+              developerId: "dev_sibling",
+              startedAt: new Date("2026-08-19T08:00:00.000Z").toISOString(),
+            }),
+          );
+          return Response.json({
+            ok: true,
+            data: { session: { id: `cc_${hostKey}`, developerId: "dev_race" } },
+          });
+        }
+        return Response.json({ ok: true, data: {} });
+      },
+    });
+    raceHubUrl = `http://127.0.0.1:${raceServer.port}`;
+    const repo = join(workspace, "monorepo");
+    await mkdir(repo, { recursive: true });
+    await git(repo, ["init", "--initial-branch=main"]);
+    await git(repo, ["config", "user.email", "dev@example.com"]);
+    await git(repo, ["config", "user.name", "Dev"]);
+    await writeFile(
+      join(repo, ".crosscheck.json"),
+      renderRepoConfig(raceHubUrl),
+      "utf8",
+    );
+    await git(repo, ["add", "."]);
+    await git(repo, ["commit", "-m", "initial"]);
+    await git(repo, ["remote", "add", "origin", REMOTE]);
+    await writeRepoFile(repo, "src/panel.ts", "export const p = 1;\n");
+
+    // Act
+    const out = await run(
+      "afterFileEdit",
+      {
+        ...AFTER_FILE_EDIT_INPUT,
+        conversation_id: conv,
+        workspace_roots: [repo],
+        file_path: join(repo, "src", "panel.ts"),
+      },
+      {
+        CROSSCHECK_HOME: home,
+        CROSSCHECK_API_KEY: hub.apiKey,
+        CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
+      },
+    );
+    raceServer.stop(true);
+
+    // Assert: the sibling's binding survives, the drop is counted, and this
+    // repo's spool holds nothing.
+    expect(out).toBe("{}");
+    const state = await readSessionState(home, hostKey);
+    expect(state?.repoId).toBe("github.com/other/web");
+    expect(state?.foreignRepoDrops).toBe(1);
+    expect(
+      await readSpoolLines(home, repoKey(raceHubUrl, REPO_ID)),
+    ).toEqual([]);
   });
 
   test("the inverse pin: a file in an UNCONNECTED repo under the workspace stays silent", async () => {

@@ -59,9 +59,27 @@ export const requireSessionState = async (
     // §2.4 privacy posture): branch @ repo, the honest fallback.
     title: fallbackWorkContextTitle(ctx.identity.branch, ctx.identity.repoId),
     status: IMPLEMENTING_STATUS,
+    // State-less reconstruction: stop the ladder on repo_mismatch, CLAIM the
+    // state file rather than overwrite a racing sibling's (flow header).
+    recovery: true,
     now: ctx.now(),
   });
-  // The flow wrote the state file before any append; reading it back gives
-  // the schema-defaulted SessionState every later transform expects.
-  return readSessionState(ctx.config.home, ctx.hostSessionKey);
+  // The flow published state before any append — or ADOPTED a sibling's, or
+  // (repo_mismatch, busy lock) wrote nothing at all. Reading it back gives
+  // the schema-defaulted SessionState every later transform expects, and the
+  // first-wins check re-runs against what is actually on disk: a sibling may
+  // have bound this conversation to a DIFFERENT repo during our register
+  // round-trip (handlers.test.ts, the recovery-race parity pin).
+  const state = await readSessionState(ctx.config.home, ctx.hostSessionKey);
+  if (state === null) {
+    return null;
+  }
+  if (state.repoId !== ctx.identity.repoId) {
+    await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
+      ...fresh,
+      foreignRepoDrops: fresh.foreignRepoDrops + 1,
+    }));
+    return null;
+  }
+  return state;
 };

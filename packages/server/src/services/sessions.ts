@@ -66,7 +66,8 @@ const requireWrittenRow = (rows: SessionRow[]): SessionRow => {
 export type RegisterSessionResult =
   | { readonly outcome: "created" | "updated"; readonly session: SessionView }
   | { readonly outcome: "foreign_session" }
-  | { readonly outcome: "already_ended" };
+  | { readonly outcome: "already_ended" }
+  | { readonly outcome: "repo_mismatch" };
 
 export const registerSession = async (
   deps: Deps,
@@ -110,12 +111,21 @@ export const registerSession = async (
   if (existing.endedAt !== null) {
     return { outcome: "already_ended" };
   }
+  // One crosscheck session is ONE repo, bound at registration (trial finding
+  // #9, first-wins). A live session re-registering under a DIFFERENT repo is
+  // the state-less recovery race or a mid-session identity change — both are
+  // refused rather than silently re-homed: past work stays attributed to the
+  // repo that produced it, and the connector's own foreign-repo guard drops
+  // the touch (the state-file path already did; this closes the no-state
+  // path). Branch and base commit may still move — checkouts are normal.
+  if (existing.repo !== input.repo) {
+    return { outcome: "repo_mismatch" };
+  }
 
   const updated = await deps.db
     .update(agentSessions)
     .set({
       agentKind: input.agentKind,
-      repo: input.repo,
       status: input.status,
       branch: input.branch,
       baseCommit: input.baseCommit,
