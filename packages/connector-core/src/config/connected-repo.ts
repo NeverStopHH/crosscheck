@@ -23,8 +23,16 @@
  *   - a `.crosscheck.json` found in a plain directory (no `.git` beside it)
  *     is ignored — init writes the config at the repo root, and a stray
  *     copy elsewhere must not mint a reporting target;
- *   - the walk is bounded by CONNECTED_ROOT_WALK_MAX_LEVELS plain fs stats
- *     (two per level, no processes), because it runs inside hook budgets.
+ *   - the touched path is NORMALIZED before anything looks at it: `resolve`
+ *     collapses `..`/`.` segments, so a path SPELLED through the connected
+ *     repo (`<repo>/../outside/x.md`) is judged at the location it actually
+ *     names, never along its spelling (adversarial-review repro, pinned in
+ *     connected-repo.test.ts); and a path with a `.git` segment — git
+ *     metadata, not work — resolves to nothing, exactly as `git rev-parse`
+ *     refuses to answer inside `.git`;
+ *   - the walk is bounded by CONNECTED_ROOT_WALK_MAX_LEVELS levels of plain
+ *     fs work (one `.git` stat per level, plus one config read at the first
+ *     boundary — no processes), because it runs inside hook budgets.
  *     Measured on a warm APFS cache: ~106 µs for a 6-level hit, ~18 µs for
  *     a boundary stop, ~121 µs for a full miss to the fs root — three
  *     orders of magnitude under the tightest hook budget; the fallback's
@@ -39,10 +47,13 @@
  * IDENTITY's root — this module only answers "which directory, if any, is
  * the file's connected repo root".
  */
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { stat } from "node:fs/promises";
 
 import { readRepoConfig } from "./repo-config.ts";
+
+/** The repo-boundary marker — a checkout's directory or a worktree's file. */
+const GIT_ENTRY_NAME = ".git";
 
 /**
  * Bound on the upward walk from the touched file to a repo root. Deep
@@ -57,10 +68,14 @@ export const CONNECTED_ROOT_WALK_MAX_LEVELS = 32;
  */
 export const CONNECTED_ROOT_MAX_CANDIDATE_PATHS = 3;
 
-/** `.git` may be a directory (checkout) or a file (worktree) — both count. */
-const hasGitEntry = async (dir: string): Promise<boolean> => {
+/**
+ * `.git` may be a directory (checkout) or a file (worktree) — both count.
+ * Exported for the doctor's workspace-root scan, which must call a subdir
+ * "connected" only under the same two conditions the walk itself requires.
+ */
+export const hasGitEntry = async (dir: string): Promise<boolean> => {
   try {
-    await stat(resolve(dir, ".git"));
+    await stat(resolve(dir, GIT_ENTRY_NAME));
     return true;
   } catch {
     return false;
@@ -78,7 +93,17 @@ export const findConnectedRepoRootForFile = async (
   cwd: string,
   filePath: string,
 ): Promise<string | null> => {
-  const absolute = isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
+  // `resolve` for BOTH spellings: an absolute path may still carry `..`/`.`
+  // segments, and the walk must judge the location the path NAMES, never the
+  // directories its spelling happens to route through (header, bullet 3).
+  const absolute = resolve(cwd, filePath);
+  // Git metadata is not work: a path with a `.git` segment (`.git/config`,
+  // hook files, a worktree's private dir) resolves to nothing, matching what
+  // `git rev-parse` answers from inside `.git`. Tracked files can never
+  // carry this segment — git refuses to track paths containing `.git`.
+  if (absolute.split(sep).includes(GIT_ENTRY_NAME)) {
+    return null;
+  }
   let dir = dirname(absolute);
   for (let level = 0; level < CONNECTED_ROOT_WALK_MAX_LEVELS; level += 1) {
     // The file may not exist yet (Write creates it, mkdir -p later): a

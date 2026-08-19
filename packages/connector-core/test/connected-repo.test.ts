@@ -141,6 +141,50 @@ describe("findConnectedRepoRootForFile", () => {
     ).toBeNull();
   });
 
+  test("a `..`-spelled path cannot smuggle an OUTSIDE file into the repo", async () => {
+    // Arrange: the file lives OUTSIDE any repo; only its SPELLING routes
+    // through the connected repo. Without normalization the lexical dirname
+    // chain visits `<repo>/..`, then `<repo>` — a non-ancestor — and answers
+    // the connected root for a file the repo does not contain (found by the
+    // adversarial review, executed repro).
+    const workspace = await makeDir("dotdot");
+    const repo = join(workspace, "monorepo");
+    await mkdir(join(repo, "src"), { recursive: true });
+    await makeBoundary(repo, { connected: true });
+    const outside = join(workspace, "plain", "notes");
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, "x.md"), "# private\n", "utf8");
+
+    // Act: spelled through the repo, normalizing to the outside dir. The
+    // spelling is built by string concatenation on purpose: `join` would
+    // collapse the `..` and hide exactly the input a hostile payload sends.
+    const root = await findConnectedRepoRootForFile(
+      workspace,
+      `${repo}/../plain/notes/x.md`,
+    );
+
+    // Assert: the normalized location decides — not the spelling
+    expect(root).toBeNull();
+  });
+
+  test("a file inside the repo's own .git metadata never resolves", async () => {
+    // Arrange: `.git/config` sits under a connected repo, but git metadata
+    // is not work — `git rev-parse` refuses to answer inside `.git`, and the
+    // walk must not be looser than that (capture noise otherwise).
+    const workspace = await makeDir("gitmeta");
+    const repo = join(workspace, "monorepo");
+    await mkdir(join(repo, "src"), { recursive: true });
+    await makeBoundary(repo, { connected: true });
+
+    // Act + Assert
+    expect(
+      await findConnectedRepoRootForFile(
+        workspace,
+        join(repo, ".git", "config"),
+      ),
+    ).toBeNull();
+  });
+
   test("relative paths resolve against the hook's cwd", async () => {
     // Arrange
     const workspace = await makeDir("relative");
