@@ -27,7 +27,7 @@ const CONNECTOR = "packages/connector-claude";
 const BUDGET_TEST = `${CONNECTOR}/test/hook-time-budget.test.ts`;
 
 const RUNNER = `${CONNECTOR}/src/hooks/runner.ts`;
-const CONSTANTS = `${CONNECTOR}/src/constants.ts`;
+const CONSTANTS = "packages/connector-core/src/constants.ts";
 
 interface Edit {
   readonly file: string;

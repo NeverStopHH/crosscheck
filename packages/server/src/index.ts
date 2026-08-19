@@ -36,6 +36,8 @@ export interface CreateServerOptions {
   readonly adminToken?: string | null;
   /** Omitted/null = keyless: the vector tier is silently absent (DESIGN.md §6). */
   readonly embedder?: Embedder | null;
+  /** Test seam only — services/search.ts SearchDeps says why. Omit in production. */
+  readonly embedDeadlineMs?: number;
   /**
    * HMAC secret for /ui session cookies. Omitted = a fresh random secret per
    * process: nothing secret at rest, and a restart logs every browser out
@@ -71,6 +73,9 @@ export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
     now: options.now ?? (() => new Date()),
     adminToken: options.adminToken ?? null,
     embedder: options.embedder ?? null,
+    ...(options.embedDeadlineMs === undefined
+      ? {}
+      : { embedDeadlineMs: options.embedDeadlineMs }),
     uiSessionSecret: resolveUiSessionSecret(options.uiSessionSecret),
   });
 

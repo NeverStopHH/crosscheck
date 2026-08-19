@@ -1,4 +1,4 @@
-import type { Env } from "../config/paths.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { handlePostToolUse } from "./post-tool-use.ts";
 import { handlePreToolUse } from "./pre-tool-use.ts";
 import { handleSessionEnd } from "./session-end.ts";

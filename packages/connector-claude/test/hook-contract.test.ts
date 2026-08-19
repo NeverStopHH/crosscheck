@@ -50,7 +50,7 @@ import {
   extractContract,
   main as runContractWatch,
 } from "../scripts/hook-contract-watch.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 import { TEAMMATE_NAME, startSlowHub } from "./fixtures/slow-hub.ts";
 import type { MockHub } from "./fixtures/slow-hub.ts";
 import {

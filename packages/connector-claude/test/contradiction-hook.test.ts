@@ -13,7 +13,7 @@ import { rm } from "node:fs/promises";
 
 import { runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const PAIR_ID = "cx_0123456789abcdef0123456789abcdef";
 

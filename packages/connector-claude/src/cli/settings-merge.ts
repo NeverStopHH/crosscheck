@@ -3,6 +3,10 @@
  * the norm, not the exception — clobbering them is how an install gets
  * reverted (DESIGN.md §2: install = one PR).
  */
+import {
+  POST_TOOL_USE_MATCHER,
+  PRE_TOOL_USE_MATCHER,
+} from "@crosscheck/connector-core/constants.ts";
 /**
  * Matches every launcher form `init` resolves on its OWN: the `crosscheck`
  * binary, an absolute path to the entry script (optionally shell-quoted), and
@@ -129,5 +133,54 @@ export const mergeClaudeSettings = (
     },
     statuslineInstalled: statusline.installed,
     foreignStatuslineCommand: statusline.foreign,
+  };
+};
+
+/**
+ * The Claude Code hook plan `crosscheck init` installs — MOVED VERBATIM from
+ * `cli/init.ts` when Block 8 extracted `packages/cli`: the plan is knowledge
+ * about CLAUDE'S settings file shapes (which events exist, which run async,
+ * which need matchers), so it lives beside the merge that writes it, and the
+ * host-agnostic init command imports both from this package.
+ */
+export const buildSettingsPlan = (
+  prefix: string,
+  forceStatusline: boolean,
+): SettingsPlan => {
+  const group = (
+    command: string,
+    matcher?: string,
+    isAsync?: boolean,
+  ): MatcherGroup => ({
+    ...(matcher === undefined ? {} : { matcher }),
+    hooks: [
+      {
+        type: "command",
+        command,
+        ...(isAsync === true ? { async: true } : {}),
+      },
+    ],
+  });
+  return {
+    hooks: {
+      SessionStart: group(`${prefix} hook session-start`),
+      PostToolUse: group(
+        `${prefix} hook post-tool-use`,
+        POST_TOOL_USE_MATCHER,
+        true,
+      ),
+      SessionEnd: group(`${prefix} hook session-end`),
+      // The injection pipeline (DESIGN.md §4): both SYNC, deliberately — one
+      // returns additionalContext, the other a permission decision, and an
+      // async hook can deliver neither.
+      UserPromptSubmit: group(`${prefix} hook user-prompt-submit`),
+      PreToolUse: group(`${prefix} hook pre-tool-use`, PRE_TOOL_USE_MATCHER),
+      // The Tier-1 summarizer gate (DESIGN.md §3 Tier 1): ASYNC, because the
+      // hook returns nothing — it gates deterministically and spawns the
+      // detached worker; the model must never wait on it.
+      Stop: group(`${prefix} hook stop`, undefined, true),
+    },
+    statusLine: { type: "command", command: `${prefix} statusline` },
+    forceStatusline,
   };
 };

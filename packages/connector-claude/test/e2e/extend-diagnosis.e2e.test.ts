@@ -23,12 +23,12 @@ import type { Db } from "@crosscheck/server";
 
 import { runHook } from "../../src/index.ts";
 import type { Env } from "../../src/index.ts";
-import { makeHome, makeRepo } from "../helpers.ts";
+import { makeHome, makeRepo } from "../../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "e2e-mcp-admin-token";
 /** Wide enough that a cold PGlite query never trips the hook's fail-open budget. */
 const TEST_TIMEOUT_MS = "4000";
-const BIN = resolve(import.meta.dir, "..", "..", "src", "bin", "crosscheck.ts");
+const BIN = resolve(import.meta.dir, "..", "..", "..", "cli", "src", "bin", "crosscheck.ts");
 const CALL_TIMEOUT_MS = 20_000;
 
 let db: Db;
@@ -102,7 +102,15 @@ const startMcp = (env: Env, cwd: string): McpClient => {
         if (line.trim().length === 0) {
           continue;
         }
-        const envelope = JSON.parse(line) as RpcEnvelope;
+        // Tolerant by design: a stray non-JSON stdout line must not kill
+        // the whole file through an unhandled rejection in this floating
+        // reader — an unanswered request still fails its own test loudly.
+        let envelope: RpcEnvelope;
+        try {
+          envelope = JSON.parse(line) as RpcEnvelope;
+        } catch {
+          continue;
+        }
         const answer =
           envelope.id === undefined ? undefined : pending.get(envelope.id);
         if (answer !== undefined && envelope.id !== undefined) {

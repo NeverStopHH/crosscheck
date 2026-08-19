@@ -12,7 +12,7 @@ import {
   MAX_CLAIM_BODY_LENGTH,
 } from "@crosscheck/schema";
 
-import { SUMMARIZER_DEFAULT_CONFIDENCE } from "../constants.ts";
+import { SUMMARIZER_DEFAULT_CONFIDENCE } from "@crosscheck/connector-core/constants.ts";
 
 /** `NONE`, tolerantly: spacing, case, and a stray full stop are all still NONE. */
 const NONE_PATTERN = /^none[.!]?$/i;

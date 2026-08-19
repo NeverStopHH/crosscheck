@@ -2,18 +2,18 @@ import {
   STATUSLINE_MAX_CHARS,
   STATUSLINE_MAX_NAMES,
   STATUSLINE_NAME_CHARS,
-} from "../constants.ts";
-import { formatAge, groupTeammates } from "../briefing/render.ts";
-import type { TeammateGroup } from "../briefing/render.ts";
-import type { Env } from "../config/paths.ts";
-import { getPresence } from "../http/hub.ts";
-import type { PresenceEntry } from "../http/hub.ts";
+} from "@crosscheck/connector-core/constants.ts";
+import { formatAge, groupTeammates } from "@crosscheck/connector-core/briefing/render.ts";
+import type { TeammateGroup } from "@crosscheck/connector-core/briefing/render.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { getPresence } from "@crosscheck/connector-core/http/hub.ts";
+import type { PresenceEntry } from "@crosscheck/connector-core/http/hub.ts";
 import {
   isCacheFresh,
   readPresenceCache,
   writePresenceCache,
-} from "../state/presence-cache.ts";
-import { readSyncState } from "../state/sync-state.ts";
+} from "@crosscheck/connector-core/state/presence-cache.ts";
+import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { prepareHook } from "../hooks/runner.ts";
 import type { HookContext } from "../hooks/runner.ts";
 

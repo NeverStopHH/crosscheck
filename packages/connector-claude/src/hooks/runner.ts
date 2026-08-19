@@ -1,24 +1,27 @@
 import {
-  HOOK_RESERVE_RATIO,
   POST_TOOL_USE_BUDGET_RATIO,
   PRE_TOOL_USE_BUDGET_RATIO,
   SESSION_END_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
   STOP_BUDGET_RATIO,
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
-} from "../constants.ts";
+} from "@crosscheck/connector-core/constants.ts";
+import {
+  hookBudget,
+  resolveHookBudget,
+  withBudget,
+} from "@crosscheck/connector-core/config/hook-budget.ts";
+import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import {
   isDisabled,
   loadConfig,
-  readStoredConfig,
-  resolveTimeoutMs,
-} from "../config/config.ts";
-import type { ResolvedConfig } from "../config/config.ts";
-import type { Env } from "../config/paths.ts";
-import { crosscheckHome, repoKey } from "../config/paths.ts";
-import { resolveRepoIdentity } from "../git/repo-identity.ts";
-import type { RepoIdentity } from "../git/repo-identity.ts";
-import type { HubContext } from "../http/client.ts";
+} from "@crosscheck/connector-core/config/config.ts";
+import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
+import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
 
@@ -47,21 +50,16 @@ export interface HookContext {
 }
 
 /**
- * How much of the hosting hook's TOTAL budget maintenance may still spend, read
- * at the moment of the call — the same budget `withBudget` below enforces by
- * abandoning the hook.
- *
- * One grade, deliberately. `spareMs` is what may go to work the developer never
- * sees — draining the spool, ending a deferred session — and it already holds
- * the reserve back. There is no accessor for the rest: a hook's own essential
- * step is bounded by the per-request timeout and by the total-budget race, and
- * every time maintenance was handed the raw remainder instead it finished after
- * the race had already resolved and took the hook's whole point down with it
- * (see HOOK_RESERVE_RATIO for both measurements).
+ * The budget family MOVED to core for Block 6
+ * (@crosscheck/connector-core/config/hook-budget.ts) — the Cursor connector's
+ * hook processes run under the identical race and cannot import from this
+ * package. Re-exported here reference-identically so existing import sites
+ * (the hook handlers, test/hook-reserve.test.ts) keep working; the one thing
+ * that stays local is BUDGET_RATIOS — which Claude event maps to which ratio
+ * is host policy.
  */
-export interface HookBudget {
-  readonly spareMs: () => number;
-}
+export { hookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
+export type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 
 export type HookHandler = (
   ctx: HookContext,
@@ -120,65 +118,6 @@ export const prepareHook = async (
   };
 };
 
-/** Total-hook budget: a slow hub must never hold the developer's session. */
-const withBudget = async (
-  work: Promise<string>,
-  budgetMs: number,
-): Promise<string> => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const budget = new Promise<string>((resolve) => {
-    timer = setTimeout(() => resolve(""), budgetMs);
-  });
-  try {
-    return await Promise.race([work, budget]);
-  } finally {
-    clearTimeout(timer);
-  }
-};
-
-interface ResolvedBudget {
-  readonly budgetMs: number;
-  /** Per-request timeout: the longest a single hub call can run. */
-  readonly timeoutMs: number;
-}
-
-/**
- * The budget has to be known before repo identity spawns git, so it comes from
- * the environment plus the stored config — one small file read — rather than
- * from the fully resolved config.
- */
-const resolveBudget = async (
-  name: HookName,
-  env: Env,
-): Promise<ResolvedBudget> => {
-  const stored = await readStoredConfig(crosscheckHome(env));
-  const timeoutMs = resolveTimeoutMs(env, stored);
-  return { budgetMs: timeoutMs * BUDGET_RATIOS[name], timeoutMs };
-};
-
-/**
- * The reserve as arithmetic: what is LEFT of the hook's deadline, minus one
- * per-request timeout, floored at zero.
- *
- * `now` is a parameter, and that is the only reason this is exported. The
- * reserve used to be observable ONLY through its wall-clock side effect — take
- * it away and maintenance eats the hook, so the briefing goes missing and the
- * hook runs long — which makes detecting its removal a bet on how slow
- * maintenance happens to be on the machine running the check. Pass a frozen
- * clock and the subtraction itself is observable, with no process, no file and
- * no real clock in the way: test/hook-reserve.test.ts. Production passes no
- * clock and gets `Date.now`, which is what test/hook-time-budget.test.ts and
- * test/hook-budget.test.ts exercise end to end.
- */
-export const hookBudget = (
-  deadlineMs: number,
-  timeoutMs: number,
-  now: () => number = Date.now,
-): HookBudget => ({
-  spareMs: () =>
-    Math.max(0, deadlineMs - now() - timeoutMs * HOOK_RESERVE_RATIO),
-});
-
 const prepareAndRun = async (
   handler: HookHandler,
   stdin: string,
@@ -202,7 +141,10 @@ export const runHookWith = async (
   env: Env,
 ): Promise<string> => {
   try {
-    const { budgetMs, timeoutMs } = await resolveBudget(name, env);
+    const { budgetMs, timeoutMs } = await resolveHookBudget(
+      BUDGET_RATIOS[name],
+      env,
+    );
     // The handler's deadline is taken a fraction BEFORE the race timer starts,
     // so what the handler believes it has left is never more than the truth.
     const deadlineMs = Date.now() + budgetMs;

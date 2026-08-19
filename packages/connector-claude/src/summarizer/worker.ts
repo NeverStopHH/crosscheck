@@ -13,17 +13,17 @@
  *
  * Fail open everywhere: every early return is silent, exit code always 0.
  */
-import { DEFAULT_AGENT_KIND, EXIT_OK } from "../constants.ts";
-import { crosscheckHome, repoKey } from "../config/paths.ts";
-import type { Env } from "../config/paths.ts";
-import { buildEnvelope, UNKNOWN_DEVELOPER_ID } from "../capture/records.ts";
-import { containsSecret } from "../capture/secret-scan.ts";
-import { readDeliveredHintHashes } from "../hints/delivered-store.ts";
-import { isEchoOfDeliveredHint } from "../hints/echo.ts";
-import { checkClaim } from "../mcp/violations.ts";
-import { mintClaimId } from "../mcp/tools/shared.ts";
-import { appendRecords } from "../spool/append.ts";
-import { readSessionState } from "../state/session-state.ts";
+import { DEFAULT_AGENT_KIND, EXIT_OK } from "@crosscheck/connector-core/constants.ts";
+import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { buildEnvelope, UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
+import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
+import { readDeliveredHintHashes } from "@crosscheck/connector-core/hints/delivered-store.ts";
+import { isEchoOfDeliveredHint } from "@crosscheck/connector-core/hints/echo.ts";
+import { checkClaim } from "@crosscheck/connector-core/mcp/violations.ts";
+import { mintClaimId } from "@crosscheck/connector-core/mcp/tools/shared.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
+import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { parseSummarizerOutput } from "./parse.ts";
 import {
   resolveSummarizerArgv,

@@ -1,0 +1,31 @@
+{
+  "claudeSessionId": "0b30fb1c-9f2a-4571-b0e0-3c405f6b7d3a",
+  "crosscheckSessionId": "cc_0b30fb1c-9f2a-4571-b0e0-3c405f6b7d3a",
+  "workContextId": "wc_cc_0b30fb1c-9f2a-4571-b0e0-3c405f6b7d3a",
+  "repoId": "github.com/acme/api",
+  "repoRoot": "/work/checkouts/acme-api",
+  "hubUrl": "https://hub.example.com",
+  "developerId": "dev_7f3a",
+  "startedAt": "2026-08-18T09:30:00.000Z",
+  "lastHeartbeatAt": "2026-08-18T09:41:12.000Z",
+  "seenTargets": [
+    "file:src/app.ts",
+    "symbol:startServer"
+  ],
+  "deliveredHintRefs": [
+    "wc_cc_11111111-2222-4333-8444-555555555555"
+  ],
+  "deliveredHintHashes": [
+    "9c1ad0efb225c135"
+  ],
+  "tripwireAskedFiles": [
+    "src/app.ts"
+  ],
+  "briefingSolvedRefs": [
+    "wc_cc_66666666-7777-4888-9999-000000000000"
+  ],
+  "stopTurnCount": 4,
+  "summarizerFireCount": 1,
+  "summarizerLastFireTurn": 3,
+  "summarizerEstimatedTokens": 1200
+}

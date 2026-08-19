@@ -13,10 +13,16 @@ useDefault = true
 [[allowlists]]
 description = "Fixtures for the connector's own secret detector"
 paths = [
-  '''packages/connector-claude/test/secret-scan\.test\.ts''',
+  '''packages/connector-core/test/secret-scan\.test\.ts''',
   # The summarizer/promotion tests plant credential-shaped strings to prove
   # the upload scanner refuses them — same class as the file above.
+  '''packages/connector-core/test/delivered-store\.test\.ts''',
+  '''packages/connector-core/test/review-draft\.test\.ts''',
+  '''packages/connector-claude/test/summarizer-worker\.test\.ts''',
+  # Pre-extraction homes of the three connector-core files above (moved in the
+  # Block 1 core extraction). History still carries those blobs at these paths,
+  # so a history scan needs the old locations allowlisted too.
+  '''packages/connector-claude/test/secret-scan\.test\.ts''',
   '''packages/connector-claude/test/delivered-store\.test\.ts''',
   '''packages/connector-claude/test/review-draft\.test\.ts''',
-  '''packages/connector-claude/test/summarizer-worker\.test\.ts''',
 ]

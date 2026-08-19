@@ -12,9 +12,9 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { STATUS_MAX_SESSION_STATES } from "../constants.ts";
-import { readJsonOrNull } from "../config/paths.ts";
-import { SessionStateSchema } from "../state/session-state.ts";
+import { STATUS_MAX_SESSION_STATES } from "@crosscheck/connector-core/constants.ts";
+import { readJsonOrNull } from "@crosscheck/connector-core/config/paths.ts";
+import { SessionStateSchema } from "@crosscheck/connector-core/state/session-state.ts";
 
 export interface SummarizerCost {
   /** Live sessions of this repo+hub that were counted. */

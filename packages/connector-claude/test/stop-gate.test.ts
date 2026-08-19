@@ -13,7 +13,7 @@ import {
   SUMMARIZER_DEBOUNCE_TURNS,
   SUMMARIZER_MAX_FIRES_PER_SESSION,
   SUMMARIZER_TAIL_BYTES,
-} from "../src/constants.ts";
+} from "@crosscheck/connector-core/constants.ts";
 import {
   hasErrorOutput,
   hasHypothesisLanguage,
@@ -28,10 +28,10 @@ import {
   readSliceRange,
   readTurnSlice,
 } from "../src/summarizer/transcript.ts";
-import type { SessionState } from "../src/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
-  claudeSessionId: "s1",
+  hostSessionKey: "s1",
   crosscheckSessionId: "cc_s1",
   workContextId: "wc_cc_s1",
   repoId: "github.com/acme/api",

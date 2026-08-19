@@ -15,8 +15,8 @@
 import {
   SUMMARIZER_DEBOUNCE_TURNS,
   SUMMARIZER_MAX_FIRES_PER_SESSION,
-} from "../constants.ts";
-import type { SessionState } from "../state/session-state.ts";
+} from "@crosscheck/connector-core/constants.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 /**
  * A test runner invoked as a command. Anchored to a word boundary on both

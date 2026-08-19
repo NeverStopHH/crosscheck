@@ -28,7 +28,7 @@ jobs:
       # database. It fails if the set of code points that still reach the reader
       # differs from the set recorded in the script, which is what stops the
       # counts quoted in briefing/sanitize.ts from ageing quietly.
-      - run: bun run packages/connector-claude/scripts/default-ignorable-sweep.ts
+      - run: bun run packages/connector-core/scripts/default-ignorable-sweep.ts
 
   concurrency:
     # The spool defects in this repo were timing-dependent, surfacing in 3 of 13
@@ -48,8 +48,8 @@ jobs:
           for round in 1 2 3 4 5; do
             echo "::group::round $round"
             bun test \
-              packages/connector-claude/test/spool-concurrency.test.ts \
-              packages/connector-claude/test/spool-durability.test.ts \
+              packages/connector-core/test/spool-concurrency.test.ts \
+              packages/connector-core/test/spool-durability.test.ts \
               packages/connector-claude/test/hook-budget.test.ts
             echo "::endgroup::"
           done
@@ -116,46 +116,111 @@ jobs:
     # the script had grown four MCP renderer mutations, and neither number was
     # written by hand after that.
     #
-    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 33
+    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
+    # PRINTS: 57
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
     # basename hides that, so the split is its own directive rather than a
     # sentence somebody has to keep in step by hand:
     #
-    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-claude/src/",""),v)'
-    # PRINTS: briefing/render.ts 2
-    # PRINTS: briefing/sanitize.ts 7
-    # PRINTS: constants.ts 4
-    # PRINTS: hints/render.ts 1
-    # PRINTS: hints/select.ts 4
+    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
+    # PRINTS: packages/cli/src/cli/doctor.ts 1
+    # PRINTS: packages/connector-acp/src/capture/engine.ts 3
+    # PRINTS: packages/connector-acp/src/fd-io.ts 1
+    # PRINTS: packages/connector-acp/src/inject/injector.ts 3
+    # PRINTS: packages/connector-acp/src/proxy.ts 1
+    # PRINTS: packages/connector-acp/src/pump.ts 1
     # PRINTS: hooks/pre-tool-use.ts 1
     # PRINTS: hooks/stop.ts 1
+    # PRINTS: briefing/render.ts 2
+    # PRINTS: briefing/sanitize.ts 7
+    # PRINTS: config/config.ts 1
+    # PRINTS: config/hook-budget.ts 1
+    # PRINTS: constants.ts 6
+    # PRINTS: flows/hint.ts 2
+    # PRINTS: git/ssh-hostname.ts 2
+    # PRINTS: hints/render.ts 1
+    # PRINTS: hints/select.ts 4
     # PRINTS: http/hub.ts 1
+    # PRINTS: http/latency.ts 1
     # PRINTS: mcp/render-referee.ts 2
     # PRINTS: mcp/render.ts 3
+    # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 1
+    # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 1
+    # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 2
+    # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/server/src/services/hints.ts 1
     # PRINTS: packages/server/src/services/search.ts 6
     #
-    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-claude/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
-    # PRINTS: constants.ts 4
+    # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
+    # PRINTS: config.ts 1
+    # PRINTS: constants.ts 6
+    # PRINTS: doctor.ts 1
+    # PRINTS: engine.ts 3
+    # PRINTS: fd-io.ts 1
+    # PRINTS: file-edit.ts 1
+    # PRINTS: hint.ts 2
     # PRINTS: hints.ts 1
+    # PRINTS: hook-budget.ts 1
     # PRINTS: hub.ts 1
+    # PRINTS: injector.ts 3
+    # PRINTS: latency.ts 1
+    # PRINTS: output.ts 1
     # PRINTS: pre-tool-use.ts 1
+    # PRINTS: proxy.ts 1
+    # PRINTS: pump.ts 1
     # PRINTS: render-referee.ts 2
     # PRINTS: render.ts 6
     # PRINTS: sanitize.ts 7
     # PRINTS: search.ts 6
     # PRINTS: select.ts 4
+    # PRINTS: session-start.ts 1
+    # PRINTS: ssh-hostname.ts 2
     # PRINTS: stop.ts 1
+    # PRINTS: tool-failure.ts 2
     name: Mutation proof
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun run packages/connector-claude/scripts/mutation-check.ts
+      - run: bun run packages/connector-core/scripts/mutation-check.ts
+
+  cpu-starved:
+    # The ACP proxy wedged deterministically on Linux hosts with <= 2
+    # effective CPUs (2026-08-19): its idle-direction reads parked on Bun's
+    # shared blocking-I/O pool — sized max(2, hardwareConcurrency) — and the
+    # three directions pinned the whole pool, so late data, zero-byte stdin
+    # EOF and every queued async-fs task were only delivered on a LATER fd
+    # event from a different direction. Reads now park on a dedicated thread
+    # per direction (connector-acp/src/fd-reader.worker.ts). This lane holds
+    # the boundary: the gate probes plus the byte-transparency and
+    # backpressure proofs, inside a 2-CPU cgroup, where the defective code
+    # was red on every file below that touches the spawned proxy.
+    #
+    # The file set is the wedge-relevant, git-free subset: the oven/bun
+    # image ships no git, which the capture/injection E2E suites shell out
+    # to — those run on the full runners in the `test` job. The mechanism
+    # itself is ALSO pinned at any core count by pool-starvation.test.ts in
+    # every ordinary `bun test` run; this lane is the true-to-life boundary
+    # (cpu-starved-e2e.test.ts skips loudly outside it).
+    name: ACP proxy on 2 CPUs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Wedge probes + byte proofs inside a 2-CPU cgroup
+        run: |
+          docker run --rm -v "$PWD":/repo -w /repo --cpus=2 --cpuset-cpus=0,1 oven/bun:1 \
+            bun test \
+              packages/connector-acp/test/pool-starvation.test.ts \
+              packages/connector-acp/test/cpu-starved-e2e.test.ts \
+              packages/connector-acp/test/fd-io.test.ts \
+              packages/connector-acp/test/transparency.test.ts \
+              packages/connector-acp/test/backpressure.test.ts \
+              packages/connector-acp/test/proxy-e2e.test.ts
 
   claims:
     # Every comment in this repo that names a command and says what it prints is

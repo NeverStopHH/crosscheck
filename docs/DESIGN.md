@@ -57,7 +57,7 @@ Who can talk to whom is decided by infrastructure, not by a toggle someone can m
 - **People join by invitation only.** Per-developer API keys (`crosscheck invite` on the hub, one-time `crosscheck login <hub-url> <key>` per developer), individually revocable.
 - **Within a hub, sharing has defaults and gates:** only structured claims, file paths, and hashed error fingerprints by default — never raw transcripts or full diffs; artifacts default to `needs_approval` (owner-only until released); per-developer presence opt-out and `mute`; local secret-scan before every upload. v0 exposes these controls via CLI, v0.5 adds the web UI (feed, member list, click-to-approve). Work contexts, claims, and claim edges are team-visible to every authenticated hub member by design — cross-developer read inside a hub is the product (see the extend_diagnosis flow); only artifacts carry per-item sensitivity gates.
 - **Presence opt-out and mute are hub-enforced, with a hard scope line.** `crosscheck presence off` hides a developer's LIVE presence from every surface other developers see — presence list (briefing "active teammates", statusline), PreToolUse tripwire, absence "inactive" findings (absence reporting is presence surveillance too), and every activity-feed event attributed to them on `/api/events`(+`/stream`) — knowledge kinds included, because feed rows carry server timestamps and `work_context_created` fires at the start of a piece of work, making a kind-scoped filter a presence bypass — inside each query's WHERE on the hub, so a modified connector cannot see them either; their own view of themselves is unaffected. It does NOT retract published knowledge: claims, diagnoses and solved trees stay visible and attributed on every pull surface (hiding an event row hides its timing from the feed, never the knowledge itself) — the control covers the surveillance surface, not authorship, and the CLI says so when opting out, including the one loophole it cannot close: commits under a git email the hub cannot match still surface as "unconnected" absence lines. `crosscheck mute <developer>` is the reader-side mirror: it suppresses that developer's content from the READER's unasked surfaces only (prompt hints, briefing pointers, presence displays, tripwire asks) and is stored hub-side per reader so it follows them across machines; muted content stays reachable by deliberate pull (`search_related_work`, `get_diagnosis`, `get_referee_brief`) — mute is a preference, never a boundary. Suppressed hints are never recorded in `hint_deliveries` (they were not delivered). The authoritative surface list lives in `packages/server/src/services/visibility.ts`; pinned by `packages/server/test/presence-optout.test.ts` and `test/mute.test.ts`, which read the raw API as another developer.
-- **Reads are hub-scoped, not repo-scoped — including the MCP tools.** This is the same rule as the bullet above, stated on the axis people actually ask about, because "one hub = one trust space" and "the repo decides where a session reports" together imply it without saying it, and an unstated implication is how a boundary gets invented by accident. A member of a hub may read and extend **any** work context in it, whatever repo the session that created it was in: `get_diagnosis` and `extend_diagnosis` take an id and do not consider the caller's repo. `search_related_work` *is* repo-scoped, and that is a **relevance filter, not a boundary** — it answers "what is being worked on here", and the id it withholds is still readable by id. It could not be a boundary even if it were meant as one: the repo is derived from the git remote on the caller's own machine, and the hub cannot re-derive it from an API key, because one developer legitimately works across many repos against one hub. Enforcement would have to move to the hub *and* the product would have to want it — and it does not: a claim about an API contract published from `acme/api` is exactly what somebody in `acme/web` needs. Pinned by `packages/connector-claude/test/mcp-repo-scope.test.ts`, which drives two repos against one hub, so a future round cannot flip this axis in either direction without a test going red.
+- **Reads are hub-scoped, not repo-scoped — including the MCP tools.** This is the same rule as the bullet above, stated on the axis people actually ask about, because "one hub = one trust space" and "the repo decides where a session reports" together imply it without saying it, and an unstated implication is how a boundary gets invented by accident. A member of a hub may read and extend **any** work context in it, whatever repo the session that created it was in: `get_diagnosis` and `extend_diagnosis` take an id and do not consider the caller's repo. `search_related_work` *is* repo-scoped, and that is a **relevance filter, not a boundary** — it answers "what is being worked on here", and the id it withholds is still readable by id. It could not be a boundary even if it were meant as one: the repo is derived from the git remote on the caller's own machine, and the hub cannot re-derive it from an API key, because one developer legitimately works across many repos against one hub. Enforcement would have to move to the hub *and* the product would have to want it — and it does not: a claim about an API contract published from `acme/api` is exactly what somebody in `acme/web` needs. Pinned by `packages/connector-core/test/mcp-repo-scope.test.ts`, which drives two repos against one hub, so a future round cannot flip this axis in either direction without a test going red.
 - **Later, not v0: per-repo ACLs within one hub.** Until then the rule is simple: different trust requirements → different hubs. That is the escape hatch for anyone who wants the bullet above to be false: it is a second hub, not a setting.
 
 ## 3. Capture pipeline (knowledge OUT)
@@ -130,13 +130,27 @@ crosscheck/
     schema/             zod types + versioned record envelope = the wire contract
     server/             Hono API · SSE · outbox · hybrid search · hint ranker
                         (PGlite embedded | DATABASE_URL → Postgres)
-    connector-claude/   hook scripts · MCP server · summarizer runner · spool
-    cli/                crosscheck: serve|init|login|status|approve|mute|doctor
+    connector-core/     everything agent-agnostic: spool · hub client · capture
+                        primitives (fingerprint, secret-scan, denylist) · the
+                        render+sanitize layer · MCP server+tools · session state
+                        · git · config · the kit flows all connectors share
+    connector-claude/   Claude Code specifics: hook payload parsing · statusline
+                        · Tier-1 summarizer · .claude settings plan+merge
+    connector-acp/      the transparent ACP proxy: byte pipe · Tier-0 capture
+                        from a parsed copy of the wire · mcpServers + prompt-
+                        block injection (one wrapper for every ACP client×agent)
+    connector-cursor/   Cursor IDE hooks: cursor-hook handlers · additional_
+                        context briefing+hints · contract-drift ledger
+    cli/                the ONE crosscheck bin fronting all of the above:
+                        serve|init|login|status|doctor|presence|mute|unmute|
+                        hook|statusline|mcp|acp|acp-report|cursor-hook
   docs/
-  examples/
+  packaging/            the npm launcher shim (bin/crosscheck.cjs)
 ```
 
 TypeScript-only (Bun). Python appears only ever as a generated HTTP client, later.
+Adapter architecture: [adapters/DESIGN-agent-agnostic.md](adapters/DESIGN-agent-agnostic.md);
+per-editor install: [adapters/INSTALL.md](adapters/INSTALL.md).
 
 The v0.5 web UI (feed, member list, click-to-approve) is NOT a separate app:
 the hub serves it itself under `/ui/*` from `packages/server` — server-rendered
@@ -154,7 +168,9 @@ reader opens is a pull, and §2.1 scopes mute to unasked surfaces.
 
 **v0.5:** Tier-1 gated draft summarizer + promotion loop · PreToolUse tripwire (ask-mode) · contradiction surfacing in briefings · web feed + approval UI · threshold tuning from telemetry + golden fixtures · **go public**.
 
-**v1:** **ACP proxy connector** (one connector for all Agent-Client-Protocol agents — Zed, JetBrains, Gemini CLI, 25+; the agent-agnostic bet) · Cursor rules adapter · MCP channels push (when out of preview) · OTel `gen_ai.*` export of observation events · git-JSONL transport export for server-averse teams · extracted public spec + conformance fixtures (now that a second adapter exists).
+**v1 — the agent-agnostic bet, SHIPPED** (docs/adapters/DESIGN-agent-agnostic.md, Blocks 1-8): **ACP proxy connector** (one transparent wrapper for all Agent-Client-Protocol agents — Zed, JetBrains, Gemini CLI, cursor-agent, 25+ — with Tier-0 capture and briefing/hint injection) · **Cursor hooks adapter** (capture + `additional_context` injection over the documented hooks API; the originally sketched *rules-file* adapter was REJECTED in design review — gitignore-interplay drift and a second sanitize surface — hooks + MCP won) · shared `connector-core` with one fingerprint, one sanitize layer and one set of kit flows, proven cross-connector by the §4.5 E2E (three real connector subprocesses, one hub, one fingerprint) · one `crosscheck` bin extracted to `packages/cli`.
+
+**v1.x (still ahead):** MCP channels push (when out of preview) · OTel `gen_ai.*` export of observation events · git-JSONL transport export for server-averse teams · extracted public spec + conformance fixtures · `acp setup` snippet printer · per-agent capture-level docs from the dogfood measurement (adapters/INSTALL.md).
 
 ## 9. Non-goals (v1)
 

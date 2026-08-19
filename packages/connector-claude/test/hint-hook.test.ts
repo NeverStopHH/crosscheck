@@ -10,9 +10,9 @@ import type { Env } from "../src/index.ts";
 import {
   readSessionState,
   writeSessionState,
-} from "../src/state/session-state.ts";
-import type { SessionState } from "../src/state/session-state.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 import {
   CANDIDATE_BODY,
   CANDIDATE_CLAIM_ID,
@@ -20,8 +20,8 @@ import {
   proposedOnlyCandidate,
   rejectedApproachCandidate,
   startHintHub,
-} from "./fixtures/hint-hub.ts";
-import type { HintHub } from "./fixtures/hint-hub.ts";
+} from "../../connector-core/test/fixtures/hint-hub.ts";
+import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "prompt-uuid";
@@ -52,7 +52,7 @@ const sessionState = (
   fixture: { repo: string; hubUrl: string },
   overrides: Partial<SessionState> = {},
 ): SessionState => ({
-  claudeSessionId: SESSION_ID,
+  hostSessionKey: SESSION_ID,
   crosscheckSessionId: `cc_${SESSION_ID}`,
   workContextId: `wc_cc_${SESSION_ID}`,
   repoId: REPO_ID,

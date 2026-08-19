@@ -10,12 +10,14 @@ import {
   appendRecords,
   readSpoolLines,
   repoKey,
-  runCli,
   runHook,
   runStatusline,
 } from "../../src/index.ts";
+// By path, not by a manifest edge (the ACP tests' arrangement): the CLI moved
+// to packages/cli in Block 8, and this package must not depend on it.
+import { runCli } from "../../../cli/src/cli/index.ts";
 import type { Env } from "../../src/index.ts";
-import { git, makeHome, makeRepo, writeRepoFile } from "../helpers.ts";
+import { git, makeHome, makeRepo, writeRepoFile } from "../../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "e2e-admin-token";
 const REPO_ID = "github.com/acme/api";

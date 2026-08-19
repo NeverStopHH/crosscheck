@@ -10,17 +10,17 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { SUMMARIZER_MAX_FIRES_PER_SESSION } from "../src/constants.ts";
+import { SUMMARIZER_MAX_FIRES_PER_SESSION } from "@crosscheck/connector-core/constants.ts";
 import { readSpoolLines, repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import {
   readSessionState,
   writeSessionState,
-} from "../src/state/session-state.ts";
-import type { SessionStateInput } from "../src/state/session-state.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
-import { CANDIDATE_BODY, startHintHub } from "./fixtures/hint-hub.ts";
-import type { HintHub } from "./fixtures/hint-hub.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionStateInput } from "@crosscheck/connector-core/state/session-state.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import { CANDIDATE_BODY, startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
+import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "stop-session-uuid";
@@ -115,7 +115,7 @@ const fixture = async (
   await writeFile(transcript, options.transcriptContent ?? diagnosisTranscript(), "utf8");
   const hubUrl = options.hubUrl ?? DEAD_HUB_URL;
   await writeSessionState(home, {
-    claudeSessionId: SESSION_ID,
+    hostSessionKey: SESSION_ID,
     crosscheckSessionId: `cc_${SESSION_ID}`,
     workContextId: `wc_cc_${SESSION_ID}`,
     repoId: REPO_ID,
@@ -416,7 +416,7 @@ describe("echo-loop exclusion, end to end (DESIGN.md §3, judge-mandated)", () =
     // turn quoting the hint, with the faked summarizer echoing its body
     const nextSessionId = "stop-session-uuid-next";
     await writeSessionState(fix.home, {
-      claudeSessionId: nextSessionId,
+      hostSessionKey: nextSessionId,
       crosscheckSessionId: `cc_${nextSessionId}`,
       workContextId: `wc_cc_${nextSessionId}`,
       repoId: REPO_ID,

@@ -35,11 +35,12 @@
  *
  * ONE CONSUMER, which is what makes a unit test of it sufficient at all: a
  * constant read in two places can be defeated in one and survive in the other.
- * hooks/runner.ts is the only reader outside the constant's own declaration —
+ * Since Block 6 moved the budget family to core, config/hook-budget.ts is the
+ * only reader outside the constant's own declaration —
  *
- * VERIFY: grep -rl HOOK_RESERVE_RATIO packages/connector-claude/src | sort
- * PRINTS: packages/connector-claude/src/constants.ts
- * PRINTS: packages/connector-claude/src/hooks/runner.ts
+ * VERIFY: grep -rl HOOK_RESERVE_RATIO packages/connector-claude/src packages/connector-core/src | sort
+ * PRINTS: packages/connector-core/src/config/hook-budget.ts
+ * PRINTS: packages/connector-core/src/constants.ts
  *
  * — and `spareMs` is in turn the sole accessor on HookBudget, taken as a whole
  * deadline by the drain in each of the four hooks that host one (SessionStart,
@@ -51,7 +52,10 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { HTTP_TIMEOUT_MS } from "../src/constants.ts";
+import {
+  HTTP_TIMEOUT_MS,
+  LATENCY_TIMEOUT_MAX_MS,
+} from "@crosscheck/connector-core/constants.ts";
 import { hookBudget } from "../src/hooks/runner.ts";
 
 /** A frozen clock. The reserve is arithmetic; asserting it needs no real one. */
@@ -86,7 +90,7 @@ describe("the hook reserve", () => {
     expect(spare).toBe(REMAINING_MS - HTTP_TIMEOUT_MS);
   });
 
-  test.each([250, HTTP_TIMEOUT_MS, 1500])(
+  test.each([250, HTTP_TIMEOUT_MS, 1500, LATENCY_TIMEOUT_MAX_MS])(
     "reserves one whole request timeout when that timeout is %i ms",
     (timeoutMs: number) => {
       // Arrange / Act: the same remainder, a hub configured slower or faster
@@ -108,6 +112,11 @@ describe("the hook reserve", () => {
     // that the hook cannot pay for.
     expect(spareWith(HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS)).toBe(0);
     expect(spareWith(HTTP_TIMEOUT_MS - 1, HTTP_TIMEOUT_MS)).toBe(0);
+    // The same holds at the top of the range login may now STORE
+    // (LATENCY_TIMEOUT_MAX_MS): a timeout at or above what remains of the
+    // budget yields exactly zero, never a negative handed on as a deadline.
+    expect(spareWith(LATENCY_TIMEOUT_MAX_MS, LATENCY_TIMEOUT_MAX_MS)).toBe(0);
+    expect(spareWith(LATENCY_TIMEOUT_MAX_MS - 1, LATENCY_TIMEOUT_MAX_MS)).toBe(0);
   });
 
   test("floors at zero rather than offering a deadline already gone", () => {
@@ -116,5 +125,6 @@ describe("the hook reserve", () => {
     // Assert: never negative — a negative would be passed on as a request
     // timeout and is the one value no caller of spareMs checks for.
     expect(spareWith(-REMAINING_MS, HTTP_TIMEOUT_MS)).toBe(0);
+    expect(spareWith(-REMAINING_MS, LATENCY_TIMEOUT_MAX_MS)).toBe(0);
   });
 });

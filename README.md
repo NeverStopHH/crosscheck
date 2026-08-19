@@ -14,7 +14,9 @@ The name is the aviation ritual: *"arm doors and cross-check"* — independent o
 | --- | --- |
 | [`packages/schema`](packages/schema) | The wire contract: versioned record envelope, zod types for sessions, work contexts, targets, claims, edges, hints. |
 | [`packages/server`](packages/server) | `crosscheck serve`: Hono API, per-developer API keys, session registration + heartbeat presence, record ingest with a dedup gate, SSE outbox, diagnosis tree queries. Embedded PGlite, no Docker. |
-| [`packages/connector-claude`](packages/connector-claude) | Claude Code hooks (SessionStart briefing, PostToolUse capture, SessionEnd), offline spool, statusline, and the `crosscheck` CLI (`login`, `init`, `status`, `doctor`). |
+| [`packages/connector-core`](packages/connector-core) | The agent-agnostic connector core shared by every connector: offline spool, hub client, capture primitives (fingerprint, secret scan, denylist), briefing/hint rendering + sanitizer, MCP server + tools, session state, git identity, config. |
+| [`packages/connector-claude`](packages/connector-claude) | Claude Code hooks (SessionStart briefing, PostToolUse capture, SessionEnd), statusline, and the `crosscheck` CLI (`login`, `init`, `status`, `doctor`). |
+| [`packages/connector-acp`](packages/connector-acp) | `crosscheck acp -- <agent cmd…>`: a byte-transparent [ACP](https://agentclientprotocol.com) proxy — wrap any ACP agent (Zed, JetBrains, …) with faithful exit/signal forwarding, measured backpressure, and a per-proxy log. Capture and injection land in later blocks. |
 
 Not built yet: the MCP tools (`publish_claim`, `extend_diagnosis`, `search_related_work`, `get_diagnosis`), semantic search and ranking, `UserPromptSubmit` hint injection, the PreToolUse tripwire, the Tier-1 draft summarizer, and the web UI. See [docs/DESIGN.md §8](docs/DESIGN.md) for the roadmap.
 
@@ -95,7 +97,7 @@ Licensed in parts, because the two halves need different things.
 
 | Part | License | In short |
 |---|---|---|
-| `packages/connector-claude`, `packages/schema` | Apache-2.0 | ordinary open source, no strings |
+| `packages/connector-claude`, `packages/connector-core`, `packages/connector-acp`, `packages/schema` | Apache-2.0 | ordinary open source, no strings |
 | `packages/server` (the hub) | FSL-1.1-ALv2 | everything except selling crosscheck itself |
 
 The connector runs inside your repository and your build, so it is permissive on

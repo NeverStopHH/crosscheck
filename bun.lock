@@ -5,13 +5,17 @@
     "": {
       "name": "crosscheck-workspace",
     },
-    "packages/connector-claude": {
-      "name": "@crosscheck/connector-claude",
-      "version": "0.1.0",
+    "packages/cli": {
+      "name": "@crosscheck/cli",
+      "version": "0.5.0",
       "bin": {
         "crosscheck": "./src/bin/crosscheck.ts",
       },
       "dependencies": {
+        "@crosscheck/connector-acp": "workspace:*",
+        "@crosscheck/connector-claude": "workspace:*",
+        "@crosscheck/connector-core": "workspace:*",
+        "@crosscheck/connector-cursor": "workspace:*",
         "@crosscheck/schema": "workspace:*",
         "@crosscheck/server": "workspace:*",
         "zod": "^4.0.0",
@@ -22,9 +26,63 @@
         "typescript": "^7.0.2",
       },
     },
+    "packages/connector-acp": {
+      "name": "@crosscheck/connector-acp",
+      "version": "0.5.0",
+      "dependencies": {
+        "@crosscheck/connector-core": "workspace:*",
+        "zod": "^4.0.0",
+      },
+      "devDependencies": {
+        "@crosscheck/server": "workspace:*",
+        "bun-types": "^1.2.0",
+        "typescript": "^7.0.2",
+      },
+    },
+    "packages/connector-claude": {
+      "name": "@crosscheck/connector-claude",
+      "version": "0.5.0",
+      "dependencies": {
+        "@crosscheck/connector-core": "workspace:*",
+        "@crosscheck/schema": "workspace:*",
+        "zod": "^4.0.0",
+      },
+      "devDependencies": {
+        "@crosscheck/server": "workspace:*",
+        "bun-types": "^1.2.0",
+        "drizzle-orm": "^0.44.0",
+        "typescript": "^7.0.2",
+      },
+    },
+    "packages/connector-core": {
+      "name": "@crosscheck/connector-core",
+      "version": "0.5.0",
+      "dependencies": {
+        "@crosscheck/schema": "workspace:*",
+        "zod": "^4.0.0",
+      },
+      "devDependencies": {
+        "@crosscheck/server": "workspace:*",
+        "bun-types": "^1.2.0",
+        "typescript": "^7.0.2",
+      },
+    },
+    "packages/connector-cursor": {
+      "name": "@crosscheck/connector-cursor",
+      "version": "0.5.0",
+      "dependencies": {
+        "@crosscheck/connector-core": "workspace:*",
+        "zod": "^4.0.0",
+      },
+      "devDependencies": {
+        "@crosscheck/server": "workspace:*",
+        "bun-types": "^1.2.0",
+        "typescript": "^7.0.2",
+      },
+    },
     "packages/schema": {
       "name": "@crosscheck/schema",
-      "version": "0.1.0",
+      "version": "0.5.0",
       "dependencies": {
         "zod": "^4.0.0",
       },
@@ -35,7 +93,7 @@
     },
     "packages/server": {
       "name": "@crosscheck/server",
-      "version": "0.1.0",
+      "version": "0.5.0",
       "dependencies": {
         "@crosscheck/schema": "workspace:*",
         "@electric-sql/pglite": "^0.3.0",
@@ -50,7 +108,15 @@
     },
   },
   "packages": {
+    "@crosscheck/cli": ["@crosscheck/cli@workspace:packages/cli"],
+
+    "@crosscheck/connector-acp": ["@crosscheck/connector-acp@workspace:packages/connector-acp"],
+
     "@crosscheck/connector-claude": ["@crosscheck/connector-claude@workspace:packages/connector-claude"],
+
+    "@crosscheck/connector-core": ["@crosscheck/connector-core@workspace:packages/connector-core"],
+
+    "@crosscheck/connector-cursor": ["@crosscheck/connector-cursor@workspace:packages/connector-cursor"],
 
     "@crosscheck/schema": ["@crosscheck/schema@workspace:packages/schema"],
 

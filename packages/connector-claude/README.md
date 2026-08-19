@@ -28,7 +28,7 @@ The API key is never written into the repo. It lives in `~/.crosscheck/config.js
 
 `init` is idempotent and refuses to clobber. It backs up the existing settings to `.claude/settings.json.bak-<epoch>`, keeps every hook entry it does not own, removes only its own, and appends them again — so running it twice produces a byte-identical file. A foreign `statusLine` is preserved and reported; `--force-statusline` replaces it. If the existing settings are not valid JSON, `init` aborts with exit 1 and changes nothing.
 
-Use `--command-prefix <p>` to control how the hooks invoke the CLI. The default is `crosscheck` when it is on `PATH`, otherwise the **absolute path of the entry point that ran `init`** (`/path/to/bun /path/to/connector-claude/src/bin/crosscheck.ts`). A package name is never written: an unpublished one is a dependency-confusion vector — whoever claims it on npm would get code execution in every hook on every machine that ran `init`.
+Use `--command-prefix <p>` to control how the hooks invoke the CLI. The default is `crosscheck` when it is on `PATH`, otherwise the **absolute path of the entry point that ran `init`** (`/path/to/bun /path/to/cli/src/bin/crosscheck.ts`). A package name is never written: an unpublished one is a dependency-confusion vector — whoever claims it on npm would get code execution in every hook on every machine that ran `init`.
 
 ## Hooks
 

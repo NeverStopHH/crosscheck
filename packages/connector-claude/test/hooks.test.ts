@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 
 import { readSpoolLines, repoKey, runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
-import { makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
+import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
 /** Port 1 refuses instantly: an unreachable hub without the wait. */

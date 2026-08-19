@@ -31,6 +31,8 @@ export interface TestHarnessOptions {
   readonly adminToken?: string | null;
   /** Omitted = keyless harness, the default install (DESIGN.md §6). */
   readonly embedder?: Embedder | null;
+  /** Omitted = the production embed deadline (SearchDeps says why it exists). */
+  readonly embedDeadlineMs?: number;
 }
 
 export const createTestHarness = async (
@@ -45,6 +47,9 @@ export const createTestHarness = async (
     now: clock.now,
     adminToken,
     embedder: options.embedder ?? null,
+    ...(options.embedDeadlineMs === undefined
+      ? {}
+      : { embedDeadlineMs: options.embedDeadlineMs }),
   });
   return { app, clock, db };
 };

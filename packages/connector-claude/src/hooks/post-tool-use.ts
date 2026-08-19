@@ -1,19 +1,8 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
-
-import {
-  HEARTBEAT_MIN_INTERVAL_MS,
-  MAX_TARGETS_PER_INVOCATION,
-} from "../constants.ts";
-import { realpathBestEffort } from "../config/paths.ts";
-import { isDenied, resolveDenylist } from "../capture/denylist.ts";
-import { fingerprint } from "../capture/fingerprint.ts";
-import { containsSecret } from "../capture/secret-scan.ts";
 import {
   UNKNOWN_DEVELOPER_ID,
-  targetRecord,
   workContextRecord,
-} from "../capture/records.ts";
-import type { Producer } from "../capture/records.ts";
+} from "@crosscheck/connector-core/capture/records.ts";
+import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import {
   extractFailureText,
   extractFilePaths,
@@ -21,96 +10,27 @@ import {
   isEditTool,
   isFailureResponse,
 } from "../capture/tool-events.ts";
-import { heartbeatSession, registerSession } from "../http/hub.ts";
-import { appendRecords } from "../spool/append.ts";
-import { flushSpool } from "../spool/flush.ts";
+import {
+  captureFailure,
+  captureFileTargets,
+} from "@crosscheck/connector-core/flows/capture-targets.ts";
+import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
+import { registerSession } from "@crosscheck/connector-core/http/hub.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
+import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
   deriveSessionState,
   readSessionState,
   updateSessionState,
   withSeenTargets,
   writeSessionState,
-} from "../state/session-state.ts";
-import type { SessionState } from "../state/session-state.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { resolveWorkContextTitle } from "./session-start.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const IMPLEMENTING_STATUS = "implementing";
 const HTTP_CONFLICT = 409;
-
-/** POSIX separators on the wire: a Windows target must match a macOS one. */
-const toPosix = (path: string): string => path.split(sep).join("/");
-
-/** Exported for the PreToolUse tripwire, which asks about the same paths. */
-export const toRepoRelative = async (
-  repoRoot: string,
-  cwd: string,
-  filePath: string,
-): Promise<string | null> => {
-  const absolute = isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
-  const direct = relative(repoRoot, absolute);
-  if (direct.length > 0 && !direct.startsWith("..") && !isAbsolute(direct)) {
-    return toPosix(direct);
-  }
-  const resolvedRoot = await realpathBestEffort(repoRoot);
-  const resolvedFile = await realpathBestEffort(absolute);
-  const viaRealpath = relative(resolvedRoot, resolvedFile);
-  if (
-    viaRealpath.length === 0 ||
-    viaRealpath.startsWith("..") ||
-    isAbsolute(viaRealpath)
-  ) {
-    return null;
-  }
-  return toPosix(viaRealpath);
-};
-
-const collectFileTargets = async (
-  ctx: HookContext,
-  state: SessionState,
-): Promise<readonly string[]> => {
-  const patterns = resolveDenylist(ctx.config.denylist ?? undefined);
-  const seen = new Set(state.seenTargets);
-  const paths = extractFilePaths(ctx.payload.tool_input);
-  const collected: string[] = [];
-  for (const path of paths) {
-    if (collected.length >= MAX_TARGETS_PER_INVOCATION) {
-      break;
-    }
-    const relativePath = await toRepoRelative(
-      state.repoRoot,
-      ctx.payload.cwd,
-      path,
-    );
-    if (relativePath === null || isDenied(relativePath, patterns)) {
-      continue;
-    }
-    if (containsSecret(relativePath) || seen.has(relativePath)) {
-      continue;
-    }
-    seen.add(relativePath);
-    collected.push(relativePath);
-  }
-  return collected;
-};
-
-const collectFingerprint = (ctx: HookContext): string | null => {
-  if (!isFailureResponse(ctx.payload.tool_response)) {
-    return null;
-  }
-  const text = extractFailureText(ctx.payload.tool_response);
-  return text.length === 0 ? null : fingerprint(text);
-};
-
-const shouldHeartbeat = (state: SessionState, now: Date): boolean => {
-  if (state.lastHeartbeatAt === null) {
-    return true;
-  }
-  const lastMs = Date.parse(state.lastHeartbeatAt);
-  return (
-    Number.isNaN(lastMs) || now.getTime() - lastMs >= HEARTBEAT_MIN_INTERVAL_MS
-  );
-};
 
 /**
  * A hook installed mid-session has no state file. The ids are deterministic, so
@@ -122,7 +42,7 @@ const shouldHeartbeat = (state: SessionState, now: Date): boolean => {
  */
 const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
   const derived = deriveSessionState({
-    claudeSessionId: ctx.payload.session_id,
+    hostSessionKey: ctx.payload.session_id,
     repoId: ctx.identity.repoId,
     repoRoot: ctx.identity.root,
     hubUrl: ctx.config.hubUrl,
@@ -184,6 +104,7 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
 const heartbeatStatusFor = (toolName: string | undefined): string | undefined =>
   isEditTool(toolName) ? IMPLEMENTING_STATUS : undefined;
 
+/** Claude's heartbeat POLICY (which tools may beat); the throttle is core's. */
 const maybeHeartbeat = async (
   ctx: HookContext,
   state: SessionState,
@@ -193,15 +114,13 @@ const maybeHeartbeat = async (
   if (!isEditTool(toolName) && !isBashTool(toolName)) {
     return false;
   }
-  if (!shouldHeartbeat(state, now)) {
-    return false;
-  }
-  await heartbeatSession(
-    ctx.hub,
-    state.crosscheckSessionId,
-    heartbeatStatusFor(toolName),
-  );
-  return true;
+  return heartbeatMaybe({
+    hub: ctx.hub,
+    crosscheckSessionId: state.crosscheckSessionId,
+    lastHeartbeatAt: state.lastHeartbeatAt,
+    now,
+    status: heartbeatStatusFor(toolName),
+  });
 };
 
 export const handlePostToolUse = async (
@@ -220,33 +139,33 @@ export const handlePostToolUse = async (
     agentKind: ctx.config.agentKind,
     sessionId: state.crosscheckSessionId,
   };
-  const files = await collectFileTargets(ctx, state);
-  const errorFingerprint = collectFingerprint(ctx);
-  const records = [
-    ...files.map((value) =>
-      targetRecord(state.workContextId, "file", value, producer, now),
-    ),
-    ...(errorFingerprint === null
-      ? []
-      : [
-          targetRecord(
-            state.workContextId,
-            "error_fingerprint",
-            errorFingerprint,
-            producer,
-            now,
-          ),
-        ]),
-  ];
-
-  if (records.length > 0) {
-    await appendRecords(
-      ctx.config.home,
-      ctx.repoKey,
-      ctx.payload.session_id,
-      records,
+  // The §1.3 flows (flows/capture-targets.ts): targets first, then the
+  // fingerprint — the same spool order the combined batch used to produce.
+  // Claude-side stays exactly the payload parsing: which fields carry paths,
+  // what counts as a failure response.
+  const files = await captureFileTargets({
+    home: ctx.config.home,
+    repoKey: ctx.repoKey,
+    hostSessionKey: ctx.payload.session_id,
+    repoRoot: state.repoRoot,
+    cwd: ctx.payload.cwd,
+    paths: extractFilePaths(ctx.payload.tool_input),
+    denylist: ctx.config.denylist ?? null,
+    seenTargets: state.seenTargets,
+    workContextId: state.workContextId,
+    producer,
+    now,
+  });
+  if (isFailureResponse(ctx.payload.tool_response)) {
+    await captureFailure({
+      home: ctx.config.home,
+      repoKey: ctx.repoKey,
+      hostSessionKey: ctx.payload.session_id,
+      workContextId: state.workContextId,
+      producer,
+      failureText: extractFailureText(ctx.payload.tool_response),
       now,
-    );
+    });
   }
   // `spareMs`, not the whole remainder: the heartbeat below is another hub call
   // and the state write after it is what keeps this session's spool safe.

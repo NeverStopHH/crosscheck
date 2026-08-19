@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 
 import { runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const MS_PER_DAY = 86_400_000;
 

@@ -8,12 +8,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
-import { MAX_DRAFT_POINTERS } from "../src/constants.ts";
-import { renderBriefing } from "../src/briefing/render.ts";
-import type { BriefingInput } from "../src/briefing/render.ts";
-import type { DraftEntry } from "../src/http/hub.ts";
+import { MAX_DRAFT_POINTERS } from "@crosscheck/connector-core/constants.ts";
+import { renderBriefing } from "@crosscheck/connector-core/briefing/render.ts";
+import type { BriefingInput } from "@crosscheck/connector-core/briefing/render.ts";
+import type { DraftEntry } from "@crosscheck/connector-core/http/hub.ts";
 import { runHook } from "../src/index.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const NOW = new Date("2026-08-11T09:00:00.000Z");
 const DAY_MS = 86_400_000;

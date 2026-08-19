@@ -1,121 +1,50 @@
-import {
-  MAX_SOLVED_POINTERS,
-  MAX_TEAMMATES,
-  MAX_WORK_CONTEXT_TITLE_CHARS,
-} from "../constants.ts";
-import { rememberDeveloper } from "../config/config.ts";
-import { sanitizeUntrusted } from "../briefing/sanitize.ts";
-import {
-  formatSolvedLine,
-  groupTeammates,
-  renderBriefing,
-} from "../briefing/render.ts";
-import { resolveDriftByBaseCommit } from "../git/commit-drift.ts";
-import { resolveDefaultBranchRef } from "../git/default-branch.ts";
+import { MAX_WORK_CONTEXT_TITLE_CHARS } from "@crosscheck/connector-core/constants.ts";
+import { rememberDeveloper } from "@crosscheck/connector-core/config/config.ts";
+import { sanitizeUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
+import { resolveDefaultBranchRef } from "@crosscheck/connector-core/git/default-branch.ts";
 import {
   collectCommitEvidence,
   commitEvidenceRecord,
-} from "../capture/commit-evidence.ts";
+} from "@crosscheck/connector-core/capture/commit-evidence.ts";
 import {
   collectLandedCommits,
   landedEvidenceRecord,
-} from "../capture/landed.ts";
+} from "@crosscheck/connector-core/capture/landed.ts";
+import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
+import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
+import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
+import { endSession } from "@crosscheck/connector-core/http/hub.ts";
+import type { PresenceEntry, WorkContextEntry } from "@crosscheck/connector-core/http/hub.ts";
 import {
-  hintDeliveryRecord,
-  UNKNOWN_DEVELOPER_ID,
-  workContextRecord,
-} from "../capture/records.ts";
-import type { Producer } from "../capture/records.ts";
-import { containsSecret } from "../capture/secret-scan.ts";
+  assembleBriefing,
+  recordBriefingDeliveries,
+} from "@crosscheck/connector-core/flows/briefing.ts";
 import {
-  endSession,
-  getAbsences,
-  getContradictions,
-  getDrafts,
-  getPresence,
-  getSolvedMatches,
-  getWorkContexts,
-  registerSession,
-} from "../http/hub.ts";
-import type { PresenceEntry, SolvedMatchEntry, WorkContextEntry } from "../http/hub.ts";
-import { appendRecords } from "../spool/append.ts";
-import { flushSpool } from "../spool/flush.ts";
-import { reapSpool } from "../spool/reap.ts";
-import type { DeferredEnder } from "../spool/reap.ts";
-import {
-  crosscheckSessionIdFor,
-  updateSessionState,
-  withBriefingSolvedRefs,
-  workContextIdFor,
-  writeSessionState,
-} from "../state/session-state.ts";
-import { writePresenceCache } from "../state/presence-cache.ts";
+  fallbackWorkContextTitle,
+  registerSessionFlow,
+} from "@crosscheck/connector-core/flows/register-session.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
+import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
+import { reapSpool } from "@crosscheck/connector-core/spool/reap.ts";
+import type { DeferredEnder } from "@crosscheck/connector-core/spool/reap.ts";
+import { writePresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const INITIAL_STATUS = "analyzing";
 
 const MS_PER_DAY = 86_400_000;
 
-/** A resumed session whose crosscheck session was closed gets a fresh suffix. */
-const RETRY_SUFFIXES = ["", "~r1", "~r2"] as const;
-
-const HTTP_CONFLICT = 409;
-
-interface Registration {
-  readonly sessionId: string;
-  readonly developerId: string | null;
-}
-
-const registerWithRetry = async (
-  ctx: HookContext,
-  baseId: string,
-): Promise<Registration | null> => {
-  for (const suffix of RETRY_SUFFIXES) {
-    const sessionId = `${baseId}${suffix}`;
-    const result = await registerSession(ctx.hub, {
-      id: sessionId,
-      agentKind: ctx.config.agentKind,
-      repo: ctx.identity.repoId,
-      branch: ctx.identity.branch,
-      baseCommit: ctx.identity.baseCommit,
-      status: INITIAL_STATUS,
-    });
-    if (result.ok) {
-      return { sessionId, developerId: result.data.session.developerId };
-    }
-    if (result.status !== HTTP_CONFLICT) {
-      return null;
-    }
-  }
-  return null;
-};
-
-const LOCAL_REPO_PREFIX = "local:";
-
 /**
- * Last segment of the shared repo id (`github.com/acme/api` → `api`), never a
- * local directory name: this title is uploaded and read by teammates. A
- * `local:` id has no shareable segment, so the branch alone has to carry it.
- */
-const repoLabel = (repoId: string): string | null => {
-  if (repoId.startsWith(LOCAL_REPO_PREFIX)) {
-    return null;
-  }
-  const last = repoId.split("/").at(-1)?.trim();
-  return last === undefined || last.length === 0 ? null : last;
-};
-
-/**
- * `session_title` when Claude Code supplied one, otherwise an honest derivation
- * from branch and repo id — never a fabricated task description.
+ * `session_title` when Claude Code supplied one, otherwise the honest core
+ * fallback derived from branch and repo id (`flows/register-session.ts`) —
+ * never a fabricated task description.
  */
 export const resolveWorkContextTitle = (
   sessionTitle: string | undefined,
   branch: string,
   repoId: string,
 ): string => {
-  const label = repoLabel(repoId);
-  const fallback = label === null ? branch : `${branch} @ ${label}`;
+  const fallback = fallbackWorkContextTitle(branch, repoId);
   if (sessionTitle === undefined || sessionTitle.trim().length === 0) {
     return fallback;
   }
@@ -186,93 +115,85 @@ export const handleSessionStart = async (
   ctx: HookContext,
   budget: HookBudget,
 ): Promise<string> => {
-  const baseSessionId = crosscheckSessionIdFor(ctx.payload.session_id);
-  const registration = await registerWithRetry(ctx, baseSessionId);
-  const crosscheckSessionId = registration?.sessionId ?? baseSessionId;
-  const developerId = registration?.developerId ?? ctx.config.developerId;
-  const workContextId = workContextIdFor(crosscheckSessionId);
   const now = ctx.now();
-
   const title = resolveWorkContextTitle(
     ctx.payload.session_title,
     ctx.identity.branch,
     ctx.identity.repoId,
   );
-  // BEFORE the first append, always: `reap` decides that a spool file has no
-  // writer left by finding no session state file for it, and that inference is
-  // only sound while state is published before any record is written.
-  await writeSessionState(ctx.config.home, {
-    claudeSessionId: ctx.payload.session_id,
-    crosscheckSessionId,
-    workContextId,
+  // The §1.3 flow: register (+409 retry) → state file BEFORE any append
+  // (reap's aliveness invariant) → work-context record. One implementation,
+  // shared with every connector (flows/register-session.ts).
+  const { crosscheckSessionId, workContextId, developerId } =
+    await registerSessionFlow({
+      home: ctx.config.home,
+      repoKey: ctx.repoKey,
+      hub: ctx.hub,
+      agentKind: ctx.config.agentKind,
+      hostSessionKey: ctx.payload.session_id,
+      repoId: ctx.identity.repoId,
+      repoRoot: ctx.identity.root,
+      branch: ctx.identity.branch,
+      baseCommit: ctx.identity.baseCommit,
+      hubUrl: ctx.config.hubUrl,
+      fallbackDeveloperId: ctx.config.developerId,
+      title,
+      status: INITIAL_STATUS,
+      now,
+    });
+  // Commit-evidence collection and default-branch resolution START here and
+  // resolve DURING the flow's parallel hub-fetch block: their git timeouts
+  // are below the per-request hub timeout that block already waits for
+  // (COMMIT_EVIDENCE_GIT_TIMEOUT_MS / LANDED_GIT_TIMEOUT_MS), so they add no
+  // wall clock of their own — concurrency needs the promises started early,
+  // not membership in the same Promise.all.
+  const commitAuthorsPromise = collectCommitEvidence(ctx.identity.root, now);
+  const defaultBranchRefPromise = resolveDefaultBranchRef(ctx.identity.root);
+
+  // The rotation is the day number: every SessionStart on one day probes the
+  // same window (idempotent replays), and the window advances daily so a
+  // backlog larger than the ancestry cap is fully covered across days
+  // instead of starving its tail (capture/landed.ts).
+  const landedRotation = Math.floor(now.getTime() / MS_PER_DAY);
+
+  // The Block-5 flow (connector-core/src/flows/briefing.ts): six parallel
+  // GETs → drift → renderBriefing → shown solved ids. Landed detection
+  // (DESIGN.md §5) rides as the flow's parallel rider — the base commits of
+  // contexts the hub still lists as open, in parallel with the drift fan-out
+  // so both cost one git timeout of wall clock. Fail open throughout.
+  const assembled = await assembleBriefing({
+    hub: ctx.hub,
     repoId: ctx.identity.repoId,
     repoRoot: ctx.identity.root,
-    hubUrl: ctx.config.hubUrl,
-    developerId,
-    startedAt: now.toISOString(),
-    lastHeartbeatAt: now.toISOString(),
-    seenTargets: [],
-    deliveredHintRefs: [],
-    deliveredHintHashes: [],
-    tripwireAskedFiles: [],
-  });
-  await appendRecords(
-    ctx.config.home,
-    ctx.repoKey,
-    ctx.payload.session_id,
-    [
-      workContextRecord(
-        { workContextId, sessionId: crosscheckSessionId, title, status: INITIAL_STATUS },
-        {
-          developerId: developerId ?? UNKNOWN_DEVELOPER_ID,
-          agentKind: ctx.config.agentKind,
-          sessionId: crosscheckSessionId,
-        },
-        now,
-      ),
-    ],
+    selfDeveloperId: developerId,
     now,
-  );
-  // Commit-evidence collection rides INSIDE the parallel hub-fetch block: its
-  // git timeout is below the per-request hub timeout the block already waits
-  // for (see COMMIT_EVIDENCE_GIT_TIMEOUT_MS), so it adds no wall clock of its
-  // own — and the default-branch resolution rides the same way
-  // (LANDED_GIT_TIMEOUT_MS). Absences, contradictions and solved matches are
-  // three more parallel GETs under the same per-request bound — the block's
-  // wall clock stays one request timeout however many rides in it. Any
-  // failing costs its section, never the briefing (fail open).
-  const [
-    presenceResult,
-    contextsResult,
-    absencesResult,
-    contradictionsResult,
-    solvedMatchesResult,
-    draftsResult,
-    commitAuthors,
-    defaultBranchRef,
-  ] = await Promise.all([
-    getPresence(ctx.hub, ctx.identity.repoId),
-    getWorkContexts(ctx.hub, ctx.identity.repoId),
-    getAbsences(ctx.hub, ctx.identity.repoId),
-    getContradictions(ctx.hub, ctx.identity.repoId),
-    getSolvedMatches(ctx.hub, ctx.identity.repoId),
-    getDrafts(ctx.hub, ctx.identity.repoId),
-    collectCommitEvidence(ctx.identity.root, now),
-    resolveDefaultBranchRef(ctx.identity.root),
+    collectLanded: async (workContexts) => {
+      const defaultBranchRef = await defaultBranchRefPromise;
+      const openBaseCommits = workContexts.flatMap((entry: WorkContextEntry) =>
+        entry.landedAt === null || entry.landedAt === undefined
+          ? (entry.baseCommit === undefined ? [] : [entry.baseCommit])
+          : [],
+      );
+      return defaultBranchRef === null || openBaseCommits.length === 0
+        ? []
+        : collectLandedCommits(
+            ctx.identity.root,
+            defaultBranchRef,
+            openBaseCommits,
+            landedRotation,
+          );
+    },
+  });
+  const { briefing, presence, landedCommits } = assembled;
+  const [commitAuthors, defaultBranchRef] = await Promise.all([
+    commitAuthorsPromise,
+    defaultBranchRefPromise,
   ]);
-  const presence = presenceResult.ok ? presenceResult.data : [];
-  const workContexts = contextsResult.ok ? contextsResult.data : [];
-  const absences = absencesResult.ok ? absencesResult.data : [];
-  const contradictions = contradictionsResult.ok
-    ? contradictionsResult.data
-    : [];
-  const solvedMatches = solvedMatchesResult.ok ? solvedMatchesResult.data : [];
-  const drafts = draftsResult.ok ? draftsResult.data : [];
 
   if (developerId !== null) {
     await rememberDeveloper(ctx.config, developerId, selfName(presence, developerId));
   }
-  if (presenceResult.ok) {
+  if (assembled.presenceFetched) {
     await writePresenceCache(ctx.config.home, ctx.repoKey, presence, now);
   }
   // A local append, microseconds: the maintenance flush below ships it, and a
@@ -299,36 +220,6 @@ export const handleSessionStart = async (
     );
   }
 
-  // Only the teammates that will actually be shown cost a git process.
-  const shownBaseCommits = groupTeammates(presence, now)
-    .slice(0, MAX_TEAMMATES)
-    .flatMap((group) => (group.baseCommit === null ? [] : [group.baseCommit]));
-  // Landed detection (DESIGN.md §5): the base commits of contexts the hub
-  // still lists as open. Runs IN PARALLEL with the drift fan-out — both are
-  // bounded git fan-outs, so together they still cost one git timeout of
-  // wall clock. No default ref resolved (fail open) = no checks.
-  const openBaseCommits = workContexts.flatMap((entry: WorkContextEntry) =>
-    entry.landedAt === null || entry.landedAt === undefined
-      ? (entry.baseCommit === undefined ? [] : [entry.baseCommit])
-      : [],
-  );
-  // The rotation is the day number: every SessionStart on one day probes the
-  // same window (idempotent replays), and the window advances daily so a
-  // backlog larger than the ancestry cap is fully covered across days
-  // instead of starving its tail (capture/landed.ts).
-  const landedRotation = Math.floor(now.getTime() / MS_PER_DAY);
-  const [drift, landedCommits] = await Promise.all([
-    resolveDriftByBaseCommit(ctx.identity.root, shownBaseCommits),
-    defaultBranchRef === null || openBaseCommits.length === 0
-      ? Promise.resolve([] as readonly string[])
-      : collectLandedCommits(
-          ctx.identity.root,
-          defaultBranchRef,
-          openBaseCommits,
-          landedRotation,
-        ),
-  ]);
-
   const producer: Producer = {
     developerId: developerId ?? UNKNOWN_DEVELOPER_ID,
     agentKind: ctx.config.agentKind,
@@ -353,55 +244,19 @@ export const handleSessionStart = async (
     );
   }
 
-  const briefing = renderBriefing({
-    repoId: ctx.identity.repoId,
-    selfDeveloperId: developerId,
-    presence,
-    workContexts,
-    now,
-    drift,
-    absences,
-    contradictions,
-    solvedMatches,
-    drafts,
-  });
-
   // Solved-pointer telemetry (VISION.md §1 + §4 precision loop): exactly the
-  // pointers the EMITTED briefing shows — formatSolvedLine is the one
-  // spelling of the line, so inclusion in the rendered text is the fact —
-  // flow through hint_deliveries like every injected ref. Order matches the
-  // prompt hook's contract: spool append, then state, then emit; a crash
-  // between the two costs a duplicate-suppressed replay, never a repeat
-  // pointer (the delivery id is deterministic per (session, ref)).
-  const shownSolvedIds = solvedMatches
-    .map((match: SolvedMatchEntry) => ({
-      match,
-      line: formatSolvedLine(match, now),
-    }))
-    .filter((entry) => entry.line !== null)
-    .slice(0, MAX_SOLVED_POINTERS)
-    .filter((entry) => briefing.includes(entry.line ?? ""))
-    .map((entry) => entry.match.workContextId);
-  if (shownSolvedIds.length > 0) {
-    await appendRecords(
-      ctx.config.home,
-      ctx.repoKey,
-      ctx.payload.session_id,
-      shownSolvedIds.map((workContextId) =>
-        hintDeliveryRecord(
-          crosscheckSessionId,
-          "work_context",
-          workContextId,
-          producer,
-          now,
-        ),
-      ),
-      now,
-    );
-    await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
-      withBriefingSolvedRefs(fresh, shownSolvedIds),
-    );
-  }
+  // pointers the EMITTED briefing shows, through the shared flow — spool
+  // append, then state, then emit (flows/briefing.ts carries the ordering
+  // argument).
+  await recordBriefingDeliveries({
+    home: ctx.config.home,
+    repoKey: ctx.repoKey,
+    hostSessionKey: ctx.payload.session_id,
+    crosscheckSessionId,
+    producer,
+    shownSolvedIds: assembled.shownSolvedIds,
+    now,
+  });
 
   // Maintenance last, on the leftover budget: the briefing above is what this
   // hook exists for, and it is already in hand when the drain starts.

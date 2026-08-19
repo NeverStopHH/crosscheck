@@ -20,8 +20,8 @@ import type { Env } from "../src/index.ts";
 import {
   readSessionState,
   writeSessionState,
-} from "../src/state/session-state.ts";
-import { makeHome, makeRepo } from "./helpers.ts";
+} from "@crosscheck/connector-core/state/session-state.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "stop-latency-session-uuid";
@@ -111,7 +111,7 @@ const fixture = async (): Promise<Fixture> => {
   const transcript = join(dir, "transcript.jsonl");
   await writeFile(transcript, diagnosisTranscript(), "utf8");
   await writeSessionState(home, {
-    claudeSessionId: SESSION_ID,
+    hostSessionKey: SESSION_ID,
     crosscheckSessionId: `cc_${SESSION_ID}`,
     workContextId: `wc_cc_${SESSION_ID}`,
     repoId: REPO_ID,

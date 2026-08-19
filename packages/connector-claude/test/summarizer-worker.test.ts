@@ -14,15 +14,15 @@ import { join } from "node:path";
 
 import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 
-import { SUMMARIZER_DEFAULT_CONFIDENCE } from "../src/constants.ts";
+import { SUMMARIZER_DEFAULT_CONFIDENCE } from "@crosscheck/connector-core/constants.ts";
 import { parseSummarizerOutput } from "../src/summarizer/parse.ts";
 import { resolveSummarizerArgv, runSummarizer } from "../src/summarizer/runner.ts";
 import { runSummarizeWorker } from "../src/summarizer/worker.ts";
-import { recordDeliveredHintHash } from "../src/hints/delivered-store.ts";
-import { hintBodyHash } from "../src/hints/echo.ts";
+import { recordDeliveredHintHash } from "@crosscheck/connector-core/hints/delivered-store.ts";
+import { hintBodyHash } from "@crosscheck/connector-core/hints/echo.ts";
 import { readSpoolLines, repoKey } from "../src/index.ts";
-import { writeSessionState } from "../src/state/session-state.ts";
-import { makeHome } from "./helpers.ts";
+import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { makeHome } from "../../connector-core/test/helpers.ts";
 
 const paths: string[] = [];
 
@@ -225,7 +225,7 @@ const workerFixture = async (
     ]);
   await writeFile(transcript, content, "utf8");
   await writeSessionState(home, {
-    claudeSessionId: SESSION_ID,
+    hostSessionKey: SESSION_ID,
     crosscheckSessionId: `cc_${SESSION_ID}`,
     workContextId: `wc_cc_${SESSION_ID}`,
     repoId: REPO_ID,
