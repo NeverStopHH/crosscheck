@@ -334,6 +334,20 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     kind: "composite",
+    name: "briefing-flow",
+    module: "src/flows/briefing.ts",
+    note: "emits renderBriefing output verbatim (registered above); formatSolvedLine only re-derives lines the rendered text already contains",
+    corpusCoveredBy: ["test/briefing-flow.test.ts"],
+  },
+  {
+    kind: "composite",
+    name: "hint-flow",
+    module: "src/flows/hint.ts",
+    note: "emits renderClaimHint/renderPointerHint output verbatim (registered above)",
+    corpusCoveredBy: ["test/hint-flow.test.ts"],
+  },
+  {
+    kind: "composite",
     name: "mcp-violations",
     module: "src/mcp/violations.ts",
     note: "hub-sent issue strings through quoted()",

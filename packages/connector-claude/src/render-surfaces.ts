@@ -22,12 +22,10 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     render: (payload) =>
       resolveWorkContextTitle(payload, "feat/x", "github.com/acme/api"),
   },
-  {
-    kind: "composite",
-    name: "claude-prompt-hint",
-    module: "src/hooks/user-prompt-submit.ts",
-    note: "emits renderClaimHint/renderPointerHint output verbatim (registered core surfaces); covered in test/hint-hook.test.ts",
-  },
+  // The prompt-hint path is the core `selectAndRenderHint` flow since Block 5
+  // (registered in core as hint-flow); user-prompt-submit.ts no longer touches
+  // the render layer itself, so a row here would be a decorative registration
+  // the registry test rejects.
   {
     kind: "composite",
     name: "claude-tripwire-ask",

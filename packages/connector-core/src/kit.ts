@@ -9,13 +9,13 @@
  * (test/kit.test.ts pins that), so there is exactly one implementation of
  * everything — the same one-copy rule the render classes live by.
  *
- * The design's flow-level helpers (`registerSessionFlow`, `captureFileTargets`,
- * `captureFailure`, `heartbeatMaybe`, `endSessionFlow`) are EXTRACTED now —
- * Block 4 (the first connector block that needed one) peeled them out of the
- * Claude hooks into `src/flows/`, and the hooks call them (extraction, not
- * invention; the §5 scheduling note's entry step, discharged). The briefing
- * and hint flows (`assembleBriefing`, `selectAndRenderHint`) remain recipes
- * until the first injection block outside Claude lands (Block 5).
+ * The design's flow-level helpers are ALL extracted now: Block 4 peeled
+ * `registerSessionFlow`, `captureFileTargets`, `captureFailure`,
+ * `heartbeatMaybe` and `endSessionFlow` out of the Claude hooks into
+ * `src/flows/`, and Block 5 (the first non-Claude injection block) did the
+ * same for `assembleBriefing` and `selectAndRenderHint` — extraction, not
+ * invention; both §5 scheduling-note entry steps discharged. The hooks and
+ * the ACP proxy call the same functions.
  */
 
 // ── Identity ────────────────────────────────────────────────────────────────
@@ -73,6 +73,15 @@ export { crosscheckHome, repoKey, sessionSlug } from "./config/paths.ts";
 export type { Env } from "./config/paths.ts";
 export { isOwnedMcpEntry, mergeMcpConfig } from "./config/mcp-config.ts";
 export type { McpServerEntry } from "./config/mcp-config.ts";
+export {
+  isEphemeralInstallPath,
+  isOwnCrosscheckBin,
+  realpathOrSelf,
+  resolveCommandPrefix,
+  resolveLauncher,
+  resolveMcpLauncher,
+} from "./config/launcher.ts";
+export type { Launcher, UsableLauncher } from "./config/launcher.ts";
 export {
   DEFAULT_AGENT_KIND,
   HEARTBEAT_MIN_INTERVAL_MS,
@@ -145,6 +154,17 @@ export type {
   EndSessionFlowInput,
   EndSessionFlowResult,
 } from "./flows/end-session.ts";
+export {
+  assembleBriefing,
+  recordBriefingDeliveries,
+} from "./flows/briefing.ts";
+export type {
+  AssembleBriefingInput,
+  AssembledBriefing,
+  RecordBriefingDeliveriesInput,
+} from "./flows/briefing.ts";
+export { selectAndRenderHint } from "./flows/hint.ts";
+export type { SelectAndRenderHintInput } from "./flows/hint.ts";
 
 // ── Capture ─────────────────────────────────────────────────────────────────
 export {

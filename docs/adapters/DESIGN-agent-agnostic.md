@@ -570,10 +570,14 @@ Status note (2026-08-19, updated in Block 4): the entry step is DISCHARGED — B
 extracted `registerSessionFlow`, `captureFileTargets`, `captureFailure`,
 `heartbeatMaybe` and `endSessionFlow` into `connector-core/src/flows/` (plus the shared
 `extractFailureText` into `capture/failure-text.ts`), rewired the Claude hooks onto
-them, and consumed them from the ACP capture engine. The briefing/hint flows
-(`assembleBriefing`, `selectAndRenderHint`) remain recipes; extracting THOSE is the
-entry step of the first non-Claude injection block (5 or 7). Blocks 5–7 parallelize
-freely against each other subject to that one remaining serialization point.
+them, and consumed them from the ACP capture engine.
+Status note (2026-08-19, updated in Block 5): the REMAINING serialization point is
+discharged too — Block 5 extracted `assembleBriefing` (+ `recordBriefingDeliveries`)
+and `selectAndRenderHint` into `connector-core/src/flows/briefing.ts` / `flows/hint.ts`,
+rewired `session-start.ts` and `user-prompt-submit.ts` onto them, and consumed them from
+the ACP injector. The launcher-resolution rules moved from `cli/init.ts` to
+`connector-core/src/config/launcher.ts` for the same reason (the mcpServers entry needs
+them; connector-claude re-exports). Blocks 6–7 now parallelize freely.
 
 ---
 
@@ -591,9 +595,23 @@ freely against each other subject to that one remaining serialization point.
 2. **Prompt-block append tolerance.** Spec-legal, but do any agents choke on an extra
    trailing text block, and how do Zed/JetBrains render the replayed history? Block 5
    dogfood decides whether briefing stays on the prompt path or moves MCP-only.
+   *Block 5 implementation (2026-08-19), conservative until dogfood answers:* the
+   appended block is a plain `text` ContentBlock, ALWAYS trailing, carrying the
+   renderer output verbatim (the renderers' own self-identifying headers under
+   QUOTED_DATA_NOTICE are the replay-honesty story — no second ACP-specific header
+   was added). The single composition point is `connector-acp/src/inject/blocks.ts`
+   (`acpPromptBlockText`, identity today), a registered §4.4 surface, so moving to
+   MCP-only or adding framing later is one module + its corpus, not a hunt.
 3. **mcpServers append vs agent MCP quirks.** Cursor-agent reads `.cursor/mcp.json` and
    team-level MCP is unsupported in its ACP mode — does a param-injected server register
    cleanly across agents, and does tool-count bloat degrade any of them?
+   *Block 5 implementation (2026-08-19), conservative until dogfood answers:* the
+   proxy only APPENDS to an `mcpServers` ARRAY the client already sent — a missing or
+   non-array field is never invented (skip + log `no-mcpservers-array`); an existing
+   entry named `crosscheck` is never clobbered or shadowed, whether owned
+   (`already-present`) or foreign (`foreign-crosscheck-entry`); and only a cwd that
+   resolves to a crosscheck-connected repo gets the entry at all. Every skip is one
+   proxy-log line with its reason.
 4. **Cursor `postToolUse.additional_context` semantics.** Documented as injected after
    the tool result — verify it reaches the model mid-turn (not next turn), and whether
    `postToolUse` fires on failed tools or only `postToolUseFailure` does (determines

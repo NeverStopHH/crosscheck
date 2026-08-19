@@ -129,6 +129,51 @@ export const ACP_CAPTURE_EXIT_BUDGET_MS = 3_000;
  */
 export const ACP_SESSION_CLOSE_FLUSH_BUDGET_MS = 1_000;
 
+/**
+ * ── Block 5: injection (design §2.5) ────────────────────────────────────────
+ */
+
+/**
+ * Byte cap on one buffered client→agent line while injection is active. The
+ * line pump must hold a COMPLETE line to decide whether it is one of the two
+ * write points; a line past this cap can never be injected into anyway
+ * (nothing legitimate on the write path comes near 1 MiB), so the pump
+ * flushes what it buffered verbatim and streams the rest through — bounded
+ * memory, unchanged bytes. Same value as the observer's parse-copy cap so
+ * one number bounds both parse layers.
+ */
+export const ACP_INJECT_MAX_LINE_BYTES = ACP_MAX_PARSE_LINE_BYTES;
+
+/**
+ * How long a session/prompt decision may wait for the capture chain to
+ * settle before looking the session up. Registration rides the capture
+ * chain (triggered by the session/new RESPONSE, which always precedes the
+ * first prompt on the wire) but may still be in flight when the prompt
+ * arrives one microtask later — this bounded wait turns that race into a
+ * deterministic hit without spending the whole prompt budget on it. A chain
+ * still busy after this: session unknown → skip (fail open, the design's
+ * next-prompt fallback).
+ */
+export const ACP_PROMPT_SETTLE_WAIT_MS = 200;
+
+/**
+ * Wall-clock budget for the session/new|load|resume mcpServers decision:
+ * repo identity + config resolution for the session's cwd (a git spawn plus
+ * file reads, each internally bounded). Session creation is setup latency,
+ * not keystroke latency — but it still sits ON the c2a forward path, so it
+ * is budgeted hard and a miss skips injection rather than holding the wire
+ * (a skipped injection is always acceptable, a stalled session/new never).
+ */
+export const ACP_SESSION_SETUP_INJECT_BUDGET_MS = 2_000;
+
+/**
+ * Bounded cache of cwd → connected-repo resolutions for the mcpServers
+ * decision. A load/resume storm over the same handful of directories must
+ * not re-spawn git per message; FIFO past the cap like every other bound in
+ * this package.
+ */
+export const ACP_INJECT_CWD_CACHE_MAX = 64;
+
 /** The shell's own convention: a command that cannot be spawned is 127. */
 export const EXIT_SPAWN_FAILURE = 127;
 

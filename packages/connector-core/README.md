@@ -34,6 +34,7 @@ A connector is the host-specific shell. It owns exactly four things:
 | Capability | Kit exports | Guarantee |
 |---|---|---|
 | Config | `loadConfig`, `isDisabled`, `rememberDeveloper`, `crosscheckHome`, `repoKey`, `mergeMcpConfig` | env > repo `.crosscheck.json` > `~/.crosscheck`; `null` config = connector no-ops silently |
+| Launcher | `resolveLauncher`, `resolveCommandPrefix`, `resolveMcpLauncher`, `isEphemeralInstallPath`, `isOwnCrosscheckBin` | the durable-install rules (moved from the Claude installer in Block 5): PATH hit only past the cache + identity guards, entry-path fallback, npx/bunx caches refused — one implementation for `.mcp.json`, hooks, and the ACP mcpServers entry |
 | Repo identity | `resolveRepoIdentity`, `normalizeRemoteUrl` | the repo decides where a session reports; per-session `cwd` resolution |
 | Identity | `crosscheckSessionIdFor` (`cc_<hostSessionKey>`), `workContextIdFor` (`wc_<cc id>`), `sessionSlug` | deterministic — recovery re-derives the same ids after any crash |
 | State | `readSessionState`, `writeSessionState`, `updateSessionState` (locked read-transform-write), `deriveSessionState`, `with*` transforms | tolerant schema: files with the legacy `claudeSessionId` key parse forever; new writes carry `hostSessionKey` only |
@@ -44,9 +45,9 @@ A connector is the host-specific shell. It owns exactly four things:
 | Hints | `selectHint`, `hintBodyHash`, `isEchoOfDeliveredHint` | seen-set, session cap, echo-loop exclusion |
 | MCP | `runMcpServer`, `resolveOwnWorkContext` | stdio MCP; session resolution reads the state files — any connector that writes state gets the whole Tier-2 tool surface for free |
 
-## The five flows
+## The seven flows
 
-The design's (§1.3) flow helpers are **extracted functions in `src/flows/`** since Block 4 — the first connector block that needed one discharged the §5 scheduling note's entry step by peeling them out of the Claude hooks (extraction, not invention: the hooks call them now, so each has exactly one implementation, pinned by `test/session-flows.test.ts`). The briefing/hint flows stay documented recipes until the first non-Claude injection block (Block 5) lands.
+The design's (§1.3) flow helpers are **all extracted functions in `src/flows/`** — Block 4 peeled the capture flows out of the Claude hooks, Block 5 (the first non-Claude injection block) did the same for the briefing and hint flows (extraction, not invention: the hooks call them now, so each has exactly one implementation, pinned by `test/session-flows.test.ts`, `test/briefing-flow.test.ts` and `test/hint-flow.test.ts`).
 
 | Flow | Does | Consumers today |
 |---|---|---|
@@ -54,7 +55,8 @@ The design's (§1.3) flow helpers are **extracted functions in `src/flows/`** si
 | `captureFileTargets` | `toRepoRelative` → `isDenied` → seen-set filter → `containsSecret` → spool `targetRecord`s (cap `MAX_TARGETS_PER_INVOCATION`). Session state stays the CALLER's: follow with `updateSessionState(withSeenTargets)` — hosts batch state writes differently. | `hooks/post-tool-use.ts`, `capture/engine.ts` |
 | `captureFailure` | host-extracted failure text (use the shared `extractFailureText`) → `fingerprint()` → spool one `error_fingerprint` target | `hooks/post-tool-use.ts`, `capture/engine.ts` |
 | `heartbeatMaybe` | `HEARTBEAT_MIN_INTERVAL_MS` throttle off the caller's `lastHeartbeatAt` → `heartbeatSession`; WHICH events may beat stays host policy | `hooks/post-tool-use.ts`, `capture/engine.ts` |
-| `assembleBriefing` / `selectAndRenderHint` | **still recipes** (Block 5 extracts): parallel hub GETs → `renderBriefing` / `selectHint` → `renderClaimHint`·`renderPointerHint` → record `hintDeliveryRecord` | `hooks/session-start.ts`, `hooks/user-prompt-submit.ts` |
+| `assembleBriefing` | six parallel hub GETs → drift for the shown teammates (∥ the optional `collectLanded` rider) → `renderBriefing` → the solved ids the emitted text really shows. `recordBriefingDeliveries` spools the deterministic hint_delivery rows + `withBriefingSolvedRefs` at DELIVERY time (record-then-emit). | `hooks/session-start.ts`, `connector-acp/src/capture/engine.ts` (async prefetch + `takeBriefing`) |
+| `selectAndRenderHint` | meaning floor → state (seen-set + cap) → `getHintCandidates` (the prompt as EPHEMERAL query — never stored) → `selectHint` → drift → `renderClaimHint`·`renderPointerHint` → record delivery, THEN return the text | `hooks/user-prompt-submit.ts`, `connector-acp/src/inject/injector.ts` |
 | `endSessionFlow` | budgeted `flushSpool` → pending-end marker → state delete → `endSession` only when nothing undelivered remains (else reap's `DeferredEnder` finishes it) | `hooks/session-end.ts`, `capture/engine.ts` |
 
 ### Cross-connector invariants (single implementation now)

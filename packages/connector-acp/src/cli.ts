@@ -10,6 +10,8 @@ export interface AcpInvocation {
   readonly recordPath: string | undefined;
   /** `--agent-kind`: overrides the initialize-derived agent kind (§2.4). */
   readonly agentKind: string | undefined;
+  /** `--no-inject`: byte-identical passthrough — Block 3 behavior (§2.5). */
+  readonly noInject: boolean;
   readonly command: readonly string[];
 }
 
@@ -18,7 +20,7 @@ export interface AcpUsageError {
 }
 
 export const ACP_USAGE = [
-  "usage: crosscheck acp [--agent-kind <kind>] [--record <file>] -- <agent command…>",
+  "usage: crosscheck acp [--agent-kind <kind>] [--record <file>] [--no-inject] -- <agent command…>",
   "",
   "  Wraps an ACP agent as a transparent stdio proxy: bytes pass through",
   "  verbatim, the agent's exit code and signals are mirrored, and a per-",
@@ -26,8 +28,10 @@ export const ACP_USAGE = [
   "  spawned as the agent, arguments untouched, environment inherited.",
   "",
   "  Sessions in a crosscheck-connected repo (its cwd decides) report",
-  "  presence, touched files and failure fingerprints to that repo's hub;",
-  "  everywhere else the proxy is a pure pipe that talks to nobody.",
+  "  presence, touched files and failure fingerprints to that repo's hub,",
+  "  get crosscheck's MCP tools appended to their session setup, and",
+  "  receive the team briefing and per-prompt hints as appended prompt",
+  "  blocks; everywhere else the proxy is a pure pipe that talks to nobody.",
   "",
   "  --agent-kind <kind>  report sessions under this agent kind instead of",
   "                       acp:<name> from the agent's initialize response",
@@ -36,6 +40,9 @@ export const ACP_USAGE = [
   "                    (development aid for capture work; never required;",
   "                    entries dropped under load leave {gap: n} markers;",
   "                    analyze with: crosscheck acp-report <file>)",
+  "  --no-inject       never touch the wire: no MCP server entry, no",
+  "                    briefing, no hints — the byte-identical pipe of the",
+  "                    capture-only proxy (capture itself stays on)",
 ].join("\n");
 
 export const isUsageError = (
@@ -56,8 +63,13 @@ export const parseAcpArgs = (
   }
   let recordPath: string | undefined;
   let agentKind: string | undefined;
+  let noInject = false;
   for (let index = 0; index < flags.length; index += 1) {
     const flag = flags[index];
+    if (flag === "--no-inject") {
+      noInject = true;
+      continue;
+    }
     if (flag === "--record") {
       const value = flags[index + 1];
       if (value === undefined || value.startsWith("--")) {
@@ -78,5 +90,5 @@ export const parseAcpArgs = (
     }
     return { error: `unknown flag before --: ${flag ?? ""}` };
   }
-  return { recordPath, agentKind, command };
+  return { recordPath, agentKind, noInject, command };
 };

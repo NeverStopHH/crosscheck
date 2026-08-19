@@ -38,6 +38,11 @@ import {
   captureFailure,
   captureFileTargets,
 } from "@crosscheck/connector-core/flows/capture-targets.ts";
+import {
+  assembleBriefing,
+  recordBriefingDeliveries,
+} from "@crosscheck/connector-core/flows/briefing.ts";
+import type { AssembledBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
 import { endSessionFlow } from "@crosscheck/connector-core/flows/end-session.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import {
@@ -102,8 +107,43 @@ export interface AcpCaptureOptions {
   readonly logger: AcpLogger;
   /** `--agent-kind` — overrides the initialize-derived kind (§2.4 row 1). */
   readonly agentKindFlag?: string | undefined;
+  /**
+   * Block 5: when true, a successful register kicks off the ASYNC briefing
+   * prefetch (§2.5 — assembled at session/new capture time, served from
+   * cache at the first prompt, never awaited on the wire path).
+   */
+  readonly injection?: boolean;
   /** Injectable clock for deterministic throttle tests. */
   readonly now?: () => Date;
+}
+
+/** What the first-prompt decision may find in the briefing cache. */
+export type BriefingTake =
+  | { readonly kind: "pending" }
+  | { readonly kind: "none" }
+  | { readonly kind: "text"; readonly text: string };
+
+/**
+ * The narrow session view the injector programs against — everything the
+ * two prompt-path decisions need, nothing else of the engine exposed.
+ */
+export interface PromptInjectionView {
+  readonly hostSessionKey: string;
+  readonly home: string;
+  readonly repoKey: string;
+  readonly repoId: string;
+  readonly repoRoot: string;
+  readonly agentKind: string;
+  readonly hub: HubContext;
+  readonly timeoutMs: number;
+  /**
+   * Claims the cached briefing exactly once: `pending` while the prefetch
+   * is in flight (the design's next-prompt fallback), `none` when it is
+   * spent or came back empty, `text` with the rendered briefing — with the
+   * solved-pointer deliveries recorded BEFORE the text is handed out
+   * (record-then-emit, the prompt-hook contract).
+   */
+  takeBriefing(): Promise<BriefingTake>;
 }
 
 export interface AcpCaptureCounters {
@@ -134,6 +174,23 @@ export interface AcpCapture {
   /** End every live session, flush, reap — bounded by `budgetMs`. */
   shutdown(budgetMs?: number): Promise<void>;
   counters(): AcpCaptureCounters;
+  /**
+   * Block 5: the injector's window into a LIVE, enabled session — null for
+   * unknown, disabled, or ended sessions (every null is a skipped
+   * injection, never an error).
+   */
+  promptInjectionView(acpSessionId: string): PromptInjectionView | null;
+}
+
+/**
+ * The per-session briefing cache (§2.5): filled by the async prefetch,
+ * spent by the first prompt's takeBriefing. Mutable by necessity, like the
+ * counters — the prefetch resolves on its own schedule.
+ */
+interface BriefingSlot {
+  status: "pending" | "ready";
+  assembled: AssembledBriefing | null;
+  taken: boolean;
 }
 
 interface CaptureSession {
@@ -153,6 +210,8 @@ interface CaptureSession {
   readonly seenTargets: Set<string>;
   turns: number;
   ended: boolean;
+  /** Null when injection is off for this proxy or the session is disabled. */
+  briefing: BriefingSlot | null;
 }
 
 interface TrackedTerminal {
@@ -183,6 +242,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
   const now = options.now ?? ((): Date => new Date());
   const logger = options.logger;
   const disabled = isDisabled(options.env);
+  const injection = options.injection === true && !disabled;
 
   const counters: MutableCounters = {
     observedLines: 0,
@@ -244,6 +304,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     seenTargets: new Set(),
     turns: 0,
     ended: true,
+    briefing: null,
   });
 
   /**
@@ -299,7 +360,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       status: INITIAL_STATUS,
       now: at,
     });
-    sessions.set(acpSessionId, {
+    const session: CaptureSession = {
       acpSessionId,
       enabled: true,
       hostSessionKey,
@@ -315,11 +376,37 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       seenTargets: new Set(),
       turns: 0,
       ended: false,
-    });
+      briefing: null,
+    };
+    sessions.set(acpSessionId, session);
     counters.sessions += 1;
     logger.line(
       `capture registered session=${acpSessionId} cc=${registered.crosscheckSessionId} registered=${registered.registered}`,
     );
+    if (injection) {
+      // §2.5: the briefing is assembled ASYNCHRONOUSLY at session/new capture
+      // time and served from cache — this promise is deliberately detached
+      // (never awaited on the chain, never on the wire path); the slot flips
+      // to "ready" whenever it lands, and the first prompt AFTER that gets
+      // the text. A failed prefetch is an empty slot, not an error.
+      session.briefing = { status: "pending", assembled: null, taken: false };
+      const slot = session.briefing;
+      void assembleBriefing({
+        hub,
+        repoId: identity.repoId,
+        repoRoot: identity.root,
+        selfDeveloperId: registered.developerId,
+        now: now(),
+      })
+        .then((assembled) => {
+          slot.assembled = assembled;
+          slot.status = "ready";
+        })
+        .catch((error: unknown) => {
+          slot.status = "ready";
+          logger.line(`inject briefing-prefetch-error ${describeError(error)}`);
+        });
+    }
     await flushSpool(
       hub,
       { sessionId: registered.crosscheckSessionId, developerId: registered.developerId },
@@ -793,6 +880,61 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     },
     counters() {
       return { ...counters };
+    },
+    promptInjectionView(acpSessionId) {
+      const session = liveSession(acpSessionId);
+      if (
+        session === null ||
+        session.hub === null ||
+        session.config === null ||
+        session.identity === null ||
+        session.repoKey === null
+      ) {
+        return null;
+      }
+      const hub = session.hub;
+      const config = session.config;
+      const identity = session.identity;
+      const sessionRepoKey = session.repoKey;
+      return {
+        hostSessionKey: session.hostSessionKey,
+        home: config.home,
+        repoKey: sessionRepoKey,
+        repoId: identity.repoId,
+        repoRoot: identity.root,
+        agentKind: config.agentKind,
+        hub,
+        timeoutMs: config.timeoutMs,
+        takeBriefing: async (): Promise<BriefingTake> => {
+          const slot = session.briefing;
+          if (slot === null || slot.taken) {
+            return { kind: "none" };
+          }
+          if (slot.status === "pending") {
+            // The design's stated fallback: this prompt gets nothing, the
+            // next one finds the cache ready. Never a blocking wait.
+            return { kind: "pending" };
+          }
+          slot.taken = true;
+          const assembled = slot.assembled;
+          if (assembled === null || assembled.briefing.length === 0) {
+            return { kind: "none" };
+          }
+          // Record-then-emit (the prompt-hook contract): the solved-pointer
+          // deliveries are spooled + remembered BEFORE the text leaves the
+          // engine; deterministic delivery ids keep a replay duplicate-free.
+          await recordBriefingDeliveries({
+            home: config.home,
+            repoKey: sessionRepoKey,
+            hostSessionKey: session.hostSessionKey,
+            crosscheckSessionId: session.crosscheckSessionId,
+            producer: producerFor(session),
+            shownSolvedIds: assembled.shownSolvedIds,
+            now: now(),
+          });
+          return { kind: "text", text: assembled.briefing };
+        },
+      };
     },
   };
 };

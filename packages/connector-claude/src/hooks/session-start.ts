@@ -1,16 +1,6 @@
-import {
-  MAX_SOLVED_POINTERS,
-  MAX_TEAMMATES,
-  MAX_WORK_CONTEXT_TITLE_CHARS,
-} from "@crosscheck/connector-core/constants.ts";
+import { MAX_WORK_CONTEXT_TITLE_CHARS } from "@crosscheck/connector-core/constants.ts";
 import { rememberDeveloper } from "@crosscheck/connector-core/config/config.ts";
 import { sanitizeUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
-import {
-  formatSolvedLine,
-  groupTeammates,
-  renderBriefing,
-} from "@crosscheck/connector-core/briefing/render.ts";
-import { resolveDriftByBaseCommit } from "@crosscheck/connector-core/git/commit-drift.ts";
 import { resolveDefaultBranchRef } from "@crosscheck/connector-core/git/default-branch.ts";
 import {
   collectCommitEvidence,
@@ -20,22 +10,15 @@ import {
   collectLandedCommits,
   landedEvidenceRecord,
 } from "@crosscheck/connector-core/capture/landed.ts";
-import {
-  hintDeliveryRecord,
-  UNKNOWN_DEVELOPER_ID,
-} from "@crosscheck/connector-core/capture/records.ts";
+import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
+import { endSession } from "@crosscheck/connector-core/http/hub.ts";
+import type { PresenceEntry, WorkContextEntry } from "@crosscheck/connector-core/http/hub.ts";
 import {
-  endSession,
-  getAbsences,
-  getContradictions,
-  getDrafts,
-  getPresence,
-  getSolvedMatches,
-  getWorkContexts,
-} from "@crosscheck/connector-core/http/hub.ts";
-import type { PresenceEntry, SolvedMatchEntry, WorkContextEntry } from "@crosscheck/connector-core/http/hub.ts";
+  assembleBriefing,
+  recordBriefingDeliveries,
+} from "@crosscheck/connector-core/flows/briefing.ts";
 import {
   fallbackWorkContextTitle,
   registerSessionFlow,
@@ -44,10 +27,6 @@ import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import { reapSpool } from "@crosscheck/connector-core/spool/reap.ts";
 import type { DeferredEnder } from "@crosscheck/connector-core/spool/reap.ts";
-import {
-  updateSessionState,
-  withBriefingSolvedRefs,
-} from "@crosscheck/connector-core/state/session-state.ts";
 import { writePresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
@@ -162,46 +141,59 @@ export const handleSessionStart = async (
       status: INITIAL_STATUS,
       now,
     });
-  // Commit-evidence collection rides INSIDE the parallel hub-fetch block: its
-  // git timeout is below the per-request hub timeout the block already waits
-  // for (see COMMIT_EVIDENCE_GIT_TIMEOUT_MS), so it adds no wall clock of its
-  // own — and the default-branch resolution rides the same way
-  // (LANDED_GIT_TIMEOUT_MS). Absences, contradictions and solved matches are
-  // three more parallel GETs under the same per-request bound — the block's
-  // wall clock stays one request timeout however many rides in it. Any
-  // failing costs its section, never the briefing (fail open).
-  const [
-    presenceResult,
-    contextsResult,
-    absencesResult,
-    contradictionsResult,
-    solvedMatchesResult,
-    draftsResult,
-    commitAuthors,
-    defaultBranchRef,
-  ] = await Promise.all([
-    getPresence(ctx.hub, ctx.identity.repoId),
-    getWorkContexts(ctx.hub, ctx.identity.repoId),
-    getAbsences(ctx.hub, ctx.identity.repoId),
-    getContradictions(ctx.hub, ctx.identity.repoId),
-    getSolvedMatches(ctx.hub, ctx.identity.repoId),
-    getDrafts(ctx.hub, ctx.identity.repoId),
-    collectCommitEvidence(ctx.identity.root, now),
-    resolveDefaultBranchRef(ctx.identity.root),
+  // Commit-evidence collection and default-branch resolution START here and
+  // resolve DURING the flow's parallel hub-fetch block: their git timeouts
+  // are below the per-request hub timeout that block already waits for
+  // (COMMIT_EVIDENCE_GIT_TIMEOUT_MS / LANDED_GIT_TIMEOUT_MS), so they add no
+  // wall clock of their own — concurrency needs the promises started early,
+  // not membership in the same Promise.all.
+  const commitAuthorsPromise = collectCommitEvidence(ctx.identity.root, now);
+  const defaultBranchRefPromise = resolveDefaultBranchRef(ctx.identity.root);
+
+  // The rotation is the day number: every SessionStart on one day probes the
+  // same window (idempotent replays), and the window advances daily so a
+  // backlog larger than the ancestry cap is fully covered across days
+  // instead of starving its tail (capture/landed.ts).
+  const landedRotation = Math.floor(now.getTime() / MS_PER_DAY);
+
+  // The Block-5 flow (connector-core/src/flows/briefing.ts): six parallel
+  // GETs → drift → renderBriefing → shown solved ids. Landed detection
+  // (DESIGN.md §5) rides as the flow's parallel rider — the base commits of
+  // contexts the hub still lists as open, in parallel with the drift fan-out
+  // so both cost one git timeout of wall clock. Fail open throughout.
+  const assembled = await assembleBriefing({
+    hub: ctx.hub,
+    repoId: ctx.identity.repoId,
+    repoRoot: ctx.identity.root,
+    selfDeveloperId: developerId,
+    now,
+    collectLanded: async (workContexts) => {
+      const defaultBranchRef = await defaultBranchRefPromise;
+      const openBaseCommits = workContexts.flatMap((entry: WorkContextEntry) =>
+        entry.landedAt === null || entry.landedAt === undefined
+          ? (entry.baseCommit === undefined ? [] : [entry.baseCommit])
+          : [],
+      );
+      return defaultBranchRef === null || openBaseCommits.length === 0
+        ? []
+        : collectLandedCommits(
+            ctx.identity.root,
+            defaultBranchRef,
+            openBaseCommits,
+            landedRotation,
+          );
+    },
+  });
+  const { briefing, presence, landedCommits } = assembled;
+  const [commitAuthors, defaultBranchRef] = await Promise.all([
+    commitAuthorsPromise,
+    defaultBranchRefPromise,
   ]);
-  const presence = presenceResult.ok ? presenceResult.data : [];
-  const workContexts = contextsResult.ok ? contextsResult.data : [];
-  const absences = absencesResult.ok ? absencesResult.data : [];
-  const contradictions = contradictionsResult.ok
-    ? contradictionsResult.data
-    : [];
-  const solvedMatches = solvedMatchesResult.ok ? solvedMatchesResult.data : [];
-  const drafts = draftsResult.ok ? draftsResult.data : [];
 
   if (developerId !== null) {
     await rememberDeveloper(ctx.config, developerId, selfName(presence, developerId));
   }
-  if (presenceResult.ok) {
+  if (assembled.presenceFetched) {
     await writePresenceCache(ctx.config.home, ctx.repoKey, presence, now);
   }
   // A local append, microseconds: the maintenance flush below ships it, and a
@@ -228,36 +220,6 @@ export const handleSessionStart = async (
     );
   }
 
-  // Only the teammates that will actually be shown cost a git process.
-  const shownBaseCommits = groupTeammates(presence, now)
-    .slice(0, MAX_TEAMMATES)
-    .flatMap((group) => (group.baseCommit === null ? [] : [group.baseCommit]));
-  // Landed detection (DESIGN.md §5): the base commits of contexts the hub
-  // still lists as open. Runs IN PARALLEL with the drift fan-out — both are
-  // bounded git fan-outs, so together they still cost one git timeout of
-  // wall clock. No default ref resolved (fail open) = no checks.
-  const openBaseCommits = workContexts.flatMap((entry: WorkContextEntry) =>
-    entry.landedAt === null || entry.landedAt === undefined
-      ? (entry.baseCommit === undefined ? [] : [entry.baseCommit])
-      : [],
-  );
-  // The rotation is the day number: every SessionStart on one day probes the
-  // same window (idempotent replays), and the window advances daily so a
-  // backlog larger than the ancestry cap is fully covered across days
-  // instead of starving its tail (capture/landed.ts).
-  const landedRotation = Math.floor(now.getTime() / MS_PER_DAY);
-  const [drift, landedCommits] = await Promise.all([
-    resolveDriftByBaseCommit(ctx.identity.root, shownBaseCommits),
-    defaultBranchRef === null || openBaseCommits.length === 0
-      ? Promise.resolve([] as readonly string[])
-      : collectLandedCommits(
-          ctx.identity.root,
-          defaultBranchRef,
-          openBaseCommits,
-          landedRotation,
-        ),
-  ]);
-
   const producer: Producer = {
     developerId: developerId ?? UNKNOWN_DEVELOPER_ID,
     agentKind: ctx.config.agentKind,
@@ -282,55 +244,19 @@ export const handleSessionStart = async (
     );
   }
 
-  const briefing = renderBriefing({
-    repoId: ctx.identity.repoId,
-    selfDeveloperId: developerId,
-    presence,
-    workContexts,
-    now,
-    drift,
-    absences,
-    contradictions,
-    solvedMatches,
-    drafts,
-  });
-
   // Solved-pointer telemetry (VISION.md §1 + §4 precision loop): exactly the
-  // pointers the EMITTED briefing shows — formatSolvedLine is the one
-  // spelling of the line, so inclusion in the rendered text is the fact —
-  // flow through hint_deliveries like every injected ref. Order matches the
-  // prompt hook's contract: spool append, then state, then emit; a crash
-  // between the two costs a duplicate-suppressed replay, never a repeat
-  // pointer (the delivery id is deterministic per (session, ref)).
-  const shownSolvedIds = solvedMatches
-    .map((match: SolvedMatchEntry) => ({
-      match,
-      line: formatSolvedLine(match, now),
-    }))
-    .filter((entry) => entry.line !== null)
-    .slice(0, MAX_SOLVED_POINTERS)
-    .filter((entry) => briefing.includes(entry.line ?? ""))
-    .map((entry) => entry.match.workContextId);
-  if (shownSolvedIds.length > 0) {
-    await appendRecords(
-      ctx.config.home,
-      ctx.repoKey,
-      ctx.payload.session_id,
-      shownSolvedIds.map((workContextId) =>
-        hintDeliveryRecord(
-          crosscheckSessionId,
-          "work_context",
-          workContextId,
-          producer,
-          now,
-        ),
-      ),
-      now,
-    );
-    await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
-      withBriefingSolvedRefs(fresh, shownSolvedIds),
-    );
-  }
+  // pointers the EMITTED briefing shows, through the shared flow — spool
+  // append, then state, then emit (flows/briefing.ts carries the ordering
+  // argument).
+  await recordBriefingDeliveries({
+    home: ctx.config.home,
+    repoKey: ctx.repoKey,
+    hostSessionKey: ctx.payload.session_id,
+    crosscheckSessionId,
+    producer,
+    shownSolvedIds: assembled.shownSolvedIds,
+    now,
+  });
 
   // Maintenance last, on the leftover budget: the briefing above is what this
   // hook exists for, and it is already in hand when the drain starts.

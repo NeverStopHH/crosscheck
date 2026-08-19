@@ -29,12 +29,16 @@
  * translation. EOF semantics survive end to end: client stdin EOF → we end
  * the agent's stdin pipe; agent exit → its FIFO ends close → our reads EOF.
  *
- * Block-3 deviation from §2.3 rule 3, stated: forwarding is CHUNK-granular,
- * not line-granular — stronger transparency than the rule asks for (a
- * partial line is already on its way before its newline arrives), and the
- * observer cannot affect forwarding even by crashing, because forwarding
- * never waits for it. Line-granular handling arrives with Block 5's two
- * write points, on the client→agent path only.
+ * FORWARD GRANULARITY, decided by the injection switch (Block 5):
+ *   - injection OFF (--no-inject, CROSSCHECK_DISABLED): the Block-3 chunk
+ *     pump, byte-identical BY CONSTRUCTION — a partial line is already on
+ *     its way before its newline arrives, and no injection code runs at all
+ *     (prime directive 1's hash proof rides this path);
+ *   - injection ON: the client→agent path becomes line-granular
+ *     (inject/line-pump.ts) so the two §2.5 write points can recognize
+ *     whole messages; untouched lines still forward their ORIGINAL bytes,
+ *     so content transparency holds — only chunk timing coarsens to lines.
+ *     agent→client stays the chunk pump either way.
  */
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
@@ -48,8 +52,13 @@ import { EXIT_FAIL, EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/const
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { crosscheckHome } from "@crosscheck/connector-core/kit.ts";
 
+import { isDisabled } from "@crosscheck/connector-core/config/config.ts";
+
 import { createAcpCapture } from "./capture/engine.ts";
 import type { AcpCapture } from "./capture/engine.ts";
+import { createAcpInjector } from "./inject/injector.ts";
+import type { AcpInjector } from "./inject/injector.ts";
+import { pumpLines } from "./inject/line-pump.ts";
 import { ACP_USAGE, isUsageError, parseAcpArgs } from "./cli.ts";
 import type { AcpInvocation } from "./cli.ts";
 import {
@@ -75,7 +84,7 @@ import {
 import { createAcpLogger } from "./logger.ts";
 import type { AcpLogger } from "./logger.ts";
 import { createLineObserver } from "./observer.ts";
-import type { LineObserver } from "./observer.ts";
+import type { LineObserver, ObservedLine } from "./observer.ts";
 import { pumpBytes } from "./pump.ts";
 import type { ByteSink, ChunkObserver, PumpOutcome } from "./pump.ts";
 import { createAcpRecorder } from "./recorder.ts";
@@ -131,21 +140,25 @@ const describeError = (error: unknown): string =>
 
 /**
  * Push the copy through the observer; hand completed lines to the record and
- * to Block 4's capture engine. Both consumers live BEHIND the pump's
- * catch-all (pump.ts observeSafely) and capture's own `offer` is bounded and
- * non-throwing besides — a capture bug is a counter, never a broken pipe.
+ * to Block 4's capture engine — and, on the agent→client path, to the
+ * injector's version-gate watcher (Block 5). All consumers live BEHIND the
+ * pump's catch-all (pump.ts observeSafely) and capture's own `offer` is
+ * bounded and non-throwing besides — a capture bug is a counter, never a
+ * broken pipe.
  */
 const observeInto = (
   observer: LineObserver,
   recorder: AcpRecorder | null,
   capture: AcpCapture,
   direction: RecordDirection,
+  alsoOffer?: (event: ObservedLine) => void,
 ): ChunkObserver => {
   return (copy) => {
     const events = observer.push(copy);
     for (const event of events) {
       recorder?.record(direction, event, Date.now());
       capture.offer(direction, event);
+      alsoOffer?.(event);
     }
   };
 };
@@ -277,6 +290,11 @@ export const runAcpProxy = async (
   const logger = await createAcpLogger(crosscheckHome(env), process.pid);
   const recorder =
     parsed.recordPath === undefined ? null : createAcpRecorder(parsed.recordPath);
+  // Block 5: injection is active unless the operator said --no-inject or the
+  // whole connector is disabled. When it is NOT active, no injection module
+  // touches the wire at all — the c2a path below stays the Block-3 chunk
+  // pump, byte-identical by construction (prime directive 1).
+  const injectionActive = !parsed.noInject && !isDisabled(env);
   // Block 4 capture: rides the observer's parsed copies, resolves hub and
   // repo PER SESSION from each session's cwd, and no-ops silently where no
   // config resolves — construction alone starts nothing and writes nothing.
@@ -284,8 +302,14 @@ export const runAcpProxy = async (
     env,
     logger,
     agentKindFlag: parsed.agentKind,
+    injection: injectionActive,
   });
-  logger.line(`start pid=${process.pid} agent=${JSON.stringify(parsed.command)}`);
+  const injector = injectionActive
+    ? createAcpInjector({ env, logger, capture, entryPath: Bun.main })
+    : null;
+  logger.line(
+    `start pid=${process.pid} inject=${injectionActive ? "on" : "off"} agent=${JSON.stringify(parsed.command)}`,
+  );
 
   // CONTAINMENT — the prime directive's last line of defense: an internal
   // failure past this point (fd exhaustion at the FIFO opens, a tmp reaper
@@ -295,7 +319,7 @@ export const runAcpProxy = async (
   // and exits EXIT_FAIL. Pinned by the E2E fault-seam test.
   const resources: SpawnedResources = { child: null, fifoDir: null };
   try {
-    return await wireAndRun(parsed, env, logger, recorder, capture, resources);
+    return await wireAndRun(parsed, env, logger, recorder, capture, injector, resources);
   } catch (error) {
     const reason = describeError(error);
     process.stderr.write(
@@ -329,6 +353,7 @@ const wireAndRun = async (
   logger: AcpLogger,
   recorder: AcpRecorder | null,
   capture: AcpCapture,
+  injector: AcpInjector | null,
   resources: SpawnedResources,
 ): Promise<number> => {
   const [executable, ...agentArgs] = parsed.command;
@@ -435,12 +460,20 @@ const wireAndRun = async (
 
   // client → agent. Whatever ends this pump — client EOF or a dead child —
   // ending the agent's stdin hands it the EOF it would have seen unproxied
-  // (§2.2 lifecycle).
-  const c2aPump = pumpBytes(
-    fdSource(STDIN_FD),
-    writableByteSink(agentStdin),
-    observeInto(c2aObserver, recorder, capture, "c2a"),
-  ).then((outcome) => {
+  // (§2.2 lifecycle). Injection off → the Block-3 chunk pump, byte-identical
+  // by construction; injection on → the line pump, whose observer sees the
+  // FORWARDED bytes so capture and --record match the wire the agent saw.
+  const c2aObserve = observeInto(c2aObserver, recorder, capture, "c2a");
+  const c2aForward: Promise<PumpOutcome> =
+    injector === null
+      ? pumpBytes(fdSource(STDIN_FD), writableByteSink(agentStdin), c2aObserve)
+      : pumpLines(
+          fdSource(STDIN_FD),
+          writableByteSink(agentStdin),
+          (text) => injector.decideLine(text),
+          c2aObserve,
+        );
+  const c2aPump = c2aForward.then((outcome) => {
     endAgentStdin();
     if (outcome.writeError !== undefined) {
       logger.line(`agent stdin closed early ${describeError(outcome.writeError)}`);
@@ -468,7 +501,17 @@ const wireAndRun = async (
   const a2cPump = pumpBytes(
     fdSource(agentStdoutFd),
     fdByteSink(STDOUT_FD),
-    observeInto(a2cObserver, recorder, capture, "a2c"),
+    observeInto(
+      a2cObserver,
+      recorder,
+      capture,
+      "a2c",
+      injector === null
+        ? undefined
+        : (event: ObservedLine): void => {
+            injector.offerA2c(event);
+          },
+    ),
   ).then((outcome) => {
     if (outcome.writeError !== undefined) {
       logger.line(`client hangup ${describeError(outcome.writeError)}`);
@@ -519,6 +562,7 @@ const wireAndRun = async (
   // spooled with a pending-end marker for reap's DeferredEnder.
   await capture.shutdown(ACP_CAPTURE_EXIT_BUDGET_MS).catch(() => undefined);
 
+  injector?.summarize();
   summarize(logger, "c2a", c2aObserver, c2aOutcome);
   summarize(logger, "a2c", a2cObserver, a2cOutcome);
   logger.line(

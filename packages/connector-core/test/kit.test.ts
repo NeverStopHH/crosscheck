@@ -33,6 +33,9 @@ import * as registerFlow from "../src/flows/register-session.ts";
 import * as captureFlows from "../src/flows/capture-targets.ts";
 import * as heartbeatFlow from "../src/flows/heartbeat.ts";
 import * as endFlow from "../src/flows/end-session.ts";
+import * as briefingFlow from "../src/flows/briefing.ts";
+import * as hintFlow from "../src/flows/hint.ts";
+import * as launcher from "../src/config/launcher.ts";
 import * as secretScan from "../src/capture/secret-scan.ts";
 import * as denylist from "../src/capture/denylist.ts";
 import * as commitEvidence from "../src/capture/commit-evidence.ts";
@@ -82,6 +85,12 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["repoKey", paths.repoKey],
   ["mergeMcpConfig", mcpConfig.mergeMcpConfig],
   ["isOwnedMcpEntry", mcpConfig.isOwnedMcpEntry],
+  ["resolveLauncher", launcher.resolveLauncher],
+  ["resolveCommandPrefix", launcher.resolveCommandPrefix],
+  ["resolveMcpLauncher", launcher.resolveMcpLauncher],
+  ["isEphemeralInstallPath", launcher.isEphemeralInstallPath],
+  ["isOwnCrosscheckBin", launcher.isOwnCrosscheckBin],
+  ["realpathOrSelf", launcher.realpathOrSelf],
   ["DEFAULT_AGENT_KIND", constants.DEFAULT_AGENT_KIND],
   ["HEARTBEAT_MIN_INTERVAL_MS", constants.HEARTBEAT_MIN_INTERVAL_MS],
   // Repo identity
@@ -123,6 +132,9 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["captureFailure", captureFlows.captureFailure],
   ["heartbeatMaybe", heartbeatFlow.heartbeatMaybe],
   ["endSessionFlow", endFlow.endSessionFlow],
+  ["assembleBriefing", briefingFlow.assembleBriefing],
+  ["recordBriefingDeliveries", briefingFlow.recordBriefingDeliveries],
+  ["selectAndRenderHint", hintFlow.selectAndRenderHint],
   // Capture
   ["buildEnvelope", records.buildEnvelope],
   ["workContextRecord", records.workContextRecord],
