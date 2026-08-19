@@ -42,7 +42,12 @@ import {
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
+import { hasGitEntry } from "@crosscheck/connector-core/config/connected-repo.ts";
 import { readRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
+import {
+  formatForeignDropLine,
+  readForeignRepoDrops,
+} from "@crosscheck/connector-core/state/foreign-drops.ts";
 import { runBoundedCommand } from "@crosscheck/connector-core/git/git.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
@@ -295,7 +300,14 @@ const connectedSubdirs = async (cwd: string): Promise<readonly string[]> => {
       if (!entry.isDirectory()) {
         continue;
       }
-      if ((await readRepoConfig(join(cwd, entry.name))) !== null) {
+      // BOTH marks, exactly as the capture walk requires (connected-repo.ts):
+      // a config without a git boundary never connects, so calling it a
+      // "connected repo" here would hand out advice the walk cannot honour.
+      const subdir = join(cwd, entry.name);
+      if (
+        (await hasGitEntry(subdir)) &&
+        (await readRepoConfig(subdir)) !== null
+      ) {
         hits.push(entry.name);
         if (hits.length >= DOCTOR_SUBDIR_MAX_NAMED) {
           break;
@@ -890,6 +902,23 @@ const latencyCheck = (
   );
 };
 
+/**
+ * Foreign-repo drops (trial finding #9, the counter's READER): first-wins
+ * silently drops a multi-repo workspace's touches of its second connected
+ * repo, and the count in session state was visible to nobody — the exact
+ * silent-invisibility class this finding set out to kill, re-created for
+ * the multi-repo variant (adversarial review). Machine-wide scan, because
+ * the dropping session is bound to the OTHER repo. Zero renders nothing:
+ * the workspace-root check's discipline — no drops is not news.
+ */
+const foreignDropChecks = async (home: string): Promise<readonly Check[]> => {
+  const summary = await readForeignRepoDrops(home);
+  if (summary.drops === 0) {
+    return [];
+  }
+  return [check("WARN", "foreign-repo drops", formatForeignDropLine(summary))];
+};
+
 /** A live session file plus a stale sync is exactly the silent-death signature. */
 const hasLiveSessionState = async (home: string): Promise<boolean> => {
   try {
@@ -1054,6 +1083,7 @@ export const runDoctor = async (
     await checkMcpRegistration(identity.root),
     mcpUsableCheck(true, config.hubUrl),
     ...(await checkSpool(config.home, key, now)),
+    ...(await foreignDropChecks(config.home)),
     await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
     await checkLastSync(config.home, key, now),
     await checkAbsences(hubCtx, identity.repoId),

@@ -7,6 +7,10 @@ import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identit
 import { getAbsences, getPresence, getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
 import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
+import {
+  formatForeignDropLine,
+  readForeignRepoDrops,
+} from "@crosscheck/connector-core/state/foreign-drops.ts";
 import { spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import {
@@ -60,6 +64,15 @@ export const runStatus = async (
   // A batch the ledger itself could not take is recorded as a marker, not a count,
   // so the summed total understates it. `doctor` says the same; both must agree.
   const unrecorded = await readUnrecordedDrop(config.home, key);
+  // Foreign-repo drops (trial finding #9): a multi-repo workspace's second
+  // connected repo goes silent under first-wins, and this line is where a
+  // human finds out. Machine-wide (the dropping session is bound to the
+  // OTHER repo), zero prints nothing, doctor says the same sentence.
+  const foreignDrops = await readForeignRepoDrops(config.home);
+  const foreignDropLines =
+    foreignDrops.drops === 0
+      ? []
+      : [`foreign-repo drops: ${formatForeignDropLine(foreignDrops)}`];
   const hubCtx = {
     hubUrl: config.hubUrl,
     apiKey: config.apiKey,
@@ -124,6 +137,7 @@ export const runStatus = async (
         ? []
         : ["commit authors without a recent session:", ...absenceLines]),
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
+      ...foreignDropLines,
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
       "",

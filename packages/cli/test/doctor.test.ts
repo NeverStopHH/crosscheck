@@ -17,6 +17,10 @@ import {
   spoolFlushLockPath,
 } from "@crosscheck/connector-core/config/paths.ts";
 import { recordDrop } from "@crosscheck/connector-core/spool/drops.ts";
+import {
+  deriveSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo, spawnZombie } from "../../connector-core/test/helpers.ts";
 
 /** Unreachable on purpose: the spool checks run whether the hub answers or not. */
@@ -110,7 +114,9 @@ describe("crosscheck doctor workspace-root check (trial finding #9)", () => {
     const workspace = await mkdtemp(join(tmpdir(), "cx-doctor-workspace-"));
     paths.push(workspace);
     const child = join(workspace, "monorepo");
-    await mkdir(child, { recursive: true });
+    // A real connected repo carries BOTH marks: the git boundary and the
+    // committed config — the same two conditions the capture walk requires.
+    await mkdir(join(child, ".git"), { recursive: true });
     await writeFile(
       join(child, ".crosscheck.json"),
       `${JSON.stringify({ hubUrl: HUB_URL })}\n`,
@@ -126,6 +132,30 @@ describe("crosscheck doctor workspace-root check (trial finding #9)", () => {
     expect(result.stdout).toContain("WARN  workspace root");
     expect(result.stdout).toContain("monorepo");
     expect(result.stdout).toContain("invisible");
+  });
+
+  test("a stray config WITHOUT a git boundary is not called a connected repo", async () => {
+    // Arrange: config but no .git — the capture walk would NEVER connect
+    // this folder (connected-repo.ts requires the boundary), so the WARN's
+    // advice "touch a file inside it" would be a lie here (adversarial
+    // review: the check and the walk must agree on what "connected" means).
+    const workspace = await mkdtemp(join(tmpdir(), "cx-doctor-strayconf-"));
+    paths.push(workspace);
+    const child = join(workspace, "notes");
+    await mkdir(child, { recursive: true });
+    await writeFile(
+      join(child, ".crosscheck.json"),
+      `${JSON.stringify({ hubUrl: HUB_URL })}\n`,
+      "utf8",
+    );
+    const home = await makeHome("doctor-strayconf");
+    paths.push(home);
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), workspace);
+
+    // Assert
+    expect(result.stdout).not.toContain("workspace root");
   });
 
   test("stays quiet inside a repo and above folders without configs", async () => {
@@ -144,6 +174,56 @@ describe("crosscheck doctor workspace-root check (trial finding #9)", () => {
     // Assert
     expect(above.stdout).not.toContain("workspace root");
     expect(inside.stdout).not.toContain("WARN  workspace root");
+  });
+});
+
+describe("crosscheck doctor foreign-repo drops check (trial finding #9)", () => {
+  test("WARNs when a live session dropped touches of another connected repo", async () => {
+    // Arrange: a session bound to acme/api that dropped 3 foreign touches —
+    // the multi-repo workspace whose second repo is silently invisible.
+    // Without this line NOTHING on any surface says so (the counter had no
+    // reader — adversarial review's headline gap).
+    const { repo, home } = await fixture();
+    await writeSessionState(home, {
+      ...deriveSessionState({
+        hostSessionKey: "fdrops-uuid",
+        repoId: "github.com/acme/api",
+        repoRoot: repo,
+        hubUrl: HUB_URL,
+        developerId: "dev_a",
+        startedAt: new Date("2026-08-19T08:00:00.000Z").toISOString(),
+      }),
+      foreignRepoDrops: 3,
+    });
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert: the count, the bound repo, and the remedy in one sentence
+    expect(result.stdout).toContain("WARN  foreign-repo drops");
+    expect(result.stdout).toContain("3");
+    expect(result.stdout).toContain("github.com/acme/api");
+    expect(result.stdout).toContain("one agent session reports to one repo");
+  });
+
+  test("renders nothing when no session dropped anything", async () => {
+    // Arrange: a live session with a zero counter
+    const { repo, home } = await fixture();
+    await writeSessionState(
+      home,
+      deriveSessionState({
+        hostSessionKey: "fdrops-zero-uuid",
+        repoId: "github.com/acme/api",
+        repoRoot: repo,
+        hubUrl: HUB_URL,
+        developerId: "dev_a",
+        startedAt: new Date("2026-08-19T08:00:00.000Z").toISOString(),
+      }),
+    );
+
+    // Act + Assert: no line at all — zero is not news
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+    expect(result.stdout).not.toContain("foreign-repo drops");
   });
 });
 

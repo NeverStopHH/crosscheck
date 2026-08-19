@@ -530,6 +530,16 @@ export const DOCTOR_AGENT_MAX_CWD_PROBES = 8;
 /** Parse bound on ps output — a runaway process table stays a bounded read. */
 export const DOCTOR_AGENT_PS_MAX_LINES = 4096;
 
+/**
+ * Bound on the session-state files the foreign-repo drop scan reads
+ * (state/foreign-drops.ts) — doctor/status surface the drop counter, and a
+ * home littered with stale session files stays a bounded read. Live
+ * sessions on one machine number in the handfuls; 200 is generous.
+ */
+export const FOREIGN_DROPS_SCAN_MAX_FILES = 200;
+/** Most repo ids the drop summary NAMES — the sentence stays readable. */
+export const FOREIGN_DROPS_MAX_NAMED_REPOS = 3;
+
 export const EXIT_OK = 0;
 export const EXIT_WARN = 1;
 /** `init` refused to touch a file it could not parse — nothing was changed. */

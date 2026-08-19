@@ -63,7 +63,12 @@ timestamped backups. Same one-PR install story. Three things to know:
   file inside the repo (the connector derives the repo from the touched
   file's path), and the session-start briefing and presence are missing
   until then. `crosscheck doctor`, run in the parent folder, names this
-  state ("you are above the connected repo").
+  state ("you are above the connected repo"). And a workspace spanning TWO
+  connected repos binds each agent session to the repo it touches FIRST —
+  edits to the other connected repo are dropped and counted, never recorded
+  under the wrong repo; `crosscheck doctor` and `crosscheck status` surface
+  the count as `foreign-repo drops`. One repo per workspace is the shape
+  that records everything.
 - **Gitignore interplay**: if your repo gitignores `.cursor/`, un-ignore
   `hooks.json` and `mcp.json` — an ignored install silently works for exactly
   one person.

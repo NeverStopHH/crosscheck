@@ -10,6 +10,10 @@ import { rm } from "node:fs/promises";
 
 import { runCli } from "../src/index.ts";
 import { EXIT_FAIL, EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
+import {
+  deriveSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 interface SeenRequest {
@@ -356,6 +360,35 @@ describe("status and doctor show the privacy state", () => {
     expect(status.stdout).toContain(
       "emails: nick@example.com (primary), nick.personal@gmail.com, nick@old-employer.example",
     );
+  });
+
+  test("status surfaces foreign-repo drops; silence when there are none", async () => {
+    // Arrange: a live session bound to another repo dropped 2 touches
+    // (trial finding #9's multi-repo shape) — status must say so, and say
+    // nothing at all when the counter is zero.
+    const withDrops = await fixture("status-fdrops");
+    await writeSessionState(withDrops.env["CROSSCHECK_HOME"] ?? "", {
+      ...deriveSessionState({
+        hostSessionKey: "status-fdrops-uuid",
+        repoId: "github.com/acme/web",
+        repoRoot: "/tmp/web",
+        hubUrl: withDrops.hub.url,
+        developerId: "dev_a",
+        startedAt: new Date("2026-08-19T08:00:00.000Z").toISOString(),
+      }),
+      foreignRepoDrops: 2,
+    });
+    const clean = await fixture("status-no-fdrops");
+
+    // Act
+    const noisy = await runCli(["status"], withDrops.env, withDrops.repo);
+    const silent = await runCli(["status"], clean.env, clean.repo);
+
+    // Assert
+    expect(noisy.stdout).toContain("foreign-repo drops: 2");
+    expect(noisy.stdout).toContain("github.com/acme/web");
+    expect(noisy.stdout).toContain("one agent session reports to one repo");
+    expect(silent.stdout).not.toContain("foreign-repo drops");
   });
 
   test("against a hub without alias emails, neither surface invents them", async () => {
