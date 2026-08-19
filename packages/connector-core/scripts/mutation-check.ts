@@ -32,6 +32,7 @@ const CONNECTOR = "packages/connector-claude";
 const CORE = "packages/connector-core";
 const SERVER = "packages/server";
 const ACP = "packages/connector-acp";
+const CURSOR = "packages/connector-cursor";
 
 interface Mutation {
   /** Names the incident, not the edit. */
@@ -674,6 +675,51 @@ export const MUTATIONS: readonly Mutation[] = [
       "the response, and session/new hangs — the only reachable " +
       "session-breaker in the block",
   },
+  // The three below guard Block 6's Cursor capture, added by the Block-6
+  // fixer round. The two failure-exclusion guards were PROVEN decoration by
+  // the adversarial review — deleting either left the whole cursor suite
+  // green, because both exclusion fixtures carried no-signal texts that
+  // fingerprint to null with or without the guard. The fixtures now carry
+  // real stderr (payloads.ts says why beside each), and these entries keep
+  // that arrangement honest: a fixture quietly softened back to a no-signal
+  // text would let either deletion go green again, and the entry catches it.
+  {
+    label: "a cursor user interrupt fingerprints into the team's failure memory",
+    file: `${CURSOR}/src/handlers/tool-failure.ts`,
+    from: '  if (ctx.payload.is_interrupt === true) {\n    return "";\n  }\n',
+    to: "",
+    test: `${CURSOR}/test/handlers.test.ts`,
+    because:
+      "a cancelled tool's error_message — often the real stderr of a command " +
+      "the user simply gave up on — lands as an error_fingerprint, teaching " +
+      "the team's memory that every abandoned command was a build failure",
+  },
+  {
+    label: "a cursor permission denial fingerprints as a build failure",
+    file: `${CURSOR}/src/handlers/tool-failure.ts`,
+    from:
+      '  if (ctx.payload.failure_type === PERMISSION_DENIED) {\n    return "";\n  }\n',
+    to: "",
+    test: `${CURSOR}/test/handlers.test.ts`,
+    because:
+      "a policy outcome fingerprints like broken code — teammates diagnosing " +
+      "the fingerprint find a hook that said no, not a failure to fix",
+  },
+  {
+    // The Claude sibling pin is state-race.test.ts's seenTargets assertion;
+    // Cursor lost that parity until the fixer round — this fold was deleted
+    // outright with all 17 handler tests green (the hub's own dedup masked
+    // it), so the replay test now reads the persisted state directly.
+    label: "the cursor file-edit forgets its seen-set between hooks",
+    file: `${CURSOR}/src/handlers/file-edit.ts`,
+    from: "    ...withSeenTargets(fresh, files),\n",
+    to: "    ...fresh,\n",
+    test: `${CURSOR}/test/handlers.test.ts`,
+    because:
+      "every afterFileEdit re-captures and re-appends every seen target — " +
+      "unbounded spool growth on a dead-hub day, and the hub-side dedup that " +
+      "hides it in tests does not exist in the spool",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -717,6 +763,7 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
+ * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2
  * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 1

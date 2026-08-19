@@ -15,6 +15,7 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { getDiagnosis, getPresence } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { readSpoolLines } from "@crosscheck/connector-core/spool/files.ts";
+import { safeHostSessionId } from "@crosscheck/connector-core/state/host-session-key.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 
@@ -189,6 +190,12 @@ describe("afterFileEdit (§3.2 row 2)", () => {
       .filter((target) => target.kind === "file")
       .map((target) => target.value);
     expect(files).toEqual(["src/rate-limit.ts"]);
+    // The dedup must be OURS, persisted — not the hub's. Without the
+    // seen-set fold in the state write, every afterFileEdit re-appends all
+    // seen targets: unbounded spool growth on a dead-hub day (the Claude
+    // state-race pin, ported; mutation-check re-proves it load-bearing).
+    const state = await readSessionState(f.home, `cur-${conv}`);
+    expect(state?.seenTargets).toContain("src/rate-limit.ts");
   });
 
   test("hooks installed mid-conversation recover: no sessionStart ever fired, the target still lands", async () => {
@@ -318,7 +325,25 @@ describe("shell + tool failures (§3.2 rows 3-5)", () => {
       f.env,
     );
 
-    // Assert: exactly the real failure, nothing from the non-failures.
+    // Assert: exactly the real failure, nothing from the non-failures. The
+    // exclusion fixtures must CARRY signal, or the two guards are decoration
+    // — a no-signal text fingerprints to null with or without them (this
+    // suite stayed green with the is_interrupt guard deleted until the
+    // fixtures were given real stderr; mutation-check re-proves both).
+    expect(
+      fingerprint(
+        extractFailureText({
+          error: POST_TOOL_USE_FAILURE_INTERRUPT.error_message,
+        }),
+      ),
+    ).not.toBeNull();
+    expect(
+      fingerprint(
+        extractFailureText({
+          error: POST_TOOL_USE_FAILURE_DENIED.error_message,
+        }),
+      ),
+    ).not.toBeNull();
     const expected = fingerprint(
       extractFailureText({ error: POST_TOOL_USE_FAILURE_INPUT.error_message }),
     );
@@ -369,6 +394,58 @@ describe("stop + sessionEnd (§3.2 rows 6-7)", () => {
   });
 });
 
+describe("hostile conversation ids — the shared shape rule guards the key mint", () => {
+  test("an oversized conversation_id folds to its digest key; capture SURVIVES instead of dying on the filename", async () => {
+    // Arrange: 8000 chars — unshaped, the state filename threw ENAMETOOLONG
+    // out of every write and the session's whole capture died silently.
+    const f = await fixture("giant-id");
+    const giant = "x".repeat(8000);
+    const shaped = safeHostSessionId(giant);
+    if (shaped === null) throw new Error("shaped id unavailable");
+
+    // Act
+    const out = await run(
+      "sessionStart",
+      inRepo(SESSION_START_INPUT, f.repo, giant),
+      f.env,
+    );
+
+    // Assert: deterministic digest key, state written, presence landed.
+    expect(out).toBe("{}");
+    expect(shaped).toMatch(/^sha256-[0-9a-f]{64}$/);
+    const state = await readSessionState(f.home, `cur-${shaped}`);
+    expect(state?.crosscheckSessionId).toBe(`cc_cur-${shaped}`);
+    const presence = await getPresence(f.hubCtx, REPO_ID);
+    if (!presence.ok) throw new Error("presence unavailable");
+    expect(
+      presence.data.some((entry) => entry.sessionId === `cc_cur-${shaped}`),
+    ).toBe(true);
+  });
+
+  test("control characters are stripped before the id enters cc_/wc_ ids, state files and logs", async () => {
+    // Arrange: newline (log forgery), ESC (terminal driving), NUL — the
+    // ACP hostile-id vectors, now on the cursor path.
+    const f = await fixture("evil-id");
+    const evil = "a\n../../../etc/pwn\u001b[31m\u0000b";
+
+    // Act
+    const out = await run(
+      "sessionStart",
+      inRepo(SESSION_START_INPUT, f.repo, evil),
+      f.env,
+    );
+
+    // Assert: the minted ids carry the SHAPED form — no unprintables ride
+    // to the hub or into filenames (the ../ stays: printable text is content
+    // for a key, and the encoded filename never treats it as a path).
+    expect(out).toBe("{}");
+    const shaped = safeHostSessionId(evil);
+    expect(shaped).toBe("a../../../etc/pwn[31mb");
+    const state = await readSessionState(f.home, `cur-${shaped ?? ""}`);
+    expect(state?.crosscheckSessionId).toBe("cc_cur-a../../../etc/pwn[31mb");
+  });
+});
+
 describe("every answer is directive-free JSON", () => {
   const EVENTS: readonly CursorHookEvent[] = [
     "sessionStart",
@@ -383,7 +460,11 @@ describe("every answer is directive-free JSON", () => {
   test.each(EVENTS.map((event) => [event] as const))(
     "%s answers {} with no permission/followup_message/continue keys",
     async (event) => {
-      // Arrange: a minimal healthy payload in a connected repo.
+      // Arrange: the sessionStart-shaped payload reused across all seven
+      // events — NOT each event's own healthy fixture: for the events whose
+      // mapping reads fields it lacks (afterShellExecution's output,
+      // postToolUseFailure's error_message) this exercises the degrade rung,
+      // which must be exactly as directive-free as the capture rung.
       const f = await fixture(`out-${event}`);
       const conv = `conv-out-${event}`;
 

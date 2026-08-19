@@ -10,7 +10,9 @@
  *   sends JSON, so non-JSON on a registered hook is contract news) →
  *   missing mapped fields (drift-counted, §10 risk 5's named-death rule) →
  *   no workspace root (drift-counted — CURSOR_PROJECT_DIR is documented
- *   always-present) → not a git repo (normal non-install) → no config
+ *   always-present) → conversation id with nothing printable after the
+ *   shared shape rule (drift-counted as conversation_id) → not a git repo
+ *   (normal non-install) → no config
  *   (no login on this machine — exactly how cloud agents running project
  *   hooks stay silent, no special-casing) → handler.
  *
@@ -46,6 +48,7 @@ import {
   CURSOR_AGENT_KIND,
   CURSOR_BACKGROUND_AGENT_KIND,
   cursorHostSessionKey,
+  safeHostSessionId,
 } from "@crosscheck/connector-core/state/host-session-key.ts";
 
 import { CURSOR_NO_OP_OUTPUT } from "./constants.ts";
@@ -97,6 +100,9 @@ const UNPARSEABLE_MARKER = "(unparseable)";
  * Resolves everything a handler needs, or null when the connector must stay
  * silent. Drift-counting happens HERE — the one choke point every payload
  * passes — so no handler can forget the tripwire.
+ *
+ * VERIFY: grep -rln "await recordContractDrift" packages/connector-cursor/src | sort
+ * PRINTS: packages/connector-cursor/src/runner.ts
  */
 export const prepareCursorHook = async (
   event: CursorHookEvent,
@@ -128,6 +134,17 @@ export const prepareCursorHook = async (
     await recordContractDrift(home, event, missing);
     return null;
   }
+  // The conversation id is host-minted, not charset-guaranteed: the shared
+  // shape rule (host-session-key.ts) strips unprintables and digest-folds
+  // oversized ids BEFORE the id can enter filenames, `cc_`/`wc_` ids or log
+  // lines — an unshaped giant id used to throw ENAMETOOLONG out of every
+  // state write and kill the session's capture with nothing counted. An id
+  // with nothing printable left cannot key anything: named drift, silence.
+  const conversationId = safeHostSessionId(payload.conversation_id ?? "");
+  if (conversationId === null) {
+    await recordContractDrift(home, event, ["conversation_id"]);
+    return null;
+  }
   const identity = await resolveRepoIdentity(workspaceRoot);
   if (identity === null) {
     return null;
@@ -148,9 +165,7 @@ export const prepareCursorHook = async (
   return {
     event,
     payload,
-    // conversation_id is non-empty here: missingMappedFields requires it
-    // for every event.
-    hostSessionKey: cursorHostSessionKey(payload.conversation_id ?? ""),
+    hostSessionKey: cursorHostSessionKey(conversationId),
     identity,
     config,
     repoKey: key,

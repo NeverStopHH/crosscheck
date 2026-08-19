@@ -66,6 +66,7 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["acpAgentKind", hostKey.acpAgentKind],
   ["agentSlug", hostKey.agentSlug],
   ["safeAcpSessionId", hostKey.safeAcpSessionId],
+  ["safeHostSessionId", hostKey.safeHostSessionId],
   ["MAX_ACP_SESSION_ID_CHARS", hostKey.MAX_ACP_SESSION_ID_CHARS],
   ["MAX_AGENT_SLUG_CHARS", hostKey.MAX_AGENT_SLUG_CHARS],
   ["ACP_AGENT_KIND_FALLBACK", hostKey.ACP_AGENT_KIND_FALLBACK],

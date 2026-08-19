@@ -144,6 +144,56 @@ describe("the contract-drift tripwire through the REAL runner", () => {
     await rm(home, { recursive: true, force: true });
   });
 
+  test("afterShellExecution with EMPTY or ABSENT output is ordinary use, never drift", async () => {
+    // Arrange: a silent successful command (mkdir, git add) — output empty
+    // or omitted. Counting this as drift would WARN on every quiet command
+    // and teach people to ignore the tripwire (the cry-wolf failure).
+    const { home, env } = await driftEnv("drift-shell-quiet");
+    const quiet = { ...AFTER_SHELL_EXECUTION_INPUT, output: "" };
+    const { output: _dropped, ...absent } = AFTER_SHELL_EXECUTION_INPUT;
+
+    // Act
+    const outQuiet = await runCursorHook(
+      "afterShellExecution",
+      JSON.stringify(quiet),
+      env,
+    );
+    const outAbsent = await runCursorHook(
+      "afterShellExecution",
+      JSON.stringify(absent),
+      env,
+    );
+
+    // Assert: fail-open output, zero drift lines.
+    expect(outQuiet).toBe("{}");
+    expect(outAbsent).toBe("{}");
+    expect((await readContractDrift(home)).total).toBe(0);
+    await rm(home, { recursive: true, force: true });
+  });
+
+  test("a conversation_id with nothing printable left counts as conversation_id drift", async () => {
+    // Arrange: present and non-empty — so the missing-fields gate passes —
+    // but nothing survives the shared shape rule: no state file could ever
+    // be keyed by it, and silence without a count would be the named death.
+    const { home, env } = await driftEnv("drift-unprintable-id");
+
+    // Act
+    const out = await runCursorHook(
+      "sessionStart",
+      JSON.stringify({
+        ...SESSION_START_INPUT,
+        conversation_id: "\n\u200b\u0000 ",
+      }),
+      env,
+    );
+
+    // Assert
+    expect(out).toBe("{}");
+    const drift = await readContractDrift(home);
+    expect(drift.byField["sessionStart.conversation_id"]).toBe(1);
+    await rm(home, { recursive: true, force: true });
+  });
+
   test("non-JSON stdin counts as (unparseable); EMPTY stdin is a human poking, not drift", async () => {
     // Arrange
     const { home, env } = await driftEnv("drift-garbage");

@@ -90,11 +90,18 @@ export const parseCursorPayload = (stdin: string): CursorPayload | null => {
  * `workspace_roots` is special-cased in the runner: the documented
  * CURSOR_PROJECT_DIR env variable is its backstop, so it only counts as
  * drift when BOTH are absent.
+ *
+ * `afterShellExecution` requires only the id, deliberately: a silent
+ * successful command (`mkdir`, `git add`) sends an empty `output`, so a
+ * required `output` would count ordinary use as drift and train people to
+ * ignore the one instrument the §6-q5 dogfood reads — and the handler's
+ * real gate is the TOLERATED exit marker, which a documented-contract
+ * tripwire cannot require.
  */
 const MAPPED_FIELDS: Readonly<Record<CursorHookEvent, readonly string[]>> = {
   sessionStart: ["conversation_id"],
   afterFileEdit: ["conversation_id", "file_path"],
-  afterShellExecution: ["conversation_id", "output"],
+  afterShellExecution: ["conversation_id"],
   postToolUse: ["conversation_id"],
   postToolUseFailure: ["conversation_id", "error_message"],
   stop: ["conversation_id"],

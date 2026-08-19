@@ -596,6 +596,15 @@ assertion changes. Block 6 renders nothing (§4.4: no registered surfaces — th
 registry meta-test verifies the claim); injection is Block 7. The §6 q4/q5 manual
 dogfood on a real Cursor build remains OPEN and is a human's duty — checklist in the
 package README.
+Status note (2026-08-19, Block-6 fixer round): conversation ids now go through the
+SAME shape rule as ACP ids (`safeHostSessionId`, reference-identical to
+`safeAcpSessionId`) before minting keys — an oversized id folds to its digest key
+instead of killing the session's capture via ENAMETOOLONG, an unprintable-only id
+drift-counts as `conversation_id`. And `afterShellExecution` requires only the id:
+empty `output` is a silent successful command, and counting it as drift would
+cry-wolf the very instrument q5's checklist reads. The failure-exclusion fixtures
+(interrupt, permission_denied) now carry fingerprintable text so both guards are
+provably load-bearing (mutation-check entries pin all three fixes).
 
 ---
 

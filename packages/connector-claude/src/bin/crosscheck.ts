@@ -86,6 +86,11 @@ const main = async (): Promise<void> => {
         EXIT_OK,
       );
     } catch {
+      // Hardcoded, not CURSOR_NO_OP_OUTPUT: the usual way here is the
+      // dynamic import itself crashing, in which case the constant never
+      // loaded — and exit 0 with EMPTY stdout would violate the package's
+      // own "always parseable JSON" rule (connector-cursor/src/constants.ts).
+      process.stdout.write("{}\n");
       process.exit(EXIT_OK);
     }
   }

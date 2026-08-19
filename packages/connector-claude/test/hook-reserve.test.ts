@@ -35,10 +35,11 @@
  *
  * ONE CONSUMER, which is what makes a unit test of it sufficient at all: a
  * constant read in two places can be defeated in one and survive in the other.
- * hooks/runner.ts is the only reader outside the constant's own declaration —
+ * Since Block 6 moved the budget family to core, config/hook-budget.ts is the
+ * only reader outside the constant's own declaration —
  *
  * VERIFY: grep -rl HOOK_RESERVE_RATIO packages/connector-claude/src packages/connector-core/src | sort
- * PRINTS: packages/connector-claude/src/hooks/runner.ts
+ * PRINTS: packages/connector-core/src/config/hook-budget.ts
  * PRINTS: packages/connector-core/src/constants.ts
  *
  * — and `spareMs` is in turn the sole accessor on HookBudget, taken as a whole

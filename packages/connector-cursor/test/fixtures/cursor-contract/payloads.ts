@@ -166,18 +166,33 @@ export const POST_TOOL_USE_FAILURE_INPUT = {
   is_interrupt: false,
 } as const;
 
-/** Same event, a user interrupt — not a build failure, captures nothing. */
+/**
+ * Same event, a user interrupt — not a build failure, captures nothing.
+ * NOT a published example (ours): the error_message DELIBERATELY carries
+ * fingerprintable signal — a user interrupting a hanging command gets its
+ * real stderr tail in error_message — because a no-signal text here would
+ * fingerprint to null with or without the `is_interrupt` guard, making the
+ * guard untestable (handlers.test.ts pins the signal stays non-null;
+ * mutation-check re-proves the guard is load-bearing).
+ */
 export const POST_TOOL_USE_FAILURE_INTERRUPT = {
   ...POST_TOOL_USE_FAILURE_INPUT,
-  error_message: "Command interrupted by user",
+  error_message:
+    "error: connect ETIMEDOUT 10.0.0.7:5432 while waiting for the database container to accept connections",
   failure_type: "error",
   is_interrupt: true,
 } as const;
 
-/** Same event, a permission denial — a policy outcome, not a build failure. */
+/**
+ * Same event, a permission denial — a policy outcome, not a build failure.
+ * Signal-carrying for the same reason as the interrupt variant above: the
+ * `failure_type` guard must be provable, so the text must be one that WOULD
+ * fingerprint if the guard were dropped.
+ */
 export const POST_TOOL_USE_FAILURE_DENIED = {
   ...POST_TOOL_USE_FAILURE_INPUT,
-  error_message: "Permission denied by hook",
+  error_message:
+    "error: EACCES: permission denied, open /var/log/app/deploy.log — the agent hook denied the write",
   failure_type: "permission_denied",
 } as const;
 

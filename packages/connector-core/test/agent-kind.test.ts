@@ -25,6 +25,7 @@ import {
   agentSlug,
   cursorHostSessionKey,
   safeAcpSessionId,
+  safeHostSessionId,
 } from "../src/state/host-session-key.ts";
 import { makeHome } from "./helpers.ts";
 
@@ -57,8 +58,17 @@ describe("connector host-session-key prefixes", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  test("Cursor keys carry the cur- prefix around the raw conversation id", () => {
+  test("Cursor keys carry the cur- prefix around the shaped conversation id", () => {
+    // A clean id shapes to itself, so the key is the readable form; the
+    // runner shapes BEFORE minting (hostile-id coverage drives the real
+    // runner in connector-cursor/test/handlers.test.ts).
     expect(cursorHostSessionKey("conv_42")).toBe("cur-conv_42");
+  });
+
+  test("cursor and ACP ids go through the SAME shape function — by reference, not by copy", () => {
+    // One implementation means an id safe for one host's filenames and
+    // cc_/wc_ ids is safe for the other's; a copy could drift.
+    expect(safeAcpSessionId).toBe(safeHostSessionId);
   });
 
   test("agent names slug to lowercase alphanumerics with single dashes", () => {

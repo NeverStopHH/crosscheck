@@ -2,11 +2,17 @@
  * Launcher HEALTH probing — whether the command a hooks file names would
  * actually run — EXTRACTED VERBATIM from `connector-claude/src/cli/doctor.ts`
  * (`checkLauncher` + `splitLauncherTokens`) for Block 6: the Cursor doctor
- * section needs the identical resolves-AND-executes probes for the commands
- * in `.cursor/hooks.json` and cannot import from the Claude package. The one
- * generalization is the KEYWORD LIST — which subcommand token ends the
- * launcher prefix is host policy (`hook`/`statusline` for Claude,
- * `cursor-hook` for Cursor).
+ * section needs the identical probes for the commands in `.cursor/hooks.json`
+ * and cannot import from the Claude package. The one generalization is the
+ * KEYWORD LIST — which subcommand token ends the launcher prefix is host
+ * policy (`hook`/`statusline` for Claude, `cursor-hook` for Cursor).
+ *
+ * HOW FAR EACH SHAPE IS PROBED — the execution probe is NOT universal:
+ * a bare `crosscheck` PATH head is resolved AND executed (`--version` via
+ * isOwnCrosscheckBin — the foreign-tool check needs the answer); an
+ * absolute-path launcher (what init writes in a dev checkout) is checked
+ * for existence and package-runner caches but never executed; a custom
+ * non-absolute prefix is the operator's word.
  *
  * Every check above this one in a doctor is textual, and the two states that
  * defeat textual checks are exactly the ones `init` guards against at write

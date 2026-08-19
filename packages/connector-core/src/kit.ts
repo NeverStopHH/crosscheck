@@ -53,6 +53,7 @@ export {
   agentSlug,
   cursorHostSessionKey,
   safeAcpSessionId,
+  safeHostSessionId,
 } from "./state/host-session-key.ts";
 
 // ── Config + paths ──────────────────────────────────────────────────────────

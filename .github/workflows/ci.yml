@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 41
+    # PRINTS: 44
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -139,12 +139,15 @@ jobs:
     # PRINTS: http/hub.ts 1
     # PRINTS: mcp/render-referee.ts 2
     # PRINTS: mcp/render.ts 3
+    # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 1
+    # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 2
     # PRINTS: packages/server/src/services/hints.ts 1
     # PRINTS: packages/server/src/services/search.ts 6
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
     # PRINTS: constants.ts 4
     # PRINTS: engine.ts 3
+    # PRINTS: file-edit.ts 1
     # PRINTS: hints.ts 1
     # PRINTS: hub.ts 1
     # PRINTS: injector.ts 3
@@ -157,6 +160,7 @@ jobs:
     # PRINTS: search.ts 6
     # PRINTS: select.ts 4
     # PRINTS: stop.ts 1
+    # PRINTS: tool-failure.ts 2
     name: Mutation proof
     runs-on: ubuntu-latest
     steps:

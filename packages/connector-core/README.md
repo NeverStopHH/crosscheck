@@ -19,7 +19,7 @@ A connector is the host-specific shell. It owns exactly four things:
 1. **A host session key** — the host's own id for the session, minted once and used everywhere:
    - Claude Code: the **raw** `session_id`, unprefixed (pre-rename compat: every existing spool slug, state filename and `cc_<uuid>` derives from it, byte-identically).
    - ACP proxy: `acpHostSessionKey(agentName, acpSessionId)` → `acp-<agentSlug>--<acpSessionId>` (the `--` marks the slug/id boundary — a slug can never contain it, so keys parse back uniquely). The id is agent-minted, so shape it with `safeAcpSessionId` at your parse boundary before it may reach a log line, a filename, or a `cc_`/`wc_` id: control/format/separator characters strip, and an id past `MAX_ACP_SESSION_ID_CHARS` (or whose URI-encoded form would overflow a filename) folds to a deterministic sha256. `agentSlug` is length-capped (`MAX_AGENT_SLUG_CHARS`) for the same reason.
-   - Cursor IDE: `cursorHostSessionKey(conversationId)` → `cur-<conversation_id>`.
+   - Cursor IDE: `cursorHostSessionKey(conversationId)` → `cur-<conversation_id>`. The conversation id is host-minted with no charset guarantee, so shape it first with `safeHostSessionId` — the *same* function `safeAcpSessionId` names (reference-identical): same strip, same bounds, same sha256 fold.
 
    Prefixes are what keep two hosts from ever minting the same key. Never invent a fourth shape without reserving its prefix here (`state/host-session-key.ts`).
 

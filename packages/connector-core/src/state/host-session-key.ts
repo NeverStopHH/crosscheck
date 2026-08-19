@@ -105,25 +105,31 @@ const digestSessionId = (shaped: string): string =>
   `sha256-${new Bun.CryptoHasher("sha256").update(shaped).digest("hex")}`;
 
 /**
- * An ACP session id is AGENT-CONTROLLED — unlike a Claude Code UUID, nothing
- * guarantees its charset, and it lands in proxy log lines, `cc_`/`wc_` ids
- * and state filenames. This shapes one before it may enter any of those: a
+ * A HOST-MINTED session id is untrusted — unlike a Claude Code UUID, nothing
+ * guarantees its charset, and it lands in log lines, `cc_`/`wc_` ids and
+ * state filenames. This shapes one before it may enter any of those: a
  * newline could otherwise forge whole log lines during incident forensics,
  * an ESC could drive the operator's terminal, and separators would let
  * forged text read as prose. Deliberately a STRIP, not an allowlist: two
- * legitimate ids must never collapse into one key, and no agent mints ids
+ * legitimate ids must never collapse into one key, and no host mints ids
  * that differ only in unprintables — one hostile enough to try can already
- * reuse an id outright, which the load path treats as a resume anyway.
+ * reuse an id outright, which both load paths treat as a resume anyway.
  *
  * An id past either bound folds to a deterministic `sha256-<hex>` — still
  * one distinct key per distinct id, still stable across load/resume replays,
  * and structurally unable to overflow a filename (ENAMETOOLONG in the
  * register flow would otherwise kill capture for the session). Null when
- * nothing printable remains: the caller treats that as no id at all (capture
- * skips, the pipe unaffected). Idempotent — shaped ids re-shape to
- * themselves, digests included.
+ * nothing printable remains: the caller treats that as no usable id (ACP
+ * capture skips, the cursor runner drift-counts `conversation_id`).
+ * Idempotent — shaped ids re-shape to themselves, digests included.
+ *
+ * SHARED across every host whose id is not a Claude-minted UUID: the ACP
+ * wire parsers and the cursor runner call the one function, so an id that
+ * is safe for one host's filenames is safe for the other's. The bounds are
+ * named MAX_ACP_* for history; `cur-` is a character shorter than `acp-`
+ * plus its slug, so the encoded-filename budget holds a fortiori.
  */
-export const safeAcpSessionId = (raw: string): string | null => {
+export const safeHostSessionId = (raw: string): string | null => {
   const shaped = raw.replace(ID_UNPRINTABLE, "");
   if (shaped.length === 0) {
     return null;
@@ -133,6 +139,13 @@ export const safeAcpSessionId = (raw: string): string | null => {
     ? shaped
     : digestSessionId(shaped);
 };
+
+/**
+ * The ACP wire parsers' name for the shared shaping — the SAME function by
+ * reference (the claude-re-exports-core's-extractor discipline), kept so the
+ * v1 parse sites read as what they are.
+ */
+export const safeAcpSessionId = safeHostSessionId;
 
 /**
  * `acp-<agentSlug>--<acpSessionId>` — e.g. `acp-gemini-cli--sess_abc123`.
@@ -145,7 +158,13 @@ export const acpHostSessionKey = (
 ): string =>
   `${ACP_HOST_KEY_PREFIX}${agentSlug(agentName)}${ACP_KEY_DELIMITER}${acpSessionId}`;
 
-/** `cur-<conversation_id>` — Cursor conversation ids are already opaque. */
+/**
+ * `cur-<conversation_id>`. Callers pass ids that already went through
+ * `safeHostSessionId` (the cursor runner's prepare step is the single choke
+ * point) — a conversation id is Cursor-minted, but "the docs say opaque" is
+ * not a charset guarantee, and the same id lands in the same filenames and
+ * `cc_`/`wc_` ids the ACP shape rule exists for.
+ */
 export const cursorHostSessionKey = (conversationId: string): string =>
   `${CURSOR_HOST_KEY_PREFIX}${conversationId}`;
 

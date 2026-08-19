@@ -1,7 +1,8 @@
 /**
  * The doctor's Cursor section (design §3.4): hooks file present + entries
- * owned + all seven events registered + nothing failClosed, launcher
- * resolves AND executes (the shared core probes), `.cursor/mcp.json` entry
+ * owned + all seven events registered + nothing failClosed, launcher health
+ * (the shared core probes — a bare `crosscheck` is executed via --version,
+ * absolute-path launchers are existence/cache-checked), `.cursor/mcp.json` entry
  * owned, last-observed cursor_version ≥ 1.7, and the contract-drift
  * counters — rule 6 on this surface: cursor hooks are silent by design, so
  * doctor is the only place a renamed payload field ever becomes a sentence.
