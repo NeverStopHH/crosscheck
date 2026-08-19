@@ -739,14 +739,29 @@ export const MutedDeveloperSchema = z.looseObject({
 export type MutedDeveloper = z.infer<typeof MutedDeveloperSchema>;
 
 /**
+ * One linked email of the CALLER's own account (trial finding #7). Tolerant
+ * row like the mutes: a malformed entry costs itself, never the settings
+ * read.
+ */
+export const OwnEmailSchema = z.looseObject({
+  email: z.string().min(1),
+  isPrimary: z.boolean().default(false),
+});
+
+export type OwnEmail = z.infer<typeof OwnEmailSchema>;
+
+/**
  * The developer's OWN privacy settings (DESIGN.md §2.1): presence opt-out +
- * mute list. Mutes are tolerant rows — one malformed entry must not cost the
+ * mute list, plus the account's linked emails (primary + aliases — trial
+ * finding #7; an older hub sends no field and the list is simply empty).
+ * Mutes and emails are tolerant rows — one malformed entry must not cost the
  * whole settings read that status/doctor depend on.
  */
 export const PrivacySettingsSchema = z
   .looseObject({
     presenceOptOut: z.boolean(),
     mutes: z.array(z.unknown()).default([]),
+    emails: z.array(z.unknown()).default([]),
   })
   .transform((value) => ({
     presenceOptOut: value.presenceOptOut,
@@ -754,11 +769,16 @@ export const PrivacySettingsSchema = z
       .map((item) => MutedDeveloperSchema.safeParse(item))
       .filter((parsed) => parsed.success)
       .map((parsed) => parsed.data),
+    emails: value.emails
+      .map((item) => OwnEmailSchema.safeParse(item))
+      .filter((parsed) => parsed.success)
+      .map((parsed) => parsed.data),
   }));
 
 export interface PrivacySettings {
   readonly presenceOptOut: boolean;
   readonly mutes: readonly MutedDeveloper[];
+  readonly emails: readonly OwnEmail[];
 }
 
 export const getPrivacySettings = (

@@ -27,6 +27,7 @@ interface FakeHub {
 interface FakeHubOptions {
   readonly presenceOptOut?: boolean;
   readonly mutes?: readonly { id: string; name: string }[];
+  readonly emails?: readonly { email: string; isPrimary: boolean }[];
   readonly muteStatus?: number;
   readonly settingsStatus?: number;
 }
@@ -51,6 +52,8 @@ const startHub = (options: FakeHubOptions = {}): FakeHub => {
           data: {
             presenceOptOut: options.presenceOptOut ?? false,
             mutes: options.mutes ?? [],
+            // Absent by default, like a hub from before alias emails.
+            ...(options.emails === undefined ? {} : { emails: options.emails }),
           },
         });
       }
@@ -331,6 +334,41 @@ describe("status and doctor show the privacy state", () => {
     expect(result.stdout).toContain("privacy settings");
     expect(result.stdout).toContain("presence hidden (opt-out), 2 muted");
     expect(result.stdout).not.toContain("Robin");
+  });
+
+  test("doctor counts the caller's alias emails; status names them", async () => {
+    // Arrange: primary + two admin-linked aliases (trial finding #7)
+    const { repo, env } = await fixture("alias-emails", {
+      emails: [
+        { email: "nick@example.com", isPrimary: true },
+        { email: "nick.personal@gmail.com", isPrimary: false },
+        { email: "nick@old-employer.example", isPrimary: false },
+      ],
+    });
+
+    // Act
+    const doctor = await runCli(["doctor"], env, repo);
+    const status = await runCli(["status"], env, repo);
+
+    // Assert: doctor counts (names belong to status), status lists
+    expect(doctor.stdout).toContain("2 alias emails");
+    expect(doctor.stdout).not.toContain("nick.personal@gmail.com");
+    expect(status.stdout).toContain(
+      "emails: nick@example.com (primary), nick.personal@gmail.com, nick@old-employer.example",
+    );
+  });
+
+  test("against a hub without alias emails, neither surface invents them", async () => {
+    // Arrange: settings answer with no emails field (older hub)
+    const { repo, env } = await fixture("no-alias-field");
+
+    // Act
+    const doctor = await runCli(["doctor"], env, repo);
+    const status = await runCli(["status"], env, repo);
+
+    // Assert
+    expect(doctor.stdout).not.toContain("alias email");
+    expect(status.stdout).not.toContain("emails:");
   });
 
   test("doctor says 'not measured' against a hub without the endpoint", async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  TEST_ADMIN_TOKEN,
   TEST_START_ISO,
   createHarnessWithSession,
   createTestDeveloper,
@@ -106,6 +107,39 @@ describe("GET /api/absences", () => {
     expect(absences[0]?.kind).toBe("unconnected");
     expect(absences[0]?.name).toBe("Sam Stranger");
     expect(absences[0]?.lastSessionAt).toBeNull();
+  });
+
+  test("a member matched via an ALIAS email is a member, never 'unconnected'", async () => {
+    // Arrange: Robin's git commits carry a personal address the admin linked
+    // as an alias (trial finding #7 — two of three trial members commit under
+    // an email that is not their hub email).
+    const setup = await createHarnessWithSession();
+    const robin = await createTestDeveloper(
+      setup.harness,
+      "Robin",
+      "robin@example.com",
+    );
+    const linked = await setup.harness.app.request(
+      `/api/developers/${encodeURIComponent(robin.developerId)}/emails`,
+      jsonRequest("POST", TEST_ADMIN_TOKEN, { email: "Robin.Personal@GMail.com" }),
+    );
+    expect(linked.status).toBe(200);
+    await ingestEvidence(setup, [
+      {
+        name: "robin-laptop",
+        email: "robin.personal@gmail.com",
+        latestCommitAt: isoAt(-2 * MS_PER_DAY),
+        commitCount: 4,
+      },
+    ]);
+
+    // Act
+    const { absences } = await fetchAbsences(setup);
+
+    // Assert: hub member identity, not a "no crosscheck account" noise line
+    expect(absences.length).toBe(1);
+    expect(absences[0]?.kind).toBe("inactive");
+    expect(absences[0]?.name).toBe("Robin");
   });
 
   test("a member whose commit falls inside the grace window stays silent", async () => {

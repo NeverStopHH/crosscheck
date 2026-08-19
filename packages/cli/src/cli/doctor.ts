@@ -511,10 +511,20 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
   const presencePart = result.data.presenceOptOut
     ? "presence hidden (opt-out)"
     : "presence visible";
+  // Counts only, like the mutes — the addresses belong to `crosscheck
+  // status`. An older hub sends no emails field (empty list): no segment,
+  // rather than a fabricated zero.
+  const aliasCount = result.data.emails.filter(
+    (entry) => !entry.isPrimary,
+  ).length;
+  const aliasPart =
+    result.data.emails.length === 0
+      ? ""
+      : `, ${aliasCount} alias email${aliasCount === 1 ? "" : "s"}`;
   return check(
     "PASS",
     "privacy settings",
-    `${presencePart}, ${result.data.mutes.length} muted`,
+    `${presencePart}, ${result.data.mutes.length} muted${aliasPart}`,
   );
 };
 

@@ -174,6 +174,45 @@ describe("persistent-dir upgrade from the pre-search-block release", () => {
   );
 
   test(
+    "the alias-email DDL lands on an old dir: the single email becomes primary",
+    async () => {
+      // Arrange: an old-format dir from before developer_emails existed
+      const dataDir = await makeOldFormatDir();
+
+      // Act: the upgrade creates the table and backfills each developer's
+      // stored email as their primary row
+      const db = await createDb({ dataDir });
+
+      // Assert
+      const backfilled = await db.execute(
+        sql`SELECT developer_id, email, is_primary FROM developer_emails
+            ORDER BY email`,
+      );
+      expect(backfilled.rows).toEqual([
+        { developer_id: "dev_old", email: "nick@example.com", is_primary: true },
+      ]);
+
+      // Act: add an alias, restart the hub (re-runs the idempotent bootstrap)
+      await db.execute(
+        sql`INSERT INTO developer_emails (developer_id, email, is_primary, created_at)
+            VALUES ('dev_old', 'nick.personal@gmail.com', false, now())`,
+      );
+      await (db as unknown as { $client: PGlite }).$client.close();
+      const reopened = await createDb({ dataDir });
+
+      // Assert: the backfill did not duplicate the primary or drop the alias
+      const after = await reopened.execute(
+        sql`SELECT email, is_primary FROM developer_emails ORDER BY email`,
+      );
+      expect(after.rows).toEqual([
+        { email: "nick.personal@gmail.com", is_primary: false },
+        { email: "nick@example.com", is_primary: true },
+      ]);
+    },
+    UPGRADE_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "a dir written by a different PostgreSQL major is refused, by name",
     async () => {
       // Arrange: the poisoned-dir shape a mixed-version install leaves behind.

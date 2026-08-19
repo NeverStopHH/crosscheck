@@ -87,6 +87,17 @@ export const runStatus = async (
         }`,
       ]
     : [];
+  // The caller's OWN linked emails (trial finding #7) — self data, so the
+  // addresses print here while doctor sticks to counts. An older hub sends
+  // no field (empty list): no line.
+  const emailLines =
+    privacy.ok && privacy.data.emails.length > 0
+      ? [
+          `emails: ${privacy.data.emails
+            .map((entry) => (entry.isPrimary ? `${entry.email} (primary)` : entry.email))
+            .join(", ")}`,
+        ]
+      : [];
   const absenceLines = (absences.ok ? absences.data : [])
     .slice(0, STATUS_MAX_ABSENCE_LINES)
     .flatMap((entry) => {
@@ -105,6 +116,7 @@ export const runStatus = async (
       `hub: ${config.hubUrl}`,
       `repo: ${identity.repoId} (${identity.branch})`,
       `developer: ${config.developerName ?? "unknown"} (${config.developerId ?? "unknown"})`,
+      ...emailLines,
       ...privacyLines,
       "teammates:",
       ...(teammates.length === 0 ? ["  (none)"] : teammates),

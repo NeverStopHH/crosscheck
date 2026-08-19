@@ -14,7 +14,9 @@
  */
 import { asc, eq, sql } from "drizzle-orm";
 
-import { developerMutes, developers } from "../db/schema.ts";
+import { developerEmails, developerMutes, developers } from "../db/schema.ts";
+import { listDeveloperEmails } from "./developers.ts";
+import type { DeveloperEmailView } from "./developers.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -32,6 +34,13 @@ export interface MuteEntryView {
 export interface DeveloperSettingsView {
   readonly presenceOptOut: boolean;
   readonly mutes: readonly MuteEntryView[];
+  /**
+   * The caller's OWN linked emails, primary first (trial finding #7) — the
+   * self view behind doctor's and status's alias count. Self-service read
+   * only; linking and unlinking stay on the admin surface
+   * (routes/developers.ts).
+   */
+  readonly emails: readonly DeveloperEmailView[];
 }
 
 interface Deps {
@@ -55,7 +64,11 @@ export const getDeveloperSettings = async (
     .where(eq(developerMutes.readerDeveloperId, developerId))
     .orderBy(asc(developers.name), asc(developers.id))
     .limit(MAX_MUTES_PER_READER);
-  return { presenceOptOut: own[0]?.presenceOptOut ?? false, mutes };
+  return {
+    presenceOptOut: own[0]?.presenceOptOut ?? false,
+    mutes,
+    emails: await listDeveloperEmails(db, developerId),
+  };
 };
 
 export const setPresenceOptOut = async (
@@ -79,8 +92,10 @@ const AMBIGUITY_PROBE_LIMIT = 2;
 
 /**
  * Resolves a CLI-supplied reference to one developer: exact id first, then
- * email (stored lowercased — services/developers.ts), then case-insensitive
- * display name, where two matches is an error rather than a guess.
+ * email — through developer_emails, so an ALIAS resolves the same person its
+ * primary does and the table's PK keeps the answer unique (trial finding #7)
+ * — then case-insensitive display name, where two matches is an error rather
+ * than a guess.
  */
 export const resolveDeveloperRef = async (
   db: Db,
@@ -100,8 +115,9 @@ export const resolveDeveloperRef = async (
   }
   const byEmail = await db
     .select({ id: developers.id, name: developers.name })
-    .from(developers)
-    .where(eq(developers.email, trimmed.toLowerCase()))
+    .from(developerEmails)
+    .innerJoin(developers, eq(developers.id, developerEmails.developerId))
+    .where(eq(developerEmails.email, trimmed.toLowerCase()))
     .limit(1);
   if (byEmail[0] !== undefined) {
     return { outcome: "resolved", developer: byEmail[0] };

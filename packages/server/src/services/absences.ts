@@ -7,7 +7,12 @@ import {
   ABSENCE_MAX_FINDINGS,
   ABSENCE_MIN_GAP_HOURS,
 } from "../constants.ts";
-import { agentSessions, commitEvidence, developers } from "../db/schema.ts";
+import {
+  agentSessions,
+  commitEvidence,
+  developerEmails,
+  developers,
+} from "../db/schema.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -87,10 +92,11 @@ const lastSessionByDeveloper = async (
  * PHRASING CONTRACT: every finding is a factual observation — "newest commit
  * at X, last reported session at Y" — never an inference about what somebody
  * did or did not do. We see agent sessions, not keystrokes: a developer can
- * legitimately work without an agent, and a member whose git email differs
- * from their hub email will surface as `unconnected` (DESIGN.md §10 risk 3 —
- * this is a surveillance-adjacent surface, renderers must keep the phrasing
- * factual).
+ * legitimately work without an agent, and a member committing under an email
+ * the hub knows NONE of — primary or alias (developer_emails, trial finding
+ * #7) — still surfaces as `unconnected`; the alias admin API is the fix for
+ * that noise, not a phrasing change (DESIGN.md §10 risk 3 — this is a
+ * surveillance-adjacent surface, renderers must keep the phrasing factual).
  *
  * PRIVACY (DESIGN.md §10 risk 3, services/visibility.ts): `inactive` findings
  * report the same person's activity presence does, so an opted-out member is
@@ -126,10 +132,16 @@ export const listAbsences = async (
       developerName: developers.name,
     })
     .from(commitEvidence)
+    // ALL of a member's emails match, not just the primary (trial finding
+    // #7): the alias table stores every address lowercased, commit evidence
+    // stores its author_email lowercased, so the join is a plain equality.
+    // developer_emails' PK on email guarantees at most one alias row — and
+    // therefore at most one developer — per evidence row.
     .leftJoin(
-      developers,
-      eq(sql`lower(${developers.email})`, commitEvidence.authorEmail),
+      developerEmails,
+      eq(developerEmails.email, commitEvidence.authorEmail),
     )
+    .leftJoin(developers, eq(developers.id, developerEmails.developerId))
     .where(
       and(
         eq(commitEvidence.repo, repo),

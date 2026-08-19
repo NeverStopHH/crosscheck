@@ -210,6 +210,31 @@ CREATE TABLE IF NOT EXISTS commit_evidence (
   PRIMARY KEY (repo, author_email)
 );
 
+-- ── Alias emails (trial finding #7) ─────────────────────────────────────────
+
+-- Every email a developer is known by: the primary plus admin-linked aliases.
+-- The PRIMARY KEY on email is the invariant — an email belongs to AT MOST one
+-- developer — enforced by the database rather than promised by a service
+-- (schema.ts developerEmails carries the full table-vs-column reasoning).
+-- Emails are stored lowercased; the absence check joins commit evidence here.
+CREATE TABLE IF NOT EXISTS developer_emails (
+  email text PRIMARY KEY,
+  developer_id text NOT NULL REFERENCES developers(id),
+  is_primary boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS developer_emails_developer_idx
+  ON developer_emails (developer_id);
+
+-- Backfill for databases created before aliases existed: each developer's
+-- single stored email becomes their primary row (test/upgrade.test.ts drives
+-- this against a real pre-alias persistent dir). Idempotent on every boot —
+-- ON CONFLICT covers both the re-run and a developer created mid-upgrade.
+INSERT INTO developer_emails (email, developer_id, is_primary, created_at)
+  SELECT lower(email), id, true, created_at FROM developers
+  ON CONFLICT (email) DO NOTHING;
+
 -- ── Presence opt-out + mute (DESIGN.md §2.1, §10 risk 3) ────────────────────
 
 -- Presence opt-out: while true, this developer's LIVE presence is hidden from
