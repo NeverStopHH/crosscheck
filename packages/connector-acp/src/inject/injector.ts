@@ -15,7 +15,11 @@
  *      afterwards, under the UserPromptSubmit budget constants. The user's
  *      own blocks are never edited or reordered (append-don't-edit).
  *
- * EVERY skip forwards the original bytes and says why in the proxy log.
+ * EVERY skip forwards the original bytes. Every skip that SUPPRESSES an
+ * intended injection says why in the proxy log; the one exception is the
+ * hint path's routine no-candidates silence, which counts in `skips`
+ * without a log line (silence is the flow's normal outcome, not a
+ * suppressed delivery — one line per quiet prompt would be noise).
  * A budget race lost mid-hint leaves the flow to finish in the background:
  * the slot is spent, the text unshown — the same lost-slot honesty as the
  * Claude runner's race (flows/hint.ts header), never a repeat delivery.
@@ -56,6 +60,7 @@ import {
 } from "../wire/v1.ts";
 import type { WireId } from "../wire/v1.ts";
 import { acpPromptBlockText } from "./blocks.ts";
+import { hasLossyNumberToken } from "./json-guard.ts";
 import { resolveAcpMcpServer } from "./launcher.ts";
 import type { AcpMcpServerResolution } from "./launcher.ts";
 import type { LineDecision } from "./line-pump.ts";
@@ -192,6 +197,12 @@ export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
   };
 
   // ── the conservative connected-cwd probe (bounded, cached) ───────────────
+  // Cached for the proxy's LIFETIME, never invalidated (bounded FIFO only): a
+  // repo disconnected mid-run keeps its stale `true` and may still receive
+  // mcpServers appends while capture — which re-resolves per register — goes
+  // silent. Accepted: the appended entry is inert without a connected config,
+  // and connect/disconnect mid-session is an operator action a proxy restart
+  // already resolves.
   const cwdConnected = new Map<string, boolean>();
 
   const probeCwd = async (cwd: string): Promise<boolean> => {
@@ -393,13 +404,18 @@ export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
         }
         return null;
       }
-      if (SETUP_METHODS.has(message.method)) {
-        return decideSetup(record, message.method);
+      const isSetup = SETUP_METHODS.has(message.method);
+      if (!isSetup && message.method !== WIRE_METHODS.sessionPrompt) {
+        return null;
       }
-      if (message.method === WIRE_METHODS.sessionPrompt) {
-        return decidePrompt(record);
+      // §2.3 rule 1's edit exception is VALUE-preserving or it is nothing: a
+      // raw number JSON.parse would round (a 64-bit id past 2^53) or replace
+      // (past double range → Infinity → `null`) makes the line uneditable —
+      // forward the original bytes (json-guard.ts).
+      if (hasLossyNumberToken(text)) {
+        return skip("lossy-reserialize");
       }
-      return null;
+      return isSetup ? decideSetup(record, message.method) : decidePrompt(record);
     },
 
     offerA2c(event) {

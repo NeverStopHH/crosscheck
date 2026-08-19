@@ -211,7 +211,13 @@ The proxy must NEVER break a session. These rules are the contract, in priority 
 1. **Forward original bytes.** Each newline-delimited line is forwarded verbatim —
    never re-serialized from a parse. The only exception is the two injection edits
    (rule 6), each of which re-serializes *that one message* and only after a successful
-   parse + validation.
+   parse + validation — and the edit must be VALUE-preserving: JSON.parse reads every
+   number as a double, so a raw integer past 2^53 (a 64-bit request id from a JVM/Rust
+   JSON-RPC stack) or a magnitude past double range would be silently rewritten on the
+   wire, and the agent's response would never correlate. Such a message is uneditable:
+   the injector skips (`lossy-reserialize`) and forwards the original bytes
+   (Block-5 fixer round; `connector-acp/src/inject/json-guard.ts`). Value-equal
+   respelling (`1.0` → `1`) is accepted on the one edited message.
 2. **Forward first, capture after.** Capture parses a copy *after* the line is on its
    way. Added latency on the hot path is parse cost only; hub I/O never blocks
    forwarding. `session/cancel` and `$/cancel_request` therefore pass with zero added

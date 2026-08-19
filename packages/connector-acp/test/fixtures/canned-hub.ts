@@ -17,6 +17,7 @@ export interface CannedHub {
   readonly url: string;
   readonly latency: CannedHubLatency;
   setCandidates(next: readonly unknown[]): void;
+  setSolvedMatches(next: readonly unknown[]): void;
   stop(): void;
 }
 
@@ -30,6 +31,7 @@ const sleep = (ms: number): Promise<void> =>
 export const startCannedHub = (): CannedHub => {
   const latency: CannedHubLatency = { presence: 0, candidates: 0 };
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
+  let solvedMatches: readonly unknown[] = [];
   const teammate = {
     sessionId: "cc_teammate",
     developerId: "dev_nick",
@@ -61,7 +63,7 @@ export const startCannedHub = (): CannedHub => {
         return Response.json({ ok: true, data: { contradictions: [] } });
       }
       if (pathname === "/api/solved-matches") {
-        return Response.json({ ok: true, data: { matches: [] } });
+        return Response.json({ ok: true, data: { matches: solvedMatches } });
       }
       if (pathname === "/api/drafts") {
         return Response.json({ ok: true, data: { drafts: [] } });
@@ -93,6 +95,9 @@ export const startCannedHub = (): CannedHub => {
     latency,
     setCandidates: (next) => {
       candidates = next;
+    },
+    setSolvedMatches: (next) => {
+      solvedMatches = next;
     },
     stop: () => {
       server.stop(true);

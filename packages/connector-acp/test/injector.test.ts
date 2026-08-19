@@ -332,6 +332,60 @@ describe("write point 1: the mcpServers append (§2.5)", () => {
   });
 });
 
+describe("value-preserving re-serialization (§2.3 rule 1)", () => {
+  // JSON.parse reads every number as a double, so the append's re-serialize
+  // would ROUND a raw 64-bit id (9007199254740993 → …992) and the client
+  // could never correlate the agent's response — a hung session on exactly
+  // the one path that edits bytes. Lossy line → skip, forward original.
+  test("a session/new with a 64-bit integer id is never edited — forwarded, logged", async () => {
+    const f = await fixture("inj-lossy-setup");
+    await openGate(f);
+    await waitForLauncher(f);
+    const raw =
+      `{"jsonrpc":"2.0","id":9007199254740993,"method":"session/new",` +
+      `"params":{"cwd":${JSON.stringify(f.repo)},"mcpServers":[]}}`;
+
+    const decision = await f.injector.decideLine(raw);
+
+    expect(decision).toBeNull();
+    expect(
+      f.logger.lines.some((entry) => entry.includes("why=lossy-reserialize")),
+    ).toBe(true);
+    // The connection is not poisoned: the next safe-id setup still appends.
+    expect(await f.injector.decideLine(sessionNewLine(f))).not.toBeNull();
+  });
+
+  test("a lossy prompt is forwarded; a float RESPELLING (1.0 → 1) is not lossy and still injects", async () => {
+    const f = await fixture("inj-lossy-prompt");
+    await openGate(f);
+    await registerSession(f);
+
+    // Value-preserving respelling in params: the briefing must still ride.
+    const floatPrompt =
+      `{"jsonrpc":"2.0","id":301,"method":"session/prompt",` +
+      `"params":{"sessionId":"${SESSION_ID}","trace":1.0,` +
+      `"prompt":[{"type":"text","text":"question about refresh"}]}}`;
+    const briefed = await waitFor(() => f.injector.decideLine(floatPrompt));
+    const parsed = JSON.parse(briefed) as {
+      params: { trace: number; prompt: readonly { type: string }[] };
+    };
+    expect(parsed.params.trace).toBe(1);
+    expect(parsed.params.prompt).toHaveLength(2);
+
+    // A 64-bit id on the prompt path: forwarded untouched, skip logged.
+    const lossyPrompt =
+      `{"jsonrpc":"2.0","id":9007199254740993,"method":"session/prompt",` +
+      `"params":{"sessionId":"${SESSION_ID}",` +
+      `"prompt":[{"type":"text","text":"why does refresh rotation fail"}]}}`;
+    const decision = await f.injector.decideLine(lossyPrompt);
+
+    expect(decision).toBeNull();
+    expect(
+      f.logger.lines.some((entry) => entry.includes("why=lossy-reserialize")),
+    ).toBe(true);
+  });
+});
+
 describe("write point 2: the prompt block (§2.5)", () => {
   test("briefing pending → skip; the NEXT prompt gets it; hints follow; seen-set holds", async () => {
     const f = await fixture("inj-prompt-full");
@@ -388,6 +442,45 @@ describe("write point 2: the prompt block (§2.5)", () => {
 
     expect(f.injector.counters().briefings).toBe(1);
     expect(f.injector.counters().hints).toBe(1);
+  });
+
+  test("a solved-pointer briefing records its hint_delivery rows through the ENGINE — record-then-emit", async () => {
+    // The §2.5 telemetry contract at the takeBriefing call site (not the
+    // flow function, which briefing-flow.test.ts pins): a briefing whose
+    // text carries solved pointers must leave hint_delivery rows + state
+    // refs behind, or the precision loop and replay dedup have no input.
+    const f = await fixture("inj-briefing-solved");
+    const solvedId = "wc_cc_99999999-8888-4777-8666-555555555555";
+    f.hub.setSolvedMatches([
+      {
+        workContextId: solvedId,
+        title: "refresh rotation deadlock",
+        developerName: "Mika",
+        solvedAt: new Date(Date.now() - 3_600_000).toISOString(),
+        matchedTargetKind: "file",
+      },
+    ]);
+    await openGate(f);
+    await registerSession(f);
+
+    const briefingDecision = await waitFor(() =>
+      f.injector.decideLine(promptLine("first question about refresh")),
+    );
+    const briefed = JSON.parse(briefingDecision) as {
+      params: { prompt: readonly { text: string }[] };
+    };
+    expect(briefed.params.prompt[1]?.text).toContain(`get_diagnosis ${solvedId}`);
+
+    // The rows exist the moment the text left the engine — no later flush
+    // may be what creates them (record-then-emit is the contract).
+    const spool = await readSessionSpool(f.home, f.key, sessionSlug(HOST_KEY));
+    const deliveries = spool.lines
+      .map((entry) => JSON.parse(entry) as { kind: string; body: { refId?: string; refKind?: string } })
+      .filter((entry) => entry.kind === "hint_delivery");
+    expect(deliveries.map((entry) => entry.body.refId)).toContain(solvedId);
+    expect(deliveries[0]?.body.refKind).toBe("work_context");
+    const state = await readSessionState(f.home, HOST_KEY);
+    expect(state?.briefingSolvedRefs).toContain(solvedId);
   });
 
   test("an unknown session skips (fail open, next prompt may know it)", async () => {

@@ -297,11 +297,30 @@ describe("§4.4: the corpus runs on every registered surface", () => {
 
 describe("§4.4: unregistered render surfaces are a red build", () => {
   test("package discovery found the workspace — the walk cannot silently go blind", () => {
-    // The floor: the two packages that exist today. A discovery that lost
-    // them (moved root, renamed dirs) must fail HERE, not pass vacuously.
+    // The floor: the three packages with surfaces today. A discovery that
+    // lost one (moved root, renamed dirs) must fail HERE, not pass vacuously.
     const labels = PACKAGES.map((pkg) => pkg.label);
     expect(labels).toContain("connector-core");
     expect(labels).toContain("connector-claude");
+    expect(labels).toContain("connector-acp");
+  });
+
+  test("the ACP injection surfaces stay registered by NAME — module cover is not surface cover", () => {
+    // All three share module src/inject/blocks.ts, so the module-granular
+    // meta-test stays green when ONE registration is deleted (its siblings
+    // keep the module allow-listed) and the corpus floor never trips —
+    // proven empirically in the Block-5 review. The day the block wrappers
+    // diverge (open question 2 framing), a dropped registration would drop
+    // that framing's corpus coverage silently; this named floor is what
+    // makes it a red build instead.
+    const names = new Set(ALL_SURFACES.map((surface) => surface.name));
+    for (const required of [
+      "acp-briefing-block",
+      "acp-claim-hint-block",
+      "acp-pointer-hint-block",
+    ]) {
+      expect(names.has(required), required).toBe(true);
+    }
   });
 
   test.each(PACKAGES.map((pkg) => [pkg.label, pkg] as const))(

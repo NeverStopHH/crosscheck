@@ -608,6 +608,72 @@ export const MUTATIONS: readonly Mutation[] = [
       "Stop test stays green because its fakes answer instantly; only the " +
       "slow-fake wall clock can see this",
   },
+  // The four below guard Block 5's ACP injection discipline (design §2.5),
+  // added by the Block-5 fixer round: the version gate and the budget race
+  // are exactly this catalogue's silent-death category — remove either and
+  // the wrapped session degrades with no error anywhere — and the two
+  // call-site entries keep the review's proven-unpinned wirings pinned.
+  {
+    label: "the acp injector ignores the version gate",
+    file: `${ACP}/src/inject/injector.ts`,
+    from: "  const gateOpen = (): boolean => gateDecided && negotiated === ACP_PROTOCOL_VERSION;",
+    to: "  const gateOpen = (): boolean => true;",
+    test: `${ACP}/test/injector.test.ts`,
+    because:
+      "an undecided or v2 connection gets mcpServers appends and prompt " +
+      "blocks a peer that never negotiated protocol 1 — §2.3 rule 7's gate " +
+      "is decoration and the version-mismatch notice never fires",
+  },
+  {
+    label: "the acp hint path waits out the hub instead of losing the race",
+    file: `${ACP}/src/inject/injector.ts`,
+    from: "      remaining,\n    );\n    if (text === null) {",
+    to: "      2_000_000_000,\n    );\n    if (text === null) {",
+    test: `${ACP}/test/injector.test.ts`,
+    because:
+      "a slow hub holds the developer's prompt ON THE WIRE for the hub's " +
+      "full latency instead of the UserPromptSubmit budget — the < 350 ms " +
+      "budget pin is the only thing that can see keystroke latency",
+  },
+  {
+    // The adversarial review's mutation M1: deleting this call left 22
+    // tests green because no suite drove a solved-pointer briefing through
+    // the ENGINE (the canned hub answered `matches: []`). The solved-match
+    // injector test is the pin now; this entry keeps it load-bearing.
+    label: "the acp briefing ships its solved pointers without telemetry",
+    file: `${ACP}/src/capture/engine.ts`,
+    from:
+      "          await recordBriefingDeliveries({\n" +
+      "            home: config.home,\n" +
+      "            repoKey: sessionRepoKey,\n" +
+      "            hostSessionKey: session.hostSessionKey,\n" +
+      "            crosscheckSessionId: session.crosscheckSessionId,\n" +
+      "            producer: producerFor(session),\n" +
+      "            shownSolvedIds: assembled.shownSolvedIds,\n" +
+      "            now: now(),\n" +
+      "          });\n",
+    to: "",
+    test: `${ACP}/test/injector.test.ts`,
+    because:
+      "a delivered solved pointer leaves no hint_delivery row and no state " +
+      "ref — the precision loop loses its input and a load/resume replay " +
+      "has no deterministic id to dedup on",
+  },
+  {
+    label: "the acp injector edits messages it cannot re-serialize value-preservingly",
+    file: `${ACP}/src/inject/injector.ts`,
+    from:
+      '      if (hasLossyNumberToken(text)) {\n' +
+      '        return skip("lossy-reserialize");\n' +
+      "      }\n",
+    to: "",
+    test: `${ACP}/test/injector.test.ts`,
+    because:
+      "a spec-legal 64-bit request id is rounded on the one edited message; " +
+      "the agent answers under the rounded id, the client never correlates " +
+      "the response, and session/new hangs — the only reachable " +
+      "session-breaker in the block",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -658,6 +724,7 @@ interface Outcome {
  * PRINTS: hints.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
+ * PRINTS: injector.test.ts 4
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1

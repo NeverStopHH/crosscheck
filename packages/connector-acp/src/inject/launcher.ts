@@ -34,9 +34,12 @@ export type AcpMcpServerResolution =
   | { readonly kind: "refused"; readonly reason: string };
 
 /**
- * Resolved ONCE per proxy, asynchronously, off the wire path (the injector
- * kicks this off at construction; a session/new that arrives before it
- * settles skips injection — fail open, logged).
+ * Resolved ONCE per proxy, asynchronously, off the wire path. The injector
+ * kicks this off at construction, and a session/new that arrives before it
+ * settles AWAITS it under the shared ACP_SESSION_SETUP_INJECT_BUDGET_MS
+ * deadline (injector.ts decideSetup) — an editor's first session lands
+ * milliseconds after spawn and is exactly the one the tools are for. Only a
+ * blown deadline skips (`launcher-pending`; fail open, logged).
  */
 export const resolveAcpMcpServer = async (
   env: Env,
