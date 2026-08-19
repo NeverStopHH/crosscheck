@@ -1,7 +1,7 @@
 # Publishing `crosscheck-hub` to npm
 
-One unscoped package, `crosscheck-hub`, assembled from the three workspace
-packages by [`pack-npm.ts`](../packages/connector-claude/scripts/pack-npm.ts).
+One unscoped package, `crosscheck-hub`, assembled from the seven workspace
+packages by [`pack-npm.ts`](../packages/cli/scripts/pack-npm.ts).
 
 Why `crosscheck-hub` and not `crosscheck`: npm refused `crosscheck` at publish
 time — its similarity rule against the existing package `cross-check`
@@ -24,7 +24,7 @@ absent.
 ## Preconditions
 
 - On `main`, green CI. The packed tarball is proven on every test run by
-  `packages/connector-claude/test/e2e/npm-package.e2e.test.ts` (clean-dir
+  `packages/cli/test/e2e/npm-package.e2e.test.ts` (clean-dir
   install, `--help`, `serve` + HTTP 200 + clean SIGTERM, `doctor`, both the
   Node-shim and Bun paths, license/file audit). That e2e needs node + npm on
   PATH and — on a cold npm cache — the registry; where those are missing it
@@ -42,7 +42,7 @@ absent.
 npm login                          # the npmjs account that will own the package
 
 cd ~/Desktop/crosscheck
-npm publish "$(bun packages/connector-claude/scripts/pack-npm.ts | tail -1)"
+npm publish "$(bun packages/cli/scripts/pack-npm.ts | tail -1)"
 # the script assembles dist/npm/, runs `npm pack`, and prints the tarball path last
 # unscoped packages are public by default; publishConfig.access=public is set anyway
 ```

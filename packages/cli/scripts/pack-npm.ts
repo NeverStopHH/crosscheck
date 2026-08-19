@@ -196,10 +196,13 @@ const buildManifest = (
   version,
   description:
     "Team coordination for local coding agents: a self-hosted hub with " +
-    "embedded PGlite plus the Claude Code connector — presence, claims, " +
-    "diagnosis trees.",
+    "embedded PGlite plus connectors for Claude Code, Cursor and any ACP " +
+    "agent — presence, claims, diagnosis trees.",
   keywords: [
     "claude-code",
+    "cursor",
+    "acp",
+    "agent-client-protocol",
     "coding-agents",
     "team-coordination",
     "mcp",

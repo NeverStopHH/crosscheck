@@ -130,13 +130,27 @@ crosscheck/
     schema/             zod types + versioned record envelope = the wire contract
     server/             Hono API · SSE · outbox · hybrid search · hint ranker
                         (PGlite embedded | DATABASE_URL → Postgres)
-    connector-claude/   hook scripts · MCP server · summarizer runner · spool
-    cli/                crosscheck: serve|init|login|status|approve|mute|doctor
+    connector-core/     everything agent-agnostic: spool · hub client · capture
+                        primitives (fingerprint, secret-scan, denylist) · the
+                        render+sanitize layer · MCP server+tools · session state
+                        · git · config · the kit flows all connectors share
+    connector-claude/   Claude Code specifics: hook payload parsing · statusline
+                        · Tier-1 summarizer · .claude settings plan+merge
+    connector-acp/      the transparent ACP proxy: byte pipe · Tier-0 capture
+                        from a parsed copy of the wire · mcpServers + prompt-
+                        block injection (one wrapper for every ACP client×agent)
+    connector-cursor/   Cursor IDE hooks: cursor-hook handlers · additional_
+                        context briefing+hints · contract-drift ledger
+    cli/                the ONE crosscheck bin fronting all of the above:
+                        serve|init|login|status|doctor|presence|mute|unmute|
+                        hook|statusline|mcp|acp|acp-report|cursor-hook
   docs/
-  examples/
+  packaging/            the npm launcher shim (bin/crosscheck.cjs)
 ```
 
 TypeScript-only (Bun). Python appears only ever as a generated HTTP client, later.
+Adapter architecture: [adapters/DESIGN-agent-agnostic.md](adapters/DESIGN-agent-agnostic.md);
+per-editor install: [adapters/INSTALL.md](adapters/INSTALL.md).
 
 The v0.5 web UI (feed, member list, click-to-approve) is NOT a separate app:
 the hub serves it itself under `/ui/*` from `packages/server` — server-rendered
@@ -154,7 +168,9 @@ reader opens is a pull, and §2.1 scopes mute to unasked surfaces.
 
 **v0.5:** Tier-1 gated draft summarizer + promotion loop · PreToolUse tripwire (ask-mode) · contradiction surfacing in briefings · web feed + approval UI · threshold tuning from telemetry + golden fixtures · **go public**.
 
-**v1:** **ACP proxy connector** (one connector for all Agent-Client-Protocol agents — Zed, JetBrains, Gemini CLI, 25+; the agent-agnostic bet) · Cursor rules adapter · MCP channels push (when out of preview) · OTel `gen_ai.*` export of observation events · git-JSONL transport export for server-averse teams · extracted public spec + conformance fixtures (now that a second adapter exists).
+**v1 — the agent-agnostic bet, SHIPPED** (docs/adapters/DESIGN-agent-agnostic.md, Blocks 1-8): **ACP proxy connector** (one transparent wrapper for all Agent-Client-Protocol agents — Zed, JetBrains, Gemini CLI, cursor-agent, 25+ — with Tier-0 capture and briefing/hint injection) · **Cursor hooks adapter** (capture + `additional_context` injection over the documented hooks API; the originally sketched *rules-file* adapter was REJECTED in design review — gitignore-interplay drift and a second sanitize surface — hooks + MCP won) · shared `connector-core` with one fingerprint, one sanitize layer and one set of kit flows, proven cross-connector by the §4.5 E2E (three real connector subprocesses, one hub, one fingerprint) · one `crosscheck` bin extracted to `packages/cli`.
+
+**v1.x (still ahead):** MCP channels push (when out of preview) · OTel `gen_ai.*` export of observation events · git-JSONL transport export for server-averse teams · extracted public spec + conformance fixtures · `acp setup` snippet printer · per-agent capture-level docs from the dogfood measurement (adapters/INSTALL.md).
 
 ## 9. Non-goals (v1)
 

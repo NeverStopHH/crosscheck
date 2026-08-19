@@ -6,14 +6,18 @@ The package is named `crosscheck-hub` (npm's similarity rule refused the bare
 name); everything it installs answers to `crosscheck` — the command below.
 
 Crosscheck is a coordination layer for teams where every developer works with a
-local coding agent (Claude Code first). It shares what git cannot see: who is
-investigating what right now, which hypotheses were already tested and
-rejected, which root causes are confirmed, and which in-flight changes are
-about to collide — semantically, not just at file level.
+local coding agent — Claude Code, Cursor, or any ACP agent (Gemini CLI,
+cursor-agent, …) in any ACP client (Zed, JetBrains, …). It shares what git
+cannot see: who is investigating what right now, which hypotheses were already
+tested and rejected, which root causes are confirmed, and which in-flight
+changes are about to collide — semantically, not just at file level.
 
-One npm package, three parts: the hub (`crosscheck serve` — Hono API, SSE,
-web UI, **embedded PGlite**: no Docker, no database install), the Claude Code
-connector (hooks, statusline, MCP tools), and the shared wire schema.
+One npm package, one `crosscheck` bin: the hub (`crosscheck serve` — Hono API,
+SSE, web UI, **embedded PGlite**: no Docker, no database install), three
+connectors — Claude Code (`crosscheck init`: hooks, statusline, MCP tools),
+Cursor IDE (`crosscheck init --cursor`), and the transparent ACP proxy
+(`crosscheck acp -- <agent cmd…>`) — and the shared wire schema. Per-editor
+install snippets: `docs/adapters/INSTALL.md` in the repo.
 
 ## Requirements
 

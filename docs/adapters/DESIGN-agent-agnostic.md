@@ -102,6 +102,13 @@ fronting three connectors) and it is accepted **as named debt**: extracting
 for zero user-visible gain. DESIGN.md §7 already reserves `packages/cli`; it gets
 extracted in Block 8 when the third connector proves the shape (one npm artifact, one
 `bin`, three connectors + server behind it).
+**Status (2026-08-19, Block 8): the debt is DISCHARGED.** `packages/cli` owns the bin
+and the host-agnostic commands (login/init/status/doctor/privacy/version);
+`connector-claude` keeps hooks, statusline, summarizer and the `.claude` settings
+plan+merge (`buildSettingsPlan` moved INTO settings-merge.ts beside the merge it
+feeds), and its Stop hook spawns an in-package `summarizer/worker-entry.ts` instead of
+the moved bin. The mechanical bar was proven the Block-1 way: a 20-command bin matrix
+captured before and after the move, stdout/stderr/exit byte-identical.
 
 ### 1.3 Identity generalization (Block 2, the only semantic change)
 
@@ -643,6 +650,32 @@ hand. (4) the budget RACE has its own deterministic hung-work pin
 (`connector-claude/test/hook-budget.test.ts`) plus a mutation entry — every
 measured budget bound rides the per-request timeouts, and deleting the race
 had left all budget suites green.
+Status note (2026-08-19, updated in Block 8): row 8 LANDED — the branch is
+complete. (1) The §4.5 cross-connector E2E exists as a CI test
+(`packages/cli/test/e2e/cross-connector.e2e.test.ts`): one real hub, all
+three connectors as real subprocesses of the one bin — the Claude developer
+publishes an evidence-backed diagnosis over real MCP, the ACP developer's
+FIRST prompt block carries that briefing and his targets land, the Cursor
+developer's briefing arrives as `additional_context` and the shared failure
+triggers the hint quoting the published claim; the same failure text through
+three wire shapes lands as ONE hub fingerprint across three work contexts;
+presence lists three agent kinds; the §2.1 opt-out and mute rules hold
+across connectors; every rendered surface passes a framing seal. Bounded
+(~4 s against the in-process hub), it rides the normal test lane. One
+scenario finding worth naming: an evidence-backed `likely_root_cause` makes
+the tree SOLVED (services/solved.ts, derived per read), so briefings in the
+scenario legitimately record solved-pointer `hint_deliveries` rows
+(ref_kind work_context) beside the hint pipeline's claim row — the E2E
+asserts both precisely. (2) `packages/cli` extraction per §1.2's discharge
+note above; the npm artifact ships all seven packages (connector-cursor and
+cli joined pack-npm + the tarball ship-audit; the launcher shim's ENTRY
+moved with the bin). (3) Docs: per-editor install + the consolidated
+dogfood checklists in `docs/adapters/INSTALL.md`; DESIGN.md §7/§8 updated
+to the shipped reality. Still OPEN and deliberately manual: the §6 q1/q2
+per-agent ACP measurement and the q4/q5 Cursor dogfood — INSTALL.md is the
+one place a human works through them after merge. `acp setup` (the
+snippet printer sketched in §2.6) remains unbuilt; INSTALL.md says so and
+carries the snippets it would print.
 
 ---
 
