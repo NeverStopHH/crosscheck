@@ -42,6 +42,9 @@ import { makeHome, makeRepo } from "./helpers.ts";
 const REPO_ID = "github.com/acme/api";
 const HOST_KEY = "hint-flow-uuid";
 const NOW = new Date("2026-08-19T12:00:00.000Z");
+/** The full-corpus loop measures ~5 s under ambient load — right at bun's
+ * default; an explicit ceiling keeps a loaded runner honest. */
+const CORPUS_TIMEOUT_MS = 20_000;
 const PROMPT = "why does src/auth/refresh.ts still 500 after the key rotation";
 
 const paths: string[] = [];
@@ -293,5 +296,5 @@ describe("selectAndRenderHint (the extracted UserPromptSubmit recipe)", () => {
         expect(text, `hint-flow/${id}`).toContain(QUOTED_DATA_NOTICE);
       }
     }
-  });
+  }, CORPUS_TIMEOUT_MS);
 });

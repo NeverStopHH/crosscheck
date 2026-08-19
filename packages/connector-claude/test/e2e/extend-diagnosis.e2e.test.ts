@@ -102,7 +102,15 @@ const startMcp = (env: Env, cwd: string): McpClient => {
         if (line.trim().length === 0) {
           continue;
         }
-        const envelope = JSON.parse(line) as RpcEnvelope;
+        // Tolerant by design: a stray non-JSON stdout line must not kill
+        // the whole file through an unhandled rejection in this floating
+        // reader — an unanswered request still fails its own test loudly.
+        let envelope: RpcEnvelope;
+        try {
+          envelope = JSON.parse(line) as RpcEnvelope;
+        } catch {
+          continue;
+        }
         const answer =
           envelope.id === undefined ? undefined : pending.get(envelope.id);
         if (answer !== undefined && envelope.id !== undefined) {

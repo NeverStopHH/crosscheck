@@ -12,21 +12,30 @@
  *          target, and his agent reports the SAME failure text.
  *   Cleo — Cursor IDE: `cursor-hook` subprocesses; her sessionStart briefing
  *          arrives as `additional_context`, and the same failure on
- *          postToolUseFailure triggers the fingerprint-matched hint that
- *          quotes Ada's published claim.
+ *          postToolUseFailure triggers the failure-matched hint (the hub's
+ *          FTS over the failure text) that quotes Ada's published claim.
  *
  * What this file proves that no per-connector suite can:
  *   - fingerprint parity IN ANGER: the same failure text captured through
  *     three different wire shapes (Claude tool_response.stderr, ACP
  *     tool_call_update.rawOutput.stderr, Cursor error_message) lands on the
  *     hub as ONE distinct fingerprint value across three work contexts;
+ *   - the fingerprint is CAUSALLY load-bearing, not just recorded: Ada's
+ *     solved tree surfaces in the other developers' briefings THROUGH the
+ *     solved-matches fingerprint tier (the only strong target her tree
+ *     shares with their live work), with the work_context delivery row to
+ *     match — break that tier and two steps here go red;
  *   - presence lists three sessions with three distinct agent kinds;
  *   - the §2.1 visibility rules hold across connectors: Ada's presence
  *     opt-out hides her live presence from Ben's and Cleo's surfaces while
  *     her published knowledge stays; Cleo muting Ada silences both the
- *     briefing pointers and the failure-matched hint about her;
- *   - every rendered surface in the scenario carries the framing invariants
- *     (the quoted-data notice, balanced « » frames, no raw control bytes).
+ *     briefing pointers and the failure-matched hint about her — and the
+ *     unmute control re-delivers the same hint to a fresh session, so the
+ *     mute step's `{}` can never go vacuous under a future dedup;
+ *   - every rendered agent-facing surface in the scenario carries the
+ *     framing invariants (the quoted-data notice, balanced « » frames, no
+ *     raw control bytes); the statusline is pinned by shape (it is a
+ *     corpus-registered surface, not a briefing).
  *
  * Runtime is bounded — every step has its own 30 s cap and the whole
  * scenario runs against an in-process hub — so it rides the normal `bun
@@ -34,7 +43,7 @@
  * lane is warranted.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm, writeFile } from "node:fs/promises";
+import { readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { sql } from "drizzle-orm";
 
@@ -59,8 +68,15 @@ const REMOTE = "git@github.com:acme/api.git";
 /** Wide enough that a cold PGlite query never trips a fail-open budget. */
 const TEST_TIMEOUT_MS = "4000";
 const STEP_TIMEOUT_MS = 30_000;
-/** ACP briefing prefetch starts at session/new capture; this lets it land. */
-const PREFETCH_WAIT_MS = 1500;
+/**
+ * The ACP briefing prefetch starts at session/new capture and announces
+ * itself with a `briefing-prefetch-ready` line in the proxy log (engine.ts
+ * logs it AFTER the cache slot flips) — polled here instead of a fixed
+ * wall-clock sleep, so a slow machine waits exactly as long as it must and
+ * a broken prefetch fails with a named error, never a false pass.
+ */
+const PREFETCH_READY_TIMEOUT_MS = 20_000;
+const PREFETCH_POLL_MS = 50;
 
 /**
  * The one failure all three developers hit. Lexically overlaps Ada's work
@@ -81,6 +97,15 @@ const ACP_SESSION_ID = "sess_fake_1";
 const BEN_CROSSCHECK_SESSION = `cc_acp-fake-agent--${ACP_SESSION_ID}`;
 const CLEO_CONV_1 = "conv-cleo-1";
 const CLEO_CROSSCHECK_SESSION_1 = `cc_cur-${CLEO_CONV_1}`;
+/**
+ * Ada's work context: `wc_cc_<host session id>` (state/session-state.ts).
+ * Named because the solved-pointer assertions pin briefing lines and
+ * `hint_deliveries` rows to exactly this id.
+ */
+const ADA_WORK_CONTEXT = "wc_cc_ada-uuid";
+/** The one solved-pointer sentence SOLVED_MATCH_KIND_LABELS renders for a
+ * fingerprint-tier match — the FTS text path cannot produce it. */
+const FINGERPRINT_MATCH_LABEL = "shared error fingerprint with current work";
 
 interface Developer {
   readonly developerId: string;
@@ -210,7 +235,16 @@ const startMcp = (env: Record<string, string>, cwd: string): McpClient => {
       buffer = lines.pop() ?? "";
       for (const line of lines) {
         if (line.trim().length === 0) continue;
-        const envelope = JSON.parse(line) as Record<string, unknown>;
+        // Tolerant by design: a stray non-JSON stdout line (a runtime
+        // warning, a debug print) must not kill the whole file through an
+        // unhandled rejection in this floating reader. Correctness is still
+        // enforced per call — an unanswered id times out loudly.
+        let envelope: Record<string, unknown>;
+        try {
+          envelope = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
         const id = envelope["id"];
         if (typeof id === "number" && pending.has(id)) {
           const answer = pending.get(id);
@@ -250,6 +284,37 @@ const startMcp = (env: Record<string, string>, cwd: string): McpClient => {
       proc.kill();
     },
   };
+};
+
+/**
+ * Poll the proxy's log dir (`<home>/logs/acp-<pid>.log`) until the engine's
+ * `briefing-prefetch-ready` line lands. The line is logged AFTER the cache
+ * slot flips, so seeing it guarantees the next prompt finds the briefing.
+ */
+const waitForPrefetchReady = async (home: string): Promise<void> => {
+  const logsDir = join(home, "logs");
+  const deadline = Date.now() + PREFETCH_READY_TIMEOUT_MS;
+  for (;;) {
+    const names = await readdir(logsDir).catch(() => [] as string[]);
+    const texts = await Promise.all(
+      names
+        .filter((name) => name.startsWith("acp-") && name.endsWith(".log"))
+        .map((name) =>
+          Bun.file(join(logsDir, name))
+            .text()
+            .catch(() => ""),
+        ),
+    );
+    if (texts.some((text) => text.includes("briefing-prefetch-ready"))) {
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `acp briefing prefetch never logged ready in ${String(PREFETCH_READY_TIMEOUT_MS)}ms`,
+      );
+    }
+    await new Promise((tick) => setTimeout(tick, PREFETCH_POLL_MS));
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -537,8 +602,8 @@ describe("three connectors, one hub (§4.5)", () => {
       benDumpPath = join(ben.home, "agent-stdin.dump");
 
       // Act: spawn the REAL bin's acp subcommand around the fake agent and
-      // drive one conversation — pausing before the first prompt so the
-      // async briefing prefetch (started at session/new) can land.
+      // drive one conversation — holding the first prompt until the proxy
+      // log carries the prefetch's ready-signal (started at session/new).
       const proc = Bun.spawn({
         cmd: [
           process.execPath,
@@ -567,7 +632,7 @@ describe("three connectors, one hub (§4.5)", () => {
         `${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: ben.repo, mcpServers: [] } })}\n`,
       );
       await benDriver.readUntil(2);
-      await new Promise((done) => setTimeout(done, PREFETCH_WAIT_MS));
+      await waitForPrefetchReady(ben.home);
       await benDriver.send(
         `${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: ACP_SESSION_ID, prompt: [{ type: "text", text: "why does the limiter build fail" }] } })}\n`,
       );
@@ -652,9 +717,12 @@ describe("three connectors, one hub (§4.5)", () => {
   );
 
   test(
-    "Cleo's failure triggers the fingerprint-matched hint quoting Ada's claim, and telemetry lands",
+    "Cleo's failure triggers the failure-matched hint quoting Ada's claim, and telemetry lands",
     async () => {
-      // Act: the SAME failure text, through Cursor's documented failure event.
+      // Act: the SAME failure text, through Cursor's documented failure
+      // event. The match here is the hub's FTS over the failure text (the
+      // hint pipeline's text tier); the FINGERPRINT-driven direction is
+      // asserted separately in the solved-pointer steps below.
       const run = await runBin(
         ["cursor-hook", "postToolUseFailure"],
         cursorFailure(cleo.repo, CLEO_CONV_1),
@@ -691,11 +759,20 @@ describe("three connectors, one hub (§4.5)", () => {
   test(
     "fingerprint parity in anger: three connectors, three work contexts, ONE hub fingerprint",
     async () => {
-      // Arrange: end Ben's session — the proxy's exit drain flushes his
-      // captured failure to the hub (§2.2 lifecycle).
+      // Arrange: end Ben's session — capture may flush at the failure
+      // moment already; the proxy's exit drain is the backstop that
+      // GUARANTEES his captured failure reached the hub (§2.2 lifecycle).
       expect(benDriver).not.toBeNull();
       const exitCode = await benDriver?.close();
       expect(exitCode).toBe(0);
+
+      // Presence half of "knowledge outlives presence": his ENDED session
+      // leaves live presence immediately (the hub excludes ended sessions
+      // even inside the TTL) — the next step asserts the knowledge half.
+      const afterClose = await presenceAs(ada.apiKey);
+      expect(
+        afterClose.some((entry) => entry.developerId === ben.developerId),
+      ).toBe(false);
 
       // Act
       const rows = await db.execute(
@@ -748,6 +825,16 @@ describe("three connectors, one hub (§4.5)", () => {
       expect(context.length).toBeLessThanOrEqual(MAX_BRIEFING_CHARS);
       assertFramed("ada-second-briefing", context);
 
+      // THE FINGERPRINT SURFACES (§4.5): Ada's solved tree (evidence-backed
+      // likely_root_cause ⇒ SOLVED, services/solved.ts) matches the other
+      // connectors' live work through the solved-matches fingerprint tier —
+      // the ONLY strong target her tree shares with theirs (she has no file
+      // target). Break that tier and this line disappears: the fingerprint
+      // rows of the previous step are causally load-bearing here, not
+      // merely recorded.
+      expect(context).toContain(FINGERPRINT_MATCH_LABEL);
+      expect(context).toContain(`get_diagnosis ${ADA_WORK_CONTEXT}`);
+
       // Her statusline (a rendered surface, via the same subprocess bin)
       // reads the presence cache this session-start just refreshed: Cleo's
       // live Cursor session is on it.
@@ -796,7 +883,23 @@ describe("three connectors, one hub (§4.5)", () => {
       const knowledgePart = context.slice(contextsHeaderAt);
       expect(presencePart).not.toContain("Ada");
       expect(knowledgePart).toContain(`«${ADA_TITLE}»`);
+      // The solved pointer is knowledge too: the fingerprint-tier match
+      // rides through her opt-out ("a solved tree is published knowledge",
+      // services/solved-matches.ts) …
+      expect(knowledgePart).toContain(FINGERPRINT_MATCH_LABEL);
       assertFramed("cleo-briefing-after-optout", context);
+
+      // … and its delivery row lands for THIS session (ref_kind
+      // work_context — the solved-pointer telemetry the claim-row filters
+      // elsewhere in this file deliberately exclude). This is the §4.5
+      // sentence made positive: an error fingerprint recorded by one
+      // connector surfaces in another's briefing, with the row to prove it.
+      const solvedDeliveries = await db.execute(
+        sql`select ref_id from hint_deliveries
+            where ref_kind = 'work_context'
+              and session_id = ${"cc_cur-conv-cleo-2"}`,
+      );
+      expect(solvedDeliveries.rows).toEqual([{ ref_id: ADA_WORK_CONTEXT }]);
     },
     STEP_TIMEOUT_MS,
   );
@@ -821,11 +924,15 @@ describe("three connectors, one hub (§4.5)", () => {
         cleo.env,
       );
 
-      // Assert: no Ada anywhere on Cleo's surfaces — briefing or hint.
+      // Assert: no Ada anywhere on Cleo's surfaces — briefing or hint. The
+      // briefing is still a RENDERED surface (Ben's context remains
+      // visible knowledge), so it passes the same framing seal as the rest.
       expect(start.exitCode).toBe(0);
       const briefing = additionalContextOf(start.stdout);
+      expect(briefing.length).toBeGreaterThan(0);
       expect(briefing).not.toContain("Ada");
       expect(briefing).not.toContain(`«${ADA_TITLE}»`);
+      assertFramed("cleo-briefing-after-mute", briefing);
       expect(failure.exitCode).toBe(0);
       expect(failure.stdout.trim()).toBe("{}");
       // And the telemetry: the claim deliveries are exactly the pre-mute
@@ -840,6 +947,50 @@ describe("three connectors, one hub (§4.5)", () => {
         sql`select ref_id from hint_deliveries where session_id = ${"cc_cur-conv-cleo-3"}`,
       );
       expect(mutedSessionRows.rows).toEqual([]);
+    },
+    STEP_TIMEOUT_MS,
+  );
+
+  test(
+    "unmute restores the hint to a fresh session — the mute was the cause, not dedup",
+    async () => {
+      // Arrange: reverse the mute through the CLI. This is the positive
+      // re-delivery control for the previous step: hint dedup is
+      // per-session (state.deliveredHintRefs), so a fresh session CAN
+      // receive the same claim — if `{}` above had come from any dedup
+      // instead of the hub's mute exclusion, this step would stay `{}` too
+      // and go red.
+      const unmute = await runBin(["unmute", "Ada"], "", cleo.env, cleo.repo);
+      expect(unmute.exitCode).toBe(0);
+
+      // Act: a fresh Cursor session hits the SAME failure once more.
+      const start = await runBin(
+        ["cursor-hook", "sessionStart"],
+        cursorSessionStart(cleo.repo, "conv-cleo-4"),
+        cleo.env,
+      );
+      expect(start.exitCode).toBe(0);
+      const failure = await runBin(
+        ["cursor-hook", "postToolUseFailure"],
+        cursorFailure(cleo.repo, "conv-cleo-4"),
+        cleo.env,
+      );
+
+      // Assert: the hint is back — same claim, same substance, attributed —
+      // and its claim delivery row lands beside the pre-mute one.
+      expect(failure.exitCode).toBe(0);
+      const hint = additionalContextOf(failure.stdout);
+      expect(hint).toContain(`«${ADA_ROOT_CAUSE}»`);
+      expect(hint).toContain("Ada");
+      assertFramed("cleo-hint-after-unmute", hint);
+      const claimDeliveries = await db.execute(
+        sql`select session_id, ref_id from hint_deliveries
+            where ref_kind = 'claim' order by session_id`,
+      );
+      expect(claimDeliveries.rows).toEqual([
+        { session_id: CLEO_CROSSCHECK_SESSION_1, ref_id: adaClaimId },
+        { session_id: "cc_cur-conv-cleo-4", ref_id: adaClaimId },
+      ]);
     },
     STEP_TIMEOUT_MS,
   );

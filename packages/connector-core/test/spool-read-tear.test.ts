@@ -79,6 +79,11 @@ const record = (tag: string, index: number): string =>
 const BIG = `${Array.from({ length: 60 }, (_, index) => record("big", index)).join("\n")}\n`;
 const SMALL = `${record("small", 0)}\n`;
 
+/** The 8000-trial loop runs ~0.8 s isolated but has been measured a hair
+ * past bun's 5 s default under full-suite machine load — an explicit
+ * ceiling keeps a loaded runner honest without hiding a real hang. */
+const TRIALS_TIMEOUT_MS = 20_000;
+
 describe("readSessionSpool returns one file, not a blend of two", () => {
   test("no swap under a reader can make the spool it returns contradict itself", async () => {
     // Arrange: BIG on disk with a cursor that legitimately says every byte of
@@ -162,5 +167,5 @@ describe("readSessionSpool returns one file, not a blend of two", () => {
       pendingExceedsSize: 0,
       contentVsIdentity: 0,
     });
-  });
+  }, TRIALS_TIMEOUT_MS);
 });

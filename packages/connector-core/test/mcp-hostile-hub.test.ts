@@ -46,6 +46,15 @@ const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "cc_hostile-uuid";
 const WORK_CONTEXT_ID = "wc_cc_hostile-uuid";
 
+/**
+ * The full-corpus loops measure 5001-5002 ms under ambient machine load —
+ * exactly bun's 5 s default, and a timeout here cascades: the shared repo's
+ * later git spawns starve and fail four unrelated tests with a misleading
+ * "not a git repository". An explicit ceiling keeps a loaded runner honest
+ * without hiding a real hang.
+ */
+const CORPUS_TIMEOUT_MS = 20_000;
+
 /** What the hub answers next. Rebound per test; there is no default worth one. */
 let respond: (request: Request) => Response | Promise<Response>;
 
@@ -424,7 +433,7 @@ describe("a draft body the hub chose cannot escape review_draft's sentences", ()
       // Assert
       assertSafeResponse(text, `draft body ${id}`);
     }
-  });
+  }, CORPUS_TIMEOUT_MS);
 
   test("a hostile draft body cannot leave the frame or forge a second line", async () => {
     // Arrange

@@ -297,13 +297,15 @@ describe("§4.4: the corpus runs on every registered surface", () => {
 
 describe("§4.4: unregistered render surfaces are a red build", () => {
   test("package discovery found the workspace — the walk cannot silently go blind", () => {
-    // The floor: the three packages with surfaces today. A discovery that
+    // The floor: the five packages with surfaces today (Block 8 moved the
+    // bin's doctor/status surfaces into packages/cli). A discovery that
     // lost one (moved root, renamed dirs) must fail HERE, not pass vacuously.
     const labels = PACKAGES.map((pkg) => pkg.label);
     expect(labels).toContain("connector-core");
     expect(labels).toContain("connector-claude");
     expect(labels).toContain("connector-acp");
     expect(labels).toContain("connector-cursor");
+    expect(labels).toContain("cli");
   });
 
   test("the ACP and Cursor injection surfaces stay registered by NAME — module cover is not surface cover", () => {
