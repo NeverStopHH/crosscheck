@@ -8,11 +8,12 @@
  * should say so" — design §6 open question 1).
  *
  * LEAN ON PURPOSE: counts and presence verdicts only. No file contents, no
- * prompt text, no command text ever appear in the report — the untrusted
- * agent name is printed through `agentSlug` (narrow charset), everything
- * else is numbers. This module never writes to stdout — the CLI layer
- * prints the returned text (the package-wide no-stdout-writers pin,
- * proxy.ts VERIFY).
+ * prompt text, no command text ever appear in the report — every untrusted
+ * wire string is reduced before it renders: the agent name through
+ * `agentSlug`, the version and stop reasons through their own narrow
+ * alphabets (`safeWireField` below); everything else is numbers. This module
+ * never writes to stdout — the CLI layer prints the returned text (the
+ * package-wide no-stdout-writers pin, proxy.ts VERIFY).
  */
 import { readFile } from "node:fs/promises";
 
@@ -34,6 +35,7 @@ import {
 export interface AcpRecordReport {
   /** Slugged (narrow charset) — the raw wire name never prints. */
   readonly agentName: string | null;
+  /** Reduced to version characters — the raw wire string never prints. */
   readonly agentVersion: string | null;
   readonly protocolVersion: number | null;
   readonly sessions: {
@@ -70,6 +72,23 @@ interface RecordEntry {
   readonly gap?: number;
   readonly oversized?: number;
 }
+
+/**
+ * The wire's OTHER untrusted strings, reduced before they may render:
+ * `agentInfo.version` keeps version punctuation, a stop reason keeps its
+ * snake_case token shape. Anything outside the alphabet — ANSI escapes,
+ * newlines, prose separators — is stripped, the remainder is length-capped,
+ * and an emptied value drops to null (renders as absent). The agent NAME
+ * already goes through `agentSlug`; these two were the header's blind spot.
+ */
+const VERSION_ALPHABET = /[^0-9A-Za-z._+-]/g;
+const STOP_REASON_ALPHABET = /[^0-9A-Za-z_-]/g;
+const MAX_WIRE_FIELD_CHARS = 40;
+
+const safeWireField = (raw: string, disallowed: RegExp): string | null => {
+  const shaped = raw.replace(disallowed, "").slice(0, MAX_WIRE_FIELD_CHARS);
+  return shaped.length === 0 ? null : shaped;
+};
 
 const parseEntry = (raw: string): RecordEntry | null => {
   try {
@@ -222,12 +241,19 @@ export const analyzeAcpRecord = (text: string): AcpRecordReport => {
     if (request.method === WIRE_METHODS.initialize) {
       const initialized = parseInitializeResult(message.result);
       agentName = initialized.agentName === null ? null : agentSlug(initialized.agentName);
-      agentVersion = initialized.agentVersion;
+      agentVersion =
+        initialized.agentVersion === null
+          ? null
+          : safeWireField(initialized.agentVersion, VERSION_ALPHABET);
       protocolVersion = initialized.protocolVersion;
     } else if (request.method === WIRE_METHODS.sessionPrompt) {
       const { stopReason } = parseSessionPromptResult(message.result);
-      if (stopReason !== null) {
-        stopReasons[stopReason] = (stopReasons[stopReason] ?? 0) + 1;
+      const shaped =
+        stopReason === null
+          ? null
+          : safeWireField(stopReason, STOP_REASON_ALPHABET);
+      if (shaped !== null) {
+        stopReasons[shaped] = (stopReasons[shaped] ?? 0) + 1;
       }
     } else if (request.method === WIRE_METHODS.terminalOutput) {
       terminals.outputs += 1;

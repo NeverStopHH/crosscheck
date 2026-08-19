@@ -18,10 +18,13 @@ import { crosscheckSessionIdFor } from "../src/state/session-state.ts";
 import {
   ACP_AGENT_KIND_FALLBACK,
   CURSOR_AGENT_KIND,
+  MAX_ACP_SESSION_ID_CHARS,
+  MAX_AGENT_SLUG_CHARS,
   acpAgentKind,
   acpHostSessionKey,
   agentSlug,
   cursorHostSessionKey,
+  safeAcpSessionId,
 } from "../src/state/host-session-key.ts";
 import { makeHome } from "./helpers.ts";
 
@@ -66,6 +69,54 @@ describe("connector host-session-key prefixes", () => {
     // Empty and all-symbol names fall to the design's unknown slug.
     expect(agentSlug("")).toBe("unknown");
     expect(agentSlug("«»``")).toBe("unknown");
+  });
+
+  test("a hostile multi-kilobyte agent name slugs to a bounded, delimiter-safe prefix", () => {
+    // "a a a …" slugs to "a-a-a-…", and the cap lands mid-pattern — the
+    // second edge strip must remove the cut's trailing dash so the `--`
+    // delimiter's uniqueness argument (slug never ends with `-`) holds.
+    const slug = agentSlug("a ".repeat(200));
+    expect(slug.length).toBeLessThanOrEqual(MAX_AGENT_SLUG_CHARS);
+    expect(slug.endsWith("-")).toBe(false);
+    expect(slug.startsWith("a-a-a")).toBe(true);
+  });
+});
+
+describe("safeAcpSessionId — agent-controlled ids, shaped before keys, logs and filenames", () => {
+  test("ordinary ids pass through untouched", () => {
+    expect(safeAcpSessionId("sess_abc123")).toBe("sess_abc123");
+    expect(safeAcpSessionId("550e8400-e29b-41d4-a716-446655440000")).toBe(
+      "550e8400-e29b-41d4-a716-446655440000",
+    );
+  });
+
+  test("control, format and separator characters are removed — a newline cannot mint a log line", () => {
+    // \n is Cc (the log-forging vector), ESC is Cc (terminal escapes), the
+    // space is Zs and the zero-width space is Cf — all gone, nothing spaced.
+    expect(safeAcpSessionId("sess\n_evil\u001b[31m id\u200b")).toBe(
+      "sess_evil[31mid",
+    );
+  });
+
+  test("an overlong id folds to a deterministic sha256 key that cannot overflow a filename", () => {
+    const long = "x".repeat(MAX_ACP_SESSION_ID_CHARS + 100);
+    const shaped = safeAcpSessionId(long);
+    expect(shaped).toMatch(/^sha256-[0-9a-f]{64}$/);
+    // Deterministic (replays land on the same key), distinct per raw id,
+    // and idempotent (the digest re-shapes to itself).
+    expect(safeAcpSessionId(long)).toBe(shaped ?? "");
+    expect(safeAcpSessionId(`${long}y`)).not.toBe(shaped);
+    expect(safeAcpSessionId(shaped ?? "")).toBe(shaped);
+  });
+
+  test("an id with nothing printable left is null — capture skips, never a degenerate key", () => {
+    expect(safeAcpSessionId("\n\t \u200b")).toBeNull();
+  });
+
+  test("shaping is idempotent — a shaped id re-shapes to itself", () => {
+    const shaped = safeAcpSessionId("sess evil\nid");
+    expect(shaped).not.toBeNull();
+    expect(safeAcpSessionId(shaped ?? "")).toBe(shaped);
   });
 });
 

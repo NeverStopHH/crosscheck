@@ -17,6 +17,8 @@
  */
 import { z } from "zod";
 
+import { safeAcpSessionId } from "@crosscheck/connector-core/state/host-session-key.ts";
+
 export const ACP_PROTOCOL_VERSION = 1;
 
 /** The §2.4 rows by method name — the capture dispatcher's whole vocabulary. */
@@ -128,6 +130,18 @@ export const parseInitializeResult = (result: unknown): InitializeResult => {
 
 // ── session lifecycle ───────────────────────────────────────────────────────
 
+/**
+ * HOSTILE-IDENTIFIER DISCIPLINE: every session id on this wire is minted by
+ * the AGENT. `safeAcpSessionId` shapes each one right here, at the parse
+ * boundary — the single choke point — so nothing downstream (engine log
+ * lines, host keys, state filenames, `cc_`/`wc_` ids) can ever see an
+ * unshaped id: no newline can mint a log line, no ESC can drive a terminal,
+ * no multi-kilobyte id can bloat a key. An id that is nothing but
+ * unprintables parses to null: capture skips it, the pipe above is
+ * unaffected. Only `--record` keeps the verbatim wire — that is its
+ * documented purpose.
+ */
+
 const SessionNewParamsSchema = z.looseObject({ cwd: z.string().min(1) });
 
 export const parseSessionNewParams = (
@@ -143,7 +157,8 @@ export const parseSessionNewResult = (
   result: unknown,
 ): { readonly sessionId: string } | null => {
   const parsed = parseOrNull(SessionNewResultSchema, result);
-  return parsed === null ? null : { sessionId: parsed.sessionId };
+  const sessionId = parsed === null ? null : safeAcpSessionId(parsed.sessionId);
+  return sessionId === null ? null : { sessionId };
 };
 
 const SessionLoadParamsSchema = z.looseObject({
@@ -155,9 +170,10 @@ export const parseSessionLoadParams = (
   params: unknown,
 ): { readonly sessionId: string; readonly cwd: string } | null => {
   const parsed = parseOrNull(SessionLoadParamsSchema, params);
-  return parsed === null
+  const sessionId = parsed === null ? null : safeAcpSessionId(parsed.sessionId);
+  return parsed === null || sessionId === null
     ? null
-    : { sessionId: parsed.sessionId, cwd: parsed.cwd };
+    : { sessionId, cwd: parsed.cwd };
 };
 
 const SessionIdParamsSchema = z.looseObject({ sessionId: z.string().min(1) });
@@ -167,7 +183,8 @@ export const parseSessionIdParams = (
   params: unknown,
 ): { readonly sessionId: string } | null => {
   const parsed = parseOrNull(SessionIdParamsSchema, params);
-  return parsed === null ? null : { sessionId: parsed.sessionId };
+  const sessionId = parsed === null ? null : safeAcpSessionId(parsed.sessionId);
+  return sessionId === null ? null : { sessionId };
 };
 
 const SessionPromptResultSchema = z.looseObject({
@@ -230,11 +247,12 @@ export const parseSessionUpdateParams = (
   params: unknown,
 ): SessionUpdate | null => {
   const parsed = parseOrNull(SessionUpdateParamsSchema, params);
-  if (parsed === null) {
+  const sessionId = parsed === null ? null : safeAcpSessionId(parsed.sessionId);
+  if (parsed === null || sessionId === null) {
     return null;
   }
   if (!TOOL_CALL_UPDATES.has(parsed.update.sessionUpdate)) {
-    return { sessionId: parsed.sessionId, toolCall: null };
+    return { sessionId, toolCall: null };
   }
   const locationPaths = (parsed.update.locations ?? [])
     .map((row) => parseOrNull(LocationSchema, row))
@@ -247,7 +265,7 @@ export const parseSessionUpdateParams = (
         : [],
     );
   return {
-    sessionId: parsed.sessionId,
+    sessionId,
     toolCall: {
       paths: [...locationPaths, ...diffPaths],
       toolKind: parsed.update.kind ?? null,
@@ -269,9 +287,10 @@ export const parseFsWriteParams = (
   params: unknown,
 ): { readonly sessionId: string; readonly path: string } | null => {
   const parsed = parseOrNull(FsWriteParamsSchema, params);
-  return parsed === null
+  const sessionId = parsed === null ? null : safeAcpSessionId(parsed.sessionId);
+  return parsed === null || sessionId === null
     ? null
-    : { sessionId: parsed.sessionId, path: parsed.path };
+    : { sessionId, path: parsed.path };
 };
 
 /** Session id only — the command text is deliberately not modeled (§2.4). */
@@ -301,7 +320,13 @@ export const parseTerminalIdParams = (
   const parsed = parseOrNull(TerminalIdParamsSchema, params);
   return parsed === null
     ? null
-    : { sessionId: parsed.sessionId ?? null, terminalId: parsed.terminalId };
+    : {
+        sessionId:
+          parsed.sessionId === undefined
+            ? null
+            : safeAcpSessionId(parsed.sessionId),
+        terminalId: parsed.terminalId,
+      };
 };
 
 const ExitStatusSchema = z.looseObject({

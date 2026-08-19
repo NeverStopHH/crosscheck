@@ -82,6 +82,47 @@ export const MUTATIONS: readonly Mutation[] = [
       "tell the proxy was there",
   },
   {
+    // Block 4's prime directive 2 (fixer round): the serialized capture
+    // chain's catch is what turns a capture-side throw into a counter plus
+    // one log line. Without it the first rejection POISONS the chain — every
+    // later `.then(work)` hangs off a rejected promise and never runs — so
+    // capture goes silently dead for the rest of the proxy's life. The
+    // adversarial review proved the original suite could not see this
+    // (all 115 connector-acp tests stayed green with the catch deleted);
+    // the hardening suite's fault-seam test is the guard now.
+    label: "the acp capture chain lets one capture bug poison every later dispatch",
+    file: `${ACP}/src/capture/engine.ts`,
+    from:
+      "    chain = chain.then(work).catch((error) => {\n" +
+      "      counters.errors += 1;\n" +
+      "      logger.line(`capture-error ${describeError(error)}`);\n" +
+      "    });\n",
+    to: "    chain = chain.then(work);\n",
+    test: `${ACP}/test/capture-hardening.test.ts`,
+    because:
+      "a single capture bug turns Tier-0 capture off for the whole proxy " +
+      "lifetime with zero counters and zero log lines — fail-open decays " +
+      "into fail-silent, which is the one decay prime directive 2 forbids",
+  },
+  {
+    // The Block-4 report presented the load-time register as pinned, but the
+    // pin ran behind a handshake that had ALREADY registered the session, so
+    // deleting this whole branch left the suite green (the review's revert
+    // probe: 13 pass / 0 fail without it). The hardening suite's COLD load
+    // and resume tests are the load-bearing pins now; this entry keeps them
+    // that way.
+    label: "session/load stops registering sessions this proxy never saw born",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "            await registerAcpSession(params.sessionId, params.cwd);\n",
+    to: "",
+    test: `${ACP}/test/capture-hardening.test.ts`,
+    because:
+      "a client resuming yesterday's session gets zero capture for its " +
+      "entire replayed history and every event after it — the §2.4 " +
+      "load/resume row silently vanishes for exactly the sessions it " +
+      "exists to cover",
+  },
+  {
     // The guard here USED TO BE the process-level test/hook-time-budget.test.ts,
     // which detects this through a wall-clock SIDE EFFECT: with the reserve gone
     // maintenance eats the hook that hosts it, so the briefing goes missing and
@@ -609,6 +650,7 @@ interface Outcome {
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
+ * PRINTS: capture-hardening.test.ts 2
  * PRINTS: hint-budget.test.ts 2
  * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 1

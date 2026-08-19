@@ -6,184 +6,56 @@
  * the pipe above this layer is Block 3's untouched proof.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createDb, createServer } from "@crosscheck/server";
-
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import { fingerprint } from "@crosscheck/connector-core/capture/fingerprint.ts";
-import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
-import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { getDiagnosis, getPresence } from "@crosscheck/connector-core/http/hub.ts";
-import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import * as claudeToolEvents from "../../connector-claude/src/capture/tool-events.ts";
 
 import { createAcpCapture } from "../src/capture/engine.ts";
-import type { AcpLogger } from "../src/logger.ts";
-import type { ObservedLine } from "../src/observer.ts";
+import {
+  REPO_ID,
+  REMOTE,
+  SHUTDOWN_BUDGET_MS,
+  advanceClock,
+  bootCaptureHub,
+  createHarness,
+  handshake,
+  listFilesRecursively,
+  stubLogger,
+  toolCallUpdate,
+  wireLine,
+} from "./fixtures/capture-harness.ts";
+import type { CaptureHub, Harness, HarnessOptions } from "./fixtures/capture-harness.ts";
 import {
   makeHome,
   makeRepo,
   writeRepoFile,
 } from "../../connector-core/test/helpers.ts";
 
-const ADMIN_TOKEN = "acp-engine-admin";
-const REPO_ID = "github.com/acme/api";
-const REMOTE = "git@github.com:acme/api.git";
-const TIMEOUT_MS = "4000";
-const SHUTDOWN_BUDGET_MS = 4000;
 const FAILURE_TEXT =
   "error TS2304: cannot find name 'limiter' at build step 7 of the pipeline";
 
-let server: ReturnType<typeof Bun.serve>;
-let hubUrl: string;
-let apiKey: string;
+let hub: CaptureHub;
 const cleanups: string[] = [];
 
 beforeAll(async () => {
-  const db = await createDb();
-  const app = createServer({ db, adminToken: ADMIN_TOKEN });
-  server = Bun.serve({ port: 0, fetch: app.fetch });
-  hubUrl = `http://127.0.0.1:${server.port}`;
-  const response = await fetch(`${hubUrl}/api/developers`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${ADMIN_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ name: "Acp Dev", email: "acp-engine@example.com" }),
-  });
-  const body = (await response.json()) as { data: { apiKey: string } };
-  apiKey = body.data.apiKey;
+  hub = await bootCaptureHub("acp-engine");
 });
 
 afterAll(async () => {
-  server.stop(true);
+  hub.server.stop(true);
   await Promise.all(
     cleanups.map((path) => rm(path, { recursive: true, force: true })),
   );
 });
 
-/** In-memory AcpLogger: capture must not need a real log file to be tested. */
-interface StubLogger extends AcpLogger {
-  readonly lines: readonly string[];
-}
-
-const stubLogger = (): StubLogger => {
-  const lines: string[] = [];
-  return {
-    lines,
-    path: "/dev/null",
-    line: (text: string) => {
-      lines.push(text);
-    },
-    writeFailures: () => 0,
-    droppedLines: () => 0,
-    flush: () => Promise.resolve(),
-  };
-};
-
-const wireLine = (value: unknown): ObservedLine => ({
-  kind: "line",
-  text: JSON.stringify(value),
-  parsedOk: true,
-  bytes: 0,
-  atEof: false,
-});
-
-interface Harness {
-  readonly home: string;
-  readonly repo: string;
-  readonly logger: StubLogger;
-  readonly hub: HubContext;
-  readonly clock: { value: Date };
-  readonly capture: ReturnType<typeof createAcpCapture>;
-}
-
-const harness = async (
-  label: string,
-  options: { readonly agentKindFlag?: string } = {},
-): Promise<Harness> => {
-  const home = await makeHome(label);
-  const repo = await makeRepo(label, { remote: REMOTE });
-  cleanups.push(home, repo);
-  const env: Env = {
-    CROSSCHECK_HOME: home,
-    CROSSCHECK_HUB_URL: hubUrl,
-    CROSSCHECK_API_KEY: apiKey,
-    CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
-  };
-  const logger = stubLogger();
-  const clock = { value: new Date("2026-08-19T12:00:00.000Z") };
-  const capture = createAcpCapture({
-    env,
-    logger,
-    agentKindFlag: options.agentKindFlag,
-    now: () => clock.value,
-  });
-  return {
-    home,
-    repo,
-    logger,
-    clock,
-    capture,
-    hub: {
-      hubUrl,
-      apiKey,
-      timeoutMs: Number(TIMEOUT_MS),
-      home,
-      repoKey: repoKey(hubUrl, REPO_ID),
-      now: () => new Date(),
-    },
-  };
-};
-
-const advanceClock = (h: Harness, ms: number): void => {
-  h.clock.value = new Date(h.clock.value.getTime() + ms);
-};
-
-const handshake = (h: Harness, sessionId: string, cwd: string): void => {
-  h.capture.offer(
-    "c2a",
-    wireLine({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } }),
-  );
-  h.capture.offer(
-    "a2c",
-    wireLine({
-      jsonrpc: "2.0",
-      id: 1,
-      result: {
-        protocolVersion: 1,
-        agentInfo: { name: "fake-agent", version: "1.0.0" },
-      },
-    }),
-  );
-  h.capture.offer(
-    "c2a",
-    wireLine({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd, mcpServers: [] } }),
-  );
-  h.capture.offer("a2c", wireLine({ jsonrpc: "2.0", id: 2, result: { sessionId } }));
-};
-
-const toolCallUpdate = (sessionId: string, update: Record<string, unknown>) =>
-  wireLine({
-    jsonrpc: "2.0",
-    method: "session/update",
-    params: { sessionId, update },
-  });
-
-const listFilesRecursively = async (root: string): Promise<readonly string[]> => {
-  const entries = await readdir(root, { recursive: true, withFileTypes: true }).catch(
-    () => [],
-  );
-  return entries
-    .filter((entry) => entry.isFile())
-    .map((entry) => join(entry.parentPath, entry.name))
-    .sort();
-};
+const harness = (label: string, options: HarnessOptions = {}): Promise<Harness> =>
+  createHarness(hub, cleanups, label, options);
 
 describe("the §2.4 mapping against a live hub", () => {
   test("initialize + session/new register with agent_kind acp:<name> and the branch @ repo title", async () => {
@@ -416,7 +288,11 @@ describe("the §2.4 mapping against a live hub", () => {
     }
   });
 
-  test("session/load re-registers idempotently and replayed updates add no new hub rows", async () => {
+  test("a warm session/load skips re-registration and replayed updates add no new hub rows", async () => {
+    // The COLD half — a load this proxy never saw born — is pinned in
+    // capture-hardening.test.ts (and mutation-checked); this test pins the
+    // warm half: a load of a session already live in this proxy is a no-op
+    // for registration, and the replay adds nothing.
     // Arrange: a live session with one captured target
     const h = await harness("replay");
     await writeRepoFile(h.repo, "src/limiter.ts", "export const a = 1;\n");
@@ -450,12 +326,14 @@ describe("the §2.4 mapping against a live hub", () => {
     h.capture.offer("a2c", wireLine({ jsonrpc: "2.0", id: 10, result: {} }));
     await h.capture.settle();
 
-    // Assert: same session id (no ~r suffix), target rows unchanged
+    // Assert: same session id (no ~r suffix), target rows unchanged, and
+    // the register flow ran exactly once — the warm load skipped it.
     const state = await readSessionState(h.home, hostKey);
     expect(state?.crosscheckSessionId).toBe(`cc_${hostKey}`);
     const after = await getDiagnosis(h.hub, `wc_cc_${hostKey}`);
     if (!after.ok) throw new Error("diagnosis unavailable");
     expect(after.data.targets.length).toBe(before.data.targets.length);
+    expect(h.capture.counters().sessions).toBe(1);
   });
 
   test("--agent-kind overrides the initialize-derived kind; the host key does not change", async () => {

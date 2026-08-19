@@ -248,7 +248,7 @@ per-session capture state.
 |---|---|
 | `initialize` response → `agentInfo.name/version` | `agent_kind = acp:<name>` for every session on this connection (stabilized field, 2025-10-24). `--agent-kind` overrides. |
 | `session/new` request (`cwd`, `mcpServers`) + response (`sessionId`) | Resolve repo identity from `cwd` → `registerSessionFlow` with `hostSessionKey = acpHostSessionKey(agentSlug, sessionId)` (the `acp--<agentSlug>--<sessionId>` double-dash shape from §1.3 — call the helper, never invent the string); work-context title from branch @ repo (ACP has no session title; we do not synthesize one from prompt text — same privacy posture as the Claude connector's fallback). State file written before first append, preserving reap's invariant. Kick off async briefing prefetch (§2.5). |
-| `session/load` / `session/resume` request + response | Re-register (idempotent — deterministic ids, hub answers duplicate). History replays as `session/update` notifications: **capture during replay is safe by construction** because every Tier-0 record dedups on a natural key server-side (`target` on (work_context, kind, value); `work_context` on id) and the injection point (`session/prompt`, client→agent) never fires during replay. Pinned by a test, not assumed (§4.2). |
+| `session/load` / `session/resume` request + response | Re-register (idempotent — deterministic ids, hub answers duplicate). A session already live in the SAME proxy skips the re-register outright (no counter inflation, no re-appended work context, no seen-set reset); the cold path — a load/resume this proxy never saw born — registers at request time and is both pinned and mutation-checked. History replays as `session/update` notifications: **capture during replay is safe by construction** because every Tier-0 record dedups on a natural key server-side (`target` on (work_context, kind, value); `work_context` on id) and the injection point (`session/prompt`, client→agent) never fires during replay. Pinned by a test, not assumed (§4.2). |
 | `session/prompt` request | Heartbeat; hint fast path (§2.5). Prompt text is used as an ephemeral search query against the hub — exact parity with the Claude connector's UserPromptSubmit; never stored, never uploaded as content. |
 | `session/update`: `tool_call` / `tool_call_update` with `locations[].path`, `content` diff paths | File targets through `captureFileTargets` (repo-relative, denylist, seen-set, secret-scan). `kind: edit` additionally drives status → `implementing` (same heuristic as the Claude connector's edit-tool heartbeat). Caveat honestly: tool-call reporting is a SHOULD; agents doing internal file I/O without reporting locations capture nothing here — `fs/write_text_file` and terminals below are the backstop. |
 | `tool_call_update` with `status: failed` → `rawOutput` | Failure text extraction (string fields joined, tail-sliced) → `fingerprint()` → `error_fingerprint` target. Identical normalizer as Claude Code = cross-agent fingerprint matching, which is the product. |
@@ -261,6 +261,15 @@ per-session capture state.
 Not captured, deliberately: prompt/response content, `rawInput` bodies, diff `oldText`/
 `newText` contents (paths only), permission outcomes. Tier-0 stays metadata + hashes,
 exactly like the Claude connector.
+
+Hostile-identifier discipline (fixer round): every identifier on this wire is
+agent-controlled, so session ids are shaped at the wire-parse boundary
+(`safeAcpSessionId` — control/format/separator strip, overlong ids fold to a
+deterministic sha256) and agent names slug through a length-capped `agentSlug`
+before either may enter log lines, state filenames, or `cc_`/`wc_` ids. Only
+`--record` keeps the verbatim wire — that is its documented purpose. The
+in-memory per-session seen-set carries the same FIFO bound as its persisted
+copy (`MAX_SEEN_TARGETS`), so a hostile path stream costs bounded memory.
 
 ### 2.5 Injection — clean per protocol, and where v1 stays read-only
 
@@ -574,7 +583,11 @@ freely against each other subject to that one remaining serialization point.
    SHOULD. Zed's UX depends on it so quality is reportedly high, but per-agent coverage
    (Gemini CLI, Copilot CLI, cursor-agent, claude-agent-acp) must be measured with
    `--record` in Block 4 — if an agent reports edits without paths, its Tier-0 capture
-   degrades to fs/terminal signals and the doc for that agent should say so.
+   degrades to fs/terminal signals and the doc for that agent should say so. The same
+   `--record` pass must answer a resume question: cold `session/resume` WITH a `cwd` is
+   pinned at the wire level (capture-hardening.test.ts), but an agent whose resume
+   request omits `cwd` registers nothing — if any major does that, its doc must say so
+   and the parser needs a fallback decision.
 2. **Prompt-block append tolerance.** Spec-legal, but do any agents choke on an extra
    trailing text block, and how do Zed/JetBrains render the replayed history? Block 5
    dogfood decides whether briefing stays on the prompt path or moves MCP-only.
@@ -591,7 +604,17 @@ freely against each other subject to that one remaining serialization point.
    proxy gains a committed-to-repo install path ("install = one PR") for Zed teams —
    test in Block 3, and if it works, `init --zed` becomes a cheap follow-up.
 7. **Proxy under long sessions**: pending-map growth, spool size, and log rotation over
-   a week of real use (bounded by design; measured before v1 ships).
+   a week of real use (bounded by design; measured before v1 ships). Two facts from the
+   fixer round belong to this question: (a) the in-memory seen-set now carries the same
+   `MAX_SEEN_TARGETS` FIFO bound as the persisted state, so it no longer grows with the
+   session; (b) MEASURED 2026-08-19 — a hard-killed proxy (SIGKILL, no shutdown drain)
+   leaves one immortal residue per live session: the session-state file makes
+   `isSessionLive` true forever, which gates reap out of both its delivered-removal and
+   age-expiry branches, so the state+spool+cursor triple and the open hub session are
+   never reclaimed. Inherited core behavior (latent for the Claude connector too), far
+   more reachable from a long-lived proxy. Not data loss — the spool was flushed live —
+   but the fix (a liveness token in `SessionState`, or an age sweep of the sessions
+   dir) must land before v1 ships.
 
 ---
 

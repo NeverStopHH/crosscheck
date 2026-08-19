@@ -73,6 +73,15 @@ export const ACP_TEST_FAULT_ENV_VAR = "CROSSCHECK_ACP_TEST_FAULT";
 export const ACP_TEST_FAULT_POST_SPAWN = "post-spawn";
 
 /**
+ * Same seam, capture side: this value arms exactly ONE throw inside the
+ * capture engine's serialized dispatch chain — the only deterministic way
+ * the suite can prove prime directive 2's containment catch is load-bearing
+ * (counted, one log line, chain alive) rather than decoration. One-shot on
+ * purpose: a real capture bug throws at a point, not on every line forever.
+ */
+export const ACP_TEST_FAULT_CAPTURE_DISPATCH = "capture-dispatch";
+
+/**
  * Cap per pending-map direction (capture/pending.ts): request ids awaiting a
  * response. A peer that never answers must cost fixed memory; past this the
  * oldest entry is evicted and counted, and its eventual response captures

@@ -25,6 +25,7 @@
  */
 import {
   FINGERPRINT_SOURCE_CHARS,
+  MAX_SEEN_TARGETS,
 } from "@crosscheck/connector-core/constants.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
@@ -64,6 +65,8 @@ import {
   ACP_CAPTURE_MAX_PENDING_BYTES,
   ACP_MAX_TRACKED_TERMINALS,
   ACP_SESSION_CLOSE_FLUSH_BUDGET_MS,
+  ACP_TEST_FAULT_CAPTURE_DISPATCH,
+  ACP_TEST_FAULT_ENV_VAR,
 } from "../constants.ts";
 import type { AcpLogger } from "../logger.ts";
 import type { ObservedLine } from "../observer.ts";
@@ -205,6 +208,10 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
   let accepting = !disabled;
   let pendingBytes = 0;
   let chain: Promise<void> = Promise.resolve();
+  // The capture-side test fault (constants.ts): arms exactly one dispatch
+  // throw, so the containment catch below is provable — and mutation-checked.
+  let dispatchFaultArmed =
+    options.env[ACP_TEST_FAULT_ENV_VAR] === ACP_TEST_FAULT_CAPTURE_DISPATCH;
 
   const enqueue = (work: () => Promise<void>): void => {
     chain = chain.then(work).catch((error) => {
@@ -361,6 +368,18 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     for (const path of captured) {
       session.seenTargets.add(path);
     }
+    // The in-memory twin of withSeenTargets' FIFO cap (design §6 question
+    // 7): a week-long session — or an agent streaming synthetic in-repo
+    // paths — must cost bounded memory. Evicting the oldest trades a
+    // possible re-capture (the hub dedups on natural key) for the bound,
+    // exactly the trade the persisted copy already makes.
+    while (session.seenTargets.size > MAX_SEEN_TARGETS) {
+      const oldest = session.seenTargets.values().next();
+      if (oldest.done) {
+        break;
+      }
+      session.seenTargets.delete(oldest.value);
+    }
     counters.targets += captured.length;
     await updateSessionState(
       session.config.home,
@@ -510,10 +529,17 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       ) {
         // Register at REQUEST time: history replays as session/update
         // notifications BEFORE the load response arrives (§2.4). Deterministic
-        // ids make the re-register idempotent; the hub answers duplicate.
+        // ids make the cold re-register idempotent; the hub answers duplicate.
+        // A session already LIVE in this proxy is skipped outright — a load
+        // storm must not inflate the counter, re-append work_context, or
+        // reset the seen-set (capture-hardening.test.ts pins both halves; a
+        // disabled or closed entry re-resolves, in case config appeared).
         const params = parseSessionLoadParams(message.params);
         if (params !== null) {
-          await registerAcpSession(params.sessionId, params.cwd);
+          const existing = sessions.get(params.sessionId);
+          if (existing === undefined || existing.ended) {
+            await registerAcpSession(params.sessionId, params.cwd);
+          }
         }
         return;
       }
@@ -663,6 +689,10 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     direction: RecordDirection,
     text: string,
   ): Promise<void> => {
+    if (dispatchFaultArmed) {
+      dispatchFaultArmed = false;
+      throw new Error("injected capture dispatch fault (test seam)");
+    }
     let value: unknown;
     try {
       value = JSON.parse(text);

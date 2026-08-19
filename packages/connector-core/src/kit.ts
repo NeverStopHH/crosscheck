@@ -45,10 +45,13 @@ export {
   ACP_KEY_DELIMITER,
   CURSOR_AGENT_KIND,
   CURSOR_HOST_KEY_PREFIX,
+  MAX_ACP_SESSION_ID_CHARS,
+  MAX_AGENT_SLUG_CHARS,
   acpAgentKind,
   acpHostSessionKey,
   agentSlug,
   cursorHostSessionKey,
+  safeAcpSessionId,
 } from "./state/host-session-key.ts";
 
 // ── Config + paths ──────────────────────────────────────────────────────────

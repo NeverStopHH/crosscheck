@@ -42,19 +42,30 @@ const NON_SLUG_RUN = /[^a-z0-9]+/g;
 const EDGE_DASHES = /^-+|-+$/g;
 
 /**
+ * Cap on the slug: the name is agent-controlled, the slug lands inside
+ * filenames, and NAME_MAX is 255 bytes — a 10-kilobyte "name" must not eat
+ * the whole budget. No real agent name comes near this.
+ */
+export const MAX_AGENT_SLUG_CHARS = 64;
+
+/**
  * An agent name as a key- and kind-safe slug: lowercase, alphanumeric runs
- * joined by single dashes, never empty. The design's examples are literal
- * outputs of this function: "Gemini CLI" → `gemini-cli`, "cursor-agent" →
- * `cursor-agent`. Slugging (rather than passing the name through) is a
- * DECISION the design only sketches: the name comes from the agent's own
- * `initialize` response — untrusted — and it lands inside filenames (via
- * sessionSlug) and the hub's agent_kind column, so it gets the narrowest
- * shape that stays readable.
+ * joined by single dashes, never empty, length-capped. The design's examples
+ * are literal outputs of this function: "Gemini CLI" → `gemini-cli`,
+ * "cursor-agent" → `cursor-agent`. Slugging (rather than passing the name
+ * through) is a DECISION the design only sketches: the name comes from the
+ * agent's own `initialize` response — untrusted — and it lands inside
+ * filenames (via sessionSlug) and the hub's agent_kind column, so it gets
+ * the narrowest shape that stays readable. The trailing edge-dash strip runs
+ * AGAIN after the cap: a cut mid-run must not reintroduce the edge dash the
+ * `--` delimiter's uniqueness argument forbids.
  */
 export const agentSlug = (agentName: string): string => {
   const slugged = agentName
     .toLowerCase()
     .replace(NON_SLUG_RUN, "-")
+    .replace(EDGE_DASHES, "")
+    .slice(0, MAX_AGENT_SLUG_CHARS)
     .replace(EDGE_DASHES, "");
   return slugged.length === 0 ? UNKNOWN_AGENT_SLUG : slugged;
 };
@@ -65,7 +76,62 @@ export const agentSlug = (agentName: string): string => {
  */
 export const ACP_KEY_DELIMITER = "--";
 
-/** `acp-<agentSlug>--<acpSessionId>` — e.g. `acp-gemini-cli--sess_abc123`. */
+/**
+ * Bound on a shaped ACP session id. Legitimate ids (UUIDs, `sess_…` tokens)
+ * sit far below it; anything past it folds to the sha256 form below rather
+ * than truncating, so distinct hostile ids stay distinct keys.
+ */
+export const MAX_ACP_SESSION_ID_CHARS = 128;
+
+/**
+ * Bound on the id's URI-ENCODED form, which is what actually lands in a
+ * filename (config/paths.ts sessionSlug): NAME_MAX is 255 bytes, and the
+ * worst key spends `acp-` (4) + slug (≤ MAX_AGENT_SLUG_CHARS = 64, encoded
+ * 1:1) + `--` (2) + this + extensions — 160 leaves comfortable room.
+ */
+const MAX_ENCODED_SESSION_ID_CHARS = 160;
+
+/** Control (Cc), format (Cf) and separator (Z) — nothing an id may carry. */
+const ID_UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Z}]/gu;
+
+const digestSessionId = (shaped: string): string =>
+  `sha256-${new Bun.CryptoHasher("sha256").update(shaped).digest("hex")}`;
+
+/**
+ * An ACP session id is AGENT-CONTROLLED — unlike a Claude Code UUID, nothing
+ * guarantees its charset, and it lands in proxy log lines, `cc_`/`wc_` ids
+ * and state filenames. This shapes one before it may enter any of those: a
+ * newline could otherwise forge whole log lines during incident forensics,
+ * an ESC could drive the operator's terminal, and separators would let
+ * forged text read as prose. Deliberately a STRIP, not an allowlist: two
+ * legitimate ids must never collapse into one key, and no agent mints ids
+ * that differ only in unprintables — one hostile enough to try can already
+ * reuse an id outright, which the load path treats as a resume anyway.
+ *
+ * An id past either bound folds to a deterministic `sha256-<hex>` — still
+ * one distinct key per distinct id, still stable across load/resume replays,
+ * and structurally unable to overflow a filename (ENAMETOOLONG in the
+ * register flow would otherwise kill capture for the session). Null when
+ * nothing printable remains: the caller treats that as no id at all (capture
+ * skips, the pipe unaffected). Idempotent — shaped ids re-shape to
+ * themselves, digests included.
+ */
+export const safeAcpSessionId = (raw: string): string | null => {
+  const shaped = raw.replace(ID_UNPRINTABLE, "");
+  if (shaped.length === 0) {
+    return null;
+  }
+  return shaped.length <= MAX_ACP_SESSION_ID_CHARS &&
+    encodeURIComponent(shaped).length <= MAX_ENCODED_SESSION_ID_CHARS
+    ? shaped
+    : digestSessionId(shaped);
+};
+
+/**
+ * `acp-<agentSlug>--<acpSessionId>` — e.g. `acp-gemini-cli--sess_abc123`.
+ * Callers pass ids that already went through `safeAcpSessionId` (the ACP
+ * wire parsers are the single choke point).
+ */
 export const acpHostSessionKey = (
   agentName: string,
   acpSessionId: string,
