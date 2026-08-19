@@ -66,6 +66,36 @@ export const MUTATIONS: readonly Mutation[] = [
       "promised never to touch",
   },
   {
+    // The ACP proxy's wake-safety (the 2026-08-19 2-CPU wedge): reads must
+    // park on a DEDICATED thread per direction, never on Bun's shared
+    // blocking-I/O pool (size max(2, hardwareConcurrency)). This re-introduces
+    // the shipped defect verbatim — fdSource parking an async node:fs.read on
+    // the pool — which pinned the whole pool under the proxy's three idle
+    // directions on a <= 2-CPU host: late data, zero-byte stdin EOF and every
+    // queued async-fs task (log appends, forward writes) were delivered only
+    // when a DIFFERENT direction got an fd event, and the proxy hung at
+    // "spawned". The guard saturates the pool at ANY core count and demands
+    // a live direction and an unrelated fs op still complete.
+    label: "the acp fd source parks its reads on the shared blocking-I/O pool again",
+    file: `${ACP}/src/fd-io.ts`,
+    from: '  yield* createFdReader({ kind: "fd", fd }).chunks();',
+    to:
+      '  const { read } = await import("node:fs"); ' +
+      "const buffer = Buffer.allocUnsafe(FD_READ_CHUNK_BYTES); " +
+      "for (;;) { let bytesRead: number; " +
+      "try { bytesRead = await new Promise<number>((resolve, reject) => { " +
+      "read(fd, buffer, 0, buffer.length, null, (error, count) => { " +
+      "if (error) reject(error); else resolve(count); }); }); } " +
+      "catch { return; } " +
+      "if (bytesRead === 0) return; yield buffer.subarray(0, bytesRead); }",
+    test: `${ACP}/test/pool-starvation.test.ts`,
+    because:
+      "an idle direction's parked read pins a shared pool thread for the " +
+      "life of the session; with pool size <= the direction count the whole " +
+      "proxy wedges — data and EOF arriving after the park are never " +
+      "delivered on a <= 2-CPU host",
+  },
+  {
     // The ACP proxy's exit mirroring (§2.2): mirrorSignalDeath must strip
     // the proxy's OWN relay handler before re-raising the child's fatal
     // signal, or the still-installed handler swallows the re-raise and the
@@ -975,6 +1005,7 @@ interface Outcome {
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
+ * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
  * PRINTS: proxy-e2e.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2

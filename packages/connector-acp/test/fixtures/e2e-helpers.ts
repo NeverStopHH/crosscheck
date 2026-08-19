@@ -148,8 +148,23 @@ export const collectDrive = async (
   return concatBytes(received);
 };
 
-/** KB resident-set size of a live process, via ps (macOS + Linux). */
+/**
+ * KB resident-set size of a live process. procfs first — container images
+ * (the ci.yml `cpu-starved` lane runs this suite in oven/bun, which ships
+ * no `ps`) and any other Linux have it for free — with `ps` as the macOS
+ * path. VmRSS is already in KB.
+ */
 export const rssKb = async (pid: number): Promise<number | null> => {
+  try {
+    const status = await Bun.file(`/proc/${pid}/status`).text();
+    const vmRss = status.split("\n").find((line) => line.startsWith("VmRSS:"));
+    if (vmRss !== undefined) {
+      const value = Number.parseInt(vmRss.replace(/[^0-9]/g, ""), 10);
+      if (Number.isFinite(value)) return value;
+    }
+  } catch {
+    // no procfs (macOS): fall through to ps
+  }
   const proc = Bun.spawn({
     cmd: ["ps", "-o", "rss=", "-p", String(pid)],
     stdin: "ignore",

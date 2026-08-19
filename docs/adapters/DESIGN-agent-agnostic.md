@@ -768,6 +768,29 @@ carries the snippets it would print.
    more reachable from a long-lived proxy. Not data loss — the spool was flushed live —
    but the fix (a liveness token in `SessionState`, or an age sweep of the sessions
    dir) must land before v1 ships.
+8. **Does the raw-fd plumbing survive constrained hosts?** (HIGH, found by the
+   whole-branch gate; **RESOLVED 2026-08-19**.) It did not: on Linux with <= 2
+   effective CPUs (cgroup quota OR cpu affinity — either alone suffices) the proxy
+   wedged deterministically. Mechanism, pinned at the syscall level: Bun runs every
+   async `node:fs` call on one shared FIFO-queued blocking-I/O pool sized
+   max(2, hardwareConcurrency), and fd-io.ts parked one blocking read per idle
+   direction ON that pool — the file's own "measured non-issue" note was measured on
+   a 16-core Mac, where the pool has 16 threads. Three parked directions on a 2-thread
+   pool pinned it whole: data or EOF arriving after a read parked was delivered only
+   when a DIFFERENT direction got an fd event, and every queued async-fs task behind
+   the parked reads (forward writes, log appends, FIFO opens) starved with them — the
+   log froze at "spawned", a zero-byte stdin EOF was never seen, an interactive reply
+   surfaced only when stdin closed. The fix moves each direction's read — and its
+   blocking FIFO open — onto a dedicated worker thread
+   (`connector-acp/src/fd-reader.worker.ts`): the kernel's blocking read stays the
+   readiness mechanism, completions ride the worker message channel onto the event
+   loop, and the shared pool carries no read parks at all. Backpressure and byte
+   transparency are unchanged (one chunk in flight, buffer ping-ponged by transfer;
+   torture suite + hash proofs re-proven inside a 2-CPU cgroup). Pinned three ways:
+   `test/pool-starvation.test.ts` saturates the pool at any core count,
+   `test/cpu-starved-e2e.test.ts` re-runs the gate probes at the real boundary
+   (ci.yml `cpu-starved` lane), and mutation-check.ts re-introduces the pool-parked
+   read and requires the pin to go red. No minimum CPU count remains.
 
 ---
 

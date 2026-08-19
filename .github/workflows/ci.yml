@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 56
+    # PRINTS: 57
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -127,6 +127,7 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/doctor.ts 1
     # PRINTS: packages/connector-acp/src/capture/engine.ts 3
+    # PRINTS: packages/connector-acp/src/fd-io.ts 1
     # PRINTS: packages/connector-acp/src/inject/injector.ts 3
     # PRINTS: packages/connector-acp/src/proxy.ts 1
     # PRINTS: packages/connector-acp/src/pump.ts 1
@@ -157,6 +158,7 @@ jobs:
     # PRINTS: constants.ts 6
     # PRINTS: doctor.ts 1
     # PRINTS: engine.ts 3
+    # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 1
     # PRINTS: hint.ts 2
     # PRINTS: hints.ts 1
@@ -184,6 +186,41 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run packages/connector-core/scripts/mutation-check.ts
+
+  cpu-starved:
+    # The ACP proxy wedged deterministically on Linux hosts with <= 2
+    # effective CPUs (2026-08-19): its idle-direction reads parked on Bun's
+    # shared blocking-I/O pool — sized max(2, hardwareConcurrency) — and the
+    # three directions pinned the whole pool, so late data, zero-byte stdin
+    # EOF and every queued async-fs task were only delivered on a LATER fd
+    # event from a different direction. Reads now park on a dedicated thread
+    # per direction (connector-acp/src/fd-reader.worker.ts). This lane holds
+    # the boundary: the gate probes plus the byte-transparency and
+    # backpressure proofs, inside a 2-CPU cgroup, where the defective code
+    # was red on every file below that touches the spawned proxy.
+    #
+    # The file set is the wedge-relevant, git-free subset: the oven/bun
+    # image ships no git, which the capture/injection E2E suites shell out
+    # to — those run on the full runners in the `test` job. The mechanism
+    # itself is ALSO pinned at any core count by pool-starvation.test.ts in
+    # every ordinary `bun test` run; this lane is the true-to-life boundary
+    # (cpu-starved-e2e.test.ts skips loudly outside it).
+    name: ACP proxy on 2 CPUs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Wedge probes + byte proofs inside a 2-CPU cgroup
+        run: |
+          docker run --rm -v "$PWD":/repo -w /repo --cpus=2 --cpuset-cpus=0,1 oven/bun:1 \
+            bun test \
+              packages/connector-acp/test/pool-starvation.test.ts \
+              packages/connector-acp/test/cpu-starved-e2e.test.ts \
+              packages/connector-acp/test/fd-io.test.ts \
+              packages/connector-acp/test/transparency.test.ts \
+              packages/connector-acp/test/backpressure.test.ts \
+              packages/connector-acp/test/proxy-e2e.test.ts
 
   claims:
     # Every comment in this repo that names a command and says what it prints is

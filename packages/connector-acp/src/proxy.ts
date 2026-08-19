@@ -77,10 +77,10 @@ import {
   STDIN_FD,
   STDOUT_FD,
   closeFd,
+  createFdReader,
   fdByteSink,
-  fdSource,
-  openFd,
 } from "./fd-io.ts";
+import type { FdReader } from "./fd-io.ts";
 import { createAcpLogger } from "./logger.ts";
 import type { AcpLogger } from "./logger.ts";
 import { createLineObserver } from "./observer.ts";
@@ -214,6 +214,8 @@ const CONTAINMENT_KILL_SIGNAL = "SIGTERM";
 interface SpawnedResources {
   child: ChildProcess | null;
   fifoDir: string | null;
+  /** Dedicated reader threads (fd-io.ts) — reaped by the containment catch. */
+  readers: FdReader[];
 }
 
 /**
@@ -317,7 +319,7 @@ export const runAcpProxy = async (
   // catch, where it would become a SILENT usage-style exit with the agent
   // left running. It reports on stderr and in the log, reaps the agent,
   // and exits EXIT_FAIL. Pinned by the E2E fault-seam test.
-  const resources: SpawnedResources = { child: null, fifoDir: null };
+  const resources: SpawnedResources = { child: null, fifoDir: null, readers: [] };
   try {
     return await wireAndRun(parsed, env, logger, recorder, capture, injector, resources);
   } catch (error) {
@@ -333,6 +335,7 @@ export const runAcpProxy = async (
         // child already gone
       }
     }
+    for (const reader of resources.readers) reader.dispose();
     if (resources.fifoDir !== null) {
       await rm(resources.fifoDir, { recursive: true, force: true }).catch(
         () => undefined,
@@ -417,16 +420,26 @@ const wireAndRun = async (
 
   // FIFO opens BLOCK until the shell opens its ends (its redirects, in
   // order), so they are raced against a child that dies before plumbing.
-  const opens = Promise.all([openFd(a2cPath, "r"), openFd(errPath, "r")]);
+  // Each open runs on its direction's DEDICATED reader thread (fd-io.ts):
+  // a child that never plumbs parks that thread, never a shared pool
+  // thread — the old pool-based opens pinned the whole 2-thread pool on a
+  // 2-CPU host and deadlocked even this early-exit path's cleanup.
+  const a2cReader = createFdReader({ kind: "path", path: a2cPath });
+  const errReader = createFdReader({ kind: "path", path: errPath });
+  resources.readers.push(a2cReader, errReader);
+  const opens = Promise.all([a2cReader.opened, errReader.opened]);
   const earlyEnd = await Promise.race([opens.then(() => null), childEnd]);
   if (earlyEnd !== null) {
     // The child died before the wire existed. Blocked opens cannot be
-    // cancelled; close whatever they eventually return and exit faithfully.
+    // cancelled; close whatever they eventually return, reap the reader
+    // threads (unref: a thread parked in open dies with the process), and
+    // exit faithfully.
     void opens
       .then((fds) => {
         for (const fd of fds) closeFd(fd);
       })
       .catch(() => undefined);
+    for (const reader of resources.readers) reader.dispose();
     await cleanupFifos();
     if (earlyEnd.spawnError !== undefined) {
       const reason = describeError(earlyEnd.spawnError);
@@ -463,12 +476,14 @@ const wireAndRun = async (
   // (§2.2 lifecycle). Injection off → the Block-3 chunk pump, byte-identical
   // by construction; injection on → the line pump, whose observer sees the
   // FORWARDED bytes so capture and --record match the wire the agent saw.
+  const stdinReader = createFdReader({ kind: "fd", fd: STDIN_FD });
+  resources.readers.push(stdinReader);
   const c2aObserve = observeInto(c2aObserver, recorder, capture, "c2a");
   const c2aForward: Promise<PumpOutcome> =
     injector === null
-      ? pumpBytes(fdSource(STDIN_FD), writableByteSink(agentStdin), c2aObserve)
+      ? pumpBytes(stdinReader.chunks(), writableByteSink(agentStdin), c2aObserve)
       : pumpLines(
-          fdSource(STDIN_FD),
+          stdinReader.chunks(),
           writableByteSink(agentStdin),
           (text) => injector.decideLine(text),
           c2aObserve,
@@ -499,7 +514,7 @@ const wireAndRun = async (
    * PRINTS: 0
    */
   const a2cPump = pumpBytes(
-    fdSource(agentStdoutFd),
+    a2cReader.chunks(),
     fdByteSink(STDOUT_FD),
     observeInto(
       a2cObserver,
@@ -522,7 +537,7 @@ const wireAndRun = async (
   });
 
   // agent stderr → our stderr, unmodified, unobserved (§2.2).
-  const stderrPump = pumpBytes(fdSource(agentStderrFd), fdByteSink(STDERR_FD));
+  const stderrPump = pumpBytes(errReader.chunks(), fdByteSink(STDERR_FD));
 
   const ended = await childEnd;
   // Drain what the agent left in its pipes — transparency includes the
@@ -543,6 +558,11 @@ const wireAndRun = async (
   closeFd(agentStdoutFd);
   closeFd(agentStderrFd);
   endAgentStdin();
+  // Reap the reader threads. The stdin reader may be parked forever (a
+  // client that holds stdin open past the child's death) — dispose unrefs
+  // it, so it can never hold this process open; its stream ends and the
+  // still-pending c2a pump settles like a client EOF.
+  for (const reader of resources.readers) reader.dispose();
   await cleanupFifos();
 
   // Trailing partial frames become observed (atEof) events for the record
