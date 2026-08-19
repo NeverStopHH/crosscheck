@@ -12,9 +12,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@crosscheck/connector-core": "workspace:*"
+    "@crosscheck/connector-core": "workspace:*",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@crosscheck/server": "workspace:*",
     "bun-types": "^1.2.0",
     "typescript": "^7.0.2"
   }

@@ -72,6 +72,54 @@ export const ACP_FIFO_DIR_PREFIX = "crosscheck-acp-fifo-";
 export const ACP_TEST_FAULT_ENV_VAR = "CROSSCHECK_ACP_TEST_FAULT";
 export const ACP_TEST_FAULT_POST_SPAWN = "post-spawn";
 
+/**
+ * Cap per pending-map direction (capture/pending.ts): request ids awaiting a
+ * response. A peer that never answers must cost fixed memory; past this the
+ * oldest entry is evicted and counted, and its eventual response captures
+ * nothing (fail-open — the bytes were forwarded regardless).
+ */
+export const ACP_MAX_PENDING_REQUESTS = 512;
+
+/**
+ * Byte cap on capture's queued line copies (capture/engine.ts). Capture
+ * dispatch is a serialized chain OFF the forward path; a slow hub during a
+ * line flood would otherwise queue text without bound. Past it, lines are
+ * dropped from CAPTURE only and counted — forwarding never sees this number.
+ */
+export const ACP_CAPTURE_MAX_PENDING_BYTES = 4_194_304;
+
+/**
+ * Terminals tracked for the §2.4 failure correlation (create → output →
+ * non-zero exit). Bounded FIFO like the pending maps: an agent leaking
+ * terminals costs capture accuracy, never memory.
+ */
+export const ACP_MAX_TRACKED_TERMINALS = 64;
+
+/**
+ * Wall-clock budget for one capture-side spool flush (after a register or a
+ * captured record). Generous against the 400 ms default request timeout, so
+ * an ordinary flush finishes; a dead hub leaves records spooled for the next
+ * flush or the exit drain — the spool's whole point.
+ */
+export const ACP_CAPTURE_FLUSH_BUDGET_MS = 1_000;
+
+/**
+ * Exit-time budget for the capture drain: settle the dispatch chain, run
+ * `endSessionFlow` for every live session, reap. The child is already dead
+ * and the client is waiting on our exit code, so this is bounded like
+ * ACP_EXIT_FLUSH_TIMEOUT_MS — larger because it includes hub round-trips;
+ * whatever does not fit stays spooled with a pending-end marker, which is
+ * exactly what reap's DeferredEnder exists to finish later.
+ */
+export const ACP_CAPTURE_EXIT_BUDGET_MS = 3_000;
+
+/**
+ * Flush budget when a single session closes mid-run (`session/close`): one
+ * session's backlog, not the exit drain's — smaller on purpose, since the
+ * proxy keeps living and later flushes retry.
+ */
+export const ACP_SESSION_CLOSE_FLUSH_BUDGET_MS = 1_000;
+
 /** The shell's own convention: a command that cannot be spawned is 127. */
 export const EXIT_SPAWN_FAILURE = 127;
 

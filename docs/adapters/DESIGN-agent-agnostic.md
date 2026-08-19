@@ -557,9 +557,14 @@ recipes, not extracted functions (extraction, not invention — no consumer exis
 **extracting them from the Claude hooks is the entry step of whichever connector block
 starts first**. Two parallel builders must not both extract (conflict) or both hand-roll
 (drift); after that first extraction lands, the remaining blocks parallelize as stated.
-Status note (2026-08-19): Block 3 started first but consumed ZERO flows — a transparent
-pipe calls none — so the entry step is still undischarged and belongs to the first of
-Blocks 4–7 that needs a flow; two of those parallelizing must serialize on it.
+Status note (2026-08-19, updated in Block 4): the entry step is DISCHARGED — Block 4
+extracted `registerSessionFlow`, `captureFileTargets`, `captureFailure`,
+`heartbeatMaybe` and `endSessionFlow` into `connector-core/src/flows/` (plus the shared
+`extractFailureText` into `capture/failure-text.ts`), rewired the Claude hooks onto
+them, and consumed them from the ACP capture engine. The briefing/hint flows
+(`assembleBriefing`, `selectAndRenderHint`) remain recipes; extracting THOSE is the
+entry step of the first non-Claude injection block (5 or 7). Blocks 5–7 parallelize
+freely against each other subject to that one remaining serialization point.
 
 ---
 

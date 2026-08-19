@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-import { FINGERPRINT_SOURCE_CHARS } from "@crosscheck/connector-core/constants.ts";
+/**
+ * The failure-TEXT derivation moved to core (capture/failure-text.ts): it
+ * feeds `fingerprint()`, the cross-agent match signal, so the ACP connector
+ * must join on the SAME spelling. Re-exported here reference-identically —
+ * existing importers keep working, and there is still exactly one
+ * implementation.
+ */
+export { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 
 /**
  * Hook payloads come from a tool we do not version-control. Unknown fields are
@@ -90,18 +97,3 @@ export const isFailureResponse = (toolResponse: unknown): boolean => {
   });
 };
 
-const TEXT_FIELDS = ["stdout", "stderr", "output", "error"] as const;
-
-export const extractFailureText = (toolResponse: unknown): string => {
-  if (typeof toolResponse === "string") {
-    return toolResponse.slice(-FINGERPRINT_SOURCE_CHARS);
-  }
-  if (typeof toolResponse !== "object" || toolResponse === null) {
-    return "";
-  }
-  const record = toolResponse as Record<string, unknown>;
-  const joined = TEXT_FIELDS.map((field) => record[field])
-    .filter((value): value is string => typeof value === "string")
-    .join("\n");
-  return joined.slice(-FINGERPRINT_SOURCE_CHARS);
-};

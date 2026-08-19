@@ -28,6 +28,11 @@ import * as reap from "../src/spool/reap.ts";
 import * as hub from "../src/http/hub.ts";
 import * as records from "../src/capture/records.ts";
 import * as fingerprint from "../src/capture/fingerprint.ts";
+import * as failureText from "../src/capture/failure-text.ts";
+import * as registerFlow from "../src/flows/register-session.ts";
+import * as captureFlows from "../src/flows/capture-targets.ts";
+import * as heartbeatFlow from "../src/flows/heartbeat.ts";
+import * as endFlow from "../src/flows/end-session.ts";
 import * as secretScan from "../src/capture/secret-scan.ts";
 import * as denylist from "../src/capture/denylist.ts";
 import * as commitEvidence from "../src/capture/commit-evidence.ts";
@@ -108,6 +113,13 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["getDrafts", hub.getDrafts],
   ["getSolvedMatches", hub.getSolvedMatches],
   ["getTripwireSessions", hub.getTripwireSessions],
+  // The session flows (§1.3, extracted in Block 4)
+  ["registerSessionFlow", registerFlow.registerSessionFlow],
+  ["fallbackWorkContextTitle", registerFlow.fallbackWorkContextTitle],
+  ["captureFileTargets", captureFlows.captureFileTargets],
+  ["captureFailure", captureFlows.captureFailure],
+  ["heartbeatMaybe", heartbeatFlow.heartbeatMaybe],
+  ["endSessionFlow", endFlow.endSessionFlow],
   // Capture
   ["buildEnvelope", records.buildEnvelope],
   ["workContextRecord", records.workContextRecord],
@@ -117,6 +129,7 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["UNKNOWN_DEVELOPER_ID", records.UNKNOWN_DEVELOPER_ID],
   ["fingerprint", fingerprint.fingerprint],
   ["normalizeFailureText", fingerprint.normalizeFailureText],
+  ["extractFailureText", failureText.extractFailureText],
   ["containsSecret", secretScan.containsSecret],
   ["resolveDenylist", denylist.resolveDenylist],
   ["isDenied", denylist.isDenied],

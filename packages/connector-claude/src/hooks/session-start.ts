@@ -23,7 +23,6 @@ import {
 import {
   hintDeliveryRecord,
   UNKNOWN_DEVELOPER_ID,
-  workContextRecord,
 } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
@@ -35,19 +34,19 @@ import {
   getPresence,
   getSolvedMatches,
   getWorkContexts,
-  registerSession,
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { PresenceEntry, SolvedMatchEntry, WorkContextEntry } from "@crosscheck/connector-core/http/hub.ts";
+import {
+  fallbackWorkContextTitle,
+  registerSessionFlow,
+} from "@crosscheck/connector-core/flows/register-session.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import { reapSpool } from "@crosscheck/connector-core/spool/reap.ts";
 import type { DeferredEnder } from "@crosscheck/connector-core/spool/reap.ts";
 import {
-  crosscheckSessionIdFor,
   updateSessionState,
   withBriefingSolvedRefs,
-  workContextIdFor,
-  writeSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { writePresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
@@ -56,66 +55,17 @@ const INITIAL_STATUS = "analyzing";
 
 const MS_PER_DAY = 86_400_000;
 
-/** A resumed session whose crosscheck session was closed gets a fresh suffix. */
-const RETRY_SUFFIXES = ["", "~r1", "~r2"] as const;
-
-const HTTP_CONFLICT = 409;
-
-interface Registration {
-  readonly sessionId: string;
-  readonly developerId: string | null;
-}
-
-const registerWithRetry = async (
-  ctx: HookContext,
-  baseId: string,
-): Promise<Registration | null> => {
-  for (const suffix of RETRY_SUFFIXES) {
-    const sessionId = `${baseId}${suffix}`;
-    const result = await registerSession(ctx.hub, {
-      id: sessionId,
-      agentKind: ctx.config.agentKind,
-      repo: ctx.identity.repoId,
-      branch: ctx.identity.branch,
-      baseCommit: ctx.identity.baseCommit,
-      status: INITIAL_STATUS,
-    });
-    if (result.ok) {
-      return { sessionId, developerId: result.data.session.developerId };
-    }
-    if (result.status !== HTTP_CONFLICT) {
-      return null;
-    }
-  }
-  return null;
-};
-
-const LOCAL_REPO_PREFIX = "local:";
-
 /**
- * Last segment of the shared repo id (`github.com/acme/api` → `api`), never a
- * local directory name: this title is uploaded and read by teammates. A
- * `local:` id has no shareable segment, so the branch alone has to carry it.
- */
-const repoLabel = (repoId: string): string | null => {
-  if (repoId.startsWith(LOCAL_REPO_PREFIX)) {
-    return null;
-  }
-  const last = repoId.split("/").at(-1)?.trim();
-  return last === undefined || last.length === 0 ? null : last;
-};
-
-/**
- * `session_title` when Claude Code supplied one, otherwise an honest derivation
- * from branch and repo id — never a fabricated task description.
+ * `session_title` when Claude Code supplied one, otherwise the honest core
+ * fallback derived from branch and repo id (`flows/register-session.ts`) —
+ * never a fabricated task description.
  */
 export const resolveWorkContextTitle = (
   sessionTitle: string | undefined,
   branch: string,
   repoId: string,
 ): string => {
-  const label = repoLabel(repoId);
-  const fallback = label === null ? branch : `${branch} @ ${label}`;
+  const fallback = fallbackWorkContextTitle(branch, repoId);
   if (sessionTitle === undefined || sessionTitle.trim().length === 0) {
     return fallback;
   }
@@ -186,53 +136,32 @@ export const handleSessionStart = async (
   ctx: HookContext,
   budget: HookBudget,
 ): Promise<string> => {
-  const baseSessionId = crosscheckSessionIdFor(ctx.payload.session_id);
-  const registration = await registerWithRetry(ctx, baseSessionId);
-  const crosscheckSessionId = registration?.sessionId ?? baseSessionId;
-  const developerId = registration?.developerId ?? ctx.config.developerId;
-  const workContextId = workContextIdFor(crosscheckSessionId);
   const now = ctx.now();
-
   const title = resolveWorkContextTitle(
     ctx.payload.session_title,
     ctx.identity.branch,
     ctx.identity.repoId,
   );
-  // BEFORE the first append, always: `reap` decides that a spool file has no
-  // writer left by finding no session state file for it, and that inference is
-  // only sound while state is published before any record is written.
-  await writeSessionState(ctx.config.home, {
-    hostSessionKey: ctx.payload.session_id,
-    crosscheckSessionId,
-    workContextId,
-    repoId: ctx.identity.repoId,
-    repoRoot: ctx.identity.root,
-    hubUrl: ctx.config.hubUrl,
-    developerId,
-    startedAt: now.toISOString(),
-    lastHeartbeatAt: now.toISOString(),
-    seenTargets: [],
-    deliveredHintRefs: [],
-    deliveredHintHashes: [],
-    tripwireAskedFiles: [],
-  });
-  await appendRecords(
-    ctx.config.home,
-    ctx.repoKey,
-    ctx.payload.session_id,
-    [
-      workContextRecord(
-        { workContextId, sessionId: crosscheckSessionId, title, status: INITIAL_STATUS },
-        {
-          developerId: developerId ?? UNKNOWN_DEVELOPER_ID,
-          agentKind: ctx.config.agentKind,
-          sessionId: crosscheckSessionId,
-        },
-        now,
-      ),
-    ],
-    now,
-  );
+  // The §1.3 flow: register (+409 retry) → state file BEFORE any append
+  // (reap's aliveness invariant) → work-context record. One implementation,
+  // shared with every connector (flows/register-session.ts).
+  const { crosscheckSessionId, workContextId, developerId } =
+    await registerSessionFlow({
+      home: ctx.config.home,
+      repoKey: ctx.repoKey,
+      hub: ctx.hub,
+      agentKind: ctx.config.agentKind,
+      hostSessionKey: ctx.payload.session_id,
+      repoId: ctx.identity.repoId,
+      repoRoot: ctx.identity.root,
+      branch: ctx.identity.branch,
+      baseCommit: ctx.identity.baseCommit,
+      hubUrl: ctx.config.hubUrl,
+      fallbackDeveloperId: ctx.config.developerId,
+      title,
+      status: INITIAL_STATUS,
+      now,
+    });
   // Commit-evidence collection rides INSIDE the parallel hub-fetch block: its
   // git timeout is below the per-request hub timeout the block already waits
   // for (see COMMIT_EVIDENCE_GIT_TIMEOUT_MS), so it adds no wall clock of its

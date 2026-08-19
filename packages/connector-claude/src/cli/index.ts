@@ -26,9 +26,12 @@ const USAGE = [
   "  statusline                one presence line (reads session json on stdin)",
   "  hook <name>               session-start | post-tool-use | session-end",
   "  mcp                       run the mcp tool server on stdio (the agent starts it)",
-  "  acp [--record <file>] -- <agent cmd…>",
+  "  acp [--agent-kind <kind>] [--record <file>] -- <agent cmd…>",
   "                            transparent ACP proxy: wrap an ACP agent",
   "                            (Zed/JetBrains custom agent command)",
+  "  acp-report <record-file>  which capture signals an agent emitted, from",
+  "                            an `acp --record` transcript (per-agent",
+  "                            capture-quality measurement)",
   "",
 ].join("\n");
 
@@ -65,6 +68,16 @@ export const runCli = async (
       return runMute(rest, env, cwd);
     case "unmute":
       return runUnmute(rest, env, cwd);
+    // DYNAMIC import like the bin's `acp` branch: hooks and the statusline
+    // must not pay connector-acp's load on every invocation.
+    case "acp-report": {
+      const path = rest[0];
+      if (path === undefined) {
+        return { stdout: USAGE, exitCode: EXIT_USAGE };
+      }
+      const { runAcpReport } = await import("@crosscheck/connector-acp");
+      return runAcpReport(path);
+    }
     default:
       return { stdout: USAGE, exitCode: EXIT_USAGE };
   }

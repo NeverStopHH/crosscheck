@@ -46,24 +46,24 @@ A connector is the host-specific shell. It owns exactly four things:
 
 ## The five flows
 
-The design (§1.3) names flow helpers; they are **documented recipes today** and become extracted functions when the first non-Claude connector lands (extraction, not invention). **Scheduling note:** that extraction is the ENTRY STEP of whichever connector block (3-7) starts first — two parallel connector builders must not each hand-roll these flows or both extract them concurrently. Block 3 (the ACP skeleton) started first but consumed zero flows — a transparent pipe calls none — so the entry step remains undischarged: it belongs to the first of Blocks 4-7 that needs a flow. Reference implementation for each: the Claude hooks named below.
+The design's (§1.3) flow helpers are **extracted functions in `src/flows/`** since Block 4 — the first connector block that needed one discharged the §5 scheduling note's entry step by peeling them out of the Claude hooks (extraction, not invention: the hooks call them now, so each has exactly one implementation, pinned by `test/session-flows.test.ts`). The briefing/hint flows stay documented recipes until the first non-Claude injection block (Block 5) lands.
 
-| Flow | Recipe | Reference |
+| Flow | Does | Consumers today |
 |---|---|---|
-| `registerSessionFlow` | `registerSession` with `cc_<hostSessionKey>` (+ `~r1`/`~r2` retry on 409) → `writeSessionState` **before any append** (reap infers "writer alive" from state) → spool a `workContextRecord` | `connector-claude/src/hooks/session-start.ts` |
-| `captureFileTargets` | `toRepoRelative` → `isDenied` → seen-set (`withSeenTargets`) → `containsSecret` → spool `targetRecord`s | `hooks/post-tool-use.ts` |
-| `captureFailure` | extract failure text → `fingerprint()` → spool an `error_fingerprint` target | `hooks/post-tool-use.ts` |
-| `heartbeatMaybe` | `HEARTBEAT_MIN_INTERVAL_MS` throttle off `lastHeartbeatAt` → `heartbeatSession` | `hooks/post-tool-use.ts` |
-| `assembleBriefing` / `selectAndRenderHint` | parallel hub GETs → `renderBriefing` / `selectHint` → `renderClaimHint`·`renderPointerHint` → record `hintDeliveryRecord` | `hooks/session-start.ts`, `hooks/user-prompt-submit.ts` |
-| `endSessionFlow` | `endSession` → `flushSpool` on the spare budget → `reapSpool` (deferred end if the backlog outlives the budget) | `hooks/session-end.ts` |
+| `registerSessionFlow` | register with `cc_<hostSessionKey>` (+ `~r1`/`~r2` retry on 409) → `writeSessionState` **before any append** (reap infers "writer alive" from state) → spool the `workContextRecord`. `fallbackWorkContextTitle` derives the honest branch @ repo title. | `connector-claude/src/hooks/session-start.ts`, `connector-acp/src/capture/engine.ts` |
+| `captureFileTargets` | `toRepoRelative` → `isDenied` → seen-set filter → `containsSecret` → spool `targetRecord`s (cap `MAX_TARGETS_PER_INVOCATION`). Session state stays the CALLER's: follow with `updateSessionState(withSeenTargets)` — hosts batch state writes differently. | `hooks/post-tool-use.ts`, `capture/engine.ts` |
+| `captureFailure` | host-extracted failure text (use the shared `extractFailureText`) → `fingerprint()` → spool one `error_fingerprint` target | `hooks/post-tool-use.ts`, `capture/engine.ts` |
+| `heartbeatMaybe` | `HEARTBEAT_MIN_INTERVAL_MS` throttle off the caller's `lastHeartbeatAt` → `heartbeatSession`; WHICH events may beat stays host policy | `hooks/post-tool-use.ts`, `capture/engine.ts` |
+| `assembleBriefing` / `selectAndRenderHint` | **still recipes** (Block 5 extracts): parallel hub GETs → `renderBriefing` / `selectHint` → `renderClaimHint`·`renderPointerHint` → record `hintDeliveryRecord` | `hooks/session-start.ts`, `hooks/user-prompt-submit.ts` |
+| `endSessionFlow` | budgeted `flushSpool` → pending-end marker → state delete → `endSession` only when nothing undelivered remains (else reap's `DeferredEnder` finishes it) | `hooks/session-end.ts`, `capture/engine.ts` |
 
-### Cross-connector invariants (single-implementation once extracted)
+### Cross-connector invariants (single implementation now)
 
-Until the flows are extracted, these live here as WORDS, and every connector must hold them:
+The first three live INSIDE the extracted flows — a connector that calls the flows holds them by construction:
 
-- **State before spool**: `writeSessionState` runs before the first `appendRecords` — the reaper decides "writer alive" by the state file's existence, so a spool without state is an orphan on sight.
+- **State before spool**: `writeSessionState` runs before the first `appendRecords` — the reaper decides "writer alive" by the state file's existence, so a spool without state is an orphan on sight (order-pinned in `test/session-flows.test.ts`).
 - **409 retry suffix**: a session-id conflict on register retries with the `~r1`, then `~r2` suffix — deterministic, so recovery after a crash re-derives the same retried id.
-- **Heartbeat throttle**: at most one `heartbeatSession` per `HEARTBEAT_MIN_INTERVAL_MS` (kit export — never copy the number), measured off state's `lastHeartbeatAt`.
+- **Heartbeat throttle**: at most one `heartbeatSession` per `HEARTBEAT_MIN_INTERVAL_MS` (kit export — never copy the number), measured off the caller's `lastHeartbeatAt`.
 - **Tripwire**: candidates come from `getTripwireSessions` (kit export), rendered ONLY through `renderTripwireReason`, one ask per file (`withTripwireAsked`).
 
 ## Render discipline — non-negotiable

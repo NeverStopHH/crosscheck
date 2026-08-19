@@ -14,11 +14,15 @@
  *   --dump-stdin-hash <file>     at EOF write "<byteCount> <sha256hex>" to file
  *   --flood <chunks>             write that many flood chunks, then exit 0
  *   --slow-read <ms>             sleep between stdin reads (backpressure peer)
+ *   --updates-file <file>        on session/prompt: stream the file's NDJSON
+ *                                lines verbatim before the standard replies
+ *                                (scripted tool_call/fs/terminal traffic for
+ *                                the Block-4 capture E2E)
  *
  * The default behavior is the §2.4 happy path: initialize → session/new →
  * session/prompt (two updates + result), error responses otherwise.
  */
-import { appendFileSync, read as fsRead, writeFileSync } from "node:fs";
+import { appendFileSync, read as fsRead, readFileSync, writeFileSync } from "node:fs";
 
 import { floodChunk } from "./flood.ts";
 
@@ -37,6 +41,7 @@ interface AgentOptions {
   readonly dumpStdinHashPath: string | undefined;
   readonly floodChunks: number;
   readonly slowReadMs: number;
+  readonly updatesFilePath: string | undefined;
 }
 
 const parseOptions = (argv: readonly string[]): AgentOptions => {
@@ -50,6 +55,7 @@ const parseOptions = (argv: readonly string[]): AgentOptions => {
   let dumpStdinHashPath: string | undefined;
   let floodChunks = 0;
   let slowReadMs = 0;
+  let updatesFilePath: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = (): string => argv[++i] ?? "";
@@ -65,6 +71,7 @@ const parseOptions = (argv: readonly string[]): AgentOptions => {
     else if (flag === "--dump-stdin-hash") dumpStdinHashPath = value();
     else if (flag === "--flood") floodChunks = Number.parseInt(value(), 10);
     else if (flag === "--slow-read") slowReadMs = Number.parseInt(value(), 10);
+    else if (flag === "--updates-file") updatesFilePath = value();
   }
   return {
     exitCode,
@@ -77,6 +84,7 @@ const parseOptions = (argv: readonly string[]): AgentOptions => {
     dumpStdinHashPath,
     floodChunks,
     slowReadMs,
+    updatesFilePath,
   };
 };
 
@@ -93,7 +101,7 @@ const sleepMs = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The §2.4 happy-path shapes, deterministic key order, no timestamps. */
-const respond = (line: string): readonly string[] => {
+const respond = (line: string, updatesFilePath?: string): readonly string[] => {
   let message: { id?: unknown; method?: unknown };
   try {
     message = JSON.parse(line) as { id?: unknown; method?: unknown };
@@ -129,7 +137,17 @@ const respond = (line: string): readonly string[] => {
           update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
         },
       })}\n`;
+    // Scripted extra traffic first, verbatim: each non-blank line of the
+    // updates file is one NDJSON frame (tool calls, fs writes, terminals).
+    const scripted =
+      updatesFilePath === undefined
+        ? []
+        : readFileSync(updatesFilePath, "utf8")
+            .split("\n")
+            .filter((entry) => entry.trim().length > 0)
+            .map((entry) => `${entry}\n`);
     return [
+      ...scripted,
       update("thinking"),
       update("done"),
       `${JSON.stringify({ jsonrpc: "2.0", id, result: { stopReason: "end_turn" } })}\n`,
@@ -228,7 +246,7 @@ const main = async (): Promise<void> => {
           process.exit(3);
         }
       }
-      for (const reply of respond(line)) {
+      for (const reply of respond(line, options.updatesFilePath)) {
         await writeOut(reply);
       }
     }

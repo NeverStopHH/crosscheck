@@ -15,3 +15,17 @@ export { createAcpLogger } from "./logger.ts";
 export type { AcpLogger, AcpLoggerLimits, AppendImpl } from "./logger.ts";
 export { createAcpRecorder } from "./recorder.ts";
 export type { AcpRecorder, AcpRecorderLimits, RecordDirection } from "./recorder.ts";
+export { createAcpCapture } from "./capture/engine.ts";
+export type {
+  AcpCapture,
+  AcpCaptureCounters,
+  AcpCaptureOptions,
+} from "./capture/engine.ts";
+export { createPendingMap } from "./capture/pending.ts";
+export type { PendingMap, PendingRequest } from "./capture/pending.ts";
+export {
+  analyzeAcpRecord,
+  renderAcpRecordReport,
+  runAcpReport,
+} from "./report.ts";
+export type { AcpRecordReport, AcpReportResult } from "./report.ts";

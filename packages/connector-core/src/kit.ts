@@ -9,13 +9,13 @@
  * (test/kit.test.ts pins that), so there is exactly one implementation of
  * everything — the same one-copy rule the render classes live by.
  *
- * The design also names flow-level helpers (`registerSessionFlow`,
- * `captureFileTargets`, `endSessionFlow`, …): those are today's Claude
- * hook-handler bodies with payload parsing peeled off, and they get EXTRACTED
- * here when the first non-Claude connector lands (extraction, not invention —
- * the same rule that kept the summarizer Claude-side). Until then the README
- * documents each flow as a recipe over these primitives, so the seam is
- * already named without rewriting working hooks.
+ * The design's flow-level helpers (`registerSessionFlow`, `captureFileTargets`,
+ * `captureFailure`, `heartbeatMaybe`, `endSessionFlow`) are EXTRACTED now —
+ * Block 4 (the first connector block that needed one) peeled them out of the
+ * Claude hooks into `src/flows/`, and the hooks call them (extraction, not
+ * invention; the §5 scheduling note's entry step, discharged). The briefing
+ * and hint flows (`assembleBriefing`, `selectAndRenderHint`) remain recipes
+ * until the first injection block outside Claude lands (Block 5).
  */
 
 // ── Identity ────────────────────────────────────────────────────────────────
@@ -118,6 +118,31 @@ export type {
   WorkContextEntry,
 } from "./http/hub.ts";
 
+// ── The session flows (§1.3, extracted in Block 4) ──────────────────────────
+export {
+  fallbackWorkContextTitle,
+  registerSessionFlow,
+} from "./flows/register-session.ts";
+export type {
+  RegisterSessionFlowInput,
+  RegisterSessionFlowResult,
+} from "./flows/register-session.ts";
+export {
+  captureFailure,
+  captureFileTargets,
+} from "./flows/capture-targets.ts";
+export type {
+  CaptureFailureInput,
+  CaptureFileTargetsInput,
+} from "./flows/capture-targets.ts";
+export { heartbeatMaybe } from "./flows/heartbeat.ts";
+export type { HeartbeatMaybeInput } from "./flows/heartbeat.ts";
+export { endSessionFlow } from "./flows/end-session.ts";
+export type {
+  EndSessionFlowInput,
+  EndSessionFlowResult,
+} from "./flows/end-session.ts";
+
 // ── Capture ─────────────────────────────────────────────────────────────────
 export {
   UNKNOWN_DEVELOPER_ID,
@@ -129,6 +154,7 @@ export {
 } from "./capture/records.ts";
 export type { Producer, TargetKind } from "./capture/records.ts";
 export { fingerprint, normalizeFailureText } from "./capture/fingerprint.ts";
+export { extractFailureText } from "./capture/failure-text.ts";
 export { containsSecret } from "./capture/secret-scan.ts";
 export {
   DEFAULT_DENYLIST,

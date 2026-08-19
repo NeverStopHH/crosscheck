@@ -48,9 +48,12 @@ import { EXIT_FAIL, EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/const
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { crosscheckHome } from "@crosscheck/connector-core/kit.ts";
 
+import { createAcpCapture } from "./capture/engine.ts";
+import type { AcpCapture } from "./capture/engine.ts";
 import { ACP_USAGE, isUsageError, parseAcpArgs } from "./cli.ts";
 import type { AcpInvocation } from "./cli.ts";
 import {
+  ACP_CAPTURE_EXIT_BUDGET_MS,
   ACP_EXIT_FLUSH_TIMEOUT_MS,
   ACP_FIFO_DIR_PREFIX,
   ACP_LOG_MAX_AGE_DAYS,
@@ -126,17 +129,23 @@ const writableByteSink = (writable: Writable): ByteSink => ({
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-/** Push the copy through the observer; hand completed lines to the record. */
+/**
+ * Push the copy through the observer; hand completed lines to the record and
+ * to Block 4's capture engine. Both consumers live BEHIND the pump's
+ * catch-all (pump.ts observeSafely) and capture's own `offer` is bounded and
+ * non-throwing besides — a capture bug is a counter, never a broken pipe.
+ */
 const observeInto = (
   observer: LineObserver,
   recorder: AcpRecorder | null,
+  capture: AcpCapture,
   direction: RecordDirection,
 ): ChunkObserver => {
   return (copy) => {
     const events = observer.push(copy);
-    if (recorder === null) return;
     for (const event of events) {
-      recorder.record(direction, event, Date.now());
+      recorder?.record(direction, event, Date.now());
+      capture.offer(direction, event);
     }
   };
 };
@@ -268,6 +277,14 @@ export const runAcpProxy = async (
   const logger = await createAcpLogger(crosscheckHome(env), process.pid);
   const recorder =
     parsed.recordPath === undefined ? null : createAcpRecorder(parsed.recordPath);
+  // Block 4 capture: rides the observer's parsed copies, resolves hub and
+  // repo PER SESSION from each session's cwd, and no-ops silently where no
+  // config resolves — construction alone starts nothing and writes nothing.
+  const capture = createAcpCapture({
+    env,
+    logger,
+    agentKindFlag: parsed.agentKind,
+  });
   logger.line(`start pid=${process.pid} agent=${JSON.stringify(parsed.command)}`);
 
   // CONTAINMENT — the prime directive's last line of defense: an internal
@@ -278,7 +295,7 @@ export const runAcpProxy = async (
   // and exits EXIT_FAIL. Pinned by the E2E fault-seam test.
   const resources: SpawnedResources = { child: null, fifoDir: null };
   try {
-    return await wireAndRun(parsed, env, logger, recorder, resources);
+    return await wireAndRun(parsed, env, logger, recorder, capture, resources);
   } catch (error) {
     const reason = describeError(error);
     process.stderr.write(
@@ -297,6 +314,10 @@ export const runAcpProxy = async (
         () => undefined,
       );
     }
+    // Best-effort session ends — capture could itself be the thrower, so its
+    // drain is wrapped; a failure here costs pending-end markers that reap
+    // finishes later, never the containment above.
+    await capture.shutdown(ACP_CAPTURE_EXIT_BUDGET_MS).catch(() => undefined);
     await flushObservability(logger, recorder);
     return EXIT_FAIL;
   }
@@ -307,6 +328,7 @@ const wireAndRun = async (
   env: Env,
   logger: AcpLogger,
   recorder: AcpRecorder | null,
+  capture: AcpCapture,
   resources: SpawnedResources,
 ): Promise<number> => {
   const [executable, ...agentArgs] = parsed.command;
@@ -417,7 +439,7 @@ const wireAndRun = async (
   const c2aPump = pumpBytes(
     fdSource(STDIN_FD),
     writableByteSink(agentStdin),
-    observeInto(c2aObserver, recorder, "c2a"),
+    observeInto(c2aObserver, recorder, capture, "c2a"),
   ).then((outcome) => {
     endAgentStdin();
     if (outcome.writeError !== undefined) {
@@ -446,7 +468,7 @@ const wireAndRun = async (
   const a2cPump = pumpBytes(
     fdSource(agentStdoutFd),
     fdByteSink(STDOUT_FD),
-    observeInto(a2cObserver, recorder, "a2c"),
+    observeInto(a2cObserver, recorder, capture, "a2c"),
   ).then((outcome) => {
     if (outcome.writeError !== undefined) {
       logger.line(`client hangup ${describeError(outcome.writeError)}`);
@@ -480,13 +502,22 @@ const wireAndRun = async (
   endAgentStdin();
   await cleanupFifos();
 
-  // Trailing partial frames become observed (atEof) events for the record.
+  // Trailing partial frames become observed (atEof) events for the record
+  // and for capture — a frame completed by EOF can still carry a signal.
   for (const event of c2aObserver.end()) {
     recorder?.record("c2a", event, Date.now());
+    capture.offer("c2a", event);
   }
   for (const event of a2cObserver.end()) {
     recorder?.record("a2c", event, Date.now());
+    capture.offer("a2c", event);
   }
+
+  // §2.2 lifecycle: child exit → budgeted spool flush + endSession for every
+  // live session (+ reap). Before the log flush so the capture summary line
+  // makes it into this run's log. Bounded: whatever does not fit stays
+  // spooled with a pending-end marker for reap's DeferredEnder.
+  await capture.shutdown(ACP_CAPTURE_EXIT_BUDGET_MS).catch(() => undefined);
 
   summarize(logger, "c2a", c2aObserver, c2aOutcome);
   summarize(logger, "a2c", a2cObserver, a2cOutcome);

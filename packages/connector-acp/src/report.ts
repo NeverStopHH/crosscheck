@@ -1,0 +1,319 @@
+/**
+ * `crosscheck acp-report <record-file>` — the §6.1 capture-quality analyzer.
+ * Replays a `--record` transcript through the same wire classifier capture
+ * uses and reports which signals the recorded agent ACTUALLY emitted:
+ * locations? diff paths? terminals? fs writes? That report is what decides
+ * the per-agent documentation ("if an agent reports edits without paths, its
+ * Tier-0 capture degrades to fs/terminal signals and the doc for that agent
+ * should say so" — design §6 open question 1).
+ *
+ * LEAN ON PURPOSE: counts and presence verdicts only. No file contents, no
+ * prompt text, no command text ever appear in the report — the untrusted
+ * agent name is printed through `agentSlug` (narrow charset), everything
+ * else is numbers. This module never writes to stdout — the CLI layer
+ * prints the returned text (the package-wide no-stdout-writers pin,
+ * proxy.ts VERIFY).
+ */
+import { readFile } from "node:fs/promises";
+
+import { EXIT_FAIL, EXIT_OK } from "@crosscheck/connector-core/constants.ts";
+import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
+import { agentSlug } from "@crosscheck/connector-core/state/host-session-key.ts";
+
+import { createPendingMap } from "./capture/pending.ts";
+import {
+  WIRE_METHODS,
+  classifyWireMessage,
+  parseInitializeResult,
+  parseSessionUpdateParams,
+  parseSessionPromptResult,
+  parseTerminalExitResult,
+  parseTerminalOutputResult,
+} from "./wire/v1.ts";
+
+export interface AcpRecordReport {
+  /** Slugged (narrow charset) — the raw wire name never prints. */
+  readonly agentName: string | null;
+  readonly agentVersion: string | null;
+  readonly protocolVersion: number | null;
+  readonly sessions: {
+    readonly new: number;
+    readonly load: number;
+    readonly resume: number;
+  };
+  readonly prompts: number;
+  readonly stopReasons: Readonly<Record<string, number>>;
+  readonly toolCalls: {
+    readonly events: number;
+    readonly withLocations: number;
+    readonly withDiffPaths: number;
+    readonly distinctPaths: number;
+    readonly failed: number;
+    readonly failedWithOutput: number;
+  };
+  readonly terminals: {
+    readonly created: number;
+    readonly outputs: number;
+    readonly nonZeroExits: number;
+  };
+  readonly fsWrites: number;
+  readonly lines: number;
+  readonly unparseable: number;
+  readonly gaps: number;
+  readonly oversized: number;
+}
+
+interface RecordEntry {
+  readonly dir?: string;
+  readonly line?: string;
+  readonly parsed?: boolean;
+  readonly gap?: number;
+  readonly oversized?: number;
+}
+
+const parseEntry = (raw: string): RecordEntry | null => {
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as RecordEntry)
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+export const analyzeAcpRecord = (text: string): AcpRecordReport => {
+  let agentName: string | null = null;
+  let agentVersion: string | null = null;
+  let protocolVersion: number | null = null;
+  const sessions = { new: 0, load: 0, resume: 0 };
+  let prompts = 0;
+  const stopReasons: Record<string, number> = {};
+  const toolCalls = {
+    events: 0,
+    withLocations: 0,
+    withDiffPaths: 0,
+    failed: 0,
+    failedWithOutput: 0,
+  };
+  const distinctPaths = new Set<string>();
+  const terminals = { created: 0, outputs: 0, nonZeroExits: 0 };
+  let fsWrites = 0;
+  let lines = 0;
+  let unparseable = 0;
+  let gaps = 0;
+  let oversized = 0;
+
+  // The record interleaves both directions, so the analyzer keeps the same
+  // two pending maps capture does — the correlation logic is re-USED, never
+  // re-invented.
+  const pendingClient = createPendingMap();
+  const pendingAgent = createPendingMap();
+
+  for (const raw of text.split("\n")) {
+    if (raw.trim().length === 0) {
+      continue;
+    }
+    const entry = parseEntry(raw);
+    if (entry === null) {
+      continue;
+    }
+    if (typeof entry.gap === "number") {
+      gaps += entry.gap;
+      continue;
+    }
+    if (typeof entry.oversized === "number") {
+      oversized += 1;
+      continue;
+    }
+    if (typeof entry.line !== "string") {
+      continue;
+    }
+    lines += 1;
+    if (entry.parsed === false) {
+      unparseable += 1;
+      continue;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(entry.line);
+    } catch {
+      unparseable += 1;
+      continue;
+    }
+    const message = classifyWireMessage(value);
+    if (message === null) {
+      continue;
+    }
+    const direction = entry.dir === "c2a" ? "c2a" : "a2c";
+
+    if (message.kind === "request" || message.kind === "notification") {
+      if (message.kind === "request") {
+        (direction === "c2a" ? pendingClient : pendingAgent).put(message.id, {
+          method: message.method,
+          params: message.params,
+        });
+      }
+      switch (message.method) {
+        case WIRE_METHODS.sessionNew:
+          sessions.new += 1;
+          break;
+        case WIRE_METHODS.sessionLoad:
+          sessions.load += 1;
+          break;
+        case WIRE_METHODS.sessionResume:
+          sessions.resume += 1;
+          break;
+        case WIRE_METHODS.sessionPrompt:
+          prompts += 1;
+          break;
+        case WIRE_METHODS.fsWriteTextFile:
+          fsWrites += 1;
+          break;
+        case WIRE_METHODS.terminalCreate:
+          terminals.created += 1;
+          break;
+        case WIRE_METHODS.sessionUpdate: {
+          const update = parseSessionUpdateParams(message.params);
+          const toolCall = update?.toolCall ?? null;
+          if (toolCall === null) {
+            break;
+          }
+          toolCalls.events += 1;
+          if (toolCall.paths.length > 0) {
+            toolCalls.withLocations += 1;
+          }
+          for (const path of toolCall.paths) {
+            distinctPaths.add(path);
+          }
+          if (toolCall.status === "failed") {
+            toolCalls.failed += 1;
+            if (extractFailureText(toolCall.rawOutput).length > 0) {
+              toolCalls.failedWithOutput += 1;
+            }
+          }
+          break;
+        }
+        default:
+          break;
+      }
+      // Diff-path presence needs the raw update rows, not the merged list.
+      if (message.method === WIRE_METHODS.sessionUpdate) {
+        const params = message.params as
+          | { update?: { content?: readonly { type?: string; path?: string }[] } }
+          | undefined;
+        const content = params?.update?.content ?? [];
+        if (
+          content.some((row) => row?.type === "diff" && typeof row?.path === "string")
+        ) {
+          toolCalls.withDiffPaths += 1;
+        }
+      }
+      continue;
+    }
+
+    // Responses: correlate through the opposite direction's pending map.
+    const request = (direction === "a2c" ? pendingClient : pendingAgent).take(
+      message.id,
+    );
+    if (request === null || message.isError) {
+      continue;
+    }
+    if (request.method === WIRE_METHODS.initialize) {
+      const initialized = parseInitializeResult(message.result);
+      agentName = initialized.agentName === null ? null : agentSlug(initialized.agentName);
+      agentVersion = initialized.agentVersion;
+      protocolVersion = initialized.protocolVersion;
+    } else if (request.method === WIRE_METHODS.sessionPrompt) {
+      const { stopReason } = parseSessionPromptResult(message.result);
+      if (stopReason !== null) {
+        stopReasons[stopReason] = (stopReasons[stopReason] ?? 0) + 1;
+      }
+    } else if (request.method === WIRE_METHODS.terminalOutput) {
+      terminals.outputs += 1;
+      const output = parseTerminalOutputResult(message.result);
+      if (output.exitCode !== null && output.exitCode !== 0) {
+        terminals.nonZeroExits += 1;
+      }
+    } else if (request.method === WIRE_METHODS.terminalWaitForExit) {
+      const exit = parseTerminalExitResult(message.result);
+      if (exit.exitCode !== null && exit.exitCode !== 0) {
+        terminals.nonZeroExits += 1;
+      }
+    }
+  }
+
+  return {
+    agentName,
+    agentVersion,
+    protocolVersion,
+    sessions,
+    prompts,
+    stopReasons,
+    toolCalls: { ...toolCalls, distinctPaths: distinctPaths.size },
+    terminals,
+    fsWrites,
+    lines,
+    unparseable,
+    gaps,
+    oversized,
+  };
+};
+
+const NONE_SEEN = "none seen";
+
+const signal = (present: boolean, detail: string): string =>
+  present ? detail : NONE_SEEN;
+
+export const renderAcpRecordReport = (report: AcpRecordReport): string => {
+  const stopReasons = Object.entries(report.stopReasons)
+    .map(([reason, count]) => `${reason}=${count}`)
+    .join(" ");
+  return [
+    `agent: ${report.agentName ?? "unknown"}${
+      report.agentVersion === null ? "" : ` ${report.agentVersion}`
+    } (protocol ${report.protocolVersion ?? "unknown"})`,
+    `wire: ${report.lines} lines, ${report.unparseable} unparseable, ${report.gaps} gaps, ${report.oversized} oversized`,
+    `sessions: new=${report.sessions.new} load=${report.sessions.load} resume=${report.sessions.resume}`,
+    `prompts: ${report.prompts}${stopReasons.length === 0 ? "" : ` (${stopReasons})`}`,
+    "capture signals:",
+    `  tool calls:  ${signal(report.toolCalls.events > 0, `${report.toolCalls.events} events`)}`,
+    `  locations:   ${signal(
+      report.toolCalls.withLocations > 0,
+      `${report.toolCalls.withLocations} events, ${report.toolCalls.distinctPaths} distinct paths`,
+    )}`,
+    `  diff paths:  ${signal(report.toolCalls.withDiffPaths > 0, `${report.toolCalls.withDiffPaths} events`)}`,
+    `  failures:    ${signal(
+      report.toolCalls.failed > 0,
+      `${report.toolCalls.failed} failed, ${report.toolCalls.failedWithOutput} with output`,
+    )}`,
+    `  terminals:   ${signal(
+      report.terminals.created > 0,
+      `${report.terminals.created} created, ${report.terminals.outputs} outputs, ${report.terminals.nonZeroExits} non-zero exits`,
+    )}`,
+    `  fs writes:   ${signal(report.fsWrites > 0, `${report.fsWrites} writes`)}`,
+    "",
+  ].join("\n");
+};
+
+export interface AcpReportResult {
+  readonly stdout: string;
+  readonly exitCode: number;
+}
+
+/** Reads and renders; the CLI layer prints. Never throws. */
+export const runAcpReport = async (path: string): Promise<AcpReportResult> => {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    return {
+      stdout: `crosscheck acp-report: cannot read ${path}\n`,
+      exitCode: EXIT_FAIL,
+    };
+  }
+  return {
+    stdout: renderAcpRecordReport(analyzeAcpRecord(text)),
+    exitCode: EXIT_OK,
+  };
+};
