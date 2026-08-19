@@ -327,6 +327,37 @@ describe("packed npm tarball", () => {
     expect(help.stdout).toContain("usage: crosscheck <command>");
   }, DRIVE_TIMEOUT_MS);
 
+  test("the package ROOT export keeps the full library surface: runCli AND the old connector-claude names", async () => {
+    // Arrange: Block 8 moved `runCli`/`CliResult` from connector-claude to
+    // packages/cli, whose index re-exports connector-claude wholesale — so
+    // the published root must point THERE to stay a strict superset of the
+    // pre-Block-8 root surface. A root pinned to connector-claude silently
+    // drops `runCli` for any `import { runCli } from "crosscheck-hub"`
+    // consumer; this probe is what makes that a red build instead.
+    const installed = await getInstalled();
+    if (!installed.ok) {
+      return warnSkip(installed.reason);
+    }
+    const probePath = join(installed.installDir, "root-export-probe.ts");
+    await writeFile(
+      probePath,
+      'import { runCli, runHook, buildSettingsPlan } from "crosscheck-hub";\n' +
+        'console.log([runCli, runHook, buildSettingsPlan].map((f) => typeof f).join(" "));\n',
+      "utf8",
+    );
+
+    // Act: under bun from the install dir — plain node_modules resolution,
+    // exactly what a library consumer's runtime does.
+    const result = await run([process.execPath, probePath], {
+      cwd: installed.installDir,
+    });
+
+    // Assert
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe("function function function");
+  }, DRIVE_TIMEOUT_MS);
+
   test("packed acp subcommand resolves its dynamic import and refuses bad args", async () => {
     // Arrange: `acp` lives in a SEPARATE workspace package reached through a
     // dynamic import — the one specifier the static rewrite audit cannot

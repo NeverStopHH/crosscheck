@@ -227,7 +227,11 @@ const buildManifest = (
   // stack-tracing; the version floor below is advisory metadata only.
   engines: { node: ">=18", bun: ">=1.3.0" },
   exports: {
-    ".": "./packages/connector-claude/src/index.ts",
+    // The ROOT surface is packages/cli's index: `runCli`/`CliResult` PLUS a
+    // wholesale re-export of connector-claude — a strict superset of the
+    // pre-Block-8 root (which pointed at connector-claude and silently lost
+    // runCli when Block 8 moved it). Pinned by the npm e2e's root probe.
+    ".": "./packages/cli/src/index.ts",
     "./schema": "./packages/schema/src/index.ts",
     "./server": "./packages/server/src/index.ts",
     "./connector-core": "./packages/connector-core/src/index.ts",

@@ -404,6 +404,12 @@ describe("write point 2: the prompt block (§2.5)", () => {
     const briefingDecision = await waitFor(() =>
       f.injector.decideLine(promptLine("second question about refresh")),
     );
+    // The prefetch's success is a LOGGED ready-signal, not a silent slot
+    // flip: harnesses (the §4.5 cross-connector E2E) poll the proxy log for
+    // this line instead of sleeping a fixed wall-clock guess.
+    expect(
+      f.logger.lines.some((entry) => entry.includes("briefing-prefetch-ready")),
+    ).toBe(true);
     const briefed = JSON.parse(briefingDecision) as {
       params: { prompt: readonly { type: string; text: string }[] };
     };

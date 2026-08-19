@@ -401,6 +401,12 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         .then((assembled) => {
           slot.assembled = assembled;
           slot.status = "ready";
+          // The ready-signal AFTER the slot flip: whoever observes this line
+          // (a harness polling the proxy log instead of sleeping a fixed
+          // guess) is guaranteed the next prompt finds the cache ready.
+          logger.line(
+            `inject briefing-prefetch-ready session=${acpSessionId} chars=${String(assembled.briefing.length)}`,
+          );
         })
         .catch((error: unknown) => {
           slot.status = "ready";
