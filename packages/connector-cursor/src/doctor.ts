@@ -28,6 +28,7 @@ import {
   MIN_CURSOR_HOOKS_MINOR,
 } from "./constants.ts";
 import { readContractDrift } from "./drift.ts";
+import { readInjectionLedger } from "./inject/ledger.ts";
 import { isOwnedCursorCommand } from "./init/hooks-merge.ts";
 import { CURSOR_HOOK_EVENTS } from "./payload.ts";
 
@@ -135,6 +136,47 @@ const driftCheck = async (home: string): Promise<CursorCheck> => {
       (drift.malformed > 0 ? `, ${drift.malformed} ledger lines unreadable` : "") +
       (drift.atCap ? " — ledger at cap, counts are a floor" : "") +
       " — Cursor may have renamed a payload field; capture degrades silently until this is investigated",
+  );
+};
+
+/**
+ * Injection state from the ledger (Block 7 item 5): was the briefing
+ * delivered, how many hints, WHICH events carried them — the §6-q4
+ * instrument. Always PASS: these are telemetry facts a human reads during
+ * the dogfood, not health judgments (a suppressed briefing in a solo repo
+ * is correct behavior, and warning on it would teach people to ignore
+ * doctor — the absence-check lesson).
+ */
+const injectionCheck = async (home: string): Promise<CursorCheck> => {
+  const summary = await readInjectionLedger(home);
+  const total =
+    summary.briefings.delivered +
+    summary.briefings.suppressed +
+    summary.hints.delivered +
+    summary.hints.suppressed;
+  if (total === 0 && summary.malformed === 0) {
+    return check(
+      "PASS",
+      "cursor injection",
+      "none recorded yet — the first connected sessionStart delivers or counts a briefing",
+    );
+  }
+  const hintEvents = Object.entries(summary.hintEvents)
+    .sort((a, b) => b[1] - a[1])
+    .map(([event, count]) => `${event} ×${count}`);
+  return check(
+    "PASS",
+    "cursor injection",
+    `briefings ${summary.briefings.delivered} delivered / ${summary.briefings.suppressed} suppressed · ` +
+      `hints ${summary.hints.delivered} delivered / ${summary.hints.suppressed} suppressed` +
+      (hintEvents.length > 0 ? ` (via ${hintEvents.join(", ")})` : "") +
+      (summary.lastDeliveredAt === null
+        ? ""
+        : `, last ${summary.lastDeliveredAt}`) +
+      (summary.malformed > 0
+        ? `, ${summary.malformed} ledger lines unreadable`
+        : "") +
+      (summary.atCap ? " — ledger at cap, counts are a floor" : ""),
   );
 };
 
@@ -261,5 +303,6 @@ export const cursorDoctorChecks = async (
     await mcpCheck(input.repoRoot),
     versionCheck(sync.cursorVersion),
     await driftCheck(input.home),
+    await injectionCheck(input.home),
   ];
 };

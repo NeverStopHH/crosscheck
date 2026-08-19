@@ -1,18 +1,34 @@
 /**
- * sessionStart (§3.2 row 1): register through the shared flow — state
- * BEFORE any append (reap's aliveness invariant lives in the flow) — record
- * the observed cursor_version for doctor, then maintenance on the spare
- * budget exactly like Claude's SessionStart: flush what earlier sessions
- * left, reap what nothing owns.
+ * sessionStart (§3.2 row 1 + §3.3 briefing): register through the shared
+ * flow — state BEFORE any append (reap's aliveness invariant lives in the
+ * flow) — record the observed cursor_version for doctor, assemble the
+ * briefing through the SAME core flow as the Claude SessionStart, then
+ * maintenance on the spare budget: flush what earlier sessions left, reap
+ * what nothing owns.
  *
- * NO briefing yet: `additional_context` is Block 7's injection surface;
- * Block 6 renders nothing (§4.4 — this package registers no render
- * surfaces, and the registry meta-test would flag any it forgot).
- * is_background_agent chose the agent kind at config load (runner.ts):
- * cursor-background registers like any session and will get no injection
- * output when Block 7 lands.
+ * INJECTION ORDER IS THE CLAUDE ORDER: everything the developer actually
+ * sees — the session, the work context, the briefing — is in hand before
+ * any maintenance, and every hub call the maintenance can make is held to
+ * `spareMs` (the reserve is what carries the briefing out of the hook; the
+ * measurements live on HOOK_RESERVE_RATIO). The briefing itself is
+ * `assembleBriefing`: six parallel hub GETs each bounded by the per-request
+ * timeout, fail-open per section — a hung hub costs sections, never the
+ * hook (budget.test.ts measures the race backstop).
+ *
+ * `additional_context` is the documented sessionStart output; the emitted
+ * stdout is `cursorInjectionOutput` — the registered §4.4 surface module —
+ * and empty briefings stay silent (`{}`). `is_background_agent: true`
+ * registers like any session and gets NO injection output (§3.2 row 1);
+ * the suppression is counted in the injection ledger, like the empty case,
+ * so the dogfood checklist reads facts.
  */
+import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
+import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { endSession } from "@crosscheck/connector-core/http/hub.ts";
+import {
+  assembleBriefing,
+  recordBriefingDeliveries,
+} from "@crosscheck/connector-core/flows/briefing.ts";
 import {
   fallbackWorkContextTitle,
   registerSessionFlow,
@@ -20,10 +36,13 @@ import {
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import { reapSpool } from "@crosscheck/connector-core/spool/reap.ts";
 import type { DeferredEnder } from "@crosscheck/connector-core/spool/reap.ts";
+import { CURSOR_BACKGROUND_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";
 import { updateSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 
 import type { CursorHookContext } from "../runner.ts";
+import { recordInjectionOutcome } from "../inject/ledger.ts";
+import { cursorInjectionOutput } from "../inject/output.ts";
 
 const INITIAL_STATUS = "analyzing";
 
@@ -79,6 +98,22 @@ export const handleCursorSessionStart = async (
     });
   }
 
+  // The briefing, BEFORE maintenance (the Claude order — see the header).
+  // Background agents skip assembly entirely: no injection output means the
+  // six GETs would be spent on a briefing nobody may see.
+  const isBackground = ctx.config.agentKind === CURSOR_BACKGROUND_AGENT_KIND;
+  const briefing = isBackground
+    ? ""
+    : await deliverBriefing(ctx, crosscheckSessionId, developerId, now);
+  if (isBackground) {
+    await recordInjectionOutcome(ctx.config.home, {
+      kind: "briefing",
+      outcome: "suppressed",
+      event: ctx.event,
+      reason: "background",
+    });
+  }
+
   // Maintenance on the spare budget, the Claude SessionStart order: flush
   // first so a session whose records just reached the hub is reaped in the
   // same pass. Our own state file exists by now, so reap can never remove
@@ -89,5 +124,51 @@ export const handleCursorSessionStart = async (
     budget.spareMs(),
   );
   await reapSpool(ctx.config.home, ctx.repoKey, now, deferredEnder(ctx, budget));
-  return "";
+
+  return briefing.length === 0 ? "" : cursorInjectionOutput(briefing);
+};
+
+/**
+ * Assemble through the shared flow (no landed rider — landed detection is
+ * the Claude connector's; a connector without it simply omits the rider),
+ * record the solved-pointer deliveries the EMITTED text really shows
+ * (spool append then state then emit — flows/briefing.ts carries the
+ * ordering argument; the deterministic delivery id is what makes a
+ * restarted session's replay a hub-side `duplicate`, never a double), and
+ * count the outcome in the injection ledger.
+ */
+const deliverBriefing = async (
+  ctx: CursorHookContext,
+  crosscheckSessionId: string,
+  developerId: string | null,
+  now: Date,
+): Promise<string> => {
+  const assembled = await assembleBriefing({
+    hub: ctx.hub,
+    repoId: ctx.identity.repoId,
+    repoRoot: ctx.identity.root,
+    selfDeveloperId: developerId,
+    now,
+  });
+  const producer: Producer = {
+    developerId: developerId ?? UNKNOWN_DEVELOPER_ID,
+    agentKind: ctx.config.agentKind,
+    sessionId: crosscheckSessionId,
+  };
+  await recordBriefingDeliveries({
+    home: ctx.config.home,
+    repoKey: ctx.repoKey,
+    hostSessionKey: ctx.hostSessionKey,
+    crosscheckSessionId,
+    producer,
+    shownSolvedIds: assembled.shownSolvedIds,
+    now,
+  });
+  await recordInjectionOutcome(ctx.config.home, {
+    kind: "briefing",
+    outcome: assembled.briefing.length === 0 ? "suppressed" : "delivered",
+    event: ctx.event,
+    ...(assembled.briefing.length === 0 ? { reason: "empty" } : {}),
+  });
+  return assembled.briefing;
 };

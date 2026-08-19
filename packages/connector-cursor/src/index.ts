@@ -2,8 +2,10 @@
  * @crosscheck/connector-cursor — the Cursor IDE connector (design §3):
  * short-lived `crosscheck cursor-hook <event>` processes over Cursor's
  * documented hooks API, the same spool, the same budgets, the same
- * fail-open-everywhere. Block 6 is capture; the injection surfaces
- * (`additional_context` briefing + hints) land in Block 7.
+ * fail-open-everywhere. Block 6 landed capture; Block 7 landed the
+ * injection surfaces — the `sessionStart` briefing and failure-matched
+ * hints via the documented `additional_context` output, everything through
+ * the core renderers on registered §4.4 surfaces (src/inject/output.ts).
  */
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 
@@ -69,3 +71,16 @@ export { prepareCursorInit } from "./init/init.ts";
 export type { CursorInitPlan } from "./init/init.ts";
 export { cursorDoctorChecks } from "./doctor.ts";
 export type { CursorCheck } from "./doctor.ts";
+export {
+  cursorInjectionOutput,
+  deliveredAdditionalContext,
+} from "./inject/output.ts";
+export {
+  injectionLedgerPath,
+  readInjectionLedger,
+  recordInjectionOutcome,
+} from "./inject/ledger.ts";
+export type {
+  InjectionOutcomeEntry,
+  InjectionSummary,
+} from "./inject/ledger.ts";

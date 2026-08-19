@@ -605,6 +605,28 @@ empty `output` is a silent successful command, and counting it as drift would
 cry-wolf the very instrument q5's checklist reads. The failure-exclusion fixtures
 (interrupt, permission_denied) now carry fingerprintable text so both guards are
 provably load-bearing (mutation-check entries pin all three fixes).
+Status note (2026-08-19, updated in Block 7): row 7 LANDED — the §3.3 injection
+path over the Block-6 handlers. `sessionStart` emits the briefing as the
+documented `additional_context` output via the shared `assembleBriefing` flow
+(no landed rider — that stays the Claude connector's), background agents get no
+injection output; the failure-matched hint runs the shared `selectAndRenderHint`
+flow with the FAILURE TEXT as the ephemeral query (Cursor documents no
+injectable prompt-time event — `beforeSubmitPrompt` has no context output — so
+the failure is the prompt-adjacent moment, which is also §3.3's better-anchoring
+case), delivered on `postToolUse`'s documented `additional_context` AND
+tolerantly on `postToolUseFailure` (see the q4 note below). One composition
+point (`connector-cursor/src/inject/output.ts`) is the package's registered
+§4.4 surface, with the corpus adapters attacking the DECODED
+`additional_context` of the real stdout JSON — the notice + frame proven to
+survive the encoding. New telemetry: the injection ledger
+(`state/cursor-injection.jsonl`, doctor-visible) counts delivered/suppressed
+briefings and hints per carrying event. Caps/seen-set/echo-exclusion/
+`hint_deliveries` are the same core flow the Claude and ACP connectors call —
+parity is structural, and pinned through the cursor path in
+`connector-cursor/test/injection.test.ts`. The §6 q4/q5 manual dogfood on a
+real Cursor build remains OPEN (checklist steps 6-8 in the package README);
+budget discipline against a hung hub is measured in
+`connector-cursor/test/budget.test.ts`.
 
 ---
 
@@ -652,6 +674,17 @@ provably load-bearing (mutation-check entries pin all three fixes).
    overlap. The manual checklist a human must run on a real build is in
    `packages/connector-cursor/README.md` ("Manual dogfood"); a green CI is NOT that
    verification.
+   *Block 7 implementation (2026-08-19), same tolerance extended to injection:*
+   the failure-matched hint attaches at BOTH failure signals — `postToolUse`'s
+   documented `additional_context`, and `postToolUseFailure` in the same response
+   shape although its documented output lists no fields (an ignored field
+   degrades silently; capture is untouched). If both events fire for one
+   failure, the shared seen-set silences the second attempt — never a double
+   delivery. The injection ledger records which event delivered, so the dogfood
+   answers this question by reading `doctor` (README steps 6-8), not by
+   guessing. `afterShellExecution` deliberately carries NO injection output: its
+   failure marker is itself undocumented, and tolerance stacked on tolerance is
+   where a connector starts inventing a contract.
 5. **Cursor event completeness per surface** (IDE vs cloud agents): the docs claim
    near-full cloud support; the six §3.2 events need a per-surface checklist run.
    *Block 6 note (2026-08-19):* the per-surface run is step 5 of the README

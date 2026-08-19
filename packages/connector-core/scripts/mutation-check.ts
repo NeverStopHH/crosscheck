@@ -720,6 +720,42 @@ export const MUTATIONS: readonly Mutation[] = [
       "unbounded spool growth on a dead-hub day, and the hub-side dedup that " +
       "hides it in tests does not exist in the spool",
   },
+  // The two below guard Block 7's Cursor injection.
+  {
+    // §3.2 row 1: background agents register but get NO injection output.
+    // The gate is one comparison in one place; flattening it to false is
+    // the smallest edit that ships briefings into background/cloud runs.
+    label: "a cursor background agent receives the briefing",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from:
+      "  const isBackground = ctx.config.agentKind === CURSOR_BACKGROUND_AGENT_KIND;",
+    to: "  const isBackground = false;",
+    test: `${CURSOR}/test/injection.test.ts`,
+    because:
+      "background and cloud runs get context injected into sessions no " +
+      "developer is watching — §3.2 row 1's no-injection rule exists so an " +
+      "unattended agent never acts on teammate text nobody saw delivered",
+  },
+  {
+    // The REAL emitted payload is JSON, and JSON.stringify is the entire
+    // encoding. Hand-rolled interpolation is the classic replacement — it
+    // ships until the first briefing carries a quote or a newline, then
+    // emits unparseable output every hook after. The registry corpus and
+    // the round-trip pin both attack the decode of the real stdout.
+    label: "the cursor additional_context is composed by string interpolation",
+    file: `${CURSOR}/src/inject/output.ts`,
+    from:
+      "export const cursorInjectionOutput = (text: string): string =>\n" +
+      "  JSON.stringify({ [CURSOR_ADDITIONAL_CONTEXT_KEY]: text });",
+    to:
+      "export const cursorInjectionOutput = (text: string): string =>\n" +
+      '  `{"additional_context": "${text}"}`;',
+    test: `${CURSOR}/test/injection.test.ts`,
+    because:
+      "every briefing is multi-line and every hint may carry quotes — the " +
+      "hand-rolled shape emits invalid JSON exactly when there is something " +
+      "to deliver, and Cursor logs a failed hook instead of injecting",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

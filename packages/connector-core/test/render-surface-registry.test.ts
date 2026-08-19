@@ -303,14 +303,16 @@ describe("§4.4: unregistered render surfaces are a red build", () => {
     expect(labels).toContain("connector-core");
     expect(labels).toContain("connector-claude");
     expect(labels).toContain("connector-acp");
+    expect(labels).toContain("connector-cursor");
   });
 
-  test("the ACP injection surfaces stay registered by NAME — module cover is not surface cover", () => {
-    // All three share module src/inject/blocks.ts, so the module-granular
-    // meta-test stays green when ONE registration is deleted (its siblings
-    // keep the module allow-listed) and the corpus floor never trips —
-    // proven empirically in the Block-5 review. The day the block wrappers
-    // diverge (open question 2 framing), a dropped registration would drop
+  test("the ACP and Cursor injection surfaces stay registered by NAME — module cover is not surface cover", () => {
+    // Each connector's three surfaces share ONE module (ACP:
+    // src/inject/blocks.ts; Cursor: src/inject/output.ts), so the
+    // module-granular meta-test stays green when ONE registration is
+    // deleted (its siblings keep the module allow-listed) and the corpus
+    // floor never trips — proven empirically in the Block-5 review. The day
+    // the wrappers diverge per surface, a dropped registration would drop
     // that framing's corpus coverage silently; this named floor is what
     // makes it a red build instead.
     const names = new Set(ALL_SURFACES.map((surface) => surface.name));
@@ -318,6 +320,9 @@ describe("§4.4: unregistered render surfaces are a red build", () => {
       "acp-briefing-block",
       "acp-claim-hint-block",
       "acp-pointer-hint-block",
+      "cursor-briefing-context",
+      "cursor-claim-hint-context",
+      "cursor-pointer-hint-context",
     ]) {
       expect(names.has(required), required).toBe(true);
     }

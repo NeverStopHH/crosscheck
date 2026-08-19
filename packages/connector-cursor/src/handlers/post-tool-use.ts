@@ -11,8 +11,13 @@
  * produce the same fingerprint from the same text, and the hub dedups on
  * (work_context, kind, value), so overlap costs nothing.
  *
- * The hint delivery this event will carry (`additional_context`) is
- * Block 7's.
+ * Block 7: a DETECTED failure also runs the failure-matched hint attempt
+ * (inject/hint.ts — the shared `selectAndRenderHint` flow with the failure
+ * text as the ephemeral query), and a delivered hint rides out on this
+ * event's DOCUMENTED `additional_context` output, "injected after the tool
+ * result". The hint runs BEFORE the maintenance flush — it is the thing the
+ * developer may actually see, the Claude ordering rule — and a successful
+ * tool result attempts nothing: no failure, no query, no HTTP.
  */
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
@@ -23,6 +28,8 @@ import { updateSessionState } from "@crosscheck/connector-core/state/session-sta
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 
 import type { CursorHookContext } from "../runner.ts";
+import { attemptFailureHint } from "../inject/hint.ts";
+import { cursorInjectionOutput } from "../inject/output.ts";
 import { requireSessionState } from "./recover.ts";
 
 /**
@@ -73,9 +80,12 @@ export const handleCursorPostToolUse = async (
   }
   const now = ctx.now();
   const parsedOutput = parseToolOutput(ctx.payload.tool_output);
+  let hintText = "";
   if (parsedOutput !== null && isFailingToolOutput(parsedOutput)) {
     // The parsed record's text fields (stdout/stderr/output/error) through
     // the shared extractor — identical spelling to every other connector.
+    // ONE extraction feeds both the fingerprint and the ephemeral query.
+    const failureText = extractFailureText(parsedOutput);
     await captureFailure({
       home: ctx.config.home,
       repoKey: ctx.repoKey,
@@ -86,9 +96,10 @@ export const handleCursorPostToolUse = async (
         agentKind: ctx.config.agentKind,
         sessionId: state.crosscheckSessionId,
       },
-      failureText: extractFailureText(parsedOutput),
+      failureText,
       now,
     });
+    hintText = await attemptFailureHint(ctx, failureText);
   }
   // Maintenance on the spare budget; the heartbeat after it is another hub
   // call and the state write is what keeps this session's spool safe.
@@ -109,5 +120,5 @@ export const handleCursorPostToolUse = async (
       lastHeartbeatAt: now.toISOString(),
     }));
   }
-  return "";
+  return hintText.length === 0 ? "" : cursorInjectionOutput(hintText);
 };

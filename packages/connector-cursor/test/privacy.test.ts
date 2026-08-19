@@ -7,6 +7,11 @@
  *      DEAD hub (so everything that would ever touch disk is still on
  *      disk), then read every file under the home — no sentinel anywhere.
  *      Failure text is allowed to leave only as its sha256: fingerprint.
+ *      Since Block 7 the failing events ALSO run the failure-matched hint
+ *      attempt with that same text as the EPHEMERAL query (design §3.3
+ *      privacy pin), and the injection ledger is one of the files swept —
+ *      so this suite now also proves the query and the delivered/suppressed
+ *      telemetry carry no content.
  *   2. STRUCTURAL (the Block-4 grep-pin shape): the package source never
  *      names the content field accessors at all — what is never read
  *      cannot leak, and a future handler that starts reading

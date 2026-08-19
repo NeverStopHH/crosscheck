@@ -18,12 +18,34 @@ export const CURSOR_HOOKS_VERSION = 1;
 export const CURSOR_HOOK_TIMEOUT_SECONDS = 10;
 
 /**
- * What every Block-6 handler answers on stdout: valid JSON carrying no
- * directives — no `permission`, no `followup_message`, no `continue`. Exit 0
- * with parseable output keeps the connector out of Cursor's hook-failure
- * logs; the injection fields arrive in Block 7.
+ * What every handler answers on stdout when it has nothing to inject: valid
+ * JSON carrying no directives — no `permission`, no `followup_message`, no
+ * `continue`. Exit 0 with parseable output keeps the connector out of
+ * Cursor's hook-failure logs. The only other answer any handler may give is
+ * the injection shape (`src/inject/output.ts`): one `additional_context`
+ * string, still directive-free.
  */
 export const CURSOR_NO_OP_OUTPUT = "{}";
+
+/**
+ * The documented injection output field (design §3.3): `sessionStart` and
+ * `postToolUse` both document it, and it is the ONLY key this connector ever
+ * emits beside the no-op. `env`, `updated_mcp_tool_output` and every
+ * directive key stay unemitted forever.
+ */
+export const CURSOR_ADDITIONAL_CONTEXT_KEY = "additional_context";
+
+/**
+ * The injection ledger (state/cursor-injection.jsonl) — Block 7's sibling of
+ * the drift ledger, same discipline: append-only JSONL (racing hook
+ * processes lose read-modify-write increments, appends they do not), size
+ * cap past which counts become a floor doctor says out loud. One line per
+ * injection decision: delivered briefings/hints and suppressed attempts,
+ * each with the CARRYING EVENT — the per-event delivered counts are the
+ * instrument the §6-q4 dogfood reads ("which event carried the hint?").
+ */
+export const INJECTION_LEDGER_FILE = "cursor-injection.jsonl";
+export const MAX_INJECTION_LEDGER_BYTES = 65_536;
 
 /**
  * Hooks exist since Cursor 1.7 (design §3.1) — doctor warns below this when

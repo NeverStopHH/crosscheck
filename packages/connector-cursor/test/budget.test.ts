@@ -11,18 +11,33 @@
  *   - a hub SLOWER than every budget → the shared race abandons the work
  *     and answers the no-op within budget + margin (the Claude slow-hub
  *     fixture, reused relatively — same drive-train, new connector).
+ *
+ * Block 7 extends the same discipline to the INJECTING hooks (prime
+ * directive 3): a sessionStart that now assembles the briefing and a
+ * postToolUse that now runs the hint fast path must still exit within
+ * their budgets against a hung hub — the briefing degrades to silence via
+ * per-request timeouts (fail open, its facts surface as later hints), and
+ * the hint's one candidates call is bounded the same way, with the shared
+ * race as backstop. Both are MEASURED below through the real runner.
  */
 import { describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import {
   HTTP_TIMEOUT_MS,
+  POST_TOOL_USE_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
+import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import { runCursorHook } from "../src/index.ts";
-import { SESSION_START_INPUT } from "./fixtures/cursor-contract/payloads.ts";
+import {
+  POST_TOOL_USE_FAILING_COMMAND,
+  SESSION_START_INPUT,
+} from "./fixtures/cursor-contract/payloads.ts";
 import { startSlowHub } from "../../connector-claude/test/fixtures/slow-hub.ts";
+import { startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const REMOTE = "git@github.com:acme/api.git";
@@ -92,8 +107,12 @@ describe("fail-open within budget", () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  test("a hub slower than every budget: the race answers {} within budget + margin", async () => {
-    // Arrange: every endpoint slower than the whole hook budget.
+  test("a hub slower than every budget: the race answers {} within budget + margin — the briefing degrades, never the hook", async () => {
+    // Arrange: every endpoint slower than the whole hook budget. Since
+    // Block 7 this sessionStart also attempts the briefing (six parallel
+    // GETs) — all of them die on the per-request timeout, the briefing
+    // collapses to silence, and the hook still answers inside its budget:
+    // the briefing prefetch/fallback discipline, measured.
     const hub = startSlowHub({ ingest: 5000, end: 5000, other: 5000 });
     const repo = await makeRepo("budget-slow", { remote: REMOTE });
     const home = await makeHome("budget-slow");
@@ -118,6 +137,71 @@ describe("fail-open within budget", () => {
       expect(out).toBe("{}");
       expect(elapsedMs).toBeLessThan(
         timeoutMs * SESSION_START_BUDGET_RATIO + MARGIN_MS,
+      );
+    } finally {
+      hub.stop();
+      await rm(repo, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("hint fast path against candidates slower than every budget: {} within the postToolUse ratio + margin", async () => {
+    // Arrange: the canned hint hub with a candidates endpoint slower than
+    // the whole hook budget; a registered session so the failing tool
+    // output reaches the hint attempt directly.
+    const hub = startHintHub({ candidates: 5000, tripwire: 0 });
+    const repo = await makeRepo("budget-hint", { remote: REMOTE });
+    const home = await makeHome("budget-hint");
+    const timeoutMs = 300;
+    const conv = "conv-budget-hint";
+
+    try {
+      await writeSessionState(home, {
+        hostSessionKey: `cur-${conv}`,
+        crosscheckSessionId: `cc_cur-${conv}`,
+        workContextId: `wc_cc_cur-${conv}`,
+        repoId: "github.com/acme/api",
+        repoRoot: repo,
+        hubUrl: hub.url,
+        developerId: "dev_self",
+        startedAt: new Date().toISOString(),
+        lastHeartbeatAt: null,
+        seenTargets: [],
+        deliveredHintRefs: [],
+        deliveredHintHashes: [],
+        tripwireAskedFiles: [],
+        briefingSolvedRefs: [],
+        stopTurnCount: 0,
+        summarizerFireCount: 0,
+        summarizerLastFireTurn: null,
+        summarizerEstimatedTokens: 0,
+      } satisfies SessionState);
+
+      // Act
+      const startedAt = performance.now();
+      const out = await runCursorHook(
+        "postToolUse",
+        JSON.stringify({
+          ...POST_TOOL_USE_FAILING_COMMAND,
+          conversation_id: conv,
+          workspace_roots: [repo],
+        }),
+        {
+          CROSSCHECK_HOME: home,
+          CROSSCHECK_HUB_URL: hub.url,
+          CROSSCHECK_API_KEY: "test-key",
+          CROSSCHECK_TIMEOUT_MS: String(timeoutMs),
+        },
+      );
+      const elapsedMs = performance.now() - startedAt;
+
+      // Assert: the candidates call died on the per-request timeout, the
+      // hint became silence, the hook answered inside its own budget — and
+      // the attempt really happened (this is the fast path, not a skip).
+      expect(out).toBe("{}");
+      expect(hub.calls.candidates).toBe(1);
+      expect(elapsedMs).toBeLessThan(
+        timeoutMs * POST_TOOL_USE_BUDGET_RATIO + MARGIN_MS,
       );
     } finally {
       hub.stop();
