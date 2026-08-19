@@ -31,6 +31,25 @@ import type { CliResult } from "./login.ts";
 /** The connector's own entry point, resolved from this module's location. */
 const BIN_ENTRY_PATH = resolve(import.meta.dir, "..", "bin", "crosscheck.ts");
 
+/** The flag names in one place: the help gate (cli/index.ts) reuses them. */
+export const INIT_COMMAND_PREFIX_FLAG = "--command-prefix";
+export const INIT_HUB_FLAG = "--hub";
+export const INIT_FORCE_STATUSLINE_FLAG = "--force-statusline";
+export const INIT_CURSOR_FLAG = "--cursor";
+
+export const INIT_USAGE = [
+  `usage: crosscheck init [${INIT_COMMAND_PREFIX_FLAG} <prefix>] [${INIT_HUB_FLAG} <url>] [${INIT_FORCE_STATUSLINE_FLAG}] [${INIT_CURSOR_FLAG}]`,
+  "",
+  "  wires this repo: hooks and statusline into .claude/settings.json, the",
+  "  mcp server into .mcp.json, and the hub url into .crosscheck.json",
+  "",
+  `  ${INIT_COMMAND_PREFIX_FLAG} <prefix>   launcher prefix for hook commands (advanced)`,
+  `  ${INIT_HUB_FLAG} <url>            hub url to write (default: stored login / repo config)`,
+  `  ${INIT_FORCE_STATUSLINE_FLAG}     replace an existing statusline`,
+  `  ${INIT_CURSOR_FLAG}               additionally merge .cursor/hooks.json + .cursor/mcp.json`,
+  "",
+].join("\n");
+
 export interface InitOptions {
   readonly commandPrefix?: string | undefined;
   readonly hubUrl?: string | undefined;
@@ -45,10 +64,10 @@ export const parseInitArgs = (args: readonly string[]): InitOptions => {
     return index === -1 ? undefined : args[index + 1];
   };
   return {
-    commandPrefix: flagValue("--command-prefix"),
-    hubUrl: flagValue("--hub"),
-    forceStatusline: args.includes("--force-statusline"),
-    cursor: args.includes("--cursor"),
+    commandPrefix: flagValue(INIT_COMMAND_PREFIX_FLAG),
+    hubUrl: flagValue(INIT_HUB_FLAG),
+    forceStatusline: args.includes(INIT_FORCE_STATUSLINE_FLAG),
+    cursor: args.includes(INIT_CURSOR_FLAG),
   };
 };
 

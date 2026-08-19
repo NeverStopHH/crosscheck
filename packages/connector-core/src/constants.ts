@@ -97,6 +97,34 @@ export const MAX_DELIVERED_HINT_HASHES_PER_REPO = 512;
 export const GIT_TIMEOUT_MS = 1500;
 
 /**
+ * Bound on the one `ssh -G <host>` that resolves an ssh ALIAS to the real
+ * hostname during repo identity resolution (git/ssh-hostname.ts). Tighter
+ * than GIT_TIMEOUT_MS because identity runs on EVERY hook invocation and
+ * `ssh -G` is local config evaluation (~10 ms measured) — a config whose
+ * Match exec outlives half a second loses its aliasing for that call
+ * (fail-open to the literal host), never the hook.
+ */
+export const SSH_RESOLVE_TIMEOUT_MS = 500;
+
+/**
+ * Environment switch that disables ssh identity canonicalization outright:
+ * when the variable holds "off", the default resolver answers null without
+ * spawning anything and every remote keeps its LITERAL host — fail-open,
+ * identical to ssh being absent. Two audiences:
+ *
+ *   - a developer whose ssh config rewrites real forge hosts to unrelated
+ *     proxies (a corporate `Host *` HostName override) and who would rather
+ *     keep the literal identity than have it follow the proxy's name;
+ *   - the test suite, whose preload (test/preload.ts) sets it so no identity
+ *     assertion ever consults the machine's ~/.ssh/config — tests exercising
+ *     the real resolution opt back in per spawned subprocess.
+ *
+ * Values other than "off" (including unset) leave canonicalization on.
+ */
+export const SSH_CANONICALIZE_ENV = "CROSSCHECK_SSH_CANONICALIZE";
+export const SSH_CANONICALIZE_OFF = "off";
+
+/**
  * Grace between the deadline's SIGTERM and the SIGKILL escalation for a git
  * that outlived its budget (git/git.ts). SIGTERM first so git can remove its
  * lock files; the escalation covers a git that ignores it. Nothing waits on
@@ -121,6 +149,66 @@ export const STDIN_TIMEOUT_MS = 1000;
  * not a silent forever-hang (cli/login.ts).
  */
 export const LOGIN_STDIN_TIMEOUT_MS = 60_000;
+
+/**
+ * ── Latency-aware timeout (login + doctor) ─────────────────────────────────
+ *
+ * HTTP_TIMEOUT_MS is sized for a same-LAN hub. A hub reached across a relay is
+ * not hypothetical: a teammate on a Tailscale DERP path measured 200-580 ms
+ * RTT, so every hub call died as "unreachable" while plain curl succeeded —
+ * and the escape hatch (CROSSCHECK_TIMEOUT_MS, stored timeoutMs) existed but
+ * nothing pointed at it. Login therefore measures the hub's distance itself:
+ * median RTT over LATENCY_PROBE_COUNT sequential probes, times
+ * LATENCY_TIMEOUT_MULTIPLIER, plus LATENCY_TIMEOUT_FLOOR_MS of absolute
+ * headroom, clamped to [HTTP_TIMEOUT_MS, LATENCY_TIMEOUT_MAX_MS] — and stores
+ * the result ONLY when it exceeds the default and only over values it wrote
+ * itself (config/timeout-policy.ts):
+ *
+ * VERIFY: bun -e 'const l=await import("./packages/connector-core/src/http/latency.ts");console.log(l.recommendedTimeoutMs(500), l.recommendedTimeoutMs(0), l.recommendedTimeoutMs(10000))'
+ * PRINTS: 2200 400 5000
+ *
+ * The multiplier absorbs relay jitter (spikes of 2-3x median are ordinary on
+ * relayed paths); the floor keeps a small median from producing a timeout with
+ * no absolute headroom; the lower clamp is the never-lower rule — a LAN user
+ * keeps the tight default untouched.
+ *
+ * THE UPPER CLAMP IS A BUDGET STATEMENT, and the honest part: the hook budgets
+ * are RATIOS of the effective timeout (resolveBudget, hooks/runner.ts), so a
+ * stored timeout widens every hook ceiling proportionally — at the cap,
+ * UserPromptSubmit's race resolves at 10 s instead of 800 ms, and what a far
+ * hub actually costs each prompt is up to one real round trip of added wait.
+ * A hub far enough that even the cap cannot cover it degrades the tight
+ * in-session surfaces (prompt hints, the tripwire) FIRST and silently — they
+ * fail open by design, silence over delay — while briefings, doctor, login and
+ * the MCP tools (patient budgets) keep working. doctor's `hub latency` WARN is
+ * where that state gets said out loud.
+ */
+export const LATENCY_PROBE_COUNT = 5;
+/**
+ * Login and doctor probes wait like MCP tools (a human asked and is watching),
+ * not like hooks (nobody did). Also the auth probe's own timeout: held to
+ * HTTP_TIMEOUT_MS, a hub 580 ms away could never complete a login at all, and
+ * the one command that could fix the timeout would be the one dying of it.
+ */
+export const LATENCY_PROBE_TIMEOUT_MS = 10_000;
+export const LATENCY_TIMEOUT_MULTIPLIER = 4;
+export const LATENCY_TIMEOUT_FLOOR_MS = 200;
+export const LATENCY_TIMEOUT_MAX_MS = 5_000;
+/**
+ * doctor warns when median RTT times this reaches the effective timeout:
+ * ordinary jitter then crosses the timeout on bad samples and calls flap —
+ * the in-session surfaces going silent first, per the budget statement above.
+ */
+export const LATENCY_FLAP_WARN_RATIO = 2;
+
+/**
+ * Bound on the one node:dns lookup that splits Bun's collapsed "could not
+ * connect" into its DNS half (http/connection-error.ts). Only login and
+ * doctor refine — a human is waiting there — and a resolver that is itself
+ * behind the dead VPN must not hang the CLI: the deadline races the lookup
+ * and the answer falls back to the unrefined cause.
+ */
+export const DNS_REFINE_TIMEOUT_MS = 1_000;
 
 export const HEARTBEAT_MIN_INTERVAL_MS = 20_000;
 
@@ -455,7 +543,7 @@ export const MCP_SERVER_NAME = "crosscheck";
  * VERIFY: bun -e 'const p=await Bun.file("packages/connector-claude/package.json").json(); const c=await import("./packages/connector-core/src/constants.ts"); console.log(p.version === c.MCP_SERVER_VERSION)'
  * PRINTS: true
  */
-export const MCP_SERVER_VERSION = "0.5.0";
+export const MCP_SERVER_VERSION = "0.5.1";
 
 /**
  * MCP revisions this server can speak, newest first. `initialize` echoes the

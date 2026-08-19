@@ -14,6 +14,8 @@ import {
   EXIT_FAIL,
   EXIT_OK,
   EXIT_WARN,
+  LATENCY_PROBE_TIMEOUT_MS,
+  LATENCY_TIMEOUT_MAX_MS,
   MAX_CLOCK_SKEW_SECONDS,
   MCP_CONFIG_FILE,
   MCP_SERVER_KEY,
@@ -24,6 +26,8 @@ import {
   SECONDS_PER_MINUTE,
 } from "@crosscheck/connector-core/constants.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
+import { timeoutOwner } from "@crosscheck/connector-core/config/timeout-policy.ts";
+import type { TimeoutOwner } from "@crosscheck/connector-core/config/timeout-policy.ts";
 import {
   configPath,
   crosscheckHome,
@@ -36,6 +40,16 @@ import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
+import {
+  describeConnectionFailure,
+  refineRefusedCause,
+} from "@crosscheck/connector-core/http/connection-error.ts";
+import {
+  isFlapRisk,
+  measureHubLatency,
+  recommendedTimeoutMs,
+} from "@crosscheck/connector-core/http/latency.ts";
+import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
 import { getAbsences, getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
@@ -113,9 +127,12 @@ const bunfigCandidates = (env: Env, cwd: string, repoRoot: string | null): reado
 
 /**
  * Bun's verbose logging prints the whole request, Authorization header
- * included, to hook stderr — a leak of OUR credential caused by the runtime.
- * The connector cannot switch that off from inside its own process, so the
- * honest answer is to name the file and say the key has to be rotated.
+ * included, to the stderr of every bun process in that cwd. The connector's
+ * OWN hub calls are shielded — the one fetch in http/client.ts passes
+ * `verbose: false`, which is the only mechanism that beats the bunfig
+ * (measured; test/bunfig-leak.test.ts) — so the WARN stays for what the
+ * shield cannot cover: other bun processes in the repo printing THEIR
+ * headers, and any older connector version that ran here before the shield.
  */
 const checkBunfig = async (
   env: Env,
@@ -128,7 +145,7 @@ const checkBunfig = async (
       return check(
         "WARN",
         "bun request logging",
-        `${path} enables debug logging — bun then prints the api key (Authorization header) to hook stderr; rotate the key if it was logged`,
+        `${path} enables debug logging — this connector's own hub calls are shielded (fetch verbose:false), but bun prints request headers for every other process here, and a connector older than the shield leaked the api key: rotate the key if one ran in this repo`,
       );
     }
   }
@@ -516,6 +533,112 @@ const checkSummarizerCost = async (
   return check("PASS", "summarizer cost", formatSummarizerCost(cost));
 };
 
+/**
+ * The effective per-request timeout and WHO set it — the source tells the
+ * reader which knob moves it: the default is raised by `crosscheck login`
+ * (measured) or CROSSCHECK_TIMEOUT_MS; a hand-set stored value is theirs to
+ * edit; login rewrites only values it measured itself (timeout-policy.ts).
+ */
+const TIMEOUT_SOURCE_LABELS: Readonly<Record<TimeoutOwner, string>> = {
+  env: "CROSSCHECK_TIMEOUT_MS",
+  login: "stored config, measured at login",
+  manual: "stored config, set by hand",
+  none: "default",
+};
+
+const timeoutCheck = (effectiveTimeoutMs: number, owner: TimeoutOwner): Check =>
+  check(
+    "PASS",
+    "timeout",
+    `${String(effectiveTimeoutMs)} ms (${TIMEOUT_SOURCE_LABELS[owner]})`,
+  );
+
+/** Measures the hub's distance; injectable so tests never time real network. */
+export type MeasureLatency = (
+  ctx: HubContext,
+) => Promise<LatencyMeasurement | null>;
+
+/**
+ * Probes wait LATENCY_PROBE_TIMEOUT_MS (a human is watching), not the
+ * effective timeout — a hub SLOWER than the effective timeout is exactly the
+ * state the WARN below exists to name, so the probe must outlast it.
+ * repoKey "" keeps the probes out of the last-sync record, like login's.
+ */
+const defaultMeasureLatency: MeasureLatency = (ctx) =>
+  measureHubLatency(
+    async () =>
+      (
+        await hubRequest(
+          { ...ctx, timeoutMs: LATENCY_PROBE_TIMEOUT_MS, repoKey: "" },
+          {
+            method: "GET",
+            path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
+            schema: z.unknown(),
+          },
+        )
+      ).ok,
+    () => Date.now(),
+  );
+
+/**
+ * The WARN's remedy must name a knob that actually moves THIS timeout.
+ * "Rerun crosscheck login" is a guaranteed no-op for an env or hand-set
+ * owner (the policy keeps both, config/timeout-policy.ts) and for a
+ * login-measured value the recommendation can no longer exceed — advising it
+ * would loop: WARN, rerun, identical WARN.
+ */
+const flapRemedy = (
+  owner: TimeoutOwner,
+  medianRttMs: number,
+  effectiveTimeoutMs: number,
+): string => {
+  if (owner === "env") {
+    return "raise CROSSCHECK_TIMEOUT_MS";
+  }
+  if (owner === "manual") {
+    return "raise your hand-set timeoutMs in config.json (login never rewrites it), or set CROSSCHECK_TIMEOUT_MS";
+  }
+  // "none" always improves (any WARN-able median recommends above the
+  // default); a login-measured value improves until the recommendation hits
+  // the cap it is already stored at.
+  return recommendedTimeoutMs(medianRttMs) > effectiveTimeoutMs
+    ? "rerun crosscheck login to store a measured timeout, or set CROSSCHECK_TIMEOUT_MS"
+    : `login already stores its cap (${String(LATENCY_TIMEOUT_MAX_MS)} ms); set CROSSCHECK_TIMEOUT_MS`;
+};
+
+/**
+ * The honest half of the latency-aware timeout: when the hub sits within the
+ * flap margin, the FIRST casualties are the surfaces that fail open silently
+ * (prompt hints, the tripwire — silence over delay, hook budgets being ratios
+ * of this same timeout), so nothing else on this machine would say why they
+ * went quiet. This line is where that state becomes a sentence, with a remedy
+ * that fits who owns the timeout — and when the median itself is past the
+ * timeout, it says the incident's name ("calls die") rather than "may flap".
+ */
+const latencyCheck = (
+  measurement: LatencyMeasurement | null,
+  effectiveTimeoutMs: number,
+  owner: TimeoutOwner,
+): Check => {
+  if (measurement === null) {
+    return check("PASS", "hub latency", "not measured");
+  }
+  const distance = `hub is ${String(measurement.medianRttMs)} ms away, timeout ${String(effectiveTimeoutMs)} ms`;
+  if (!isFlapRisk(measurement.medianRttMs, effectiveTimeoutMs)) {
+    return check("PASS", "hub latency", distance);
+  }
+  const consequence =
+    measurement.medianRttMs >= effectiveTimeoutMs
+      ? "past the timeout, calls die as unreachable"
+      : "calls may flap";
+  const remedy = flapRemedy(owner, measurement.medianRttMs, effectiveTimeoutMs);
+  return check(
+    "WARN",
+    "hub latency",
+    `${distance} — ${consequence}: in-session hints go silent first (hooks fail open — silence over delay), briefings and cli follow; ${remedy}`,
+  );
+};
+
 /** A live session file plus a stale sync is exactly the silent-death signature. */
 const hasLiveSessionState = async (home: string): Promise<boolean> => {
   try {
@@ -559,7 +682,11 @@ const summarize = (checks: readonly Check[]): CliResult => {
   };
 };
 
-export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
+export const runDoctor = async (
+  env: Env,
+  cwd: string,
+  measureLatency: MeasureLatency = defaultMeasureLatency,
+): Promise<CliResult> => {
   const now = new Date();
   const home = crosscheckHome(env);
   const configCheck = await checkConfig(home);
@@ -602,6 +729,10 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
     path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
     schema: z.unknown(),
   });
+  // A connection-level failure names what actually happened and the remedy
+  // that moves it (http/connection-error.ts) — "unreachable" hid a plain
+  // timeout for an hour of a real onboarding. The bounded DNS refinement is
+  // fine here: doctor is a human-run command, not a hook.
   const hubCheck = probe.ok
     ? check("PASS", "hub reachable", config.hubUrl)
     : check(
@@ -609,7 +740,13 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
         "hub reachable",
         probe.status === HTTP_UNAUTHORIZED
           ? "invalid api key"
-          : `${config.hubUrl}: ${probe.message}`,
+          : probe.kind === "network"
+            ? describeConnectionFailure(
+                await refineRefusedCause(probe.cause ?? "unknown", config.hubUrl),
+                { hubUrl: config.hubUrl, timeoutMs: config.timeoutMs },
+                probe.message,
+              )
+            : `${config.hubUrl}: ${probe.message}`,
       );
 
   const skewCheck = ((): Check => {
@@ -626,11 +763,24 @@ export const runDoctor = async (env: Env, cwd: string): Promise<CliResult> => {
       : check("PASS", "clock skew", `${Math.round(skewSeconds)}s vs hub`);
   })();
 
+  // Measured when the hub answered OR when the probe died network-shaped: the
+  // reachability probe runs at the TIGHT effective timeout, so a hub past that
+  // timeout — the incident this feature exists for — fails it, and the patient
+  // probes (LATENCY_PROBE_TIMEOUT_MS) are the only way its distance still gets
+  // printed with the remedies. A refused or dead hub fails those probes too,
+  // instantly, degrading to null ("not measured"); an answered denial
+  // (http/malformed) is the reachability FAIL's story alone.
+  const measurement =
+    probe.ok || probe.kind === "network" ? await measureLatency(hubCtx) : null;
+
+  const owner = timeoutOwner(env, config.stored);
   const settingsInspection = await checkSettings(identity.root);
   return summarize([
     configCheck,
     identityCheck,
     hubCheck,
+    timeoutCheck(config.timeoutMs, owner),
+    latencyCheck(measurement, config.timeoutMs, owner),
     ...settingsInspection.checks,
     ...(settingsInspection.launcherCommand === null
       ? []

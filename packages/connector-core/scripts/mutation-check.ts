@@ -30,6 +30,7 @@ import { resolve } from "node:path";
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const CONNECTOR = "packages/connector-claude";
 const CORE = "packages/connector-core";
+const CLI = "packages/cli";
 const SERVER = "packages/server";
 const ACP = "packages/connector-acp";
 const CURSOR = "packages/connector-cursor";
@@ -595,6 +596,74 @@ export const MUTATIONS: readonly Mutation[] = [
       "arithmetic detector must catch a raised cap on every machine — " +
       "no stopwatch gets a vote",
   },
+  // The three below guard the latency-aware timeout (login + doctor). Their
+  // guard is test/latency.test.ts, an arithmetic detector with scripted clocks
+  // and probes — no process, no network — because each defect is a constant,
+  // and a constant is wrong on every machine or on none.
+  {
+    label: "a far hub's measured timeout collapses to the floor",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const LATENCY_TIMEOUT_MULTIPLIER = 4;",
+    to: "export const LATENCY_TIMEOUT_MULTIPLIER = 0;",
+    test: `${CORE}/test/latency.test.ts`,
+    because:
+      "recommendedTimeoutMs degenerates to the fixed floor, which clamps to " +
+      "the default — the remote teammate the feature exists for logs in and " +
+      "keeps the 400 ms timeout that killed every call in the incident",
+  },
+  {
+    label: "doctor stops warning about a flap-risk timeout",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const LATENCY_FLAP_WARN_RATIO = 2;",
+    to: "export const LATENCY_FLAP_WARN_RATIO = 0;",
+    test: `${CORE}/test/latency.test.ts`,
+    because:
+      "isFlapRisk is never true, so a hub 500 ms away on a 400 ms timeout " +
+      "reads PASS — the silent-death state the WARN exists to name, on the " +
+      "one surface that would ever say it",
+  },
+  {
+    label: "login stores a timeout below the LAN default",
+    file: `${CORE}/src/http/latency.ts`,
+    from: "    Math.max(\n      HTTP_TIMEOUT_MS,",
+    to: "    Math.max(\n      0,",
+    test: `${CORE}/test/latency.test.ts`,
+    because:
+      "the never-lower clamp is gone: a 2 ms LAN median recommends ~208 ms, " +
+      "which login would store below the 400 ms default — making NEARBY hubs " +
+      "flakier after the very command that is supposed to fix flapping",
+  },
+  {
+    // Guard shells out to git (makeRepo) — the assertGuardIsGreen container
+    // caveat applies. This re-introduces the review finding that shipped in
+    // the feature's first cut: measurement gated on probe.ok.
+    label: "doctor goes quiet in the exact state it exists to name",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from:
+      "  const measurement =\n" +
+      '    probe.ok || probe.kind === "network" ? await measureLatency(hubCtx) : null;',
+    to: "  const measurement = probe.ok ? await measureLatency(hubCtx) : null;",
+    test: `${CLI}/test/doctor-latency.test.ts`,
+    because:
+      "the reachability probe runs at the TIGHT effective timeout, so a hub " +
+      "past that timeout — the incident itself — fails it, and gating " +
+      "measurement on probe.ok leaves doctor printing FAIL unreachable plus " +
+      "latency not measured with neither remedy named, while login seconds " +
+      "later measures the same hub fine",
+  },
+  {
+    label: "one hand-typed word bricks the whole stored config",
+    file: `${CORE}/src/config/config.ts`,
+    from: "  timeoutSource: z.string().optional().catch(undefined),",
+    to: "  timeoutSource: z.literal(MEASURED_TIMEOUT_SOURCE).optional(),",
+    test: `${CORE}/test/config-parse.test.ts`,
+    because:
+      'a config carrying timeoutSource "manual" — a word doctor itself ' +
+      'teaches ("set by hand") — fails a literal parse, so readStoredConfig ' +
+      "returns null: hooks silently fall back to the 400 ms default and the " +
+      "next login rebuilds the file, dropping developerId, denylist and any " +
+      "hand-set timeoutMs",
+  },
   {
     // Like tripwire-hook.test.ts, this guard shells out to git (makeRepo) —
     // the assertGuardIsGreen container caveat applies to it too.
@@ -608,6 +677,40 @@ export const MUTATIONS: readonly Mutation[] = [
       "SUMMARIZER_TIMEOUT_MS on the developer's keyboard — and every other " +
       "Stop test stays green because its fakes answer instantly; only the " +
       "slow-fake wall clock can see this",
+  },
+  // The two below guard the ssh-alias identity canonicalization
+  // (git/ssh-hostname.ts), re-applied here from fix/latency-aware-timeout
+  // onto the extracted core package.
+  {
+    label: "identity tests answer to whichever machine runs them",
+    file: `${CORE}/src/git/ssh-hostname.ts`,
+    from:
+      "  if (process.env[SSH_CANONICALIZE_ENV] === SSH_CANONICALIZE_OFF) {\n" +
+      "    return Promise.resolve(null);\n" +
+      "  }",
+    to:
+      "  if (process.env[SSH_CANONICALIZE_ENV] === `${SSH_CANONICALIZE_OFF}-never`) {\n" +
+      "    return Promise.resolve(null);\n" +
+      "  }",
+    test: `${CORE}/test/repo-ssh-determinism.test.ts`,
+    because:
+      "the off-switch is the suite's only isolation from the developer's " +
+      "~/.ssh/config — with it dead, a config that rewrites github.com forks " +
+      "dozens of github.com/acme/api assertions and every run spawns " +
+      "hundreds of real ssh processes; the hostile-config probe and the " +
+      "in-process null pin both go red",
+  },
+  {
+    label: "the MCP server pays one ssh spawn per tool call",
+    file: `${CORE}/src/git/ssh-hostname.ts`,
+    from: "  const cached = hostnameByHost.get(host);",
+    to: "  const cached = hostnameByHost.get(`${host}-never`);",
+    test: `${CORE}/test/repo-ssh-determinism.test.ts`,
+    because:
+      "identity resolution runs on every tool call of the long-lived server, " +
+      "and without the memo each call re-evaluates the same host — worst " +
+      "case SSH_RESOLVE_TIMEOUT_MS every time under a pathological config; " +
+      "the spawn-count pin sees three spawns where two are allowed",
   },
   // The four below guard Block 5's ACP injection discipline (design §2.5),
   // added by the Block-5 fixer round: the version gate and the budget race
@@ -854,6 +957,8 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
+ * PRINTS: config-parse.test.ts 1
+ * PRINTS: doctor-latency.test.ts 1
  * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2
  * PRINTS: hint-flow.test.ts 2
@@ -866,11 +971,13 @@ interface Outcome {
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: injection.test.ts 2
  * PRINTS: injector.test.ts 4
+ * PRINTS: latency.test.ts 3
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
  * PRINTS: proxy-e2e.test.ts 1
+ * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search.test.ts 3
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1

@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+import {
+  classifyConnectionError,
+  CONNECTION_FAILURE_CODES,
+  shortConnectionMessage,
+} from "./connection-error.ts";
+import type { ConnectionCause } from "./connection-error.ts";
 import { updateSyncState } from "../state/sync-state.ts";
 
 const OkEnvelopeSchema = z.object({ ok: z.literal(true), data: z.unknown() });
@@ -28,6 +34,12 @@ export type HubResult<T> =
       readonly status: number;
       readonly code: string;
       readonly message: string;
+      /**
+       * Set on "network" failures only: what the runtime error actually was
+       * (http/connection-error.ts). CLI surfaces turn it into the sentence
+       * with the matching remedy; hooks ignore it and stay fail-open.
+       */
+      readonly cause?: ConnectionCause;
     };
 
 export interface HubRequest<T> {
@@ -42,7 +54,15 @@ const failure = <T>(
   status: number,
   code: string,
   message: string,
-): HubResult<T> => ({ ok: false, kind, status, code, message });
+  cause?: ConnectionCause,
+): HubResult<T> => ({
+  ok: false,
+  kind,
+  status,
+  code,
+  message,
+  ...(cause === undefined ? {} : { cause }),
+});
 
 const parseEnvelope = <T>(
   raw: unknown,
@@ -128,13 +148,26 @@ const performRequest = async <T>(
         ? {}
         : { body: JSON.stringify(request.body) }),
       signal: AbortSignal.timeout(ctx.timeoutMs),
+      // The api-key shield. A repo bunfig with logLevel="debug" makes bun
+      // print every request VERBATIM to stderr, `Authorization: Bearer
+      // <key>` included, for every process in that cwd — our hooks and MCP
+      // server run there. Measured on Bun 1.3.13: NO env var overrides the
+      // bunfig (BUN_CONFIG_VERBOSE_FETCH=0 in the spawn env and set at
+      // runtime both still leak); this per-request option provably wins.
+      // Pinned through the real hook binary by test/bunfig-leak.test.ts,
+      // whose control arm fails first if a future bun changes the mechanism.
+      verbose: false,
     });
   } catch (error) {
+    // Classified rather than passed through: "hub unreachable" hiding a plain
+    // timeout cost a real onboarding an hour (http/connection-error.ts).
+    const cause = classifyConnectionError(error);
     return failure(
       "network",
       0,
-      "network_error",
-      error instanceof Error ? error.message : "request failed",
+      CONNECTION_FAILURE_CODES[cause],
+      shortConnectionMessage(cause, error, ctx.timeoutMs),
+      cause,
     );
   }
 

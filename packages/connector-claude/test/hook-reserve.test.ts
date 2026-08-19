@@ -52,7 +52,10 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { HTTP_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
+import {
+  HTTP_TIMEOUT_MS,
+  LATENCY_TIMEOUT_MAX_MS,
+} from "@crosscheck/connector-core/constants.ts";
 import { hookBudget } from "../src/hooks/runner.ts";
 
 /** A frozen clock. The reserve is arithmetic; asserting it needs no real one. */
@@ -87,7 +90,7 @@ describe("the hook reserve", () => {
     expect(spare).toBe(REMAINING_MS - HTTP_TIMEOUT_MS);
   });
 
-  test.each([250, HTTP_TIMEOUT_MS, 1500])(
+  test.each([250, HTTP_TIMEOUT_MS, 1500, LATENCY_TIMEOUT_MAX_MS])(
     "reserves one whole request timeout when that timeout is %i ms",
     (timeoutMs: number) => {
       // Arrange / Act: the same remainder, a hub configured slower or faster
@@ -109,6 +112,11 @@ describe("the hook reserve", () => {
     // that the hook cannot pay for.
     expect(spareWith(HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MS)).toBe(0);
     expect(spareWith(HTTP_TIMEOUT_MS - 1, HTTP_TIMEOUT_MS)).toBe(0);
+    // The same holds at the top of the range login may now STORE
+    // (LATENCY_TIMEOUT_MAX_MS): a timeout at or above what remains of the
+    // budget yields exactly zero, never a negative handed on as a deadline.
+    expect(spareWith(LATENCY_TIMEOUT_MAX_MS, LATENCY_TIMEOUT_MAX_MS)).toBe(0);
+    expect(spareWith(LATENCY_TIMEOUT_MAX_MS - 1, LATENCY_TIMEOUT_MAX_MS)).toBe(0);
   });
 
   test("floors at zero rather than offering a deadline already gone", () => {
@@ -117,5 +125,6 @@ describe("the hook reserve", () => {
     // Assert: never negative — a negative would be passed on as a request
     // timeout and is the one value no caller of spareMs checks for.
     expect(spareWith(-REMAINING_MS, HTTP_TIMEOUT_MS)).toBe(0);
+    expect(spareWith(-REMAINING_MS, LATENCY_TIMEOUT_MAX_MS)).toBe(0);
   });
 });

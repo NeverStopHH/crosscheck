@@ -32,28 +32,29 @@ const abandonProcess = (proc: ReturnType<typeof Bun.spawn>): void => {
 };
 
 /**
- * Runs git and returns trimmed stdout, or null for any failure at all
- * (missing binary, not a repo, non-zero exit, deadline). Hooks treat null as
- * "this information does not exist" and keep going.
+ * Runs a command and returns trimmed stdout, or null for any failure at all
+ * (missing binary, non-zero exit, deadline). Callers treat null as "this
+ * information does not exist" and keep going.
  *
  * THE DEADLINE BOUNDS THE CALL, NOT THE CHILD. Killing the direct child is
- * not enough: a `git` that is a non-exec wrapper, or one that lazy-fetches
- * (partial clones spawning fetch/ssh — teammate base commits are exactly the
- * shas the landed probes ask about), leaves a DESCENDANT holding the
- * inherited stdout pipe, and a read awaited past the kill then pends for
- * that descendant's whole lifetime. So the deadline races the read: when it
- * fires, the caller gets its null immediately and the read is abandoned —
- * it settles quietly whenever the pipe finally closes. Pinned by
- * test/git-timeout.test.ts, which drives exactly that wrapper shape.
+ * not enough: a binary that is a non-exec wrapper, or one that spawns helpers
+ * (git lazy-fetching from a partial clone, ssh running a Match exec), leaves
+ * a DESCENDANT holding the inherited stdout pipe, and a read awaited past the
+ * kill then pends for that descendant's whole lifetime. So the deadline races
+ * the read: when it fires, the caller gets its null immediately and the read
+ * is abandoned — it settles quietly whenever the pipe finally closes. Pinned
+ * by test/git-timeout.test.ts (git through a wrapper) and
+ * test/repo-ssh-alias.test.ts (a hanging fake ssh), which drive exactly that
+ * shape.
  */
-export const runGit = async (
-  args: readonly string[],
+export const runBoundedCommand = async (
+  cmd: readonly string[],
   cwd: string,
-  timeoutMs: number = GIT_TIMEOUT_MS,
+  timeoutMs: number,
 ): Promise<string | null> => {
   try {
     const proc = Bun.spawn({
-      cmd: ["git", ...args],
+      cmd: [...cmd],
       cwd,
       stdin: "ignore",
       stdout: "pipe",
@@ -93,3 +94,16 @@ export const runGit = async (
     return null;
   }
 };
+
+/**
+ * Runs git and returns trimmed stdout, or null for any failure at all
+ * (missing binary, not a repo, non-zero exit, deadline). Hooks treat null as
+ * "this information does not exist" and keep going. The deadline discipline
+ * lives in runBoundedCommand above; the wrapper only supplies the binary and
+ * the git default budget.
+ */
+export const runGit = (
+  args: readonly string[],
+  cwd: string,
+  timeoutMs: number = GIT_TIMEOUT_MS,
+): Promise<string | null> => runBoundedCommand(["git", ...args], cwd, timeoutMs);

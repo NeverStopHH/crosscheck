@@ -6,14 +6,41 @@ import {
   EXIT_UNREACHABLE,
   EXIT_USAGE,
   HTTP_TIMEOUT_MS,
+  LATENCY_PROBE_TIMEOUT_MS,
   LOGIN_STDIN_TIMEOUT_MS,
   MS_PER_SECOND,
   PROBE_REPO,
 } from "@crosscheck/connector-core/constants.ts";
-import { normalizeHubUrl, readStoredConfig, saveConfig } from "@crosscheck/connector-core/config/config.ts";
+import {
+  envTimeoutMs,
+  normalizeHubUrl,
+  readStoredConfig,
+  resolveTimeoutMs,
+  saveConfig,
+} from "@crosscheck/connector-core/config/config.ts";
+import type { Config } from "@crosscheck/connector-core/config/config.ts";
+import {
+  decideTimeoutUpdate,
+  timeoutOwner,
+  withTimeoutDecision,
+} from "@crosscheck/connector-core/config/timeout-policy.ts";
+import type {
+  TimeoutDecision,
+  TimeoutOwner,
+} from "@crosscheck/connector-core/config/timeout-policy.ts";
 import { crosscheckHome, ensureDir } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
+import {
+  describeConnectionFailure,
+  refineRefusedCause,
+} from "@crosscheck/connector-core/http/connection-error.ts";
+import type { ConnectionCause } from "@crosscheck/connector-core/http/connection-error.ts";
+import {
+  measureHubLatency,
+  recommendedTimeoutMs,
+} from "@crosscheck/connector-core/http/latency.ts";
+import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
 
 export interface CliResult {
   readonly stdout: string;
@@ -21,6 +48,14 @@ export interface CliResult {
 }
 
 const HTTP_UNAUTHORIZED = 401;
+
+export interface CredentialProbe {
+  readonly ok: boolean;
+  readonly status: number;
+  /** What the runtime error was, for network failures (connection-error.ts). */
+  readonly cause?: ConnectionCause;
+  readonly message: string;
+}
 
 /**
  * Auth is checked before the repo lookup, so a nonsense repo name is the
@@ -30,7 +65,7 @@ export const probeCredentials = async (
   hubUrl: string,
   apiKey: string,
   timeoutMs: number,
-): Promise<{ readonly ok: boolean; readonly status: number }> => {
+): Promise<CredentialProbe> => {
   const result = await hubRequest(
     {
       hubUrl,
@@ -46,9 +81,15 @@ export const probeCredentials = async (
       schema: z.unknown(),
     },
   );
-  return result.ok
-    ? { ok: true, status: 200 }
-    : { ok: false, status: result.status };
+  if (result.ok) {
+    return { ok: true, status: 200, message: "" };
+  }
+  return {
+    ok: false,
+    status: result.status,
+    ...(result.cause === undefined ? {} : { cause: result.cause }),
+    message: result.message,
+  };
 };
 
 export type SecretReader = () => Promise<string | null>;
@@ -107,6 +148,61 @@ export const LOGIN_USAGE = [
   "",
 ].join("\n");
 
+/**
+ * Login is a human-run command, so its probes wait like the MCP tools rather
+ * than like a hook (LATENCY_PROBE_TIMEOUT_MS) — at the hook default, the hub
+ * the incident was about (580 ms away over a DERP relay) could never complete
+ * a login at all. An explicit setting that is even MORE patient is honoured;
+ * a tighter one is not allowed to re-create the incident here.
+ */
+export const loginProbeTimeoutMs = (env: Env, stored: Config | null): number =>
+  Math.max(resolveTimeoutMs(env, stored), LATENCY_PROBE_TIMEOUT_MS);
+
+/** Measures the hub's distance; injectable so tests never time real network. */
+export type LatencyMeasurer = (
+  hubUrl: string,
+  apiKey: string,
+) => Promise<LatencyMeasurement | null>;
+
+const defaultMeasurer: LatencyMeasurer = (hubUrl, apiKey) =>
+  measureHubLatency(
+    async () => (await probeCredentials(hubUrl, apiKey, LATENCY_PROBE_TIMEOUT_MS)).ok,
+    () => Date.now(),
+  );
+
+/**
+ * The one honest line: what was measured, what was chosen, and — when a value
+ * is deliberately NOT touched — whose value stood in the way and why.
+ */
+const renderLatencyLine = (
+  env: Env,
+  stored: Config | null,
+  owner: TimeoutOwner,
+  measurement: LatencyMeasurement | null,
+  decision: TimeoutDecision,
+): string => {
+  if (measurement === null) {
+    return "hub latency not measured (probes failed) — timeout settings unchanged\n";
+  }
+  const away = `hub is ${String(measurement.medianRttMs)} ms away (median of ${String(measurement.samples)} probes)`;
+  if (owner === "env") {
+    return `${away} — CROSSCHECK_TIMEOUT_MS=${String(envTimeoutMs(env))} takes precedence; config untouched\n`;
+  }
+  if (owner === "manual") {
+    return `${away} — keeping timeoutMs ${String(stored?.timeoutMs)} ms (set by hand; login only rewrites values it measured itself)\n`;
+  }
+  if (decision.kind === "store") {
+    return `${away} — storing timeoutMs ${String(decision.timeoutMs)} ms (the default ${String(HTTP_TIMEOUT_MS)} ms is too tight this far out)\n`;
+  }
+  // Reset: when a stale measured value is being REMOVED, say so — a silently
+  // vanished timeoutMs would make the config diff inexplicable.
+  const retired =
+    stored?.timeoutMs === undefined
+      ? ""
+      : ` (retiring stored ${String(stored.timeoutMs)} ms)`;
+  return `${away} — the default ${String(HTTP_TIMEOUT_MS)} ms timeout fits${retired}\n`;
+};
+
 const resolveApiKey = async (
   positional: string | undefined,
   env: Env,
@@ -123,6 +219,7 @@ export const runLogin = async (
   args: readonly string[],
   env: Env,
   readSecret: SecretReader = readSecretFromStdin,
+  measure: LatencyMeasurer = defaultMeasurer,
 ): Promise<CliResult> => {
   const [rawHubUrl, positionalKey] = args;
   if (rawHubUrl === undefined) {
@@ -143,25 +240,49 @@ export const runLogin = async (
     };
   }
 
-  const probe = await probeCredentials(hubUrl, apiKey, HTTP_TIMEOUT_MS);
+  const home = crosscheckHome(env);
+  const existing = await readStoredConfig(home);
+  const probeTimeoutMs = loginProbeTimeoutMs(env, existing);
+  const probe = await probeCredentials(hubUrl, apiKey, probeTimeoutMs);
   if (!probe.ok) {
     if (probe.status === HTTP_UNAUTHORIZED) {
       return { stdout: "invalid api key\n", exitCode: EXIT_FAIL };
     }
+    // Say what actually happened, not "unreachable": a human is watching, so
+    // the collapsed could-not-connect is worth one bounded DNS refinement
+    // before the sentence is chosen (http/connection-error.ts).
+    const cause = await refineRefusedCause(probe.cause ?? "unknown", hubUrl);
     return {
-      stdout: `hub unreachable: ${hubUrl}\n`,
+      stdout: `${describeConnectionFailure(
+        cause,
+        { hubUrl, timeoutMs: probeTimeoutMs },
+        probe.message,
+      )}\n`,
       exitCode: EXIT_UNREACHABLE,
     };
   }
 
-  const home = crosscheckHome(env);
+  // The auth probe succeeded, so the hub is genuinely there — now measure how
+  // far, and store a fitting timeout when (and only when) the rule allows
+  // (config/timeout-policy.ts: only values login itself measured).
+  const measurement = await measure(hubUrl, apiKey);
+  const owner = timeoutOwner(env, existing);
+  const decision: TimeoutDecision =
+    measurement === null
+      ? { kind: "keep" }
+      : decideTimeoutUpdate(owner, recommendedTimeoutMs(measurement.medianRttMs));
+  const latencyLine = renderLatencyLine(env, existing, owner, measurement, decision);
+
   await ensureDir(home);
-  const existing = await readStoredConfig(home);
-  await saveConfig(home, {
-    ...(existing ?? {}),
-    version: 1,
-    hubUrl,
-    apiKey,
-  });
-  return { stdout: `logged in to ${hubUrl}\n`, exitCode: EXIT_OK };
+  await saveConfig(
+    home,
+    withTimeoutDecision(
+      { ...(existing ?? {}), version: 1, hubUrl, apiKey },
+      decision,
+    ),
+  );
+  return {
+    stdout: `${latencyLine}logged in to ${hubUrl}\n`,
+    exitCode: EXIT_OK,
+  };
 };

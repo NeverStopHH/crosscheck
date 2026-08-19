@@ -29,7 +29,7 @@ export const PRESENCE_USAGE = [
   "",
 ].join("\n");
 
-const MUTE_USAGE = [
+export const MUTE_USAGE = [
   "usage: crosscheck mute <developer>    stop seeing hints/pointers about them",
   "   or: crosscheck mute list           show who you have muted",
   "   or: crosscheck unmute <developer>",
