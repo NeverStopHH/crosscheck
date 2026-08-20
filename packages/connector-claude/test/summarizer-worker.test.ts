@@ -21,7 +21,10 @@ import { runSummarizeWorker } from "../src/summarizer/worker.ts";
 import { recordDeliveredHintHash } from "@crosscheck/connector-core/hints/delivered-store.ts";
 import { hintBodyHash } from "@crosscheck/connector-core/hints/echo.ts";
 import { readSpoolLines, repoKey } from "../src/index.ts";
-import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  readSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome } from "../../connector-core/test/helpers.ts";
 
 const paths: string[] = [];
@@ -301,7 +304,7 @@ describe("runSummarizeWorker (end to end, faked binary)", () => {
     expect(claim?.producer.sessionId).toBe(`cc_${SESSION_ID}`);
   });
 
-  test("NONE spools nothing", async () => {
+  test("NONE spools nothing and is counted as a NONE outcome", async () => {
     const fixture = await workerFixture();
     const fake = await makeFakeSummarizer({ output: "NONE" });
 
@@ -311,6 +314,26 @@ describe("runSummarizeWorker (end to end, faked binary)", () => {
     });
 
     expect(await spooledClaims(fixture)).toHaveLength(0);
+    // The trial's signal-to-noise instrument: fires minus NONEs minus drafts
+    // is the drop-or-failure remainder, so each outcome must be booked.
+    const state = await readSessionState(fixture.home, SESSION_ID);
+    expect(state?.summarizerNoneCount).toBe(1);
+    expect(state?.summarizerDraftCount).toBe(0);
+  });
+
+  test("a spooled draft is counted as a draft outcome", async () => {
+    const fixture = await workerFixture();
+    const fake = await makeFakeSummarizer({ output: draftJson() });
+
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+    });
+
+    expect(await spooledClaims(fixture)).toHaveLength(1);
+    const state = await readSessionState(fixture.home, SESSION_ID);
+    expect(state?.summarizerDraftCount).toBe(1);
+    expect(state?.summarizerNoneCount).toBe(0);
   });
 
   test("echo-loop exclusion: a delivered hint's body is never re-captured", async () => {
@@ -330,8 +353,14 @@ describe("runSummarizeWorker (end to end, faked binary)", () => {
       CROSSCHECK_SUMMARIZER_CMD: fake,
     });
 
-    // Assert: refused (DESIGN.md §3, judge-mandated)
+    // Assert: refused (DESIGN.md §3, judge-mandated) — and counted as
+    // NEITHER outcome: a dropped draft is not a NONE (the model answered)
+    // and not a produced draft (nothing spooled); it stays visible as the
+    // fires-minus-outcomes remainder.
     expect(await spooledClaims(fixture)).toHaveLength(0);
+    const state = await readSessionState(fixture.home, SESSION_ID);
+    expect(state?.summarizerNoneCount).toBe(0);
+    expect(state?.summarizerDraftCount).toBe(0);
   });
 
   test("a hint delivered in an EARLIER session is still excluded", async () => {

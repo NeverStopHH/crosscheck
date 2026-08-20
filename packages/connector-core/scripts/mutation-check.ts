@@ -1103,6 +1103,70 @@ export const MUTATIONS: readonly Mutation[] = [
       "prompt for the rest of the session — the repeat-injection noise " +
       "§10 risk 1 forbids, and the hint path never runs again behind it",
   },
+  // The five below guard the conclusion wing of the Tier-1 gate (trial
+  // finding #12): each deletes ONE named predicate from the fire condition,
+  // and the conclusion corpus must go red on exactly the fixture whose
+  // loadBearing field names it — a fixture that stays green under its own
+  // predicate's deletion is over-determined and pins nothing.
+  {
+    label: "the gate stops hearing declared verdicts",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from:
+      "  (hasVerdictLanguage(sliceText) ||\n" +
+      "    hasRejectionLanguage(sliceText) ||\n",
+    to: "  (hasRejectionLanguage(sliceText) ||\n",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "a whole-branch gate verdict after a full suite run — the moment the " +
+      "live trial lost four times in one day — passes through unseen again; " +
+      "branch_gate_verdict and version_bump_merge both go silent",
+  },
+  {
+    label: "the gate stops hearing ruled-out approaches",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from:
+      "    hasRejectionLanguage(sliceText) ||\n    hasSuiteFlip(sliceText)) &&\n",
+    to: "    hasSuiteFlip(sliceText)) &&\n",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "negative knowledge is the SAFEST knowledge to share (§4: negatives " +
+      "privileged) and the first to be lost: fixer_disposition_ruled_out " +
+      "goes silent and a dead end gets re-walked by the next teammate",
+  },
+  {
+    label: "a suite flipping red to green stops being a conclusion",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from: "    hasSuiteFlip(sliceText)) &&\n",
+    to: "    false) &&\n",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "a fix proven by the suite itself — red output and green output in " +
+      "one turn, no verdict prose anywhere — is the conclusion moment " +
+      "nobody writes down; suite_flip_red_green goes silent",
+  },
+  {
+    label: "review findings stop anchoring the conclusion gate",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from: "    hasReviewFindingShape(sliceText) ||\n",
+    to: "",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "an adversarial review that found a CRITICAL — no test command, no " +
+      "error output, no commit in the slice — has only its finding shape " +
+      "to anchor on; adversarial_review_critical goes silent, which is " +
+      "trial finding #12's headline loss verbatim",
+  },
+  {
+    label: "commit and merge boundaries stop anchoring the conclusion gate",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from: "    hasCommitBoundary(sliceText));",
+    to: "    false);",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "a release commit with its decision stated beside it — work merged " +
+      "and shipped, the day's most durable conclusion — has only the " +
+      "commit boundary as its anchor; version_bump_merge goes silent",
+  },
   {
     // Briefing parity's CURSOR half (races review finding 1): the debt is
     // recorded by exactly one line — the recovery register's
@@ -1166,6 +1230,7 @@ interface Outcome {
  * PRINTS: briefing-parity.test.ts 2
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
+ * PRINTS: conclusion-corpus.test.ts 5
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1

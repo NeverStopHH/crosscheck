@@ -21,16 +21,31 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
  * What the model is asked, verbatim. One assertion or NONE — the tolerant
  * parse (parse.ts) discards everything else, so the prompt and the parser
  * agree on the contract.
+ *
+ * WIDENED for conclusion moments (trial finding #12): the prompt asks for
+ * any conclusion a TEAMMATE in the same area would act on — diagnosis,
+ * decision, ruled-out approach, review finding — with the same strictness
+ * as before. Progress narration, plans and praise are named out explicitly,
+ * and NONE stays the right answer for chatter. The precision instrument for
+ * this wording is the conclusion corpus
+ * (test/fixtures/conclusion-corpus/format.ts): its distillations define
+ * what a correct answer looks like per slice shape, and
+ * test/conclusion-corpus.test.ts pins the defining words of this contract.
  */
 export const SUMMARIZER_PROMPT =
   "You are a passive capture assistant for a team knowledge tool. Below is a " +
-  "slice of one coding-session turn. If it contains ONE concrete diagnostic " +
-  "finding about a bug or failure, answer with ONLY a JSON object of the form " +
+  "slice of one coding-session turn. If it contains ONE concrete conclusion " +
+  "a teammate working in the same area would act on — a diagnostic finding " +
+  "about a bug or failure, a decision reached and its reason, an approach " +
+  "ruled out and why, or what a review found — answer with ONLY a JSON " +
+  "object of the form " +
   '{"kind": "<observation|hypothesis|evidence|root_cause|decision|rejected_approach>", ' +
-  '"body": "<the finding as one sentence, max 400 characters>", ' +
+  '"body": "<the conclusion as one sentence, max 400 characters>", ' +
   '"confidence": <a number between 0 and 0.5>} and nothing else. ' +
-  "The body must state the finding itself, not narrate the session. " +
-  "If there is no clear diagnostic finding, answer with exactly NONE.";
+  "The body must state the conclusion itself — what was decided, found or " +
+  "ruled out, and why — and never narrate the session. Progress reports " +
+  '("tests pass now", "implemented X"), plans, and praise are not ' +
+  "conclusions. If there is no such conclusion, answer with exactly NONE.";
 
 /**
  * SIGKILL follow-up after the polite kill — the same escalation PATTERN as

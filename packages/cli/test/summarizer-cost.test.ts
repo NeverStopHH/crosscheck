@@ -58,23 +58,30 @@ describe("summarizer cost surfaces", () => {
     await seedSession(home, repo, "cost-a", {
       summarizerFireCount: 2,
       summarizerEstimatedTokens: 800,
+      summarizerNoneCount: 1,
+      summarizerDraftCount: 1,
     });
     await seedSession(home, repo, "cost-b", {
       summarizerFireCount: 1,
       summarizerEstimatedTokens: 400,
+      summarizerNoneCount: 1,
     });
     await seedSession(home, repo, "cost-foreign", {
       repoId: "github.com/acme/other",
       summarizerFireCount: 9,
       summarizerEstimatedTokens: 9000,
+      summarizerNoneCount: 9,
+      summarizerDraftCount: 9,
     });
 
     // Act
     const cost = await readSummarizerCost(home, HUB_URL, REPO_ID);
 
-    // Assert
+    // Assert — fires/NONEs/drafts are the trial's signal-to-noise counters
     expect(cost.sessions).toBe(2);
     expect(cost.fires).toBe(3);
+    expect(cost.nones).toBe(2);
+    expect(cost.drafts).toBe(1);
     expect(cost.estimatedTokens).toBe(1200);
   });
 
@@ -87,11 +94,14 @@ describe("summarizer cost surfaces", () => {
     await seedSession(home, repo, "cost-status-a", {
       summarizerFireCount: 3,
       summarizerEstimatedTokens: 1200,
+      summarizerNoneCount: 2,
+      summarizerDraftCount: 1,
     });
 
     const result = await runCli(["status"], env(home), repo);
 
     expect(result.stdout).toContain("summarizer: 3 runs");
+    expect(result.stdout).toContain("(2 NONE, 1 draft)");
     expect(result.stdout).toContain("~1200 tokens (estimate)");
   });
 

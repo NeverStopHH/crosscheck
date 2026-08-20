@@ -18,6 +18,15 @@ import { SUMMARIZER_DEFAULT_CONFIDENCE } from "@crosscheck/connector-core/consta
 const NONE_PATTERN = /^none[.!]?$/i;
 
 /**
+ * Whether the model EXPLICITLY answered NONE — the telemetry surface needs
+ * this apart from "no draft", because unparseable garbage is a runner
+ * problem, not a judged-empty turn, and folding the two would flatter the
+ * signal-to-noise figure the trial reads.
+ */
+export const isNoneAnswer = (stdout: string): boolean =>
+  NONE_PATTERN.test(stdout.trim());
+
+/**
  * What the model may choose: kind, body, and (optionally) confidence. It may
  * NOT choose status, capture mode, provenance or evidence — the worker forces
  * those (draft semantics are non-negotiable).

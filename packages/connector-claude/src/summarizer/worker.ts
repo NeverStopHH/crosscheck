@@ -23,8 +23,12 @@ import { isEchoOfDeliveredHint } from "@crosscheck/connector-core/hints/echo.ts"
 import { checkClaim } from "@crosscheck/connector-core/mcp/violations.ts";
 import { mintClaimId } from "@crosscheck/connector-core/mcp/tools/shared.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
-import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { parseSummarizerOutput } from "./parse.ts";
+import {
+  readSessionState,
+  updateSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
+import { withSummarizerDraft, withSummarizerNone } from "./gate.ts";
+import { isNoneAnswer, parseSummarizerOutput } from "./parse.ts";
 import {
   resolveSummarizerArgv,
   resolveSummarizerTimeoutMs,
@@ -95,6 +99,12 @@ const summarizeTurn = async (args: WorkerArgs, env: Env): Promise<void> => {
   }
   const draft = parseSummarizerOutput(stdout);
   if (draft === null) {
+    // Outcome telemetry (trial finding #12's measuring stick): only an
+    // EXPLICIT NONE is booked — unparseable garbage is a runner problem,
+    // and stays visible as the fires-minus-outcomes remainder instead.
+    if (isNoneAnswer(stdout)) {
+      await updateSessionState(home, args.claudeSessionId, withSummarizerNone);
+    }
     return;
   }
 
@@ -163,6 +173,9 @@ const summarizeTurn = async (args: WorkerArgs, env: Env): Promise<void> => {
     ],
     now,
   );
+  // Booked AFTER the spool append: "draft produced" means the draft exists
+  // on disk, not that the model merely offered one (telemetry honesty).
+  await updateSessionState(home, args.claudeSessionId, withSummarizerDraft);
 };
 
 /** Entry point behind `crosscheck summarize-turn` — always exits 0. */

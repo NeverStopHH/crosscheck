@@ -5,12 +5,19 @@
  * per-session fire cap. The Stop hook runs these and either spawns the
  * detached worker or does nothing — it never waits on a model.
  *
- * THE FIRE CONDITION IS A CONJUNCTION, deliberately: an evidence signal (a
- * test command ran, or error output is present) AND hypothesis language.
- * Hypothesis language alone fires on planning chatter; an error alone fires
- * on every failing build with nothing diagnosed yet. Both misfires spend the
- * developer's own quota (§10 risk 7) and fill the hub with junk drafts
- * (§10 risk 4), so precision beats recall on every doubt.
+ * TWO WINGS, ONE CONJUNCTION RULE. The gate recognizes DIAGNOSIS moments
+ * (a test command ran or error output is present, AND hypothesis language)
+ * and — since trial finding #12, where a full day of reviews, fixes and
+ * merges produced zero claims — CONCLUSION moments: a verdict or decision
+ * declared, an approach ruled out, a review finding stated, a suite flipping
+ * red→green, a commit or merge landing. Both wings are conjunctions,
+ * deliberately: conclusion language alone fires on planning chatter, and a
+ * work anchor alone fires on every green build with nothing concluded.
+ * Both misfires spend the developer's own quota (§10 risk 7) and fill the
+ * hub with junk drafts (§10 risk 4), so precision beats recall on every
+ * doubt — the conclusion-corpus fixtures
+ * (test/fixtures/conclusion-corpus/format.ts) are the precision instrument
+ * every predicate below answers to.
  */
 import {
   SUMMARIZER_DEBOUNCE_TURNS,
@@ -21,10 +28,13 @@ import type { SessionState } from "@crosscheck/connector-core/state/session-stat
 /**
  * A test runner invoked as a command. Anchored to a word boundary on both
  * sides so "we should test this later" and `ls contest/` do not count; the
- * runner name must be followed by a test-ish argument or subcommand.
+ * runner name must be followed by a test-ish argument or subcommand. Both
+ * boundary classes admit quotes because the slice renders tool_use input as
+ * JSON — `tool_use Bash: {"command":"bun test"}` — where the characters
+ * around the command are `"`, not whitespace.
  */
 const TEST_COMMAND_PATTERN =
-  /(?:^|[\s;&|(])(?:(?:bun|npm|pnpm|yarn|npx)\s+(?:run\s+)?test|(?:go|cargo)\s+test|pytest|vitest|jest|rspec|phpunit|tox)(?:$|[\s.:/])/m;
+  /(?:^|[\s;&|("'])(?:(?:bun|npm|pnpm|yarn|npx)\s+(?:run\s+)?test|(?:go|cargo)\s+test|pytest|vitest|jest|rspec|phpunit|tox)(?:$|[\s.:/"'])/m;
 
 /**
  * Error markers the way tools actually print them. `\w*error` covers the
@@ -46,10 +56,106 @@ export const hasErrorOutput = (text: string): boolean =>
 export const hasHypothesisLanguage = (text: string): boolean =>
   HYPOTHESIS_PATTERN.test(text);
 
-/** The gate's content decision: evidence signal AND hypothesis language. */
+/** The debugging wing: evidence signal AND hypothesis language. */
 export const isDiagnosisMoment = (sliceText: string): boolean =>
   (hasTestCommand(sliceText) || hasErrorOutput(sliceText)) &&
   hasHypothesisLanguage(sliceText);
+
+// ---------------------------------------------------------------------------
+// The conclusion wing (trial finding #12). Same philosophy, second vocabulary:
+// a CONCLUSION SIGNAL (a verdict declared, an approach ruled out, a suite
+// flipping red→green) AND a WORK ANCHOR (something actually happened in this
+// slice — a test ran, errors printed, a review finding was stated in review
+// shape, a commit landed). Each predicate is named and pinned on its own
+// corpus fixture; scripts/mutation-check.ts deletes each from the fire
+// condition and the corpus must go red.
+// ---------------------------------------------------------------------------
+
+/**
+ * Verdict/decision prose: a conclusion being DECLARED, not planned. Past and
+ * present declarations only — "will decide", "should decide", "start with"
+ * stay out, because plans are the negative corpus's biggest class.
+ */
+const VERDICT_PATTERN =
+  /\b(?:verdict|decision|decid(?:ed|es) (?:to|on|against|that)|going with|went with|chose|opted (?:for|to)|settled on|conclusion|confirmed that|safe to merge|ready to (?:merge|ship)|the fix (?:is|was)|fix(?:ed)? (?:it|this|that) by)\b/i;
+
+/**
+ * Rejection prose: an approach RULED OUT with the ruling stated. Past forms
+ * only — "rule out", "ruling out" are investigation narration, not verdicts.
+ */
+const REJECTION_PATTERN =
+  /\b(?:ruled out|rejected|not viable|(?:won'?t|will not|doesn'?t|does not|didn'?t|did not) work because|dead end|abandon(?:ed|ing) (?:the|this|that)|scrapp(?:ed|ing) (?:the|this|that)|discard(?:ed|ing) (?:the|this|that))\b/;
+
+/**
+ * Review findings the way review tooling prints them. The severity labels
+ * are CASE-SENSITIVE on purpose: "CRITICAL:" is a review artifact, "critical
+ * path" is prose — and HIGH/MEDIUM/LOW additionally demand the punctuation a
+ * findings list gives them, because those three words appear uppercase in
+ * ordinary shouting too.
+ */
+const SEVERITY_LABEL_PATTERN = /\b(?:CRITICAL|BLOCKER)\b|\b(?:HIGH|MEDIUM|LOW)\s*[:)\]—–-]/;
+const REVIEW_PROSE_PATTERN =
+  /\b(?:finding\s+#?\d+|review (?:found|finding|confirmed)|adversarial review)\b/i;
+
+/**
+ * The green half of a suite flip, the way runners print it. "0 fail" also
+ * matches ERROR_OUTPUT_PATTERN's count-fail form, which is why the flip's
+ * red half below demands a STRICTLY POSITIVE count or an error-class marker
+ * — a wholly green run must never provide its own "red".
+ */
+const GREEN_SUITE_PATTERN =
+  /\b0 fail(?:ed|ures)?\b|\ball (?:\d+\s+)?tests? (?:pass(?:ed|ing)?|green)\b|\btests? (?:are |is )?(?:passing|green)(?: now)?\b|\bsuite (?:is )?green\b|\bnow (?:passing|green)\b/i;
+
+/** The red half: a positive failure count or an error-class marker. */
+const RED_SUITE_PATTERN =
+  /\b[1-9]\d*\s+(?:tests? )?fail(?:ed|ures)?\b|\b(?:\w*error|\w*exception|traceback|panic)\b/i;
+
+/**
+ * A commit, merge or push visible in the slice: the command itself (quote in
+ * the prefix class for the JSON-rendered tool_use, like TEST_COMMAND_PATTERN),
+ * git's own commit summary line (`[branch abc1234] …`), or GitHub's merge
+ * phrasing.
+ */
+const COMMIT_BOUNDARY_PATTERN =
+  /(?:^|[\s;&|("'])git\s+(?:commit|merge|push)\b|(?:^|[\s;&|("'])gh\s+pr\s+(?:create|merge)\b|\bmerge pull request\b|\[[^\s[\]]+ [0-9a-f]{7,40}\]/im;
+
+export const hasVerdictLanguage = (text: string): boolean =>
+  VERDICT_PATTERN.test(text);
+
+export const hasRejectionLanguage = (text: string): boolean =>
+  REJECTION_PATTERN.test(text);
+
+export const hasReviewFindingShape = (text: string): boolean =>
+  SEVERITY_LABEL_PATTERN.test(text) || REVIEW_PROSE_PATTERN.test(text);
+
+/**
+ * Red AND green in one slice — something failed and then passed within the
+ * turn. The flip is a conclusion SIGNAL in its own right (a fix landed even
+ * when nobody wrote "the fix is"), and its red half doubles as the work
+ * anchor through hasErrorOutput, so the flip alone fires the gate.
+ */
+export const hasSuiteFlip = (text: string): boolean =>
+  RED_SUITE_PATTERN.test(text) && GREEN_SUITE_PATTERN.test(text);
+
+export const hasCommitBoundary = (text: string): boolean =>
+  COMMIT_BOUNDARY_PATTERN.test(text);
+
+/**
+ * The conclusion wing's fire condition: a conclusion signal AND a work
+ * anchor. Signal alone is planning chatter; anchor alone is a build log.
+ */
+export const isConclusionMoment = (sliceText: string): boolean =>
+  (hasVerdictLanguage(sliceText) ||
+    hasRejectionLanguage(sliceText) ||
+    hasSuiteFlip(sliceText)) &&
+  (hasTestCommand(sliceText) ||
+    hasErrorOutput(sliceText) ||
+    hasReviewFindingShape(sliceText) ||
+    hasCommitBoundary(sliceText));
+
+/** The whole gate's content decision: either wing fires it. */
+export const isCaptureMoment = (sliceText: string): boolean =>
+  isDiagnosisMoment(sliceText) || isConclusionMoment(sliceText);
 
 /**
  * The gate's budget decision, on the state AFTER this turn was counted:
@@ -88,4 +194,22 @@ export const withSummarizerFire = (
   summarizerLastFireTurn: state.stopTurnCount,
   summarizerEstimatedTokens:
     state.summarizerEstimatedTokens + Math.max(0, estimatedTokens),
+});
+
+/**
+ * Outcome bookkeeping, recorded by the detached worker once the model has
+ * answered (trial finding #12's measuring stick): a NONE, or a draft that
+ * actually reached the spool. A run that produced neither — runner failure,
+ * unparseable output, or a draft dropped by the echo/secret/contract gates —
+ * books nothing, so fires minus NONEs minus drafts stays the honest
+ * drop-or-failure remainder on every cost surface.
+ */
+export const withSummarizerNone = (state: SessionState): SessionState => ({
+  ...state,
+  summarizerNoneCount: state.summarizerNoneCount + 1,
+});
+
+export const withSummarizerDraft = (state: SessionState): SessionState => ({
+  ...state,
+  summarizerDraftCount: state.summarizerDraftCount + 1,
 });

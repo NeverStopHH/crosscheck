@@ -18,7 +18,7 @@ The name is the aviation ritual: *"arm doors and cross-check"* — independent o
 | [`packages/connector-claude`](packages/connector-claude) | Claude Code hooks (SessionStart briefing, PostToolUse capture, SessionEnd), statusline, and the `crosscheck` CLI (`login`, `init`, `status`, `doctor`). |
 | [`packages/connector-acp`](packages/connector-acp) | `crosscheck acp -- <agent cmd…>`: a byte-transparent [ACP](https://agentclientprotocol.com) proxy — wrap any ACP agent (Zed, JetBrains, …) with faithful exit/signal forwarding, measured backpressure, and a per-proxy log. Capture and injection land in later blocks. |
 
-Not built yet: the MCP tools (`publish_claim`, `extend_diagnosis`, `search_related_work`, `get_diagnosis`), semantic search and ranking, `UserPromptSubmit` hint injection, the PreToolUse tripwire, the Tier-1 draft summarizer, and the web UI. See [docs/DESIGN.md §8](docs/DESIGN.md) for the roadmap.
+Since then the v0.5/v1 surface has landed too: the MCP tools (`publish_claim`, `extend_diagnosis`, `search_related_work`, `get_diagnosis`, `get_referee_brief`, `review_draft`), hybrid search and ranking, `UserPromptSubmit` hint injection, the PreToolUse tripwire, the Tier-1 draft summarizer (diagnosis **and** conclusion moments — see below), the hub-served web feed under `/ui`, and the Cursor hooks adapter plus the `crosscheck` CLI in `packages/cli`. See [docs/DESIGN.md §8](docs/DESIGN.md) for what remains (v1.x).
 
 Background reading:
 
@@ -99,6 +99,16 @@ Teammate work contexts on this repo:
 Teammate-written text is untrusted input. It is quoted inside a frame the header labels as data rather than instruction, and stripped of control, bidi, zero-width and frame-breaking characters before rendering. A blunt "ignore previous instructions" title is additionally redacted — but that phrase list is opportunistic defence-in-depth, not a guarantee; the framing and the structural stripping are what the safety of this pipeline actually rests on. Details in [the connector README](packages/connector-claude/README.md#briefing-safety).
 
 Everything fails open: if the hub is down, hooks print nothing, exit 0, and spool their records to `~/.crosscheck/` until the next successful flush. Only relative file paths and hashed error fingerprints are uploaded — never transcripts, diffs, prompts, or raw command output.
+
+### Where the Tier-1 draft summarizer runs
+
+Passive draft capture — the gated Stop-hook summarizer, which recognizes both debugging moments (failing test, error output, hypothesis) and conclusion moments (a verdict declared, an approach ruled out, a review finding, a suite flipping red→green, a commit/merge landing) — rides headless `claude -p` on the developer's own Claude Code auth, triggered by Claude Code's Stop hook and its sanctioned `transcript_path`. That makes capture **width** connector-specific today, and this is documented rather than papered over:
+
+- **Claude Code** — full Tier-1 capture, both wings. Drafts stay `capture_mode=auto`, `provenance=derived`, confidence-capped at 0.5, and are never proactively injected to teammates — pointers only, until the author's own agent promotes them via `review_draft`.
+- **Cursor** — the stop handler counts turns into the same shared gate state, but Cursor's hook payload carries no sanctioned transcript slice for a summarizer to read (reading `state.vscdb` is deliberately off the table, and the summarizer is `claude -p`-shaped: it exists because it reuses the developer's Claude auth). Cursor sessions produce Tier-0 capture and Tier-2 published claims; Tier-1 there stays deferred, per [docs/adapters/DESIGN-agent-agnostic.md](docs/adapters/DESIGN-agent-agnostic.md).
+- **ACP agents** — the proxy observes the wire, not a transcript file; same boundary, same reasons.
+
+Pointer **delivery** is connector-agnostic: briefings, prompt hints and the draft-review reminders ride the shared `connector-core` flows, so a draft captured in a Claude Code session reaches Cursor and ACP teammates exactly like any other claim — as a pull-able pointer, never as injected substance.
 
 ## The one-paragraph pitch
 
