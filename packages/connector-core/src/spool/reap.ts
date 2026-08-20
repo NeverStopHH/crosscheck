@@ -455,6 +455,39 @@ const endDeferredSession = async (
   await removeFile(path);
 };
 
+/**
+ * True when a `.pending-end` marker exists that a reap run by THIS hook could
+ * actually spend: its session has not come back to life and its own backlog is
+ * gone. The hosting hook holds one request timeout of spare back from the
+ * drain for it — without that, any start with something to flush hands the
+ * drain the whole spare, and `endDeferredSession`'s ender reads zero room at
+ * the end of every single hook. Registration appends a work-context record on
+ * EVERY start, so against a hub slower than the leftover spare the deferred
+ * end would starve to its MAX_SPOOL_AGE_DAYS age-out: a livelock, not a race
+ * (connector-claude/test/hook-budget.test.ts pins it through the fixture's
+ * latency dial, and a mutation-check entry holds this probe honest).
+ *
+ * A marker whose own backlog is still on disk holds nothing back — draining is
+ * exactly what that marker is waiting for, so the drain keeps its full spare.
+ * Local file reads only (readdir, a state-file stat, a spool read): the probe
+ * costs microseconds against budgets measured in hundreds of milliseconds.
+ */
+export const hasSpendablePendingEnd = async (
+  home: string,
+  key: string,
+): Promise<boolean> => {
+  for (const slug of await pendingEndSlugs(home, key)) {
+    if (await isSessionLive(home, slug)) {
+      continue;
+    }
+    const spool = await readSessionSpool(home, key, slug);
+    if (spool.lines.length === 0) {
+      return true;
+    }
+  }
+  return false;
+};
+
 const total = (results: readonly ReapResult[]): ReapResult =>
   results.reduce(
     (sum, result) => ({

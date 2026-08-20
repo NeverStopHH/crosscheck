@@ -37,7 +37,10 @@ import {
   registerSessionFlow,
 } from "@crosscheck/connector-core/flows/register-session.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
-import { reapSpool } from "@crosscheck/connector-core/spool/reap.ts";
+import {
+  hasSpendablePendingEnd,
+  reapSpool,
+} from "@crosscheck/connector-core/spool/reap.ts";
 import type { DeferredEnder } from "@crosscheck/connector-core/spool/reap.ts";
 import { CURSOR_BACKGROUND_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";
 import { updateSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
@@ -120,11 +123,20 @@ export const handleCursorSessionStart = async (
   // Maintenance on the spare budget, the Claude SessionStart order: flush
   // first so a session whose records just reached the hub is reaped in the
   // same pass. Our own state file exists by now, so reap can never remove
-  // the file this session keeps appending to.
+  // the file this session keeps appending to. One request timeout is held
+  // back from the drain when a deferred end is spendable this run — the
+  // starvation livelock and the probe's rules live on hasSpendablePendingEnd
+  // (spool/reap.ts) and the Claude hook's identical call site.
+  const endHoldbackMs = (await hasSpendablePendingEnd(
+    ctx.config.home,
+    ctx.repoKey,
+  ))
+    ? ctx.hub.timeoutMs
+    : 0;
   await flushSpool(
     ctx.hub,
     { sessionId: crosscheckSessionId, developerId },
-    budget.spareMs(),
+    budget.spareMs() - endHoldbackMs,
   );
   await reapSpool(ctx.config.home, ctx.repoKey, now, deferredEnder(ctx, budget));
 
