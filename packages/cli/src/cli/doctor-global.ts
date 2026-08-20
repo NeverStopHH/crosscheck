@@ -37,6 +37,12 @@ export interface GlobalWiring {
   readonly unreadable: boolean;
   /** True = the user-scope mcpServers carries our entry (~/.claude.json). */
   readonly mcpRegistered: boolean;
+  /** Hook events carrying an owned command in the user settings. */
+  readonly hookEvents: readonly string[];
+  /** The first owned hook command — what a user-scope hook would run. */
+  readonly launcherCommand: string | null;
+  /** The user-scope statusLine command, whoever owns it (null = none). */
+  readonly statuslineCommand: string | null;
 }
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -44,16 +50,27 @@ const asRecord = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
-const hasOwnedHook = (settings: Record<string, unknown>): boolean =>
-  Object.values(asRecord(settings["hooks"])).some(
-    (groups) =>
-      Array.isArray(groups) &&
-      groups.some((group) =>
-        (Array.isArray(asRecord(group)["hooks"])
-          ? (asRecord(group)["hooks"] as readonly unknown[])
-          : []
-        ).some((hook) => isOwnedCommand(asRecord(hook)["command"])),
-      ),
+export interface OwnedHookEntry {
+  readonly event: string;
+  readonly command: string;
+}
+
+/**
+ * Every owned hook command in a Claude settings object, keyed by the event
+ * it fires on — the one extraction both scopes' checks read (finding #13
+ * made the project check and this file disagree about what "wired" means).
+ */
+export const ownedHookEntries = (
+  settings: Record<string, unknown>,
+): readonly OwnedHookEntry[] =>
+  Object.entries(asRecord(settings["hooks"])).flatMap(([event, groups]) =>
+    (Array.isArray(groups) ? groups : []).flatMap((group) => {
+      const entries = asRecord(group)["hooks"];
+      return (Array.isArray(entries) ? entries : [])
+        .map((entry) => asRecord(entry)["command"])
+        .filter(isOwnedCommand)
+        .map((command) => ({ event, command: String(command) }));
+    }),
   );
 
 /**
@@ -71,7 +88,7 @@ export const readProjectWiring = async (
     return false;
   }
   try {
-    return hasOwnedHook(asRecord(JSON.parse(raw) as unknown));
+    return ownedHookEntries(asRecord(JSON.parse(raw) as unknown)).length > 0;
   } catch {
     return false;
   }
@@ -81,11 +98,15 @@ export const readProjectWiring = async (
 export const readGlobalWiring = async (env: Env): Promise<GlobalWiring> => {
   const settingsPath = claudeUserSettingsPath(env);
   const raw = await readTextOrNull(settingsPath);
-  let hooksInstalled = false;
+  let hookEntries: readonly OwnedHookEntry[] = [];
+  let statuslineCommand: string | null = null;
   let unreadable = false;
   if (raw !== null) {
     try {
-      hooksInstalled = hasOwnedHook(asRecord(JSON.parse(raw) as unknown));
+      const settings = asRecord(JSON.parse(raw) as unknown);
+      hookEntries = ownedHookEntries(settings);
+      const command = asRecord(settings["statusLine"])["command"];
+      statuslineCommand = typeof command === "string" ? command : null;
     } catch {
       unreadable = true;
     }
@@ -103,7 +124,15 @@ export const readGlobalWiring = async (env: Env): Promise<GlobalWiring> => {
       // reason to fail doctor: the mcp line simply reads "absent".
     }
   }
-  return { settingsPath, hooksInstalled, unreadable, mcpRegistered };
+  return {
+    settingsPath,
+    hooksInstalled: hookEntries.length > 0,
+    unreadable,
+    mcpRegistered,
+    hookEvents: hookEntries.map((entry) => entry.event),
+    launcherCommand: hookEntries[0]?.command ?? null,
+    statuslineCommand,
+  };
 };
 
 const check = (level: Check["level"], name: string, detail: string): Check => ({

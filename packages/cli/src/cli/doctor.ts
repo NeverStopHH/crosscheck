@@ -77,9 +77,11 @@ import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts
 import { isOwnedCommand } from "@crosscheck/connector-claude";
 import {
   globalInstallChecks,
+  ownedHookEntries,
   readGlobalWiring,
   readProjectWiring,
 } from "./doctor-global.ts";
+import type { GlobalWiring } from "./doctor-global.ts";
 import type { CliResult } from "./login.ts";
 
 export type CheckLevel = "PASS" | "WARN" | "FAIL";
@@ -180,19 +182,86 @@ const settingsOnly = (checks: readonly Check[]): SettingsInspection => ({
   launcherCommand: null,
 });
 
-const checkSettings = async (repoRoot: string): Promise<SettingsInspection> => {
+/** Hook events a healthy install registers — project and user scope alike. */
+const REQUIRED_HOOK_EVENTS = [
+  "SessionStart",
+  "PostToolUse",
+  "SessionEnd",
+  "UserPromptSubmit",
+  "PreToolUse",
+  "Stop",
+] as const;
+
+/**
+ * Whether the user-scope install registers every hook the project check
+ * requires — the condition under which a repo with no project hooks is
+ * still fully wired (finding #13: the project checks predate `init
+ * --global` and read a healthy global-only machine as broken).
+ */
+const globalCoversHooks = (wiring: GlobalWiring): boolean =>
+  REQUIRED_HOOK_EVENTS.every((event) => wiring.hookEvents.includes(event));
+
+/**
+ * The hooks line when the PROJECT scope registers nothing: PASS when user
+ * scope satisfies the requirement (saying which scope did), FAIL naming
+ * the incomplete user-scope install when it half does, and the exact
+ * project-scope FAIL (`projectDetail`) when NEITHER scope is wired.
+ */
+const hooksViaScopes = (wiring: GlobalWiring, projectDetail: string): Check => {
+  if (globalCoversHooks(wiring)) {
+    return check(
+      "PASS",
+      "hooks registered",
+      `via global install — ${wiring.settingsPath} (user scope)`,
+    );
+  }
+  if (wiring.hookEvents.length > 0) {
+    const missing = REQUIRED_HOOK_EVENTS.filter(
+      (event) => !wiring.hookEvents.includes(event),
+    );
+    return check(
+      "FAIL",
+      "hooks registered",
+      `user-scope hooks in ${wiring.settingsPath} are missing: ${missing.join(", ")} — rerun crosscheck init --global`,
+    );
+  }
+  return check("FAIL", "hooks registered", projectDetail);
+};
+
+/** The statusline line when the project scope sets none — user scope applies. */
+const statuslineViaGlobal = (wiring: GlobalWiring, noneDetail: string): Check =>
+  wiring.statuslineCommand === null
+    ? check("WARN", "statusline registered", noneDetail)
+    : isOwnedCommand(wiring.statuslineCommand)
+      ? check(
+          "PASS",
+          "statusline registered",
+          `via global install — ${wiring.statuslineCommand}`,
+        )
+      : check(
+          "WARN",
+          "statusline registered",
+          `foreign statusline (user scope): ${wiring.statuslineCommand}`,
+        );
+
+const checkSettings = async (
+  repoRoot: string,
+  global: GlobalWiring,
+): Promise<SettingsInspection> => {
   const path = join(repoRoot, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE);
   const raw = await readTextOrNull(path);
   if (raw === null) {
     return settingsOnly([
-      check("FAIL", "hooks registered", `${path} not found — run crosscheck init`),
-      check("WARN", "statusline registered", "no settings file"),
+      hooksViaScopes(global, `${path} not found — run crosscheck init`),
+      statuslineViaGlobal(global, "no settings file"),
     ]);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
   } catch {
+    // A corrupt PROJECT file stays a FAIL whatever user scope says: the
+    // file needs a human whichever scope runs the hooks.
     return settingsOnly([
       check("FAIL", "hooks registered", `${path} is not valid json`),
       check("WARN", "statusline registered", "settings unparseable"),
@@ -212,46 +281,37 @@ const checkSettings = async (repoRoot: string): Promise<SettingsInspection> => {
     ]);
   }
 
-  const hooks = settings.data.hooks ?? {};
-  const ownedCommands = Object.entries(hooks).flatMap(([event, groups]) =>
-    (Array.isArray(groups) ? groups : []).flatMap((group) => {
-      const entries = (group as Record<string, unknown>)["hooks"];
-      return (Array.isArray(entries) ? entries : [])
-        .map((entry) => (entry as Record<string, unknown>)["command"])
-        .filter(isOwnedCommand)
-        .map((command) => ({ event, command: String(command) }));
-    }),
+  const ownedCommands = ownedHookEntries(
+    settings.data as Record<string, unknown>,
   );
 
-  const required = [
-    "SessionStart",
-    "PostToolUse",
-    "SessionEnd",
-    "UserPromptSubmit",
-    "PreToolUse",
-    "Stop",
-  ];
-  const missing = required.filter(
+  const missing = REQUIRED_HOOK_EVENTS.filter(
     (event) => !ownedCommands.some((entry) => entry.event === event),
   );
   const unexpected = ownedCommands.filter(
-    (entry) => !required.includes(entry.event),
+    (entry) => !(REQUIRED_HOOK_EVENTS as readonly string[]).includes(entry.event),
   );
   const hooksCheck =
-    missing.length > 0
-      ? check("FAIL", "hooks registered", `missing: ${missing.join(", ")}`)
-      : unexpected.length > 0
-        ? check(
-            "WARN",
-            "hooks registered",
-            `unexpected crosscheck entries: ${unexpected.map((entry) => entry.event).join(", ")}`,
-          )
-        : check("PASS", "hooks registered", required.join(", "));
+    ownedCommands.length === 0
+      ? // The statusLine-only shape (finding #13's second variant): the
+        // project file exists but registers no crosscheck hooks at all, so
+        // the question falls through to user scope exactly as if the file
+        // were absent.
+        hooksViaScopes(global, `missing: ${missing.join(", ")}`)
+      : missing.length > 0
+        ? check("FAIL", "hooks registered", `missing: ${missing.join(", ")}`)
+        : unexpected.length > 0
+          ? check(
+              "WARN",
+              "hooks registered",
+              `unexpected crosscheck entries: ${unexpected.map((entry) => entry.event).join(", ")}`,
+            )
+          : check("PASS", "hooks registered", REQUIRED_HOOK_EVENTS.join(", "));
 
   const statuslineCommand = settings.data.statusLine?.command;
   const statuslineCheck =
     statuslineCommand === undefined
-      ? check("WARN", "statusline registered", "no statusline configured")
+      ? statuslineViaGlobal(global, "no statusline configured")
       : isOwnedCommand(statuslineCommand)
         ? check("PASS", "statusline registered", statuslineCommand)
         : check(
@@ -538,10 +598,24 @@ const defaultAgentProbe = (cwd: string): AgentProcessProbe => ({
  * `crosscheck login`. A single line saying "the tools do not work" would send
  * half the readers to the wrong command.
  */
-const checkMcpRegistration = async (repoRoot: string): Promise<Check> => {
+const checkMcpRegistration = async (
+  repoRoot: string,
+  userScopeRegistered: boolean,
+): Promise<Check> => {
   const path = join(repoRoot, MCP_CONFIG_FILE);
   const raw = await readTextOrNull(path);
   if (raw === null) {
+    // Finding #13: a missing PROJECT file is not a broken install when the
+    // user scope registers the tools — but user scope covers only THIS
+    // machine, so the committed-file advice survives as a note instead of
+    // being lost with the FAIL.
+    if (userScopeRegistered) {
+      return check(
+        "PASS",
+        "mcp tools registered",
+        `via global install (user scope, this machine only) — teammates get the tools from a committed ${path}: run crosscheck init, then commit the file`,
+      );
+    }
     return check(
       "FAIL",
       "mcp tools registered",
@@ -1015,7 +1089,12 @@ export const runDoctor = async (
       check("FAIL", "hub reachable", "no hub configured"),
       ...(identity === null
         ? []
-        : [await checkMcpRegistration(identity.root)]),
+        : [
+            await checkMcpRegistration(
+              identity.root,
+              globalWiring.mcpRegistered,
+            ),
+          ]),
       mcpUsableCheck(config !== null, config?.hubUrl ?? null),
       bunfigCheck,
     ]);
@@ -1080,7 +1159,12 @@ export const runDoctor = async (
     probe.ok || probe.kind === "network" ? await measureLatency(hubCtx) : null;
 
   const owner = timeoutOwner(env, config.stored);
-  const settingsInspection = await checkSettings(identity.root);
+  const settingsInspection = await checkSettings(identity.root, globalWiring);
+  // The launcher the hooks would actually run: the project scope's where it
+  // is wired, else the user scope's — the spelling check must execute
+  // whichever scope satisfies the hooks requirement (finding #13).
+  const launcherCommand =
+    settingsInspection.launcherCommand ?? globalWiring.launcherCommand;
   return summarize([
     configCheck,
     identityCheck,
@@ -1093,16 +1177,16 @@ export const runDoctor = async (
     timeoutCheck(config.timeoutMs, owner),
     latencyCheck(measurement, config.timeoutMs, owner),
     ...settingsInspection.checks,
-    ...(settingsInspection.launcherCommand === null
+    ...(launcherCommand === null
       ? []
-      : [await checkLauncher(settingsInspection.launcherCommand, env)]),
+      : [await checkLauncher(launcherCommand, env)]),
     await checkAgentRestart(
       identity.root,
       join(identity.root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
       agentProbe ?? defaultAgentProbe(cwd),
       now.getTime(),
     ),
-    await checkMcpRegistration(identity.root),
+    await checkMcpRegistration(identity.root, globalWiring.mcpRegistered),
     mcpUsableCheck(true, config.hubUrl),
     ...(await checkSpool(config.home, key, now)),
     ...(await foreignDropChecks(config.home)),
