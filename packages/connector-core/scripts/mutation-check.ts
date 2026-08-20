@@ -1070,6 +1070,24 @@ export const MUTATIONS: readonly Mutation[] = [
       "MAX_SPOOL_AGE_DAYS instead of costing one bounded call",
   },
   {
+    // The CURSOR half of the same starvation fix (rigor review F1): the
+    // adversarial review proved by mutation that dropping ONLY the cursor
+    // call site's subtraction left every suite green — the shared probe's
+    // entry above reddens through the Claude hook alone, so the cursor
+    // holdback was unpinned. This drops the subtraction exactly as that
+    // review did; the cursor connector's own budget pin must go red for it.
+    label: "the cursor drain starves the deferred end it is hosting again",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "    budget.spareMs() - endHoldbackMs,",
+    to: "    budget.spareMs(),",
+    test: `${CURSOR}/test/budget.test.ts`,
+    because:
+      "with the cursor holdback gone the flush runs to the hook's spare " +
+      "deadline on every cursor start, the ender reads roomMs 0, and a " +
+      "deferred end starves to its MAX_SPOOL_AGE_DAYS age-out behind a " +
+      "connector whose Claude sibling is fixed",
+  },
+  {
     // Briefing parity's exactly-once (§10 risk 1 in briefing form): the
     // deferred briefing must be CLAIMED with a check-and-set that spends
     // `briefingPending`, or every prompt of a late-registered session
@@ -1129,6 +1147,7 @@ interface Outcome {
  * PRINTS: absence-render.test.ts 1
  * PRINTS: agent-restart.test.ts 1
  * PRINTS: briefing-parity.test.ts 1
+ * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
