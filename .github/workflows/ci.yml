@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 71
+    # PRINTS: 72
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -137,7 +137,7 @@ jobs:
     # PRINTS: hooks/stop.ts 1
     # PRINTS: briefing/render.ts 2
     # PRINTS: briefing/sanitize.ts 7
-    # PRINTS: config/config.ts 2
+    # PRINTS: config/config.ts 3
     # PRINTS: config/connected-repo.ts 2
     # PRINTS: config/hook-budget.ts 1
     # PRINTS: constants.ts 6
@@ -165,7 +165,7 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
     # PRINTS: briefing.ts 1
     # PRINTS: capture-targets.ts 1
-    # PRINTS: config.ts 2
+    # PRINTS: config.ts 3
     # PRINTS: connected-repo.ts 2
     # PRINTS: constants.ts 6
     # PRINTS: developers.ts 1

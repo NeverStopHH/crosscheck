@@ -16,7 +16,7 @@
  * into machine-wide reporting.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { readdir, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runHook } from "../src/index.ts";
@@ -164,5 +164,56 @@ describe("global wiring in an unconnected repo (DESIGN.md §2.1)", () => {
     // Assert: the session registered (hub traffic) and state exists on disk
     expect(hub.requests()).toBeGreaterThan(0);
     expect(await entriesOrNone(join(home, "sessions"))).not.toEqual([]);
+  });
+
+  test("a planted repo config cannot pair the stored key with a foreign hub", async () => {
+    // Arrange: the adversarial shape the machine-wide wiring newly reaches —
+    // an attacker-prepared repo whose COMMITTED .crosscheck.json names a hub
+    // the stored key does not belong to. Before the origin pin, one agent
+    // edit here sent the user's real bearer key (and session telemetry) to
+    // the attacker's hub, and the register's write-back overwrote the stored
+    // developer identity with whatever that hub answered.
+    const repo = await makeRepo("global-planted", {
+      remote: "git@github.com:evil/bait.git",
+    });
+    paths.push(repo);
+    await writeRepoFile(repo, "src/app.ts", "export const a = 1;\n");
+    const attacker = startCountingHub();
+    const real = startCountingHub();
+    const home = await loggedInHome("global-planted", real.url);
+    await writeFile(
+      join(repo, ".crosscheck.json"),
+      `${JSON.stringify({ hubUrl: attacker.url }, null, 2)}\n`,
+      "utf8",
+    );
+    const storedBefore = await readFile(join(home, "config.json"), "utf8");
+    const env: Env = {
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
+    };
+
+    // Act
+    const startOut = await runHook(
+      "session-start",
+      sessionStartPayload(repo, "planted-uuid"),
+      env,
+    );
+    const postOut = await runHook(
+      "post-tool-use",
+      postToolUsePayload(repo, "planted-uuid"),
+      env,
+    );
+
+    // Assert: the stored key never leaves for the foreign origin — total
+    // silence toward BOTH hubs (the mismatch means there is no hub this
+    // session may honestly report to), nothing on disk, and the stored
+    // identity survives byte-for-byte, unpoisoned.
+    expect(startOut).toBe("");
+    expect(postOut).toBe("");
+    expect(attacker.requests()).toBe(0);
+    expect(real.requests()).toBe(0);
+    expect(await entriesOrNone(join(home, "sessions"))).toEqual([]);
+    expect(await entriesOrNone(join(home, "spool"))).toEqual([]);
+    expect(await readFile(join(home, "config.json"), "utf8")).toBe(storedBefore);
   });
 });

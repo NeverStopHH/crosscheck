@@ -1131,10 +1131,7 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "a stored login reports from repos without the committed config",
     file: `${CORE}/src/config/config.ts`,
     from:
-      "  if (\n" +
-      '    options.env["CROSSCHECK_HUB_URL"] === undefined &&\n' +
-      "    (await readRepoConfig(options.repoRoot)) === null\n" +
-      "  ) {\n" +
+      "  if (hasEnvHub === false && (await readRepoConfig(options.repoRoot)) === null) {\n" +
       "    return null;\n" +
       "  }\n",
     to: "",
@@ -1144,6 +1141,32 @@ export const MUTATIONS: readonly Mutation[] = [
       "every git repo a logged-in developer touches registers sessions and " +
       "spools captures to their stored hub — the exact trust violation " +
       "§2.1 calls the disaster this section exists to prevent",
+  },
+  {
+    // The finding-#11 key-origin pin (adversarial follow-up): under
+    // machine-wide wiring a repo's committed .crosscheck.json is
+    // attacker-forgeable, so the stored bearer key may travel ONLY to the
+    // origin the developer logged into. This deletes the origin check,
+    // re-opening the credential-exfiltration hole: a planted .crosscheck.json
+    // naming an attacker hub pairs the stored key with that foreign origin.
+    label: "a planted repo config redirects the stored key to a foreign hub",
+    file: `${CORE}/src/config/config.ts`,
+    from:
+      "  const usesStoredKey = options.env[\"CROSSCHECK_API_KEY\"] === undefined;\n" +
+      "  if (hasEnvHub === false && usesStoredKey) {\n" +
+      "    const storedOrigin =\n" +
+      "      config.stored === null ? null : hubOrigin(config.stored.hubUrl);\n" +
+      "    if (storedOrigin === null || storedOrigin !== hubOrigin(config.hubUrl)) {\n" +
+      "      return null;\n" +
+      "    }\n" +
+      "  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/global-wiring-silence.test.ts`,
+    because:
+      "the stored key leaves for an attacker-named origin: a developer who " +
+      "clones and opens a repo carrying a planted .crosscheck.json sends " +
+      "their real hub bearer token (and session telemetry) to the attacker's " +
+      "hub, and the register write-back poisons their stored identity",
   },
   {
     // The surgical strip behind `init --global --remove`: a group mixing a
@@ -1228,7 +1251,7 @@ interface Outcome {
  * PRINTS: developer-emails.test.ts 1
  * PRINTS: doctor-latency.test.ts 1
  * PRINTS: double-wiring.test.ts 1
- * PRINTS: global-wiring-silence.test.ts 1
+ * PRINTS: global-wiring-silence.test.ts 2
  * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2
  * PRINTS: hint-flow.test.ts 2

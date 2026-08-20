@@ -14,14 +14,12 @@ import {
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import {
   isDisabled,
-  loadConfig,
   loadReportableConfig,
 } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
 import { findConnectedRepoRootForPaths } from "@crosscheck/connector-core/config/connected-repo.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
-import { readRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
@@ -125,8 +123,12 @@ const resolveHookRepo = async (
   );
   if (derivedRoot !== null) {
     const derived = await resolveRepoIdentity(derivedRoot);
-    if (derived !== null && (await readRepoConfig(derived.root)) !== null) {
-      const config = await loadConfig({ env, repoRoot: derived.root });
+    if (derived !== null) {
+      // loadReportableConfig, NOT bare loadConfig: this rung must also honour
+      // the finding-#11 gate AND its key-origin pin, or a planted
+      // .crosscheck.json at the touched file's repo redirects the stored key
+      // exactly where rung 1's pin refused it.
+      const config = await loadReportableConfig({ env, repoRoot: derived.root });
       if (config !== null) {
         return { identity: derived, config };
       }
