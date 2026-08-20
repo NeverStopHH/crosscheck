@@ -50,11 +50,15 @@ wiring, repo-scoped trust.
 Operational notes:
 
 - **Non-destructive, reversible.** Additive merge with timestamped backups
-  and atomic writes; a re-run is a byte-identical no-op; an existing
-  statusline is never replaced without `--force-statusline`;
-  `crosscheck init --global --remove` strips exactly the crosscheck entries
-  from all four user-scope files (Cursor's included, no flag needed) and
-  leaves everything else byte-identical.
+  and atomic writes; a re-run against an unchanged file is a byte-identical
+  no-op; an existing statusline is never replaced without
+  `--force-statusline`; `crosscheck init --global --remove` strips exactly
+  the crosscheck entries from all four user-scope files (Cursor's included,
+  no flag needed) and leaves every foreign entry content-identical. (JSON
+  formatting is normalized to 2-space indentation on the first install and
+  not restored, so a file you hand-indented differently is preserved in
+  content, not byte-for-byte — the timestamped backup holds the exact
+  original either way.)
 - **Coexists with project installs.** A repo can carry committed project
   hooks while the machine carries the global ones: Claude Code runs an
   identical handler defined in both files once, and capture stays

@@ -69,7 +69,7 @@ curl -sX POST http://localhost:7100/api/developers/<developerId>/emails \
 npm install -g crosscheck-hub    # or: bun add -g crosscheck-hub — installs the `crosscheck` command; hooks outlive npx, so `init` refuses to run from an npx/bunx cache
 
 crosscheck login http://localhost:7100 < api-key.txt   # writes ~/.crosscheck/config.json (0600)
-crosscheck init --global                               # once per machine: hooks + mcp into ~/.claude — covers every checkout, worktree and parent workspace, forever
+crosscheck init --global                               # once per machine: hooks + mcp into ~/.claude — covers every checkout, worktree and parent workspace, for as long as the `crosscheck` command stays on PATH (the -g install above keeps it there; if init falls back to an absolute launcher it says so and moving the package means rerunning)
 crosscheck doctor                                      # verifies config, hooks, launcher, hub, spool, clock
 ```
 
