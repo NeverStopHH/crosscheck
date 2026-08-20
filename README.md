@@ -63,19 +63,21 @@ curl -sX POST http://localhost:7100/api/developers/<developerId>/emails \
 # unlink with DELETE /api/developers/<developerId>/emails/alice@gmail.com
 ```
 
-**3. Each developer installs the connector permanently, logs in once, then wires up the repo:**
+**3. Each developer installs the connector permanently, logs in once, then wires the machine:**
 
 ```bash
 npm install -g crosscheck-hub    # or: bun add -g crosscheck-hub — installs the `crosscheck` command; hooks outlive npx, so `init` refuses to run from an npx/bunx cache
 
 crosscheck login http://localhost:7100 < api-key.txt   # writes ~/.crosscheck/config.json (0600)
-crosscheck init                                        # writes .crosscheck.json + .claude/settings.json
+crosscheck init --global                               # once per machine: hooks + mcp into ~/.claude — covers every checkout, worktree and parent workspace, forever
 crosscheck doctor                                      # verifies config, hooks, launcher, hub, spool, clock
 ```
 
 `login` reads the key from stdin, or from `CROSSCHECK_API_KEY`. Passing it as an argument (`crosscheck login <hubUrl> <apiKey>`) still works but is discouraged — the key ends up in your shell history.
 
-`crosscheck init` is meant to be committed: the hub URL and the hook registration live in the repo, so every teammate is connected after `git pull` + their own `login`. The API key never enters the repo.
+**4. One teammate connects each repo:** `crosscheck init` inside the repo writes `.crosscheck.json` (the hub URL), which is meant to be committed. Wiring travels with the machine, trust travels with the repo: sessions report ONLY in repos carrying that committed file — every other directory stays silent no matter how the machine is wired. The API key never enters the repo.
+
+Plain `crosscheck init` (no flag) remains the narrower alternative: besides connecting the repo it wires that one checkout's `.claude/settings.json` + `.mcp.json`, committable so teammates are wired on `git pull`. It covers exactly that checkout — fresh worktrees and editor workspaces rooted at the repo's parent folder are only covered by `--global`. Running both is harmless (identical hook commands run once; `doctor` flags the redundancy); `crosscheck init --global --remove` uninstalls the user-level side.
 
 ### What you actually see
 

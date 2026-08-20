@@ -6,8 +6,8 @@ behind it:
 
 | Host | Connector | Install mechanism |
 |---|---|---|
-| Claude Code | `connector-claude` | `crosscheck init` (repo-committed `.claude/settings.json` + `.mcp.json`) |
-| Cursor IDE | `connector-cursor` | `crosscheck init --cursor` (repo-committed `.cursor/hooks.json` + `.cursor/mcp.json`) |
+| Claude Code | `connector-claude` | `crosscheck init --global` (once per machine: `~/.claude/settings.json` + user-scope mcp) or `crosscheck init` (repo-committed `.claude/settings.json` + `.mcp.json`) |
+| Cursor IDE | `connector-cursor` | `crosscheck init --global --cursor` (`~/.cursor/hooks.json` + `~/.cursor/mcp.json`, local sessions) or `crosscheck init --cursor` (repo-committed `.cursor/hooks.json` + `.cursor/mcp.json`) |
 | Any ACP client × any ACP agent (Zed, JetBrains, Neovim, Emacs × Gemini CLI, cursor-agent, Goose, …) | `connector-acp` | wrap the agent command: `crosscheck acp -- <agent cmd…>` (per-user editor config) |
 
 Everything below assumes a reachable hub and a login:
@@ -22,9 +22,51 @@ crosscheck login https://hub.example.com   # key read from stdin
 
 `crosscheck doctor` is the answer to "is it working" on every host: it checks
 launcher health, hook registration (Claude + Cursor sections), hub liveness,
-spool depth, contract drift and injection counts.
+spool depth, contract drift, injection counts — and the user-level install
+state (present, absent, double-wired).
 
-## Claude Code
+## The user-level ("global") install — once per machine
+
+```sh
+crosscheck init --global             # add --cursor for ~/.cursor too
+```
+
+Project-scoped init wires ONE checkout, and every new checkout, git worktree
+or parent-workspace session starts deaf until someone re-runs it — two real
+incidents in one week (a Cursor workspace rooted at the repo's PARENT folder
+loaded no repo settings at session start; a fresh worktree carried the
+committed `.crosscheck.json` but not the per-machine, gitignored
+`.claude/settings.json`). `--global` wires the machine instead: hooks +
+statusline into `~/.claude/settings.json`, the mcp tools into user-scope
+`~/.claude.json` — the files Claude Code reads for EVERY session, wherever it
+starts.
+
+What it does NOT change: **where a session reports.** Trust stays per-repo
+(DESIGN.md §2.1) — only a repo whose root carries the committed
+`.crosscheck.json` ever reports; a session in any other directory produces
+zero hub traffic, zero disk artifacts, zero errors, forever. Machine-wide
+wiring, repo-scoped trust.
+
+Operational notes:
+
+- **Non-destructive, reversible.** Additive merge with timestamped backups
+  and atomic writes; a re-run is a byte-identical no-op; an existing
+  statusline is never replaced without `--force-statusline`;
+  `crosscheck init --global --remove` strips exactly the crosscheck entries
+  from all four user-scope files (Cursor's included, no flag needed) and
+  leaves everything else byte-identical.
+- **Coexists with project installs.** A repo can carry committed project
+  hooks while the machine carries the global ones: Claude Code runs an
+  identical handler defined in both files once, and capture stays
+  exactly-once even when differing launcher spellings make both fire.
+  `doctor` flags the redundancy and names the cleanup command.
+- **Cursor scope is narrower.** `--global --cursor` writes
+  `~/.cursor/hooks.json` + `~/.cursor/mcp.json`, which cover LOCAL Cursor
+  sessions only — Cursor cloud agents read the repo-committed
+  `.cursor/hooks.json`, so teams using cloud agents still want the committed
+  install too.
+
+## Claude Code (per-repo alternative)
 
 ```sh
 cd your-repo
@@ -33,7 +75,9 @@ crosscheck init
 
 Non-destructive merge into `.claude/settings.json` (hooks + statusline) and
 `.mcp.json` (the diagnosis tools). Both files are repo-committed: install is
-one PR, teammates connect on `git pull` + `crosscheck login`.
+one PR, teammates connect on `git pull` + `crosscheck login`. (Connecting the
+repo — writing the committed `.crosscheck.json` — happens here in both
+stories; `--global` only replaces the per-checkout hook wiring.)
 
 Two operational notes:
 
@@ -42,10 +86,13 @@ Two operational notes:
   (`init` prints this, and `doctor` warns about running agents in the repo
   that predate the settings file).
 - **Start sessions inside the repo.** A session started in a PARENT folder
-  of the repo only becomes visible on its first edit of a file inside the
-  repo (the connector derives the repo from the touched file's path);
-  briefing and presence are missing until then. `crosscheck doctor` in the
-  parent folder names this state.
+  of the repo loads no project-scoped settings at all (Claude Code reads
+  `<cwd>/.claude/settings.json` at session start) — with only a per-repo
+  install it is deaf there. A user-level install closes this: the wiring is
+  machine-wide, and the session becomes visible on its first edit of a file
+  inside the repo (the connector derives the repo from the touched file's
+  path); briefing and presence are missing until then. `crosscheck doctor`
+  in the parent folder names whichever of the two states you are in.
 
 ## Cursor IDE (≥ 1.7)
 
@@ -55,7 +102,11 @@ crosscheck init --cursor      # composes with the default Claude init
 ```
 
 Merges `.cursor/hooks.json` and `.cursor/mcp.json`, non-destructively, with
-timestamped backups. Same one-PR install story. Three things to know:
+timestamped backups. Same one-PR install story. The user-level variant
+(`crosscheck init --global --cursor`, see above) writes `~/.cursor` instead
+and covers every checkout for LOCAL sessions — cloud agents only read the
+committed files, which is why the repo-scoped install stays the team
+default here. Three things to know:
 
 - **Open the repo itself as your workspace, not a parent folder.** A
   workspace rooted at `~/dev` above `~/dev/monorepo` starts panel sessions
