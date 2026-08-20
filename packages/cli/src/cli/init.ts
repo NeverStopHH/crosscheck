@@ -10,7 +10,7 @@ import {
   MCP_CONFIG_FILE,
 } from "@crosscheck/connector-core/constants.ts";
 import { normalizeHubUrl, readStoredConfig } from "@crosscheck/connector-core/config/config.ts";
-import { crosscheckHome, ensureDir, readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
+import { crosscheckHome, ensureDir } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import {
   readRepoConfig,
@@ -26,6 +26,8 @@ import {
 } from "@crosscheck/connector-core/config/launcher.ts";
 import type { Launcher } from "@crosscheck/connector-core/config/launcher.ts";
 import { buildSettingsPlan, mergeClaudeSettings } from "@crosscheck/connector-claude";
+import { readGlobalWiring } from "./doctor-global.ts";
+import { backUp, readJsonConfig, renderJsonFile } from "./init-io.ts";
 import type { CliResult } from "./login.ts";
 
 /** The connector's own entry point, resolved from this module's location. */
@@ -50,14 +52,21 @@ export const RESTART_HINT_LINE =
 
 export const INIT_USAGE = [
   `usage: crosscheck init [${INIT_COMMAND_PREFIX_FLAG} <prefix>] [${INIT_HUB_FLAG} <url>] [${INIT_FORCE_STATUSLINE_FLAG}] [${INIT_CURSOR_FLAG}]`,
+  "       crosscheck init --global [--remove] [--force-statusline] [--cursor]",
   "",
   "  wires this repo: hooks and statusline into .claude/settings.json, the",
   "  mcp server into .mcp.json, and the hub url into .crosscheck.json",
   "",
+  "  --global wires the MACHINE instead — once per machine, into",
+  "  ~/.claude/settings.json + user-scope mcp (~/.claude.json) — covering",
+  "  every checkout, worktree and parent workspace; sessions still report",
+  "  only in repos with a committed .crosscheck.json. --remove uninstalls.",
+  "",
   `  ${INIT_COMMAND_PREFIX_FLAG} <prefix>   launcher prefix for hook commands (advanced)`,
   `  ${INIT_HUB_FLAG} <url>            hub url to write (default: stored login / repo config)`,
   `  ${INIT_FORCE_STATUSLINE_FLAG}     replace an existing statusline`,
-  `  ${INIT_CURSOR_FLAG}               additionally merge .cursor/hooks.json + .cursor/mcp.json`,
+  `  ${INIT_CURSOR_FLAG}               additionally merge cursor hooks + mcp (repo scope,`,
+  "                          or ~/.cursor with --global)",
   "",
 ].join("\n");
 
@@ -105,48 +114,9 @@ export const resolveLauncher = async (
   entryPath: string = BIN_ENTRY_PATH,
 ): Promise<Launcher> => resolveLauncherWithEntry(override, env, entryPath);
 
-const renderSettings = (settings: Record<string, unknown>): string =>
-  `${JSON.stringify(settings, null, 2)}\n`;
-
-type ReadJson =
-  | { readonly ok: true; readonly value: Record<string, unknown>; readonly raw: string | null }
-  | { readonly ok: false };
-
-/**
- * Reads a JSON config `init` is going to rewrite, or refuses.
- *
- * Refusing is the point. A file that cannot be parsed is a file whose contents
- * cannot be preserved, and overwriting it would silently delete a teammate's
- * configuration — so `init` changes NOTHING and says which file stopped it. Both
- * `.claude/settings.json` and `.mcp.json` obey this, which is why it is one
- * function rather than two copies of the same four lines.
- */
-const readJsonConfig = async (path: string): Promise<ReadJson> => {
-  const raw = await readTextOrNull(path);
-  if (raw === null) {
-    return { ok: true, value: {}, raw: null };
-  }
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return {
-      ok: true,
-      value:
-        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
-          : {},
-      raw,
-    };
-  } catch {
-    return { ok: false };
-  }
-};
-
-/** Timestamped backup beside the original, so a bad merge is recoverable. */
-const backUp = async (path: string, raw: string | null): Promise<void> => {
-  if (raw !== null) {
-    await writeFile(`${path}.bak-${String(Date.now())}`, raw, "utf8");
-  }
-};
+// The read-and-refuse / backup / render discipline MOVED to init-io.ts when
+// finding #11 added the user-level install: both inits obey the identical
+// rules, so they share one spelling.
 
 type ResolvedInputs = { readonly hubUrl: string } | { readonly error: string };
 
@@ -258,10 +228,10 @@ export const runInit = async (
     buildSettingsPlan(prefix, options.forceStatusline),
   );
   await ensureDir(settingsDir);
-  await writeFile(settingsPath, renderSettings(merged.settings), "utf8");
+  await writeFile(settingsPath, renderJsonFile(merged.settings), "utf8");
   await writeFile(
     mcpPath,
-    renderSettings(mergeMcpConfig(mcpRead.value, mcpEntry)),
+    renderJsonFile(mergeMcpConfig(mcpRead.value, mcpEntry)),
     "utf8",
   );
   await writeFile(
@@ -271,6 +241,11 @@ export const runInit = async (
   );
   const cursorPaths =
     cursorPlan !== null && cursorPlan.ok ? await cursorPlan.apply() : [];
+  // Honest, not blocking (finding #11): the project install proceeds — it
+  // is the team's committed mechanism, and one developer's user-level
+  // install must not veto it — but the double wiring is said out loud with
+  // the cleanup command, never left for someone to discover via doctor.
+  const globalWiring = await readGlobalWiring(env);
 
   const notes = [
     ...(merged.statuslineInstalled
@@ -284,6 +259,11 @@ export const runInit = async (
     ...(launcher.kind === "entry"
       ? [
           "launcher is an absolute path on this machine — teammates must run crosscheck init once too (or npm install -g crosscheck-hub)",
+        ]
+      : []),
+    ...(globalWiring.hooksInstalled
+      ? [
+          `note: a user-level (global) crosscheck install exists (${globalWiring.settingsPath}) — this repo is now wired twice on your machine; identical commands run once (Claude Code dedups them) and capture stays exactly-once either way, but doctor will flag the redundancy; \`crosscheck init --global --remove\` removes the user-level side if the committed install should stand alone`,
         ]
       : []),
   ];
