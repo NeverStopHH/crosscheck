@@ -18,6 +18,15 @@
  * result". The hint runs BEFORE the maintenance flush — it is the thing the
  * developer may actually see, the Claude ordering rule — and a successful
  * tool result attempts nothing: no failure, no query, no HTTP.
+ *
+ * Briefing parity: a conversation that registered LATE (requireSessionState's
+ * recovery) is owed the briefing sessionStart never delivered, and THIS is
+ * the hook that pays it (inject/deferred-briefing.ts) — on the invocation
+ * AFTER the recovery, outranking the hint for that one response: one
+ * injection per response, the briefing because it is the bigger loss (the
+ * Claude user-prompt-submit's pinned precedence). Capture is untouched by
+ * the precedence — a detected failure is fingerprinted whether or not the
+ * briefing takes the injection slot.
  */
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
@@ -28,6 +37,10 @@ import { updateSessionState } from "@crosscheck/connector-core/state/session-sta
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 
 import type { CursorHookContext } from "../runner.ts";
+import {
+  deliverOwedBriefing,
+  owedBriefingBefore,
+} from "../inject/deferred-briefing.ts";
 import { attemptFailureHint } from "../inject/hint.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
 import { requireSessionState } from "./recover.ts";
@@ -74,10 +87,16 @@ export const handleCursorPostToolUse = async (
   ctx: CursorHookContext,
   budget: HookBudget,
 ): Promise<string> => {
+  // Read BEFORE recovery can stamp the debt: the recovery invocation itself
+  // never pays (inject/deferred-briefing.ts carries the budget argument).
+  const owedBefore = await owedBriefingBefore(ctx);
   const state = await requireSessionState(ctx);
   if (state === null) {
     return "";
   }
+  // The deferred briefing first — it is what the developer may actually see,
+  // and whether it delivered decides if the hint pipeline is consulted at all.
+  const briefingText = owedBefore ? await deliverOwedBriefing(ctx) : "";
   const now = ctx.now();
   const parsedOutput = parseToolOutput(ctx.payload.tool_output);
   let hintText = "";
@@ -99,7 +118,13 @@ export const handleCursorPostToolUse = async (
       failureText,
       now,
     });
-    hintText = await attemptFailureHint(ctx, failureText);
+    // Precedence, pinned: a delivered briefing takes this response's one
+    // injection slot — the hint pipeline is not even consulted (briefing-
+    // parity.test.ts counts the candidates GET at zero). Capture above ran
+    // regardless.
+    if (briefingText.length === 0) {
+      hintText = await attemptFailureHint(ctx, failureText);
+    }
   }
   // Maintenance on the spare budget; the heartbeat after it is another hub
   // call and the state write is what keeps this session's spool safe.
@@ -129,5 +154,6 @@ export const handleCursorPostToolUse = async (
       lastHeartbeatAt: now.toISOString(),
     }));
   }
-  return hintText.length === 0 ? "" : cursorInjectionOutput(hintText);
+  const text = briefingText.length === 0 ? hintText : briefingText;
+  return text.length === 0 ? "" : cursorInjectionOutput(text);
 };

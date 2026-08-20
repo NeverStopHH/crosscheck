@@ -398,7 +398,7 @@ Registered in `.cursor/hooks.json` (`version: 1`), each with an explicit `timeou
 | `afterFileEdit` | `file_path` → `captureFileTargets`. The `edits[]` old/new strings are **never uploaded** — path only, Tier-0 discipline. Heartbeat (throttled), status → `implementing`. |
 | `afterShellExecution` | Failure detection from exit/output fields → `captureFailure` → `error_fingerprint`. Command text not uploaded. |
 | `postToolUseFailure` | Same fingerprint path for non-shell tool failures. |
-| `postToolUse` | Heartbeat; spool flush on spare budget; hint delivery via `additional_context` (§3.3). |
+| `postToolUse` | Heartbeat; spool flush on spare budget; hint delivery via `additional_context` (§3.3). Pays a late-registered conversation's deferred briefing first — the briefing outranks the hint for that one response (§3.3). |
 | `stop` | Turn counter (future Tier-1 gate); spool flush. Never emits `followup_message` — auto-continuing the user's session is not ours to do. |
 | `sessionEnd` | `endSessionFlow`. |
 
@@ -418,7 +418,14 @@ silent — the same "unconnected directory talks to nobody" rule, no special-cas
 
 - **Briefing**: `sessionStart` → `additional_context` (documented as injected into
   initial context — the exact analog of Claude's `additionalContext`). Same
-  `renderBriefing`, same ≤600-token budget.
+  `renderBriefing`, same ≤600-token budget. A conversation that registered LATE
+  through `requireSessionState`'s recovery (no `sessionStart` ever fired here) is
+  OWED that briefing: recovery records the debt (`briefingPending`), and the next
+  `postToolUse`/`postToolUseFailure` pays it through the core
+  `deliverDeferredBriefing` flow — exactly once, outranking the hint for that one
+  response, never on the recovery invocation itself (the Claude
+  UserPromptSubmit pattern, tool-event form — briefing parity for every
+  registration path).
 - **In-session hints**: `postToolUse` → `additional_context`, injected into the
   conversation after the tool result. This anchors better than a prompt-time hint in one
   real case: a failing command whose fingerprint matches a teammate's recorded failure

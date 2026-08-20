@@ -62,6 +62,12 @@ export const requireSessionState = async (
     // State-less reconstruction: stop the ladder on repo_mismatch, CLAIM the
     // state file rather than overwrite a racing sibling's (flow header).
     recovery: true,
+    // No sessionStart ever briefed this conversation (that is what made this
+    // recovery live), so the debt is recorded atomically with the claim; the
+    // NEXT injection-capable hook pays it (inject/deferred-briefing.ts) —
+    // never this invocation, which already spent a register round trip
+    // (test/briefing-parity.test.ts pins both halves).
+    briefingPending: true,
     now: ctx.now(),
   });
   // The flow published state before any append — or ADOPTED a sibling's, or

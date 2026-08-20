@@ -25,10 +25,9 @@ import { readSessionState } from "@crosscheck/connector-core/state/session-state
 import { runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
-import {
-  CANDIDATE_BODY,
-  rejectedApproachCandidate,
-} from "../../connector-core/test/fixtures/hint-hub.ts";
+import { CANDIDATE_BODY } from "../../connector-core/test/fixtures/hint-hub.ts";
+import { startParityHub } from "../../connector-core/test/fixtures/parity-hub.ts";
+import type { ParityHub } from "../../connector-core/test/fixtures/parity-hub.ts";
 
 const REMOTE = "git@github.com:acme/api.git";
 const SESSION_ID = "late-uuid";
@@ -49,89 +48,6 @@ afterEach(async () => {
   stops.length = 0;
 });
 
-interface ParityHubCalls {
-  candidates: number;
-  presence: number;
-  records: number;
-  other: number;
-}
-
-interface ParityHub {
-  readonly url: string;
-  readonly calls: ParityHubCalls;
-  readonly stop: () => void;
-}
-
-/**
- * A hub that can answer BOTH surfaces at once — the briefing's presence GET
- * and the hint flow's candidates GET — which is exactly what the precedence
- * pin needs: with both on offer, the prompt after a late registration must
- * choose the briefing and never even ask for candidates.
- */
-const startParityHub = (): ParityHub => {
-  const calls: ParityHubCalls = { candidates: 0, presence: 0, records: 0, other: 0 };
-  const server = Bun.serve({
-    port: 0,
-    fetch: async (request) => {
-      const { pathname } = new URL(request.url);
-      if (pathname === "/api/hints/candidates") {
-        calls.candidates += 1;
-        return Response.json({
-          ok: true,
-          data: { candidates: [rejectedApproachCandidate()] },
-        });
-      }
-      if (pathname === "/api/presence") {
-        calls.presence += 1;
-        return Response.json({
-          ok: true,
-          data: {
-            sessions: [
-              {
-                sessionId: "cc_other",
-                developerId: "dev_other",
-                developerName: TEAMMATE_NAME,
-                branch: "feat/rate-limit",
-                status: "implementing",
-                lastHeartbeatAt: new Date().toISOString(),
-                isSelf: false,
-              },
-            ],
-          },
-        });
-      }
-      if (pathname === "/api/work-contexts") {
-        return Response.json({ ok: true, data: { workContexts: [] } });
-      }
-      if (pathname === "/api/records") {
-        const body = (await request.json()) as { records: readonly unknown[] };
-        calls.records += 1;
-        return Response.json({
-          ok: true,
-          data: {
-            accepted: body.records.length,
-            duplicates: 0,
-            ignored: 0,
-            rejected: 0,
-          },
-        });
-      }
-      calls.other += 1;
-      return Response.json({
-        ok: true,
-        data: { session: { id: "cc_x", developerId: "dev_self" } },
-      });
-    },
-  });
-  return {
-    url: `http://127.0.0.1:${server.port}`,
-    calls,
-    stop: () => {
-      server.stop(true);
-    },
-  };
-};
-
 interface Fixture {
   readonly repo: string;
   readonly home: string;
@@ -143,7 +59,9 @@ const fixture = async (label: string): Promise<Fixture> => {
   const repo = await makeRepo(label, { remote: REMOTE });
   const home = await makeHome(label);
   paths.push(repo, home);
-  const hub = startParityHub();
+  // The shared two-surface hub (connector-core/test/fixtures/parity-hub.ts)
+  // — the cursor deferred-briefing suite drives the identical canned answers.
+  const hub = startParityHub(TEAMMATE_NAME);
   stops.push(hub.stop);
   // What `crosscheck init` commits: the trust anchor the file-derived
   // registration path (runner.ts rung 2) demands before it will register.

@@ -101,6 +101,15 @@ export interface RegisterSessionFlowInput {
    * path: re-creating state on a re-fire is deliberate there.
    */
   readonly recovery?: boolean;
+  /**
+   * A recovery caller that OWES the session its briefing sets this: no
+   * sessionStart ever delivered one, so the debt is recorded IN the claimed
+   * state — atomically with the claim, the Claude recoverState's
+   * `briefingPending` in flow form — and the next injection-capable hook
+   * pays it through `deliverDeferredBriefing`. Absent means false (the
+   * schema default): sessionStart callers deliver in-hook and owe nothing.
+   */
+  readonly briefingPending?: boolean;
 }
 
 export interface RegisterSessionFlowResult {
@@ -182,6 +191,7 @@ export const registerSessionFlow = async (
     deliveredHintRefs: [],
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
+    ...(input.briefingPending === true ? { briefingPending: true } : {}),
   };
   if (input.recovery === true) {
     // CLAIM, never overwrite: a sibling recovery that published first keeps

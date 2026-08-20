@@ -1103,6 +1103,23 @@ export const MUTATIONS: readonly Mutation[] = [
       "prompt for the rest of the session — the repeat-injection noise " +
       "§10 risk 1 forbids, and the hint path never runs again behind it",
   },
+  {
+    // Briefing parity's CURSOR half (races review finding 1): the debt is
+    // recorded by exactly one line — the recovery register's
+    // `briefingPending: true`. Dropping it re-opens the loss class on this
+    // connector alone: every cursor conversation that registers late (hooks
+    // installed mid-conversation, a reopened conversation) silently loses
+    // its briefing again while the Claude suites stay green.
+    label: "a late-registered cursor conversation loses its briefing again",
+    file: `${CURSOR}/src/handlers/recover.ts`,
+    from: "    briefingPending: true,\n",
+    to: "",
+    test: `${CURSOR}/test/briefing-parity.test.ts`,
+    because:
+      "recovery stops recording the briefing debt, so no later hook ever " +
+      "pays it — a parent-workspace-shaped cursor session is back to " +
+      "losing the one injection that tells it who else is working here",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -1146,7 +1163,7 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
  * PRINTS: agent-restart.test.ts 1
- * PRINTS: briefing-parity.test.ts 1
+ * PRINTS: briefing-parity.test.ts 2
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
  * PRINTS: config-parse.test.ts 1
