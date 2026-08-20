@@ -1051,6 +1051,36 @@ export const MUTATIONS: readonly Mutation[] = [
       "repo's hooks — the false positive the cwd gate exists to prevent",
   },
   {
+    // The scope-aware hooks check (finding #13) cuts both ways: PASS when
+    // the user scope satisfies it, and the exact old FAIL when NEITHER
+    // scope is wired. This collapses the satisfaction gate to always-true,
+    // so a machine with no install at all reads "via global install".
+    label: "the hooks check trusts a global install that is not there",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  REQUIRED_HOOK_EVENTS.every((event) => wiring.hookEvents.includes(event));",
+    to: "  wiring.hookEvents.length >= 0;",
+    test: `${CLI}/test/doctor-global.test.ts`,
+    because:
+      "a repo with neither project nor user-scope hooks — the deaf state " +
+      "doctor exists to name — reads PASS hooks registered via global " +
+      "install, and the onboarding teammate it lies to has no other surface " +
+      "that would say their sessions load nothing",
+  },
+  {
+    // The same defense on the mcp line: the user-scope fallback must be
+    // GATED on the user scope actually carrying the entry, or a missing
+    // .mcp.json passes everywhere.
+    label: "the mcp check passes a missing .mcp.json with no user scope behind it",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    if (userScopeRegistered) {",
+    to: "    if (raw === null) {",
+    test: `${CLI}/test/doctor.test.ts`,
+    because:
+      "an unregistered repo on an uninstalled machine reads PASS mcp tools " +
+      "registered — the never-called-and-nothing-says-so silence rule 6 " +
+      "exists against, restored one scope up",
+  },
+  {
     // The deferred-end starvation (CI "Concurrency (repeated)", 2026-08):
     // SessionStart handed its drain the WHOLE spare while registration
     // guarantees the spool is never empty, so the ender read zero room at
@@ -1348,7 +1378,9 @@ interface Outcome {
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
+ * PRINTS: doctor-global.test.ts 1
  * PRINTS: doctor-latency.test.ts 1
+ * PRINTS: doctor.test.ts 1
  * PRINTS: double-wiring.test.ts 1
  * PRINTS: global-wiring-silence.test.ts 2
  * PRINTS: handlers.test.ts 3
