@@ -10,7 +10,10 @@
  * `~r1` retry mints the fresh session Claude's recovery cannot).
  */
 import { fallbackWorkContextTitle, registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
-import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  readSessionState,
+  updateSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import type { CursorHookContext } from "../runner.ts";
@@ -19,13 +22,25 @@ export const IMPLEMENTING_STATUS = "implementing";
 
 /**
  * The stored state, or the state a fresh register just wrote — null only
- * when even the flow could not produce one (fail open, capture skipped).
+ * when even the flow could not produce one (fail open, capture skipped) or
+ * when the touch belongs to a DIFFERENT repo than the session registered
+ * with (first-wins, trial finding #9 — the Claude post-tool-use guard's
+ * twin): one conversation is ONE crosscheck session bound to one repo, so a
+ * foreign-repo touch is dropped and counted rather than captured under the
+ * wrong repo.
  */
 export const requireSessionState = async (
   ctx: CursorHookContext,
 ): Promise<SessionState | null> => {
   const stored = await readSessionState(ctx.config.home, ctx.hostSessionKey);
   if (stored !== null) {
+    if (stored.repoId !== ctx.identity.repoId) {
+      await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
+        ...fresh,
+        foreignRepoDrops: fresh.foreignRepoDrops + 1,
+      }));
+      return null;
+    }
     return stored;
   }
   await registerSessionFlow({
@@ -44,9 +59,33 @@ export const requireSessionState = async (
     // §2.4 privacy posture): branch @ repo, the honest fallback.
     title: fallbackWorkContextTitle(ctx.identity.branch, ctx.identity.repoId),
     status: IMPLEMENTING_STATUS,
+    // State-less reconstruction: stop the ladder on repo_mismatch, CLAIM the
+    // state file rather than overwrite a racing sibling's (flow header).
+    recovery: true,
+    // No sessionStart ever briefed this conversation (that is what made this
+    // recovery live), so the debt is recorded atomically with the claim; the
+    // NEXT injection-capable hook pays it (inject/deferred-briefing.ts) —
+    // never this invocation, which already spent a register round trip
+    // (test/briefing-parity.test.ts pins both halves).
+    briefingPending: true,
     now: ctx.now(),
   });
-  // The flow wrote the state file before any append; reading it back gives
-  // the schema-defaulted SessionState every later transform expects.
-  return readSessionState(ctx.config.home, ctx.hostSessionKey);
+  // The flow published state before any append — or ADOPTED a sibling's, or
+  // (repo_mismatch, busy lock) wrote nothing at all. Reading it back gives
+  // the schema-defaulted SessionState every later transform expects, and the
+  // first-wins check re-runs against what is actually on disk: a sibling may
+  // have bound this conversation to a DIFFERENT repo during our register
+  // round-trip (handlers.test.ts, the recovery-race parity pin).
+  const state = await readSessionState(ctx.config.home, ctx.hostSessionKey);
+  if (state === null) {
+    return null;
+  }
+  if (state.repoId !== ctx.identity.repoId) {
+    await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
+      ...fresh,
+      foreignRepoDrops: fresh.foreignRepoDrops + 1,
+    }));
+    return null;
+  }
+  return state;
 };

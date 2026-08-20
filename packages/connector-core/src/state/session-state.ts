@@ -81,6 +81,26 @@ const SessionStateObjectSchema = z.looseObject({
    */
   briefingSolvedRefs: z.array(z.string().min(1)).default([]),
   /**
+   * Touches of files in a DIFFERENT connected repo, dropped under the
+   * first-wins rule (trial finding #9): one agent session is ONE crosscheck
+   * session, bound at registration to one repo — a multi-project workspace
+   * editing a second connected repo has those targets dropped, and this is
+   * the count that keeps the drop honest. Default keeps every existing
+   * state file parsing.
+   */
+  foreignRepoDrops: z.number().int().min(0).default(0),
+  /**
+   * True when registration happened OUTSIDE SessionStart — PostToolUse's
+   * state-less recovery, the parent-workspace/finding-#9 shape — so this
+   * session has never seen its briefing. The next UserPromptSubmit pays the
+   * debt through the same core flow SessionStart uses and clears the flag
+   * with a check-and-set (flows/briefing.ts `deliverDeferredBriefing`, the
+   * ACP briefing-slot pattern in hook form). Default false keeps every
+   * existing state file parsing — and keeps SessionStart-registered
+   * sessions debt-free.
+   */
+  briefingPending: z.boolean().default(false),
+  /**
    * Tier-1 summarizer bookkeeping (DESIGN.md §3 Tier 1): the Stop-turn
    * counter the debounce is measured against, the fires already spent
    * against SUMMARIZER_MAX_FIRES_PER_SESSION, and the rough token estimate
@@ -189,6 +209,47 @@ export const updateSessionState = async (
     return true;
   });
 
+export interface SessionStateClaim {
+  /** True when THIS caller published the state; false when it adopted one. */
+  readonly claimed: boolean;
+  /** The state on disk after the claim — the caller's or the winner's. */
+  readonly state: SessionState;
+}
+
+/**
+ * Create-if-absent publication for the RECOVERY paths (adversarial review of
+ * trial finding #9's race): two state-less hooks racing through recovery —
+ * a multi-repo workspace's parallel first touches — must not take turns
+ * overwriting the state file, or the session's repo binding flaps and the
+ * loser's records reference a work context the hub bound to the winner's
+ * repo. Under the state file's own lock: re-read, adopt whatever a sibling
+ * published since the caller's read, publish only into absence. The hub
+ * call stays OUTSIDE the lock (a register can take seconds; sibling
+ * updateSessionState calls must not starve behind it) — only the
+ * read-and-publish is serialized, which is all the flap needs.
+ *
+ * Null means the lock stayed busy: fail open, write nothing, capture
+ * nothing this invocation. SessionStart re-fires keep using
+ * writeSessionState — re-CREATING the state file there is deliberate
+ * (withBriefingSolvedRefs' header).
+ */
+export const claimSessionState = async (
+  home: string,
+  state: SessionStateInput,
+): Promise<SessionStateClaim | null> =>
+  withLock<SessionStateClaim | null>(
+    sessionStateLockPath(home, state.hostSessionKey),
+    null,
+    async () => {
+      const existing = await readSessionState(home, state.hostSessionKey);
+      if (existing !== null) {
+        return { claimed: false, state: existing };
+      }
+      await writeSessionState(home, state);
+      return { claimed: true, state: SessionStateObjectSchema.parse(state) };
+    },
+  );
+
 /** FIFO cap: the oldest targets fall out, the session never grows unbounded. */
 export const withSeenTargets = (
   state: SessionState,
@@ -295,6 +356,8 @@ export const deriveSessionState = (
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
     briefingSolvedRefs: [],
+    foreignRepoDrops: 0,
+    briefingPending: false,
     stopTurnCount: 0,
     summarizerFireCount: 0,
     summarizerLastFireTurn: null,

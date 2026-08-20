@@ -25,7 +25,10 @@ import {
 } from "@crosscheck/connector-core/flows/register-session.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
-import { reapSpool } from "@crosscheck/connector-core/spool/reap.ts";
+import {
+  hasSpendablePendingEnd,
+  reapSpool,
+} from "@crosscheck/connector-core/spool/reap.ts";
 import type { DeferredEnder } from "@crosscheck/connector-core/spool/reap.ts";
 import { writePresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
@@ -260,10 +263,27 @@ export const handleSessionStart = async (
 
   // Maintenance last, on the leftover budget: the briefing above is what this
   // hook exists for, and it is already in hand when the drain starts.
+  //
+  // One request timeout is HELD BACK from the drain when a deferred end is
+  // spendable this run. Registration appends a work-context record on every
+  // start, so the drain almost always has work, and handed the whole spare it
+  // runs to that deadline — the ender below then reads zero room on every
+  // single start against a slow hub, and a deferred end starves to its
+  // age-out instead of costing the one bounded call it needs (the livelock
+  // hook-budget.test.ts pins). A marker whose own backlog is still on disk
+  // holds nothing back: draining is what that marker is waiting for
+  // (spool/reap.ts carries the argument).
+  const endHoldbackMs = (await hasSpendablePendingEnd(
+    ctx.config.home,
+    ctx.repoKey,
+    now,
+  ))
+    ? ctx.hub.timeoutMs
+    : 0;
   await flushSpool(
     ctx.hub,
     { sessionId: crosscheckSessionId, developerId },
-    budget.spareMs(),
+    budget.spareMs() - endHoldbackMs,
   );
   // After the flush, so a session whose records just reached the hub is reaped
   // in the same run rather than a session later. Our own state file exists by

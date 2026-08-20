@@ -23,13 +23,21 @@
  * deterministic pin in connector-claude/test/hook-budget.test.ts.
  */
 import { describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 
 import {
   HTTP_TIMEOUT_MS,
   POST_TOOL_USE_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
+import {
+  ensureDir,
+  repoKey,
+  sessionSlug,
+  spoolDir,
+  spoolPendingEndPath,
+} from "@crosscheck/connector-core/config/paths.ts";
+import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
@@ -41,7 +49,10 @@ import {
   POST_TOOL_USE_FAILING_COMMAND,
   SESSION_START_INPUT,
 } from "./fixtures/cursor-contract/payloads.ts";
-import { startSlowHub } from "../../connector-claude/test/fixtures/slow-hub.ts";
+import {
+  TEAMMATE_NAME,
+  startSlowHub,
+} from "../../connector-claude/test/fixtures/slow-hub.ts";
 import {
   CANDIDATE_BODY,
   rejectedApproachCandidate,
@@ -201,6 +212,8 @@ describe("fail-open within budget", () => {
         deliveredHintHashes: [],
         tripwireAskedFiles: [],
         briefingSolvedRefs: [],
+        foreignRepoDrops: 0,
+        briefingPending: false,
         stopTurnCount: 0,
         summarizerFireCount: 0,
         summarizerLastFireTurn: null,
@@ -289,6 +302,8 @@ describe("fail-open within budget", () => {
         deliveredHintHashes: [],
         tripwireAskedFiles: [],
         briefingSolvedRefs: [],
+        foreignRepoDrops: 0,
+        briefingPending: false,
         stopTurnCount: 0,
         summarizerFireCount: 0,
         summarizerLastFireTurn: null,
@@ -330,6 +345,84 @@ describe("fail-open within budget", () => {
     }
   });
 
+  test("a deferred end AND a backlog to drain: one request timeout is held back, so the end lands", async () => {
+    // Arrange: the Claude holdback fixture, ported (hook-budget.test.ts —
+    // where the livelock argument lives): a stranded end whose own backlog is
+    // gone, next to an old session's 600-record backlog, with ingest at
+    // 350 ms a batch. Handed the WHOLE spare, the drain runs to its deadline
+    // by construction — every batch either costs the full ingest latency or
+    // aborts at the clamp — and the ender then reads spareMs() = 0 on every
+    // single start: the deferred end starves to its age-out. The holdback in
+    // handlers/session-start.ts is the cursor half of that fix, and THIS pin
+    // is what makes the cursor call site load-bearing on its own — the
+    // adversarial review proved the Claude suite stays green when only the
+    // cursor subtraction is dropped. The fixture's latency dial is the whole
+    // interleaving; nothing here depends on machine speed.
+    const INGEST_LATENCY_MS = 350;
+    const BACKLOG = 600;
+    const hub = startSlowHub({ ingest: INGEST_LATENCY_MS, end: 0, other: 0 });
+    const repo = await makeRepo("budget-holdback", { remote: REMOTE });
+    const home = await makeHome("budget-holdback");
+    const key = repoKey(hub.url, "github.com/acme/api");
+    const markerPath = spoolPendingEndPath(home, key, sessionSlug("stranded-uuid"));
+    await ensureDir(spoolDir(home, key));
+    await writeFile(
+      markerPath,
+      `${JSON.stringify({
+        crosscheckSessionId: "cc_stranded-uuid",
+        at: new Date().toISOString(),
+      })}\n`,
+      "utf8",
+    );
+    await appendRecords(
+      home,
+      key,
+      "old-session",
+      Array.from({ length: BACKLOG }, (_unused, index) => ({
+        cx: "0.1",
+        id: `env_backlog_${index}`,
+        ts: new Date().toISOString(),
+        producer: {
+          developerId: "dev_self",
+          agentKind: "cursor-ide",
+          sessionId: "cc_old-session",
+        },
+        kind: "target",
+        body: { workContextId: "wc_1", kind: "file", value: `src/f${index}.ts` },
+      })),
+      new Date(),
+    );
+
+    try {
+      // Act — the real runner, at the documented default timeout and budget.
+      const startedAt = performance.now();
+      const out = await runCursorHook(
+        "sessionStart",
+        payloadIn(repo, "conv-budget-holdback"),
+        {
+          CROSSCHECK_HOME: home,
+          CROSSCHECK_HUB_URL: hub.url,
+          CROSSCHECK_API_KEY: "test-key",
+        },
+      );
+      const elapsedMs = performance.now() - startedAt;
+
+      // Assert: the briefing survives, the budget holds, AND the deferred
+      // end landed — the drain was held to spare minus one request timeout,
+      // which is exactly what the end call needs and all it may spend.
+      expect(deliveredAdditionalContext(out)).toContain(TEAMMATE_NAME);
+      expect(elapsedMs).toBeLessThan(
+        HTTP_TIMEOUT_MS * SESSION_START_BUDGET_RATIO + MARGIN_MS,
+      );
+      expect(hub.calls.end).toBe(1);
+      expect(await Bun.file(markerPath).exists()).toBe(false);
+    } finally {
+      hub.stop();
+      await rm(repo, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   test("hint fast path against candidates slower than every budget: {} within the postToolUse ratio + margin", async () => {
     // Arrange: the canned hint hub with a candidates endpoint slower than
     // the whole hook budget; a registered session so the failing tool
@@ -356,6 +449,8 @@ describe("fail-open within budget", () => {
         deliveredHintHashes: [],
         tripwireAskedFiles: [],
         briefingSolvedRefs: [],
+        foreignRepoDrops: 0,
+        briefingPending: false,
         stopTurnCount: 0,
         summarizerFireCount: 0,
         summarizerLastFireTurn: null,

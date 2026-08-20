@@ -33,7 +33,10 @@ import { fingerprint } from "../src/capture/fingerprint.ts";
 import type { Producer } from "../src/capture/records.ts";
 import type { HubContext } from "../src/http/client.ts";
 import { getPresence } from "../src/http/hub.ts";
-import { readSessionState } from "../src/state/session-state.ts";
+import {
+  readSessionState,
+  writeSessionState,
+} from "../src/state/session-state.ts";
 import { readSpoolLines } from "../src/spool/files.ts";
 import {
   fallbackWorkContextTitle,
@@ -279,6 +282,127 @@ describe("registerSessionFlow", () => {
     // Assert
     expect(result.crosscheckSessionId).toBe(`cc_${hostSessionKey}`);
     expect(await readSessionState(fx.home, hostSessionKey)).not.toBeNull();
+  });
+});
+
+describe("registerSessionFlow in RECOVERY mode (state-less mid-session)", () => {
+  test("repo_mismatch stops the ladder: no ~r1 session, no state, no spool", async () => {
+    // Arrange: the SAME developer holds a live session under this id, bound
+    // to another repo — the state-lost multi-repo shape. First-wins says
+    // silence, and minting cc_<key>~r1 for the foreign repo would be a
+    // re-home by another name.
+    const fx = await fixture("reg-mismatch");
+    const hostSessionKey = "acp-test--sess_mismatch";
+    await fetch(`${hubUrl}/api/sessions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id: `cc_${hostSessionKey}`,
+        agentKind: "claude-code",
+        repo: "github.com/other/web",
+        branch: "main",
+        baseCommit: "0000000000000000000000000000000000000000",
+        status: "analyzing",
+      }),
+    });
+
+    // Act: recovery for THIS repo (acme/api) — the hub answers repo_mismatch
+    const result = await registerSessionFlow(
+      registerInput(fx, hostSessionKey, { recovery: true }),
+    );
+
+    // Assert: nothing written anywhere, and no sibling session was minted
+    expect(result.registered).toBe(false);
+    expect(await readSessionState(fx.home, hostSessionKey)).toBeNull();
+    expect(await readSpoolLines(fx.home, fx.key)).toEqual([]);
+    const presence = await getPresence(hubFor(fx.home, fx.key), REPO_ID);
+    if (!presence.ok) throw new Error("presence unavailable");
+    expect(
+      presence.data.some((entry) =>
+        entry.sessionId.startsWith(`cc_${hostSessionKey}`),
+      ),
+    ).toBe(false);
+  });
+
+  test("a generic conflict still walks the ~r1 ladder in recovery mode", async () => {
+    // Arrange: somebody ELSE owns the base id (code "conflict", not
+    // "repo_mismatch") — the reopened-conversation flow must keep working.
+    const otherResponse = await fetch(`${hubUrl}/api/developers`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ADMIN_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Other Recovery",
+        email: "other-recovery@example.com",
+      }),
+    });
+    const other = (await otherResponse.json()) as { data: { apiKey: string } };
+    const fx = await fixture("reg-recovery-conflict");
+    const hostSessionKey = "acp-test--sess_rec_conflict";
+    await fetch(`${hubUrl}/api/sessions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${other.data.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id: `cc_${hostSessionKey}`,
+        agentKind: "claude-code",
+        repo: REPO_ID,
+        branch: "main",
+        baseCommit: "0000000000000000000000000000000000000000",
+        status: "analyzing",
+      }),
+    });
+
+    // Act
+    const result = await registerSessionFlow(
+      registerInput(fx, hostSessionKey, { recovery: true }),
+    );
+
+    // Assert: the fresh suffix was minted and published
+    expect(result.registered).toBe(true);
+    expect(result.crosscheckSessionId).toBe(`cc_${hostSessionKey}~r1`);
+    const state = await readSessionState(fx.home, hostSessionKey);
+    expect(state?.crosscheckSessionId).toBe(`cc_${hostSessionKey}~r1`);
+  });
+
+  test("recovery adopts a state a sibling published mid-register", async () => {
+    // Arrange: the claim pin at flow level. Recovery callers read state
+    // FIRST and call the flow only when it was null — so a state present
+    // when the flow's publish runs is exactly the sibling-mid-call window,
+    // stood in for deterministically by writing it before the call.
+    const fx = await fixture("reg-claimed");
+    const hostSessionKey = "acp-test--sess_claimed";
+    await writeSessionState(fx.home, {
+      hostSessionKey,
+      crosscheckSessionId: `cc_${hostSessionKey}`,
+      workContextId: `wc_cc_${hostSessionKey}`,
+      repoId: "github.com/other/web",
+      repoRoot: "/tmp/web",
+      hubUrl,
+      developerId: "dev_sibling",
+      startedAt: new Date("2026-08-19T08:00:00.000Z").toISOString(),
+      lastHeartbeatAt: null,
+      seenTargets: [],
+      deliveredHintRefs: [],
+      deliveredHintHashes: [],
+      tripwireAskedFiles: [],
+    });
+
+    // Act
+    await registerSessionFlow(registerInput(fx, hostSessionKey, { recovery: true }));
+
+    // Assert: the sibling's binding survives and no work context was spooled
+    const state = await readSessionState(fx.home, hostSessionKey);
+    expect(state?.repoId).toBe("github.com/other/web");
+    expect(state?.developerId).toBe("dev_sibling");
+    expect(await readSpoolLines(fx.home, fx.key)).toEqual([]);
   });
 });
 

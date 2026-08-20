@@ -58,6 +58,39 @@ export const developers = pgTable("developers", {
 });
 
 /**
+ * Every email a developer is known by — the primary they registered with plus
+ * admin-linked aliases (trial finding #7: git author emails rarely match the
+ * hub email, so absence matching on the primary alone misfiles known members
+ * as "unconnected"). A TABLE, not an array column, for three reasons that are
+ * all the same invariant: the PRIMARY KEY on `email` is what makes "an email
+ * belongs to AT MOST one developer" a database fact rather than a service
+ * promise (alias-vs-alias); the absence check joins commit evidence on this
+ * column and a join wants a keyed table, not an unnest; and the per-developer
+ * list stays bounded by MAX_EMAILS_PER_DEVELOPER at write time
+ * (services/developers.ts). `developers.email` REMAINS the primary's home —
+ * auth and every existing surface read it — and the row here mirrors it with
+ * `is_primary`, backfilled by bootstrap.sql for pre-alias databases.
+ * Alias-vs-PRIMARY duplicates are guarded by the same PK because primaries
+ * live in this table too. Emails are stored lowercased (normalizeEmail).
+ */
+export const developerEmails = pgTable(
+  "developer_emails",
+  {
+    email: text("email").primaryKey(),
+    developerId: text("developer_id")
+      .notNull()
+      .references(() => developers.id),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    // Serves "all emails of one developer" (settings, admin list); the PK
+    // leads on email and cannot.
+    index("developer_emails_developer_idx").on(table.developerId),
+  ],
+);
+
+/**
  * Reader-side mutes (DESIGN.md §2.1): "I do not want hints/pointers about
  * developer X" — one row per (reader, muted) pair, filtering the READER's
  * unasked surfaces only (services/visibility.ts). Hub-side rather than in the

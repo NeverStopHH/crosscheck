@@ -1,11 +1,15 @@
-import { readdir, stat } from "node:fs/promises";
+import { readdir, readlink, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { z } from "zod";
 
 import {
   CLAUDE_SETTINGS_DIR,
   CLAUDE_SETTINGS_FILE,
+  DOCTOR_AGENT_CWD_TIMEOUT_MS,
+  DOCTOR_AGENT_MAX_CWD_PROBES,
+  DOCTOR_AGENT_PS_MAX_LINES,
+  DOCTOR_AGENT_PS_TIMEOUT_MS,
   DOCTOR_FLUSH_LOCK_WARN_MS,
   DOCTOR_LAST_SYNC_WARN_MINUTES,
   DOCTOR_SPOOL_AGE_WARN_HOURS,
@@ -37,6 +41,14 @@ import {
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
+import { hasGitEntry } from "@crosscheck/connector-core/config/connected-repo.ts";
+import { readRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
+import {
+  formatForeignDropLine,
+  readForeignRepoDrops,
+} from "@crosscheck/connector-core/state/foreign-drops.ts";
+import { runBoundedCommand } from "@crosscheck/connector-core/git/git.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
@@ -263,6 +275,247 @@ const checkLauncher = async (command: string, env: Env): Promise<Check> => {
   ]);
   return check(result.level, "hook launcher", result.detail);
 };
+
+/**
+ * ── Workspace-root check (trial finding #9) ────────────────────────────────
+ *
+ * A developer whose editor workspace is rooted at the PARENT folder of the
+ * repo (~/dev above ~/dev/monorepo) has panel sessions start with cwd at
+ * the workspace root — where there is no repo config — and those sessions
+ * were silently invisible while terminal sessions reported fine. The
+ * capture side now derives the repo from the touched file
+ * (connector-core/config/connected-repo.ts), but the SessionStart briefing
+ * and presence still only begin at the first file touch — so when doctor is
+ * run in exactly that spot, it says so instead of printing an unexplained
+ * "not a git repository". One level deep, bounded entries, read-only.
+ */
+const DOCTOR_SUBDIR_SCAN_MAX_ENTRIES = 200;
+const DOCTOR_SUBDIR_MAX_NAMED = 3;
+
+const connectedSubdirs = async (cwd: string): Promise<readonly string[]> => {
+  try {
+    const entries = await readdir(cwd, { withFileTypes: true });
+    const hits: string[] = [];
+    for (const entry of entries.slice(0, DOCTOR_SUBDIR_SCAN_MAX_ENTRIES)) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      // BOTH marks, exactly as the capture walk requires (connected-repo.ts):
+      // a config without a git boundary never connects, so calling it a
+      // "connected repo" here would hand out advice the walk cannot honour.
+      const subdir = join(cwd, entry.name);
+      if (
+        (await hasGitEntry(subdir)) &&
+        (await readRepoConfig(subdir)) !== null
+      ) {
+        hits.push(entry.name);
+        if (hits.length >= DOCTOR_SUBDIR_MAX_NAMED) {
+          break;
+        }
+      }
+    }
+    return hits;
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Emitted only when the cwd is NOT a connected repo but a DIRECT
+ * subdirectory is — the exact "workspace above the repo" spot. Empty
+ * findings render nothing: a plain folder above nothing connected is not
+ * news, and inside a connected repo the check does not run at all.
+ */
+const workspaceRootChecks = async (cwd: string): Promise<readonly Check[]> => {
+  const subdirs = await connectedSubdirs(cwd);
+  if (subdirs.length === 0) {
+    return [];
+  }
+  const first = subdirs[0] ?? "";
+  const others =
+    subdirs.length > 1 ? ` (also: ${subdirs.slice(1).join(", ")})` : "";
+  return [
+    check(
+      "WARN",
+      "workspace root",
+      `you are above the connected repo ${first} — sessions starting here are invisible until they touch a file inside it; open ${first} as your workspace${others}`,
+    ),
+  ];
+};
+
+/**
+ * ── Agent-restart check (trial finding #8) ─────────────────────────────────
+ *
+ * Hooks load at agent/editor process start, so a session already running
+ * when `crosscheck init` wrote the settings keeps running WITHOUT them —
+ * silently, hooks failing open by design. A teammate lost a morning to it.
+ * This check turns that state into a sentence: a known agent process, in
+ * THIS repo, started before the settings file was written.
+ *
+ * "In THIS repo" is the load-bearing half. An agent running in a different
+ * repo is untouched by this repo's hooks — a name-and-age match alone would
+ * warn on every developer machine with two projects, and that noise is how
+ * doctors get ignored. So each age-matched candidate's working directory is
+ * resolved (readlink /proc/<pid>/cwd on Linux, one bounded lsof on macOS)
+ * and only a cwd inside the repo root convicts. Every resolution failure is
+ * fail-open: a missed warning over a wrong one. GUI editors whose cwd is
+ * "/" (Cursor's app process) are therefore never flagged — acceptable,
+ * because Cursor hot-reloads its hook files; the CLI agents this check can
+ * see are exactly the ones that need the restart.
+ */
+export interface AgentProcessProbe {
+  /** Raw `ps -axo pid=,etime=,comm=` output, or null = not measurable. */
+  readonly listProcesses: () => Promise<string | null>;
+  /** The process's working directory, or null when it cannot be known. */
+  readonly resolveCwd: (pid: number) => Promise<string | null>;
+}
+
+/** Process names that are coding agents whose hooks load at start. */
+const AGENT_PROCESS_NAMES = new Set(["claude", "cursor"]);
+
+const SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR;
+const SECONDS_PER_DAY = SECONDS_PER_HOUR * 24;
+
+/** `ps` etime — [[dd-]hh:]mm:ss — as seconds, or null for anything else. */
+export const parsePsEtime = (etime: string): number | null => {
+  const match = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(etime.trim());
+  if (match === null) {
+    return null;
+  }
+  const days = match[1] === undefined ? 0 : Number.parseInt(match[1], 10);
+  const hours = match[2] === undefined ? 0 : Number.parseInt(match[2], 10);
+  const minutes = Number.parseInt(match[3] ?? "0", 10);
+  const seconds = Number.parseInt(match[4] ?? "0", 10);
+  if (seconds >= 60 || minutes >= 60 || hours >= 24) {
+    return null;
+  }
+  return (
+    days * SECONDS_PER_DAY +
+    hours * SECONDS_PER_HOUR +
+    minutes * SECONDS_PER_MINUTE +
+    seconds
+  );
+};
+
+interface AgentCandidate {
+  readonly pid: number;
+  readonly name: string;
+  readonly startedAtMs: number;
+}
+
+/** One ps line — "<pid> <etime> <comm…>" — or null for anything unparseable. */
+const parsePsLine = (line: string, nowMs: number): AgentCandidate | null => {
+  const tokens = line.trim().split(/\s+/);
+  const [pidToken, etimeToken, ...commTokens] = tokens;
+  if (pidToken === undefined || etimeToken === undefined || commTokens.length === 0) {
+    return null;
+  }
+  const pid = Number.parseInt(pidToken, 10);
+  const elapsedSeconds = parsePsEtime(etimeToken);
+  if (!Number.isSafeInteger(pid) || pid <= 0 || elapsedSeconds === null) {
+    return null;
+  }
+  const name = basename(commTokens.join(" ")).toLowerCase();
+  if (!AGENT_PROCESS_NAMES.has(name)) {
+    return null;
+  }
+  return { pid, name, startedAtMs: nowMs - elapsedSeconds * MS_PER_SECOND };
+};
+
+const isInsideRepo = async (repoRoot: string, cwd: string): Promise<boolean> => {
+  const root = await realpathBestEffort(repoRoot);
+  const resolved = await realpathBestEffort(cwd);
+  const rel = relative(root, resolved);
+  return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
+};
+
+export const checkAgentRestart = async (
+  repoRoot: string,
+  settingsPath: string,
+  probe: AgentProcessProbe,
+  nowMs: number,
+): Promise<Check> => {
+  const name = "agent restart";
+  try {
+    const settingsMtimeMs = await stat(settingsPath).then(
+      (info) => info.mtimeMs,
+      () => null,
+    );
+    if (settingsMtimeMs === null) {
+      return check("PASS", name, "not measured (no settings file)");
+    }
+    const raw = await probe.listProcesses();
+    if (raw === null) {
+      return check("PASS", name, "not measured");
+    }
+    // Age first, cwd second: the pre-filter keeps the per-pid probes (a
+    // spawn each on macOS) to the handful that could matter at all.
+    const candidates = raw
+      .split("\n")
+      .slice(0, DOCTOR_AGENT_PS_MAX_LINES)
+      .flatMap((line) => {
+        const parsed = parsePsLine(line, nowMs);
+        return parsed === null || parsed.startedAtMs >= settingsMtimeMs
+          ? []
+          : [parsed];
+      })
+      .slice(0, DOCTOR_AGENT_MAX_CWD_PROBES);
+    const offenders: AgentCandidate[] = [];
+    for (const candidate of candidates) {
+      const cwd = await probe.resolveCwd(candidate.pid).catch(() => null);
+      if (cwd !== null && (await isInsideRepo(repoRoot, cwd))) {
+        offenders.push(candidate);
+      }
+    }
+    if (offenders.length === 0) {
+      return check("PASS", name, "no running agent predates the hooks");
+    }
+    const listed = offenders
+      .map((entry) => `pid ${String(entry.pid)} (${entry.name})`)
+      .join(", ");
+    return check(
+      "WARN",
+      name,
+      `a running agent predates your hooks — restart it: ${listed} in this repo started before ${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE} was written, and hooks load only at process start`,
+    );
+  } catch {
+    // Never crashes doctor: any surprise is a "not measured", not a report.
+    return check("PASS", name, "not measured");
+  }
+};
+
+/** The real probe: ps once, then /proc (Linux) or bounded lsof (macOS). */
+const defaultAgentProbe = (cwd: string): AgentProcessProbe => ({
+  listProcesses: async () =>
+    process.platform === "linux" || process.platform === "darwin"
+      ? runBoundedCommand(
+          ["ps", "-axo", "pid=,etime=,comm="],
+          cwd,
+          DOCTOR_AGENT_PS_TIMEOUT_MS,
+        )
+      : null,
+  resolveCwd: async (pid) => {
+    if (process.platform === "linux") {
+      try {
+        return await readlink(`/proc/${String(pid)}/cwd`);
+      } catch {
+        return null;
+      }
+    }
+    if (process.platform === "darwin") {
+      const output = await runBoundedCommand(
+        ["lsof", "-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+        cwd,
+        DOCTOR_AGENT_CWD_TIMEOUT_MS,
+      );
+      const nameLine = output
+        ?.split("\n")
+        .find((line) => line.startsWith("n"));
+      return nameLine === undefined ? null : nameLine.slice(1);
+    }
+    return null;
+  },
+});
 
 /**
  * Whether an agent in this repo can reach the diagnosis tree at all.
@@ -511,10 +764,20 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
   const presencePart = result.data.presenceOptOut
     ? "presence hidden (opt-out)"
     : "presence visible";
+  // Counts only, like the mutes — the addresses belong to `crosscheck
+  // status`. An older hub sends no emails field (empty list): no segment,
+  // rather than a fabricated zero.
+  const aliasCount = result.data.emails.filter(
+    (entry) => !entry.isPrimary,
+  ).length;
+  const aliasPart =
+    result.data.emails.length === 0
+      ? ""
+      : `, ${aliasCount} alias email${aliasCount === 1 ? "" : "s"}`;
   return check(
     "PASS",
     "privacy settings",
-    `${presencePart}, ${result.data.mutes.length} muted`,
+    `${presencePart}, ${result.data.mutes.length} muted${aliasPart}`,
   );
 };
 
@@ -639,6 +902,23 @@ const latencyCheck = (
   );
 };
 
+/**
+ * Foreign-repo drops (trial finding #9, the counter's READER): first-wins
+ * silently drops a multi-repo workspace's touches of its second connected
+ * repo, and the count in session state was visible to nobody — the exact
+ * silent-invisibility class this finding set out to kill, re-created for
+ * the multi-repo variant (adversarial review). Machine-wide scan, because
+ * the dropping session is bound to the OTHER repo. Zero renders nothing:
+ * the workspace-root check's discipline — no drops is not news.
+ */
+const foreignDropChecks = async (home: string): Promise<readonly Check[]> => {
+  const summary = await readForeignRepoDrops(home);
+  if (summary.drops === 0) {
+    return [];
+  }
+  return [check("WARN", "foreign-repo drops", formatForeignDropLine(summary))];
+};
+
 /** A live session file plus a stale sync is exactly the silent-death signature. */
 const hasLiveSessionState = async (home: string): Promise<boolean> => {
   try {
@@ -686,6 +966,7 @@ export const runDoctor = async (
   env: Env,
   cwd: string,
   measureLatency: MeasureLatency = defaultMeasureLatency,
+  agentProbe?: AgentProcessProbe,
 ): Promise<CliResult> => {
   const now = new Date();
   const home = crosscheckHome(env);
@@ -698,6 +979,12 @@ export const runDoctor = async (
 
   const bunfigCheck = await checkBunfig(env, cwd, identity?.root ?? null);
   const config = await loadConfig({ env, repoRoot: identity?.root });
+  // "Connected" in the committed sense (DESIGN.md §2.1): the repo root
+  // carries .crosscheck.json. Only when the cwd is NOT that does the
+  // workspace-root scan run — the parent-folder trap it exists to name.
+  const isConnectedHere =
+    identity !== null && (await readRepoConfig(identity.root)) !== null;
+  const workspaceChecks = isConnectedHere ? [] : await workspaceRootChecks(cwd);
   if (config === null || identity === null) {
     // The MCP checks belong in THIS branch too, and leaving them out was the
     // first version's bug: a developer with no key would have been told the hub
@@ -706,6 +993,7 @@ export const runDoctor = async (
     return summarize([
       configCheck,
       identityCheck,
+      ...workspaceChecks,
       check("FAIL", "hub reachable", "no hub configured"),
       ...(identity === null
         ? []
@@ -778,6 +1066,7 @@ export const runDoctor = async (
   return summarize([
     configCheck,
     identityCheck,
+    ...workspaceChecks,
     hubCheck,
     timeoutCheck(config.timeoutMs, owner),
     latencyCheck(measurement, config.timeoutMs, owner),
@@ -785,9 +1074,16 @@ export const runDoctor = async (
     ...(settingsInspection.launcherCommand === null
       ? []
       : [await checkLauncher(settingsInspection.launcherCommand, env)]),
+    await checkAgentRestart(
+      identity.root,
+      join(identity.root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
+      agentProbe ?? defaultAgentProbe(cwd),
+      now.getTime(),
+    ),
     await checkMcpRegistration(identity.root),
     mcpUsableCheck(true, config.hubUrl),
     ...(await checkSpool(config.home, key, now)),
+    ...(await foreignDropChecks(config.home)),
     await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
     await checkLastSync(config.home, key, now),
     await checkAbsences(hubCtx, identity.repoId),

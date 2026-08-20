@@ -7,6 +7,10 @@ import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identit
 import { getAbsences, getPresence, getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
 import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
+import {
+  formatForeignDropLine,
+  readForeignRepoDrops,
+} from "@crosscheck/connector-core/state/foreign-drops.ts";
 import { spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import {
@@ -60,6 +64,15 @@ export const runStatus = async (
   // A batch the ledger itself could not take is recorded as a marker, not a count,
   // so the summed total understates it. `doctor` says the same; both must agree.
   const unrecorded = await readUnrecordedDrop(config.home, key);
+  // Foreign-repo drops (trial finding #9): a multi-repo workspace's second
+  // connected repo goes silent under first-wins, and this line is where a
+  // human finds out. Machine-wide (the dropping session is bound to the
+  // OTHER repo), zero prints nothing, doctor says the same sentence.
+  const foreignDrops = await readForeignRepoDrops(config.home);
+  const foreignDropLines =
+    foreignDrops.drops === 0
+      ? []
+      : [`foreign-repo drops: ${formatForeignDropLine(foreignDrops)}`];
   const hubCtx = {
     hubUrl: config.hubUrl,
     apiKey: config.apiKey,
@@ -87,6 +100,17 @@ export const runStatus = async (
         }`,
       ]
     : [];
+  // The caller's OWN linked emails (trial finding #7) — self data, so the
+  // addresses print here while doctor sticks to counts. An older hub sends
+  // no field (empty list): no line.
+  const emailLines =
+    privacy.ok && privacy.data.emails.length > 0
+      ? [
+          `emails: ${privacy.data.emails
+            .map((entry) => (entry.isPrimary ? `${entry.email} (primary)` : entry.email))
+            .join(", ")}`,
+        ]
+      : [];
   const absenceLines = (absences.ok ? absences.data : [])
     .slice(0, STATUS_MAX_ABSENCE_LINES)
     .flatMap((entry) => {
@@ -105,6 +129,7 @@ export const runStatus = async (
       `hub: ${config.hubUrl}`,
       `repo: ${identity.repoId} (${identity.branch})`,
       `developer: ${config.developerName ?? "unknown"} (${config.developerId ?? "unknown"})`,
+      ...emailLines,
       ...privacyLines,
       "teammates:",
       ...(teammates.length === 0 ? ["  (none)"] : teammates),
@@ -112,6 +137,7 @@ export const runStatus = async (
         ? []
         : ["commit authors without a recent session:", ...absenceLines]),
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
+      ...foreignDropLines,
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
       "",

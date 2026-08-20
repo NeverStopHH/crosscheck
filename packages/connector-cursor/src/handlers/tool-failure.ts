@@ -33,6 +33,10 @@ import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 
 import type { CursorHookContext } from "../runner.ts";
+import {
+  deliverOwedBriefing,
+  owedBriefingBefore,
+} from "../inject/deferred-briefing.ts";
 import { attemptFailureHint } from "../inject/hint.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
 import { requireSessionState } from "./recover.ts";
@@ -49,10 +53,17 @@ export const handlePostToolUseFailure = async (
   if (ctx.payload.failure_type === PERMISSION_DENIED) {
     return "";
   }
+  // Read BEFORE recovery can stamp the debt: the recovery invocation itself
+  // never pays (inject/deferred-briefing.ts carries the budget argument).
+  const owedBefore = await owedBriefingBefore(ctx);
   const state = await requireSessionState(ctx);
   if (state === null) {
     return "";
   }
+  // A late-registered conversation's owed briefing rides THIS surface too —
+  // both failure signals inject, so both pay (post-tool-use.ts precedence,
+  // same rule: the briefing takes the one injection slot, capture untouched).
+  const briefingText = owedBefore ? await deliverOwedBriefing(ctx) : "";
   // ONE extraction feeds both the fingerprint and the ephemeral query.
   const failureText = extractFailureText({ error: ctx.payload.error_message });
   await captureFailure({
@@ -68,7 +79,8 @@ export const handlePostToolUseFailure = async (
     failureText,
     now: ctx.now(),
   });
-  const hintText = await attemptFailureHint(ctx, failureText);
+  const hintText =
+    briefingText.length === 0 ? await attemptFailureHint(ctx, failureText) : "";
   // A failure moment is exactly when a teammate wants the fingerprint fresh:
   // drain on the spare budget (the split-event rule — file-edit.ts).
   await flushSpool(
@@ -76,5 +88,6 @@ export const handlePostToolUseFailure = async (
     { sessionId: state.crosscheckSessionId, developerId: state.developerId },
     budget.spareMs(),
   );
-  return hintText.length === 0 ? "" : cursorInjectionOutput(hintText);
+  const text = briefingText.length === 0 ? hintText : briefingText;
+  return text.length === 0 ? "" : cursorInjectionOutput(text);
 };

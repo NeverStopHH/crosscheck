@@ -29,7 +29,7 @@ import {
   renderBriefing,
 } from "../briefing/render.ts";
 import { resolveDriftByBaseCommit } from "../git/commit-drift.ts";
-import { hintDeliveryRecord } from "../capture/records.ts";
+import { UNKNOWN_DEVELOPER_ID, hintDeliveryRecord } from "../capture/records.ts";
 import type { Producer } from "../capture/records.ts";
 import {
   getAbsences,
@@ -47,6 +47,7 @@ import type {
 } from "../http/hub.ts";
 import { appendRecords } from "../spool/append.ts";
 import {
+  readSessionState,
   updateSessionState,
   withBriefingSolvedRefs,
 } from "../state/session-state.ts";
@@ -206,4 +207,89 @@ export const recordBriefingDeliveries = async (
   await updateSessionState(input.home, input.hostSessionKey, (fresh) =>
     withBriefingSolvedRefs(fresh, input.shownSolvedIds),
   );
+};
+
+export interface DeliverDeferredBriefingInput {
+  readonly home: string;
+  readonly repoKey: string;
+  readonly hub: HubContext;
+  /** The host's own id for the session — the state file key. */
+  readonly hostSessionKey: string;
+  /** The repo THIS hook resolved; a session bound elsewhere keeps its debt. */
+  readonly repoId: string;
+  readonly agentKind: string;
+  readonly now: Date;
+}
+
+/**
+ * The ACP proxy's briefing-slot pattern in hook form (§2.5: "the cached
+ * briefing on the first prompt it is ready for, the hint flow afterwards"):
+ * a session that registered LATE — PostToolUse's state-less recovery, the
+ * parent-workspace/finding-#9 shape — never saw SessionStart, so registration
+ * left `briefingPending` in its state, and the next prompt pays the debt
+ * here through the SAME `assembleBriefing` flow and renderers SessionStart
+ * uses. Returns the rendered briefing, or "" (silence) — and a caller that
+ * receives text emits it INSTEAD of a hint: one injection per prompt, the
+ * briefing outranking the hint because it is the bigger loss.
+ *
+ * CLAIMED before it is assembled, exactly once: the check-and-set below is
+ * the tripwire's own shape — a racing sibling reads `briefingPending: false`
+ * and stays silent, so a developer can never see the same briefing twice.
+ * Spending the flag on a FAILED assembly is deliberate, the ACP slot's exact
+ * semantics ("a failed prefetch is an empty slot, not an error"): the
+ * alternative is a six-GET retry storm on every prompt of a session whose
+ * hub is down or whose repo is simply quiet. That costs one briefing in the
+ * worst case — the honest direction; never a repeat, never a per-prompt tax.
+ *
+ * Record-then-emit still holds: the solved-pointer deliveries are spooled
+ * and remembered (`recordBriefingDeliveries`) BEFORE the text is returned,
+ * so the prompt path's seen-set discipline covers briefing pointers exactly
+ * as it does on the SessionStart path.
+ */
+export const deliverDeferredBriefing = async (
+  input: DeliverDeferredBriefingInput,
+): Promise<string> => {
+  const state = await readSessionState(input.home, input.hostSessionKey);
+  if (state === null || !state.briefingPending) {
+    return "";
+  }
+  // First-wins guard (finding #9): a prompt resolved against ANOTHER repo
+  // must not spend this session's debt — the briefing belongs to the repo
+  // the session is bound to, and a prompt that resolves there pays it.
+  if (state.repoId !== input.repoId) {
+    return "";
+  }
+  const claimed = await updateSessionState(
+    input.home,
+    input.hostSessionKey,
+    (fresh) =>
+      fresh.briefingPending ? { ...fresh, briefingPending: false } : null,
+  );
+  if (!claimed) {
+    return "";
+  }
+  const assembled = await assembleBriefing({
+    hub: input.hub,
+    repoId: state.repoId,
+    repoRoot: state.repoRoot,
+    selfDeveloperId: state.developerId,
+    now: input.now,
+  });
+  if (assembled.briefing.length === 0) {
+    return "";
+  }
+  await recordBriefingDeliveries({
+    home: input.home,
+    repoKey: input.repoKey,
+    hostSessionKey: input.hostSessionKey,
+    crosscheckSessionId: state.crosscheckSessionId,
+    producer: {
+      developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
+      agentKind: input.agentKind,
+      sessionId: state.crosscheckSessionId,
+    },
+    shownSolvedIds: assembled.shownSolvedIds,
+    now: input.now,
+  });
+  return assembled.briefing;
 };

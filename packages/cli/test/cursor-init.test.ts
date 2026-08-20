@@ -54,6 +54,11 @@ describe("init --cursor", () => {
     expect(result.stdout).toContain(join(repo, ".cursor", "hooks.json"));
     expect(result.stdout).toContain(join(repo, ".cursor", "mcp.json"));
     expect(result.stdout).toContain("commit the .cursor files too");
+    // Trial finding #8: the --cursor variant carries the restart hint too
+    // (Cursor hot-reloads its own hook files; Claude Code does not).
+    expect(result.stdout).toContain(
+      "hooks load when an agent or editor process starts",
+    );
     const hooks = JSON.parse(
       await Bun.file(join(repo, ".cursor", "hooks.json")).text(),
     ) as { version: number; hooks: Record<string, readonly { command: string; timeout: number }[]> };

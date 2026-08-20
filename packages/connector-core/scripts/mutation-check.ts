@@ -944,6 +944,182 @@ export const MUTATIONS: readonly Mutation[] = [
       "hand-rolled shape emits invalid JSON exactly when there is something " +
       "to deliver, and Cursor logs a failed hook instead of injecting",
   },
+  {
+    // The nested-repo trust pin of the path-derived walk (trial finding
+    // #9): the walk must STOP at the first git boundary whether or not that
+    // repo is connected. This makes an unconnected boundary transparent —
+    // the walk climbs on and a connected OUTER repo captures files
+    // belonging to an unconnected repo nested inside it, the exact §2.1
+    // crossing the boundary stop exists to forbid.
+    label: "the connected-root walk climbs past an unconnected repo boundary",
+    file: `${CORE}/src/config/connected-repo.ts`,
+    from: "      return (await readRepoConfig(dir)) === null ? null : dir;",
+    to: "      if ((await readRepoConfig(dir)) !== null) { return dir; }",
+    test: `${CORE}/test/connected-repo.test.ts`,
+    because:
+      "a connected outer repo silently absorbs a nested unconnected repo's " +
+      "files — sessions and targets minted for a repo that never opted in",
+  },
+  {
+    // The normalization the adversarial review's repro attacked: judging a
+    // path along its SPELLING lets `<repo>/../outside/x.md` route through
+    // the connected repo's directories and mint a walk target for a file
+    // that lives outside any repo.
+    label: "the connected-root walk trusts unnormalized dot-dot spellings again",
+    file: `${CORE}/src/config/connected-repo.ts`,
+    from: "  const absolute = resolve(cwd, filePath);",
+    to:
+      '  const absolute = filePath.startsWith("/") ? filePath : resolve(cwd, filePath);',
+    test: `${CORE}/test/connected-repo.test.ts`,
+    because:
+      "a hostile or accidental `..` spelling registers presence for a " +
+      "connected repo whose files the session never touched",
+  },
+  {
+    // First-wins (trial finding #9): one crosscheck session is bound to ONE
+    // repo. Stripping the guard lets a multi-repo workspace's foreign
+    // touches walk on into capture/heartbeat/flush under the wrong repo's
+    // session — and the drop counter that keeps the silence honest never
+    // ticks.
+    label: "the post-tool-use foreign-repo drop guard is disconnected",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  if (state.repoId !== ctx.identity.repoId) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/e2e/parent-workspace.e2e.test.ts`,
+    because:
+      "a second connected repo's edits stop being dropped-and-counted; the " +
+      "session flaps across repos and the count that keeps the drop honest " +
+      "stays zero",
+  },
+  {
+    // The recovery-race serialization: a loser that behaves as if it had
+    // claimed appends a SECOND work-context record and captures under its
+    // own repo although a sibling already bound the session elsewhere —
+    // the pre-claim defect verbatim.
+    label: "the recovery claim's loser proceeds as if it had won",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  const claim = await claimSessionState(ctx.config.home, recovered);",
+    to:
+      "  await claimSessionState(ctx.config.home, recovered);\n" +
+      "  const claim = { claimed: true, state: recovered } as const;",
+    test: `${CONNECTOR}/test/recovery-race.test.ts`,
+    because:
+      "two racing state-less recoveries both spool work contexts and the " +
+      "foreign one captures targets its repo never owned",
+  },
+  {
+    // The hub half of the same invariant: re-registering a LIVE session
+    // under a different repo must refuse, not re-home. Disabling the guard
+    // restores the silent repo rewrite the review confirmed (the update no
+    // longer carries `repo`, so the visible defect is the vanished 409).
+    label: "the hub accepts a live session's re-register under another repo",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  if (existing.repo !== input.repo) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/sessions.test.ts`,
+    because:
+      "the state-less recovery race and mid-session identity changes stop " +
+      "being refused — the distinct 409 the register ladder stops on is " +
+      "never emitted",
+  },
+  {
+    // The DB-fact half of trial finding #7: an email belongs to AT MOST one
+    // developer, and the caller must HEAR about a cross-developer duplicate
+    // — a silent success leaves absence matching attributing commits to the
+    // wrong person.
+    label: "a cross-developer alias duplicate reports success instead of 409",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: '    return { outcome: "taken_by_other" };',
+    to: '    return { outcome: "added", alreadyLinked: true, emails: existing };',
+    test: `${SERVER}/test/developer-emails.test.ts`,
+    because:
+      "an admin linking an email another developer already owns is told it " +
+      "worked; the alias silently is not theirs and their teammate's commits " +
+      "keep matching somebody else",
+  },
+  {
+    // The load-bearing half of the agent-restart check (trial finding #8):
+    // "in THIS repo". A name-and-age match alone warns on every two-project
+    // dev machine, and that noise is how doctors get ignored.
+    label: "the agent-restart check convicts on name and age alone",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      if (cwd !== null && (await isInsideRepo(repoRoot, cwd))) {",
+    to: "      if (cwd !== null) {",
+    test: `${CLI}/test/agent-restart.test.ts`,
+    because:
+      "an agent running in a DIFFERENT repo is flagged as predating this " +
+      "repo's hooks — the false positive the cwd gate exists to prevent",
+  },
+  {
+    // The deferred-end starvation (CI "Concurrency (repeated)", 2026-08):
+    // SessionStart handed its drain the WHOLE spare while registration
+    // guarantees the spool is never empty, so the ender read zero room at
+    // the end of every start against a slow hub and a deferred end starved
+    // to its age-out — a livelock, not a race. This turns the
+    // spendable-marker probe back into "never", which removes the holdback
+    // exactly as the shipped code lacked it.
+    label: "the drain starves the deferred end it is hosting again",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "    if (spool.lines.length === 0) {\n      return true;\n    }",
+    to: "",
+    test: `${CONNECTOR}/test/hook-budget.test.ts`,
+    because:
+      "with the holdback gone the flush runs to the hook's spare deadline " +
+      "on every start (registration always spools a work-context record), " +
+      "the ender reads roomMs 0, and a deferred end waits out " +
+      "MAX_SPOOL_AGE_DAYS instead of costing one bounded call",
+  },
+  {
+    // The CURSOR half of the same starvation fix (rigor review F1): the
+    // adversarial review proved by mutation that dropping ONLY the cursor
+    // call site's subtraction left every suite green — the shared probe's
+    // entry above reddens through the Claude hook alone, so the cursor
+    // holdback was unpinned. This drops the subtraction exactly as that
+    // review did; the cursor connector's own budget pin must go red for it.
+    label: "the cursor drain starves the deferred end it is hosting again",
+    file: `${CURSOR}/src/handlers/session-start.ts`,
+    from: "    budget.spareMs() - endHoldbackMs,",
+    to: "    budget.spareMs(),",
+    test: `${CURSOR}/test/budget.test.ts`,
+    because:
+      "with the cursor holdback gone the flush runs to the hook's spare " +
+      "deadline on every cursor start, the ender reads roomMs 0, and a " +
+      "deferred end starves to its MAX_SPOOL_AGE_DAYS age-out behind a " +
+      "connector whose Claude sibling is fixed",
+  },
+  {
+    // Briefing parity's exactly-once (§10 risk 1 in briefing form): the
+    // deferred briefing must be CLAIMED with a check-and-set that spends
+    // `briefingPending`, or every prompt of a late-registered session
+    // re-delivers the same briefing. This makes the claim always succeed
+    // AND leave the flag set.
+    label: "the deferred briefing is delivered on every prompt, not once",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "      fresh.briefingPending ? { ...fresh, briefingPending: false } : null,",
+    to: "      ({ ...fresh, briefingPending: true }),",
+    test: `${CONNECTOR}/test/briefing-parity.test.ts`,
+    because:
+      "a late-registered session hears the identical briefing on every " +
+      "prompt for the rest of the session — the repeat-injection noise " +
+      "§10 risk 1 forbids, and the hint path never runs again behind it",
+  },
+  {
+    // Briefing parity's CURSOR half (races review finding 1): the debt is
+    // recorded by exactly one line — the recovery register's
+    // `briefingPending: true`. Dropping it re-opens the loss class on this
+    // connector alone: every cursor conversation that registers late (hooks
+    // installed mid-conversation, a reopened conversation) silently loses
+    // its briefing again while the Claude suites stay green.
+    label: "a late-registered cursor conversation loses its briefing again",
+    file: `${CURSOR}/src/handlers/recover.ts`,
+    from: "    briefingPending: true,\n",
+    to: "",
+    test: `${CURSOR}/test/briefing-parity.test.ts`,
+    because:
+      "recovery stops recording the briefing debt, so no later hook ever " +
+      "pays it — a parent-workspace-shaped cursor session is back to " +
+      "losing the one injection that tells it who else is working here",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -986,8 +1162,13 @@ interface Outcome {
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
+ * PRINTS: agent-restart.test.ts 1
+ * PRINTS: briefing-parity.test.ts 2
+ * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
  * PRINTS: config-parse.test.ts 1
+ * PRINTS: connected-repo.test.ts 2
+ * PRINTS: developer-emails.test.ts 1
  * PRINTS: doctor-latency.test.ts 1
  * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2
@@ -996,7 +1177,7 @@ interface Outcome {
  * PRINTS: hint-render.test.ts 1
  * PRINTS: hint-select.test.ts 3
  * PRINTS: hints.test.ts 2
- * PRINTS: hook-budget.test.ts 1
+ * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: injection.test.ts 2
@@ -1005,11 +1186,14 @@ interface Outcome {
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
+ * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
  * PRINTS: proxy-e2e.test.ts 1
+ * PRINTS: recovery-race.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search.test.ts 3
+ * PRINTS: sessions.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1
  * PRINTS: stop-latency.test.ts 1

@@ -35,6 +35,18 @@ Non-destructive merge into `.claude/settings.json` (hooks + statusline) and
 `.mcp.json` (the diagnosis tools). Both files are repo-committed: install is
 one PR, teammates connect on `git pull` + `crosscheck login`.
 
+Two operational notes:
+
+- **Hooks load at process start** — a Claude Code session already running
+  when `init` writes the settings keeps running WITHOUT them; restart it
+  (`init` prints this, and `doctor` warns about running agents in the repo
+  that predate the settings file).
+- **Start sessions inside the repo.** A session started in a PARENT folder
+  of the repo only becomes visible on its first edit of a file inside the
+  repo (the connector derives the repo from the touched file's path);
+  briefing and presence are missing until then. `crosscheck doctor` in the
+  parent folder names this state.
+
 ## Cursor IDE (≥ 1.7)
 
 ```sh
@@ -43,8 +55,20 @@ crosscheck init --cursor      # composes with the default Claude init
 ```
 
 Merges `.cursor/hooks.json` and `.cursor/mcp.json`, non-destructively, with
-timestamped backups. Same one-PR install story. Two things to know:
+timestamped backups. Same one-PR install story. Three things to know:
 
+- **Open the repo itself as your workspace, not a parent folder.** A
+  workspace rooted at `~/dev` above `~/dev/monorepo` starts panel sessions
+  OUTSIDE the repo: the session only becomes visible on its first edit of a
+  file inside the repo (the connector derives the repo from the touched
+  file's path), and the session-start briefing and presence are missing
+  until then. `crosscheck doctor`, run in the parent folder, names this
+  state ("you are above the connected repo"). And a workspace spanning TWO
+  connected repos binds each agent session to the repo it touches FIRST —
+  edits to the other connected repo are dropped and counted, never recorded
+  under the wrong repo; `crosscheck doctor` and `crosscheck status` surface
+  the count as `foreign-repo drops`. One repo per workspace is the shape
+  that records everything.
 - **Gitignore interplay**: if your repo gitignores `.cursor/`, un-ignore
   `hooks.json` and `mcp.json` — an ignored install silently works for exactly
   one person.

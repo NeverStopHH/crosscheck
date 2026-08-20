@@ -170,22 +170,22 @@ describe("SessionStart under a backlog", () => {
   });
 });
 
-describe("SessionStart with a deferred end it cannot make", () => {
-  const strandMarker = async (
-    fixed: Fixture,
-    hostSessionKey: string,
-  ): Promise<void> => {
-    await ensureDir(spoolDir(fixed.home, fixed.key));
-    await writeFile(
-      spoolPendingEndPath(fixed.home, fixed.key, sessionSlug(hostSessionKey)),
-      `${JSON.stringify({
-        crosscheckSessionId: `cc_${hostSessionKey}`,
-        at: new Date().toISOString(),
-      })}\n`,
-      "utf8",
-    );
-  };
+const strandMarker = async (
+  fixed: Fixture,
+  hostSessionKey: string,
+): Promise<void> => {
+  await ensureDir(spoolDir(fixed.home, fixed.key));
+  await writeFile(
+    spoolPendingEndPath(fixed.home, fixed.key, sessionSlug(hostSessionKey)),
+    `${JSON.stringify({
+      crosscheckSessionId: `cc_${hostSessionKey}`,
+      at: new Date().toISOString(),
+    })}\n`,
+    "utf8",
+  );
+};
 
+describe("SessionStart with a deferred end it cannot make", () => {
   test("returns its briefing instead of spending the reserve on the end call", async () => {
     // Arrange: a marker left by an earlier SessionEnd, and a hub whose two
     // mandatory round trips leave SessionStart less than one request timeout.
@@ -223,6 +223,55 @@ describe("SessionStart with a deferred end it cannot make", () => {
         spoolPendingEndPath(fixed.home, fixed.key, sessionSlug("stranded-uuid")),
       ).exists(),
     ).toBe(true);
+    fixed.stop();
+  });
+});
+
+describe("SessionStart with a deferred end AND a backlog to drain", () => {
+  test("one request timeout is held back from the drain, so the end lands", async () => {
+    // Arrange: a stranded end whose own backlog is gone, next to an old
+    // session's 600-record backlog, with ingest at 350 ms a batch. The drain
+    // can never finish inside any spare this hook has, and handed the WHOLE
+    // spare it runs to that deadline by construction — every batch either
+    // costs the full ingest latency or aborts at the clamp — so the ender
+    // then reads spareMs() = 0. Registration appends a work-context record on
+    // EVERY start, so "something to flush" is the common case, not this
+    // fixture's invention: without the holdback the deferred end starves to
+    // its age-out on every start against a slow hub — a livelock, not a race.
+    // The fixture's latency dial is the whole interleaving; nothing here
+    // depends on machine speed.
+    const fixed = await fixture("budget-start-holdback");
+    await strandMarker(fixed, "stranded-uuid");
+    await seedBacklog(fixed.home, fixed.key, "old-session");
+
+    // Act
+    const startedAt = Date.now();
+    const stdout = await runHook(
+      "session-start",
+      JSON.stringify({
+        session_id: "start-holdback-uuid",
+        cwd: fixed.repo,
+        hook_event_name: "SessionStart",
+        source: "startup",
+      }),
+      fixed.env,
+    );
+    const elapsedMs = Date.now() - startedAt;
+
+    // Assert: the briefing survives, the budget holds, AND the deferred end
+    // landed — the drain was held to spare minus one request timeout, which
+    // is exactly what the end call needs and all it may spend.
+    const parsed = JSON.parse(stdout) as {
+      hookSpecificOutput: { additionalContext: string };
+    };
+    expect(parsed.hookSpecificOutput.additionalContext).toContain("Teammate");
+    expect(elapsedMs).toBeLessThan(SESSION_START_BUDGET_MS);
+    expect(fixed.calls.end).toBe(1);
+    expect(
+      await Bun.file(
+        spoolPendingEndPath(fixed.home, fixed.key, sessionSlug("stranded-uuid")),
+      ).exists(),
+    ).toBe(false);
     fixed.stop();
   });
 });

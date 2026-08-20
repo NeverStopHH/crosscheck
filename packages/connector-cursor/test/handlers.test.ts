@@ -6,17 +6,24 @@
  * output must be directive-free JSON.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import { fingerprint } from "@crosscheck/connector-core/capture/fingerprint.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { renderRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
 import { getDiagnosis, getPresence } from "@crosscheck/connector-core/http/hub.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import { readSpoolLines } from "@crosscheck/connector-core/spool/files.ts";
 import { safeHostSessionId } from "@crosscheck/connector-core/state/host-session-key.ts";
-import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  deriveSessionState,
+  readSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 
 import { runCursorHook } from "../src/index.ts";
@@ -38,6 +45,7 @@ import {
   STOP_INPUT,
 } from "./fixtures/cursor-contract/payloads.ts";
 import {
+  git,
   makeHome,
   makeRepo,
   writeRepoFile,
@@ -57,7 +65,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  hub.server.stop(true);
+  await hub.close();
   await Promise.all(
     cleanups.map((path) => rm(path, { recursive: true, force: true })),
   );
@@ -162,6 +170,190 @@ describe("sessionStart (§3.2 row 1)", () => {
       .map((record) => record.producer.agentKind)
       .sort();
     expect(producers).toEqual(["cursor-background", "cursor-ide"]);
+  });
+});
+
+describe("a Cursor workspace rooted at the PARENT of the repo (trial finding #9)", () => {
+  test("afterFileEdit derives the repo from the edited file and registers on first touch", async () => {
+    // Arrange: workspace/monorepo is a connected repo; the workspace root
+    // itself is a plain folder — the exact panel-session shape that was
+    // silently invisible while terminal sessions reported fine.
+    const workspace = await mkdtemp(join(tmpdir(), "cx-cursor-workspace-"));
+    cleanups.push(workspace);
+    const repo = join(workspace, "monorepo");
+    await mkdir(repo, { recursive: true });
+    await git(repo, ["init", "--initial-branch=main"]);
+    await git(repo, ["config", "user.email", "dev@example.com"]);
+    await git(repo, ["config", "user.name", "Dev"]);
+    await writeFile(
+      join(repo, ".crosscheck.json"),
+      renderRepoConfig(hub.hubUrl),
+      "utf8",
+    );
+    await git(repo, ["add", "."]);
+    await git(repo, ["commit", "-m", "initial"]);
+    await git(repo, ["remote", "add", "origin", REMOTE]);
+    await writeRepoFile(repo, "src/panel.ts", "export const p = 1;\n");
+    const home = await makeHome("cursor-parent");
+    cleanups.push(home);
+    const env: Env = {
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_API_KEY: hub.apiKey,
+      CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
+    };
+    const conv = "conv-parent-1";
+
+    // Act: workspace_roots is the PARENT; only file_path names the repo
+    const out = await run(
+      "afterFileEdit",
+      {
+        ...AFTER_FILE_EDIT_INPUT,
+        conversation_id: conv,
+        workspace_roots: [workspace],
+        file_path: join(repo, "src", "panel.ts"),
+      },
+      env,
+    );
+
+    // Assert: visible with the repo's identity, target captured
+    expect(out).toBe("{}");
+    const state = await readSessionState(home, `cur-${conv}`);
+    expect(state?.crosscheckSessionId).toBe(`cc_cur-${conv}`);
+    expect(state?.repoId).toBe(REPO_ID);
+    const hubCtx: HubContext = {
+      hubUrl: hub.hubUrl,
+      apiKey: hub.apiKey,
+      timeoutMs: 4000,
+      home,
+      repoKey: repoKey(hub.hubUrl, REPO_ID),
+      now: () => new Date(),
+    };
+    const diagnosis = await getDiagnosis(hubCtx, `wc_cc_cur-${conv}`);
+    if (!diagnosis.ok) throw new Error("diagnosis unavailable");
+    expect(
+      diagnosis.data.targets
+        .filter((target) => target.kind === "file")
+        .map((target) => target.value),
+    ).toEqual(["src/panel.ts"]);
+  });
+
+  test("a sibling recovery bound to ANOTHER repo wins the race: dropped, not captured", async () => {
+    // Arrange: the Claude recovery-race parity pin. A hub whose register
+    // endpoint publishes a SIBLING's state (bound to other/web) mid-call —
+    // the exact window between requireSessionState's read and the flow's
+    // state publish. The loser must adopt, count the drop, capture nothing.
+    const workspace = await mkdtemp(join(tmpdir(), "cx-cursor-race-"));
+    cleanups.push(workspace);
+    const home = await makeHome("cursor-race");
+    cleanups.push(home);
+    const conv = "conv-race-1";
+    const hostKey = `cur-${conv}`;
+    let raceHubUrl = "";
+    const raceServer = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/api/sessions" && request.method === "POST") {
+          await writeSessionState(
+            home,
+            deriveSessionState({
+              hostSessionKey: hostKey,
+              repoId: "github.com/other/web",
+              repoRoot: "/tmp/web",
+              hubUrl: raceHubUrl,
+              developerId: "dev_sibling",
+              startedAt: new Date("2026-08-19T08:00:00.000Z").toISOString(),
+            }),
+          );
+          return Response.json({
+            ok: true,
+            data: { session: { id: `cc_${hostKey}`, developerId: "dev_race" } },
+          });
+        }
+        return Response.json({ ok: true, data: {} });
+      },
+    });
+    raceHubUrl = `http://127.0.0.1:${raceServer.port}`;
+    const repo = join(workspace, "monorepo");
+    await mkdir(repo, { recursive: true });
+    await git(repo, ["init", "--initial-branch=main"]);
+    await git(repo, ["config", "user.email", "dev@example.com"]);
+    await git(repo, ["config", "user.name", "Dev"]);
+    await writeFile(
+      join(repo, ".crosscheck.json"),
+      renderRepoConfig(raceHubUrl),
+      "utf8",
+    );
+    await git(repo, ["add", "."]);
+    await git(repo, ["commit", "-m", "initial"]);
+    await git(repo, ["remote", "add", "origin", REMOTE]);
+    await writeRepoFile(repo, "src/panel.ts", "export const p = 1;\n");
+
+    // Act
+    const out = await run(
+      "afterFileEdit",
+      {
+        ...AFTER_FILE_EDIT_INPUT,
+        conversation_id: conv,
+        workspace_roots: [repo],
+        file_path: join(repo, "src", "panel.ts"),
+      },
+      {
+        CROSSCHECK_HOME: home,
+        CROSSCHECK_API_KEY: hub.apiKey,
+        CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
+      },
+    );
+    raceServer.stop(true);
+
+    // Assert: the sibling's binding survives, the drop is counted, and this
+    // repo's spool holds nothing.
+    expect(out).toBe("{}");
+    const state = await readSessionState(home, hostKey);
+    expect(state?.repoId).toBe("github.com/other/web");
+    expect(state?.foreignRepoDrops).toBe(1);
+    expect(
+      await readSpoolLines(home, repoKey(raceHubUrl, REPO_ID)),
+    ).toEqual([]);
+  });
+
+  test("the inverse pin: a file in an UNCONNECTED repo under the workspace stays silent", async () => {
+    // Arrange: a git repo WITHOUT committed config, credentials stored
+    const workspace = await mkdtemp(join(tmpdir(), "cx-cursor-scratch-"));
+    cleanups.push(workspace);
+    const scratch = join(workspace, "scratch");
+    await mkdir(scratch, { recursive: true });
+    await git(scratch, ["init", "--initial-branch=main"]);
+    await git(scratch, ["config", "user.email", "dev@example.com"]);
+    await git(scratch, ["config", "user.name", "Dev"]);
+    await writeRepoFile(scratch, "src/notes.ts", "// private\n");
+    await git(scratch, ["add", "."]);
+    await git(scratch, ["commit", "-m", "initial"]);
+    const home = await makeHome("cursor-scratch");
+    cleanups.push(home);
+    const env: Env = {
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: hub.hubUrl,
+      CROSSCHECK_API_KEY: hub.apiKey,
+      CROSSCHECK_TIMEOUT_MS: TIMEOUT_MS,
+    };
+    const conv = "conv-scratch-1";
+
+    // Act
+    const out = await run(
+      "afterFileEdit",
+      {
+        ...AFTER_FILE_EDIT_INPUT,
+        conversation_id: conv,
+        workspace_roots: [workspace],
+        file_path: join(scratch, "src", "notes.ts"),
+      },
+      env,
+    );
+
+    // Assert: silence is the contract — no state, nothing registered
+    expect(out).toBe("{}");
+    expect(await readSessionState(home, `cur-${conv}`)).toBeNull();
   });
 });
 

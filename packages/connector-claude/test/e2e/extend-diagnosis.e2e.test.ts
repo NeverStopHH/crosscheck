@@ -176,6 +176,12 @@ const createDeveloper = async (
     },
     body: JSON.stringify({ name, email }),
   });
+  // Named failure over an unreadable one (suite-stability finding).
+  if (!response.ok) {
+    throw new Error(
+      `createDeveloper failed: ${String(response.status)} ${await response.text()}`,
+    );
+  }
   const body = (await response.json()) as { data: { apiKey: string } };
   return { apiKey: body.data.apiKey };
 };
@@ -241,6 +247,10 @@ afterAll(async () => {
   alice.mcp.close();
   bob.mcp.close();
   server.stop(true);
+  // Release the PGlite WASM instance (suite-stability finding).
+  await (db as unknown as { $client: { close: () => Promise<void> } }).$client
+    .close()
+    .catch(() => undefined);
   await Promise.all(
     cleanups.map((path) => rm(path, { recursive: true, force: true })),
   );

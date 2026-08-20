@@ -60,6 +60,36 @@ describe("POST /api/sessions", () => {
     expect(presence.sessions[0]?.branch).toBe("feat/other-branch");
   });
 
+  test("re-registering a live session with a DIFFERENT repo is refused", async () => {
+    // Arrange: a live session bound to acme/api (trial finding #9 —
+    // one crosscheck session is ONE repo, bound at registration)
+    const harness = await createTestHarness();
+    const developer = await createTestDeveloper(
+      harness,
+      "Nick",
+      "nick@example.com",
+    );
+    await registerTestSession(harness, developer.apiKey);
+
+    // Act: the same session id arrives claiming another repo — the
+    // state-less recovery race, or a mid-session identity change
+    const response = await registerTestSession(harness, developer.apiKey, {
+      repo: "github.com/acme/web",
+    });
+
+    // Assert: refused with the DISTINCT code (the register flow must stop
+    // retrying on it, not mint a fresh session for the foreign repo), and
+    // the session stays bound where it registered — never re-homed.
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      error: { code: string };
+    };
+    expect(body.error.code).toBe("repo_mismatch");
+    const presence = await fetchPresence(harness, developer.apiKey);
+    expect(presence.sessions).toHaveLength(1);
+    expect(presence.sessions[0]?.repo).toBe("github.com/acme/api");
+  });
+
   test("registering another developer's session id returns 409", async () => {
     // Arrange
     const harness = await createTestHarness();

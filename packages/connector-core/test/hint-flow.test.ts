@@ -85,6 +85,8 @@ const freshState = (
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   briefingSolvedRefs: [],
+  foreignRepoDrops: 0,
+  briefingPending: false,
   stopTurnCount: 0,
   summarizerFireCount: 0,
   summarizerLastFireTurn: null,

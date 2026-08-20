@@ -50,6 +50,19 @@ curl -sX POST http://localhost:7100/api/developers \
 # -> {"ok":true,"data":{"developer":{"id":"..."},"apiKey":"..."}}   (shown once)
 ```
 
+If someone commits under a different address than their hub email (work vs.
+personal git identity — most teams have at least one), link it as an alias so
+absence detection recognises their commits instead of reporting a stranger:
+
+```bash
+curl -sX POST http://localhost:7100/api/developers/<developerId>/emails \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"email":"alice@gmail.com"}'
+# -> {"ok":true,"data":{"alreadyLinked":false,"emails":[...]}}
+# an email can belong to at most one developer — a duplicate answers 409;
+# unlink with DELETE /api/developers/<developerId>/emails/alice@gmail.com
+```
+
 **3. Each developer installs the connector permanently, logs in once, then wires up the repo:**
 
 ```bash
