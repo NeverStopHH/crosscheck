@@ -18,6 +18,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   buildSettingsPlan,
+  isOwnedCommand,
   mergeClaudeSettings,
   removeClaudeSettings,
 } from "../src/index.ts";
@@ -195,6 +196,60 @@ describe("install/remove round trip on arbitrary foreign settings", () => {
         },
       }),
     );
+  });
+});
+
+describe("owned-command boundary: a crosscheck DIRECTORY is not ours", () => {
+  test("removal leaves foreign hooks routed through a crosscheck/ path", () => {
+    // The false-positive class both adversarial reviews flagged: a foreign
+    // tool that merely LIVES under a directory named crosscheck, with
+    // `hook`/`statusline` as its first argument. Ours is either the
+    // crosscheck command itself (any path, `crosscheck` as basename) or an
+    // entry SCRIPT (.js/.ts family) under a crosscheck directory — a
+    // path continuing past `crosscheck/` to a non-script file is somebody
+    // else's, and --remove must not delete it from a user's own file.
+    const original: Record<string, unknown> = {
+      hooks: {
+        PostToolUse: [
+          {
+            hooks: [
+              { type: "command", command: "/usr/lib/crosscheck/run hook payload" },
+              { type: "command", command: "/opt/crosscheck/runner.sh hook x" },
+            ],
+          },
+        ],
+      },
+    };
+
+    const removed = removeClaudeSettings(original);
+
+    expect(removed.changed).toBe(false);
+    expect(render(removed.settings)).toBe(render(original));
+  });
+
+  test("every launcher spelling init resolves is still recognised", () => {
+    for (const command of [
+      // bare bin on PATH
+      "crosscheck hook post-tool-use",
+      // absolute path whose BASENAME is the crosscheck bin
+      "/opt/tools/crosscheck statusline",
+      // entry form: runtime + entry script under a crosscheck checkout
+      "/Users/dev/.bun/bin/bun /Users/dev/code/crosscheck/packages/cli/src/index.ts hook stop",
+      // the same, shell-quoted (a path with spaces)
+      "'/Users/dev/.bun/bin/bun' '/Users/dev/my code/crosscheck/dist/index.js' hook stop",
+      // legacy package invocation
+      "bunx --bun @crosscheck/cli statusline",
+    ]) {
+      expect(isOwnedCommand(command)).toBe(true);
+    }
+    for (const command of [
+      "/usr/lib/crosscheck/run hook payload",
+      "/opt/crosscheck/runner.sh hook x",
+      "my-crosscheck hook",
+      "/opt/crosscheck-linter/bin/lint hook",
+    ]) {
+      expect(isOwnedCommand(command)).toBe(false);
+    }
   });
 });
 

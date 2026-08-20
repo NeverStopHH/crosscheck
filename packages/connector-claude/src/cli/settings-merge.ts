@@ -8,10 +8,27 @@ import {
   PRE_TOOL_USE_MATCHER,
 } from "@crosscheck/connector-core/constants.ts";
 /**
- * Matches every launcher form `init` resolves on its OWN: the `crosscheck`
- * binary, an absolute path to the entry script (optionally shell-quoted), and
- * the legacy package invocation. Without all three a second `init` would not
- * recognise its own entries and would duplicate them.
+ * Matches every launcher form `init` resolves on its OWN, and ONLY those —
+ * three shapes, each ending in the `hook`/`statusline` subcommand:
+ *
+ *   A) the `crosscheck` binary, bare or as a path BASENAME
+ *      (`/opt/tools/crosscheck statusline`);
+ *   B) the legacy scoped package `@crosscheck/<pkg>`
+ *      (`bunx --bun @crosscheck/cli statusline`);
+ *   C) the entry SCRIPT — a path from a `crosscheck` segment that ENDS in a
+ *      `.js`/`.ts`-family extension, whether the script is named
+ *      `crosscheck.ts` itself (`…/bin/crosscheck.ts hook`) or lives deeper
+ *      (`…/crosscheck/…/index.ts hook`), optionally shell-quoted.
+ *
+ * The trailing extension in form C is REQUIRED, which is the boundary: a
+ * foreign tool that merely lives in a `crosscheck/` DIRECTORY but is not a
+ * JS/TS script — `/usr/lib/crosscheck/run hook`, `/opt/crosscheck/runner.sh
+ * hook` — is NOT ours, and since `--remove` now deletes owned entries from
+ * the USER's own ~/.claude/settings.json (not just de-duplicates on
+ * re-init), a false positive there would strip a stranger's hook. The
+ * earlier `(?:\.[cm]?[jt]s)?` made the extension OPTIONAL, so
+ * `crosscheck/run hook` matched; requiring it on the path's final component
+ * closes that while still matching the `crosscheck.ts` entry file.
  *
  * A `--command-prefix` that does not name crosscheck falls outside it, and has
  * to: an operator's arbitrary launcher cannot be recognised by pattern. Such an
@@ -19,7 +36,7 @@ import {
  * `doctor` reports those hooks as unregistered.
  */
 const OWNED_COMMAND_PATTERN =
-  /(^|[\s"'/])@?crosscheck(?:\/[\w.-]+)*(?:\.[cm]?[jt]s)?["']?\s+(?:hook|statusline)\b/;
+  /(?:(?:^|[\s"'/])crosscheck|(?:^|[\s"'])@crosscheck\/[\w.-]+|(?:^|[\s"'/])@?crosscheck(?:\/[\w.-]+)*\.[cm]?[jt]s)["']?\s+(?:hook|statusline)\b/;
 
 export interface HookEntry {
   readonly type: string;

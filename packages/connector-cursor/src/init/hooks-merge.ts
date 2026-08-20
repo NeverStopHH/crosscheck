@@ -15,16 +15,24 @@ import { CURSOR_HOOK_EVENTS } from "../payload.ts";
 import type { CursorHookEvent } from "../payload.ts";
 
 /**
- * Matches every launcher form init resolves on its own — the `crosscheck`
- * binary, an absolute path to the entry script (optionally shell-quoted),
- * the legacy package invocation — followed by the `cursor-hook` subcommand.
- * The sibling of settings-merge.ts's OWNED_COMMAND_PATTERN (which keys on
- * ` hook `/` statusline` and can never match these entries); without it a
- * second `init --cursor` would not recognise its own entries and would
- * duplicate them.
+ * Matches every launcher form init resolves on its own, and ONLY those — the
+ * `crosscheck` binary bare or as a path BASENAME, the legacy scoped package
+ * `@crosscheck/<pkg>`, or the entry SCRIPT (a path from a `crosscheck`
+ * segment ending in a `.js`/`.ts`-family extension — `crosscheck.ts` itself
+ * or a deeper `…/crosscheck/…/index.ts`, optionally shell-quoted) — followed
+ * by the `cursor-hook` subcommand. The sibling of settings-merge.ts's
+ * OWNED_COMMAND_PATTERN (which keys on ` hook`/` statusline` and can never
+ * match these entries), tightened the same way: the trailing script
+ * extension in the third form is REQUIRED, so a foreign tool inside a
+ * `crosscheck/` DIRECTORY that is not a JS/TS script
+ * (`/opt/crosscheck/runner.sh cursor-hook`) is NOT ours — `--remove` deletes
+ * owned entries from the user's own ~/.cursor/hooks.json, so a false
+ * positive there would strip a stranger's hook. Without the pattern a second
+ * `init --cursor` would not recognise its own entries and would duplicate
+ * them.
  */
 const OWNED_CURSOR_COMMAND_PATTERN =
-  /(^|[\s"'/])@?crosscheck(?:\/[\w.-]+)*(?:\.[cm]?[jt]s)?["']?\s+cursor-hook\b/;
+  /(?:(?:^|[\s"'/])crosscheck|(?:^|[\s"'])@crosscheck\/[\w.-]+|(?:^|[\s"'/])@?crosscheck(?:\/[\w.-]+)*\.[cm]?[jt]s)["']?\s+cursor-hook\b/;
 
 export const isOwnedCursorCommand = (command: unknown): boolean =>
   typeof command === "string" && OWNED_CURSOR_COMMAND_PATTERN.test(command);

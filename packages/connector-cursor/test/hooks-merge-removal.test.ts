@@ -74,4 +74,22 @@ describe("install/remove round trip on cursor hooks", () => {
     expect(removed.changed).toBe(false);
     expect(render(removed.hooks)).toBe(render(original));
   });
+
+  test("a foreign hook routed through a crosscheck/ path is not ours", () => {
+    // The same owned-command boundary as the Claude side (both adversarial
+    // reviews): a foreign tool living under a directory named crosscheck,
+    // taking `cursor-hook` as its first argument, must survive --remove.
+    const original: Record<string, unknown> = {
+      version: 1,
+      hooks: {
+        sessionStart: [
+          { command: "/usr/lib/crosscheck/run cursor-hook payload" },
+          { command: "/opt/crosscheck/runner.sh cursor-hook x" },
+        ],
+      },
+    };
+    const removed = removeCursorHooks(original);
+    expect(removed.changed).toBe(false);
+    expect(render(removed.hooks)).toBe(render(original));
+  });
 });
