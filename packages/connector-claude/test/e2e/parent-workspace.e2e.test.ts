@@ -281,6 +281,56 @@ describe("a session whose cwd is the PARENT of a connected repo", () => {
     expect(second).not.toContain("Teammate sessions active now:");
   });
 
+  test("Stop at the workspace root counts the turn — the lifecycle hooks ride the state file too", async () => {
+    // Arrange: nothing — Ken's session state exists from the first touch.
+    // Stop carries neither a resolvable cwd nor file paths, so pre-rung-3 it
+    // was silent here and the turn was never counted (rigor review F3: the
+    // widened surfaces shipped unpinned).
+
+    // Act
+    const stdout = await runHook(
+      "stop",
+      JSON.stringify({
+        session_id: "ken-uuid",
+        cwd: workspace,
+        hook_event_name: "Stop",
+        stop_hook_active: false,
+      }),
+      env,
+    );
+
+    // Assert: silent as every Stop, but the turn REALLY was counted — the
+    // state file resolved the repo where cwd could not.
+    expect(stdout).toBe("");
+    const state = await readSessionState(home, "ken-uuid");
+    expect(state?.stopTurnCount).toBe(1);
+  });
+
+  test("SessionEnd at the workspace root really ends the session — no leak", async () => {
+    // Act: the session ends where it lived, at the PARENT cwd. Pre-rung-3
+    // this hook resolved nothing: the hub session leaked as live-forever and
+    // the state file stayed behind.
+    const stdout = await runHook(
+      "session-end",
+      JSON.stringify({
+        session_id: "ken-uuid",
+        cwd: workspace,
+        hook_event_name: "SessionEnd",
+        reason: "clear",
+      }),
+      env,
+    );
+
+    // Assert: the hub heard the end, and the local state is gone.
+    expect(stdout).toBe("");
+    const rows = await db.execute(
+      sql`select ended_at from agent_sessions where id = 'cc_ken-uuid'`,
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]?.["ended_at"]).not.toBeNull();
+    expect(await readSessionState(home, "ken-uuid")).toBeNull();
+  });
+
   test("the inverse pin: a file in an UNCONNECTED repo stays silent forever", async () => {
     // Arrange: stored credentials exist (home config), the scratch repo has
     // a git boundary but NO committed .crosscheck.json
