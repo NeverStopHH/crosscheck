@@ -457,27 +457,45 @@ const endDeferredSession = async (
 
 /**
  * True when a `.pending-end` marker exists that a reap run by THIS hook could
- * actually spend: its session has not come back to life and its own backlog is
- * gone. The hosting hook holds one request timeout of spare back from the
- * drain for it — without that, any start with something to flush hands the
- * drain the whole spare, and `endDeferredSession`'s ender reads zero room at
- * the end of every single hook. Registration appends a work-context record on
- * EVERY start, so against a hub slower than the leftover spare the deferred
- * end would starve to its MAX_SPOOL_AGE_DAYS age-out: a livelock, not a race
+ * actually spend: its session has not come back to life, the marker itself is
+ * readable and not expired, and its own backlog is gone. The hosting hook
+ * holds one request timeout of spare back from the drain for it — without
+ * that, any start with something to flush hands the drain the whole spare,
+ * and `endDeferredSession`'s ender reads zero room at the end of every single
+ * hook. Registration appends a work-context record on EVERY start, so against
+ * a hub slower than the leftover spare the deferred end would starve to its
+ * MAX_SPOOL_AGE_DAYS age-out: a livelock, not a race
  * (connector-claude/test/hook-budget.test.ts pins it through the fixture's
  * latency dial, and a mutation-check entry holds this probe honest).
  *
- * A marker whose own backlog is still on disk holds nothing back — draining is
- * exactly what that marker is waiting for, so the drain keeps its full spare.
- * Local file reads only (readdir, a state-file stat, a spool read): the probe
- * costs microseconds against budgets measured in hundreds of milliseconds.
+ * The gates mirror `endDeferredSession`'s own, in its order, so the probe
+ * answers true for exactly the markers a reap would spend a hub call on: an
+ * UNREADABLE marker is discarded on sight and an EXPIRED one retired into the
+ * unclosed count — neither ever calls the ender, so neither may cost the
+ * drain a holdback (test/pending-end-probe.test.ts pins all five faces). A
+ * marker whose own backlog is still on disk holds nothing back either —
+ * draining is exactly what that marker is waiting for, so the drain keeps its
+ * full spare. Local file reads only (readdir, a state-file stat, a marker
+ * read, a spool read): the probe costs microseconds against budgets measured
+ * in hundreds of milliseconds.
  */
 export const hasSpendablePendingEnd = async (
   home: string,
   key: string,
+  now: Date,
 ): Promise<boolean> => {
   for (const slug of await pendingEndSlugs(home, key)) {
     if (await isSessionLive(home, slug)) {
+      continue;
+    }
+    const path = spoolPendingEndPath(home, key, slug);
+    const parsed = PendingEndSchema.safeParse(await readJsonOrNull(path));
+    if (!parsed.success) {
+      continue;
+    }
+    const deferredAt =
+      markerDeferredAt(parsed.data.at) ?? (await markerWrittenAt(path));
+    if (deferredAt !== null && isMarkerExpired(deferredAt, now)) {
       continue;
     }
     const spool = await readSessionSpool(home, key, slug);

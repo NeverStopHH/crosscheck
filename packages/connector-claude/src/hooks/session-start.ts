@@ -276,6 +276,7 @@ export const handleSessionStart = async (
   const endHoldbackMs = (await hasSpendablePendingEnd(
     ctx.config.home,
     ctx.repoKey,
+    now,
   ))
     ? ctx.hub.timeoutMs
     : 0;
