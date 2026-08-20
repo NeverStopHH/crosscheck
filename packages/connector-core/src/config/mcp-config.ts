@@ -80,3 +80,43 @@ export const mergeMcpConfig = (
     [MCP_SERVER_KEY]: entry,
   },
 });
+
+export interface McpRemovalResult {
+  readonly config: Record<string, unknown>;
+  /** False = no crosscheck-owned entry found; the input passes through. */
+  readonly changed: boolean;
+}
+
+/**
+ * The inverse of `mergeMcpConfig`, for `init --global --remove` (finding
+ * #11) — and it matters most on `~/.claude.json`, which is Claude Code's
+ * OWN state file: everything foreign must ride through byte-identically,
+ * order preserved. Only an entry `isOwnedMcpEntry` recognises is removed —
+ * a hand-written server that happens to sit under our key is somebody's
+ * deliberate configuration, not ours to delete. The `mcpServers` record is
+ * dropped only when the removal emptied it (install created it); one that
+ * was already empty, or still holds foreign servers, stays.
+ */
+export const removeMcpConfig = (
+  existing: Record<string, unknown>,
+): McpRemovalResult => {
+  const servers = existing["mcpServers"];
+  if (!isRecord(servers) || !isOwnedMcpEntry(servers[MCP_SERVER_KEY])) {
+    return { config: existing, changed: false };
+  }
+  const kept = Object.entries(servers).reduce<Record<string, unknown>>(
+    (rest, [name, entry]) =>
+      name === MCP_SERVER_KEY ? rest : { ...rest, [name]: entry },
+    {},
+  );
+  const config = Object.entries(existing).reduce<Record<string, unknown>>(
+    (rest, [key, value]) => {
+      if (key !== "mcpServers") {
+        return { ...rest, [key]: value };
+      }
+      return Object.keys(kept).length === 0 ? rest : { ...rest, [key]: kept };
+    },
+    {},
+  );
+  return { config, changed: true };
+};

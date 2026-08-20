@@ -70,6 +70,65 @@ const asDefinitions = (value: unknown): readonly Record<string, unknown>[] =>
  *     it knows more than we do); absent → the documented version 1;
  *   - unknown top-level keys ride through untouched.
  */
+export interface CursorRemovalResult {
+  readonly hooks: Record<string, unknown>;
+  /** False = nothing crosscheck-owned was found; the input passes through. */
+  readonly changed: boolean;
+}
+
+/**
+ * The inverse of `mergeCursorHooks`, for `init --global --remove` (finding
+ * #11): strips exactly the `cursor-hook` entries an init wrote, preserves
+ * every foreign definition byte-identically in place, and drops an event
+ * key only when the strip emptied it. The `version` key is deliberately
+ * LEFT even when the hooks record ends empty: whether the file existed
+ * before install cannot be reconstructed from its content, and a leftover
+ * `{"version": 1}` is inert where a wrongly deleted foreign file is not.
+ */
+export const removeCursorHooks = (
+  existing: Record<string, unknown>,
+): CursorRemovalResult => {
+  const existingHooks = existing["hooks"];
+  if (
+    typeof existingHooks !== "object" ||
+    existingHooks === null ||
+    Array.isArray(existingHooks)
+  ) {
+    return { hooks: existing, changed: false };
+  }
+  let changed = false;
+  const hooks = Object.entries(existingHooks).reduce<Record<string, unknown>>(
+    (kept, [event, definitions]) => {
+      if (!Array.isArray(definitions)) {
+        return { ...kept, [event]: definitions };
+      }
+      const preserved = definitions.filter(
+        (definition) =>
+          !isOwnedCursorCommand(asRecord(definition)["command"]),
+      );
+      if (preserved.length === definitions.length) {
+        return { ...kept, [event]: definitions };
+      }
+      changed = true;
+      return preserved.length === 0 ? kept : { ...kept, [event]: preserved };
+    },
+    {},
+  );
+  if (!changed) {
+    return { hooks: existing, changed: false };
+  }
+  return {
+    hooks: Object.entries(existing).reduce<Record<string, unknown>>(
+      (rest, [key, value]) => ({
+        ...rest,
+        ...(key === "hooks" ? { hooks } : { [key]: value }),
+      }),
+      {},
+    ),
+    changed: true,
+  };
+};
+
 export const mergeCursorHooks = (
   existing: Record<string, unknown>,
   plan: CursorHooksPlan,

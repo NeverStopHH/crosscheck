@@ -65,8 +65,12 @@ export {
   buildCursorHooksPlan,
   isOwnedCursorCommand,
   mergeCursorHooks,
+  removeCursorHooks,
 } from "./init/hooks-merge.ts";
-export type { CursorHooksPlan } from "./init/hooks-merge.ts";
+export type {
+  CursorHooksPlan,
+  CursorRemovalResult,
+} from "./init/hooks-merge.ts";
 export { prepareCursorInit } from "./init/init.ts";
 export type { CursorInitPlan } from "./init/init.ts";
 export { cursorDoctorChecks } from "./doctor.ts";
