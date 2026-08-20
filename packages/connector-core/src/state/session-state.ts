@@ -90,6 +90,17 @@ const SessionStateObjectSchema = z.looseObject({
    */
   foreignRepoDrops: z.number().int().min(0).default(0),
   /**
+   * True when registration happened OUTSIDE SessionStart — PostToolUse's
+   * state-less recovery, the parent-workspace/finding-#9 shape — so this
+   * session has never seen its briefing. The next UserPromptSubmit pays the
+   * debt through the same core flow SessionStart uses and clears the flag
+   * with a check-and-set (flows/briefing.ts `deliverDeferredBriefing`, the
+   * ACP briefing-slot pattern in hook form). Default false keeps every
+   * existing state file parsing — and keeps SessionStart-registered
+   * sessions debt-free.
+   */
+  briefingPending: z.boolean().default(false),
+  /**
    * Tier-1 summarizer bookkeeping (DESIGN.md §3 Tier 1): the Stop-turn
    * counter the debounce is measured against, the fires already spent
    * against SUMMARIZER_MAX_FIRES_PER_SESSION, and the rough token estimate
@@ -346,6 +357,7 @@ export const deriveSessionState = (
     tripwireAskedFiles: [],
     briefingSolvedRefs: [],
     foreignRepoDrops: 0,
+    briefingPending: false,
     stopTurnCount: 0,
     summarizerFireCount: 0,
     summarizerLastFireTurn: null,

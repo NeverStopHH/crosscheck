@@ -67,7 +67,17 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     ? result.data.session.developerId
     : ctx.config.developerId;
   const now = ctx.now();
-  const recovered: SessionState = { ...derived, developerId };
+  // `briefingPending`: a recovery registration means SessionStart never ran
+  // for this session (or ran somewhere it could not resolve the repo — the
+  // parent-workspace shape), so nobody has briefed it. The debt is recorded
+  // here and paid by the NEXT UserPromptSubmit through the same core flow
+  // SessionStart uses (flows/briefing.ts `deliverDeferredBriefing`) — a
+  // parent-workspace session loses nothing but the timing.
+  const recovered: SessionState = {
+    ...derived,
+    developerId,
+    briefingPending: true,
+  };
   // BEFORE the first append, always: `reap` infers "no writer left" from the
   // absence of a session state file, so a hook that appends without publishing
   // state first could have its records reaped out from under it.

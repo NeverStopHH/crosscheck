@@ -19,11 +19,12 @@ import {
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
 import { findConnectedRepoRootForPaths } from "@crosscheck/connector-core/config/connected-repo.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import { readRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
+import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { extractFilePaths, parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
 
@@ -83,7 +84,10 @@ interface ResolvedHookRepo {
 }
 
 /**
- * The repo this hook reports for: cwd first, touched file second.
+ * The repo this hook reports for: cwd first, touched file second, the
+ * session's own state file last (`stateDerivedHookRepo` below — the rung
+ * that gives an already-registered parent-workspace session its prompt
+ * surface back).
  *
  * The cwd path is untouched shipped behavior. The FALLBACK is trial finding
  * #9: an editor whose workspace root is the PARENT of the repo fires hooks
@@ -113,15 +117,50 @@ const resolveHookRepo = async (
     payload.cwd,
     extractFilePaths(payload.tool_input),
   );
-  if (derivedRoot === null) {
+  if (derivedRoot !== null) {
+    const derived = await resolveRepoIdentity(derivedRoot);
+    if (derived !== null && (await readRepoConfig(derived.root)) !== null) {
+      const config = await loadConfig({ env, repoRoot: derived.root });
+      if (config !== null) {
+        return { identity: derived, config };
+      }
+    }
+  }
+  return stateDerivedHookRepo(payload, env);
+};
+
+/**
+ * The LAST rung, for hooks that carry neither a resolvable cwd nor file
+ * paths: a session ALREADY REGISTERED from this workspace — PostToolUse's
+ * file-derived recovery wrote its state file — keeps firing prompts and
+ * lifecycle hooks with the same unresolvable parent cwd, and rungs 1 and 2
+ * left every one of them silent, so the session had no prompt surface at
+ * all: no deferred briefing, no hints (the finding-#9 briefing-parity gap,
+ * test/briefing-parity.test.ts).
+ *
+ * Trust is narrowed here, not widened: a state file exists only because a
+ * PREVIOUS hook passed rung 1 or rung 2 for this very session, and nothing
+ * is taken on faith from it — the identity is re-resolved at its repoRoot
+ * and must still answer the SAME repo id (a moved, deleted or re-remoted
+ * checkout reads as silence, never as a rebind), and the config is
+ * re-checked at the resolved root exactly as rung 1 would. A session id
+ * with no state file — the unconnected-repo pin's shape — resolves nothing,
+ * so "silent forever" stays true where it must.
+ */
+const stateDerivedHookRepo = async (
+  payload: HookPayload,
+  env: Env,
+): Promise<ResolvedHookRepo | null> => {
+  const state = await readSessionState(crosscheckHome(env), payload.session_id);
+  if (state === null) {
     return null;
   }
-  const derived = await resolveRepoIdentity(derivedRoot);
-  if (derived === null || (await readRepoConfig(derived.root)) === null) {
+  const identity = await resolveRepoIdentity(state.repoRoot);
+  if (identity === null || identity.repoId !== state.repoId) {
     return null;
   }
-  const config = await loadConfig({ env, repoRoot: derived.root });
-  return config === null ? null : { identity: derived, config };
+  const config = await loadConfig({ env, repoRoot: identity.root });
+  return config === null ? null : { identity, config };
 };
 
 /**

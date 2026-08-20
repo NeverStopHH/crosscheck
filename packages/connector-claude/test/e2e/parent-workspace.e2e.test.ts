@@ -27,7 +27,7 @@ import type { Env } from "../../src/index.ts";
 import { saveConfig } from "@crosscheck/connector-core/config/config.ts";
 import { renderRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { git } from "../../../connector-core/test/helpers.ts";
+import { git, makeHome, makeRepo } from "../../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "e2e-admin-token";
 /** Wide enough that a cold PGlite query never trips the fail-open budget. */
@@ -205,6 +205,80 @@ describe("a session whose cwd is the PARENT of a connected repo", () => {
     const state = await readSessionState(home, "ken-uuid");
     expect(state?.repoId).toBe("github.com/acme/api");
     expect(state?.foreignRepoDrops).toBe(1);
+  });
+
+  test("the NEXT prompt after the late registration carries the briefing — once", async () => {
+    // Arrange: a teammate whose live session gives Ken's briefing substance.
+    // Mona registers the ordinary way, from her own clone of the same repo.
+    const response = await fetch(`${hubUrl}/api/developers`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ADMIN_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: "Mona", email: "mona@example.com" }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `createDeveloper failed: ${String(response.status)} ${await response.text()}`,
+      );
+    }
+    const mona = (await response.json()) as { data: { apiKey: string } };
+    const monaHome = await makeHome("mona");
+    const monaRepo = await makeRepo("mona", { remote: "git@github.com:acme/api.git" });
+    cleanups.push(monaHome, monaRepo);
+    await runHook(
+      "session-start",
+      JSON.stringify({
+        session_id: "mona-uuid",
+        cwd: monaRepo,
+        hook_event_name: "SessionStart",
+        source: "startup",
+      }),
+      {
+        CROSSCHECK_HOME: monaHome,
+        CROSSCHECK_HUB_URL: hubUrl,
+        CROSSCHECK_API_KEY: mona.data.apiKey,
+        CROSSCHECK_TIMEOUT_MS: TEST_TIMEOUT_MS,
+      },
+    );
+
+    // Act: Ken prompts from the WORKSPACE root — no repo at cwd, no file
+    // paths to derive one from. His session registered LATE (the first-touch
+    // test above), so SessionStart never briefed him.
+    const stdout = await runHook(
+      "user-prompt-submit",
+      JSON.stringify({
+        session_id: "ken-uuid",
+        cwd: workspace,
+        hook_event_name: "UserPromptSubmit",
+        prompt: "does the token refresh path still fail for anyone else",
+      }),
+      env,
+    );
+
+    // Assert: the briefing arrived — parent-workspace sessions lose nothing
+    const parsed = JSON.parse(stdout) as {
+      hookSpecificOutput: { additionalContext: string };
+    };
+    const context = parsed.hookSpecificOutput.additionalContext;
+    expect(context).toContain("Teammate sessions active now:");
+    expect(context).toContain("Mona");
+    const state = await readSessionState(home, "ken-uuid");
+    expect(state?.briefingPending).toBe(false);
+
+    // Act again: the debt is spent — no second briefing, ever
+    const second = await runHook(
+      "user-prompt-submit",
+      JSON.stringify({
+        session_id: "ken-uuid",
+        cwd: workspace,
+        hook_event_name: "UserPromptSubmit",
+        prompt: "does the token refresh path still fail for anyone else",
+      }),
+      env,
+    );
+    expect(second).not.toContain("Teammate sessions active now:");
   });
 
   test("the inverse pin: a file in an UNCONNECTED repo stays silent forever", async () => {
