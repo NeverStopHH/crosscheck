@@ -53,7 +53,7 @@ there is exactly one package.
 ## Verify afterwards (machine without the repo)
 
 ```bash
-npx crosscheck-hub@latest --version    # -> crosscheck 0.6.0 (the CLI keeps its name)
+npx crosscheck-hub@latest --version    # -> crosscheck 0.6.1 (the CLI keeps its name)
 bunx crosscheck-hub@latest --help      # usage screen, exit 0
 ADMIN_TOKEN=t CROSSCHECK_DATA_DIR=/tmp/cx-smoke npx crosscheck-hub@latest serve
 # expect: "crosscheck server listening on :7100 · search: exact+fts (keyless)"
@@ -65,7 +65,7 @@ npm install -g crosscheck-hub@latest && crosscheck --version   # the connector f
 # wire hooks from an npx/bunx cache (the launcher would die with the cache).
 ```
 
-Then tag: `git tag v0.6.0 && git push origin v0.6.0`.
+Then tag: `git tag v0.6.1 && git push origin v0.6.1`.
 
 ## Version bumps
 
