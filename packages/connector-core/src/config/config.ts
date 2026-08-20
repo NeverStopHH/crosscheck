@@ -158,6 +158,39 @@ export const loadConfig = async (
   };
 };
 
+/**
+ * `loadConfig` for the surfaces that REPORT — hooks, capture engines, the
+ * MCP tools (finding #11). Under a user-level ("global") install the wiring
+ * fires in every directory on the machine, so the §2.1 trust rule must hold
+ * here rather than at the wiring: only a repo whose root carries the
+ * committed `.crosscheck.json` may be reported to. The stored login's hub
+ * URL therefore no longer stands in for a missing repo config on these
+ * surfaces — a merely logged-in developer's session in an unconnected repo
+ * stays silent forever (connector-claude/test/global-wiring-silence.test.ts
+ * pins both directions). CROSSCHECK_HUB_URL keeps standing in: the env
+ * override is an operator's explicit per-process instruction, not ambient
+ * machine state.
+ *
+ * Human-run commands (status, doctor, login, privacy) keep plain
+ * `loadConfig`: they answer questions about the stored state and report
+ * nothing to any hub on a repo's behalf.
+ */
+export const loadReportableConfig = async (
+  options: LoadConfigOptions & { readonly repoRoot: string },
+): Promise<ResolvedConfig | null> => {
+  const config = await loadConfig(options);
+  if (config === null) {
+    return null;
+  }
+  if (
+    options.env["CROSSCHECK_HUB_URL"] === undefined &&
+    (await readRepoConfig(options.repoRoot)) === null
+  ) {
+    return null;
+  }
+  return config;
+};
+
 export const isDisabled = (env: Env): boolean =>
   env["CROSSCHECK_DISABLED"] === "1";
 

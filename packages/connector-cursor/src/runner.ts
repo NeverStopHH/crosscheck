@@ -36,6 +36,7 @@ import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.t
 import {
   isDisabled,
   loadConfig,
+  loadReportableConfig,
 } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
 import { findConnectedRepoRootForPaths } from "@crosscheck/connector-core/config/connected-repo.ts";
@@ -129,7 +130,10 @@ const resolveCursorRepo = async (
 ): Promise<ResolvedCursorRepo | null> => {
   const identity = await resolveRepoIdentity(workspaceRoot);
   if (identity !== null) {
-    const config = await loadConfig({
+    // The finding-#11 gate: under a user-level hooks.json (~/.cursor/) this
+    // runs in every workspace, so a stored login must not stand in for the
+    // missing committed config (core config.ts `loadReportableConfig`).
+    const config = await loadReportableConfig({
       env,
       repoRoot: identity.root,
       defaultAgentKind: agentKind,

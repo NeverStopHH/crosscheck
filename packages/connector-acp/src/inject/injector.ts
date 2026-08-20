@@ -38,7 +38,7 @@ import {
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
-import { loadConfig, resolveTimeoutMs } from "@crosscheck/connector-core/config/config.ts";
+import { loadReportableConfig, resolveTimeoutMs } from "@crosscheck/connector-core/config/config.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
@@ -210,7 +210,9 @@ export const createAcpInjector = (options: AcpInjectorOptions): AcpInjector => {
     if (identity === null) {
       return false;
     }
-    const config = await loadConfig({ env, repoRoot: identity.root });
+    // The finding-#11 gate: "connected" means the committed .crosscheck.json
+    // (or an explicit env hub), never the stored login alone.
+    const config = await loadReportableConfig({ env, repoRoot: identity.root });
     return config !== null;
   };
 
