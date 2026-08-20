@@ -27,7 +27,12 @@ import {
 import type { Launcher } from "@crosscheck/connector-core/config/launcher.ts";
 import { buildSettingsPlan, mergeClaudeSettings } from "@crosscheck/connector-claude";
 import { readGlobalWiring } from "./doctor-global.ts";
-import { backUp, readJsonConfig, renderJsonFile } from "./init-io.ts";
+import {
+  backUp,
+  readJsonConfig,
+  refusalMessage,
+  renderJsonFile,
+} from "./init-io.ts";
 import type { CliResult } from "./login.ts";
 
 /** The connector's own entry point, resolved from this module's location. */
@@ -189,14 +194,14 @@ export const runInit = async (
   const settingsRead = await readJsonConfig(settingsPath);
   if (!settingsRead.ok) {
     return {
-      stdout: `${settingsPath} is not valid json — nothing was changed\n`,
+      stdout: `${refusalMessage(settingsPath, settingsRead.reason)}\n`,
       exitCode: EXIT_ABORTED,
     };
   }
   const mcpRead = await readJsonConfig(mcpPath);
   if (!mcpRead.ok) {
     return {
-      stdout: `${mcpPath} is not valid json — nothing was changed\n`,
+      stdout: `${refusalMessage(mcpPath, mcpRead.reason)}\n`,
       exitCode: EXIT_ABORTED,
     };
   }

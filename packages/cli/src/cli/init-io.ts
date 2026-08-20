@@ -16,17 +16,44 @@ import { ensureDir } from "@crosscheck/connector-core/config/paths.ts";
 export const renderJsonFile = (value: Record<string, unknown>): string =>
   `${JSON.stringify(value, null, 2)}\n`;
 
+/** Why a read refused — each maps to the sentence init prints before aborting. */
+export type ReadRefusal = "unreadable" | "unparseable" | "not-object";
+
 export type ReadJson =
   | { readonly ok: true; readonly value: Record<string, unknown>; readonly raw: string | null }
-  | { readonly ok: false };
+  | { readonly ok: false; readonly reason: ReadRefusal };
+
+/** The core clause naming why a file resisted preservation. */
+const REFUSAL_CLAUSE: Readonly<Record<ReadRefusal, string>> = {
+  unreadable: "could not be read",
+  unparseable: "is not valid json",
+  "not-object": "is not a json object",
+};
+
+/** Install's abort sentence — the JSON IS valid in the not-object case. */
+export const refusalMessage = (path: string, reason: ReadRefusal): string =>
+  `${path} ${REFUSAL_CLAUSE[reason]} — nothing was changed`;
+
+/**
+ * Remove's per-file skip sentence: a file crosscheck cannot parse is, by
+ * definition of being unwritable, a file crosscheck never wrote — it holds
+ * none of our entries, so removal skips it and cleans the rest rather than
+ * aborting the whole uninstall over an unrelated editor's broken file.
+ */
+export const skippedMessage = (path: string, reason: ReadRefusal): string =>
+  `${path} ${REFUSAL_CLAUSE[reason]} — skipped`;
 
 /**
  * Reads a JSON config init is going to rewrite, or refuses.
  *
- * Refusing is the point. A file that cannot be parsed is a file whose
- * contents cannot be preserved, and overwriting it would silently delete a
- * teammate's — or the user's own — configuration: init changes NOTHING and
- * says which file stopped it.
+ * Refusing is the point. A file whose contents cannot be preserved through
+ * the merge must not be overwritten — that would silently delete a
+ * teammate's, or the user's own, configuration. Three ways a file resists
+ * preservation, each refused: it cannot be read, it is not valid JSON, or it
+ * is valid JSON that is not an object (an array/string/number cannot carry
+ * our merged keys, so writing our object over it is the same clobber as
+ * overwriting unparseable bytes). init changes NOTHING and says which file
+ * stopped it, and why.
  */
 export const readJsonConfig = async (path: string): Promise<ReadJson> => {
   const file = Bun.file(path);
@@ -37,21 +64,18 @@ export const readJsonConfig = async (path: string): Promise<ReadJson> => {
   try {
     raw = await file.text();
   } catch {
-    return { ok: false };
+    return { ok: false, reason: "unreadable" };
   }
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    return {
-      ok: true,
-      value:
-        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
-          : {},
-      raw,
-    };
+    parsed = JSON.parse(raw) as unknown;
   } catch {
-    return { ok: false };
+    return { ok: false, reason: "unparseable" };
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, reason: "not-object" };
+  }
+  return { ok: true, value: parsed as Record<string, unknown>, raw };
 };
 
 /** Timestamped backup beside the original, so a bad merge is recoverable. */

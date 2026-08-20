@@ -30,7 +30,9 @@
  *
  * `--remove` is the surgical inverse: it strips exactly the crosscheck
  * entries from all four user-scope files — install flags do not need to be
- * remembered — and leaves every foreign byte where it was.
+ * remembered — and leaves every foreign entry content-identical (JSON
+ * formatting is normalized to 2-space on the first install and not
+ * restored; the timestamped backup holds the exact original bytes).
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -60,8 +62,14 @@ import {
   removeClaudeSettings,
 } from "@crosscheck/connector-claude";
 import { resolveLauncher, RESTART_HINT_LINE } from "./init.ts";
-import { readJsonConfig, renderJsonFile, writeIfChanged } from "./init-io.ts";
-import type { ReadJson } from "./init-io.ts";
+import {
+  readJsonConfig,
+  refusalMessage,
+  renderJsonFile,
+  skippedMessage,
+  writeIfChanged,
+} from "./init-io.ts";
+import type { ReadJson, ReadRefusal } from "./init-io.ts";
 import type { CliResult } from "./login.ts";
 
 export const INIT_GLOBAL_FLAG = "--global";
@@ -101,8 +109,8 @@ const checkLogin = async (env: Env): Promise<string | null> => {
   return null;
 };
 
-const abortUnparseable = (path: string): CliResult => ({
-  stdout: `${path} is not valid json — nothing was changed\n`,
+const abortRefused = (path: string, reason: ReadRefusal): CliResult => ({
+  stdout: `${refusalMessage(path, reason)}\n`,
   exitCode: EXIT_ABORTED,
 });
 
@@ -137,15 +145,15 @@ export const runInitGlobal = async (
   // on the machine at once, not one repo's.
   const settingsRead = await readJsonConfig(settingsPath);
   if (!settingsRead.ok) {
-    return abortUnparseable(settingsPath);
+    return abortRefused(settingsPath, settingsRead.reason);
   }
   const mcpRead = await readJsonConfig(mcpPath);
   if (!mcpRead.ok) {
-    return abortUnparseable(mcpPath);
+    return abortRefused(mcpPath, mcpRead.reason);
   }
   const cursorReads = options.cursor ? await readCursorFiles(env) : null;
   if (cursorReads !== null && !cursorReads.ok) {
-    return abortUnparseable(cursorReads.path);
+    return abortRefused(cursorReads.path, cursorReads.reason);
   }
 
   const merged = mergeClaudeSettings(
@@ -209,7 +217,7 @@ interface CursorReads {
 
 type CursorReadResult =
   | CursorReads
-  | { readonly ok: false; readonly path: string };
+  | { readonly ok: false; readonly path: string; readonly reason: ReadRefusal };
 
 const readCursorFiles = async (env: Env): Promise<CursorReadResult> => {
   // DYNAMIC import like project init's cursor branch: the default install
@@ -222,11 +230,11 @@ const readCursorFiles = async (env: Env): Promise<CursorReadResult> => {
   const mcpPath = join(dir, CURSOR_MCP_FILE);
   const hooks = await readJsonConfig(hooksPath);
   if (!hooks.ok) {
-    return { ok: false, path: hooksPath };
+    return { ok: false, path: hooksPath, reason: hooks.reason };
   }
   const mcp = await readJsonConfig(mcpPath);
   if (!mcp.ok) {
-    return { ok: false, path: mcpPath };
+    return { ok: false, path: mcpPath, reason: mcp.reason };
   }
   return {
     ok: true,
@@ -268,9 +276,11 @@ const applyCursorInstall = async (
 /**
  * `--remove` sweeps ALL four user-scope files whatever flags the install
  * ran with — a removal that depends on remembering `--cursor` leaves
- * half-installed machines behind. Files that are missing are skipped;
- * files without crosscheck entries are reported as such; unparseable files
- * abort with nothing changed, exactly like install.
+ * half-installed machines behind. Files that are missing are skipped; files
+ * without crosscheck entries are reported as such; a file crosscheck cannot
+ * parse is SKIPPED with a WARN line, not aborted on — it holds none of our
+ * entries by definition of being unwritable, and one broken file (Cursor's
+ * own, say) must never make the rest of the wiring un-uninstallable.
  */
 const runGlobalRemove = async (env: Env): Promise<CliResult> => {
   const settingsPath = claudeUserSettingsPath(env);
@@ -282,16 +292,17 @@ const runGlobalRemove = async (env: Env): Promise<CliResult> => {
   const cursorHooksPath = join(dir, CURSOR_HOOKS_FILE);
   const cursorMcpPath = join(dir, CURSOR_MCP_FILE);
 
+  const lines: string[] = [];
   const reads = new Map<string, ReadJson & { readonly ok: true }>();
   for (const path of [settingsPath, mcpPath, cursorHooksPath, cursorMcpPath]) {
     const read = await readJsonConfig(path);
     if (!read.ok) {
-      return abortUnparseable(path);
+      lines.push(skippedMessage(path, read.reason));
+      continue;
     }
     reads.set(path, read);
   }
 
-  const lines: string[] = [];
   const removeFrom = async (
     path: string,
     changed: boolean,

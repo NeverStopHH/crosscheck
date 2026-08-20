@@ -220,6 +220,48 @@ describe("crosscheck init --global", () => {
     expect(await readFile(settingsPath, "utf8")).toBe("{ not json");
   });
 
+  test("refuses a parseable non-object user file instead of clobbering it", async () => {
+    // Arrange: valid JSON that is not an object — its content cannot be
+    // preserved through the merge, so the read-and-refuse principle applies
+    // to it exactly as it does to unparseable text (rigor review MEDIUM-1)
+    const { home, env, settingsPath } = await fixture();
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(settingsPath, "[1, 2, 3]\n", "utf8");
+
+    // Act
+    const result = await runCli(GLOBAL_ARGS, env, "/");
+
+    // Assert: aborted, file byte-identical, no backup written
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("not a json object");
+    expect(await readFile(settingsPath, "utf8")).toBe("[1, 2, 3]\n");
+    expect(await backupsIn(join(home, ".claude"))).toEqual([]);
+  });
+
+  test("--remove skips a corrupt file it never wrote and sweeps the rest", async () => {
+    // Arrange: a Claude-only install, then ~/.cursor/mcp.json — a file this
+    // install never touched — goes corrupt (rigor review MEDIUM-2: one
+    // unreadable file must not make the Claude wiring un-uninstallable)
+    const { home, env, settingsPath } = await fixture();
+    await runCli(GLOBAL_ARGS, env, "/");
+    const cursorMcpPath = join(home, ".cursor", "mcp.json");
+    await mkdir(join(home, ".cursor"), { recursive: true });
+    await writeFile(cursorMcpPath, "{ not json", "utf8");
+
+    // Act
+    const removal = await runCli(["init", "--global", "--remove"], env, "/");
+
+    // Assert: the Claude wiring is gone, the corrupt file is named as
+    // skipped and left byte-identical
+    expect(removal.exitCode).toBe(0);
+    expect(removal.stdout).toContain(
+      `removed crosscheck entries from ${settingsPath}`,
+    );
+    expect(removal.stdout).toContain(`${cursorMcpPath} is not valid json — skipped`);
+    expect(await readFile(settingsPath, "utf8")).not.toContain("crosscheck hook");
+    expect(await readFile(cursorMcpPath, "utf8")).toBe("{ not json");
+  });
+
   test("requires a login first — inert machine-wide wiring helps nobody", async () => {
     const home = await makeHome("init-global-nologin");
     paths.push(home);
