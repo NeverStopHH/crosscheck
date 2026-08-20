@@ -1050,6 +1050,41 @@ export const MUTATIONS: readonly Mutation[] = [
       "an agent running in a DIFFERENT repo is flagged as predating this " +
       "repo's hooks — the false positive the cwd gate exists to prevent",
   },
+  {
+    // The deferred-end starvation (CI "Concurrency (repeated)", 2026-08):
+    // SessionStart handed its drain the WHOLE spare while registration
+    // guarantees the spool is never empty, so the ender read zero room at
+    // the end of every start against a slow hub and a deferred end starved
+    // to its age-out — a livelock, not a race. This turns the
+    // spendable-marker probe back into "never", which removes the holdback
+    // exactly as the shipped code lacked it.
+    label: "the drain starves the deferred end it is hosting again",
+    file: `${CORE}/src/spool/reap.ts`,
+    from: "    if (spool.lines.length === 0) {\n      return true;\n    }",
+    to: "",
+    test: `${CONNECTOR}/test/hook-budget.test.ts`,
+    because:
+      "with the holdback gone the flush runs to the hook's spare deadline " +
+      "on every start (registration always spools a work-context record), " +
+      "the ender reads roomMs 0, and a deferred end waits out " +
+      "MAX_SPOOL_AGE_DAYS instead of costing one bounded call",
+  },
+  {
+    // Briefing parity's exactly-once (§10 risk 1 in briefing form): the
+    // deferred briefing must be CLAIMED with a check-and-set that spends
+    // `briefingPending`, or every prompt of a late-registered session
+    // re-delivers the same briefing. This makes the claim always succeed
+    // AND leave the flag set.
+    label: "the deferred briefing is delivered on every prompt, not once",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: "      fresh.briefingPending ? { ...fresh, briefingPending: false } : null,",
+    to: "      ({ ...fresh, briefingPending: true }),",
+    test: `${CONNECTOR}/test/briefing-parity.test.ts`,
+    because:
+      "a late-registered session hears the identical briefing on every " +
+      "prompt for the rest of the session — the repeat-injection noise " +
+      "§10 risk 1 forbids, and the hint path never runs again behind it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -1093,6 +1128,7 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
  * PRINTS: agent-restart.test.ts 1
+ * PRINTS: briefing-parity.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
@@ -1105,7 +1141,7 @@ interface Outcome {
  * PRINTS: hint-render.test.ts 1
  * PRINTS: hint-select.test.ts 3
  * PRINTS: hints.test.ts 2
- * PRINTS: hook-budget.test.ts 1
+ * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: injection.test.ts 2
