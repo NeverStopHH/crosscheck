@@ -50,6 +50,15 @@ npm publish "$(bun packages/cli/scripts/pack-npm.ts | tail -1)"
 No `--access` flag is required (unscoped), no scope, no dependency order —
 there is exactly one package.
 
+**If the publish fails with `E404 Not Found - PUT
+https://registry.npmjs.org/crosscheck-hub`: check your token before anything
+else.** A STALE npm token (expired, or revoked by an npm security sweep)
+yields exactly this misleading 404 on the PUT — it looks like "package does
+not exist" or a naming problem, but the registry is answering 404 to an
+unauthenticated write. The fix is `npm login` again, then re-run the same
+publish command. (This bit us twice; the tarball and the name were fine both
+times.)
+
 ## Verify afterwards (machine without the repo)
 
 ```bash

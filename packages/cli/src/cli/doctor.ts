@@ -75,6 +75,11 @@ import {
 } from "@crosscheck/connector-claude";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { isOwnedCommand } from "@crosscheck/connector-claude";
+import {
+  globalInstallChecks,
+  readGlobalWiring,
+  readProjectWiring,
+} from "./doctor-global.ts";
 import type { CliResult } from "./login.ts";
 
 export type CheckLevel = "PASS" | "WARN" | "FAIL";
@@ -985,6 +990,11 @@ export const runDoctor = async (
   const isConnectedHere =
     identity !== null && (await readRepoConfig(identity.root)) !== null;
   const workspaceChecks = isConnectedHere ? [] : await workspaceRootChecks(cwd);
+  // The user-level install state (finding #11), in BOTH branches: the Ken
+  // shape — a parent-workspace cwd with neither project hooks nor a global
+  // install — lands in the early branch, and leaving the check out of it
+  // would silence the one place it exists for.
+  const globalWiring = await readGlobalWiring(env);
   if (config === null || identity === null) {
     // The MCP checks belong in THIS branch too, and leaving them out was the
     // first version's bug: a developer with no key would have been told the hub
@@ -994,6 +1004,14 @@ export const runDoctor = async (
       configCheck,
       identityCheck,
       ...workspaceChecks,
+      ...globalInstallChecks(
+        globalWiring,
+        identity === null
+          ? null
+          : await readProjectWiring(
+              join(identity.root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
+            ),
+      ),
       check("FAIL", "hub reachable", "no hub configured"),
       ...(identity === null
         ? []
@@ -1067,6 +1085,10 @@ export const runDoctor = async (
     configCheck,
     identityCheck,
     ...workspaceChecks,
+    ...globalInstallChecks(
+      globalWiring,
+      settingsInspection.launcherCommand !== null,
+    ),
     hubCheck,
     timeoutCheck(config.timeoutMs, owner),
     latencyCheck(measurement, config.timeoutMs, owner),

@@ -9,8 +9,14 @@ import {
   INIT_FORCE_STATUSLINE_FLAG,
   INIT_HUB_FLAG,
   INIT_USAGE,
+  parseInitArgs,
   runInit,
 } from "./init.ts";
+import {
+  INIT_GLOBAL_FLAG,
+  INIT_REMOVE_FLAG,
+  runInitGlobal,
+} from "./init-global.ts";
 import { LOGIN_USAGE, readSecretFromStdin, runLogin } from "./login.ts";
 import type { CliResult, SecretReader } from "./login.ts";
 import {
@@ -78,7 +84,12 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
   init: {
     usage: INIT_USAGE,
     valueFlags: [INIT_COMMAND_PREFIX_FLAG, INIT_HUB_FLAG],
-    booleanFlags: [INIT_FORCE_STATUSLINE_FLAG, INIT_CURSOR_FLAG],
+    booleanFlags: [
+      INIT_FORCE_STATUSLINE_FLAG,
+      INIT_CURSOR_FLAG,
+      INIT_GLOBAL_FLAG,
+      INIT_REMOVE_FLAG,
+    ],
   },
   status: { usage: STATUS_USAGE },
   doctor: { usage: DOCTOR_USAGE },
@@ -115,8 +126,35 @@ export const runCli = async (
       };
     case "login":
       return runLogin(rest, env, readSecret);
-    case "init":
+    case "init": {
+      if (rest.includes(INIT_GLOBAL_FLAG)) {
+        const parsed = parseInitArgs(rest);
+        // --hub has no meaning at machine scope: each repo's committed
+        // .crosscheck.json carries its hub url. Refusing beats ignoring.
+        if (parsed.hubUrl !== undefined) {
+          return {
+            stdout: `${INIT_HUB_FLAG} does not apply to ${INIT_GLOBAL_FLAG} — the hub url lives in each repo's committed .crosscheck.json\n${INIT_USAGE}`,
+            exitCode: EXIT_USAGE,
+          };
+        }
+        return runInitGlobal(
+          {
+            commandPrefix: parsed.commandPrefix,
+            forceStatusline: parsed.forceStatusline,
+            cursor: parsed.cursor,
+            remove: rest.includes(INIT_REMOVE_FLAG),
+          },
+          env,
+        );
+      }
+      if (rest.includes(INIT_REMOVE_FLAG)) {
+        return {
+          stdout: `${INIT_REMOVE_FLAG} applies to the user-level install: run \`crosscheck init ${INIT_GLOBAL_FLAG} ${INIT_REMOVE_FLAG}\`\n${INIT_USAGE}`,
+          exitCode: EXIT_USAGE,
+        };
+      }
       return runInit(rest, env, cwd);
+    }
     case "status":
       return runStatus(env, cwd);
     case "doctor":
