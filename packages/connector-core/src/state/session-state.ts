@@ -111,6 +111,15 @@ const SessionStateObjectSchema = z.looseObject({
   summarizerFireCount: z.number().int().min(0).default(0),
   summarizerLastFireTurn: z.number().int().min(0).nullable().default(null),
   summarizerEstimatedTokens: z.number().int().min(0).default(0),
+  /**
+   * Outcome telemetry per fire (trial finding #12's measuring stick): how
+   * many runs answered NONE and how many produced a spooled draft. Booked by
+   * the detached worker, read by the cost surfaces beside the fire count —
+   * fires minus NONEs minus drafts is the drop-or-failure remainder. The
+   * defaults keep every pre-telemetry state file parsing.
+   */
+  summarizerNoneCount: z.number().int().min(0).default(0),
+  summarizerDraftCount: z.number().int().min(0).default(0),
 });
 
 /**
@@ -362,5 +371,7 @@ export const deriveSessionState = (
     summarizerFireCount: 0,
     summarizerLastFireTurn: null,
     summarizerEstimatedTokens: 0,
+    summarizerNoneCount: 0,
+    summarizerDraftCount: 0,
   };
 };

@@ -21,7 +21,9 @@ import {
   isDiagnosisMoment,
   summarizerFireAllowed,
   withStopTurn,
+  withSummarizerDraft,
   withSummarizerFire,
+  withSummarizerNone,
 } from "../src/summarizer/gate.ts";
 import {
   extractSliceText,
@@ -51,6 +53,8 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   summarizerFireCount: 0,
   summarizerLastFireTurn: null,
   summarizerEstimatedTokens: 0,
+  summarizerNoneCount: 0,
+  summarizerDraftCount: 0,
   ...overrides,
 });
 
@@ -158,6 +162,24 @@ describe("debounce and hard cap (DESIGN.md §3: >=2 turns apart, 6/session)", ()
     expect(after.summarizerLastFireTurn).toBe(7);
     expect(after.summarizerEstimatedTokens).toBe(350);
     expect(before.summarizerFireCount).toBe(0);
+  });
+});
+
+describe("summarizer outcome telemetry (trial signal-to-noise instrument)", () => {
+  test("withSummarizerNone counts a NONE answer and never mutates", () => {
+    const before = baseState({ summarizerNoneCount: 1 });
+    const after = withSummarizerNone(before);
+    expect(after.summarizerNoneCount).toBe(2);
+    expect(after.summarizerDraftCount).toBe(0);
+    expect(before.summarizerNoneCount).toBe(1);
+  });
+
+  test("withSummarizerDraft counts a spooled draft and never mutates", () => {
+    const before = baseState({ summarizerDraftCount: 2 });
+    const after = withSummarizerDraft(before);
+    expect(after.summarizerDraftCount).toBe(3);
+    expect(after.summarizerNoneCount).toBe(0);
+    expect(before.summarizerDraftCount).toBe(2);
   });
 });
 

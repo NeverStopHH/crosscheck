@@ -58,6 +58,24 @@ export const normalizeHubUrl = (raw: string): string | null => {
   }
 };
 
+/**
+ * The scheme+host+port a bearer key is safe to travel to, or null. A bearer
+ * token issued by `crosscheck login <hub>` is bound to that hub's ORIGIN
+ * (path is not a credential boundary), so this is what the reportable gate
+ * compares the stored key's home hub against.
+ */
+export const hubOrigin = (raw: string): string | null => {
+  const normalized = normalizeHubUrl(raw);
+  if (normalized === null) {
+    return null;
+  }
+  try {
+    return new URL(normalized).origin;
+  } catch {
+    return null;
+  }
+};
+
 export interface ResolvedConfig {
   readonly home: string;
   readonly hubUrl: string;
@@ -156,6 +174,58 @@ export const loadConfig = async (
       DEFAULT_AGENT_KIND,
     stored,
   };
+};
+
+/**
+ * `loadConfig` for the surfaces that REPORT — hooks, capture engines, the
+ * MCP tools (finding #11). Under a user-level ("global") install the wiring
+ * fires in every directory on the machine, so the §2.1 trust rule must hold
+ * here rather than at the wiring: only a repo whose root carries the
+ * committed `.crosscheck.json` may be reported to. The stored login's hub
+ * URL therefore no longer stands in for a missing repo config on these
+ * surfaces — a merely logged-in developer's session in an unconnected repo
+ * stays silent forever (connector-claude/test/global-wiring-silence.test.ts
+ * pins both directions). CROSSCHECK_HUB_URL keeps standing in: the env
+ * override is an operator's explicit per-process instruction, not ambient
+ * machine state.
+ *
+ * Human-run commands (status, doctor, login, privacy) keep plain
+ * `loadConfig`: they answer questions about the stored state and report
+ * nothing to any hub on a repo's behalf.
+ *
+ * KEY-ORIGIN PIN (finding #11 adversarial follow-up): the hub URL is resolved
+ * from the repo's committed `.crosscheck.json`, but the api key is ALWAYS the
+ * stored login's. Under machine-wide wiring that committed file is
+ * attacker-forgeable — cloning and opening a repo whose `.crosscheck.json`
+ * names an attacker hub would otherwise pair the developer's real stored
+ * bearer key with that foreign origin and leak it (plus session telemetry,
+ * plus a developerId write-back poisoning the stored identity). So a stored
+ * key may only travel to the ORIGIN the developer logged into: when the
+ * resolved hub's origin differs from the stored hub's, the session stays
+ * silent. An explicit env override — CROSSCHECK_HUB_URL or CROSSCHECK_API_KEY
+ * — is the operator's per-process word and bypasses the pin; ambient
+ * stored-key + planted-hub does not.
+ */
+export const loadReportableConfig = async (
+  options: LoadConfigOptions & { readonly repoRoot: string },
+): Promise<ResolvedConfig | null> => {
+  const config = await loadConfig(options);
+  if (config === null) {
+    return null;
+  }
+  const hasEnvHub = options.env["CROSSCHECK_HUB_URL"] !== undefined;
+  if (hasEnvHub === false && (await readRepoConfig(options.repoRoot)) === null) {
+    return null;
+  }
+  const usesStoredKey = options.env["CROSSCHECK_API_KEY"] === undefined;
+  if (hasEnvHub === false && usesStoredKey) {
+    const storedOrigin =
+      config.stored === null ? null : hubOrigin(config.stored.hubUrl);
+    if (storedOrigin === null || storedOrigin !== hubOrigin(config.hubUrl)) {
+      return null;
+    }
+  }
+  return config;
 };
 
 export const isDisabled = (env: Env): boolean =>

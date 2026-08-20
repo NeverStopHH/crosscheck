@@ -16,6 +16,7 @@ import {
   registerTestSession,
   TEST_START_ISO,
   validClaimBody,
+  validClaimEdgeBody,
   validWorkContextBody,
   VALID_SESSION_BODY,
 } from "./helpers.ts";
@@ -57,6 +58,7 @@ const fetchMatches = async (
 /** An old solved tree with the given targets. */
 const solvedTreeRecords = (
   targets: readonly { kind: string; value: string }[],
+  rootOverrides: Record<string, unknown> = {},
 ): readonly Record<string, unknown>[] => [
   recordEnvelope(
     "work_context",
@@ -100,6 +102,7 @@ const solvedTreeRecords = (
       evidenceRefs: ["clm_old_evidence"],
       body: "The ingestion mapping drops the key id on rotation",
       createdAt: OLD_ISO,
+      ...rootOverrides,
     }),
     { sessionId: OLD_SESSION },
   ),
@@ -339,5 +342,81 @@ describe("GET /api/solved-matches", () => {
 
     // Assert
     expect(result.matches).toHaveLength(0);
+  });
+
+  test("a derived root cause never marks a tree solved", async () => {
+    // Arrange: the wire admits derived + likely_root_cause + evidence at the
+    // confidence cap (schema check), but SOLVED is a trust label and every
+    // sibling trust surface (contradictions, similarity-gate, hint selection)
+    // gates on declared provenance — solved must too.
+    const context = await setup();
+    await seed(
+      context,
+      solvedTreeRecords([{ kind: "error_fingerprint", value: FINGERPRINT }], {
+        provenance: "derived",
+        captureMode: "auto",
+        confidence: 0.5,
+      }),
+    );
+    await seed(
+      context,
+      liveContextRecords([{ kind: "error_fingerprint", value: FINGERPRINT }]),
+    );
+
+    // Act
+    const result = await fetchMatches(context.harness, context.developer.apiKey);
+
+    // Assert — a machine's guess is nobody's vouched answer
+    expect(result.matches).toHaveLength(0);
+  });
+
+  test("a derived rival cannot deadlock a declared solved tree", async () => {
+    // Arrange: the peer side of the same gate — a derived rival root cause
+    // joined by a contradicts edge is not a standing answer, so it must not
+    // censor the solved label off a genuinely vouched diagnosis.
+    const context = await setup();
+    await seed(context, [
+      ...solvedTreeRecords([{ kind: "error_fingerprint", value: FINGERPRINT }]),
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id: "clm_derived_rival",
+          workContextId: "wc_solved",
+          authorSessionId: OLD_SESSION,
+          kind: "root_cause",
+          status: "likely_root_cause",
+          provenance: "derived",
+          captureMode: "auto",
+          confidence: 0.5,
+          evidenceRefs: ["clm_old_evidence"],
+          body: "The session cache, not the mapping, serves the stale key",
+          createdAt: OLD_ISO,
+        }),
+        { sessionId: OLD_SESSION },
+      ),
+      recordEnvelope(
+        "claim_edge",
+        validClaimEdgeBody({
+          id: "edge_derived_rival",
+          fromClaimId: "clm_derived_rival",
+          toClaimId: "clm_old_root",
+          kind: "contradicts",
+          authorSessionId: OLD_SESSION,
+          createdAt: OLD_ISO,
+        }),
+        { sessionId: OLD_SESSION },
+      ),
+    ]);
+    await seed(
+      context,
+      liveContextRecords([{ kind: "error_fingerprint", value: FINGERPRINT }]),
+    );
+
+    // Act
+    const result = await fetchMatches(context.harness, context.developer.apiKey);
+
+    // Assert — the declared diagnosis still reads solved
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0]?.workContextId).toBe("wc_solved");
   });
 });

@@ -65,6 +65,8 @@ describe("classifyConnectionError pins the injected shapes", () => {
       [codedError("EPIPE"), "reset"],
       [codedError("Malformed_HTTP_Response", "Malformed_HTTP_Response fetching ..."), "protocol"],
       [codedError("DEPTH_ZERO_SELF_SIGNED_CERT", "self signed certificate"), "tls"],
+      // Bun 1.4.0's https-at-a-plain-http-port shape — the (!) row, un-collapsed.
+      [codedError("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR", "unknown certificate verification error"), "tls"],
       [new Error("SSL routines: wrong version number"), "tls"],
       [new Error("something else entirely"), "unknown"],
       ["not even an error", "unknown"],
@@ -90,6 +92,16 @@ describe("the live runtime still throws the researched shapes", () => {
   // what fetch throws fails here, instead of silently sending every failure
   // down the "unknown" branch. All sockets are loopback and deterministic.
   const LIVE_PROBE_TIMEOUT_MS = 50;
+
+  /**
+   * Bun 1.4.0 un-collapsed the researched table's (!) rows (measured
+   * 2026-08-20): https at a plain-http port now throws its own
+   * certificate-verification shape ("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR",
+   * classified "tls") where ≤ 1.3.x collapsed it into ConnectionRefused.
+   * Each range pins its own researched truth, so the NEXT runtime that
+   * moves the shape fails here again instead of drifting to "unknown".
+   */
+  const TLS_ROW_UNCOLLAPSED = Bun.semver.order(Bun.version, "1.4.0") >= 0;
 
   test("a hung server plus AbortSignal.timeout classifies as timeout", async () => {
     // Arrange
@@ -123,7 +135,7 @@ describe("the live runtime still throws the researched shapes", () => {
     expect(classifyConnectionError(caught)).toBe("refused");
   });
 
-  test("https against a plain-http port collapses to refused — the (!) row", async () => {
+  test("https against a plain-http port — the (!) row, per-runtime truth", async () => {
     // Arrange: a plain http listener; the client insists on TLS at it. This
     // is the one collapsed row a loopback socket CAN pin (the unresolvable-
     // name row would need real DNS) — and the collapse is the entire reason
@@ -141,8 +153,10 @@ describe("the live runtime still throws the researched shapes", () => {
     }
     plain.stop(true);
 
-    // Assert: Bun cannot tell this from refused — not a tls classification
-    expect(classifyConnectionError(caught)).toBe("refused");
+    // Assert: ≤ 1.3 bun cannot tell this from refused; 1.4+ names the tls truth
+    expect(classifyConnectionError(caught)).toBe(
+      TLS_ROW_UNCOLLAPSED ? "tls" : "refused",
+    );
   });
 
   test("non-http bytes on the port classify as protocol", async () => {

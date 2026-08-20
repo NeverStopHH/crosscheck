@@ -8,10 +8,27 @@ import {
   PRE_TOOL_USE_MATCHER,
 } from "@crosscheck/connector-core/constants.ts";
 /**
- * Matches every launcher form `init` resolves on its OWN: the `crosscheck`
- * binary, an absolute path to the entry script (optionally shell-quoted), and
- * the legacy package invocation. Without all three a second `init` would not
- * recognise its own entries and would duplicate them.
+ * Matches every launcher form `init` resolves on its OWN, and ONLY those —
+ * three shapes, each ending in the `hook`/`statusline` subcommand:
+ *
+ *   A) the `crosscheck` binary, bare or as a path BASENAME
+ *      (`/opt/tools/crosscheck statusline`);
+ *   B) the legacy scoped package `@crosscheck/<pkg>`
+ *      (`bunx --bun @crosscheck/cli statusline`);
+ *   C) the entry SCRIPT — a path from a `crosscheck` segment that ENDS in a
+ *      `.js`/`.ts`-family extension, whether the script is named
+ *      `crosscheck.ts` itself (`…/bin/crosscheck.ts hook`) or lives deeper
+ *      (`…/crosscheck/…/index.ts hook`), optionally shell-quoted.
+ *
+ * The trailing extension in form C is REQUIRED, which is the boundary: a
+ * foreign tool that merely lives in a `crosscheck/` DIRECTORY but is not a
+ * JS/TS script — `/usr/lib/crosscheck/run hook`, `/opt/crosscheck/runner.sh
+ * hook` — is NOT ours, and since `--remove` now deletes owned entries from
+ * the USER's own ~/.claude/settings.json (not just de-duplicates on
+ * re-init), a false positive there would strip a stranger's hook. The
+ * earlier `(?:\.[cm]?[jt]s)?` made the extension OPTIONAL, so
+ * `crosscheck/run hook` matched; requiring it on the path's final component
+ * closes that while still matching the `crosscheck.ts` entry file.
  *
  * A `--command-prefix` that does not name crosscheck falls outside it, and has
  * to: an operator's arbitrary launcher cannot be recognised by pattern. Such an
@@ -19,7 +36,7 @@ import {
  * `doctor` reports those hooks as unregistered.
  */
 const OWNED_COMMAND_PATTERN =
-  /(^|[\s"'/])@?crosscheck(?:\/[\w.-]+)*(?:\.[cm]?[jt]s)?["']?\s+(?:hook|statusline)\b/;
+  /(?:(?:^|[\s"'/])crosscheck|(?:^|[\s"'])@crosscheck\/[\w.-]+|(?:^|[\s"'/])@?crosscheck(?:\/[\w.-]+)*\.[cm]?[jt]s)["']?\s+(?:hook|statusline)\b/;
 
 export interface HookEntry {
   readonly type: string;
@@ -134,6 +151,106 @@ export const mergeClaudeSettings = (
     statuslineInstalled: statusline.installed,
     foreignStatuslineCommand: statusline.foreign,
   };
+};
+
+export interface RemovalResult {
+  readonly settings: Record<string, unknown>;
+  /** False = nothing crosscheck-owned was found; the input passes through. */
+  readonly changed: boolean;
+}
+
+/**
+ * The inverse of `mergeClaudeSettings`, for `init --global --remove`
+ * (finding #11): strips exactly what a crosscheck init wrote and leaves
+ * every foreign byte where it was. Pure, order-preserving — the object is
+ * rebuilt by walking the existing entries in place, never delete-then-
+ * append, so a JSON render of the result is byte-identical to the original
+ * render everywhere crosscheck never touched.
+ *
+ * The emptiness rules mirror what install CREATED rather than guessing at
+ * history: an event array that changed and ended empty held only our
+ * entries, so the key goes; one that was already empty is untouched and
+ * stays. The `hooks` record itself goes only when it both changed and ended
+ * empty. A statusLine goes only when `isOwnedCommand` says it is ours — a
+ * foreign one that `--force-statusline` replaced is NOT restored (the
+ * force was the operator's choice, and the backup beside the file is the
+ * recovery path); an untouched foreign one stays byte-identical.
+ */
+export const removeClaudeSettings = (
+  existing: Record<string, unknown>,
+): RemovalResult => {
+  let changed = false;
+  const settings = Object.entries(existing).reduce<Record<string, unknown>>(
+    (kept, [key, value]) => {
+      if (key === "hooks") {
+        const { hooks, hooksChanged } = strippedHooks(asRecord(value));
+        changed = changed || hooksChanged;
+        return hooksChanged && Object.keys(hooks).length === 0
+          ? kept
+          : { ...kept, [key]: hooksChanged ? hooks : value };
+      }
+      if (key === "statusLine" && isOwnedCommand(asRecord(value)["command"])) {
+        changed = true;
+        return kept;
+      }
+      return { ...kept, [key]: value };
+    },
+    {},
+  );
+  return { settings, changed };
+};
+
+/**
+ * One event's groups with the owned hooks stripped. Change detection is
+ * per HOOK, not per group count: a group mixing a foreign hook with an
+ * owned one keeps its length while losing content, and a count comparison
+ * would return the original — owned entry included — as "unchanged".
+ */
+const strippedEvent = (
+  groups: unknown,
+): { readonly value: unknown; readonly eventChanged: boolean } => {
+  if (!Array.isArray(groups)) {
+    return { value: groups, eventChanged: false };
+  }
+  let eventChanged = false;
+  const preserved = groups.flatMap((item) => {
+    // Non-object entries are foreign junk this removal has no opinion on:
+    // preserved verbatim, never counted as a change.
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return [item];
+    }
+    const group = item as Record<string, unknown>;
+    const hooks = Array.isArray(group["hooks"]) ? group["hooks"] : [];
+    const kept = hooks.filter(
+      (hook) => !isOwnedCommand(asRecord(hook)["command"]),
+    );
+    if (kept.length === hooks.length) {
+      return [group];
+    }
+    eventChanged = true;
+    return kept.length === 0 ? [] : [{ ...group, hooks: kept }];
+  });
+  return { value: eventChanged ? preserved : groups, eventChanged };
+};
+
+const strippedHooks = (
+  existingHooks: Record<string, unknown>,
+): { readonly hooks: Record<string, unknown>; readonly hooksChanged: boolean } => {
+  let hooksChanged = false;
+  const hooks = Object.entries(existingHooks).reduce<Record<string, unknown>>(
+    (kept, [event, groups]) => {
+      const { value, eventChanged } = strippedEvent(groups);
+      hooksChanged = hooksChanged || eventChanged;
+      if (!eventChanged) {
+        return { ...kept, [event]: groups };
+      }
+      return Array.isArray(value) && value.length === 0
+        ? kept
+        : { ...kept, [event]: value };
+    },
+    {},
+  );
+  return { hooks, hooksChanged };
 };
 
 /**

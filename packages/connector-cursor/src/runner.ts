@@ -35,7 +35,7 @@ import {
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import {
   isDisabled,
-  loadConfig,
+  loadReportableConfig,
 } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
 import { findConnectedRepoRootForPaths } from "@crosscheck/connector-core/config/connected-repo.ts";
@@ -44,7 +44,6 @@ import {
   crosscheckHome,
   repoKey,
 } from "@crosscheck/connector-core/config/paths.ts";
-import { readRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
@@ -129,7 +128,10 @@ const resolveCursorRepo = async (
 ): Promise<ResolvedCursorRepo | null> => {
   const identity = await resolveRepoIdentity(workspaceRoot);
   if (identity !== null) {
-    const config = await loadConfig({
+    // The finding-#11 gate: under a user-level hooks.json (~/.cursor/) this
+    // runs in every workspace, so a stored login must not stand in for the
+    // missing committed config (core config.ts `loadReportableConfig`).
+    const config = await loadReportableConfig({
       env,
       repoRoot: identity.root,
       defaultAgentKind: agentKind,
@@ -146,10 +148,14 @@ const resolveCursorRepo = async (
     return null;
   }
   const derived = await resolveRepoIdentity(derivedRoot);
-  if (derived === null || (await readRepoConfig(derived.root)) === null) {
+  if (derived === null) {
     return null;
   }
-  const config = await loadConfig({
+  // loadReportableConfig, NOT bare loadConfig: this rung must also honour the
+  // finding-#11 gate AND its key-origin pin (core config.ts), or a planted
+  // .crosscheck.json at the touched file's repo redirects the stored key
+  // exactly where the workspace-root rung's pin refused it.
+  const config = await loadReportableConfig({
     env,
     repoRoot: derived.root,
     defaultAgentKind: agentKind,

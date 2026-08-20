@@ -50,8 +50,7 @@
  * floor. Only a park that can last FOREVER while holding a shared thread —
  * an idle read — was the defect.
  */
-import { close as fsClose, write as fsWrite } from "node:fs";
-import { open as openPromise } from "node:fs/promises";
+import { close as fsClose, open as fsOpen, write as fsWrite } from "node:fs";
 import { Worker } from "node:worker_threads";
 
 import type { ByteSink } from "./pump.ts";
@@ -82,11 +81,27 @@ const FD_READER_WORKER_URL = new URL("./fd-reader.worker.ts", import.meta.url);
 const isEagain = (error: unknown): boolean =>
   (error as NodeJS.ErrnoException | null)?.code === "EAGAIN";
 
-/** Open a path (FIFO ends included — these BLOCK until the peer opens). */
-export const openFd = async (path: string, flags: "r" | "w"): Promise<number> => {
-  const handle = await openPromise(path, flags);
-  return handle.fd;
-};
+/**
+ * Open a path (FIFO ends included — these BLOCK until the peer opens). The
+ * CALLBACK form of node:fs.open on purpose, never fs/promises: this layer
+ * owns fds by NUMBER (closeFd closes them), and fs/promises would wrap the
+ * fd in a FileHandle nobody keeps — a second owner whose GC reap closes the
+ * fd underneath the live stream built on it, and which Bun 1.4.0 turned
+ * from a deprecation warning into a thrown error (bun test v1.4.0 went red
+ * in backpressure.test.ts exactly this way; ≤ 1.3.x only warned, which is
+ * why local suites stayed green). Same shared-pool blocking open either
+ * way — only the wrapper object is gone.
+ */
+export const openFd = (path: string, flags: "r" | "w"): Promise<number> =>
+  new Promise((resolve, reject) => {
+    fsOpen(path, flags, (error, fd) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(fd);
+    });
+  });
 
 /** What the reader targets: an fd we already hold, or a path its thread opens. */
 export type FdReaderTarget =

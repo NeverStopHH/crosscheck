@@ -30,7 +30,7 @@ import {
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
-import { isDisabled, loadConfig } from "@crosscheck/connector-core/config/config.ts";
+import { isDisabled, loadReportableConfig } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -323,7 +323,10 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       logger.line(`capture session=${acpSessionId} off (not a repo)`);
       return;
     }
-    const config = await loadConfig({
+    // The finding-#11 gate (core config.ts `loadReportableConfig`): a stored
+    // login must not stand in for the missing committed .crosscheck.json —
+    // the proxy wraps agents anywhere, and only connected repos may report.
+    const config = await loadReportableConfig({
       env: options.env,
       repoRoot: identity.root,
       defaultAgentKind: options.agentKindFlag ?? acpAgentKind(agentName ?? undefined),

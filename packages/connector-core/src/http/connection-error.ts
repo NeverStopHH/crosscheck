@@ -27,6 +27,15 @@
  * Hooks never refine: no extra I/O on a fail-open path. Node-style codes
  * (ECONNREFUSED, ENOTFOUND, EAI_AGAIN, name "DNSException") are matched too,
  * so a runtime that switches to them reclassifies instead of degrading.
+ *
+ * RE-MEASURED ON BUN 1.4.0 (2026-08-20): both (!) rows un-collapsed. An
+ * unresolvable hostname now throws node-style ENOTFOUND and https against a
+ * plain-http port throws code "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR" —
+ * shapes the node-style branch and the tls vocabulary below already
+ * classify as "dns" and "tls", which is exactly the switch the paragraph
+ * above anticipated. The refinement keeps earning its keep on every ≤ 1.3
+ * runtime, where the collapse is still real; the live pins in
+ * test/connection-error.test.ts assert each runtime's own researched truth.
  */
 import { lookup } from "node:dns/promises";
 

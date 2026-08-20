@@ -13,7 +13,7 @@
  * launch would keep saying so for the rest of the session.
  */
 import { MCP_TIMEOUT_MS } from "../constants.ts";
-import { isDisabled, loadConfig } from "../config/config.ts";
+import { isDisabled, loadConfig, loadReportableConfig } from "../config/config.ts";
 import type { ResolvedConfig } from "../config/config.ts";
 import { repoKey } from "../config/paths.ts";
 import type { Env } from "../config/paths.ts";
@@ -51,14 +51,26 @@ export const prepareMcp = async (env: Env, cwd: string): Promise<McpSetup> => {
         "These tools identify work by git remote and only run inside a checkout.",
     };
   }
-  const config = await loadConfig({ env, repoRoot: identity.root });
+  // The finding-#11 gate, with the honest sentence a tool call deserves:
+  // under a user-scope MCP registration the tools exist in EVERY repo, and
+  // an unconnected one must answer with the reason and the remedy — never a
+  // crash, never a report to a hub this repo never opted into (§2.1). The
+  // two states are told apart so the remedy is the right one: no
+  // credentials at all vs. credentials without the committed repo config.
+  const config = await loadReportableConfig({ env, repoRoot: identity.root });
   if (config === null) {
+    const hasCredentials =
+      (await loadConfig({ env, repoRoot: identity.root })) !== null;
     return {
       ok: false,
-      message:
-        "crosscheck has no hub url or api key for this repo. Run " +
-        "crosscheck login with your hub url and then crosscheck init, then restart " +
-        "the session. crosscheck doctor says which of the two is missing.",
+      message: hasCredentials
+        ? `${identity.root} is not connected to a hub: it has no committed ` +
+          ".crosscheck.json, and only connected repos ever report. Run " +
+          "crosscheck init in this repo to connect it (the file is meant to " +
+          "be committed), then restart the session."
+        : "crosscheck has no hub url or api key for this repo. Run " +
+          "crosscheck login with your hub url and then crosscheck init, then restart " +
+          "the session. crosscheck doctor says which of the two is missing.",
     };
   }
   const now = (): Date => new Date();

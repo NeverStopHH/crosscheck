@@ -23,7 +23,7 @@ import {
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import {
-  isDiagnosisMoment,
+  isCaptureMoment,
   summarizerFireAllowed,
   withStopTurn,
   withSummarizerFire,
@@ -140,7 +140,7 @@ export const handleStop = async (
     transcriptPath !== undefined && summarizerFireAllowed(withStopTurn(state));
   const slice = couldFire ? await readTurnSlice(transcriptPath) : null;
   const sliceText = slice === null ? "" : extractSliceText(slice.raw);
-  const wantsFire = sliceText.length > 0 && isDiagnosisMoment(sliceText);
+  const wantsFire = sliceText.length > 0 && isCaptureMoment(sliceText);
 
   // One locked read-transform-write: the turn is counted unconditionally,
   // and the fire is re-decided on the FRESH state so a racing sibling can

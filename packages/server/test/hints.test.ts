@@ -504,6 +504,57 @@ describe("candidate pool integrity", () => {
       "clm_settled_late",
     );
   });
+
+  test("a flood of newer derived drafts cannot evict declared substance from the window", async () => {
+    // Arrange — the conclusion summarizer's whole purpose is more derived
+    // drafts per context, and the declared-only injection gate runs CLIENT
+    // side, after this window: a whole window of newer drafts must not push
+    // the one declared evidence-backed claim out of it, or the reader gets a
+    // pointer where substance existed.
+    const { harness, nick, robin } = await setupTwoDevelopers();
+    const drafts = Array.from(
+      { length: HINT_MAX_CLAIMS_PER_CONTEXT },
+      (_, index) =>
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: `clm_draft_${String(index).padStart(2, "0")}`,
+            provenance: "derived",
+            captureMode: "auto",
+            confidence: 0.4,
+            body: `Auto-drafted observation number ${String(index)}`,
+            createdAt: LATER_ISO,
+          }),
+        ),
+    );
+    const seeded = await postRecords(harness, nick, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_declared_substance",
+            kind: "root_cause",
+            status: "likely_root_cause",
+            evidenceRefs: ["clm_01"],
+            body: "Declared and evidence-backed: the rotated key never propagated",
+          }),
+        ),
+        ...drafts,
+      ],
+    });
+    expect(seeded.data?.accepted).toBe(HINT_MAX_CLAIMS_PER_CONTEXT + 1);
+
+    // Act
+    const result = await fetchCandidates(harness, robin, "why does refresh.ts 500");
+
+    // Assert — declared substance keeps its window slot; drafts yield first
+    const candidate = result.candidates.find(
+      (row) => row.workContext.id === WORK_CONTEXT_ID,
+    );
+    expect(candidate?.claims.map((claim) => claim.id)).toContain(
+      "clm_declared_substance",
+    );
+  });
 });
 
 describe("GET /api/hints/tripwire", () => {

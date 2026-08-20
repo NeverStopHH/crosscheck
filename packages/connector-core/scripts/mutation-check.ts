@@ -1103,6 +1103,104 @@ export const MUTATIONS: readonly Mutation[] = [
       "prompt for the rest of the session — the repeat-injection noise " +
       "§10 risk 1 forbids, and the hint path never runs again behind it",
   },
+  // The six below guard the conclusion wing of the Tier-1 gate (trial
+  // finding #12): each deletes ONE named predicate from the fire condition,
+  // and the conclusion corpus must go red on exactly the fixture whose
+  // loadBearing field names it — a fixture that stays green under its own
+  // predicate's deletion is over-determined and pins nothing. A seventh
+  // (after them) reverts the STOP-HOOK WIRING itself to the diagnosis-only
+  // gate — the exact un-widening that WAS finding #12.
+  {
+    label: "the gate stops hearing declared verdicts",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from:
+      "  (hasVerdictLanguage(sliceText) ||\n" +
+      "    hasRejectionLanguage(sliceText) ||\n",
+    to: "  (hasRejectionLanguage(sliceText) ||\n",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "a whole-branch gate verdict after a full suite run — the moment the " +
+      "live trial lost four times in one day — passes through unseen again; " +
+      "branch_gate_verdict and version_bump_merge both go silent",
+  },
+  {
+    label: "the gate stops hearing ruled-out approaches",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from:
+      "    hasRejectionLanguage(sliceText) ||\n    hasSuiteFlip(sliceText) ||\n",
+    to: "    hasSuiteFlip(sliceText) ||\n",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "negative knowledge is the SAFEST knowledge to share (§4: negatives " +
+      "privileged) and the first to be lost: fixer_disposition_ruled_out " +
+      "goes silent and a dead end gets re-walked by the next teammate",
+  },
+  {
+    label: "a suite flipping red to green stops being a conclusion",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from:
+      "    hasSuiteFlip(sliceText) ||\n    hasReviewFindingSignal(sliceText)) &&\n",
+    to: "    hasReviewFindingSignal(sliceText)) &&\n",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "a fix proven by the suite itself — red output and green output in " +
+      "one turn, no verdict prose anywhere — is the conclusion moment " +
+      "nobody writes down; suite_flip_red_green goes silent",
+  },
+  {
+    label: "a verdict-free findings list stops being a conclusion",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from: "    hasReviewFindingSignal(sliceText)) &&\n",
+    to: "    false) &&\n",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "severity labels + defect statements ARE the modal output of deep " +
+      "review tooling, and v1 heard them only when the prose happened to " +
+      "add verdict vocabulary (fix-round recall MEDIUM); pure_findings_list " +
+      "goes silent and the headline class of trial finding #12 is lost " +
+      "again in its most common surface form",
+  },
+  {
+    label: "review findings stop anchoring the conclusion gate",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from: "    hasReviewFindingShape(sliceText) ||\n",
+    to: "",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "an adversarial review that found a CRITICAL — no test command, no " +
+      "error output, no commit in the slice — has only its finding shape " +
+      "to anchor on; adversarial_review_critical goes silent (and " +
+      "pure_findings_list with it, whose anchor is the same shape), which " +
+      "is trial finding #12's headline loss verbatim",
+  },
+  {
+    label: "commit and merge boundaries stop anchoring the conclusion gate",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from: "    hasCommitBoundary(sliceText));",
+    to: "    false);",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "a release commit with its decision stated beside it — work merged " +
+      "and shipped, the day's most durable conclusion — has only the " +
+      "commit boundary as its anchor; version_bump_merge goes silent",
+  },
+  {
+    // The wiring itself, at trial finding #12's actual fix point: stop.ts
+    // consults isCaptureMoment (both wings), and this reverts it to the
+    // diagnosis-only gate that lost a full day of conclusions. The mutated
+    // identifier is not imported there, so the un-widened hook throws where
+    // v1 stayed silent — either way the conclusion-only transcript's fire
+    // bookkeeping reads 0 and the guard goes red.
+    label: "the stop hook un-widens to the diagnosis-only gate",
+    file: `${CONNECTOR}/src/hooks/stop.ts`,
+    from: "  const wantsFire = sliceText.length > 0 && isCaptureMoment(sliceText);\n",
+    to: "  const wantsFire = sliceText.length > 0 && isDiagnosisMoment(sliceText);\n",
+    test: `${CONNECTOR}/test/stop-hook.test.ts`,
+    because:
+      "the widened gate exists but nothing calls it — trial finding #12 " +
+      "verbatim, one identifier away: a verdict beside a green run spends " +
+      "no fire slot and the day's conclusions never reach the hub",
+  },
   {
     // Briefing parity's CURSOR half (races review finding 1): the debt is
     // recorded by exactly one line — the recovery register's
@@ -1119,6 +1217,86 @@ export const MUTATIONS: readonly Mutation[] = [
       "recovery stops recording the briefing debt, so no later hook ever " +
       "pays it — a parent-workspace-shaped cursor session is back to " +
       "losing the one injection that tells it who else is working here",
+  },
+  {
+    // The finding-#11 trust gate (DESIGN.md §2.1 under a global install):
+    // reporting surfaces resolve config through loadReportableConfig, which
+    // refuses a stored login standing in for the missing committed
+    // .crosscheck.json. This deletes the refusal, re-opening the hole the
+    // gate exists for: with user-level hooks firing in every directory, a
+    // merely logged-in developer's session in ANY git repo reports to their
+    // stored hub.
+    label: "a stored login reports from repos without the committed config",
+    file: `${CORE}/src/config/config.ts`,
+    from:
+      "  if (hasEnvHub === false && (await readRepoConfig(options.repoRoot)) === null) {\n" +
+      "    return null;\n" +
+      "  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/global-wiring-silence.test.ts`,
+    because:
+      "an unconnected repo stops being silent: under machine-wide wiring " +
+      "every git repo a logged-in developer touches registers sessions and " +
+      "spools captures to their stored hub — the exact trust violation " +
+      "§2.1 calls the disaster this section exists to prevent",
+  },
+  {
+    // The finding-#11 key-origin pin (adversarial follow-up): under
+    // machine-wide wiring a repo's committed .crosscheck.json is
+    // attacker-forgeable, so the stored bearer key may travel ONLY to the
+    // origin the developer logged into. This deletes the origin check,
+    // re-opening the credential-exfiltration hole: a planted .crosscheck.json
+    // naming an attacker hub pairs the stored key with that foreign origin.
+    label: "a planted repo config redirects the stored key to a foreign hub",
+    file: `${CORE}/src/config/config.ts`,
+    from:
+      "  const usesStoredKey = options.env[\"CROSSCHECK_API_KEY\"] === undefined;\n" +
+      "  if (hasEnvHub === false && usesStoredKey) {\n" +
+      "    const storedOrigin =\n" +
+      "      config.stored === null ? null : hubOrigin(config.stored.hubUrl);\n" +
+      "    if (storedOrigin === null || storedOrigin !== hubOrigin(config.hubUrl)) {\n" +
+      "      return null;\n" +
+      "    }\n" +
+      "  }\n",
+    to: "",
+    test: `${CONNECTOR}/test/global-wiring-silence.test.ts`,
+    because:
+      "the stored key leaves for an attacker-named origin: a developer who " +
+      "clones and opens a repo carrying a planted .crosscheck.json sends " +
+      "their real hub bearer token (and session telemetry) to the attacker's " +
+      "hub, and the register write-back poisons their stored identity",
+  },
+  {
+    // The surgical strip behind `init --global --remove`: a group mixing a
+    // foreign hook with an owned one must lose ONLY ours. This makes the
+    // strip drop the whole group instead, deleting the user's own hook
+    // with it — the clobber class the removal property exists to forbid.
+    label: "removal deletes a foreign hook that shares a group with ours",
+    file: `${CONNECTOR}/src/cli/settings-merge.ts`,
+    from: "    return kept.length === 0 ? [] : [{ ...group, hooks: kept }];",
+    to: "    return [];",
+    test: `${CONNECTOR}/test/settings-merge-removal.test.ts`,
+    because:
+      "uninstalling crosscheck silently deletes the user's own hooks " +
+      "wherever they shared an event group — the never-clobber promise " +
+      "broken exactly where nobody re-reads the file to notice",
+  },
+  {
+    // Double wiring's exactly-once (finding #11): a project and a global
+    // install can BOTH run the same hook event when their launcher
+    // spellings differ. The seen-set check is what makes the second fire
+    // append nothing; without it every double-wired edit spools duplicate
+    // targets.
+    label: "a double-wired post-tool-use captures the same file twice",
+    file: `${CORE}/src/flows/capture-targets.ts`,
+    from: "    if (containsSecret(relativePath) || seen.has(relativePath)) {",
+    to: "    if (containsSecret(relativePath)) {",
+    test: `${CONNECTOR}/test/double-wiring.test.ts`,
+    because:
+      "capture stops being exactly-once under double wiring: every edit in " +
+      "a repo carrying both installs spools its targets twice, inflating " +
+      "spool depth and hub ingest for exactly the users the global install " +
+      "exists to help",
   },
 ];
 
@@ -1166,10 +1344,13 @@ interface Outcome {
  * PRINTS: briefing-parity.test.ts 2
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
+ * PRINTS: conclusion-corpus.test.ts 6
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
  * PRINTS: doctor-latency.test.ts 1
+ * PRINTS: double-wiring.test.ts 1
+ * PRINTS: global-wiring-silence.test.ts 2
  * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2
  * PRINTS: hint-flow.test.ts 2
@@ -1194,8 +1375,10 @@ interface Outcome {
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search.test.ts 3
  * PRINTS: sessions.test.ts 1
+ * PRINTS: settings-merge-removal.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1
+ * PRINTS: stop-hook.test.ts 1
  * PRINTS: stop-latency.test.ts 1
  * PRINTS: transparency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1

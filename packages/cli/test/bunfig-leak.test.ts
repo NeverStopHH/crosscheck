@@ -25,6 +25,16 @@
  * processes. Other bun processes in that repo still print THEIR headers, and
  * connectors older than this fix still leak — doctor's WARN (kept) is what
  * names the file and advises rotation.
+ *
+ * RE-MEASURED ON BUN 1.4.0 (2026-08-20): verbose logging still fires under
+ * the same bunfig, but the runtime now prints header values as
+ * `Authorization: Bearer [redacted]` — the leak is fixed upstream. The
+ * control therefore pins per-runtime truth: pre-1.4 the marker must appear
+ * (the mechanism the shield defuses), 1.4+ the verbose line must carry the
+ * redaction and the marker must be absent — a bun that ever un-redacts goes
+ * red here instead of silently reopening the hole. The shield stays either
+ * way: fleets on ≤ 1.3.x runtimes are exactly where `verbose: false` keeps
+ * the hooks clean.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
@@ -37,6 +47,10 @@ const CONTROL_PATH = join(import.meta.dir, "fixtures", "verbose-leak-control.ts"
 
 const SECRET_KEY = "cx_secret_marker_key";
 const DEBUG_BUNFIG = 'logLevel = "debug"\n';
+
+/** Bun 1.4.0 redacts header values in verbose fetch logs (header: re-measured). */
+const RUNTIME_REDACTS_VERBOSE_HEADERS =
+  Bun.semver.order(Bun.version, "1.4.0") >= 0;
 
 const paths: string[] = [];
 
@@ -86,7 +100,7 @@ const acceptingHub = (): ReturnType<typeof Bun.serve> =>
   });
 
 describe("a debug bunfig in the repo must not leak the api key", () => {
-  test("control: an unshielded fetch in this cwd DOES leak its header", async () => {
+  test("control: an unshielded fetch in this cwd hits verbose header logging", async () => {
     // Arrange: the fixture — without this control going red-hot, the main
     // assertion below could pass vacuously on a bun that stopped reading
     // ./bunfig.toml
@@ -104,9 +118,15 @@ describe("a debug bunfig in the repo must not leak the api key", () => {
     );
     server.stop(true);
 
-    // Assert: the mechanism is live on this runtime
+    // Assert: the mechanism is live on this runtime, and it prints exactly
+    // what this runtime was measured to print (header: re-measured on 1.4.0)
     expect(outcome.exitCode).toBe(0);
-    expect(outcome.stderr).toContain("cx_control_marker_key");
+    if (RUNTIME_REDACTS_VERBOSE_HEADERS) {
+      expect(outcome.stderr).toContain("Authorization: Bearer [redacted]");
+      expect(outcome.stderr).not.toContain("cx_control_marker_key");
+    } else {
+      expect(outcome.stderr).toContain("cx_control_marker_key");
+    }
   });
 
   test("a hook invocation under the same bunfig never prints the key", async () => {

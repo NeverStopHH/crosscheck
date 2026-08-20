@@ -478,6 +478,8 @@ const probeSessionState = (
   summarizerFireCount: 0,
   summarizerLastFireTurn: null,
   summarizerEstimatedTokens: 0,
+  summarizerNoneCount: 0,
+  summarizerDraftCount: 0,
 });
 
 interface Observation {

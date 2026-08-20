@@ -17,13 +17,20 @@ export {
 export {
   buildSettingsPlan,
   mergeClaudeSettings,
+  removeClaudeSettings,
   isOwnedCommand,
 } from "./cli/settings-merge.ts";
 export type {
   MatcherGroup,
   MergeResult,
+  RemovalResult,
   SettingsPlan,
 } from "./cli/settings-merge.ts";
+export {
+  claudeUserDir,
+  claudeUserMcpPath,
+  claudeUserSettingsPath,
+} from "./cli/user-paths.ts";
 
 // The agent-agnostic core, re-exported so this package's surface is unchanged
 // by the Block 1 extraction (DESIGN-agent-agnostic.md §1.2): every name that
