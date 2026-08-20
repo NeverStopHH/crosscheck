@@ -36,6 +36,7 @@ import {
 } from "../db/schema.ts";
 import { presenceCutoff } from "./presence.ts";
 import { searchWorkContexts } from "./search.ts";
+import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import type { SearchResultKind, SearchTier } from "./search.ts";
 import type { Db } from "../db/client.ts";
@@ -167,9 +168,24 @@ const listClaimsForContext = async (
         notMutedCondition(readerDeveloperId, agentSessions.developerId),
       ),
     )
-    .orderBy(desc(claims.createdAt))
+    // Window MEMBERSHIP prefers declared rows: the conclusion summarizer's
+    // whole purpose is more derived drafts per context, and the declared-only
+    // injection gate runs client side AFTER this bound — a flood of newer
+    // drafts must not evict the declared substance a reader could have been
+    // handed, or hints degrade to pointers where evidence existed. Membership
+    // only: the returned list is re-sorted newest-first below, so consumers
+    // still see the hub's claim order, and the pointer claimCount still
+    // counts every row in the window whatever its provenance.
+    .orderBy(
+      sql`(${claims.provenance} = ${DECLARED_PROVENANCE}) desc`,
+      desc(claims.createdAt),
+    )
     .limit(HINT_MAX_CLAIMS_PER_CONTEXT);
-  return rows.map((row) => ({
+  return [...rows]
+    .sort(
+      (a, b) => b.claim.createdAt.getTime() - a.claim.createdAt.getTime(),
+    )
+    .map((row) => ({
     id: row.claim.id,
     workContextId: row.claim.workContextId,
     kind: row.claim.kind,

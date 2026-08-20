@@ -1103,11 +1103,13 @@ export const MUTATIONS: readonly Mutation[] = [
       "prompt for the rest of the session — the repeat-injection noise " +
       "§10 risk 1 forbids, and the hint path never runs again behind it",
   },
-  // The five below guard the conclusion wing of the Tier-1 gate (trial
+  // The six below guard the conclusion wing of the Tier-1 gate (trial
   // finding #12): each deletes ONE named predicate from the fire condition,
   // and the conclusion corpus must go red on exactly the fixture whose
   // loadBearing field names it — a fixture that stays green under its own
-  // predicate's deletion is over-determined and pins nothing.
+  // predicate's deletion is over-determined and pins nothing. A seventh
+  // (after them) reverts the STOP-HOOK WIRING itself to the diagnosis-only
+  // gate — the exact un-widening that WAS finding #12.
   {
     label: "the gate stops hearing declared verdicts",
     file: `${CONNECTOR}/src/summarizer/gate.ts`,
@@ -1125,8 +1127,8 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "the gate stops hearing ruled-out approaches",
     file: `${CONNECTOR}/src/summarizer/gate.ts`,
     from:
-      "    hasRejectionLanguage(sliceText) ||\n    hasSuiteFlip(sliceText)) &&\n",
-    to: "    hasSuiteFlip(sliceText)) &&\n",
+      "    hasRejectionLanguage(sliceText) ||\n    hasSuiteFlip(sliceText) ||\n",
+    to: "    hasSuiteFlip(sliceText) ||\n",
     test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
     because:
       "negative knowledge is the SAFEST knowledge to share (§4: negatives " +
@@ -1136,13 +1138,27 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "a suite flipping red to green stops being a conclusion",
     file: `${CONNECTOR}/src/summarizer/gate.ts`,
-    from: "    hasSuiteFlip(sliceText)) &&\n",
-    to: "    false) &&\n",
+    from:
+      "    hasSuiteFlip(sliceText) ||\n    hasReviewFindingSignal(sliceText)) &&\n",
+    to: "    hasReviewFindingSignal(sliceText)) &&\n",
     test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
     because:
       "a fix proven by the suite itself — red output and green output in " +
       "one turn, no verdict prose anywhere — is the conclusion moment " +
       "nobody writes down; suite_flip_red_green goes silent",
+  },
+  {
+    label: "a verdict-free findings list stops being a conclusion",
+    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    from: "    hasReviewFindingSignal(sliceText)) &&\n",
+    to: "    false) &&\n",
+    test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
+    because:
+      "severity labels + defect statements ARE the modal output of deep " +
+      "review tooling, and v1 heard them only when the prose happened to " +
+      "add verdict vocabulary (fix-round recall MEDIUM); pure_findings_list " +
+      "goes silent and the headline class of trial finding #12 is lost " +
+      "again in its most common surface form",
   },
   {
     label: "review findings stop anchoring the conclusion gate",
@@ -1153,8 +1169,9 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "an adversarial review that found a CRITICAL — no test command, no " +
       "error output, no commit in the slice — has only its finding shape " +
-      "to anchor on; adversarial_review_critical goes silent, which is " +
-      "trial finding #12's headline loss verbatim",
+      "to anchor on; adversarial_review_critical goes silent (and " +
+      "pure_findings_list with it, whose anchor is the same shape), which " +
+      "is trial finding #12's headline loss verbatim",
   },
   {
     label: "commit and merge boundaries stop anchoring the conclusion gate",
@@ -1166,6 +1183,23 @@ export const MUTATIONS: readonly Mutation[] = [
       "a release commit with its decision stated beside it — work merged " +
       "and shipped, the day's most durable conclusion — has only the " +
       "commit boundary as its anchor; version_bump_merge goes silent",
+  },
+  {
+    // The wiring itself, at trial finding #12's actual fix point: stop.ts
+    // consults isCaptureMoment (both wings), and this reverts it to the
+    // diagnosis-only gate that lost a full day of conclusions. The mutated
+    // identifier is not imported there, so the un-widened hook throws where
+    // v1 stayed silent — either way the conclusion-only transcript's fire
+    // bookkeeping reads 0 and the guard goes red.
+    label: "the stop hook un-widens to the diagnosis-only gate",
+    file: `${CONNECTOR}/src/hooks/stop.ts`,
+    from: "  const wantsFire = sliceText.length > 0 && isCaptureMoment(sliceText);\n",
+    to: "  const wantsFire = sliceText.length > 0 && isDiagnosisMoment(sliceText);\n",
+    test: `${CONNECTOR}/test/stop-hook.test.ts`,
+    because:
+      "the widened gate exists but nothing calls it — trial finding #12 " +
+      "verbatim, one identifier away: a verdict beside a green run spends " +
+      "no fire slot and the day's conclusions never reach the hub",
   },
   {
     // Briefing parity's CURSOR half (races review finding 1): the debt is
@@ -1230,7 +1264,7 @@ interface Outcome {
  * PRINTS: briefing-parity.test.ts 2
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
- * PRINTS: conclusion-corpus.test.ts 5
+ * PRINTS: conclusion-corpus.test.ts 6
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
@@ -1261,6 +1295,7 @@ interface Outcome {
  * PRINTS: sessions.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1
+ * PRINTS: stop-hook.test.ts 1
  * PRINTS: stop-latency.test.ts 1
  * PRINTS: transparency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1

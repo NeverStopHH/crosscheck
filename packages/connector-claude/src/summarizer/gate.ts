@@ -74,17 +74,24 @@ export const isDiagnosisMoment = (sliceText: string): boolean =>
 /**
  * Verdict/decision prose: a conclusion being DECLARED, not planned. Past and
  * present declarations only — "will decide", "should decide", "start with"
- * stay out, because plans are the negative corpus's biggest class.
+ * stay out, because plans are the negative corpus's biggest class. The bare
+ * nouns demand the punctuation a declaration gives them ("Verdict:",
+ * "Decision —"): undecided uses ("no decision yet", "the decision is still
+ * open", "In conclusion, here is where we are") each fired the v1 gate and
+ * spent a capped slot on nothing (fix-round noise finding HIGH-1).
  */
 const VERDICT_PATTERN =
-  /\b(?:verdict|decision|decid(?:ed|es) (?:to|on|against|that)|going with|went with|chose|opted (?:for|to)|settled on|conclusion|confirmed that|safe to merge|ready to (?:merge|ship)|the fix (?:is|was)|fix(?:ed)? (?:it|this|that) by)\b/i;
+  /\b(?:verdict|decision|conclusion)\s*[:—–]|\b(?:decid(?:ed|es) (?:to|on|against|that)|going with|went with|chose|opted (?:for|to)|settled on|confirmed that|safe to merge|ready to (?:merge|ship)|the fix (?:is|was)|fix(?:ed)? (?:it|this|that) by)\b/i;
 
 /**
  * Rejection prose: an approach RULED OUT with the ruling stated. Past forms
  * only — "rule out", "ruling out" are investigation narration, not verdicts.
+ * Case-insensitive like every prose pattern here: disposition tables start
+ * entries with the capitalized verb ("Ruled out: …"), and the v1 pattern —
+ * the one prose pattern without /i — missed exactly that modal form.
  */
 const REJECTION_PATTERN =
-  /\b(?:ruled out|rejected|not viable|(?:won'?t|will not|doesn'?t|does not|didn'?t|did not) work because|dead end|abandon(?:ed|ing) (?:the|this|that)|scrapp(?:ed|ing) (?:the|this|that)|discard(?:ed|ing) (?:the|this|that))\b/;
+  /\b(?:ruled out|rejected|not viable|(?:won'?t|will not|doesn'?t|does not|didn'?t|did not) work because|dead end|abandon(?:ed|ing) (?:the|this|that)|scrapp(?:ed|ing) (?:the|this|that)|discard(?:ed|ing) (?:the|this|that))\b/i;
 
 /**
  * Review findings the way review tooling prints them. The severity labels
@@ -98,26 +105,51 @@ const REVIEW_PROSE_PATTERN =
   /\b(?:finding\s+#?\d+|review (?:found|finding|confirmed)|adversarial review)\b/i;
 
 /**
+ * The SIGNAL-grade review shape (stricter than the anchor above): every
+ * severity — CRITICAL and BLOCKER included — must carry the punctuation a
+ * findings list gives it, AND a review-context word must stand nearby.
+ * "It is CRITICAL that we not forget the backup" is emphasis; "HIGH: fix
+ * the login button tomorrow" is a todo; "Finding 3 (HIGH): the cap is never
+ * re-checked" is the modal review output trial finding #12 lost, and the v1
+ * gate stayed silent on it whenever the prose skipped verdict vocabulary.
+ */
+const PUNCTUATED_SEVERITY_PATTERN =
+  /\b(?:CRITICAL|BLOCKER|HIGH|MEDIUM|LOW)\s*[:)\]—–-]/;
+const REVIEW_CONTEXT_PATTERN = /\b(?:review|finding|findings|audit)\b/i;
+
+/**
  * The green half of a suite flip, the way runners print it. "0 fail" also
  * matches ERROR_OUTPUT_PATTERN's count-fail form, which is why the flip's
- * red half below demands a STRICTLY POSITIVE count or an error-class marker
+ * red half below demands a STRICTLY POSITIVE count or a thrown-error line
  * — a wholly green run must never provide its own "red".
  */
 const GREEN_SUITE_PATTERN =
   /\b0 fail(?:ed|ures)?\b|\ball (?:\d+\s+)?tests? (?:pass(?:ed|ing)?|green)\b|\btests? (?:are |is )?(?:passing|green)(?: now)?\b|\bsuite (?:is )?green\b|\bnow (?:passing|green)\b/i;
 
-/** The red half: a positive failure count or an error-class marker. */
+/**
+ * The red half: a positive failure count or failure OUTPUT — a thrown-error
+ * line ("TypeError: …", "panic: …") or a Python traceback header. NOT the
+ * bare word: "added error handling" beside green tests, and an error class
+ * inside a passing test's NAME ("✓ handles TypeError in parser"), each made
+ * a wholly green slice read as a flip in v1 (fix-round noise finding
+ * HIGH-1), and gate precision is the only thing standing between chatter
+ * and the non-refunding cap.
+ */
 const RED_SUITE_PATTERN =
-  /\b[1-9]\d*\s+(?:tests? )?fail(?:ed|ures)?\b|\b(?:\w*error|\w*exception|traceback|panic)\b/i;
+  /\b[1-9]\d*\s+(?:tests? )?fail(?:ed|ures)?\b|\b\w*(?:error|exception):|\btraceback \(most recent call last\)|\bpanic:/i;
 
 /**
- * A commit, merge or push visible in the slice: the command itself (quote in
- * the prefix class for the JSON-rendered tool_use, like TEST_COMMAND_PATTERN),
- * git's own commit summary line (`[branch abc1234] …`), or GitHub's merge
- * phrasing.
+ * A commit, merge or push visible in the slice: the command as it EXECUTES —
+ * JSON-rendered tool_use (quote prefix, like TEST_COMMAND_PATTERN), a shell
+ * separator, a line start, or a pasted `$ ` prompt — git's own commit
+ * summary line (`[branch abc1234] …`), or GitHub's merge phrasing. Bare
+ * whitespace is NOT in the prefix class, deliberately: "then git push it
+ * once the docs are done" is a plan MENTIONING a command, not a commit that
+ * happened, and anchors must attest that work occurred (fix-round noise
+ * finding: the v1 prefix class admitted ordinary prose mentions).
  */
 const COMMIT_BOUNDARY_PATTERN =
-  /(?:^|[\s;&|("'])git\s+(?:commit|merge|push)\b|(?:^|[\s;&|("'])gh\s+pr\s+(?:create|merge)\b|\bmerge pull request\b|\[[^\s[\]]+ [0-9a-f]{7,40}\]/im;
+  /(?:^|[;&|("'$])\s{0,2}git\s+(?:commit|merge|push)\b|(?:^|[;&|("'$])\s{0,2}gh\s+pr\s+(?:create|merge)\b|\bmerge pull request\b|\[[^\s[\]]+ [0-9a-f]{7,40}\]/im;
 
 export const hasVerdictLanguage = (text: string): boolean =>
   VERDICT_PATTERN.test(text);
@@ -127,6 +159,18 @@ export const hasRejectionLanguage = (text: string): boolean =>
 
 export const hasReviewFindingShape = (text: string): boolean =>
   SEVERITY_LABEL_PATTERN.test(text) || REVIEW_PROSE_PATTERN.test(text);
+
+/**
+ * A findings LIST as the conclusion itself: punctuated severity in review
+ * context. A review whose entire output is severity labels + defect
+ * statements — the modal shape of deep adversarial review tooling — is a
+ * conclusion moment with no verdict prose anywhere, and it satisfies the
+ * anchor side through hasReviewFindingShape by construction (the signal
+ * shapes are a strict subset of the anchor shapes), so the findings list
+ * alone fires the gate.
+ */
+export const hasReviewFindingSignal = (text: string): boolean =>
+  PUNCTUATED_SEVERITY_PATTERN.test(text) && REVIEW_CONTEXT_PATTERN.test(text);
 
 /**
  * Red AND green in one slice — something failed and then passed within the
@@ -147,7 +191,8 @@ export const hasCommitBoundary = (text: string): boolean =>
 export const isConclusionMoment = (sliceText: string): boolean =>
   (hasVerdictLanguage(sliceText) ||
     hasRejectionLanguage(sliceText) ||
-    hasSuiteFlip(sliceText)) &&
+    hasSuiteFlip(sliceText) ||
+    hasReviewFindingSignal(sliceText)) &&
   (hasTestCommand(sliceText) ||
     hasErrorOutput(sliceText) ||
     hasReviewFindingShape(sliceText) ||

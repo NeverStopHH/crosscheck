@@ -271,6 +271,40 @@ const suiteFlipFix: ConclusionFixture = {
   bodyPins: ["locked transform", "0 fail"],
 };
 
+/**
+ * P7 — a review whose ENTIRE output is a findings list: severity labels and
+ * defect statements, no verdict, rejection or flip vocabulary anywhere. The
+ * fix-round recall finding (MEDIUM-2): deep adversarial reviews print
+ * severity + defect, and the shipped P1 only fired because its prose
+ * happened to add "confirmed that" — the modal tooling shape itself must
+ * fire. The SIGNAL is the punctuated-severity-in-review-context shape;
+ * deleting hasReviewFindingSignal must silence exactly this fixture.
+ */
+const pureFindingsList: ConclusionFixture = {
+  name: "pure_findings_list",
+  expect: "draft",
+  loadBearing: "hasReviewFindingSignal",
+  note: "models a severity-labels-only adversarial review report — no verdict prose anywhere (fix round for trial finding #12's headline class)",
+  transcript:
+    userText("review the summarizer branch") +
+    assistantText(
+      "Finding 3 (HIGH): the cap is never re-checked after the lock is " +
+        "taken, so racing stop hooks double-spend the summarizer slot. " +
+        "Finding 4 (MEDIUM): the spool reader holds the file handle across " +
+        "the await, pinning the directory on Windows.",
+    ),
+  distillation: {
+    kind: "evidence",
+    body:
+      "Review found the summarizer cap is never re-checked after the lock " +
+      "is taken — racing stop hooks double-spend the slot — and the spool " +
+      "reader holds its file handle across the await, pinning the " +
+      "directory on Windows.",
+    confidence: 0.45,
+  },
+  bodyPins: ["re-checked", "double-spend"],
+};
+
 /** N1 — a status update: work happened, nothing was concluded. */
 const statusUpdate: ConclusionFixture = {
   name: "status_update",
@@ -336,6 +370,125 @@ const praise: ConclusionFixture = {
     ),
 };
 
+// ---------------------------------------------------------------------------
+// N6–N13: the fix round's HARD negatives — every one is a probe that FIRED
+// the shipped v1 gate during the adversarial review (noise findings HIGH-1
+// and the two precision MEDIUMs). They sit just INSIDE realistic phrasing
+// where N1–N5 were each crafted just outside the regex boundary, so the 1.0
+// silence floor now means something about real days, not corpus-shaped days.
+// ---------------------------------------------------------------------------
+
+/** N6 — review HIGH-1 probe (a): "error handling" narration beside green tests. */
+const errorHandlingProgress: ConclusionFixture = {
+  name: "error_handling_progress",
+  expect: "none",
+  note: "fired v1 via the flip's bare-word 'error' red half — progress narration, nothing concluded",
+  transcript:
+    userText("keep going") +
+    assistantText(
+      "Added error handling to the importer and the tests are passing now. " +
+        "Wiring the cost surface next.",
+    ),
+};
+
+/** N7 — review probes (b, and R2's decision-pending): an OPEN decision beside a real test run. */
+const decisionPending: ConclusionFixture = {
+  name: "decision_pending",
+  expect: "none",
+  note: "fired v1 via the bare noun 'decision' — an explicitly undecided question must never spend a slot",
+  transcript:
+    userText("where do we stand on the cache layer") +
+    assistantToolUse("Bash", { command: "bun test packages/api" }) +
+    toolResult("212 pass, 0 skip. Ran 212 tests.") +
+    assistantText(
+      "The decision on the cache layer is still open — no decision yet; I " +
+        "need Nick's call before touching the eviction path.",
+    ),
+};
+
+/** N8 — review HIGH-1 probe (c): "In conclusion" opening a status summary. */
+const inConclusionStatus: ConclusionFixture = {
+  name: "in_conclusion_status",
+  expect: "none",
+  note: "fired v1 via the bare noun 'conclusion' — a summary opener is not a verdict",
+  transcript:
+    userText("summarize the day") +
+    assistantToolUse("Bash", { command: "bun test" }) +
+    toolResult("212 pass, 0 skip. Ran 212 tests.") +
+    assistantText(
+      "In conclusion, here is where we are: the worker is done, docs are " +
+        "pending, and nothing is blocked.",
+    ),
+};
+
+/** N9 — review HIGH-1 probe (d): a hoped-for fix narrated, nothing proven. */
+const shouldBeFixedNoise: ConclusionFixture = {
+  name: "should_be_fixed_noise",
+  expect: "none",
+  note: "fired v1 via bare-word 'error' + 'tests are green' — 'should be gone' is hope, not a conclusion",
+  transcript:
+    userText("is login fixed?") +
+    assistantText(
+      "The connection error should be gone and login should work now — the " +
+        "tests are green on my machine.",
+    ),
+};
+
+/** N10 — review HIGH-1 probe (e): self-praise naming the error class it fixed. */
+const praiseWithErrorName: ConclusionFixture = {
+  name: "praise_with_error_name",
+  expect: "none",
+  note: "fired v1 via 'TypeError' as the flip's red half inside a wholly green report",
+  transcript:
+    userText("nice") +
+    assistantText(
+      "I fixed the TypeError earlier and the suite is green — clean run, " +
+        "nice work all around.",
+    ),
+};
+
+/** N11 — review HIGH-1 probe (f): a shouted CRITICAL with the decision explicitly unmade. */
+const criticalShoutNoDecision: ConclusionFixture = {
+  name: "critical_shout_no_decision",
+  expect: "none",
+  note: "fired v1 via shouted CRITICAL anchor + bare 'decision' — emphasis is not a finding, pending is not a verdict",
+  transcript:
+    userText("anything else before I leave?") +
+    assistantText(
+      "It is CRITICAL that we not forget the backup before the migration. " +
+        "No decision yet on the cutover window.",
+    ),
+};
+
+/** N12 — R2's green-run probe: an error class inside a ✓ test NAME, suite wholly green. */
+const greenRunErrorTestName: ConclusionFixture = {
+  name: "green_run_error_test_name",
+  expect: "none",
+  note: "fired v1 via 'TypeError' in a passing test's name — a wholly green run must never provide its own red",
+  transcript:
+    userText("run them again") +
+    assistantToolUse("Bash", { command: "bun test" }) +
+    toolResult(
+      "✓ handles TypeError in parser\n✓ recovers the reader after close\n" +
+        "212 pass\n0 fail\nRan 212 tests.",
+    ) +
+    assistantText("All green, moving on."),
+};
+
+/** N13 — R2's anti-conclusion probe: red output mid-bisect, conclusion explicitly absent. */
+const bisectingNoConclusion: ConclusionFixture = {
+  name: "bisecting_no_conclusion",
+  expect: "none",
+  note: "fired v1 via bare 'conclusion' + error anchor — an explicit NOT-concluded is the clearest non-moment there is",
+  transcript:
+    userText("keep bisecting") +
+    toolResult("TimeoutError: hook-budget.test.ts exceeded 5000ms") +
+    assistantText(
+      "No conclusion yet — still bisecting the failure window; three " +
+        "commits left.",
+    ),
+};
+
 export const loadConclusionCorpus = (): readonly ConclusionFixture[] => [
   adversarialReviewCritical,
   fixerDispositionRuledOut,
@@ -343,9 +496,18 @@ export const loadConclusionCorpus = (): readonly ConclusionFixture[] => [
   mechanismRootCause,
   versionBumpMerge,
   suiteFlipFix,
+  pureFindingsList,
   statusUpdate,
   planNarration,
   smallTalk,
   testGreenNoise,
   praise,
+  errorHandlingProgress,
+  decisionPending,
+  inConclusionStatus,
+  shouldBeFixedNoise,
+  praiseWithErrorName,
+  criticalShoutNoDecision,
+  greenRunErrorTestName,
+  bisectingNoConclusion,
 ];

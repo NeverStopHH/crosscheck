@@ -124,6 +124,37 @@ describe("solvedAtFromTree", () => {
     expect(solvedAtMs).toBeNull();
   });
 
+  test("a derived root cause never marks the tree solved", () => {
+    // The provenance gate every sibling trust surface already has
+    // (similarity-gate, contradictions, hint selection): a machine-derived
+    // likely_root_cause — even evidence-carrying, even at the confidence cap
+    // — is nobody's vouched answer, and SOLVED is a trust label.
+    const solvedAtMs = solvedAtFromTree(
+      diagnosis([rootCauseClaim({ provenance: "derived", confidence: 0.5 })]),
+    );
+
+    // Assert
+    expect(solvedAtMs).toBeNull();
+  });
+
+  test("a derived rival cannot deadlock a declared solved tree", () => {
+    // The same gate on the PEER side: a forged or future-writer derived
+    // rival is not a standing answer, so its contradicts edge must not
+    // censor the solved label off a genuinely vouched diagnosis.
+    const solvedAtMs = solvedAtFromTree(
+      diagnosis(
+        [
+          rootCauseClaim(),
+          rivalRootCauseClaim({ provenance: "derived", confidence: 0.5 }),
+        ],
+        [contradictsEdge()],
+      ),
+    );
+
+    // Assert
+    expect(solvedAtMs).toBe(Date.parse(SOLVED_ISO));
+  });
+
   test("two evidenced root causes in open contradiction do not read solved", () => {
     // The referee-mode deadlock (DESIGN.md §4): two standing evidence-backed
     // answers joined by a contradicts edge are a live dispute, not a settled

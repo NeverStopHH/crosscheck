@@ -84,6 +84,31 @@ const quietTranscript = (): string =>
   transcriptLine("user", [{ type: "text", text: "rename that variable please" }]) +
   transcriptLine("assistant", [{ type: "text", text: "Renamed as requested" }]);
 
+/**
+ * A turn that trips ONLY the conclusion wing: a verdict beside a green run,
+ * with no error output and no hypothesis language anywhere — the hook fires
+ * exactly because stop.ts consults isCaptureMoment, never through the
+ * debugging wing. Pins trial finding #12's actual fix point (the wiring);
+ * the mutation catalogue reverts stop.ts to the diagnosis-only gate and this
+ * transcript's test must go red.
+ */
+const conclusionTranscript = (): string =>
+  transcriptLine("user", [
+    { type: "text", text: "run the gauntlet on the branch and call it" },
+  ]) +
+  transcriptLine("assistant", [
+    { type: "tool_use", name: "Bash", input: { command: "bun test" } },
+  ]) +
+  transcriptLine("user", [
+    { type: "tool_result", content: "1658 pass, 0 skip across 170 files." },
+  ]) +
+  transcriptLine("assistant", [
+    {
+      type: "text",
+      text: "Verdict: the branch is safe to merge — the gauntlet came back clean.",
+    },
+  ]);
+
 const draftJson = (body: string): string =>
   JSON.stringify({ kind: "hypothesis", body, confidence: 0.4 });
 
@@ -207,6 +232,24 @@ describe("stop hook gates, spawns detached, and never blocks", () => {
     expect(state?.summarizerFireCount).toBe(1);
     expect(state?.summarizerLastFireTurn).toBe(1);
     expect(state?.summarizerEstimatedTokens ?? 0).toBeGreaterThan(0);
+  });
+
+  test("a conclusion-only turn (no hypothesis language) spends a fire slot", async () => {
+    // Arrange — a verdict beside a green run, nothing for the debugging wing
+    const fix = await fixture("conclusion-wiring", {
+      transcriptContent: conclusionTranscript(),
+      summarizerOutput: "NONE",
+    });
+
+    // Act
+    await runHook("stop", stopPayload(fix), fix.env);
+
+    // Assert — the fire is recorded through the WIDENED gate at the stop.ts
+    // call site; reverting that line to isDiagnosisMoment leaves this at 0
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.stopTurnCount).toBe(1);
+    expect(state?.summarizerFireCount).toBe(1);
+    expect(state?.summarizerLastFireTurn).toBe(1);
   });
 
   test("a quiet turn counts the turn but never spawns", async () => {

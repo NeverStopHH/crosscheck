@@ -15,13 +15,13 @@
  * Corpus size, derived from the data so this header cannot rot:
  *
  * VERIFY: bun -e 'const {loadConclusionCorpus}=await import("./packages/connector-claude/test/fixtures/conclusion-corpus/format.ts");const c=loadConclusionCorpus();console.log(c.length,c.filter(f=>f.expect==="draft").length,c.filter(f=>f.expect==="none").length)'
- * PRINTS: 11 6 5
+ * PRINTS: 20 7 13
  *
  * THE HARNESS CAN FAIL — proven continuously: scripts/mutation-check.ts
- * deletes each of the five conclusion predicates from the gate in turn
- * (verdict, rejection, review-finding anchor, suite-flip signal, commit
- * boundary), and this file must go red on exactly the fixture whose
- * `loadBearing` names the deleted predicate.
+ * deletes each of the six conclusion predicates from the gate in turn
+ * (verdict, rejection, review-finding signal, review-finding anchor,
+ * suite-flip signal, commit boundary), and this file must go red on exactly
+ * the fixture whose `loadBearing` names the deleted predicate.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -35,6 +35,7 @@ import {
   hasCommitBoundary,
   hasRejectionLanguage,
   hasReviewFindingShape,
+  hasReviewFindingSignal,
   hasSuiteFlip,
   hasVerdictLanguage,
   isCaptureMoment,
@@ -211,6 +212,7 @@ describe("conclusion corpus: the gate", () => {
     expect(labels).toContain("hasVerdictLanguage");
     expect(labels).toContain("hasRejectionLanguage");
     expect(labels).toContain("hasReviewFindingShape");
+    expect(labels).toContain("hasReviewFindingSignal");
     expect(labels).toContain("hasSuiteFlip");
     expect(labels).toContain("hasCommitBoundary");
     expect(labels).toContain("isDiagnosisMoment");
@@ -326,8 +328,20 @@ describe("conclusion predicates (unit)", () => {
     expect(hasVerdictLanguage("Verdict: the branch is safe to merge")).toBe(true);
     expect(hasVerdictLanguage("Decided to ship 0.6.1 with the holdback on")).toBe(true);
     expect(hasVerdictLanguage("We are going with the spool-flush pattern")).toBe(true);
+    expect(hasVerdictLanguage("Decision: holdback stays on by default")).toBe(true);
     expect(hasVerdictLanguage("I will start with the gate")).toBe(false);
     expect(hasVerdictLanguage("we should decide this later")).toBe(false);
+  });
+
+  test("the bare nouns decision/conclusion are not verdicts (fix-round precision)", () => {
+    // Undecided, pending and summary-opener uses fired the v1 gate; the
+    // nouns now demand the punctuation a declaration gives them.
+    expect(hasVerdictLanguage("waiting on a product decision from Nick")).toBe(false);
+    expect(hasVerdictLanguage("The decision on the cache layer is still open")).toBe(false);
+    expect(hasVerdictLanguage("no conclusion yet, still bisecting the failure")).toBe(false);
+    expect(hasVerdictLanguage("In conclusion, here is where we are")).toBe(false);
+    expect(hasVerdictLanguage("the decision-making process is slow")).toBe(false);
+    expect(hasVerdictLanguage("Conclusion: the flag was dead code")).toBe(true);
   });
 
   test("rejection language marks a ruled-out approach", () => {
@@ -338,6 +352,15 @@ describe("conclusion predicates (unit)", () => {
     expect(hasRejectionLanguage("the request was denied by the proxy")).toBe(false);
   });
 
+  test("sentence-initial capitalized rejections count (fix-round recall)", () => {
+    // Disposition tables start entries with the capitalized verb — the v1
+    // pattern was the only prose pattern without /i and missed all of these.
+    expect(hasRejectionLanguage("Ruled out: cache pre-warming — the seal kills it")).toBe(true);
+    expect(hasRejectionLanguage("Rejected the polling approach entirely")).toBe(true);
+    expect(hasRejectionLanguage("Dead end — the hub spools every write")).toBe(true);
+    expect(hasRejectionLanguage("Not viable at this depth")).toBe(true);
+  });
+
   test("review-finding shapes are recognized the way reviews print them", () => {
     expect(hasReviewFindingShape("Finding 1 (CRITICAL): secret egress")).toBe(true);
     expect(hasReviewFindingShape("the adversarial review confirmed the leak")).toBe(true);
@@ -345,6 +368,18 @@ describe("conclusion predicates (unit)", () => {
     // Lowercase severity words in prose are not findings.
     expect(hasReviewFindingShape("high confidence in this low-risk change")).toBe(false);
     expect(hasReviewFindingShape("we should review this later")).toBe(false);
+  });
+
+  test("a findings list is a SIGNAL; a shouted severity or a lone label is not", () => {
+    // The fix-round recall MEDIUM: severity + defect statement IS the modal
+    // review output, and must fire without any verdict prose beside it.
+    expect(hasReviewFindingSignal("Finding 3 (HIGH): the cap is never re-checked")).toBe(true);
+    expect(hasReviewFindingSignal("Review complete. HIGH: dedup misses cross-session repeats")).toBe(true);
+    // Emphasis is not a finding — bare CRITICAL stays an anchor only.
+    expect(hasReviewFindingSignal("It is CRITICAL that we not forget the backup")).toBe(false);
+    // A severity label with no review context is a todo, not a finding.
+    expect(hasReviewFindingSignal("HIGH: fix the login button tomorrow")).toBe(false);
+    expect(hasReviewFindingSignal("we should review this later")).toBe(false);
   });
 
   test("a suite flip needs BOTH halves — red alone or green alone is not a flip", () => {
@@ -357,13 +392,25 @@ describe("conclusion predicates (unit)", () => {
     expect(hasSuiteFlip("0 fail then 0 fail again")).toBe(false);
   });
 
+  test("the flip's red half is failure OUTPUT, not the word error (fix-round precision)", () => {
+    // A thrown-error line ("TypeError: …") or a positive count is red; the
+    // bare word and an error class inside a passing test's NAME are not.
+    expect(hasSuiteFlip("TypeError: cursor is undefined\nfixed — tests are passing now")).toBe(true);
+    expect(hasSuiteFlip("Added error handling and the tests are passing now")).toBe(false);
+    expect(hasSuiteFlip("✓ handles TypeError in parser\n212 pass\n0 fail")).toBe(false);
+    expect(hasSuiteFlip("the connection error should be gone — tests are green")).toBe(false);
+  });
+
   test("commit boundaries: the command, git's summary line, GitHub's merge phrasing", () => {
     expect(hasCommitBoundary('tool_use Bash: {"command":"git commit -m \\"fix\\""}')).toBe(true);
     expect(hasCommitBoundary("[main 5730ea5] chore: 0.6.1")).toBe(true);
     expect(hasCommitBoundary('tool_use Bash: {"command":"gh pr merge 42"}')).toBe(true);
     expect(hasCommitBoundary("Merge pull request #28")).toBe(true);
+    expect(hasCommitBoundary("$ git push origin main")).toBe(true);
     expect(hasCommitBoundary("we should commit to this plan")).toBe(false);
     expect(hasCommitBoundary("the git history shows nothing")).toBe(false);
+    // A command MENTIONED in prose is a plan, not a commit that happened.
+    expect(hasCommitBoundary("then git push it once the docs are done")).toBe(false);
   });
 
   test("a conclusion moment is signal AND anchor, never signal alone", () => {

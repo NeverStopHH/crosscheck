@@ -7,13 +7,20 @@
  * probe the hints path applies (services/hints.ts notSuperseded) — and
  * (b) carries evidence refs, the anchoring-asymmetry evidence rule: a root
  * cause without evidence is a theory, and a theory must never earn the solved
- * ranking floor or the solved label readers treat as settled — and (c) is not
- * DEADLOCKED: while a contradicts edge joins it to another qualifying
- * likely_root_cause in the same tree, the tree holds two standing answers
- * that cannot both be right. That is the referee-mode dispute (DESIGN.md §4),
- * and a dispute must not read settled on any surface. A rival that is
- * evidence-free or superseded does not count — a drive-by theory cannot
- * unsolve a tree, and retracting one side of a deadlock settles it again.
+ * ranking floor or the solved label readers treat as settled — and
+ * (c) carries DECLARED provenance, the gate every sibling trust surface
+ * applies (contradictions on both sides, similarity-gate, the hint
+ * selector's isDeclared): a machine-derived row is nobody's vouched answer,
+ * and SOLVED is a trust label — the wire admits derived + likely_root_cause
+ * + evidence at the confidence cap, so without this clause a row no shipped
+ * writer produces (but a modified connector could mint) would stamp the tree
+ * settled — and (d) is not DEADLOCKED: while a contradicts edge joins it to
+ * another qualifying likely_root_cause in the same tree, the tree holds two
+ * standing answers that cannot both be right. That is the referee-mode
+ * dispute (DESIGN.md §4), and a dispute must not read settled on any
+ * surface. A rival that is evidence-free, derived or superseded does not
+ * count — a drive-by theory cannot unsolve a tree, and retracting one side
+ * of a deadlock settles it again.
  *
  * SOLVED is a fact about the DIAGNOSIS (the tree says what the root cause
  * was); LANDED (work_contexts.landed_at, services/landed.ts) is a fact about
@@ -26,6 +33,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { claimEdges, claims } from "../db/schema.ts";
+import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import type { Db } from "../db/client.ts";
 
 /** The one claim status that can mark a tree solved. */
@@ -82,6 +90,7 @@ export const listSolvedInfo = async (
       and(
         inArray(claims.workContextId, [...contextIds]),
         eq(claims.status, SOLVED_CLAIM_STATUS),
+        eq(claims.provenance, DECLARED_PROVENANCE),
         sql`jsonb_array_length(${claims.evidenceRefs}) >= ${SOLVED_MIN_EVIDENCE_REFS}`,
         sql`NOT EXISTS (SELECT 1 FROM ${claimEdges} WHERE ${claimEdges.toClaimId} = ${claims.id} AND ${claimEdges.kind} = ${SUPERSEDES_EDGE_KIND})`,
         // The deadlock probe: raw identifiers because the same two tables
@@ -99,6 +108,7 @@ export const listSolvedInfo = async (
             AND (dl.from_claim_id = ${claims.id} OR dl.to_claim_id = ${claims.id})
             AND peer.work_context_id = ${claims.workContextId}
             AND peer.status = ${SOLVED_CLAIM_STATUS}
+            AND peer.provenance = ${DECLARED_PROVENANCE}
             AND jsonb_array_length(peer.evidence_refs) >= ${SOLVED_MIN_EVIDENCE_REFS}
             AND NOT EXISTS (
               SELECT 1 FROM claim_edges se

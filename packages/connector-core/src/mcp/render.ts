@@ -267,17 +267,30 @@ const CONTRADICTS_EDGE_KIND = "contradicts";
 const SOLVED_CLAIM_STATUS = "likely_root_cause";
 
 /**
- * When this tree was SOLVED — the newest likely_root_cause claim WITH
- * evidence refs that is neither superseded nor deadlocked — or null.
+ * Only vouched-for rows can settle a tree — positive equality, fail closed
+ * on unknown strings, the hint selector's isDeclared rule applied to the
+ * solved label (and the hub's DECLARED_PROVENANCE, services/similarity-gate.ts).
+ */
+const SOLVED_CLAIM_PROVENANCE = "declared";
+
+/**
+ * When this tree was SOLVED — the newest DECLARED likely_root_cause claim
+ * WITH evidence refs that is neither superseded nor deadlocked — or null.
  *
  * Derived from the VERY TREE being rendered, deliberately, rather than
  * shipped as a hub field: the label then cannot disagree with the claims the
  * reader sees under it, and a hostile hub cannot mint "solved" without also
  * minting the claim rows that justify it. This mirrors the hub's own rule
  * (packages/server/src/services/solved.ts — same status, same evidence
- * floor, same supersedes probe, same deadlock probe); the two sit on
- * opposite sides of the wire where an import cannot reach, so each side's
- * tests pin its half, and an intentional rule change must touch both files.
+ * floor, same declared-provenance gate, same supersedes probe, same deadlock
+ * probe); the two sit on opposite sides of the wire where an import cannot
+ * reach, so each side's tests pin its half, and an intentional rule change
+ * must touch both files.
+ *
+ * DERIVED ROWS NEVER SOLVE, on either side of a contradicts edge: a
+ * machine-derived likely_root_cause is nobody's vouched answer (the same
+ * fail-closed `=== "declared"` equality as hint selection), so it cannot
+ * earn the label — and cannot deadlock it off a genuinely vouched rival.
  *
  * DEADLOCK: a qualifying root cause loses its standing while a contradicts
  * edge joins it to another QUALIFYING root cause — two standing answers that
@@ -306,6 +319,7 @@ export const solvedAtFromTree = (
   const qualifying = diagnosis.claims.filter(
     (claim) =>
       claim.status === SOLVED_CLAIM_STATUS &&
+      claim.provenance === SOLVED_CLAIM_PROVENANCE &&
       claim.evidenceRefs.length > 0 &&
       !supersededIds.has(claim.id),
   );

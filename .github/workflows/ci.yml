@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 73
+    # PRINTS: 75
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -133,8 +133,8 @@ jobs:
     # PRINTS: packages/connector-acp/src/pump.ts 1
     # PRINTS: hooks/post-tool-use.ts 2
     # PRINTS: hooks/pre-tool-use.ts 1
-    # PRINTS: hooks/stop.ts 1
-    # PRINTS: summarizer/gate.ts 5
+    # PRINTS: hooks/stop.ts 2
+    # PRINTS: summarizer/gate.ts 6
     # PRINTS: briefing/render.ts 2
     # PRINTS: briefing/sanitize.ts 7
     # PRINTS: config/config.ts 1
@@ -171,7 +171,7 @@ jobs:
     # PRINTS: engine.ts 3
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 1
-    # PRINTS: gate.ts 5
+    # PRINTS: gate.ts 6
     # PRINTS: hint.ts 2
     # PRINTS: hints.ts 1
     # PRINTS: hook-budget.ts 1
@@ -193,7 +193,7 @@ jobs:
     # PRINTS: session-start.ts 2
     # PRINTS: sessions.ts 1
     # PRINTS: ssh-hostname.ts 2
-    # PRINTS: stop.ts 1
+    # PRINTS: stop.ts 2
     # PRINTS: tool-failure.ts 2
     name: Mutation proof
     runs-on: ubuntu-latest
