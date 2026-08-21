@@ -35,6 +35,7 @@ import {
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import {
   isDisabled,
+  isSummarizerChild,
   loadReportableConfig,
 } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
@@ -259,6 +260,11 @@ const prepareAndRun = async (
  * the answer is ALWAYS valid no-directive JSON on exit 0 — Cursor treats
  * exit 2 as a block and other non-zero exits as hook failures worth logging;
  * this connector is never either.
+ *
+ * The Tier-1 summarizer's child marker (core config.ts isSummarizerChild)
+ * is honoured here too, before the budget: a nested `claude -p` does not
+ * run Cursor hooks today, but a marker that only SOME entries honour is the
+ * marker the next entry forgets — the Claude runner's rule, same rung.
  */
 export const runCursorHookWith = async (
   event: CursorHookEvent,
@@ -266,6 +272,9 @@ export const runCursorHookWith = async (
   stdin: string,
   env: Env,
 ): Promise<string> => {
+  if (isSummarizerChild(env)) {
+    return CURSOR_NO_OP_OUTPUT;
+  }
   try {
     const { budgetMs, timeoutMs } = await resolveHookBudget(
       BUDGET_RATIOS[event],
