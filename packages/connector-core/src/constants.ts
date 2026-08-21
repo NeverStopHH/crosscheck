@@ -500,7 +500,10 @@ export const SUMMARIZER_DEFAULT_CONFIDENCE = 0.3;
 /**
  * The ~4 chars/token rule of thumb the briefing budget already uses
  * (MAX_BRIEFING_CHARS). Cost figures derived from it are ESTIMATES and every
- * surface printing them says so.
+ * surface printing them says so — and they count the slice and prompt the
+ * hook hands over, not the nested claude's own system prompt, which on a
+ * real call is an order of magnitude more (connector-claude
+ * summarizer/cost.ts records the measurement).
  */
 export const CHARS_PER_TOKEN_ESTIMATE = 4;
 /** Haiku-class, per DESIGN.md §2: cheap capture on the developer's own auth. */

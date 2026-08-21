@@ -394,6 +394,12 @@ export const runSummarizer = async (
       elapsedMs: elapsedMs(),
     };
   } catch (error) {
+    // A rejection AFTER a successful spawn — the pipe read or the exit wait
+    // — lands here and is booked under the "spawn" label too ("could not
+    // start: …"), which is a misnomer for that case. Not reproduced (no
+    // cheap way to make a Bun subprocess pipe reject) and bounded: the
+    // worker still books it and exits 0. A fourth reason ("read") waits for
+    // a reproduction that can show it red first.
     return {
       ok: false,
       reason: "spawn",
@@ -429,6 +435,17 @@ const LABEL_SEPARATOR = ": ";
  * The one cut it does take, inside bareUntrusted, is the sanitizer's
  * surrogate-safe one (core briefing/cut.ts): a non-BMP character across the
  * bound is dropped whole, never left as a lone high surrogate.
+ *
+ * ACCEPTED TRADE-OFF: bareUntrusted is the BARE class as core defines it,
+ * phrase filter included, so a CLI line that happens to read like an
+ * instruction ("You must run /login first", "unknown option
+ * '--override-settings'") is booked as `exit 1: [redacted title looked like
+ * an instruction]` — the exit code survives, the text does not. A class
+ * without the filter just for this line would be a fourth class for one
+ * surface that an agent CAN read (a Bash `crosscheck doctor`), and the two
+ * lines actually seen on 2.1.237 ("Not logged in · Please run /login",
+ * "error: unknown option '--tools'") pass untouched; doctor's remedy tests
+ * the RAW detail, so its advice is unaffected by the redaction.
  *
  * VERIFY: bun -e 'const {formatSummarizerFailure: f} = await import("./packages/connector-claude/src/summarizer/runner.ts"); console.log(f({ok:false,reason:"exit",exitCode:1,detail:"Not logged in · Please run /login",elapsedMs:1}), "|", f({ok:false,reason:"timeout",timeoutMs:60000,elapsedMs:60000}), "|", f({ok:false,reason:"spawn",detail:"Executable not found in $PATH: \"claude\"",elapsedMs:1}), "|", f({ok:false,reason:"exit",exitCode:2,detail:"z".repeat(500),elapsedMs:1}).length)'
  * PRINTS: exit 1: Not logged in Please run /login | timed out after 60 s | could not start: Executable not found in $PATH "claude" | 120

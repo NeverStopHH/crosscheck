@@ -7,7 +7,15 @@
  * is that a running summarizer is never spending invisibly, not accounting.
  *
  * Every figure derived from CHARS_PER_TOKEN_ESTIMATE is an ESTIMATE, and
- * every surface printing one says so.
+ * every surface printing one says so. WHAT IT COUNTS: the slice and the
+ * prompt the Stop hook hands over, at ~4 chars/token — NOT the nested
+ * claude's own system prompt, which is the larger share of a real call.
+ * Measured 2026-08-21 on Claude Code 2.1.237 with the lean argv and the
+ * doctor probe slice: the estimate says ~234 tokens; the CLI's usage
+ * reports 6714 cached input + 187 output tokens (cost_usd 0.0028 on a
+ * cache hit; the first, uncached call of the day creates that ~6.6k cache
+ * at ~0.017). The line is a spend INDICATOR on the developer's quota —
+ * "is this firing at all, and how often" — not a bill.
  */
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
