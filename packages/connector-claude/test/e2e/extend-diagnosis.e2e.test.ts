@@ -260,7 +260,7 @@ describe("two developers, one diagnosis", () => {
   let aliceContextId: string;
   let aliceClaimId: string;
 
-  test("the server Claude Code would start offers all six tools", async () => {
+  test("the server Claude Code would start offers all seven tools", async () => {
     // Arrange + Act: the same binary and argv `.mcp.json` names, spawned the
     // same way — this is what proves the wiring, not a unit test of the registry
     const names = await alice.mcp.listTools();
@@ -268,6 +268,7 @@ describe("two developers, one diagnosis", () => {
     // Assert
     expect(names).toEqual([
       "publish_claim",
+      "set_intent",
       "review_draft",
       "extend_diagnosis",
       "get_diagnosis",
