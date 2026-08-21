@@ -24,6 +24,7 @@ import {
   SUMMARIZER_FAILURE_MAX_CHARS,
   SUMMARIZER_MAX_FIRES_PER_SESSION,
 } from "@crosscheck/connector-core/constants.ts";
+import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 /**
@@ -276,5 +277,7 @@ export const withSummarizerFailure = (
 ): SessionState => ({
   ...state,
   summarizerFailCount: state.summarizerFailCount + 1,
-  summarizerLastFailure: detail.slice(0, SUMMARIZER_FAILURE_MAX_CHARS),
+  // The same surrogate-safe cut the sanitizer makes (core briefing/cut.ts):
+  // a bound in code units that never leaves half an astral character.
+  summarizerLastFailure: cutWellFormed(detail, SUMMARIZER_FAILURE_MAX_CHARS),
 });

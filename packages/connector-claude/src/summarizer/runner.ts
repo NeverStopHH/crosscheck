@@ -408,7 +408,10 @@ const LABEL_SEPARATOR = ": ";
  * status/doctor: the reason first, then what the binary said (through
  * bareSummarizerLine), the binary's share of the line being whatever
  * SUMMARIZER_FAILURE_MAX_CHARS leaves after the label — so the whole line
- * is bounded without a final cut that could split a character.
+ * is bounded by construction and never cut again after the label is added.
+ * The one cut it does take, inside bareUntrusted, is the sanitizer's
+ * surrogate-safe one (core briefing/cut.ts): a non-BMP character across the
+ * bound is dropped whole, never left as a lone high surrogate.
  *
  * VERIFY: bun -e 'const {formatSummarizerFailure: f} = await import("./packages/connector-claude/src/summarizer/runner.ts"); console.log(f({ok:false,reason:"exit",exitCode:1,detail:"Not logged in · Please run /login",elapsedMs:1}), "|", f({ok:false,reason:"timeout",timeoutMs:60000,elapsedMs:60000}), "|", f({ok:false,reason:"spawn",detail:"Executable not found in $PATH: \"claude\"",elapsedMs:1}), "|", f({ok:false,reason:"exit",exitCode:2,detail:"z".repeat(500),elapsedMs:1}).length)'
  * PRINTS: exit 1: Not logged in Please run /login | timed out after 60 s | could not start: Executable not found in $PATH "claude" | 120

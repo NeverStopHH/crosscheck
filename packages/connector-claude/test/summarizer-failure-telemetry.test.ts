@@ -46,6 +46,16 @@ describe("withSummarizerFailure (the writer owns the bound)", () => {
     const state = withSummarizerFailure(baseState(), "x".repeat(1000));
     expect(state.summarizerLastFailure?.length).toBe(SUMMARIZER_FAILURE_MAX_CHARS);
   });
+
+  test("the cut never splits an astral character: a pair across the bound is dropped, the line stays well-formed", () => {
+    // Arrange: 119 BMP units then a pair at 119-120 — a bare slice(0, 120)
+    // would keep the high surrogate alone (state still parses; prints U+FFFD)
+    const state = withSummarizerFailure(baseState(), "x".repeat(119) + "😀😀");
+
+    // Assert
+    expect(state.summarizerLastFailure?.isWellFormed()).toBe(true);
+    expect(state.summarizerLastFailure?.length).toBe(SUMMARIZER_FAILURE_MAX_CHARS - 1);
+  });
 });
 
 describe("formatSummarizerFailure (one bounded, sanitized line)", () => {
@@ -98,6 +108,23 @@ describe("formatSummarizerFailure (one bounded, sanitized line)", () => {
     expect(line).not.toContain("");
     expect(line).not.toContain("·");
     expect(line.length).toBeLessThanOrEqual(SUMMARIZER_FAILURE_MAX_CHARS);
+  });
+
+  test("the binary's share of the line is cut without splitting an astral character", () => {
+    // Arrange: the label "exit 1: " leaves 112 units; 108 x's put the cut
+    // (111, room for the ellipsis) between the halves of the second emoji
+    const line = formatSummarizerFailure({
+      ok: false,
+      reason: "exit",
+      exitCode: 1,
+      detail: "x".repeat(108) + "😀".repeat(6),
+      elapsedMs: 1,
+    });
+
+    // Assert: well-formed, bounded, the ellipsis right after a whole character
+    expect(line.isWellFormed()).toBe(true);
+    expect(line.length).toBeLessThanOrEqual(SUMMARIZER_FAILURE_MAX_CHARS);
+    expect(line).toBe(`exit 1: ${"x".repeat(108)}😀…`);
   });
 });
 
