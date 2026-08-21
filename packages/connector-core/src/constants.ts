@@ -216,6 +216,17 @@ export const MAX_TARGETS_PER_INVOCATION = 20;
 export const MAX_SEEN_TARGETS = 500;
 
 /**
+ * Per-session cache of worktree-root → repoId, so the PostToolUse/PreToolUse
+ * capture path never pays `resolveRepoIdentity` (4-6 bounded git spawns) twice
+ * for the same touched-file root (trial finding #17). FIFO-capped like
+ * MAX_SEEN_TARGETS: a session touching more than this many distinct worktree
+ * roots is not the common case, and the oldest entry falls out. Negative
+ * answers are cached too (repoId null: a foreign or unresolvable root), so a
+ * repeated foreign touch also costs no git after the first.
+ */
+export const MAX_KNOWN_WORKTREE_ROOTS = 8;
+
+/**
  * The spool's only cap, and the reason compaction no longer exists: an append
  * that would push a session's data file past this is REFUSED and counted,
  * rather than making room by rewriting a file other processes append to.
