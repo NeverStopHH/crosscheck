@@ -358,6 +358,38 @@ export const DETACHED_SUBJECT_MAX_CHARS = 60;
  * PRINTS: true true
  */
 export const INTENT_MAX_CHARS = 120;
+/**
+ * "Substantive" for the derived-intent fire (connector-claude intent/gate.ts):
+ * the FIRST user prompt of a session at least this long — below it sits
+ * "yes", "go on", "/clear", a pasted path — and not a slash command, not a
+ * bare yes/no, with at least one word of HINT_MIN_TOKEN_CHARS. One fire per
+ * session state, booked under the state lock BEFORE the worker spawns (the
+ * Stop hook's contract), so the one Haiku call this costs on the developer's
+ * quota is spent exactly once per SessionStart (a `--resume` re-creates the
+ * state and may fire again).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.INTENT_MIN_PROMPT_CHARS, c.INTENT_MIN_PROMPT_CHARS > c.HINT_MIN_TOKEN_CHARS)'
+ * PRINTS: 40 true
+ */
+export const INTENT_MIN_PROMPT_CHARS = 40;
+/**
+ * How much of the first prompt the worker hands the model — the token bill's
+ * bound for the intent call (≈ INTENT_PROMPT_MAX_CHARS / 4 tokens at the
+ * CHARS_PER_TOKEN_ESTIMATE rate). The prompt is written to a 0600 file under
+ * the crosscheck home and unlinked by the worker; it never leaves the machine
+ * — only the model's one sentence does.
+ */
+export const INTENT_PROMPT_MAX_CHARS = 4000;
+/**
+ * Confidence a DERIVED intent carries, fixed — never model-chosen — and under
+ * the derived cap the schema enforces on every derived intent and claim
+ * (DERIVED_CONFIDENCE_CAP, @crosscheck/schema): the label "(derived)" is what
+ * a reader sees; this number is what the wire contract checks.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.INTENT_DERIVED_CONFIDENCE < s.DERIVED_CONFIDENCE_CAP)'
+ * PRINTS: true
+ */
+export const INTENT_DERIVED_CONFIDENCE = 0.4;
 
 // ── Absence detection ───────────────────────────────────────────────────────
 

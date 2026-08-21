@@ -325,3 +325,24 @@ describe("pin (c): MCP session resolution still finds the same session", () => {
     expect(own?.hostSessionKey).toBe(pins.fixtureSessionId);
   });
 });
+
+describe("pin (d): a pre-intent state file reads the intent defaults", () => {
+  test("title null, zero fires, no failure — nothing fabricated for an older session", async () => {
+    // Arrange: the frozen pre-Block-2 fixture predates every intent field
+    const home = await makeHome("legacy-intent");
+    const pins = await installLegacyState(home);
+
+    // Act
+    const state = await readSessionState(home, pins.fixtureSessionId);
+
+    // Assert
+    expect(state).not.toBeNull();
+    expect(state?.workContextTitle).toBeNull();
+    expect(state?.workContextStatus).toBeNull();
+    expect(state?.intentFireCount).toBe(0);
+    expect(state?.intentNoneCount).toBe(0);
+    expect(state?.intentSetCount).toBe(0);
+    expect(state?.intentFailCount).toBe(0);
+    expect(state?.intentLastFailure).toBeNull();
+  });
+});

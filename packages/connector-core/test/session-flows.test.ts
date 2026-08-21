@@ -302,6 +302,22 @@ describe("composeDetachedTitle (the pure composer the registry corpus plants int
 });
 
 describe("registerSessionFlow", () => {
+  test("persists the work-context title and status in the session state (the intent writers read them)", async () => {
+    // Arrange
+    const fx = await fixture("reg-title-state");
+    const hostSessionKey = "acp-test--sess_title_state";
+
+    // Act
+    await registerSessionFlow(
+      registerInput(fx, hostSessionKey, { title: "feat/x @ api", status: "implementing" }),
+    );
+
+    // Assert
+    const state = await readSessionState(fx.home, hostSessionKey);
+    expect(state?.workContextTitle).toBe("feat/x @ api");
+    expect(state?.workContextStatus).toBe("implementing");
+    expect(state?.intentFireCount).toBe(0);
+  });
   test("registers on the hub, writes state, spools the work context", async () => {
     // Arrange
     const fx = await fixture("reg-happy");

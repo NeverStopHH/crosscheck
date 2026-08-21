@@ -73,10 +73,16 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
   // here and paid by the NEXT UserPromptSubmit through the same core flow
   // SessionStart uses (flows/briefing.ts `deliverDeferredBriefing`) — a
   // parent-workspace session loses nothing but the timing.
+  // The detached-aware title builder runs ONCE per session here (recovery
+  // happens once), never on the per-tool path — and the title is kept in
+  // state for the intent writers (trial finding #16).
+  const title = await resolveSessionWorkContextTitle(undefined, ctx.identity);
   const recovered: SessionState = {
     ...derived,
     developerId,
     briefingPending: true,
+    workContextTitle: title,
+    workContextStatus: IMPLEMENTING_STATUS,
   };
   // BEFORE the first append, always: `reap` infers "no writer left" from the
   // absence of a session state file, so a hook that appends without publishing
@@ -94,9 +100,6 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     return claim.state;
   }
   // The work context must exist before its targets, or ingest rejects them.
-  // The detached-aware title builder runs ONCE per session here (recovery
-  // happens once), never on the per-tool path.
-  const title = await resolveSessionWorkContextTitle(undefined, ctx.identity);
   await appendRecords(
     ctx.config.home,
     ctx.repoKey,

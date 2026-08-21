@@ -19,6 +19,7 @@
  *     reap reads the marker only once the state is gone.
  */
 import {
+  intentPromptPathForSlug,
   removeFile,
   sessionSlug,
   spoolPendingEndPath,
@@ -76,6 +77,10 @@ export const endSessionFlow = async (
     })}\n`,
   );
   await deleteSessionState(input.home, input.hostSessionKey);
+  // A first prompt parked for the derived-intent worker that never ran (a
+  // spawn that failed, a session ending inside the worker's deadline) must
+  // not outlive the session: best-effort, like the state delete above.
+  await removeFile(intentPromptPathForSlug(input.home, slug));
 
   if (undelivered > 0) {
     // Telling the hub "done" now would publish a finished session while

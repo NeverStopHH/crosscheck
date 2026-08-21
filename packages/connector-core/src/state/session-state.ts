@@ -133,6 +133,29 @@ const SessionStateObjectSchema = z.looseObject({
    */
   summarizerFailCount: z.number().int().min(0).default(0),
   summarizerLastFailure: z.string().nullable().default(null),
+  /**
+   * The work-context title and status this session registered with (trial
+   * finding #16): an intent UPDATE record must carry both (the wire schema
+   * requires them), so the derived-intent worker and `set_intent` read them
+   * here instead of re-deriving. Null on a pre-intent state file — the writers
+   * then book "no title in session state" rather than fabricate one.
+   */
+  workContextTitle: z.string().min(1).nullable().default(null),
+  workContextStatus: z.string().min(1).nullable().default(null),
+  /**
+   * Derived-intent telemetry (trial finding #16; the finding-#14 lesson — a
+   * fire that lands nothing must be a number somebody can explain): fires
+   * booked by the UserPromptSubmit hook under the lock BEFORE the worker
+   * spawns, and the worker's outcome — NONE, an intent set on the spool, or
+   * a failure with its reason (runner loss, or a drop: secret, echo, empty —
+   * bounded by the writer to SUMMARIZER_FAILURE_MAX_CHARS). Defaults keep
+   * every pre-intent state file parsing.
+   */
+  intentFireCount: z.number().int().min(0).default(0),
+  intentNoneCount: z.number().int().min(0).default(0),
+  intentSetCount: z.number().int().min(0).default(0),
+  intentFailCount: z.number().int().min(0).default(0),
+  intentLastFailure: z.string().nullable().default(null),
 });
 
 /**
@@ -388,5 +411,12 @@ export const deriveSessionState = (
     summarizerDraftCount: 0,
     summarizerFailCount: 0,
     summarizerLastFailure: null,
+    workContextTitle: null,
+    workContextStatus: null,
+    intentFireCount: 0,
+    intentNoneCount: 0,
+    intentSetCount: 0,
+    intentFailCount: 0,
+    intentLastFailure: null,
   };
 };

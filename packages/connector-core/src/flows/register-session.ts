@@ -191,6 +191,11 @@ export const registerSessionFlow = async (
     deliveredHintRefs: [],
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
+    // The intent writers (derived-intent worker, set_intent) re-send the
+    // title and status on their update record — kept here so they never
+    // fabricate one (trial finding #16).
+    workContextTitle: input.title,
+    workContextStatus: input.status,
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
   };
   if (input.recovery === true) {

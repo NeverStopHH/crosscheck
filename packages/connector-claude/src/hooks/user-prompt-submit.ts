@@ -17,18 +17,47 @@
  *      Block 5 extracted it (connector-core/src/flows/hint.ts, where the
  *      ordering and privacy arguments now live).
  *
+ * AND, BEFORE EITHER, one thing that delivers nothing: the derived-intent
+ * fire (trial finding #16). On the FIRST substantive prompt of a session
+ * this hook books a fire under the state lock, parks the prompt in a 0600
+ * file and spawns the detached intent worker (intent/worker.ts) — the Stop
+ * hook's summarizer spawn shape, byte for byte: record-then-spawn, unref,
+ * stdio ignored, the worker env minus the parent session's markers plus the
+ * child marker, fail open. No hub call, no model wait: one lock round, one
+ * small file write, one spawn inside the same 800 ms race
+ * (USER_PROMPT_SUBMIT_BUDGET_RATIO; test/hint-hook-latency.test.ts measures
+ * it). The prompt text itself NEVER leaves the machine — only the model's
+ * one sentence can, and only from the worker, after its gates.
+ *
  * This hook is the Claude-specific shell: payload fields in,
  * `hookSpecificOutput` envelope out.
- *
- * The 800 ms total budget is enforced by the runner's race
- * (USER_PROMPT_SUBMIT_BUDGET_RATIO), measured in test/hint-hook-latency.test.ts.
- * The briefing path fits the same envelope: one parallel GET block bounded by
- * the per-request timeout plus one bounded git fan-out — the SessionStart
- * measurement, inside a budget sized for exactly that shape.
  */
+import { resolve } from "node:path";
+
+import { INTENT_PROMPT_MAX_CHARS } from "@crosscheck/connector-core/constants.ts";
+import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
+import {
+  intentPromptPathForSlug,
+  sessionSlug,
+  writePrivateFile,
+} from "@crosscheck/connector-core/config/paths.ts";
 import { deliverDeferredBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
+import {
+  readSessionState,
+  updateSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
+import { isSubstantivePrompt, withIntentFire } from "../intent/gate.ts";
+import { summarizerWorkerEnv } from "../summarizer/worker-env.ts";
 import type { HookContext } from "./runner.ts";
+
+/** The intent worker's own entry, INSIDE this package (intent/worker-entry.ts). */
+const INTENT_WORKER_ENTRY_PATH = resolve(
+  import.meta.dir,
+  "..",
+  "intent",
+  "worker-entry.ts",
+);
 
 const envelope = (text: string): string =>
   JSON.stringify({
@@ -38,9 +67,81 @@ const envelope = (text: string): string =>
     },
   });
 
+/**
+ * Fire-and-forget, the Stop hook's shape: the child is unref'd, its stdio
+ * ignored, a spawn failure swallowed — the fire is already booked and losing
+ * one intent is the cheap outcome (fail open). The prompt reaches the worker
+ * through the FILE path on argv — never the prompt itself, which `ps` would
+ * show, and never stdin, which a detached child cannot be handed by a hook
+ * that exits first.
+ */
+const spawnIntentWorker = (ctx: HookContext, promptFile: string): void => {
+  try {
+    const proc = Bun.spawn({
+      cmd: [
+        process.execPath,
+        INTENT_WORKER_ENTRY_PATH,
+        "--session",
+        ctx.payload.session_id,
+        "--prompt-file",
+        promptFile,
+      ],
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+      env: summarizerWorkerEnv(ctx.env, ctx.config.home),
+    });
+    proc.unref();
+  } catch {
+    // Fail open — the fire slot is spent, the intent is lost, nothing breaks.
+  }
+};
+
+/**
+ * Exactly once per session state: the lockless pre-check keeps every later
+ * prompt to one state read, and the check-AND-set under the lock is what
+ * makes two racing hook processes spend ONE fire (the tripwire's shape).
+ * Record-then-spawn, like the summarizer: a crash between the two costs one
+ * unspent fire, never a double spawn.
+ */
+const maybeSpawnIntentWorker = async (ctx: HookContext): Promise<void> => {
+  try {
+    const prompt = ctx.payload.prompt ?? "";
+    if (!isSubstantivePrompt(prompt)) {
+      return;
+    }
+    const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
+    if (state === null || state.intentFireCount > 0) {
+      return;
+    }
+    let fired = false;
+    await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
+      if (fresh.intentFireCount > 0) {
+        return null;
+      }
+      fired = true;
+      return withIntentFire(fresh);
+    });
+    if (!fired) {
+      return;
+    }
+    const promptFile = intentPromptPathForSlug(
+      ctx.config.home,
+      sessionSlug(ctx.payload.session_id),
+    );
+    await writePrivateFile(promptFile, cutWellFormed(prompt, INTENT_PROMPT_MAX_CHARS));
+    spawnIntentWorker(ctx, promptFile);
+  } catch {
+    // Fail open: the prompt hook's own job (briefing or hint) is untouched.
+  }
+};
+
 export const handleUserPromptSubmit = async (
   ctx: HookContext,
 ): Promise<string> => {
+  // The derived-intent fire delivers nothing and runs first, so it happens
+  // on the first substantive prompt whatever else this hook goes on to emit.
+  await maybeSpawnIntentWorker(ctx);
   // The deferred briefing never reads the prompt text, so it sits BEFORE the
   // hint pipeline's meaning floor and secret gate: a session owed a briefing
   // gets it whatever the first prompt says. Exactly-once and the

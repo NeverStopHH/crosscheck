@@ -79,6 +79,17 @@ export const sessionSlug = (hostSessionKey: string): string =>
 export const sessionStatePathForSlug = (home: string, slug: string): string =>
   join(home, "sessions", `${slug}.json`);
 
+/**
+ * Where the UserPromptSubmit hook parks the FIRST substantive prompt for the
+ * detached derived-intent worker (connector-claude intent/worker.ts) — a 0600
+ * file beside the session state, never argv (visible in `ps`) and never
+ * stdin (the hook exits before a detached child could read it). The worker
+ * unlinks it in `finally`; `endSessionFlow` removes a leftover best-effort.
+ * Takes the derived slug like every other per-session path here.
+ */
+export const intentPromptPathForSlug = (home: string, slug: string): string =>
+  join(home, "sessions", `${slug}.intent-prompt`);
+
 export const sessionStatePath = (
   home: string,
   hostSessionKey: string,
