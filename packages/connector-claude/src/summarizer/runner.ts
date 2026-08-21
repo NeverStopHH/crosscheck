@@ -78,12 +78,16 @@ export const SUMMARIZER_PROMPT =
  * `--bare` was REJECTED: it skips keychain/OAuth auth (Claude Code's own
  * help: requires ANTHROPIC_API_KEY or an apiKeyHelper), so every developer
  * logged in through `claude /login` would read "Not logged in". Every flag
- * here exists on 2.1.237 (`claude --help`); the changelog shows
- * --setting-sources in use by 2.0.24, --tools by 2.1.0, --strict-mcp-config
- * by 2.1.143 and --max-turns by 2.1.205, and an older CLI rejects an unknown
- * option loudly (exit 1, "error: unknown option"), which `crosscheck
- * doctor`'s runner probe prints verbatim. CROSSCHECK_SUMMARIZER_CMD still
- * replaces the binary WHOLESALE — no flag reaches an override (tests).
+ * here is ACCEPTED by 2.1.237; all but --max-turns are listed by
+ * `claude --help` (--max-turns is a print-mode flag the help omits — the
+ * zero-cost check is `claude --max-turns 1 --bogus -p x`, which names only
+ * --bogus as unknown, and `--version` proves nothing: it short-circuits
+ * option validation). The changelog shows --setting-sources in use by
+ * 2.0.24, --tools by 2.1.0, --strict-mcp-config by 2.1.143 and --max-turns
+ * by 2.1.205 (first MENTIONS, not introductions); an older CLI rejects an
+ * unknown option loudly (exit 1, "error: unknown option"), which
+ * `crosscheck doctor`'s runner probe prints verbatim. CROSSCHECK_SUMMARIZER_CMD
+ * still replaces the binary WHOLESALE — no flag reaches an override (tests).
  *
  * VERIFY: bun -e 'const {SUMMARIZER_LEAN_FLAGS: f} = await import("./packages/connector-claude/src/summarizer/runner.ts"); console.log(f.filter((x) => x.startsWith("--")).join(" "))'
  * PRINTS: --setting-sources --strict-mcp-config --mcp-config --no-session-persistence --tools --max-turns
