@@ -176,14 +176,22 @@ describe("summarizer cost surfaces", () => {
     // Act
     const result = await runCli(["doctor"], env(home), repo);
 
-    // Assert: the line is WARN, names the remainder, points at the probe
+    // Assert: the line is WARN, names the remainder, points at the probe —
+    // and asserts nothing about the runner's CURRENT health: fires booked
+    // before a fix or a login stay in live state files until SessionEnd, so
+    // this line can sit right above a PASSing runner probe and must not
+    // contradict it ("the runner is failing" did).
     const line = result.stdout.split("\n").find((entry) => entry.includes("summarizer cost")) ?? "";
     expect(line).toContain("WARN  summarizer cost");
-    expect(line).toContain("3 runs fired, none answered");
-    expect(line).toContain("summarizer runner");
+    expect(line).toContain("3 runs fired, none answered — see the summarizer runner check");
+    expect(line).not.toContain("is failing");
   });
 
-  test("doctor stays PASS below the threshold, and at it when even one run answered", async () => {
+  // BOUNDARY PIN, green on main by design (main always printed PASS here):
+  // it proves the WARN above does not over-reach, not that the WARN exists —
+  // the mutation "doctor calls a summarizer that never answers healthy" is
+  // caught by the WARN test, never by this one.
+  test("boundary pin: doctor stays PASS below the threshold, and at it when even one run answered", async () => {
     const repo = await makeRepo("cost-not-silent", { remote: "git@github.com:acme/api.git" });
     const home = await makeHome("cost-not-silent");
     paths.push(repo, home);

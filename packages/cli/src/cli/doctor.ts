@@ -876,6 +876,12 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
  * read "PASS 17 runs (0 NONE, 0 drafts)" while every run was dying before
  * the model — fail-open that had become silently dead, with the remedy one
  * check further down.
+ *
+ * The WARN states the BOOKED fact and points at the probe; it does not
+ * assert that the runner is failing NOW. Fires are booked into live session
+ * state and stay there until SessionEnd, so after an upgrade or a login the
+ * old counts sit right above a runner probe that PASSes — a line saying
+ * "the runner is failing" there contradicted the check it pointed at.
  */
 const checkSummarizerCost = async (
   home: string,
@@ -888,7 +894,7 @@ const checkSummarizerCost = async (
     ? check(
         "WARN",
         "summarizer cost",
-        `${line} — ${String(cost.fires)} runs fired, none answered: the runner is failing; see the summarizer runner check`,
+        `${line} — ${String(cost.fires)} runs fired, none answered — see the summarizer runner check (these counts are per live session and clear at SessionEnd)`,
       )
     : check("PASS", "summarizer cost", line);
 };
