@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-import { DEFAULT_AGENT_KIND, HTTP_TIMEOUT_MS } from "../constants.ts";
+import {
+  DEFAULT_AGENT_KIND,
+  HTTP_TIMEOUT_MS,
+  SUMMARIZER_CHILD_ENV,
+  SUMMARIZER_CHILD_ON,
+} from "../constants.ts";
 import { configPath, crosscheckHome, readJsonOrNull, writePrivateFile } from "./paths.ts";
 import type { Env } from "./paths.ts";
 import { readRepoConfig } from "./repo-config.ts";
@@ -230,6 +235,20 @@ export const loadReportableConfig = async (
 
 export const isDisabled = (env: Env): boolean =>
   env["CROSSCHECK_DISABLED"] === "1";
+
+/**
+ * True inside the Tier-1 summarizer's OWN nested `claude -p` (trial finding
+ * #14): the runner marks that process's env, and every hook entry that sees
+ * the marker exits silently — no hub request, no spool write, no state file,
+ * no turn counted — so the summarizer can never register phantom sessions
+ * or fire itself again from inside its own model call. A second off-switch
+ * beside CROSSCHECK_DISABLED rather than an alias of it, because the two
+ * answer different questions ("the developer turned crosscheck off" vs
+ * "this process is crosscheck's own child") and a developer reading the env
+ * of a stuck process should be able to tell which one fired.
+ */
+export const isSummarizerChild = (env: Env): boolean =>
+  env[SUMMARIZER_CHILD_ENV] === SUMMARIZER_CHILD_ON;
 
 /** Learned identity is written back once, never asked for (spec §A). */
 export const rememberDeveloper = async (

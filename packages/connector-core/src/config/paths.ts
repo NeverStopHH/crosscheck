@@ -26,6 +26,18 @@ export const repoKey = (hubUrl: string, repoId: string): string =>
 export const configPath = (home: string): string => join(home, "config.json");
 
 /**
+ * Where the Tier-1 summarizer's nested `claude -p` runs FROM (trial finding
+ * #14): a neutral directory under the crosscheck home, never the repo root
+ * the Stop hook fired in. A claude started in a repo loads that repo's
+ * CLAUDE.md and rules into every fire — tokens on the developer's own quota
+ * and a prompt biased by project instructions the summarizer prompt never
+ * asked for. Created 0700 by the worker (summarizer/worker.ts) like every
+ * other directory under the home.
+ */
+export const summarizerCwdPath = (home: string): string =>
+  join(home, "summarizer-cwd");
+
+/**
  * The one encoding of a session id into a filename. A spool data file and the
  * session state file that proves its writer is alive MUST derive their names
  * from this single function — `reap` decides whether it may delete a spool file

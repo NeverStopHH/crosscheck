@@ -59,6 +59,7 @@ export {
 // ── Config + paths ──────────────────────────────────────────────────────────
 export {
   isDisabled,
+  isSummarizerChild,
   loadConfig,
   normalizeHubUrl,
   readStoredConfig,
