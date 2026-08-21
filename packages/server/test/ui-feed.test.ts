@@ -121,3 +121,35 @@ describe("ui feed", () => {
     expect(html).toContain("&quot;&gt;&lt;b&gt;");
   });
 });
+
+describe("intent updates on the feed (trial finding #16)", () => {
+  test("an intent update reads as 'updated work context' with an intent label and no summary text", async () => {
+    // Arrange
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, recordEnvelope("work_context", validWorkContextBody()));
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: {
+            summary: "SECRET-SHAPED-SENTINEL the feed must never print",
+            provenance: "derived",
+            confidence: 0.4,
+            capturedAt: "2026-07-24T09:02:00.000Z",
+          },
+        }),
+      ),
+    );
+    const cookie = await loginUi(harness, developer.apiKey);
+
+    // Act
+    const html = await (await uiGet(harness, "/ui/feed", cookie)).text();
+
+    // Assert: the phrase and the field name, never the sentence
+    expect(html).toContain("updated work context");
+    expect(html).toContain(">intent</span>");
+    expect(html).not.toContain("SECRET-SHAPED-SENTINEL");
+  });
+});

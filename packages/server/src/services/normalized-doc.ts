@@ -48,17 +48,33 @@ export const NORMALIZED_DOC_MAX_CHARS = 8000;
 export interface NormalizedDocInput {
   readonly title: string;
   readonly status: string;
+  /**
+   * The session's intent sentence (trial finding #16): indexed like the
+   * title, so a teammate's prompt that shares only the TOPIC — no file, no
+   * claim — still reaches the context through the FTS tier and becomes a
+   * pointer. Null when no intent was ever captured.
+   */
+  readonly intentSummary: string | null;
   readonly description: string | null;
   readonly targetValues: readonly string[];
   /** One line per claim, already in "kind: body" form. */
   readonly claimSummaries: readonly string[];
 }
 
+/** The one field of the intent jsonb that is searchable prose. */
+export const intentSummaryOf = (
+  intent: Record<string, unknown> | null | undefined,
+): string | null => {
+  const summary = intent?.["summary"];
+  return typeof summary === "string" && summary.length > 0 ? summary : null;
+};
+
 /** Pure builder — the single place that decides what the doc contains. */
 export const buildNormalizedDoc = (input: NormalizedDocInput): string =>
   [
     input.title,
     input.status,
+    input.intentSummary ?? "",
     input.description ?? "",
     ...input.targetValues,
     ...input.claimSummaries,
@@ -82,6 +98,7 @@ export const refreshNormalizedDoc = async (
     .select({
       title: workContexts.title,
       status: workContexts.status,
+      intent: workContexts.intent,
       description: workContexts.description,
     })
     .from(workContexts)
@@ -108,6 +125,7 @@ export const refreshNormalizedDoc = async (
   const doc = buildNormalizedDoc({
     title: context.title,
     status: context.status,
+    intentSummary: intentSummaryOf(context.intent),
     description: context.description,
     targetValues: targetRows.map((row) => row.value),
     claimSummaries: claimRows.map((row) => `${row.kind}: ${row.body}`),

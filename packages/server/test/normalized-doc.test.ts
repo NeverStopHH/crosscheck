@@ -15,7 +15,10 @@ import { describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 
 import { workContexts } from "../src/db/schema.ts";
-import { NORMALIZED_DOC_MAX_TARGETS } from "../src/services/normalized-doc.ts";
+import {
+  NORMALIZED_DOC_MAX_TARGETS,
+  buildNormalizedDoc,
+} from "../src/services/normalized-doc.ts";
 import {
   createHarnessWithSession,
   postRecords,
@@ -219,5 +222,48 @@ describe("FTS columns in the embedded database (PGlite capability proof)", () =>
     // Assert
     expect(names).toContain("work_contexts_tsv_idx");
     expect(names).toContain("claims_tsv_idx");
+  });
+});
+
+describe("intent in the normalized doc (trial finding #16)", () => {
+  test("an intent update regenerates the doc with the intent's sentence", async () => {
+    // Arrange
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, recordEnvelope("work_context", validWorkContextBody()));
+
+    // Act: the derived-intent worker's update record
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: {
+            summary: "Make the tenant quota limiter refetch its budget",
+            provenance: "derived",
+            confidence: 0.4,
+            capturedAt: "2026-07-24T09:02:00.000Z",
+          },
+        }),
+      ),
+    );
+
+    // Assert: indexed like the title — the FTS tier sees it
+    const doc = await readNormalizedDoc(harness);
+    expect(doc).toContain("Login 500s on staging");
+    expect(doc).toContain("Make the tenant quota limiter refetch its budget");
+  });
+
+  test("buildNormalizedDoc folds the intent summary right after the status", () => {
+    expect(
+      buildNormalizedDoc({
+        title: "T",
+        status: "analyzing",
+        intentSummary: "I",
+        description: null,
+        targetValues: ["src/a.ts"],
+        claimSummaries: ["observation: O"],
+      }),
+    ).toBe("T\nanalyzing\nI\nsrc/a.ts\nobservation: O");
   });
 });

@@ -13,11 +13,12 @@ import type { FC } from "hono/jsx";
 import {
   UI_MAX_ARTIFACT_CHARS,
   UI_MAX_BODY_CHARS,
+  UI_MAX_INTENT_CHARS,
   UI_MAX_LABEL_CHARS,
   UI_MAX_NOTE_CHARS,
   UI_MAX_TITLE_CHARS,
 } from "../constants.ts";
-import { capped, contradictionHref, formatUiAge } from "../format.ts";
+import { capped, contradictionHref, formatUiAge, uiIntentOf } from "../format.ts";
 import { Layout } from "../layout.tsx";
 import type { ViewerChrome } from "../layout.tsx";
 import type { ArtifactView } from "../../services/artifacts.ts";
@@ -108,9 +109,16 @@ export const WorkContextPage: FC<WorkContextPageProps> = ({
   nowMs,
 }) => {
   const context = diagnosis.workContext;
+  const intent = uiIntentOf(context.intent);
   return (
     <Layout title="Work context" viewer={viewer}>
       <h1>{capped(context.title, UI_MAX_TITLE_CHARS)}</h1>
+      {intent === null ? null : (
+        <p class="intent">
+          <span class="label">{intent.label}</span>{" "}
+          {capped(intent.summary, UI_MAX_INTENT_CHARS)}
+        </p>
+      )}
       <p class="meta">
         <span class="label">{capped(context.status, UI_MAX_LABEL_CHARS)}</span>{" "}
         {solvedAtMs === null ? null : (

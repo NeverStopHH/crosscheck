@@ -314,3 +314,67 @@ describe("ui referee case file", () => {
     expect(response.status).toBe(404);
   });
 });
+
+describe("intent on the work-context page (trial finding #16)", () => {
+  test("shows the intent under the title, labelled (derived), HTML-escaped", async () => {
+    // Arrange: a hostile intent summary — the page must escape, never execute
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    await postRecords(
+      harness,
+      nick,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: {
+            summary: "Stop the login 500s <script>alert(1)</script> after rotation",
+            provenance: "derived",
+            confidence: 0.4,
+            capturedAt: "2026-07-24T09:02:00.000Z",
+          },
+        }),
+      ),
+    );
+    const cookie = await loginUi(harness, nick.apiKey);
+
+    // Act
+    const html = await (await uiGet(harness, "/ui/work-contexts/wc_01", cookie)).text();
+
+    // Assert
+    expect(html).toContain("intent (derived)");
+    expect(html).toContain("Stop the login 500s &lt;script&gt;alert(1)&lt;/script&gt; after rotation");
+    expect(html).not.toContain("<script>alert(1)</script>");
+  });
+
+  test("a declared intent is labelled plainly, and no intent renders no line", async () => {
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    const cookie = await loginUi(harness, nick.apiKey);
+    await postRecords(harness, nick, recordEnvelope("work_context", validWorkContextBody()));
+    const without = await (await uiGet(harness, "/ui/work-contexts/wc_01", cookie)).text();
+    expect(without).not.toContain('class="intent"');
+
+    await postRecords(
+      harness,
+      nick,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: {
+            summary: "Make verifyToken refetch the JWKS on an unknown kid",
+            provenance: "declared",
+            confidence: 1,
+            capturedAt: "2026-07-24T09:02:00.000Z",
+          },
+        }),
+      ),
+    );
+    const declared = await (await uiGet(harness, "/ui/work-contexts/wc_01", cookie)).text();
+    expect(declared).toContain('class="intent"');
+    expect(declared).toContain(">intent</span>");
+    expect(declared).not.toContain("intent (derived)");
+    expect(declared).toContain("Make verifyToken refetch the JWKS on an unknown kid");
+  });
+});

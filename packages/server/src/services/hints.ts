@@ -102,6 +102,12 @@ export interface HintContextCandidate {
     readonly id: string;
     readonly title: string;
     readonly status: string;
+    /**
+     * The session's intent (trial finding #16): what makes "same topic,
+     * different files" surface — the pointer hint shows it, and a context
+     * with an intent and no claims still earns a pointer (connector selector).
+     */
+    readonly intent: Record<string, unknown> | null;
     readonly tier: SearchTier;
     readonly developerId: string;
     readonly developerName: string;
@@ -279,6 +285,7 @@ export const listHintCandidates = async (
       id: row.id,
       title: row.title,
       status: row.status,
+      intent: row.intent,
       tier: row.tier,
       developerId: row.developerId,
       developerName: row.developerName,
@@ -301,6 +308,8 @@ export interface TargetSessionView {
   readonly lastHeartbeatAt: string;
   readonly workContextId: string;
   readonly workContextTitle: string;
+  /** The overlapping session's stated intent; the ask reason shows it. */
+  readonly workContextIntent: Record<string, unknown> | null;
 }
 
 /**
@@ -324,6 +333,7 @@ export const listTargetSessions = async (
       developerName: developers.name,
       workContextId: workContexts.id,
       workContextTitle: workContexts.title,
+      workContextIntent: workContexts.intent,
     })
     .from(workContextTargets)
     .innerJoin(
@@ -358,5 +368,6 @@ export const listTargetSessions = async (
     lastHeartbeatAt: row.session.lastHeartbeatAt.toISOString(),
     workContextId: row.workContextId,
     workContextTitle: row.workContextTitle,
+    workContextIntent: row.workContextIntent ?? null,
   }));
 };

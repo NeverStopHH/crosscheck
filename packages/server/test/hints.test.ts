@@ -605,3 +605,65 @@ describe("GET /api/hints/tripwire", () => {
     expect(result.sessions.length).toBe(0);
   });
 });
+
+describe("intent rides the hint and tripwire rows (trial finding #16)", () => {
+  const INTENT = {
+    summary: "Stop the refresh 500s by refetching the JWKS on an unknown kid",
+    provenance: "derived",
+    confidence: 0.4,
+    capturedAt: "2026-07-24T09:02:00.000Z",
+  } as const;
+
+  test("a candidate context carries its intent, and an intent-only match is a candidate", async () => {
+    // Arrange: Nick's context gains an intent; the prompt shares a word with
+    // the INTENT only ("JWKS" appears nowhere in title, targets or claims)
+    const { harness, nick, robin } = await setupTwoDevelopers();
+    await postRecords(
+      harness,
+      nick,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({ title: "Refresh 500s after key rotation", intent: INTENT }),
+      ),
+    );
+
+    // Act
+    const result = await fetchCandidates(harness, robin, "why does the JWKS kid lookup fail");
+
+    // Assert
+    expect(result.candidates.length).toBe(1);
+    const context = result.candidates[0]?.workContext as unknown as {
+      intent: { summary: string; provenance: string } | null;
+    };
+    expect(context.intent?.summary).toBe(INTENT.summary);
+    expect(context.intent?.provenance).toBe("derived");
+  });
+
+  test("a tripwire session carries the overlapping context's intent", async () => {
+    const { harness, nick, robin } = await setupTwoDevelopers();
+    await postRecords(
+      harness,
+      nick,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({ title: "Refresh 500s after key rotation", intent: INTENT }),
+      ),
+    );
+
+    const result = await fetchTripwire(harness, robin, TARGET_FILE);
+
+    const session = result.sessions[0] as unknown as {
+      workContextIntent: { summary: string } | null;
+    };
+    expect(session.workContextIntent?.summary).toBe(INTENT.summary);
+  });
+
+  test("a context without an intent carries null, not a missing field", async () => {
+    const { harness, robin } = await setupTwoDevelopers();
+
+    const result = await fetchCandidates(harness, robin, "refresh key rotation");
+
+    const context = result.candidates[0]?.workContext as unknown as { intent: unknown };
+    expect(context.intent).toBeNull();
+  });
+});

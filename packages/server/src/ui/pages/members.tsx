@@ -7,8 +7,8 @@
  */
 import type { FC } from "hono/jsx";
 
-import { UI_MAX_LABEL_CHARS } from "../constants.ts";
-import { capped, formatUiAge } from "../format.ts";
+import { UI_MAX_INTENT_CHARS, UI_MAX_LABEL_CHARS } from "../constants.ts";
+import { capped, formatUiAge, uiIntentOf } from "../format.ts";
 import { Layout } from "../layout.tsx";
 import type { ViewerChrome } from "../layout.tsx";
 import type { MemberEntry } from "../../services/members.ts";
@@ -24,6 +24,12 @@ const MemberRow: FC<{ readonly member: MemberEntry; readonly nowMs: number }> = 
       <span class="label presence">
         active · {capped(member.presence.status, UI_MAX_LABEL_CHARS)} ·{" "}
         {capped(member.presence.branch, UI_MAX_LABEL_CHARS)}
+      </span>
+    )}{" "}
+    {member.presence === null || uiIntentOf(member.presence.intent) === null ? null : (
+      <span class="meta intent">
+        {uiIntentOf(member.presence.intent)?.label}:{" "}
+        {capped(uiIntentOf(member.presence.intent)?.summary ?? "", UI_MAX_INTENT_CHARS)}
       </span>
     )}{" "}
     {member.isSelfOptedOut ? (

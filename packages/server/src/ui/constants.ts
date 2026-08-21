@@ -3,7 +3,7 @@
  * click-to-approve). The UI is HUB functionality — served by packages/server
  * under the FSL license, same trust boundary as the API it renders.
  */
-import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+import { MAX_CLAIM_BODY_LENGTH, MAX_INTENT_SUMMARY_CHARS } from "@crosscheck/schema";
 
 export const UI_SESSION_COOKIE_NAME = "crosscheck_ui_session";
 
@@ -49,6 +49,8 @@ export const UI_MAX_ARTIFACTS = 100;
 /** Render caps for untrusted text (task item 4) — escaping is the defense,
  * capping keeps one hostile record from swallowing the page. */
 export const UI_MAX_TITLE_CHARS = 160;
+/** The intent summary is wire-capped at MAX_INTENT_SUMMARY_CHARS; shown whole. */
+export const UI_MAX_INTENT_CHARS = MAX_INTENT_SUMMARY_CHARS;
 export const UI_MAX_LABEL_CHARS = 80;
 export const UI_MAX_BODY_CHARS = MAX_CLAIM_BODY_LENGTH;
 export const UI_MAX_NOTE_CHARS = 400;

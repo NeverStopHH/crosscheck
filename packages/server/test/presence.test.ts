@@ -6,7 +6,10 @@ import {
   createTestHarness,
   fetchPresence,
   jsonRequest,
+  postRecords,
+  recordEnvelope,
   registerTestSession,
+  validWorkContextBody,
   VALID_SESSION_BODY,
 } from "./helpers.ts";
 
@@ -119,5 +122,37 @@ describe("GET /api/presence", () => {
     );
 
     expect(response.status).toBe(400);
+  });
+});
+describe("presence carries the session's intent (trial finding #16)", () => {
+  test("a presence row names the work context's intent, null when none", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    const before = await fetchPresence(harness, nick.apiKey);
+    expect((before.sessions[0] as unknown as { intent: unknown }).intent).toBeNull();
+
+    // Act: the session's work context gains an intent
+    await postRecords(
+      harness,
+      nick,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: {
+            summary: "Find why the refresh call 500s after the key rotation",
+            provenance: "declared",
+            confidence: 1,
+            capturedAt: "2026-07-24T09:02:00.000Z",
+          },
+        }),
+      ),
+    );
+    const after = await fetchPresence(harness, nick.apiKey);
+
+    // Assert
+    const intent = (after.sessions[0] as unknown as { intent: { summary: string } | null }).intent;
+    expect(intent?.summary).toBe("Find why the refresh call 500s after the key rotation");
   });
 });

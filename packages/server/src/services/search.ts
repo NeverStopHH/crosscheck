@@ -183,6 +183,8 @@ export interface SearchResultView {
   readonly developerName: string;
   readonly title: string;
   readonly status: string;
+  /** The session's intent (trial finding #16), raw jsonb; null when none. */
+  readonly intent: Record<string, unknown> | null;
   readonly createdAt: string;
   readonly updatedAt: string | null;
   readonly tier: SearchTier;
@@ -550,6 +552,7 @@ const hydrate = async (
       id: workContexts.id,
       title: workContexts.title,
       status: workContexts.status,
+      intent: workContexts.intent,
       createdAt: workContexts.createdAt,
       updatedAt: workContexts.updatedAt,
       developerId: agentSessions.developerId,
@@ -573,6 +576,7 @@ const hydrate = async (
         developerName: row.developerName,
         title: row.title,
         status: row.status,
+        intent: row.intent ?? null,
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt === null ? null : row.updatedAt.toISOString(),
         tier: tierLabel(entry.tiers),

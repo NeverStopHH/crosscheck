@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import type { Claim, ClaimEdge, Target, WorkContext } from "@crosscheck/schema";
+import type { Claim, ClaimEdge, Intent, Target, WorkContext } from "@crosscheck/schema";
 
 import { EVENT_KINDS } from "../constants.ts";
 import {
@@ -12,6 +12,7 @@ import {
 import { appendEvent } from "./events.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
 import {
+  DECLARED_PROVENANCE,
   applyCrossSimilarity,
   embedClaimBody,
   findSimilarOwnClaim,
@@ -104,6 +105,35 @@ export const checkOwnedSession = async (
 
 type WorkContextRow = typeof workContexts.$inferSelect;
 
+/**
+ * The intent MERGE rule (trial finding #16). Title, status and description
+ * keep replace semantics — every registration re-sends them — but an intent
+ * is captured ONCE and a later work_context record usually carries none
+ * (SessionStart re-fire on `--resume`, the mid-session recovery, Cursor's
+ * late registration): `body.intent ?? null` wiped it on every such record.
+ * So: a record WITHOUT the field keeps the stored intent; a record WITH one
+ * replaces it — except that a DERIVED intent never overwrites a DECLARED one
+ * (a late-flushed derived spool record must not undo `set_intent`; declared
+ * over declared is the re-declare supersede). Hub-enforced, because spool
+ * replay order is nobody's promise.
+ */
+const mergeIntent = (
+  current: Record<string, unknown> | null,
+  next: Intent | undefined,
+): Record<string, unknown> | null => {
+  if (next === undefined) {
+    return current;
+  }
+  if (
+    current !== null &&
+    current["provenance"] === DECLARED_PROVENANCE &&
+    next.provenance !== DECLARED_PROVENANCE
+  ) {
+    return current;
+  }
+  return next;
+};
+
 const workContextChanges = (
   current: WorkContextRow,
   body: WorkContext,
@@ -111,7 +141,7 @@ const workContextChanges = (
   const next = {
     title: body.title,
     description: body.description ?? null,
-    intent: body.intent ?? null,
+    intent: mergeIntent(current.intent ?? null, body.intent),
     status: body.status,
   };
   // Accepted v0 limitation: JSON.stringify intent comparison is key-order
@@ -153,9 +183,14 @@ const updateExistingWorkContext = async (
     .set({ ...changes, updatedAt: deps.now() })
     .where(eq(workContexts.id, body.id));
   await refreshNormalizedDoc(deps.db, body.id);
+  // Outbox discipline: ids and metadata only — WHICH fields changed, never
+  // their text (the feed phrases "intent" from the list, no summary crosses).
   await appendEvent(deps, EVENT_KINDS.WORK_CONTEXT_UPDATED, {
     workContextId: body.id,
     developerId,
+    changed: Object.entries(changes)
+      .filter(([field, value]) => value !== row.workContext[field as keyof WorkContextRow])
+      .map(([field]) => field),
   });
   return accepted(body.id);
 };

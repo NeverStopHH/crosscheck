@@ -37,10 +37,12 @@ export type { Claim, ClaimEdge } from "./claim.ts";
 
 export {
   AgentSessionSchema,
+  IntentSchema,
+  MAX_INTENT_SUMMARY_CHARS,
   TargetSchema,
   WorkContextSchema,
 } from "./session.ts";
-export type { AgentSession, Target, WorkContext } from "./session.ts";
+export type { AgentSession, Intent, Target, WorkContext } from "./session.ts";
 
 export {
   HINT_REF_KINDS,

@@ -2,8 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import {
   AgentSessionSchema,
+  DERIVED_CONFIDENCE_CAP,
   HintSchema,
+  IntentSchema,
   MAX_HINT_TEXT_LENGTH,
+  MAX_INTENT_SUMMARY_CHARS,
   SESSION_STATUSES,
   TARGET_KINDS,
   TargetSchema,
@@ -59,18 +62,22 @@ describe("AgentSessionSchema", () => {
   });
 });
 
+const VALID_INTENT = {
+  summary: "Make the TM extraction task claim idempotent on staging",
+  provenance: "declared",
+  confidence: 1,
+  capturedAt: "2026-07-24T09:02:00.000Z",
+} as const;
+
 describe("WorkContextSchema", () => {
-  test("parses a work context with a structured intent", () => {
+  test("parses a work context with a typed intent", () => {
     // Arrange
     const input = {
       id: "wc_1",
       sessionId: "ses_1",
       title: "Duplicate TM extractions on staging",
       status: "analyzing",
-      intent: {
-        plannedChanges: ["make task claim idempotent"],
-        likelyFiles: ["worker.ts"],
-      },
+      intent: VALID_INTENT,
       createdAt: "2026-07-24T09:01:00.000Z",
     };
 
@@ -79,6 +86,32 @@ describe("WorkContextSchema", () => {
 
     // Assert
     expect(result.success).toBe(true);
+  });
+
+  test("parses a work context without an intent — every pre-intent record", () => {
+    const result = WorkContextSchema.safeParse({
+      id: "wc_1",
+      sessionId: "ses_1",
+      title: "Duplicate TM extractions on staging",
+      status: "analyzing",
+      createdAt: "2026-07-24T09:01:00.000Z",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.intent).toBeUndefined();
+  });
+
+  test("rejects a work context whose intent is malformed", () => {
+    const result = WorkContextSchema.safeParse({
+      id: "wc_1",
+      sessionId: "ses_1",
+      title: "Duplicate TM extractions on staging",
+      status: "analyzing",
+      intent: { plannedChanges: ["not the typed shape"] },
+      createdAt: "2026-07-24T09:01:00.000Z",
+    });
+
+    expect(result.success).toBe(false);
   });
 
   test("rejects a work context without a title", () => {
@@ -165,5 +198,53 @@ describe("HintSchema", () => {
     const result = HintSchema.safeParse(withoutTrust);
 
     expect(result.success).toBe(false);
+  });
+});
+describe("IntentSchema", () => {
+  test("a declared intent may assert full confidence", () => {
+    expect(IntentSchema.safeParse(VALID_INTENT).success).toBe(true);
+  });
+
+  test(`a derived intent above the ${String(DERIVED_CONFIDENCE_CAP)} cap is rejected — machine inference never outranks a person`, () => {
+    const result = IntentSchema.safeParse({
+      ...VALID_INTENT,
+      provenance: "derived",
+      confidence: DERIVED_CONFIDENCE_CAP + 0.01,
+    });
+
+    expect(result.success).toBe(false);
+    expect(
+      !result.success && result.error.issues.some((issue) => issue.path[0] === "confidence"),
+    ).toBe(true);
+  });
+
+  test("a derived intent at or under the cap is accepted", () => {
+    expect(
+      IntentSchema.safeParse({ ...VALID_INTENT, provenance: "derived", confidence: 0.4 }).success,
+    ).toBe(true);
+    expect(
+      IntentSchema.safeParse({
+        ...VALID_INTENT,
+        provenance: "derived",
+        confidence: DERIVED_CONFIDENCE_CAP,
+      }).success,
+    ).toBe(true);
+  });
+
+  test(`a summary longer than ${String(MAX_INTENT_SUMMARY_CHARS)} characters is rejected, an empty one too`, () => {
+    expect(
+      IntentSchema.safeParse({ ...VALID_INTENT, summary: "x".repeat(MAX_INTENT_SUMMARY_CHARS + 1) })
+        .success,
+    ).toBe(false);
+    expect(IntentSchema.safeParse({ ...VALID_INTENT, summary: "" }).success).toBe(false);
+    expect(
+      IntentSchema.safeParse({ ...VALID_INTENT, summary: "x".repeat(MAX_INTENT_SUMMARY_CHARS) })
+        .success,
+    ).toBe(true);
+  });
+
+  test("provenance is the shared enum and capturedAt an ISO datetime", () => {
+    expect(IntentSchema.safeParse({ ...VALID_INTENT, provenance: "guessed" }).success).toBe(false);
+    expect(IntentSchema.safeParse({ ...VALID_INTENT, capturedAt: "yesterday" }).success).toBe(false);
   });
 });
