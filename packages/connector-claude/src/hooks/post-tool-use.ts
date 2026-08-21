@@ -26,7 +26,7 @@ import {
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { resolveWorkContextTitle } from "./session-start.ts";
+import { resolveSessionWorkContextTitle } from "./session-start.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const IMPLEMENTING_STATUS = "implementing";
@@ -94,6 +94,9 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     return claim.state;
   }
   // The work context must exist before its targets, or ingest rejects them.
+  // The detached-aware title builder runs ONCE per session here (recovery
+  // happens once), never on the per-tool path.
+  const title = await resolveSessionWorkContextTitle(undefined, ctx.identity);
   await appendRecords(
     ctx.config.home,
     ctx.repoKey,
@@ -103,11 +106,7 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
         {
           workContextId: derived.workContextId,
           sessionId: derived.crosscheckSessionId,
-          title: resolveWorkContextTitle(
-            undefined,
-            ctx.identity.branch,
-            ctx.identity.repoId,
-          ),
+          title,
           status: IMPLEMENTING_STATUS,
         },
         {

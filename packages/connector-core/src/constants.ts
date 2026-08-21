@@ -311,6 +311,37 @@ export const DRIFT_GIT_TIMEOUT_MS = 250;
 export const MAX_WORK_CONTEXT_TITLE_CHARS = 120;
 export const CONTEXT_MAX_AGE_DAYS = 14;
 
+// ── Detached-HEAD work-context titles (trial finding #15) ────────────────────
+
+/**
+ * A worktree session runs on a detached HEAD, so its branch reads
+ * `detached@<sha>` and the honest fallback title `detached@<sha> @ repo` tells
+ * a teammate nothing: on the trial hub 70 of 80 work contexts carried one. At
+ * SESSION START ONLY — never in a per-tool hook — the title builder
+ * (flows/work-context-title.ts) asks git twice, each call bounded by this:
+ * which branch tip the commit sits on (preferred, a worktree made from a
+ * branch), else the HEAD commit's subject. Same class as the drift, landed
+ * and commit-evidence timeouts: a slow git loses the label, never the
+ * registration, and at the default timeouts both calls together stay inside
+ * the one hub round trip SessionStart already pays (worst case 2 × 250 ms on
+ * a detached session, nothing at all on a branch):
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.HEAD_LABEL_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS, 2 * c.HEAD_LABEL_GIT_TIMEOUT_MS <= c.SESSION_START_BUDGET_RATIO * c.HTTP_TIMEOUT_MS - c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true true
+ */
+export const HEAD_LABEL_GIT_TIMEOUT_MS = 250;
+/**
+ * Bound on the commit subject folded into a detached title. A subject is a
+ * developer's own commit message — untrusted cross-user text once uploaded —
+ * so it goes through the PROSE sanitizer at this width before the title is
+ * composed; half the title cap, so `detached@<sha> · <subject> @ <repo>`
+ * always fits inside MAX_WORK_CONTEXT_TITLE_CHARS with the repo label:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DETACHED_SUBJECT_MAX_CHARS * 2 === c.MAX_WORK_CONTEXT_TITLE_CHARS)'
+ * PRINTS: true
+ */
+export const DETACHED_SUBJECT_MAX_CHARS = 60;
+
 // ── Absence detection ───────────────────────────────────────────────────────
 
 /** How far back the SessionStart commit-authorship scan looks. */

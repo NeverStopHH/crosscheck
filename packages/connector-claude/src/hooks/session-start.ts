@@ -23,6 +23,8 @@ import {
   fallbackWorkContextTitle,
   registerSessionFlow,
 } from "@crosscheck/connector-core/flows/register-session.ts";
+import { resolveFallbackWorkContextTitle } from "@crosscheck/connector-core/flows/work-context-title.ts";
+import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
@@ -38,28 +40,53 @@ const INITIAL_STATUS = "analyzing";
 const MS_PER_DAY = 86_400_000;
 
 /**
- * `session_title` when Claude Code supplied one, otherwise the honest core
- * fallback derived from branch and repo id (`flows/register-session.ts`) —
- * never a fabricated task description.
+ * Claude Code's `session_title` as a work-context title may carry it: null
+ * when absent, blank, secret-like (dropped, never redacted) or empty after
+ * the PROSE sanitizer — the ONE untrusted path this package owns on its way
+ * into an uploaded record (registered in src/render-surfaces.ts).
  */
-export const resolveWorkContextTitle = (
+export const sanitizeSessionTitle = (
   sessionTitle: string | undefined,
-  branch: string,
-  repoId: string,
-): string => {
-  const fallback = fallbackWorkContextTitle(branch, repoId);
+): string | null => {
   if (sessionTitle === undefined || sessionTitle.trim().length === 0) {
-    return fallback;
+    return null;
   }
   if (containsSecret(sessionTitle)) {
-    return fallback;
+    return null;
   }
   const sanitized = sanitizeUntrusted(
     sessionTitle,
     MAX_WORK_CONTEXT_TITLE_CHARS,
   );
-  return sanitized.length === 0 ? fallback : sanitized;
+  return sanitized.length === 0 ? null : sanitized;
 };
+
+/**
+ * `session_title` when Claude Code supplied one, otherwise the honest core
+ * fallback derived from branch and repo id (`flows/register-session.ts`) —
+ * never a fabricated task description. The synchronous, git-free form: the
+ * §4.4 registry plants the corpus through it.
+ */
+export const resolveWorkContextTitle = (
+  sessionTitle: string | undefined,
+  branch: string,
+  repoId: string,
+): string =>
+  sanitizeSessionTitle(sessionTitle) ?? fallbackWorkContextTitle(branch, repoId);
+
+/**
+ * The same choice for a LIVE session: `session_title` when supplied, else the
+ * detached-aware core builder (flows/work-context-title.ts) — which asks git
+ * (bounded, twice at most) only when the identity is a detached HEAD, so a
+ * worktree session uploads `detached@<sha> · <commit subject> @ repo` or the
+ * branch its commit sits on, never the bare sha (trial finding #15).
+ */
+export const resolveSessionWorkContextTitle = async (
+  sessionTitle: string | undefined,
+  identity: RepoIdentity,
+): Promise<string> =>
+  sanitizeSessionTitle(sessionTitle) ??
+  (await resolveFallbackWorkContextTitle(identity));
 
 const selfName = (
   presence: readonly PresenceEntry[],
@@ -119,10 +146,12 @@ export const handleSessionStart = async (
   budget: HookBudget,
 ): Promise<string> => {
   const now = ctx.now();
-  const title = resolveWorkContextTitle(
+  // Detached-aware (trial finding #15): on a worktree session this is up to
+  // two bounded git calls BEFORE the register round trip — see
+  // HEAD_LABEL_GIT_TIMEOUT_MS for why they fit the SessionStart budget.
+  const title = await resolveSessionWorkContextTitle(
     ctx.payload.session_title,
-    ctx.identity.branch,
-    ctx.identity.repoId,
+    ctx.identity,
   );
   // The §1.3 flow: register (+409 retry) → state file BEFORE any append
   // (reap's aliveness invariant) → work-context record. One implementation,

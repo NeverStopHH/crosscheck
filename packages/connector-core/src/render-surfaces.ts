@@ -30,6 +30,7 @@ import {
   renderUnusableQuery,
 } from "./mcp/render.ts";
 import { renderRefereeBrief } from "./mcp/render-referee.ts";
+import { composeDetachedTitle } from "./flows/work-context-title.ts";
 import type {
   Diagnosis,
   HintClaimCandidate,
@@ -331,6 +332,18 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/mcp/render-referee.ts",
     framing: "framed",
     render: (payload) => renderRefereeBrief(refereeBriefWith(payload), NOW),
+  },
+  {
+    kind: "corpus",
+    name: "detached-work-context-title",
+    module: "src/flows/work-context-title.ts",
+    framing: "sanitized",
+    // A detached worktree's HEAD commit SUBJECT on its way into an uploaded
+    // work-context title (trial finding #15): the commit message is the
+    // developer's own text, sanitized here BEFORE it leaves the machine and
+    // framed later on every teammate surface.
+    render: (payload) =>
+      composeDetachedTitle("detached@0badc0ffe", payload, "github.com/acme/api"),
   },
   {
     kind: "composite",

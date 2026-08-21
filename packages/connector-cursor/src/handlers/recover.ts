@@ -9,7 +9,8 @@
  * sessionEnd (same conversation_id, hub session already ended — the flow's
  * `~r1` retry mints the fresh session Claude's recovery cannot).
  */
-import { fallbackWorkContextTitle, registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
+import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
+import { resolveFallbackWorkContextTitle } from "@crosscheck/connector-core/flows/work-context-title.ts";
 import {
   readSessionState,
   updateSessionState,
@@ -56,8 +57,9 @@ export const requireSessionState = async (
     hubUrl: ctx.config.hubUrl,
     fallbackDeveloperId: ctx.config.developerId,
     // No host title exists on this path (and never from prompt text — the
-    // §2.4 privacy posture): branch @ repo, the honest fallback.
-    title: fallbackWorkContextTitle(ctx.identity.branch, ctx.identity.repoId),
+    // §2.4 privacy posture): the honest fallback, detached-aware (once per
+    // conversation — recovery happens once).
+    title: await resolveFallbackWorkContextTitle(ctx.identity),
     status: IMPLEMENTING_STATUS,
     // State-less reconstruction: stop the ladder on repo_mismatch, CLAIM the
     // state file rather than overwrite a racing sibling's (flow header).

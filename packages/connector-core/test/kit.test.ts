@@ -30,6 +30,7 @@ import * as records from "../src/capture/records.ts";
 import * as fingerprint from "../src/capture/fingerprint.ts";
 import * as failureText from "../src/capture/failure-text.ts";
 import * as registerFlow from "../src/flows/register-session.ts";
+import * as titleFlow from "../src/flows/work-context-title.ts";
 import * as captureFlows from "../src/flows/capture-targets.ts";
 import * as heartbeatFlow from "../src/flows/heartbeat.ts";
 import * as endFlow from "../src/flows/end-session.ts";
@@ -135,6 +136,8 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   // The session flows (§1.3, extracted in Block 4)
   ["registerSessionFlow", registerFlow.registerSessionFlow],
   ["fallbackWorkContextTitle", registerFlow.fallbackWorkContextTitle],
+  ["composeDetachedTitle", titleFlow.composeDetachedTitle],
+  ["resolveFallbackWorkContextTitle", titleFlow.resolveFallbackWorkContextTitle],
   ["captureFileTargets", captureFlows.captureFileTargets],
   ["captureFailure", captureFlows.captureFailure],
   ["heartbeatMaybe", heartbeatFlow.heartbeatMaybe],

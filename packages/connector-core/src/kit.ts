@@ -144,6 +144,10 @@ export {
   fallbackWorkContextTitle,
   registerSessionFlow,
 } from "./flows/register-session.ts";
+export {
+  composeDetachedTitle,
+  resolveFallbackWorkContextTitle,
+} from "./flows/work-context-title.ts";
 export type {
   RegisterSessionFlowInput,
   RegisterSessionFlowResult,
