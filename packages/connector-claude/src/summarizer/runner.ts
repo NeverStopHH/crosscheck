@@ -275,15 +275,23 @@ const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 /**
- * The child's environment: the caller's, undefined values dropped, plus the
- * child marker — set HERE as well as by summarizer/worker-env.ts, so the
- * nested claude carries it even when a caller built the env by hand (the
- * doctor probe, an operator's one-off).
+ * The hub key's env name (core config/config.ts reads it). The nested binary
+ * never talks to the hub — its whole contract is slice on stdin, answer on
+ * stdout — so a secret the developer exported for the hooks stops HERE and
+ * does not ride into a third-party process that has no use for it.
+ */
+const HUB_KEY_ENV = "CROSSCHECK_API_KEY";
+
+/**
+ * The child's environment: the caller's, undefined values and the hub key
+ * dropped, plus the child marker — set HERE as well as by
+ * summarizer/worker-env.ts, so the nested claude carries it even when a
+ * caller built the env by hand (the doctor probe, an operator's one-off).
  */
 const childEnv = (env: Env): Record<string, string> => ({
   ...Object.fromEntries(
     Object.entries(env).flatMap(([name, value]) =>
-      value === undefined ? [] : [[name, value]],
+      value === undefined || name === HUB_KEY_ENV ? [] : [[name, value]],
     ),
   ),
   [SUMMARIZER_CHILD_ENV]: SUMMARIZER_CHILD_ON,

@@ -1336,8 +1336,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // defect, re-created one name at a time.
     label: "the summarizer worker's env drops USER again",
     file: `${CONNECTOR}/src/summarizer/worker-env.ts`,
-    from: "  /^CLAUDECODE$|^CLAUDE_CODE_(SESSION_ID|ENTRYPOINT|MESSAGING_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;",
-    to: "  /^USER$|^CLAUDECODE$|^CLAUDE_CODE_(SESSION_ID|ENTRYPOINT|MESSAGING_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;",
+    from: "  /^CLAUDECODE$|^CLAUDE_PID$|^CLAUDE_CODE_(SESSION_|CHILD_SESSION$|ENTRYPOINT$|MESSAGING_|TASK_LIST_ID$|SSE_PORT$|REMOTE|RESUME_FROM_SESSION$|BRIDGE_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;",
+    to: "  /^USER$|^CLAUDECODE$|^CLAUDE_PID$|^CLAUDE_CODE_(SESSION_|CHILD_SESSION$|ENTRYPOINT$|MESSAGING_|TASK_LIST_ID$|SSE_PORT$|REMOTE|RESUME_FROM_SESSION$|BRIDGE_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;",
     test: `${CONNECTOR}/test/summarizer-worker-env.test.ts`,
     because:
       "every nested claude -p on a keychain-login machine answers \"Not " +

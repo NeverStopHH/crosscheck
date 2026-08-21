@@ -127,6 +127,9 @@ describe("crosscheck doctor — summarizer runner probe", () => {
     expect(seen["USER"]).toBe("tester");
     expect(seen["CROSSCHECK_SUMMARIZER_CHILD"]).toBe("1");
     expect(seen["CROSSCHECK_HOME"]).toBe(home);
+    // …and never the hub key doctor itself was given: the nested binary has
+    // no business with the hub, so the secret stops at the runner
+    expect(seen).not.toHaveProperty("CROSSCHECK_API_KEY");
     // …and the cwd: the neutral directory, not the repo doctor ran in
     // (realpath on both sides: the child reports the resolved path, macOS
     // /var → /private/var, while the fixture path is the symlink)

@@ -588,4 +588,27 @@ describe("runSummarizeWorker spawns the binary neutral and marked", () => {
     const seen = JSON.parse(await Bun.file(envDump).text()) as Record<string, string>;
     expect(seen["CROSSCHECK_SUMMARIZER_CHILD"]).toBe("1");
   });
+
+  test("the binary's env never carries the hub key — the nested claude has no business with the hub", async () => {
+    // Arrange: a developer who exported CROSSCHECK_API_KEY in the shell the
+    // hook runs in (most keep it in config.json; the env path exists too)
+    const fixture = await workerFixture();
+    const dir = await tempDir();
+    const envDump = join(dir, "env.json");
+    const fake = await makeFakeSummarizer({ output: "NONE", envDump });
+
+    // Act
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+      CROSSCHECK_API_KEY: "cx_live_secret_never_needed_here",
+      USER: "nick",
+    });
+
+    // Assert: the secret stays with the worker; everything else still rides
+    const seen = JSON.parse(await Bun.file(envDump).text()) as Record<string, string>;
+    expect(seen).not.toHaveProperty("CROSSCHECK_API_KEY");
+    expect(seen["USER"]).toBe("nick");
+    expect(seen["CROSSCHECK_SUMMARIZER_CHILD"]).toBe("1");
+  });
 });

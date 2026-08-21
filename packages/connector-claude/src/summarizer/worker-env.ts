@@ -57,11 +57,22 @@ export const ensureSummarizerCwd = async (
  * CLAUDE_CODE_USE_BEDROCK/VERTEX, CLAUDE_CONFIG_DIR and every ANTHROPIC_*
  * variable pass through, because they are how the nested claude logs in.
  *
- * VERIFY: bun -e 'const {PARENT_SESSION_MARKER_PATTERN: p} = await import("./packages/connector-claude/src/summarizer/worker-env.ts"); console.log(["CLAUDECODE","CLAUDE_CODE_SESSION_ID","CLAUDE_CODE_ENTRYPOINT","CLAUDE_CODE_MESSAGING_SOCKET","CLAUDE_CODE_MESSAGING_TOKEN","CLAUDE_PLUGIN_ROOT","CLAUDE_PLUGIN_DATA","CLAUDE_PROJECT_DIR","CLAUDE_AGENT_SDK_VERSION"].filter((n) => p.test(n)).length, ["USER","HOME","PATH","ANTHROPIC_API_KEY","CLAUDE_CODE_OAUTH_TOKEN","CLAUDE_CODE_USE_BEDROCK","CLAUDE_CONFIG_DIR","AWS_PROFILE","HTTPS_PROXY"].filter((n) => p.test(n)).length)'
- * PRINTS: 9 0
+ * WIDENED past the nine names the first cut stripped, after a real 2.1.237
+ * hook/agent env was found to carry CLAUDE_PID and CLAUDE_CODE_CHILD_SESSION
+ * past them, and `strings claude.exe | grep -oE 'CLAUDE(_CODE)?_[A-Z0-9_]+'`
+ * showed the other session-binding names the binary reads: the task-list
+ * id, the IDE SSE port (an auto-connect in an IDE terminal), the
+ * remote/bridge session ids, resume-from-session, the session access token
+ * (CLAUDE_CODE_SESSION_* as a family). CLAUDE_CODE_EXECPATH, CLAUDE_EFFORT
+ * and the CLAUDE_CODE_ENABLE_* knobs are NOT session binding and pass
+ * through — a denylist that swept CLAUDE_ wholesale would take the auth
+ * names with it.
+ *
+ * VERIFY: bun -e 'const {PARENT_SESSION_MARKER_PATTERN: p} = await import("./packages/connector-claude/src/summarizer/worker-env.ts"); console.log(["CLAUDECODE","CLAUDE_CODE_SESSION_ID","CLAUDE_CODE_ENTRYPOINT","CLAUDE_CODE_MESSAGING_SOCKET","CLAUDE_CODE_MESSAGING_TOKEN","CLAUDE_PLUGIN_ROOT","CLAUDE_PLUGIN_DATA","CLAUDE_PROJECT_DIR","CLAUDE_AGENT_SDK_VERSION","CLAUDE_PID","CLAUDE_CODE_CHILD_SESSION","CLAUDE_CODE_SESSION_ACCESS_TOKEN","CLAUDE_CODE_TASK_LIST_ID","CLAUDE_CODE_SSE_PORT","CLAUDE_CODE_REMOTE_SESSION_ID","CLAUDE_CODE_RESUME_FROM_SESSION","CLAUDE_CODE_BRIDGE_SESSION_ID"].filter((n) => p.test(n)).length, ["USER","HOME","PATH","ANTHROPIC_API_KEY","CLAUDE_CODE_OAUTH_TOKEN","CLAUDE_CODE_USE_BEDROCK","CLAUDE_CONFIG_DIR","AWS_PROFILE","HTTPS_PROXY","CLAUDE_CODE_EXECPATH","CLAUDE_EFFORT"].filter((n) => p.test(n)).length)'
+ * PRINTS: 17 0
  */
 export const PARENT_SESSION_MARKER_PATTERN =
-  /^CLAUDECODE$|^CLAUDE_CODE_(SESSION_ID|ENTRYPOINT|MESSAGING_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;
+  /^CLAUDECODE$|^CLAUDE_PID$|^CLAUDE_CODE_(SESSION_|CHILD_SESSION$|ENTRYPOINT$|MESSAGING_|TASK_LIST_ID$|SSE_PORT$|REMOTE|RESUME_FROM_SESSION$|BRIDGE_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;
 
 /**
  * The worker's environment: everything the hook was invoked with except the

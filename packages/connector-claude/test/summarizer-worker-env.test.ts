@@ -53,7 +53,14 @@ const LOGIN_SHAPED: Readonly<Record<string, string>> = {
   SSL_CERT_FILE: "/etc/ssl/corp.pem",
 };
 
-/** The PARENT Claude Code session's markers — what must NOT reach the child. */
+/**
+ * The PARENT Claude Code session's markers — what must NOT reach the child.
+ * The first nine are the spec's list; the rest are the session-scoped names
+ * a real 2.1.237 hook/agent env carried past them (CLAUDE_PID,
+ * CLAUDE_CODE_CHILD_SESSION) or that the binary reads for session binding
+ * (task list, SSE port, remote/bridge session, resume, session access token)
+ * — `strings claude.exe | grep -oE 'CLAUDE(_CODE)?_[A-Z0-9_]+'` lists them.
+ */
 const PARENT_MARKERS: Readonly<Record<string, string>> = {
   CLAUDECODE: "1",
   CLAUDE_CODE_SESSION_ID: "parent-session-uuid",
@@ -64,6 +71,25 @@ const PARENT_MARKERS: Readonly<Record<string, string>> = {
   CLAUDE_PLUGIN_DATA: "/home/nick/.claude/plugins/x/data",
   CLAUDE_PROJECT_DIR: "/home/nick/repo",
   CLAUDE_AGENT_SDK_VERSION: "0.1.0",
+  CLAUDE_PID: "4242",
+  CLAUDE_CODE_CHILD_SESSION: "1",
+  CLAUDE_CODE_SESSION_ACCESS_TOKEN: "parent-session-access",
+  CLAUDE_CODE_TASK_LIST_ID: "parent-task-list",
+  CLAUDE_CODE_SSE_PORT: "51234",
+  CLAUDE_CODE_REMOTE_SESSION_ID: "remote-session-uuid",
+  CLAUDE_CODE_RESUME_FROM_SESSION: "parent-session-uuid",
+  CLAUDE_CODE_BRIDGE_SESSION_ID: "bridge-session-uuid",
+};
+
+/**
+ * CLAUDE_* names a real parent env ALSO carries that are NOT session binding
+ * — the executable's own path and feature knobs — and pass through: a
+ * denylist that swept CLAUDE_ wholesale would take the auth names with them.
+ */
+const PARENT_PASS_THROUGH: Readonly<Record<string, string>> = {
+  CLAUDE_CODE_EXECPATH: "/usr/local/bin/claude",
+  CLAUDE_EFFORT: "medium",
+  CLAUDE_CODE_ENABLE_TASKS: "1",
 };
 
 const HOOK_ENV: Readonly<Record<string, string>> = {
@@ -73,6 +99,7 @@ const HOOK_ENV: Readonly<Record<string, string>> = {
   CROSSCHECK_SUMMARIZER_CMD: "/tmp/fake-summarizer.sh",
   CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "5000",
   ...LOGIN_SHAPED,
+  ...PARENT_PASS_THROUGH,
   ...PARENT_MARKERS,
 };
 
@@ -109,11 +136,13 @@ describe("summarizerWorkerEnv (pass-through minus the parent's markers)", () => 
       expect(PARENT_SESSION_MARKER_PATTERN.test(name)).toBe(true);
     }
     // The auth-shaped CLAUDE_* variables are NOT markers — a denylist that
-    // swept CLAUDE_ wholesale would recreate the finding for OAuth/Bedrock.
-    for (const name of Object.keys(LOGIN_SHAPED)) {
+    // swept CLAUDE_ wholesale would recreate the finding for OAuth/Bedrock —
+    // and neither are the executable path and feature knobs a parent carries.
+    for (const name of [...Object.keys(LOGIN_SHAPED), ...Object.keys(PARENT_PASS_THROUGH)]) {
       expect(PARENT_SESSION_MARKER_PATTERN.test(name)).toBe(false);
+      expect(env[name]).toBe(HOOK_ENV[name] ?? "");
     }
-    // Exactly the nine named markers left the environment — no silent extras.
+    // Exactly the named markers left the environment — no silent extras.
     const forwarded = Object.keys(env).filter((name) => name in HOOK_ENV);
     expect(forwarded).toHaveLength(
       Object.keys(HOOK_ENV).length - Object.keys(PARENT_MARKERS).length,
