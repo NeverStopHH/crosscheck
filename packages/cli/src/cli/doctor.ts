@@ -76,7 +76,10 @@ import {
   probeSummarizerRunner,
   readSummarizerCost,
 } from "@crosscheck/connector-claude";
-import type { SummarizerFailure } from "@crosscheck/connector-claude";
+import type {
+  SummarizerFailure,
+  SummarizerProbe,
+} from "@crosscheck/connector-claude";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { isOwnedCommand } from "@crosscheck/connector-claude";
 import {
@@ -927,15 +930,13 @@ const versionPart = (version: string | null): string =>
 const seconds = (ms: number): string => `${String(Math.round(ms / MS_PER_SECOND))} s`;
 
 /**
- * The active runner probe (trial finding #14; summarizer/probe.ts states the
- * cost and the skips): the real argv, the real worker env, the real cwd, a
- * slice that must answer NONE. PASS names the answer and the time; FAIL
- * names what the binary said and a remedy that fits it — the three real
- * failures seen on 2026-08-21 ("Not logged in", an unknown flag on an old
- * CLI, the deadline) each want a different one.
+ * The runner line for one probe outcome — PURE, so the rendering is pinned
+ * without a binary: PASS names the answer and the time; FAIL names what the
+ * binary said and a remedy that fits it — the three real failures seen on
+ * 2026-08-21 ("Not logged in", an unknown flag on an old CLI, the deadline)
+ * each want a different one.
  */
-const checkSummarizerRunner = async (env: Env, home: string): Promise<Check> => {
-  const probe = await probeSummarizerRunner(env, home);
+export const summarizerRunnerCheck = (probe: SummarizerProbe): Check => {
   switch (probe.kind) {
     case "skipped":
       return check("PASS", "summarizer runner", `skipped — ${probe.why}`);
@@ -965,6 +966,14 @@ const checkSummarizerRunner = async (env: Env, home: string): Promise<Check> => 
       );
   }
 };
+
+/**
+ * The active runner probe (trial finding #14; summarizer/probe.ts states the
+ * cost and the skips): the real argv, the real worker env, the real cwd, a
+ * slice that must answer NONE — rendered by summarizerRunnerCheck.
+ */
+const checkSummarizerRunner = async (env: Env, home: string): Promise<Check> =>
+  summarizerRunnerCheck(await probeSummarizerRunner(env, home));
 
 /**
  * The effective per-request timeout and WHO set it — the source tells the
