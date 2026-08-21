@@ -98,11 +98,23 @@ export const probeSummarizerRunner = async (
   }
   const override = env["CROSSCHECK_SUMMARIZER_CMD"];
   const hasOverride = override !== undefined && override.length > 0;
-  // The DOCTOR's PATH, not the test runner's: Bun.spawn falls back to the
-  // parent's PATH when the child env has none, so a bare "claude" in a test
-  // env without PATH would still find the developer's real binary. The
-  // which() below is what keeps a real Haiku call out of every doctor test
-  // on a machine that has claude installed.
+  // Looked up against the DOCTOR's env PATH — the same PATH the spawn below
+  // resolves "claude" with. Bun.spawn never consults the PARENT process's
+  // PATH: a child env without PATH resolves a bare command against the OS
+  // default search path only (`ls` in /bin spawns; a binary that is on the
+  // parent's PATH but outside that default — /usr/local/bin, ~/.local/bin —
+  // is "Executable not found"), measured on Bun 1.3.13/darwin and
+  // 1.4.0/linux alike. So a test env without PATH cannot reach a claude in
+  // /usr/local/bin at all; without this which() the probe would FAIL "could
+  // not start" there instead of saying truthfully that it skipped. The one
+  // case the which() actually GUARDS is a claude installed inside the OS
+  // default path (/usr/bin), which the spawn would find even with no PATH.
+  //
+  // VERIFY: d=$(mktemp -d) && printf '#!/bin/sh\necho hi\n' > "$d/cx-probe" && chmod +x "$d/cx-probe" && PATH="$d:$PATH" bun -e 'const t=(env)=>{try{Bun.spawn({cmd:["cx-probe"],env,stdout:"ignore"});return "spawned"}catch(e){return String(e.message).split(":")[0]}};console.log(t({}),"|",t({PATH:process.env.PATH}))'; rm -rf "$d"
+  // PRINTS: Executable not found in $PATH | spawned
+  //
+  // VERIFY: bun -e 'try{const p=Bun.spawn({cmd:["ls"],env:{},stdout:"ignore"});await p.exited;console.log("spawned")}catch(e){console.log(String(e.message).split(":")[0])}'
+  // PRINTS: spawned
   if (
     !hasOverride &&
     Bun.which(CLAUDE_BINARY, { PATH: env["PATH"] ?? "" }) === null
