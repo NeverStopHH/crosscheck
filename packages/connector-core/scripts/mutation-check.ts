@@ -1328,6 +1328,65 @@ export const MUTATIONS: readonly Mutation[] = [
       "spool depth and hub ingest for exactly the users the global install " +
       "exists to help",
   },
+  // ── Trial finding #14: the Tier-1 summarizer never answered ─────────────
+  {
+    // The worker env's one load-bearing variable on a keychain-login Mac:
+    // the bisect showed USER alone flips "Not logged in" to NONE. This
+    // widens the parent-marker denylist to swallow it — the allowlist's
+    // defect, re-created one name at a time.
+    label: "the summarizer worker's env drops USER again",
+    file: `${CONNECTOR}/src/summarizer/worker-env.ts`,
+    from: "  /^CLAUDECODE$|^CLAUDE_CODE_(SESSION_ID|ENTRYPOINT|MESSAGING_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;",
+    to: "  /^USER$|^CLAUDECODE$|^CLAUDE_CODE_(SESSION_ID|ENTRYPOINT|MESSAGING_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;",
+    test: `${CONNECTOR}/test/summarizer-worker-env.test.ts`,
+    because:
+      "every nested claude -p on a keychain-login machine answers \"Not " +
+      "logged in · Please run /login\" and exits 1 — 17 of 17 fires of the " +
+      "trial, booked as failures now but still zero drafts",
+  },
+  {
+    // The recursion/phantom guard that does not depend on flags: the hook
+    // dispatcher's early exit under the child marker. Without it a nested
+    // claude that DOES load hooks registers phantom sessions and its Stop
+    // can fire the summarizer again.
+    label: "hooks inside the summarizer's own claude run again",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: '  if (isSummarizerChild(env)) {\n    return "";\n  }\n',
+    to: "",
+    test: `${CONNECTOR}/test/summarizer-child-guard.test.ts`,
+    because:
+      "a nested claude -p that loads the global hooks mints phantom " +
+      "sessions — 3 state files and hub sessions per plain run measured — " +
+      "and its Stop hook can fire the summarizer from inside the summarizer",
+  },
+  {
+    // The lean argv's cold-start flag: without --setting-sources "" the
+    // nested claude loads the developer's whole settings stack (~10 MCP
+    // servers, plugins, hooks) — 35–116 s measured against a 30 s deadline.
+    label: "the nested claude loads the whole settings stack again",
+    file: `${CONNECTOR}/src/summarizer/runner.ts`,
+    from: '  "--setting-sources",\n  "",\n',
+    to: "",
+    test: `${CONNECTOR}/test/summarizer-argv.test.ts`,
+    because:
+      "every fire pays the full session cold start and runs the developer's " +
+      "hooks and MCP servers; the deadline kills most of them before the " +
+      "model speaks — the trial's 0-draft remainder",
+  },
+  {
+    // Hard-won rule 5 at the cost line: the remainder must be a WARN when
+    // fires reach the threshold with nothing answered. This turns it back
+    // into the PASS the trial read for a week while every run was dying.
+    label: "doctor calls a summarizer that never answers healthy",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '    ? check(\n        "WARN",\n        "summarizer cost",',
+    to: '    ? check(\n        "PASS",\n        "summarizer cost",',
+    test: `${CLI}/test/summarizer-cost.test.ts`,
+    because:
+      "\"PASS summarizer cost 17 runs (0 NONE, 0 drafts)\" — fail-open that " +
+      "has become silently dead, with no surface saying so; the remedy one " +
+      "check down is never read",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -1412,6 +1471,10 @@ interface Outcome {
  * PRINTS: stop-gate.test.ts 1
  * PRINTS: stop-hook.test.ts 1
  * PRINTS: stop-latency.test.ts 1
+ * PRINTS: summarizer-argv.test.ts 1
+ * PRINTS: summarizer-child-guard.test.ts 1
+ * PRINTS: summarizer-cost.test.ts 1
+ * PRINTS: summarizer-worker-env.test.ts 1
  * PRINTS: transparency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1
  */
