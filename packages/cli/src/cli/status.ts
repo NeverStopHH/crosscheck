@@ -16,7 +16,9 @@ import {
 import { spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import {
+  formatIntentCost,
   formatSummarizerCost,
+  readIntentCost,
   readSummarizerCost,
 } from "@crosscheck/connector-claude";
 import type { CliResult } from "./login.ts";
@@ -62,6 +64,10 @@ export const runStatus = async (
     config.hubUrl,
     identity.repoId,
   );
+  // The derived-intent fires and what came of them (trial finding #16):
+  // one Haiku call per session state, the outcome split so a fire that
+  // landed nothing is never an invisible number.
+  const intentCost = await readIntentCost(config.home, config.hubUrl, identity.repoId);
   const drops = await readDropSummary(config.home, key);
   // A batch the ledger itself could not take is recorded as a marker, not a count,
   // so the summed total understates it. `doctor` says the same; both must agree.
@@ -155,6 +161,7 @@ export const runStatus = async (
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       ...foreignDropLines,
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
+      `intent: ${formatIntentCost(intentCost)}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
       "",
     ].join("\n"),

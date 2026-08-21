@@ -11,6 +11,11 @@ export {
   isSummarizerSilentlyDead,
   readSummarizerCost,
 } from "./summarizer/cost.ts";
+// The derived-intent surface (trial finding #16): the worker entry the
+// prompt hook spawns, and the cost read/format pair `status`/`doctor` print.
+export { runIntentWorker } from "./intent/worker.ts";
+export { formatIntentCost, isIntentSilentlyDead, readIntentCost } from "./intent/cost.ts";
+export type { IntentCost } from "./intent/cost.ts";
 // The runner's own surface for `doctor` (trial finding #14): the real argv,
 // the real worker env, the booked-failure formatter and the active probe.
 export {

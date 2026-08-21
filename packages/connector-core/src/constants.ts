@@ -390,6 +390,19 @@ export const INTENT_PROMPT_MAX_CHARS = 4000;
  * PRINTS: true
  */
 export const INTENT_DERIVED_CONFIDENCE = 0.4;
+/**
+ * `crosscheck doctor` calls the derived-intent capture silently dead once
+ * this many fires have landed neither a NONE nor an intent — AND on any
+ * booked failure at all, whatever the count (cli/doctor.ts checkIntentCost).
+ * Lower than the summarizer's threshold (DOCTOR_SUMMARIZER_SILENT_FIRES_WARN)
+ * because an intent fires at most ONCE per session state: waiting for three
+ * silent fires would mean three sessions of silence before doctor spoke.
+ * Never a PASS-only counter (the finding-#14 lesson).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DOCTOR_INTENT_SILENT_FIRES_WARN, c.DOCTOR_INTENT_SILENT_FIRES_WARN < c.DOCTOR_SUMMARIZER_SILENT_FIRES_WARN)'
+ * PRINTS: 2 true
+ */
+export const DOCTOR_INTENT_SILENT_FIRES_WARN = 2;
 
 // ── Absence detection ───────────────────────────────────────────────────────
 

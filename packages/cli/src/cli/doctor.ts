@@ -71,11 +71,14 @@ import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.t
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher-check.ts";
 import {
+  formatIntentCost,
   formatSummarizerCost,
   formatSummarizerFailure,
   isBelowSummarizerVersionFloor,
+  isIntentSilentlyDead,
   isSummarizerSilentlyDead,
   probeSummarizerRunner,
+  readIntentCost,
   readSummarizerCost,
 } from "@crosscheck/connector-claude";
 import type {
@@ -905,6 +908,31 @@ const checkSummarizerCost = async (
 };
 
 /**
+ * Derived-intent capture (trial finding #16), the summarizer cost check's
+ * sibling with a tighter rule: an intent fires at most once per session
+ * state, so doctor WARNs on ANY booked failure (the worker names why — a
+ * runner loss, a dropped sentence, a pre-intent state file) and on
+ * DOCTOR_INTENT_SILENT_FIRES_WARN fires that landed neither a NONE nor an
+ * intent; never a PASS-only counter (the finding-#14 lesson). The runner is
+ * the summarizer's, so the remedy is one check down — no second probe.
+ */
+const checkIntentCost = async (
+  home: string,
+  hubUrl: string,
+  repoId: string,
+): Promise<Check> => {
+  const cost = await readIntentCost(home, hubUrl, repoId);
+  const line = formatIntentCost(cost);
+  return isIntentSilentlyDead(cost)
+    ? check(
+        "WARN",
+        "intent capture",
+        `${line} — fires that landed neither a NONE nor an intent; see the summarizer runner check (counts are per live session and clear at SessionEnd)`,
+      )
+    : check("PASS", "intent capture", line);
+};
+
+/**
  * The remedy a failed runner probe names, by what the binary said — each a
  * DIFFERENT fix, which is why the first output line is printed at all:
  * "Not logged in" is the developer's login, "unknown option" is the CLI's
@@ -1298,6 +1326,7 @@ export const runDoctor = async (
     ...(await checkSpool(config.home, key, now)),
     ...(await foreignDropChecks(config.home)),
     await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
+    await checkIntentCost(config.home, config.hubUrl, identity.repoId),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now),
     await checkAbsences(hubCtx, identity.repoId),
