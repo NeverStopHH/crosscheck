@@ -1403,6 +1403,88 @@ export const MUTATIONS: readonly Mutation[] = [
       "reads PASS while every summarizer fire can run the buggy cleanup and " +
       "delete their older conversation history",
   },
+  // ── Trial findings #15/#16: session intent ───────────────────────────────
+  {
+    // The derived cap, on intents as on claims (DESIGN.md §3): a derived
+    // intent above DERIVED_CONFIDENCE_CAP must be refused by the shared
+    // schema the hub and the worker both run. This removes the check.
+    label: "a derived intent may assert full confidence again",
+    file: "packages/schema/src/session.ts",
+    from: '      intent.provenance === "derived" &&',
+    to: "      false &&",
+    test: "packages/schema/test/session.test.ts",
+    because:
+      "a machine-derived intent can claim confidence 1 and read like a " +
+      "person's statement on every surface — the label is all that is left " +
+      "of the trust ladder",
+  },
+  {
+    // The privacy line of the whole feature: the raw prompt never leaves the
+    // machine, only the model's one sentence. This ships the prompt instead.
+    label: "the intent worker ships the raw prompt",
+    file: `${CONNECTOR}/src/intent/worker.ts`,
+    from: "    summary: sentence,",
+    to: "    summary: cutWellFormed(prompt, MAX_INTENT_SUMMARY_CHARS),",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because:
+      "the developer's first prompt — pasted secrets, customer names, the " +
+      "bug in their own words — is uploaded to the hub as the intent and " +
+      "rendered into every teammate's briefing",
+  },
+  {
+    // The ONE sanitizer for every intent surface (briefing/intent.ts): the
+    // briefing, hints, tripwire, MCP and status all compose from it. This
+    // prints the summary raw.
+    label: "the briefing renders a teammate's intent unsanitized",
+    file: `${CORE}/src/briefing/intent.ts`,
+    from: "  const text = sanitizeUntrusted(intent.summary, INTENT_MAX_CHARS);",
+    to: "  const text = intent.summary;",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "an intent is teammate-declared or model-derived text on seven " +
+      "injection surfaces at once; raw, it can carry control characters, " +
+      "close the « » frame and open a second one — on every surface",
+  },
+  {
+    // The worker env contract (finding #14, applied to the intent worker):
+    // the parent session's markers stripped, the child marker added. This
+    // passes the hook's environment through untouched.
+    label: "the intent worker inherits the parent session's markers",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "      env: summarizerWorkerEnv(ctx.env, ctx.config.home),",
+    to: "      env: { ...ctx.env, CROSSCHECK_HOME: ctx.config.home } as Record<string, string>,",
+    test: `${CONNECTOR}/test/intent-hook.test.ts`,
+    because:
+      "the nested claude inherits CLAUDECODE and the session id of the " +
+      "session it is summarizing and can be mistaken for, or bind to, it — " +
+      "the phantom-session class trial finding #14 closed",
+  },
+  {
+    // The hub merge rule: declared over derived, enforced where spool replay
+    // order cannot undo it. This lets a late derived record overwrite.
+    label: "a late derived intent overwrites a declared one",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '    current["provenance"] === DECLARED_PROVENANCE &&',
+    to: "    false &&",
+    test: `${SERVER}/test/records.test.ts`,
+    because:
+      "set_intent is undone by the derived-intent worker's spool record " +
+      "landing afterwards — the agent's own statement loses to a model " +
+      "guess, silently",
+  },
+  {
+    // "Same topic, different files": an intent-only context (no claims) is a
+    // pointer. This narrows the pointer pass back to contexts with claims.
+    label: "an intent-only context stops earning a pointer",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "      (foreignCount > 0 || hasIntent(context)) &&",
+    to: "      foreignCount > 0 &&",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "a teammate whose session states exactly what it is doing, but has " +
+      "published no claim yet, is invisible to a prompt on the same topic — " +
+      "the gap trial finding #16 measured on 80 of 80 work contexts",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -1464,13 +1546,15 @@ interface Outcome {
  * PRINTS: hint-flow.test.ts 2
  * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 1
- * PRINTS: hint-select.test.ts 3
+ * PRINTS: hint-select.test.ts 4
  * PRINTS: hints.test.ts 2
  * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: injection.test.ts 2
  * PRINTS: injector.test.ts 4
+ * PRINTS: intent-hook.test.ts 1
+ * PRINTS: intent-worker.test.ts 1
  * PRINTS: latency.test.ts 3
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
@@ -1479,9 +1563,12 @@ interface Outcome {
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
  * PRINTS: proxy-e2e.test.ts 1
+ * PRINTS: records.test.ts 1
  * PRINTS: recovery-race.test.ts 1
+ * PRINTS: render-surface-registry.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search.test.ts 3
+ * PRINTS: session.test.ts 1
  * PRINTS: sessions.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
  * PRINTS: solved-ranking.test.ts 2

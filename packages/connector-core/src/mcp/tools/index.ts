@@ -28,6 +28,10 @@ export interface McpTool {
   readonly run: (ctx: McpContext, args: unknown) => Promise<ToolResult>;
 }
 
+/**
+ * VERIFY: bun -e 'const {TOOLS}=await import("./packages/connector-core/src/mcp/tools/index.ts");console.log(TOOLS.length, TOOLS.map((t)=>t.definition.name).join(" "))'
+ * PRINTS: 7 publish_claim set_intent review_draft extend_diagnosis get_diagnosis get_referee_brief search_related_work
+ */
 export const TOOLS: readonly McpTool[] = [
   publishClaim,
   setIntent,

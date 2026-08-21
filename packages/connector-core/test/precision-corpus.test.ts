@@ -17,7 +17,7 @@
  * Corpus size, derived from the data so this header cannot rot:
  *
  * VERIFY: bun -e 'const {loadCorpus}=await import("./packages/connector-core/test/fixtures/precision-corpus/format.ts");const c=await loadCorpus();const p=c.scenarios.flatMap(s=>s.probes);const by=k=>p.filter(x=>x.expect===k).length;console.log(c.scenarios.length,p.length,by("substance"),by("pointer"),by("silence"))'
- * PRINTS: 9 25 10 3 12
+ * PRINTS: 10 28 10 4 14
  *
  * THE HARNESS CAN FAIL — proven, not assumed, in two ways. Continuously:
  * scripts/mutation-check.ts re-introduces "derived provenance counts as

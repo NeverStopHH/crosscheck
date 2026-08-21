@@ -249,4 +249,42 @@ describe("the first substantive prompt derives the session intent, exactly once"
     // Assert
     expect(await fileExists(fix.promptFile)).toBe(false);
   });
+  test("the worker env drops the parent session's markers and carries the child marker", async () => {
+    // Arrange: a fake model that dumps its environment; the hook env carries
+    // the markers a real Claude Code hook process carries
+    const fix = await fixture("markers");
+    const dir = await mkdtemp(join(tmpdir(), "cx-intent-env-"));
+    paths.push(dir);
+    const envDump = join(dir, "env.json");
+    const script = join(dir, "dump.ts");
+    await writeFile(
+      script,
+      `await Bun.stdin.text();\nawait Bun.write(${JSON.stringify(envDump)}, JSON.stringify(process.env));\nprocess.stdout.write("NONE");\n`,
+      "utf8",
+    );
+    const wrapper = join(dir, "dump.sh");
+    await writeFile(wrapper, `#!/bin/sh\nexec "${process.execPath}" "${script}"\n`, "utf8");
+    await chmod(wrapper, 0o755);
+
+    // Act
+    await runHook("user-prompt-submit", promptPayload(fix, PROMPT), {
+      ...fix.env,
+      CROSSCHECK_SUMMARIZER_CMD: wrapper,
+      CLAUDECODE: "1",
+      CLAUDE_CODE_SESSION_ID: "parent-session",
+      USER: process.env["USER"] ?? "tester",
+    });
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+    while (Date.now() < deadline && !(await fileExists(envDump))) {
+      await Bun.sleep(POLL_INTERVAL_MS);
+    }
+
+    // Assert: summarizerWorkerEnv's contract, through the prompt hook's spawn
+    const env = JSON.parse(await Bun.file(envDump).text()) as Record<string, string>;
+    expect(env["CROSSCHECK_SUMMARIZER_CHILD"]).toBe("1");
+    expect(env["CLAUDECODE"]).toBeUndefined();
+    expect(env["CLAUDE_CODE_SESSION_ID"]).toBeUndefined();
+    expect(env["CROSSCHECK_HOME"]).toBe(fix.home);
+    expect(env["USER"]).toBeDefined();
+  });
 });
