@@ -20,10 +20,10 @@ import {
   DOCTOR_SUMMARIZER_PROBE_SLICE,
   DOCTOR_SUMMARIZER_VERSION_TIMEOUT_MS,
 } from "@crosscheck/connector-core/constants.ts";
-import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { isNoneAnswer } from "./parse.ts";
 import {
+  bareSummarizerLine,
   resolveSummarizerArgv,
   resolveSummarizerTimeoutMs,
   runSummarizer,
@@ -85,7 +85,7 @@ const readClaudeVersion = async (
   if (!result.ok) {
     return null;
   }
-  const token = bareUntrusted(firstLine(result.stdout)).split(" ")[0] ?? "";
+  const token = bareSummarizerLine(result.stdout).split(" ")[0] ?? "";
   return token.length === 0 ? null : token;
 };
 
@@ -135,7 +135,7 @@ export const probeSummarizerRunner = async (
   return {
     kind: "answered",
     none: isNoneAnswer(result.stdout),
-    firstLine: bareUntrusted(line),
+    firstLine: bareSummarizerLine(result.stdout),
     elapsedMs: result.elapsedMs,
     version,
   };

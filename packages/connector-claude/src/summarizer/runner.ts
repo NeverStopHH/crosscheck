@@ -389,14 +389,29 @@ export const runSummarizer = async (
 };
 
 /**
+ * One line of what the binary said, fit for a human surface: the first
+ * non-empty line through bareUntrusted — model/CLI output is untrusted and
+ * must not mint renderer structure or carry control characters — bounded
+ * to `maxChars`. The ONE door in this package from runner output to the
+ * render layer; render-surfaces.ts registers this module for it, and the
+ * probe (probe.ts) comes through here rather than importing the layer.
+ */
+export const bareSummarizerLine = (
+  raw: string,
+  maxChars: number = SUMMARIZER_FAILURE_MAX_CHARS,
+): string => bareUntrusted(firstLine(raw), maxChars);
+
+const LABEL_SEPARATOR = ": ";
+
+/**
  * One line for a failure, fit to be BOOKED in session state and printed by
- * status/doctor: the reason first, then what the binary said — through
- * bareUntrusted, because that text is model/CLI output and must not mint
- * renderer structure or carry control characters — the whole cut to
- * SUMMARIZER_FAILURE_MAX_CHARS.
+ * status/doctor: the reason first, then what the binary said (through
+ * bareSummarizerLine), the binary's share of the line being whatever
+ * SUMMARIZER_FAILURE_MAX_CHARS leaves after the label — so the whole line
+ * is bounded without a final cut that could split a character.
  *
- * VERIFY: bun -e 'const {formatSummarizerFailure: f} = await import("./packages/connector-claude/src/summarizer/runner.ts"); console.log(f({ok:false,reason:"exit",exitCode:1,detail:"Not logged in · Please run /login",elapsedMs:1}), "|", f({ok:false,reason:"timeout",timeoutMs:60000,elapsedMs:60000}), "|", f({ok:false,reason:"spawn",detail:"Executable not found in $PATH: \"claude\"",elapsedMs:1}))'
- * PRINTS: exit 1: Not logged in Please run /login | timed out after 60 s | could not start: Executable not found in $PATH "claude"
+ * VERIFY: bun -e 'const {formatSummarizerFailure: f} = await import("./packages/connector-claude/src/summarizer/runner.ts"); console.log(f({ok:false,reason:"exit",exitCode:1,detail:"Not logged in · Please run /login",elapsedMs:1}), "|", f({ok:false,reason:"timeout",timeoutMs:60000,elapsedMs:60000}), "|", f({ok:false,reason:"spawn",detail:"Executable not found in $PATH: \"claude\"",elapsedMs:1}), "|", f({ok:false,reason:"exit",exitCode:2,detail:"z".repeat(500),elapsedMs:1}).length)'
+ * PRINTS: exit 1: Not logged in Please run /login | timed out after 60 s | could not start: Executable not found in $PATH "claude" | 120
  */
 export const formatSummarizerFailure = (failure: SummarizerFailure): string => {
   if (failure.reason === "timeout") {
@@ -406,9 +421,9 @@ export const formatSummarizerFailure = (failure: SummarizerFailure): string => {
     failure.reason === "spawn"
       ? "could not start"
       : `exit ${String(failure.exitCode)}`;
-  const said = bareUntrusted(failure.detail, SUMMARIZER_FAILURE_MAX_CHARS);
-  return (said.length === 0 ? label : `${label}: ${said}`).slice(
-    0,
-    SUMMARIZER_FAILURE_MAX_CHARS,
+  const said = bareSummarizerLine(
+    failure.detail,
+    SUMMARIZER_FAILURE_MAX_CHARS - label.length - LABEL_SEPARATOR.length,
   );
+  return said.length === 0 ? label : `${label}${LABEL_SEPARATOR}${said}`;
 };
