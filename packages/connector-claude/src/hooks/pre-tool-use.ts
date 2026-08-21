@@ -22,23 +22,54 @@ import { renderTripwireReason } from "@crosscheck/connector-core/hints/render.ts
 import {
   readSessionState,
   updateSessionState,
+  withKnownWorktreeRoot,
   withTripwireAsked,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
 import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
 import type { HookContext } from "./runner.ts";
 
 /** The ONLY decision this connector can emit — the ladder's ceiling (§4). */
 const ASK_DECISION = "ask";
 
+/**
+ * The edited file's repo-relative id, resolved against the root that governs
+ * the FILE (trial finding #17): PostToolUse's own resolution, so an edit in a
+ * linked worktree of the same repo trips the wire instead of resolving to null
+ * against the session's checkout. A newly-resolved worktree root is persisted
+ * to the session-state cache so pre- and post-tool-use never pay git twice for
+ * it (hook budgets are binding).
+ */
 const resolveEditedFile = async (
   ctx: HookContext,
-  repoRoot: string,
+  state: SessionState,
 ): Promise<string | null> => {
   const [first] = extractFilePaths(ctx.payload.tool_input);
   if (first === undefined) {
     return null;
   }
-  return toRepoRelative(repoRoot, ctx.payload.cwd, first);
+  const resolution = await resolveTouchedRoots({
+    paths: [first],
+    cwd: ctx.payload.cwd,
+    sessionRepoRoot: state.repoRoot,
+    sessionRepoId: state.repoId,
+    identityRoot: ctx.identity.root,
+    identityRepoId: ctx.identity.repoId,
+    knownWorktreeRoots: state.knownWorktreeRoots,
+  });
+  if (resolution.newlyResolved.length > 0) {
+    await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
+      resolution.newlyResolved.reduce(
+        (next, entry) => withKnownWorktreeRoot(next, entry.root, entry.repoId),
+        fresh,
+      ),
+    );
+  }
+  const root = resolution.rootByPath.get(first);
+  return root === undefined
+    ? null
+    : toRepoRelative(root, ctx.payload.cwd, first);
 };
 
 export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
@@ -49,7 +80,7 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   if (state === null) {
     return "";
   }
-  const file = await resolveEditedFile(ctx, state.repoRoot);
+  const file = await resolveEditedFile(ctx, state);
   if (file === null) {
     return "";
   }
