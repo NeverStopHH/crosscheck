@@ -144,6 +144,23 @@ to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
   so the summarizer can never register phantom sessions or fire itself. It
   runs from `~/.crosscheck/summarizer-cwd`, never from your repo, so no
   project `CLAUDE.md` rides into a fire.
+- **One more Haiku call per session: the derived intent.** On the FIRST
+  substantive prompt of a session (≥ 40 characters, not a slash command,
+  not a bare yes/no) the UserPromptSubmit hook spawns the SAME detached
+  worker shape with a different prompt and asks for one sentence of what
+  the session is trying to accomplish (or NONE). Same binary, same login
+  environment, same lean flags, same `CROSSCHECK_SUMMARIZER_CMD` /
+  `CROSSCHECK_SUMMARIZER_TIMEOUT_MS` knobs, same child marker — so whatever
+  makes the summarizer work (or not) applies here too. The raw prompt never
+  leaves the machine (a 0600 file under `~/.crosscheck/sessions/`, unlinked
+  by the worker); only the model's sentence is uploaded, as a `(derived)`
+  intent on your work context. `crosscheck status` prints an `intent:` line
+  (fires / NONE / set / failed) and `doctor` has an `intent capture` check
+  that WARNs on any booked failure or on two fires that landed nothing.
+  The `set_intent` MCP tool states the intent outright (declared,
+  confidence 1) and replaces a derived one. Cursor and ACP sessions have no
+  derived intent — no `claude -p` there — but `set_intent` works for any
+  MCP-connected agent.
 
 ## Cursor IDE (≥ 1.7)
 
