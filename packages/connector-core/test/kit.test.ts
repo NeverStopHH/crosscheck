@@ -79,6 +79,7 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   // Config
   ["loadConfig", config.loadConfig],
   ["isDisabled", config.isDisabled],
+  ["isSummarizerChild", config.isSummarizerChild],
   ["rememberDeveloper", config.rememberDeveloper],
   ["readStoredConfig", config.readStoredConfig],
   ["saveConfig", config.saveConfig],

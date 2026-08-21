@@ -473,10 +473,13 @@ describe("packed npm tarball", () => {
     await run(["git", "init", "-q"], { cwd: repoDir });
     const home = join(repoDir, "cx-home");
 
-    // Act
+    // Act. The doctor's summarizer runner probe is switched off: this is the
+    // one doctor in the suite that runs with the developer's REAL PATH, and
+    // on a machine with claude installed the probe would spend a Haiku call
+    // on it (trial finding #14; the probe has its own suite behind a fake).
     const result = await run([nodeExe ?? "node", binPath, "doctor"], {
       cwd: repoDir,
-      env: { ...process.env, CROSSCHECK_HOME: home },
+      env: { ...process.env, CROSSCHECK_HOME: home, CROSSCHECK_DOCTOR_NO_PROBE: "1" },
     });
 
     // Assert: exit 2 = FAIL findings (nothing configured yet), with the

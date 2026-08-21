@@ -120,6 +120,19 @@ const SessionStateObjectSchema = z.looseObject({
    */
   summarizerNoneCount: z.number().int().min(0).default(0),
   summarizerDraftCount: z.number().int().min(0).default(0),
+  /**
+   * Failure telemetry per fire (trial finding #14, where 17 of 17 fires
+   * answered nothing and no surface said why): how many runs the runner
+   * itself lost — binary missing, non-zero exit, deadline — and the most
+   * recent reason as the worker booked it (gate.ts withSummarizerFailure:
+   * exit code / timeout / the first line of STDOUT, sanitized and cut to
+   * SUMMARIZER_FAILURE_MAX_CHARS — stderr stays ignored). Bounded by the
+   * writer, not here: a schema max would make one over-long string an
+   * unparseable file and silence the whole session. Defaults keep every
+   * pre-telemetry state file parsing.
+   */
+  summarizerFailCount: z.number().int().min(0).default(0),
+  summarizerLastFailure: z.string().nullable().default(null),
 });
 
 /**
@@ -373,5 +386,7 @@ export const deriveSessionState = (
     summarizerEstimatedTokens: 0,
     summarizerNoneCount: 0,
     summarizerDraftCount: 0,
+    summarizerFailCount: 0,
+    summarizerLastFailure: null,
   };
 };

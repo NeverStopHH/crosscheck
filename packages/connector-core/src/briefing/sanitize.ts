@@ -1,4 +1,5 @@
 import { MAX_ID_CHARS, MAX_TITLE_CHARS } from "../constants.ts";
+import { cutWellFormed } from "./cut.ts";
 
 export const REDACTED_TITLE = "[redacted: title looked like an instruction]";
 
@@ -296,7 +297,10 @@ export const sanitizeUntrusted = (
   if (cleaned.length <= maxChars) {
     return cleaned;
   }
-  return `${cleaned.slice(0, maxChars - ELLIPSIS.length)}${ELLIPSIS}`;
+  // cutWellFormed, not slice: a cut landing between the halves of an astral
+  // character would otherwise leave a lone high surrogate before the
+  // ellipsis (cut.ts says what that costs and shows it).
+  return `${cutWellFormed(cleaned, maxChars - ELLIPSIS.length)}${ELLIPSIS}`;
 };
 
 /**

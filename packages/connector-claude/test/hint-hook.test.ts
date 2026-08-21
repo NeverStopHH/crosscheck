@@ -74,6 +74,8 @@ const sessionState = (
   summarizerEstimatedTokens: 0,
   summarizerNoneCount: 0,
   summarizerDraftCount: 0,
+  summarizerFailCount: 0,
+  summarizerLastFailure: null,
   ...overrides,
 });
 

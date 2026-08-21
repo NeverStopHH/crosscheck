@@ -14,6 +14,7 @@ import {
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
 import {
   isDisabled,
+  isSummarizerChild,
   loadReportableConfig,
 } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
@@ -45,8 +46,10 @@ export interface HookContext {
   /**
    * The environment the hook was invoked with — NOT process.env, which in
    * tests belongs to the test runner. The one consumer is the Stop hook,
-   * which must forward selected variables (summarizer override, PATH) into
-   * the detached worker it spawns.
+   * which forwards it — minus the parent session's own markers — into the
+   * detached summarizer worker it spawns (summarizer/worker-env.ts: the
+   * nested claude needs the developer's whole login environment, USER
+   * included).
    */
   readonly env: Env;
 }
@@ -227,6 +230,17 @@ const prepareAndRun = async (
  * written to stderr, and the caller always exits 0 (spec §E). The budget covers
  * preparation too — resolving repo identity spawns several git processes, and a
  * slow git would otherwise blow the documented budget many times over.
+ *
+ * FIRST, before the budget, before any file or git is touched: a hook
+ * running inside the Tier-1 summarizer's own nested `claude -p` (the
+ * child marker, config/config.ts isSummarizerChild) returns silence. Trial
+ * finding #14 — the nested claude ran crosscheck's globally installed hooks
+ * and minted phantom sessions; a Stop inside it could have fired the
+ * summarizer again. The lean argv keeps hooks out of that process too, but
+ * this exit does not depend on which flags a Claude Code version honours.
+ * It sits here and not in prepareHook beside isDisabled on purpose: that
+ * rung already pays budget resolution (a config read); this one must cost
+ * nothing — microseconds on every ordinary hook, no budget regression.
  */
 export const runHookWith = async (
   name: HookName,
@@ -234,6 +248,9 @@ export const runHookWith = async (
   stdin: string,
   env: Env,
 ): Promise<string> => {
+  if (isSummarizerChild(env)) {
+    return "";
+  }
   try {
     const { budgetMs, timeoutMs } = await resolveHookBudget(
       BUDGET_RATIOS[name],

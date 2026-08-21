@@ -27,14 +27,20 @@ import {
   readSessionState,
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
-import { withSummarizerDraft, withSummarizerNone } from "./gate.ts";
+import {
+  withSummarizerDraft,
+  withSummarizerFailure,
+  withSummarizerNone,
+} from "./gate.ts";
 import { isNoneAnswer, parseSummarizerOutput } from "./parse.ts";
 import {
+  formatSummarizerFailure,
   resolveSummarizerArgv,
   resolveSummarizerTimeoutMs,
   runSummarizer,
 } from "./runner.ts";
 import { extractSliceText, readSliceRange } from "./transcript.ts";
+import { ensureSummarizerCwd } from "./worker-env.ts";
 
 interface WorkerArgs {
   readonly transcriptPath: string;
@@ -88,15 +94,27 @@ const summarizeTurn = async (args: WorkerArgs, env: Env): Promise<void> => {
     return;
   }
 
-  const stdout = await runSummarizer(
+  const result = await runSummarizer(
     resolveSummarizerArgv(env),
     slice,
     resolveSummarizerTimeoutMs(env),
     env,
+    // From the neutral directory, never the repo root the hook fired in
+    // (trial finding #14: no project CLAUDE.md rides into the fire).
+    { cwd: await ensureSummarizerCwd(home) },
   );
-  if (stdout === null) {
+  if (!result.ok) {
+    // Failure telemetry (trial finding #14): the runner's own losses —
+    // missing binary, non-zero exit, deadline — are booked with their
+    // reason (exit code / timeout / the first STDOUT line, sanitized and
+    // bounded; stderr is never read), so the fires-minus-outcomes
+    // remainder is no longer a number nobody can explain.
+    await updateSessionState(home, args.claudeSessionId, (fresh) =>
+      withSummarizerFailure(fresh, formatSummarizerFailure(result)),
+    );
     return;
   }
+  const stdout = result.stdout;
   const draft = parseSummarizerOutput(stdout);
   if (draft === null) {
     // Outcome telemetry (trial finding #12's measuring stick): only an

@@ -8,7 +8,7 @@
  * wrapper around a bun script written per test.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -44,6 +44,12 @@ interface FakeOptions {
   readonly output?: string;
   readonly sleepMs?: number;
   readonly stdinDump?: string;
+  /** Non-zero to fake a failing binary ("Not logged in", an unknown flag). */
+  readonly exitCode?: number;
+  /** Where the fake writes its working directory (the neutral-cwd pin). */
+  readonly cwdDump?: string;
+  /** Where the fake writes its environment as JSON (the child-marker pin). */
+  readonly envDump?: string;
 }
 
 /**
@@ -60,10 +66,19 @@ const makeFakeSummarizer = async (options: FakeOptions): Promise<string> => {
       options.stdinDump === undefined
         ? ""
         : `await Bun.write(${JSON.stringify(options.stdinDump)}, stdin);`,
+      options.cwdDump === undefined
+        ? ""
+        : `await Bun.write(${JSON.stringify(options.cwdDump)}, process.cwd());`,
+      options.envDump === undefined
+        ? ""
+        : `await Bun.write(${JSON.stringify(options.envDump)}, JSON.stringify(process.env));`,
       options.sleepMs === undefined
         ? ""
         : `await Bun.sleep(${String(options.sleepMs)});`,
       `process.stdout.write(${JSON.stringify(options.output ?? "NONE")});`,
+      options.exitCode === undefined
+        ? ""
+        : `process.exitCode = ${String(options.exitCode)};`,
     ].join("\n"),
     "utf8",
   );
@@ -129,25 +144,29 @@ describe("runSummarizer (injectable runner, hard timeout)", () => {
     const dump = join(dir, "stdin-dump.txt");
     const fake = await makeFakeSummarizer({ output: "NONE", stdinDump: dump });
 
-    const output = await runSummarizer([fake], "the slice text", 5000, {});
+    const result = await runSummarizer([fake], "the slice text", 5000, {});
 
-    expect(output).toBe("NONE");
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.stdout : "").toBe("NONE");
     expect(await Bun.file(dump).text()).toBe("the slice text");
   });
 
-  test("a hung runner is killed at the timeout and yields null", async () => {
+  test("a hung runner is killed at the timeout and reports the timeout", async () => {
     const fake = await makeFakeSummarizer({ sleepMs: 30_000, output: "late" });
 
     const startedAt = Date.now();
-    const output = await runSummarizer([fake], "slice", 300, {});
+    const result = await runSummarizer([fake], "slice", 300, {});
     const elapsed = Date.now() - startedAt;
 
-    expect(output).toBeNull();
+    expect(result.ok).toBe(false);
+    expect(result.ok ? "" : result.reason).toBe("timeout");
     expect(elapsed).toBeLessThan(5000);
   });
 
-  test("a missing binary is null, never a throw", async () => {
-    expect(await runSummarizer(["/nonexistent/claude"], "slice", 1000, {})).toBeNull();
+  test("a missing binary is a spawn failure, never a throw", async () => {
+    const result = await runSummarizer(["/nonexistent/claude"], "slice", 1000, {});
+    expect(result.ok).toBe(false);
+    expect(result.ok ? "" : result.reason).toBe("spawn");
   });
 
   /** Longer than any plausible CI wobble, far past the ceiling below. */
@@ -174,13 +193,14 @@ describe("runSummarizer (injectable runner, hard timeout)", () => {
 
     // Act
     const startedAt = Date.now();
-    const output = await runSummarizer([wrapper], "slice", DESCENDANT_TIMEOUT_MS, {});
+    const result = await runSummarizer([wrapper], "slice", DESCENDANT_TIMEOUT_MS, {});
     const elapsed = Date.now() - startedAt;
 
-    // Assert: null at the deadline — not after the descendant's 6 s lifetime.
-    // The floor proves the wrapper genuinely ran and the DEADLINE produced
-    // the null, not an instant exec failure.
-    expect(output).toBeNull();
+    // Assert: the timeout at the deadline — not after the descendant's 6 s
+    // lifetime. The floor proves the wrapper genuinely ran and the DEADLINE
+    // produced the failure, not an instant exec failure.
+    expect(result.ok).toBe(false);
+    expect(result.ok ? "" : result.reason).toBe("timeout");
     expect(elapsed).toBeLessThan(BOUNDED_CEILING_MS);
     expect(elapsed).toBeGreaterThan(DEADLINE_FLOOR_MS);
   });
@@ -319,6 +339,8 @@ describe("runSummarizeWorker (end to end, faked binary)", () => {
     const state = await readSessionState(fixture.home, SESSION_ID);
     expect(state?.summarizerNoneCount).toBe(1);
     expect(state?.summarizerDraftCount).toBe(0);
+    // A NONE is an answer, not a failure.
+    expect(state?.summarizerFailCount).toBe(0);
   });
 
   test("a spooled draft is counted as a draft outcome", async () => {
@@ -434,5 +456,159 @@ describe("runSummarizeWorker (end to end, faked binary)", () => {
     });
     expect(exitCode).toBe(0);
     expect(await spooledClaims(fixture)).toHaveLength(0);
+  });
+});
+
+/**
+ * Trial finding #14: every fire of the trial was lost INSIDE the runner —
+ * the binary answered "Not logged in" or was killed at the deadline — and
+ * the cost line said "17 runs (0 NONE, 0 drafts)" with no reason anywhere.
+ * The worker now books the reason, bounded and sanitized, so status and
+ * doctor can say it.
+ */
+describe("runSummarizeWorker books why a run was lost", () => {
+  test("a missing binary books a spawn failure and nothing else", async () => {
+    // Arrange
+    const fixture = await workerFixture();
+
+    // Act
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: "/nonexistent/claude",
+    });
+
+    // Assert
+    const state = await readSessionState(fixture.home, SESSION_ID);
+    expect(state?.summarizerFailCount).toBe(1);
+    expect(state?.summarizerLastFailure?.startsWith("could not start")).toBe(true);
+    expect(state?.summarizerNoneCount).toBe(0);
+    expect(state?.summarizerDraftCount).toBe(0);
+    expect(await spooledClaims(fixture)).toHaveLength(0);
+  });
+
+  test('exit 1 with "Not logged in" on stdout books the code and the first line, bare', async () => {
+    const fixture = await workerFixture();
+    const fake = await makeFakeSummarizer({
+      output: "Not logged in · Please run /login\nsecond line never booked\n",
+      exitCode: 1,
+    });
+
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+    });
+
+    const state = await readSessionState(fixture.home, SESSION_ID);
+    expect(state?.summarizerFailCount).toBe(1);
+    // bareUntrusted strips the renderer-structure "·" — the text is CLI output.
+    expect(state?.summarizerLastFailure).toBe("exit 1: Not logged in Please run /login");
+  });
+
+  test("a run past the deadline books the timeout", async () => {
+    const fixture = await workerFixture();
+    const fake = await makeFakeSummarizer({ sleepMs: 30_000, output: "late" });
+
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+      CROSSCHECK_SUMMARIZER_TIMEOUT_MS: "1000",
+    });
+
+    const state = await readSessionState(fixture.home, SESSION_ID);
+    expect(state?.summarizerFailCount).toBe(1);
+    expect(state?.summarizerLastFailure).toBe("timed out after 1 s");
+  }, 15_000);
+
+  test("the booked reason is bounded to 120 chars and a later failure replaces it", async () => {
+    const fixture = await workerFixture();
+    const chatty = await makeFakeSummarizer({ output: "z".repeat(500), exitCode: 2 });
+    const notLoggedIn = await makeFakeSummarizer({
+      output: "Not logged in · Please run /login",
+      exitCode: 1,
+    });
+
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: chatty,
+    });
+    const afterChatty = await readSessionState(fixture.home, SESSION_ID);
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: notLoggedIn,
+    });
+    const afterBoth = await readSessionState(fixture.home, SESSION_ID);
+
+    expect(afterChatty?.summarizerLastFailure?.startsWith("exit 2: ")).toBe(true);
+    expect(afterChatty?.summarizerLastFailure?.length ?? 999).toBeLessThanOrEqual(120);
+    expect(afterBoth?.summarizerFailCount).toBe(2);
+    expect(afterBoth?.summarizerLastFailure).toBe("exit 1: Not logged in Please run /login");
+  });
+});
+
+/**
+ * Trial finding #14, the nested process itself: it must run from a NEUTRAL
+ * directory (no repo CLAUDE.md or rules loaded into every fire) and carry
+ * the child marker that makes every crosscheck hook inside it return
+ * silence — even when the worker's own env never carried the marker.
+ */
+describe("runSummarizeWorker spawns the binary neutral and marked", () => {
+  test("the binary runs from <home>/summarizer-cwd (0700), never the repo root", async () => {
+    // Arrange
+    const fixture = await workerFixture();
+    const dir = await tempDir();
+    const cwdDump = join(dir, "cwd.txt");
+    const fake = await makeFakeSummarizer({ output: "NONE", cwdDump });
+
+    // Act
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+    });
+
+    // Assert: not where this test process (the repo root) lives. Compared
+    // through realpath: process.cwd() in the child is the resolved path
+    // (macOS /var → /private/var) while the fixture path is the symlink.
+    const seen = await Bun.file(cwdDump).text();
+    expect(await realpath(seen)).toBe(await realpath(join(fixture.home, "summarizer-cwd")));
+    expect(await realpath(seen)).not.toBe(await realpath(process.cwd()));
+    expect((await stat(seen)).mode & 0o777).toBe(0o700);
+  });
+
+  test("the binary's env carries CROSSCHECK_SUMMARIZER_CHILD=1 even when the worker's did not", async () => {
+    const fixture = await workerFixture();
+    const dir = await tempDir();
+    const envDump = join(dir, "env.json");
+    const fake = await makeFakeSummarizer({ output: "NONE", envDump });
+
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+    });
+
+    const seen = JSON.parse(await Bun.file(envDump).text()) as Record<string, string>;
+    expect(seen["CROSSCHECK_SUMMARIZER_CHILD"]).toBe("1");
+  });
+
+  test("the binary's env never carries the hub key — the nested claude has no business with the hub", async () => {
+    // Arrange: a developer who exported CROSSCHECK_API_KEY in the shell the
+    // hook runs in (most keep it in config.json; the env path exists too)
+    const fixture = await workerFixture();
+    const dir = await tempDir();
+    const envDump = join(dir, "env.json");
+    const fake = await makeFakeSummarizer({ output: "NONE", envDump });
+
+    // Act
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+      CROSSCHECK_API_KEY: "cx_live_secret_never_needed_here",
+      USER: "nick",
+    });
+
+    // Assert: the secret stays with the worker; everything else still rides
+    const seen = JSON.parse(await Bun.file(envDump).text()) as Record<string, string>;
+    expect(seen).not.toHaveProperty("CROSSCHECK_API_KEY");
+    expect(seen["USER"]).toBe("nick");
+    expect(seen["CROSSCHECK_SUMMARIZER_CHILD"]).toBe("1");
   });
 });

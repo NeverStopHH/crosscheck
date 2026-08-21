@@ -21,8 +21,10 @@
  */
 import {
   SUMMARIZER_DEBOUNCE_TURNS,
+  SUMMARIZER_FAILURE_MAX_CHARS,
   SUMMARIZER_MAX_FIRES_PER_SESSION,
 } from "@crosscheck/connector-core/constants.ts";
+import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 /**
@@ -257,4 +259,25 @@ export const withSummarizerNone = (state: SessionState): SessionState => ({
 export const withSummarizerDraft = (state: SessionState): SessionState => ({
   ...state,
   summarizerDraftCount: state.summarizerDraftCount + 1,
+});
+
+/**
+ * A run the RUNNER lost (trial finding #14) — binary missing, non-zero
+ * exit, deadline — booked by the worker with the reason as
+ * runner.ts formatSummarizerFailure renders it. The bound lives HERE, on
+ * the writer (SUMMARIZER_FAILURE_MAX_CHARS), never in the schema: one
+ * over-long string must not make the state file unparseable. A failure is
+ * NOT a NONE and NOT a draft, so the fires-minus-outcomes remainder still
+ * counts it; the fail count is what lets status/doctor say WHY the
+ * remainder exists instead of leaving it a number.
+ */
+export const withSummarizerFailure = (
+  state: SessionState,
+  detail: string,
+): SessionState => ({
+  ...state,
+  summarizerFailCount: state.summarizerFailCount + 1,
+  // The same surrogate-safe cut the sanitizer makes (core briefing/cut.ts):
+  // a bound in code units that never leaves half an astral character.
+  summarizerLastFailure: cutWellFormed(detail, SUMMARIZER_FAILURE_MAX_CHARS),
 });

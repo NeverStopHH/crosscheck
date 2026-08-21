@@ -33,7 +33,7 @@ A connector is the host-specific shell. It owns exactly four things:
 
 | Capability | Kit exports | Guarantee |
 |---|---|---|
-| Config | `loadConfig`, `isDisabled`, `rememberDeveloper`, `crosscheckHome`, `repoKey`, `mergeMcpConfig` | env > repo `.crosscheck.json` > `~/.crosscheck`; `null` config = connector no-ops silently |
+| Config | `loadConfig`, `isDisabled`, `isSummarizerChild`, `rememberDeveloper`, `crosscheckHome`, `repoKey`, `mergeMcpConfig` | env > repo `.crosscheck.json` > `~/.crosscheck`; `null` config = connector no-ops silently; `isSummarizerChild` = this process is the Tier-1 summarizer's own nested `claude`, every hook entry returns silence |
 | Hook budget | `resolveHookBudget`, `withBudget`, `hookBudget` | the Claude connector's budget discipline (moved from its runner in Block 6): total budget = per-request timeout × the caller's ratio constant, enforced by a race that abandons the hook; `spareMs` holds one request timeout in reserve for the essential step. Which host event maps to which ratio stays connector policy |
 | Launcher | `resolveLauncher`, `resolveCommandPrefix`, `resolveMcpLauncher`, `isEphemeralInstallPath`, `isOwnCrosscheckBin` | the durable-install rules (moved from the Claude installer in Block 5): PATH hit only past the cache + identity guards, entry-path fallback, npx/bunx caches refused — one implementation for `.mcp.json`, hooks, and the ACP mcpServers entry |
 | Repo identity | `resolveRepoIdentity`, `normalizeRemoteUrl` | the repo decides where a session reports; per-session `cwd` resolution |

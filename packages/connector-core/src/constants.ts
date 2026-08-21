@@ -413,8 +413,82 @@ export const SUMMARIZER_BLOCK_MAX_CHARS = 2_000;
  * any hook budget (the Stop hook only spawns and exits), so this is generous —
  * but it is a kill, not a wait: a hung claude binary must never accumulate.
  * CROSSCHECK_SUMMARIZER_TIMEOUT_MS overrides it (tests, slow machines).
+ *
+ * 60 s, raised from 30 s by trial finding #14: a nested `claude -p` that
+ * loaded the developer's whole settings stack took 35–116 s to answer a
+ * trivial slice (measured four runs on 2026-08-21), so the 30 s deadline
+ * killed every fire before the model spoke. The lean argv
+ * (summarizer/runner.ts) brings a run to ~9 s; the doubled deadline is the
+ * margin for a cold Haiku or a slower laptop — the worker is detached, so
+ * a longer deadline costs nothing on the keyboard.
+ *
+ * VERIFY: bun -e 'import {SUMMARIZER_TIMEOUT_MS as t} from "./packages/connector-core/src/constants.ts"; console.log(t / 1000)'
+ * PRINTS: 60
  */
-export const SUMMARIZER_TIMEOUT_MS = 30_000;
+export const SUMMARIZER_TIMEOUT_MS = 60_000;
+/**
+ * The env marker the summarizer's nested `claude -p` carries
+ * (summarizer/worker-env.ts sets it on the worker, summarizer/runner.ts on
+ * the model process): EVERY crosscheck hook entry exits silently when it is
+ * set (hooks/runner.ts, connector-cursor/src/runner.ts). Trial finding #14:
+ * the nested claude ran crosscheck's own globally installed hooks, minting
+ * phantom sessions — 3 state files per plain run, 6 under
+ * --strict-mcp-config — and its Stop hook could fire the summarizer AGAIN.
+ * The lean argv keeps hooks out too; the marker is the guard that does not
+ * depend on which flags a given Claude Code version honours.
+ */
+export const SUMMARIZER_CHILD_ENV = "CROSSCHECK_SUMMARIZER_CHILD";
+export const SUMMARIZER_CHILD_ON = "1";
+/**
+ * Bound on the booked failure text (state/session-state.ts
+ * summarizerLastFailure): the first stdout line of a failed run, sanitized
+ * through bareUntrusted — it is model/CLI output, untrusted — and cut here.
+ * Long enough for "Not logged in · Please run /login" or "error: unknown
+ * option '--tools'", short enough that a chatty binary cannot grow the
+ * state file. Enforced by the WRITER (gate.ts withSummarizerFailure), not
+ * the schema: a schema max would turn one over-long string into an
+ * unparseable state file and silence the whole session's capture.
+ */
+export const SUMMARIZER_FAILURE_MAX_CHARS = 120;
+/**
+ * `crosscheck doctor` calls the summarizer silently dead once this many
+ * fires have produced neither a NONE nor a draft (cli/doctor.ts): below it,
+ * one or two runs lost to a slow laptop are noise; at it, the remainder is
+ * the finding-#14 signature — 17 of 17 fires answered nothing for a whole
+ * trial and no surface said so.
+ */
+export const DOCTOR_SUMMARIZER_SILENT_FIRES_WARN = 3;
+/**
+ * The slice the doctor's runner probe hands the REAL argv: a progress
+ * report the prompt names out explicitly, so a working runner answers NONE
+ * and a non-NONE answer is a precision note, not a failure.
+ */
+export const DOCTOR_SUMMARIZER_PROBE_SLICE =
+  "user: run the suite\nassistant: I ran the suite and all 42 tests pass now.";
+/** Bound on `claude --version` for the doctor probe's PASS line. */
+export const DOCTOR_SUMMARIZER_VERSION_TIMEOUT_MS = 5000;
+/**
+ * The oldest Claude Code the nested summarizer may run on. The lean flags
+ * are accepted well before it (changelog first mentions: --setting-sources
+ * 2.0.24, --tools 2.1.0); the floor is there because `--setting-sources ""`
+ * — no `user` source — let Claude Code's background cleanup ignore
+ * cleanupPeriodDays and delete conversation history older than 30 days,
+ * until 2.1.101 fixed it (Claude Code CHANGELOG.md, 2.1.101: "Fixed
+ * --setting-sources without user causing background cleanup to ignore
+ * cleanupPeriodDays and delete conversation history older than 30 days").
+ * A developer with a longer retention on such a CLI would lose transcripts
+ * on every fire. The argv does not change per version (an older CLI that
+ * also lacks a flag fails loudly anyway); doctor's runner probe reads
+ * `claude --version` and WARNs below this (summarizer/probe.ts
+ * isBelowSummarizerVersionFloor).
+ */
+export const SUMMARIZER_CLAUDE_MIN_VERSION = "2.1.101";
+/**
+ * Set to "1" to skip the doctor's runner probe — it spends one Haiku call
+ * on the developer's own quota per `crosscheck doctor` (acceptable for a
+ * manual diagnostic, not for a script that runs doctor in a loop).
+ */
+export const DOCTOR_NO_PROBE_ENV = "CROSSCHECK_DOCTOR_NO_PROBE";
 /** Ceiling on captured summarizer stdout — a claim is one sentence, not a log. */
 export const SUMMARIZER_OUTPUT_MAX_BYTES = 16_384;
 /**
@@ -426,7 +500,10 @@ export const SUMMARIZER_DEFAULT_CONFIDENCE = 0.3;
 /**
  * The ~4 chars/token rule of thumb the briefing budget already uses
  * (MAX_BRIEFING_CHARS). Cost figures derived from it are ESTIMATES and every
- * surface printing them says so.
+ * surface printing them says so — and they count the slice and prompt the
+ * hook hands over, not the nested claude's own system prompt, which on a
+ * real call is an order of magnitude more (connector-claude
+ * summarizer/cost.ts records the measurement).
  */
 export const CHARS_PER_TOKEN_ESTIMATE = 4;
 /** Haiku-class, per DESIGN.md §2: cheap capture on the developer's own auth. */

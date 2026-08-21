@@ -28,6 +28,7 @@ import {
   PRIVATE_FILE_MODE,
   PROBE_REPO,
   SECONDS_PER_MINUTE,
+  SUMMARIZER_CLAUDE_MIN_VERSION,
 } from "@crosscheck/connector-core/constants.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { timeoutOwner } from "@crosscheck/connector-core/config/timeout-policy.ts";
@@ -71,7 +72,15 @@ import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher-check.ts";
 import {
   formatSummarizerCost,
+  formatSummarizerFailure,
+  isBelowSummarizerVersionFloor,
+  isSummarizerSilentlyDead,
+  probeSummarizerRunner,
   readSummarizerCost,
+} from "@crosscheck/connector-claude";
+import type {
+  SummarizerFailure,
+  SummarizerProbe,
 } from "@crosscheck/connector-claude";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import { isOwnedCommand } from "@crosscheck/connector-claude";
@@ -861,10 +870,23 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
 };
 
 /**
- * Summarizer cost (DESIGN.md §10 risk 7), always PASS: spending inside the
- * hard caps is a designed behaviour, not a defect — the check exists so the
- * spend on the developer's own quota is never invisible. Figures are
- * estimates (~4 chars/token) and the line says so.
+ * Summarizer cost (DESIGN.md §10 risk 7): spending inside the hard caps is
+ * a designed behaviour, not a defect — the check exists so the spend on the
+ * developer's own quota is never invisible. Figures are estimates (~4
+ * chars/token) and the line says so.
+ *
+ * WARN, not PASS, on the finding-#14 signature (summarizer/cost.ts
+ * isSummarizerSilentlyDead): DOCTOR_SUMMARIZER_SILENT_FIRES_WARN or more
+ * fires and not one NONE or draft among them. For a whole trial this line
+ * read "PASS 17 runs (0 NONE, 0 drafts)" while every run was dying before
+ * the model — fail-open that had become silently dead, with the remedy one
+ * check further down.
+ *
+ * The WARN states the BOOKED fact and points at the probe; it does not
+ * assert that the runner is failing NOW. Fires are booked into live session
+ * state and stay there until SessionEnd, so after an upgrade or a login the
+ * old counts sit right above a runner probe that PASSes — a line saying
+ * "the runner is failing" there contradicted the check it pointed at.
  */
 const checkSummarizerCost = async (
   home: string,
@@ -872,8 +894,93 @@ const checkSummarizerCost = async (
   repoId: string,
 ): Promise<Check> => {
   const cost = await readSummarizerCost(home, hubUrl, repoId);
-  return check("PASS", "summarizer cost", formatSummarizerCost(cost));
+  const line = formatSummarizerCost(cost);
+  return isSummarizerSilentlyDead(cost)
+    ? check(
+        "WARN",
+        "summarizer cost",
+        `${line} — ${String(cost.fires)} runs fired, none answered — see the summarizer runner check (these counts are per live session and clear at SessionEnd)`,
+      )
+    : check("PASS", "summarizer cost", line);
 };
+
+/**
+ * The remedy a failed runner probe names, by what the binary said — each a
+ * DIFFERENT fix, which is why the first output line is printed at all:
+ * "Not logged in" is the developer's login, "unknown option" is the CLI's
+ * age, a deadline is the machine or the timeout knob.
+ */
+const summarizerRemedy = (failure: SummarizerFailure): string => {
+  if (failure.reason === "timeout") {
+    return "a lean run answers in ~9 s: raise CROSSCHECK_SUMMARIZER_TIMEOUT_MS or check the machine's load";
+  }
+  if (failure.reason === "spawn") {
+    return "is claude on the PATH the hooks run with? (CROSSCHECK_SUMMARIZER_CMD overrides the binary)";
+  }
+  if (/not logged in/i.test(failure.detail)) {
+    return "log in once with `claude` in a terminal as this user — the summarizer reuses that login, keychain or API key";
+  }
+  if (/unknown option/i.test(failure.detail)) {
+    return `upgrade Claude Code — the summarizer needs ${SUMMARIZER_CLAUDE_MIN_VERSION} or newer and its lean flags are verified on 2.1.237`;
+  }
+  return "run the argv by hand; crosscheck status shows the booked failures";
+};
+
+const versionPart = (version: string | null): string =>
+  version === null ? "" : ` (claude ${version})`;
+
+const seconds = (ms: number): string => `${String(Math.round(ms / MS_PER_SECOND))} s`;
+
+/**
+ * The runner line for one probe outcome — PURE, so the rendering is pinned
+ * without a binary: PASS names the answer and the time; FAIL names what the
+ * binary said and a remedy that fits it — the three real failures seen on
+ * 2026-08-21 ("Not logged in", an unknown flag on an old CLI, the deadline)
+ * each want a different one.
+ */
+export const summarizerRunnerCheck = (probe: SummarizerProbe): Check => {
+  switch (probe.kind) {
+    case "skipped":
+      return check("PASS", "summarizer runner", `skipped — ${probe.why}`);
+    case "answered": {
+      const answer = probe.none
+        ? `answered NONE in ${seconds(probe.elapsedMs)}${versionPart(probe.version)}`
+        : `answered in ${seconds(probe.elapsedMs)}${versionPart(probe.version)}, not NONE: "${probe.firstLine}" (the runner works; that is model precision)`;
+      // A working runner on a CLI below the floor is a WARN, not a PASS:
+      // below 2.1.101 `--setting-sources ""` let Claude Code's cleanup
+      // ignore cleanupPeriodDays and delete transcripts older than 30 days
+      // (core constants SUMMARIZER_CLAUDE_MIN_VERSION says where that is
+      // from) — every fire could cost the developer conversation history.
+      return isBelowSummarizerVersionFloor(probe.version)
+        ? check(
+            "WARN",
+            "summarizer runner",
+            `${answer} — below the ${SUMMARIZER_CLAUDE_MIN_VERSION} floor: on this CLI --setting-sources "" lets Claude Code's background cleanup ignore cleanupPeriodDays and delete transcripts older than 30 days (fixed in ${SUMMARIZER_CLAUDE_MIN_VERSION}); upgrade Claude Code`,
+          )
+        : check("PASS", "summarizer runner", answer);
+    }
+    case "empty":
+      return check(
+        "FAIL",
+        "summarizer runner",
+        `exit 0 with empty stdout in ${seconds(probe.elapsedMs)}${versionPart(probe.version)} — run the argv by hand`,
+      );
+    case "failed":
+      return check(
+        "FAIL",
+        "summarizer runner",
+        `${formatSummarizerFailure(probe.failure)}${versionPart(probe.version)} — ${summarizerRemedy(probe.failure)}`,
+      );
+  }
+};
+
+/**
+ * The active runner probe (trial finding #14; summarizer/probe.ts states the
+ * cost and the skips): the real argv, the real worker env, the real cwd, a
+ * slice that must answer NONE — rendered by summarizerRunnerCheck.
+ */
+const checkSummarizerRunner = async (env: Env, home: string): Promise<Check> =>
+  summarizerRunnerCheck(await probeSummarizerRunner(env, home));
 
 /**
  * The effective per-request timeout and WHO set it — the source tells the
@@ -1191,6 +1298,7 @@ export const runDoctor = async (
     ...(await checkSpool(config.home, key, now)),
     ...(await foreignDropChecks(config.home)),
     await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
+    await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now),
     await checkAbsences(hubCtx, identity.repoId),
     await checkPrivacy(hubCtx),
