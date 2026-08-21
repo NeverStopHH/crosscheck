@@ -31,6 +31,7 @@ import {
 import { SUMMARIZER_PROMPT } from "../summarizer/runner.ts";
 import { extractSliceText, readTurnSlice } from "../summarizer/transcript.ts";
 import type { TurnSlice } from "../summarizer/transcript.ts";
+import { summarizerWorkerEnv } from "../summarizer/worker-env.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 /**
@@ -48,33 +49,13 @@ const WORKER_ENTRY_PATH = resolve(
 );
 
 /**
- * What the worker inherits: never the hook's whole environment (in tests
- * that is the test runner's), only what the worker needs — where the
- * crosscheck home is, how to find binaries, and the summarizer knobs.
- */
-const workerEnv = (ctx: HookContext): Record<string, string> => {
-  const passthrough = [
-    "PATH",
-    "HOME",
-    "CROSSCHECK_AGENT_KIND",
-    "CROSSCHECK_SUMMARIZER_CMD",
-    "CROSSCHECK_SUMMARIZER_TIMEOUT_MS",
-  ] as const;
-  return {
-    CROSSCHECK_HOME: ctx.config.home,
-    ...Object.fromEntries(
-      passthrough.flatMap((name) => {
-        const value = ctx.env[name];
-        return value === undefined ? [] : [[name, value]];
-      }),
-    ),
-  };
-};
-
-/**
  * Fire-and-forget: the child is unref'd, its stdio ignored, and a spawn
  * failure is swallowed — the hook has already recorded the fire, and losing
  * one draft is the cheap outcome (fail open).
+ *
+ * The env is the hook's own minus the parent-session markers, plus the
+ * crosscheck home and the child marker (summarizer/worker-env.ts says why
+ * an allowlist here lost every fire of the trial — finding #14).
  */
 const spawnSummarizeWorker = (
   ctx: HookContext,
@@ -98,7 +79,7 @@ const spawnSummarizeWorker = (
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
-      env: workerEnv(ctx),
+      env: summarizerWorkerEnv(ctx.env, ctx.config.home),
     });
     proc.unref();
   } catch {
