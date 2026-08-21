@@ -12,7 +12,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readdir, rm } from "node:fs/promises";
 
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  readSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { CURSOR_NO_OP_OUTPUT, runCursorHook } from "../src/index.ts";
 import type { CursorHookEvent } from "../src/index.ts";
 import {
@@ -82,15 +85,38 @@ const inRepo = (payload: object, fix: Fixture): string =>
     ...("file_path" in payload ? { file_path: fix.file } : {}),
   });
 
-const EVENTS: readonly (readonly [CursorHookEvent, object])[] = [
+/**
+ * The events that DO work on a fresh session without the marker (register,
+ * capture, end). `stop` is not here: the cursor stop handler is silent on a
+ * session it does not know, so a fresh-session `stop` row would pass on a
+ * tree without the guard — a test that never reaches the broken path. It
+ * gets a registered session below instead.
+ */
+const FRESH_EVENTS: readonly (readonly [CursorHookEvent, object])[] = [
   ["sessionStart", SESSION_START_INPUT],
   ["afterFileEdit", AFTER_FILE_EDIT_INPUT],
-  ["stop", STOP_INPUT],
   ["sessionEnd", SESSION_END_INPUT],
 ];
 
+const HOST_SESSION_KEY = `cur-${CONVERSATION}`;
+
+/** A registered cursor session, as sessionStart would have left it; returns the state as written. */
+const seedState = async (fix: Fixture): Promise<string> => {
+  await writeSessionState(fix.home, {
+    hostSessionKey: HOST_SESSION_KEY,
+    crosscheckSessionId: `cc_${HOST_SESSION_KEY}`,
+    workContextId: `wc_cc_${HOST_SESSION_KEY}`,
+    repoId: "github.com/acme/api",
+    repoRoot: fix.repo,
+    hubUrl: fix.hub.url,
+    developerId: "dev_self",
+    startedAt: new Date().toISOString(),
+  });
+  return JSON.stringify(await readSessionState(fix.home, HOST_SESSION_KEY));
+};
+
 describe("cursor hooks under the summarizer child marker", () => {
-  test.each(EVENTS)(
+  test.each(FRESH_EVENTS)(
     "%s answers the no-op JSON, makes no hub request, writes nothing",
     async (event, payload) => {
       // Arrange
@@ -108,6 +134,35 @@ describe("cursor hooks under the summarizer child marker", () => {
       expect(await readdir(fix.home)).toEqual([]);
     },
   );
+
+  test("stop on a registered session: no-op JSON, zero hub requests, state byte-identical, no turn counted", async () => {
+    // Arrange: a session the stop handler WOULD count a turn on
+    const fix = await fixture("cursor-child-stop");
+    const before = await seedState(fix);
+
+    // Act
+    const out = await runCursorHook("stop", inRepo(STOP_INPUT, fix), {
+      ...fix.env,
+      [CHILD_MARKER]: "1",
+    });
+
+    // Assert
+    expect(out).toBe(CURSOR_NO_OP_OUTPUT);
+    expect(totalCalls(fix.hub)).toBe(0);
+    expect(JSON.stringify(await readSessionState(fix.home, HOST_SESSION_KEY))).toBe(before);
+    expect((await readSessionState(fix.home, HOST_SESSION_KEY))?.stopTurnCount).toBe(0);
+    expect(await readdir(fix.home)).toEqual(["sessions"]);
+  });
+
+  test("positive control: without the marker the same stop counts a turn on the seeded session", async () => {
+    // The seeded path reaches the handler — so the silence above is the guard's.
+    const fix = await fixture("cursor-stop-control");
+    await seedState(fix);
+
+    await runCursorHook("stop", inRepo(STOP_INPUT, fix), fix.env);
+
+    expect((await readSessionState(fix.home, HOST_SESSION_KEY))?.stopTurnCount).toBe(1);
+  });
 
   test("positive control: without the marker sessionStart registers and writes state", async () => {
     const fix = await fixture("cursor-control");
