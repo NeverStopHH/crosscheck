@@ -1387,6 +1387,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "has become silently dead, with no surface saying so; the remedy one " +
       "check down is never read",
   },
+  {
+    // The version floor on the runner probe: below Claude Code 2.1.101 the
+    // lean argv's `--setting-sources ""` let the CLI's background cleanup
+    // ignore cleanupPeriodDays and delete transcripts older than 30 days.
+    // This turns the WARN on an old CLI back into the PASS a working runner
+    // would otherwise earn.
+    label: "doctor passes a claude below the transcript-cleanup floor",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      return isBelowSummarizerVersionFloor(probe.version)\n        ? check(\n            \"WARN\",",
+    to: "      return isBelowSummarizerVersionFloor(probe.version)\n        ? check(\n            \"PASS\",",
+    test: `${CLI}/test/doctor-summarizer-runner.test.ts`,
+    because:
+      "a developer on a 2.0.24–2.1.100 CLI with cleanupPeriodDays above 30 " +
+      "reads PASS while every summarizer fire can run the buggy cleanup and " +
+      "delete their older conversation history",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -1439,6 +1455,7 @@ interface Outcome {
  * PRINTS: developer-emails.test.ts 1
  * PRINTS: doctor-global.test.ts 1
  * PRINTS: doctor-latency.test.ts 1
+ * PRINTS: doctor-summarizer-runner.test.ts 1
  * PRINTS: doctor.test.ts 1
  * PRINTS: double-wiring.test.ts 1
  * PRINTS: global-wiring-silence.test.ts 2

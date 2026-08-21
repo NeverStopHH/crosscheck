@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
+import { summarizerRunnerCheck } from "../src/cli/doctor.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 /** Unreachable on purpose: the runner line is a local fact, no hub needed. */
@@ -246,5 +247,77 @@ describe("crosscheck doctor — summarizer runner probe", () => {
     expect(line).toContain("PASS  summarizer runner");
     expect(line).toContain("skipped");
     expect(line).toContain("no claude binary on PATH");
+  });
+});
+
+/**
+ * The version floor on the PURE line (doctor.ts summarizerRunnerCheck): the
+ * probe reads `claude --version` only from the real binary, never from a
+ * CROSSCHECK_SUMMARIZER_CMD fake, so the rendering is pinned on probe
+ * outcomes here. Below 2.1.101 `--setting-sources ""` let Claude Code's
+ * cleanup ignore cleanupPeriodDays and delete transcripts older than 30
+ * days (Claude Code CHANGELOG.md 2.1.101) — a working runner on such a CLI
+ * is a WARN that names the floor and the remedy, not a PASS.
+ */
+describe("summarizerRunnerCheck — the 2.1.101 version floor", () => {
+  test("a NONE answer on a claude below the floor is WARN, names the floor, the cleanup risk and the upgrade", () => {
+    const line = summarizerRunnerCheck({
+      kind: "answered",
+      none: true,
+      firstLine: "NONE",
+      elapsedMs: 4200,
+      version: "2.1.90",
+    });
+
+    expect(line.level).toBe("WARN");
+    expect(line.detail).toContain("answered NONE in 4 s (claude 2.1.90)");
+    expect(line.detail).toContain("2.1.101");
+    expect(line.detail).toContain("cleanupPeriodDays");
+    expect(line.detail).toContain("upgrade Claude Code");
+  });
+
+  test("a non-NONE answer on a claude below the floor is WARN too — the floor is about the CLI, not the answer", () => {
+    const line = summarizerRunnerCheck({
+      kind: "answered",
+      none: false,
+      firstLine: "the suite is green",
+      elapsedMs: 3000,
+      version: "2.0.24",
+    });
+
+    expect(line.level).toBe("WARN");
+    expect(line.detail).toContain("2.1.101");
+  });
+
+  test("at the floor, above it, or with no readable version the answer stays PASS", () => {
+    for (const version of ["2.1.101", "2.1.237", null]) {
+      const line = summarizerRunnerCheck({
+        kind: "answered",
+        none: true,
+        firstLine: "NONE",
+        elapsedMs: 4000,
+        version,
+      });
+      expect(line.level).toBe("PASS");
+      expect(line.detail).not.toContain("cleanupPeriodDays");
+    }
+  });
+
+  test("the unknown-option remedy names the floor", () => {
+    const line = summarizerRunnerCheck({
+      kind: "failed",
+      failure: {
+        ok: false,
+        reason: "exit",
+        exitCode: 1,
+        detail: "error: unknown option '--tools'",
+        elapsedMs: 500,
+      },
+      version: "2.0.10",
+    });
+
+    expect(line.level).toBe("FAIL");
+    expect(line.detail).toContain("upgrade Claude Code");
+    expect(line.detail).toContain("2.1.101");
   });
 });

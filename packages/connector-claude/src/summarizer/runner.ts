@@ -86,7 +86,12 @@ export const SUMMARIZER_PROMPT =
  * 2.0.24, --tools by 2.1.0, --strict-mcp-config by 2.1.143 and --max-turns
  * by 2.1.205 (first MENTIONS, not introductions); an older CLI rejects an
  * unknown option loudly (exit 1, "error: unknown option"), which
- * `crosscheck doctor`'s runner probe prints verbatim. CROSSCHECK_SUMMARIZER_CMD
+ * `crosscheck doctor`'s runner probe prints verbatim. The FLOOR is a
+ * different matter from the flags: below Claude Code 2.1.101 (core
+ * SUMMARIZER_CLAUDE_MIN_VERSION) `--setting-sources ""` — no `user` source
+ * — let the CLI's background cleanup ignore cleanupPeriodDays and delete
+ * transcripts older than 30 days; the argv is the same on every version,
+ * and doctor WARNs on a CLI below the floor. CROSSCHECK_SUMMARIZER_CMD
  * still replaces the binary WHOLESALE — no flag reaches an override (tests).
  *
  * VERIFY: bun -e 'const {SUMMARIZER_LEAN_FLAGS: f} = await import("./packages/connector-claude/src/summarizer/runner.ts"); console.log(f.filter((x) => x.startsWith("--")).join(" "))'

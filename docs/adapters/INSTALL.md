@@ -124,7 +124,12 @@ to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
   is a model call (~9 s) and not a full session (35–116 s measured, with
   hooks/plugins/MCP servers loaded). Verified on Claude Code 2.1.237; an
   older CLI that does not know a flag exits 1 with `error: unknown option`,
-  which `doctor` prints — upgrade Claude Code.
+  which `doctor` prints — upgrade Claude Code. **Floor: Claude Code ≥
+  2.1.101.** Below it `--setting-sources ""` (no `user` source) let Claude
+  Code's background cleanup ignore `cleanupPeriodDays` and delete
+  transcripts older than 30 days (Claude Code changelog 2.1.101); the
+  `summarizer runner` check WARNs when the `claude --version` it reads is
+  older, even when the probe answered.
 - **`crosscheck doctor`** now has a `summarizer runner` check that runs the
   real argv with the real worker env on a fixed slice: `PASS answered NONE
   in 9 s (claude 2.1.237)`, or `FAIL exit 1: Not logged in Please run

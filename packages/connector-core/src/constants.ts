@@ -468,6 +468,22 @@ export const DOCTOR_SUMMARIZER_PROBE_SLICE =
 /** Bound on `claude --version` for the doctor probe's PASS line. */
 export const DOCTOR_SUMMARIZER_VERSION_TIMEOUT_MS = 5000;
 /**
+ * The oldest Claude Code the nested summarizer may run on. The lean flags
+ * are accepted well before it (changelog first mentions: --setting-sources
+ * 2.0.24, --tools 2.1.0); the floor is there because `--setting-sources ""`
+ * — no `user` source — let Claude Code's background cleanup ignore
+ * cleanupPeriodDays and delete conversation history older than 30 days,
+ * until 2.1.101 fixed it (Claude Code CHANGELOG.md, 2.1.101: "Fixed
+ * --setting-sources without user causing background cleanup to ignore
+ * cleanupPeriodDays and delete conversation history older than 30 days").
+ * A developer with a longer retention on such a CLI would lose transcripts
+ * on every fire. The argv does not change per version (an older CLI that
+ * also lacks a flag fails loudly anyway); doctor's runner probe reads
+ * `claude --version` and WARNs below this (summarizer/probe.ts
+ * isBelowSummarizerVersionFloor).
+ */
+export const SUMMARIZER_CLAUDE_MIN_VERSION = "2.1.101";
+/**
  * Set to "1" to skip the doctor's runner probe — it spends one Haiku call
  * on the developer's own quota per `crosscheck doctor` (acceptable for a
  * manual diagnostic, not for a script that runs doctor in a loop).

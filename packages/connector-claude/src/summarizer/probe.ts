@@ -13,12 +13,16 @@
  * the README; CROSSCHECK_DOCTOR_NO_PROBE=1 skips it, and so does a PATH
  * with no claude on it (the worker would fail the same way, and CI/tests
  * have no claude — tests reach the probe only through a fake
- * CROSSCHECK_SUMMARIZER_CMD, never a real binary).
+ * CROSSCHECK_SUMMARIZER_CMD, never a real binary). The version it reads is
+ * also held against core SUMMARIZER_CLAUDE_MIN_VERSION
+ * (isBelowSummarizerVersionFloor below) — doctor WARNs on an older CLI even
+ * when the probe answered.
  */
 import {
   DOCTOR_NO_PROBE_ENV,
   DOCTOR_SUMMARIZER_PROBE_SLICE,
   DOCTOR_SUMMARIZER_VERSION_TIMEOUT_MS,
+  SUMMARIZER_CLAUDE_MIN_VERSION,
 } from "@crosscheck/connector-core/constants.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { isNoneAnswer } from "./parse.ts";
@@ -70,6 +74,42 @@ const firstLine = (text: string): string =>
  * binary — an override is the operator's, and its `--version` means
  * whatever they made it mean.
  */
+const VERSION_TOKEN_PATTERN = /^(\d+)\.(\d+)\.(\d+)/;
+
+/** "2.1.237" → [2, 1, 237]; "2.1.237-rc1" reads the same; anything else → null. */
+const parseVersionToken = (token: string): readonly number[] | null => {
+  const match = VERSION_TOKEN_PATTERN.exec(token);
+  return match === null
+    ? null
+    : match.slice(1, 4).map((part) => Number.parseInt(part, 10));
+};
+
+/**
+ * Below core SUMMARIZER_CLAUDE_MIN_VERSION (2.1.101 — where Claude Code
+ * stopped its background cleanup from ignoring cleanupPeriodDays under
+ * `--setting-sources` without `user`, the exact shape the lean argv uses).
+ * Compared part by part as numbers (2.1.9 < 2.1.101). An unreadable or
+ * missing version is NOT below: doctor says what it knows.
+ */
+export const isBelowSummarizerVersionFloor = (version: string | null): boolean => {
+  if (version === null) {
+    return false;
+  }
+  const actual = parseVersionToken(version);
+  const floor = parseVersionToken(SUMMARIZER_CLAUDE_MIN_VERSION);
+  if (actual === null || floor === null) {
+    return false;
+  }
+  for (let index = 0; index < floor.length; index += 1) {
+    const have = actual[index] ?? 0;
+    const need = floor[index] ?? 0;
+    if (have !== need) {
+      return have < need;
+    }
+  }
+  return false;
+};
+
 const readClaudeVersion = async (
   binary: string,
   env: Env,

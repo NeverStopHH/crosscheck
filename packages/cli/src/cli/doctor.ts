@@ -28,6 +28,7 @@ import {
   PRIVATE_FILE_MODE,
   PROBE_REPO,
   SECONDS_PER_MINUTE,
+  SUMMARIZER_CLAUDE_MIN_VERSION,
 } from "@crosscheck/connector-core/constants.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { timeoutOwner } from "@crosscheck/connector-core/config/timeout-policy.ts";
@@ -72,6 +73,7 @@ import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher
 import {
   formatSummarizerCost,
   formatSummarizerFailure,
+  isBelowSummarizerVersionFloor,
   isSummarizerSilentlyDead,
   probeSummarizerRunner,
   readSummarizerCost,
@@ -919,7 +921,7 @@ const summarizerRemedy = (failure: SummarizerFailure): string => {
     return "log in once with `claude` in a terminal as this user — the summarizer reuses that login, keychain or API key";
   }
   if (/unknown option/i.test(failure.detail)) {
-    return "upgrade Claude Code — the summarizer's lean flags are verified on 2.1.237";
+    return `upgrade Claude Code — the summarizer needs ${SUMMARIZER_CLAUDE_MIN_VERSION} or newer and its lean flags are verified on 2.1.237`;
   }
   return "run the argv by hand; crosscheck status shows the booked failures";
 };
@@ -940,18 +942,23 @@ export const summarizerRunnerCheck = (probe: SummarizerProbe): Check => {
   switch (probe.kind) {
     case "skipped":
       return check("PASS", "summarizer runner", `skipped — ${probe.why}`);
-    case "answered":
-      return probe.none
+    case "answered": {
+      const answer = probe.none
+        ? `answered NONE in ${seconds(probe.elapsedMs)}${versionPart(probe.version)}`
+        : `answered in ${seconds(probe.elapsedMs)}${versionPart(probe.version)}, not NONE: "${probe.firstLine}" (the runner works; that is model precision)`;
+      // A working runner on a CLI below the floor is a WARN, not a PASS:
+      // below 2.1.101 `--setting-sources ""` let Claude Code's cleanup
+      // ignore cleanupPeriodDays and delete transcripts older than 30 days
+      // (core constants SUMMARIZER_CLAUDE_MIN_VERSION says where that is
+      // from) — every fire could cost the developer conversation history.
+      return isBelowSummarizerVersionFloor(probe.version)
         ? check(
-            "PASS",
+            "WARN",
             "summarizer runner",
-            `answered NONE in ${seconds(probe.elapsedMs)}${versionPart(probe.version)}`,
+            `${answer} — below the ${SUMMARIZER_CLAUDE_MIN_VERSION} floor: on this CLI --setting-sources "" lets Claude Code's background cleanup ignore cleanupPeriodDays and delete transcripts older than 30 days (fixed in ${SUMMARIZER_CLAUDE_MIN_VERSION}); upgrade Claude Code`,
           )
-        : check(
-            "PASS",
-            "summarizer runner",
-            `answered in ${seconds(probe.elapsedMs)}${versionPart(probe.version)}, not NONE: "${probe.firstLine}" (the runner works; that is model precision)`,
-          );
+        : check("PASS", "summarizer runner", answer);
+    }
     case "empty":
       return check(
         "FAIL",

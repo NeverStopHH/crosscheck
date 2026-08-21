@@ -29,7 +29,10 @@ export {
   ensureSummarizerCwd,
   summarizerWorkerEnv,
 } from "./summarizer/worker-env.ts";
-export { probeSummarizerRunner } from "./summarizer/probe.ts";
+export {
+  isBelowSummarizerVersionFloor,
+  probeSummarizerRunner,
+} from "./summarizer/probe.ts";
 export type { SummarizerProbe } from "./summarizer/probe.ts";
 
 export {
