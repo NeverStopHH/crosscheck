@@ -648,6 +648,26 @@ export const POST_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
 export const PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
 
 /**
+ * The PreToolUse tripwire mode (trial finding #25 + Q2). DESIGN §4 makes `ask`
+ * normative and it stays the default. But a headless `claude -p` /
+ * Agent-SDK subagent — most of Nick's live sessions — cannot show a permission
+ * prompt, so Claude Code turns a hook `ask` into a ONE-SHOT DENY of that tool
+ * call, with the reason delivered to the model (settled empirically:
+ * /private/tmp/cx-b1-q2). There is NO reliable per-hook signal to detect
+ * headless (the env is inherited, stdin is always a pipe, no payload flag), so
+ * this cannot be auto-detected honestly — it is an explicit knob instead.
+ *   ask     (default) — emit `ask` AND `additionalContext` (§4, DESIGN.md:97).
+ *   notice            — emit `additionalContext` ONLY, no decision: the model
+ *                       is briefed, the tool is never blocked. For
+ *                       orchestration/CI sessions that must not one-shot-deny.
+ * `additionalContext` is emitted in BOTH modes (#25): the tripwire reason,
+ * carrying the get_diagnosis id, reached the human alone before.
+ */
+export const TRIPWIRE_MODE_ENV = "CROSSCHECK_TRIPWIRE";
+export const TRIPWIRE_MODE_ASK = "ask";
+export const TRIPWIRE_MODE_NOTICE = "notice";
+
+/**
  * Project-scoped MCP registration, committed alongside `.claude/settings.json`
  * so a teammate gets the tools on `git pull` (DESIGN.md §2).
  */

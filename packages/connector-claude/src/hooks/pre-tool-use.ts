@@ -28,6 +28,8 @@ import {
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
 import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
+import { resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
+import { TRIPWIRE_MODE_NOTICE } from "@crosscheck/connector-core/constants.ts";
 import type { HookContext } from "./runner.ts";
 
 /** The ONLY decision this connector can emit — the ladder's ceiling (§4). */
@@ -103,6 +105,7 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
     return "";
   }
   const reason = renderTripwireReason(teammate, file, ctx.now());
+  const mode = resolveTripwireMode(ctx.env);
   // The marker is CLAIMED atomically — check-and-set under the state lock, on
   // the freshest state: a sibling PreToolUse racing this one finds the marker
   // already present and stays silent, and a slower PostToolUse writing after
@@ -120,11 +123,22 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   if (!claimed) {
     return "";
   }
-  return JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: ASK_DECISION,
-      permissionDecisionReason: reason,
-    },
-  });
+  // #25: additionalContext carries the SAME factual reason (incl. the
+  // get_diagnosis id) to the MODEL — permissionDecisionReason for an "ask"
+  // reaches the human only (hooks.md), so before this the model learned
+  // nothing. It is emitted in BOTH modes. In `notice` mode (Q2: headless
+  // orchestration/CI) the decision fields are omitted entirely, so the tool is
+  // briefed but never blocked — the only honest fallback, since headless
+  // cannot be auto-detected. The ladder still stops at "ask": ASK_DECISION is
+  // this module's one decision literal and `notice` emits no decision at all.
+  const hookSpecificOutput =
+    mode === TRIPWIRE_MODE_NOTICE
+      ? { hookEventName: "PreToolUse", additionalContext: reason }
+      : {
+          hookEventName: "PreToolUse",
+          permissionDecision: ASK_DECISION,
+          permissionDecisionReason: reason,
+          additionalContext: reason,
+        };
+  return JSON.stringify({ hookSpecificOutput });
 };
