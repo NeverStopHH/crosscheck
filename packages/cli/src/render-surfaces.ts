@@ -20,6 +20,6 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     kind: "composite",
     name: "cli-status",
     module: "src/cli/status.ts",
-    note: "formatAbsenceLine + formatAge from the core render layer; absence names sanitized inside the renderer",
+    note: "formatAbsenceLine + formatAge from the core render layer; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment)",
   },
 ];

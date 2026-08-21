@@ -287,3 +287,48 @@ describe("solved trees compose with the anchoring rules (VISION.md §1)", () => 
     expect(selection.kind).toBe("pointer");
   });
 });
+
+describe("intent-only contexts pointer (trial finding #16: same topic, different files)", () => {
+  const INTENT = {
+    summary: "Stop the refresh 500s by refetching the JWKS on an unknown kid",
+    provenance: "derived",
+    confidence: 0.4,
+    capturedAt: "2026-08-10T08:00:00.000Z",
+  } as const;
+
+  test("a context with an intent and NO claims is a pointer with claimCount 0", () => {
+    const selection = select([context({ intent: INTENT }, [])]);
+
+    expect(selection.kind).toBe("pointer");
+    if (selection.kind === "pointer") {
+      expect(selection.claimCount).toBe(0);
+      expect(selection.context.workContext.id).toBe("wc_1");
+    }
+    // Structural: no body can leak through an intent-only pointer either
+    expect("claim" in selection).toBe(false);
+  });
+
+  test("a context with neither claims nor intent stays silent", () => {
+    expect(select([context({}, [])]).kind).toBe("silence");
+    expect(select([context({ intent: null }, [])]).kind).toBe("silence");
+  });
+
+  test("an intent-only context already pointed at this session is not re-pointed", () => {
+    const selection = select([context({ intent: INTENT }, [])], { seenRefIds: ["wc_1"] });
+
+    expect(selection.kind).toBe("silence");
+  });
+
+  test("substance in another context still beats an intent-only pointer", () => {
+    const selection = select([
+      context({ id: "wc_intent", intent: INTENT }, []),
+      context({ id: "wc_claims" }, [claim({ workContextId: "wc_claims" })]),
+    ]);
+
+    expect(selection.kind).toBe("claim");
+  });
+
+  test("the tier floor applies to intent-only contexts as well", () => {
+    expect(select([context({ tier: "recency", intent: INTENT }, [])]).kind).toBe("silence");
+  });
+});

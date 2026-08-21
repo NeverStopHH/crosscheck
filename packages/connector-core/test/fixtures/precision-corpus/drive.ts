@@ -332,6 +332,7 @@ const ingestContexts = async (seed: ScenarioSeed): Promise<void> => {
         ...(context.description === undefined
           ? {}
           : { description: context.description }),
+        ...(context.intent === undefined ? {} : { intent: context.intent }),
         status: context.status,
         createdAt: context.createdAt,
         ...(context.updatedAt === undefined

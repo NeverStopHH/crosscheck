@@ -31,6 +31,7 @@ import {
   MAX_TITLE_CHARS,
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
+import { renderIntent } from "../briefing/intent.ts";
 import {
   QUOTED_DATA_NOTICE,
   formatAge,
@@ -445,12 +446,16 @@ export const renderDiagnosis = (
   const context = diagnosis.workContext;
   const header = `crosscheck diagnosis for work context ${safeId(context.id)}. ${QUOTED_DATA_NOTICE}`;
   const contextLine = `Work context ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} · status ${bare(context.status)} · opened by ${authorLabel(index, context.sessionId)}`;
+  // The session's stated intent on its own line (trial finding #16): one
+  // framed value per line, the one fragment every surface spells.
+  const intentFragment = renderIntent(context.intent);
+  const intentLines = intentFragment === null ? [] : [`Session ${intentFragment}`];
   const solvedLines = solvedBlock(diagnosis, solvedPresentation);
 
   const opening =
     diagnosis.claims.length === 0
-      ? [header, contextLine, ...solvedLines, "Claims: no claims recorded yet."]
-      : [header, contextLine, ...solvedLines];
+      ? [header, contextLine, ...intentLines, ...solvedLines, "Claims: no claims recorded yet."]
+      : [header, contextLine, ...intentLines, ...solvedLines];
 
   const sections: readonly Section[] = [
     {
@@ -533,7 +538,11 @@ const searchLine = (hit: SearchHit): string => {
     `status ${bare(hit.entry.status)}`,
     ...solvedFact(hit),
   ];
-  return `${facts.join(" · ")}: ${quoted(hit.entry.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
+  const line = `${facts.join(" · ")}: ${quoted(hit.entry.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
+  // The intent on a second, indented line of the SAME section entry (one
+  // « » pair per line; appendSection keeps or drops the hit whole).
+  const intent = renderIntent(hit.entry.intent);
+  return intent === null ? line : `${line}\n  ${intent}`;
 };
 
 /**

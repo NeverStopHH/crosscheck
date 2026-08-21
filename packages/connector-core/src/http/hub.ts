@@ -20,6 +20,27 @@ import type { HubContext, HubResult } from "./client.ts";
  */
 export type { HubContext, HubResult } from "./client.ts";
 
+/**
+ * A work context's intent as the hub serves it (trial finding #16): the
+ * sentence and its provenance, which the renderers turn into a "(derived)"
+ * label by positive equality on "declared" — confidence is never printed for
+ * an intent. Tolerant PER FIELD at every row that carries one: a malformed
+ * intent drops the INTENT (`catch(undefined)`), never the row — the same
+ * posture as `baseCommit`, and the opposite of the hub's own ingest schema,
+ * which is strict because nobody but this connector writes the field.
+ */
+export const IntentEntrySchema = z.looseObject({
+  summary: z.string().min(1),
+  provenance: z.string().min(1),
+  confidence: z.number().min(0).max(1).optional(),
+  capturedAt: z.string().optional(),
+});
+
+export type IntentEntry = z.infer<typeof IntentEntrySchema>;
+
+/** Null from the hub means "none"; anything unparseable reads the same way. */
+const tolerantIntent = IntentEntrySchema.nullable().optional().catch(undefined);
+
 export const PresenceEntrySchema = z.looseObject({
   sessionId: z.string().min(1),
   developerId: z.string().min(1),
@@ -30,6 +51,8 @@ export const PresenceEntrySchema = z.looseObject({
   status: z.string().min(1),
   lastHeartbeatAt: z.string().min(1),
   isSelf: z.boolean(),
+  /** The session's work-context intent; older hubs send none. */
+  intent: tolerantIntent,
 });
 
 export type PresenceEntry = z.infer<typeof PresenceEntrySchema>;
@@ -41,6 +64,7 @@ export const WorkContextEntrySchema = z.looseObject({
   developerName: z.string().min(1).optional(),
   title: z.string().min(1),
   status: z.string().min(1),
+  intent: tolerantIntent,
   /** Optional: an older hub omits both, and landed detection simply skips. */
   baseCommit: z.string().min(1).optional(),
   landedAt: z.string().nullable().optional(),
@@ -323,6 +347,7 @@ export const DiagnosisWorkContextSchema = z.looseObject({
   sessionId: z.string().min(1),
   title: z.string().min(1),
   description: z.string().nullable().optional(),
+  intent: tolerantIntent,
   status: z.string().min(1),
   /** Optional: an older hub omits both — drift and the landed line simply skip. */
   baseCommit: z.string().min(1).optional(),
@@ -431,6 +456,7 @@ export const SearchResultEntrySchema = z.looseObject({
   developerName: z.string().min(1).optional(),
   title: z.string().min(1),
   status: z.string().min(1),
+  intent: tolerantIntent,
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
   tier: z.string().min(1).optional(),
@@ -515,6 +541,11 @@ const HintContextSchema = z.looseObject({
   id: z.string().min(1),
   title: z.string().min(1),
   status: z.string().min(1),
+  /**
+   * The context's intent (trial finding #16) — the pointer hint shows it, and
+   * the selector lets an intent-only context (no claims) become a pointer.
+   */
+  intent: tolerantIntent,
   /** Optional: an older hub sends no tier, and no tier means no precision. */
   tier: z.string().min(1).optional(),
   developerId: z.string().min(1),
@@ -845,6 +876,8 @@ export const TripwireSessionSchema = z.looseObject({
   lastHeartbeatAt: z.string().min(1),
   workContextId: z.string().min(1),
   workContextTitle: z.string().min(1),
+  /** The overlapping session's intent; the ask reason shows it. */
+  workContextIntent: tolerantIntent,
 });
 
 export type TripwireSession = z.infer<typeof TripwireSessionSchema>;

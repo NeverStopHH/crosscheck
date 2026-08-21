@@ -26,6 +26,8 @@ import type {
   SolvedMatchEntry,
   WorkContextEntry,
 } from "../http/hub.ts";
+import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
+import type { IntentLabel } from "./intent.ts";
 import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
 
 /**
@@ -107,6 +109,11 @@ export interface TeammateGroup {
   readonly status: string;
   readonly ageMs: number;
   readonly baseCommit: string | null;
+  /**
+   * The freshest session's intent (trial finding #16), already sanitized and
+   * labelled by briefing/intent.ts; null when that session carries none.
+   */
+  readonly intent: IntentLabel | null;
 }
 
 const toGroup = (entry: PresenceEntry, now: Date): TeammateGroup | null => {
@@ -123,10 +130,11 @@ const toGroup = (entry: PresenceEntry, now: Date): TeammateGroup | null => {
     status: sanitizeUntrusted(entry.status),
     ageMs,
     baseCommit: entry.baseCommit ?? null,
+    intent: formatIntentLabel(entry.intent),
   };
 };
 
-/** The freshest session speaks for the developer's status and base commit. */
+/** The freshest session speaks for the developer's status, base commit and intent. */
 const mergeGroup = (
   existing: TeammateGroup,
   candidate: TeammateGroup,
@@ -189,7 +197,11 @@ const renderPresenceSection = (input: BriefingInput): Section => {
       `status ${group.status}`,
       `heartbeat ${formatAge(group.ageMs)} ago`,
     ];
-    return `${facts.join(" · ")}${driftLabel(drift)}`;
+    // The intent LAST, after drift: the one framed value on a line that is
+    // otherwise bare, so the line still opens the frame at most once.
+    const intent =
+      group.intent === null ? "" : ` · ${intentFragment(group.intent)}`;
+    return `${facts.join(" · ")}${driftLabel(drift)}${intent}`;
   });
   return {
     header: "Teammate sessions active now:",
@@ -244,7 +256,13 @@ const renderContextSection = (input: BriefingInput): Section => {
     }
     const author = authorNameFor(context, input.presence);
     const status = sanitizeUntrusted(context.status);
-    return [`- ${author}, ${formatAge(ageMs)} ago, status ${status}: «${title}»`];
+    // The intent on ITS OWN line (one « » pair per line, the framed-surface
+    // invariant), indented under the context it belongs to — but inside the
+    // SAME entry string, so appendSection's "+N more" arithmetic still counts
+    // one context per entry and the two lines are kept or dropped together.
+    const intent = renderIntent(context.intent);
+    const entry = `- ${author}, ${formatAge(ageMs)} ago, status ${status}: «${title}»`;
+    return [intent === null ? entry : `${entry}\n  ${intent}`];
   });
   return {
     header: "Teammate work contexts on this repo:",

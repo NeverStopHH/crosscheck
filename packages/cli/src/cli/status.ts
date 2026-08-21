@@ -2,7 +2,9 @@ import { EXIT_OK, EXIT_UNREACHABLE, STATUS_MAX_ABSENCE_LINES } from "@crosscheck
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
 import { formatAbsenceLine, formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { getAbsences, getPresence, getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
 import { presenceStateLine } from "./privacy.ts";
@@ -118,10 +120,24 @@ export const runStatus = async (
       return line === null ? [] : [`  ${line}`];
     });
 
+  // Teammate lines through the render layer: name, branch and status are
+  // hub-served, teammate-written short fields printed BARE on a ·-separated
+  // line, so they take the BARE class (bareUntrusted — no minting a second
+  // field; the MCP claim lines' rule), and the session's intent — WHAT they
+  // are doing, trial finding #16 — is the one framed fragment every surface
+  // spells (briefing/intent.ts).
   const teammates = presence.ok
     ? presence.data
         .filter((entry) => entry.isSelf !== true)
-        .map((entry) => `  - ${entry.developerName} · ${entry.branch} · ${entry.status}`)
+        .map((entry) => {
+          const facts = [
+            `  - ${bareUntrusted(entry.developerName)}`,
+            bareUntrusted(entry.branch),
+            bareUntrusted(entry.status),
+          ];
+          const intent = renderIntent(entry.intent);
+          return [...facts, ...(intent === null ? [] : [intent])].join(" · ");
+        })
     : ["  (hub unreachable)"];
 
   return {

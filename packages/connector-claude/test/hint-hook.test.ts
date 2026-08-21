@@ -17,6 +17,8 @@ import {
   CANDIDATE_BODY,
   CANDIDATE_CLAIM_ID,
   CANDIDATE_CONTEXT_ID,
+  CANDIDATE_INTENT,
+  intentOnlyCandidate,
   proposedOnlyCandidate,
   rejectedApproachCandidate,
   startHintHub,
@@ -294,5 +296,27 @@ describe("silence is the default", () => {
 
     // Assert
     expect(stdout).toBe("");
+  });
+});
+
+describe("an intent-only context earns a pointer (trial finding #16)", () => {
+  test("a teammate context with an intent and no claims arrives as a pointer carrying the intent", async () => {
+    // Arrange: same topic, different files — nothing but the intent matched
+    const { repo, home, hub, env } = await fixture("intent-pointer");
+    hub.setCandidates([intentOnlyCandidate()]);
+
+    // Act
+    const stdout = await runHook("user-prompt-submit", promptPayload(repo, PROMPT), env);
+
+    // Assert — a pointer, with the intent, no body anywhere
+    const context = contextOf(stdout);
+    expect(context.startsWith("crosscheck pointer:")).toBe(true);
+    expect(context).toContain(`Their intent (derived): «${CANDIDATE_INTENT}»`);
+    expect(context).toContain("It carries no claims yet");
+    expect(context).not.toContain(CANDIDATE_BODY);
+    // — recorded like every pointer: the context ref, no body hash
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.deliveredHintRefs).toContain(CANDIDATE_CONTEXT_ID);
+    expect(state?.deliveredHintHashes).toHaveLength(0);
   });
 });

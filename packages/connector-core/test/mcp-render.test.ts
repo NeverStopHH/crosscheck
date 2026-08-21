@@ -490,3 +490,62 @@ describe("renderSearchResults", () => {
     expect(rendered.length).toBeLessThanOrEqual(MAX_SEARCH_CHARS);
   });
 });
+
+describe("the session's intent on the MCP reading tools (trial finding #16)", () => {
+  const INTENT = {
+    summary: "Make verifyToken refetch the JWKS on an unknown kid",
+    provenance: "declared",
+    confidence: 1,
+    capturedAt: CREATED,
+  } as const;
+
+  test("get_diagnosis prints the intent on its own line right after the context line", () => {
+    const rendered = renderDiagnosis(
+      diagnosis({
+        workContext: {
+          id: "wc_01",
+          sessionId: "cc_a-uuid",
+          title: "Login 500s on staging",
+          description: null,
+          intent: { ...INTENT, provenance: "derived", confidence: 0.4 },
+          status: "analyzing",
+          createdAt: CREATED,
+          updatedAt: null,
+        },
+      }),
+    );
+
+    const lines = rendered.split("\n");
+    expect(lines[1]?.startsWith("Work context «Login 500s on staging»")).toBe(true);
+    expect(lines[2]).toBe(
+      "Session intent (derived): «Make verifyToken refetch the JWKS on an unknown kid»",
+    );
+  });
+
+  test("a diagnosis without an intent keeps its exact shape", () => {
+    const rendered = renderDiagnosis(diagnosis());
+
+    expect(rendered.split("\n")[2]?.startsWith("Claims (")).toBe(true);
+    expect(rendered).not.toContain("intent");
+  });
+
+  test("search_related_work prints a hit's intent on an indented second line", () => {
+    const rendered = renderSearchResults(
+      [
+        {
+          entry: workContext({ intent: INTENT }),
+          ageMs: 60_000,
+        },
+      ],
+      "jwks",
+    );
+
+    expect(rendered).toContain(
+      "\n  intent: «Make verifyToken refetch the JWKS on an unknown kid»",
+    );
+    // One « » pair per line across the whole document
+    for (const line of rendered.split("\n")) {
+      expect(line.split("«").length - 1).toBeLessThanOrEqual(1);
+    }
+  });
+});

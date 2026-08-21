@@ -59,7 +59,7 @@ const WORKSPACE_PACKAGES_ROOT = join(import.meta.dir, "..", "..");
  * (`@crosscheck/connector-core/briefing/sanitize.ts`).
  */
 const RENDER_LAYER_SPECIFIER =
-  /(briefing\/(?:sanitize|render)|hints\/render|mcp\/render(?:-referee)?)\.ts$/;
+  /(briefing\/(?:sanitize|intent|render)|hints\/render|mcp\/render(?:-referee)?)\.ts$/;
 
 /**
  * The render layer's value exports. An import of any of these names flags
@@ -88,6 +88,9 @@ const RENDER_IDENTIFIERS: ReadonlySet<string> = new Set([
   "groupTeammates",
   "formatAge",
   "formatSolvedAge",
+  "formatIntentLabel",
+  "intentFragment",
+  "renderIntent",
 ]);
 
 /** import/export-from statements: clause + specifier. */

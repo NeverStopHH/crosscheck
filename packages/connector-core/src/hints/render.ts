@@ -21,6 +21,7 @@
 import { MAX_CLAIM_BODY_LENGTH, MAX_HINT_TEXT_LENGTH } from "@crosscheck/schema";
 
 import { MAX_WORK_CONTEXT_TITLE_CHARS } from "../constants.ts";
+import { renderIntent } from "../briefing/intent.ts";
 import {
   QUOTED_DATA_NOTICE,
   UNKNOWN_AUTHOR,
@@ -92,6 +93,19 @@ const ageLabel = (iso: string, now: Date): string => {
 };
 
 /**
+ * The teammate's intent as its own line — `Their intent (derived): «…»` —
+ * or no line at all (trial finding #16). One framed value, its own line, the
+ * same fragment every surface spells (briefing/intent.ts); "Their" is the
+ * factual, third-person framing every hint sentence keeps.
+ */
+const intentLines = (
+  intent: Parameters<typeof renderIntent>[0],
+): readonly string[] => {
+  const fragment = renderIntent(intent);
+  return fragment === null ? [] : [`Their ${fragment}`];
+};
+
+/**
  * Joins lines under the wire cap for a rendered hint. Dropping from the END,
  * never truncating a line: a cut mid-frame would leave « unclosed, and the
  * trailing lines are the droppable context, not the substance. Empty when not
@@ -129,7 +143,7 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
   const contextLine =
     `Recorded on work context ${safeId(context.id)} ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} — ` +
     "the full tree is readable with get_diagnosis.";
-  return fitHint([CLAIM_HEADER, factsLine, contextLine]);
+  return fitHint([CLAIM_HEADER, factsLine, contextLine, ...intentLines(context.intent)]);
 };
 
 export interface PointerHintInput {
@@ -141,9 +155,11 @@ export interface PointerHintInput {
 }
 
 /**
- * A pointer: id + title only (§4 anchoring asymmetry — unconfirmed substance
- * is pulled deliberately, never pushed). The input type has no body field, so
- * no wording change here can leak one.
+ * A pointer: id + title (+ the stated intent) only (§4 anchoring asymmetry —
+ * unconfirmed substance is pulled deliberately, never pushed). The input type
+ * has no body field, so no wording change here can leak one. An intent-only
+ * context — the "same topic, different files" case, no claims yet — gets the
+ * same pointer with a tail that says so (trial finding #16).
  */
 export const renderPointerHint = (input: PointerHintInput): string => {
   const { context, claimCount, drift, now } = input;
@@ -155,10 +171,15 @@ export const renderPointerHint = (input: PointerHintInput): string => {
   ];
   const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
   const tailLine =
-    `It carries ${String(claimCount)} claim${claimCount === 1 ? "" : "s"} crosscheck does not ` +
-    "inject unasked (substance is pushed only for evidence-backed findings); the tree is " +
-    `readable with get_diagnosis ${safeId(context.id)}.`;
-  return fitHint([POINTER_HEADER, factsLine, tailLine]);
+    claimCount === 0
+      ? "It carries no claims yet (substance is pushed only for evidence-backed findings); " +
+        `the tree is readable with get_diagnosis ${safeId(context.id)}.`
+      : `It carries ${String(claimCount)} claim${claimCount === 1 ? "" : "s"} crosscheck does not ` +
+        "inject unasked (substance is pushed only for evidence-backed findings); the tree is " +
+        `readable with get_diagnosis ${safeId(context.id)}.`;
+  // The intent BEFORE the tail: fitHint drops from the end, and of the two
+  // the tail is the droppable one — the intent is what says WHAT they do.
+  return fitHint([POINTER_HEADER, factsLine, ...intentLines(context.intent), tailLine]);
 };
 
 /**
@@ -177,5 +198,10 @@ export const renderTripwireReason = (
     `(status ${bare(session.status)}, heartbeat ${ageLabel(session.lastHeartbeatAt, now)}) ` +
     `whose work context targeted ${bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS)}.`;
   const contextLine = `Their work context ${quoted(session.workContextTitle, MAX_WORK_CONTEXT_TITLE_CHARS)} is readable with get_diagnosis ${safeId(session.workContextId)}.`;
-  return [overlapLine, contextLine, QUOTED_DATA_NOTICE].join("\n");
+  return [
+    overlapLine,
+    contextLine,
+    ...intentLines(session.workContextIntent),
+    QUOTED_DATA_NOTICE,
+  ].join("\n");
 };

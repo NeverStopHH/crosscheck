@@ -34,6 +34,7 @@ import { composeDetachedTitle } from "./flows/work-context-title.ts";
 import type {
   Diagnosis,
   HintClaimCandidate,
+  IntentEntry,
   PresenceEntry,
   RefereeBrief,
   RefereeClaim,
@@ -92,6 +93,7 @@ export type RenderSurface = CorpusRenderSurface | CompositeRenderSurface;
  */
 export const RENDER_LAYER_MODULES: readonly string[] = [
   "src/briefing/sanitize.ts",
+  "src/briefing/intent.ts",
   "src/briefing/render.ts",
   "src/hints/render.ts",
   "src/mcp/render.ts",
@@ -109,6 +111,18 @@ const NOW = new Date("2026-08-18T12:00:00.000Z");
 const ISO = "2026-08-18T11:55:00.000Z";
 const NO_DRIFT: CommitDrift | null = null;
 
+/**
+ * The payload in the INTENT slot too (trial finding #16): a derived intent is
+ * model text, a declared one a teammate's — both land on every surface below
+ * through briefing/intent.ts, so every adapter plants it.
+ */
+const intentWith = (payload: string): IntentEntry => ({
+  summary: payload,
+  provenance: "derived",
+  confidence: 0.4,
+  capturedAt: ISO,
+});
+
 const presenceWith = (payload: string): PresenceEntry => ({
   sessionId: "cc_11111111-2222-4333-8444-555555555555",
   developerId: "dev_other",
@@ -117,6 +131,7 @@ const presenceWith = (payload: string): PresenceEntry => ({
   status: payload,
   lastHeartbeatAt: ISO,
   isSelf: false,
+  intent: intentWith(payload),
 });
 
 const workContextWith = (payload: string): WorkContextEntry => ({
@@ -125,6 +140,7 @@ const workContextWith = (payload: string): WorkContextEntry => ({
   developerName: payload,
   title: payload,
   status: "implementing",
+  intent: intentWith(payload),
   createdAt: ISO,
 });
 
@@ -146,6 +162,7 @@ const hintContextWith = (payload: string) => ({
   id: "wc_cc_11111111-2222-4333-8444-555555555555",
   title: payload,
   status: "implementing",
+  intent: intentWith(payload),
   developerId: "dev_other",
   developerName: payload,
   createdAt: ISO,
@@ -160,6 +177,7 @@ const tripwireSessionWith = (payload: string): TripwireSession => ({
   lastHeartbeatAt: ISO,
   workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
   workContextTitle: payload,
+  workContextIntent: intentWith(payload),
 });
 
 const diagnosisWith = (payload: string): Diagnosis => ({
@@ -168,6 +186,7 @@ const diagnosisWith = (payload: string): Diagnosis => ({
     sessionId: "cc_11111111-2222-4333-8444-555555555555",
     title: payload,
     status: "implementing",
+    intent: intentWith(payload),
     createdAt: ISO,
   },
   claims: [
@@ -311,6 +330,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
               developerName: payload,
               title: payload,
               status: payload,
+              intent: intentWith(payload),
               createdAt: ISO,
             },
             ageMs: 60_000,

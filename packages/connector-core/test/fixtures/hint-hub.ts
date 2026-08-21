@@ -86,6 +86,34 @@ export const proposedOnlyCandidate = (): Record<string, unknown> => {
   };
 };
 
+/** The stated intent the tripwire ask and the intent-only pointer show. */
+export const CANDIDATE_INTENT =
+  "Stop the refresh 500s by refetching the JWKS on an unknown kid";
+
+const derivedCandidateIntent = (): Record<string, unknown> => ({
+  summary: CANDIDATE_INTENT,
+  provenance: "derived",
+  confidence: 0.4,
+  capturedAt: "2026-08-10T08:05:00.000Z",
+});
+
+/**
+ * The same context carrying ONLY a derived intent — no claims at all: the
+ * "same topic, different files" shape (trial finding #16) that used to be
+ * invisible, and now earns a pointer.
+ */
+export const intentOnlyCandidate = (): Record<string, unknown> => {
+  const base = rejectedApproachCandidate();
+  return {
+    ...base,
+    workContext: {
+      ...(base["workContext"] as Record<string, unknown>),
+      intent: derivedCandidateIntent(),
+    },
+    claims: [],
+  };
+};
+
 export const activeTeammateSession = (): Record<string, unknown> => ({
   sessionId: "cc_nick",
   developerId: TEAMMATE_DEVELOPER_ID,
@@ -95,6 +123,7 @@ export const activeTeammateSession = (): Record<string, unknown> => ({
   lastHeartbeatAt: new Date().toISOString(),
   workContextId: CANDIDATE_CONTEXT_ID,
   workContextTitle: "Refresh 500s after key rotation",
+  workContextIntent: derivedCandidateIntent(),
 });
 
 const sleep = (ms: number): Promise<void> =>

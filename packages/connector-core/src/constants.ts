@@ -342,6 +342,23 @@ export const HEAD_LABEL_GIT_TIMEOUT_MS = 250;
  */
 export const DETACHED_SUBJECT_MAX_CHARS = 60;
 
+// ── Session intent (trial finding #16) ──────────────────────────────────────
+
+/**
+ * Render cap for an intent sentence on EVERY surface that shows one — the
+ * briefing's presence and context lines, the pointer/claim hints, the
+ * tripwire reason, the MCP diagnosis and search, `crosscheck status`. The hub
+ * stores up to MAX_INTENT_SUMMARY_CHARS (@crosscheck/schema); a longer
+ * declared sentence renders cut with an ellipsis. Equal to the title cap on
+ * purpose: an intent line costs the briefing what a title line costs, so
+ * the MAX_BRIEFING_CHARS arithmetic (and the saturating-briefing pin in
+ * test/injection-corpus.test.ts) keeps its shape:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.INTENT_MAX_CHARS === c.MAX_WORK_CONTEXT_TITLE_CHARS, c.INTENT_MAX_CHARS < s.MAX_INTENT_SUMMARY_CHARS)'
+ * PRINTS: true true
+ */
+export const INTENT_MAX_CHARS = 120;
+
 // ── Absence detection ───────────────────────────────────────────────────────
 
 /** How far back the SessionStart commit-authorship scan looks. */

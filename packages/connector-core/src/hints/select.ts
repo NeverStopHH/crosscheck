@@ -114,6 +114,17 @@ const isForeignClaim = (
   selfDeveloperId: string,
 ): boolean => claim.authorDeveloperId !== selfDeveloperId;
 
+/**
+ * A context whose owner STATED what they are doing (trial finding #16): with
+ * an intent, a context with no claims yet is still worth a pointer — the
+ * "same topic, different files" case nothing else detects. The pointer
+ * carries title + intent + id, no body, so the asymmetry is untouched.
+ */
+const hasIntent = (context: HintContextCandidate): boolean => {
+  const intent = context.workContext.intent;
+  return intent !== null && intent !== undefined && intent.summary.length > 0;
+};
+
 export const selectHint = (input: SelectHintInput): HintSelection => {
   if (input.deliveredCount >= MAX_HINTS_PER_SESSION) {
     return SILENCE;
@@ -147,7 +158,8 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     }
   }
 
-  // Pointer pass: the best-ranked unseen context that has any foreign claims.
+  // Pointer pass: the best-ranked unseen context that has any foreign claims
+  // — or a stated intent (hasIntent), the claimless "same topic" case.
   // "Unseen" covers the context id AND its claims: once substance from a
   // context was delivered, re-surfacing the same context as a pointer is
   // noise, not news.
@@ -156,7 +168,11 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
       isForeignClaim(claim, selfDeveloperId),
     ).length;
     const anyClaimSeen = context.claims.some((claim) => seen.has(claim.id));
-    if (foreignCount > 0 && !seen.has(context.workContext.id) && !anyClaimSeen) {
+    if (
+      (foreignCount > 0 || hasIntent(context)) &&
+      !seen.has(context.workContext.id) &&
+      !anyClaimSeen
+    ) {
       return { kind: "pointer", context, claimCount: foreignCount };
     }
   }
