@@ -28,7 +28,9 @@ import {
   ClaimSchema,
   DERIVED_CONFIDENCE_CAP,
   EDGE_KINDS,
+  IntentSchema,
   MAX_CLAIM_BODY_LENGTH,
+  MAX_INTENT_SUMMARY_CHARS,
 } from "@crosscheck/schema";
 import type { z } from "zod";
 
@@ -108,9 +110,35 @@ const edgeMessage = (issue: z.core.$ZodIssue): string | null => {
   return null;
 };
 
+/**
+ * The intent rules (trial finding #16) in words: one bounded sentence, a
+ * provenance from the shared enum, and the derived cap — the same sentence
+ * the claim path uses for it, because it is the same rule.
+ */
+const intentMessage = (issue: z.core.$ZodIssue, input: unknown): string | null => {
+  const field = fieldOf(issue);
+  if (field === "summary") {
+    const actual =
+      typeof input === "object" && input !== null && "summary" in input
+        ? String((input as { summary: unknown }).summary).length
+        : 0;
+    return issue.code === "too_big"
+      ? `An intent is one sentence of at most ${String(MAX_INTENT_SUMMARY_CHARS)} characters and ` +
+          `yours is ${String(actual)}. Say what this session is trying to accomplish, not how.`
+      : "An intent cannot be empty — say in one sentence what this session is trying to accomplish.";
+  }
+  if (field === "confidence") {
+    return issue.code === "custom"
+      ? `A derived intent may not assert confidence above ${String(DERIVED_CONFIDENCE_CAP)} ` +
+          "(DESIGN.md §3): machine inference does not get to outrank a person."
+      : "confidence must be a number between 0 and 1.";
+  }
+  return null;
+};
+
 const explain = (
   input: unknown,
-  schema: typeof ClaimSchema | typeof ClaimEdgeSchema,
+  schema: typeof ClaimSchema | typeof ClaimEdgeSchema | typeof IntentSchema,
   toMessage: (issue: z.core.$ZodIssue, input: unknown) => string | null,
 ): RuleCheck => {
   const parsed = schema.safeParse(input);
@@ -136,6 +164,9 @@ export const checkClaim = (body: unknown): RuleCheck =>
 
 export const checkClaimEdge = (body: unknown): RuleCheck =>
   explain(body, ClaimEdgeSchema, (issue) => edgeMessage(issue));
+
+export const checkIntent = (intent: unknown): RuleCheck =>
+  explain(intent, IntentSchema, intentMessage);
 
 /**
  * What the hub refused, and why, in terms of the rule rather than the response.

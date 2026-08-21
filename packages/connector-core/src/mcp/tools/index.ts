@@ -15,6 +15,7 @@ import * as getRefereeBrief from "./get-referee-brief.ts";
 import * as publishClaim from "./publish-claim.ts";
 import * as reviewDraft from "./review-draft.ts";
 import * as searchRelatedWork from "./search-related-work.ts";
+import * as setIntent from "./set-intent.ts";
 
 export interface ToolDefinition {
   readonly name: string;
@@ -29,6 +30,7 @@ export interface McpTool {
 
 export const TOOLS: readonly McpTool[] = [
   publishClaim,
+  setIntent,
   reviewDraft,
   extendDiagnosis,
   getDiagnosis,

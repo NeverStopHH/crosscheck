@@ -213,11 +213,12 @@ afterAll(async () => {
 });
 
 describe("the tool registry", () => {
-  test("declares exactly the five tools, each with a usable schema", () => {
+  test("declares the tools, each with a usable schema", () => {
     // Arrange: `tools/list` is how a model learns what it may call, so a tool
     // with no description or no schema is a tool it will call wrongly
     const names = [
       "publish_claim",
+      "set_intent",
       "extend_diagnosis",
       "get_diagnosis",
       "get_referee_brief",

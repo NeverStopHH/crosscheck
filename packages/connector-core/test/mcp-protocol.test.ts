@@ -139,7 +139,7 @@ describe("the handshake", () => {
 });
 
 describe("tools/list", () => {
-  test("lists all six tools with names, descriptions and schemas", async () => {
+  test("lists all seven tools with names, descriptions and schemas", async () => {
     // Act
     const response = await parsedRoundTrip(request(2, "tools/list"));
 
@@ -148,6 +148,7 @@ describe("tools/list", () => {
     const names = result.tools.map((tool) => tool["name"]);
     expect(names).toEqual([
       "publish_claim",
+      "set_intent",
       "review_draft",
       "extend_diagnosis",
       "get_diagnosis",

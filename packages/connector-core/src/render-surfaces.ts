@@ -428,6 +428,13 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     kind: "composite",
+    name: "mcp-tool-set-intent",
+    module: "src/mcp/tools/set-intent.ts",
+    note: "ids through safeId; the echoed summary through quoted under quotingText",
+    corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
+  },
+  {
+    kind: "composite",
     name: "mcp-tool-review-draft",
     module: "src/mcp/tools/review-draft.ts",
     note: "ids through safeId; promoted body through quoted under quotingText",
