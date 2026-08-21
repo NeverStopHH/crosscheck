@@ -98,6 +98,43 @@ Two operational notes:
   path); briefing and presence are missing until then. `crosscheck doctor`
   in the parent folder names whichever of the two states you are in.
 
+### The Tier-1 draft summarizer (Claude Code only) — what it needs
+
+The Stop hook's summarizer is a nested `claude -p` on a Haiku-class model,
+run by a detached worker on the developer's own Claude auth. After trial
+finding #14 (a whole trial in which it never answered) these are the facts
+to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
+…)`:
+
+- **Login environment.** The worker inherits the hook's whole environment
+  minus the parent session's own markers. `USER` must be in it (the macOS
+  keychain lookup keys on it — `Not logged in · Please run /login` is what
+  its absence looks like); API-key (`ANTHROPIC_API_KEY`), Bedrock/Vertex
+  (`CLAUDE_CODE_USE_*` + `AWS_*`/`GOOGLE_*`), OAuth token, `CLAUDE_CONFIG_DIR`,
+  proxy and CA variables all pass through. Keychain and API-key logins both
+  work; `--bare` is not used because it disables keychain/OAuth auth.
+- **Claude Code version.** The worker passes `--setting-sources ""
+  --strict-mcp-config --mcp-config '{"mcpServers":{}}'
+  --no-session-persistence --tools "" --max-turns 1` so the nested claude
+  is a model call (~9 s) and not a full session (35–116 s measured, with
+  hooks/plugins/MCP servers loaded). Verified on Claude Code 2.1.237; an
+  older CLI that does not know a flag exits 1 with `error: unknown option`,
+  which `doctor` prints — upgrade Claude Code.
+- **`crosscheck doctor`** now has a `summarizer runner` check that runs the
+  real argv with the real worker env on a fixed slice: `PASS answered NONE
+  in 9 s (claude 2.1.237)`, or `FAIL exit 1: Not logged in Please run
+  /login — log in once with claude in a terminal as this user`, or
+  `timed out after 60 s — raise CROSSCHECK_SUMMARIZER_TIMEOUT_MS`. It spends
+  one Haiku call per run; `CROSSCHECK_DOCTOR_NO_PROBE=1` skips it, and a
+  PATH without `claude` skips it with a line that says so. The `summarizer
+  cost` line WARNs once 3 or more fires have produced neither a NONE nor a
+  draft.
+- **Isolation.** The nested process carries `CROSSCHECK_SUMMARIZER_CHILD=1`;
+  every crosscheck hook entry (Claude and Cursor) exits silently under it,
+  so the summarizer can never register phantom sessions or fire itself. It
+  runs from `~/.crosscheck/summarizer-cwd`, never from your repo, so no
+  project `CLAUDE.md` rides into a fire.
+
 ## Cursor IDE (≥ 1.7)
 
 ```sh
