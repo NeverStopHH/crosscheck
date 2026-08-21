@@ -6,7 +6,31 @@ export { runStatusline } from "./statusline/statusline.ts";
 // cost read/format pair `status`/`doctor` print — all consumed from
 // `packages/cli` since Block 8 moved the bin there.
 export { runSummarizeWorker } from "./summarizer/worker.ts";
-export { formatSummarizerCost, readSummarizerCost } from "./summarizer/cost.ts";
+export {
+  formatSummarizerCost,
+  isSummarizerSilentlyDead,
+  readSummarizerCost,
+} from "./summarizer/cost.ts";
+// The runner's own surface for `doctor` (trial finding #14): the real argv,
+// the real worker env, the booked-failure formatter and the active probe.
+export {
+  SUMMARIZER_LEAN_FLAGS,
+  formatSummarizerFailure,
+  resolveSummarizerArgv,
+  resolveSummarizerTimeoutMs,
+  runSummarizer,
+} from "./summarizer/runner.ts";
+export type {
+  SummarizerFailure,
+  SummarizerResult,
+} from "./summarizer/runner.ts";
+export {
+  PARENT_SESSION_MARKER_PATTERN,
+  ensureSummarizerCwd,
+  summarizerWorkerEnv,
+} from "./summarizer/worker-env.ts";
+export { probeSummarizerRunner } from "./summarizer/probe.ts";
+export type { SummarizerProbe } from "./summarizer/probe.ts";
 
 export {
   extractFailureText,

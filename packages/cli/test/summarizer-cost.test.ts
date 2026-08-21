@@ -123,6 +123,83 @@ describe("summarizer cost surfaces", () => {
     expect(result.stdout).toContain("(estimate)");
   });
 
+  test("readSummarizerCost sums the runner's failures and carries one booked reason", async () => {
+    // Arrange: two sessions lost runs; one of them booked why
+    const repo = await makeRepo("cost-fails", { remote: "git@github.com:acme/api.git" });
+    const home = await makeHome("cost-fails");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-fails-a", {
+      summarizerFireCount: 2,
+      summarizerFailCount: 2,
+      summarizerLastFailure: "exit 1: Not logged in Please run /login",
+    });
+    await seedSession(home, repo, "cost-fails-b", {
+      summarizerFireCount: 1,
+      summarizerFailCount: 1,
+    });
+
+    // Act
+    const cost = await readSummarizerCost(home, HUB_URL, REPO_ID);
+
+    // Assert
+    expect(cost.fails).toBe(3);
+    expect(cost.lastFailure).toBe("exit 1: Not logged in Please run /login");
+  });
+
+  test("status prints the fail count and the last booked reason beside NONE and drafts", async () => {
+    const repo = await makeRepo("cost-fails-status", { remote: "git@github.com:acme/api.git" });
+    const home = await makeHome("cost-fails-status");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-fails-status-a", {
+      summarizerFireCount: 3,
+      summarizerFailCount: 3,
+      summarizerLastFailure: "exit 1: Not logged in Please run /login",
+    });
+
+    const result = await runCli(["status"], env(home), repo);
+
+    expect(result.stdout).toContain(
+      'summarizer: 3 runs (0 NONE, 0 drafts, 3 failed: last "exit 1: Not logged in Please run /login")',
+    );
+  });
+
+  test("doctor WARNs when fires reach the threshold and not one answered — the finding-#14 signature", async () => {
+    // Arrange: three fires, no NONE, no draft — the trial's "17 runs (0 NONE, 0 drafts)"
+    const repo = await makeRepo("cost-silent", { remote: "git@github.com:acme/api.git" });
+    const home = await makeHome("cost-silent");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-silent-a", {
+      summarizerFireCount: 3,
+      summarizerEstimatedTokens: 900,
+    });
+
+    // Act
+    const result = await runCli(["doctor"], env(home), repo);
+
+    // Assert: the line is WARN, names the remainder, points at the probe
+    const line = result.stdout.split("\n").find((entry) => entry.includes("summarizer cost")) ?? "";
+    expect(line).toContain("WARN  summarizer cost");
+    expect(line).toContain("3 runs fired, none answered");
+    expect(line).toContain("summarizer runner");
+  });
+
+  test("doctor stays PASS below the threshold, and at it when even one run answered", async () => {
+    const repo = await makeRepo("cost-not-silent", { remote: "git@github.com:acme/api.git" });
+    const home = await makeHome("cost-not-silent");
+    paths.push(repo, home);
+    // Below the threshold: two fires, nothing answered — noise, not news.
+    await seedSession(home, repo, "cost-not-silent-a", { summarizerFireCount: 2 });
+    const below = await runCli(["doctor"], env(home), repo);
+    expect(below.stdout).toContain("PASS  summarizer cost");
+    // At the threshold with one NONE: the runner demonstrably works.
+    await seedSession(home, repo, "cost-not-silent-a", {
+      summarizerFireCount: 3,
+      summarizerNoneCount: 1,
+    });
+    const answered = await runCli(["doctor"], env(home), repo);
+    expect(answered.stdout).toContain("PASS  summarizer cost");
+  });
+
   test("no live sessions reads as exactly that, not as zero cost forever", async () => {
     const repo = await makeRepo("cost-none", {
       remote: "git@github.com:acme/api.git",
