@@ -1403,6 +1403,93 @@ export const MUTATIONS: readonly Mutation[] = [
       "reads PASS while every summarizer fire can run the buggy cleanup and " +
       "delete their older conversation history",
   },
+  // ── Trial findings #17/#19/#20/#25: capture signal ───────────────────────
+  {
+    // #17: an edit in a linked git worktree of the SAME repo resolved to null
+    // against the session's checkout and was dropped silently — 371 worktree
+    // edits → 0 targets across the trial. This makes every candidate root
+    // unresolvable again, so the path falls back to the session root only.
+    // Guard shells out to git (makeRepo + worktree add) — the container
+    // caveat on assertGuardIsGreen applies.
+    label: "worktree edits resolve against the session root again",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "    if (candidate === null) {",
+    to: "    if (candidate !== undefined) {",
+    test: `${CONNECTOR}/test/worktree-capture.test.ts`,
+    because:
+      "a session registered at checkout A editing a file in worktree B of " +
+      "the same repo captures nothing, and only the new outside-root counter " +
+      "ticks — the silent shape that produced 0 targets for whole sessions",
+  },
+  {
+    // #17's budget guard: the per-session root→repoId cache is what keeps
+    // the per-tool hook from paying resolveRepoIdentity (4-6 git spawns)
+    // twice for one root. Dropping the cap lets it grow per distinct root.
+    label: "the known-worktree-root cache grows without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      merged.length <= MAX_KNOWN_WORKTREE_ROOTS",
+    to: "      true",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because:
+      "a session touching many worktree roots carries an ever-growing list " +
+      "in its state file, read and rewritten under the lock on every edit",
+  },
+  {
+    // #19: the exact tier (the prompt NAMED a file this context targeted)
+    // may point with zero claims. Restoring the claim requirement brings
+    // back the structural death: a hub with 0 claims never hints at all.
+    label: "the targets-only pointer is disabled",
+    file: `${CORE}/src/hints/select.ts`,
+    from: '    if (context.workContext.tier === "exact") {',
+    to: "    if (false) {",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "a teammate's context that targeted the very file the prompt names " +
+      "yields silence until somebody publishes a claim — three trial days " +
+      "of zero hints on a hub with zero claims, again",
+  },
+  {
+    // #20: doctor's capture WARN is the #17/#18 signature made visible —
+    // "N edit-tool fires → 0 targets". Raising the threshold out of reach
+    // turns every such session back into a PASS line.
+    label: "doctor's capture WARN is downgraded out of reach",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const DOCTOR_CAPTURE_SILENT_FIRES_WARN = 3;",
+    to: "export const DOCTOR_CAPTURE_SILENT_FIRES_WARN = 1000000;",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because:
+      "a session whose every edit lands nowhere reads PASS capture — the " +
+      "exact silence Ken's zero targets sat in for a whole trial",
+  },
+  {
+    // Q2: `notice` mode exists so headless orchestration/CI sessions are
+    // briefed via additionalContext and never one-shot-denied. Forcing the
+    // decision branch re-introduces the deny in the sessions that opted out.
+    // Guard shells out to git (makeRepo) — assertGuardIsGreen caveat.
+    label: "notice mode still emits the ask",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    mode === TRIPWIRE_MODE_NOTICE",
+    to: "    false",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "CROSSCHECK_TRIPWIRE=notice still emits permissionDecision ask, which " +
+      "a headless claude -p turns into a denied Edit — the one behaviour the " +
+      "knob exists to switch off",
+  },
+  {
+    // #25: additionalContext is the ONLY field that reaches the MODEL on an
+    // ask (the reason reaches the human alone). Dropping it from the ask
+    // branch leaves the model unbriefed again.
+    // Guard shells out to git (makeRepo) — assertGuardIsGreen caveat.
+    label: "the tripwire briefs the human only again",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "          permissionDecisionReason: reason,\n          additionalContext: reason,\n",
+    to: "          permissionDecisionReason: reason,\n",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "the ask fires, the human reads the reason, and the model learns " +
+      "nothing — not the teammate, not the file, not the get_diagnosis id",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -1449,6 +1536,7 @@ interface Outcome {
  * PRINTS: briefing-parity.test.ts 2
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
+ * PRINTS: capture-health.test.ts 1
  * PRINTS: conclusion-corpus.test.ts 6
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
@@ -1464,7 +1552,7 @@ interface Outcome {
  * PRINTS: hint-flow.test.ts 2
  * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 1
- * PRINTS: hint-select.test.ts 3
+ * PRINTS: hint-select.test.ts 4
  * PRINTS: hints.test.ts 2
  * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
@@ -1482,6 +1570,7 @@ interface Outcome {
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search.test.ts 3
+ * PRINTS: session-state-transforms.test.ts 1
  * PRINTS: sessions.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
@@ -1493,7 +1582,8 @@ interface Outcome {
  * PRINTS: summarizer-cost.test.ts 1
  * PRINTS: summarizer-worker-env.test.ts 1
  * PRINTS: transparency.test.ts 1
- * PRINTS: tripwire-hook.test.ts 1
+ * PRINTS: tripwire-hook.test.ts 3
+ * PRINTS: worktree-capture.test.ts 1
  */
 const greenGuards = new Map<string, boolean>();
 
