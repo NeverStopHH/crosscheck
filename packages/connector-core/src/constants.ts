@@ -221,8 +221,9 @@ export const MAX_SEEN_TARGETS = 500;
  * for the same touched-file root (trial finding #17). FIFO-capped like
  * MAX_SEEN_TARGETS: a session touching more than this many distinct worktree
  * roots is not the common case, and the oldest entry falls out. Negative
- * answers are cached too (repoId null: a foreign or unresolvable root), so a
- * repeated foreign touch also costs no git after the first.
+ * answers are cached too — a foreign root under ITS OWN repoId, an
+ * unresolvable root as null — so a repeated foreign touch also costs no git
+ * after the first.
  */
 export const MAX_KNOWN_WORKTREE_ROOTS = 8;
 

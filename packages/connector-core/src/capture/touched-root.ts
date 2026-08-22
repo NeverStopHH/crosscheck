@@ -42,7 +42,10 @@ import { toRepoRelative } from "./target-paths.ts";
 export interface KnownWorktreeRoot {
   /** A realpath'd worktree root. */
   readonly root: string;
-  /** Its repo id, or null — the NEGATIVE answer (foreign or unresolvable). */
+  /**
+   * Its repo id — a foreign root carries ITS id (≠ the session's), an
+   * unresolvable root null; both are negative answers the cache keeps.
+   */
   readonly repoId: string | null;
 }
 

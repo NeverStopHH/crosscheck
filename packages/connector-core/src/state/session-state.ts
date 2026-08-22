@@ -104,9 +104,10 @@ const SessionStateObjectSchema = z.looseObject({
   /**
    * Per-session cache of worktree roots this session has already resolved
    * (trial finding #17): `root` is the realpath'd worktree root of a touched
-   * file, `repoId` its resolved repo id — or null, the NEGATIVE answer (a
-   * foreign or unresolvable root), cached so a repeated touch costs no git
-   * either. FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS by `withKnownWorktreeRoot`.
+   * file, `repoId` its resolved repo id — a FOREIGN root sits here under its
+   * own id, an unresolvable one as null — both negative answers cached so a
+   * repeated touch costs no git either. FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS
+   * by `withKnownWorktreeRoot`.
    * Default [] keeps every pre-#17 state file parsing.
    */
   knownWorktreeRoots: z
@@ -392,8 +393,9 @@ export const withBriefingSolvedRefs = (
  * #17), so the per-tool capture path never resolves the same root's identity
  * twice. Dedup by root (a cache, not a log — a re-resolution replaces the old
  * answer) and FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS, the withSeenTargets
- * shape. `repoId` null is the NEGATIVE answer, remembered so a repeated
- * foreign/unresolvable touch is also free after the first.
+ * shape. A foreign root is remembered under its own repoId and an
+ * unresolvable one as null, so a repeated foreign/unresolvable touch is also
+ * free after the first.
  */
 export const withKnownWorktreeRoot = (
   state: SessionState,

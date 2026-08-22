@@ -107,8 +107,9 @@ const editPayload = (cwd: string, absoluteFile: string): string =>
 /** A repo A with a committed config, a linked worktree B carrying it too. */
 const repoWithWorktree = async (
   label: string,
+  remote = "git@github.com:acme/api.git",
 ): Promise<{ main: string; worktree: string; home: string }> => {
-  const main = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
+  const main = await makeRepo(label, { remote });
   await writeFile(
     join(main, ".crosscheck.json"),
     `${JSON.stringify({ hubUrl: DEAD_HUB_URL }, null, 2)}\n`,
@@ -205,6 +206,34 @@ describe("drops that must stay drops, now counted (#17)", () => {
     const state = await readSessionState(home, SESSION_ID);
     expect(state?.foreignRepoDrops).toBe(1);
     expect(state?.editToolFires).toBe(1);
+  });
+
+  test("a file in a linked worktree of a DIFFERENT connected repo is a foreign drop", async () => {
+    // Arrange: session in repo A; a second connected repo with its own
+    // linked worktree — the same-repoId rule must say no here
+    const { main, home } = await repoWithWorktree("foreign-wt");
+    const other = await repoWithWorktree("foreign-wt-other", "git@github.com:acme/web.git");
+    await writeRepoFile(other.worktree, "src/app.ts", "export const b = 2;\n");
+    await writeSessionState(home, sessionState(main));
+
+    // Act: cwd A, the file lives in the OTHER repo's worktree
+    const stdout = await runHook(
+      "post-tool-use",
+      editPayload(main, join(other.worktree, "src/app.ts")),
+      env(home),
+    );
+
+    // Assert: not captured, counted as foreign — not as outside-root
+    expect(stdout).toBe("");
+    expect(await targetsIn(home)).toEqual([]);
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.foreignRepoDrops).toBe(1);
+    expect(state?.outsideRootDrops).toBe(0);
+    // …and the foreign root is cached under ITS repoId, so the next touch of
+    // that worktree costs no git either
+    expect(
+      state?.knownWorktreeRoots.some((entry) => entry.repoId === "github.com/acme/web"),
+    ).toBe(true);
   });
 
   test("a loose file under no connected root is an outside-root drop", async () => {

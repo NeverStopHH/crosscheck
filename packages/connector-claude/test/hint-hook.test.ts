@@ -20,6 +20,7 @@ import {
   proposedOnlyCandidate,
   rejectedApproachCandidate,
   startHintHub,
+  targetsOnlyCandidate,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
 import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 
@@ -303,5 +304,28 @@ describe("silence is the default", () => {
 
     // Assert
     expect(stdout).toBe("");
+  });
+});
+
+describe("targets-only pointer through the prompt hook (trial finding #19)", () => {
+  test("a context with 0 claims that touched the named file yields a body-less pointer", async () => {
+    // Arrange: the trial's hub shape — an exact-tier teammate context, no
+    // claims, the prompt names a file it targeted. Silence before #19.
+    const f = await fixture("targets-only");
+    f.hub.setCandidates([targetsOnlyCandidate()]);
+
+    // Act
+    const stdout = await runHook("user-prompt-submit", promptPayload(f.repo, PROMPT), f.env);
+
+    // Assert: a pointer naming the touched file and the pull, no body; the
+    // candidate is booked so doctor can say a pointer was possible here
+    const text = contextOf(stdout);
+    expect(text).toContain("crosscheck pointer:");
+    expect(text).toContain("touched src/auth/refresh.ts");
+    expect(text).toContain(`get_diagnosis ${CANDIDATE_CONTEXT_ID}`);
+    expect(text).not.toContain(CANDIDATE_BODY);
+    const state = await readSessionState(f.home, SESSION_ID);
+    expect(state?.deliveredHintRefs).toEqual([CANDIDATE_CONTEXT_ID]);
+    expect(state?.hintCandidatesSeen).toBe(1);
   });
 });
