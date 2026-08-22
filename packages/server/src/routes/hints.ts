@@ -1,6 +1,8 @@
 /**
  * GET /api/hints/candidates — one bounded call for the UserPromptSubmit hook.
  * GET /api/hints/tripwire — one bounded call for the PreToolUse tripwire.
+ * GET /api/hints/stats — delivered/pulled per repo over a bounded window, for
+ *   `crosscheck doctor`/`status` (trial finding #20); read-only.
  *
  * Both serve hook paths with hard sync budgets (DESIGN.md §4), so both are a
  * single service call over bounded queries; ranking beyond the search service
@@ -12,6 +14,11 @@ import { z } from "zod";
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
+import {
+  HINT_STATS_DEFAULT_WINDOW_DAYS,
+  HINT_STATS_MAX_WINDOW_DAYS,
+  readHintStats,
+} from "../services/hint-deliveries.ts";
 import { listHintCandidates, listTargetSessions } from "../services/hints.ts";
 import { SEARCH_MAX_QUERY_CHARS } from "../services/search.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -30,6 +37,12 @@ const CandidatesQuerySchema = z.object({
 const TripwireQuerySchema = z.object({
   repo: z.string().min(1),
   value: z.string().min(1).max(SEARCH_MAX_QUERY_CHARS),
+});
+
+/** `days` above the cap is clamped by the service, never honoured. */
+const StatsQuerySchema = z.object({
+  repo: z.string().min(1),
+  days: z.coerce.number().int().min(1).default(HINT_STATS_DEFAULT_WINDOW_DAYS),
 });
 
 export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
@@ -67,6 +80,22 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       parsed.data.value,
     );
     return ok(c, { sessions });
+  });
+
+  router.get("/stats", async (c) => {
+    const parsed = StatsQuerySchema.safeParse({
+      repo: c.req.query("repo"),
+      days: c.req.query("days"),
+    });
+    if (!parsed.success) {
+      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    const stats = await readHintStats(
+      deps,
+      parsed.data.repo,
+      Math.min(parsed.data.days, HINT_STATS_MAX_WINDOW_DAYS),
+    );
+    return ok(c, stats);
   });
 
   return router;

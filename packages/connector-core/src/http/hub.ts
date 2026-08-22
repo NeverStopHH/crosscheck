@@ -46,6 +46,13 @@ export const WorkContextEntrySchema = z.looseObject({
   landedAt: z.string().nullable().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
+  /**
+   * Cheap aggregates `doctor` reads (trial finding #20): how many claims and
+   * targets the tree carries. Optional — an older hub omits targetCount, and
+   * the check then says the targets are unknown rather than 0.
+   */
+  claimCount: z.number().int().min(0).optional(),
+  targetCount: z.number().int().min(0).optional(),
 });
 
 export type WorkContextEntry = z.infer<typeof WorkContextEntrySchema>;
@@ -583,6 +590,29 @@ export const getHintCandidates = (
     schema: tolerantList("candidates", HintContextCandidateSchema),
   });
 };
+
+/**
+ * GET /api/hints/stats (trial finding #20): delivered/pulled hints for a repo
+ * over the hub's bounded window. Read by `doctor`/`status` only — an older hub
+ * answers 404 and the surfaces say "not measured".
+ */
+export const HintStatsSchema = z.looseObject({
+  delivered: z.number().int().min(0),
+  pulled: z.number().int().min(0),
+  windowDays: z.number().int().min(1),
+});
+
+export type HintStats = z.infer<typeof HintStatsSchema>;
+
+export const getHintStats = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<HintStats>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/hints/stats${encodeRepo(repo)}`,
+    schema: HintStatsSchema,
+  });
 
 /**
  * One side of a listed contradiction — just enough for a one-line pointer:

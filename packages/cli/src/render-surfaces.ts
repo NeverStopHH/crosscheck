@@ -14,7 +14,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     kind: "composite",
     name: "cli-doctor",
     module: "src/cli/doctor.ts",
-    note: "formatAge only — renderer-built ages, no untrusted interpolation",
+    note: "formatAge only — renderer-built ages, no untrusted interpolation; the capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text",
   },
   {
     kind: "composite",

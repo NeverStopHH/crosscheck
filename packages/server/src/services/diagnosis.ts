@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, or, sql } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -66,6 +66,14 @@ export interface WorkContextListEntry extends WorkContextView {
    * instead of being looked up in the 90 s presence list by the reader. */
   readonly developerName: string;
   readonly claimCount: number;
+  /**
+   * How many targets the tree carries (trial finding #20): the cheap
+   * aggregate `crosscheck doctor` reads to tell "this repo has 0 claims AND 0
+   * targets — nothing for a hint to match on" apart from "targets exist, a
+   * prompt naming one would point". A correlated subquery, NOT a second
+   * leftJoin: joining targets beside claims would cross-multiply claimCount.
+   */
+  readonly targetCount: number;
 }
 
 export interface ClaimView {
@@ -205,6 +213,8 @@ export const listWorkContextsByRepo = async (
       developerName: developers.name,
       baseCommit: agentSessions.baseCommit,
       claimCount: count(claims.id),
+      // Correlated, so the claims leftJoin below cannot inflate it (#20).
+      targetCount: sql<number>`(select count(*) from ${workContextTargets} where ${workContextTargets.workContextId} = ${workContexts.id})`.mapWith(Number),
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -232,6 +242,7 @@ export const listWorkContextsByRepo = async (
     developerId: row.developerId,
     developerName: row.developerName,
     claimCount: row.claimCount,
+    targetCount: row.targetCount,
   }));
 };
 

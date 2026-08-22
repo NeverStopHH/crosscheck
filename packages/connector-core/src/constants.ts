@@ -470,6 +470,24 @@ export const SUMMARIZER_FAILURE_MAX_CHARS = 120;
  */
 export const DOCTOR_SUMMARIZER_SILENT_FIRES_WARN = 3;
 /**
+ * `crosscheck doctor` calls a live session's capture silently dead once this
+ * many edit-tool PostToolUse fires have produced ZERO targets (trial findings
+ * #17/#18/#20, cli/doctor.ts `capture` check): below it, one or two edits that
+ * landed nowhere are a denylisted lockfile or a loose file — noise; at it,
+ * the remainder is the worktree signature — 371 edits, 0 targets, and no
+ * surface said so. Same threshold shape as the summarizer's.
+ */
+export const DOCTOR_CAPTURE_SILENT_FIRES_WARN = 3;
+/** Most per-session capture lines doctor prints; the rest is a count. */
+export const DOCTOR_CAPTURE_MAX_SESSION_LINES = 5;
+/**
+ * Display caps for the developer's OWN local facts on the doctor capture line
+ * (a repo root, an edited path, a host tool name) — not teammate text, but
+ * bounded so one 4 KB path cannot drown the report.
+ */
+export const DOCTOR_PATH_MAX_CHARS = 120;
+export const DOCTOR_TOOL_NAME_MAX_CHARS = 40;
+/**
  * The slice the doctor's runner probe hands the REAL argv: a progress
  * report the prompt names out explicitly, so a working runner answers NONE
  * and a non-NONE answer is a precision note, not a failure.

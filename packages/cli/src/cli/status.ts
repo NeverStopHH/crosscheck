@@ -1,10 +1,25 @@
-import { EXIT_OK, EXIT_UNREACHABLE, STATUS_MAX_ABSENCE_LINES } from "@crosscheck/connector-core/constants.ts";
+import {
+  EXIT_OK,
+  EXIT_UNREACHABLE,
+  STATUS_MAX_ABSENCE_LINES,
+  TRIPWIRE_MODE_ENV,
+  TRIPWIRE_MODE_NOTICE,
+} from "@crosscheck/connector-core/constants.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
+import { resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { formatAbsenceLine, formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
-import { getAbsences, getPresence, getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
+import {
+  getAbsences,
+  getHintStats,
+  getPresence,
+  getPrivacySettings,
+} from "@crosscheck/connector-core/http/hub.ts";
+import { readCaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
+import type { CaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
+import type { HintStats, HubResult } from "@crosscheck/connector-core/http/hub.ts";
 import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
@@ -25,6 +40,46 @@ const ageOrNever = (iso: string | null, now: Date): string => {
   }
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? "never" : `${formatAge(now.getTime() - ms)} ago`;
+};
+
+const plural = (count: number, noun: string): string =>
+  `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+
+/**
+ * Capture visibility (trial findings #17/#18/#20): targets this repo's live
+ * sessions actually spooled, and — when edits fired and NOTHING landed — that
+ * fact, pointing at `doctor`, whose capture check prints the per-session
+ * diagnosis. Local facts, printed whether or not the hub answers.
+ */
+const targetsLine = (health: CaptureHealth, now: Date): string => {
+  const last =
+    health.lastTargetAt === null ? "" : ` (last ${ageOrNever(health.lastTargetAt, now)})`;
+  const dead =
+    health.fires > 0 && health.targets === 0
+      ? ` — ${plural(health.fires, "edit-tool fire")}, none captured: see \`crosscheck doctor\``
+      : "";
+  return `targets: ${String(health.targets)} captured by ${plural(health.sessions.length, "live session")}${last}${dead}`;
+};
+
+/**
+ * Hint visibility (#19/#20): delivered = the live sessions' seen-sets here;
+ * the hub's delivered/pulled over its bounded window when it answers (an
+ * older hub has no /api/hints/stats — "not measured", never a guess);
+ * candidates = what the hub returned for this repo's prompts.
+ */
+const hintsLine = (health: CaptureHealth, stats: HubResult<HintStats>): string => {
+  const hubPart = stats.ok
+    ? `hub ${String(stats.data.windowDays)}d: ${String(stats.data.delivered)} delivered, ${String(stats.data.pulled)} pulled`
+    : "pulled: not measured";
+  return `hints: delivered ${String(health.hintsDelivered)} (${hubPart}), candidates ${String(health.hintCandidatesSeen)}`;
+};
+
+/** The Q2 knob, visible: which PreToolUse decision this machine's hooks emit. */
+const tripwireLine = (env: Env): string => {
+  const mode = resolveTripwireMode(env);
+  return mode === TRIPWIRE_MODE_NOTICE
+    ? `tripwire: ${mode} (${TRIPWIRE_MODE_ENV}=${mode} — additionalContext only, never asks)`
+    : `tripwire: ${mode}`;
 };
 
 export const runStatus = async (
@@ -69,6 +124,13 @@ export const runStatus = async (
   // human finds out. Machine-wide (the dropping session is bound to the
   // OTHER repo), zero prints nothing, doctor says the same sentence.
   const foreignDrops = await readForeignRepoDrops(config.home);
+  // Capture + hint health (#17/#18/#20): the counters PostToolUse and the
+  // prompt hook book, summed over this repo's live sessions on this machine.
+  const captureHealth = await readCaptureHealth(
+    config.home,
+    config.hubUrl,
+    identity.repoId,
+  );
   const foreignDropLines =
     foreignDrops.drops === 0
       ? []
@@ -82,6 +144,8 @@ export const runStatus = async (
     now: () => now,
   };
   const presence = await getPresence(hubCtx, identity.repoId);
+  // The hub's delivered/pulled window (#20) — fail-open like every hub read.
+  const hintStats = await getHintStats(hubCtx, identity.repoId);
   // Absence findings share the briefing's line formatter, so both surfaces
   // state the same facts the same way. A hub without the endpoint (or any
   // failure) simply prints no section — same fail-open as the briefing.
@@ -138,6 +202,9 @@ export const runStatus = async (
         : ["commit authors without a recent session:", ...absenceLines]),
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       ...foreignDropLines,
+      targetsLine(captureHealth, now),
+      hintsLine(captureHealth, hintStats),
+      tripwireLine(env),
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
       "",
