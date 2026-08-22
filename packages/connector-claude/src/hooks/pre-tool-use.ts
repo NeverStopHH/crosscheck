@@ -14,6 +14,27 @@
  * developer-id filter on the tripwire endpoint, and "active" is the presence
  * TTL the presence endpoint applies. One bounded hub call, one ask per file
  * per session (state file), fail-open everywhere.
+ *
+ * HEADLESS SESSIONS (trial Q2, settled empirically on Claude Code 2.1.237 with
+ * real `claude -p` runs against a throwaway hub): a session that cannot show a
+ * permission prompt — `claude -p`, an Agent-SDK subagent — turns a hook "ask"
+ * into a ONE-SHOT DENY of that tool call in EVERY permission mode
+ * (acceptEdits, default+allowedTools, auto, bypassPermissions, dontAsk), no
+ * hang, no PermissionRequest hook; the `permissionDecisionReason` reaches the
+ * model verbatim as an is_error tool_result, and the next identical edit
+ * passes because of the ask-once marker below. Headless cannot be detected
+ * per hook (the env is inherited unchanged, stdin is always a pipe, the
+ * payload carries no flag), so the fallback is an explicit knob:
+ * CROSSCHECK_TRIPWIRE=notice emits `additionalContext` ONLY (the ladder's
+ * notice rung, DESIGN §4) — briefed, never blocked. `additionalContext` is
+ * emitted in BOTH modes (trial finding #25): it is the one field that reaches
+ * the MODEL on an ask, and the live hooks reference documents it for
+ * PreToolUse (scripts/hook-contract-watch.ts probes it).
+ *
+ * The edited file's id resolves against the root that governs the FILE
+ * (capture/touched-root.ts, trial finding #17): an edit in a linked worktree
+ * of the same repo trips the wire; before, it resolved to null against the
+ * session's checkout and the wire stayed silent.
  */
 import { isDenied, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { extractFilePaths, isEditTool } from "../capture/tool-events.ts";
