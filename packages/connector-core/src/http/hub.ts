@@ -531,15 +531,33 @@ const HintContextSchema = z.looseObject({
   updatedAt: z.string().nullable().optional(),
 });
 
+/**
+ * One target the prompt lexically matched (trial finding #19): a targets-only
+ * pointer names it ("touched <value> <age> ago"). `value` is TEAMMATE-CONTROLLED
+ * text (a path they edited) rendered into an injected hint, so it is bounded on
+ * the wire and rendered through `bare()` + a cap downstream. `createdAt` null
+ * is the honest "age unknown" (a row predating the column); an OLDER hub omits
+ * `matchedTargets` entirely and the targets-only pointer is simply unavailable.
+ */
+export const MatchedTargetSchema = z.looseObject({
+  kind: z.string().min(1),
+  value: z.string().min(1),
+  createdAt: z.string().min(1).nullable().optional(),
+});
+
+export type MatchedTarget = z.infer<typeof MatchedTargetSchema>;
+
 export const HintContextCandidateSchema = z
   .looseObject({
     workContext: HintContextSchema,
     claims: z.array(z.unknown()).default([]),
+    matchedTargets: z.array(z.unknown()).default([]),
   })
   .transform((value) => ({
     workContext: value.workContext,
     // Tolerant rows, silent drop — candidates are advisory, like search rows.
     claims: parseRows(value.claims, HintClaimCandidateSchema).rows,
+    matchedTargets: parseRows(value.matchedTargets, MatchedTargetSchema).rows,
   }));
 
 export type HintContextCandidate = z.infer<typeof HintContextCandidateSchema>;

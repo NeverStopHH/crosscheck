@@ -58,6 +58,17 @@ export type HintSelection =
       readonly context: HintContextCandidate;
       /** How many claims the pointer withholds — a count, never a body. */
       readonly claimCount: number;
+      /**
+       * Trial finding #19: the file the prompt lexically named that this
+       * context touched — a TARGETS-ONLY pointer, claimCount 0, no body. Absent
+       * for the claim-count pointer (a context with foreign claims). Same
+       * anchoring asymmetry: an id, a title and a touched-file fact, pulled
+       * deliberately with get_diagnosis, never a claim pushed unasked.
+       */
+      readonly matchedTarget?: {
+        readonly value: string;
+        readonly createdAt: string | null;
+      };
     };
 
 export interface SelectHintInput {
@@ -147,17 +158,38 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     }
   }
 
-  // Pointer pass: the best-ranked unseen context that has any foreign claims.
-  // "Unseen" covers the context id AND its claims: once substance from a
-  // context was delivered, re-surfacing the same context as a pointer is
-  // noise, not news.
+  // Pointer pass: the best-ranked unseen context. "Unseen" covers the context
+  // id AND its claims: once substance from a context was delivered,
+  // re-surfacing the same context as a pointer is noise, not news.
   for (const context of eligible) {
+    if (seen.has(context.workContext.id)) {
+      continue;
+    }
+    if (context.claims.some((claim) => seen.has(claim.id))) {
+      continue;
+    }
     const foreignCount = context.claims.filter((claim) =>
       isForeignClaim(claim, selfDeveloperId),
     ).length;
-    const anyClaimSeen = context.claims.some((claim) => seen.has(claim.id));
-    if (foreignCount > 0 && !seen.has(context.workContext.id) && !anyClaimSeen) {
+    if (foreignCount > 0) {
       return { kind: "pointer", context, claimCount: foreignCount };
+    }
+    // #19 targets-only pointer: the EXACT tier is a fact — the prompt named a
+    // file this context targeted — so a body-less pointer at zero claims is
+    // precise, not a guess. FTS-only stays silent: a lexical body match is too
+    // loose to point on without a claim behind it (keep precision, §4).
+    if (context.workContext.tier === "exact") {
+      const target = context.matchedTargets.find(
+        (matched) => matched.kind === "file",
+      );
+      if (target !== undefined) {
+        return {
+          kind: "pointer",
+          context,
+          claimCount: 0,
+          matchedTarget: { value: target.value, createdAt: target.createdAt ?? null },
+        };
+      }
     }
   }
   return SILENCE;

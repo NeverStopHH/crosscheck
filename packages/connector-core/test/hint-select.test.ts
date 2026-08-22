@@ -31,6 +31,7 @@ const claim = (
 const context = (
   overrides: Partial<HintContextCandidate["workContext"]> = {},
   claims: readonly HintClaimCandidate[] = [claim()],
+  matchedTargets: HintContextCandidate["matchedTargets"] = [],
 ): HintContextCandidate => ({
   workContext: {
     id: "wc_1",
@@ -45,6 +46,16 @@ const context = (
     ...overrides,
   },
   claims,
+  matchedTargets,
+});
+
+const fileTarget = (
+  value = "src/auth/refresh.ts",
+  createdAt: string | null = "2026-08-10T08:00:00.000Z",
+): HintContextCandidate["matchedTargets"][number] => ({
+  kind: "file",
+  value,
+  createdAt,
 });
 
 interface SelectOverrides {
@@ -198,6 +209,48 @@ describe("precision floor", () => {
 
   test("no candidates is silence", () => {
     expect(select([]).kind).toBe("silence");
+  });
+});
+
+describe("targets-only pointer (trial finding #19)", () => {
+  test("an exact-tier context with 0 claims but a matched file → pointer", () => {
+    // The prompt named a file this teammate context touched; the exact tier is
+    // a fact, so a body-less pointer is precise even with zero claims — the
+    // structural death this fix removes (foreignCount > 0 used to be required).
+    const selection = select([context({}, [], [fileTarget()])]);
+    expect(selection.kind).toBe("pointer");
+    if (selection.kind === "pointer") {
+      expect(selection.claimCount).toBe(0);
+      expect(selection.matchedTarget?.value).toBe("src/auth/refresh.ts");
+      // Structural: still no claim on the variant, so no body can leak.
+      expect("claim" in selection).toBe(false);
+    }
+  });
+
+  test("a matched file with an unknown age still points (createdAt null)", () => {
+    const selection = select([context({}, [], [fileTarget("src/x.ts", null)])]);
+    expect(selection.kind).toBe("pointer");
+    if (selection.kind === "pointer") {
+      expect(selection.matchedTarget?.createdAt).toBeNull();
+    }
+  });
+
+  test("an FTS-tier context with 0 claims and a matched file stays silent", () => {
+    // FTS is too loose to point on without a claim behind it (keep precision).
+    expect(
+      select([context({ tier: "fts" }, [], [fileTarget()])]).kind,
+    ).toBe("silence");
+  });
+
+  test("a non-file matched target does not make a targets-only pointer", () => {
+    const symbolTarget = { kind: "symbol", value: "verifyToken", createdAt: null };
+    expect(select([context({}, [], [symbolTarget])]).kind).toBe("silence");
+  });
+
+  test("a seen context is not re-pointed on its matched target", () => {
+    expect(
+      select([context({}, [], [fileTarget()])], { seenRefIds: ["wc_1"] }).kind,
+    ).toBe("silence");
   });
 });
 
