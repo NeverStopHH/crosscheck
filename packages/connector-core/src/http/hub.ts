@@ -541,8 +541,9 @@ const HintContextSchema = z.looseObject({
 /**
  * One target the prompt lexically matched (trial finding #19): a targets-only
  * pointer names it ("touched <value> <age> ago"). `value` is TEAMMATE-CONTROLLED
- * text (a path they edited) rendered into an injected hint, so it is bounded on
- * the wire and rendered through `bare()` + a cap downstream. `createdAt` null
+ * text (a path they edited) rendered into an injected hint, so downstream it
+ * goes through `bare()` + the title cap, and the whole hint through fitHint's
+ * length bound (hints/render.ts) — no new untrusted path opens. `createdAt` null
  * is the honest "age unknown" (a row predating the column); an OLDER hub omits
  * `matchedTargets` entirely and the targets-only pointer is simply unavailable.
  */
