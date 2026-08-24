@@ -7,6 +7,7 @@
  * counted in `.drops`.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import type { DeferredEnder } from "../src/spool/reap.ts";
 import { open, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
@@ -607,14 +608,18 @@ describe("the end SessionEnd deferred", () => {
     );
   };
 
-  /** Records what reap asked to end, and whether the hub played along. */
+  /**
+   * Records what reap asked to end, and whether the hub played along. Three
+   * outcomes since M6: `"retry"` keeps the marker, `"ended"` and `"gone"` both
+   * spend it — see spool/reap.ts DeferredEndOutcome.
+   */
   const enderThat = (
     succeeds: boolean,
     seen: string[],
-  ): ((sessionId: string) => Promise<boolean>) =>
+  ): DeferredEnder =>
     async (sessionId: string) => {
       seen.push(sessionId);
-      return succeeds;
+      return succeeds ? "ended" : "retry";
     };
 
   test("ends the session once its backlog has reached the hub", async () => {

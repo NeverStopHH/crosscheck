@@ -30,6 +30,33 @@ export const EVENTS_MAX_LIMIT = 500;
  */
 export const WORK_CONTEXT_LIST_MAX = 200;
 
+/**
+ * How long a session may go without a heartbeat before the hub closes it
+ * (trial finding M6).
+ *
+ * `/api/events` on the trial hub: 127 sessions started, 23 ended, **104 never
+ * ended**. `services/sessions.ts endSession` was the only writer of
+ * `ended_at` and nothing anywhere ran on a timer, so a killed orchestration
+ * agent, a closed terminal or a SessionEnd that never got its budget left a
+ * session "live" forever — visible in presence until its 90-second TTL, and
+ * open in every listing and every event stream after that.
+ *
+ * SIX HOURS, which is 240x PRESENCE_TTL_SECONDS. The danger of a reaper is
+ * closing a session that is still working: ingest refuses records from an
+ * ended session (`services/records.ts checkProducerSession`), so a reap that
+ * fired early would re-create the trial's deafness from the server side. Six
+ * hours is far past any pause a working session takes, and a session
+ * resurrected after it gets a loud 409 `already_ended` on its next heartbeat
+ * rather than silent data loss.
+ */
+export const SESSION_REAP_STALE_HOURS = 6;
+/** Sessions one reaper pass closes — a bounded UPDATE, never a table sweep. */
+export const SESSION_REAP_MAX_PER_PASS = 100;
+/** How often the hub's own reaper runs. Started in startServer only. */
+export const SESSION_REAP_INTERVAL_MS = 15 * 60 * 1000;
+/** Bound on `GET /api/sessions?open=1`. */
+export const OPEN_SESSIONS_MAX = 200;
+
 /** Upper bound for one POST /api/records spool flush; larger batches get 422. */
 export const MAX_INGEST_BATCH = 100;
 

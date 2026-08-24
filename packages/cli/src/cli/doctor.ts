@@ -75,6 +75,7 @@ import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency
 import {
   getAbsences,
   getHintStats,
+  getOpenSessions,
   getPrivacySettings,
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { HintStats } from "@crosscheck/connector-core/http/hub.ts";
@@ -1036,6 +1037,7 @@ const checkSpool = async (
   home: string,
   key: string,
   now: Date,
+  openOnHub: number | null,
 ): Promise<readonly Check[]> => {
   const depth = await spoolDepth(home, key);
   const depthCheck =
@@ -1100,9 +1102,18 @@ const checkSpool = async (
     zombies.stale > 0
       ? `, ${zombies.stale} of ${zombies.total} session state file${zombies.total === 1 ? "" : "s"} stale >${String(DOCTOR_ZOMBIE_STATE_WARN_HOURS)}h (each one pins its spool file against reap)`
       : "";
+  // The HUB's own count when it has the endpoint (M6). A session killed on
+  // this machine can leave no local trace while its row stays open on the
+  // hub — 104 of the trial hub's 127 were exactly that — so the local marker
+  // count is a floor and the hub's number is the fact. An older hub sends
+  // null and the line reads as it always did.
+  const hubPart =
+    openOnHub === null || openOnHub === 0
+      ? ""
+      : `, hub still holds ${String(openOnHub)} of your sessions open`;
   const unclosedCheck =
-    unclosed.sessions > 0 || zombies.stale > 0
-      ? check("WARN", "unclosed sessions", `${expiredPart}${zombiePart}`)
+    unclosed.sessions > 0 || zombies.stale > 0 || (openOnHub ?? 0) > 0
+      ? check("WARN", "unclosed sessions", `${expiredPart}${zombiePart}${hubPart}`)
       : check("PASS", "unclosed sessions", "none");
   return [
     depthCheck,
@@ -1997,6 +2008,10 @@ export const runDoctor = async (
   // double wiring (H6). When neither is wired the project path is still
   // offered, so a half-written install keeps today's reading rather than
   // going quiet.
+  // Fetched once, before the summarize array, so the spool section can read
+  // it: an older hub 404s and the count degrades to null (§R6).
+  const openSessions = await getOpenSessions(hubCtx);
+  const openOnHub = openSessions.ok ? openSessions.data.length : null;
   const agentSettingsPaths = ((): readonly string[] => {
     const projectPath = join(
       identity.root,
@@ -2041,7 +2056,7 @@ export const runDoctor = async (
         globalWiring.mcpRegistered ||
         (await readRegisteredMcpEntry(identity.root, env)) !== null,
     }),
-    ...(await checkSpool(config.home, key, now)),
+    ...(await checkSpool(config.home, key, now, openOnHub)),
     ...(await foreignDropChecks(config.home)),
     await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
     await checkSummarizerRunner(env, config.home),

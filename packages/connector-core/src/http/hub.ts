@@ -187,6 +187,34 @@ export const postRecords = (
     capture: true,
   });
 
+/**
+ * One session the hub still believes is running (trial finding M6).
+ *
+ * Only the fields `doctor` prints: a count and, for the oldest, an age. The
+ * hub's number beats every local guess here, because a session that was killed
+ * on THIS machine may have left no local trace at all while the hub's row is
+ * still open — which is precisely the 104-of-127 state the trial found.
+ */
+export const OpenSessionEntrySchema = z.looseObject({
+  id: z.string().min(1),
+  repo: z.string().min(1),
+  branch: z.string().min(1),
+  status: z.string().min(1),
+  lastHeartbeatAt: z.string().min(1),
+});
+
+export type OpenSessionEntry = z.infer<typeof OpenSessionEntrySchema>;
+
+/** An older hub has no such route and answers 404 — a plain HubResult failure. */
+export const getOpenSessions = (
+  ctx: HubContext,
+): Promise<HubResult<readonly OpenSessionEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/sessions?open=1&mine=1",
+    schema: tolerantList("sessions", OpenSessionEntrySchema),
+  });
+
 export const getPresence = (
   ctx: HubContext,
   repo: string,

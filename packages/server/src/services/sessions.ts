@@ -1,7 +1,12 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import type { SessionStatus } from "@crosscheck/schema";
 
-import { EVENT_KINDS } from "../constants.ts";
+import {
+  EVENT_KINDS,
+  OPEN_SESSIONS_MAX,
+  SESSION_REAP_MAX_PER_PASS,
+  SESSION_REAP_STALE_HOURS,
+} from "../constants.ts";
 import { agentSessions } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import type { Db } from "../db/client.ts";
@@ -214,4 +219,137 @@ export const endSession = async (
     status: finalStatus,
   });
   return { outcome: "ended", session: toSessionView(row) };
+};
+
+const MS_PER_HOUR = 60 * 60 * 1000;
+
+export interface ReapStaleSessionsOptions {
+  readonly staleHours?: number;
+  readonly limit?: number;
+  /** Confine the pass to one developer's own sessions (the SessionStart path). */
+  readonly developerId?: string;
+}
+
+export interface ReapResult {
+  readonly ended: readonly SessionView[];
+}
+
+/**
+ * Closes sessions that stopped heartbeating (trial finding M6).
+ *
+ * 104 of the trial hub's 127 sessions never ended, because `endSession` above
+ * was the only writer of `ended_at` and nothing ran on a timer. A killed
+ * orchestration agent, a closed terminal, a SessionEnd that ran out of budget
+ * — each one left a row that every listing, every presence query and every
+ * `/api/events` reader treated as live work.
+ *
+ * IT WRITES, rather than filtering at read time, and that is the deliberate
+ * half. A listing-only reaper would leave `/api/events` — the surface the
+ * trial audit itself trusted — stating 127 starts and 23 ends forever. So the
+ * `ended_at` lands and ONE `session_ended` event is appended per row, through
+ * the same `appendEvent` the ordinary end uses, and the ledger stays true.
+ *
+ * THE SAFETY IS IN THE PREDICATE, not in the caller: `ended_at IS NULL AND
+ * last_heartbeat_at < cutoff`, a per-pass `limit`, and a cutoff 240x the
+ * presence TTL. A session heartbeating every twenty seconds can never match.
+ * Ending a LIVE session would make ingest reject its records
+ * (`services/records.ts checkProducerSession`), which is exactly the deafness
+ * this whole batch exists to remove — so the predicate is the thing to read
+ * twice, and `test/session-reaper.test.ts` pins the never-reap case first.
+ */
+export const reapStaleSessions = async (
+  deps: Deps,
+  options: ReapStaleSessionsOptions = {},
+): Promise<ReapResult> => {
+  const now = deps.now();
+  const cutoff = new Date(
+    now.getTime() - (options.staleHours ?? SESSION_REAP_STALE_HOURS) * MS_PER_HOUR,
+  );
+  const limit = Math.min(
+    options.limit ?? SESSION_REAP_MAX_PER_PASS,
+    SESSION_REAP_MAX_PER_PASS,
+  );
+  // Candidates first, then one UPDATE by id: a bare `UPDATE … LIMIT` is not
+  // portable, and the two-step keeps the write bounded by construction.
+  const candidates = await deps.db
+    .select({ id: agentSessions.id })
+    .from(agentSessions)
+    .where(
+      and(
+        isNull(agentSessions.endedAt),
+        lt(agentSessions.lastHeartbeatAt, cutoff),
+        ...(options.developerId === undefined
+          ? []
+          : [eq(agentSessions.developerId, options.developerId)]),
+      ),
+    )
+    .limit(limit);
+  if (candidates.length === 0) {
+    return { ended: [] };
+  }
+  const updated = await deps.db
+    .update(agentSessions)
+    .set({ endedAt: now, status: DEFAULT_END_STATUS })
+    .where(
+      and(
+        inArray(
+          agentSessions.id,
+          candidates.map((row) => row.id),
+        ),
+        // Re-checked inside the write: a session that heartbeated between the
+        // SELECT and the UPDATE must survive, and two concurrent passes must
+        // not both claim the same row.
+        isNull(agentSessions.endedAt),
+      ),
+    )
+    .returning();
+  for (const row of updated) {
+    await appendEvent(deps, EVENT_KINDS.SESSION_ENDED, {
+      sessionId: row.id,
+      developerId: row.developerId,
+      repo: row.repo,
+      status: DEFAULT_END_STATUS,
+      // The one field that tells a reader this end was the hub's doing and
+      // not the connector's — `/api/events` is a ledger, so the difference
+      // belongs in it.
+      reapedAfterHours: options.staleHours ?? SESSION_REAP_STALE_HOURS,
+    });
+  }
+  return { ended: updated.map(toSessionView) };
+};
+
+export interface ListOpenSessionsOptions {
+  /** Only the caller's own sessions. */
+  readonly mine?: boolean;
+  readonly limit?: number;
+}
+
+/**
+ * Sessions the hub still believes are running (trial finding M6).
+ *
+ * `doctor`'s `unclosed sessions` line counted only local `.pending-end`
+ * markers that had aged out, so it read "none" on a machine with 100 zombie
+ * state files and a hub holding 104 never-ended sessions. This is the number
+ * that makes that line true, and it is the hub's answer rather than a guess
+ * assembled from local files.
+ */
+export const listOpenSessions = async (
+  deps: Deps,
+  developerId: string,
+  options: ListOpenSessionsOptions = {},
+): Promise<readonly SessionView[]> => {
+  const rows = await deps.db
+    .select()
+    .from(agentSessions)
+    .where(
+      and(
+        isNull(agentSessions.endedAt),
+        ...(options.mine === true
+          ? [eq(agentSessions.developerId, developerId)]
+          : []),
+      ),
+    )
+    .orderBy(desc(agentSessions.lastHeartbeatAt))
+    .limit(Math.min(options.limit ?? OPEN_SESSIONS_MAX, OPEN_SESSIONS_MAX));
+  return rows.map(toSessionView);
 };

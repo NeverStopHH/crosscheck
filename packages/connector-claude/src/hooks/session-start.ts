@@ -1,4 +1,7 @@
-import { MAX_WORK_CONTEXT_TITLE_CHARS } from "@crosscheck/connector-core/constants.ts";
+import {
+  HTTP_NOT_FOUND,
+  MAX_WORK_CONTEXT_TITLE_CHARS,
+} from "@crosscheck/connector-core/constants.ts";
 import { rememberDeveloper } from "@crosscheck/connector-core/config/config.ts";
 import { sanitizeUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveDefaultBranchRef } from "@crosscheck/connector-core/git/default-branch.ts";
@@ -29,8 +32,12 @@ import {
   hasSpendablePendingEnd,
   reapSpool,
 } from "@crosscheck/connector-core/spool/reap.ts";
-import type { DeferredEnder } from "@crosscheck/connector-core/spool/reap.ts";
+import type {
+  DeferredEndOutcome,
+  DeferredEnder,
+} from "@crosscheck/connector-core/spool/reap.ts";
 import { writePresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
+import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const INITIAL_STATUS = "analyzing";
@@ -92,16 +99,28 @@ const selfName = (
  */
 const deferredEnder =
   (ctx: HookContext, budget: HookBudget): DeferredEnder =>
-  async (crosscheckSessionId: string): Promise<boolean> => {
+  async (crosscheckSessionId: string): Promise<DeferredEndOutcome> => {
     const roomMs = budget.spareMs();
     if (roomMs <= 0) {
-      return false;
+      return "retry";
     }
     const result = await endSession(
       { ...ctx.hub, timeoutMs: Math.min(ctx.hub.timeoutMs, roomMs) },
       crosscheckSessionId,
     );
-    return result.ok;
+    if (result.ok) {
+      return "ended";
+    }
+    // A 404 is TERMINAL for a deferred end (trial finding M6): the hub has
+    // never heard of this session — the failed-first-register shape — so
+    // there is nothing to end and no later attempt can change that. Retrying
+    // it cost a hub call on every SessionStart until the marker aged out
+    // seven days later; the trial machine was carrying one 48 hours old.
+    //
+    // SCOPE: this is the DEFERRED-end path only. A 404 on a LIVE session's
+    // heartbeat means something else entirely (re-register), and that ladder
+    // belongs to the capture branch — `flows/heartbeat.ts` is untouched here.
+    return result.status === HTTP_NOT_FOUND ? "gone" : "retry";
   };
 
 /**
@@ -294,6 +313,15 @@ export const handleSessionStart = async (
     now,
     deferredEnder(ctx, budget),
   );
+  // Session-state corpses, bounded (trial finding M6). Deliberately AFTER
+  // reapSpool: a state file is what stops its spool being reaped
+  // (spool/reap.ts isSessionLive), so removing it here means the spool goes on
+  // the NEXT SessionStart rather than this one — which is right, because this
+  // run has already spent its file budget. Our own state file is excluded by
+  // name as well as by age.
+  await reapStaleSessionStates(ctx.config.home, now, {
+    keepHostSessionKey: ctx.payload.session_id,
+  });
 
   if (briefing.length === 0) {
     return "";

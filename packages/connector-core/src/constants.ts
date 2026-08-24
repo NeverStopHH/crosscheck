@@ -712,6 +712,8 @@ export const SESSION_STATE_SCAN_MAX_FILES = 200;
  * unlink storm on the hook whose latency the developer feels most.
  */
 export const SESSION_STATE_REAP_MAX_PER_RUN = 25;
+/** A deferred end whose session the hub has never heard of (trial finding M6). */
+export const HTTP_NOT_FOUND = 404;
 
 export const EXIT_OK = 0;
 export const EXIT_WARN = 1;
