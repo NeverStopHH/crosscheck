@@ -58,6 +58,7 @@ import {
   formatForeignDropLine,
   readForeignRepoDrops,
 } from "@crosscheck/connector-core/state/foreign-drops.ts";
+import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
 import { runBoundedCommand } from "@crosscheck/connector-core/git/git.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
@@ -751,9 +752,20 @@ const defaultAgentProbe = (cwd: string): AgentProcessProbe => ({
  * `crosscheck login`. A single line saying "the tools do not work" would send
  * half the readers to the wrong command.
  */
+/**
+ * The sentence that turns a committed-file recommendation into a lie when the
+ * file is gitignored (trial finding M11). Empty when git says it is not
+ * ignored, and empty when git could not say — old text over wrong text.
+ */
+const ignoredSuffix = (ignored: boolean | null, path: string): string =>
+  ignored === true
+    ? ` — WARNING: ${path} is gitignored in this repo, so committing it is impossible and teammates never receive it; they need \`crosscheck init --global\` on their own machines`
+    : "";
+
 const checkMcpRegistration = async (
   repoRoot: string,
   userScopeRegistered: boolean,
+  mcpIgnored: boolean | null,
 ): Promise<Check> => {
   const path = join(repoRoot, MCP_CONFIG_FILE);
   const raw = await readTextOrNull(path);
@@ -763,16 +775,22 @@ const checkMcpRegistration = async (
     // machine, so the committed-file advice survives as a note instead of
     // being lost with the FAIL.
     if (userScopeRegistered) {
-      return check(
-        "PASS",
-        "mcp tools registered",
-        `via global install (user scope, this machine only) — teammates get the tools from a committed ${path}: run crosscheck init, then commit the file`,
-      );
+      return mcpIgnored === true
+        ? check(
+            "WARN",
+            "mcp tools registered",
+            `via global install (user scope, this machine only) — ${path} is gitignored here, so the committed-file route does not exist in this repo and teammates need \`crosscheck init --global\` on their own machines`,
+          )
+        : check(
+            "PASS",
+            "mcp tools registered",
+            `via global install (user scope, this machine only) — teammates get the tools from a committed ${path}: run crosscheck init, then commit the file`,
+          );
     }
     return check(
       "FAIL",
       "mcp tools registered",
-      `${path} not found — run crosscheck init, then commit the file so teammates get the tools too`,
+      `${path} not found — run crosscheck init, then commit the file so teammates get the tools too${ignoredSuffix(mcpIgnored, path)}`,
     );
   }
   let parsed: unknown;
@@ -803,13 +821,20 @@ const checkMcpRegistration = async (
   }
   // The KEY being present is not enough: a hand-written entry under this name
   // pointing somewhere else would otherwise be reported as a healthy install.
-  return isOwnedMcpEntry(entry)
-    ? check("PASS", "mcp tools registered", path)
-    : check(
-        "FAIL",
-        "mcp tools registered",
-        `${path} has a "${MCP_SERVER_KEY}" server, but not the one crosscheck init writes — rerun crosscheck init`,
-      );
+  if (isOwnedMcpEntry(entry)) {
+    return mcpIgnored === true
+      ? check(
+          "WARN",
+          "mcp tools registered",
+          `${path}${ignoredSuffix(mcpIgnored, path)}`,
+        )
+      : check("PASS", "mcp tools registered", path);
+  }
+  return check(
+    "FAIL",
+    "mcp tools registered",
+    `${path} has a "${MCP_SERVER_KEY}" server, but not the one crosscheck init writes — rerun crosscheck init`,
+  );
 };
 
 /**
@@ -1913,6 +1938,7 @@ export const runDoctor = async (
             await checkMcpRegistration(
               identity.root,
               globalWiring.mcpRegistered,
+              await isPathIgnored(identity.root, MCP_CONFIG_FILE),
             ),
           ]),
       mcpUsableCheck({
@@ -2012,6 +2038,16 @@ export const runDoctor = async (
   // it: an older hub 404s and the count degrades to null (§R6).
   const openSessions = await getOpenSessions(hubCtx);
   const openOnHub = openSessions.ok ? openSessions.data.length : null;
+  // Whether the two PROJECT files this repo's advice keeps recommending can
+  // actually reach a teammate (trial finding M11). Resolved once, passed as
+  // data, so `globalInstallChecks` stays pure and testable.
+  const ignoreVerdicts = {
+    mcp: await isPathIgnored(identity.root, MCP_CONFIG_FILE),
+    projectSettings: await isPathIgnored(
+      identity.root,
+      `${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE}`,
+    ),
+  };
   const agentSettingsPaths = ((): readonly string[] => {
     const projectPath = join(
       identity.root,
@@ -2031,6 +2067,7 @@ export const runDoctor = async (
     ...globalInstallChecks(
       globalWiring,
       settingsInspection.launcherCommand !== null,
+      ignoreVerdicts.projectSettings,
     ),
     hubCheck,
     timeoutCheck(config.timeoutMs, owner),
@@ -2045,7 +2082,11 @@ export const runDoctor = async (
       agentProbe ?? defaultAgentProbe(cwd),
       now.getTime(),
     ),
-    await checkMcpRegistration(identity.root, globalWiring.mcpRegistered),
+    await checkMcpRegistration(
+      identity.root,
+      globalWiring.mcpRegistered,
+      ignoreVerdicts.mcp,
+    ),
     await checkMcpUsable(identity.root, env, {
       configured: true,
       hubUrl: config.hubUrl,

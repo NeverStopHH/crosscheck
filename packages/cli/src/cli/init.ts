@@ -29,6 +29,7 @@ import {
 import type { Launcher } from "@crosscheck/connector-core/config/launcher.ts";
 import { buildSettingsPlan, mergeClaudeSettings } from "@crosscheck/connector-claude";
 import { readGlobalWiring } from "./doctor-global.ts";
+import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
 import {
   backUp,
   readJsonConfig,
@@ -253,6 +254,7 @@ export const runInit = async (
   // install must not veto it — but the double wiring is said out loud with
   // the cleanup command, never left for someone to discover via doctor.
   const globalWiring = await readGlobalWiring(env);
+  const mcpIgnored = await isPathIgnored(identity.root, MCP_CONFIG_FILE);
 
   const notes = [
     ...(merged.statuslineInstalled
@@ -295,7 +297,14 @@ export const runInit = async (
       // Said explicitly because it is the ONLY delivery mechanism: a teammate
       // gets the tools from this file arriving in their checkout, and nowhere
       // else. An uncommitted .mcp.json is an install that works for one person.
-      `commit ${MCP_CONFIG_FILE} so teammates get the mcp tools on git pull`,
+      //
+      // Unless the repo ignores it (trial finding M11) — in the monorepo the
+      // trial ran in, `.mcp.json` sits at `.gitignore:5`, so "commit it" was
+      // advice nobody could follow and the real remedy was never printed. A
+      // `null` verdict (git could not answer) keeps the original line.
+      mcpIgnored === true
+        ? `${MCP_CONFIG_FILE} is gitignored in this repo, so teammates cannot receive it — they need \`crosscheck init --global\` on their own machines`
+        : `commit ${MCP_CONFIG_FILE} so teammates get the mcp tools on git pull`,
       // The same one-PR rule for the Cursor pair — and the gitignore warning
       // the design's rules-file rejection earned: an ignored .cursor/ is an
       // install that silently works for one person only.
