@@ -12,6 +12,8 @@ import {
   DOCTOR_AGENT_PS_TIMEOUT_MS,
   DOCTOR_FLUSH_LOCK_WARN_MS,
   DOCTOR_HOOK_SILENT_WARN_MINUTES,
+  DOCTOR_MCP_PROBE_TIMEOUT_MS,
+  DOCTOR_NO_PROBE_ENV,
   DOCTOR_LAST_SYNC_WARN_MINUTES,
   DOCTOR_SPOOL_AGE_WARN_HOURS,
   DOCTOR_SPOOL_DEPTH_FAIL,
@@ -59,7 +61,7 @@ import {
 import { runBoundedCommand } from "@crosscheck/connector-core/git/git.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
-import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
+import type { HubContext, HubFailureKind } from "@crosscheck/connector-core/http/client.ts";
 import {
   describeConnectionFailure,
   refineRefusedCause,
@@ -99,7 +101,8 @@ import type {
   SummarizerProbe,
 } from "@crosscheck/connector-claude";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
-import { isOwnedCommand } from "@crosscheck/connector-claude";
+import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
+import { claudeUserMcpPath, isOwnedCommand } from "@crosscheck/connector-claude";
 import {
   globalInstallChecks,
   ownedHookEntries,
@@ -803,15 +806,226 @@ const checkMcpRegistration = async (
       );
 };
 
-/** Whether the registered tools have credentials to reach the hub with. */
-const mcpUsableCheck = (hasConfig: boolean, hubUrl: string | null): Check =>
-  hasConfig
-    ? check("PASS", "mcp tools usable", `they will call ${hubUrl ?? "the hub"}`)
-    : check(
+/**
+ * ── "mcp tools usable" (trial finding M3) ──────────────────────────────────
+ *
+ * This line used to be `mcpUsableCheck(hasConfig, hubUrl)`, called as
+ * `mcpUsableCheck(true, config.hubUrl)` — a literal constant in the branch
+ * where a config exists, so it printed `PASS mcp tools usable  they will call
+ * <url>` unconditionally, and during the trial it printed exactly that
+ * directly beneath `FAIL hub reachable  invalid api key`. "Usable" is a claim
+ * about credentials and a claim about the server starting, and it made
+ * neither.
+ *
+ * The KEY verdict comes from the HUB PROBE, which doctor has already run.
+ * The spawn below proves something different and narrower, and the comment on
+ * `probeMcpServer` says exactly what.
+ */
+export type McpProbeOutcome =
+  | { readonly kind: "not-probed"; readonly why: string }
+  | { readonly kind: "answered"; readonly tools: number }
+  | { readonly kind: "failed"; readonly detail: string };
+
+export interface McpUsableFacts {
+  /** A hub url and api key exist at all. */
+  readonly configured: boolean;
+  readonly hubUrl: string | null;
+  /** Doctor's own reachability probe — null in the unconfigured branch. */
+  readonly hub: { readonly ok: boolean; readonly status: number; readonly kind: HubFailureKind } | null;
+  /** Registered in EITHER scope: an unregistered tool is never called. */
+  readonly registered: boolean;
+  readonly probe: McpProbeOutcome;
+}
+
+/** PURE, so every branch's wording is pinned without spawning anything. */
+export const mcpUsableCheck = (facts: McpUsableFacts): Check => {
+  const name = "mcp tools usable";
+  if (!facts.configured) {
+    return check(
+      "FAIL",
+      name,
+      "no hub url or api key, so every tool call answers with an error — run `crosscheck login <hubUrl>`",
+    );
+  }
+  const hubUrl = facts.hubUrl ?? "the hub";
+  if (facts.hub !== null && !facts.hub.ok) {
+    // The credential verdict, taken from the call that actually presented the
+    // credential. A 401 is an ANSWER — the hub is there and the key is not
+    // welcome — and it has its own command, which is why it is not folded in
+    // with the outage below.
+    if (facts.hub.status === HTTP_UNAUTHORIZED) {
+      return check(
         "FAIL",
-        "mcp tools usable",
-        "no hub url or api key, so every tool call answers with an error — run `crosscheck login <hubUrl>`",
+        name,
+        `api key rejected — every tool call will answer with an error: run \`crosscheck login ${hubUrl}\``,
       );
+    }
+    return check(
+      "WARN",
+      name,
+      `${hubUrl} is unreachable from here, so the tools will error on every call — see the hub reachable line above for what to fix`,
+    );
+  }
+  if (!facts.registered) {
+    return check(
+      "FAIL",
+      name,
+      "no mcp server is registered in either scope, so no agent can call the tools — run `crosscheck init` (or `crosscheck init --global`)",
+    );
+  }
+  switch (facts.probe.kind) {
+    case "failed":
+      return check(
+        "FAIL",
+        name,
+        `the registered mcp server did not answer: ${facts.probe.detail} — the launcher in the registration cannot start crosscheck`,
+      );
+    case "answered":
+      return check(
+        "PASS",
+        name,
+        `${String(facts.probe.tools)} tools, and they will call ${hubUrl}`,
+      );
+    case "not-probed":
+      return check("PASS", name, `not probed (${facts.probe.why}) — they will call ${hubUrl}`);
+  }
+};
+
+/** JSON-RPC ids used by the handshake; only the second one is read back. */
+const MCP_PROBE_INIT_ID = 1;
+const MCP_PROBE_LIST_ID = 2;
+
+const McpToolsResultSchema = z.looseObject({
+  id: z.number(),
+  result: z.looseObject({ tools: z.array(z.unknown()) }),
+});
+
+/**
+ * Spawns the REGISTERED mcp entry and speaks two frames to it.
+ *
+ * WHAT THIS PROVES, precisely: that the command in `.mcp.json` (or the user
+ * scope) STARTS and speaks the protocol. That is a real failure mode — a
+ * launcher whose path no longer resolves, an import that crashes, a wrapper
+ * script that exits — and nothing else on the machine reports it, because an
+ * agent that cannot start the server simply has no tools and says nothing.
+ *
+ * WHAT IT DOES NOT PROVE: credentials. `tools/list` is answered from a static
+ * table (mcp/server.ts `listToolsResult`), so it succeeds with no api key, a
+ * rotated one, or a dead hub. The key verdict is the hub probe's, above, and
+ * the branch order in `mcpUsableCheck` reflects that.
+ *
+ * stdin is `"pipe"` and CLOSED after the two frames: the server's stdio loop
+ * ends when stdin ends, so the child cannot outlive the probe. `timeout` is a
+ * second guard for a child that ignores both.
+ */
+const probeMcpServer = async (
+  entry: McpServerEntry,
+  cwd: string,
+): Promise<McpProbeOutcome> => {
+  try {
+    const child = Bun.spawn({
+      cmd: [entry.command, ...entry.args],
+      cwd,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: DOCTOR_MCP_PROBE_TIMEOUT_MS,
+    });
+    const frames =
+      `${JSON.stringify({ jsonrpc: "2.0", id: MCP_PROBE_INIT_ID, method: "initialize", params: {} })}\n` +
+      `${JSON.stringify({ jsonrpc: "2.0", id: MCP_PROBE_LIST_ID, method: "tools/list", params: {} })}\n`;
+    child.stdin.write(frames);
+    await child.stdin.end();
+    const stdout = await new Response(child.stdout).text();
+    await child.exited;
+    for (const line of stdout.split("\n")) {
+      if (line.trim().length === 0) {
+        continue;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line) as unknown;
+      } catch {
+        continue;
+      }
+      const listed = McpToolsResultSchema.safeParse(parsed);
+      if (listed.success && listed.data.id === MCP_PROBE_LIST_ID) {
+        return { kind: "answered", tools: listed.data.result.tools.length };
+      }
+    }
+    return {
+      kind: "failed",
+      detail: `no tools/list answer within ${String(DOCTOR_MCP_PROBE_TIMEOUT_MS)} ms`,
+    };
+  } catch (error) {
+    return {
+      kind: "failed",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+const McpServerEntrySchema = z.looseObject({
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+});
+
+/** The entry an agent would actually launch: project scope first, then user. */
+const readRegisteredMcpEntry = async (
+  repoRoot: string,
+  env: Env,
+): Promise<McpServerEntry | null> => {
+  for (const path of [join(repoRoot, MCP_CONFIG_FILE), claudeUserMcpPath(env)]) {
+    const servers = z
+      .looseObject({ mcpServers: z.record(z.string(), z.unknown()).optional() })
+      .safeParse(await readJsonOrNull(path));
+    const raw = servers.success
+      ? servers.data.mcpServers?.[MCP_SERVER_KEY]
+      : undefined;
+    if (!isOwnedMcpEntry(raw)) {
+      continue;
+    }
+    const parsed = McpServerEntrySchema.safeParse(raw);
+    if (parsed.success) {
+      return { type: "stdio", command: parsed.data.command, args: parsed.data.args };
+    }
+  }
+  return null;
+};
+
+/**
+ * Gathers the facts. The spawn is skipped under the same env var the
+ * summarizer probe honours — doctor is human-run, but a script that loops it
+ * must not spawn a server per iteration (§R7).
+ */
+const checkMcpUsable = async (
+  repoRoot: string,
+  env: Env,
+  facts: Omit<McpUsableFacts, "probe">,
+): Promise<Check> => {
+  if (!facts.configured || (facts.hub !== null && !facts.hub.ok) || !facts.registered) {
+    // Every one of these decides the line on its own, and the spawn would be
+    // a process spent on an answer nobody reads.
+    return mcpUsableCheck({
+      ...facts,
+      probe: { kind: "not-probed", why: "the verdict is already decided" },
+    });
+  }
+  if (env[DOCTOR_NO_PROBE_ENV] === "1") {
+    return mcpUsableCheck({
+      ...facts,
+      probe: { kind: "not-probed", why: `${DOCTOR_NO_PROBE_ENV}=1` },
+    });
+  }
+  const entry = await readRegisteredMcpEntry(repoRoot, env);
+  return mcpUsableCheck({
+    ...facts,
+    probe:
+      entry === null
+        ? { kind: "not-probed", why: "no launchable entry found" }
+        : await probeMcpServer(entry, repoRoot),
+  });
+};
 
 const checkSpool = async (
   home: string,
@@ -1541,7 +1755,18 @@ export const runDoctor = async (
               globalWiring.mcpRegistered,
             ),
           ]),
-      mcpUsableCheck(config !== null, config?.hubUrl ?? null),
+      mcpUsableCheck({
+        configured: config !== null,
+        hubUrl: config?.hubUrl ?? null,
+        // No probe ran in this branch: there is no hub to ask, so the line
+        // rests on `configured` alone exactly as it always did here.
+        hub: null,
+        registered:
+          globalWiring.mcpRegistered ||
+          (identity !== null &&
+            (await readRegisteredMcpEntry(identity.root, env)) !== null),
+        probe: { kind: "not-probed", why: "no hub configured" },
+      }),
       bunfigCheck,
     ]);
   }
@@ -1657,7 +1882,16 @@ export const runDoctor = async (
       now.getTime(),
     ),
     await checkMcpRegistration(identity.root, globalWiring.mcpRegistered),
-    mcpUsableCheck(true, config.hubUrl),
+    await checkMcpUsable(identity.root, env, {
+      configured: true,
+      hubUrl: config.hubUrl,
+      hub: probe.ok
+        ? { ok: true, status: 200, kind: "http" }
+        : { ok: false, status: probe.status, kind: probe.kind },
+      registered:
+        globalWiring.mcpRegistered ||
+        (await readRegisteredMcpEntry(identity.root, env)) !== null,
+    }),
     ...(await checkSpool(config.home, key, now)),
     ...(await foreignDropChecks(config.home)),
     await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
