@@ -282,3 +282,15 @@ CREATE TABLE IF NOT EXISTS developer_mutes (
   created_at timestamptz NOT NULL,
   PRIMARY KEY (reader_developer_id, muted_developer_id)
 );
+
+-- ── The session's intent on presence (trial finding #16) ────────────────────
+
+-- `work_contexts.session_id` is a foreign key with no index of its own, and
+-- services/presence.ts now reads the newest context of each live session to
+-- put its intent on the "active now" line. That read happens on every
+-- SessionStart briefing and every `crosscheck status`, so without this index
+-- it is a sequential scan of every work context on the hub, per live session.
+-- Leading with session_id and descending on created_at makes the subquery's
+-- `order by created_at desc limit 1` a single index lookup.
+CREATE INDEX IF NOT EXISTS work_contexts_session_created_idx
+  ON work_contexts (session_id, created_at DESC);

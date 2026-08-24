@@ -1500,6 +1500,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "the moment the hub's own exclusion slips — self-noise, DESIGN.md §10 risk 1",
   },
   {
+    // Presence is one row per SESSION, and the schema does not make a session
+    // have one work context. Without the bound the intent read fans the
+    // presence row out per context the client filed.
+    label: "the presence intent read stops being single-valued",
+    file: `${SERVER}/src/services/presence.ts`,
+    from: "        order by ${workContexts.createdAt} desc\n        limit 1\n",
+    to: "        order by ${workContexts.createdAt} desc\n",
+    test: `${SERVER}/test/presence.test.ts`,
+    because:
+      "one teammate appears twice in every briefing and `crosscheck status`, " +
+      "and the presence response grows by one row per work context a client files",
+  },
+  {
     // A declared intent is the one agent-written string this system PUSHES
     // into every teammate's briefing unasked; the derived path already drops
     // a secret-like sentence, so this gate is the declared path's half.
@@ -1589,6 +1602,7 @@ interface Outcome {
  * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
+ * PRINTS: presence.test.ts 1
  * PRINTS: proxy-e2e.test.ts 1
  * PRINTS: records.test.ts 1
  * PRINTS: recovery-race.test.ts 1

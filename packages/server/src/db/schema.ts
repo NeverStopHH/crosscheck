@@ -160,7 +160,18 @@ export const workContexts = pgTable("work_contexts", {
   landedAt: timestamptz("landed_at"),
   createdAt: timestamptz("created_at").notNull(),
   updatedAt: timestamptz("updated_at"),
-});
+}, (table) => [
+  // `session_id` is a foreign key, which Postgres does NOT index on its own.
+  // services/presence.ts reads the newest context of every live session to
+  // put its intent on the "active now" line, on every SessionStart briefing
+  // and every `crosscheck status`; leading with session_id and descending on
+  // created_at turns that into one index lookup instead of a scan of every
+  // work context on the hub. Mirrored in db/bootstrap.sql.
+  index("work_contexts_session_created_idx").on(
+    table.sessionId,
+    table.createdAt.desc(),
+  ),
+]);
 
 export const workContextTargets = pgTable(
   "work_context_targets",

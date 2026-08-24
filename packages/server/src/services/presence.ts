@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 
 import { PRESENCE_TTL_SECONDS } from "../constants.ts";
 import { agentSessions, developers, workContexts } from "../db/schema.ts";
@@ -42,14 +42,28 @@ export const listPresence = async (
     .select({
       session: agentSessions,
       developerName: developers.name,
-      intent: workContexts.intent,
+      // A SCALAR SUBQUERY, not a join, and the difference is a row count.
+      // Presence is one row per SESSION, but nothing makes a session have one
+      // work context: `work_contexts.session_id` is a plain foreign key and
+      // `POST /api/records` accepts any `wc_*` id whose session the caller
+      // owns. A join therefore multiplies the presence row by the number of
+      // contexts the client filed — the same teammate twice in every briefing
+      // and `crosscheck status`, and a response a client can grow at will.
+      // This form returns at most one value whatever the data, and picks the
+      // NEWEST context, which is the same "freshest speaks for the developer"
+      // rule the briefing's mergeGroup applies one level up. Index behind it:
+      // work_contexts_session_created_idx (db/bootstrap.sql) — without one
+      // this runs on every SessionStart and every `crosscheck status`.
+      intent: sql<Record<string, unknown> | null>`(
+        select ${workContexts.intent}
+        from ${workContexts}
+        where ${workContexts.sessionId} = ${agentSessions.id}
+        order by ${workContexts.createdAt} desc
+        limit 1
+      )`.as("intent"),
     })
     .from(agentSessions)
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
-    // One work context per session by construction (`wc_<sessionId>`,
-    // connector state/session-state.ts); LEFT so a session whose context
-    // record is still in the spool keeps its presence row.
-    .leftJoin(workContexts, eq(workContexts.sessionId, agentSessions.id))
     .where(
       and(
         eq(agentSessions.repo, repo),
