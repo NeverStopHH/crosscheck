@@ -4,7 +4,12 @@ import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { formatAbsenceLine, formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
-import { getAbsences, getPresence, getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
+import {
+  getAbsences,
+  getHintStats,
+  getPresence,
+  getPrivacySettings,
+} from "@crosscheck/connector-core/http/hub.ts";
 import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
@@ -96,6 +101,17 @@ export const runStatus = async (
   // "why do I never see Robin" are answered here instead of chasing ghosts.
   // An older hub without the endpoint prints no lines, same fail-open.
   const privacy = await getPrivacySettings(hubCtx);
+  // Whether hints are reaching anybody on this repo (trial finding M1).
+  // `claims` is the load-bearing number: the selector only ever proposes
+  // claims, so a repo with none delivers nothing however good the ranking is.
+  // An older hub 404s the endpoint and this prints no line at all — the same
+  // fail-open the absence and privacy sections above use.
+  const hintStats = await getHintStats(hubCtx, identity.repoId);
+  const hintLines = hintStats.ok
+    ? [
+        `hints: delivered ${String(hintStats.data.delivered)} (pulled ${String(hintStats.data.pulled)}) · claims on this repo ${String(hintStats.data.claims)}`,
+      ]
+    : [];
   const privacyLines = privacy.ok
     ? [
         presenceStateLine(privacy.data.presenceOptOut),
@@ -144,6 +160,7 @@ export const runStatus = async (
         : ["commit authors without a recent session:", ...absenceLines]),
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       ...foreignDropLines,
+      ...hintLines,
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       // The CAPTURE stamp, not `lastOkAt`: only register/heartbeat/records/end
       // move it, so this age is the hook path's and not this command's (H5).

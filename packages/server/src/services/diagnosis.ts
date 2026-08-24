@@ -1,4 +1,6 @@
-import { and, asc, count, desc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, or } from "drizzle-orm";
+
+import { WORK_CONTEXT_LIST_MAX } from "../constants.ts";
 
 import {
   agentSessions,
@@ -66,6 +68,21 @@ export interface WorkContextListEntry extends WorkContextView {
    * instead of being looked up in the 90 s presence list by the reader. */
   readonly developerName: string;
   readonly claimCount: number;
+  /**
+   * How many deterministic targets this context captured (trial finding M1).
+   *
+   * The number the connector's `capture` check and `crosscheck status` need to
+   * answer "is capture working at all": a context with claims and zero targets
+   * is a session that reported its existence and nothing it touched, which is
+   * the H1 cross-worktree drop's signature and was invisible on every surface.
+   */
+  readonly targetCount: number;
+}
+
+export interface WorkContextListWindow {
+  /** Oldest `created_at` to include; omitted = no window (see §M8). */
+  readonly since?: Date;
+  readonly limit?: number;
 }
 
 export interface ClaimView {
@@ -193,11 +210,47 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
   createdAt: row.createdAt.toISOString(),
 });
 
+/**
+ * Target counts for a page of contexts, as ONE bounded follow-up query.
+ *
+ * Deliberately not a second `leftJoin` on the statement below. Two left joins
+ * against one grouped row multiply each other's `count()`, so a context with
+ * three claims and two targets would report `claimCount: 6` — a silent
+ * corruption of a number three surfaces already print. `work_context_targets`
+ * also has no `id` column (composite primary key, db/schema.ts), so
+ * `countDistinct` is not available to paper over it. The page is capped at
+ * WORK_CONTEXT_LIST_MAX, so this is one extra bounded query per list call.
+ */
+const targetCountsFor = async (
+  db: Db,
+  workContextIds: readonly string[],
+): Promise<ReadonlyMap<string, number>> => {
+  if (workContextIds.length === 0) {
+    return new Map();
+  }
+  const rows = await db
+    .select({
+      workContextId: workContextTargets.workContextId,
+      targetCount: count(),
+    })
+    .from(workContextTargets)
+    .where(inArray(workContextTargets.workContextId, [...workContextIds]))
+    .groupBy(workContextTargets.workContextId);
+  return new Map(rows.map((row) => [row.workContextId, row.targetCount]));
+};
+
 export const listWorkContextsByRepo = async (
   db: Db,
   viewerDeveloperId: string,
   repo: string,
+  window: WorkContextListWindow = {},
 ): Promise<readonly WorkContextListEntry[]> => {
+  // Capped HERE rather than rejected at the route, the EventsQuerySchema
+  // discipline: a caller asking for 10 000 rows gets the cap, not a 400.
+  const limit = Math.min(
+    window.limit ?? WORK_CONTEXT_LIST_MAX,
+    WORK_CONTEXT_LIST_MAX,
+  );
   const rows = await db
     .select({
       workContext: workContexts,
@@ -218,6 +271,9 @@ export const listWorkContextsByRepo = async (
       and(
         eq(agentSessions.repo, repo),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+        ...(window.since === undefined
+          ? []
+          : [gte(workContexts.createdAt, window.since)]),
       ),
     )
     .groupBy(
@@ -226,12 +282,21 @@ export const listWorkContextsByRepo = async (
       developers.name,
       agentSessions.baseCommit,
     )
-    .orderBy(desc(workContexts.createdAt));
+    // Newest first, then the cap: a truncated page must keep the rows the
+    // reader would have used, and every consumer of this list wants recent
+    // work (the briefing filters to CONTEXT_MAX_AGE_DAYS client-side).
+    .orderBy(desc(workContexts.createdAt))
+    .limit(limit);
+  const targetCounts = await targetCountsFor(
+    db,
+    rows.map((row) => row.workContext.id),
+  );
   return rows.map((row) => ({
     ...toWorkContextView(row.workContext, row.baseCommit),
     developerId: row.developerId,
     developerName: row.developerName,
     claimCount: row.claimCount,
+    targetCount: targetCounts.get(row.workContext.id) ?? 0,
   }));
 };
 

@@ -12,6 +12,7 @@ import { z } from "zod";
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
+import { hintStatsForRepo } from "../services/hint-deliveries.ts";
 import { listHintCandidates, listTargetSessions } from "../services/hints.ts";
 import { SEARCH_MAX_QUERY_CHARS } from "../services/search.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -32,9 +33,26 @@ const TripwireQuerySchema = z.object({
   value: z.string().min(1).max(SEARCH_MAX_QUERY_CHARS),
 });
 
+const StatsQuerySchema = z.object({ repo: z.string().min(1) });
+
 export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();
   router.use("*", developerAuth(deps));
+
+  /**
+   * GET /api/hints/stats — three counts, so a connector can say whether hints
+   * are reaching anybody (trial finding M1).
+   *
+   * NOT on a hook path: `crosscheck status` and `doctor` call it, both
+   * human-run, and both render nothing at all when an older hub 404s it.
+   */
+  router.get("/stats", async (c) => {
+    const parsed = StatsQuerySchema.safeParse({ repo: c.req.query("repo") });
+    if (!parsed.success) {
+      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    return ok(c, await hintStatsForRepo(deps, parsed.data.repo));
+  });
 
   router.get("/candidates", async (c) => {
     const parsed = CandidatesQuerySchema.safeParse({

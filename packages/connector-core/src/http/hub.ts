@@ -58,6 +58,12 @@ export const WorkContextEntrySchema = z.looseObject({
   /** Optional: an older hub omits both, and landed detection simply skips. */
   baseCommit: z.string().min(1).optional(),
   landedAt: z.string().nullable().optional(),
+  /**
+   * Deterministic targets this context captured (trial finding M1). Optional
+   * because an older hub does not send it — and the surfaces that read it must
+   * say "not measured" rather than print a fabricated zero.
+   */
+  targetCount: z.number().int().min(0).optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
 });
@@ -191,15 +197,41 @@ export const getPresence = (
     schema: tolerantList("sessions", PresenceEntrySchema),
   });
 
+export interface WorkContextWindow {
+  /** ISO instant; omitted = no window. */
+  readonly since?: string;
+  readonly limit?: number;
+}
+
+/**
+ * The listing, with the window passed EXPLICITLY (trial finding M8).
+ *
+ * The hub's default is still "everything, capped" — deliberately, so a 0.7.2
+ * connector that sends no parameters does not silently lose rows to a
+ * server-chosen window. A connector that knows about the window therefore has
+ * to ask for it, which is what this signature is. The caller derives it from
+ * CONTEXT_MAX_AGE_DAYS, the same 14 days the briefing already filters to
+ * client-side — so the window narrows the TRANSFER without changing what any
+ * surface renders.
+ */
 export const getWorkContexts = (
   ctx: HubContext,
   repo: string,
-): Promise<HubResult<readonly WorkContextEntry[]>> =>
-  hubRequest(ctx, {
+  window: WorkContextWindow = {},
+): Promise<HubResult<readonly WorkContextEntry[]>> => {
+  const params = new URLSearchParams({ repo });
+  if (window.since !== undefined) {
+    params.set("since", window.since);
+  }
+  if (window.limit !== undefined) {
+    params.set("limit", String(window.limit));
+  }
+  return hubRequest(ctx, {
     method: "GET",
-    path: `/api/work-contexts${encodeRepo(repo)}`,
+    path: `/api/work-contexts?${params.toString()}`,
     schema: tolerantList("workContexts", WorkContextEntrySchema),
   });
+};
 
 /**
  * One absence finding. Names only — the hub keeps commit
@@ -436,6 +468,52 @@ export const getDiagnosis = (
     method: "GET",
     path: `/api/work-contexts/${encodeURIComponent(workContextId)}/diagnosis`,
     schema: DiagnosisEnvelopeSchema,
+  });
+
+/**
+ * The same tree, with NO hint telemetry (trial finding V1-X1).
+ *
+ * `getDiagnosis` above marks the reader's hint deliveries pulled, which is
+ * right for a developer following a hint and wrong for everything else — an
+ * audit that walked 113 contexts through it would have written 113 "the hint
+ * worked" signals. Tooling that only wants to look uses this door. An older
+ * hub answers 404, which is a plain `HubResult` failure like any other.
+ */
+export const getWorkContextPure = (
+  ctx: HubContext,
+  workContextId: string,
+): Promise<HubResult<Diagnosis>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/work-contexts/${encodeURIComponent(workContextId)}`,
+    schema: DiagnosisEnvelopeSchema,
+  });
+
+/**
+ * Whether hints are reaching anybody on this repo (trial finding M1).
+ *
+ * `claims` is the load-bearing one: the selector only ever proposes claims,
+ * so a repo with none delivers no hints however good the ranking is — and
+ * `delivered: 0` alone reads like a tuning problem rather than the structural
+ * fact it is. Every field defaults, so a partial answer from a newer or older
+ * hub degrades to zeros instead of failing the whole read.
+ */
+export const HintStatsSchema = z.looseObject({
+  delivered: z.number().int().min(0).default(0),
+  pulled: z.number().int().min(0).default(0),
+  claims: z.number().int().min(0).default(0),
+});
+
+export type HintStats = z.infer<typeof HintStatsSchema>;
+
+export const getHintStats = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<HintStats>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/hints/stats${encodeRepo(repo)}`,
+    schema: HintStatsSchema,
   });
 
 /**

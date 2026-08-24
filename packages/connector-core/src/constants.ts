@@ -310,6 +310,14 @@ export const MAX_DRIFT_LOOKUPS = 5;
 export const DRIFT_GIT_TIMEOUT_MS = 250;
 export const MAX_WORK_CONTEXT_TITLE_CHARS = 120;
 export const CONTEXT_MAX_AGE_DAYS = 14;
+/**
+ * Rows one `GET /api/work-contexts` asks for (trial finding M8). The hub caps
+ * at its own WORK_CONTEXT_LIST_MAX regardless; asking for the same number
+ * keeps the two honest about each other, and asking at all is what makes the
+ * window opt-IN rather than a server default that would truncate every
+ * connector too old to know about it.
+ */
+export const WORK_CONTEXT_LIST_LIMIT = 200;
 
 // ── Absence detection ───────────────────────────────────────────────────────
 

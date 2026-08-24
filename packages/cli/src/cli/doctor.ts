@@ -72,7 +72,12 @@ import {
   recommendedTimeoutMs,
 } from "@crosscheck/connector-core/http/latency.ts";
 import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
-import { getAbsences, getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
+import {
+  getAbsences,
+  getHintStats,
+  getPrivacySettings,
+} from "@crosscheck/connector-core/http/hub.ts";
+import type { HintStats } from "@crosscheck/connector-core/http/hub.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
@@ -1631,6 +1636,150 @@ const countStaleSessionStates = async (
   };
 };
 
+/**
+ * ── Capture health, as a number (trial finding M1) ─────────────────────────
+ *
+ * `status` printed the spool depth and the cross-repo drop count; nothing
+ * anywhere printed how many TARGETS a session had captured. So the H1
+ * cross-worktree drop — a session whose every edit landed outside the repo it
+ * was bound to, capturing nothing at all — produced `spool: 0 pending, 0
+ * dropped`, 24 PASS lines and not one sentence about the thing that had
+ * stopped working.
+ *
+ * WHERE THE COUNTERS COME FROM. The write side is the sibling capture branch,
+ * which books `editToolFires` into session state. This reads them through a
+ * LOCAL loose view with defaults rather than through `SessionStateSchema`, for
+ * two reasons: `SessionStateSchema` is a `looseObject`, so the fields survive
+ * a parse it does not know about, and a doctor that hard-required them could
+ * not ship before the branch that writes them. When no state file carries the
+ * counter at all, the line says "not measured" at PASS instead of printing a
+ * fabricated zero.
+ *
+ * NO AGE IN THE LINE. Nothing timestamps an individual target, so "last 4m
+ * ago" would have to be inferred from a state file's mtime — which moves for
+ * a heartbeat as readily as for a capture. A number that is true beats a
+ * freshness claim that is nearly true.
+ */
+const CaptureCountersSchema = z.looseObject({
+  hubUrl: z.string().default(""),
+  repoId: z.string().default(""),
+  seenTargets: z.array(z.string()).default([]),
+  editToolFires: z.number().int().min(0).optional(),
+});
+
+export interface CaptureFacts {
+  /** True when at least one state file carried the counter at all. */
+  readonly measured: boolean;
+  readonly fires: number;
+  readonly targets: number;
+  readonly sessions: number;
+}
+
+/** PURE: the wording, pinned without a session on disk. */
+export const captureCheck = (facts: CaptureFacts): Check => {
+  const name = "capture";
+  if (!facts.measured) {
+    return check(
+      "PASS",
+      name,
+      "not measured (edit-tool counters arrive with the capture fix)",
+    );
+  }
+  const summary = `${String(facts.fires)} edit-tool fires -> ${String(facts.targets)} targets across ${String(facts.sessions)} live session${facts.sessions === 1 ? "" : "s"}`;
+  return facts.fires > 0 && facts.targets === 0
+    ? check(
+        "WARN",
+        name,
+        `${summary} — every edit this session saw was discarded before it became a target: the usual cause is editing files in a DIFFERENT checkout or worktree than the session registered from`,
+      )
+    : check("PASS", name, summary);
+};
+
+const checkCapture = async (
+  home: string,
+  hubUrl: string,
+  repoId: string,
+  now: Date,
+): Promise<Check> => {
+  const listing = await listSessionStateFiles(home, SESSION_STATE_SCAN_MAX_FILES);
+  const parsed = await Promise.all(
+    listing.files.map(async (file) =>
+      CaptureCountersSchema.safeParse(await readJsonOrNull(file.path)),
+    ),
+  );
+  const mine = parsed
+    .filter((entry) => entry.success)
+    .map((entry) => entry.data)
+    .filter((state) => state.hubUrl === hubUrl && state.repoId === repoId);
+  // Stale sessions are excluded for the same reason the cost line excludes
+  // them: a corpse's counters describe a session nobody is running.
+  const live = await Promise.all(
+    listing.files.map(async (file) => {
+      const state = SessionStateSchema.safeParse(await readJsonOrNull(file.path));
+      if (!state.success) {
+        return false;
+      }
+      const ageMs = heartbeatAgeMs(state.data, now.getTime());
+      return ageMs === null || ageMs <= DOCTOR_ZOMBIE_STATE_WARN_HOURS * MS_PER_HOUR;
+    }),
+  );
+  const counted = mine.filter((_state, index) => live[index] !== false);
+  return captureCheck({
+    measured: counted.some((state) => state.editToolFires !== undefined),
+    fires: counted.reduce((total, state) => total + (state.editToolFires ?? 0), 0),
+    targets: counted.reduce((total, state) => total + state.seenTargets.length, 0),
+    sessions: counted.length,
+  });
+};
+
+/**
+ * Whether hints CAN fire on this repo (trial finding M1/H3).
+ *
+ * `hint_deliveries` was write-only from the outside — `markHintsPulled` was
+ * its only reader — so "are hints reaching anybody" had no answer anywhere.
+ * And the number that decides it is not `delivered`: the selector only ever
+ * proposes CLAIMS, so a repo with none delivers nothing however good the
+ * ranking is. `delivered: 0` alone reads like a tuning problem; `claims: 0`
+ * names the structural fact.
+ *
+ * An older hub 404s the endpoint, which is a PASS saying so — never a WARN,
+ * because nothing about this install is wrong in that case (§R6).
+ */
+export const hintsCheck = (
+  stats: HintStats | null,
+  hasLiveSession: boolean,
+): Check => {
+  const name = "hints";
+  if (stats === null) {
+    return check("PASS", name, "not available on this hub");
+  }
+  const counts = `${String(stats.delivered)} delivered (${String(stats.pulled)} pulled), ${String(stats.claims)} claims on this repo`;
+  // The live-session gate, same as `last capture sync` and `hooks firing`
+  // above. A team that has not published anything YET is not broken — a fresh
+  // `crosscheck login` would otherwise WARN on its very first doctor run, and
+  // a warning that greets every new install is one nobody reads. With a
+  // session running, zero claims is the answer to "why do I never get a hint".
+  return hasLiveSession && stats.claims === 0
+    ? check(
+        "WARN",
+        name,
+        `${counts} — hints cannot fire: the selector only ever points at claims, and nothing has been published on this repo yet`,
+      )
+    : check("PASS", name, counts);
+};
+
+const checkHints = async (
+  ctx: HubContext,
+  repoId: string,
+  home: string,
+): Promise<Check> => {
+  const result = await getHintStats(ctx, repoId);
+  return hintsCheck(
+    result.ok ? result.data : null,
+    await hasLiveSessionState(home),
+  );
+};
+
 /** A live session file plus a stale sync is exactly the silent-death signature. */
 const hasLiveSessionState = async (home: string): Promise<boolean> => {
   try {
@@ -1907,6 +2056,8 @@ export const runDoctor = async (
     // just been told what is WIRED, and these say what has actually RUN.
     await checkHooksFiring(config.home, key, now),
     await checkStatuslineRendered(config.home, key, now),
+    await checkCapture(config.home, config.hubUrl, identity.repoId, now),
+    await checkHints(hubCtx, identity.repoId, config.home),
   ]);
 };
 

@@ -10,6 +10,26 @@ export const SSE_KEEPALIVE_INTERVAL_MS = 15_000;
 export const EVENTS_DEFAULT_LIMIT = 100;
 export const EVENTS_MAX_LIMIT = 500;
 
+/**
+ * Hard cap on one `GET /api/work-contexts` page (trial finding M8).
+ *
+ * The listing had no LIMIT and no window at all: 127 rows / 56 928 bytes on
+ * the trial hub after three days, growing ~40 rows a day, fetched by every
+ * SessionStart under a 400 ms budget (2000 ms for the teammate on tailscale).
+ * Serialisation was measured and is NOT the problem — 14 600 rows render in
+ * 112-143 ms on loopback — the multi-megabyte TRANSFER over a tailnet is.
+ *
+ * The default is deliberately NOT a 14-day window, and the ledger's first
+ * reading said it should be. A server-side default window silently truncates
+ * every connector that does not know to ask for more, and 0.7.2 connectors
+ * send no parameters at all. So the server's default stays "everything",
+ * bounded by this cap and ordered newest-first, and the NEW connector passes
+ * `?since=&limit=` explicitly (connector-core http/hub.ts getWorkContexts). An
+ * old connector against a 250-row repo then loses the oldest 50 — which it
+ * already discards client-side at CONTEXT_MAX_AGE_DAYS = 14.
+ */
+export const WORK_CONTEXT_LIST_MAX = 200;
+
 /** Upper bound for one POST /api/records spool flush; larger batches get 422. */
 export const MAX_INGEST_BATCH = 100;
 

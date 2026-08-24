@@ -8,10 +8,15 @@
  * precision that tunes thresholds — telemetry, so every failure here is
  * non-fatal to the read it rides on.
  */
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, count, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { HintDelivery } from "@crosscheck/schema";
 
-import { agentSessions, claims, hintDeliveries } from "../db/schema.ts";
+import {
+  agentSessions,
+  claims,
+  hintDeliveries,
+  workContexts,
+} from "../db/schema.ts";
 import { checkOwnedSession, rejectedOutcome } from "./record-handlers.ts";
 import type { HandlerOutcome } from "./record-handlers.ts";
 import type { Db } from "../db/client.ts";
@@ -131,4 +136,70 @@ export const markHintsPulled = async (
     .update(hintDeliveries)
     .set({ pulledAt: deps.now() })
     .where(inArray(hintDeliveries.id, ids));
+};
+
+export interface HintStats {
+  /** Hints this repo's sessions were shown. */
+  readonly delivered: number;
+  /** …of which the receiver later opened the tree (the precision numerator). */
+  readonly pulled: number;
+  /**
+   * Claims that exist on this repo AT ALL — the number that decides whether
+   * hints CAN fire.
+   *
+   * Trial finding H3/M1: the hint selector only ever proposes claims, so a
+   * repo with zero claims delivers zero hints no matter how well the ranking
+   * works, and nothing anywhere said so. `delivered: 0` reads like a tuning
+   * problem; `delivered: 0, claims: 0` reads like the structural fact it is.
+   */
+  readonly claims: number;
+}
+
+const countRows = async (
+  rows: Promise<readonly { readonly value: number }[]>,
+): Promise<number> => (await rows)[0]?.value ?? 0;
+
+/**
+ * Three bounded aggregates for one repo (trial finding M1's read side).
+ *
+ * `hint_deliveries` was write-only from the outside: `markHintsPulled` was its
+ * only reader, and no endpoint exposed the ledger at all, so "are hints
+ * reaching anybody" had no answer on any surface. Aggregates rather than rows
+ * — the connector prints counts, and the bodies are none of a health check's
+ * business.
+ */
+export const hintStatsForRepo = async (
+  deps: Deps,
+  repo: string,
+): Promise<HintStats> => {
+  const [delivered, pulled, claimCount] = await Promise.all([
+    countRows(
+      deps.db
+        .select({ value: count() })
+        .from(hintDeliveries)
+        .innerJoin(agentSessions, eq(hintDeliveries.sessionId, agentSessions.id))
+        .where(eq(agentSessions.repo, repo)),
+    ),
+    countRows(
+      deps.db
+        .select({ value: count() })
+        .from(hintDeliveries)
+        .innerJoin(agentSessions, eq(hintDeliveries.sessionId, agentSessions.id))
+        .where(
+          and(
+            eq(agentSessions.repo, repo),
+            isNotNull(hintDeliveries.pulledAt),
+          ),
+        ),
+    ),
+    countRows(
+      deps.db
+        .select({ value: count() })
+        .from(claims)
+        .innerJoin(workContexts, eq(claims.workContextId, workContexts.id))
+        .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+        .where(eq(agentSessions.repo, repo)),
+    ),
+  ]);
+  return { delivered, pulled, claims: claimCount };
 };
