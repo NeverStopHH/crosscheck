@@ -20,6 +20,8 @@ import {
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { mergeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
 import {
+  isVersionManagerPath,
+  realpathOrSelf,
   resolveCommandPrefix,
   resolveLauncher as resolveLauncherWithEntry,
   resolveMcpLauncher,
@@ -261,6 +263,17 @@ export const runInit = async (
     // The entry launcher is an absolute path of THIS machine. It runs here —
     // that is the point — but the committed .mcp.json will not run for a
     // teammate until they rerun init (or put crosscheck on PATH) themselves.
+    // Trial finding M9: the bare `crosscheck` on PATH belongs to ONE runtime
+    // version here, so `nvm use` (or a node upgrade) takes the name with it
+    // and every hook fires exit 127 until somebody reruns init. Said at write
+    // time because that is when the choice is being made; doctor's `hook
+    // launcher` line repeats it for installs that already exist.
+    ...(launcher.kind === "bare" &&
+    isVersionManagerPath(await realpathOrSelf(launcher.path))
+      ? [
+          `note: ${launcher.path} resolves through a node version manager — the hooks' bare \`crosscheck\` disappears on \`nvm use\` or a runtime upgrade; pin it with ${INIT_COMMAND_PREFIX_FLAG} "<bun> <entry>" if you switch versions`,
+        ]
+      : []),
     ...(launcher.kind === "entry"
       ? [
           "launcher is an absolute path on this machine — teammates must run crosscheck init once too (or npm install -g crosscheck-hub)",

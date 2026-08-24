@@ -48,6 +48,47 @@ export const isEphemeralInstallPath = (path: string): boolean =>
     .split(sep)
     .some((segment) => segment === "_npx" || segment.startsWith("bunx-"));
 
+/**
+ * A launcher path that belongs to ONE runtime version, chosen by a version
+ * manager (trial finding M9).
+ *
+ * `~/.nvm/versions/node/v22.4.0/bin/crosscheck` answers `--version` correctly
+ * and is not a package-runner cache, so `resolveLauncher` below calls it
+ * `bare` and `init` writes the naked command `crosscheck` into every hook.
+ * That works until `nvm use 20`, at which point the name is gone from PATH and
+ * every hook fire exits 127. It is LOUD — Claude Code prints a "<hook> hook
+ * error" per fire — but the capture is lost for as long as it lasts, and the
+ * entry form (`<bun> <entry.ts>`) survives it.
+ *
+ * The four segments are the version managers that hand each runtime version
+ * its own bin directory: nvm, fnm, Volta's tool image, and asdf's nodejs
+ * installs. A global npm prefix that happens to live under a version manager
+ * hits the same problem for the same reason, which is why the match is on the
+ * path shape rather than on any one tool's name.
+ *
+ * IT DOES NOT CHANGE `resolveLauncher`'s VERDICT. Silently switching to the
+ * entry form would rewrite every existing install's hook commands to an
+ * absolute path of one machine — a worse failure for the many to fix a real
+ * one for the few. Instead `init` prints a note naming `--command-prefix`, and
+ * `checkLauncherCommand` (config/launcher-check.ts) turns the bare PASS into a
+ * WARN that names nvm and the pin command.
+ */
+export const isVersionManagerPath = (path: string): boolean => {
+  const segments = path.split(sep);
+  const hasPair = (first: string, second: string): boolean =>
+    segments.some(
+      (segment, index) => segment === first && segments[index + 1] === second,
+    );
+  return (
+    segments.includes(".nvm") ||
+    segments.includes(".fnm") ||
+    // Volta keeps every installed runtime under tools/image/node/<version>.
+    hasPair("image", "node") ||
+    // asdf: ~/.asdf/installs/nodejs/<version>/bin
+    hasPair("installs", "nodejs")
+  );
+};
+
 /** Symlinks (npm's .bin) resolved so the cache test sees the real location. */
 export const realpathOrSelf = async (path: string): Promise<string> => {
   try {
