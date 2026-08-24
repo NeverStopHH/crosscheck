@@ -85,6 +85,12 @@ describe("crosscheck init --global", () => {
     // The operator prefix resolves through sh -c, so the subcommand sits
     // inside the joined argument — assert on the entry as rendered.
     expect(JSON.stringify(mcp.mcpServers["crosscheck"])).toContain("mcp");
+    // Trial finding M10: the SessionEnd entry carries the explicit host
+    // timeout, read back from the file `init --global` actually wrote.
+    const parsed = JSON.parse(settings) as {
+      hooks: Record<string, { hooks: { timeout?: number }[] }[]>;
+    };
+    expect(parsed.hooks["SessionEnd"]?.[0]?.hooks[0]?.timeout).toBe(60);
     // The §2.1 line and the restart hint are said out loud
     expect(result.stdout).toContain("committed .crosscheck.json");
     expect(result.stdout).toContain("restart");
