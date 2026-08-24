@@ -9,7 +9,7 @@
 import {
   SUMMARIZER_LEAN_FLAGS,
 } from "../summarizer/runner.ts";
-import { SUMMARIZER_MODEL } from "@crosscheck/connector-core/constants.ts";
+import { INTENT_MAX_CHARS, SUMMARIZER_MODEL } from "@crosscheck/connector-core/constants.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 
 /**
@@ -17,10 +17,21 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
  * — the model is told to state what the session is trying to accomplish, so
  * a pasted stack trace or a question comes back as a task description. The
  * worker still bounds, scans and parses whatever comes back (intent/worker.ts).
+ *
+ * THE BOUND IS THE RENDER CAP, not the storage cap, and it is interpolated
+ * rather than typed so the two cannot drift. INTENT_MAX_CHARS (120) is what
+ * every surface can show; MAX_INTENT_SUMMARY_CHARS (200) is only what the
+ * hub will store, and a DECLARED sentence may legitimately use it. Asking
+ * the model for anything above the render cap guarantees an ellipsis on a
+ * sentence it was told to keep short — the one thing a one-line intent
+ * cannot afford. Pinned by test/intent-worker.test.ts.
+ *
+ * VERIFY: bun -e 'const p=await import("./packages/connector-claude/src/intent/prompt.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(p.INTENT_PROMPT.includes(`at most ${c.INTENT_MAX_CHARS} characters`))'
+ * PRINTS: true
  */
 export const INTENT_PROMPT =
   "Below is the first prompt of one coding session. Answer with ONE sentence of " +
-  "at most 160 characters, in the third person, stating what this coding session " +
+  `at most ${String(INTENT_MAX_CHARS)} characters, in the third person, stating what this coding session ` +
   "is trying to accomplish — for example \"Fix the refresh 500s after the key " +
   "rotation\" — or exactly NONE if the prompt is not about a task. Never repeat " +
   "the prompt, never quote it, no preamble, no markdown.";

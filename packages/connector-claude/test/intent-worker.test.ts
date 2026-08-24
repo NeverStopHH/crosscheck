@@ -30,6 +30,7 @@ import {
   writeSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome } from "../../connector-core/test/helpers.ts";
+import { INTENT_MAX_CHARS } from "@crosscheck/connector-core/constants.ts";
 import { resolveIntentArgv } from "../src/intent/prompt.ts";
 import { parseIntentWorkerArgs, runIntentWorker } from "../src/intent/worker.ts";
 
@@ -172,6 +173,24 @@ describe("parseIntentWorkerArgs / resolveIntentArgv", () => {
     expect(argv.join(" ")).toContain("haiku");
     expect(argv.join(" ")).toContain("--setting-sources");
     expect(resolveIntentArgv({ CROSSCHECK_SUMMARIZER_CMD: "/tmp/fake" })).toEqual(["/tmp/fake"]);
+  });
+
+  /**
+   * The number the model is given must be the number every surface can
+   * actually show. INTENT_MAX_CHARS is the render cap (briefing/intent.ts);
+   * asking for more guarantees an ellipsis on a sentence the model was told
+   * to keep short, which is the one thing a one-line intent cannot afford.
+   */
+  test("the prompt asks for a sentence that fits the render cap, not one that will be cut", () => {
+    const prompt = resolveIntentArgv({})[2] ?? "";
+
+    // Exactly one character bound is stated, and it is the render cap —
+    // matched on the phrase, so the "500s" inside the example sentence is
+    // not mistaken for a bound.
+    const bounds = [...prompt.matchAll(/at most (\d+) characters/g)].map((match) =>
+      Number(match[1]),
+    );
+    expect(bounds, prompt).toEqual([INTENT_MAX_CHARS]);
   });
 });
 
