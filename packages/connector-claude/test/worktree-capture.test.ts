@@ -260,6 +260,65 @@ describe("drops that must stay drops, now counted (#17)", () => {
   });
 });
 
+describe("the foreign-repo guard is still load-bearing after #17 (#9)", () => {
+  // The #17 resolver counts a foreign file's drop on its own, so disconnecting
+  // the early `state.repoId !== ctx.identity.repoId` guard no longer changes
+  // `foreignRepoDrops`. What the guard still uniquely governs: a touch whose
+  // CWD is a wholly foreign repo returns BEFORE capture/flush/heartbeat, so it
+  // never disturbs the in-repo #18 diagnostics — the last edited path stays the
+  // last edit that actually belonged to THIS session's repo, not the foreign
+  // drop. Disconnect the guard and the foreign file overwrites those fields
+  // (its own resolution is null), which is what this pins.
+  test("a foreign-cwd touch leaves the in-repo #18 diagnostics intact", async () => {
+    // Arrange: session at A; a good in-repo edit first, then a foreign repo F
+    const { main, home } = await repoWithWorktree("guard");
+    await writeRepoFile(main, "src/own.ts", "export const a = 1;\n");
+    const foreign = await makeRepo("guard-foreign", {
+      remote: "git@github.com:acme/web.git",
+    });
+    await writeFile(
+      join(foreign, ".crosscheck.json"),
+      `${JSON.stringify({ hubUrl: DEAD_HUB_URL }, null, 2)}\n`,
+      "utf8",
+    );
+    await git(foreign, ["add", "."]);
+    await git(foreign, ["commit", "-m", "config"]);
+    await writeRepoFile(foreign, "src/app.ts", "export const b = 2;\n");
+    paths.push(foreign);
+    await writeSessionState(home, sessionState(main));
+
+    // Act 1: a good edit of a file in A (cwd A) sets the #18 fields to A
+    await runHook(
+      "post-tool-use",
+      editPayload(main, join(main, "src/own.ts")),
+      env(home),
+    );
+    const afterOwn = await readSessionState(home, SESSION_ID);
+    expect(afterOwn?.lastEditedPathResolvedAgainst).not.toBeNull();
+
+    // Act 2: an edit whose CWD IS the foreign repo — the guard fires
+    const stdout = await runHook(
+      "post-tool-use",
+      editPayload(foreign, join(foreign, "src/app.ts")),
+      env(home),
+    );
+
+    // Assert: counted foreign, nothing captured, and the #18 fields still name
+    // the last IN-REPO edit — the guard returned before touching them.
+    // `lastEditedPath` holds the path AS THE HOST GAVE IT (absolute), not the
+    // repo-relative id: the #18 line has to be able to name a path that never
+    // resolved, and such a path has no repo-relative form to hold.
+    expect(stdout).toBe("");
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.foreignRepoDrops).toBe(1);
+    expect(state?.seenTargets).toEqual(["src/own.ts"]);
+    expect(state?.lastEditedPath).toBe(join(main, "src/own.ts"));
+    expect(state?.lastEditedPathResolvedAgainst).toBe(
+      afterOwn?.lastEditedPathResolvedAgainst ?? null,
+    );
+  });
+});
+
 describe("the tripwire trips on a worktree file (#17 pre-tool-use)", () => {
   const preToolUsePayload = (cwd: string, absoluteFile: string): string =>
     JSON.stringify({

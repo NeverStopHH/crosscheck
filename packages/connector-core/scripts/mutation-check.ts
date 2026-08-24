@@ -979,17 +979,30 @@ export const MUTATIONS: readonly Mutation[] = [
     // First-wins (trial finding #9): one crosscheck session is bound to ONE
     // repo. Stripping the guard lets a multi-repo workspace's foreign
     // touches walk on into capture/heartbeat/flush under the wrong repo's
-    // session — and the drop counter that keeps the silence honest never
-    // ticks.
+    // session.
+    //
+    // THE GUARD'S REMAINING UNIQUE EFFECT MOVED with trial finding #17, and so
+    // did this entry's test. The #17 resolver counts a foreign file's drop on
+    // its own, so with the guard stripped `foreignRepoDrops` still ticks and
+    // nothing is captured — parent-workspace.e2e.test.ts asserted exactly
+    // those two, went GREEN under the mutation, and stopped being a guard
+    // (MEASURED: that run reported this entry NOT CAUGHT). What the guard
+    // alone still governs is the EARLY RETURN: a touch whose cwd is a wholly
+    // foreign repo never reaches capture, flush, heartbeat or the #18
+    // diagnosis fields, so `lastEditedPath` / `lastEditedPathResolvedAgainst`
+    // keep naming the last edit that really belonged to THIS session's repo.
+    // Strip it and the foreign path overwrites them, resolving to null — what
+    // the test below pins.
     label: "the post-tool-use foreign-repo drop guard is disconnected",
     file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
     from: "  if (state.repoId !== ctx.identity.repoId) {",
     to: "  if (false) {",
-    test: `${CONNECTOR}/test/e2e/parent-workspace.e2e.test.ts`,
+    test: `${CONNECTOR}/test/worktree-capture.test.ts`,
     because:
-      "a second connected repo's edits stop being dropped-and-counted; the " +
-      "session flaps across repos and the count that keeps the drop honest " +
-      "stays zero",
+      "a foreign-repo touch stops returning early: it walks into capture, " +
+      "flush and heartbeat under the wrong repo's session and overwrites the " +
+      "#18 diagnosis fields, so the last edited path a doctor paste reports " +
+      "is the foreign drop instead of this repo's last real edit",
   },
   {
     // The recovery-race serialization: a loser that behaves as if it had
@@ -1563,7 +1576,6 @@ interface Outcome {
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
- * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
  * PRINTS: proxy-e2e.test.ts 1
@@ -1583,7 +1595,7 @@ interface Outcome {
  * PRINTS: summarizer-worker-env.test.ts 1
  * PRINTS: transparency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 3
- * PRINTS: worktree-capture.test.ts 1
+ * PRINTS: worktree-capture.test.ts 2
  */
 const greenGuards = new Map<string, boolean>();
 
