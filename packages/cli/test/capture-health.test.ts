@@ -198,6 +198,43 @@ describe("crosscheck status capture and hint lines (#20)", () => {
     expect(line).toContain("doctor");
   });
 
+  test("names the outside-root drops that ate the difference (#17)", async () => {
+    // Arrange: four edit-tool fires, one target — the other three resolved
+    // against no root of this repo. A target DID land, so the doctor WARN
+    // never fires and this line is the only surface the new counter reaches.
+    const { repo, home } = await fixture("ch-status-outside");
+    await seedSession(home, repo, "ch-status-outside-a", {
+      editToolFires: 4,
+      targetsCapturedCount: 1,
+      outsideRootDrops: 3,
+    });
+
+    // Act
+    const result = await runCli(["status"], env(home), repo);
+
+    // Assert
+    const line = lineWith(result.stdout, "targets:");
+    expect(line).toContain("targets: 1 captured");
+    expect(line).toContain("outside-root drops 3");
+  });
+
+  test("stays quiet about outside-root drops when there are none", async () => {
+    // Arrange: the same shape with the counter at zero — zero prints nothing,
+    // exactly as the foreign-repo drop line above it already behaves
+    const { repo, home } = await fixture("ch-status-outside-zero");
+    await seedSession(home, repo, "ch-status-outside-zero-a", {
+      editToolFires: 2,
+      targetsCapturedCount: 2,
+      outsideRootDrops: 0,
+    });
+
+    // Act
+    const result = await runCli(["status"], env(home), repo);
+
+    // Assert
+    expect(lineWith(result.stdout, "targets:")).not.toContain("outside-root");
+  });
+
   test("prints the tripwire mode, ask by default and notice when opted out", async () => {
     // Arrange
     const { repo, home } = await fixture("ch-status-tw");

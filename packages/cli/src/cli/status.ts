@@ -47,18 +47,28 @@ const plural = (count: number, noun: string): string =>
 
 /**
  * Capture visibility (trial findings #17/#18/#20): targets this repo's live
- * sessions actually spooled, and — when edits fired and NOTHING landed — that
- * fact, pointing at `doctor`, whose capture check prints the per-session
- * diagnosis. Local facts, printed whether or not the hub answers.
+ * sessions actually spooled, the touches that resolved against no root of
+ * this repo, and — when edits fired and NOTHING landed — that fact, pointing
+ * at `doctor`, whose capture check prints the per-session diagnosis. Local
+ * facts, printed whether or not the hub answers.
+ *
+ * The outside-root count is the ONLY surface for a session that drops many
+ * and still captures one: the doctor WARN needs ZERO targets, and the doctor
+ * capture line states drop counts only in its "path did not resolve" branch.
+ * Zero prints nothing, exactly like the `foreign-repo drops:` line above.
  */
 const targetsLine = (health: CaptureHealth, now: Date): string => {
   const last =
     health.lastTargetAt === null ? "" : ` (last ${ageOrNever(health.lastTargetAt, now)})`;
+  const outside =
+    health.outsideDrops === 0
+      ? ""
+      : ` · outside-root drops ${String(health.outsideDrops)}`;
   const dead =
     health.fires > 0 && health.targets === 0
       ? ` — ${plural(health.fires, "edit-tool fire")}, none captured: see \`crosscheck doctor\``
       : "";
-  return `targets: ${String(health.targets)} captured by ${plural(health.sessions.length, "live session")}${last}${dead}`;
+  return `targets: ${String(health.targets)} captured by ${plural(health.sessions.length, "live session")}${last}${outside}${dead}`;
 };
 
 /**

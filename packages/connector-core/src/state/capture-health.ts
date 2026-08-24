@@ -57,6 +57,14 @@ export interface CaptureHealth {
   readonly sessions: readonly SessionCaptureHealth[];
   readonly fires: number;
   readonly targets: number;
+  /**
+   * Touches this repo's live sessions resolved against no root of their own
+   * repo (trial finding #17). Summed here because a session can drop a
+   * hundred of them and still capture one target, which keeps
+   * `isCaptureSilentlyDead` false — so without this line the counter reaches
+   * no surface at all in that shape.
+   */
+  readonly outsideDrops: number;
   /** The newest lastTargetAt across the sessions, or null. */
   readonly lastTargetAt: string | null;
   readonly hintsDelivered: number;
@@ -67,6 +75,7 @@ const NO_HEALTH: CaptureHealth = {
   sessions: [],
   fires: 0,
   targets: 0,
+  outsideDrops: 0,
   lastTargetAt: null,
   hintsDelivered: 0,
   hintCandidatesSeen: 0,
@@ -133,6 +142,7 @@ export const readCaptureHealth = async (
       sessions: [...total.sessions, session],
       fires: total.fires + session.editToolFires,
       targets: total.targets + session.targetsCapturedCount,
+      outsideDrops: total.outsideDrops + session.outsideRootDrops,
       lastTargetAt: newerIso(total.lastTargetAt, session.lastTargetAt),
       hintsDelivered: total.hintsDelivered + session.hintsDelivered,
       hintCandidatesSeen: total.hintCandidatesSeen + session.hintCandidatesSeen,
