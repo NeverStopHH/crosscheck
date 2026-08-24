@@ -522,8 +522,26 @@ describe("the session's intent on the MCP reading tools (trial finding #16)", ()
     );
   });
 
-  test("a diagnosis without an intent keeps its exact shape", () => {
+  test("a diagnosis without an intent keeps its exact shape — one line shorter", () => {
+    const withIntent = renderDiagnosis(
+      diagnosis({
+        workContext: {
+          id: "wc_01",
+          sessionId: "cc_a-uuid",
+          title: "Login 500s on staging",
+          description: null,
+          intent: INTENT,
+          status: "analyzing",
+          createdAt: CREATED,
+          updatedAt: null,
+        },
+      }),
+    );
     const rendered = renderDiagnosis(diagnosis());
+
+    // The control: the intent costs exactly one line, and it is line 2
+    expect(withIntent.split("\n").length - rendered.split("\n").length).toBe(1);
+    expect(withIntent.split("\n")[2]?.startsWith("Session intent")).toBe(true);
 
     expect(rendered.split("\n")[2]?.startsWith("Claims (")).toBe(true);
     expect(rendered).not.toContain("intent");

@@ -823,6 +823,16 @@ describe("work_context intent merge", () => {
       recordEnvelope("work_context", validWorkContextBody({ intent: redeclared })),
     );
     expect(await readStoredIntent(harness, developer)).toEqual(redeclared);
+
+    // The MERGE half: a replay without an intent must not undo any of it.
+    // Without this line the test is green against a handler that simply
+    // overwrites the column with `body.intent ?? null` on every record.
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ status: "testing" })),
+    );
+    expect(await readStoredIntent(harness, developer)).toEqual(redeclared);
   });
 
   test("a derived intent is replaced by a newer derived one (re-derivation)", async () => {
@@ -840,6 +850,15 @@ describe("work_context intent merge", () => {
       recordEnvelope("work_context", validWorkContextBody({ intent: newer })),
     );
 
+    expect(await readStoredIntent(harness, developer)).toEqual(newer);
+
+    // The MERGE half, as above: a later intent-less record keeps the newer
+    // derived intent rather than wiping the column back to null.
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ status: "testing" })),
+    );
     expect(await readStoredIntent(harness, developer)).toEqual(newer);
   });
 

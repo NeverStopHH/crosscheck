@@ -116,6 +116,15 @@ describe("a detached worktree session uploads a readable title", () => {
     );
 
     expect(await spooledTitles(fix)).toEqual(["Rate limiter drops burst traffic"]);
+
+    // The control, in a second worktree built the same way: WITHOUT the
+    // session_title the derivation fires and produces something else. Without
+    // it this test is green on any tree that has no derivation at all.
+    const derived = await fixture("session-title-control", "fix: refresh 500s after key rotation");
+    await runHook("session-start", sessionStartPayload(derived), derived.env);
+    expect(await spooledTitles(derived)).toEqual([
+      `detached@${derived.sha} · fix: refresh 500s after key rotation @ api`,
+    ]);
   });
 
   test("PostToolUse recovery (no state file) derives the same title once", async () => {

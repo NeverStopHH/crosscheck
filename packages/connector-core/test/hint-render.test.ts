@@ -361,7 +361,32 @@ describe("the teammate's intent on hints and the tripwire (trial finding #16)", 
     expect(lines[3]).toContain(NOTICE_FRAGMENT);
   });
 
-  test("no intent renders no line on any of the three", () => {
+  test("no intent renders no line on any of the three, one line when there is one", () => {
+    // The three WITH an intent first: without this half the assertions below
+    // are green on any tree that never renders an intent line at all.
+    const withIntent = [
+      renderPointerHint({
+        context: workContext({ intent: INTENT }),
+        claimCount: 1,
+        drift: null,
+        now: NOW,
+      }),
+      renderClaimHint({
+        claim: claim(),
+        context: workContext({ intent: INTENT }),
+        drift: null,
+        now: NOW,
+      }),
+      renderTripwireReason(
+        tripwireSession({ workContextIntent: INTENT }),
+        "src/auth/refresh.ts",
+        NOW,
+      ),
+    ];
+    for (const text of withIntent) {
+      expect(text.split("\n").filter((line) => line.startsWith("Their intent")).length).toBe(1);
+    }
+
     expect(
       renderPointerHint({ context: workContext(), claimCount: 1, drift: null, now: NOW }),
     ).not.toContain("intent");
