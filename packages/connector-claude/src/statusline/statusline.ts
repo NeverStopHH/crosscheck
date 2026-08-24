@@ -13,6 +13,7 @@ import {
   readPresenceCache,
   writePresenceCache,
 } from "@crosscheck/connector-core/state/presence-cache.ts";
+import { recordStatuslineRendered } from "@crosscheck/connector-core/state/fired-markers.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { prepareHook } from "../hooks/runner.ts";
 import type { HookContext } from "../hooks/runner.ts";
@@ -130,7 +131,16 @@ export const runStatusline = async (
     if (ctx === null) {
       return "";
     }
-    return await renderForContext(ctx);
+    const line = await renderForContext(ctx);
+    // The RENDERED fact, which nothing recorded before (trial finding H7).
+    // `doctor`'s `statusline registered` line reads the settings file and
+    // reports what it says — and the statusline is a terminal-TUI feature, so
+    // on a machine whose sessions are all `--output-format stream-json` the
+    // registration is perfect and the function is never called. Written after
+    // the line is in hand and swallowing its own errors: a statusline that
+    // prints nothing is worse than one that fails to record itself.
+    await recordStatuslineRendered(ctx.config.home, ctx.repoKey, ctx.now());
+    return line;
   } catch {
     return "";
   }
