@@ -1525,6 +1525,65 @@ export const MUTATIONS: readonly Mutation[] = [
       "credential-shaped text reaches every teammate's context through the " +
       "one surface that is pushed rather than pulled (DESIGN.md §3: drop, never redact)",
   },
+  {
+    // R1's WHO. Every tier list is bounded at TIER_CANDIDATES, so dropping
+    // the filter from the shared scope condition does not merely widen the
+    // answer — the wanted row is GONE, because 30 rows the caller did not ask
+    // about filled the bound ahead of it.
+    label: "the search developer filter stops running inside the tiers",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "      : eq(agentSessions.developerId, scope.developerId),",
+    to: "      : undefined,",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "`developer: Ken` answers with everyone's work, and the one row past " +
+      "the tier bound — the row the filter existed to reach — is missing",
+  },
+  {
+    // R1's WHEN, same bound, same consequence.
+    label: "the search since window stops running inside the tiers",
+    file: `${SERVER}/src/services/search.ts`,
+    from:
+      "      : sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) " +
+      ">= ${scope.since.toISOString()}::timestamptz`,",
+    to: "      : undefined,",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "`since: 14d` returns 60-day-old work as if it were this fortnight's, " +
+      "and the fresh row past the tier bound never appears",
+  },
+  {
+    // The composition rule: a filter naming the caller must INTERSECT with
+    // self-exclusion, never replace it. This is the plausible-looking edit —
+    // "they asked for themselves, so let them through" — that hands a reader
+    // their own contexts back as teammate hints.
+    label: "a developer filter naming the caller lifts self-exclusion",
+    file: `${SERVER}/src/services/search.ts`,
+    from:
+      "    scope.excludeDeveloperId === undefined\n      ? undefined\n      : ne(",
+    to:
+      "    scope.excludeDeveloperId === undefined || scope.developerId !== undefined\n" +
+      "      ? undefined\n      : ne(",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "the hints candidates query stops excluding the reader the moment a " +
+      "developer filter is present, and a developer is hinted their own work",
+  },
+  {
+    // The honesty rule R1 exists for: a name that resolved to nobody must be
+    // an ERROR. An empty result to a misspelt name reads as "Ken has done
+    // nothing", and a model acts on that by redoing Ken's work.
+    label: "an unknown developer comes back as an empty result",
+    file: `${SERVER}/src/routes/search.ts`,
+    from:
+      '        return fail(\n          c,\n          400,\n          "unknown_developer",\n' +
+      "          describeUnknownDeveloper(developerTerm, lookup.suggestions),\n        );",
+    to: "        return ok(c, { results: [], vectorTierActive: false, filters });",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "a typo in a teammate's name is answered with a silence that reads as " +
+      "a fact about that teammate's work",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -1608,6 +1667,7 @@ interface Outcome {
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: render-surface-registry.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
+ * PRINTS: search-filters.test.ts 4
  * PRINTS: search.test.ts 3
  * PRINTS: session.test.ts 1
  * PRINTS: sessions.test.ts 1

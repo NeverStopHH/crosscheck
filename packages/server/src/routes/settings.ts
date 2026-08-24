@@ -18,10 +18,10 @@ import {
   removeMute,
   setPresenceOptOut,
 } from "../services/developer-settings.ts";
+// One bound for one concept: a reference too long to mute must not be short
+// enough to filter a search by (services/developer-lookup.ts).
+import { MAX_DEVELOPER_REF_CHARS } from "../services/developer-lookup.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
-
-/** Longest accepted developer reference (id, email, or display name). */
-const MAX_DEVELOPER_REF_CHARS = 320;
 
 const PresenceBodySchema = z.object({ optOut: z.boolean() });
 

@@ -82,13 +82,33 @@ export const setPresenceOptOut = async (
     .where(eq(developers.id, developerId));
 };
 
+/**
+ * A same-named developer as an ambiguity refusal has to name them. The EMAIL
+ * is what makes such a refusal actionable: two people called Ken differ only
+ * by address, so a refusal listing names alone leaves the caller with no next
+ * call to make (services/developer-lookup.ts writes the sentence).
+ */
+export interface DeveloperCandidate {
+  readonly id: string;
+  readonly name: string;
+  readonly email: string;
+}
+
 export type ResolveDeveloperResult =
   | { readonly outcome: "resolved"; readonly developer: MuteEntryView }
   | { readonly outcome: "not_found" }
-  | { readonly outcome: "ambiguous" };
+  | {
+      readonly outcome: "ambiguous";
+      readonly candidates: readonly DeveloperCandidate[];
+    };
 
-/** How many same-name rows are read to detect ambiguity — two is enough. */
-const AMBIGUITY_PROBE_LIMIT = 2;
+/**
+ * How many same-name rows are read. Two is enough to DETECT ambiguity, which
+ * is all the mute surfaces ever needed; the search and question filters have
+ * to NAME the candidates, so the probe reads a few more and the refusal lists
+ * what it found. Bounded either way — a page of Kens is not a useful sentence.
+ */
+const AMBIGUITY_PROBE_LIMIT = 5;
 
 /**
  * Resolves a CLI-supplied reference to one developer: exact id first, then
@@ -96,6 +116,13 @@ const AMBIGUITY_PROBE_LIMIT = 2;
  * primary does and the table's PK keeps the answer unique (trial finding #7)
  * — then case-insensitive display name, where two matches is an error rather
  * than a guess.
+ *
+ * MATCHING IS STRICT, and that is the design rather than a limitation: no
+ * prefix, no substring, no fuzz. A matcher that picked "Ken Weber" out of
+ * "ken" would answer a question nobody asked, and nothing in the result would
+ * say it had. Approximate spellings appear only as SUGGESTIONS on the miss
+ * path (services/developer-lookup.ts), where being roughly right decides no
+ * query.
  */
 export const resolveDeveloperRef = async (
   db: Db,
@@ -123,12 +150,17 @@ export const resolveDeveloperRef = async (
     return { outcome: "resolved", developer: byEmail[0] };
   }
   const byName = await db
-    .select({ id: developers.id, name: developers.name })
+    .select({
+      id: developers.id,
+      name: developers.name,
+      email: developers.email,
+    })
     .from(developers)
     .where(eq(sql`lower(${developers.name})`, trimmed.toLowerCase()))
+    .orderBy(asc(developers.email))
     .limit(AMBIGUITY_PROBE_LIMIT);
   if (byName.length > 1) {
-    return { outcome: "ambiguous" };
+    return { outcome: "ambiguous", candidates: byName };
   }
   const match = byName[0];
   if (match !== undefined) {

@@ -294,3 +294,29 @@ CREATE TABLE IF NOT EXISTS developer_mutes (
 -- `order by created_at desc limit 1` a single index lookup.
 CREATE INDEX IF NOT EXISTS work_contexts_session_created_idx
   ON work_contexts (session_id, created_at DESC);
+
+-- ── WHO and WHEN in search (roadmap R1) ─────────────────────────────────────
+
+-- `GET /api/search?developer=…` filters INSIDE every tier query, which joins
+-- work_contexts to agent_sessions. `developer_id` is a foreign key, and
+-- Postgres does not index those on its own, so the filter was a scan of every
+-- session on the hub. Leading with developer_id and carrying repo lets one
+-- lookup serve "Ken, on this repo" — the only shape the search route asks
+-- for; repo ALONE keeps its own index above.
+CREATE INDEX IF NOT EXISTS agent_sessions_developer_repo_idx
+  ON agent_sessions (developer_id, repo);
+
+-- `?since=14d` filters on ACTIVITY — coalesce(updated_at, created_at), the
+-- timestamp every surface renders as the row's age and the one time-decay is
+-- computed from. The same expression is the recency tier's ORDER BY, so this
+-- index serves both the window filter and the "what is happening here"
+-- listing, which without it reads every work context on the hub and top-N
+-- sorts them to answer a LIMIT 30.
+CREATE INDEX IF NOT EXISTS work_contexts_activity_idx
+  ON work_contexts (coalesce(updated_at, created_at) DESC);
+
+-- The unknown-developer refusal reads a bounded, name-ordered page of
+-- developers to offer the closest spellings (services/developer-lookup.ts
+-- DEVELOPER_SUGGESTION_SCAN). Bounded listing, index behind the ORDER BY.
+CREATE INDEX IF NOT EXISTS developers_name_idx
+  ON developers (name, email);

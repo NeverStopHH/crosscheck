@@ -55,7 +55,13 @@ export const developers = pgTable("developers", {
    */
   presenceOptOut: boolean("presence_opt_out").notNull().default(false),
   createdAt: timestamptz("created_at").notNull().defaultNow(),
-});
+}, (table) => [
+  // The unknown-developer refusal reads a bounded, name-ordered page of this
+  // table to offer the closest spellings (services/developer-lookup.ts):
+  // a bounded listing wants an index behind its ORDER BY like every other.
+  // Mirrored in db/bootstrap.sql.
+  index("developers_name_idx").on(table.name, table.email),
+]);
 
 /**
  * Every email a developer is known by — the primary they registered with plus
@@ -131,6 +137,13 @@ export const agentSessions = pgTable(
   (table) => [
     index("agent_sessions_repo_idx").on(table.repo),
     index("agent_sessions_heartbeat_idx").on(table.lastHeartbeatAt),
+    // `GET /api/search?developer=…` (roadmap R1) filters inside every tier
+    // query, and each of them joins work_contexts to this table. developer_id
+    // is a foreign key, which Postgres does not index on its own, so the
+    // filter was a scan of every session on the hub. Leading with developer_id
+    // and carrying repo lets ONE lookup serve "Ken, on this repo" — the only
+    // shape the search route asks for. Mirrored in db/bootstrap.sql.
+    index("agent_sessions_developer_repo_idx").on(table.developerId, table.repo),
   ],
 );
 
@@ -170,6 +183,16 @@ export const workContexts = pgTable("work_contexts", {
   index("work_contexts_session_created_idx").on(
     table.sessionId,
     table.createdAt.desc(),
+  ),
+  // `?since=14d` (roadmap R1) filters on ACTIVITY — coalesce(updated_at,
+  // created_at), the timestamp every surface renders as the row's age and the
+  // one time-decay is computed from. That same expression is the recency
+  // tier's ORDER BY, so this index serves both the window filter and the
+  // "what is happening here" listing, which without it reads every work
+  // context on the hub and top-N sorts them for a LIMIT 30. Mirrored in
+  // db/bootstrap.sql.
+  index("work_contexts_activity_idx").on(
+    sql`coalesce(${table.updatedAt}, ${table.createdAt}) DESC`,
   ),
 ]);
 

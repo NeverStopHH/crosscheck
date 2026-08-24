@@ -5,6 +5,17 @@
  * comes from the caller's own checkout, the hub cannot re-derive it from the
  * api key, and any work context this endpoint omits is still readable by id
  * through the diagnosis route. Omitting `repo` searches the whole hub.
+ *
+ * `developer` and `since` are the WHO and WHEN of roadmap R1. Both are
+ * RESOLVED here and applied inside the search service's tier queries, and
+ * both are ECHOED back in `filters`: a renderer must be able to state which
+ * filters ran without guessing, the same rule `vectorTierActive` follows.
+ *
+ * A developer term that does not resolve is a 400, never an empty result.
+ * "No work contexts" in answer to a misspelt name reads as "Ken has done
+ * nothing", and a model acts on that by redoing Ken's work — so the two miss
+ * paths (`ambiguous_developer`, `unknown_developer`) carry sentences naming
+ * the candidates or the closest known spellings instead.
  */
 import { Hono } from "hono";
 import { z } from "zod";
@@ -13,11 +24,21 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import {
+  describeAmbiguousDeveloper,
+  describeUnknownDeveloper,
+  lookUpDeveloper,
+  MAX_DEVELOPER_REF_CHARS,
+} from "../services/developer-lookup.ts";
+import {
   SEARCH_DEFAULT_LIMIT,
   SEARCH_MAX_QUERY_CHARS,
   searchWorkContexts,
 } from "../services/search.ts";
+import { parseSinceWindow } from "../services/time-window.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
+
+/** Longest `since` term. `2026-08-01T09:00:00.000+02:00` is 29 characters. */
+const MAX_SINCE_CHARS = 40;
 
 /**
  * Oversized limits are capped in the search service, not rejected here — but
@@ -28,8 +49,19 @@ import type { AppDeps, AppEnv } from "../types.ts";
 const SearchQuerySchema = z.object({
   query: z.string().max(SEARCH_MAX_QUERY_CHARS).default(""),
   repo: z.string().min(1).optional(),
+  developer: z.string().min(1).max(MAX_DEVELOPER_REF_CHARS).optional(),
+  since: z.string().min(1).max(MAX_SINCE_CHARS).optional(),
   limit: z.coerce.number().int().min(1).default(SEARCH_DEFAULT_LIMIT),
 });
+
+/** What ran, as the response reports it. Null means "that filter was off". */
+interface AppliedFilters {
+  readonly developer: {
+    readonly name: string;
+    readonly isSelf: boolean;
+  } | null;
+  readonly since: string | null;
+}
 
 export const searchRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();
@@ -39,13 +71,66 @@ export const searchRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const parsed = SearchQuerySchema.safeParse({
       query: c.req.query("query"),
       repo: c.req.query("repo"),
+      developer: c.req.query("developer"),
+      since: c.req.query("since"),
       limit: c.req.query("limit"),
     });
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const response = await searchWorkContexts(deps, parsed.data);
-    return ok(c, response);
+    const {
+      developer: developerTerm,
+      since: sinceTerm,
+      ...query
+    } = parsed.data;
+
+    let filters: AppliedFilters = { developer: null, since: null };
+    let developerId: string | undefined;
+    if (developerTerm !== undefined) {
+      const lookup = await lookUpDeveloper(deps.db, developerTerm);
+      if (lookup.outcome === "ambiguous") {
+        return fail(
+          c,
+          400,
+          "ambiguous_developer",
+          describeAmbiguousDeveloper(developerTerm, lookup.candidates),
+        );
+      }
+      if (lookup.outcome === "unknown") {
+        return fail(
+          c,
+          400,
+          "unknown_developer",
+          describeUnknownDeveloper(developerTerm, lookup.suggestions),
+        );
+      }
+      developerId = lookup.developer.id;
+      filters = {
+        ...filters,
+        developer: {
+          name: lookup.developer.name,
+          // The hub knows who is asking; the renderer would have to guess.
+          isSelf: lookup.developer.id === c.get("developer").id,
+        },
+      };
+    }
+
+    let since: Date | undefined;
+    if (sinceTerm !== undefined) {
+      const window = parseSinceWindow(sinceTerm, deps.now());
+      if (!window.ok) {
+        return fail(c, 400, "invalid_since", window.reason);
+      }
+      since = window.since;
+      filters = { ...filters, since: window.since.toISOString() };
+    }
+
+    const response = await searchWorkContexts(deps, {
+      ...query,
+      ...(developerId === undefined ? {} : { developerId }),
+      ...(since === undefined ? {} : { since }),
+    });
+    return ok(c, { ...response, filters });
   });
 
   return router;

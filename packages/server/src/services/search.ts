@@ -231,6 +231,30 @@ export interface SearchQuery {
    * pull, and mute controls the unasked surfaces, never the pull.
    */
   readonly excludeMutedForDeveloperId?: string | undefined;
+  /**
+   * Keeps ONLY this developer's contexts (roadmap R1, "what did Ken do").
+   * Resolved hub-side from a name or any linked email before it gets here
+   * (services/developer-lookup.ts), so this field is always a real id.
+   *
+   * INTERSECTS with `excludeDeveloperId`, never replaces it. The hints
+   * endpoint excludes the reader inside every tier; if a filter naming that
+   * same reader lifted the exclusion, a candidates query carrying
+   * `developer: me` would hand a reader their own contexts back as teammate
+   * hints. Both conditions are ANDed in scopeCondition, so asking for
+   * yourself on a self-excluding surface returns nothing — the honest answer,
+   * not a licence.
+   */
+  readonly developerId?: string | undefined;
+  /**
+   * Keeps only contexts LAST ACTIVE at or after this instant.
+   *
+   * Activity, `coalesce(updated_at, created_at)`, rather than creation: it is
+   * the timestamp every surface already renders as the row's age and the one
+   * decay is computed from, so a result under a 14-day window can never print
+   * "40d ago". A context opened in March and worked on yesterday IS work from
+   * the last two weeks, and filtering on created_at alone would drop it.
+   */
+  readonly since?: Date | undefined;
   readonly limit: number;
 }
 
@@ -282,6 +306,10 @@ interface SearchScope {
   readonly repo: string | undefined;
   readonly excludeDeveloperId: string | undefined;
   readonly excludeMutedForDeveloperId: string | undefined;
+  /** R1's WHO — see SearchQuery.developerId for why it intersects. */
+  readonly developerId: string | undefined;
+  /** R1's WHEN — see SearchQuery.since for why it is activity, not creation. */
+  readonly since: Date | undefined;
 }
 
 const scopeCondition = (scope: SearchScope) =>
@@ -290,6 +318,17 @@ const scopeCondition = (scope: SearchScope) =>
     scope.excludeDeveloperId === undefined
       ? undefined
       : ne(agentSessions.developerId, scope.excludeDeveloperId),
+    // ANDed with the exclusion above, deliberately: a filter naming the
+    // caller narrows a self-excluding surface to nothing rather than
+    // re-admitting them. Both R1 filters live HERE, in the one condition
+    // every tier puts in its own WHERE, so neither can become a post-filter
+    // over a list already truncated at TIER_CANDIDATES.
+    scope.developerId === undefined
+      ? undefined
+      : eq(agentSessions.developerId, scope.developerId),
+    scope.since === undefined
+      ? undefined
+      : sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) >= ${scope.since.toISOString()}::timestamptz`,
     scope.excludeMutedForDeveloperId === undefined
       ? undefined
       : notMutedCondition(
@@ -632,6 +671,8 @@ export const searchWorkContexts = async (
     repo: input.repo,
     excludeDeveloperId: input.excludeDeveloperId,
     excludeMutedForDeveloperId: input.excludeMutedForDeveloperId,
+    developerId: input.developerId,
+    since: input.since,
   };
 
   // A blank query asks "what is happening" — answered by recency alone. The
