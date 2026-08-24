@@ -59,6 +59,8 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   summarizerDraftCount: 0,
   summarizerFailCount: 0,
   summarizerLastFailure: null,
+  summarizerUnparsedCount: 0,
+  intentFireCount: 0,
 });
 
 interface Fixture {

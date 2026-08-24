@@ -459,6 +459,18 @@ export const SUMMARIZER_FAILURE_MAX_CHARS = 120;
  */
 export const DOCTOR_SUMMARIZER_SILENT_FIRES_WARN = 3;
 /**
+ * The second silent-death signature (trial finding M5) needs a bigger sample
+ * than the first, so it has its own floor.
+ *
+ * "Not one answer in three fires" is unambiguous at three. "More than half of
+ * the fires ended unexplained" is not: a draft dropped by the echo, secret or
+ * contract gates is a NORMAL outcome that books nothing, and at three fires
+ * two such drops would fire the WARN on a perfectly healthy machine. Ten is
+ * where the ratio starts meaning something — and the state it exists for was
+ * far past it: 27 fires on the trial machine with 21 unexplained.
+ */
+export const DOCTOR_SUMMARIZER_MOSTLY_DEAD_MIN_FIRES = 10;
+/**
  * The slice the doctor's runner probe hands the REAL argv: a progress
  * report the prompt names out explicitly, so a working runner answers NONE
  * and a non-NONE answer is a precision note, not a failure.

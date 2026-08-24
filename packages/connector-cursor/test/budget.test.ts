@@ -222,6 +222,8 @@ describe("fail-open within budget", () => {
         summarizerDraftCount: 0,
         summarizerFailCount: 0,
         summarizerLastFailure: null,
+        summarizerUnparsedCount: 0,
+        intentFireCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -316,6 +318,8 @@ describe("fail-open within budget", () => {
         summarizerDraftCount: 0,
         summarizerFailCount: 0,
         summarizerLastFailure: null,
+        summarizerUnparsedCount: 0,
+        intentFireCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -467,6 +471,8 @@ describe("fail-open within budget", () => {
         summarizerDraftCount: 0,
         summarizerFailCount: 0,
         summarizerLastFailure: null,
+        summarizerUnparsedCount: 0,
+        intentFireCount: 0,
       } satisfies SessionState);
 
       // Act

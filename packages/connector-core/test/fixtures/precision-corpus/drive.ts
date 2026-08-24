@@ -482,6 +482,8 @@ const probeSessionState = (
   summarizerDraftCount: 0,
   summarizerFailCount: 0,
   summarizerLastFailure: null,
+  summarizerUnparsedCount: 0,
+  intentFireCount: 0,
 });
 
 interface Observation {
