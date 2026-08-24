@@ -11,10 +11,13 @@ import {
   DOCTOR_AGENT_PS_MAX_LINES,
   DOCTOR_AGENT_PS_TIMEOUT_MS,
   DOCTOR_FLUSH_LOCK_WARN_MS,
+  DOCTOR_HOOK_SILENT_WARN_MINUTES,
   DOCTOR_LAST_SYNC_WARN_MINUTES,
   DOCTOR_SPOOL_AGE_WARN_HOURS,
   DOCTOR_SPOOL_DEPTH_FAIL,
   DOCTOR_SPOOL_DEPTH_WARN,
+  DOCTOR_STATUSLINE_SILENT_WARN_MINUTES,
+  DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   EXIT_FAIL,
   EXIT_OK,
   EXIT_WARN,
@@ -27,7 +30,10 @@ import {
   MS_PER_SECOND,
   PRIVATE_FILE_MODE,
   PROBE_REPO,
+  REGISTERED_HOOK_EVENTS,
+  REGISTERED_HOOK_EVENT_NAMES,
   SECONDS_PER_MINUTE,
+  SESSION_STATE_SCAN_MAX_FILES,
   SUMMARIZER_CLAUDE_MIN_VERSION,
 } from "@crosscheck/connector-core/constants.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
@@ -36,6 +42,7 @@ import type { TimeoutOwner } from "@crosscheck/connector-core/config/timeout-pol
 import {
   configPath,
   crosscheckHome,
+  readJsonOrNull,
   readTextOrNull,
   repoKey,
   spoolFlushLockPath,
@@ -68,6 +75,15 @@ import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/
 import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
 import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
+import {
+  readHooksFired,
+  readStatuslineRendered,
+} from "@crosscheck/connector-core/state/fired-markers.ts";
+import {
+  heartbeatAgeMs,
+  listSessionStateFiles,
+} from "@crosscheck/connector-core/state/session-scan.ts";
+import { SessionStateSchema } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher-check.ts";
 import {
@@ -191,15 +207,16 @@ const settingsOnly = (checks: readonly Check[]): SettingsInspection => ({
   launcherCommand: null,
 });
 
-/** Hook events a healthy install registers — project and user scope alike. */
-const REQUIRED_HOOK_EVENTS = [
-  "SessionStart",
-  "PostToolUse",
-  "SessionEnd",
-  "UserPromptSubmit",
-  "PreToolUse",
-  "Stop",
-] as const;
+/**
+ * Hook events a healthy install registers — project and user scope alike.
+ *
+ * Read from core (constants.ts REGISTERED_HOOK_EVENTS) rather than spelled a
+ * second time here: this list, `buildSettingsPlan`'s and the contract
+ * watcher's had drifted apart, and the watcher's copy — three events where
+ * this one has six — is what left the PreToolUse tripwire's output contract
+ * unwatched (trial finding M17).
+ */
+const REQUIRED_HOOK_EVENTS = REGISTERED_HOOK_EVENT_NAMES;
 
 /**
  * Whether the user-scope install registers every hook the project check
@@ -731,16 +748,24 @@ const checkSpool = async (
   const unclosed = await readUnclosedSummary(home, key);
   const oldestUnclosedMs =
     unclosed.oldestAt === null ? Number.NaN : Date.parse(unclosed.oldestAt);
-  const unclosedCheck =
+  // The second number (trial finding M2): state files whose session stopped
+  // heartbeating. Machine-wide, like the foreign-drop scan, because a zombie
+  // state file pins its spool against reap whichever repo it belongs to.
+  const zombies = await countStaleSessionStates(home, now);
+  const expiredPart =
     unclosed.sessions > 0
-      ? check(
-          "WARN",
-          "unclosed sessions",
-          `${unclosed.sessions} session end${unclosed.sessions === 1 ? "" : "s"} expired undelivered` +
-            (Number.isNaN(oldestUnclosedMs)
-              ? ""
-              : `, oldest ${formatAge(now.getTime() - oldestUnclosedMs)} ago`),
-        )
+      ? `${unclosed.sessions} session end${unclosed.sessions === 1 ? "" : "s"} expired undelivered` +
+        (Number.isNaN(oldestUnclosedMs)
+          ? ""
+          : `, oldest ${formatAge(now.getTime() - oldestUnclosedMs)} ago`)
+      : "no expired ends";
+  const zombiePart =
+    zombies.stale > 0
+      ? `, ${zombies.stale} of ${zombies.total} session state file${zombies.total === 1 ? "" : "s"} stale >${String(DOCTOR_ZOMBIE_STATE_WARN_HOURS)}h (each one pins its spool file against reap)`
+      : "";
+  const unclosedCheck =
+    unclosed.sessions > 0 || zombies.stale > 0
+      ? check("WARN", "unclosed sessions", `${expiredPart}${zombiePart}`)
       : check("PASS", "unclosed sessions", "none");
   return [
     depthCheck,
@@ -1105,6 +1130,175 @@ const foreignDropChecks = async (home: string): Promise<readonly Check[]> => {
   return [check("WARN", "foreign-repo drops", formatForeignDropLine(summary))];
 };
 
+/**
+ * ── Execution checks (trial findings M2 and H7) ────────────────────────────
+ *
+ * Eleven of doctor's twenty-six lines could PASS while the thing they name
+ * was dead, and they shared one mechanism: they read CONFIGURATION. `hooks
+ * registered` parses `.claude/settings.json` and reports what it says;
+ * `statusline registered` does the same. Neither can see a launcher that
+ * stopped resolving after `nvm use`, a `CROSSCHECK_DISABLED` in the agent's
+ * environment, an agent process older than the wiring, or a host that never
+ * calls the statusline because the session is headless.
+ *
+ * The two checks below read the only evidence that settles it: markers the
+ * hook runner and the statusline write for themselves
+ * (connector-core/state/fired-markers.ts). Configuration and execution stay
+ * SEPARATE lines on purpose — they have different fixes, and merging them
+ * would send half the readers to the wrong command.
+ */
+
+/**
+ * Events whose silence is evidence. PreToolUse fires only on a write to a
+ * file a teammate is holding and SessionEnd only when a session closes
+ * cleanly, so both are legitimately rare — they render an age and never WARN,
+ * because a warning nobody can act on is how doctors get ignored.
+ */
+const HOOK_SILENCE_WARN_EVENTS: readonly string[] = [
+  "SessionStart",
+  "PostToolUse",
+  "UserPromptSubmit",
+  "Stop",
+];
+
+export interface HookFireFacts {
+  /** Hook subcommand name (`post-tool-use`) → ISO stamp of its last fire. */
+  readonly firedAt: Readonly<Record<string, string>>;
+  /** A stale marker is only news while something is supposed to be running. */
+  readonly hasLiveSession: boolean;
+  readonly nowMs: number;
+}
+
+const fireAge = (
+  facts: HookFireFacts,
+  event: string,
+): { readonly label: string; readonly ageMs: number | null } => {
+  const iso = facts.firedAt[REGISTERED_HOOK_EVENTS[event as keyof typeof REGISTERED_HOOK_EVENTS]];
+  if (iso === undefined) {
+    return { label: "never", ageMs: null };
+  }
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) {
+    return { label: "never", ageMs: null };
+  }
+  return { label: formatAge(facts.nowMs - ms), ageMs: facts.nowMs - ms };
+};
+
+/**
+ * PURE, so the wording is pinned without a hook process: the async half below
+ * only reads the marker file and asks whether a session state exists.
+ */
+export const hooksFiringCheck = (facts: HookFireFacts): Check => {
+  const name = "hooks firing";
+  const rendered = REQUIRED_HOOK_EVENTS.map(
+    (event) => `${event} ${fireAge(facts, event).label}`,
+  ).join(" · ");
+  if (Object.keys(facts.firedAt).length === 0 && !facts.hasLiveSession) {
+    // A machine that has never run a session here: nothing has failed, and
+    // "SessionStart never · PostToolUse never · …" would only read as alarm.
+    return check("PASS", name, "not measured (no hook has fired here yet)");
+  }
+  const silent = HOOK_SILENCE_WARN_EVENTS.filter((event) => {
+    const { ageMs } = fireAge(facts, event);
+    return (
+      ageMs === null ||
+      ageMs > DOCTOR_HOOK_SILENT_WARN_MINUTES * MS_PER_MINUTE
+    );
+  });
+  return facts.hasLiveSession && silent.length > 0
+    ? check(
+        "WARN",
+        name,
+        `${rendered} — a session is live and ${silent.join(", ")} ${silent.length === 1 ? "has" : "have"} not fired in ${String(DOCTOR_HOOK_SILENT_WARN_MINUTES)} min: the agent may predate the wiring, the launcher may no longer resolve, or CROSSCHECK_DISABLED may be set in its environment`,
+      )
+    : check("PASS", name, rendered);
+};
+
+const checkHooksFiring = async (
+  home: string,
+  key: string,
+  now: Date,
+): Promise<Check> =>
+  hooksFiringCheck({
+    firedAt: await readHooksFired(home, key),
+    hasLiveSession: await hasLiveSessionState(home),
+    nowMs: now.getTime(),
+  });
+
+/**
+ * PURE, like its sibling. The WARN here is EXPECTED on a healthy headless
+ * machine, which is why it leads with the explanation instead of a fix: every
+ * session of the trial ran `--output-format stream-json` under the VS Code
+ * extension, where Claude Code renders no statusline at all, and the developer
+ * reading this needs to know where presence DOES reach them.
+ */
+export const statuslineRenderedCheck = (
+  lastRenderedAt: string | null,
+  hasLiveSession: boolean,
+  nowMs: number,
+): Check => {
+  const name = "statusline last rendered";
+  const headless =
+    "headless and VS Code-extension sessions have no statusline; presence reaches you through the SessionStart briefing instead";
+  const ms = lastRenderedAt === null ? Number.NaN : Date.parse(lastRenderedAt);
+  if (Number.isNaN(ms)) {
+    return hasLiveSession
+      ? check("WARN", name, `never — ${headless}`)
+      : check("PASS", name, "never");
+  }
+  const ageMs = nowMs - ms;
+  return hasLiveSession &&
+    ageMs > DOCTOR_STATUSLINE_SILENT_WARN_MINUTES * MS_PER_MINUTE
+    ? check("WARN", name, `${formatAge(ageMs)} ago — ${headless}`)
+    : check("PASS", name, `${formatAge(ageMs)} ago`);
+};
+
+const checkStatuslineRendered = async (
+  home: string,
+  key: string,
+  now: Date,
+): Promise<Check> =>
+  statuslineRenderedCheck(
+    await readStatuslineRendered(home, key),
+    await hasLiveSessionState(home),
+    now.getTime(),
+  );
+
+/**
+ * Session-state files whose session stopped saying anything.
+ *
+ * The SECOND number on the `unclosed sessions` line (trial finding M2). That
+ * line counted `.pending-end` markers that aged out — a real fact, and a
+ * narrow one: on the trial machine it read "none" while 75 of 100 state files
+ * had not heartbeated in over an hour, each one pinning its spool file against
+ * reap (`spool/reap.ts isSessionLive`). Two numbers, not one merged number:
+ * an expired end and a zombie state file have different causes and different
+ * consequences.
+ */
+const countStaleSessionStates = async (
+  home: string,
+  now: Date,
+): Promise<{ readonly stale: number; readonly total: number }> => {
+  const listing = await listSessionStateFiles(home, SESSION_STATE_SCAN_MAX_FILES);
+  const maxAgeMs = DOCTOR_ZOMBIE_STATE_WARN_HOURS * MS_PER_HOUR;
+  const ages = await Promise.all(
+    listing.files.map(async (file) => {
+      const parsed = SessionStateSchema.safeParse(
+        await readJsonOrNull(file.path),
+      );
+      if (!parsed.success) {
+        return false;
+      }
+      const ageMs = heartbeatAgeMs(parsed.data, now.getTime());
+      return ageMs !== null && ageMs > maxAgeMs;
+    }),
+  );
+  return {
+    stale: ages.filter(Boolean).length,
+    total: listing.filesSeen,
+  };
+};
+
 /** A live session file plus a stale sync is exactly the silent-death signature. */
 const hasLiveSessionState = async (home: string): Promise<boolean> => {
   try {
@@ -1339,6 +1533,11 @@ export const runDoctor = async (
     skewCheck,
     bunfigCheck,
     ...(await checkCursor(identity.root, env, config.home, key)),
+    // Appended at the END so a sibling branch's rebase stays mechanical, and
+    // because these read execution rather than configuration: the reader has
+    // just been told what is WIRED, and these say what has actually RUN.
+    await checkHooksFiring(config.home, key, now),
+    await checkStatuslineRendered(config.home, key, now),
   ]);
 };
 

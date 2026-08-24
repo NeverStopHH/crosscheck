@@ -563,6 +563,52 @@ export const DOCTOR_SPOOL_DEPTH_FAIL = 1500;
 export const DOCTOR_SPOOL_AGE_WARN_HOURS = 24;
 export const DOCTOR_LAST_SYNC_WARN_MINUTES = 10;
 /**
+ * How long a registered hook event may go without firing, while a session is
+ * live, before `doctor` says so (trial finding M2).
+ *
+ * SIXTY MINUTES, not ten. PostToolUse fires per edit and SessionStart once per
+ * session, so the quiet stretches this must survive are lunch, a meeting, a
+ * long read — a ten-minute threshold would WARN through every one of them, and
+ * a doctor that cries wolf daily is a doctor nobody reads. An hour still
+ * catches the failure this exists for: hooks that stopped at the last agent
+ * restart, at an `nvm use`, or at a `CROSSCHECK_DISABLED` and never resumed.
+ *
+ * Applied only to the events that fire on their own (SessionStart,
+ * PostToolUse, UserPromptSubmit, Stop). PreToolUse and SessionEnd render an
+ * age and never WARN: the tripwire only fires on a write to a file a teammate
+ * holds, and SessionEnd may legitimately never have fired on a machine whose
+ * sessions are still open.
+ */
+export const DOCTOR_HOOK_SILENT_WARN_MINUTES = 60;
+/**
+ * How long the statusline may go unrendered, while a session is live, before
+ * `doctor` says so (trial finding H7).
+ *
+ * Same hour, and for once the WARN is EXPECTED on a healthy machine: the
+ * statusline is a terminal-TUI feature, and every session of the trial ran
+ * `--output-format stream-json` under the VS Code extension, where Claude Code
+ * never calls it at all. That is why the wording leads with the explanation
+ * and names where presence actually reaches such a session (the SessionStart
+ * briefing) instead of offering a fix for something that is not broken.
+ */
+export const DOCTOR_STATUSLINE_SILENT_WARN_MINUTES = 60;
+/**
+ * A session-state file whose heartbeat is older than this is not a live
+ * session (trial finding M2/M6): 75 of 100 state files on the trial machine
+ * were past it while `unclosed sessions` read "none", because that line
+ * counted only aged-out `.pending-end` markers. The hub's own presence TTL is
+ * 90 seconds (server PRESENCE_TTL_SECONDS); an hour is 40× that, so nothing
+ * merely slow is ever counted here.
+ */
+export const DOCTOR_ZOMBIE_STATE_WARN_HOURS = 1;
+/**
+ * Bound on the `crosscheck mcp` handshake `doctor` spawns (trial finding M3).
+ * Mirrors the identity probe's 3 s in config/launcher.ts: a human is watching,
+ * and a server that cannot answer `initialize` + `tools/list` in three seconds
+ * has already failed the thing being asked.
+ */
+export const DOCTOR_MCP_PROBE_TIMEOUT_MS = 3_000;
+/**
  * How long a flush lock may be held by a RUNNING process before `doctor` calls
  * it wedged.
  *
@@ -602,8 +648,22 @@ export const DOCTOR_FLUSH_LOCK_WARN_MS = 60_000;
 export const DOCTOR_AGENT_PS_TIMEOUT_MS = 1500;
 /** Bound on ONE cwd resolution (lsof can be slow; doctor is human-run). */
 export const DOCTOR_AGENT_CWD_TIMEOUT_MS = 1000;
-/** Most candidate processes whose cwd is probed — one spawn each on macOS. */
-export const DOCTOR_AGENT_MAX_CWD_PROBES = 8;
+/**
+ * Most candidate processes whose cwd is parsed.
+ *
+ * It used to be 8 and it used to buy something: every cwd cost its own `lsof`
+ * spawn on macOS, so the cap was a spawn budget. It is now ONE batched
+ * `lsof -a -p <csv> -d cwd -Fn` for the whole list (cli/doctor.ts), so the cap
+ * bounds a parse and nothing else — and at 8 it was actively harmful. Measured
+ * on the author's Mac during the trial audit: 23 processes whose `ps comm`
+ * basenames to `claude`, twelve or more of them
+ * `/Applications/Claude.app/Contents/{MacOS,Frameworks}/…` desktop helpers.
+ * They arrive in ps order, so eight slots were spent on helpers and a real
+ * offender at position 25 read `PASS no running agent predates the hooks`.
+ * Helpers are excluded by path now and the survivors are sorted newest-first;
+ * 64 covers a very busy day with room.
+ */
+export const DOCTOR_AGENT_MAX_CWD_PROBES = 64;
 /** Parse bound on ps output — a runaway process table stays a bounded read. */
 export const DOCTOR_AGENT_PS_MAX_LINES = 4096;
 
@@ -616,6 +676,22 @@ export const DOCTOR_AGENT_PS_MAX_LINES = 4096;
 export const FOREIGN_DROPS_SCAN_MAX_FILES = 200;
 /** Most repo ids the drop summary NAMES — the sentence stays readable. */
 export const FOREIGN_DROPS_MAX_NAMED_REPOS = 3;
+
+/**
+ * Bound on the session-state files `doctor`'s stale-state count and the
+ * SessionStart zombie reap walk (state/session-scan.ts). Larger than the cost
+ * scan's 50 because these two are COUNTING and DELETING rather than summing:
+ * the number worth printing is how many stale files there are, and a home
+ * that accumulated a hundred zombies is exactly the machine that needs them
+ * gone.
+ */
+export const SESSION_STATE_SCAN_MAX_FILES = 200;
+/**
+ * Most zombie state files ONE SessionStart deletes. A home with a hundred of
+ * them drains over four sessions instead of costing one session a hundred-file
+ * unlink storm on the hook whose latency the developer feels most.
+ */
+export const SESSION_STATE_REAP_MAX_PER_RUN = 25;
 
 export const EXIT_OK = 0;
 export const EXIT_WARN = 1;
@@ -635,6 +711,38 @@ export const CLAUDE_SETTINGS_FILE = "settings.json";
 export const POST_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
 /** Tripwire fires on writes only — Bash carries no file to overlap on. */
 export const PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
+
+/**
+ * The six Claude Code hook events `crosscheck init` registers, mapped to the
+ * `crosscheck hook <name>` subcommand each one calls.
+ *
+ * ONE LIST, because three places used to keep their own and two of them
+ * drifted (trial finding M17): `settings-merge.ts buildSettingsPlan` writes
+ * six, `doctor.ts REQUIRED_HOOK_EVENTS` required six, and
+ * `scripts/hook-contract-watch.ts` watched THREE while its comment claimed to
+ * watch "the events we register" — so the PreToolUse tripwire's whole output
+ * contract (permissionDecision, permissionDecisionReason, the literal `ask`)
+ * went unwatched for as long as it existed. Every consumer now reads this,
+ * which kills that class of drift by construction rather than by review.
+ *
+ * The insertion order is the order doctor prints them in, and it is the
+ * lifecycle order a reader expects, not alphabetical.
+ */
+export const REGISTERED_HOOK_EVENTS = {
+  SessionStart: "session-start",
+  PostToolUse: "post-tool-use",
+  SessionEnd: "session-end",
+  UserPromptSubmit: "user-prompt-submit",
+  PreToolUse: "pre-tool-use",
+  Stop: "stop",
+} as const;
+
+export type RegisteredHookEvent = keyof typeof REGISTERED_HOOK_EVENTS;
+
+/** The same six as a list, for the callers that only need the names. */
+export const REGISTERED_HOOK_EVENT_NAMES = Object.keys(
+  REGISTERED_HOOK_EVENTS,
+) as readonly RegisteredHookEvent[];
 
 /**
  * Project-scoped MCP registration, committed alongside `.claude/settings.json`
