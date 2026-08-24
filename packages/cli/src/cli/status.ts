@@ -73,12 +73,18 @@ export const runStatus = async (
     foreignDrops.drops === 0
       ? []
       : [`foreign-repo drops: ${formatForeignDropLine(foreignDrops)}`];
+  // repoKey "" so this command's own three reads do not stamp the sync record
+  // it is about to print (trial finding H5): with the real key, `status` wrote
+  // `lastOkAt` and then reported it, so the age it showed was always its own.
+  // The capture stamp was never at risk — reads are not capture-marked
+  // (http/hub.ts) — but `last capture sync` is read beside `lastSyncAt`, and a
+  // surface that reports its own writes teaches nobody anything.
   const hubCtx = {
     hubUrl: config.hubUrl,
     apiKey: config.apiKey,
     timeoutMs: config.timeoutMs,
     home: config.home,
-    repoKey: key,
+    repoKey: "",
     now: () => now,
   };
   const presence = await getPresence(hubCtx, identity.repoId);
@@ -139,7 +145,9 @@ export const runStatus = async (
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       ...foreignDropLines,
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
-      `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
+      // The CAPTURE stamp, not `lastOkAt`: only register/heartbeat/records/end
+      // move it, so this age is the hook path's and not this command's (H5).
+      `last capture sync: ${ageOrNever(sync.lastCaptureOkAt, now)}`,
       "",
     ].join("\n"),
     exitCode: presence.ok ? EXIT_OK : EXIT_UNREACHABLE,

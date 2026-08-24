@@ -20,6 +20,20 @@ import type { HubContext, HubResult } from "./client.ts";
  */
 export type { HubContext, HubResult } from "./client.ts";
 
+/**
+ * WHICH CALLS BELOW ARE CAPTURE-MARKED — the four the hook path makes:
+ * `registerSession`, `heartbeatSession`, `endSession`, `postRecords`. Nothing
+ * else. Every read (presence, work contexts, absences, drafts, diagnosis,
+ * hints, referee, privacy, solved matches) stays unmarked on purpose: they are
+ * what doctor, `status` and the statusline themselves call, and a read that
+ * stamped the capture record would report the reader's own request back as the
+ * connector's health (trial finding H5, the `last sync 0s ago` tautology).
+ *
+ * VERIFY: grep -c "captur[e]: true" packages/connector-core/src/http/hub.ts
+ * PRINTS: 4
+ * (the bracket keeps this directive from counting itself.)
+ */
+
 export const PresenceEntrySchema = z.looseObject({
   sessionId: z.string().min(1),
   developerId: z.string().min(1),
@@ -127,6 +141,7 @@ export const registerSession = (
     path: "/api/sessions",
     schema: SessionResponseSchema,
     body: input,
+    capture: true,
   });
 
 export const heartbeatSession = (
@@ -139,6 +154,7 @@ export const heartbeatSession = (
     path: `/api/sessions/${encodeURIComponent(sessionId)}/heartbeat`,
     schema: z.unknown(),
     body: status === undefined ? {} : { status },
+    capture: true,
   });
 
 export const endSession = (
@@ -150,6 +166,7 @@ export const endSession = (
     path: `/api/sessions/${encodeURIComponent(sessionId)}/end`,
     schema: z.unknown(),
     body: { status: "done" },
+    capture: true,
   });
 
 export const postRecords = (
@@ -161,6 +178,7 @@ export const postRecords = (
     path: "/api/records",
     schema: IngestSummarySchema,
     body: { records },
+    capture: true,
   });
 
 export const getPresence = (

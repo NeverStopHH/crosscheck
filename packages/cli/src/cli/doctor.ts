@@ -1114,20 +1114,47 @@ const hasLiveSessionState = async (home: string): Promise<boolean> => {
   }
 };
 
+/**
+ * When a HOOK last reached the hub — trial finding H5, and the line's name
+ * changed with its meaning.
+ *
+ * It used to read `lastOkAt`, which `recordSync` stamps after EVERY successful
+ * request with a non-empty repo key — including the reachability probe six
+ * lines up in `runDoctor`. The check was therefore reading what doctor had
+ * just written: a machine whose hooks had not fired in three hours printed
+ * `PASS last sync 0s ago`, and with a rejected key it printed `PASS last sync
+ * 2h ago` directly under `FAIL hub reachable invalid api key`. The record is
+ * now split (state/sync-state.ts): `lastOkAt` still means "the hub answered
+ * this machine", and `lastCaptureOkAt` — written only by register, heartbeat,
+ * records and end (http/hub.ts) — means "a hook got through". Reachability is
+ * the `hub reachable` line's job; this line is the capture path's.
+ *
+ * The live-session gate stays: an age alone is not a defect (a developer who
+ * has not started a session today is not broken), so the WARN needs a session
+ * state file beside the stale stamp — the silent-death signature.
+ */
 const checkLastSync = async (
   home: string,
   key: string,
   now: Date,
 ): Promise<Check> => {
+  const name = "last capture sync";
   const sync = await readSyncState(home, key);
-  if (sync.lastOkAt === null) {
-    return check("WARN", "last sync", "never synced");
+  if (sync.lastCaptureOkAt === null) {
+    return (await hasLiveSessionState(home))
+      ? check(
+          "WARN",
+          name,
+          "no hook has reached the hub yet, with a live session — the session is running and nothing it captured has landed",
+        )
+      : // A machine with no session on this repo yet: nothing has failed.
+        check("PASS", name, "never — no session has reported from this repo");
   }
-  const ageMs = now.getTime() - Date.parse(sync.lastOkAt);
+  const ageMs = now.getTime() - Date.parse(sync.lastCaptureOkAt);
   const isStale = ageMs > DOCTOR_LAST_SYNC_WARN_MINUTES * MS_PER_MINUTE;
   return isStale && (await hasLiveSessionState(home))
-    ? check("WARN", "last sync", `${formatAge(ageMs)} ago with a live session`)
-    : check("PASS", "last sync", `${formatAge(ageMs)} ago`);
+    ? check("WARN", name, `${formatAge(ageMs)} ago with a live session`)
+    : check("PASS", name, `${formatAge(ageMs)} ago`);
 };
 
 const summarize = (checks: readonly Check[]): CliResult => {
@@ -1216,11 +1243,18 @@ export const runDoctor = async (
     repoKey: key,
     now: () => now,
   };
-  const probe = await hubRequest(hubCtx, {
-    method: "GET",
-    path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
-    schema: z.unknown(),
-  });
+  // repoKey "" keeps the probe out of the sync record, exactly like
+  // `defaultMeasureLatency` above and `login`'s probe: with the real key it
+  // stamped `lastSyncAt`/`lastOkAt` moments before `checkLastSync` read them,
+  // which is half of what made `last sync` a tautology (H5).
+  const probe = await hubRequest(
+    { ...hubCtx, repoKey: "" },
+    {
+      method: "GET",
+      path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
+      schema: z.unknown(),
+    },
+  );
   // A connection-level failure names what actually happened and the remedy
   // that moves it (http/connection-error.ts) — "unreachable" hid a plain
   // timeout for an hour of a real onboarding. The bounded DNS refinement is

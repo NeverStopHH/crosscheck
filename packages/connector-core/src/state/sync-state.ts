@@ -12,12 +12,39 @@ import { readJsonOrNull, syncStatePath, writePrivateFile } from "../config/paths
  * truth. Both are now derived from the spool directory itself — depth by
  * counting pending lines, drops by summing the append-only `.drops` ledger —
  * which needs no lock to be exact. What remains here are last-writer-wins
- * timestamps, where a lost update costs a slightly stale age, never a count.
+ * timestamps (and one last-writer-wins status code), where a lost update costs
+ * a slightly stale age or a slightly stale reason, never a count.
  */
 export const SyncStateSchema = z.looseObject({
   lastSyncAt: z.string().nullable().default(null),
   lastOkAt: z.string().nullable().default(null),
+  /**
+   * The last time a CAPTURE call — register, heartbeat, records, end — reached
+   * the hub (http/hub.ts marks exactly those four `capture: true`). Trial
+   * finding #14/H5: `lastOkAt` above is stamped by EVERY ok request, doctor's
+   * own reachability probe and the statusline's presence poll included, so a
+   * surface that read it was reading what it had just written — `PASS last
+   * sync 0s ago` printed beside hooks that had not fired in hours. This field
+   * only moves when the hook path itself succeeded, which is what makes the
+   * age non-tautological.
+   *
+   * `null` on every state file written before this field existed, and on a
+   * machine whose hooks have never reached the hub — the two are told apart by
+   * whether a live session state exists, not by this value (cli doctor's
+   * checkLastSync).
+   */
+  lastCaptureOkAt: z.string().nullable().default(null),
   lastError: z.string().nullable().default(null),
+  /**
+   * HTTP status of the last failure, or null when the last call succeeded.
+   *
+   * `lastError` above is a `code: message` string, and the statusline was
+   * pattern-free: it branched on `result.ok` alone and rendered a rejected api
+   * key as `hub unreachable` (trial finding M4). The number is what lets the
+   * CACHED statusline path — fresh presence cache, no live call — still say
+   * "key rejected" rather than repeating a stale success.
+   */
+  lastErrorStatus: z.number().int().nullable().default(null),
   /**
    * Last `cursor_version` a Cursor sessionStart hook reported for this repo
    * (design §3.2) — `doctor`'s evidence that the observed Cursor build is one
@@ -32,7 +59,9 @@ export type SyncState = z.infer<typeof SyncStateSchema>;
 export const EMPTY_SYNC_STATE: SyncState = {
   lastSyncAt: null,
   lastOkAt: null,
+  lastCaptureOkAt: null,
   lastError: null,
+  lastErrorStatus: null,
   cursorVersion: null,
 };
 
