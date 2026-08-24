@@ -119,10 +119,24 @@ const isForeignClaim = (
  * an intent, a context with no claims yet is still worth a pointer — the
  * "same topic, different files" case nothing else detects. The pointer
  * carries title + intent + id, no body, so the asymmetry is untouched.
+ *
+ * FOREIGN is part of the rule, not an accident of the data. Before intents
+ * the pointer pass could only fire on a context with a foreign CLAIM
+ * (isForeignClaim), which meant a candidate list that leaked the reader's own
+ * context could not produce a pointer whatever the hub did. An intent-only
+ * context has no claim to carry that check, so it is stated here: the hub
+ * excludes the caller in the query (server/src/services/hints.ts) and this is
+ * the second lock, the shape self-exclusion has everywhere else in this file.
  */
-const hasIntent = (context: HintContextCandidate): boolean => {
+const isForeignIntentOnly = (
+  context: HintContextCandidate,
+  selfDeveloperId: string,
+): boolean => {
   const intent = context.workContext.intent;
-  return intent !== null && intent !== undefined && intent.summary.length > 0;
+  if (intent === null || intent === undefined || intent.summary.length === 0) {
+    return false;
+  }
+  return context.workContext.developerId !== selfDeveloperId;
 };
 
 export const selectHint = (input: SelectHintInput): HintSelection => {
@@ -159,7 +173,7 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
   }
 
   // Pointer pass: the best-ranked unseen context that has any foreign claims
-  // — or a stated intent (hasIntent), the claimless "same topic" case.
+  // — or a foreign stated intent, the claimless "same topic" case.
   // "Unseen" covers the context id AND its claims: once substance from a
   // context was delivered, re-surfacing the same context as a pointer is
   // noise, not news.
@@ -169,7 +183,7 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     ).length;
     const anyClaimSeen = context.claims.some((claim) => seen.has(claim.id));
     if (
-      (foreignCount > 0 || hasIntent(context)) &&
+      (foreignCount > 0 || isForeignIntentOnly(context, selfDeveloperId)) &&
       !seen.has(context.workContext.id) &&
       !anyClaimSeen
     ) {

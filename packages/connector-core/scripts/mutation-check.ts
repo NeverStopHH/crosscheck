@@ -1477,13 +1477,27 @@ export const MUTATIONS: readonly Mutation[] = [
     // pointer. This narrows the pointer pass back to contexts with claims.
     label: "an intent-only context stops earning a pointer",
     file: `${CORE}/src/hints/select.ts`,
-    from: "      (foreignCount > 0 || hasIntent(context)) &&",
+    from: "      (foreignCount > 0 || isForeignIntentOnly(context, selfDeveloperId)) &&",
     to: "      foreignCount > 0 &&",
     test: `${CORE}/test/hint-select.test.ts`,
     because:
       "a teammate whose session states exactly what it is doing, but has " +
       "published no claim yet, is invisible to a prompt on the same topic — " +
       "the gap trial finding #16 measured on 80 of 80 work contexts",
+  },
+  {
+    // Before intents, the pointer pass could only fire on a context with a
+    // FOREIGN claim, so a candidate list that leaked the reader's own context
+    // could not produce a pointer whatever the hub did. An intent-only
+    // context has no claim to carry that check.
+    label: "the intent-only pointer forgets whose context it is",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  return context.workContext.developerId !== selfDeveloperId;",
+    to: "  return true;",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "the reader's own work context is hinted back at them as a teammate's " +
+      "the moment the hub's own exclusion slips — self-noise, DESIGN.md §10 risk 1",
   },
 ];
 
@@ -1546,7 +1560,7 @@ interface Outcome {
  * PRINTS: hint-flow.test.ts 2
  * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 1
- * PRINTS: hint-select.test.ts 4
+ * PRINTS: hint-select.test.ts 5
  * PRINTS: hints.test.ts 2
  * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1

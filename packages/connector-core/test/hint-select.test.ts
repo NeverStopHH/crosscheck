@@ -308,20 +308,35 @@ describe("intent-only contexts pointer (trial finding #16: same topic, different
     expect("claim" in selection).toBe(false);
   });
 
-  test("a context with neither claims nor intent stays silent", () => {
+  test("a context with neither claims nor intent stays silent — the intent is the difference", () => {
+    // The control FIRST: the identical claimless context becomes a pointer
+    // only because it carries an intent. Without this line the three
+    // silences below pass on any tree that never points at a claimless
+    // context at all, which is what the tree before this feature did.
+    expect(select([context({ intent: INTENT }, [])]).kind).toBe("pointer");
+
     expect(select([context({}, [])]).kind).toBe("silence");
     expect(select([context({ intent: null }, [])]).kind).toBe("silence");
+    expect(select([context({ intent: { ...INTENT, summary: "" } }, [])]).kind).toBe("silence");
   });
 
   test("an intent-only context already pointed at this session is not re-pointed", () => {
-    const selection = select([context({ intent: INTENT }, [])], { seenRefIds: ["wc_1"] });
+    const candidates = [context({ intent: INTENT }, [])];
 
-    expect(selection.kind).toBe("silence");
+    // Control: unseen, it IS a pointer — so the silence below is the
+    // seen-set doing its job, not the selector ignoring intents.
+    expect(select(candidates).kind).toBe("pointer");
+    expect(select(candidates, { seenRefIds: ["wc_1"] }).kind).toBe("silence");
   });
 
   test("substance in another context still beats an intent-only pointer", () => {
+    const intentOnly = context({ id: "wc_intent", intent: INTENT }, []);
+
+    // Control: alone, the intent-only context is a pointer
+    expect(select([intentOnly]).kind).toBe("pointer");
+
     const selection = select([
-      context({ id: "wc_intent", intent: INTENT }, []),
+      intentOnly,
       context({ id: "wc_claims" }, [claim({ workContextId: "wc_claims" })]),
     ]);
 
@@ -329,6 +344,26 @@ describe("intent-only contexts pointer (trial finding #16: same topic, different
   });
 
   test("the tier floor applies to intent-only contexts as well", () => {
+    // Control: in the exact tier the same context is a pointer
+    expect(select([context({ tier: "exact", intent: INTENT }, [])]).kind).toBe("pointer");
     expect(select([context({ tier: "recency", intent: INTENT }, [])]).kind).toBe("silence");
+  });
+
+  /**
+   * Self-exclusion, client side. Before intents, the pointer pass could only
+   * fire on a context with a FOREIGN claim, so a candidate list that leaked
+   * the reader's own context could not produce a pointer. `hasIntent` removed
+   * that accident, and the hub's own exclusion (services/hints.ts) became the
+   * single point of failure — so the selector states the rule itself.
+   */
+  test("my own intent-only context is never pointed back at me", () => {
+    const mine = context({ id: "wc_mine", developerId: SELF_DEVELOPER, intent: INTENT }, []);
+
+    expect(select([mine]).kind).toBe("silence");
+    // The same context owned by a teammate IS a pointer — the developer id
+    // is what decides, not the shape of the context.
+    expect(select([{ ...mine, workContext: { ...mine.workContext, developerId: TEAMMATE } }]).kind).toBe(
+      "pointer",
+    );
   });
 });
