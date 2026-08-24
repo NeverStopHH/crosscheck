@@ -54,37 +54,67 @@ const presenceLine = (
 ): string => {
   const teammates = groupTeammates(entries, now);
   if (teammates.length === 0) {
-    return capLine(`cx 0 · no teammates on this repo · sync ${syncAge}`);
+    return capLine(`cx 0 · no teammates on this repo · capture ${syncAge}`);
   }
   return capLine(
-    `cx ${teammates.length} · ${renderNames(teammates)} · sync ${syncAge}`,
+    `cx ${teammates.length} · ${renderNames(teammates)} · capture ${syncAge}`,
   );
 };
+
+const HTTP_UNAUTHORIZED = 401;
+
+/**
+ * What a hub failure MEANS, in the reader's words — trial finding M4.
+ *
+ * This used to branch on `result.ok` alone, so a rotated or revoked api key
+ * (HTTP 401, an answer) rendered `cx ! hub unreachable · last sync 2h` and
+ * sent the developer to check their network for a credential problem. The
+ * status and the kind are both on `HubResult` already (http/client.ts); all
+ * three states below name their own remedy, and every one keeps the age.
+ */
+const failureHead = (
+  status: number,
+  kind: "network" | "http" | "malformed",
+): string => {
+  if (status === HTTP_UNAUTHORIZED) {
+    return "key rejected · crosscheck login";
+  }
+  if (kind === "network") {
+    return "hub unreachable";
+  }
+  return "hub answered garbage";
+};
+
+const failureLine = (head: string, age: string | null): string =>
+  capLine(age === null ? `cx ! ${head}` : `cx ! ${head} · last capture ${age}`);
 
 const renderForContext = async (ctx: HookContext): Promise<string> => {
   const now = ctx.now();
   const cache = await readPresenceCache(ctx.config.home, ctx.repoKey);
   const sync = await readSyncState(ctx.config.home, ctx.repoKey);
+  // The CAPTURE stamp (state/sync-state.ts), not `lastOkAt`: this very
+  // function's presence poll used to write `lastOkAt` and the next render read
+  // it back as `sync 0s`, which is the statusline's half of H5. A read is not
+  // capture-marked, so what shows here is when a HOOK last got through.
+  const captureAge = ageSince(sync.lastCaptureOkAt, now);
 
   if (cache !== null && isCacheFresh(cache, now)) {
-    return presenceLine(
-      cache.entries,
-      ageSince(sync.lastOkAt, now) ?? "0s",
-      now,
-    );
+    // A fresh cache means no call was made — so a 401 booked by the last real
+    // call is the newest thing known about the hub, and saying "sync 12s"
+    // over it would launder a rejected key into health (M4's cached path).
+    if (sync.lastErrorStatus === HTTP_UNAUTHORIZED) {
+      return failureLine(failureHead(HTTP_UNAUTHORIZED, "http"), captureAge);
+    }
+    return presenceLine(cache.entries, captureAge ?? "never", now);
   }
 
   const result = await getPresence(ctx.hub, ctx.identity.repoId);
   if (result.ok) {
     await writePresenceCache(ctx.config.home, ctx.repoKey, result.data, now);
-    return presenceLine(result.data, "0s", now);
+    return presenceLine(result.data, captureAge ?? "never", now);
   }
 
-  const lastOkAge = ageSince(sync.lastOkAt, now);
-  if (lastOkAge === null) {
-    return "cx ! never synced";
-  }
-  return capLine(`cx ! hub unreachable · last sync ${lastOkAge}`);
+  return failureLine(failureHead(result.status, result.kind), captureAge);
 };
 
 /**
