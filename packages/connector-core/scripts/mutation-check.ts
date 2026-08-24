@@ -1499,6 +1499,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "the reader's own work context is hinted back at them as a teammate's " +
       "the moment the hub's own exclusion slips — self-noise, DESIGN.md §10 risk 1",
   },
+  {
+    // A declared intent is the one agent-written string this system PUSHES
+    // into every teammate's briefing unasked; the derived path already drops
+    // a secret-like sentence, so this gate is the declared path's half.
+    label: "a declared intent skips the secret scan",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "  if (containsSecret(parsed.value.summary)) {\n    return toolFailure(INTENT_SECRET_REFUSAL);\n  }\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because:
+      "credential-shaped text reaches every teammate's context through the " +
+      "one surface that is pushed rather than pulled (DESIGN.md §3: drop, never redact)",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -1584,6 +1597,7 @@ interface Outcome {
  * PRINTS: search.test.ts 3
  * PRINTS: session.test.ts 1
  * PRINTS: sessions.test.ts 1
+ * PRINTS: set-intent.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1

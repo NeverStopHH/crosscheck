@@ -20,7 +20,7 @@ import { prepareMcp } from "../src/mcp/context.ts";
 import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
 import { NO_SESSION } from "../src/mcp/tools/publish-claim.ts";
-import { INTENT_ECHO_REFUSAL, NO_TITLE } from "../src/mcp/tools/set-intent.ts";
+import { INTENT_ECHO_REFUSAL, INTENT_SECRET_REFUSAL, NO_TITLE } from "../src/mcp/tools/set-intent.ts";
 import { writeSessionState } from "../src/state/session-state.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -300,5 +300,28 @@ describe("set_intent", () => {
 
     expect(result.isError).toBe(true);
     expect(result.text).toBe(INTENT_ECHO_REFUSAL);
+  });
+
+  /**
+   * A declared intent is the ONE piece of agent-written text this system
+   * pushes into every teammate's briefing unasked — a claim body is a
+   * pointer until somebody pulls it. The derived path already drops a
+   * secret-like sentence (intent/worker.ts DROPPED_SECRET), so without this
+   * gate `set_intent` is the only way credential-shaped text reaches another
+   * developer's context. Drop, never redact (DESIGN.md §3).
+   */
+  test("a summary carrying credential-shaped text is refused, and nothing reaches the hub", async () => {
+    // Arrange: a synthetic AWS-shaped id, built rather than typed
+    const fake = `AKIA${"Q7RSTUVWXYZ234567".slice(0, 16)}`;
+    const before = await storedIntent(alice);
+
+    // Act
+    const result = await call(alice, { summary: `Rotate the leaked key ${fake} out of the limiter` });
+
+    // Assert: the refusal names the rule, and the stored intent is untouched
+    expect(result.isError).toBe(true);
+    expect(result.text).toBe(INTENT_SECRET_REFUSAL);
+    expect(result.text).not.toContain(fake);
+    expect(await storedIntent(alice)).toEqual(before);
   });
 });

@@ -11,6 +11,11 @@
  *
  * The summary travels on a work_context UPDATE record (title + status from
  * the session state, intent declared) — no new record kind, no new endpoint.
+ *
+ * Two gates before the hub sees anything: the secret scan
+ * (INTENT_SECRET_REFUSAL — an intent is pushed into every teammate's
+ * briefing unasked, so it is scanned like every derived value) and the
+ * echo-loop exclusion (INTENT_ECHO_REFUSAL).
  */
 import { z } from "zod";
 import { MAX_INTENT_SUMMARY_CHARS, SessionStatusSchema } from "@crosscheck/schema";
@@ -21,6 +26,7 @@ import type { McpContext } from "../context.ts";
 import { quoted, quotingText, safeId } from "../render.ts";
 import type { OwnWorkContext } from "../session.ts";
 import { checkIntent, explainRejection } from "../violations.ts";
+import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { postRecords } from "../../http/hub.ts";
 import {
@@ -70,6 +76,22 @@ export const NO_TITLE =
   "SessionStart re-registers it, then call set_intent again.";
 
 /**
+ * Secret gate, and the reason it is here rather than only on the derived
+ * path. A declared intent is the one piece of agent-written text crosscheck
+ * PUSHES into every teammate's briefing, prompt hint and tripwire reason
+ * unasked; a claim body stays a pointer until somebody pulls it (DESIGN.md
+ * §4 anchoring asymmetry). The derived worker already drops a secret-like
+ * sentence (intent/worker.ts DROPPED_SECRET), so without this the declared
+ * path is the only route credential-shaped text has into another
+ * developer's context. Drop, never redact — the §3 rule, and the refusal
+ * never echoes the matched text back.
+ */
+export const INTENT_SECRET_REFUSAL =
+  "That intent matches a secret pattern (key, token or credential), so it is " +
+  "refused rather than uploaded — crosscheck never redacts, it drops. Teammates' " +
+  "briefings show an intent unasked, so state the goal without the credential material.";
+
+/**
  * Echo-loop exclusion, the publish_claim rule applied to intents: a sentence
  * that arrived IN THIS SESSION as a teammate's hint is their finding, not
  * this session's goal, and declaring it would launder provenance.
@@ -99,6 +121,11 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   }
   if (own.workContextTitle === null || own.workContextStatus === null) {
     return toolFailure(NO_TITLE);
+  }
+  // Before the echo check and before any hub call: nothing credential-shaped
+  // is worth a round trip, and the refusal must not quote it back.
+  if (containsSecret(parsed.value.summary)) {
+    return toolFailure(INTENT_SECRET_REFUSAL);
   }
   if (await isDeliveredHintEcho(ctx, own, parsed.value.summary)) {
     return toolFailure(INTENT_ECHO_REFUSAL);
