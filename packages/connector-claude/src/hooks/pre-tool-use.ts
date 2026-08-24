@@ -22,9 +22,18 @@
  * (acceptEdits, default+allowedTools, auto, bypassPermissions, dontAsk), no
  * hang, no PermissionRequest hook; the `permissionDecisionReason` reaches the
  * model verbatim as an is_error tool_result, and the next identical edit
- * passes because of the ask-once marker below. Headless cannot be detected
- * per hook (the env is inherited unchanged, stdin is always a pipe, the
- * payload carries no flag), so the fallback is an explicit knob:
+ * passes because of the ask-once marker below.
+ *
+ * There is no TRUSTWORTHY per-hook signal for headless, which is not the same
+ * as no signal — stated MEASURED so nobody "fixes" this by auto-detecting: a
+ * `claude -p` whose caller left CLAUDE_CODE_ENTRYPOINT unset hands the hook
+ * `sdk-cli`, but a caller-supplied value survives verbatim — the same headless
+ * run reported `sdk-cli` and `claude-vscode` depending only on the spawn env
+ * (probe V7 vs V8). Orchestration subagents are spawned FROM a Claude Code
+ * session, so the parent's interactive value is exactly what leaks in and the
+ * marker would read "interactive" in the one shape a detection exists for.
+ * stdin is a pipe in interactive sessions too, and the payload carries no
+ * flag. So the fallback is an explicit knob:
  * CROSSCHECK_TRIPWIRE=notice emits `additionalContext` ONLY (the ladder's
  * notice rung, DESIGN §4) — briefed, never blocked. `additionalContext` is
  * emitted in BOTH modes (trial finding #25): it is the one field that reaches
