@@ -457,8 +457,19 @@ const workspaceRootChecks = async (cwd: string): Promise<readonly Check[]> => {
 export interface AgentProcessProbe {
   /** Raw `ps -axo pid=,etime=,comm=` output, or null = not measurable. */
   readonly listProcesses: () => Promise<string | null>;
-  /** The process's working directory, or null when it cannot be known. */
-  readonly resolveCwd: (pid: number) => Promise<string | null>;
+  /**
+   * Working directories for a whole batch of pids at once — a pid missing
+   * from the map is one whose cwd could not be known.
+   *
+   * It used to be one pid per call, and on macOS one call was one `lsof`
+   * spawn, which is why the candidate list was capped at eight. That cap was
+   * then spent on desktop-app helpers (below) before a real agent was ever
+   * reached. `lsof` takes a comma-separated pid list, so the whole batch is
+   * ONE spawn regardless of size and the cap now bounds only the parse.
+   */
+  readonly resolveCwds: (
+    pids: readonly number[],
+  ) => Promise<ReadonlyMap<number, string>>;
 }
 
 /** Process names that are coding agents whose hooks load at start. */
@@ -491,8 +502,24 @@ export const parsePsEtime = (etime: string): number | null => {
 interface AgentCandidate {
   readonly pid: number;
   readonly name: string;
+  /** Full `ps comm` path — what the desktop-helper exclusion reads. */
+  readonly command: string;
   readonly startedAtMs: number;
 }
+
+/**
+ * A macOS application BUNDLE's internal executables.
+ *
+ * Measured on the author's Mac during the trial audit: 23 processes whose
+ * `ps comm` basenames to `claude`, twelve or more of them
+ * `/Applications/Claude.app/Contents/MacOS/…` and
+ * `/Applications/Claude.app/Contents/Frameworks/…` — the desktop app and its
+ * helpers, which are not coding agents, do not load our hooks and whose cwd is
+ * `/`. They arrive in ps order, so with the old cap of eight they consumed the
+ * entire candidate budget and a real offender at position 25 was never looked
+ * at: `PASS no running agent predates the hooks`, with the agent running.
+ */
+const APP_BUNDLE_PATTERN = /\.app\/Contents\//;
 
 /** One ps line — "<pid> <etime> <comm…>" — or null for anything unparseable. */
 const parsePsLine = (line: string, nowMs: number): AgentCandidate | null => {
@@ -506,11 +533,17 @@ const parsePsLine = (line: string, nowMs: number): AgentCandidate | null => {
   if (!Number.isSafeInteger(pid) || pid <= 0 || elapsedSeconds === null) {
     return null;
   }
-  const name = basename(commTokens.join(" ")).toLowerCase();
+  const command = commTokens.join(" ");
+  const name = basename(command).toLowerCase();
   if (!AGENT_PROCESS_NAMES.has(name)) {
     return null;
   }
-  return { pid, name, startedAtMs: nowMs - elapsedSeconds * MS_PER_SECOND };
+  return {
+    pid,
+    name,
+    command,
+    startedAtMs: nowMs - elapsedSeconds * MS_PER_SECOND,
+  };
 };
 
 const isInsideRepo = async (repoRoot: string, cwd: string): Promise<boolean> => {
@@ -520,46 +553,97 @@ const isInsideRepo = async (repoRoot: string, cwd: string): Promise<boolean> => 
   return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
 };
 
+/**
+ * The NEWEST settings file that carries hooks, and its name.
+ *
+ * It used to be exactly one path — this repo's `.claude/settings.json` — and
+ * that was wrong in both directions (trial finding H6). In a fresh worktree
+ * the file does not exist, so the whole check read `PASS not measured (no
+ * settings file)` while a global install's `~/.claude/settings.json` carried
+ * all six hooks and had been rewritten ten minutes ago. And in a repo that
+ * DOES have one, an 88-byte statusLine-only stub from days earlier was what
+ * got measured, while the file that actually holds the hooks — the user-scope
+ * one — was newer and never stat'ed. Whichever file was written LAST is the
+ * one an already-running agent can be older than, so that is the one measured,
+ * and its path goes in the sentence so the reader knows which file is meant.
+ */
+const newestSettingsFile = async (
+  paths: readonly string[],
+): Promise<{ readonly path: string; readonly mtimeMs: number } | null> => {
+  const stats = await Promise.all(
+    paths.map(async (path) =>
+      stat(path).then(
+        (info) => ({ path, mtimeMs: info.mtimeMs }),
+        () => null,
+      ),
+    ),
+  );
+  return stats
+    .filter((entry): entry is { path: string; mtimeMs: number } => entry !== null)
+    .reduce<{ path: string; mtimeMs: number } | null>(
+      (newest, entry) =>
+        newest === null || entry.mtimeMs > newest.mtimeMs ? entry : newest,
+      null,
+    );
+};
+
 export const checkAgentRestart = async (
   repoRoot: string,
-  settingsPath: string,
+  settingsPaths: readonly string[],
   probe: AgentProcessProbe,
   nowMs: number,
 ): Promise<Check> => {
   const name = "agent restart";
   try {
-    const settingsMtimeMs = await stat(settingsPath).then(
-      (info) => info.mtimeMs,
-      () => null,
-    );
-    if (settingsMtimeMs === null) {
+    const settings = await newestSettingsFile(settingsPaths);
+    if (settings === null) {
       return check("PASS", name, "not measured (no settings file)");
     }
     const raw = await probe.listProcesses();
     if (raw === null) {
       return check("PASS", name, "not measured");
     }
-    // Age first, cwd second: the pre-filter keeps the per-pid probes (a
-    // spawn each on macOS) to the handful that could matter at all.
-    const candidates = raw
+    const matched = raw
       .split("\n")
       .slice(0, DOCTOR_AGENT_PS_MAX_LINES)
       .flatMap((line) => {
         const parsed = parsePsLine(line, nowMs);
-        return parsed === null || parsed.startedAtMs >= settingsMtimeMs
+        return parsed === null || parsed.startedAtMs >= settings.mtimeMs
           ? []
           : [parsed];
-      })
+      });
+    // Desktop-app helpers out, then NEWEST-STARTED FIRST, then the cap. The
+    // order is the whole point: ps order is arbitrary, so a truncation that
+    // happens in it drops candidates at random, and the ones worth keeping
+    // are the ones that started closest to the settings write.
+    const eligible = matched.filter(
+      (candidate) => !APP_BUNDLE_PATTERN.test(candidate.command),
+    );
+    const candidates = [...eligible]
+      .sort((left, right) => right.startedAtMs - left.startedAtMs)
       .slice(0, DOCTOR_AGENT_MAX_CWD_PROBES);
+    const skipped = matched.length - candidates.length;
+    // ONE call for every pid: on macOS that is a single `lsof`, so the number
+    // of candidates no longer costs spawns.
+    const cwds = await probe
+      .resolveCwds(candidates.map((candidate) => candidate.pid))
+      .catch(() => new Map<number, string>());
     const offenders: AgentCandidate[] = [];
     for (const candidate of candidates) {
-      const cwd = await probe.resolveCwd(candidate.pid).catch(() => null);
-      if (cwd !== null && (await isInsideRepo(repoRoot, cwd))) {
+      const cwd = cwds.get(candidate.pid);
+      if (cwd !== undefined && (await isInsideRepo(repoRoot, cwd))) {
         offenders.push(candidate);
       }
     }
+    // Both branches carry the counts: a PASS whose reader cannot tell whether
+    // anything was examined is the shape this whole finding is about.
+    const counts = `${String(candidates.length)} agent${candidates.length === 1 ? "" : "s"} checked, ${String(skipped)} skipped`;
     if (offenders.length === 0) {
-      return check("PASS", name, "no running agent predates the hooks");
+      return check(
+        "PASS",
+        name,
+        `no running agent predates ${settings.path} — ${counts}`,
+      );
     }
     const listed = offenders
       .map((entry) => `pid ${String(entry.pid)} (${entry.name})`)
@@ -567,7 +651,7 @@ export const checkAgentRestart = async (
     return check(
       "WARN",
       name,
-      `a running agent predates your hooks — restart it: ${listed} in this repo started before ${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE} was written, and hooks load only at process start`,
+      `a running agent predates your hooks — restart it: ${listed} in this repo started before ${settings.path} was written, and hooks load only at process start — ${counts}`,
     );
   } catch {
     // Never crashes doctor: any surprise is a "not measured", not a report.
@@ -575,7 +659,32 @@ export const checkAgentRestart = async (
   }
 };
 
-/** The real probe: ps once, then /proc (Linux) or bounded lsof (macOS). */
+/**
+ * `lsof -Fn` field output for a batch of pids, as a map.
+ *
+ * The format repeats `p<pid>` / `f<fd>` / `n<path>`, so a `n` line belongs to
+ * whichever `p` line most recently preceded it — which is why the parser
+ * carries the current pid forward instead of reading pairs. Only the `cwd`
+ * descriptor is requested (`-d cwd`), so the first `n` per pid is the one
+ * wanted; a later duplicate never overwrites it.
+ */
+export const parseLsofCwds = (output: string): ReadonlyMap<number, string> => {
+  const cwds = new Map<number, string>();
+  let pid: number | null = null;
+  for (const line of output.split("\n")) {
+    if (line.startsWith("p")) {
+      const parsed = Number.parseInt(line.slice(1), 10);
+      pid = Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+      continue;
+    }
+    if (line.startsWith("n") && pid !== null && !cwds.has(pid)) {
+      cwds.set(pid, line.slice(1));
+    }
+  }
+  return cwds;
+};
+
+/** The real probe: ps once, then /proc (Linux) or ONE batched lsof (macOS). */
 const defaultAgentProbe = (cwd: string): AgentProcessProbe => ({
   listProcesses: async () =>
     process.platform === "linux" || process.platform === "darwin"
@@ -585,26 +694,35 @@ const defaultAgentProbe = (cwd: string): AgentProcessProbe => ({
           DOCTOR_AGENT_PS_TIMEOUT_MS,
         )
       : null,
-  resolveCwd: async (pid) => {
+  resolveCwds: async (pids) => {
+    if (pids.length === 0) {
+      return new Map<number, string>();
+    }
     if (process.platform === "linux") {
-      try {
-        return await readlink(`/proc/${String(pid)}/cwd`);
-      } catch {
-        return null;
-      }
+      // No spawn at all here: /proc is a readlink each, which is why Linux
+      // never needed the batching macOS does.
+      const entries = await Promise.all(
+        pids.map(async (pid): Promise<readonly [number, string] | null> => {
+          try {
+            return [pid, await readlink(`/proc/${String(pid)}/cwd`)] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      return new Map(
+        entries.filter((entry): entry is readonly [number, string] => entry !== null),
+      );
     }
     if (process.platform === "darwin") {
       const output = await runBoundedCommand(
-        ["lsof", "-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+        ["lsof", "-a", "-p", pids.join(","), "-d", "cwd", "-Fn"],
         cwd,
         DOCTOR_AGENT_CWD_TIMEOUT_MS,
       );
-      const nameLine = output
-        ?.split("\n")
-        .find((line) => line.startsWith("n"));
-      return nameLine === undefined ? null : nameLine.slice(1);
+      return output === null ? new Map<number, string>() : parseLsofCwds(output);
     }
-    return null;
+    return new Map<number, string>();
   },
 });
 
@@ -1500,6 +1618,23 @@ export const runDoctor = async (
   // whichever scope satisfies the hooks requirement (finding #13).
   const launcherCommand =
     settingsInspection.launcherCommand ?? globalWiring.launcherCommand;
+  // Every settings file that could carry THIS repo's hooks: the project one
+  // when the project scope is wired, the user one when it is, both under
+  // double wiring (H6). When neither is wired the project path is still
+  // offered, so a half-written install keeps today's reading rather than
+  // going quiet.
+  const agentSettingsPaths = ((): readonly string[] => {
+    const projectPath = join(
+      identity.root,
+      CLAUDE_SETTINGS_DIR,
+      CLAUDE_SETTINGS_FILE,
+    );
+    const wired = [
+      ...(settingsInspection.launcherCommand === null ? [] : [projectPath]),
+      ...(globalWiring.hooksInstalled ? [globalWiring.settingsPath] : []),
+    ];
+    return wired.length > 0 ? wired : [projectPath];
+  })();
   return summarize([
     configCheck,
     identityCheck,
@@ -1517,7 +1652,7 @@ export const runDoctor = async (
       : [await checkLauncher(launcherCommand, env)]),
     await checkAgentRestart(
       identity.root,
-      join(identity.root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
+      agentSettingsPaths,
       agentProbe ?? defaultAgentProbe(cwd),
       now.getTime(),
     ),
