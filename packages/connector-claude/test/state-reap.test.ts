@@ -13,7 +13,7 @@
  * all — not that the pure function works.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { readdir, rm } from "node:fs/promises";
+import { readdir, rm, utimes } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runHook } from "../src/index.ts";
@@ -69,6 +69,14 @@ const acceptingHub = (): string => {
   return `http://127.0.0.1:${String(server.port)}`;
 };
 
+/**
+ * A session that has said nothing for `ageMs` — stamps AND file mtime, because
+ * the reaper measures silence off the newest of the three
+ * (`sessionSilentForMs`, state/session-scan.ts). That is what stops it
+ * deleting a live session's state file: a session whose every edit lands in a
+ * foreign checkout never heartbeats, so on the stamps alone it would look a
+ * week dead while its hooks were still writing the file.
+ */
 const seedState = async (
   home: string,
   repo: string,
@@ -76,7 +84,8 @@ const seedState = async (
   hostSessionKey: string,
   ageMs: number,
 ): Promise<void> => {
-  const stamp = new Date(Date.now() - ageMs).toISOString();
+  const when = new Date(Date.now() - ageMs);
+  const stamp = when.toISOString();
   await writeSessionState(home, {
     ...deriveSessionState({
       hostSessionKey,
@@ -88,6 +97,7 @@ const seedState = async (
     }),
     lastHeartbeatAt: stamp,
   });
+  await utimes(join(home, "sessions", `${hostSessionKey}.json`), when, when);
 };
 
 const stateNames = async (home: string): Promise<readonly string[]> =>

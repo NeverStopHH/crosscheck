@@ -17,9 +17,7 @@
  * SessionEnd, so its mere existence used to count as a live session — and 75
  * of the trial machine's 100 files belonged to sessions killed hours or days
  * earlier (closed terminals, killed orchestration agents, SessionEnds that
- * never ran). `heartbeatAgeMs` is what tells those apart, from the heartbeat
- * when there is one and from `startedAt` when there is not: a file whose
- * session never heartbeated at all is exactly as dead as one that stopped.
+ * never ran). `sessionSilentForMs` is what tells those apart.
  */
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -85,18 +83,44 @@ export const listSessionStateFiles = async (
 };
 
 /**
- * How long since this session last said anything — the heartbeat when it has
- * one, the start otherwise.
+ * How long this session has been SILENT: measured from the newest thing it did
+ * — its heartbeat, its start, or the last write to its own state file.
  *
- * Null means neither timestamp can be read, which the callers treat as "not
- * stale": a state file nobody can date is not evidence of a dead session, and
- * a reaper or a WARN built on a guess is worse than one that skips a file.
+ * THE FILE'S OWN mtime IS PART OF THE ANSWER, and leaving it out was a defect
+ * with a name. `lastHeartbeatAt` has exactly two writers in the whole tree
+ * (`hooks/post-tool-use.ts` and `flows/register-session.ts`), and PostToolUse
+ * returns BEFORE its heartbeat whenever the touch resolved to a DIFFERENT
+ * connected repo — the first-wins rule of trial finding #9. So a session whose
+ * every edit lands in a foreign checkout books `editToolFires` and
+ * `foreignRepoDrops` forever while its heartbeat stays frozen at registration
+ * time, and a day later every surface called it dead while its hooks were
+ * writing the very file those surfaces were reading. That is the one shape the
+ * capture WARN exists to name.
+ *
+ * Every writer of a state file is one of that session's own hooks
+ * (post-tool-use, pre-tool-use, stop, the hint flows, the summarizer worker),
+ * so the WRITE is the session speaking. The heartbeat is the subset of those
+ * writes that also reaches the hub, and the subset is lossy — which is why the
+ * liveness signal is taken from the act rather than from a stamp some path can
+ * forget to set.
+ *
+ * `wroteAtMs` is the file's mtime (`listSessionStateFiles` has already stat'd
+ * it); null or 0 means the caller has none, not that the file is from 1970.
+ *
+ * Null means nothing here can be dated at all. The callers decide what that
+ * means, and they do not agree on purpose: a REAPER skips such a file (a
+ * deletion has to be certain), while the capture surfaces read it as idle (the
+ * only thing that could make it fresh is a clock they cannot read).
  */
-export const heartbeatAgeMs = (
+export const sessionSilentForMs = (
   state: { readonly lastHeartbeatAt: string | null; readonly startedAt: string },
+  wroteAtMs: number | null,
   nowMs: number,
 ): number | null => {
-  const iso = state.lastHeartbeatAt ?? state.startedAt;
-  const ms = Date.parse(iso);
-  return Number.isNaN(ms) ? null : nowMs - ms;
+  const said = Date.parse(state.lastHeartbeatAt ?? state.startedAt);
+  const stamps = [
+    ...(Number.isNaN(said) ? [] : [said]),
+    ...(wroteAtMs === null || wroteAtMs <= 0 ? [] : [wroteAtMs]),
+  ];
+  return stamps.length === 0 ? null : nowMs - Math.max(...stamps);
 };

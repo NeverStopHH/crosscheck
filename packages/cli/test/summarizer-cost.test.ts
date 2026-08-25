@@ -292,13 +292,19 @@ describe("summarizer cost reads the newest sessions, and says how many", () => {
     });
     const home = await makeHome("cost-zombie");
     paths.push(repo, home);
-    const dead = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+    const deadAgeMs = 26 * 60 * 60 * 1000;
+    const dead = new Date(Date.now() - deadAgeMs).toISOString();
     for (const id of ["dead-1", "dead-2", "dead-3"]) {
       await seedSession(home, repo, id, {
         startedAt: dead,
         lastHeartbeatAt: dead,
         summarizerFireCount: 4,
       });
+      // The FILE is 26 hours old too. Silence is measured off the newest of the
+      // heartbeat, the start and the file's own mtime (state/session-scan.ts),
+      // because every writer of a state file is one of that session's hooks —
+      // so a file written a moment ago belongs to a session that is running.
+      await backdate(home, id, deadAgeMs);
     }
 
     // Act

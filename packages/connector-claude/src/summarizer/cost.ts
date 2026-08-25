@@ -28,8 +28,8 @@ import {
 } from "@crosscheck/connector-core/constants.ts";
 import { readJsonOrNull } from "@crosscheck/connector-core/config/paths.ts";
 import {
-  heartbeatAgeMs,
   listSessionStateFiles,
+  sessionSilentForMs,
 } from "@crosscheck/connector-core/state/session-scan.ts";
 import { SessionStateSchema } from "@crosscheck/connector-core/state/session-state.ts";
 
@@ -130,22 +130,28 @@ export const readSummarizerCost = async (
     return NO_COST;
   }
   const parsed = await Promise.all(
-    listing.files.map(async (file) =>
-      SessionStateSchema.safeParse(await readJsonOrNull(file.path)),
-    ),
+    listing.files.map(async (file) => ({
+      // The mtime travels with the parse: a session's silence is measured off
+      // its own file's last write as well as its heartbeat (session-scan.ts).
+      mtimeMs: file.mtimeMs,
+      result: SessionStateSchema.safeParse(await readJsonOrNull(file.path)),
+    })),
   );
   const base: SummarizerCost = {
     ...NO_COST,
     filesSeen: listing.filesSeen,
     filesRead: listing.files.length,
-    parseFailures: parsed.filter((entry) => !entry.success).length,
+    parseFailures: parsed.filter((entry) => !entry.result.success).length,
   };
   return parsed
-    .filter((entry) => entry.success)
-    .map((entry) => entry.data)
-    .filter((state) => state.hubUrl === hubUrl && state.repoId === repoId)
-    .reduce<SummarizerCost>((total, state) => {
-      const ageMs = heartbeatAgeMs(state, now.getTime());
+    .flatMap((entry) =>
+      entry.result.success
+        ? [{ mtimeMs: entry.mtimeMs, state: entry.result.data }]
+        : [],
+    )
+    .filter(({ state }) => state.hubUrl === hubUrl && state.repoId === repoId)
+    .reduce<SummarizerCost>((total, { mtimeMs, state }) => {
+      const ageMs = sessionSilentForMs(state, mtimeMs, now.getTime());
       if (ageMs !== null && ageMs > STALE_STATE_MS) {
         // Counted, not dropped: "3 stale skipped" is the number that would
         // have told the trial its cost line was reading corpses.

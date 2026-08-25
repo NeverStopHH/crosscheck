@@ -17,14 +17,17 @@
  *     hash order, so a plain slice reads an arbitrary subset and the live
  *     session of this repo can miss the window entirely — zero targets, zero
  *     fires, a PASSing `capture` check, on the machine the counters were
- *     built for. The entries are stat'd and sorted NEWEST FIRST instead, and
+ *     built for. `listSessionStateFiles` (state/session-scan.ts) stats every
+ *     candidate and sorts NEWEST FIRST before the cap, and
  *     `statesRead`/`statesTotal` let the surfaces say the cut happened.
  *   - it must not claim more than it measured. A state file exists until
  *     SessionEnd deletes it, so it means "this session never ended" — the
- *     trial found 104 of 127 sessions never closed and no reaper. Sessions
- *     silent for longer than STATUS_SESSION_IDLE_HOURS are counted as IDLE
- *     and reported as such; their counters stay in the totals (they really
- *     were captured) but nothing here calls them live.
+ *     trial found 104 of 127 sessions never closed and no reaper. How long
+ *     each one has been SILENT is measured once, off the newest of its
+ *     heartbeat, its start and its own file's mtime (`sessionSilentForMs`),
+ *     and read at two thresholds: `isStale` for the doctor gates,
+ *     `isIdle` for the 24 h line `status` prints. Their counters stay in the
+ *     totals (they really were captured) but nothing here calls them live.
  *
  * `statesUnparsed` counts files that were read and did not parse — before, a
  * corrupt state file was indistinguishable from an absent one.
@@ -33,32 +36,19 @@
  * strings and the developer's own local paths; the registered surfaces
  * (cli/doctor.ts, cli/status.ts) do the formatting.
  */
-import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
-
 import {
   DOCTOR_CAPTURE_SILENT_FIRES_WARN,
+  DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   HOURS_PER_DAY,
   MS_PER_DAY,
   STATUS_MAX_SESSION_STATES,
   STATUS_SESSION_IDLE_HOURS,
 } from "../constants.ts";
 import { readTextOrNull } from "../config/paths.ts";
+import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { SessionStateSchema } from "./session-state.ts";
-import type { SessionState } from "./session-state.ts";
 
-const idleWindowMs = (): number =>
-  (STATUS_SESSION_IDLE_HOURS / HOURS_PER_DAY) * MS_PER_DAY;
-
-/**
- * Silent since `idleBefore`: the last heartbeat, or — for a session that never
- * wrote one — its start. An unparseable stamp reads as idle, since the only
- * thing that could make it fresh is a clock we cannot read.
- */
-const isIdleSince = (state: SessionState, idleBefore: number): boolean => {
-  const stamp = Date.parse(state.lastHeartbeatAt ?? state.startedAt);
-  return Number.isNaN(stamp) || stamp < idleBefore;
-};
+const hoursToMs = (hours: number): number => (hours / HOURS_PER_DAY) * MS_PER_DAY;
 
 export interface SessionCaptureHealth {
   /** The host's session key (the state file name); surfaces show a prefix. */
@@ -68,8 +58,23 @@ export interface SessionCaptureHealth {
   readonly repoRoot: string;
   /** The last heartbeat this session wrote, or null when it never has. */
   readonly lastHeartbeatAt: string | null;
-  /** No fire, no heartbeat for STATUS_SESSION_IDLE_HOURS — never ended, not live. */
+  /**
+   * How long since this session did ANYTHING — heartbeat, start, or a write to
+   * its own state file (state/session-scan.ts). Null = nothing datable, which
+   * both booleans below read as dead.
+   */
+  readonly silentForMs: number | null;
+  /** Silent for STATUS_SESSION_IDLE_HOURS — never ended, and not live. */
   readonly isIdle: boolean;
+  /**
+   * Silent for DOCTOR_ZOMBIE_STATE_WARN_HOURS — the predicate every OTHER
+   * liveness gate in `doctor` uses (`unclosed sessions`, `last capture sync`,
+   * `hooks firing`, `statusline last rendered`). Both windows are measured off
+   * the same silence, so a session can never be stale on one line and running
+   * on the next; what differs is only how much silence each line is willing to
+   * call normal.
+   */
+  readonly isStale: boolean;
   /** Edit-tool PostToolUse fires, counted BEFORE any drop. */
   readonly editToolFires: number;
   /** Targets actually spooled (monotonic; seenTargets is FIFO-capped). */
@@ -128,9 +133,6 @@ const NO_HEALTH: CaptureHealth = {
   hintCandidatesSeen: 0,
 };
 
-const SESSIONS_DIR = "sessions";
-const STATE_FILE_SUFFIX = ".json";
-
 const newerIso = (a: string | null, b: string | null): string | null => {
   if (a === null) {
     return b;
@@ -139,15 +141,6 @@ const newerIso = (a: string | null, b: string | null): string | null => {
     return a;
   }
   return Date.parse(b) > Date.parse(a) ? b : a;
-};
-
-/** mtime, or 0 for a file that vanished between the readdir and the stat. */
-const modifiedAt = async (path: string): Promise<number> => {
-  try {
-    return (await stat(path)).mtimeMs;
-  } catch {
-    return 0;
-  }
 };
 
 /**
@@ -179,38 +172,38 @@ export const readCaptureHealth = async (
   repoId: string,
   now: Date = new Date(),
 ): Promise<CaptureHealth> => {
-  let names: readonly string[];
-  try {
-    names = await readdir(join(home, SESSIONS_DIR));
-  } catch {
-    return NO_HEALTH;
-  }
-  const stateNames = names.filter((name) => name.endsWith(STATE_FILE_SUFFIX));
-  const stamped = await Promise.all(
-    stateNames.map(async (name) => {
-      const path = join(home, SESSIONS_DIR, name);
-      return { path, modifiedAt: await modifiedAt(path) };
-    }),
+  // Newest first, THEN the cap — the shared listing (state/session-scan.ts),
+  // which also hands back the mtime each session's liveness is measured with.
+  const listing = await listSessionStateFiles(home, STATUS_MAX_SESSION_STATES);
+  const read = await Promise.all(
+    listing.files.map(async (file) => ({
+      file,
+      parsed: await readStateFile(file.path),
+    })),
   );
-  // Newest first, THEN the cap: the sessions a surface is asked about are the
-  // ones that wrote most recently, and a session that just fired a hook wrote
-  // its state file microseconds ago.
-  const window = [...stamped]
-    .sort((a, b) => b.modifiedAt - a.modifiedAt)
-    .slice(0, STATUS_MAX_SESSION_STATES);
-  const parsed = await Promise.all(
-    window.map((entry) => readStateFile(entry.path)),
-  );
-  const idleBefore = now.getTime() - idleWindowMs();
-  const sessions = parsed
-    .flatMap((entry) => (entry !== GONE && entry.success ? [entry.data] : []))
-    .filter((state) => state.hubUrl === hubUrl && state.repoId === repoId)
-    .map(
-      (state): SessionCaptureHealth => ({
+  const nowMs = now.getTime();
+  const idleWindowMs = hoursToMs(STATUS_SESSION_IDLE_HOURS);
+  const staleWindowMs = hoursToMs(DOCTOR_ZOMBIE_STATE_WARN_HOURS);
+  // ONE pass, keeping each state beside the file it came out of: the repo
+  // filter and the liveness measure must judge the SAME session, and building
+  // them as two arrays indexed by each other's positions is how they stopped
+  // doing that once (review finding B2-02).
+  const sessions = read
+    .flatMap((entry) =>
+      entry.parsed !== GONE && entry.parsed.success
+        ? [{ file: entry.file, state: entry.parsed.data }]
+        : [],
+    )
+    .filter(({ state }) => state.hubUrl === hubUrl && state.repoId === repoId)
+    .map(({ file, state }): SessionCaptureHealth => {
+      const silentForMs = sessionSilentForMs(state, file.mtimeMs, nowMs);
+      return {
         hostSessionKey: state.hostSessionKey,
         startedAt: state.startedAt,
         lastHeartbeatAt: state.lastHeartbeatAt,
-        isIdle: isIdleSince(state, idleBefore),
+        silentForMs,
+        isIdle: silentForMs === null || silentForMs > idleWindowMs,
+        isStale: silentForMs === null || silentForMs > staleWindowMs,
         repoRoot: state.repoRoot,
         editToolFires: state.editToolFires,
         targetsCapturedCount: state.targetsCapturedCount,
@@ -222,8 +215,8 @@ export const readCaptureHealth = async (
         outsideRootDrops: state.outsideRootDrops,
         hintCandidatesSeen: state.hintCandidatesSeen,
         hintsDelivered: state.deliveredHintRefs.length,
-      }),
-    )
+      };
+    })
     .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
   return sessions.reduce<CaptureHealth>(
     (total, session) => ({
@@ -239,10 +232,10 @@ export const readCaptureHealth = async (
     }),
     {
       ...NO_HEALTH,
-      statesTotal: stateNames.length,
-      statesRead: window.length,
-      statesUnparsed: parsed.filter(
-        (entry) => entry !== GONE && !entry.success,
+      statesTotal: listing.filesSeen,
+      statesRead: listing.files.length,
+      statesUnparsed: read.filter(
+        (entry) => entry.parsed !== GONE && !entry.parsed.success,
       ).length,
     },
   );
@@ -254,7 +247,7 @@ export const readCaptureHealth = async (
  * denylisted lockfile or a loose scratch file — noise; at it, the remainder
  * is exactly Ken's "0 targets" shape and the 371-edit worktree silence.
  *
- * IDLE SESSIONS ARE EXCLUDED (review finding B2-04). A state file is deleted
+ * SILENT SESSIONS ARE EXCLUDED (review finding B2-04). A state file is deleted
  * only at SessionEnd and the trial found 104 of 127 sessions never closed, so
  * a home is mostly corpses — and a corpse's counters describe a session
  * nobody is running: yesterday's dead session that captured nothing must not
@@ -262,11 +255,18 @@ export const readCaptureHealth = async (
  * updates this line") no one is ever going to trigger. It also makes the
  * predicate mean what DOCTOR_CAPTURE_SILENT_FIRES_WARN already says it means
  * — "a LIVE session's capture" — instead of only the fire/target half of it.
- * The liveness test is this module's own `isIdle`
- * (STATUS_SESSION_IDLE_HOURS), so "idle" and "silently dead" cannot
- * contradict each other on the same line.
+ *
+ * THE WINDOW IS `isStale`, NOT `isIdle`. Every other liveness gate in `doctor`
+ * asks about DOCTOR_ZOMBIE_STATE_WARN_HOURS, and gating this one on the 24 h
+ * idle window put two answers to "is anybody running anything here" in one
+ * report: a session three hours quiet drew `1 of 1 session state file stale
+ * >1h` from `unclosed sessions` and, four lines down, a capture WARN whose
+ * remedy is "the next edit updates this line" — an edit in the session the
+ * report had just called stale. `isIdle` stays at 24 h because `status`'s
+ * `N idle >24h` clause and the totals still mean that; it is the same measured
+ * silence, read at two thresholds, rather than two measures.
  */
 export const isCaptureSilentlyDead = (session: SessionCaptureHealth): boolean =>
-  !session.isIdle &&
+  !session.isStale &&
   session.editToolFires >= DOCTOR_CAPTURE_SILENT_FIRES_WARN &&
   session.targetsCapturedCount === 0;

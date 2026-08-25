@@ -25,6 +25,7 @@ import {
   DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   EXIT_FAIL,
   GIT_TIMEOUT_MS,
+  HEARTBEAT_MIN_INTERVAL_MS,
   HTTP_NOT_FOUND,
   EXIT_OK,
   EXIT_WARN,
@@ -111,8 +112,8 @@ import {
   readStatuslineRendered,
 } from "@crosscheck/connector-core/state/fired-markers.ts";
 import {
-  heartbeatAgeMs,
   listSessionStateFiles,
+  sessionSilentForMs,
 } from "@crosscheck/connector-core/state/session-scan.ts";
 import { SessionStateSchema } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
@@ -1575,10 +1576,40 @@ const boundedLocal = (value: string, max: number): string => {
  * state file survives until SessionEnd deletes it, and the trial found most
  * sessions never end (104 of 127).
  */
+/**
+ * ` (state written 12s ago)` when this session has been writing its state file
+ * WITHOUT heartbeating, and nothing when the two stamps agree.
+ *
+ * They diverge for one reason worth a clause: PostToolUse returns BEFORE its
+ * heartbeat whenever the touch resolved to a different connected repo (trial
+ * finding #9's first-wins rule), so a session whose every edit lands in a
+ * foreign checkout books fires and drops and never beats. Without this the
+ * WARN below reads as a report about a corpse — `heartbeat 30h ago` beside a
+ * remedy the reader has no reason to believe — when the session is running
+ * right now and its next edit really will update the line.
+ *
+ * The threshold is HEARTBEAT_MIN_INTERVAL_MS because that is exactly the
+ * claim: a state write more than one heartbeat interval newer than the
+ * heartbeat is a write that had the opportunity to beat and did not.
+ */
+const wroteSinceHeartbeat = (
+  session: SessionCaptureHealth,
+  now: Date,
+): string => {
+  const heardMs = Date.parse(session.lastHeartbeatAt ?? session.startedAt);
+  if (session.silentForMs === null || Number.isNaN(heardMs)) {
+    return "";
+  }
+  const heardAgeMs = now.getTime() - heardMs;
+  return heardAgeMs - session.silentForMs > HEARTBEAT_MIN_INTERVAL_MS
+    ? ` (state written ${formatAge(session.silentForMs)} ago)`
+    : "";
+};
+
 const captureSessionLine = (session: SessionCaptureHealth, now: Date): string => {
   const last = session.lastTargetAt === null ? "" : ` (last ${ageOf(session.lastTargetAt, now)})`;
   const heard = session.lastHeartbeatAt ?? session.startedAt;
-  const heartbeat = `${ageOf(heard, now)}${session.isIdle ? ", idle" : ""}`;
+  const heartbeat = `${ageOf(heard, now)}${wroteSinceHeartbeat(session, now)}${session.isIdle ? ", idle" : ""}`;
   const tool =
     session.lastPostToolUseTool === null
       ? "none yet"
@@ -1943,7 +1974,7 @@ const countStaleSessionStates = async (
       if (!parsed.success) {
         return false;
       }
-      const ageMs = heartbeatAgeMs(parsed.data, now.getTime());
+      const ageMs = sessionSilentForMs(parsed.data, file.mtimeMs, now.getTime());
       return ageMs !== null && ageMs > maxAgeMs;
     }),
   );
@@ -2075,7 +2106,7 @@ const SessionCountersSchema = z.looseObject({
   repoId: z.string().default(""),
   // Read for the LIVENESS half, which is why the defaults are the unreadable
   // values: a file that carries neither timestamp cannot be dated, and an
-  // undatable file is not evidence of a running session (heartbeatAgeMs).
+  // undatable file is not evidence of a running session (sessionSilentForMs).
   startedAt: z.string().default(""),
   lastHeartbeatAt: z.string().nullable().default(null),
   seenTargets: z.array(z.string()).default([]),
@@ -2117,7 +2148,7 @@ const EMPTY_LIVE_SESSIONS: LiveRepoSessions = {
  * (review finding B2-04/B2-L2).
  *
  * THE PREDICATE IS THE ONE THE REST OF THE FILE ALREADY USES —
- * `heartbeatAgeMs` inside DOCTOR_ZOMBIE_STATE_WARN_HOURS, the same one
+ * `sessionSilentForMs` inside DOCTOR_ZOMBIE_STATE_WARN_HOURS, the same one
  * `countStaleSessionStates` and the summarizer cost line read — so "stale" and
  * "live" can no longer contradict each other in the same run. And it is scoped
  * to this repo's hubUrl/repoId, because a teammate's session in another
@@ -2142,18 +2173,23 @@ const readLiveRepoSessions = async (
   const nowMs = now.getTime();
   const maxAgeMs = DOCTOR_ZOMBIE_STATE_WARN_HOURS * MS_PER_HOUR;
   const parsed = await Promise.all(
-    listing.files.map(async (file) =>
-      SessionCountersSchema.safeParse(await readJsonOrNull(file.path)),
-    ),
+    listing.files.map(async (file) => ({
+      mtimeMs: file.mtimeMs,
+      result: SessionCountersSchema.safeParse(await readJsonOrNull(file.path)),
+    })),
   );
   const sessions = parsed
-    .filter((entry) => entry.success)
-    .map((entry) => entry.data)
-    .filter((state) => state.hubUrl === hubUrl && state.repoId === repoId)
-    .filter((state) => {
-      const ageMs = heartbeatAgeMs(state, nowMs);
+    .flatMap((entry) =>
+      entry.result.success
+        ? [{ mtimeMs: entry.mtimeMs, state: entry.result.data }]
+        : [],
+    )
+    .filter(({ state }) => state.hubUrl === hubUrl && state.repoId === repoId)
+    .filter(({ mtimeMs, state }) => {
+      const ageMs = sessionSilentForMs(state, mtimeMs, nowMs);
       return ageMs !== null && ageMs <= maxAgeMs;
-    });
+    })
+    .map(({ state }) => state);
   const startedAges = sessions
     .map((state) => nowMs - Date.parse(state.startedAt))
     .filter((ageMs) => !Number.isNaN(ageMs));
@@ -2415,6 +2451,7 @@ export const runDoctor = async (
     config.home,
     config.hubUrl,
     identity.repoId,
+    now,
   );
   return summarize([
     configCheck,

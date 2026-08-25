@@ -37,13 +37,37 @@ import { rm, utimes } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runDoctor } from "../src/cli/doctor.ts";
-import { STATUS_SESSION_IDLE_HOURS } from "@crosscheck/connector-core/constants.ts";
+import {
+  DOCTOR_ZOMBIE_STATE_WARN_HOURS,
+  STATUS_SESSION_IDLE_HOURS,
+} from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
 /** Past STATUS_SESSION_IDLE_HOURS by a clear margin: a corpse, not a pause. */
 const DEAD_AGE_MS = (STATUS_SESSION_IDLE_HOURS + 6) * 60 * 60 * 1000;
+/**
+ * Inside the 24 h idle window, outside the 1 h one every other doctor gate
+ * reads — the band where one report used to call the same session stale on one
+ * line and running on the next.
+ */
+const QUIET_AGE_MS = (DOCTOR_ZOMBIE_STATE_WARN_HOURS + 2) * 60 * 60 * 1000;
+
+/**
+ * A state file's own mtime, which is half of how long its session has been
+ * SILENT: every writer of that file is one of the session's own hooks, so a
+ * file written a moment ago belongs to a session that is running whatever its
+ * heartbeat says. A corpse fixture therefore has to back-date BOTH.
+ */
+const setMtime = async (
+  home: string,
+  hostSessionKey: string,
+  whenMs: number,
+): Promise<void> => {
+  const when = new Date(whenMs);
+  await utimes(join(home, "sessions", `${hostSessionKey}.json`), when, when);
+};
 
 const paths: string[] = [];
 const servers: ReturnType<typeof Bun.serve>[] = [];
@@ -168,15 +192,6 @@ const runFixtureDoctor = (home: string, repo: string, hubUrl: string) =>
 describe("the capture check reads THIS repo's sessions, whatever the mtime order", () => {
   const OTHER_REPO = "github.com/acme/other";
 
-  const setMtime = async (
-    home: string,
-    hostSessionKey: string,
-    whenMs: number,
-  ): Promise<void> => {
-    const when = new Date(whenMs);
-    await utimes(join(home, "sessions", `${hostSessionKey}.json`), when, when);
-  };
-
   test("a corpse of THIS repo is not called a live capture failure", async () => {
     // Arrange: this repo's session died past the idle window carrying 7 fires
     // and no targets; the newest state file on the machine is a fresh session
@@ -197,7 +212,7 @@ describe("the capture check reads THIS repo's sessions, whatever the mtime order
       editToolFires: 3,
       targetsCapturedCount: 1,
     });
-    await setMtime(home, "dead-mine", Date.now() - 60_000);
+    await setMtime(home, "dead-mine", Date.now() - DEAD_AGE_MS);
     await setMtime(home, "live-other", Date.now());
 
     // Act
@@ -242,6 +257,65 @@ describe("the capture check reads THIS repo's sessions, whatever the mtime order
     expect(line).toContain("WARN  capture");
     expect(line).toContain("7 edit-tool fires → 0 targets");
     expect(line).toContain("edits fire but nothing is captured");
+  });
+
+  test("a foreign-repo drop keeps its WARN once the heartbeat ages out", async () => {
+    // Arrange: every edit of this session lands in ANOTHER connected checkout,
+    // so PostToolUse returns at the first-wins branch (#9) — booking the fire
+    // and the drop, and never reaching its heartbeat. A day in, the heartbeat
+    // is the only stamp that has aged: the state file was written by the hook
+    // that fired a second ago.
+    const { repo, home } = await fixture("doctor-capture-foreign");
+    const hubUrl = hubWith({
+      stats: { delivered: 0, pulled: 0, claims: 0, windowDays: 7 },
+    });
+    const staleIso = new Date(Date.now() - DEAD_AGE_MS).toISOString();
+    await seedSession(home, repo, hubUrl, "foreign-mine", {
+      startedAt: staleIso,
+      lastHeartbeatAt: staleIso,
+      editToolFires: 9,
+      targetsCapturedCount: 0,
+      foreignRepoDrops: 9,
+    });
+    await setMtime(home, "foreign-mine", Date.now());
+
+    // Act
+    const result = await runFixtureDoctor(home, repo, hubUrl);
+
+    // Assert: this printed `PASS capture … heartbeat 30h ago, idle` while
+    // `status` on the same machine sent the reader here. The clause naming the
+    // state write is what makes the remedy believable.
+    const line = lineWith(result.stdout, "  capture  ");
+    expect(line).toContain("WARN  capture");
+    expect(line).toContain("9 edit-tool fires → 0 targets");
+    expect(line).toContain("state written");
+    expect(line).not.toContain("idle");
+  });
+
+  test("a session quiet for hours is stale on every line, not just one", async () => {
+    // Arrange: 7 fires, 0 targets, and nothing said for three hours — inside
+    // the 24 h idle window and outside the 1 h one the rest of doctor reads.
+    const { repo, home } = await fixture("doctor-capture-band");
+    const hubUrl = hubWith({
+      stats: { delivered: 0, pulled: 0, claims: 0, windowDays: 7 },
+    });
+    const quietIso = new Date(Date.now() - QUIET_AGE_MS).toISOString();
+    await seedSession(home, repo, hubUrl, "band-mine", {
+      startedAt: quietIso,
+      lastHeartbeatAt: quietIso,
+      editToolFires: 7,
+      targetsCapturedCount: 0,
+    });
+    await setMtime(home, "band-mine", Date.now() - QUIET_AGE_MS);
+
+    // Act
+    const result = await runFixtureDoctor(home, repo, hubUrl);
+
+    // Assert: one report cannot call the same session stale and running. The
+    // capture WARN's remedy is "the next edit updates this line", and this
+    // reader has just been told nothing is running here to edit in.
+    expect(lineWith(result.stdout, "  capture  ")).toContain("PASS  capture");
+    expect(lineWith(result.stdout, "unclosed sessions")).toContain("stale >1h");
   });
 });
 
@@ -296,6 +370,7 @@ describe("the hints check says whether a hint can fire at all", () => {
       startedAt: deadIso,
       lastHeartbeatAt: deadIso,
     });
+    await setMtime(home, "hints-corpse", Date.now() - DEAD_AGE_MS);
 
     // Act
     const result = await runFixtureDoctor(home, repo, hubUrl);

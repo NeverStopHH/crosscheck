@@ -28,7 +28,7 @@ import {
   SESSION_STATE_SCAN_MAX_FILES,
 } from "../constants.ts";
 import { readJsonOrNull, sessionSlug } from "../config/paths.ts";
-import { heartbeatAgeMs, listSessionStateFiles } from "./session-scan.ts";
+import { listSessionStateFiles, sessionSilentForMs } from "./session-scan.ts";
 import { SessionStateSchema } from "./session-state.ts";
 
 export interface StateReapOptions {
@@ -77,7 +77,7 @@ export const reapStaleSessionStates = async (
     if (!parsed.success) {
       continue;
     }
-    const ageMs = heartbeatAgeMs(parsed.data, now.getTime());
+    const ageMs = sessionSilentForMs(parsed.data, file.mtimeMs, now.getTime());
     if (ageMs === null || ageMs <= maxAgeMs) {
       continue;
     }

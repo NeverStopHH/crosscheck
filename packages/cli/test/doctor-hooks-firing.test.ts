@@ -13,7 +13,7 @@
  * line so the wiring is pinned as well as the wording.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -70,13 +70,23 @@ const writeStateFile = async (
 };
 
 /** A session whose heartbeat stopped `ageMs` ago — a zombie, not a session. */
+/**
+ * A corpse: nothing said for `ageMs`, and — because silence is measured off
+ * the newest of the heartbeat, the start and the file's OWN mtime
+ * (state/session-scan.ts) — nothing WRITTEN for `ageMs` either. Every writer
+ * of a state file is one of that session's hooks, so a file written a moment
+ * ago belongs to a session that is running whatever its stamps claim; a
+ * fixture that back-dates only the stamps describes a session whose hooks
+ * stopped reaching the hub, which is a live defect rather than a corpse.
+ */
 const writeStaleSession = async (
   home: string,
   hostSessionKey: string,
   repo: string,
   ageMs: number,
 ): Promise<void> => {
-  const stamp = new Date(Date.now() - ageMs).toISOString();
+  const when = new Date(Date.now() - ageMs);
+  const stamp = when.toISOString();
   await writeSessionState(home, {
     ...deriveSessionState({
       hostSessionKey,
@@ -88,6 +98,7 @@ const writeStaleSession = async (
     }),
     lastHeartbeatAt: stamp,
   });
+  await utimes(join(home, "sessions", `${hostSessionKey}.json`), when, when);
 };
 
 /** A session that IS reporting: started `startedAgoMs` ago, heartbeating now. */

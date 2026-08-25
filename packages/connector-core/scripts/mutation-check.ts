@@ -1453,7 +1453,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // corpses satisfy all of them.
     label: "doctor counts a dead session state file as a live session",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "      const ageMs = heartbeatAgeMs(state, nowMs);" + "\n" + "      return ageMs !== null && ageMs <= maxAgeMs;",
+    from: "      const ageMs = sessionSilentForMs(state, mtimeMs, nowMs);" + "\n" + "      return ageMs !== null && ageMs <= maxAgeMs;",
     to: "      return true;",
     test: `${CLI}/test/doctor-hooks-firing.test.ts`,
     because:
@@ -1552,13 +1552,29 @@ export const MUTATIONS: readonly Mutation[] = [
     // about yesterday, every run, with a remedy nobody can trigger.
     label: "a corpse's counters raise the live-capture alarm again",
     file: `${CORE}/src/state/capture-health.ts`,
-    from: "  !session.isIdle &&\n  session.editToolFires >= DOCTOR_CAPTURE_SILENT_FIRES_WARN",
+    from: "  !session.isStale &&\n  session.editToolFires >= DOCTOR_CAPTURE_SILENT_FIRES_WARN",
     to: "  session.editToolFires >= DOCTOR_CAPTURE_SILENT_FIRES_WARN",
     test: `${CLI}/test/doctor-capture.test.ts`,
     because:
       "every home is mostly corpses (the trial found 104 of 127 sessions " +
       "never closed), so the check that exists to name a capture failing NOW " +
       "cries wolf about dead ones and stops being read",
+  },
+  {
+    // The mtime half of `sessionSilentForMs`. `lastHeartbeatAt` has exactly two
+    // writers in the tree, and PostToolUse returns BEFORE its heartbeat on the
+    // foreign-repo path (#9's first-wins rule), so a session whose every edit
+    // lands in another checkout books fires and drops forever without one.
+    // Measuring silence from the stamp alone makes that session read as a
+    // corpse a day in — the one shape the capture WARN exists to name.
+    label: "liveness ignores that the session just wrote its own state file",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "sessionSilentForMs(state, file.mtimeMs, nowMs)",
+    to: "sessionSilentForMs(state, null, nowMs)",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "24 hours in, doctor PASSes a session that is dropping every edit right " +
+      "now while status on the same machine tells the reader to run doctor",
   },
   {
     // Trial finding H6, the SMALLER half. The desktop app is one process on
@@ -1823,7 +1839,7 @@ interface Outcome {
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
- * PRINTS: doctor-capture.test.ts 2
+ * PRINTS: doctor-capture.test.ts 3
  * PRINTS: doctor-global.test.ts 1
  * PRINTS: doctor-hooks-firing.test.ts 1
  * PRINTS: doctor-last-sync.test.ts 1
