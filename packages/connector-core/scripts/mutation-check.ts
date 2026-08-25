@@ -1043,8 +1043,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // dev machine, and that noise is how doctors get ignored.
     label: "the agent-restart check convicts on name and age alone",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "      if (cwd !== null && (await isInsideRepo(repoRoot, cwd))) {",
-    to: "      if (cwd !== null) {",
+    // The cwd map replaced the per-pid probe with M6's batched lsof, so the
+    // gate now reads `cwds.get(pid)`; the defect it re-introduces is the same
+    // one — convicting on name and age without asking WHERE the agent runs.
+    from: "      if (cwd !== undefined && (await isInsideRepo(repoRoot, cwd))) {",
+    to: "      if (cwd !== undefined) {",
     test: `${CLI}/test/agent-restart.test.ts`,
     because:
       "an agent running in a DIFFERENT repo is flagged as predating this " +
@@ -1403,6 +1406,107 @@ export const MUTATIONS: readonly Mutation[] = [
       "reads PASS while every summarizer fire can run the buggy cleanup and " +
       "delete their older conversation history",
   },
+  {
+    // Trial finding H5, the tautology itself. `recordSync` stamps the CAPTURE
+    // record only for the four hook-path calls; making every request capture
+    // -marked restores exactly the shipped defect, where doctor's own probe
+    // wrote the fact doctor then read back three lines later.
+    label: "every hub read re-stamps the capture record (the last-sync tautology)",
+    file: `${CORE}/src/http/client.ts`,
+    from: "          ...(request.capture === true ? { lastCaptureOkAt: nowIso } : {}),",
+    to: "          lastCaptureOkAt: nowIso,",
+    test: `${CLI}/test/doctor-last-sync.test.ts`,
+    because:
+      "doctor prints PASS last capture sync 0s ago beside hooks that have " +
+      "not fired in hours — finding #14's shape, where the surface reports " +
+      "its own request back as the connector's health",
+  },
+  {
+    // Trial finding M2. Without the post-race marker write, nothing on the
+    // machine records that a hook ever ran, and every hook check in doctor
+    // falls back to reading configuration — which is what let eleven of its
+    // twenty-six lines PASS while the thing they name was dead.
+    label: "no hook records that it fired",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    if (resolved.value !== null) {",
+    to: "    if ((resolved.value as unknown) === undefined) {",
+    test: `${CONNECTOR}/test/hooks-fired-marker.test.ts`,
+    because:
+      "an agent that predates the wiring, a launcher lost to `nvm use` and a " +
+      "CROSSCHECK_DISABLED all read PASS again, because configuration is the " +
+      "only thing left to read",
+  },
+  {
+    // Trial finding M6. The reaper's whole safety AND its whole point live in
+    // this predicate; dropping the staleness half would close live sessions,
+    // so the mutation drops the OTHER half — the cutoff — which is the
+    // "104 of 127 sessions never ended" state restored.
+    label: "the hub reaper never finds a stale session",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "        lt(agentSessions.lastHeartbeatAt, cutoff),",
+    to: "        lt(agentSessions.lastHeartbeatAt, new Date(0)),",
+    test: `${SERVER}/test/session-reaper.test.ts`,
+    because:
+      "sessions that stopped heartbeating stay open forever — presence, every " +
+      "listing and /api/events all keep reporting work nobody is doing, which " +
+      "is the state the trial hub was in",
+  },
+  {
+    // Trial finding M1. The capture line's ONLY reachable alarm is the
+    // fires-without-targets case; downgrading it to PASS restores the silence
+    // in which a session whose every edit was discarded looked healthy.
+    label: "capture reports edits that became nothing as healthy",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  return facts.fires > 0 && facts.targets === 0" + "\n" + "    ? check(" + "\n" + '        "WARN",',
+    to: "  return facts.fires > 0 && facts.targets === 0" + "\n" + "    ? check(" + "\n" + '        "PASS",',
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "a session editing files in a different worktree captures nothing, and " +
+      "doctor prints 24 PASS lines with no sentence about the thing that " +
+      "stopped working",
+  },
+  {
+    // Trial finding H6. The candidate list is sorted newest-started-first
+    // BEFORE the cap, because ps order is arbitrary: without the sort, a
+    // truncation drops candidates at random and an offender behind a screenful
+    // of desktop-app helpers is never looked at.
+    // The exclusion that stops a MacBook's desktop-app helpers being counted
+    // as coding agents. With the old cap of 8 they consumed the whole budget;
+    // with the batched lsof they no longer hide an offender, but they still
+    // make the "N agents checked" number a fiction, which is what the guard
+    // asserts.
+    label: "agent-restart counts desktop-app helpers as coding agents",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      (candidate) => !APP_BUNDLE_PATTERN.test(candidate.command),",
+    to: "      () => true,",
+    test: `${CLI}/test/agent-restart.test.ts`,
+    because:
+      "twelve or more Claude.app helpers basename to `claude` on the author's " +
+      "Mac, so the line reports two dozen agents examined where one was — and " +
+      "under the old cap of eight they hid a real offender entirely",
+  },
+  {
+    label: "agent-restart truncates its candidates in arbitrary ps order",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      .sort((left, right) => right.startedAtMs - left.startedAtMs)" + "\n" + "      .slice(0, DOCTOR_AGENT_MAX_CWD_PROBES);",
+    to: "      .slice(0, 8);",
+    test: `${CLI}/test/agent-restart.test.ts`,
+    because:
+      "a real agent at ps position 25, behind two dozen Claude.app helpers, " +
+      "reads PASS no running agent predates the hooks — measured on the " +
+      "author's Mac, where 23 processes basename to `claude`",
+  },
+  {
+    label: "the summarizer cost line reads an arbitrary half of the sessions",
+    file: `${CORE}/src/state/session-scan.ts`,
+    from: "    .sort((left, right) => right.mtimeMs - left.mtimeMs)",
+    to: "    .sort((left, right) => left.name.localeCompare(right.name))",
+    test: `${CLI}/test/summarizer-cost.test.ts`,
+    because:
+      "the cost and the silently-dead WARN are computed from whichever files " +
+      "the slice happened to land on, so the same machine reports different " +
+      "spend depending on filesystem order",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -1445,7 +1549,7 @@ interface Outcome {
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
- * PRINTS: agent-restart.test.ts 1
+ * PRINTS: agent-restart.test.ts 3
  * PRINTS: briefing-parity.test.ts 2
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
@@ -1453,7 +1557,9 @@ interface Outcome {
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
+ * PRINTS: doctor-capture.test.ts 1
  * PRINTS: doctor-global.test.ts 1
+ * PRINTS: doctor-last-sync.test.ts 1
  * PRINTS: doctor-latency.test.ts 1
  * PRINTS: doctor-summarizer-runner.test.ts 1
  * PRINTS: doctor.test.ts 1
@@ -1468,6 +1574,7 @@ interface Outcome {
  * PRINTS: hints.test.ts 2
  * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
+ * PRINTS: hooks-fired-marker.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: injection.test.ts 2
  * PRINTS: injector.test.ts 4
@@ -1482,6 +1589,7 @@ interface Outcome {
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search.test.ts 3
+ * PRINTS: session-reaper.test.ts 1
  * PRINTS: sessions.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
@@ -1490,7 +1598,7 @@ interface Outcome {
  * PRINTS: stop-latency.test.ts 1
  * PRINTS: summarizer-argv.test.ts 1
  * PRINTS: summarizer-child-guard.test.ts 1
- * PRINTS: summarizer-cost.test.ts 1
+ * PRINTS: summarizer-cost.test.ts 2
  * PRINTS: summarizer-worker-env.test.ts 1
  * PRINTS: transparency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1

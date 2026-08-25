@@ -290,6 +290,33 @@ describe("the H6 blind spots", () => {
     expect(check.detail).toContain("1 agent checked, 24 skipped");
   });
 
+  test("the newest-started candidate survives the cap, whatever ps order says", async () => {
+    // Arrange: ten real agents, all older than the settings file, none of them
+    // a desktop-app helper — so the exclusion cannot be what saves this. The
+    // one in THIS repo started most recently and is LAST in ps output, which
+    // is exactly where an unsorted cap of eight would drop it.
+    const { repo, settingsPath } = await fixture(60);
+    const elsewhere = await makeHome("agent-restart-crowd");
+    paths.push(elsewhere);
+    const cwdByPid: Record<number, string> = { 4242: repo };
+    const lines: string[] = [];
+    for (let index = 0; index < 10; index += 1) {
+      const pid = 2000 + index;
+      cwdByPid[pid] = elsewhere;
+      lines.push(`  ${String(pid)} 09:${String(index).padStart(2, "0")}:00 /usr/local/bin/claude`);
+    }
+    // Five minutes: after every decoy above, still before the settings write.
+    lines.push("  4242 05:00 /usr/local/bin/claude", "");
+    const probe = probeOf(lines.join("\n"), cwdByPid);
+
+    // Act
+    const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
+
+    // Assert
+    expect(check.level).toBe("WARN");
+    expect(check.detail).toContain("4242");
+  });
+
   test("a clean PASS still says how much was examined", async () => {
     // Arrange
     const { repo, settingsPath } = await fixture(60);
