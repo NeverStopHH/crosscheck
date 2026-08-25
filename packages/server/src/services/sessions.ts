@@ -306,8 +306,9 @@ export const reapStaleSessions = async (
     .update(agentSessions)
     // `reapedAt` beside `endedAt` is what makes this verdict revocable: an
     // end the hub INFERRED from silence, which a record from that session can
-    // disprove (services/records.ts reviveIfReaped). A connector's own
-    // SessionEnd leaves it null and stays final.
+    // disprove — services/records.ts checkProducerSession calls
+    // `reviveReapedSession` below when one arrives. A connector's own
+    // SessionEnd leaves `reapedAt` null and stays final.
     .set({ endedAt: now, status: DEFAULT_END_STATUS, reapedAt: now })
     .where(
       and(
