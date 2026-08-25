@@ -30,6 +30,7 @@ import {
   DOCTOR_QUESTION_OPEN_WARN_DAYS,
   MAX_BRIEFING_QUESTION_CHARS,
   MS_PER_DAY,
+  QUESTION_EXPIRY_REPORT_DAYS,
 } from "../constants.ts";
 import type { InboxQuestion, QuestionCounts } from "../http/hub.ts";
 import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
@@ -165,10 +166,16 @@ export const formatQuestionCounts = (
     counts.asked === 0
       ? "none asked"
       : `${String(counts.asked)} asked (${String(counts.askedAnswered)} answered)`;
+  // The WINDOW is named, not implied: the hub reports an expired question for
+  // one further TTL and then stops, and a bare "1 of yours expired" leaves the
+  // reader to guess whether that means ever or lately.
   const expired =
     counts.askedExpired === 0
       ? []
-      : [`${String(counts.askedExpired)} of yours expired unanswered`];
+      : [
+          `${String(counts.askedExpired)} of yours expired unanswered in the last ` +
+            `${String(QUESTION_EXPIRY_REPORT_DAYS)} days`,
+        ];
   return [toMe, asked, ...expired].join(" · ");
 };
 
@@ -186,18 +193,33 @@ export const questionWarning = (
     counts.oldestToMeAt === null ? null : ageMsFrom(counts.oldestToMeAt, now);
   const oldestDays =
     oldestMs === null ? 0 : Math.floor(oldestMs / MS_PER_DAY);
+  // THE PERSON, not "a teammate": this is the sentence somebody reads at 23:00
+  // before shutting the laptop, and with four teammates the nameless version
+  // has no next action cheaper than starting an agent session. BARE untrusted
+  // like every other teammate name on a rendered line; a name that does not
+  // survive the sanitizer falls back to the wording that names nobody, because
+  // a warning with a mangled name is worse than a warning with none.
+  const asker =
+    counts.oldestToMeFrom === null || counts.oldestToMeFrom === undefined
+      ? ""
+      : bareUntrusted(counts.oldestToMeFrom);
+  const who = asker.length === 0 ? "a teammate has" : `${asker} has`;
   const stale =
     counts.openToMe > 0 && oldestDays >= DOCTOR_QUESTION_OPEN_WARN_DAYS
       ? [
-          `a teammate has been waiting ${String(oldestDays)}d for an answer from you ` +
-            "(list_open_questions shows what, answer_question replies)",
+          `${who} been waiting ${String(oldestDays)}d for an answer — ` +
+            "list_open_questions shows the question and its id, " +
+            "answer_question <id> sends the reply",
         ]
       : [];
+  // NO RESTATEMENT. `formatQuestionCounts` has already said how many expired,
+  // and the composed line is `<counts> — <warning>`: repeating the count here
+  // made one fact read as two problems. What this half adds is the only
+  // recovery there is, which the old sentence never named.
   const expired =
     counts.askedExpired > 0
       ? [
-          `${String(counts.askedExpired)} question${counts.askedExpired === 1 ? "" : "s"} ` +
-            "you asked expired unanswered — nobody was told, and nothing retries",
+          "nobody was told and nothing retries — ask again if you still need the answer",
         ]
       : [];
   const reasons = [...stale, ...expired];

@@ -503,6 +503,20 @@ export const MAX_BRIEFING_QUESTION_CHARS = 700;
  */
 export const DOCTOR_QUESTION_OPEN_WARN_DAYS = 7;
 
+/**
+ * How long the hub keeps REPORTING a question of yours that expired
+ * unanswered. Equal to the TTL: reported for one further fortnight, then
+ * silent — nothing can clear an expired row (`withdrawn` is unreachable and
+ * `questions` has no reaper), so an unwindowed count would make `doctor` WARN
+ * and exit 1 for the rest of an install's life over one question nobody
+ * answered last spring. Named here only so the sentence can say the window
+ * out loud rather than reporting a number whose scope the reader must guess.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.QUESTION_EXPIRY_REPORT_DAYS === s.QUESTION_TTL_DAYS)'
+ * PRINTS: true
+ */
+export const QUESTION_EXPIRY_REPORT_DAYS = 14;
+
 export const MAX_SOLVED_POINTERS = 2;
 /**
  * FIFO cap on the remembered briefing pointers (state/session-state.ts).

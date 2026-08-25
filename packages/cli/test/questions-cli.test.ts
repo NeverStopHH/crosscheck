@@ -208,11 +208,13 @@ describe("crosscheck doctor", () => {
     await backdate(fresh, 8);
     const after = await runFor(readerKey, ["doctor"]);
 
-    // Assert
+    // Assert: the person, the age and the next action — all three, because a
+    // reader with four teammates cannot act on "a teammate has been waiting".
     const warned = questionLineOf(after.stdout);
     expect(warned).toContain("WARN");
-    expect(warned).toContain("waiting");
+    expect(warned).toContain("Nick has been waiting 8d for an answer");
     expect(warned).toContain("list_open_questions");
+    expect(warned).toContain("answer_question <id>");
   });
 
   test("WARNS the ASKER about their own questions that expired unanswered", async () => {
@@ -230,8 +232,15 @@ describe("crosscheck doctor", () => {
 
     // Assert: the asker is told nobody was told — nothing retries, and
     // silence here is the one failure this channel is built to make visible.
+    // ONCE, and with the recovery on the end: the counts half states the fact,
+    // so a warning half that restates it word for word makes a tired reader
+    // re-read the line to check they have not misparsed two problems.
     const line = questionLineOf(result.stdout);
     expect(line).toContain("WARN");
-    expect(line).toContain("expired unanswered");
+    expect(line).toContain("1 of yours expired unanswered in the last 14 days");
+    expect(line).toContain(
+      "nobody was told and nothing retries — ask again if you still need the answer",
+    );
+    expect(line.split("expired unanswered").length - 1).toBe(1);
   });
 });
