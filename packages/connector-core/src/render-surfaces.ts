@@ -28,6 +28,7 @@ import {
   renderDiagnosis,
   renderSearchFilterRefusal,
   renderSearchResults,
+  renderUnappliedFilters,
   renderUnusableQuery,
 } from "./mcp/render.ts";
 import { renderRefereeBrief } from "./mcp/render-referee.ts";
@@ -360,6 +361,36 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     kind: "corpus",
+    name: "search-results-empty-filtered",
+    module: "src/mcp/render.ts",
+    framing: "framed",
+    // The EMPTY branch of the same renderer, which the entry above cannot
+    // reach: it always passes one hit, so `noMatchLine` — the one place a
+    // teammate's display name is printed bare INSIDE a sentence rather than
+    // after a field label — and the `(you)` fragment were never attacked by
+    // the corpus. Both go through `bare()` today; this is what keeps that
+    // true when somebody later edits the sentence around them.
+    render: (payload) =>
+      renderSearchResults([], payload, {
+        filters: {
+          developerName: payload,
+          isSelf: true,
+          sinceAgeMs: 14 * 24 * 3_600_000,
+        },
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "search-unapplied-filters",
+    module: "src/mcp/render.ts",
+    framing: "framed",
+    // A hub too old to apply the filters: the caller's own query is the only
+    // untrusted text on the surface, and the filter names beside it are this
+    // renderer's own literals.
+    render: (payload) => renderUnappliedFilters(payload, ["developer", "since"]),
+  },
+  {
+    kind: "corpus",
     name: "unusable-query",
     module: "src/mcp/render.ts",
     framing: "framed",
@@ -463,6 +494,6 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     kind: "composite",
     name: "mcp-tool-search-related-work",
     module: "src/mcp/tools/search-related-work.ts",
-    note: "renders through renderSearchResults/renderUnusableQuery (registered above)",
+    note: "renders through renderSearchResults/renderUnusableQuery/renderUnappliedFilters (registered above)",
   },
 ];

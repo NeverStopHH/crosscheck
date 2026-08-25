@@ -44,6 +44,7 @@ import type { McpContext } from "../context.ts";
 import {
   renderSearchFilterRefusal,
   renderSearchResults,
+  renderUnappliedFilters,
   renderUnusableQuery,
 } from "../render.ts";
 import type { SearchFilterView, SearchHit } from "../render.ts";
@@ -179,6 +180,34 @@ const filterView = (
   };
 };
 
+/**
+ * The filters this call SENT that the hub did not report back.
+ *
+ * `filterView` above turns an absent block into "no filters were asked for",
+ * which is right for the RENDERER and wrong as an answer, because this client
+ * knows better: it put `developer=` and `since=` on the query string itself. A
+ * hub that predates R1 never reads those params and its response carries no
+ * `filters` block at all, so the two facts only meet here — and if they are not
+ * compared, unfiltered rows are rendered as the answer to the filtered
+ * question. Compared per FILTER rather than per response: a hub could grow one
+ * of them before the other, and the sentence should then name only the one that
+ * went missing.
+ */
+const unappliedFilters = (
+  asked: {
+    readonly developer?: string | undefined;
+    readonly since?: string | undefined;
+  },
+  applied: SearchFilters | null,
+): readonly string[] => [
+  ...(asked.developer !== undefined && (applied?.developer ?? null) === null
+    ? ["developer"]
+    : []),
+  ...(asked.since !== undefined && (applied?.since ?? null) === null
+    ? ["since"]
+    : []),
+];
+
 /** Lowercased words of the query, punctuation and grammar-length words dropped. */
 const tokenize = (query: string): readonly string[] =>
   query
@@ -233,6 +262,14 @@ export const run = async (
     return isFilterRefusal(searched)
       ? toolFailure(renderSearchFilterRefusal(query, searched.message))
       : hubFailure(ctx, searched);
+  }
+
+  // A hub that ignored a filter answered a WIDER question than the one asked,
+  // and said nothing about it. Checked before anything is rendered: there is
+  // no honest way to show these rows under the caller's own question.
+  const unapplied = unappliedFilters(parsed.value, searched.data.filters);
+  if (unapplied.length > 0) {
+    return toolFailure(renderUnappliedFilters(query, unapplied));
   }
 
   const nowMs = ctx.now().getTime();

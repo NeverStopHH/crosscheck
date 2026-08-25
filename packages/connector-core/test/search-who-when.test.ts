@@ -48,6 +48,26 @@ let bob: Developer;
 /** Alice's second context, 60 days old — the row a `since` window drops. */
 const ALICE_OLD_CONTEXT = "wc_alice_old";
 
+/**
+ * A hub from BEFORE the filters, in front of the real one.
+ *
+ * It is the rollout order this repo already documents ("one hub serves
+ * connectors of several versions at once", server services/refusal.ts): a
+ * connector updates on one machine while the shared hub is still last week's
+ * build. Such a hub does not read `developer=` or `since=` off the query string
+ * and its response carries no `filters` block — so it answers the filtered
+ * question with EVERYONE'S work over ALL of history, and every field the
+ * connector can check says the call succeeded.
+ *
+ * Both halves are simulated rather than asserted about, because both are what
+ * an older hub really does: the params are stripped on the way in (its schema
+ * never had them) and `filters` is deleted on the way out (its response never
+ * had it).
+ */
+let oldHub: ReturnType<typeof Bun.serve>;
+/** Bob's connector, pointed at the old hub — same account, same repo. */
+let bobOnOldHub: Developer;
+
 const createDeveloper = async (
   name: string,
   email: string,
@@ -153,6 +173,43 @@ const setUpDeveloper = async (
   };
 };
 
+/**
+ * The same developer, same repo, same session — talking to a different hub.
+ *
+ * A second CROSSCHECK_HOME rather than an edit to the first, so the two hubs
+ * are asked the same question by two independent connectors and neither test
+ * can disturb the other's state.
+ */
+const pointAt = async (
+  developer: Developer,
+  label: string,
+  url: string,
+): Promise<Developer> => {
+  const home = await makeHome(label);
+  cleanups.push(home);
+  const startedAt = new Date().toISOString();
+  await writeSessionState(home, {
+    hostSessionKey: `${label}-uuid`,
+    crosscheckSessionId: developer.sessionId,
+    workContextId: developer.workContextId,
+    repoId: REPO_ID,
+    repoRoot: developer.repo,
+    hubUrl: url,
+    developerId: developer.developerId,
+    startedAt,
+    lastHeartbeatAt: startedAt,
+    seenTargets: [],
+  });
+  return {
+    ...developer,
+    env: {
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: url,
+      CROSSCHECK_API_KEY: developer.apiKey,
+    },
+  };
+};
+
 interface Called {
   readonly text: string;
   readonly isError: boolean;
@@ -202,9 +259,38 @@ beforeAll(async () => {
     "Login retries hammered the staging gateway",
     new Date(Date.now() - 60 * DAY_MS).toISOString(),
   );
+
+  oldHub = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      const incoming = new URL(request.url);
+      // The half an older hub's SearchQuerySchema does not have.
+      incoming.searchParams.delete("developer");
+      incoming.searchParams.delete("since");
+      const forwarded = await fetch(
+        `${hubUrl}${incoming.pathname}${incoming.search}`,
+        { method: request.method, headers: request.headers },
+      );
+      const body = (await forwarded.json()) as {
+        data?: Record<string, unknown>;
+      };
+      // The half an older hub's response does not have.
+      delete body.data?.["filters"];
+      return new Response(JSON.stringify(body), {
+        status: forwarded.status,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  });
+  bobOnOldHub = await pointAt(
+    bob,
+    "who-bob-old",
+    `http://127.0.0.1:${String(oldHub.port)}`,
+  );
 });
 
 afterAll(async () => {
+  oldHub.stop(true);
   server.stop(true);
   await Promise.all(
     cleanups.map((path) => rm(path, { recursive: true, force: true })),
@@ -303,5 +389,71 @@ describe("search_related_work with a since window", () => {
     expect(result.text).toContain("14d");
     expect(result.text).toContain("a filter did not resolve to what it names");
     expect(result.text).not.toContain("refused the request");
+  });
+});
+
+/**
+ * THE FILTERS ARE THE QUESTION, so a hub that ignored them did not answer it.
+ *
+ * Every other "an older hub omits this field" case in http/hub.ts costs a
+ * DETAIL — a tier label, a solved marker, an intent — and the answer around it
+ * stays true. This one is different in kind: the omitted field is the only
+ * evidence that the question the caller asked was ever applied, and the rows
+ * beside it are a true answer to a DIFFERENT question. Rendered as an ordinary
+ * success they are read as "here is Bob's work from the last two weeks" while
+ * being everybody's work over all of history — the confident-wrong answer this
+ * whole feature was built to make impossible, arriving through the success path
+ * rather than the refusal path.
+ */
+describe("search_related_work against a hub that predates the filters", () => {
+  test("refuses rather than pass off unfiltered rows as a filtered answer", async () => {
+    // Arrange: the same call that works against the current hub.
+    // Act
+    const result = await search(bobOnOldHub, {
+      query: "login",
+      developer: "Alice",
+      since: "14d",
+    });
+
+    // Assert: no answer at all, and the reason names both filters and the fix.
+    // Alice's 60-day-old context is the row that proves the point — an
+    // unfiltered answer contains it, and this must not be one.
+    expect(result.isError).toBe(true);
+    expect(result.text).not.toContain(ALICE_OLD_CONTEXT);
+    expect(result.text).not.toContain(alice.workContextId);
+    expect(result.text).toContain("developer and since filters");
+    expect(result.text.toLowerCase()).toContain("nothing was searched");
+  });
+
+  test("still answers a question that asked for no filter at all", async () => {
+    // Arrange: the missing block only matters when something was ASKED for.
+    // Refusing every search against an older hub would be a different bug.
+    // Act
+    const result = await search(bobOnOldHub, { query: "login" });
+
+    // Assert
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain(alice.workContextId);
+    expect(result.text).not.toContain("Filters:");
+  });
+
+  test("refuses on the developer alone, and on the window alone", async () => {
+    // Act
+    const person = await search(bobOnOldHub, {
+      query: "login",
+      developer: "Alice",
+    });
+    const window = await search(bobOnOldHub, { query: "login", since: "14d" });
+
+    // Assert: each names the filter that went unapplied and not the other, so
+    // the sentence cannot be read as a blanket complaint about the hub. The
+    // header says "other developers" on every surface, so the assertions are
+    // on the FILTER phrase rather than on the bare word.
+    expect(person.isError).toBe(true);
+    expect(person.text).toContain("the developer filter this call sent");
+    expect(person.text).not.toContain("since filter");
+    expect(window.isError).toBe(true);
+    expect(window.text).toContain("the since filter this call sent");
+    expect(window.text).not.toContain("developer filter");
   });
 });

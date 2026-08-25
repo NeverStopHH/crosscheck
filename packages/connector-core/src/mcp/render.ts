@@ -726,6 +726,54 @@ export const renderSearchFilterRefusal = (
   ].join("\n");
 
 /**
+ * What each unapplied filter COSTS the answer, said in the answer's own terms.
+ *
+ * Naming the argument is not enough on its own: "the developer filter did not
+ * run" leaves the reader to work out what the rows beside it therefore are, and
+ * a reader who does not work that out is the whole failure mode here.
+ */
+const UNAPPLIED_FILTER_COST: Readonly<Record<string, string>> = {
+  developer: "the rows it sent are everyone's work, not one teammate's",
+  since: "the rows it sent reach back over all of history, not just the window",
+};
+
+/**
+ * A search whose FILTERS the hub never applied (roadmap R1).
+ *
+ * THIS IS THE ONE OMISSION THAT CHANGES THE QUESTION. Every other "an older hub
+ * sends no such field" case in http/hub.ts costs a DETAIL — a tier label, a
+ * solved marker, an intent — and the answer around it stays true. Here the
+ * omitted field is the only evidence that the caller's question was ever asked,
+ * and the rows beside it are a true answer to a DIFFERENT one: everybody's work
+ * over all of history. Rendered as an ordinary success they read as "here is
+ * Ken's work from the last two weeks", which is the misattribution the `(you)`
+ * label two screens up exists to prevent in its smaller form.
+ *
+ * So it is a refusal, on the grounds the two surfaces above it share: a question
+ * that was never asked must not come back looking answered. It is NOT framed as
+ * "the hub said" — no hub said anything, this client noticed the silence.
+ */
+export const renderUnappliedFilters = (
+  query: string,
+  unapplied: readonly string[],
+): string => {
+  const plural = unapplied.length === 1 ? "" : "s";
+  const costs = unapplied
+    .map((name) => UNAPPLIED_FILTER_COST[name])
+    .filter((cost): cost is string => cost !== undefined)
+    .join(", and ");
+  return [
+    searchHeader(),
+    queryLine(quoted(query)),
+    "Nothing was searched: this hub did not report applying the " +
+      `${unapplied.join(" and ")} filter${plural} this call sent, so ${costs}. ` +
+      "A hub older than a filter drops it without saying so, which is why this " +
+      `is a refusal rather than a list. Ask again without that filter${plural}, ` +
+      "or ask whoever runs the hub to update it.",
+  ].join("\n");
+};
+
+/**
  * Hub search results, in the hub's fused ranking order.
  */
 export const renderSearchResults = (
