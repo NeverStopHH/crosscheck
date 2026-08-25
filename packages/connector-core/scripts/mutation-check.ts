@@ -1584,6 +1584,53 @@ export const MUTATIONS: readonly Mutation[] = [
       "a typo in a teammate's name is answered with a silence that reads as " +
       "a fact about that teammate's work",
   },
+  {
+    // The reader-facing half of the same rule. Unfiltered, "nothing matched"
+    // is about WORDS; filtered, it is about words AND a person AND a window,
+    // and a reader who forgets the second half concludes the teammate has
+    // done nothing.
+    label: "a filtered empty result reads as a fact about the teammate",
+    file: `${CORE}/src/mcp/render.ts`,
+    from:
+      "  return from.length === 0 && window.length === 0\n    ? sentence\n" +
+      "    : `${sentence} Those filters are part of that answer: other words, a longer ` +\n" +
+      '        "window or another teammate may well match.";',
+    to: "  return sentence;",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "`developer: Ken` with no hits renders the same sentence an unfiltered " +
+      "search does, and the filters vanish from the answer they shaped",
+  },
+  {
+    // Search deliberately does NOT exclude the caller, so `developer: me` is
+    // a legitimate call — and without the label its results are
+    // indistinguishable from a teammate's.
+    label: "the filter line stops saying the developer is the reader",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  return filters.isSelf === true ? `${name} (you)` : name;",
+    to: "  return name;",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a reader's own work comes back labelled exactly like a teammate's, " +
+      "which is a misattribution nothing in the answer lets them notice",
+  },
+  {
+    // A filter that did not resolve is not a broken hub. Rendered as one, the
+    // candidate names and the window forms are still in the text — but so is
+    // "the hub refused the request", and the model retries instead of asking
+    // again with a name that exists.
+    label: "a filter refusal is rendered as an ordinary hub failure",
+    file: `${CORE}/src/mcp/tools/search-related-work.ts`,
+    from:
+      "    return isFilterRefusal(searched)\n" +
+      "      ? toolFailure(renderSearchFilterRefusal(query, searched.message))\n" +
+      "      : hubFailure(ctx, searched);",
+    to: "    return hubFailure(ctx, searched);",
+    test: `${CORE}/test/search-who-when.test.ts`,
+    because:
+      "a misspelt teammate name is reported as an HTTP fault rather than as " +
+      "a question that was never asked",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -1657,7 +1704,7 @@ interface Outcome {
  * PRINTS: latency.test.ts 3
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
- * PRINTS: mcp-render.test.ts 1
+ * PRINTS: mcp-render.test.ts 3
  * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
@@ -1668,6 +1715,7 @@ interface Outcome {
  * PRINTS: render-surface-registry.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search-filters.test.ts 4
+ * PRINTS: search-who-when.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: session.test.ts 1
  * PRINTS: sessions.test.ts 1

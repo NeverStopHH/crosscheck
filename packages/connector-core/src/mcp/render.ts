@@ -27,6 +27,7 @@ import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
 import {
   MAX_DIAGNOSIS_CHARS,
+  MAX_HUB_MESSAGE_CHARS,
   MAX_SEARCH_CHARS,
   MAX_TITLE_CHARS,
   MAX_WORK_CONTEXT_TITLE_CHARS,
@@ -582,15 +583,93 @@ const SEARCH_METHOD_SEMANTIC =
   "titles, statuses and claim summaries, plus a semantic similarity tier, this repo only, " +
   "recent work ranked higher.";
 
+/**
+ * WHICH FILTERS RAN, as the hub reported them (roadmap R1) — never as this
+ * client hopes, the same rule `semanticTier` follows one field above.
+ *
+ * `sinceAgeMs` is a DURATION, not the instant: the hub sends the resolved
+ * timestamp and the tool subtracts its own clock, so the window prints in the
+ * vocabulary the rest of the answer already uses — `14d` beside "3d ago" on
+ * the hits, and `14d` is also exactly what the caller types into `since`.
+ */
+export interface SearchFilterView {
+  readonly developerName?: string | undefined;
+  /** The filter names the READER — see the fragment below for why it shows. */
+  readonly isSelf?: boolean | undefined;
+  readonly sinceAgeMs?: number | undefined;
+}
+
 export interface SearchRenderOptions {
   /** The hub reported its vector tier ran for this search. */
   readonly semanticTier?: boolean;
+  readonly filters?: SearchFilterView | undefined;
 }
 
 const searchMethodLine = (options: SearchRenderOptions): string =>
   options.semanticTier === true
     ? SEARCH_METHOD_SEMANTIC
     : SEARCH_METHOD_LEXICAL;
+
+/**
+ * The developer a filter narrowed to, BARE — a display name, like every other
+ * author name on this surface, never a frame of its own.
+ *
+ * "(you)" is renderer-owned and load-bearing. Search does not exclude the
+ * caller (hiding your own tree would make `get_diagnosis` on it unreachable),
+ * so `developer: <myself>` is a legitimate call — and its results would
+ * otherwise be indistinguishable from a teammate's, which is a misattribution
+ * the reader has no way to notice.
+ */
+const developerFragment = (filters: SearchFilterView): string | null => {
+  const name =
+    filters.developerName === undefined ? "" : bare(filters.developerName);
+  if (name.length === 0) {
+    return null;
+  }
+  return filters.isSelf === true ? `${name} (you)` : name;
+};
+
+const windowFragment = (filters: SearchFilterView): string | null =>
+  filters.sinceAgeMs === undefined
+    ? null
+    : `active in the last ${formatAge(filters.sinceAgeMs)}`;
+
+const filtersLine = (options: SearchRenderOptions): readonly string[] => {
+  const filters = options.filters;
+  if (filters === undefined) {
+    return [];
+  }
+  const parts = [developerFragment(filters), windowFragment(filters)].filter(
+    (part): part is string => part !== null,
+  );
+  return parts.length === 0 ? [] : [`Filters: ${parts.join(" · ")}`];
+};
+
+/**
+ * "Nothing matched" is a different sentence once a filter is in play, and the
+ * difference is the whole reason R1 needed care.
+ *
+ * Unfiltered, an empty result says these WORDS matched nothing. Filtered, it
+ * says these words matched nothing FROM THIS PERSON IN THIS WINDOW — and a
+ * reader who forgets the second half concludes "Ken has done nothing" and goes
+ * off to redo Ken's work. So the filters are repeated in the sentence and the
+ * sentence says out loud that they are part of the answer.
+ */
+const noMatchLine = (options: SearchRenderOptions): string => {
+  const filters = options.filters;
+  const name =
+    filters?.developerName === undefined ? "" : bare(filters.developerName);
+  const from = name.length === 0 ? "" : ` from ${name}`;
+  const window =
+    filters?.sinceAgeMs === undefined
+      ? ""
+      : ` in the last ${formatAge(filters.sinceAgeMs)}`;
+  const sentence = `No work context on this repo matched that query${from}${window}.`;
+  return from.length === 0 && window.length === 0
+    ? sentence
+    : `${sentence} Those filters are part of that answer: other words, a longer ` +
+        "window or another teammate may well match.";
+};
 
 /**
  * A query that could not be searched for at all, as distinct from one that was
@@ -620,6 +699,33 @@ export const renderUnusableQuery = (
 };
 
 /**
+ * A search that never ran because a FILTER did not resolve (roadmap R1).
+ *
+ * Kept apart from an empty result on purpose, and for the reason
+ * `renderUnusableQuery` exists one screen above: collapsing "I could not tell
+ * which person you meant" into "nothing matched" tells a model its question
+ * was asked and answered, so it concludes the teammate has done nothing. This
+ * says the opposite in its first sentence, and hands the hub's own reason
+ * over as quoted data — the hub chose those words, so they are framed and
+ * capped exactly like a teammate's claim body (mcp/tools/shared.ts states the
+ * threat model).
+ *
+ * NO METHOD LINE, like the unusable-query surface: nothing was searched, so
+ * there is no method to describe.
+ */
+export const renderSearchFilterRefusal = (
+  query: string,
+  hubMessage: string,
+): string =>
+  [
+    searchHeader(),
+    queryLine(quoted(query)),
+    "Nothing was searched: a filter did not resolve to what it names, so this is " +
+      "not a result about anyone's work.",
+    `The hub said: ${quoted(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,
+  ].join("\n");
+
+/**
  * Hub search results, in the hub's fused ranking order.
  */
 export const renderSearchResults = (
@@ -631,12 +737,11 @@ export const renderSearchResults = (
   const opening = [
     searchHeader(),
     queryLine(framedQuery),
+    ...filtersLine(options),
     searchMethodLine(options),
   ];
   if (hits.length === 0) {
-    return [...opening, "No work context on this repo matched that query."].join(
-      "\n",
-    );
+    return [...opening, noMatchLine(options)].join("\n");
   }
   const lines = appendSection(
     opening,

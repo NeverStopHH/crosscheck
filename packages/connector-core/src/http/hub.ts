@@ -468,32 +468,72 @@ export const SearchResultEntrySchema = z.looseObject({
 
 export type SearchResultEntry = z.infer<typeof SearchResultEntrySchema>;
 
+/**
+ * WHICH FILTERS THE HUB APPLIED (roadmap R1), reported rather than assumed.
+ *
+ * The renderer states the filters in the answer, so it must state what RAN:
+ * the developer term was a name or an address the hub resolved, and `isSelf`
+ * is a comparison only the hub can make, because it is the side that
+ * authenticated the caller. Exactly the `vectorTierActive` discipline.
+ */
+export interface SearchFilters {
+  readonly developer: {
+    readonly name: string;
+    readonly isSelf: boolean;
+  } | null;
+  /** ISO instant the window starts at; null when no window was asked for. */
+  readonly since: string | null;
+}
+
 export interface SearchOutcome {
   readonly results: readonly SearchResultEntry[];
   /** True only when the hub's vector tier ran for this search (DESIGN.md §6). */
   readonly vectorTierActive: boolean;
+  /** Null from a hub that predates the filters — then nothing is claimed. */
+  readonly filters: SearchFilters | null;
 }
+
+const SearchFiltersSchema = z.looseObject({
+  developer: z
+    .looseObject({
+      name: z.string().min(1),
+      isSelf: z.boolean().default(false),
+    })
+    .nullable()
+    .default(null),
+  since: z.string().min(1).nullable().default(null),
+});
 
 const SearchResponseSchema = z
   .looseObject({
     results: z.array(z.unknown()).default([]),
     vectorTierActive: z.boolean().default(false),
+    // Tolerant like every other optional block: an older hub sends nothing,
+    // and a malformed one is treated as nothing — a filter line the reader
+    // cannot trust is worse than no filter line at all.
+    filters: z.unknown().optional(),
   })
-  .transform(
-    (value): SearchOutcome => ({
+  .transform((value): SearchOutcome => {
+    const filters = SearchFiltersSchema.safeParse(value.filters);
+    return {
       // Tolerant rows, silent drop — a listing, like tolerantList above; the
       // diagnosis path counts its drops because a TREE must not silently
       // shrink, a search result list is advisory by nature.
       results: parseRows(value.results, SearchResultEntrySchema).rows,
       vectorTierActive: value.vectorTierActive,
-    }),
-  );
+      filters: filters.success ? filters.data : null,
+    };
+  });
 
 export interface SearchRequest {
   readonly query: string;
   /** Relevance filter, never a boundary (DESIGN.md §2.1). */
   readonly repo: string;
   readonly limit: number;
+  /** A teammate's name or any email they are known by; resolved hub-side. */
+  readonly developer?: string | undefined;
+  /** `14d`, `72h` or an ISO date; parsed and bounded hub-side. */
+  readonly since?: string | undefined;
 }
 
 export const searchWorkContexts = (
@@ -505,6 +545,14 @@ export const searchWorkContexts = (
     repo: request.repo,
     limit: String(request.limit),
   });
+  // Sent only when asked for: an empty `developer=` would be a filter naming
+  // nobody, and the hub is right to refuse one.
+  if (request.developer !== undefined) {
+    params.set("developer", request.developer);
+  }
+  if (request.since !== undefined) {
+    params.set("since", request.since);
+  }
   return hubRequest(ctx, {
     method: "GET",
     path: `/api/search?${params.toString()}`,

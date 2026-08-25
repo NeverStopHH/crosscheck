@@ -38,14 +38,28 @@ import {
   MAX_SEARCH_QUERY_CHARS,
   MAX_SEARCH_RESULTS,
 } from "../../constants.ts";
-import { toolText } from "../protocol.ts";
+import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
-import { renderSearchResults, renderUnusableQuery } from "../render.ts";
-import type { SearchHit } from "../render.ts";
+import {
+  renderSearchFilterRefusal,
+  renderSearchResults,
+  renderUnusableQuery,
+} from "../render.ts";
+import type { SearchFilterView, SearchHit } from "../render.ts";
 import { searchWorkContexts } from "../../http/hub.ts";
-import type { SearchResultEntry } from "../../http/hub.ts";
+import type { SearchFilters, SearchResultEntry } from "../../http/hub.ts";
 import { hubFailure, parseArgs } from "./shared.ts";
+import type { HubFailure } from "./shared.ts";
+
+/**
+ * Bounds on the two R1 filters, mirroring the hub's own (its search route
+ * rejects longer ones with a 400). Refused here rather than truncated: a
+ * TRUNCATED name is a different person's name, and the hub would answer about
+ * them without anything saying so.
+ */
+const MAX_DEVELOPER_FILTER_CHARS = 320;
+const MAX_SINCE_FILTER_CHARS = 40;
 
 export const ArgsSchema = z.object({
   query: z
@@ -55,6 +69,26 @@ export const ArgsSchema = z.object({
       "Words describing the problem: file paths, symbols, error fingerprints and " +
         "distinctive phrases all match. Leave empty to list the most recent work on " +
         "this repo.",
+    ),
+  developer: z
+    .string()
+    .min(1)
+    .max(MAX_DEVELOPER_FILTER_CHARS)
+    .optional()
+    .describe(
+      "Only work by this teammate: their full name as the hub spells it, or any email " +
+        "address they are known by. A name matching nobody, or more than one person, " +
+        "comes back as an error naming the candidates — never as an empty result, " +
+        "which would read as \"that person has done nothing\".",
+    ),
+  since: z
+    .string()
+    .min(1)
+    .max(MAX_SINCE_FILTER_CHARS)
+    .optional()
+    .describe(
+      "Only work last active since then: a window like 14d or 72h, or an ISO date " +
+        "like 2026-08-01. At most 365 days back; omit it to search all of history.",
     ),
   limit: z
     .number()
@@ -94,6 +128,55 @@ export const definition = {
  */
 const MIN_QUERY_TOKEN_CHARS = 3;
 
+/**
+ * The hub refusals that mean "your FILTER did not resolve", as opposed to
+ * "the hub is broken". They earn their own sentence: a model that reads
+ * "the hub refused the request (HTTP 400)" learns nothing it can act on,
+ * while these carry the candidate names or the window forms it should retry
+ * with. The codes are the hub's (server routes/search.ts).
+ */
+const FILTER_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  "ambiguous_developer",
+  "unknown_developer",
+  "invalid_since",
+]);
+
+const HTTP_BAD_REQUEST = 400;
+
+const isFilterRefusal = (failure: HubFailure): boolean =>
+  failure.kind === "http" &&
+  failure.status === HTTP_BAD_REQUEST &&
+  FILTER_REFUSAL_CODES.has(failure.code);
+
+/**
+ * What the hub says it applied, as a duration this client can print.
+ *
+ * The window arrives as an INSTANT and is rendered as an age, so the answer
+ * speaks one vocabulary about time: `14d` in the filter line, `3d ago` on the
+ * hits, and `14d` is what the caller typed. An unparseable instant simply
+ * drops the window from the line rather than printing a wrong number.
+ */
+const filterView = (
+  filters: SearchFilters | null,
+  nowMs: number,
+): SearchFilterView | undefined => {
+  if (filters === null) {
+    return undefined;
+  }
+  const sinceMs = filters.since === null ? Number.NaN : Date.parse(filters.since);
+  return {
+    ...(filters.developer === null
+      ? {}
+      : {
+          developerName: filters.developer.name,
+          isSelf: filters.developer.isSelf,
+        }),
+    ...(Number.isNaN(sinceMs)
+      ? {}
+      : { sinceAgeMs: Math.max(0, nowMs - sinceMs) }),
+  };
+};
+
 /** Lowercased words of the query, punctuation and grammar-length words dropped. */
 const tokenize = (query: string): readonly string[] =>
   query
@@ -130,14 +213,24 @@ export const run = async (
     return toolText(renderUnusableQuery(query, MIN_QUERY_TOKEN_CHARS));
   }
 
-  // Repo is a relevance filter, never a boundary (see the header).
+  // Repo is a relevance filter, never a boundary (see the header). The two
+  // R1 filters are resolved and applied HUB-side: one developer table, one
+  // clock, one place where "Ken" becomes a developer id.
   const searched = await searchWorkContexts(ctx.hub, {
     query,
     repo: ctx.identity.repoId,
     limit: parsed.value.limit,
+    ...(parsed.value.developer === undefined
+      ? {}
+      : { developer: parsed.value.developer }),
+    ...(parsed.value.since === undefined ? {} : { since: parsed.value.since }),
   });
   if (!searched.ok) {
-    return hubFailure(ctx, searched);
+    // A filter that did not resolve is not a hub failure and must not read as
+    // an empty search — it is a question that was never asked.
+    return isFilterRefusal(searched)
+      ? toolFailure(renderSearchFilterRefusal(query, searched.message))
+      : hubFailure(ctx, searched);
   }
 
   const nowMs = ctx.now().getTime();
@@ -164,9 +257,11 @@ export const run = async (
       };
     });
 
+  const filters = filterView(searched.data.filters, nowMs);
   return toolText(
     renderSearchResults(hits, query, {
       semanticTier: searched.data.vectorTierActive,
+      ...(filters === undefined ? {} : { filters }),
     }),
   );
 };

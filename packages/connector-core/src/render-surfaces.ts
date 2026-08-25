@@ -26,6 +26,7 @@ import {
 } from "./hints/render.ts";
 import {
   renderDiagnosis,
+  renderSearchFilterRefusal,
   renderSearchResults,
   renderUnusableQuery,
 } from "./mcp/render.ts";
@@ -337,7 +338,25 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
           },
         ],
         payload,
+        // The FILTER slot too (roadmap R1): the developer name on the filter
+        // line is the hub's word for a person, planted like every other
+        // author-written field so the BARE class is exercised there as well.
+        {
+          filters: {
+            developerName: payload,
+            sinceAgeMs: 14 * 24 * 3_600_000,
+          },
+        },
       ),
+  },
+  {
+    kind: "corpus",
+    name: "search-filter-refusal",
+    module: "src/mcp/render.ts",
+    framing: "framed",
+    // The hub's own sentence about why a filter did not resolve — hub-chosen
+    // text, therefore untrusted text, planted beside the caller's query.
+    render: (payload) => renderSearchFilterRefusal(payload, payload),
   },
   {
     kind: "corpus",
