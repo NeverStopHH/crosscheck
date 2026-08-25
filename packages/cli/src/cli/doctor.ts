@@ -1705,7 +1705,20 @@ const checkHints = async (
 ): Promise<Check> => {
   const contexts = await getWorkContexts(ctx, repoId);
   if (!contexts.ok) {
-    return check("PASS", "hints", "not measured (hub unreachable)");
+    // WHY the ask failed decides which half of this sentence is honest. A
+    // rejected key fails this listing before the 404 discrimination below is
+    // ever reached, and calling that "hub unreachable" asserted a network
+    // fault that did not happen — under `FAIL hub reachable invalid api key`
+    // and `FAIL mcp tools usable api key rejected`, giving the reader two
+    // competing explanations of one symptom. The credential verdict belongs to
+    // `hub reachable`; this line only says it never got to ask.
+    return check(
+      "PASS",
+      "hints",
+      contexts.kind === "network"
+        ? "not measured (hub unreachable)"
+        : "not measured",
+    );
   }
   const stats = await getHintStats(ctx, repoId);
   const hasOpenSession = health.sessions.some((session) => !session.isStale);

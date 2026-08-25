@@ -468,11 +468,17 @@ describe("the hints check says whether a hint can fire at all", () => {
     // Act
     const result = await runFixtureDoctor(home, repo, hubUrl);
 
-    // Assert
+    // Assert: "absent" (the hub answered 404) and "unmeasured" (rejected key,
+    // unreachable, 5xx) are different claims, and so are "unreachable" and
+    // "your key was refused" — the credential verdict is `hub reachable`'s two
+    // lines up. Asserting only the first half let `not measured (hub
+    // unreachable)` satisfy a case whose whole point is that it must not.
     const line = lineWith(result.stdout, "  hints  ");
     expect(line).toContain("PASS  hints");
     expect(line).toContain("not measured");
     expect(line).not.toContain("predates");
+    expect(line).not.toContain("unreachable");
+    expect(result.stdout).toContain("FAIL  hub reachable  invalid api key");
   });
 });
 

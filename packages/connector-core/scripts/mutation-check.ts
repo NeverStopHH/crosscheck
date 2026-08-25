@@ -1561,6 +1561,24 @@ export const MUTATIONS: readonly Mutation[] = [
       "cries wolf about dead ones and stops being read",
   },
   {
+    // Review finding M3 in miniature: a line that blames the hub for a local
+    // credential problem. Collapsing the two failures makes the hints line
+    // assert a network fault under `FAIL hub reachable invalid api key`.
+    label: "the hints line calls a rejected key an unreachable hub",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from:
+      '      contexts.kind === "network"' +
+      "\n" +
+      '        ? "not measured (hub unreachable)"' +
+      "\n" +
+      '        : "not measured",',
+    to: '      "not measured (hub unreachable)",',
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "a developer whose key was rotated reads three lines about one hub, one " +
+      "of them asserting a network failure that did not happen",
+  },
+  {
     // Review finding B2-L2, the other half: the four gates must read the SAME
     // scan, not merely the same predicate. Dropping the argument puts doctor
     // back on the narrow default cap for its capture and hints lines while the
@@ -1856,7 +1874,7 @@ interface Outcome {
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
- * PRINTS: doctor-capture.test.ts 4
+ * PRINTS: doctor-capture.test.ts 5
  * PRINTS: doctor-global.test.ts 1
  * PRINTS: doctor-hooks-firing.test.ts 1
  * PRINTS: doctor-last-sync.test.ts 1
