@@ -1,5 +1,6 @@
 {
   "event.SessionStart": true,
+  "event.PreToolUse": true,
   "event.PostToolUse": true,
   "event.SessionEnd": true,
   "event.UserPromptSubmit": true,
@@ -13,6 +14,9 @@
   "SessionStart.output.hookSpecificOutput": true,
   "SessionStart.output.hookEventName": true,
   "SessionStart.output.additionalContext": true,
+  "PreToolUse.output.permissionDecision": true,
+  "PreToolUse.output.permissionDecisionReason": true,
+  "PreToolUse.output.additionalContext": true,
   "PostToolUse.input.tool_name": true,
   "PostToolUse.input.tool_input": true,
   "PostToolUse.input.tool_response": true,

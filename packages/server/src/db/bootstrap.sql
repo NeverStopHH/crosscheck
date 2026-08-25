@@ -61,6 +61,11 @@ CREATE TABLE IF NOT EXISTS work_context_targets (
   PRIMARY KEY (work_context_id, kind, value)
 );
 
+-- The age a targets-only prompt pointer states (trial finding #19). Nullable
+-- and set by ingestTarget, so a row that predates this column reads null and
+-- the pointer says "age unknown" rather than a fabricated now() age.
+ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS created_at timestamptz;
+
 -- The derived-contradictions join matches targets on (kind, value) with the
 -- PK's leading column unconstrained (services/contradictions.ts) — without
 -- this, every read of GET /api/contradictions scans the whole targets table.

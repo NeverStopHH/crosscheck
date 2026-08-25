@@ -86,6 +86,26 @@ export const proposedOnlyCandidate = (): Record<string, unknown> => {
   };
 };
 
+/**
+ * The #19 shape: the same exact-tier context with NO claims but a file target
+ * the prompt named — the case that used to yield silence (foreignCount 0) and
+ * now yields a targets-only pointer.
+ */
+export const targetsOnlyCandidate = (): Record<string, unknown> => {
+  const base = rejectedApproachCandidate();
+  return {
+    ...base,
+    claims: [],
+    matchedTargets: [
+      {
+        kind: "file",
+        value: "src/auth/refresh.ts",
+        createdAt: "2026-08-10T08:00:00.000Z",
+      },
+    ],
+  };
+};
+
 export const activeTeammateSession = (): Record<string, unknown> => ({
   sessionId: "cc_nick",
   developerId: TEAMMATE_DEVELOPER_ID,

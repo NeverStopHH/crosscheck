@@ -68,6 +68,29 @@ Runs when Claude Code starts a new session or resumes an existing session.
 }
 ```
 
+### PreToolUse
+
+Runs after Claude creates tool parameters and before processing the tool call.
+
+#### PreToolUse decision control
+
+| Field                      | Description                                                        |
+| :------------------------- | :----------------------------------------------------------------- |
+| `permissionDecision`       | `"allow"`, `"deny"`, `"ask"` or `"defer"`                           |
+| `permissionDecisionReason` | For `"allow"` and `"ask"`, shown to the user but not Claude         |
+| `additionalContext`        | String added to Claude's context alongside the tool result         |
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "ask",
+    "permissionDecisionReason": "My reason here",
+    "additionalContext": "Current environment: production."
+  }
+}
+```
+
 ### PostToolUse
 
 Runs immediately after a tool completes successfully.

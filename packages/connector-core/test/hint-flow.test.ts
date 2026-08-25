@@ -33,6 +33,7 @@ import {
   proposedOnlyCandidate,
   rejectedApproachCandidate,
   startHintHub,
+  targetsOnlyCandidate,
 } from "./fixtures/hint-hub.ts";
 import type { HintHub } from "./fixtures/hint-hub.ts";
 import { INJECTION_CORPUS } from "./fixtures/injection-corpus.ts";
@@ -95,6 +96,15 @@ const freshState = (
   summarizerDraftCount: 0,
   summarizerFailCount: 0,
   summarizerLastFailure: null,
+  outsideRootDrops: 0,
+  knownWorktreeRoots: [],
+  editToolFires: 0,
+  targetsCapturedCount: 0,
+  lastTargetAt: null,
+  lastPostToolUseTool: null,
+  lastEditedPath: null,
+  lastEditedPathResolvedAgainst: null,
+  hintCandidatesSeen: 0,
   summarizerUnparsedCount: 0,
   intentFireCount: 0,
   ...overrides,
@@ -174,6 +184,31 @@ describe("selectAndRenderHint (the extracted UserPromptSubmit recipe)", () => {
 
     expect(first.length).toBeGreaterThan(0);
     expect(second).toBe("");
+  });
+
+  test("a targets-only candidate delivers a body-less pointer (#19)", async () => {
+    // Arrange: an exact-tier context with NO claims but the file the prompt
+    // named — silence before #19, a targets-only pointer now.
+    const f = await fixture("hf-targets");
+    f.hub.setCandidates([targetsOnlyCandidate()]);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert: the pointer states the touched file and the pull, never a body
+    expect(text).toContain("crosscheck pointer:");
+    expect(text).toContain("touched");
+    expect(text).toContain("src/auth/refresh.ts");
+    expect(text).toContain("get_diagnosis");
+    expect(text).not.toContain(CANDIDATE_BODY);
+    // …and it recorded as a work_context ref (a pointer, not a claim).
+    const spool = await readSessionSpool(f.home, f.key, sessionSlug(HOST_KEY));
+    const delivery = JSON.parse(spool.lines[0] ?? "{}") as {
+      kind: string;
+      body?: { refKind?: string };
+    };
+    expect(delivery.kind).toBe("hint_delivery");
+    expect(delivery.body?.refKind).toBe("work_context");
   });
 
   test("CONCURRENT duplicate attempts deliver exactly once — the seen-set claim is a locked check-and-set, not luck", async () => {

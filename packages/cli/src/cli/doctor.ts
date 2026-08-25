@@ -7,6 +7,9 @@ import {
   CLAUDE_SETTINGS_DIR,
   CLAUDE_SETTINGS_FILE,
   DOCTOR_AGENT_CWD_TIMEOUT_MS,
+  DOCTOR_CAPTURE_MAX_SESSION_LINES,
+  DOCTOR_PATH_MAX_CHARS,
+  DOCTOR_TOOL_NAME_MAX_CHARS,
   DOCTOR_AGENT_MAX_CWD_PROBES,
   DOCTOR_AGENT_PS_MAX_LINES,
   DOCTOR_AGENT_PS_TIMEOUT_MS,
@@ -39,8 +42,20 @@ import {
   REGISTERED_HOOK_EVENT_NAMES,
   SECONDS_PER_MINUTE,
   SESSION_STATE_SCAN_MAX_FILES,
+  STATUS_MAX_SESSION_STATES,
   SUMMARIZER_CLAUDE_MIN_VERSION,
+  TRIPWIRE_MODE_ENV,
+  TRIPWIRE_MODE_NOTICE,
 } from "@crosscheck/connector-core/constants.ts";
+import { resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
+import {
+  isCaptureSilentlyDead,
+  readCaptureHealth,
+} from "@crosscheck/connector-core/state/capture-health.ts";
+import type {
+  CaptureHealth,
+  SessionCaptureHealth,
+} from "@crosscheck/connector-core/state/capture-health.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { timeoutOwner } from "@crosscheck/connector-core/config/timeout-policy.ts";
 import type { TimeoutOwner } from "@crosscheck/connector-core/config/timeout-policy.ts";
@@ -81,8 +96,8 @@ import {
   getHintStats,
   getOpenSessions,
   getPrivacySettings,
+  getWorkContexts,
 } from "@crosscheck/connector-core/http/hub.ts";
-import type { HintStats } from "@crosscheck/connector-core/http/hub.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   countCursorIdentityMismatches,
@@ -1530,6 +1545,196 @@ const latencyCheck = (
   );
 };
 
+const plural = (count: number, noun: string): string =>
+  `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+
+const ageOf = (iso: string, now: Date): string => {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? "unknown age" : `${formatAge(now.getTime() - ms)} ago`;
+};
+
+/**
+ * A local fact of the developer's own (a path, a host tool name) on the
+ * doctor line: control characters stripped, length capped — keeping the TAIL
+ * of a path, which is the part that tells worktrees apart.
+ */
+const boundedLocal = (value: string, max: number): string => {
+  const clean = value.replace(/[\p{Cc}\p{Cf}]/gu, "");
+  return clean.length <= max ? clean : `…${clean.slice(clean.length - (max - 1))}`;
+};
+
+/**
+ * The #18 diagnosis line, one per open session: fires → targets, the root the
+ * session is bound to, how long since it last spoke, the last edit-tool name,
+ * and whether the last edited path resolved (against which root) or dropped —
+ * NAMING the path in the drop branch, because "something did not resolve" is
+ * not a cause a remote reader can act on, and the path is the one fact that
+ * tells a worktree, a second repo and a loose file apart.
+ *
+ * The heartbeat age is what separates an open session from a running one: a
+ * state file survives until SessionEnd deletes it, and the trial found most
+ * sessions never end (104 of 127).
+ */
+const captureSessionLine = (session: SessionCaptureHealth, now: Date): string => {
+  const last = session.lastTargetAt === null ? "" : ` (last ${ageOf(session.lastTargetAt, now)})`;
+  const heard = session.lastHeartbeatAt ?? session.startedAt;
+  const heartbeat = `${ageOf(heard, now)}${session.isIdle ? ", idle" : ""}`;
+  const tool =
+    session.lastPostToolUseTool === null
+      ? "none yet"
+      : boundedLocal(session.lastPostToolUseTool, DOCTOR_TOOL_NAME_MAX_CHARS);
+  const resolved =
+    session.lastEditedPath === null
+      ? "no edit yet"
+      : session.lastEditedPathResolvedAgainst === null
+        ? `no — ${boundedLocal(session.lastEditedPath, DOCTOR_PATH_MAX_CHARS)} (${plural(session.foreignRepoDrops, "foreign-repo")}, ${plural(session.outsideRootDrops, "outside-root drop")})`
+        : `yes (against ${boundedLocal(session.lastEditedPathResolvedAgainst, DOCTOR_PATH_MAX_CHARS)})`;
+  return (
+    `${session.hostSessionKey.slice(0, 8)}: ${plural(session.editToolFires, "edit-tool fire")} → ` +
+    `${plural(session.targetsCapturedCount, "target")}${last} · repoRoot ${boundedLocal(session.repoRoot, DOCTOR_PATH_MAX_CHARS)} · ` +
+    `heartbeat ${heartbeat} · last tool ${tool} · last edited path resolved: ${resolved}`
+  );
+};
+
+/**
+ * Capture health (trial findings #17/#18/#20): per open session of this repo,
+ * "N edit-tool fires → M targets" with the diagnosis facts, WARN when N
+ * reaches DOCTOR_CAPTURE_SILENT_FIRES_WARN and M is 0 — the worktree silence
+ * (371 edits → 0 targets) and Ken's "0 targets" shape, made a line. ALWAYS
+ * printed: a repo with no open session says so (PASS), never nothing.
+ *
+ * A read that was CUT gets its own line first. Without it a truncated scan and
+ * a dead capture print the same thing, which is the failure this check exists
+ * to end.
+ */
+const captureChecks = (health: CaptureHealth, now: Date): readonly Check[] => {
+  const cut =
+    health.statesRead >= health.statesTotal
+      ? []
+      : [
+          check(
+            "WARN",
+            "capture",
+            `read the ${String(health.statesRead)} most recently written of ${String(health.statesTotal)} session state files (cap ${String(STATUS_MAX_SESSION_STATES)}) — every count below is of those; older sessions of this repo are not in them. State files are deleted at SessionEnd, so a large number of them means sessions that never ended`,
+          ),
+        ];
+  if (health.sessions.length === 0) {
+    return [
+      ...cut,
+      check(
+        "PASS",
+        "capture",
+        "no open session of this repo on this machine (counts are per session and clear at SessionEnd)",
+      ),
+    ];
+  }
+  const shown = health.sessions.slice(0, DOCTOR_CAPTURE_MAX_SESSION_LINES);
+  const lines = shown.map((session) => {
+    const line = captureSessionLine(session, now);
+    return isCaptureSilentlyDead(session)
+      ? check(
+          "WARN",
+          "capture",
+          `${line} — edits fire but nothing is captured: the edited paths never resolved against a root of this repo (a worktree of a different repo, files outside every checkout) or were all denylisted; the next edit updates this line`,
+        )
+      : check("PASS", "capture", line);
+  });
+  const rest = health.sessions.length - shown.length;
+  return rest === 0
+    ? [...cut, ...lines]
+    : [
+        ...cut,
+        ...lines,
+        check(
+          "PASS",
+          "capture",
+          `… and ${plural(rest, "more open session")} (first ${String(DOCTOR_CAPTURE_MAX_SESSION_LINES)} shown)`,
+        ),
+      ];
+};
+
+/**
+ * Hint health (#19/#20/M1): WARN when the hub holds 0 claims for this repo AND
+ * no targets-only pointer was possible (0 targets, or no prompt of a live
+ * session here ever matched one) — saying what WOULD make a hint possible,
+ * since 3 trial days of silence had no line to explain them. The hub's own
+ * delivered/pulled window is appended when it answers; an older hub without
+ * /api/hints/stats is named as such (it predates targets-only pointers too).
+ *
+ * The WARN needs a session that is actually OPEN here, the same gate `last
+ * capture sync` and `hooks firing` use. A team that has published nothing YET
+ * is not broken: without the gate a fresh `crosscheck login` WARNs on its very
+ * first doctor run, and a warning that greets every new install is one nobody
+ * reads. With a session running, zero claims is the answer to "why do I never
+ * get a hint" — so the facts are printed either way and only the level moves.
+ */
+const checkHints = async (
+  ctx: HubContext,
+  repoId: string,
+  health: CaptureHealth,
+): Promise<Check> => {
+  const contexts = await getWorkContexts(ctx, repoId);
+  if (!contexts.ok) {
+    return check("PASS", "hints", "not measured (hub unreachable)");
+  }
+  const stats = await getHintStats(ctx, repoId);
+  const hasOpenSession = health.sessions.some((session) => !session.isIdle);
+  // The hub's own repo-wide count when it sends one (M1), else the sum over
+  // the contexts page. The endpoint's number is the better one — the page is
+  // capped at the hub's list maximum, so a big repo's older contexts are not
+  // in it — and an older hub omits the field entirely rather than sending a
+  // zero, which is why this is `??` and not a defaulted read.
+  const pageClaims = contexts.data.reduce((sum, row) => sum + (row.claimCount ?? 0), 0);
+  const claims = (stats.ok ? stats.data.claims : undefined) ?? pageClaims;
+  const targetsKnown = contexts.data.every((row) => typeof row.targetCount === "number");
+  const targets = contexts.data.reduce((sum, row) => sum + (row.targetCount ?? 0), 0);
+  const targetsPart = targetsKnown ? plural(targets, "target") : "targets unknown (older hub)";
+  const local = `live sessions here: ${plural(health.hintsDelivered, "hint")} delivered, ${plural(health.hintCandidatesSeen, "candidate")} seen`;
+  const hubPart = stats.ok
+    ? `hub ${String(stats.data.windowDays)}d: ${String(stats.data.delivered)} delivered, ${String(stats.data.pulled)} pulled`
+    : stats.status === HTTP_NOT_FOUND
+      ? "hub predates /api/hints/stats (upgrade it for targets-only pointers and these counts)"
+      : "hub stats not measured";
+  const nothingToMatch = !targetsKnown || targets === 0 || health.hintCandidatesSeen === 0;
+  if (hasOpenSession && claims === 0 && nothingToMatch) {
+    const why =
+      targetsKnown && targets > 0
+        ? `no prompt of a live session here matched one of its ${plural(targets, "target")}`
+        : targetsPart;
+    return check(
+      "WARN",
+      "hints",
+      `hints cannot fire yet: the hub holds 0 claims for this repo and ${why} — a teammate's claim, or a prompt naming a file a teammate's context touched, would make one possible; ${local}; ${hubPart}`,
+    );
+  }
+  return check(
+    "PASS",
+    "hints",
+    `hub holds ${plural(claims, "claim")}, ${targetsPart} for this repo; ${local}; ${hubPart}`,
+  );
+};
+
+/**
+ * The Q2 knob, visible (trial finding #25): which PreToolUse decision the
+ * hooks on this machine emit. Both are deliberate choices — PASS either way —
+ * but a headless orchestration session under the default gets a one-shot
+ * deny with the reason, and this is where that is named.
+ */
+const tripwireModeCheck = (env: Env): Check => {
+  const mode = resolveTripwireMode(env);
+  return mode === TRIPWIRE_MODE_NOTICE
+    ? check(
+        "PASS",
+        "tripwire mode",
+        `${mode} (${TRIPWIRE_MODE_ENV}=${mode}: the model is briefed via additionalContext only, the edit is never asked or denied)`,
+      )
+    : check(
+        "PASS",
+        "tripwire mode",
+        `${mode} (default, DESIGN §4; a headless claude -p session cannot prompt, so Claude Code turns the ask into a one-shot deny carrying the reason — export ${TRIPWIRE_MODE_ENV}=${TRIPWIRE_MODE_NOTICE} for orchestration/CI sessions)`,
+      );
+};
+
 /**
  * Foreign-repo drops (trial finding #9, the counter's READER): first-wins
  * silently drops a multi-repo workspace's touches of its second connected
@@ -1958,122 +2163,6 @@ const readLiveRepoSessions = async (
   };
 };
 
-export interface CaptureFacts {
-  /** True when at least one state file carried the counter at all. */
-  readonly measured: boolean;
-  readonly fires: number;
-  readonly targets: number;
-  readonly sessions: number;
-}
-
-/** PURE: the wording, pinned without a session on disk. */
-export const captureCheck = (facts: CaptureFacts): Check => {
-  const name = "capture";
-  if (!facts.measured) {
-    return check(
-      "PASS",
-      name,
-      "not measured (edit-tool counters arrive with the capture fix)",
-    );
-  }
-  const summary = `${String(facts.fires)} edit-tool fires -> ${String(facts.targets)} targets across ${String(facts.sessions)} live session${facts.sessions === 1 ? "" : "s"}`;
-  return facts.fires > 0 && facts.targets === 0
-    ? check(
-        "WARN",
-        name,
-        `${summary} — every edit this session saw was discarded before it became a target: the usual cause is editing files in a DIFFERENT checkout or worktree than the session registered from`,
-      )
-    : check("PASS", name, summary);
-};
-
-/**
- * Stale sessions are excluded for the same reason the cost line excludes them:
- * a corpse's counters describe a session nobody is running.
- */
-const checkCapture = (live: LiveRepoSessions): Check => {
-  const counted = live.sessions;
-  return captureCheck({
-    measured: counted.some((state) => state.editToolFires !== undefined),
-    fires: counted.reduce((total, state) => total + (state.editToolFires ?? 0), 0),
-    targets: counted.reduce((total, state) => total + state.seenTargets.length, 0),
-    sessions: counted.length,
-  });
-};
-
-/**
- * What the hint-stats probe came back with.
- *
- * The two failure reasons are kept apart because they are different claims
- * about the world: "absent" (the hub answered 404) says this hub predates the
- * endpoint, and "unmeasured" (rejected key, unreachable, 5xx) says we never
- * got to ask. Collapsing them was the M3 defect in miniature — a line that
- * blames the hub for a local credential problem.
- */
-export type HintsProbe =
-  | { readonly ok: true; readonly stats: HintStats }
-  | { readonly ok: false; readonly reason: "absent" | "unmeasured" };
-
-/**
- * Whether hints CAN fire on this repo (trial finding M1/H3).
- *
- * `hint_deliveries` was write-only from the outside — `markHintsPulled` was
- * its only reader — so "are hints reaching anybody" had no answer anywhere.
- * And the number that decides it is not `delivered`: the selector only ever
- * proposes CLAIMS, so a repo with none delivers nothing however good the
- * ranking is. `delivered: 0` alone reads like a tuning problem; `claims: 0`
- * names the structural fact.
- *
- * An older hub 404s the endpoint, which is a PASS saying so — never a WARN,
- * because nothing about this install is wrong in that case (§R6). A hub that
- * rejected the key gets the file's usual "not measured" instead: `hub
- * reachable` already FAILs two lines up and owns that verdict.
- */
-export const hintsCheck = (
-  probe: HintsProbe,
-  hasLiveSession: boolean,
-): Check => {
-  const name = "hints";
-  if (!probe.ok) {
-    return check(
-      "PASS",
-      name,
-      probe.reason === "absent" ? "not available on this hub" : "not measured",
-    );
-  }
-  const stats = probe.stats;
-  const counts = `${String(stats.delivered)} delivered (${String(stats.pulled)} pulled), ${String(stats.claims)} claims on this repo`;
-  // The live-session gate, same as `last capture sync` and `hooks firing`
-  // above. A team that has not published anything YET is not broken — a fresh
-  // `crosscheck login` would otherwise WARN on its very first doctor run, and
-  // a warning that greets every new install is one nobody reads. With a
-  // session running, zero claims is the answer to "why do I never get a hint".
-  return hasLiveSession && stats.claims === 0
-    ? check(
-        "WARN",
-        name,
-        `${counts} — hints cannot fire: the selector only ever points at claims, and nothing has been published on this repo yet`,
-      )
-    : check("PASS", name, counts);
-};
-
-const checkHints = async (
-  ctx: HubContext,
-  repoId: string,
-  live: LiveRepoSessions,
-): Promise<Check> => {
-  const result = await getHintStats(ctx, repoId);
-  const probe: HintsProbe = result.ok
-    ? { ok: true, stats: result.data }
-    : {
-        ok: false,
-        reason:
-          result.kind === "http" && result.status === HTTP_NOT_FOUND
-            ? "absent"
-            : "unmeasured",
-      };
-  return hintsCheck(probe, live.oldestAgeMs !== null);
-};
-
 /**
  * When a HOOK last reached the hub — trial finding H5, and the line's name
  * changed with its meaning.
@@ -2320,6 +2409,13 @@ export const runDoctor = async (
     ];
     return wired.length > 0 ? wired : [projectPath];
   })();
+  // Capture + hint counters of this repo's open sessions (#17/#18/#20), read
+  // once and shared by the capture and hints checks below.
+  const captureHealth = await readCaptureHealth(
+    config.home,
+    config.hubUrl,
+    identity.repoId,
+  );
   return summarize([
     configCheck,
     identityCheck,
@@ -2359,6 +2455,9 @@ export const runDoctor = async (
     }),
     ...(await checkSpool(config.home, key, now, openOnHub)),
     ...(await foreignDropChecks(config.home)),
+    ...captureChecks(captureHealth, now),
+    await checkHints(hubCtx, identity.repoId, captureHealth),
+    tripwireModeCheck(env),
     await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),
@@ -2373,8 +2472,6 @@ export const runDoctor = async (
     await checkHooksFiring(config.home, key, now, liveSessions),
     await checkStatuslineRendered(config.home, key, now, liveSessions),
     await checkRepoConnected(identity.root, isConnectedHere),
-    checkCapture(liveSessions),
-    await checkHints(hubCtx, identity.repoId, liveSessions),
   ]);
 };
 

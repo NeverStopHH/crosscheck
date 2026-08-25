@@ -22,8 +22,8 @@ import {
 import {
   claimSessionState,
   crosscheckSessionIdFor,
+  publishSessionState,
   workContextIdFor,
-  writeSessionState,
 } from "../state/session-state.ts";
 
 /** A resumed session whose crosscheck session was closed gets a fresh suffix. */
@@ -208,7 +208,12 @@ export const registerSessionFlow = async (
       };
     }
   } else {
-    await writeSessionState(input.home, stateInput);
+    // A SessionStart RE-FIRE (compact/resume/clear) arrives here with the same
+    // session id while the session is still running. Publishing carries the
+    // capture counters and the worktree-root cache across the fire; the
+    // per-fire lists (briefing pointers, the hint seen-set) start empty again,
+    // which is what withBriefingSolvedRefs' header specifies.
+    await publishSessionState(input.home, stateInput);
   }
   await appendRecords(
     input.home,

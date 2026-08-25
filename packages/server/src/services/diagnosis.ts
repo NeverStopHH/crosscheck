@@ -69,12 +69,18 @@ export interface WorkContextListEntry extends WorkContextView {
   readonly developerName: string;
   readonly claimCount: number;
   /**
-   * How many deterministic targets this context captured (trial finding M1).
+   * How many deterministic targets this context captured (trial findings
+   * #20 + M1).
    *
-   * The number the connector's `capture` check and `crosscheck status` need to
-   * answer "is capture working at all": a context with claims and zero targets
-   * is a session that reported its existence and nothing it touched, which is
-   * the H1 cross-worktree drop's signature and was invisible on every surface.
+   * The cheap aggregate `crosscheck doctor` reads to tell "this repo has 0
+   * claims AND 0 targets — nothing for a hint to match on" apart from
+   * "targets exist, a prompt naming one would point"; and the number that
+   * answers "is capture working at all", since a context with claims and zero
+   * targets is a session that reported its existence and nothing it touched —
+   * the H1 cross-worktree drop's signature, invisible on every surface before.
+   *
+   * A correlated subquery, NOT a second leftJoin: joining targets beside
+   * claims would cross-multiply claimCount.
    */
   readonly targetCount: number;
 }
@@ -211,35 +217,6 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
 });
 
 /**
- * Target counts for a page of contexts, as ONE bounded follow-up query.
- *
- * Deliberately not a second `leftJoin` on the statement below. Two left joins
- * against one grouped row multiply each other's `count()`, so a context with
- * three claims and two targets would report `claimCount: 6` — a silent
- * corruption of a number three surfaces already print. `work_context_targets`
- * also has no `id` column (composite primary key, db/schema.ts), so
- * `countDistinct` is not available to paper over it. The page is capped at
- * WORK_CONTEXT_LIST_MAX, so this is one extra bounded query per list call.
- */
-const targetCountsFor = async (
-  db: Db,
-  workContextIds: readonly string[],
-): Promise<ReadonlyMap<string, number>> => {
-  if (workContextIds.length === 0) {
-    return new Map();
-  }
-  const rows = await db
-    .select({
-      workContextId: workContextTargets.workContextId,
-      targetCount: count(),
-    })
-    .from(workContextTargets)
-    .where(inArray(workContextTargets.workContextId, [...workContextIds]))
-    .groupBy(workContextTargets.workContextId);
-  return new Map(rows.map((row) => [row.workContextId, row.targetCount]));
-};
-
-/**
  * How OLD a context is, in the one expression every consumer already uses.
  *
  * The window and the ordering both read this rather than `created_at`. The
@@ -275,6 +252,8 @@ export const listWorkContextsByRepo = async (
       developerName: developers.name,
       baseCommit: agentSessions.baseCommit,
       claimCount: count(claims.id),
+      // Correlated, so the claims leftJoin below cannot inflate it (#20).
+      targetCount: sql<number>`(select count(*) from ${workContextTargets} where ${workContextTargets.workContextId} = ${workContexts.id})`.mapWith(Number),
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -304,16 +283,12 @@ export const listWorkContextsByRepo = async (
     // work (the briefing filters to CONTEXT_MAX_AGE_DAYS client-side).
     .orderBy(desc(contextActivityAt))
     .limit(limit);
-  const targetCounts = await targetCountsFor(
-    db,
-    rows.map((row) => row.workContext.id),
-  );
   return rows.map((row) => ({
     ...toWorkContextView(row.workContext, row.baseCommit),
     developerId: row.developerId,
     developerName: row.developerName,
     claimCount: row.claimCount,
-    targetCount: targetCounts.get(row.workContext.id) ?? 0,
+    targetCount: row.targetCount,
   }));
 };
 

@@ -979,17 +979,30 @@ export const MUTATIONS: readonly Mutation[] = [
     // First-wins (trial finding #9): one crosscheck session is bound to ONE
     // repo. Stripping the guard lets a multi-repo workspace's foreign
     // touches walk on into capture/heartbeat/flush under the wrong repo's
-    // session — and the drop counter that keeps the silence honest never
-    // ticks.
+    // session.
+    //
+    // THE GUARD'S REMAINING UNIQUE EFFECT MOVED with trial finding #17, and so
+    // did this entry's test. The #17 resolver counts a foreign file's drop on
+    // its own, so with the guard stripped `foreignRepoDrops` still ticks and
+    // nothing is captured — parent-workspace.e2e.test.ts asserted exactly
+    // those two, went GREEN under the mutation, and stopped being a guard
+    // (MEASURED: that run reported this entry NOT CAUGHT). What the guard
+    // alone still governs is the EARLY RETURN: a touch whose cwd is a wholly
+    // foreign repo never reaches capture, flush, heartbeat or the #18
+    // diagnosis fields, so `lastEditedPath` / `lastEditedPathResolvedAgainst`
+    // keep naming the last edit that really belonged to THIS session's repo.
+    // Strip it and the foreign path overwrites them, resolving to null — what
+    // the test below pins.
     label: "the post-tool-use foreign-repo drop guard is disconnected",
     file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
     from: "  if (state.repoId !== ctx.identity.repoId) {",
     to: "  if (false) {",
-    test: `${CONNECTOR}/test/e2e/parent-workspace.e2e.test.ts`,
+    test: `${CONNECTOR}/test/worktree-capture.test.ts`,
     because:
-      "a second connected repo's edits stop being dropped-and-counted; the " +
-      "session flaps across repos and the count that keeps the drop honest " +
-      "stays zero",
+      "a foreign-repo touch stops returning early: it walks into capture, " +
+      "flush and heartbeat under the wrong repo's session and overwrites the " +
+      "#18 diagnosis fields, so the last edited path a doctor paste reports " +
+      "is the foreign drop instead of this repo's last real edit",
   },
   {
     // The recovery-race serialization: a loser that behaves as if it had
@@ -1517,10 +1530,14 @@ export const MUTATIONS: readonly Mutation[] = [
     // Trial finding M1. The capture line's ONLY reachable alarm is the
     // fires-without-targets case; downgrading it to PASS restores the silence
     // in which a session whose every edit was discarded looked healthy.
+    // RE-POINTED at the surviving check when the two capture implementations
+    // were merged: the pure `captureCheck` this used to mutate is gone with
+    // the second surface it belonged to, and `captureChecks` is the one line
+    // left. Same defect, same guard file.
     label: "capture reports edits that became nothing as healthy",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "  return facts.fires > 0 && facts.targets === 0" + "\n" + "    ? check(" + "\n" + '        "WARN",',
-    to: "  return facts.fires > 0 && facts.targets === 0" + "\n" + "    ? check(" + "\n" + '        "PASS",',
+    from: "    return isCaptureSilentlyDead(session)" + "\n" + "      ? check(" + "\n" + '          "WARN",',
+    to: "    return isCaptureSilentlyDead(session)" + "\n" + "      ? check(" + "\n" + '          "PASS",',
     test: `${CLI}/test/doctor-capture.test.ts`,
     because:
       "a session editing files in a different worktree captures nothing, and " +
@@ -1566,6 +1583,178 @@ export const MUTATIONS: readonly Mutation[] = [
       "the cost and the silently-dead WARN are computed from whichever files " +
       "the slice happened to land on, so the same machine reports different " +
       "spend depending on filesystem order",
+  },
+  // ── Trial findings #17/#19/#20/#25: capture signal ───────────────────────
+  {
+    // #17: an edit in a linked git worktree of the SAME repo resolved to null
+    // against the session's checkout and was dropped silently — 371 worktree
+    // edits → 0 targets across the trial. This makes every candidate root
+    // unresolvable again, so the path falls back to the session root only.
+    // Guard shells out to git (makeRepo + worktree add) — the container
+    // caveat on assertGuardIsGreen applies.
+    label: "worktree edits resolve against the session root again",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "    if (candidate === null) {",
+    to: "    if (candidate !== undefined) {",
+    test: `${CONNECTOR}/test/worktree-capture.test.ts`,
+    because:
+      "a session registered at checkout A editing a file in worktree B of " +
+      "the same repo captures nothing, and only the new outside-root counter " +
+      "ticks — the silent shape that produced 0 targets for whole sessions",
+  },
+  {
+    // #17: the free D2 candidate is the CWD's root, not the FILE's. Taking it
+    // for every path — the shape this branch shipped first — drops a same-repo
+    // edit in a third worktree and books a second repo's file as outside-root.
+    // Pure seams: no git, so the container caveat does not apply.
+    label: "the cwd's root is assumed to govern every touched path",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "      ? await toRepoRelative(input.identityRoot, input.cwd, path)",
+    to: "      ? input.identityRoot",
+    test: `${CORE}/test/touched-root.test.ts`,
+    because:
+      "a hook whose cwd sits in worktree B silently drops an edit in worktree " +
+      "C of the SAME repo, and reports a DIFFERENT repo's file as an " +
+      "outside-root drop — doctor then names the wrong cause",
+  },
+  {
+    // #17: a null repoId is an UNKNOWN (git deadline, git missing), not a
+    // second repo. Booking it as foreign makes doctor say "your second
+    // connected repo" about a worktree whose identity simply did not resolve.
+    label: "an unresolvable root is booked as a foreign repo",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "    if (repoId === null) {",
+    to: "    if (false) {",
+    test: `${CORE}/test/touched-root.test.ts`,
+    because:
+      "one missed git deadline turns an edit in the developer's own worktree " +
+      "into a `foreign-repo drops` line, the counter doctor explains as a " +
+      "multi-repo workspace's touches of its second repo",
+  },
+  {
+    // #17's budget, asserted as a COUNT rather than a clock: the cache HIT
+    // path is why the per-tool hook does not spawn git again for a root it
+    // already judged. A wall-clock budget test cannot see this — it stayed
+    // green with the read removed, at 2.6x the warm cost.
+    label: "the worktree-root cache is never read",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "    const cached = cache.get(candidateReal);",
+    to: "    const cached = undefined;",
+    test: `${CORE}/test/touched-root.test.ts`,
+    because:
+      "every PostToolUse and PreToolUse pays resolveRepoIdentity again for a " +
+      "root already resolved this session, and the first symptom is a hook " +
+      "that loses its capture to its own budget on a loaded machine",
+  },
+  {
+    // #17/#20: the state-file cap must be spent on the NEWEST states. In
+    // readdir order (OS hash order over UUID names) the cut is arbitrary, and
+    // the live session of this repo can miss the window entirely.
+    label: "the state-file cap is spent in readdir order again",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "    .sort((a, b) => b.modifiedAt - a.modifiedAt)",
+    to: "    .sort(() => 0)",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because:
+      "on a home with more state files than the cap, `status` and `doctor` " +
+      "report an arbitrary subset — a session in the WARN shape can be " +
+      "invisible on the machine the counters were built for",
+  },
+  {
+    // #18/#20: SessionStart re-fires inside a live session (compact/resume/
+    // clear). Re-creating the state file with fresh defaults erases the very
+    // counters the diagnosis line exists to print.
+    label: "a SessionStart re-fire zeroes the capture counters",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  previous === null ||",
+    to: "  true ||",
+    test: `${CONNECTOR}/test/session-refire.test.ts`,
+    because:
+      "a session that fired 40 edit tools into nothing and then auto-compacted " +
+      "prints `0 edit-tool fires → 0 targets` and PASSes — the WARN erased by " +
+      "the compaction, on the line a remote reader is asked to paste",
+  },
+  {
+    // #19 + §4: the targets-only pointer has no claim to derive self-exclusion
+    // from, and an exact path match is exactly how the reader's OWN earlier
+    // session surfaces. The hub excludes the caller; this is the second line.
+    label: "the targets-only pointer points at the reader's own work",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "      context.workContext.developerId !== selfDeveloperId",
+    to: "      true",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "a hub that fails to exclude the caller makes the reader's own earlier " +
+      "session a hint, spending one of the five a session gets on self-noise",
+  },
+  {
+    // #17's budget guard: the per-session root→repoId cache is what keeps
+    // the per-tool hook from paying resolveRepoIdentity (4-6 git spawns)
+    // twice for one root. Dropping the cap lets it grow per distinct root.
+    label: "the known-worktree-root cache grows without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      merged.length <= MAX_KNOWN_WORKTREE_ROOTS",
+    to: "      true",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because:
+      "a session touching many worktree roots carries an ever-growing list " +
+      "in its state file, read and rewritten under the lock on every edit",
+  },
+  {
+    // #19: the exact tier (the prompt NAMED a file this context targeted)
+    // may point with zero claims. Restoring the claim requirement brings
+    // back the structural death: a hub with 0 claims never hints at all.
+    label: "the targets-only pointer is disabled",
+    file: `${CORE}/src/hints/select.ts`,
+    from: '      context.workContext.tier === "exact" &&',
+    to: "      false &&",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "a teammate's context that targeted the very file the prompt names " +
+      "yields silence until somebody publishes a claim — three trial days " +
+      "of zero hints on a hub with zero claims, again",
+  },
+  {
+    // #20: doctor's capture WARN is the #17/#18 signature made visible —
+    // "N edit-tool fires → 0 targets". Raising the threshold out of reach
+    // turns every such session back into a PASS line.
+    label: "doctor's capture WARN is downgraded out of reach",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const DOCTOR_CAPTURE_SILENT_FIRES_WARN = 3;",
+    to: "export const DOCTOR_CAPTURE_SILENT_FIRES_WARN = 1000000;",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because:
+      "a session whose every edit lands nowhere reads PASS capture — the " +
+      "exact silence Ken's zero targets sat in for a whole trial",
+  },
+  {
+    // Q2: `notice` mode exists so headless orchestration/CI sessions are
+    // briefed via additionalContext and never one-shot-denied. Forcing the
+    // decision branch re-introduces the deny in the sessions that opted out.
+    // Guard shells out to git (makeRepo) — assertGuardIsGreen caveat.
+    label: "notice mode still emits the ask",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    mode === TRIPWIRE_MODE_NOTICE",
+    to: "    false",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "CROSSCHECK_TRIPWIRE=notice still emits permissionDecision ask, which " +
+      "a headless claude -p turns into a denied Edit — the one behaviour the " +
+      "knob exists to switch off",
+  },
+  {
+    // #25: additionalContext is the ONLY field that reaches the MODEL on an
+    // ask (the reason reaches the human alone). Dropping it from the ask
+    // branch leaves the model unbriefed again.
+    // Guard shells out to git (makeRepo) — assertGuardIsGreen caveat.
+    label: "the tripwire briefs the human only again",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "          permissionDecisionReason: reason,\n          additionalContext: reason,\n",
+    to: "          permissionDecisionReason: reason,\n",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "the ask fires, the human reads the reason, and the model learns " +
+      "nothing — not the teammate, not the file, not the get_diagnosis id",
   },
 ];
 
@@ -1613,6 +1802,7 @@ interface Outcome {
  * PRINTS: briefing-parity.test.ts 2
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
+ * PRINTS: capture-health.test.ts 2
  * PRINTS: conclusion-corpus.test.ts 6
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
@@ -1631,7 +1821,7 @@ interface Outcome {
  * PRINTS: hint-flow.test.ts 2
  * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 1
- * PRINTS: hint-select.test.ts 3
+ * PRINTS: hint-select.test.ts 5
  * PRINTS: hints.test.ts 2
  * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
@@ -1643,7 +1833,6 @@ interface Outcome {
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 1
- * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
  * PRINTS: proxy-e2e.test.ts 1
@@ -1652,6 +1841,8 @@ interface Outcome {
  * PRINTS: search.test.ts 3
  * PRINTS: session-reap-liveness.test.ts 1
  * PRINTS: session-reaper.test.ts 2
+ * PRINTS: session-refire.test.ts 1
+ * PRINTS: session-state-transforms.test.ts 1
  * PRINTS: sessions.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
@@ -1663,8 +1854,10 @@ interface Outcome {
  * PRINTS: summarizer-child-guard.test.ts 1
  * PRINTS: summarizer-cost.test.ts 2
  * PRINTS: summarizer-worker-env.test.ts 1
+ * PRINTS: touched-root.test.ts 3
  * PRINTS: transparency.test.ts 1
- * PRINTS: tripwire-hook.test.ts 1
+ * PRINTS: tripwire-hook.test.ts 3
+ * PRINTS: worktree-capture.test.ts 2
  */
 const greenGuards = new Map<string, boolean>();
 

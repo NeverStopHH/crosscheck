@@ -24,7 +24,7 @@
  *   bun test packages/connector-claude/test/hook-contract.test.ts
  *
  *   field names published in bold rather than in backticks   4 observations flip
- *   every heading promoted one level (`###` → `####`)       26 observations flip
+ *   every heading promoted one level (`###` → `####`)       27 observations flip
  *
  * That direction is a false alarm, not a missed change, so it fails safe: the
  * job goes red, somebody reads the reference and re-records with --write. The
@@ -90,12 +90,25 @@ interface FieldProbe {
  * `ask`) was outside the watched surface for as long as the tripwire existed,
  * so Anthropic could have renamed any of it and the only symptom would have
  * been tripwires that silently stopped asking.
+ *
+ * THE LIST IS DELIBERATELY WIDER THAN "sections with fields we parse". A
+ * narrower literal here was the drift itself: UserPromptSubmit and Stop
+ * consume only the common input fields probed below, which is an argument for
+ * skipping their section probe and NOT an argument for keeping a second list —
+ * the moment either event starts carrying a field of its own, a hand-kept
+ * literal is the thing that stays silent about it. A section that documents
+ * none of our fields simply contributes no observation, so the wider list
+ * costs nothing and cannot drift.
  */
 const EVENTS = REGISTERED_HOOK_EVENT_NAMES;
 
 /**
  * Exactly what we read off stdin (capture/tool-events.ts HookPayloadSchema) and
- * what we write back (hooks/session-start.ts). Nothing aspirational.
+ * what we write back (hooks/session-start.ts, hooks/pre-tool-use.ts). Nothing
+ * aspirational: the PreToolUse probes are the three output fields the tripwire
+ * emits — the decision, its reason, and `additionalContext` (trial finding
+ * #25), which the reference documents for PreToolUse as "added to Claude's
+ * context alongside the tool result".
  */
 const HOOK_PROBES: readonly FieldProbe[] = [
   {
@@ -128,6 +141,21 @@ const HOOK_PROBES: readonly FieldProbe[] = [
   {
     key: "SessionStart.output.additionalContext",
     section: "SessionStart",
+    field: "additionalContext",
+  },
+  {
+    key: "PreToolUse.output.permissionDecision",
+    section: "PreToolUse",
+    field: "permissionDecision",
+  },
+  {
+    key: "PreToolUse.output.permissionDecisionReason",
+    section: "PreToolUse",
+    field: "permissionDecisionReason",
+  },
+  {
+    key: "PreToolUse.output.additionalContext",
+    section: "PreToolUse",
     field: "additionalContext",
   },
   {

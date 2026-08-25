@@ -179,6 +179,15 @@ export const workContextTargets = pgTable(
       .references(() => workContexts.id),
     kind: text("kind", { enum: TARGET_KINDS }).notNull(),
     value: text("value").notNull(),
+    /**
+     * When this target was first ingested (trial finding #19): the age a
+     * targets-only prompt pointer states ("touched <path> <age> ago"). NULLABLE
+     * and set by ingestTarget, deliberately: a row that predates this column
+     * reads null and the pointer says "age unknown" rather than a fabricated
+     * `now()` age. Never bumped on a duplicate touch — first-seen is the honest
+     * age.
+     */
+    createdAt: timestamptz("created_at"),
   },
   (table) => [
     primaryKey({ columns: [table.workContextId, table.kind, table.value] }),

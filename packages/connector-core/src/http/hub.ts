@@ -62,14 +62,16 @@ export const WorkContextEntrySchema = z.looseObject({
   /** Optional: an older hub omits both, and landed detection simply skips. */
   baseCommit: z.string().min(1).optional(),
   landedAt: z.string().nullable().optional(),
-  /**
-   * Deterministic targets this context captured (trial finding M1). Optional
-   * because an older hub does not send it — and the surfaces that read it must
-   * say "not measured" rather than print a fabricated zero.
-   */
-  targetCount: z.number().int().min(0).optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
+  /**
+   * Cheap aggregates `doctor` reads (trial findings #20 + M1): how many claims
+   * and deterministic targets the tree carries. Optional because an older hub
+   * omits them — and the surfaces that read them must say the targets are
+   * unknown rather than print a fabricated zero.
+   */
+  claimCount: z.number().int().min(0).optional(),
+  targetCount: z.number().int().min(0).optional(),
 });
 
 export type WorkContextEntry = z.infer<typeof WorkContextEntrySchema>;
@@ -534,33 +536,6 @@ export const getWorkContextPure = (
   });
 
 /**
- * Whether hints are reaching anybody on this repo (trial finding M1).
- *
- * `claims` is the load-bearing one: the selector only ever proposes claims,
- * so a repo with none delivers no hints however good the ranking is — and
- * `delivered: 0` alone reads like a tuning problem rather than the structural
- * fact it is. Every field defaults, so a partial answer from a newer or older
- * hub degrades to zeros instead of failing the whole read.
- */
-export const HintStatsSchema = z.looseObject({
-  delivered: z.number().int().min(0).default(0),
-  pulled: z.number().int().min(0).default(0),
-  claims: z.number().int().min(0).default(0),
-});
-
-export type HintStats = z.infer<typeof HintStatsSchema>;
-
-export const getHintStats = (
-  ctx: HubContext,
-  repo: string,
-): Promise<HubResult<HintStats>> =>
-  hubRequest(ctx, {
-    method: "GET",
-    path: `/api/hints/stats${encodeRepo(repo)}`,
-    schema: HintStatsSchema,
-  });
-
-/**
  * One hub search result. A superset of WorkContextEntry: the hub adds the
  * match tier and fused score. Both optional on the wire so an older hub's
  * plain rows still parse — the renderer never prints them anyway.
@@ -671,15 +646,34 @@ const HintContextSchema = z.looseObject({
   updatedAt: z.string().nullable().optional(),
 });
 
+/**
+ * One target the prompt lexically matched (trial finding #19): a targets-only
+ * pointer names it ("touched <value> <age> ago"). `value` is TEAMMATE-CONTROLLED
+ * text (a path they edited) rendered into an injected hint, so downstream it
+ * goes through `bare()` + the title cap, and the whole hint through fitHint's
+ * length bound (hints/render.ts) — no new untrusted path opens. `createdAt` null
+ * is the honest "age unknown" (a row predating the column); an OLDER hub omits
+ * `matchedTargets` entirely and the targets-only pointer is simply unavailable.
+ */
+export const MatchedTargetSchema = z.looseObject({
+  kind: z.string().min(1),
+  value: z.string().min(1),
+  createdAt: z.string().min(1).nullable().optional(),
+});
+
+export type MatchedTarget = z.infer<typeof MatchedTargetSchema>;
+
 export const HintContextCandidateSchema = z
   .looseObject({
     workContext: HintContextSchema,
     claims: z.array(z.unknown()).default([]),
+    matchedTargets: z.array(z.unknown()).default([]),
   })
   .transform((value) => ({
     workContext: value.workContext,
     // Tolerant rows, silent drop — candidates are advisory, like search rows.
     claims: parseRows(value.claims, HintClaimCandidateSchema).rows,
+    matchedTargets: parseRows(value.matchedTargets, MatchedTargetSchema).rows,
   }));
 
 export type HintContextCandidate = z.infer<typeof HintContextCandidateSchema>;
@@ -705,6 +699,41 @@ export const getHintCandidates = (
     schema: tolerantList("candidates", HintContextCandidateSchema),
   });
 };
+
+/**
+ * GET /api/hints/stats (trial findings #20 + M1): delivered/pulled hints for a
+ * repo over the hub's bounded window, plus the repo's claim count. Read by
+ * `doctor`/`status` only — an older hub answers 404 and the surfaces say "not
+ * measured".
+ *
+ * `claims` is the load-bearing one: the selector only ever proposes claims, so
+ * a repo with none delivers no hints however good the ranking is, and
+ * `delivered: 0` alone reads like a tuning problem rather than the structural
+ * fact it is. OPTIONAL — never defaulted — while the other three are required,
+ * the same discipline `targetCount` above uses: a hub on the released 0.7.3
+ * shape answers this route with the window and no claim count, and a default
+ * would turn "this hub does not say" into the "0 claims" the WARN exists to
+ * name. Absent means unknown, and the surfaces fall back to what they can
+ * count themselves.
+ */
+export const HintStatsSchema = z.looseObject({
+  delivered: z.number().int().min(0),
+  pulled: z.number().int().min(0),
+  windowDays: z.number().int().min(1),
+  claims: z.number().int().min(0).optional(),
+});
+
+export type HintStats = z.infer<typeof HintStatsSchema>;
+
+export const getHintStats = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<HintStats>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/hints/stats${encodeRepo(repo)}`,
+    schema: HintStatsSchema,
+  });
 
 /**
  * One side of a listed contradiction — just enough for a one-line pointer:

@@ -11,11 +11,20 @@
  * The `claimCount` assertion below is the regression any join-based
  * `targetCount` causes: two left joins against one grouped row multiply each
  * other's `count()`.
+ *
+ * WHICH IMPLEMENTATION THESE GUARD, after the M1 and #20 rounds were merged:
+ * one `/api/hints/stats`, `readHintStats` in services/hint-deliveries.ts. It
+ * carries the trailing WINDOW #20 added (hence `windowDays` in every expected
+ * body) and the repo-wide `claims` count M1 added, which is unwindowed on
+ * purpose — a claim published before the window still gives a hint something
+ * to point at. The duplicate window-less `hintStatsForRepo` this file was
+ * written against is gone.
  */
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
 import { hintDeliveries } from "../src/db/schema.ts";
+import { HINT_STATS_DEFAULT_WINDOW_DAYS } from "../src/services/hint-deliveries.ts";
 import {
   createHarnessWithSession,
   jsonRequest,
@@ -195,7 +204,7 @@ describe("hint stats", () => {
       jsonRequest("GET", seeded.developer.apiKey),
     );
     const beforeBody = (await before.json()) as {
-      data: { delivered: number; pulled: number; claims: number };
+      data: { delivered: number; pulled: number; claims: number; windowDays: number };
     };
 
     // Act: then a real diagnosis read, which is the pull signal
@@ -208,12 +217,13 @@ describe("hint stats", () => {
       jsonRequest("GET", seeded.developer.apiKey),
     );
     const afterBody = (await after.json()) as {
-      data: { delivered: number; pulled: number; claims: number };
+      data: { delivered: number; pulled: number; claims: number; windowDays: number };
     };
 
     // Assert
-    expect(beforeBody.data).toEqual({ delivered: 1, pulled: 0, claims: 3 });
-    expect(afterBody.data).toEqual({ delivered: 1, pulled: 1, claims: 3 });
+    const windowDays = HINT_STATS_DEFAULT_WINDOW_DAYS;
+    expect(beforeBody.data).toEqual({ delivered: 1, pulled: 0, claims: 3, windowDays });
+    expect(afterBody.data).toEqual({ delivered: 1, pulled: 1, claims: 3, windowDays });
   });
 
   test("a repo with no claims reports zero — the structural fact, not a tuning problem", async () => {
@@ -228,9 +238,14 @@ describe("hint stats", () => {
 
     // Assert
     const body = (await response.json()) as {
-      data: { delivered: number; pulled: number; claims: number };
+      data: { delivered: number; pulled: number; claims: number; windowDays: number };
     };
-    expect(body.data).toEqual({ delivered: 0, pulled: 0, claims: 0 });
+    expect(body.data).toEqual({
+      delivered: 0,
+      pulled: 0,
+      claims: 0,
+      windowDays: HINT_STATS_DEFAULT_WINDOW_DAYS,
+    });
   });
 
   test("a missing repo parameter is a 400, not a silent all-repo scan", async () => {

@@ -281,6 +281,23 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       }),
   },
   {
+    // The #19 targets-only pointer: the touched-file `value` is teammate-
+    // controlled text (a path they edited), planted here alongside the title
+    // and author so bare() + the title cap are exercised on it too.
+    kind: "corpus",
+    name: "targets-pointer-hint",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderPointerHint({
+        context: hintContextWith(payload),
+        claimCount: 0,
+        matchedTarget: { value: payload, createdAt: ISO },
+        drift: NO_DRIFT,
+        now: NOW,
+      }),
+  },
+  {
     kind: "corpus",
     name: "tripwire-reason",
     module: "src/hints/render.ts",

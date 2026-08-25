@@ -10,19 +10,40 @@
  * `hint_deliveries` was write-only, so "are hints reaching anybody" had no
  * answer on any surface.
  *
- * The counters the capture line reads are written by the sibling capture
- * branch. Both halves of that are pinned here: the number when they exist,
- * and the honest "not measured" when they do not.
+ * WHICH IMPLEMENTATION THESE GUARD, after the M1 and #17/#18/#20 rounds were
+ * merged: ONE `capture` check and ONE `hints` check, both in cli/doctor.ts and
+ * both fed by `readCaptureHealth` (connector-core state/capture-health.ts).
+ * The pure `captureCheck`/`hintsCheck` helpers this file was written against
+ * are gone with the second implementation they belonged to, so every test
+ * below goes through `runDoctor` — which is the stronger check anyway: it
+ * proves the WIRING, which is where a duplicate surface hides.
+ *
+ * What survives from this side of the merge, and is pinned here because
+ * nothing else pins it:
+ *
+ *   - a CORPSE's counters never produce the "capture is failing" WARN
+ *     (review finding B2-04): a state file lives until SessionEnd and most
+ *     never end, so a home is mostly corpses, and a dead session's silence is
+ *     not a live capture failure — its remedy ("the next edit updates this
+ *     line") is one nobody will ever trigger;
+ *   - the repo filter and the liveness test are the SAME pass (B2-02), so a
+ *     session is never judged by another session's freshness — in BOTH
+ *     directions;
+ *   - zero claims with NO session open here is a fresh team, not a defect: a
+ *     warning that greets every new install is one nobody reads.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm, utimes } from "node:fs/promises";
 import { join } from "node:path";
 
-import { captureCheck, hintsCheck, runDoctor } from "../src/cli/doctor.ts";
+import { runDoctor } from "../src/cli/doctor.ts";
+import { STATUS_SESSION_IDLE_HOURS } from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
+/** Past STATUS_SESSION_IDLE_HOURS by a clear margin: a corpse, not a pause. */
+const DEAD_AGE_MS = (STATUS_SESSION_IDLE_HOURS + 6) * 60 * 60 * 1000;
 
 const paths: string[] = [];
 const servers: ReturnType<typeof Bun.serve>[] = [];
@@ -38,20 +59,48 @@ afterEach(async () => {
   paths.length = 0;
 });
 
-/** A hub that answers presence and serves the given hint stats. */
-const hubWithStats = (
-  stats: { delivered: number; pulled: number; claims: number } | null,
-): string => {
+/** The hub's stats body; `claims` is absent on a hub that predates M1. */
+interface Stats {
+  readonly delivered: number;
+  readonly pulled: number;
+  readonly claims?: number;
+  readonly windowDays: number;
+}
+
+interface HubOptions {
+  /** null = a hub that predates /api/hints/stats and 404s it. */
+  readonly stats: Stats | null;
+  /** Rows for /api/work-contexts; the claim/target counts doctor falls back to. */
+  readonly contexts?: readonly Record<string, unknown>[];
+  /** 401 on every route: a rejected key, which is NOT "the hub lacks it". */
+  readonly rejectKey?: boolean;
+}
+
+/** A hub that answers presence, the context listing and the hint stats. */
+const hubWith = (options: HubOptions): string => {
   const server = Bun.serve({
     port: 0,
     fetch: (request) => {
-      if (new URL(request.url).pathname === "/api/hints/stats") {
-        return stats === null
+      if (options.rejectKey === true) {
+        return Response.json(
+          { ok: false, error: { code: "unauthorized", message: "invalid api key" } },
+          { status: 401 },
+        );
+      }
+      const { pathname } = new URL(request.url);
+      if (pathname === "/api/hints/stats") {
+        return options.stats === null
           ? Response.json(
               { ok: false, error: { code: "not_found", message: "unknown route" } },
               { status: 404 },
             )
-          : Response.json({ ok: true, data: stats });
+          : Response.json({ ok: true, data: options.stats });
+      }
+      if (pathname === "/api/work-contexts") {
+        return Response.json({
+          ok: true,
+          data: { workContexts: options.contexts ?? [] },
+        });
       }
       return Response.json({ ok: true, data: { sessions: [] } });
     },
@@ -59,6 +108,18 @@ const hubWithStats = (
   servers.push(server);
   return `http://127.0.0.1:${String(server.port)}`;
 };
+
+const listRow = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  id: "wc_ken",
+  developerId: "dev_ken",
+  developerName: "Ken",
+  title: "Refresh 500s",
+  status: "analyzing",
+  createdAt: new Date().toISOString(),
+  claimCount: 0,
+  targetCount: 0,
+  ...overrides,
+});
 
 const seedSession = async (
   home: string,
@@ -89,125 +150,23 @@ const doctorEnv = (home: string, hubUrl: string) => ({
   CROSSCHECK_API_KEY: "test-key",
 });
 
-describe("captureCheck", () => {
-  test("fires with no targets is the cross-worktree drop, and it WARNs", () => {
-    // Arrange + Act
-    const result = captureCheck({
-      measured: true,
-      fires: 7,
-      targets: 0,
-      sessions: 1,
-    });
+const fixture = async (
+  name: string,
+): Promise<{ readonly repo: string; readonly home: string }> => {
+  const repo = await makeRepo(name, { remote: "git@github.com:acme/api.git" });
+  const home = await makeHome(name);
+  paths.push(repo, home);
+  return { repo, home };
+};
 
-    // Assert
-    expect(result.level).toBe("WARN");
-    expect(result.detail).toContain("7 edit-tool fires -> 0 targets");
-    expect(result.detail).toContain("worktree");
-  });
+const lineWith = (stdout: string, needle: string): string =>
+  stdout.split("\n").find((line) => line.includes(needle)) ?? "";
 
-  test("fires with targets passes with both numbers", () => {
-    // Arrange + Act
-    const result = captureCheck({
-      measured: true,
-      fires: 7,
-      targets: 4,
-      sessions: 2,
-    });
+const runFixtureDoctor = (home: string, repo: string, hubUrl: string) =>
+  runDoctor(doctorEnv(home, hubUrl), repo, async () => null);
 
-    // Assert
-    expect(result.level).toBe("PASS");
-    expect(result.detail).toContain("7 edit-tool fires -> 4 targets");
-  });
-
-  test("no counter anywhere says so instead of printing a fabricated zero", () => {
-    // Arrange + Act
-    const result = captureCheck({
-      measured: false,
-      fires: 0,
-      targets: 0,
-      sessions: 1,
-    });
-
-    // Assert
-    expect(result.level).toBe("PASS");
-    expect(result.detail).toContain("not measured");
-  });
-});
-
-describe("hintsCheck", () => {
-  test("zero claims beside a live session names the structural fact and WARNs", () => {
-    // Arrange + Act
-    const result = hintsCheck(
-      { ok: true, stats: { delivered: 0, pulled: 0, claims: 0 } },
-      true,
-    );
-
-    // Assert
-    expect(result.level).toBe("WARN");
-    expect(result.detail).toContain("hints cannot fire");
-    expect(result.detail).toContain("0 claims");
-  });
-
-  test("zero claims on a machine with no session is a fresh team, not a defect", () => {
-    // Arrange + Act
-    const result = hintsCheck(
-      { ok: true, stats: { delivered: 0, pulled: 0, claims: 0 } },
-      false,
-    );
-
-    // Assert: a warning that greets every new install is one nobody reads
-    expect(result.level).toBe("PASS");
-    expect(result.detail).toContain("0 claims on this repo");
-  });
-
-  test("an older hub without the endpoint is a PASS, never a WARN", () => {
-    // Arrange + Act
-    const result = hintsCheck({ ok: false, reason: "absent" }, true);
-
-    // Assert
-    expect(result.level).toBe("PASS");
-    expect(result.detail).toContain("not available on this hub");
-  });
-
-  test("a rejected key says not measured, never 'not available on this hub'", () => {
-    // Arrange + Act: the whole point of M3 was a PASS that claimed something
-    // false under `FAIL hub reachable invalid api key`. A 401 means the
-    // endpoint was never asked, not that the hub lacks it.
-    const result = hintsCheck({ ok: false, reason: "unmeasured" }, true);
-
-    // Assert
-    expect(result.level).toBe("PASS");
-    expect(result.detail).toBe("not measured");
-    expect(result.detail).not.toContain("not available on this hub");
-  });
-
-  test("a healthy repo prints delivered, pulled and claims", () => {
-    // Arrange + Act
-    const result = hintsCheck(
-      { ok: true, stats: { delivered: 5, pulled: 2, claims: 11 } },
-      true,
-    );
-
-    // Assert
-    expect(result.level).toBe("PASS");
-    expect(result.detail).toContain("5 delivered (2 pulled), 11 claims");
-  });
-});
-
-/**
- * The liveness mask and the repo filter have to be the SAME pass.
- *
- * `mine` was `parsed` filtered by parse success and then by hubUrl/repoId, so
- * its indices no longer lined up with `listing.files` — and the mask was
- * indexed by `listing.files`. Element i of a filtered array was therefore
- * tested against the liveness of the i-th newest file on the machine, usually
- * another repo's session (review finding B2-02). It failed in BOTH directions,
- * so both are pinned here: a corpse counted as live, and a live broken session
- * silently swallowed. Neither could be seen by a fixture with one repoId.
- */
-describe("capture counts this repo's LIVE sessions, whatever the mtime order", () => {
+describe("the capture check reads THIS repo's sessions, whatever the mtime order", () => {
   const OTHER_REPO = "github.com/acme/other";
-  const THIRTY_HOURS_MS = 30 * 60 * 60 * 1000;
 
   const setMtime = async (
     home: string,
@@ -218,127 +177,235 @@ describe("capture counts this repo's LIVE sessions, whatever the mtime order", (
     await utimes(join(home, "sessions", `${hostSessionKey}.json`), when, when);
   };
 
-  test("a corpse of THIS repo is not called live because another repo's session is", async () => {
-    // Arrange: this repo's session died 30 h ago carrying 7 fires and no
-    // targets; the newest state file on the machine is a fresh session of a
-    // DIFFERENT repo.
-    const repo = await makeRepo("doctor-capture-mask-a", {
-      remote: "git@github.com:acme/api.git",
+  test("a corpse of THIS repo is not called a live capture failure", async () => {
+    // Arrange: this repo's session died past the idle window carrying 7 fires
+    // and no targets; the newest state file on the machine is a fresh session
+    // of a DIFFERENT repo.
+    const { repo, home } = await fixture("doctor-capture-mask-a");
+    const hubUrl = hubWith({
+      stats: { delivered: 0, pulled: 0, claims: 0, windowDays: 7 },
     });
-    const home = await makeHome("doctor-capture-mask-a");
-    paths.push(repo, home);
-    const hubUrl = hubWithStats({ delivered: 0, pulled: 0, claims: 0 });
-    const deadIso = new Date(Date.now() - THIRTY_HOURS_MS).toISOString();
+    const deadIso = new Date(Date.now() - DEAD_AGE_MS).toISOString();
     await seedSession(home, repo, hubUrl, "dead-mine", {
       startedAt: deadIso,
       lastHeartbeatAt: deadIso,
-      seenTargets: [],
       editToolFires: 7,
+      targetsCapturedCount: 0,
     });
     await seedSession(home, repo, hubUrl, "live-other", {
       repoId: OTHER_REPO,
-      seenTargets: ["src/a.ts"],
       editToolFires: 3,
+      targetsCapturedCount: 1,
     });
     await setMtime(home, "dead-mine", Date.now() - 60_000);
     await setMtime(home, "live-other", Date.now());
 
     // Act
-    const result = await runDoctor(
-      doctorEnv(home, hubUrl),
-      repo,
-      async () => null,
-    );
+    const result = await runFixtureDoctor(home, repo, hubUrl);
 
-    // Assert: yesterday's corpse must not be reported as a live drop
-    expect(result.stdout).toContain("PASS  capture  not measured");
+    // Assert: yesterday's corpse must not be reported as a live drop — it is
+    // still PRINTED (its counters are real), and named idle rather than dead.
     expect(result.stdout).not.toContain("WARN  capture");
+    const line = lineWith(result.stdout, "  capture  ");
+    expect(line).toContain("PASS  capture");
+    expect(line).toContain("7 edit-tool fires → 0 targets");
+    expect(line).toContain("idle");
   });
 
   test("a LIVE broken session is reported even when the newest file is a corpse", async () => {
     // Arrange: the dangerous direction — this repo's session is live and
     // capturing nothing, and the newest state file on the machine is dead.
-    const repo = await makeRepo("doctor-capture-mask-b", {
-      remote: "git@github.com:acme/api.git",
+    const { repo, home } = await fixture("doctor-capture-mask-b");
+    const hubUrl = hubWith({
+      stats: { delivered: 0, pulled: 0, claims: 0, windowDays: 7 },
     });
-    const home = await makeHome("doctor-capture-mask-b");
-    paths.push(repo, home);
-    const hubUrl = hubWithStats({ delivered: 0, pulled: 0, claims: 0 });
-    const deadIso = new Date(Date.now() - THIRTY_HOURS_MS).toISOString();
+    const deadIso = new Date(Date.now() - DEAD_AGE_MS).toISOString();
     await seedSession(home, repo, hubUrl, "live-mine", {
-      seenTargets: [],
       editToolFires: 7,
+      targetsCapturedCount: 0,
     });
     await seedSession(home, repo, hubUrl, "dead-other", {
       repoId: OTHER_REPO,
       startedAt: deadIso,
       lastHeartbeatAt: deadIso,
-      seenTargets: [],
       editToolFires: 4,
+      targetsCapturedCount: 0,
     });
     await setMtime(home, "live-mine", Date.now() - 60_000);
     await setMtime(home, "dead-other", Date.now());
 
     // Act
-    const result = await runDoctor(
-      doctorEnv(home, hubUrl),
-      repo,
-      async () => null,
-    );
+    const result = await runFixtureDoctor(home, repo, hubUrl);
 
     // Assert: this is the H1 signature the whole line exists to surface
-    expect(result.stdout).toContain(
-      "WARN  capture  7 edit-tool fires -> 0 targets across 1 live session",
-    );
+    const line = lineWith(result.stdout, "  capture  ");
+    expect(line).toContain("WARN  capture");
+    expect(line).toContain("7 edit-tool fires → 0 targets");
+    expect(line).toContain("edits fire but nothing is captured");
   });
 });
 
-describe("runDoctor carries both lines", () => {
-  test("seven fires and no targets WARN, beside a 0-claim hub", async () => {
+describe("the hints check says whether a hint can fire at all", () => {
+  test("zero claims beside an open session names the structural fact and WARNs", async () => {
     // Arrange
-    const repo = await makeRepo("doctor-capture", {
-      remote: "git@github.com:acme/api.git",
+    const { repo, home } = await fixture("doctor-hints-dead");
+    const hubUrl = hubWith({
+      stats: { delivered: 0, pulled: 0, claims: 0, windowDays: 7 },
+      contexts: [listRow()],
     });
-    const home = await makeHome("doctor-capture");
-    paths.push(repo, home);
-    const hubUrl = hubWithStats({ delivered: 0, pulled: 0, claims: 0 });
-    await seedSession(home, repo, hubUrl, "cap-a", {
-      seenTargets: [],
-      editToolFires: 7,
-    });
+    await seedSession(home, repo, hubUrl, "hints-a", { editToolFires: 0 });
 
     // Act
-    const result = await runDoctor(
-      doctorEnv(home, hubUrl),
-      repo,
-      async () => null,
-    );
+    const result = await runFixtureDoctor(home, repo, hubUrl);
 
     // Assert
-    expect(result.stdout).toContain("WARN  capture  7 edit-tool fires -> 0 targets");
-    expect(result.stdout).toContain("WARN  hints  0 delivered (0 pulled), 0 claims");
-    expect(result.stdout).toContain("hints cannot fire");
+    const line = lineWith(result.stdout, "  hints  ");
+    expect(line).toContain("WARN  hints");
+    expect(line).toContain("0 claims");
+    expect(line).toContain("hints cannot fire yet");
+    expect(line).toContain("hub 7d: 0 delivered, 0 pulled");
   });
 
-  test("an old hub degrades to 'not available', and no counters to 'not measured'", async () => {
-    // Arrange
-    const repo = await makeRepo("doctor-capture-old", {
-      remote: "git@github.com:acme/api.git",
+  test("zero claims on a machine with no open session is a fresh team, not a defect", async () => {
+    // Arrange: the same hub, and nobody running anything here
+    const { repo, home } = await fixture("doctor-hints-fresh");
+    const hubUrl = hubWith({
+      stats: { delivered: 0, pulled: 0, claims: 0, windowDays: 7 },
+      contexts: [listRow()],
     });
-    const home = await makeHome("doctor-capture-old");
-    paths.push(repo, home);
-    const hubUrl = hubWithStats(null);
-    await seedSession(home, repo, hubUrl, "cap-b", { seenTargets: [] });
 
     // Act
-    const result = await runDoctor(
-      doctorEnv(home, hubUrl),
-      repo,
-      async () => null,
-    );
+    const result = await runFixtureDoctor(home, repo, hubUrl);
 
-    // Assert: an old hub is not a defect of this install (§R6)
-    expect(result.stdout).toContain("PASS  hints  not available on this hub");
-    expect(result.stdout).toContain("PASS  capture  not measured");
+    // Assert: a warning that greets every new install is one nobody reads —
+    // the facts still print, only the level moves
+    const line = lineWith(result.stdout, "  hints  ");
+    expect(line).toContain("PASS  hints");
+    expect(line).toContain("0 claims");
+  });
+
+  test("an idle session does not re-arm the WARN a corpse cannot justify", async () => {
+    // Arrange: a state file that never ended, silent past the idle window
+    const { repo, home } = await fixture("doctor-hints-corpse");
+    const hubUrl = hubWith({
+      stats: { delivered: 0, pulled: 0, claims: 0, windowDays: 7 },
+      contexts: [listRow()],
+    });
+    const deadIso = new Date(Date.now() - DEAD_AGE_MS).toISOString();
+    await seedSession(home, repo, hubUrl, "hints-corpse", {
+      startedAt: deadIso,
+      lastHeartbeatAt: deadIso,
+    });
+
+    // Act
+    const result = await runFixtureDoctor(home, repo, hubUrl);
+
+    // Assert
+    expect(lineWith(result.stdout, "  hints  ")).toContain("PASS  hints");
+  });
+
+  test("the hub's own claim count is preferred to the contexts page's sum", async () => {
+    // Arrange: the page shows none (it is capped and this repo is old), the
+    // ledger endpoint knows about eleven. The endpoint's number is the repo's.
+    const { repo, home } = await fixture("doctor-hints-source");
+    const hubUrl = hubWith({
+      stats: { delivered: 5, pulled: 2, claims: 11, windowDays: 7 },
+      contexts: [listRow({ targetCount: 3 })],
+    });
+    await seedSession(home, repo, hubUrl, "hints-b", { hintCandidatesSeen: 1 });
+
+    // Act
+    const result = await runFixtureDoctor(home, repo, hubUrl);
+
+    // Assert
+    const line = lineWith(result.stdout, "  hints  ");
+    expect(line).toContain("PASS  hints");
+    expect(line).toContain("11 claims");
+    expect(line).toContain("hub 7d: 5 delivered, 2 pulled");
+  });
+
+  test("an older hub without the endpoint is a PASS that says so, never a WARN", async () => {
+    // Arrange: an old hub is not a defect of this install (§R6). Its context
+    // listing still carries the claim count, so the sentence keeps a number.
+    const { repo, home } = await fixture("doctor-hints-old");
+    const hubUrl = hubWith({
+      stats: null,
+      contexts: [listRow({ claimCount: 2, targetCount: 3 })],
+    });
+    await seedSession(home, repo, hubUrl, "hints-c", { hintCandidatesSeen: 1 });
+
+    // Act
+    const result = await runFixtureDoctor(home, repo, hubUrl);
+
+    // Assert
+    const line = lineWith(result.stdout, "  hints  ");
+    expect(line).toContain("PASS  hints");
+    expect(line).toContain("2 claims, 3 targets");
+    expect(line).toContain("hub predates /api/hints/stats");
+  });
+
+  test("a rejected key says not measured, never 'this hub does not have it'", async () => {
+    // Arrange: the whole point of M3 was a PASS that claimed something false
+    // under `FAIL hub reachable invalid api key`. A 401 means the endpoint was
+    // never asked, not that the hub lacks it.
+    const { repo, home } = await fixture("doctor-hints-401");
+    const hubUrl = hubWith({ stats: null, rejectKey: true });
+    await seedSession(home, repo, hubUrl, "hints-d", {});
+
+    // Act
+    const result = await runFixtureDoctor(home, repo, hubUrl);
+
+    // Assert
+    const line = lineWith(result.stdout, "  hints  ");
+    expect(line).toContain("PASS  hints");
+    expect(line).toContain("not measured");
+    expect(line).not.toContain("predates");
+  });
+});
+
+describe("runDoctor carries both lines, once each", () => {
+  test("seven fires and no targets WARN, beside a 0-claim hub", async () => {
+    // Arrange
+    const { repo, home } = await fixture("doctor-capture");
+    const hubUrl = hubWith({
+      stats: { delivered: 0, pulled: 0, claims: 0, windowDays: 7 },
+      contexts: [listRow()],
+    });
+    await seedSession(home, repo, hubUrl, "cap-a", {
+      editToolFires: 7,
+      targetsCapturedCount: 0,
+    });
+
+    // Act
+    const result = await runFixtureDoctor(home, repo, hubUrl);
+
+    // Assert
+    expect(result.stdout).toContain("WARN  capture");
+    expect(result.stdout).toContain("7 edit-tool fires → 0 targets");
+    expect(result.stdout).toContain("WARN  hints");
+    expect(result.stdout).toContain("hints cannot fire yet");
+  });
+
+  test("ONE capture line and ONE hints line — the duplicate surface is gone", async () => {
+    // Arrange: two implementations of each check were merged, and a report
+    // that states the same thing twice from two readers is how they disagree.
+    const { repo, home } = await fixture("doctor-capture-once");
+    const hubUrl = hubWith({
+      stats: { delivered: 1, pulled: 1, claims: 4, windowDays: 7 },
+      contexts: [listRow({ claimCount: 4, targetCount: 2 })],
+    });
+    await seedSession(home, repo, hubUrl, "cap-b", {
+      editToolFires: 2,
+      targetsCapturedCount: 2,
+      hintCandidatesSeen: 1,
+    });
+
+    // Act
+    const result = await runFixtureDoctor(home, repo, hubUrl);
+
+    // Assert
+    const lines = result.stdout.split("\n");
+    expect(lines.filter((line) => /^(PASS|WARN|FAIL)  capture  /.test(line))).toHaveLength(1);
+    expect(lines.filter((line) => /^(PASS|WARN|FAIL)  hints  /.test(line))).toHaveLength(1);
   });
 });
