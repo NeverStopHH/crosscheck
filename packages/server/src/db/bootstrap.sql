@@ -343,11 +343,14 @@ CREATE TABLE IF NOT EXISTS questions (
     CHECK (target_developer_id IS NOT NULL OR work_context_id IS NOT NULL)
 );
 
--- The inbox read ("open questions for me, newest first") and the per-target
--- budget probe are the same range; without this index both scan every
--- question on the hub on every SessionStart briefing.
-CREATE INDEX IF NOT EXISTS questions_target_status_created_idx
-  ON questions (target_developer_id, status, created_at DESC);
+-- The inbox read ("open questions for me in THIS repo, newest first") and the
+-- two backlog counters beside it are the same range; without this index all
+-- three scan every question on the hub on every SessionStart briefing.
+-- repo is the SECOND column, not a filter after the fact: one person can be
+-- the addressee of many questions across many repos, and a repo predicate
+-- applied after the index cond makes the scan fetch rows it then throws away.
+CREATE INDEX IF NOT EXISTS questions_target_repo_status_created_idx
+  ON questions (target_developer_id, repo, status, created_at DESC);
 
 -- The second addressee axis: questions asked ABOUT one work context. A plain
 -- foreign key, which Postgres does not index on its own.

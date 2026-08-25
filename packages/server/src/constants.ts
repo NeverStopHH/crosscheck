@@ -100,6 +100,26 @@ export const MAX_QUESTIONS_PER_AUTHOR_PER_DAY = 20;
 export const MAX_QUESTIONS_LISTED = 20;
 
 /**
+ * How far back the UNDELIVERED-ANSWER probe looks, counted on the QUESTION.
+ *
+ * WHY IT EXISTS: without it the probe's outer set is every question this
+ * developer ever asked, so its cost grows monotonically with the lifetime of
+ * the account and never shrinks — `hint_deliveries` has no reaper, and a
+ * delivered answer does not stop being scanned. Measured on a seeded hub: 11
+ * ms at 3 000 lifetime answers and 25 ms at 7 300 (about a year at a modest
+ * rate), on the UserPromptSubmit path, every prompt. With the window the
+ * outer set is bounded by the ASKER'S OWN BUDGET instead — at most
+ * MAX_QUESTIONS_PER_AUTHOR_PER_DAY a day over this many days — so it is
+ * bounded by a rule rather than by how long somebody has used the product.
+ *
+ * TWICE THE TTL, so nothing reachable is cut: a question cannot be answered
+ * after it expires (QUESTION_TTL_DAYS), which leaves a full further TTL for
+ * the asker to start a session and be handed the answer. An answer older than
+ * that is not injected; the asker's `answered` counter still reports it.
+ */
+export const QUESTION_ANSWER_WINDOW_DAYS = QUESTION_TTL_DAYS * 2;
+
+/**
  * Most undelivered ANSWERS one response carries. Small on purpose: they ride
  * the UserPromptSubmit path, one per prompt, inside the hint budget — a
  * bigger window would only buy rows the connector throws away.

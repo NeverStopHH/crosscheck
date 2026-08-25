@@ -431,10 +431,16 @@ export const questions = pgTable(
       "questions_addressee_check",
       sql`${table.targetDeveloperId} IS NOT NULL OR ${table.workContextId} IS NOT NULL`,
     ),
-    // The inbox read: "open questions for me, newest first" — one lookup, and
-    // the per-target budget probe rides the same index.
-    index("questions_target_status_created_idx").on(
+    // The inbox read — "open questions for me IN THIS REPO, newest first" —
+    // and the two backlog counters beside it (count, oldest) are the same
+    // range, so one lookup serves all three. repo is the SECOND column rather
+    // than a filter after the index cond: one person can be the addressee of
+    // many questions across many repos, and a post-index filter makes the scan
+    // fetch rows it then discards (measured: 741 rows removed by filter on a
+    // hot target across 40 repos).
+    index("questions_target_repo_status_created_idx").on(
       table.targetDeveloperId,
+      table.repo,
       table.status,
       table.createdAt.desc(),
     ),

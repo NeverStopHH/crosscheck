@@ -611,6 +611,24 @@ describe("answering a question", () => {
     expect((await answerAs(ken)).status).toBe(200);
   });
 
+  test("an answer nobody collected stops being injected after the window", async () => {
+    // Arrange: Ken answers, and Nick never starts a session to collect it. The
+    // probe that finds this row runs on EVERY prompt inside the 800 ms hook
+    // budget, and its LIMIT is applied after the join — so without a window
+    // its outer set is every question this developer ever asked, for ever.
+    expect((await answerAs(ken)).status).toBe(200);
+    expect((await readQuestions(harness, nick)).data.answers).toHaveLength(1);
+
+    // Act: past twice the TTL — a question cannot even be answered after one
+    // TTL, so a second one is all the slack a returning asker could need.
+    harness.clock.advanceSeconds(29 * SECONDS_PER_DAY);
+
+    // Assert: no longer injected, and still counted, so nothing is hidden.
+    const later = await readQuestions(harness, nick);
+    expect(later.data.answers).toHaveLength(0);
+    expect(later.data.counts["askedAnswered"]).toBe(1);
+  });
+
   test("an answer to a question asked in another repo waits in that repo", async () => {
     // Arrange: Nick asks from a SECOND repo, and Ken answers it. The inbox
     // half of this channel is repo-scoped; the answer half was scoped by

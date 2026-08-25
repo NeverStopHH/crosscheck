@@ -47,6 +47,7 @@ import {
   MAX_QUESTIONS_LISTED,
   MAX_QUESTIONS_PER_AUTHOR_PER_DAY,
   MAX_QUESTION_ANSWERS_LISTED,
+  QUESTION_ANSWER_WINDOW_DAYS,
   QUESTION_TTL_DAYS,
 } from "../constants.ts";
 import {
@@ -734,12 +735,22 @@ const summarizeInbox = async (
  * different codebase and a different problem, possibly days later. So a
  * cross-repo answer waits until its asker next works in the repo they asked
  * from, which is also the only place it is legible.
+ *
+ * AND BOUNDED IN TIME, because a LIMIT is not a bound when the sort runs over
+ * everything first. The `.limit(3)` here is applied AFTER the join and the
+ * anti-join, so without a window the probe reads every question this
+ * developer ever asked on every prompt — 25 ms at a year of use, measured,
+ * and growing. QUESTION_ANSWER_WINDOW_DAYS caps the outer set by the asker's
+ * OWN day budget instead of by the age of their account.
  */
 export const listUndeliveredAnswers = async (
   deps: Deps,
   developerId: string,
   repo: string,
 ): Promise<readonly AnsweredQuestion[]> => {
+  const answerWindowStart = new Date(
+    deps.now().getTime() - QUESTION_ANSWER_WINDOW_DAYS * MS_PER_DAY,
+  );
   const rows = await deps.db
     .select({
       questionId: questionAnswers.questionId,
@@ -759,6 +770,7 @@ export const listUndeliveredAnswers = async (
       and(
         eq(questions.authorDeveloperId, developerId),
         eq(questions.repo, repo),
+        gt(questions.createdAt, answerWindowStart),
         sql`NOT EXISTS (
           SELECT 1 FROM hint_deliveries delivered
           JOIN agent_sessions reader ON reader.id = delivered.session_id
