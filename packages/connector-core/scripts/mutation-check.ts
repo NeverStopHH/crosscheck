@@ -530,6 +530,46 @@ export const MUTATIONS: readonly Mutation[] = [
       "that actually still stands",
   },
   {
+    // The intent tier's whole precision story is a COUNT of distinct matching
+    // words (server constants). One word is no floor at all.
+    label: "the intent tier stops counting how much of the intent matched",
+    file: `${SERVER}/src/constants.ts`,
+    from: "export const SOLVED_MATCH_INTENT_MIN_TOKEN_HITS = 3;",
+    to: "export const SOLVED_MATCH_INTENT_MIN_TOKEN_HITS = 1;",
+    test: `${SERVER}/test/solved-intent.test.ts`,
+    because:
+      "one workhorse word in common — \"fix\", \"test\", \"webhook\" — makes " +
+      "any old solved tree a \"you have seen this before\" line, which is " +
+      "the cry-wolf failure the prior art warns about",
+  },
+  {
+    // An intent is one developer's sentence about their own work. Reading
+    // the repo's intents instead puts a teammate's topic in my briefing.
+    label: "a teammate's intent is read as mine",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: `        eq(agentSessions.developerId, viewerDeveloperId),
+        gte(activity, cutoff),`,
+    to: "        gte(activity, cutoff),",
+    test: `${SERVER}/test/solved-intent.test.ts`,
+    because:
+      "solved trees are pulled into my SessionStart briefing because a " +
+      "teammate happens to be working on that topic — lines about somebody " +
+      "else's problem, asserted as relevant to mine",
+  },
+  {
+    // The kind is what the reader is asked to trust; a word match must not
+    // be able to present itself as an identical failure (and collect a body).
+    label: "a topic match reports itself as an identical failure",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "  return strength.viaIntent ? \"session_intent\" : \"file\";",
+    to: "  return \"error_fingerprint\";",
+    test: `${SERVER}/test/solved-intent.test.ts`,
+    because:
+      "an overlap of three words arrives labelled as the same error " +
+      "fingerprint, which is the one label that lets a solved answer be " +
+      "asserted rather than pointed at",
+  },
+  {
     label: "the solved floor leaks into similarity guesses",
     file: `${SERVER}/src/services/search.ts`,
     from: "solvedIds.has(entry.row.id) && hasFactTier(entry.tiers)",
@@ -2116,6 +2156,7 @@ interface Outcome {
  * PRINTS: set-intent.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
  * PRINTS: solved-cross-repo.test.ts 4
+ * PRINTS: solved-intent.test.ts 3
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1
  * PRINTS: stop-hook.test.ts 1

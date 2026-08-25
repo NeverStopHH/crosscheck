@@ -276,8 +276,14 @@ export interface SearchQuery {
 const boundTokens = (tokens: readonly string[]): readonly string[] =>
   [...new Set(tokens)].slice(0, SEARCH_MAX_QUERY_TOKENS);
 
-/** Letter/digit words for FTS — split on everything else, floor applied. */
-const ftsTokens = (query: string): readonly string[] =>
+/**
+ * Letter/digit words for FTS — split on everything else, floor applied.
+ * EXPORTED for the solved-match intent tier (services/solved-matches.ts):
+ * that tier turns a session intent into the same kind of tsquery this one
+ * builds, and two tokenizers would mean two answers to "does this text match
+ * that doc" on two surfaces the reader cannot tell apart.
+ */
+export const ftsTokens = (query: string): readonly string[] =>
   boundTokens(
     query
       .toLowerCase()

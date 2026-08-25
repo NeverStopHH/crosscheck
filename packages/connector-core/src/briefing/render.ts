@@ -396,6 +396,12 @@ export const formatSolvedAge = (ageMs: number): string => {
 const SOLVED_MATCH_KIND_LABELS: Readonly<Record<string, string>> = {
   error_fingerprint: "shared error fingerprint with current work",
   file: "shared file with current work",
+  // Not a target kind at all (the hub's own note on `matchedTargetKind`
+  // says so): the tree's searchable text overlaps the sentence THIS reader's
+  // session declared about its work. The label says "topic" and names whose
+  // sentence it was, because a reader who mistook it for identity would
+  // trust it the way they trust a fingerprint.
+  session_intent: "shared topic with your session intent",
 };
 
 /**

@@ -17,12 +17,16 @@
  * Derived fresh per read like the deterministic contradictions — no stored
  * pairs, no ingest-order dependence, nothing to go stale.
  */
-import { and, asc, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, ne, notInArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import {
   SOLVED_MATCH_ACTIVE_WINDOW_DAYS,
+  SOLVED_MATCH_INTENT_MIN_TOKEN_HITS,
   SOLVED_MATCH_MAX_FINDINGS,
+  SOLVED_MATCH_MAX_INTENT_CANDIDATES,
+  SOLVED_MATCH_MAX_INTENT_FINDINGS,
+  SOLVED_MATCH_MAX_LIVE_INTENTS,
   SOLVED_MATCH_MAX_PAIR_ROWS,
 } from "../constants.ts";
 import {
@@ -31,6 +35,7 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
+import { ftsTokens } from "./search.ts";
 import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
@@ -87,6 +92,26 @@ export interface SolvedMatchView {
    */
   readonly rootCause: string | null;
 }
+
+/** Why a tree matched, strongest reason first — fingerprint ≻ file ≻ intent. */
+interface MatchStrength {
+  readonly viaFingerprint: boolean;
+  readonly viaIntent: boolean;
+}
+
+/**
+ * The one place a strength becomes the word on the wire. `session_intent` is
+ * not a target kind and the field is named `matchedTargetKind` — an honest
+ * mismatch: the field is the wire's OPEN "why", the renderer maps it by
+ * strict equality and drops a value it does not know, and renaming a shipped
+ * field would cost every older connector the whole section.
+ */
+const matchKindOf = (strength: MatchStrength): string => {
+  if (strength.viaFingerprint) {
+    return "error_fingerprint";
+  }
+  return strength.viaIntent ? "session_intent" : "file";
+};
 
 interface PairRow {
   readonly candidateId: string;
@@ -173,6 +198,90 @@ const listSharedTargetPairs = async (
     .limit(SOLVED_MATCH_MAX_PAIR_ROWS);
 };
 
+/**
+ * The INTENT tier (VISION.md §1: the current session's symptoms are its
+ * fingerprints, its targets AND its intent). Deliberately the weakest of the
+ * three, and everything about its shape is an answer to that:
+ *
+ *   - the inputs are the CALLER'S OWN live intents on this repo, not the
+ *     repo's. A fingerprint is a fact about a failure and belongs to whoever
+ *     hits it; an intent is a sentence about what one developer is doing, and
+ *     matching solved trees against a TEAMMATE'S sentence would put lines in
+ *     my briefing about somebody else's topic;
+ *   - a candidate qualifies on a COUNT of distinct matching words
+ *     (SOLVED_MATCH_INTENT_MIN_TOKEN_HITS), never on a relevance score, so
+ *     the rule can be stated to the person who was shown the line;
+ *   - it is SAME-REPO ONLY, unlike the fingerprint tier. Text overlap is not
+ *     identity, and the searchable doc still folds in the repo label and the
+ *     default branch name (audit row M13, Block 6's edit) — until that is
+ *     cleaned up, letting prose match across repos would make "rebase onto
+ *     main" a hit on every repo the hub holds;
+ *   - and what it earns is a POINTER. `rootCause` is fingerprint-only, so a
+ *     tree reached this way is a line saying WHERE the answer is, never the
+ *     answer.
+ */
+const listIntentMatchIds = async (
+  deps: Deps,
+  viewerDeveloperId: string,
+  repo: string,
+): Promise<readonly string[]> => {
+  const activity = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
+  const cutoff = new Date(
+    deps.now().getTime() - SOLVED_MATCH_ACTIVE_WINDOW_DAYS * MS_PER_DAY,
+  );
+  const mine = await deps.db
+    .select({
+      id: workContexts.id,
+      summary: sql<string>`${workContexts.intent} ->> 'summary'`,
+    })
+    .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(
+      and(
+        eq(agentSessions.repo, repo),
+        eq(agentSessions.developerId, viewerDeveloperId),
+        gte(activity, cutoff),
+        sql`${workContexts.intent} ->> 'summary' IS NOT NULL`,
+      ),
+    )
+    .orderBy(desc(activity))
+    .limit(SOLVED_MATCH_MAX_LIVE_INTENTS);
+  const tokens = ftsTokens(mine.map((row) => row.summary).join(" "));
+  const sourceIds = mine.map((row) => row.id);
+  if (tokens.length < SOLVED_MATCH_INTENT_MIN_TOKEN_HITS) {
+    return [];
+  }
+  // One 0/1 term per distinct word, summed: the count the floor is stated in.
+  // English stopwords cost nothing here — plainto_tsquery drops them, so
+  // their term is 0 for every row rather than a free hit on all of them.
+  const hits = sql`(${sql.join(
+    tokens.map(
+      (token) =>
+        sql`(case when ${workContexts.tsv} @@ plainto_tsquery('english', ${token}) then 1 else 0 end)`,
+    ),
+    sql` + `,
+  )})`;
+  // The GIN prefilter first (work_contexts_tsv_idx), so the per-row sum is
+  // only ever computed for rows that match at least one word.
+  const anyToken = sql`websearch_to_tsquery('english', ${tokens.join(" or ")})`;
+  const rows = await deps.db
+    .select({ id: workContexts.id })
+    .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(
+      and(
+        eq(agentSessions.repo, repo),
+        notInArray(workContexts.id, sourceIds),
+        sql`${workContexts.tsv} @@ ${anyToken}`,
+        sql`${hits} >= ${SOLVED_MATCH_INTENT_MIN_TOKEN_HITS}`,
+        notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+      ),
+    )
+    .orderBy(desc(hits), desc(activity))
+    .limit(SOLVED_MATCH_MAX_INTENT_CANDIDATES);
+  return rows.map((row) => row.id);
+};
+
 /** Display rows for the winning solved contexts, keyed by id. */
 const hydrateMatches = async (
   db: Db,
@@ -222,19 +331,29 @@ export const listSolvedMatches = async (
   viewerDeveloperId: string,
   repo: string,
 ): Promise<readonly SolvedMatchView[]> => {
-  const pairs = await listSharedTargetPairs(deps, viewerDeveloperId, repo);
-  if (pairs.length === 0) {
+  // The two tiers run in parallel: they read different tables and neither
+  // needs the other's answer. An empty target tier is not an empty result any
+  // more — a session with no captured targets yet (every SessionStart) still
+  // has an intent.
+  const [pairs, intentIds] = await Promise.all([
+    listSharedTargetPairs(deps, viewerDeveloperId, repo),
+    listIntentMatchIds(deps, viewerDeveloperId, repo),
+  ]);
+  if (pairs.length === 0 && intentIds.length === 0) {
     return [];
   }
   const allIds = [
-    ...new Set(pairs.flatMap((pair) => [pair.candidateId, pair.liveId])),
+    ...new Set([
+      ...pairs.flatMap((pair) => [pair.candidateId, pair.liveId]),
+      ...intentIds,
+    ]),
   ];
   const solvedInfo = await listSolvedInfo(deps.db, allIds);
 
   // A pair counts when the candidate is solved and the live side is NOT —
   // two solved trees sharing a fingerprint is history meeting history, not
   // current work meeting an answer.
-  const byCandidate = new Map<string, { viaFingerprint: boolean }>();
+  const byCandidate = new Map<string, MatchStrength>();
   for (const pair of pairs) {
     if (!solvedInfo.has(pair.candidateId) || solvedInfo.has(pair.liveId)) {
       continue;
@@ -243,17 +362,28 @@ export const listSolvedMatches = async (
     byCandidate.set(pair.candidateId, {
       viaFingerprint:
         (known?.viaFingerprint ?? false) || pair.kind === "error_fingerprint",
+      viaIntent: false,
     });
   }
+  // Intent hits are added LAST and never overwrite a target hit: a tree
+  // reached both ways is reported under the stronger reason, because the
+  // reason is what the reader is asked to trust.
+  const intentWinners = intentIds
+    .filter((id) => solvedInfo.has(id) && !byCandidate.has(id))
+    .slice(0, SOLVED_MATCH_MAX_INTENT_FINDINGS);
+  for (const id of intentWinners) {
+    byCandidate.set(id, { viaFingerprint: false, viaIntent: true });
+  }
   const winners = [...byCandidate.entries()]
-    .map(([id, { viaFingerprint }]) => ({
+    .map(([id, strength]) => ({
       id,
-      viaFingerprint,
+      ...strength,
       solvedAtMs: solvedInfo.get(id)?.getTime() ?? 0,
     }))
     .sort(
       (left, right) =>
         Number(right.viaFingerprint) - Number(left.viaFingerprint) ||
+        Number(left.viaIntent) - Number(right.viaIntent) ||
         right.solvedAtMs - left.solvedAtMs,
     )
     .slice(0, SOLVED_MATCH_MAX_FINDINGS);
@@ -286,9 +416,7 @@ export const listSolvedMatches = async (
         repo: row.repo,
         solvedAt: solvedAt.toISOString(),
         landedAt: row.landedAt === null ? null : row.landedAt.toISOString(),
-        matchedTargetKind: winner.viaFingerprint
-          ? "error_fingerprint"
-          : "file",
+        matchedTargetKind: matchKindOf(winner),
         rootCause: rootCauses.get(winner.id) ?? null,
       },
     ];

@@ -58,6 +58,33 @@ export const SOLVED_MATCH_MAX_FINDINGS = 5;
 export const SOLVED_MATCH_MAX_PAIR_ROWS = 200;
 
 /**
+ * The INTENT tier (VISION.md §1: symptoms are fingerprints, targets AND the
+ * session intent). Its inputs are the CALLER'S OWN live intents on this repo
+ * — an intent is a statement about what THIS developer is doing, so unlike
+ * the target tiers it is not read repo-wide.
+ */
+export const SOLVED_MATCH_MAX_LIVE_INTENTS = 5;
+/**
+ * How many DISTINCT intent words a solved tree's searchable doc must match
+ * before the tier will point at it. Text overlap is not identity, so this is
+ * the whole precision story of the tier, and it is a COUNT rather than a
+ * relevance score on purpose: a tuned float is a number nobody can argue
+ * with, while "three different words of what I said I am doing" is a
+ * sentence a tired reader can check against the line they were shown. Two
+ * would fire on any pair of workhorse words ("fix", "test"); the floor test
+ * in solved-intent.test.ts is what keeps this honest.
+ */
+export const SOLVED_MATCH_INTENT_MIN_TOKEN_HITS = 3;
+/** Read bound on candidate rows the intent tier scores per query. */
+export const SOLVED_MATCH_MAX_INTENT_CANDIDATES = 20;
+/**
+ * Findings the intent tier may contribute. ONE: it is the weakest signal
+ * here and must never crowd out an identity match, and a briefing shows
+ * MAX_SOLVED_POINTERS = 2 entries in total anyway.
+ */
+export const SOLVED_MATCH_MAX_INTENT_FINDINGS = 1;
+
+/**
  * Most unreviewed Tier-1 drafts one GET /api/drafts response carries
  * (DESIGN.md §3 Tier 1 promotion loop). Well above what the summarizer cap
  * lets one session mint, and bounded like every list query:

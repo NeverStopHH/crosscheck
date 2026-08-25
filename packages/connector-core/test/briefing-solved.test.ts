@@ -95,6 +95,35 @@ describe("briefing solved-before section", () => {
     expect(briefing).toContain("diagnosed 45d ago");
   });
 
+  test("an intent match says topic, not identity, and quotes nothing", async () => {
+    // Arrange: the same tree, matched two ways, with a body attached to
+    // both. Together they pin what the reader is being asked to trust — an
+    // overlap of words is not the same fact as an identical failure, and
+    // only the second one may put the old answer in front of the agent.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          workContextId: "wc_topic",
+          matchedTargetKind: "session_intent",
+          rootCause: "The ingestion mapping drops the key id on rotation",
+        }),
+        solvedMatch({
+          workContextId: "wc_same_failure",
+          matchedTargetKind: "error_fingerprint",
+          rootCause: "The ingestion mapping drops the key id on rotation",
+        }),
+      ]),
+    );
+
+    // Assert
+    const lines = briefing.split("\n");
+    const topicAt = lines.findIndex((line) => line.includes("get_diagnosis wc_topic"));
+    expect(lines[topicAt]).toContain("shared topic with your session intent");
+    expect(lines[topicAt + 1] ?? "").not.toContain("root cause");
+    expect(briefing).toContain("shared error fingerprint with current work");
+    expect(briefing).toContain("  root cause: «");
+  });
+
   test("an unknown match kind drops the line rather than inventing a sentence", async () => {
     // Act: a newer hub's kind this renderer does not know — same honesty rule
     // as the absence section's unknown-kind handling.
