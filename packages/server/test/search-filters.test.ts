@@ -241,6 +241,29 @@ describe("GET /api/search — the developer filter", () => {
     expect(result.ids).toEqual(["wc_needle"]);
   });
 
+  test("refuses a blank developer instead of quoting an empty term", async () => {
+    // Arrange: SearchQuerySchema bounds `developer` with min(1) and never
+    // trims, so "   " passes validation, trims to nothing inside
+    // resolveDeveloperRef, misses, and comes back through the unknown-name
+    // path — whose echo trims again. The reader is then shown a sentence that
+    // opens with a quoted nothing and goes looking for a name they never sent.
+    const { harness, nick } = await seedCrowdedTier();
+
+    // Act
+    const blank = await search(harness, nick.apiKey, {
+      query: NEEDLE_TARGET,
+      developer: "   ",
+    });
+
+    // Assert: its own code and its own sentence, naming what to do instead
+    expect(blank.status).toBe(400);
+    expect(blank.code).toBe("invalid_developer");
+    expect(blank.message).not.toContain('""');
+    expect(blank.message).toContain("blank");
+    expect(blank.message).toContain("omit");
+    expect(blank.ids).toEqual([]);
+  });
+
   test("refuses an ambiguous name with the candidates named", async () => {
     // Arrange: two people called Ken is a fact about this hub. Picking one
     // would attribute half a team's work to the wrong person silently.
@@ -735,10 +758,12 @@ describe("GET /api/search — every refusal arrives whole", () => {
       { developer: "Ken" },
       { developer: WIDEST_TERM },
       { developer: WIDEST_NAME },
+      { developer: "   " },
       { since: "last fortnight" },
       { since: "0d" },
       { since: "400d" },
       { since: "2027-01-01" },
+      { since: "   " },
     ]) {
       refusals.push({
         params,

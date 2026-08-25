@@ -94,6 +94,20 @@ export const searchRoutes = (deps: AppDeps): Hono<AppEnv> => {
     let filters: AppliedFilters = { developer: null, since: null };
     let developerId: string | undefined;
     if (developerTerm !== undefined) {
+      // A term that is only whitespace passes `min(1)`, trims to nothing in
+      // the resolver, misses, and comes back through the unknown-name path —
+      // whose echo trims it a second time, so the sentence opens with a
+      // quoted nothing and the reader goes looking for a name they never
+      // sent. It is a different mistake and it gets a different sentence.
+      if (developerTerm.trim().length === 0) {
+        return fail(
+          c,
+          400,
+          "invalid_developer",
+          "developer cannot be blank — name a teammate, give an address they " +
+            "are known by, or omit the filter to search everyone's work.",
+        );
+      }
       const lookup = await lookUpDeveloper(deps.db, developerTerm);
       if (lookup.outcome === "ambiguous") {
         return fail(
@@ -131,6 +145,17 @@ export const searchRoutes = (deps: AppDeps): Hono<AppEnv> => {
 
     let since: Date | undefined;
     if (sinceTerm !== undefined) {
+      // Same shape, same reason: `parseSinceWindow` trims, so a blank window
+      // would be echoed back as an empty pair of quotes beside the forms.
+      if (sinceTerm.trim().length === 0) {
+        return fail(
+          c,
+          400,
+          "invalid_since",
+          "since cannot be blank — give a window like 14d or 72h, or an ISO " +
+            "date like 2026-08-01, or omit it to search all of history.",
+        );
+      }
       const window = parseSinceWindow(sinceTerm, deps.now());
       if (!window.ok) {
         return fail(c, 400, "invalid_since", window.reason);

@@ -141,6 +141,7 @@ const MIN_QUERY_TOKEN_CHARS = 3;
 const FILTER_REFUSAL_CODES: ReadonlySet<string> = new Set([
   "ambiguous_developer",
   "unknown_developer",
+  "invalid_developer",
   "invalid_since",
 ]);
 
