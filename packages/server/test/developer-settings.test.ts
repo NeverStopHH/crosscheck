@@ -7,6 +7,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { addMute } from "../src/services/developer-settings.ts";
 import {
   createTestHarness,
   createTestDeveloper,
@@ -167,6 +168,59 @@ describe("POST /api/settings/mutes", () => {
       "Clara",
       "Robin",
     ]);
+  });
+
+  test("answers the same shape however the developer was spelled", async () => {
+    // Arrange: R1 widened resolveDeveloperRef's NAME branch from {id, name} to
+    // {id, name, email} so a search refusal could list addresses. addMute and
+    // removeMute hand `resolved.developer` straight to the response, and
+    // MuteEntryView is declared {id, name} — so TypeScript could not see the
+    // extra field and this endpoint began answering with a teammate's address,
+    // but only when the caller happened to spell the reference as a NAME.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const robin = await createTestDeveloper(
+      harness,
+      "Robin",
+      "robin@example.com",
+    );
+
+    // Act: the three reference forms, muting and unmuting through each
+    const byName = await postMute(harness, nick, "Robin");
+    const unmutedByName = await deleteMute(harness, nick, "Robin");
+    const byEmail = await postMute(harness, nick, "robin@example.com");
+    const byId = await deleteMute(harness, nick, robin.developerId);
+
+    // Assert: one shape, and it is the declared one — an endpoint that was not
+    // part of R1 does not grow a field because a different surface needed it
+    const expected = { id: robin.developerId, name: "Robin" };
+    expect((byName.body?.data as { muted: unknown }).muted).toEqual(expected);
+    expect(
+      (unmutedByName.body?.data as { unmuted: unknown }).unmuted,
+    ).toEqual(expected);
+    expect((byEmail.body?.data as { muted: unknown }).muted).toEqual(expected);
+    expect((byId.body?.data as { unmuted: unknown }).unmuted).toEqual(expected);
+  });
+
+  test("an ambiguous mute refusal carries no candidate list", async () => {
+    // Arrange: AddMuteResult's ambiguous variant is declared {outcome} and
+    // nothing else, but addMute returned the resolver's own result — which
+    // since R1 carries every same-named developer's address. The route does
+    // not serialize it today; the leak is one `...resolved` away.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await createTestDeveloper(harness, "Sam", "sam1@example.com");
+    await createTestDeveloper(harness, "Sam", "sam2@example.com");
+
+    // Act
+    const ambiguous = await addMute(
+      { db: harness.db, now: harness.clock.now },
+      nick.developerId,
+      "Sam",
+    );
+
+    // Assert
+    expect(ambiguous).toEqual({ outcome: "ambiguous" });
   });
 
   test("unknown developer is 404, ambiguous name is 409, self-mute is 400", async () => {

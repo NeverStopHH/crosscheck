@@ -197,7 +197,15 @@ export const resolveDeveloperRef = async (
   }
   const match = byName[0];
   if (match !== undefined) {
-    return { outcome: "resolved", developer: match };
+    // Projected, not passed through. This branch selects an EMAIL as well,
+    // because an ambiguity refusal has to name addresses — and every caller of
+    // this function that resolves a single developer serializes what it gets.
+    // Handing the query row back made one endpoint answer with a teammate's
+    // address, and only when the reference happened to be spelled as a name.
+    return {
+      outcome: "resolved",
+      developer: { id: match.id, name: match.name },
+    };
   }
   return { outcome: "not_found" };
 };
@@ -252,8 +260,15 @@ export const addMute = async (
   ref: string,
 ): Promise<AddMuteResult> => {
   const resolved = await resolveDeveloperRef(deps.db, ref);
+  if (resolved.outcome === "ambiguous") {
+    // The OUTCOME, never the candidates. This surface's refusal names nobody
+    // (see developer-lookup.ts's header, which owns the plan to fix that);
+    // until it does, forwarding the resolver's result would ship a list of
+    // teammate addresses through a response typed as carrying none.
+    return { outcome: "ambiguous" };
+  }
   if (resolved.outcome !== "resolved") {
-    return resolved;
+    return { outcome: "not_found" };
   }
   if (resolved.developer.id === readerDeveloperId) {
     return { outcome: "self" };
@@ -296,8 +311,11 @@ export const removeMute = async (
   ref: string,
 ): Promise<RemoveMuteResult> => {
   const resolved = await resolveDeveloperRef(db, ref);
+  if (resolved.outcome === "ambiguous") {
+    return { outcome: "ambiguous" };
+  }
   if (resolved.outcome !== "resolved") {
-    return resolved;
+    return { outcome: "not_found" };
   }
   const deleted = await db
     .delete(developerMutes)
