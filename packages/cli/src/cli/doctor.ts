@@ -1777,6 +1777,12 @@ export const repoConnectedCheck = (
     );
   }
   if (tracked === false) {
+    // A DELIBERATE DEVIATION from the row this line was built for, and it is
+    // recorded here because it was not recorded anywhere else: the blueprint
+    // for A4-07 prescribes WARN for `present but untracked`, and this returns
+    // PASS (review finding B2-08/B2-L6, which found the implementer's report
+    // still describing the WARN its own e2e captures show as PASS).
+    //
     // PASS, not WARN, and the difference is what a reader can act on RIGHT
     // NOW. `crosscheck init` writes this file and cannot commit it, so every
     // correct install is untracked for the minutes before the commit — a WARN

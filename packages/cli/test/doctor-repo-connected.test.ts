@@ -75,7 +75,9 @@ describe("repoConnectedCheck", () => {
     // Arrange + Act + Assert
     expect(repoConnectedCheck(false, null).level).toBe("WARN");
     // Untracked is the minutes between `init` and the commit, so it says its
-    // piece at PASS rather than greeting every new install with a defect.
+    // piece at PASS rather than greeting every new install with a defect —
+    // a deliberate deviation from A4-07's prescribed WARN, spelled out at the
+    // site in doctor.ts (review finding B2-08/B2-L6).
     expect(repoConnectedCheck(true, false).level).toBe("PASS");
     expect(repoConnectedCheck(true, true).level).toBe("PASS");
   });
