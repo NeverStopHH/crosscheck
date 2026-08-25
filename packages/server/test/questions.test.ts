@@ -806,6 +806,78 @@ describe("mute and the question channel", () => {
 });
 
 /**
+ * PRESENCE OPT-OUT vs ADDRESSED COMMUNICATION (DESIGN.md §2.1). Opt-out hides
+ * LIVE PRESENCE; a question is addressed communication and is not presence, so
+ * an opted-out developer receives questions exactly as anybody else does — and
+ * the ASKER must learn nothing about their presence through asking, or the
+ * channel becomes a presence oracle: "no developer matches that reference"
+ * would mean "that person opted out".
+ *
+ * The rule was documented and pinned by nothing. This is the pin.
+ */
+describe("presence opt-out and the question channel", () => {
+  let harness: TestHarness;
+  let nick: Party;
+  let ken: Party;
+
+  const withoutIdentity = (
+    value: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    const question = value["question"] as Record<string, unknown> | undefined;
+    return question === undefined
+      ? value
+      : {
+          ...value,
+          question: {
+            ...question,
+            id: "<id>",
+            body: "<body>",
+            createdAt: "<at>",
+            expiresAt: "<at>",
+          },
+        };
+  };
+
+  const dataOf = async (response: Response): Promise<Record<string, unknown>> =>
+    withoutIdentity(
+      ((await response.json()) as { data: Record<string, unknown> }).data,
+    );
+
+  beforeEach(async () => {
+    harness = await createTestHarness();
+    nick = await seatDeveloper(harness, "Nick", "nick@example.com", "ses_nick");
+    ken = await seatDeveloper(harness, "Ken", "ken@example.com", "ses_ken");
+  });
+
+  test("an opted-out teammate still receives questions, and the asker sees no difference", async () => {
+    // Arrange: the CONTRAST first — the same ask against a visible target.
+    const visible = await ask(harness, nick, {
+      developer: "Ken",
+      body: "Did the rate-limit variant of the importer ever get tried?",
+    });
+    expect(visible.status).toBe(200);
+    const visibleData = await dataOf(visible);
+
+    // Act: Ken hides his presence, and Nick asks again.
+    const optedOut = await harness.app.request(
+      "/api/settings/presence",
+      jsonRequest("PUT", ken.developer.apiKey, { optOut: true }),
+    );
+    expect(optedOut.status).toBe(200);
+    const hidden = await ask(harness, nick, {
+      developer: "Ken",
+      body: "Does the matcher retry on a 429 already?",
+    });
+
+    // Assert: delivered, and the two replies differ in nothing but the
+    // question itself — no status, no wording, no field that leaks presence.
+    expect(hidden.status).toBe(visible.status);
+    expect(await dataOf(hidden)).toEqual(visibleData);
+    expect((await readQuestions(harness, ken)).data.inbox).toHaveLength(2);
+  });
+});
+
+/**
  * Every refusal this channel can send is QUOTED by the connector at
  * MAX_HUB_MESSAGE_CHARS and the rest is dropped (mcp/tools/shared.ts), so a
  * sentence past the bound arrives with its actionable half missing — which is
@@ -819,10 +891,30 @@ describe("every question refusal fits what a connector quotes", () => {
   let ken: Party;
   let mike: Party;
 
+  /**
+   * A refusal FROM THIS CHANNEL, proved to be one. `record` used to push
+   * `failureOf(response).message` whatever came back, so on a tree where
+   * /api/questions does not exist it collected nine copies of the 404
+   * handler's "route not found" — non-empty, inside the bound, green. The
+   * guard could not tell a refusal from an absent route, which is the one
+   * thing it has to be able to tell.
+   */
+  const CHANNEL_CODES = new Set([
+    "invalid_question",
+    "question_budget_reached",
+    "question_not_answerable",
+    "unknown_developer",
+    "ambiguous_developer",
+    "invalid_developer",
+  ]);
+
   const refusalsOf = async (): Promise<readonly string[]> => {
     const collected: string[] = [];
     const record = async (response: Response): Promise<void> => {
-      collected.push((await failureOf(response)).message);
+      const failure = await failureOf(response);
+      expect(response.status, failure.message).not.toBe(404);
+      expect([...CHANNEL_CODES]).toContain(failure.code);
+      collected.push(failure.message);
     };
     await record(await ask(harness, nick, { body: "no addressee at all?" }));
     await record(
@@ -870,6 +962,22 @@ describe("every question refusal fits what a connector quotes", () => {
         }),
       ),
     );
+    // The derived-answer gate, which is a refusal this channel alone can send.
+    await record(
+      await harness.app.request(
+        "/api/questions/qn_nobody_minted_this/answers",
+        jsonRequest("POST", mike.developer.apiKey, {
+          claim: validClaimBody({
+            id: "clm_y",
+            workContextId: WORK_CONTEXT_ID,
+            authorSessionId: mike.sessionId,
+            provenance: "derived",
+            confidence: 0.4,
+            createdAt: harness.clock.now().toISOString(),
+          }),
+        }),
+      ),
+    );
     return collected;
   };
 
@@ -888,7 +996,7 @@ describe("every question refusal fits what a connector quotes", () => {
 
     // Assert: every one of them non-empty (a path that did not refuse would
     // silently pass this test) and every one inside the bound.
-    expect(refusals.length).toBe(9);
+    expect(refusals.length).toBe(10);
     const tooLong = refusals
       .map((message) => ({ message, length: asRendered(message).length }))
       .filter((entry) => entry.length > MAX_REFUSAL_CHARS);
