@@ -26,6 +26,8 @@ export interface HintHub {
   readonly calls: HintHubCalls;
   readonly latency: HintHubLatency;
   readonly setCandidates: (candidates: readonly unknown[]) => void;
+  /** Answers to the CALLER's own questions, on the same bounded response. */
+  readonly setAnswers: (answers: readonly unknown[]) => void;
   readonly setTripwireSessions: (sessions: readonly unknown[]) => void;
   readonly stop: () => void;
 }
@@ -114,6 +116,32 @@ export const intentOnlyCandidate = (): Record<string, unknown> => {
   };
 };
 
+export const ANSWER_QUESTION_ID = "qn_backoff";
+export const ANSWER_CLAIM_ID = "clm_answer";
+export const ANSWER_BODY =
+  "Both share one token bucket, so the uploader starves the importer";
+export const ASKED_BODY = "Is the uploader's backoff shared with the importer?";
+
+/**
+ * One answer to a question the READER asked (roadmap R2). Deliberately a
+ * BARE PROPOSED OBSERVATION with no evidence — the shape the anchoring
+ * asymmetry keeps out of the proactive path. It is delivered as substance
+ * only because it was solicited, which is what the §4 exception says and what
+ * question-delivery.test.ts pins against the unsolicited control.
+ */
+export const answeredQuestion = (): Record<string, unknown> => ({
+  questionId: ANSWER_QUESTION_ID,
+  questionBody: ASKED_BODY,
+  claimId: ANSWER_CLAIM_ID,
+  claimBody: ANSWER_BODY,
+  claimKind: "observation",
+  claimStatus: "proposed",
+  confidence: 0.6,
+  provenance: "declared",
+  answererDeveloperName: "Nick",
+  answeredAt: "2026-08-19T09:00:00.000Z",
+});
+
 export const activeTeammateSession = (): Record<string, unknown> => ({
   sessionId: "cc_nick",
   developerId: TEAMMATE_DEVELOPER_ID,
@@ -138,6 +166,7 @@ export const startHintHub = (
 ): HintHub => {
   const calls: HintHubCalls = { candidates: 0, tripwire: 0, records: 0, other: 0 };
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
+  let answers: readonly unknown[] = [];
   let tripwireSessions: readonly unknown[] = [];
   const server = Bun.serve({
     port: 0,
@@ -146,7 +175,7 @@ export const startHintHub = (
       if (pathname === "/api/hints/candidates") {
         calls.candidates += 1;
         await sleep(latency.candidates);
-        return Response.json({ ok: true, data: { candidates } });
+        return Response.json({ ok: true, data: { candidates, answers } });
       }
       if (pathname === "/api/hints/tripwire") {
         calls.tripwire += 1;
@@ -180,6 +209,9 @@ export const startHintHub = (
     latency,
     setCandidates: (next) => {
       candidates = next;
+    },
+    setAnswers: (next) => {
+      answers = next;
     },
     setTripwireSessions: (next) => {
       tripwireSessions = next;
