@@ -58,6 +58,20 @@ import type { HubFailure } from "./shared.ts";
  * rejects longer ones with a 400). Refused here rather than truncated: a
  * TRUNCATED name is a different person's name, and the hub would answer about
  * them without anything saying so.
+ *
+ * TWO CONSTANTS RATHER THAN AN IMPORT, for the reason services/refusal.ts
+ * states about its own mirror of MAX_HUB_MESSAGE_CHARS: this package does not
+ * depend on the server package, and one hub serves connectors of several
+ * versions at once. A mirror nothing checks is a mirror that drifts — if the
+ * hub RAISES its bound, this client silently refuses references the hub would
+ * have accepted, and nothing anywhere reports it. So the pairing is a claim,
+ * checked across the package boundary by grep the way the hub checks the one
+ * it mirrors back:
+ *
+ * VERIFY: grep -c "MAX_DEVELOPER_REF_CHARS = 320" packages/server/src/services/developer-lookup.ts
+ * PRINTS: 1
+ * VERIFY: grep -c "MAX_SINCE_CHARS = 40" packages/server/src/routes/search.ts
+ * PRINTS: 1
  */
 const MAX_DEVELOPER_FILTER_CHARS = 320;
 const MAX_SINCE_FILTER_CHARS = 40;
