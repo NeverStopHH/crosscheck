@@ -1644,7 +1644,7 @@ const captureSessionLine = (session: SessionCaptureHealth, now: Date): string =>
  * a dead capture print the same thing, which is the failure this check exists
  * to end.
  */
-const captureChecks = (health: CaptureHealth, now: Date): readonly Check[] => {
+export const captureChecks = (health: CaptureHealth, now: Date): readonly Check[] => {
   const cut =
     health.statesRead >= health.statesTotal
       ? []
@@ -1656,12 +1656,20 @@ const captureChecks = (health: CaptureHealth, now: Date): readonly Check[] => {
           ),
         ];
   if (health.sessions.length === 0) {
+    // "on this machine" is a claim a TRUNCATED read cannot support, and the
+    // one shape where it would be wrong is the one that matters: a home with
+    // more state files than the cap, whose only session of this repo is not
+    // among the newest of them. The cut line above says the read was cut; this
+    // one stops asserting past it.
+    const where = cut.length === 0
+      ? "on this machine"
+      : `among the ${String(health.statesRead)} state files read`;
     return [
       ...cut,
       check(
         "PASS",
         "capture",
-        "no open session of this repo on this machine (counts are per session and clear at SessionEnd)",
+        `no open session of this repo ${where} (counts are per session and clear at SessionEnd)`,
       ),
     ];
   }

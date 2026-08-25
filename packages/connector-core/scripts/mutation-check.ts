@@ -1561,6 +1561,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "cries wolf about dead ones and stops being read",
   },
   {
+    // The cut line says the read was TRUNCATED; the sentence under it must not
+    // then assert something about the whole machine. The one shape where that
+    // is wrong is the one that matters — a home with more state files than the
+    // cap whose only session of this repo is not among the newest of them.
+    label: "a truncated capture read still speaks for the whole machine",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    const where = cut.length === 0",
+    to: "    const where = true",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "`no open session of this repo on this machine` is printed under a line " +
+      "saying the reader looked at 200 of 240 state files",
+  },
+  {
     // The absent-versus-zero distinction on the capture line. The schema
     // defaults the counters to 0 so a pre-#17 state file parses; printing that
     // zero fabricates a measurement for a session that may have been editing
@@ -1892,7 +1906,7 @@ interface Outcome {
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
- * PRINTS: doctor-capture.test.ts 6
+ * PRINTS: doctor-capture.test.ts 7
  * PRINTS: doctor-global.test.ts 1
  * PRINTS: doctor-hooks-firing.test.ts 1
  * PRINTS: doctor-last-sync.test.ts 1

@@ -52,7 +52,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { runDoctor } from "../src/cli/doctor.ts";
+import { captureChecks, runDoctor } from "../src/cli/doctor.ts";
+import type { CaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import {
   DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   STATUS_SESSION_IDLE_HOURS,
@@ -408,6 +409,55 @@ describe("the capture check reads THIS repo's sessions, whatever the mtime order
     // reader has just been told nothing is running here to edit in.
     expect(lineWith(result.stdout, "  capture  ")).toContain("PASS  capture");
     expect(lineWith(result.stdout, "unclosed sessions")).toContain("stale >1h");
+  });
+});
+
+/**
+ * The ONE pure case in this file. Everything else drives `runDoctor`, which is
+ * the stronger check — but the branch below only appears once the read is CUT,
+ * and reaching that through `runDoctor` means seeding more state files than
+ * SESSION_STATE_SCAN_MAX_FILES on every CI run to pin a sentence.
+ */
+describe("a truncated read stops claiming what it did not look at", () => {
+  const emptyHealth = (
+    overrides: Partial<CaptureHealth> = {},
+  ): CaptureHealth => ({
+    sessions: [],
+    idleSessions: 0,
+    statesTotal: 12,
+    statesRead: 12,
+    statesCap: 200,
+    statesUnparsed: 0,
+    fires: 0,
+    targets: 0,
+    outsideDrops: 0,
+    lastTargetAt: null,
+    hintsDelivered: 0,
+    hintCandidatesSeen: 0,
+    ...overrides,
+  });
+
+  test("a whole read says 'on this machine'", () => {
+    // Act
+    const lines = captureChecks(emptyHealth(), new Date()).map((c) => c.detail);
+
+    // Assert
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("no open session of this repo on this machine");
+  });
+
+  test("a cut read says how many files it read instead", () => {
+    // Arrange: more state files than the cap admits
+    const health = emptyHealth({ statesTotal: 240, statesRead: 200 });
+
+    // Act
+    const lines = captureChecks(health, new Date()).map((c) => c.detail);
+
+    // Assert: the cut line, then a sentence that does not reach past it
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("read the 200 most recently written of 240");
+    expect(lines[1]).toContain("no open session of this repo among the 200 state files read");
+    expect(lines[1]).not.toContain("on this machine");
   });
 });
 

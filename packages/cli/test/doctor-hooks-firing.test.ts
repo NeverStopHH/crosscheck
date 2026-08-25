@@ -69,7 +69,6 @@ const writeStateFile = async (
   );
 };
 
-/** A session whose heartbeat stopped `ageMs` ago — a zombie, not a session. */
 /**
  * A corpse: nothing said for `ageMs`, and — because silence is measured off
  * the newest of the heartbeat, the start and the file's OWN mtime
