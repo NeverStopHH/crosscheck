@@ -316,8 +316,20 @@ export const CONTEXT_MAX_AGE_DAYS = 14;
  * keeps the two honest about each other, and asking at all is what makes the
  * window opt-IN rather than a server default that would truncate every
  * connector too old to know about it.
+ *
+ * It has to cover CONTEXT_MAX_AGE_DAYS at the rate the repo actually produces
+ * rows, or this number — not the window beside it — is what decides what a
+ * SessionStart sees. At the trial hub's measured ~40 rows a day, fourteen days
+ * is roughly 560 rows; 200 would have been about five (review finding B2-09).
+ *
+ * The two halves of that sentence are the ones that rotted last time, so both
+ * are directives rather than prose: the ask covers the window at the observed
+ * rate, and it matches the hub's own cap so neither surprises the other.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.WORK_CONTEXT_LIST_LIMIT >= c.CONTEXT_MAX_AGE_DAYS * 40, c.WORK_CONTEXT_LIST_LIMIT === s.WORK_CONTEXT_LIST_MAX)'
+ * PRINTS: true true
  */
-export const WORK_CONTEXT_LIST_LIMIT = 200;
+export const WORK_CONTEXT_LIST_LIMIT = 600;
 
 // ── Absence detection ───────────────────────────────────────────────────────
 

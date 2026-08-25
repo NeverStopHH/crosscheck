@@ -24,11 +24,25 @@ export const EVENTS_MAX_LIMIT = 500;
  * every connector that does not know to ask for more, and 0.7.2 connectors
  * send no parameters at all. So the server's default stays "everything",
  * bounded by this cap and ordered newest-first, and the NEW connector passes
- * `?since=&limit=` explicitly (connector-core http/hub.ts getWorkContexts). An
- * old connector against a 250-row repo then loses the oldest 50 — which it
- * already discards client-side at CONTEXT_MAX_AGE_DAYS = 14.
+ * `?since=&limit=` explicitly (connector-core http/hub.ts getWorkContexts).
+ *
+ * SIX HUNDRED, so that the WINDOW is the binding limit and not the cap. The
+ * first version of this was 200 and defended itself with "an old connector
+ * against a 250-row repo then loses the oldest 50 — which it already discards
+ * client-side at CONTEXT_MAX_AGE_DAYS = 14". That arithmetic contradicts this
+ * comment's own measurement: at ~40 rows a day, fourteen days is about 560
+ * rows, so 200 bit at roughly FIVE days — well inside the window both
+ * connectors use, and the new connector asked for 200 too (review finding
+ * B2-09). It mattered beyond the briefing: this same listing feeds
+ * `collectLanded` (connector-claude hooks/session-start.ts), so no context
+ * older than the cap could ever be marked landed, and open contexts on
+ * longer-lived branches would have gone quietly stale.
+ *
+ * 600 covers fourteen days at the observed rate with room, and costs nothing
+ * measurable — 14 600 rows serialise in 112-143 ms, so 600 is noise on the
+ * wire as well as in the database.
  */
-export const WORK_CONTEXT_LIST_MAX = 200;
+export const WORK_CONTEXT_LIST_MAX = 600;
 
 /**
  * How long a session may go without a heartbeat before the hub closes it
