@@ -686,7 +686,16 @@ const noMatchLine = (options: SearchRenderOptions): string => {
   const filters = options.filters;
   const name =
     filters?.developerName === undefined ? "" : bare(filters.developerName);
-  const from = name.length === 0 ? "" : ` from ${name}`;
+  // "you", not the reader's own display name — the same flag and the same
+  // reason as the filter line three functions up. Without it one answer
+  // carries two lines that disagree about who Nick is, and a model quoting
+  // only the sentence reports it as a fact about a teammate called Nick.
+  const from =
+    name.length === 0
+      ? ""
+      : filters?.isSelf === true
+        ? " from you"
+        : ` from ${name}`;
   const window =
     filters?.sinceAgeMs === undefined
       ? ""

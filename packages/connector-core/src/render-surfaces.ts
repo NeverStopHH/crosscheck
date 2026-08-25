@@ -368,15 +368,19 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // The EMPTY branch of the same renderer, which the entry above cannot
     // reach: it always passes one hit, so `noMatchLine` — the one place a
     // teammate's display name is printed bare INSIDE a sentence rather than
-    // after a field label — and the `(you)` fragment were never attacked by
-    // the corpus. Both go through `bare()` today; this is what keeps that
-    // true when somebody later edits the sentence around them.
+    // after a field label — was never attacked by the corpus. It goes through
+    // `bare()` today; this is what keeps that true when somebody later edits
+    // the sentence around it.
+    //
+    // `isSelf` false ON PURPOSE: the self branch substitutes the renderer's
+    // own word "you" for the name, so it would render one fewer copy of the
+    // payload than this surface exists to attack.
     render: (payload) =>
       renderSearchResults([], payload, {
         filters: {
           developerName: payload,
           developerEmail: payload,
-          isSelf: true,
+          isSelf: false,
           sinceAgeMs: 14 * 24 * 3_600_000,
         },
       }),

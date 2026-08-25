@@ -1629,6 +1629,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "one thing that does not identify the person it is about",
   },
   {
+    // The same argument as the `(you)` label above, one sentence further down.
+    // Dropping it makes the two lines of one answer disagree about who the
+    // reader is, and the sentence is the half a model quotes.
+    label: "the empty filtered sentence calls the reader a teammate",
+    file: `${CORE}/src/mcp/render.ts`,
+    from:
+      "  const from =\n    name.length === 0\n      ? \"\"\n" +
+      "      : filters?.isSelf === true\n        ? \" from you\"\n" +
+      "        : ` from ${name}`;",
+    to: "  const from = name.length === 0 ? \"\" : ` from ${name}`;",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a reader's own empty result reads as a fact about a teammate who " +
+      "happens to share their name",
+  },
+  {
     // A filter that did not resolve is not a broken hub. Rendered as one, the
     // candidate names and the window forms are still in the text — but so is
     // "the hub refused the request", and the model retries instead of asking
@@ -1807,7 +1823,7 @@ interface Outcome {
  * PRINTS: latency.test.ts 3
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
- * PRINTS: mcp-render.test.ts 5
+ * PRINTS: mcp-render.test.ts 6
  * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1

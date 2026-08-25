@@ -666,6 +666,19 @@ describe("renderSearchResults names the filters that ran", () => {
     // there is nothing for the reader to widen
     const unfiltered = renderSearchResults([], "login");
     expect(unfiltered.toLowerCase()).not.toContain("part of that answer");
+
+    // And when the filter names the READER, the sentence says so too. The
+    // filter line three functions up already carries "(you)" on the argument
+    // that a reader's own work must never look like a teammate's; this
+    // sentence read `from Nick`, so the two lines of one answer disagreed
+    // about who Nick is — and a model quoting the sentence alone reports it
+    // as a fact about a teammate.
+    const mine = renderSearchResults([], "login", {
+      filters: { developerName: "Nick", isSelf: true },
+    });
+    expect(mine).toContain("Filters: Nick (you)");
+    expect(mine).toContain("matched that query from you.");
+    expect(mine).not.toContain("from Nick");
   });
 });
 
