@@ -36,11 +36,40 @@ import type {
   DeferredEndOutcome,
   DeferredEnder,
 } from "@crosscheck/connector-core/spool/reap.ts";
-import { writePresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
+import {
+  deriveLastSeen,
+  writePresenceCache,
+} from "@crosscheck/connector-core/state/presence-cache.ts";
 import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const INITIAL_STATUS = "analyzing";
+
+/**
+ * Whether this session is sitting ON the default branch (or detached), so its
+ * base commit is an ancestor of the default ref by construction rather than by
+ * having landed anything (Anhang A, A5-9).
+ *
+ * `defaultBranchRef` is a REMOTE-tracking ref — `origin/main` — while
+ * `identity.branch` is the local name, so the comparison is against the
+ * segment after the remote. A detached HEAD renders as `detached@<sha>`
+ * (git/repo-identity.ts resolveBranch) and counts too: an orchestration
+ * worktree detached at a commit the default branch already contains is an
+ * ancestor of it forever, and every context it opens would be born landed.
+ */
+export const isOnDefaultBranch = (
+  branch: string,
+  defaultBranchRef: string | null,
+): boolean => {
+  if (branch.startsWith("detached@") || branch === "HEAD") {
+    return true;
+  }
+  if (defaultBranchRef === null) {
+    return false;
+  }
+  const localName = defaultBranchRef.split("/").at(-1) ?? defaultBranchRef;
+  return branch === localName || branch === defaultBranchRef;
+};
 
 const MS_PER_DAY = 86_400_000;
 
@@ -191,6 +220,21 @@ export const handleSessionStart = async (
     now,
     collectLanded: async (workContexts) => {
       const defaultBranchRef = await defaultBranchRefPromise;
+      // The A5-9 guard, and it lives HERE rather than inside
+      // `collectLandedCommits`, which stays a pure ancestry question.
+      //
+      // "Landed" is supposed to mean "this branch's work reached the default
+      // branch". The ancestry test alone cannot say that: a session running ON
+      // the default branch — or detached at one of its ancestors, which is
+      // every orchestration worktree — has a base commit that is an ancestor
+      // from the moment it starts, before it has done anything at all. 118 of
+      // the trial hub's 127 contexts read "landed", 79 of them within sixty
+      // seconds of being created. Skipping the whole collection from such a
+      // session is what makes the label mean what the surface claims; a
+      // session on a real feature branch is unaffected.
+      if (isOnDefaultBranch(ctx.identity.branch, defaultBranchRef)) {
+        return [];
+      }
       const openBaseCommits = workContexts.flatMap((entry: WorkContextEntry) =>
         entry.landedAt === null || entry.landedAt === undefined
           ? (entry.baseCommit === undefined ? [] : [entry.baseCommit])
@@ -216,7 +260,16 @@ export const handleSessionStart = async (
     await rememberDeveloper(ctx.config, developerId, selfName(presence, developerId));
   }
   if (assembled.presenceFetched) {
-    await writePresenceCache(ctx.config.home, ctx.repoKey, presence, now);
+    // The last-seen list rides along (Anhang A, A4-09): SessionStart already
+    // holds the work contexts, so telling "offline" from "never onboarded"
+    // costs one pure derivation and no hub call.
+    await writePresenceCache(
+      ctx.config.home,
+      ctx.repoKey,
+      presence,
+      now,
+      deriveLastSeen(assembled.workContexts, developerId),
+    );
   }
   // A local append, microseconds: the maintenance flush below ships it, and a
   // dead hub leaves it spooled like any other record. Appended after the work
