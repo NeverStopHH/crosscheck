@@ -108,6 +108,19 @@ export const SOLVED_MATCH_MAX_PROBE_FINDINGS = 3;
 export const SOLVED_MATCH_MAX_FINGERPRINT_CHARS = 128;
 
 /**
+ * The precision loop's window (services/solved-counts.ts): how far back
+ * "solved matches: N shown, M pulled" looks. Long enough that a quiet week
+ * does not read as a dead surface, short enough that the numbers describe
+ * how the tool behaves NOW rather than how it behaved in the spring.
+ */
+export const SOLVED_COUNT_WINDOW_DAYS = 30;
+/**
+ * Read bound on delivery rows the counter reads. Past it the numbers are a
+ * floor, which is why every surface prints the window with them.
+ */
+export const SOLVED_COUNT_MAX_DELIVERY_ROWS = 200;
+
+/**
  * Most unreviewed Tier-1 drafts one GET /api/drafts response carries
  * (DESIGN.md §3 Tier 1 promotion loop). Well above what the summarizer cap
  * lets one session mint, and bounded like every list query:

@@ -67,11 +67,16 @@ import {
   getAbsences,
   getPrivacySettings,
   getQuestions,
+  getSolvedMatchCounts,
 } from "@crosscheck/connector-core/http/hub.ts";
 import {
   formatQuestionCounts,
   questionWarning,
 } from "@crosscheck/connector-core/briefing/questions.ts";
+import {
+  formatSolvedCounts,
+  solvedPrecisionWarning,
+} from "@crosscheck/connector-core/hints/precision.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
@@ -975,6 +980,36 @@ const checkQuestions = async (
 };
 
 /**
+ * The solved-pointer precision loop (VISION.md §1): the briefing and the
+ * failure hook both assert that an old diagnosis is relevant to work
+ * happening now, unasked, and this is the one line that says whether anybody
+ * ever opened one.
+ *
+ * NEVER PASS-ONLY (the finding-#14 lesson). The WARN is not "few pulls" — it
+ * is pointers shown repeatedly and opened NEVER, which is what this surface
+ * looks like when its matches are wrong. Below the evidence floor
+ * (hints/precision.ts) there is nothing to say, and saying it anyway would
+ * be the same over-claiming the warning exists to catch.
+ *
+ * "not measured" is a PASS, exactly as in checkQuestions and checkAbsences:
+ * an older hub without the counters says nothing about this install.
+ */
+const checkSolvedMatches = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<Check> => {
+  const result = await getSolvedMatchCounts(ctx, repoId);
+  if (!result.ok) {
+    return check("PASS", "solved matches", "not measured");
+  }
+  const line = formatSolvedCounts(result.data);
+  const warning = solvedPrecisionWarning(result.data);
+  return warning === null
+    ? check("PASS", "solved matches", line)
+    : check("WARN", "solved matches", `${line} — ${warning}`);
+};
+
+/**
  * The remedy a failed runner probe names, by what the binary said — each a
  * DIFFERENT fix, which is why the first output line is printed at all:
  * "Not logged in" is the developer's login, "unknown option" is the CLI's
@@ -1373,6 +1408,7 @@ export const runDoctor = async (
     await checkLastSync(config.home, key, now),
     await checkAbsences(hubCtx, identity.repoId),
     await checkQuestions(hubCtx, identity.repoId, now),
+    await checkSolvedMatches(hubCtx, identity.repoId),
     await checkPrivacy(hubCtx),
     skewCheck,
     bunfigCheck,

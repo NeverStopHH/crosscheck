@@ -397,6 +397,15 @@ export const hintDeliveries = pgTable("hint_deliveries", {
   // all, which made that probe a scan of every delivery on the hub on the
   // UserPromptSubmit path. Mirrored in db/bootstrap.sql.
   index("hint_deliveries_ref_session_idx").on(table.refId, table.sessionId),
+  // The precision counter (services/solved-counts.ts) asks "this developer's
+  // recent deliveries on this repo", which reaches these rows through
+  // session_id — a foreign key, and therefore unindexed by default. Without
+  // it `crosscheck status` and `doctor` each scan every delivery on the hub.
+  // Mirrored in db/bootstrap.sql.
+  index("hint_deliveries_session_delivered_idx").on(
+    table.sessionId,
+    table.deliveredAt.desc(),
+  ),
 ]);
 
 /**

@@ -48,6 +48,8 @@ export const SolvedMatchQuerySchema = z.object({
     .min(1)
     .max(SOLVED_MATCH_MAX_FINGERPRINT_CHARS)
     .optional(),
+  /** `1` asks for the precision counters instead of the listing. */
+  counts: z.literal("1").optional(),
 });
 
 /** Oversized limits are capped in the events service, not rejected here. */

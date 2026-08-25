@@ -543,6 +543,19 @@ export const MAX_BRIEFING_QUESTION_CHARS = 700;
 export const DOCTOR_QUESTION_OPEN_WARN_DAYS = 7;
 
 /**
+ * How many solved pointers must have been SHOWN before `doctor` will call
+ * "none of them was ever opened" a problem (hints/precision.ts). One or two
+ * ignored pointers are a reader who was busy; at three the pattern is the
+ * surface, not the day. Deliberately below MAX_HINTS_PER_SESSION, so a
+ * single session that spent its whole allowance on solved pointers and
+ * opened none of them is already enough evidence to say so:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DOCTOR_SOLVED_SHOWN_WARN < c.MAX_HINTS_PER_SESSION)'
+ * PRINTS: true
+ */
+export const DOCTOR_SOLVED_SHOWN_WARN = 3;
+
+/**
  * How long the hub keeps REPORTING a question of yours that expired
  * unanswered. Equal to the TTL: reported for one further fortnight, then
  * silent — nothing can clear an expired row (`withdrawn` is unreachable and

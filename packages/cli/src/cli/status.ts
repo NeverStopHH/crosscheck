@@ -4,6 +4,7 @@ import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
 import { formatQuestionCounts } from "@crosscheck/connector-core/briefing/questions.ts";
+import { formatSolvedCounts } from "@crosscheck/connector-core/hints/precision.ts";
 import { formatAbsenceLine, formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
@@ -12,6 +13,7 @@ import {
   getPresence,
   getPrivacySettings,
   getQuestions,
+  getSolvedMatchCounts,
 } from "@crosscheck/connector-core/http/hub.ts";
 import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
@@ -110,6 +112,14 @@ export const runStatus = async (
   const questionLines = questions.ok
     ? [`questions: ${formatQuestionCounts(questions.data.counts, now)}`]
     : [];
+  // The solved-pointer precision loop (VISION.md §1): what this repo's
+  // "solved before" lines actually earned. A hub too old to answer, or an
+  // unreachable one, simply prints no line — the same fail-open every other
+  // hub-fed line here has.
+  const solvedCounts = await getSolvedMatchCounts(hubCtx, identity.repoId);
+  const solvedLines = solvedCounts.ok
+    ? [`solved matches: ${formatSolvedCounts(solvedCounts.data)}`]
+    : [];
   const privacy = await getPrivacySettings(hubCtx);
   const privacyLines = privacy.ok
     ? [
@@ -174,6 +184,7 @@ export const runStatus = async (
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       ...foreignDropLines,
       ...questionLines,
+      ...solvedLines,
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `intent: ${formatIntentCost(intentCost)}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,

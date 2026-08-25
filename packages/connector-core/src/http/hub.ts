@@ -282,6 +282,46 @@ export const getSolvedMatches = (
   });
 
 /**
+ * The precision counters for solved pointers (VISION.md §1): how many this
+ * reader was shown on this repo inside the hub's window, and how many they
+ * then pulled. A hub too old to know the parameter answers the ordinary
+ * listing, whose `counts` block is absent — read as zeros, which the
+ * surfaces print as "not measured" rather than as a bad score.
+ */
+export const SolvedMatchCountsSchema = z.looseObject({
+  shown: z.number().int().min(0).default(0),
+  pulled: z.number().int().min(0).default(0),
+  windowDays: z.number().int().min(1).default(30),
+});
+
+export type SolvedMatchCounts = z.infer<typeof SolvedMatchCountsSchema>;
+
+const EMPTY_SOLVED_COUNTS: SolvedMatchCounts = {
+  shown: 0,
+  pulled: 0,
+  windowDays: 30,
+};
+
+const SolvedCountsResponseSchema = z
+  .looseObject({ counts: z.unknown().optional() })
+  .transform((value): SolvedMatchCounts => {
+    const counts = SolvedMatchCountsSchema.safeParse(value.counts);
+    // A counts block this client cannot read is treated as no counts at all:
+    // a number the reader cannot trust is worse than no number.
+    return counts.success ? counts.data : EMPTY_SOLVED_COUNTS;
+  });
+
+export const getSolvedMatchCounts = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<SolvedMatchCounts>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/solved-matches${encodeRepo(repo)}&counts=1`,
+    schema: SolvedCountsResponseSchema,
+  });
+
+/**
  * The failure-time probe: solved trees carrying THIS exact fingerprint,
  * asked once, the moment a tool fails. Same route and same row shape as the
  * listing above — a hub too old to know the parameter ignores it and answers

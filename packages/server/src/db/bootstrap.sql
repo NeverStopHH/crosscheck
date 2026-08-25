@@ -392,3 +392,9 @@ CREATE INDEX IF NOT EXISTS hint_deliveries_ref_session_idx
 -- and normalized-doc's per-ingest refresh. Mirrored in db/schema.ts.
 CREATE INDEX IF NOT EXISTS claims_work_context_created_idx
   ON claims (work_context_id, created_at DESC);
+
+-- The precision counter (services/solved-counts.ts) reaches deliveries
+-- through session_id — a foreign key, and therefore unindexed by default.
+-- Mirrored in db/schema.ts.
+CREATE INDEX IF NOT EXISTS hint_deliveries_session_delivered_idx
+  ON hint_deliveries (session_id, delivered_at DESC);

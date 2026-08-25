@@ -657,6 +657,32 @@ export const MUTATIONS: readonly Mutation[] = [
       "collective memory never matches anything",
   },
   {
+    // The counter is about SOLVED pointers, not about every work-context
+    // hint. Dropping the solvedness resolution totals the whole ledger.
+    label: "the solved counter counts every pointer as a solved one",
+    file: `${SERVER}/src/services/solved-counts.ts`,
+    from: "  const delivered = rows.filter((row) => solved.has(row.refId));",
+    to: "  const delivered = rows;",
+    test: `${SERVER}/test/solved-counts.test.ts`,
+    because:
+      "every ordinary teammate pointer is reported as a solved match, so the " +
+      "one number that says whether collective memory is working describes a " +
+      "different surface entirely",
+  },
+  {
+    // No PASS-only telemetry (the finding-#14 lesson): this removes the one
+    // WARN path the solved surface has.
+    label: "solved pointers can be ignored for ever in silence",
+    file: `${CORE}/src/hints/precision.ts`,
+    from: "  if (counts.shown < DOCTOR_SOLVED_SHOWN_WARN || counts.pulled > 0) {",
+    to: "  if (true) {",
+    test: `${CLI}/test/solved-cli.test.ts`,
+    because:
+      "`doctor` goes green over a surface that has shown the reader match " +
+      "after match and had none of them opened — a wrong matcher with a " +
+      "clean bill of health, which is the shape finding #14 was",
+  },
+  {
     label: "the solved floor leaks into similarity guesses",
     file: `${SERVER}/src/services/search.ts`,
     from: "solvedIds.has(entry.row.id) && hasFactTier(entry.tiers)",
@@ -2246,6 +2272,8 @@ interface Outcome {
  * PRINTS: sessions.test.ts 1
  * PRINTS: set-intent.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
+ * PRINTS: solved-cli.test.ts 1
+ * PRINTS: solved-counts.test.ts 1
  * PRINTS: solved-cross-repo.test.ts 4
  * PRINTS: solved-hint-flow.test.ts 2
  * PRINTS: solved-intent.test.ts 3

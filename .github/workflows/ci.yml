@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 138
+    # PRINTS: 140
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -156,6 +156,7 @@ jobs:
     # PRINTS: flows/solved-hint.ts 2
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/delivery.ts 1
+    # PRINTS: hints/precision.ts 1
     # PRINTS: hints/render.ts 1
     # PRINTS: hints/select.ts 6
     # PRINTS: http/hub.ts 1
@@ -185,6 +186,7 @@ jobs:
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/search.ts 9
     # PRINTS: packages/server/src/services/sessions.ts 1
+    # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 5
     # PRINTS: packages/server/src/services/solved.ts 1
     # PRINTS: packages/server/src/services/time-window.ts 1
@@ -216,6 +218,7 @@ jobs:
     # PRINTS: post-tool-use-failure.ts 2
     # PRINTS: post-tool-use.ts 2
     # PRINTS: pre-tool-use.ts 1
+    # PRINTS: precision.ts 1
     # PRINTS: presence.ts 1
     # PRINTS: proxy.ts 1
     # PRINTS: publish-claim.ts 1
@@ -237,6 +240,7 @@ jobs:
     # PRINTS: sessions.ts 1
     # PRINTS: set-intent.ts 1
     # PRINTS: settings-merge.ts 2
+    # PRINTS: solved-counts.ts 1
     # PRINTS: solved-hint.ts 2
     # PRINTS: solved-matches.ts 5
     # PRINTS: solved.ts 1
