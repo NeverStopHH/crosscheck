@@ -7,6 +7,14 @@
  * reason the identity resolution is not paid per tool call.
  *
  * Elapsed times are printed so a slow run is a number in the log, not a guess.
+ *
+ * A wall clock cannot be red-first: main measures the same budgets at the same
+ * order of magnitude (post-tool-use 47 ms cold / 43 ms warm, pre-tool-use
+ * 39/38) because it does no resolution at all. These are MEASUREMENTS of the
+ * new cost, not proofs of the new behaviour — the behaviour is pinned by
+ * worktree-capture.test.ts, and the cache's HIT path (the reason the warm
+ * number stays flat) by the resolution COUNT in
+ * connector-core/test/touched-root.test.ts, which a wall clock cannot see.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";

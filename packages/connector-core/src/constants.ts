@@ -716,10 +716,19 @@ export const PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
  * normative and it stays the default. But a headless `claude -p` /
  * Agent-SDK subagent — most of Nick's live sessions — cannot show a permission
  * prompt, so Claude Code turns a hook `ask` into a ONE-SHOT DENY of that tool
- * call, with the reason delivered to the model (settled empirically:
- * /private/tmp/cx-b1-q2). There is NO reliable per-hook signal to detect
- * headless (the env is inherited, stdin is always a pipe, no payload flag), so
- * this cannot be auto-detected honestly — it is an explicit knob instead.
+ * call, with the reason delivered to the model. Measured on real `claude -p`
+ * runs against a throwaway hub across 15 variants; the ask half and the
+ * notice half are summarized in the batch's PR body.
+ *
+ * There is no TRUSTWORTHY per-hook signal for headless, which is NOT the same
+ * as no signal — stated measured so nobody "fixes" this into an auto-detector:
+ * a `claude -p` whose caller left CLAUDE_CODE_ENTRYPOINT unset hands the hook
+ * `sdk-cli`, but a caller-supplied value survives verbatim (the same headless
+ * run reported `sdk-cli` and `claude-vscode` depending only on the spawn env),
+ * and orchestration subagents are spawned FROM a Claude Code session, so the
+ * parent's interactive value leaks into exactly the shape a detector exists
+ * for. stdin is a pipe in interactive sessions too, and the payload carries no
+ * flag. So this is an explicit knob instead.
  *   ask     (default) — emit `ask` AND `additionalContext` (§4, DESIGN.md:97).
  *   notice            — emit `additionalContext` ONLY, no decision: the model
  *                       is briefed, the tool is never blocked. For
