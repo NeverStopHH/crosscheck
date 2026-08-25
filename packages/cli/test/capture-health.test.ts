@@ -7,11 +7,14 @@
  * Red on main: none of these lines existed.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
 import {
   DOCTOR_CAPTURE_SILENT_FIRES_WARN,
+  STATUS_MAX_SESSION_STATES,
+  STATUS_SESSION_IDLE_HOURS,
 } from "@crosscheck/connector-core/constants.ts";
 import { readCaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import {
@@ -24,6 +27,15 @@ import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 const DEAD_HUB_URL = "http://127.0.0.1:9";
 const REPO_ID = "github.com/acme/api";
 const ISO = "2026-08-21T08:00:00.000Z";
+/**
+ * A session that spoke a minute ago. Seeded RELATIVE to now on purpose: the
+ * surfaces name a session idle once it has been silent for
+ * STATUS_SESSION_IDLE_HOURS, so a fixed stamp would make every one of these
+ * fixtures read as idle the day after it was written.
+ */
+const justNow = (msAgo = 60_000): string =>
+  new Date(Date.now() - msAgo).toISOString();
+const A_DAY_MS = 25 * 60 * 60 * 1000;
 
 const paths: string[] = [];
 const servers: { stop: () => void }[] = [];
@@ -59,8 +71,9 @@ const seedSession = async (
       repoRoot,
       hubUrl,
       developerId: "dev_self",
-      startedAt: ISO,
+      startedAt: justNow(),
     }),
+    lastHeartbeatAt: justNow(),
     ...overrides,
   });
 };
@@ -157,6 +170,116 @@ describe("readCaptureHealth (the #17/#18/#20 counters' reader)", () => {
   });
 });
 
+describe("the state-file cap is spent newest first (#17/#20)", () => {
+  /** Explicit mtimes: `readdir` order is the OS's, this is the file's own age. */
+  const ageStateFile = async (
+    home: string,
+    hostSessionKey: string,
+    secondsOld: number,
+  ): Promise<void> => {
+    const when = new Date(Date.now() - secondsOld * 1000);
+    await utimes(join(home, "sessions", `${hostSessionKey}.json`), when, when);
+  };
+
+  test("reads the most recently written states, not an arbitrary slice", async () => {
+    // Arrange: ten more sessions of this repo than the cap admits, aged so
+    // that s00 is the newest and s59 the oldest. In readdir order the ten
+    // that fall out are decided by the OS's hash of UUID file names.
+    const { repo, home } = await fixture("ch-cap");
+    const total = STATUS_MAX_SESSION_STATES + 10;
+    const keys = Array.from({ length: total }, (_, i) => `s${String(i).padStart(2, "0")}`);
+    for (const [index, key] of keys.entries()) {
+      await seedSession(home, repo, key, {
+        editToolFires: 1,
+        targetsCapturedCount: 1,
+        startedAt: new Date(Date.now() - index * 1000).toISOString(),
+        lastHeartbeatAt: new Date(Date.now() - index * 1000).toISOString(),
+      });
+      await ageStateFile(home, key, index);
+    }
+
+    // Act
+    const health = await readCaptureHealth(home, DEAD_HUB_URL, REPO_ID);
+
+    // Assert: exactly the newest STATUS_MAX_SESSION_STATES, and the cut said
+    const read = new Set(health.sessions.map((entry) => entry.hostSessionKey));
+    expect(read.size).toBe(STATUS_MAX_SESSION_STATES);
+    expect([...read].sort()).toEqual(keys.slice(0, STATUS_MAX_SESSION_STATES));
+    expect(health.statesRead).toBe(STATUS_MAX_SESSION_STATES);
+    expect(health.statesTotal).toBe(total);
+  });
+
+  test("status says the cut happened instead of implying a total", async () => {
+    // Arrange: the same over-full home
+    const { repo, home } = await fixture("ch-cap-line");
+    const total = STATUS_MAX_SESSION_STATES + 3;
+    for (let index = 0; index < total; index += 1) {
+      const key = `c${String(index).padStart(2, "0")}`;
+      await seedSession(home, repo, key, { editToolFires: 1, targetsCapturedCount: 1 });
+      await ageStateFile(home, key, index);
+    }
+
+    // Act
+    const result = await runCli(["status"], env(home), repo);
+
+    // Assert
+    expect(lineWith(result.stdout, "targets:")).toContain(
+      `read ${String(STATUS_MAX_SESSION_STATES)} of ${String(total)} state files`,
+    );
+  });
+
+  test("a state file that will not parse is counted, not silently skipped", async () => {
+    // Arrange: one good session and one corrupt state file beside it
+    const { repo, home } = await fixture("ch-cap-corrupt");
+    await seedSession(home, repo, "ch-cap-good", {
+      editToolFires: 1,
+      targetsCapturedCount: 1,
+    });
+    await mkdir(join(home, "sessions"), { recursive: true });
+    await writeFile(join(home, "sessions", "half-written.json"), "{\"repoId\":", "utf8");
+
+    // Act
+    const health = await readCaptureHealth(home, DEAD_HUB_URL, REPO_ID);
+    const result = await runCli(["status"], env(home), repo);
+
+    // Assert
+    expect(health.statesUnparsed).toBe(1);
+    expect(lineWith(result.stdout, "targets:")).toContain("1 unreadable state file");
+  });
+});
+
+describe("an open session is not the same as a live one (#20)", () => {
+  test("a session silent past the idle window is named, not counted as live", async () => {
+    // Arrange: one session that spoke a minute ago, one silent for over a day
+    const { repo, home } = await fixture("ch-idle");
+    await seedSession(home, repo, "ch-idle-fresh", {
+      editToolFires: 1,
+      targetsCapturedCount: 1,
+    });
+    await seedSession(home, repo, "ch-idle-old", {
+      editToolFires: 2,
+      targetsCapturedCount: 2,
+      startedAt: new Date(Date.now() - A_DAY_MS).toISOString(),
+      lastHeartbeatAt: new Date(Date.now() - A_DAY_MS).toISOString(),
+    });
+
+    // Act
+    const health = await readCaptureHealth(home, DEAD_HUB_URL, REPO_ID);
+    const result = await runCli(["status"], env(home), repo);
+    const doctor = await runCli(["doctor"], env(home), repo);
+
+    // Assert: both counted (they really captured), one of them named idle
+    expect(health.sessions).toHaveLength(2);
+    expect(health.idleSessions).toBe(1);
+    expect(health.targets).toBe(3);
+    expect(lineWith(result.stdout, "targets:")).toContain(
+      `1 idle >${String(STATUS_SESSION_IDLE_HOURS)}h`,
+    );
+    expect(lineWith(result.stdout, "targets:")).not.toContain("live session");
+    expect(doctor.stdout).toContain("heartbeat 25h ago, idle");
+  });
+});
+
 describe("crosscheck status capture and hint lines (#20)", () => {
   test("prints targets captured, hints delivered and candidates seen", async () => {
     // Arrange
@@ -173,7 +296,7 @@ describe("crosscheck status capture and hint lines (#20)", () => {
     const result = await runCli(["status"], env(home), repo);
 
     // Assert: the two lines, with the hub part honestly "not measured"
-    expect(lineWith(result.stdout, "targets:")).toContain("targets: 2 captured by 1 live session");
+    expect(lineWith(result.stdout, "targets:")).toContain("targets: 2 captured by 1 open session");
     expect(lineWith(result.stdout, "targets:")).toContain("(last 1m ago)");
     expect(lineWith(result.stdout, "hints:")).toContain("hints: delivered 1");
     expect(lineWith(result.stdout, "hints:")).toContain("candidates 4");
@@ -283,6 +406,29 @@ describe("crosscheck doctor capture check (#17/#18 made visible)", () => {
     expect(line).toContain("never resolved against a root of this repo");
   });
 
+  test("names the path that did not resolve, not just that one did not (#18)", async () => {
+    // Arrange: the shape Ken pastes — the edited file sits in a worktree the
+    // session was never bound to. "no" alone sends the reader back to his
+    // machine; the path is what tells a worktree from a second repo.
+    const { repo, home } = await fixture("ch-doctor-path");
+    await seedSession(home, repo, "ch-doctor-path-uuid", {
+      editToolFires: 1,
+      targetsCapturedCount: 0,
+      lastPostToolUseTool: "Edit",
+      lastEditedPath: "/repos/lab-featB/src/auth/refresh.ts",
+      lastEditedPathResolvedAgainst: null,
+      outsideRootDrops: 1,
+    });
+
+    // Act
+    const result = await runCli(["doctor"], env(home), repo);
+
+    // Assert
+    const line = lineWith(result.stdout, "  capture  ");
+    expect(line).toContain("last edited path resolved: no");
+    expect(line).toContain("/repos/lab-featB/src/auth/refresh.ts");
+  });
+
   test("PASSes with the diagnosis line when targets landed", async () => {
     // Arrange
     const { repo, home } = await fixture("ch-doctor-ok");
@@ -335,7 +481,7 @@ describe("crosscheck doctor capture check (#17/#18 made visible)", () => {
     // Assert: printed, PASS — zero is stated, not hidden
     const line = lineWith(result.stdout, "  capture  ");
     expect(line).toContain("PASS  capture");
-    expect(line).toContain("no live session");
+    expect(line).toContain("no open session");
   });
 });
 

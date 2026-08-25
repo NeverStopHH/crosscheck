@@ -2,6 +2,7 @@ import {
   EXIT_OK,
   EXIT_UNREACHABLE,
   STATUS_MAX_ABSENCE_LINES,
+  STATUS_SESSION_IDLE_HOURS,
   TRIPWIRE_MODE_ENV,
   TRIPWIRE_MODE_NOTICE,
 } from "@crosscheck/connector-core/constants.ts";
@@ -46,16 +47,22 @@ const plural = (count: number, noun: string): string =>
   `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
 
 /**
- * Capture visibility (trial findings #17/#18/#20): targets this repo's live
+ * Capture visibility (trial findings #17/#18/#20): targets this repo's open
  * sessions actually spooled, the touches that resolved against no root of
  * this repo, and — when edits fired and NOTHING landed — that fact, pointing
  * at `doctor`, whose capture check prints the per-session diagnosis. Local
  * facts, printed whether or not the hub answers.
  *
+ * OPEN, not live: a state file lives until SessionEnd deletes it, and the
+ * trial found most sessions never end. The ones silent past
+ * STATUS_SESSION_IDLE_HOURS are named as idle rather than counted as running.
+ *
  * The outside-root count is the ONLY surface for a session that drops many
  * and still captures one: the doctor WARN needs ZERO targets, and the doctor
  * capture line states drop counts only in its "path did not resolve" branch.
- * Zero prints nothing, exactly like the `foreign-repo drops:` line above.
+ * Every optional clause prints nothing at zero, exactly like the
+ * `foreign-repo drops:` line above — and the read cut appears only when it
+ * actually bit, so a normal home's line is unchanged.
  */
 const targetsLine = (health: CaptureHealth, now: Date): string => {
   const last =
@@ -64,11 +71,23 @@ const targetsLine = (health: CaptureHealth, now: Date): string => {
     health.outsideDrops === 0
       ? ""
       : ` · outside-root drops ${String(health.outsideDrops)}`;
+  const idle =
+    health.idleSessions === 0
+      ? ""
+      : ` · ${String(health.idleSessions)} idle >${String(STATUS_SESSION_IDLE_HOURS)}h`;
+  const cut =
+    health.statesRead >= health.statesTotal
+      ? ""
+      : ` · read ${String(health.statesRead)} of ${String(health.statesTotal)} state files`;
+  const unparsed =
+    health.statesUnparsed === 0
+      ? ""
+      : ` · ${plural(health.statesUnparsed, "unreadable state file")}`;
   const dead =
     health.fires > 0 && health.targets === 0
       ? ` — ${plural(health.fires, "edit-tool fire")}, none captured: see \`crosscheck doctor\``
       : "";
-  return `targets: ${String(health.targets)} captured by ${plural(health.sessions.length, "live session")}${last}${outside}${dead}`;
+  return `targets: ${String(health.targets)} captured by ${plural(health.sessions.length, "open session")}${last}${outside}${idle}${cut}${unparsed}${dead}`;
 };
 
 /**

@@ -568,8 +568,30 @@ export const SUMMARIZER_MODEL = "haiku";
 export const STOP_BUDGET_RATIO = 2;
 /** Draft pointers one briefing may spend — pointer discipline like solved. */
 export const MAX_DRAFT_POINTERS = 2;
-/** Most session state files one cost scan reads (status/doctor, bounded). */
+/**
+ * Most session state files one scan reads (status/doctor, bounded).
+ *
+ * The cap is spent NEWEST FIRST — the readers stat and sort by mtime before
+ * slicing, and report "read K of M" when the cut bites. Taken in readdir order
+ * the cut is effectively random (UUID file names, OS hash order), which on a
+ * home with more state files than this silently hid the very session the
+ * surface was asked about: sessions never end on their own, so the tail is
+ * long (the trial measured 100 state files, 75 idle over an hour).
+ */
 export const STATUS_MAX_SESSION_STATES = 50;
+
+/**
+ * When a session state file stops counting as ACTIVE on the capture surfaces.
+ *
+ * A state file is deleted at SessionEnd, so its presence means "this session
+ * never ended" — which is not the same as "running": the trial found 104 of
+ * 127 hub sessions never closed (killed orchestration agents, closed
+ * terminals), and there is no reaper. Their counters are real and stay in the
+ * totals; what must not be claimed is that they are live. PostToolUse
+ * heartbeats every HEARTBEAT_MIN_INTERVAL_MS while tools fire, so a full day
+ * of silence is well past any plausible think-time.
+ */
+export const STATUS_SESSION_IDLE_HOURS = 24;
 
 export const PRESENCE_CACHE_TTL_MS = 10_000;
 export const STATUSLINE_MAX_CHARS = 90;

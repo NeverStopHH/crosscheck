@@ -31,6 +31,7 @@ import {
   PRIVATE_FILE_MODE,
   PROBE_REPO,
   SECONDS_PER_MINUTE,
+  STATUS_MAX_SESSION_STATES,
   SUMMARIZER_CLAUDE_MIN_VERSION,
   TRIPWIRE_MODE_ENV,
   TRIPWIRE_MODE_NOTICE,
@@ -1128,12 +1129,21 @@ const boundedLocal = (value: string, max: number): string => {
 };
 
 /**
- * The #18 diagnosis line, one per live session: fires → targets, the root
- * the session is bound to, the last edit-tool name, and whether the last
- * edited path resolved (against which root) or dropped (and as what).
+ * The #18 diagnosis line, one per open session: fires → targets, the root the
+ * session is bound to, how long since it last spoke, the last edit-tool name,
+ * and whether the last edited path resolved (against which root) or dropped —
+ * NAMING the path in the drop branch, because "something did not resolve" is
+ * not a cause a remote reader can act on, and the path is the one fact that
+ * tells a worktree, a second repo and a loose file apart.
+ *
+ * The heartbeat age is what separates an open session from a running one: a
+ * state file survives until SessionEnd deletes it, and the trial found most
+ * sessions never end (104 of 127).
  */
 const captureSessionLine = (session: SessionCaptureHealth, now: Date): string => {
   const last = session.lastTargetAt === null ? "" : ` (last ${ageOf(session.lastTargetAt, now)})`;
+  const heard = session.lastHeartbeatAt ?? session.startedAt;
+  const heartbeat = `${ageOf(heard, now)}${session.isIdle ? ", idle" : ""}`;
   const tool =
     session.lastPostToolUseTool === null
       ? "none yet"
@@ -1142,29 +1152,44 @@ const captureSessionLine = (session: SessionCaptureHealth, now: Date): string =>
     session.lastEditedPath === null
       ? "no edit yet"
       : session.lastEditedPathResolvedAgainst === null
-        ? `no (${plural(session.foreignRepoDrops, "foreign-repo")}, ${plural(session.outsideRootDrops, "outside-root drop")})`
+        ? `no — ${boundedLocal(session.lastEditedPath, DOCTOR_PATH_MAX_CHARS)} (${plural(session.foreignRepoDrops, "foreign-repo")}, ${plural(session.outsideRootDrops, "outside-root drop")})`
         : `yes (against ${boundedLocal(session.lastEditedPathResolvedAgainst, DOCTOR_PATH_MAX_CHARS)})`;
   return (
     `${session.hostSessionKey.slice(0, 8)}: ${plural(session.editToolFires, "edit-tool fire")} → ` +
     `${plural(session.targetsCapturedCount, "target")}${last} · repoRoot ${boundedLocal(session.repoRoot, DOCTOR_PATH_MAX_CHARS)} · ` +
-    `last tool ${tool} · last edited path resolved: ${resolved}`
+    `heartbeat ${heartbeat} · last tool ${tool} · last edited path resolved: ${resolved}`
   );
 };
 
 /**
- * Capture health (trial findings #17/#18/#20): per live session of this repo,
+ * Capture health (trial findings #17/#18/#20): per open session of this repo,
  * "N edit-tool fires → M targets" with the diagnosis facts, WARN when N
  * reaches DOCTOR_CAPTURE_SILENT_FIRES_WARN and M is 0 — the worktree silence
  * (371 edits → 0 targets) and Ken's "0 targets" shape, made a line. ALWAYS
- * printed: a repo with no live session says so (PASS), never nothing.
+ * printed: a repo with no open session says so (PASS), never nothing.
+ *
+ * A read that was CUT gets its own line first. Without it a truncated scan and
+ * a dead capture print the same thing, which is the failure this check exists
+ * to end.
  */
 const captureChecks = (health: CaptureHealth, now: Date): readonly Check[] => {
+  const cut =
+    health.statesRead >= health.statesTotal
+      ? []
+      : [
+          check(
+            "WARN",
+            "capture",
+            `read the ${String(health.statesRead)} most recently written of ${String(health.statesTotal)} session state files (cap ${String(STATUS_MAX_SESSION_STATES)}) — every count below is of those; older sessions of this repo are not in them. State files are deleted at SessionEnd, so a large number of them means sessions that never ended`,
+          ),
+        ];
   if (health.sessions.length === 0) {
     return [
+      ...cut,
       check(
         "PASS",
         "capture",
-        "no live session of this repo on this machine (counts are per live session and clear at SessionEnd)",
+        "no open session of this repo on this machine (counts are per session and clear at SessionEnd)",
       ),
     ];
   }
@@ -1181,13 +1206,14 @@ const captureChecks = (health: CaptureHealth, now: Date): readonly Check[] => {
   });
   const rest = health.sessions.length - shown.length;
   return rest === 0
-    ? lines
+    ? [...cut, ...lines]
     : [
+        ...cut,
         ...lines,
         check(
           "PASS",
           "capture",
-          `… and ${plural(rest, "more live session")} (first ${String(DOCTOR_CAPTURE_MAX_SESSION_LINES)} shown)`,
+          `… and ${plural(rest, "more open session")} (first ${String(DOCTOR_CAPTURE_MAX_SESSION_LINES)} shown)`,
         ),
       ];
 };
