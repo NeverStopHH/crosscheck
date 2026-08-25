@@ -41,13 +41,26 @@ export const WORK_CONTEXT_LIST_MAX = 200;
  * session "live" forever — visible in presence until its 90-second TTL, and
  * open in every listing and every event stream after that.
  *
- * SIX HOURS, which is 240x PRESENCE_TTL_SECONDS. The danger of a reaper is
- * closing a session that is still working: ingest refuses records from an
- * ended session (`services/records.ts checkProducerSession`), so a reap that
- * fired early would re-create the trial's deafness from the server side. Six
- * hours is far past any pause a working session takes, and a session
- * resurrected after it gets a loud 409 `already_ended` on its next heartbeat
- * rather than silent data loss.
+ * SIX HOURS, which is 240x PRESENCE_TTL_SECONDS — and the number is the LEAST
+ * important half of the design, because six hours of silence does not mean the
+ * session is dead. The heartbeat this reads only moves on an Edit or a Bash
+ * PostToolUse (connector-claude post-tool-use.ts, the ledger's M7), so a
+ * session that spent the afternoon prompting, reading and reviewing crosses
+ * six hours routinely while being fully alive, and one left open overnight
+ * crosses it every single night. An earlier draft of this comment claimed such
+ * a session "gets a loud 409 already_ended on its next heartbeat rather than
+ * silent data loss"; it got neither. `flows/heartbeat.ts` discards the
+ * HubResult by design, and ingest answered its records HTTP 200 /
+ * `accepted:0` / `rejected:N` while `spool/flush.ts` advanced the cursor past
+ * them — the loss was silent and total (review finding B2-01).
+ *
+ * SO THE VERDICT IS NOT ALLOWED TO BE FINAL. Two mechanisms carry that, both
+ * in services/records.ts: an accepted flush refreshes `last_heartbeat_at`, so
+ * a session that captures anything never becomes a candidate; and a record
+ * from a session the hub DID close reopens it (`reviveReapedSession`) instead
+ * of being rejected. A wrong reap therefore costs a listing entry until the
+ * session next speaks, never its work. A SessionEnd the connector reported
+ * stays final — `reaped_at` is what tells the two apart.
  */
 export const SESSION_REAP_STALE_HOURS = 6;
 /** Sessions one reaper pass closes — a bounded UPDATE, never a table sweep. */

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import type { SessionStatus } from "@crosscheck/schema";
 
 import {
@@ -114,7 +114,14 @@ export const registerSession = async (
     return { outcome: "foreign_session" };
   }
   if (existing.endedAt !== null) {
-    return { outcome: "already_ended" };
+    if (existing.reapedAt === null) {
+      return { outcome: "already_ended" };
+    }
+    // The session the hub gave up on is registering again, which is proof it
+    // was alive. Reviving beats 409: a `already_ended` here would leave the
+    // connector holding a session id the hub refuses every record from, for
+    // the whole life of that session (review finding B2-01).
+    await reviveReapedSession(deps, existing);
   }
   // One crosscheck session is ONE repo, bound at registration (trial finding
   // #9, first-wins). A live session re-registering under a DIFFERENT repo is
@@ -249,13 +256,21 @@ export interface ReapResult {
  * `ended_at` lands and ONE `session_ended` event is appended per row, through
  * the same `appendEvent` the ordinary end uses, and the ledger stays true.
  *
- * THE SAFETY IS IN THE PREDICATE, not in the caller: `ended_at IS NULL AND
- * last_heartbeat_at < cutoff`, a per-pass `limit`, and a cutoff 240x the
- * presence TTL. A session heartbeating every twenty seconds can never match.
- * Ending a LIVE session would make ingest reject its records
- * (`services/records.ts checkProducerSession`), which is exactly the deafness
- * this whole batch exists to remove — so the predicate is the thing to read
- * twice, and `test/session-reaper.test.ts` pins the never-reap case first.
+ * THE PREDICATE IS BOUNDED but it is not sufficient on its own: `ended_at IS
+ * NULL AND last_heartbeat_at < cutoff`, a per-pass `limit`, and a cutoff 240x
+ * the presence TTL. A session heartbeating every twenty seconds can never
+ * match — and a session that only READS for six hours matches easily, because
+ * the connector heartbeats from Edit and Bash alone (ledger M7). Ending a live
+ * session used to make ingest reject its records with `accepted:0` while the
+ * spool cursor advanced past them, which is exactly the deafness this batch
+ * exists to remove (review finding B2-01).
+ *
+ * SO THE SAFETY IS DOWNSTREAM, in services/records.ts: a flush refreshes
+ * `last_heartbeat_at` (a session that captures is never a candidate), and a
+ * record from a session this function closed REOPENS it rather than being
+ * discarded — which is what `reaped_at` is written for below.
+ * `test/session-reaper.test.ts` pins the never-reap case and
+ * `test/session-reap-liveness.test.ts` pins both halves of the revocation.
  */
 export const reapStaleSessions = async (
   deps: Deps,
@@ -289,7 +304,11 @@ export const reapStaleSessions = async (
   }
   const updated = await deps.db
     .update(agentSessions)
-    .set({ endedAt: now, status: DEFAULT_END_STATUS })
+    // `reapedAt` beside `endedAt` is what makes this verdict revocable: an
+    // end the hub INFERRED from silence, which a record from that session can
+    // disprove (services/records.ts reviveIfReaped). A connector's own
+    // SessionEnd leaves it null and stays final.
+    .set({ endedAt: now, status: DEFAULT_END_STATUS, reapedAt: now })
     .where(
       and(
         inArray(
@@ -316,6 +335,58 @@ export const reapStaleSessions = async (
     });
   }
   return { ended: updated.map(toSessionView) };
+};
+
+/**
+ * Undoes a reap that the world has since disproved (review finding B2-01).
+ *
+ * `reapStaleSessions` closes a session on ONE signal: no heartbeat for
+ * SESSION_REAP_STALE_HOURS. That signal is weaker than it reads, because the
+ * connector only heartbeats from PostToolUse on an Edit or a Bash (ledger M7),
+ * so a session that spent the afternoon reading and planning looks exactly
+ * like a killed terminal. When such a session then speaks — a record, or a
+ * SessionStart re-fire — the silence has been refuted, and the row has to
+ * reopen rather than spend the rest of its life having its records rejected
+ * with `accepted:0`.
+ *
+ * ONLY a reaped end is reversible. `endedAt` set with `reapedAt` null is a
+ * SessionEnd the session itself reported, and late writes against it stay
+ * rejected — that gate is what keeps a dead session's spool from being
+ * replayed in its own name (spool/flush.ts stamps the FLUSHING session).
+ *
+ * The reopening is appended to `/api/events` as a `session_started` carrying
+ * `revivedAfterReap`, because that stream is a ledger: a `session_ended` with
+ * no counterpart would leave every reader of it — the trial audit included —
+ * believing the session stopped there.
+ */
+export const reviveReapedSession = async (
+  deps: Deps,
+  row: SessionRow,
+): Promise<void> => {
+  const revived = await deps.db
+    .update(agentSessions)
+    .set({ endedAt: null, reapedAt: null, lastHeartbeatAt: deps.now() })
+    // Re-checked inside the write: only a row that is STILL a reaped corpse
+    // may be reopened, so a real SessionEnd landing between the read and this
+    // write is never undone.
+    .where(
+      and(
+        eq(agentSessions.id, row.id),
+        isNotNull(agentSessions.reapedAt),
+        isNotNull(agentSessions.endedAt),
+      ),
+    )
+    .returning();
+  if (revived.length === 0) {
+    return;
+  }
+  await appendEvent(deps, EVENT_KINDS.SESSION_STARTED, {
+    sessionId: row.id,
+    developerId: row.developerId,
+    repo: row.repo,
+    branch: row.branch,
+    revivedAfterReap: true,
+  });
 };
 
 export interface ListOpenSessionsOptions {
