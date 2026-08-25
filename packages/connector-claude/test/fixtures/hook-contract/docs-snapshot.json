@@ -2,6 +2,9 @@
   "event.SessionStart": true,
   "event.PostToolUse": true,
   "event.SessionEnd": true,
+  "event.UserPromptSubmit": true,
+  "event.PreToolUse": true,
+  "event.Stop": true,
   "common.input.session_id": true,
   "common.input.cwd": true,
   "common.input.hook_event_name": true,
@@ -15,6 +18,13 @@
   "PostToolUse.input.tool_response": true,
   "PostToolUse.input.file_path": true,
   "SessionEnd.input.reason": true,
+  "PreToolUse.output.permissionDecision": true,
+  "PreToolUse.output.permissionDecisionReason": true,
+  "PreToolUse.output.ask": true,
+  "UserPromptSubmit.input.prompt": true,
+  "UserPromptSubmit.output.additionalContext": true,
+  "Stop.input.transcript_path": true,
+  "Stop.input.stop_hook_active": true,
   "statusline.input.session_id": true,
   "statusline.input.cwd": true
 }

@@ -56,6 +56,7 @@ import type { MockHub } from "./fixtures/slow-hub.ts";
 import {
   POST_TOOL_USE_INPUT,
   POST_TOOL_USE_INPUT_FAILURE,
+  PRE_TOOL_USE_OUTPUT,
   SESSION_END_INPUT,
   SESSION_START_INPUT,
   SESSION_START_INPUT_WITH_TITLE,
@@ -387,7 +388,11 @@ describe("the drift watcher itself", () => {
       "every heading promoted one level",
       (hooks: string): string =>
         hooks.replace(/^### /gm, "#### ").replace(/^## /gm, "### "),
-      16,
+      // 16 before M17 widened the watched surface from three events to six:
+      // every section probe rides on the `### ` heading level, so adding
+      // PreToolUse, UserPromptSubmit and Stop added ten more observations
+      // that a heading promotion can flip. Re-derived, not adjusted by hand.
+      26,
     ],
   ] as const)(
     "KNOWN LIMIT: a formatting-only rewrite reports drift (%s)",
@@ -418,6 +423,63 @@ describe("the drift watcher itself", () => {
       expect(diffContract(before, after).length).toBe(expectedFlips);
     },
   );
+
+  /**
+   * Trial finding M17: the watcher's `EVENTS` list said three where the
+   * installer registers six, and its comment claimed to name "the events we
+   * register". The list is now read from the same constant both the installer
+   * and the doctor read, which kills that drift by construction — and these
+   * are the ten observations that appeared the moment it was.
+   */
+  test("the six registered events and the tripwire contract are all watched", async () => {
+    // Arrange
+    const hooks = await Bun.file(HOOKS_EXCERPT).text();
+    const statusline = await Bun.file(STATUSLINE_EXCERPT).text();
+
+    // Act
+    const view = extractContract({ hooks, statusline });
+
+    // Assert: the three events that were invisible
+    expect(view["event.PreToolUse"]).toBe(true);
+    expect(view["event.UserPromptSubmit"]).toBe(true);
+    expect(view["event.Stop"]).toBe(true);
+    // The tripwire's decision contract, `ask` included — it is a documented
+    // VALUE rather than a field name, and the quote-delimited rule finds it.
+    expect(view["PreToolUse.output.permissionDecision"]).toBe(true);
+    expect(view["PreToolUse.output.permissionDecisionReason"]).toBe(true);
+    expect(view["PreToolUse.output.ask"]).toBe(true);
+    // The prompt path and the summarizer gate's two inputs
+    expect(view["UserPromptSubmit.input.prompt"]).toBe(true);
+    expect(view["UserPromptSubmit.output.additionalContext"]).toBe(true);
+    expect(view["Stop.input.transcript_path"]).toBe(true);
+    expect(view["Stop.input.stop_hook_active"]).toBe(true);
+  });
+
+  test("the tripwire's own OUTPUT shape is pinned, not just its input", async () => {
+    // Arrange: only SessionStart's output was pinned before M17, so a rename
+    // on the decision-control side would have been caught by nothing.
+    const hooks = await Bun.file(HOOKS_EXCERPT).text();
+    const decision = PRE_TOOL_USE_OUTPUT.hookSpecificOutput;
+
+    // Act
+    const withoutDecision = hooks
+      .split("\n")
+      .filter((line) => !line.includes("permissionDecision"))
+      .join("\n");
+    const after = extractContract({
+      hooks: withoutDecision,
+      statusline: await Bun.file(STATUSLINE_EXCERPT).text(),
+    });
+
+    // Assert: the emitted shape is what the docs must keep documenting
+    expect(decision.hookEventName).toBe("PreToolUse");
+    expect(decision.permissionDecision).toBe("ask");
+    expect(typeof decision.permissionDecisionReason).toBe("string");
+    // …and removing it from the reference is seen, so the `true` above means
+    // something rather than the probe never looking.
+    expect(after["PreToolUse.output.permissionDecision"]).toBe(false);
+    expect(after["PreToolUse.output.permissionDecisionReason"]).toBe(false);
+  });
 
   test("sees a field that is gone, so a recorded true means something", async () => {
     // Arrange: the same excerpt with one documented field removed. Without

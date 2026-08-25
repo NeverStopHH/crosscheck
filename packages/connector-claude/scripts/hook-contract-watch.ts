@@ -24,7 +24,7 @@
  *   bun test packages/connector-claude/test/hook-contract.test.ts
  *
  *   field names published in bold rather than in backticks   4 observations flip
- *   every heading promoted one level (`###` → `####`)       16 observations flip
+ *   every heading promoted one level (`###` → `####`)       26 observations flip
  *
  * That direction is a false alarm, not a missed change, so it fails safe: the
  * job goes red, somebody reads the reference and re-records with --write. The
@@ -41,6 +41,8 @@
  *   ... --write                                        # accept drift as a diff
  */
 import { resolve } from "node:path";
+
+import { REGISTERED_HOOK_EVENT_NAMES } from "@crosscheck/connector-core/constants.ts";
 
 export const HOOKS_DOC_URL = "https://code.claude.com/docs/en/hooks.md";
 export const STATUSLINE_DOC_URL = "https://code.claude.com/docs/en/statusline.md";
@@ -76,8 +78,20 @@ interface FieldProbe {
   readonly field: string;
 }
 
-/** The events we register in .claude/settings.json (cli/init.ts). */
-const EVENTS = ["SessionStart", "PostToolUse", "SessionEnd"] as const;
+/**
+ * The events we register in .claude/settings.json — READ FROM THE SAME LIST
+ * the installer and the doctor read (connector-core constants.ts).
+ *
+ * It used to be a second literal here, and it had drifted: three events where
+ * `buildSettingsPlan` writes six and doctor's requirement names six (trial
+ * finding M17). The comment still said "the events we register". The
+ * consequence was not cosmetic — the PreToolUse tripwire's whole decision
+ * contract (`permissionDecision`, `permissionDecisionReason`, the literal
+ * `ask`) was outside the watched surface for as long as the tripwire existed,
+ * so Anthropic could have renamed any of it and the only symptom would have
+ * been tripwires that silently stopped asking.
+ */
+const EVENTS = REGISTERED_HOOK_EVENT_NAMES;
 
 /**
  * Exactly what we read off stdin (capture/tool-events.ts HookPayloadSchema) and
@@ -137,6 +151,48 @@ const HOOK_PROBES: readonly FieldProbe[] = [
     field: "file_path",
   },
   { key: "SessionEnd.input.reason", section: "SessionEnd", field: "reason" },
+  /**
+   * The PreToolUse tripwire's decision contract (DESIGN.md §4). This is the
+   * half M17 was really about: three names, all of them ours to send, none of
+   * them watched. `ask` is a VALUE rather than a field name — it appears as
+   * `"permissionDecision": "ask"` — and `mentionsField` finds it anyway,
+   * because the rule is "quote-delimited token", which is exactly what a
+   * documented enum value looks like. (`"task"` does not match: the regex
+   * needs a quote or backtick immediately before the `a`.)
+   */
+  {
+    key: "PreToolUse.output.permissionDecision",
+    section: "PreToolUse",
+    field: "permissionDecision",
+  },
+  {
+    key: "PreToolUse.output.permissionDecisionReason",
+    section: "PreToolUse",
+    field: "permissionDecisionReason",
+  },
+  { key: "PreToolUse.output.ask", section: "PreToolUse", field: "ask" },
+  /** The prompt path: what we read, and what we hand back (flows/hint.ts). */
+  {
+    key: "UserPromptSubmit.input.prompt",
+    section: "UserPromptSubmit",
+    field: "prompt",
+  },
+  {
+    key: "UserPromptSubmit.output.additionalContext",
+    section: "UserPromptSubmit",
+    field: "additionalContext",
+  },
+  /** The Tier-1 summarizer gate reads both (summarizer/gate.ts, hooks/stop.ts). */
+  {
+    key: "Stop.input.transcript_path",
+    section: "Stop",
+    field: "transcript_path",
+  },
+  {
+    key: "Stop.input.stop_hook_active",
+    section: "Stop",
+    field: "stop_hook_active",
+  },
 ];
 
 /** The statusline doc is small, so the whole page is the search space. */
