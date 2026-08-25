@@ -136,7 +136,10 @@ describe("captureCheck", () => {
 describe("hintsCheck", () => {
   test("zero claims beside a live session names the structural fact and WARNs", () => {
     // Arrange + Act
-    const result = hintsCheck({ delivered: 0, pulled: 0, claims: 0 }, true);
+    const result = hintsCheck(
+      { ok: true, stats: { delivered: 0, pulled: 0, claims: 0 } },
+      true,
+    );
 
     // Assert
     expect(result.level).toBe("WARN");
@@ -146,7 +149,10 @@ describe("hintsCheck", () => {
 
   test("zero claims on a machine with no session is a fresh team, not a defect", () => {
     // Arrange + Act
-    const result = hintsCheck({ delivered: 0, pulled: 0, claims: 0 }, false);
+    const result = hintsCheck(
+      { ok: true, stats: { delivered: 0, pulled: 0, claims: 0 } },
+      false,
+    );
 
     // Assert: a warning that greets every new install is one nobody reads
     expect(result.level).toBe("PASS");
@@ -155,16 +161,31 @@ describe("hintsCheck", () => {
 
   test("an older hub without the endpoint is a PASS, never a WARN", () => {
     // Arrange + Act
-    const result = hintsCheck(null, true);
+    const result = hintsCheck({ ok: false, reason: "absent" }, true);
 
     // Assert
     expect(result.level).toBe("PASS");
     expect(result.detail).toContain("not available on this hub");
   });
 
+  test("a rejected key says not measured, never 'not available on this hub'", () => {
+    // Arrange + Act: the whole point of M3 was a PASS that claimed something
+    // false under `FAIL hub reachable invalid api key`. A 401 means the
+    // endpoint was never asked, not that the hub lacks it.
+    const result = hintsCheck({ ok: false, reason: "unmeasured" }, true);
+
+    // Assert
+    expect(result.level).toBe("PASS");
+    expect(result.detail).toBe("not measured");
+    expect(result.detail).not.toContain("not available on this hub");
+  });
+
   test("a healthy repo prints delivered, pulled and claims", () => {
     // Arrange + Act
-    const result = hintsCheck({ delivered: 5, pulled: 2, claims: 11 }, true);
+    const result = hintsCheck(
+      { ok: true, stats: { delivered: 5, pulled: 2, claims: 11 } },
+      true,
+    );
 
     // Assert
     expect(result.level).toBe("PASS");

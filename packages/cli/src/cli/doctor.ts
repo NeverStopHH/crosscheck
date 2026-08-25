@@ -22,6 +22,7 @@ import {
   DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   EXIT_FAIL,
   GIT_TIMEOUT_MS,
+  HTTP_NOT_FOUND,
   EXIT_OK,
   EXIT_WARN,
   LATENCY_PROBE_TIMEOUT_MS,
@@ -1873,6 +1874,19 @@ const checkCapture = async (
 };
 
 /**
+ * What the hint-stats probe came back with.
+ *
+ * The two failure reasons are kept apart because they are different claims
+ * about the world: "absent" (the hub answered 404) says this hub predates the
+ * endpoint, and "unmeasured" (rejected key, unreachable, 5xx) says we never
+ * got to ask. Collapsing them was the M3 defect in miniature — a line that
+ * blames the hub for a local credential problem.
+ */
+export type HintsProbe =
+  | { readonly ok: true; readonly stats: HintStats }
+  | { readonly ok: false; readonly reason: "absent" | "unmeasured" };
+
+/**
  * Whether hints CAN fire on this repo (trial finding M1/H3).
  *
  * `hint_deliveries` was write-only from the outside — `markHintsPulled` was
@@ -1883,16 +1897,23 @@ const checkCapture = async (
  * names the structural fact.
  *
  * An older hub 404s the endpoint, which is a PASS saying so — never a WARN,
- * because nothing about this install is wrong in that case (§R6).
+ * because nothing about this install is wrong in that case (§R6). A hub that
+ * rejected the key gets the file's usual "not measured" instead: `hub
+ * reachable` already FAILs two lines up and owns that verdict.
  */
 export const hintsCheck = (
-  stats: HintStats | null,
+  probe: HintsProbe,
   hasLiveSession: boolean,
 ): Check => {
   const name = "hints";
-  if (stats === null) {
-    return check("PASS", name, "not available on this hub");
+  if (!probe.ok) {
+    return check(
+      "PASS",
+      name,
+      probe.reason === "absent" ? "not available on this hub" : "not measured",
+    );
   }
+  const stats = probe.stats;
   const counts = `${String(stats.delivered)} delivered (${String(stats.pulled)} pulled), ${String(stats.claims)} claims on this repo`;
   // The live-session gate, same as `last capture sync` and `hooks firing`
   // above. A team that has not published anything YET is not broken — a fresh
@@ -1914,10 +1935,16 @@ const checkHints = async (
   home: string,
 ): Promise<Check> => {
   const result = await getHintStats(ctx, repoId);
-  return hintsCheck(
-    result.ok ? result.data : null,
-    await hasLiveSessionState(home),
-  );
+  const probe: HintsProbe = result.ok
+    ? { ok: true, stats: result.data }
+    : {
+        ok: false,
+        reason:
+          result.kind === "http" && result.status === HTTP_NOT_FOUND
+            ? "absent"
+            : "unmeasured",
+      };
+  return hintsCheck(probe, await hasLiveSessionState(home));
 };
 
 /** A live session file plus a stale sync is exactly the silent-death signature. */
