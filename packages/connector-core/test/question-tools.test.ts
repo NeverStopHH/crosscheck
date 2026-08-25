@@ -23,7 +23,10 @@ import {
   NO_ADDRESSEE_REFUSAL,
   QUESTION_SECRET_REFUSAL,
 } from "../src/mcp/tools/ask-teammate.ts";
-import { ANSWER_ECHO_REFUSAL } from "../src/mcp/tools/answer-question.ts";
+import {
+  ANSWER_ECHO_REFUSAL,
+  ANSWER_SECRET_REFUSAL,
+} from "../src/mcp/tools/answer-question.ts";
 import { NO_OPEN_QUESTIONS } from "../src/mcp/tools/list-open-questions.ts";
 import { getQuestions } from "../src/http/hub.ts";
 import {
@@ -369,6 +372,26 @@ describe("answer_question", () => {
     expect(result.text).not.toContain("uploader");
     expect(result.text).not.toContain("backoff");
     expect(await answersOf(nick)).toHaveLength(0);
+  });
+
+  test("a credential-shaped answer is dropped before the hub sees it", async () => {
+    // Arrange: an answer is pushed HARDER than a question — it lands in the
+    // asker's next prompt as substance with no relevance gate, so it reaches a
+    // second developer's machine and a second model's context. `ask_teammate`
+    // scans for exactly this reason; the answer path did not scan at all.
+    const before = (await answersOf(nick)).length;
+
+    // Act
+    const result = await call(ken, "answer_question", {
+      questionId,
+      body: `Yes — it needs AWS_SECRET_ACCESS_KEY=${CREDENTIAL} in its env, that is the 403.`,
+    });
+
+    // Assert — refused, the match never echoed back, nothing uploaded.
+    expect(result.isError).toBe(true);
+    expect(result.text).toBe(ANSWER_SECRET_REFUSAL);
+    expect(result.text).not.toContain(CREDENTIAL);
+    expect(await answersOf(nick)).toHaveLength(before);
   });
 
   test("the named teammate answers and it reaches the asker", async () => {

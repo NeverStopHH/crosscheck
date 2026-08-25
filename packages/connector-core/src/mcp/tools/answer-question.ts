@@ -27,6 +27,7 @@ import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
 import { quoted, quotingText, safeId } from "../render.ts";
 import { checkClaim } from "../violations.ts";
+import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { answerQuestion } from "../../http/hub.ts";
 import { readSessionState } from "../../state/session-state.ts";
@@ -85,6 +86,20 @@ export const ANSWER_ECHO_REFUSAL =
   "(echo-loop exclusion). Answer in your own words, or point at the teammate's " +
   "finding by naming it.";
 
+/**
+ * The secret gate, and an answer needs it MORE than a question does. A
+ * question lands in a teammate's briefing as quoted title-class text; an
+ * answer lands in the asker's next PROMPT as substance, with no relevance
+ * gate in front of it (DESIGN.md §4, the solicited exception) — so a
+ * credential in an answer body reaches a second developer's machine and a
+ * second model's context. Same rule as everywhere else: drop, never redact,
+ * and never echo the match back (DESIGN.md §3).
+ */
+export const ANSWER_SECRET_REFUSAL =
+  "That answer matches a secret pattern (key, token or credential), so it is " +
+  "refused rather than uploaded — crosscheck never redacts, it drops. Answer " +
+  "without the credential material in it.";
+
 export const run = async (
   ctx: McpContext,
   args: unknown,
@@ -92,6 +107,12 @@ export const run = async (
   const parsed = parseArgs(ArgsSchema, args, definition.name);
   if (!parsed.ok) {
     return parsed.result;
+  }
+  // Before the session lookup and before any round trip, exactly where
+  // `ask_teammate` scans: nothing credential-shaped is worth either, and the
+  // refusal must not quote it back.
+  if (containsSecret(parsed.value.body)) {
+    return toolFailure(ANSWER_SECRET_REFUSAL);
   }
   const own = await requireOwnContext(ctx);
   if (own === null) {

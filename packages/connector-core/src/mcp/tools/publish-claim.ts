@@ -17,6 +17,7 @@ import { quotingText, safeId } from "../render.ts";
 import { resolveOwnWorkContext } from "../session.ts";
 import type { OwnWorkContext } from "../session.ts";
 import { checkClaim, explainRejection } from "../violations.ts";
+import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { readSessionState } from "../../state/session-state.ts";
 import { postRecords } from "../../http/hub.ts";
@@ -136,6 +137,19 @@ const isDeliveredHintEcho = async (
   );
 };
 
+/**
+ * The secret gate, the same one `ask_teammate`, `set_intent`, `review_draft`
+ * and `answer_question` apply. A published claim is uploaded to a shared hub
+ * and can be injected into a TEAMMATE's prompt as substance, so a credential
+ * in a claim body reaches a second machine and a second model's context —
+ * the exposure `answer_question` was audited for, on the tool beside it.
+ * Drop, never redact, and never echo the match (DESIGN.md §3).
+ */
+export const CLAIM_SECRET_REFUSAL =
+  "That claim matches a secret pattern (key, token or credential), so it is " +
+  "refused rather than uploaded — crosscheck never redacts, it drops. Record " +
+  "the finding without the credential material in it.";
+
 export const run = async (
   ctx: McpContext,
   args: unknown,
@@ -143,6 +157,11 @@ export const run = async (
   const parsed = parseArgs(ArgsSchema, args, definition.name);
   if (!parsed.ok) {
     return parsed.result;
+  }
+  // Before the session lookup and before any round trip, exactly where every
+  // other uploading tool scans.
+  if (containsSecret(parsed.value.body)) {
+    return toolFailure(CLAIM_SECRET_REFUSAL);
   }
   const own = await requireOwnContext(ctx);
   if (own === null) {
