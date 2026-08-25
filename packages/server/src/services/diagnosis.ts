@@ -86,7 +86,13 @@ export interface WorkContextListEntry extends WorkContextView {
 }
 
 export interface WorkContextListWindow {
-  /** Oldest `created_at` to include; omitted = no window (see §M8). */
+  /**
+   * Oldest ACTIVITY to include — `coalesce(updated_at, created_at)`, the same
+   * expression the hub and the renderer age a row by; omitted = no window (see
+   * §M8). Naming `created_at` here was the pre-B2-06 defect written down: a
+   * context created three weeks ago and updated an hour ago is inside this
+   * window, and a reader who trusts the field doc concludes it has aged out.
+   */
   readonly since?: Date;
   readonly limit?: number;
 }
