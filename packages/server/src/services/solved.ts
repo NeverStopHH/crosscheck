@@ -30,7 +30,8 @@
  * cause. Ranking (the search decay floor) keys on SOLVED alone — the retained
  * knowledge is what the floor protects; presentation states each separately.
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
 import { claimEdges, claims } from "../db/schema.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
@@ -66,6 +67,45 @@ const toDate = (value: unknown): Date | null => {
 };
 
 /**
+ * THE solved predicate, as one expression: every rule the header states,
+ * over a caller-bounded id list. Extracted because two readers now need it —
+ * "is this tree solved, and when" and "what does it say the cause was" — and
+ * two spellings of a trust rule are two rules. A body served under the
+ * solved label by a query that had drifted from this one would be substance
+ * injected on a vouch nobody made.
+ */
+const solvedClaimCondition = (contextIds: readonly string[]): SQL =>
+  and(
+    inArray(claims.workContextId, [...contextIds]),
+    eq(claims.status, SOLVED_CLAIM_STATUS),
+    eq(claims.provenance, DECLARED_PROVENANCE),
+    sql`jsonb_array_length(${claims.evidenceRefs}) >= ${SOLVED_MIN_EVIDENCE_REFS}`,
+    sql`NOT EXISTS (SELECT 1 FROM ${claimEdges} WHERE ${claimEdges.toClaimId} = ${claims.id} AND ${claimEdges.kind} = ${SUPERSEDES_EDGE_KIND})`,
+    // The deadlock probe: raw identifiers because the same two tables
+    // appear twice (peer, se) and drizzle's table refs cannot alias
+    // inside a sql fragment. Peer scope is THE SAME TREE — the
+    // connector's mirror (mcp/render.ts solvedAtFromTree) only sees
+    // local claims, and the two rules must answer identically.
+    sql`NOT EXISTS (
+      SELECT 1 FROM claim_edges dl
+      JOIN claims peer ON peer.id = CASE
+        WHEN dl.from_claim_id = ${claims.id} THEN dl.to_claim_id
+        ELSE dl.from_claim_id
+      END
+      WHERE dl.kind = ${CONTRADICTS_EDGE_KIND}
+        AND (dl.from_claim_id = ${claims.id} OR dl.to_claim_id = ${claims.id})
+        AND peer.work_context_id = ${claims.workContextId}
+        AND peer.status = ${SOLVED_CLAIM_STATUS}
+        AND peer.provenance = ${DECLARED_PROVENANCE}
+        AND jsonb_array_length(peer.evidence_refs) >= ${SOLVED_MIN_EVIDENCE_REFS}
+        AND NOT EXISTS (
+          SELECT 1 FROM claim_edges se
+          WHERE se.to_claim_id = peer.id AND se.kind = ${SUPERSEDES_EDGE_KIND}
+        )
+    )`,
+  ) as SQL;
+
+/**
  * Which of `contextIds` are solved, and when — `solvedAt` is the newest
  * qualifying claim's createdAt, the "diagnosed N days ago" every surface
  * states plainly (honest presentation). One bounded query: the id list is
@@ -86,37 +126,7 @@ export const listSolvedInfo = async (
       solvedAt: sql`max(${claims.createdAt})`,
     })
     .from(claims)
-    .where(
-      and(
-        inArray(claims.workContextId, [...contextIds]),
-        eq(claims.status, SOLVED_CLAIM_STATUS),
-        eq(claims.provenance, DECLARED_PROVENANCE),
-        sql`jsonb_array_length(${claims.evidenceRefs}) >= ${SOLVED_MIN_EVIDENCE_REFS}`,
-        sql`NOT EXISTS (SELECT 1 FROM ${claimEdges} WHERE ${claimEdges.toClaimId} = ${claims.id} AND ${claimEdges.kind} = ${SUPERSEDES_EDGE_KIND})`,
-        // The deadlock probe: raw identifiers because the same two tables
-        // appear twice (peer, se) and drizzle's table refs cannot alias
-        // inside a sql fragment. Peer scope is THE SAME TREE — the
-        // connector's mirror (mcp/render.ts solvedAtFromTree) only sees
-        // local claims, and the two rules must answer identically.
-        sql`NOT EXISTS (
-          SELECT 1 FROM claim_edges dl
-          JOIN claims peer ON peer.id = CASE
-            WHEN dl.from_claim_id = ${claims.id} THEN dl.to_claim_id
-            ELSE dl.from_claim_id
-          END
-          WHERE dl.kind = ${CONTRADICTS_EDGE_KIND}
-            AND (dl.from_claim_id = ${claims.id} OR dl.to_claim_id = ${claims.id})
-            AND peer.work_context_id = ${claims.workContextId}
-            AND peer.status = ${SOLVED_CLAIM_STATUS}
-            AND peer.provenance = ${DECLARED_PROVENANCE}
-            AND jsonb_array_length(peer.evidence_refs) >= ${SOLVED_MIN_EVIDENCE_REFS}
-            AND NOT EXISTS (
-              SELECT 1 FROM claim_edges se
-              WHERE se.to_claim_id = peer.id AND se.kind = ${SUPERSEDES_EDGE_KIND}
-            )
-        )`,
-      ),
-    )
+    .where(solvedClaimCondition(contextIds))
     .groupBy(claims.workContextId);
   return new Map(
     rows.flatMap((row) => {
@@ -124,4 +134,48 @@ export const listSolvedInfo = async (
       return solvedAt === null ? [] : [[row.workContextId, solvedAt] as const];
     }),
   );
+};
+
+/**
+ * Read bound on qualifying root-cause rows per lookup. The caller's id list
+ * is already capped (SOLVED_MATCH_MAX_FINDINGS trees), and a tree holds a
+ * handful of standing root causes at most, so this is the usual "bounded
+ * like every other query" floor rather than a working limit.
+ */
+export const SOLVED_ROOT_CAUSE_MAX_ROWS = 50;
+
+/**
+ * What each solved tree of `contextIds` says the cause WAS — the newest
+ * qualifying claim's body, which is by construction the same claim whose
+ * createdAt `listSolvedInfo` reports as `solvedAt`: same predicate, same
+ * ordering key, so the sentence a reader sees and the age printed beside it
+ * always describe one claim.
+ *
+ * Newest-first plus first-wins in JS rather than DISTINCT ON: the row cap
+ * above keeps it small, and the two readers then share the predicate instead
+ * of one of them growing a dialect-specific clause the other lacks.
+ */
+export const listSolvedRootCauses = async (
+  db: Db,
+  contextIds: readonly string[],
+): Promise<ReadonlyMap<string, string>> => {
+  if (contextIds.length === 0) {
+    return new Map();
+  }
+  const rows = await db
+    .select({
+      workContextId: claims.workContextId,
+      body: claims.body,
+    })
+    .from(claims)
+    .where(solvedClaimCondition(contextIds))
+    .orderBy(desc(claims.createdAt))
+    .limit(SOLVED_ROOT_CAUSE_MAX_ROWS);
+  const newest = new Map<string, string>();
+  for (const row of rows) {
+    if (!newest.has(row.workContextId)) {
+      newest.set(row.workContextId, row.body);
+    }
+  }
+  return newest;
 };

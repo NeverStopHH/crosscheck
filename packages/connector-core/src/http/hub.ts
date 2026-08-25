@@ -237,8 +237,10 @@ export const getAbsences = (
  * One "solved before" match (VISION.md §1): a solved tree sharing a strong
  * target with current work on this repo — or, through the content-identity
  * kind, on ANY repo of this hub, which is why the row names its own. A
- * POINTER on the wire by construction — title, author, repo, ages and the id
- * to pull, never a claim body.
+ * A pointer plus, for the strongest match only, the one sentence the tree
+ * settled on: title, author, repo, ages, the id to pull, and `rootCause`
+ * (DESIGN.md §4 — evidence makes a claim trustworthy, content identity makes
+ * it relevant, and asserting it unasked needs both).
  */
 export const SolvedMatchEntrySchema = z.looseObject({
   workContextId: z.string().min(1),
@@ -256,6 +258,14 @@ export const SolvedMatchEntrySchema = z.looseObject({
   landedAt: z.string().nullable().optional(),
   /** Open string: an unknown kind renders nothing (briefing/render.ts). */
   matchedTargetKind: z.string().min(1),
+  /**
+   * What the tree says the cause WAS. The hub sends it only for a
+   * fingerprint match; the renderer requires the same kind again before it
+   * prints anything, so a hub that sent a body beside a weaker match — a
+   * newer one with different rules, or a hostile one — buys no substance
+   * (briefing/render.ts `solvedRootCauseLine`).
+   */
+  rootCause: z.string().min(1).nullable().optional(),
 });
 
 export type SolvedMatchEntry = z.infer<typeof SolvedMatchEntrySchema>;

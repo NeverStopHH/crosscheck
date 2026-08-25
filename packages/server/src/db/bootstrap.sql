@@ -385,3 +385,10 @@ CREATE INDEX IF NOT EXISTS question_answers_claim_idx
 -- scan of every delivery row on the UserPromptSubmit hot path.
 CREATE INDEX IF NOT EXISTS hint_deliveries_ref_session_idx
   ON hint_deliveries (ref_id, session_id);
+
+-- `work_context_id` is a foreign key, which Postgres does NOT index on its
+-- own, and three hot readers ask "the claims of THESE contexts, newest
+-- first": the solved probe, the solved root-cause body the briefing renders,
+-- and normalized-doc's per-ingest refresh. Mirrored in db/schema.ts.
+CREATE INDEX IF NOT EXISTS claims_work_context_created_idx
+  ON claims (work_context_id, created_at DESC);

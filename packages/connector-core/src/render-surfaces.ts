@@ -214,11 +214,14 @@ const answeredQuestionWith = (payload: string): AnsweredQuestion => ({
 
 /**
  * The payload in every untrusted slot of a solved match (VISION.md §1): the
- * solver's display name, the tree's title, and — new with cross-repo
- * matching — the REPO the tree lives in, which is hub text printed BARE on a
- * ·-separated line and therefore the newest place a field could be minted.
- * The repo deliberately differs from the briefing's own so the fragment
- * actually renders; equal to it, the surface would render nothing to attack.
+ * solver's display name, the tree's title, the REPO the tree lives in (hub
+ * text printed BARE on a ·-separated line — the newest place a field could
+ * be minted), and the recorded ROOT CAUSE, which is the one teammate-written
+ * BODY this section asserts rather than points at. The repo deliberately
+ * differs from the briefing's own so the fragment actually renders, and the
+ * kind is the fingerprint because that is the only kind the cause renders
+ * under; equal repo or a weaker kind and the surface would render less than
+ * it exists to attack.
  */
 const solvedMatchWith = (payload: string): SolvedMatchEntry => ({
   workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
@@ -228,6 +231,7 @@ const solvedMatchWith = (payload: string): SolvedMatchEntry => ({
   solvedAt: ISO,
   landedAt: null,
   matchedTargetKind: "error_fingerprint",
+  rootCause: payload,
 });
 
 const tripwireSessionWith = (payload: string): TripwireSession => ({

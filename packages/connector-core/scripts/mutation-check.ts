@@ -486,6 +486,50 @@ export const MUTATIONS: readonly Mutation[] = [
       "failure the whole matching rule exists to avoid",
   },
   {
+    // DESIGN.md §4: evidence makes a claim trustworthy, content identity
+    // makes it relevant, and asserting one unasked needs both. This drops
+    // the second half on the RENDER side, where a hostile hub reaches it.
+    label: "a solved match asserts its cause on a weak match",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: `    entry.matchedTargetKind !== SUBSTANCE_MATCH_KIND ||
+    entry.rootCause === null ||`,
+    to: "    entry.rootCause === null ||",
+    test: `${CORE}/test/briefing-solved.test.ts`,
+    because:
+      "a teammate's old answer is asserted at SessionStart on the evidence " +
+      "that somebody once touched the same file — the anchoring the whole " +
+      "pointer discipline exists to prevent, from a body the hub is not " +
+      "even supposed to have sent",
+  },
+  {
+    // The same rule on the HUB side: what is not rendered is not sent.
+    label: "a solved body is sent for a match that will never print it",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: `      winners
+        .filter((winner) => winner.viaFingerprint)
+        .map((winner) => winner.id),`,
+    to: "      winners.map((winner) => winner.id),",
+    test: `${SERVER}/test/solved-cross-repo.test.ts`,
+    because:
+      "every file-matched tree's claim body leaves the hub for a line that " +
+      "renders only a pointer — the V2-X4 shape, one surface later",
+  },
+  {
+    // The body and the age beside it must describe ONE claim, which is what
+    // sharing the predicate buys. This gives the body reader its own rule.
+    label: "the solved body stops obeying the standing-claim rule",
+    file: `${SERVER}/src/services/solved.ts`,
+    from: `    .where(solvedClaimCondition(contextIds))
+    .orderBy(desc(claims.createdAt))`,
+    to: `    .where(inArray(claims.workContextId, [...contextIds]))
+    .orderBy(desc(claims.createdAt))`,
+    test: `${SERVER}/test/solved-cross-repo.test.ts`,
+    because:
+      "the briefing quotes a retracted theory — or the correction that " +
+      "retracted it — as the recorded cause, under the age of the claim " +
+      "that actually still stands",
+  },
+  {
     label: "the solved floor leaks into similarity guesses",
     file: `${SERVER}/src/services/search.ts`,
     from: "solvedIds.has(entry.row.id) && hasFactTier(entry.tiers)",
@@ -2020,6 +2064,7 @@ interface Outcome {
  * PRINTS: absence-render.test.ts 1
  * PRINTS: agent-restart.test.ts 1
  * PRINTS: briefing-parity.test.ts 2
+ * PRINTS: briefing-solved.test.ts 1
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
  * PRINTS: conclusion-corpus.test.ts 6
@@ -2070,7 +2115,7 @@ interface Outcome {
  * PRINTS: sessions.test.ts 1
  * PRINTS: set-intent.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
- * PRINTS: solved-cross-repo.test.ts 2
+ * PRINTS: solved-cross-repo.test.ts 4
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1
  * PRINTS: stop-hook.test.ts 1

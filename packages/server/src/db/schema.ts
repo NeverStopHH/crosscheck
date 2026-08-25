@@ -252,6 +252,17 @@ export const claims = pgTable(
       "claims_body_length_check",
       sql`char_length(${table.body}) <= ${sql.raw(String(MAX_CLAIM_BODY_LENGTH))}`,
     ),
+    // `work_context_id` is a foreign key, which Postgres does NOT index on
+    // its own, and three hot readers ask "the claims of THESE contexts,
+    // newest first": services/solved.ts (both the solved probe and the
+    // root-cause body the briefing now renders) and normalized-doc.ts, which
+    // re-reads a context's claims inside EVERY ingest transaction. Without
+    // it each of those is a scan of every claim on the hub. Mirrored in
+    // db/bootstrap.sql.
+    index("claims_work_context_created_idx").on(
+      table.workContextId,
+      table.createdAt.desc(),
+    ),
     // ANN index for the ingest gate's nearest-neighbor probes — without it
     // every claim ingest seq-scans all embedded claims (similarity-gate.ts).
     index("claims_embedding_hnsw_idx").using(

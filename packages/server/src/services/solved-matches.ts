@@ -31,7 +31,7 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
-import { listSolvedInfo } from "./solved.ts";
+import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -71,6 +71,21 @@ export interface SolvedMatchView {
   readonly landedAt: string | null;
   /** Which shared target kind carried the match — fingerprint wins ties. */
   readonly matchedTargetKind: string;
+  /**
+   * What the tree says the cause WAS — sent ONLY for a fingerprint match,
+   * null otherwise. Two conditions have to hold before a solved answer is
+   * pushed into a reader's context unasked, and this field is where they
+   * meet: the claim is evidence-backed and vouched (the solved predicate,
+   * services/solved.ts), AND the match is content identity rather than a
+   * shared location. A file two people touched says they are near each
+   * other; a fingerprint says they hit the SAME failure, which is the only
+   * evidence this surface has that the old answer is about the new problem.
+   * A weaker match keeps the pointer and nothing else — DESIGN.md §4.
+   *
+   * It is also why the field is null rather than absent-but-fetched: what is
+   * not rendered is not sent (the V2-X4 rule).
+   */
+  readonly rootCause: string | null;
 }
 
 interface PairRow {
@@ -243,10 +258,20 @@ export const listSolvedMatches = async (
     )
     .slice(0, SOLVED_MATCH_MAX_FINDINGS);
 
-  const display = await hydrateMatches(
-    deps.db,
-    winners.map((winner) => winner.id),
-  );
+  const [display, rootCauses] = await Promise.all([
+    hydrateMatches(
+      deps.db,
+      winners.map((winner) => winner.id),
+    ),
+    // Bodies only for the trees that will be allowed to carry one, so a
+    // file-matched tree's claim never leaves the hub at all.
+    listSolvedRootCauses(
+      deps.db,
+      winners
+        .filter((winner) => winner.viaFingerprint)
+        .map((winner) => winner.id),
+    ),
+  ]);
   return winners.flatMap((winner) => {
     const row = display.get(winner.id);
     const solvedAt = solvedInfo.get(winner.id);
@@ -264,6 +289,7 @@ export const listSolvedMatches = async (
         matchedTargetKind: winner.viaFingerprint
           ? "error_fingerprint"
           : "file",
+        rootCause: rootCauses.get(winner.id) ?? null,
       },
     ];
   });

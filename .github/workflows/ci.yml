@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 126
+    # PRINTS: 129
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -143,7 +143,7 @@ jobs:
     # PRINTS: summarizer/worker-env.ts 1
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/questions.ts 1
-    # PRINTS: briefing/render.ts 2
+    # PRINTS: briefing/render.ts 3
     # PRINTS: briefing/sanitize.ts 7
     # PRINTS: config/config.ts 3
     # PRINTS: config/connected-repo.ts 2
@@ -181,7 +181,8 @@ jobs:
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/search.ts 9
     # PRINTS: packages/server/src/services/sessions.ts 1
-    # PRINTS: packages/server/src/services/solved-matches.ts 2
+    # PRINTS: packages/server/src/services/solved-matches.ts 3
+    # PRINTS: packages/server/src/services/solved.ts 1
     # PRINTS: packages/server/src/services/time-window.ts 1
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
@@ -219,7 +220,7 @@ jobs:
     # PRINTS: recover.ts 1
     # PRINTS: refusal.ts 3
     # PRINTS: render-referee.ts 2
-    # PRINTS: render.ts 11
+    # PRINTS: render.ts 12
     # PRINTS: runner.ts 2
     # PRINTS: sanitize.ts 7
     # PRINTS: search-related-work.ts 1
@@ -230,7 +231,8 @@ jobs:
     # PRINTS: sessions.ts 1
     # PRINTS: set-intent.ts 1
     # PRINTS: settings-merge.ts 1
-    # PRINTS: solved-matches.ts 2
+    # PRINTS: solved-matches.ts 3
+    # PRINTS: solved.ts 1
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: stop.ts 2
     # PRINTS: time-window.ts 1

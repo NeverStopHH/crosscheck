@@ -459,10 +459,23 @@ export const STALENESS_GIT_TIMEOUT_MS = 250;
 /** Most referenced files one staleness probe hands git as pathspecs. */
 export const STALENESS_MAX_PATHS = 20;
 /**
- * "Solved before" pointers one briefing may spend — pointer discipline like
- * MAX_CONTRADICTION_POINTERS: title + id + age, the tree is a pull.
+ * "Solved before" entries one briefing may spend — title + id + age, and for
+ * a fingerprint match one further line carrying the recorded cause.
  */
 export const MAX_SOLVED_POINTERS = 2;
+
+/**
+ * How much of a solved tree's recorded cause the briefing prints. The claim's
+ * own bound is MAX_CLAIM_BODY_LENGTH (400), so two full-length bodies would
+ * cost more of the 2200-character briefing than the whole "Questions for you"
+ * block gets — for a section that renders second to last. This bound keeps
+ * the pair below that block's, which is the ordering the budget already
+ * states: what somebody is waiting for outranks what somebody once found.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.SOLVED_ROOT_CAUSE_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH, c.MAX_SOLVED_POINTERS * c.SOLVED_ROOT_CAUSE_MAX_CHARS < c.MAX_BRIEFING_QUESTION_CHARS)'
+ * PRINTS: true true
+ */
+export const SOLVED_ROOT_CAUSE_MAX_CHARS = 200;
 /**
  * FIFO cap on the remembered briefing pointers (state/session-state.ts).
  * Defensive: one SessionStart fire appends at most MAX_SOLVED_POINTERS, and

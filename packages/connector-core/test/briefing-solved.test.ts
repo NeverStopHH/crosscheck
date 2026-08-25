@@ -6,6 +6,8 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+
 import { MAX_SOLVED_POINTERS } from "../src/constants.ts";
 import { renderBriefing } from "../src/briefing/render.ts";
 import type { BriefingInput } from "../src/briefing/render.ts";
@@ -223,6 +225,60 @@ describe("briefing solved-before section", () => {
     expect(lineFor(both, "wc_near")).not.toContain(" · in ");
     expect(lineFor(older, "wc_old")).toContain("get_diagnosis wc_old");
     expect(lineFor(older, "wc_old")).not.toContain(" · in ");
+  });
+
+  test("a fingerprint match quotes its cause; a file match only points", async () => {
+    // Arrange: the SAME recorded cause on both entries, differing only in
+    // how the hub says the match was reached. Asserting both together is
+    // what makes this discriminating — a renderer that printed every body it
+    // was handed would satisfy the first half on its own.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          workContextId: "wc_fp",
+          matchedTargetKind: "error_fingerprint",
+          rootCause: "The ingestion mapping drops the key id on rotation",
+        }),
+        solvedMatch({
+          workContextId: "wc_file",
+          matchedTargetKind: "file",
+          rootCause: "The ingestion mapping drops the key id on rotation",
+        }),
+      ]),
+    );
+
+    // Assert: the cause is its own indented line under the fingerprint
+    // entry, and the file entry's pointer line is the last thing about it.
+    const lines = briefing.split("\n");
+    const fingerprintAt = lines.findIndex((line) =>
+      line.includes("get_diagnosis wc_fp"),
+    );
+    const fileAt = lines.findIndex((line) => line.includes("get_diagnosis wc_file"));
+    expect(lines[fingerprintAt + 1]).toBe(
+      "  root cause: «The ingestion mapping drops the key id on rotation»",
+    );
+    expect(lines[fileAt + 1] ?? "").not.toContain("root cause");
+    // One « » pair per line stays true with two framed values in one entry.
+    for (const line of lines) {
+      expect((line.match(/«/g) ?? []).length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test("a cause longer than the bound is cut, and the entry stays one unit", async () => {
+    // Arrange: a body at the claim's own maximum, well past what a briefing
+    // line may spend.
+    const long = "z".repeat(MAX_CLAIM_BODY_LENGTH);
+    const briefing = renderBriefing(
+      baseInput([solvedMatch({ rootCause: long })]),
+    );
+
+    // Assert
+    const causeLine = briefing
+      .split("\n")
+      .find((line) => line.startsWith("  root cause:"));
+    expect(causeLine).toBeDefined();
+    expect(causeLine?.length).toBeLessThan(long.length);
+    expect(causeLine).toContain("«");
   });
 
   test("a foreign repo the renderer cannot print drops the line", async () => {

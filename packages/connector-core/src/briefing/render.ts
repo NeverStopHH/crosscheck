@@ -17,6 +17,7 @@ import {
   MS_PER_SECOND,
   SECONDS_PER_MINUTE,
   SOLVED_AGE_MONTHS_THRESHOLD_DAYS,
+  SOLVED_ROOT_CAUSE_MAX_CHARS,
 } from "../constants.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import type {
@@ -421,7 +422,36 @@ const solvedRepoFragment = (
 };
 
 /**
- * One solved-before pointer: author, plain age, WHERE it was solved, what is
+ * THE ONE MATCH KIND THAT MAY CARRY SUBSTANCE, named here rather than
+ * inferred: a fingerprint is derived from the failure TEXT, so it says the
+ * old answer is about the NEW problem. A shared file says only that two
+ * people were near each other, and "solved before, here is the cause" on
+ * that evidence is the anchoring §4 forbids. Checked again on this side,
+ * although the hub already applies it, because a body arriving beside a
+ * weaker kind is exactly what a newer hub with different rules — or a
+ * hostile one — would send.
+ */
+const SUBSTANCE_MATCH_KIND = "error_fingerprint";
+
+/**
+ * The recorded cause as its OWN indented line, or "" — one « » pair per
+ * line is the rule, and the pointer line already spends its pair on the
+ * title. Same shape as the work-context intent line.
+ */
+const solvedRootCauseLine = (entry: SolvedMatchEntry): string => {
+  if (
+    entry.matchedTargetKind !== SUBSTANCE_MATCH_KIND ||
+    entry.rootCause === null ||
+    entry.rootCause === undefined
+  ) {
+    return "";
+  }
+  const body = sanitizeUntrusted(entry.rootCause, SOLVED_ROOT_CAUSE_MAX_CHARS);
+  return body.length === 0 ? "" : `\n  root cause: «${body}»`;
+};
+
+/**
+ * One solved-before entry: author, plain age, WHERE it was solved, what is
  * shared, and the pull call — NEVER a claim body (§4 pointer discipline; an
  * old answer asserted at SessionStart would anchor). Exported because the
  * SessionStart hook must know which pointers the emitted briefing actually
@@ -465,15 +495,22 @@ export const formatSolvedLine = (
   // U+00B7-separated like the absence and MCP lines — the structure the BARE
   // class strips from names, so an author cannot mint a field. A comma-shaped
   // line here would be structure no character class covers.
-  return `- ${author} · diagnosed ${formatSolvedAge(ageMs)} ago${landedFact}${repoFragment} · ${kindLabel}: «${title}» · get_diagnosis ${id}`;
+  return (
+    `- ${author} · diagnosed ${formatSolvedAge(ageMs)} ago${landedFact}${repoFragment} · ${kindLabel}: «${title}» · get_diagnosis ${id}` +
+    solvedRootCauseLine(entry)
+  );
 };
 
 /**
  * Placed AFTER contradictions and BEFORE absences: an old confirmed answer
  * is a lead for the work at hand — worth more than ambient absence context,
  * less urgent than a live conflict between open theories. With the briefing
- * full, solved pointers give way before conflicts do, and absences give way
- * before solved pointers.
+ * full, solved entries give way before conflicts do, and absences give way
+ * before solved entries.
+ *
+ * An entry is ONE unit of one or two lines, and the fitter therefore drops
+ * it WHOLE: a pointer line whose cause was cut off half-way would quote a
+ * diagnosis it had truncated into a different sentence.
  */
 const renderSolvedSection = (input: BriefingInput): Section => {
   const rendered = (input.solvedMatches ?? []).flatMap((entry) => {
