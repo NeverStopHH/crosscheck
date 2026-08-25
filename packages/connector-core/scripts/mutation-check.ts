@@ -1545,6 +1545,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "stopped working",
   },
   {
+    // Review finding B2-04, ported onto this side's predicate when the two
+    // capture checks were merged. Dropping the liveness term makes a CORPSE's
+    // counters raise the live-capture alarm again — a state file lives until
+    // SessionEnd and most sessions never end, so on a real home this WARNs
+    // about yesterday, every run, with a remedy nobody can trigger.
+    label: "a corpse's counters raise the live-capture alarm again",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "  !session.isIdle &&\n  session.editToolFires >= DOCTOR_CAPTURE_SILENT_FIRES_WARN",
+    to: "  session.editToolFires >= DOCTOR_CAPTURE_SILENT_FIRES_WARN",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "every home is mostly corpses (the trial found 104 of 127 sessions " +
+      "never closed), so the check that exists to name a capture failing NOW " +
+      "cries wolf about dead ones and stops being read",
+  },
+  {
     // Trial finding H6, the SMALLER half. The desktop app is one process on
     // the author's Mac — `ps -axo comm= | awk -F/ 'tolower($NF)=="claude"'
     // | grep -c "\.app/Contents/"` prints 1, because the framework helpers are
@@ -1807,7 +1823,7 @@ interface Outcome {
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
- * PRINTS: doctor-capture.test.ts 1
+ * PRINTS: doctor-capture.test.ts 2
  * PRINTS: doctor-global.test.ts 1
  * PRINTS: doctor-hooks-firing.test.ts 1
  * PRINTS: doctor-last-sync.test.ts 1
