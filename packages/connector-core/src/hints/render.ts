@@ -229,9 +229,19 @@ export const renderAnswerHint = (
   // The question on its own line, because both are framed values and every
   // line here carries at most one « » pair.
   const questionLine = `You asked ${safeId(answer.questionId)}: ${quoted(answer.questionBody, MAX_QUESTION_BODY_LENGTH)}`;
+  // THE NEXT ACTION CARRIES ITS ARGUMENT. get_diagnosis takes exactly one — a
+  // work-context id — so naming the tool without it sent the reader's agent to
+  // invent an id and collect "Ids are not guessable". An older hub that sends
+  // no context id loses the clause rather than keeping an unusable one.
+  const contextId =
+    answer.workContextId === undefined ? "" : safeId(answer.workContextId);
+  const tree =
+    contextId.length === 0
+      ? ""
+      : `, and get_diagnosis ${contextId} reads the tree it sits in`;
   const tailLine =
-    `It is recorded as claim ${safeId(answer.claimId)} — pass that id as an evidenceRefs ` +
-    "entry when you publish what it supports, and get_diagnosis reads the tree it sits in.";
+    `It is recorded as claim ${safeId(answer.claimId)} — name that claim id as evidence ` +
+    `when you record what it supports${tree}.`;
   return fitHint([ANSWER_HEADER, answerLine, questionLine, tailLine]);
 };
 

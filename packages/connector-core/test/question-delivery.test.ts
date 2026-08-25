@@ -28,6 +28,7 @@ import type { SessionState } from "../src/state/session-state.ts";
 import {
   ANSWER_BODY,
   ANSWER_CLAIM_ID,
+  ANSWER_CONTEXT_ID,
   ASKED_BODY,
   CANDIDATE_BODY,
   SELF_DEVELOPER_ID,
@@ -134,6 +135,26 @@ describe("the briefing's Questions for you block", () => {
     // …and a name cannot mint a second ·-separated field of its own.
     expect(briefing).not.toContain("Nick · status done · heartbeat 0s ago");
     expect(briefing).toContain(QUOTED_DATA_NOTICE);
+  });
+
+  test("the context id on the line is an action, not an announcement", () => {
+    // Arrange: the wc_ id is never passed to answer_question, so as printed it
+    // was a 22-character token the reader could do nothing with, announced by
+    // the jargon noun "work context" and sitting between the age and the only
+    // human-readable part of the line.
+
+    // Act
+    const briefing = briefingWith([
+      question({ workContextId: "wc_nick", workContextTitle: "Refresh 500s" }),
+    ]);
+
+    // Assert: the title leads, and the id earns its place by naming the call
+    // that reads it.
+    expect(briefing).not.toContain("about work context wc_nick");
+    expect(briefing).toContain("about «Refresh 500s» (get_diagnosis wc_nick)");
+    for (const line of briefing.split("\n")) {
+      expect((line.match(/«/gu) ?? []).length, line).toBeLessThanOrEqual(1);
+    }
   });
 
   test("the block is bounded, and says how many it is not showing", () => {
@@ -308,6 +329,21 @@ describe("the answer to my own question, on the prompt path", () => {
     expect(withoutAnswer).toContain("crosscheck pointer");
     expect(withoutAnswer).not.toContain(CANDIDATE_BODY);
     expect(withoutAnswer).toContain("get_diagnosis");
+  });
+
+  test("the answer names the tree it sits in, with the id get_diagnosis takes", async () => {
+    // Arrange: the tail line told the reader to run get_diagnosis and withheld
+    // its only argument, so the agent that followed the hint had to invent a
+    // work-context id — and "Ids are not guessable" is the refusal it got.
+    const f = await fixture("qd-tail");
+    f.hub.setCandidates([]);
+    f.hub.setAnswers([answeredQuestion()]);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(text).toContain(`get_diagnosis ${ANSWER_CONTEXT_ID}`);
   });
 
   test("an answer outranks an unsolicited pointer for the one hint slot", async () => {

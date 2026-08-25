@@ -559,6 +559,13 @@ export interface AnsweredQuestion {
   readonly questionId: string;
   readonly questionBody: string;
   readonly claimId: string;
+  /**
+   * The tree the answer's claim sits in. The rendered hint names
+   * `get_diagnosis` as the next action, and that tool takes exactly one
+   * argument — a work-context id — which never reached the surface, so the
+   * named action could not be performed from what the reader was given.
+   */
+  readonly workContextId: string;
   readonly claimBody: string;
   readonly claimKind: string;
   readonly claimStatus: string;
@@ -801,6 +808,7 @@ export const listUndeliveredAnswers = async (
     questionId: row.questionId,
     questionBody: row.questionBody,
     claimId: row.claim.id,
+    workContextId: row.claim.workContextId,
     claimBody: row.claim.body,
     claimKind: row.claim.kind,
     claimStatus: row.claim.status,

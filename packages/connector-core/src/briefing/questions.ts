@@ -97,6 +97,13 @@ export const formatQuestionEntry = (
   // The work-context title is the SECOND framed value, so it takes the first
   // line and the question body takes the second: one « » pair per line, the
   // framed-surface invariant this package holds everywhere.
+  //
+  // THE TITLE LEADS AND THE ID FOLLOWS AS A CALL. "about work context wc_…:"
+  // put a 22-character token the reader can do nothing with — it is never an
+  // argument of answer_question — in the most readable position on the line,
+  // announced by a jargon noun. Naming the call that reads it turns the same
+  // id into the next action, which is the only thing that earns a bare id a
+  // place on a briefing line at 23:00.
   const contextId =
     question.workContextId === null || question.workContextId === undefined
       ? ""
@@ -112,7 +119,7 @@ export const formatQuestionEntry = (
   const about =
     contextId.length === 0 || title.length === 0
       ? ""
-      : ` · about work context ${contextId}: «${title}»`;
+      : ` · about «${title}» (get_diagnosis ${contextId})`;
   return `${facts.join(" · ")}${about}\n  asks: «${body}» · answer_question ${id}`;
 };
 

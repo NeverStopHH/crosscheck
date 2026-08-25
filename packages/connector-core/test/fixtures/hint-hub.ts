@@ -131,10 +131,13 @@ export const ASKED_BODY = "Is the uploader's backoff shared with the importer?";
  * only because it was solicited, which is what the §4 exception says and what
  * question-delivery.test.ts pins against the unsolicited control.
  */
+export const ANSWER_CONTEXT_ID = "wc_nick_answer";
+
 export const answeredQuestion = (): Record<string, unknown> => ({
   questionId: ANSWER_QUESTION_ID,
   questionBody: ASKED_BODY,
   claimId: ANSWER_CLAIM_ID,
+  workContextId: ANSWER_CONTEXT_ID,
   claimBody: ANSWER_BODY,
   claimKind: "observation",
   claimStatus: "proposed",

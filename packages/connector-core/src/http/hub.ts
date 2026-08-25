@@ -653,6 +653,9 @@ export const AnsweredQuestionSchema = z.looseObject({
   questionId: z.string().min(1),
   questionBody: z.string().min(1),
   claimId: z.string().min(1),
+  /** The tree the claim sits in — the argument get_diagnosis takes. Optional
+   * so an older hub that omits it simply loses the clause that names it. */
+  workContextId: z.string().min(1).optional(),
   claimBody: z.string(),
   claimKind: z.string().min(1),
   claimStatus: z.string().min(1),
