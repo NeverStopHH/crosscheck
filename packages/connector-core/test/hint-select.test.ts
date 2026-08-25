@@ -235,6 +235,23 @@ describe("targets-only pointer (trial finding #19)", () => {
     }
   });
 
+  test("the READER's OWN exact-tier context never points (§4 self-exclusion)", () => {
+    // The claim pointer gets this free — own claims are never foreign, so
+    // foreignCount stays 0. A targets-only pointer has no claim to derive it
+    // from, and an exact path match is exactly how the reader's OWN earlier
+    // session surfaces. The hub excludes the caller today; §4 makes the
+    // selector the second line of defence, and one self-pointer would spend a
+    // teammate's slot out of the five a session gets.
+    expect(
+      select([context({ developerId: SELF_DEVELOPER }, [], [fileTarget()])]).kind,
+    ).toBe("silence");
+  });
+
+  // The three negatives below are GREEN ON MAIN as well as on this branch —
+  // main answers silence to every candidate, so they cannot be red-first
+  // proofs of the new pointer. They are the precision guards around it: each
+  // one fails the moment the exact-tier gate, the file-kind gate or the
+  // seen-set check is widened.
   test("an FTS-tier context with 0 claims and a matched file stays silent", () => {
     // FTS is too loose to point on without a claim behind it (keep precision).
     expect(

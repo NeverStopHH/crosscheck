@@ -178,7 +178,18 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     // file this context targeted — so a body-less pointer at zero claims is
     // precise, not a guess. FTS-only stays silent: a lexical body match is too
     // loose to point on without a claim behind it (keep precision, §4).
-    if (context.workContext.tier === "exact") {
+    //
+    // Self-exclusion is checked HERE too, not left to the hub. The claim
+    // pointer above gets it free (own claims are never foreign, so
+    // foreignCount stays 0); a targets-only pointer has no claim to derive it
+    // from, and the reader's OWN earlier session is exactly what an exact path
+    // match finds. The hub excludes the caller today, but §4 makes the
+    // selector the second line of defence, and one self-pointer costs a
+    // teammate's slot out of the five a session gets (§10 risk 1).
+    if (
+      context.workContext.tier === "exact" &&
+      context.workContext.developerId !== selfDeveloperId
+    ) {
       const target = context.matchedTargets.find(
         (matched) => matched.kind === "file",
       );
