@@ -101,7 +101,7 @@ export interface CaptureHealth {
   readonly fires: number;
   readonly targets: number;
   /**
-   * Touches this repo's live sessions resolved against no root of their own
+   * Touches this repo's open sessions resolved against no root of their own
    * repo (trial finding #17). Summed here because a session can drop a
    * hundred of them and still capture one target, which keeps
    * `isCaptureSilentlyDead` false — so without this line the counter reaches
@@ -199,7 +199,7 @@ export const readCaptureHealth = async (
     .sort((a, b) => b.modifiedAt - a.modifiedAt)
     .slice(0, STATUS_MAX_SESSION_STATES);
   const parsed = await Promise.all(
-    window.map(async (entry) => readStateFile(entry.path)),
+    window.map((entry) => readStateFile(entry.path)),
   );
   const idleBefore = now.getTime() - idleWindowMs();
   const sessions = parsed
