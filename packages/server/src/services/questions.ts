@@ -38,7 +38,7 @@
  * ANSWERER's own work context (`publish_claim` semantics): it is their
  * assertion, in their own tree, and the edge is what carries it to the asker.
  */
-import { and, desc, eq, gt, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, lte, sql } from "drizzle-orm";
 import type { Question, QuestionAnswer } from "@crosscheck/schema";
 
 import {
@@ -730,19 +730,3 @@ export const listAnswerableQuestions = (
   repo: string,
 ): Promise<readonly InboxQuestion[]> =>
   listInbox(deps, developerId, repo, false);
-
-/** Raw rows by id — the scale probe and the tests that assert stored state. */
-export const readQuestionRows = async (
-  deps: Deps,
-  ids: readonly string[],
-): Promise<readonly QuestionRow[]> => {
-  if (ids.length === 0) {
-    return [];
-  }
-  const rows = await deps.db
-    .select()
-    .from(questions)
-    .where(inArray(questions.id, ids))
-    .limit(ids.length);
-  return rows.map(toRow);
-};

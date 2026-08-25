@@ -114,8 +114,13 @@ export const EVENT_KINDS = {
   WORK_CONTEXT_UPDATED: "work_context_updated",
   CLAIM_ADDED: "claim_added",
   CLAIM_EDGE_ADDED: "claim_edge_added",
-  QUESTION_ASKED: "question_asked",
-  QUESTION_ANSWERED: "question_answered",
+  // NO question kinds here on purpose. A question is addressed to ONE person
+  // and the outbox is a team-wide feed; an event row saying "Nick asked Ken
+  // something" would put addressed communication on a surface nobody asked
+  // for, and the feed's opt-out filter is written for the SUBJECT of a row,
+  // which a question has two of. The channel's own counters (GET
+  // /api/questions) are where its activity is visible, to the two people it
+  // concerns.
 } as const;
 
 export type EventKind = (typeof EVENT_KINDS)[keyof typeof EVENT_KINDS];
