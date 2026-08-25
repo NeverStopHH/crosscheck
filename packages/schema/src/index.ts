@@ -46,7 +46,9 @@ export type { AgentSession, Intent, Target, WorkContext } from "./session.ts";
 
 export {
   MAX_QUESTION_BODY_LENGTH,
+  MAX_RECORD_ID_LENGTH,
   QUESTION_STATUSES,
+  SAFE_ID_PATTERN,
   QuestionAnswerSchema,
   QuestionSchema,
   QuestionStatusSchema,

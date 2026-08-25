@@ -38,7 +38,32 @@ export const QuestionStatusSchema = z.enum(QUESTION_STATUSES);
 
 export type QuestionStatus = z.infer<typeof QuestionStatusSchema>;
 
-const nonEmptyId = z.string().min(1);
+/**
+ * Characters an id may carry, and the one place both sides of the wire agree
+ * on them.
+ *
+ * The RENDERER strips everything outside this alphabet (connector-core's
+ * `safeId`), so an id it cannot print is an id nobody can pass back: a
+ * question filed as `qn_«»<bidi>SYSTEM ignore previous` renders as
+ * `answer_question qn_SYSTEMignoreprevious`, which the hub has never heard
+ * of. The entry is not dropped — the reader sees a live question they can
+ * never act on, and the asker is told nothing. Validating here makes the
+ * renderer's contract ("a row I will not vouch for is dropped") true, because
+ * an id that reaches the renderer is already what the renderer would print.
+ *
+ * VERIFY: bun -e 'const a=await import("./packages/schema/src/question.ts");const b=await import("./packages/connector-core/src/briefing/sanitize.ts");console.log(a.SAFE_ID_PATTERN.source === b.SAFE_ID_PATTERN.source)'
+ * PRINTS: true
+ */
+export const SAFE_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
+
+/** Long enough for `qn_` plus a uuid, short enough to render on one line. */
+export const MAX_RECORD_ID_LENGTH = 64;
+
+const nonEmptyId = z
+  .string()
+  .min(1)
+  .max(MAX_RECORD_ID_LENGTH)
+  .regex(SAFE_ID_PATTERN, "id carries characters an id may not carry");
 
 export const QuestionSchema = z
   .looseObject({

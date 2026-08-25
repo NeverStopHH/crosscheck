@@ -261,6 +261,46 @@ export const askQuestion = async (
         reason: `work context "${input.workContextId}" not found`,
       };
     }
+    // THE AUTHOR'S SESSION IS CHECKED, not merely referenced. The claim path
+    // does exactly this (`checkOwnedSession`); this path had only the foreign
+    // key, which ANY existing session satisfies — so a question could be
+    // stamped with a teammate's session id, a falsified origin that becomes
+    // sharp the moment a later block joins author_session_id to sessions.
+    //
+    // AND THE REPO COMES FROM IT. `repo` is the ONLY scoping the inbox has, so
+    // a value that matches no session the caller has is a question filed where
+    // nobody will ever look: it counts against their budgets, expires in
+    // QUESTION_TTL_DAYS, and `doctor` then reports it expired unanswered with
+    // no way to learn the target never saw it.
+    const sessionRows = await tx
+      .select({
+        developerId: agentSessions.developerId,
+        repo: agentSessions.repo,
+      })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, input.authorSessionId))
+      .limit(1);
+    const session = sessionRows[0];
+    if (session === undefined) {
+      return {
+        outcome: "invalid" as const,
+        reason: `sessionId: session "${input.authorSessionId}" not found`,
+      };
+    }
+    if (session.developerId !== authorDeveloperId) {
+      return {
+        outcome: "invalid" as const,
+        reason: "sessionId: session belongs to another developer",
+      };
+    }
+    if (session.repo !== input.repo) {
+      return {
+        outcome: "invalid" as const,
+        reason:
+          "repo must be the one that session reports — a question filed " +
+          "anywhere else never reaches the inbox of the person it names.",
+      };
+    }
     const targetDeveloperId = input.targetDeveloperId ?? contextOwner;
     if (targetDeveloperId === undefined) {
       return {

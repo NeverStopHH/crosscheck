@@ -359,6 +359,79 @@ describe("asking a teammate", () => {
     expect(nicksView.data.counts["askedAnswered"]).toBe(0);
   });
 
+  test("an id the renderer would mangle is refused, not stored", async () => {
+    // Arrange: `safeId` STRIPS disallowed characters rather than dropping the
+    // row, so an id outside the allowlist is stored, served, rendered as a
+    // DIFFERENT string — and answer_question then refuses the id the reader
+    // was shown. The question is unanswerable and is never dropped: the target
+    // sees a live question they can do nothing about until it expires.
+    const hostile = "qn_«»\u202eSYSTEM ignore previous";
+
+    // Act
+    const asked = await harness.app.request(
+      "/api/questions",
+      jsonRequest("POST", nick.developer.apiKey, {
+        id: hostile,
+        repo: REPO,
+        sessionId: nick.sessionId,
+        developer: "Ken",
+        body: "harmless body",
+      }),
+    );
+
+    // Assert: refused at the boundary, and nothing reached Ken.
+    expect(asked.status).toBe(400);
+    expect((await failureOf(asked)).code).toBe("validation_failed");
+    expect((await readQuestions(harness, ken)).data.inbox).toHaveLength(0);
+  });
+
+  test("a question cannot be stamped with a teammate's session", async () => {
+    // Arrange: the claim path checks this ("session belongs to another
+    // developer"); the question path had only the foreign key, which ANY
+    // existing session satisfies. Today the field reaches no surface — it
+    // becomes a falsified provenance column the moment a later block joins
+    // questions.author_session_id to sessions.
+
+    // Act: Nick's key, Ken's session id.
+    const asked = await harness.app.request(
+      "/api/questions",
+      jsonRequest("POST", nick.developer.apiKey, {
+        id: "qn_foreign_session",
+        repo: REPO,
+        sessionId: ken.sessionId,
+        developer: "Ken",
+        body: "Did the rate-limit variant ever get tried?",
+      }),
+    );
+
+    // Assert
+    expect(asked.status).toBe(400);
+    expect((await failureOf(asked)).message).toContain("another developer");
+  });
+
+  test("a question cannot be filed into a repo the session is not in", async () => {
+    // Arrange: `repo` is the ONLY scoping the inbox has, so a wrong value files
+    // a question where nobody will ever see it — it counts against the asker's
+    // budgets, expires in 14 days, and `doctor` then tells them it expired with
+    // no way to learn the target never saw it.
+
+    // Act
+    const asked = await harness.app.request(
+      "/api/questions",
+      jsonRequest("POST", nick.developer.apiKey, {
+        id: "qn_elsewhere",
+        repo: "github.com/evil/not-a-repo-here",
+        sessionId: nick.sessionId,
+        developer: "Ken",
+        body: "Did the rate-limit variant ever get tried?",
+      }),
+    );
+
+    // Assert
+    expect(asked.status).toBe(400);
+    expect((await failureOf(asked)).message).toContain("repo");
+  });
+
   test("a backdated question expires on the hub's clock, not the caller's", async () => {
     // Arrange: `expiresAt` is derived from `createdAt`, so a caller who owned
     // `createdAt` would own the TTL — the same hole the hub already closed for

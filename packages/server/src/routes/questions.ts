@@ -20,7 +20,12 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { ClaimSchema, MAX_QUESTION_BODY_LENGTH } from "@crosscheck/schema";
+import {
+  ClaimSchema,
+  MAX_QUESTION_BODY_LENGTH,
+  MAX_RECORD_ID_LENGTH,
+  SAFE_ID_PATTERN,
+} from "@crosscheck/schema";
 
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
@@ -39,11 +44,14 @@ import {
 } from "../services/questions.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
-/** Ids are minted by the caller so a spool replay is idempotent. */
-const MAX_QUESTION_ID_CHARS = 64;
-
+/**
+ * Ids are minted by the caller so a spool replay is idempotent — and checked
+ * against the RENDERER'S alphabet here, because an id the briefing would
+ * reduce to something else is an id its reader can never pass back
+ * (schema/question.ts states the whole rule).
+ */
 const AskBodySchema = z.object({
-  id: z.string().min(1).max(MAX_QUESTION_ID_CHARS),
+  id: z.string().min(1).max(MAX_RECORD_ID_LENGTH).regex(SAFE_ID_PATTERN),
   repo: z.string().min(1),
   sessionId: z.string().min(1),
   body: z.string().min(1).max(MAX_QUESTION_BODY_LENGTH),
@@ -170,7 +178,11 @@ export const questionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
     const questionId = c.req.param("id");
-    if (questionId.length === 0 || questionId.length > MAX_QUESTION_ID_CHARS) {
+    if (
+      questionId.length === 0 ||
+      questionId.length > MAX_RECORD_ID_LENGTH ||
+      !SAFE_ID_PATTERN.test(questionId)
+    ) {
       return fail(c, 400, "validation_failed", "invalid question id");
     }
     const outcome = await answerQuestion(deps, c.get("developer").id, {
