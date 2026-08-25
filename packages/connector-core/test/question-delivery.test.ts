@@ -156,6 +156,33 @@ describe("the briefing's Questions for you block", () => {
     expect(briefing).toContain("(+2 more not shown)");
   });
 
+  test("three MAX-LENGTH questions do not eat the whole briefing", () => {
+    // Arrange: the saturation case the base report warned about. A question
+    // body may be 400 characters; three of them plus their id lines measured
+    // 2200 chars on their own, which erased presence and teammate contexts
+    // from a full briefing completely.
+    const wide = "did the rate-limit variant of the importer ever get tried? ";
+    const fat = Array.from({ length: 3 }, (_, index) =>
+      question({
+        id: `qn_fat${String(index)}`,
+        body: wide.repeat(8).slice(0, 400),
+      }),
+    );
+
+    // Act
+    const briefing = briefingWith(fat);
+
+    // Assert: the block is there, it says what it is holding back, and the
+    // ambient sections it is competing with survive.
+    expect(briefing).toContain("Questions for you");
+    expect(briefing).toContain("answer_question qn_fat0");
+    expect(briefing).not.toContain("answer_question qn_fat2");
+    expect(briefing).toContain("more not shown");
+    expect(briefing).toContain("Teammate sessions active now:");
+    // Dropped whole, never cut: a truncated question cannot be answered.
+    expect(briefing).toContain(`«${wide.repeat(8).slice(0, 400)}»`);
+  });
+
   test("a row this renderer cannot vouch for is dropped, never rendered hollow", () => {
     // Arrange: one good question and one whose body is nothing but the
     // characters the sanitizer strips.

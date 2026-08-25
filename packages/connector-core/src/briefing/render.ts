@@ -29,7 +29,7 @@ import type {
   WorkContextEntry,
 } from "../http/hub.ts";
 import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
-import { formatQuestionEntry } from "./questions.ts";
+import { fitQuestionEntries, formatQuestionEntry } from "./questions.ts";
 import type { IntentLabel } from "./intent.ts";
 import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
 
@@ -201,8 +201,12 @@ const driftLabel = (drift: CommitDrift | undefined): string => {
  * that gives way, and the intent lines added in feat/session-intent made the
  * later sections tighter, not looser (DESIGN.md §4 budget note).
  *
- * Bounded at MAX_QUESTION_POINTERS, which equals the hub's per-target open
- * budget, so one teammate can fill this block exactly once.
+ * Bounded TWICE: at MAX_QUESTION_POINTERS items, which equals the hub's
+ * per-target open budget so one teammate can fill this block exactly once,
+ * and at MAX_BRIEFING_QUESTION_CHARS characters. The second bound is not
+ * belt-and-braces — a question body may be 400 characters, and three of them
+ * measured at 2200 chars on their own, erasing presence and teammate
+ * contexts from a saturated briefing entirely.
  */
 const renderQuestionSection = (input: BriefingInput): Section => {
   const rendered = (input.questions ?? []).flatMap((question) => {
@@ -212,7 +216,7 @@ const renderQuestionSection = (input: BriefingInput): Section => {
   return {
     header:
       "Questions for you (answer_question replies; unanswered ones expire):",
-    lines: rendered.slice(0, MAX_QUESTION_POINTERS),
+    lines: fitQuestionEntries(rendered.slice(0, MAX_QUESTION_POINTERS)),
     total: rendered.length,
   };
 };

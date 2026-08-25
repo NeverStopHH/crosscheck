@@ -475,6 +475,23 @@ export const STALENESS_MAX_PATHS = 20;
 export const MAX_QUESTION_POINTERS = 3;
 
 /**
+ * The most CHARACTERS the questions block may take out of the briefing —
+ * roughly a third of MAX_BRIEFING_CHARS. Bounded in items AND in characters,
+ * because the item bound alone is not a bound: a question body may be 400
+ * characters, and three of them plus their id lines ate the ENTIRE 2200-char
+ * briefing in the saturation measurement — presence and teammate contexts
+ * vanished completely.
+ *
+ * Entries are DROPPED, never truncated, and the block then says how many it
+ * is not showing. A cut question is unanswerable, which is the one thing this
+ * block exists to prevent; a question left for `list_open_questions` is not.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_BRIEFING_QUESTION_CHARS * 3 <= c.MAX_BRIEFING_CHARS)'
+ * PRINTS: true
+ */
+export const MAX_BRIEFING_QUESTION_CHARS = 700;
+
+/**
  * When `doctor` starts calling an unanswered question a problem. A question
  * expires after QUESTION_TTL_DAYS = 14 on the hub, so half the window is the
  * point where "nobody has answered yet" stops being normal and starts being

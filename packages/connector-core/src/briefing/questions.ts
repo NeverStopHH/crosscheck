@@ -26,7 +26,11 @@
  */
 import { MAX_QUESTION_BODY_LENGTH } from "@crosscheck/schema";
 
-import { DOCTOR_QUESTION_OPEN_WARN_DAYS, MS_PER_DAY } from "../constants.ts";
+import {
+  DOCTOR_QUESTION_OPEN_WARN_DAYS,
+  MAX_BRIEFING_QUESTION_CHARS,
+  MS_PER_DAY,
+} from "../constants.ts";
 import type { InboxQuestion, QuestionCounts } from "../http/hub.ts";
 import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
 
@@ -110,6 +114,28 @@ export const formatQuestionEntry = (
       : ` · about work context ${contextId}: «${title}»`;
   return `${facts.join(" · ")}${about}\n  asks: «${body}» · answer_question ${id}`;
 };
+
+/**
+ * As many whole entries as MAX_BRIEFING_QUESTION_CHARS holds, in order.
+ *
+ * DROPPED, NEVER TRUNCATED, and never fewer than one: a cut question cannot
+ * be answered, which is the failure this block exists to prevent, while a
+ * question left for `list_open_questions` can. The first entry is admitted
+ * whatever it costs — a briefing that shows "somebody is waiting and I will
+ * not tell you who" would be worse than a long line — and the section's
+ * "+N more not shown" then carries the rest.
+ */
+export const fitQuestionEntries = (
+  entries: readonly string[],
+  maxChars: number = MAX_BRIEFING_QUESTION_CHARS,
+): readonly string[] =>
+  entries.reduce<readonly string[]>((kept, entry) => {
+    if (kept.length === 0) {
+      return [entry];
+    }
+    const candidate = [...kept, entry];
+    return candidate.join("\n").length > maxChars ? kept : candidate;
+  }, []);
 
 /**
  * The counters, in ONE sentence both `crosscheck status` and `doctor` print
