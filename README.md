@@ -18,7 +18,7 @@ The name is the aviation ritual: *"arm doors and cross-check"* — independent o
 | [`packages/connector-claude`](packages/connector-claude) | Claude Code hooks (SessionStart briefing, PostToolUse capture, SessionEnd), statusline, and the `crosscheck` CLI (`login`, `init`, `status`, `doctor`). |
 | [`packages/connector-acp`](packages/connector-acp) | `crosscheck acp -- <agent cmd…>`: a byte-transparent [ACP](https://agentclientprotocol.com) proxy — wrap any ACP agent (Zed, JetBrains, …) with faithful exit/signal forwarding, measured backpressure, and a per-proxy log. Capture and injection land in later blocks. |
 
-Since then the v0.5/v1 surface has landed too: the MCP tools (`publish_claim`, `set_intent`, `extend_diagnosis`, `search_related_work`, `get_diagnosis`, `get_referee_brief`, `review_draft`), hybrid search and ranking, `UserPromptSubmit` hint injection, the PreToolUse tripwire, the Tier-1 draft summarizer (diagnosis **and** conclusion moments — see below), session intents (derived from the first prompt, declarable over MCP — see below), the hub-served web feed under `/ui`, and the Cursor hooks adapter plus the `crosscheck` CLI in `packages/cli`. See [docs/DESIGN.md §8](docs/DESIGN.md) for what remains (v1.x).
+Since then the v0.5/v1 surface has landed too: the MCP tools (`publish_claim`, `set_intent`, `extend_diagnosis`, `search_related_work`, `get_diagnosis`, `get_referee_brief`, `review_draft`, `ask_teammate`, `answer_question`, `list_open_questions`), hybrid search and ranking, `UserPromptSubmit` hint injection, the PreToolUse tripwire, the Tier-1 draft summarizer (diagnosis **and** conclusion moments — see below), session intents (derived from the first prompt, declarable over MCP — see below), the hub-served web feed under `/ui`, and the Cursor hooks adapter plus the `crosscheck` CLI in `packages/cli`. See [docs/DESIGN.md §8](docs/DESIGN.md) for what remains (v1.x).
 
 Background reading:
 
@@ -110,6 +110,39 @@ Every surface shows it: the briefing lines above, `crosscheck status`, the promp
 Teammate-written text is untrusted input. It is quoted inside a frame the header labels as data rather than instruction, and stripped of control, bidi, zero-width and frame-breaking characters before rendering. A blunt "ignore previous instructions" title is additionally redacted — but that phrase list is opportunistic defence-in-depth, not a guarantee; the framing and the structural stripping are what the safety of this pipeline actually rests on. Details in [the connector README](packages/connector-claude/README.md#briefing-safety).
 
 Everything fails open: if the hub is down, hooks print nothing, exit 0, and spool their records to `~/.crosscheck/` until the next successful flush. Only relative file paths, hashed error fingerprints, a work-context title and the one-sentence session intent (declared by the agent, or the model's one-sentence summary of the first prompt — never the prompt) are uploaded — never transcripts, diffs, raw prompts, or raw command output.
+
+### Asking a teammate something they never wrote down
+
+Reading what Ken's agent recorded is the easy half. The hard half is the
+question his notes do not answer — "did you already try the rate-limit
+variant?" — and a live agent-to-agent channel would be theatre, because his
+agent is not running when you ask.
+
+So a question is a **record that waits**:
+
+```
+Questions for you (answer_question replies; unanswered ones expire):
+- Nick · asked 2d ago · expires in 12d · about work context wc_cc_… : «TM importer club matching»
+  asks: «Did the rate-limit variant of the importer ever get tried?» · answer_question qn_…
+```
+
+`ask_teammate` files it against one person (a name, an address, or the owner
+of a work context — there is no broadcast). It reaches them at their next
+SessionStart, and it costs them nothing until then. `answer_question` records
+the answer as an ordinary claim on the ANSWERER's own work context plus an
+`answers` edge, and the answer reaches the asker as a hint at one of their
+next prompts.
+
+Everything about it is bounded and honest: at most 5 open questions per
+author and 3 per teammate, 20 a day, deduped against your own open ones, and
+expiring after 14 days — applied on read, so nothing haunts a briefing.
+`crosscheck status` prints the backlog both ways and `crosscheck doctor`
+WARNs when somebody has been waiting on you for a week, or when a question
+you asked expired with nobody told.
+
+The answer is the **one** thing crosscheck pushes at you as substance without
+evidence behind it, and that is deliberate: you asked for it. Everything else
+a teammate wrote stays a pointer you have to pull.
 
 ### Where the Tier-1 draft summarizer runs
 
