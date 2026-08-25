@@ -107,6 +107,12 @@ export const listSessionStateFiles = async (
  * `wroteAtMs` is the file's mtime (`listSessionStateFiles` has already stat'd
  * it); null or 0 means the caller has none, not that the file is from 1970.
  *
+ * IT ANSWERS "DID THIS SESSION DO ANYTHING", NEVER "DID IT CAPTURE ANYTHING".
+ * An mtime moves for a heartbeat as readily as for a capture, so it can carry
+ * liveness and must not be turned into a freshness claim about targets — those
+ * have their own stamp (`lastTargetAt`), and a number that is true beats a
+ * freshness claim that is nearly true.
+ *
  * Null means nothing here can be dated at all. The callers decide what that
  * means, and they do not agree on purpose: a REAPER skips such a file (a
  * deletion has to be certain), while the capture surfaces read it as idle (the
