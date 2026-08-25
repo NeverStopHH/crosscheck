@@ -8,7 +8,11 @@
  * printed what its comment said. What rotted were the quantifiers and the
  * pointers: "exactly one", "the ONLY", "2 of 8", "5 mutations", "lines
  * 312-321", and figures credited to a script that printed something narrower.
- * A human re-reading 72 claims will keep missing those. A script will not.
+ * A human re-reading a corpus this size will keep missing those. A script will
+ * not. The size itself is the directive at the foot of this header rather than
+ * a figure in this sentence, deliberately: a count written into prose is the
+ * exact defect class this file exists to kill, and it is the one class the
+ * checker cannot see, because prose carries no directive for it to run.
  *
  * THE CONVENTION. A comment block may carry a verification directive: a line
  * beginning `VERIFY:` that names a single-line shell command, followed by one
@@ -87,10 +91,14 @@
  *
  * Run here this round, that printed `FAIL packages/.../sanitize.ts:88`, the
  * command, `expected | 3739`, `actual | 3738`, a `::error file=…,line=88::`
- * annotation for the pull request, the summary `1 of 32 claims do not match
- * what their command prints`, and exit 1 — then 32 of 32 again once restored.
- * It is a mutation, so it is prose with a named command rather than a directive,
- * for the reason given above: nothing that edits the tree runs from in here.
+ * annotation for the pull request, the summary `1 of N claims do not match what
+ * their command prints`, and exit 1 — then N of N again once restored. A
+ * TRANSCRIPT rather than a measurement: that run happened when the corpus held
+ * 32 directives and its totals have moved with every directive added since, so
+ * what is pinned here is the SHAPE of the red path. The size is the directive
+ * above. It is a mutation, so it is prose with a named command rather than a
+ * directive, for the reason given above: nothing that edits the tree runs from
+ * in here.
  */
 import { readdir } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
