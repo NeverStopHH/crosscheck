@@ -661,6 +661,35 @@ describe("answering a question", () => {
     expect((await failureOf(answered)).code).toBe("validation_failed");
   });
 
+  test("re-pointing an existing claim id does not deliver a body nobody wrote", async () => {
+    // Arrange: a claim of Ken's that already exists. Posting its id again with
+    // a drifted body is a spool replay to `ingestClaimWithin`, which answers
+    // `duplicate` and keeps the STORED row — so the `answers` edge would bind
+    // the asker to text the answerer never sent, and the route reported
+    // success. Unreachable through answer_question today (ids are minted per
+    // call), which is why the gate belongs on the hub.
+    const seeded = await answerAs(ken, {
+      id: "clm_reused",
+      body: "The rate-limit variant still 429s at 40 requests per second.",
+    });
+    expect(seeded.status).toBe(200);
+
+    // Act: the same id, different words.
+    const drifted = await answerAs(ken, {
+      id: "clm_reused",
+      body: "A totally different sentence the asker would never have seen.",
+    });
+
+    // Assert: refused, and the asker still holds only what was really written.
+    expect(drifted.status).toBe(400);
+    expect((await failureOf(drifted)).message).toContain("different text");
+    const nicksView = await readQuestions(harness, nick);
+    expect(nicksView.data.answers).toHaveLength(1);
+    expect(nicksView.data.answers[0]?.["claimBody"]).toBe(
+      "The rate-limit variant still 429s at 40 requests per second.",
+    );
+  });
+
   test("a derived draft cannot be sent as an answer", async () => {
     // Arrange: a Tier-1 draft is `provenance: derived`, capped at 0.5, and
     // DESIGN §3 says such a claim is never proactively injected to a teammate

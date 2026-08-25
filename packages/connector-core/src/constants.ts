@@ -462,6 +462,21 @@ export const STALENESS_MAX_PATHS = 20;
  * "Solved before" pointers one briefing may spend — pointer discipline like
  * MAX_CONTRADICTION_POINTERS: title + id + age, the tree is a pull.
  */
+export const MAX_SOLVED_POINTERS = 2;
+/**
+ * FIFO cap on the remembered briefing pointers (state/session-state.ts).
+ * Defensive: one SessionStart fire appends at most MAX_SOLVED_POINTERS, and
+ * a re-fire re-creates the state file fresh (hooks/session-start.ts), so the
+ * list never accumulates across fires — the cap bounds it like its sibling
+ * state lists so no future second writer can grow it unbounded.
+ */
+export const MAX_BRIEFING_SOLVED_REFS = 20;
+/** Solved ages render as days up to here, months beyond ("diagnosed 5mo ago"). */
+export const SOLVED_AGE_MONTHS_THRESHOLD_DAYS = 60;
+export const DAYS_PER_MONTH_APPROX = 30;
+
+// ── The asynchronous question channel (roadmap R2) ────────────────────
+
 /**
  * Most questions the SessionStart briefing shows at once (roadmap R2).
  * Three, and the ceiling is not arbitrary: MAX_OPEN_QUESTIONS_PER_TARGET on
@@ -516,19 +531,6 @@ export const DOCTOR_QUESTION_OPEN_WARN_DAYS = 7;
  * PRINTS: true
  */
 export const QUESTION_EXPIRY_REPORT_DAYS = 14;
-
-export const MAX_SOLVED_POINTERS = 2;
-/**
- * FIFO cap on the remembered briefing pointers (state/session-state.ts).
- * Defensive: one SessionStart fire appends at most MAX_SOLVED_POINTERS, and
- * a re-fire re-creates the state file fresh (hooks/session-start.ts), so the
- * list never accumulates across fires — the cap bounds it like its sibling
- * state lists so no future second writer can grow it unbounded.
- */
-export const MAX_BRIEFING_SOLVED_REFS = 20;
-/** Solved ages render as days up to here, months beyond ("diagnosed 5mo ago"). */
-export const SOLVED_AGE_MONTHS_THRESHOLD_DAYS = 60;
-export const DAYS_PER_MONTH_APPROX = 30;
 
 // ── Tier-1 summarizer (DESIGN.md §3 Tier 1, §10 risks 4 + 7) ────────────────
 

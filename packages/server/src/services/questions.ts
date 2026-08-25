@@ -445,6 +445,20 @@ export const ANSWER_NOT_DECLARED =
   "an answer is delivered to the asker as substance, so it cannot be a derived " +
   "draft — promote it with review_draft first, or answer in your own words.";
 
+/**
+ * A claim id that is already stored, re-pointed at a different body.
+ *
+ * `ingestClaimWithin` answers `duplicate` and KEEPS the stored row — the right
+ * call for a spool replay whose body drifted — but an answer then writes its
+ * `answers` edge against text the answerer never sent, and the route reported
+ * `duplicate: false` because it keyed that off the EDGE insert. The answerer
+ * has no way to notice: their tool echoes the body they typed, not the body
+ * the asker will be handed.
+ */
+export const ANSWER_CLAIM_ID_REUSED =
+  "that claim id is already recorded with different text, so the answer the asker " +
+  "would receive is not the one you wrote. Answer again — a new answer gets a new id.";
+
 export type AnswerOutcome =
   | {
       readonly outcome: "answered";
@@ -556,6 +570,20 @@ export const answerQuestion = async (
       };
     }
     const claimId = claimOutcome.id ?? body.claim.id;
+    if (claimOutcome.status === "duplicate") {
+      const storedRows = await tx
+        .select({ body: claims.body })
+        .from(claims)
+        .where(eq(claims.id, claimId))
+        .limit(1);
+      const stored = storedRows[0]?.body;
+      if (
+        stored !== undefined &&
+        normalizeBody(stored) !== normalizeBody(body.claim.body)
+      ) {
+        return { outcome: "refused" as const, reason: ANSWER_CLAIM_ID_REUSED };
+      }
+    }
     const edge = await tx
       .insert(questionAnswers)
       .values({
