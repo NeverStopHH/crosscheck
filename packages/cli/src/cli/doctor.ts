@@ -1619,9 +1619,16 @@ const captureSessionLine = (session: SessionCaptureHealth, now: Date): string =>
       : session.lastEditedPathResolvedAgainst === null
         ? `no — ${boundedLocal(session.lastEditedPath, DOCTOR_PATH_MAX_CHARS)} (${plural(session.foreignRepoDrops, "foreign-repo")}, ${plural(session.outsideRootDrops, "outside-root drop")})`
         : `yes (against ${boundedLocal(session.lastEditedPathResolvedAgainst, DOCTOR_PATH_MAX_CHARS)})`;
+  // An absent counter is not a zero. A state file written before the counters
+  // existed parses with `editToolFires: 0` because the schema defaults it, and
+  // printing that reads as a measured, healthy nothing for a session that may
+  // have been editing all morning — the same absent-versus-zero distinction the
+  // hub's `claims` field gets on the hints line.
+  const counters = session.countersMeasured
+    ? `${plural(session.editToolFires, "edit-tool fire")} → ${plural(session.targetsCapturedCount, "target")}${last}`
+    : "counters not measured (this session started before they existed)";
   return (
-    `${session.hostSessionKey.slice(0, 8)}: ${plural(session.editToolFires, "edit-tool fire")} → ` +
-    `${plural(session.targetsCapturedCount, "target")}${last} · repoRoot ${boundedLocal(session.repoRoot, DOCTOR_PATH_MAX_CHARS)} · ` +
+    `${session.hostSessionKey.slice(0, 8)}: ${counters} · repoRoot ${boundedLocal(session.repoRoot, DOCTOR_PATH_MAX_CHARS)} · ` +
     `heartbeat ${heartbeat} · last tool ${tool} · last edited path resolved: ${resolved}`
   );
 };

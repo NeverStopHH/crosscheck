@@ -33,7 +33,7 @@
  *     warning that greets every new install is one nobody reads.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm, utimes } from "node:fs/promises";
+import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runDoctor } from "../src/cli/doctor.ts";
@@ -328,6 +328,44 @@ describe("the capture check reads THIS repo's sessions, whatever the mtime order
     expect(capture).toContain("9 edit-tool fires → 0 targets");
     expect(result.stdout).toContain("the session is running");
     expect(result.stdout).not.toContain("(cap 50)");
+  });
+
+  test("a state file predating the counters says so, never '0 → 0'", async () => {
+    // Arrange: a session that started under a connector without the capture
+    // counters and is still running. `SessionStateSchema` defaults them to 0
+    // so the file still parses, which is right for the parse and wrong for the
+    // line: it reported a measured, healthy nothing for a session that may
+    // have been editing all morning.
+    const { repo, home } = await fixture("doctor-capture-unmeasured");
+    const hubUrl = hubWith({
+      stats: { delivered: 0, pulled: 0, claims: 0, windowDays: 7 },
+    });
+    const nowIso = new Date().toISOString();
+    await mkdir(join(home, "sessions"), { recursive: true });
+    await writeFile(
+      join(home, "sessions", "old-shape.json"),
+      JSON.stringify({
+        hostSessionKey: "old-shape",
+        crosscheckSessionId: "cc_old-shape",
+        workContextId: "wc_old-shape",
+        repoId: REPO_ID,
+        repoRoot: repo,
+        hubUrl,
+        developerId: "dev_self",
+        startedAt: nowIso,
+        lastHeartbeatAt: nowIso,
+      }),
+      "utf8",
+    );
+
+    // Act
+    const result = await runFixtureDoctor(home, repo, hubUrl);
+
+    // Assert
+    const line = lineWith(result.stdout, "  capture  ");
+    expect(line).toContain("PASS  capture");
+    expect(line).toContain("counters not measured");
+    expect(line).not.toContain("0 edit-tool fires → 0 targets");
   });
 
   test("a session quiet for hours is stale on every line, not just one", async () => {

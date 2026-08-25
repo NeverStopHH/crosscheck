@@ -1561,6 +1561,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "cries wolf about dead ones and stops being read",
   },
   {
+    // The absent-versus-zero distinction on the capture line. The schema
+    // defaults the counters to 0 so a pre-#17 state file parses; printing that
+    // zero fabricates a measurement for a session that may have been editing
+    // all morning under a connector that did not write them.
+    label: "the capture line prints a defaulted zero as a measurement",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const counters = session.countersMeasured",
+    to: "  const counters = true",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "a developer who upgraded mid-session reads `0 edit-tool fires → 0 " +
+      "targets` as a healthy measured zero rather than as a session whose " +
+      "counters did not exist when it started",
+  },
+  {
     // Review finding M3 in miniature: a line that blames the hub for a local
     // credential problem. Collapsing the two failures makes the hints line
     // assert a network fault under `FAIL hub reachable invalid api key`.
@@ -1874,7 +1889,7 @@ interface Outcome {
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
- * PRINTS: doctor-capture.test.ts 5
+ * PRINTS: doctor-capture.test.ts 6
  * PRINTS: doctor-global.test.ts 1
  * PRINTS: doctor-hooks-firing.test.ts 1
  * PRINTS: doctor-last-sync.test.ts 1

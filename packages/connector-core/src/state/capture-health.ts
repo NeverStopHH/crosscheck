@@ -75,6 +75,14 @@ export interface SessionCaptureHealth {
    * call normal.
    */
   readonly isStale: boolean;
+  /**
+   * False for a state file written before the counters existed — a session
+   * that upgraded mid-flight. Its `editToolFires` reads 0 because the schema
+   * defaults it, and a surface that prints that zero has fabricated a
+   * measurement. Cannot make the WARN fire or vanish either way: an unmeasured
+   * session's 0 never reaches DOCTOR_CAPTURE_SILENT_FIRES_WARN.
+   */
+  readonly countersMeasured: boolean;
   /** Edit-tool PostToolUse fires, counted BEFORE any drop. */
   readonly editToolFires: number;
   /** Targets actually spooled (monotonic; seenTargets is FIFO-capped). */
@@ -155,18 +163,43 @@ const newerIso = (a: string | null, b: string | null): string | null => {
  */
 const GONE = "gone";
 
+interface ParsedState {
+  readonly result: ReturnType<typeof SessionStateSchema.safeParse>;
+  /**
+   * Whether the FILE carried the capture counters at all.
+   *
+   * `SessionStateSchema` defaults them to 0 so every pre-#17 state file still
+   * parses, which is right for the parse and wrong for the line: an absent
+   * counter and a measured zero are the difference between "this session
+   * started before the counters existed" and "this session captured nothing".
+   * Same discipline the hub's `claims` field gets one surface over, where a
+   * default would have turned "this hub does not say" into the structural
+   * verdict the field exists to name.
+   */
+  readonly countersMeasured: boolean;
+}
+
 const readStateFile = async (
   path: string,
-): Promise<typeof GONE | ReturnType<typeof SessionStateSchema.safeParse>> => {
+): Promise<typeof GONE | ParsedState> => {
   const text = await readTextOrNull(path);
   if (text === null) {
     return GONE;
   }
+  let raw: unknown;
   try {
-    return SessionStateSchema.safeParse(JSON.parse(text));
+    raw = JSON.parse(text);
   } catch {
-    return SessionStateSchema.safeParse(undefined);
+    return {
+      result: SessionStateSchema.safeParse(undefined),
+      countersMeasured: false,
+    };
   }
+  return {
+    result: SessionStateSchema.safeParse(raw),
+    countersMeasured:
+      typeof raw === "object" && raw !== null && "editToolFires" in raw,
+  };
 };
 
 /**
@@ -203,12 +236,18 @@ export const readCaptureHealth = async (
   // doing that once (review finding B2-02).
   const sessions = read
     .flatMap((entry) =>
-      entry.parsed !== GONE && entry.parsed.success
-        ? [{ file: entry.file, state: entry.parsed.data }]
+      entry.parsed !== GONE && entry.parsed.result.success
+        ? [
+            {
+              file: entry.file,
+              state: entry.parsed.result.data,
+              countersMeasured: entry.parsed.countersMeasured,
+            },
+          ]
         : [],
     )
     .filter(({ state }) => state.hubUrl === hubUrl && state.repoId === repoId)
-    .map(({ file, state }): SessionCaptureHealth => {
+    .map(({ countersMeasured, file, state }): SessionCaptureHealth => {
       const silentForMs = sessionSilentForMs(state, file.mtimeMs, nowMs);
       return {
         hostSessionKey: state.hostSessionKey,
@@ -218,6 +257,7 @@ export const readCaptureHealth = async (
         isIdle: silentForMs === null || silentForMs > idleWindowMs,
         isStale: silentForMs === null || silentForMs > staleWindowMs,
         repoRoot: state.repoRoot,
+        countersMeasured,
         editToolFires: state.editToolFires,
         targetsCapturedCount: state.targetsCapturedCount,
         lastTargetAt: state.lastTargetAt,
@@ -249,7 +289,7 @@ export const readCaptureHealth = async (
       statesRead: listing.files.length,
       statesCap: limit,
       statesUnparsed: read.filter(
-        (entry) => entry.parsed !== GONE && !entry.parsed.success,
+        (entry) => entry.parsed !== GONE && !entry.parsed.result.success,
       ).length,
     },
   );
