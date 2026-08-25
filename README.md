@@ -81,12 +81,21 @@ Plain `crosscheck init` (no flag) remains the narrower alternative: besides conn
 
 ### What you actually see
 
-**In the statusline**, who else is live on this repo right now, plus a sync-health indicator so a dead hub is visible rather than silent:
+**In the statusline**, who else is live on this repo right now, plus a capture-health indicator so a dead hub is visible rather than silent:
 
 ```
-cx 2 · Alice(implementing), Sam(analyzing) · sync 12s
-cx ! hub unreachable · last sync 14m
+cx 2 · Alice(implementing), Sam(analyzing) · capture 12s
+cx 0 · no teammates on this repo · Alice last seen 10h ago · capture 3m
+cx ! hub unreachable · last capture 14m
+cx ! key rejected · crosscheck login · last capture 2h
 ```
+
+The statusline is a terminal-TUI feature: **headless and VS Code-extension
+sessions have no statusline at all**, so in those the whole of the above simply
+never renders — presence reaches you through the SessionStart briefing below
+instead. `crosscheck doctor` says which of the two you are in (`statusline last
+rendered <age> | never`), because "registered in settings.json" and "actually
+rendered" are different facts and only the first one used to be reported.
 
 **At the start of a session**, a short factual briefing injected into the agent's context (invisible in the UI, ~550 characters max). One line per teammate — not per session — with their branches, how far their base commit sits from your `HEAD`, and their recent work contexts:
 
