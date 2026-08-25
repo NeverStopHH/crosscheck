@@ -13,6 +13,7 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { listHintCandidates, listTargetSessions } from "../services/hints.ts";
+import { listUndeliveredAnswers } from "../services/questions.ts";
 import { SEARCH_MAX_QUERY_CHARS } from "../services/search.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
@@ -44,12 +45,18 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const candidates = await listHintCandidates(
-      deps,
-      c.get("developer").id,
-      parsed.data,
-    );
-    return ok(c, { candidates });
+    // TWO reads, ONE round trip. The UserPromptSubmit hook has an 800 ms
+    // budget for the whole call (DESIGN.md §4), so the answers to the
+    // caller's own questions ride this response rather than costing a second
+    // request: they are the one thing the prompt path may deliver as
+    // SUBSTANCE (DESIGN.md §4, solicited exception), and a hint path that had
+    // to choose between them and a teammate pointer needs both in hand.
+    // Both queries are bounded and indexed; they run in parallel.
+    const [candidates, answers] = await Promise.all([
+      listHintCandidates(deps, c.get("developer").id, parsed.data),
+      listUndeliveredAnswers(deps, c.get("developer").id),
+    ]);
+    return ok(c, { candidates, answers });
   });
 
   router.get("/tripwire", async (c) => {

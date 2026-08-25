@@ -36,6 +36,7 @@ import {
   getContradictions,
   getDrafts,
   getPresence,
+  getQuestions,
   getSolvedMatches,
   getWorkContexts,
 } from "../http/hub.ts";
@@ -103,6 +104,7 @@ export const assembleBriefing = async (
     contradictionsResult,
     solvedMatchesResult,
     draftsResult,
+    questionsResult,
   ] = await Promise.all([
     getPresence(hub, repoId),
     getWorkContexts(hub, repoId),
@@ -110,6 +112,10 @@ export const assembleBriefing = async (
     getContradictions(hub, repoId),
     getSolvedMatches(hub, repoId),
     getDrafts(hub, repoId),
+    // Roadmap R2. In the SAME parallel block, so the questions block costs no
+    // extra wall clock: the whole fetch is still one per-request hub timeout,
+    // and a hub too old to serve it simply renders no section (fail open).
+    getQuestions(hub, repoId),
   ]);
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
@@ -119,6 +125,7 @@ export const assembleBriefing = async (
     : [];
   const solvedMatches = solvedMatchesResult.ok ? solvedMatchesResult.data : [];
   const drafts = draftsResult.ok ? draftsResult.data : [];
+  const questions = questionsResult.ok ? questionsResult.data.inbox : [];
 
   // Only the teammates that will actually be shown cost a git process; the
   // optional rider shares the fan-out window, so both together still cost one
@@ -142,6 +149,7 @@ export const assembleBriefing = async (
     contradictions,
     solvedMatches,
     drafts,
+    questions,
   });
 
   const shownSolvedIds = solvedMatches

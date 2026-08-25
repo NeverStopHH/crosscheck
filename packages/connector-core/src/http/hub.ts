@@ -639,10 +639,61 @@ export interface HintCandidatesRequest {
 }
 
 /** The UserPromptSubmit fast path's ONE bounded hub call (DESIGN.md §4). */
+/**
+ * One ANSWER to a question the READER asked (roadmap R2) — the only wire
+ * shape in this file that carries a claim body on the PROACTIVE path.
+ *
+ * That is the §4 solicited exception, and it is legible here: the hub only
+ * ever puts a row in this list when the caller is the question's AUTHOR, so
+ * the substance was asked for. Everything else about it is unchanged —
+ * author, provenance, age and status all travel, because a solicited answer
+ * still gets the trust labels every injected claim gets.
+ */
+export const AnsweredQuestionSchema = z.looseObject({
+  questionId: z.string().min(1),
+  questionBody: z.string().min(1),
+  claimId: z.string().min(1),
+  claimBody: z.string(),
+  claimKind: z.string().min(1),
+  claimStatus: z.string().min(1),
+  // Bounded like every rendered confidence: a forged `1e+30` is a credential,
+  // not a number, and the row is dropped rather than rendered.
+  confidence: z.number().min(0).max(1),
+  provenance: z.string().min(1),
+  answererDeveloperName: z.string().min(1),
+  answeredAt: z.string().min(1),
+});
+
+export type AnsweredQuestion = z.infer<typeof AnsweredQuestionSchema>;
+
+/** What the ONE bounded prompt-time call brings back (DESIGN.md §4). */
+export interface HintCandidatesResult {
+  readonly candidates: readonly HintContextCandidate[];
+  /**
+   * Answers to the caller's OWN questions that no session of theirs has been
+   * handed yet. Empty from any hub too old to send the field — the hint path
+   * then behaves exactly as it did before R2.
+   */
+  readonly answers: readonly AnsweredQuestion[];
+}
+
+const HintCandidatesResponseSchema = z
+  .looseObject({
+    candidates: z.array(z.unknown()).default([]),
+    answers: z.array(z.unknown()).default([]),
+  })
+  .transform(
+    (value): HintCandidatesResult => ({
+      // Tolerant rows, silent drop — a candidate list is advisory by nature.
+      candidates: parseRows(value.candidates, HintContextCandidateSchema).rows,
+      answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
+    }),
+  );
+
 export const getHintCandidates = (
   ctx: HubContext,
   request: HintCandidatesRequest,
-): Promise<HubResult<readonly HintContextCandidate[]>> => {
+): Promise<HubResult<HintCandidatesResult>> => {
   const params = new URLSearchParams({
     query: request.query,
     repo: request.repo,
@@ -650,9 +701,147 @@ export const getHintCandidates = (
   return hubRequest(ctx, {
     method: "GET",
     path: `/api/hints/candidates?${params.toString()}`,
-    schema: tolerantList("candidates", HintContextCandidateSchema),
+    schema: HintCandidatesResponseSchema,
   });
 };
+
+/**
+ * One question addressed TO the reader — the briefing's "Questions for you"
+ * block and `list_open_questions`.
+ *
+ * A POINTER-SHAPED ROW with one deliberate exception: it carries the question
+ * BODY. A question is not a finding — it asserts nothing, it has no evidence
+ * and it cannot be cited — and a pointer saying "Ken asked you something"
+ * without the question would be unanswerable, which is the whole failure mode
+ * the channel exists to avoid. It is still untrusted PROSE and is framed at
+ * every surface that shows it.
+ */
+export const InboxQuestionSchema = z.looseObject({
+  id: z.string().min(1),
+  authorDeveloperId: z.string().min(1),
+  authorDeveloperName: z.string().min(1),
+  body: z.string().min(1),
+  workContextId: z.string().nullable().optional(),
+  workContextTitle: z.string().nullable().optional(),
+  createdAt: z.string().min(1),
+  expiresAt: z.string().min(1),
+});
+
+export type InboxQuestion = z.infer<typeof InboxQuestionSchema>;
+
+/** The counters `crosscheck status` prints and `doctor` warns on. */
+export const QuestionCountsSchema = z.looseObject({
+  openToMe: z.number().int().min(0).default(0),
+  oldestToMeAt: z.string().nullable().default(null),
+  asked: z.number().int().min(0).default(0),
+  askedAnswered: z.number().int().min(0).default(0),
+  askedExpired: z.number().int().min(0).default(0),
+});
+
+export type QuestionCounts = z.infer<typeof QuestionCountsSchema>;
+
+export interface QuestionsView {
+  readonly inbox: readonly InboxQuestion[];
+  readonly answers: readonly AnsweredQuestion[];
+  readonly counts: QuestionCounts;
+}
+
+const EMPTY_COUNTS: QuestionCounts = {
+  openToMe: 0,
+  oldestToMeAt: null,
+  asked: 0,
+  askedAnswered: 0,
+  askedExpired: 0,
+};
+
+const QuestionsResponseSchema = z
+  .looseObject({
+    inbox: z.array(z.unknown()).default([]),
+    answers: z.array(z.unknown()).default([]),
+    counts: z.unknown().optional(),
+  })
+  .transform((value): QuestionsView => {
+    const counts = QuestionCountsSchema.safeParse(value.counts);
+    return {
+      inbox: parseRows(value.inbox, InboxQuestionSchema).rows,
+      answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
+      // A counts block this client cannot read is treated as no counts at
+      // all: a number the reader cannot trust is worse than no number.
+      counts: counts.success ? counts.data : EMPTY_COUNTS,
+    };
+  });
+
+export const getQuestions = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<QuestionsView>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/questions${encodeRepo(repo)}`,
+    schema: QuestionsResponseSchema,
+  });
+
+export interface AskQuestionRequest {
+  readonly id: string;
+  readonly repo: string;
+  readonly sessionId: string;
+  readonly body: string;
+  /** A teammate's name or any address they are known by; resolved hub-side. */
+  readonly developer?: string | undefined;
+  readonly workContextId?: string | undefined;
+}
+
+const AskQuestionResponseSchema = z.looseObject({
+  question: z.looseObject({ id: z.string().min(1) }).optional(),
+  questionId: z.string().min(1).optional(),
+  duplicate: z.boolean().default(false),
+});
+
+export type AskQuestionResponse = z.infer<typeof AskQuestionResponseSchema>;
+
+export const askQuestion = (
+  ctx: HubContext,
+  request: AskQuestionRequest,
+): Promise<HubResult<AskQuestionResponse>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/questions",
+    schema: AskQuestionResponseSchema,
+    body: {
+      id: request.id,
+      repo: request.repo,
+      sessionId: request.sessionId,
+      body: request.body,
+      ...(request.developer === undefined
+        ? {}
+        : { developer: request.developer }),
+      ...(request.workContextId === undefined
+        ? {}
+        : { workContextId: request.workContextId }),
+    },
+  });
+
+const AnswerQuestionResponseSchema = z.looseObject({
+  questionId: z.string().min(1).optional(),
+  claimId: z.string().min(1).optional(),
+  duplicate: z.boolean().default(false),
+});
+
+export type AnswerQuestionResponse = z.infer<
+  typeof AnswerQuestionResponseSchema
+>;
+
+export const answerQuestion = (
+  ctx: HubContext,
+  questionId: string,
+  claim: unknown,
+): Promise<HubResult<AnswerQuestionResponse>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: `/api/questions/${encodeURIComponent(questionId)}/answers`,
+    schema: AnswerQuestionResponseSchema,
+    body: { claim },
+  });
 
 /**
  * One side of a listed contradiction — just enough for a one-line pointer:

@@ -39,10 +39,14 @@ import type { HintRefKind, Producer } from "../capture/records.ts";
 import { resolveCommitDrift } from "../git/commit-drift.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import { getHintCandidates } from "../http/hub.ts";
-import type { HubContext } from "../http/hub.ts";
+import type { AnsweredQuestion, HubContext } from "../http/hub.ts";
 import { recordDeliveredHintHash } from "../hints/delivered-store.ts";
 import { hintBodyHash } from "../hints/echo.ts";
-import { renderClaimHint, renderPointerHint } from "../hints/render.ts";
+import {
+  renderAnswerHint,
+  renderClaimHint,
+  renderPointerHint,
+} from "../hints/render.ts";
 import { selectHint } from "../hints/select.ts";
 import type { HintSelection } from "../hints/select.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -115,6 +119,30 @@ const renderSelection = async (
       now,
     }),
   };
+};
+
+/**
+ * An answer to a question THIS developer asked, if one is waiting and this
+ * session has not been handed it (roadmap R2).
+ *
+ * DELIVERED EXACTLY ONCE, by two locks that fail in different directions.
+ * The hub excludes any answer some session of this developer already carries
+ * (`hint_deliveries`, the durable store), which covers a NEW session; the
+ * seen-set below covers THIS session, whose delivery record is still in the
+ * spool and has not reached the hub yet. Either alone would repeat an answer.
+ *
+ * SOLICITED SUBSTANCE OUTRANKS AN UNSOLICITED POINTER, and the ordering is
+ * the product decision, not an implementation detail: this developer asked a
+ * question and is waiting for it; a teammate pointer they never asked for can
+ * wait one prompt. Both spend the same hint slot, so an answer never widens
+ * the budget — it only wins the slot.
+ */
+const selectAnswer = (
+  answers: readonly AnsweredQuestion[],
+  seenRefIds: readonly string[],
+): AnsweredQuestion | undefined => {
+  const seen = new Set(seenRefIds);
+  return answers.find((answer) => !seen.has(answer.claimId));
 };
 
 /** False when the seen-set could not be updated — then nothing may be emitted. */
@@ -212,6 +240,23 @@ export const selectAndRenderHint = async (
   if (!result.ok) {
     return "";
   }
+  // The solicited pass FIRST — see selectAnswer for why it outranks.
+  const answer = selectAnswer(result.data.answers, state.deliveredHintRefs);
+  if (answer !== undefined) {
+    const text = renderAnswerHint(answer, input.now);
+    if (text.length > 0) {
+      const delivery: Delivery = {
+        refKind: "claim",
+        refId: answer.claimId,
+        // Hashed like every other injected body: an answer that came back to
+        // this session must not be re-published as its own observation
+        // (hints/echo.ts, the echo-loop exclusion).
+        bodyHash: hintBodyHash(answer.claimBody),
+        text,
+      };
+      return (await recordDelivery(input, state, delivery)) ? text : "";
+    }
+  }
   const selection = selectHint({
     // Briefing solved pointers join the seen-set — the same tree must not be
     // re-pointed — but NOT deliveredCount: they were the briefing's budget,
@@ -219,7 +264,7 @@ export const selectAndRenderHint = async (
     // solved tree's evidence-backed claims stay deliverable as substance
     // (the seen-set suppresses pointers to a seen context, never unseen
     // claims inside it — hints/select.ts).
-    candidates: result.data,
+    candidates: result.data.candidates,
     seenRefIds: [...state.deliveredHintRefs, ...state.briefingSolvedRefs],
     deliveredCount: state.deliveredHintRefs.length,
     selfDeveloperId: state.developerId,

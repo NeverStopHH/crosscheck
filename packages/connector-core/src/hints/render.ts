@@ -18,7 +18,11 @@
  * readable with get_diagnosis" — imperatives in injected context are what §4
  * forbids and what prompt-injection defences trip on.
  */
-import { MAX_CLAIM_BODY_LENGTH, MAX_HINT_TEXT_LENGTH } from "@crosscheck/schema";
+import {
+  MAX_CLAIM_BODY_LENGTH,
+  MAX_HINT_TEXT_LENGTH,
+  MAX_QUESTION_BODY_LENGTH,
+} from "@crosscheck/schema";
 
 import { MAX_WORK_CONTEXT_TITLE_CHARS } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
@@ -32,6 +36,7 @@ import { bareUntrusted as bare } from "../briefing/sanitize.ts";
 import { quoted, safeId } from "../mcp/render.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import type {
+  AnsweredQuestion,
   HintClaimCandidate,
   HintContextCandidate,
   TripwireSession,
@@ -41,6 +46,14 @@ const CONFIDENCE_DECIMALS = 2;
 
 const CLAIM_HEADER = `crosscheck hint: a teammate's recorded finding may relate to this prompt. ${QUOTED_DATA_NOTICE}`;
 const POINTER_HEADER = `crosscheck pointer: a teammate has notes that may relate to this prompt. ${QUOTED_DATA_NOTICE}`;
+/**
+ * The ANSWER header, and the one word in it that matters is "asked": this is
+ * the §4 solicited exception, so the sentence states out loud that the
+ * substance below was requested by this session. A reader who cannot tell an
+ * answer from an unsolicited teammate claim has lost the distinction the
+ * exception rests on.
+ */
+const ANSWER_HEADER = `crosscheck answer: a teammate answered a question you asked. ${QUOTED_DATA_NOTICE}`;
 
 type HintContext = HintContextCandidate["workContext"];
 
@@ -180,6 +193,46 @@ export const renderPointerHint = (input: PointerHintInput): string => {
   // The intent BEFORE the tail: fitHint drops from the end, and of the two
   // the tail is the droppable one — the intent is what says WHAT they do.
   return fitHint([POINTER_HEADER, factsLine, ...intentLines(context.intent), tailLine]);
+};
+
+/**
+ * An ANSWER to a question this developer asked (roadmap R2) — the one
+ * proactive surface in this file that shows a claim body without demanding
+ * evidence and a settled status first.
+ *
+ * THAT IS THE EXCEPTION, NOT A HOLE, and DESIGN.md §4 states it as its own
+ * rule: the anchoring asymmetry exists because UNSOLICITED substance can
+ * anchor a healthy agent on somebody else's wrong theory. An answer was
+ * asked for by this session, about a question this session wrote, so the
+ * reader already holds the frame it lands in. The hub is what makes that
+ * true rather than the wording: a row only reaches this renderer when the
+ * caller is the question's AUTHOR (services/questions.ts).
+ *
+ * Everything else is unchanged. The answer is still one claim under the full
+ * trust labels — author, kind, status, confidence, provenance, age — still
+ * PROSE-framed, still bounded, and an unsolicited claim by the same author
+ * still renders as a pointer (test/hint-select.test.ts pins that).
+ */
+export const renderAnswerHint = (
+  answer: AnsweredQuestion,
+  now: Date,
+): string => {
+  const facts = [
+    `- ${authorLabel(answer.answererDeveloperName)}`,
+    bare(answer.claimKind),
+    `status ${bare(answer.claimStatus)}`,
+    `confidence ${answer.confidence.toFixed(CONFIDENCE_DECIMALS)}`,
+    `provenance ${bare(answer.provenance)}`,
+    ageLabel(answer.answeredAt, now),
+  ];
+  const answerLine = `${facts.join(" · ")}: ${quoted(answer.claimBody, MAX_CLAIM_BODY_LENGTH)}`;
+  // The question on its own line, because both are framed values and every
+  // line here carries at most one « » pair.
+  const questionLine = `You asked ${safeId(answer.questionId)}: ${quoted(answer.questionBody, MAX_QUESTION_BODY_LENGTH)}`;
+  const tailLine =
+    `It is recorded as claim ${safeId(answer.claimId)} — pass that id as an evidenceRefs ` +
+    "entry when you publish what it supports, and get_diagnosis reads the tree it sits in.";
+  return fitHint([ANSWER_HEADER, answerLine, questionLine, tailLine]);
 };
 
 /**

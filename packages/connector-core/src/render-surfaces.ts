@@ -20,10 +20,12 @@
 import type { CommitDrift } from "./git/commit-drift.ts";
 import { renderBriefing } from "./briefing/render.ts";
 import {
+  renderAnswerHint,
   renderClaimHint,
   renderPointerHint,
   renderTripwireReason,
 } from "./hints/render.ts";
+import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
 import {
   renderDiagnosis,
   renderSearchFilterRefusal,
@@ -34,8 +36,10 @@ import {
 import { renderRefereeBrief } from "./mcp/render-referee.ts";
 import { composeDetachedTitle } from "./flows/work-context-title.ts";
 import type {
+  AnsweredQuestion,
   Diagnosis,
   HintClaimCandidate,
+  InboxQuestion,
   IntentEntry,
   PresenceEntry,
   RefereeBrief,
@@ -96,6 +100,7 @@ export type RenderSurface = CorpusRenderSurface | CompositeRenderSurface;
 export const RENDER_LAYER_MODULES: readonly string[] = [
   "src/briefing/sanitize.ts",
   "src/briefing/intent.ts",
+  "src/briefing/questions.ts",
   "src/briefing/render.ts",
   "src/hints/render.ts",
   "src/mcp/render.ts",
@@ -168,6 +173,42 @@ const hintContextWith = (payload: string) => ({
   developerId: "dev_other",
   developerName: payload,
   createdAt: ISO,
+});
+
+/**
+ * The payload in EVERY untrusted slot of a question (roadmap R2): the asker's
+ * display name, the question body, and the title of the work context it is
+ * about. The ids stay well-formed on purpose — an id the allowlist rejects
+ * drops the whole entry, and a surface that renders nothing cannot be
+ * attacked.
+ */
+const inboxQuestionWith = (payload: string): InboxQuestion => ({
+  id: "qn_11111111-2222-4333-8444-555555555555",
+  authorDeveloperId: "dev_other",
+  authorDeveloperName: payload,
+  body: payload,
+  workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+  workContextTitle: payload,
+  createdAt: ISO,
+  expiresAt: "2026-09-01T11:55:00.000Z",
+});
+
+/**
+ * An ANSWER carries TWO teammate-written bodies at once — the claim and the
+ * question it answers — plus the answerer's name, so the payload goes into
+ * all three.
+ */
+const answeredQuestionWith = (payload: string): AnsweredQuestion => ({
+  questionId: "qn_11111111-2222-4333-8444-555555555555",
+  questionBody: payload,
+  claimId: "clm_11111111-2222-4333-8444-555555555555",
+  claimBody: payload,
+  claimKind: payload,
+  claimStatus: payload,
+  confidence: 0.6,
+  provenance: payload,
+  answererDeveloperName: payload,
+  answeredAt: ISO,
 });
 
 const tripwireSessionWith = (payload: string): TripwireSession => ({
@@ -275,6 +316,42 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         workContexts: [workContextWith(payload)],
         now: NOW,
       }),
+  },
+  {
+    kind: "corpus",
+    name: "briefing-questions",
+    module: "src/briefing/questions.ts",
+    framing: "framed",
+    // The QUESTION slot of the briefing, which the "briefing" surface above
+    // cannot reach: it passes no questions, so the block never renders there.
+    // A question body is the one teammate-authored BODY this product injects
+    // proactively (DESIGN.md §4), which makes it the slot most worth attacking.
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        presence: [],
+        workContexts: [],
+        questions: [inboxQuestionWith(payload)],
+        now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "open-questions-list",
+    module: "src/mcp/tools/list-open-questions.ts",
+    framing: "framed",
+    render: (payload) => renderOpenQuestions([inboxQuestionWith(payload)], NOW),
+  },
+  {
+    kind: "corpus",
+    name: "answer-hint",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    // The §4 solicited-substance surface: a claim body pushed at the reader
+    // BECAUSE they asked for it. Solicited does not mean trusted — it is
+    // still a teammate's text landing in a healthy session.
+    render: (payload) => renderAnswerHint(answeredQuestionWith(payload), NOW),
   },
   {
     kind: "corpus",
@@ -494,6 +571,20 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "mcp-tool-review-draft",
     module: "src/mcp/tools/review-draft.ts",
     note: "ids through safeId; promoted body through quoted under quotingText",
+    corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
+  },
+  {
+    kind: "composite",
+    name: "mcp-tool-ask-teammate",
+    module: "src/mcp/tools/ask-teammate.ts",
+    note: "ids through safeId; the echoed question through quoted under quotingText",
+    corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
+  },
+  {
+    kind: "composite",
+    name: "mcp-tool-answer-question",
+    module: "src/mcp/tools/answer-question.ts",
+    note: "ids through safeId; the echoed answer body through quoted under quotingText",
     corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
   },
   {

@@ -462,6 +462,18 @@ export const STALENESS_MAX_PATHS = 20;
  * "Solved before" pointers one briefing may spend — pointer discipline like
  * MAX_CONTRADICTION_POINTERS: title + id + age, the tree is a pull.
  */
+/**
+ * Most questions the SessionStart briefing shows at once (roadmap R2).
+ * Three, and the ceiling is not arbitrary: MAX_OPEN_QUESTIONS_PER_TARGET on
+ * the hub is also three, so one teammate can fill this block exactly once and
+ * a second teammate's question is what pushes theirs out — never one voice
+ * holding the whole block against everyone else.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.MAX_QUESTION_POINTERS === s.MAX_OPEN_QUESTIONS_PER_TARGET)'
+ * PRINTS: true
+ */
+export const MAX_QUESTION_POINTERS = 3;
+
 export const MAX_SOLVED_POINTERS = 2;
 /**
  * FIFO cap on the remembered briefing pointers (state/session-state.ts).

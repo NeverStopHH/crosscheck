@@ -8,6 +8,7 @@ import {
   MAX_CONTEXTS,
   MAX_CONTRADICTION_POINTERS,
   MAX_DRAFT_POINTERS,
+  MAX_QUESTION_POINTERS,
   MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
   MAX_TITLE_CHARS,
@@ -22,11 +23,13 @@ import type {
   ContradictionEntry,
   ContradictionSide,
   DraftEntry,
+  InboxQuestion,
   PresenceEntry,
   SolvedMatchEntry,
   WorkContextEntry,
 } from "../http/hub.ts";
 import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
+import { formatQuestionEntry } from "./questions.ts";
 import type { IntentLabel } from "./intent.ts";
 import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
 
@@ -93,6 +96,8 @@ export interface BriefingInput {
   readonly solvedMatches?: readonly SolvedMatchEntry[] | undefined;
   /** The reader's OWN unreviewed drafts; omitted or empty renders no section. */
   readonly drafts?: readonly DraftEntry[] | undefined;
+  /** Open questions addressed to the reader; omitted or empty renders none. */
+  readonly questions?: readonly InboxQuestion[] | undefined;
 }
 
 interface Section {
@@ -183,6 +188,33 @@ const driftLabel = (drift: CommitDrift | undefined): string => {
   return drift.behind > 0
     ? ` · base ${drift.behind} behind yours`
     : ` · base ${drift.ahead} ahead of yours`;
+};
+
+/**
+ * "Questions for you" — rendered FIRST, before presence, and that ordering is
+ * the one product decision in this file worth arguing about.
+ *
+ * Every other section is AMBIENT: who is around, what is being worked on,
+ * what conflicts, what was solved before. A question is ADDRESSED — a named
+ * teammate is waiting on this reader specifically, and it expires. When the
+ * briefing is full, the thing somebody is waiting for must not be the thing
+ * that gives way, and the intent lines added in feat/session-intent made the
+ * later sections tighter, not looser (DESIGN.md §4 budget note).
+ *
+ * Bounded at MAX_QUESTION_POINTERS, which equals the hub's per-target open
+ * budget, so one teammate can fill this block exactly once.
+ */
+const renderQuestionSection = (input: BriefingInput): Section => {
+  const rendered = (input.questions ?? []).flatMap((question) => {
+    const entry = formatQuestionEntry(question, input.now);
+    return entry === null ? [] : [entry];
+  });
+  return {
+    header:
+      "Questions for you (answer_question replies; unanswered ones expire):",
+    lines: rendered.slice(0, MAX_QUESTION_POINTERS),
+    total: rendered.length,
+  };
 };
 
 const renderPresenceSection = (input: BriefingInput): Section => {
@@ -599,6 +631,7 @@ const appendSection = (
  */
 export const renderBriefing = (input: BriefingInput): string => {
   const sections = [
+    renderQuestionSection(input),
     renderPresenceSection(input),
     renderContextSection(input),
     renderContradictionSection(input),
