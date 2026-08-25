@@ -125,11 +125,16 @@ const renderSelection = async (
  * An answer to a question THIS developer asked, if one is waiting and this
  * session has not been handed it (roadmap R2).
  *
- * DELIVERED EXACTLY ONCE, by two locks that fail in different directions.
- * The hub excludes any answer some session of this developer already carries
- * (`hint_deliveries`, the durable store), which covers a NEW session; the
- * seen-set below covers THIS session, whose delivery record is still in the
- * spool and has not reached the hub yet. Either alone would repeat an answer.
+ * DELIVERED EXACTLY ONCE, and it is worth being precise about WHERE that is
+ * enforced. Across SESSIONS it is the hub: it excludes any answer some
+ * session of this developer already carries (`hint_deliveries`, the durable
+ * store). Within THIS session it is `recordDelivery`'s check-and-set under
+ * the state lock — the same first-writer-wins claim every hint delivery
+ * makes, and unremembered means unemitted. The seen-set filter below is
+ * neither of those: it is a cheap PRE-CHECK that saves a pointless spool
+ * append on every later prompt of a session whose flush has not reached the
+ * hub yet. Removing it costs spool churn, not the guarantee — which is why
+ * the mutation that guards this path breaks the echo hash instead.
  *
  * SOLICITED SUBSTANCE OUTRANKS AN UNSOLICITED POINTER, and the ordering is
  * the product decision, not an implementation detail: this developer asked a

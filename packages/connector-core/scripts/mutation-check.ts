@@ -1526,6 +1526,87 @@ export const MUTATIONS: readonly Mutation[] = [
       "one surface that is pushed rather than pulled (DESIGN.md §3: drop, never redact)",
   },
   {
+    // R2's permission gate. A question body is another developer's text, and
+    // the whole channel rests on "only the person it names, or the owner of
+    // the context it is about, may answer".
+    label: "an answer to a question reaches somebody who never asked it",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "    found.question.targetDeveloperId === developerId ||",
+    to: "    true ||",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "anybody holding a question id can answer it, so a teammate's private " +
+      "question is answerable — and probeable — by the whole hub",
+  },
+  {
+    // The one teammate-written BODY this product injects proactively. It is
+    // still untrusted PROSE from another developer.
+    label: "a question body reaches the briefing unsanitized",
+    file: `${CORE}/src/briefing/questions.ts`,
+    from: "  const body = sanitizeUntrusted(question.body, MAX_QUESTION_BODY_LENGTH);",
+    to: "  const body = question.body;",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "a question body carrying frame characters, bidi marks or control " +
+      "codes lands verbatim in the reader's SessionStart context",
+  },
+  {
+    // The per-target budget is what keeps the bounded briefing block from
+    // becoming one person's megaphone.
+    label: "the per-teammate question budget stops being enforced",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "  if (toTarget >= MAX_OPEN_QUESTIONS_PER_TARGET) {",
+    to: "  if (toTarget >= Number.MAX_SAFE_INTEGER) {",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "one author can fill a teammate's whole Questions-for-you block and " +
+      "keep every other teammate's question out of it",
+  },
+  {
+    // The TTL is applied in SQL on every read precisely so no cron is needed
+    // and the status column can never haunt a briefing.
+    label: "the question TTL stops being applied on read",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: '  and(eq(questions.status, "open"), gt(questions.expiresAt, now));',
+    to: '  eq(questions.status, "open");',
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "a question nobody answered a month ago is still in the briefing, " +
+      "because the status flip is opportunistic and this read trusted it",
+  },
+  {
+    // A question is PUSHED into a teammate's briefing unasked, like a
+    // declared intent — the one class of agent-written text that cannot wait
+    // for somebody to pull it.
+    label: "a question skips the secret scan",
+    file: `${CORE}/src/mcp/tools/ask-teammate.ts`,
+    from: "  if (containsSecret(question)) {\n    return toolFailure(QUESTION_SECRET_REFUSAL);\n  }\n",
+    to: "",
+    test: `${CORE}/test/question-tools.test.ts`,
+    because:
+      "credential-shaped text is uploaded and pushed into a teammate's " +
+      "context (DESIGN.md §3: drop, never redact)",
+  },
+  {
+    // An ANSWER is a teammate's claim body landing in this session. Without
+    // its echo hash the echo-loop exclusion cannot see it, and publish_claim
+    // will happily mint it as this session's own independent observation.
+    //
+    // NOT the seen-set filter one line above it, and the difference is the
+    // point: mutating THAT was caught by nothing, because `recordDelivery`'s
+    // check-and-set is the real within-session lock and the filter only
+    // saves a spool append. A mutation nobody's test can catch is a mutation
+    // aimed at code that is not load-bearing.
+    label: "an answer is not remembered as a delivered hint body",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "        bodyHash: hintBodyHash(answer.claimBody),",
+    to: "        bodyHash: null,",
+    test: `${CORE}/test/question-delivery.test.ts`,
+    because:
+      "a teammate's answer can be republished as this session's own " +
+      "observation — the provenance laundering the echo-loop exclusion exists to stop",
+  },
+  {
     // R1's WHO. Every tier list is bounded at TIER_CANDIDATES, so dropping
     // the filter from the shared scope condition does not merely widen the
     // answer — the wanted row is GONE, because 30 rows the caller did not ask
@@ -1848,9 +1929,12 @@ interface Outcome {
  * PRINTS: precision-corpus.test.ts 1
  * PRINTS: presence.test.ts 1
  * PRINTS: proxy-e2e.test.ts 1
+ * PRINTS: question-delivery.test.ts 1
+ * PRINTS: question-tools.test.ts 1
+ * PRINTS: questions.test.ts 3
  * PRINTS: records.test.ts 1
  * PRINTS: recovery-race.test.ts 1
- * PRINTS: render-surface-registry.test.ts 1
+ * PRINTS: render-surface-registry.test.ts 2
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search-filters.test.ts 10
  * PRINTS: search-who-when.test.ts 1

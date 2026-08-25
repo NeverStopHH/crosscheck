@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 111
+    # PRINTS: 117
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -142,6 +142,7 @@ jobs:
     # PRINTS: summarizer/runner.ts 1
     # PRINTS: summarizer/worker-env.ts 1
     # PRINTS: briefing/intent.ts 1
+    # PRINTS: briefing/questions.ts 1
     # PRINTS: briefing/render.ts 2
     # PRINTS: briefing/sanitize.ts 7
     # PRINTS: config/config.ts 3
@@ -150,7 +151,7 @@ jobs:
     # PRINTS: constants.ts 6
     # PRINTS: flows/briefing.ts 1
     # PRINTS: flows/capture-targets.ts 1
-    # PRINTS: flows/hint.ts 2
+    # PRINTS: flows/hint.ts 3
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/render.ts 1
     # PRINTS: hints/select.ts 6
@@ -158,6 +159,7 @@ jobs:
     # PRINTS: http/latency.ts 1
     # PRINTS: mcp/render-referee.ts 2
     # PRINTS: mcp/render.ts 8
+    # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
     # PRINTS: mcp/tools/set-intent.ts 1
     # PRINTS: spool/reap.ts 1
@@ -172,6 +174,7 @@ jobs:
     # PRINTS: packages/server/src/services/developers.ts 1
     # PRINTS: packages/server/src/services/hints.ts 1
     # PRINTS: packages/server/src/services/presence.ts 1
+    # PRINTS: packages/server/src/services/questions.ts 3
     # PRINTS: packages/server/src/services/record-handlers.ts 1
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/search.ts 9
@@ -179,6 +182,7 @@ jobs:
     # PRINTS: packages/server/src/services/time-window.ts 1
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
+    # PRINTS: ask-teammate.ts 1
     # PRINTS: briefing.ts 1
     # PRINTS: capture-targets.ts 1
     # PRINTS: config.ts 3
@@ -191,7 +195,7 @@ jobs:
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 1
     # PRINTS: gate.ts 6
-    # PRINTS: hint.ts 2
+    # PRINTS: hint.ts 3
     # PRINTS: hints.ts 1
     # PRINTS: hook-budget.ts 1
     # PRINTS: hub.ts 1
@@ -204,6 +208,7 @@ jobs:
     # PRINTS: presence.ts 1
     # PRINTS: proxy.ts 1
     # PRINTS: pump.ts 1
+    # PRINTS: questions.ts 4
     # PRINTS: reap.ts 1
     # PRINTS: record-handlers.ts 1
     # PRINTS: recover.ts 1
