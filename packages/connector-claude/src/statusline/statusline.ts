@@ -97,7 +97,14 @@ const HTTP_UNAUTHORIZED = 401;
  * (HTTP 401, an answer) rendered `cx ! hub unreachable · last sync 2h` and
  * sent the developer to check their network for a credential problem. The
  * status and the kind are both on `HubResult` already (http/client.ts); all
- * three states below name their own remedy, and every one keeps the age.
+ * four states below name their own remedy, and every one keeps the age.
+ *
+ * GARBAGE IS ITS OWN KIND and only its own kind. `kind: "http"` is assigned
+ * exactly when a well-formed error envelope PARSED (client.ts parseEnvelope),
+ * which is the opposite of malformed — so folding it in here rendered a hub
+ * whose database was wedged as `hub answered garbage` and pointed the reader
+ * at a protocol or version problem (review finding B2-L5). A 5xx, a 403 and a
+ * 404 are a hub that is up and failing, and the status is the actionable part.
  */
 const failureHead = (
   status: number,
@@ -109,7 +116,10 @@ const failureHead = (
   if (kind === "network") {
     return "hub unreachable";
   }
-  return "hub answered garbage";
+  if (kind === "malformed") {
+    return "hub answered garbage";
+  }
+  return `hub error ${String(status)}`;
 };
 
 const failureLine = (head: string, age: string | null): string =>

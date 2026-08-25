@@ -20,6 +20,7 @@ import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "statusline-401-uuid";
 const HTTP_UNAUTHORIZED = 401;
+const HTTP_SERVER_ERROR = 500;
 /** Refuses connections: the only state that is really "unreachable". */
 const DEAD_HUB_URL = "http://127.0.0.1:9";
 
@@ -116,6 +117,29 @@ describe("statusline failure wording", () => {
 
     // Assert
     expect(line).toContain("hub answered garbage");
+  });
+
+  test("a 5xx from a reachable hub is an error, not garbage", async () => {
+    // Arrange: the hub is up and its database is wedged, so it answers a
+    // perfectly well-formed error envelope with status 500. `kind: "http"` is
+    // assigned only when that envelope PARSES, which is the opposite of
+    // malformed — and calling it garbage sent the reader looking for a
+    // protocol or version problem (review finding B2-L5).
+    const hubUrl = serveWith(() =>
+      Response.json(
+        { ok: false, error: { code: "internal", message: "database is down" } },
+        { status: HTTP_SERVER_ERROR },
+      ),
+    );
+    const { repo, env } = await fixture(hubUrl);
+
+    // Act
+    const line = await runStatusline(stdinFor(repo), env);
+
+    // Assert
+    expect(line).toContain("hub error 500");
+    expect(line).not.toContain("garbage");
+    expect(line).not.toContain("unreachable");
   });
 
   test("a fresh presence cache does not launder a booked 401 into health", async () => {
