@@ -24,6 +24,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { MAX_REFUSAL_CHARS } from "../src/services/refusal.ts";
 import { searchWorkContexts } from "../src/services/search.ts";
 import {
   addTestDeveloperWithSession,
@@ -449,6 +450,126 @@ describe("GET /api/search — the since filter", () => {
     // Assert
     expect(result.status).toBe(400);
     expect(result.code).toBe("invalid_since");
+  });
+});
+
+/**
+ * A refusal that arrives truncated is a refusal that cannot be acted on, and
+ * this route is the one that refuses most: two developer shapes and four
+ * window shapes. Every connector quotes a hub message at
+ * MAX_HUB_MESSAGE_CHARS (200) and drops the rest, so the budget belongs to the
+ * WHOLE sentence — not to the list inside it, which is the half that was
+ * budgeted first and the half a caller cannot inflate.
+ */
+describe("GET /api/search — every refusal arrives whole", () => {
+  /** The route's own bound on the term, so the widest echo a caller can force. */
+  const WIDEST_TERM = "the person who last touched the refresh path".padEnd(
+    320,
+    "x",
+  );
+
+  /**
+   * A display name long enough to blow the echo, and reachable: the create
+   * route bounds a name below (`min(1)`) and not above, so how long a name
+   * this hub holds is the org's choice, not this route's.
+   */
+  const WIDEST_NAME = "Ken Weber (backend, on leave until September)".padEnd(
+    300,
+    "x",
+  );
+
+  const worstCaseHub = async (): Promise<{
+    harness: TestHarness;
+    nick: TestDeveloper;
+  }> => {
+    const seeded = await seedCrowdedTier();
+    for (const index of [2, 3, 4, 5]) {
+      await addTestDeveloperWithSession(
+        seeded.harness,
+        "Ken",
+        `ken.number.${String(index)}.with.a.long.address@example.com`,
+        { id: `ses_ken${String(index)}` },
+      );
+    }
+    // Five people whose shared name is itself long — the ambiguity refusal
+    // echoes the term, so this is the widest one a caller can actually reach.
+    for (const index of [1, 2, 3, 4, 5]) {
+      await addTestDeveloperWithSession(
+        seeded.harness,
+        WIDEST_NAME,
+        `long.name.${String(index)}.with.a.long.address@example.com`,
+        { id: `ses_long${String(index)}` },
+      );
+    }
+    return seeded;
+  };
+
+  test("no refusal this route can send is longer than a connector quotes", async () => {
+    // Arrange: the worst case of each shape — five same-named developers with
+    // long addresses, and a 320-character term for the two that echo it.
+    const { harness, nick } = await worstCaseHub();
+
+    // Act
+    const refusals = [];
+    for (const params of [
+      { developer: "Ken" },
+      { developer: WIDEST_TERM },
+      { developer: WIDEST_NAME },
+      { since: "last fortnight" },
+      { since: "0d" },
+      { since: "400d" },
+      { since: "2027-01-01" },
+    ]) {
+      refusals.push({
+        params,
+        result: await search(harness, nick.apiKey, { query: "", ...params }),
+      });
+    }
+
+    // Assert: every one of them refused, and every one of them fits
+    for (const { params, result } of refusals) {
+      expect({ params, status: result.status }).toEqual({
+        params,
+        status: 400,
+      });
+      expect({
+        params,
+        chars: result.message.length,
+        fits: result.message.length <= MAX_REFUSAL_CHARS,
+      }).toEqual({ params, chars: result.message.length, fits: true });
+    }
+  });
+
+  test("the actionable half survives even when the echo is cut", async () => {
+    // Arrange: when a refusal has to lose characters it loses the CALLER'S OWN
+    // term first. The caller already knows what they typed; what they do not
+    // know is how this hub spells the name, and that is the half that makes
+    // the sentence a next step rather than a complaint.
+    const { harness, nick } = await worstCaseHub();
+
+    // Act
+    const ambiguous = await search(harness, nick.apiKey, {
+      query: "",
+      developer: WIDEST_NAME,
+    });
+    const unknown = await search(harness, nick.apiKey, {
+      query: "",
+      developer: WIDEST_TERM,
+    });
+
+    // Assert: the count is never abbreviated, an address arrives WHOLE (a cut
+    // address is a different, wrong address), the suggestions still name
+    // somebody rather than counting them, and the echo says it was cut
+    expect(ambiguous.message).toContain("5 developers");
+    expect(ambiguous.message).toContain(
+      "long.name.1.with.a.long.address@example.com",
+    );
+    expect(unknown.message).toContain("Closest known names: ");
+    expect(unknown.message).not.toContain("none short enough");
+    for (const message of [ambiguous.message, unknown.message]) {
+      expect(message).toContain("…");
+      expect(message.length).toBeLessThanOrEqual(MAX_REFUSAL_CHARS);
+    }
   });
 });
 

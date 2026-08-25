@@ -1631,6 +1631,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "a misspelt teammate name is reported as an HTTP fault rather than as " +
       "a question that was never asked",
   },
+  {
+    // The refusal that does not fit is the refusal that cannot be acted on.
+    // Deleting the shrink is the plausible edit — "the sentence reads better
+    // with the whole term in it" — and it costs the addresses and the closest
+    // spellings, which is the entire payload of both refusals.
+    label: "a refusal keeps its whole echo and loses its addresses",
+    file: `${SERVER}/src/services/refusal.ts`,
+    from: "  while (sentence.length > MAX_REFUSAL_CHARS) {",
+    to: "  while (false) {",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "a long developer term pushes the candidate addresses past the 200 " +
+      "characters every connector quotes, so the reader is told to ask again " +
+      "with an exact address and never shown one",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -1714,7 +1729,7 @@ interface Outcome {
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: render-surface-registry.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
- * PRINTS: search-filters.test.ts 4
+ * PRINTS: search-filters.test.ts 5
  * PRINTS: search-who-when.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: session.test.ts 1

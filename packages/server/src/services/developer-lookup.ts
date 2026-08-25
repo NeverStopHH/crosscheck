@@ -18,6 +18,7 @@
 import { asc } from "drizzle-orm";
 
 import { developers } from "../db/schema.ts";
+import { fitRefusal } from "./refusal.ts";
 import { resolveDeveloperRef } from "./developer-settings.ts";
 import type { DeveloperCandidate } from "./developer-settings.ts";
 import type { MuteEntryView } from "./developer-settings.ts";
@@ -43,9 +44,6 @@ export const DEVELOPER_SUGGESTION_LIMIT = 3;
  * does not exist.
  */
 export const DEVELOPER_SUGGESTION_SCAN = 500;
-
-/** How much of the caller's own term is echoed back in a refusal. */
-const MAX_ECHOED_TERM_CHARS = 80;
 
 export type DeveloperLookup =
   | { readonly outcome: "resolved"; readonly developer: MuteEntryView }
@@ -153,29 +151,44 @@ export const lookUpDeveloper = async (
   return { outcome: "unknown", suggestions: await suggestSpellings(db, term) };
 };
 
-const echoTerm = (term: string): string =>
-  `"${term.trim().slice(0, MAX_ECHOED_TERM_CHARS)}"`;
+/**
+ * Longest a single NAME may be before it is shown cut. Addresses are never
+ * cut, and the difference is the same one that decides which of the two each
+ * refusal lists: a name is for RECOGNITION — "oh, Ken Weber" — and survives
+ * losing its tail, while an address is for RETYPING and a cut one is simply a
+ * different, wrong address. Without this an org whose display names carry
+ * titles gets "3 of them, none short enough to name here", which names nobody
+ * and leaves the reader with no next step at all.
+ */
+const MAX_LISTED_NAME_CHARS = 40;
+
+/** At most `maxChars` characters, ellipsis included — the caller budgets in
+ * the units it counts in, so a shortened value never costs one more than it
+ * was allowed and gets dropped from the list for it. */
+const shortened = (value: string, maxChars: number): string =>
+  value.length <= maxChars
+    ? value
+    : `${value.slice(0, Math.max(0, maxChars - 1))}…`;
 
 /**
- * How much of a refusal may be the LIST. THE SENTENCE HAS TO FIT: every
- * connector caps a hub message at MAX_HUB_MESSAGE_CHARS (200) and quotes the
- * rest away, so a refusal listing five long addresses would arrive with its
- * actionable half missing — the exact failure it exists to prevent. Budgeted
- * in CHARACTERS rather than in people, because a name and an address have no
- * length in common; the count that follows is always the true one, so a list
- * cut short still tells the reader there is more.
+ * As many of them as `maxChars` holds, then the true count of the rest.
+ * Budgeted in CHARACTERS rather than in people, because a display name and an
+ * email address have no length in common; the COUNT is never abbreviated, so a
+ * list cut short still tells the reader how many there really are.
  *
- * VERIFY: grep -c "MAX_HUB_MESSAGE_CHARS = 200" packages/connector-core/src/constants.ts
- * PRINTS: 1
+ * `maxChars` comes from `fitRefusal`, which knows what the sentence around it
+ * has left — the list is the last thing asked to give up room, and the first
+ * thing a reader needs.
  */
-const MAX_LISTED_CHARS = 60;
-
-const listAndCount = (values: readonly string[]): string => {
+const listAndCount = (
+  values: readonly string[],
+  maxChars: number,
+): string => {
   const shown: string[] = [];
   let used = 0;
   for (const value of values) {
     const cost = used === 0 ? value.length : value.length + 2;
-    if (used + cost > MAX_LISTED_CHARS) {
+    if (used + cost > maxChars) {
       break;
     }
     shown.push(value);
@@ -198,27 +211,49 @@ const listAndCount = (values: readonly string[]): string => {
  * reasons and must say the same thing.
  *
  * WHAT EACH ONE LISTS is decided by what the reader has to retype. Same-named
- * candidates differ only by ADDRESS, so ambiguity lists addresses; a misspelt
- * name is fixed by the NAME, so the suggestions list names. Neither repeats
- * "nothing was searched" beyond once — the connector's own line says it too,
- * and the budget is 200 characters.
+ * candidates differ only by ADDRESS, so ambiguity lists addresses, whole; a
+ * misspelt name is fixed by the NAME, so the suggestions list names, shortened
+ * rather than dropped. Neither repeats "nothing was searched" beyond once —
+ * the connector's own line says it too.
  *
- * The term is the caller's own text handed back to the caller; every
- * connector frames a hub message as quoted data before a model sees it
+ * BOTH GO THROUGH `fitRefusal`, which is not decoration: the term is the
+ * caller's, its length is the caller's choice, and a sentence whose actionable
+ * half falls past MAX_REFUSAL_CHARS is quoted away by every connector. The
+ * echo gives up characters first; the addresses and the spellings never do.
+ *
+ * The term is the caller's own text handed back to the caller; every connector
+ * frames a hub message as quoted data before a model sees it
  * (mcp/tools/shared.ts).
  */
 export const describeAmbiguousDeveloper = (
   term: string,
   candidates: readonly DeveloperCandidate[],
 ): string =>
-  `${echoTerm(term)} is the name of ${String(candidates.length)} developers here: ` +
-  `${listAndCount(candidates.map((person) => person.email))}. Ask again with the exact ` +
-  "address — picking one would file the work under the wrong person.";
+  fitRefusal(
+    (echo, listChars) =>
+      `${echo} is the name of ${String(candidates.length)} developers here: ` +
+      `${listAndCount(
+        candidates.map((person) => person.email),
+        listChars,
+      )}. Ask again with the exact address; a guess would credit the wrong person.`,
+    term,
+  );
 
 export const describeUnknownDeveloper = (
   term: string,
   suggestions: readonly DeveloperCandidate[],
 ): string =>
-  `${echoTerm(term)} matches no developer on this hub, so nothing was searched. Closest ` +
-  `known names: ${listAndCount(suggestions.map((person) => person.name))}. Ask again ` +
-  "with a name or email exactly as the hub spells it.";
+  fitRefusal(
+    (echo, listChars) =>
+      `${echo} matches no developer on this hub, so nothing was searched. Closest ` +
+      `known names: ${listAndCount(
+        suggestions.map((person) =>
+          // Shortened to whatever the sentence has left, never to nothing: a
+          // list that names one recognisable spelling beats a list that names
+          // a count, and the reader retypes a name rather than copying it.
+          shortened(person.name, Math.min(MAX_LISTED_NAME_CHARS, listChars)),
+        ),
+        listChars,
+      )}. Ask again with a name or address the hub knows.`,
+    term,
+  );

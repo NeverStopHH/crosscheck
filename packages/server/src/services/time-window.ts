@@ -14,6 +14,8 @@
  * be missing. The refusal names the bound and names the alternative, which is
  * to omit the filter and search all of history.
  */
+import { fitRefusal } from "./refusal.ts";
+
 const MS_PER_HOUR = 60 * 60 * 1000;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
 
@@ -40,18 +42,26 @@ export type SinceWindow =
 const FORMS =
   "since takes a window like 14d or 72h, or an ISO date like 2026-08-01";
 
+/**
+ * Every sentence below is a hub refusal, and a hub refusal is quoted at
+ * MAX_REFUSAL_CHARS by every connector — so these two, which have no list and
+ * no echo to give back, simply have to BE short enough. Both were 201 and 204
+ * characters and arrived cut; test/search-filters.test.ts now walks every
+ * refusal this route can send and fails if one grows past the bound again.
+ */
 const tooOld = (): SinceWindow => ({
   ok: false,
   reason:
     `since may look back at most ${String(SEARCH_MAX_SINCE_DAYS)} days. Omit it ` +
-    "to search all of history instead — the window is not narrowed silently, " +
-    "because a result missing older work with nothing saying so is worse than " +
-    "this refusal.",
+    "to search all of history — a window is never narrowed for you, because " +
+    "work missing from an answer with nothing saying so is worse than a refusal.",
 });
 
 const notAWindow = (term: string): SinceWindow => ({
   ok: false,
-  reason: `${FORMS}. "${term.slice(0, 40)}" is neither.`,
+  // The one sentence here that echoes the caller: through the shared budget,
+  // so a 40-character window term cannot push the forms off the end.
+  reason: fitRefusal((echo) => `${FORMS}. ${echo} is neither.`, term),
 });
 
 /**
@@ -88,8 +98,8 @@ export const parseSinceWindow = (raw: string, now: Date): SinceWindow => {
     return {
       ok: false,
       reason:
-        "since must be in the past. A window that starts in the future can only " +
-        `ever answer "nothing", which reads as a fact about the team. ${FORMS}.`,
+        "since must be in the past: a window starting in the future can only " +
+        `answer "nothing", which reads as a fact about the team. ${FORMS}.`,
     };
   }
   if (now.getTime() - parsedMs > SEARCH_MAX_SINCE_DAYS * MS_PER_DAY) {
