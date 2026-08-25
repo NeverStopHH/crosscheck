@@ -90,6 +90,26 @@ const writeStaleSession = async (
   });
 };
 
+/** A session that IS reporting: started `startedAgoMs` ago, heartbeating now. */
+const writeLiveSession = async (
+  home: string,
+  hostSessionKey: string,
+  repo: string,
+  startedAgoMs: number,
+): Promise<void> => {
+  await writeSessionState(home, {
+    ...deriveSessionState({
+      hostSessionKey,
+      repoId: REPO_ID,
+      repoRoot: repo,
+      hubUrl: HUB_URL,
+      developerId: "dev_1",
+      startedAt: new Date(Date.now() - startedAgoMs).toISOString(),
+    }),
+    lastHeartbeatAt: new Date().toISOString(),
+  });
+};
+
 const doctorEnv = (home: string) => ({
   CROSSCHECK_HOME: home,
   HOME: home,
@@ -98,12 +118,18 @@ const doctorEnv = (home: string) => ({
 });
 
 describe("hooksFiringCheck", () => {
-  test("a 3h-old SessionStart beside a live session WARNs and names the event", () => {
+  test("a 3h-old PostToolUse beside a live session WARNs and names the event", () => {
     // Arrange
     const nowMs = Date.now();
+    const fresh = new Date(nowMs - MINUTE_MS).toISOString();
     const facts = {
-      firedAt: { "session-start": new Date(nowMs - 3 * HOUR_MS).toISOString() },
-      hasLiveSession: true,
+      firedAt: {
+        "session-start": fresh,
+        "post-tool-use": new Date(nowMs - 3 * HOUR_MS).toISOString(),
+        "user-prompt-submit": fresh,
+        stop: fresh,
+      },
+      liveSessionAgeMs: 3 * HOUR_MS,
       nowMs,
     };
 
@@ -112,12 +138,11 @@ describe("hooksFiringCheck", () => {
 
     // Assert
     expect(result.level).toBe("WARN");
-    expect(result.detail).toContain("SessionStart 3h");
-    expect(result.detail).toContain("SessionStart");
-    expect(result.detail).toContain("PostToolUse never");
+    expect(result.detail).toContain("PostToolUse 3h");
+    expect(result.detail).toContain("PostToolUse has not fired");
   });
 
-  test("fresh fires of the four watched events pass", () => {
+  test("fresh fires of the three watched events pass", () => {
     // Arrange
     const nowMs = Date.now();
     const fresh = new Date(nowMs - MINUTE_MS).toISOString();
@@ -130,7 +155,7 @@ describe("hooksFiringCheck", () => {
         "user-prompt-submit": fresh,
         stop: fresh,
       },
-      hasLiveSession: true,
+      liveSessionAgeMs: 3 * HOUR_MS,
       nowMs,
     });
 
@@ -144,13 +169,71 @@ describe("hooksFiringCheck", () => {
     // Arrange + Act
     const result = hooksFiringCheck({
       firedAt: {},
-      hasLiveSession: false,
+      liveSessionAgeMs: null,
       nowMs: Date.now(),
     });
 
     // Assert
     expect(result.level).toBe("PASS");
     expect(result.detail).toContain("not measured");
+  });
+
+  test("a THREE-HOUR-OLD SessionStart is not a defect while the rest is fresh", () => {
+    // Arrange: SessionStart fires once per session, and the marker is
+    // last-writer-wins per repo, so its age is "time since the last session
+    // started here" — not a health signal. The same line's own numbers refute
+    // all three causes the WARN names (review finding B2-05).
+    const nowMs = Date.now();
+
+    // Act
+    const result = hooksFiringCheck({
+      firedAt: {
+        "session-start": new Date(nowMs - 3 * HOUR_MS).toISOString(),
+        "post-tool-use": new Date(nowMs - 8_000).toISOString(),
+        "user-prompt-submit": new Date(nowMs - MINUTE_MS).toISOString(),
+        stop: new Date(nowMs - 30_000).toISOString(),
+      },
+      liveSessionAgeMs: 3 * HOUR_MS,
+      nowMs,
+    });
+
+    // Assert
+    expect(result.level).toBe("PASS");
+    expect(result.detail).toContain("SessionStart 3h");
+  });
+
+  test("a session thirty seconds old does not WARN about hooks it cannot have fired", () => {
+    // Arrange: the first thing an onboarding developer does — start a session
+    // and run doctor. PostToolUse, UserPromptSubmit and Stop have had no
+    // opportunity (review finding B2-L3).
+    const nowMs = Date.now();
+
+    // Act
+    const result = hooksFiringCheck({
+      firedAt: { "session-start": new Date(nowMs - 1000).toISOString() },
+      liveSessionAgeMs: 30_000,
+      nowMs,
+    });
+
+    // Assert
+    expect(result.level).toBe("PASS");
+    expect(result.detail).toContain("PostToolUse never");
+  });
+
+  test("the same silence an hour into the session IS evidence", () => {
+    // Arrange
+    const nowMs = Date.now();
+
+    // Act
+    const result = hooksFiringCheck({
+      firedAt: { "session-start": new Date(nowMs - 90 * MINUTE_MS).toISOString() },
+      liveSessionAgeMs: 90 * MINUTE_MS,
+      nowMs,
+    });
+
+    // Assert
+    expect(result.level).toBe("WARN");
+    expect(result.detail).toContain("PostToolUse, UserPromptSubmit, Stop");
   });
 });
 
@@ -193,11 +276,13 @@ describe("statuslineRenderedCheck", () => {
 
 describe("runDoctor carries the execution lines", () => {
   test("a stale hooks marker beside a live session WARNs", async () => {
-    // Arrange
+    // Arrange: a session that IS reporting, three hours in, whose PostToolUse
+    // marker stopped three hours ago
     const { repo, home, key } = await fixture();
-    await writeStaleSession(home, "zombie-a", repo, 3 * HOUR_MS);
+    await writeLiveSession(home, "alive-a", repo, 3 * HOUR_MS);
     await writeStateFile(home, `${key}-hooks.json`, {
       "session-start": new Date(Date.now() - 3 * HOUR_MS).toISOString(),
+      "post-tool-use": new Date(Date.now() - 3 * HOUR_MS).toISOString(),
     });
 
     // Act
@@ -205,13 +290,13 @@ describe("runDoctor carries the execution lines", () => {
 
     // Assert
     expect(result.stdout).toContain("WARN  hooks firing");
-    expect(result.stdout).toContain("SessionStart 3h");
+    expect(result.stdout).toContain("PostToolUse 3h");
   });
 
   test("no statusline marker beside a live session WARNs", async () => {
     // Arrange
     const { repo, home } = await fixture();
-    await writeStaleSession(home, "zombie-b", repo, 3 * HOUR_MS);
+    await writeLiveSession(home, "alive-b", repo, 3 * HOUR_MS);
 
     // Act
     const result = await runDoctor(doctorEnv(home), repo, async () => null);
@@ -249,6 +334,27 @@ describe("runDoctor carries the execution lines", () => {
     expect(result.stdout).toContain("3 of 3 session state files stale");
     expect(result.stdout).toContain("pins its spool file against reap");
     expect(result.stdout).not.toContain("PASS  unclosed sessions  none");
+  });
+
+  test("one three-day-old state file leaves every session-gated line at PASS", async () => {
+    // Arrange: a Sunday laptop — nothing running, one corpse left behind by a
+    // killed orchestration agent. The connector-side reap only deletes state
+    // files past MAX_SPOOL_AGE_DAYS = 7, so files like this persist for a
+    // week (review finding B2-04/B2-L2).
+    const { repo, home } = await fixture();
+    await writeStaleSession(home, "zombie-sunday", repo, 3 * 24 * HOUR_MS);
+
+    // Act
+    const result = await runDoctor(doctorEnv(home), repo, async () => null);
+
+    // Assert: one line may call it stale — no line may call it running
+    expect(result.stdout).toContain("WARN  unclosed sessions");
+    expect(result.stdout).toContain("1 of 1 session state file stale");
+    expect(result.stdout).toContain("PASS  hooks firing");
+    expect(result.stdout).toContain("PASS  statusline last rendered  never");
+    expect(result.stdout).toContain("PASS  last capture sync  never");
+    expect(result.stdout).not.toContain("a session is live");
+    expect(result.stdout).not.toContain("the session is running");
   });
 
   test("a live session that heartbeated a minute ago is not a zombie", async () => {

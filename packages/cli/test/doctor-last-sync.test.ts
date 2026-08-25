@@ -19,6 +19,10 @@ import { join } from "node:path";
 
 import { runDoctor } from "../src/cli/doctor.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import {
+  deriveSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
@@ -75,11 +79,33 @@ const writeSyncState = async (
   );
 };
 
-/** A session state file is the "a session is running" signal doctor gates on. */
-const writeLiveSession = async (home: string): Promise<void> => {
-  const dir = join(home, "sessions");
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "live.json"), "{}\n", "utf8");
+/**
+ * A session state file is the "a session is running" signal doctor gates on —
+ * and it has to be a REAL one.
+ *
+ * This wrote the literal string `{}`, which parses as no session at all: no
+ * heartbeat to age, no repo to match. The gate it fed was a bare readdir, so
+ * the fixture worked by accident and the gate was untestable through it
+ * (review finding B2-L2). Doctor now asks whether a state file's session is
+ * still REPORTING, on THIS repo, so the fixture has to carry both.
+ */
+const writeLiveSession = async (
+  home: string,
+  repo: string,
+  hubUrl: string,
+): Promise<void> => {
+  const nowIso = new Date().toISOString();
+  await writeSessionState(home, {
+    ...deriveSessionState({
+      hostSessionKey: "live",
+      repoId: REPO_ID,
+      repoRoot: repo,
+      hubUrl,
+      developerId: "dev_1",
+      startedAt: nowIso,
+    }),
+    lastHeartbeatAt: nowIso,
+  });
 };
 
 const doctorEnv = (home: string, hubUrl: string) => ({
@@ -102,7 +128,7 @@ describe("doctor last capture sync", () => {
       lastErrorStatus: null,
       cursorVersion: null,
     });
-    await writeLiveSession(home);
+    await writeLiveSession(home, repo, hubUrl);
 
     // Act
     const result = await runDoctor(
@@ -154,7 +180,7 @@ describe("doctor last capture sync", () => {
       lastErrorStatus: null,
       cursorVersion: null,
     });
-    await writeLiveSession(home);
+    await writeLiveSession(home, repo, hubUrl);
 
     // Act
     const result = await runDoctor(
@@ -187,7 +213,7 @@ describe("doctor last capture sync", () => {
   test("a live session that has never captured WARNs", async () => {
     // Arrange
     const { repo, home, hubUrl } = await fixture();
-    await writeLiveSession(home);
+    await writeLiveSession(home, repo, hubUrl);
 
     // Act
     const result = await runDoctor(

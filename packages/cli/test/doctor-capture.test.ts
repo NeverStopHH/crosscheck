@@ -15,7 +15,8 @@
  * and the honest "not measured" when they do not.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rm, utimes } from "node:fs/promises";
+import { join } from "node:path";
 
 import { captureCheck, hintsCheck, runDoctor } from "../src/cli/doctor.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -190,6 +191,105 @@ describe("hintsCheck", () => {
     // Assert
     expect(result.level).toBe("PASS");
     expect(result.detail).toContain("5 delivered (2 pulled), 11 claims");
+  });
+});
+
+/**
+ * The liveness mask and the repo filter have to be the SAME pass.
+ *
+ * `mine` was `parsed` filtered by parse success and then by hubUrl/repoId, so
+ * its indices no longer lined up with `listing.files` — and the mask was
+ * indexed by `listing.files`. Element i of a filtered array was therefore
+ * tested against the liveness of the i-th newest file on the machine, usually
+ * another repo's session (review finding B2-02). It failed in BOTH directions,
+ * so both are pinned here: a corpse counted as live, and a live broken session
+ * silently swallowed. Neither could be seen by a fixture with one repoId.
+ */
+describe("capture counts this repo's LIVE sessions, whatever the mtime order", () => {
+  const OTHER_REPO = "github.com/acme/other";
+  const THIRTY_HOURS_MS = 30 * 60 * 60 * 1000;
+
+  const setMtime = async (
+    home: string,
+    hostSessionKey: string,
+    whenMs: number,
+  ): Promise<void> => {
+    const when = new Date(whenMs);
+    await utimes(join(home, "sessions", `${hostSessionKey}.json`), when, when);
+  };
+
+  test("a corpse of THIS repo is not called live because another repo's session is", async () => {
+    // Arrange: this repo's session died 30 h ago carrying 7 fires and no
+    // targets; the newest state file on the machine is a fresh session of a
+    // DIFFERENT repo.
+    const repo = await makeRepo("doctor-capture-mask-a", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("doctor-capture-mask-a");
+    paths.push(repo, home);
+    const hubUrl = hubWithStats({ delivered: 0, pulled: 0, claims: 0 });
+    const deadIso = new Date(Date.now() - THIRTY_HOURS_MS).toISOString();
+    await seedSession(home, repo, hubUrl, "dead-mine", {
+      startedAt: deadIso,
+      lastHeartbeatAt: deadIso,
+      seenTargets: [],
+      editToolFires: 7,
+    });
+    await seedSession(home, repo, hubUrl, "live-other", {
+      repoId: OTHER_REPO,
+      seenTargets: ["src/a.ts"],
+      editToolFires: 3,
+    });
+    await setMtime(home, "dead-mine", Date.now() - 60_000);
+    await setMtime(home, "live-other", Date.now());
+
+    // Act
+    const result = await runDoctor(
+      doctorEnv(home, hubUrl),
+      repo,
+      async () => null,
+    );
+
+    // Assert: yesterday's corpse must not be reported as a live drop
+    expect(result.stdout).toContain("PASS  capture  not measured");
+    expect(result.stdout).not.toContain("WARN  capture");
+  });
+
+  test("a LIVE broken session is reported even when the newest file is a corpse", async () => {
+    // Arrange: the dangerous direction — this repo's session is live and
+    // capturing nothing, and the newest state file on the machine is dead.
+    const repo = await makeRepo("doctor-capture-mask-b", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("doctor-capture-mask-b");
+    paths.push(repo, home);
+    const hubUrl = hubWithStats({ delivered: 0, pulled: 0, claims: 0 });
+    const deadIso = new Date(Date.now() - THIRTY_HOURS_MS).toISOString();
+    await seedSession(home, repo, hubUrl, "live-mine", {
+      seenTargets: [],
+      editToolFires: 7,
+    });
+    await seedSession(home, repo, hubUrl, "dead-other", {
+      repoId: OTHER_REPO,
+      startedAt: deadIso,
+      lastHeartbeatAt: deadIso,
+      seenTargets: [],
+      editToolFires: 4,
+    });
+    await setMtime(home, "live-mine", Date.now() - 60_000);
+    await setMtime(home, "dead-other", Date.now());
+
+    // Act
+    const result = await runDoctor(
+      doctorEnv(home, hubUrl),
+      repo,
+      async () => null,
+    );
+
+    // Assert: this is the H1 signature the whole line exists to surface
+    expect(result.stdout).toContain(
+      "WARN  capture  7 edit-tool fires -> 0 targets across 1 live session",
+    );
   });
 });
 

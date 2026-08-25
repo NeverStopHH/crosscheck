@@ -1552,9 +1552,18 @@ const foreignDropChecks = async (home: string): Promise<readonly Check[]> => {
  * file a teammate is holding and SessionEnd only when a session closes
  * cleanly, so both are legitimately rare — they render an age and never WARN,
  * because a warning nobody can act on is how doctors get ignored.
+ *
+ * SessionStart is off this list for the same reason, arrived at the other way
+ * round: it fires ONCE per session and the marker is per-repo last-writer-
+ * wins, so its age is "time since the last session started here", not a health
+ * signal. Three hours into one session it read three hours old and the line
+ * WARNed — while naming PostToolUse 8s and Stop 30s on the same row, refuting
+ * all three causes the sentence offers (review finding B2-05). It still
+ * renders an age, and the gate below is a live SESSION STATE, which SessionStart
+ * is what writes — so a SessionStart that never fired leaves nothing for these
+ * lines to warn about in the first place.
  */
 const HOOK_SILENCE_WARN_EVENTS: readonly string[] = [
-  "SessionStart",
   "PostToolUse",
   "UserPromptSubmit",
   "Stop",
@@ -1563,8 +1572,16 @@ const HOOK_SILENCE_WARN_EVENTS: readonly string[] = [
 export interface HookFireFacts {
   /** Hook subcommand name (`post-tool-use`) → ISO stamp of its last fire. */
   readonly firedAt: Readonly<Record<string, string>>;
-  /** A stale marker is only news while something is supposed to be running. */
-  readonly hasLiveSession: boolean;
+  /**
+   * How long the oldest live session on this repo has been running, or null
+   * when none is (doctor's readLiveRepoSessions).
+   *
+   * An AGE rather than a boolean, because the never-fired case needs it. A
+   * stale marker is only news while something is supposed to be running — and
+   * a marker that has never fired at all is only news once a session has been
+   * running long enough to have produced it.
+   */
+  readonly liveSessionAgeMs: number | null;
   readonly nowMs: number;
 }
 
@@ -1592,19 +1609,32 @@ export const hooksFiringCheck = (facts: HookFireFacts): Check => {
   const rendered = REQUIRED_HOOK_EVENTS.map(
     (event) => `${event} ${fireAge(facts, event).label}`,
   ).join(" · ");
-  if (Object.keys(facts.firedAt).length === 0 && !facts.hasLiveSession) {
+  const hasLiveSession = facts.liveSessionAgeMs !== null;
+  if (Object.keys(facts.firedAt).length === 0 && !hasLiveSession) {
     // A machine that has never run a session here: nothing has failed, and
     // "SessionStart never · PostToolUse never · …" would only read as alarm.
     return check("PASS", name, "not measured (no hook has fired here yet)");
   }
+  const silenceMs = DOCTOR_HOOK_SILENT_WARN_MINUTES * MS_PER_MINUTE;
   const silent = HOOK_SILENCE_WARN_EVENTS.filter((event) => {
     const { ageMs } = fireAge(facts, event);
-    return (
-      ageMs === null ||
-      ageMs > DOCTOR_HOOK_SILENT_WARN_MINUTES * MS_PER_MINUTE
-    );
+    if (ageMs !== null) {
+      return ageMs > silenceMs;
+    }
+    // NEVER FIRED is not the same claim as "has not fired in 60 min", and
+    // folding the two made a session WARN from its first second: PostToolUse,
+    // UserPromptSubmit and Stop have had no opportunity yet, and the sentence
+    // blamed three causes the session's own age refutes (review finding
+    // B2-L3). It becomes silence once the session has outlived the threshold.
+    //
+    // The residual, stated rather than implied: a session that only ever READS
+    // — no Edit, no Write, no Bash — never fires PostToolUse at all, and an
+    // hour in this will name it. UserPromptSubmit and Stop fire in such a
+    // session, so the sentence names one event rather than three, and the
+    // causes it offers are still the ones worth checking.
+    return (facts.liveSessionAgeMs ?? 0) > silenceMs;
   });
-  return facts.hasLiveSession && silent.length > 0
+  return hasLiveSession && silent.length > 0
     ? check(
         "WARN",
         name,
@@ -1617,10 +1647,11 @@ const checkHooksFiring = async (
   home: string,
   key: string,
   now: Date,
+  live: LiveRepoSessions,
 ): Promise<Check> =>
   hooksFiringCheck({
     firedAt: await readHooksFired(home, key),
-    hasLiveSession: await hasLiveSessionState(home),
+    liveSessionAgeMs: live.oldestAgeMs,
     nowMs: now.getTime(),
   });
 
@@ -1656,10 +1687,11 @@ const checkStatuslineRendered = async (
   home: string,
   key: string,
   now: Date,
+  live: LiveRepoSessions,
 ): Promise<Check> =>
   statuslineRenderedCheck(
     await readStatuslineRendered(home, key),
-    await hasLiveSessionState(home),
+    live.oldestAgeMs !== null,
     now.getTime(),
   );
 
@@ -1809,12 +1841,98 @@ const checkRepoConnected = async (
  * a heartbeat as readily as for a capture. A number that is true beats a
  * freshness claim that is nearly true.
  */
-const CaptureCountersSchema = z.looseObject({
+const SessionCountersSchema = z.looseObject({
   hubUrl: z.string().default(""),
   repoId: z.string().default(""),
+  // Read for the LIVENESS half, which is why the defaults are the unreadable
+  // values: a file that carries neither timestamp cannot be dated, and an
+  // undatable file is not evidence of a running session (heartbeatAgeMs).
+  startedAt: z.string().default(""),
+  lastHeartbeatAt: z.string().nullable().default(null),
   seenTargets: z.array(z.string()).default([]),
   editToolFires: z.number().int().min(0).optional(),
 });
+
+type SessionCounters = z.infer<typeof SessionCountersSchema>;
+
+export interface LiveRepoSessions {
+  /** State files of THIS repo whose session is still reporting, newest first. */
+  readonly sessions: readonly SessionCounters[];
+  /**
+   * How long the OLDEST of them has been running, or null when none is live.
+   *
+   * The oldest, not the newest: a never-fired hook is evidence once SOME
+   * session has been running long enough to have produced it, and taking the
+   * youngest would let one fresh session mask a machine whose hooks stopped
+   * hours ago. Null is the "no live session here" signal every gate reads.
+   */
+  readonly oldestAgeMs: number | null;
+}
+
+const EMPTY_LIVE_SESSIONS: LiveRepoSessions = {
+  sessions: [],
+  oldestAgeMs: null,
+};
+
+/**
+ * The session-state scan, done ONCE, for every line that needs to know
+ * whether anybody is running anything here.
+ *
+ * `hasLiveSessionState` used to answer this with `readdir(<home>/sessions)
+ * .length > 0` — no age test and no repo test — and it gated four separate
+ * WARNs. A state file is only deleted at SessionEnd and the connector-side
+ * reap only clears files past MAX_SPOOL_AGE_DAYS = 7, so on the trial machine
+ * 75 of 100 files were corpses and all four gates were permanently satisfied
+ * by dead sessions: one line printed "1 of 1 session state file stale >1h"
+ * while three others said "a session is live" and "the session is running"
+ * (review finding B2-04/B2-L2).
+ *
+ * THE PREDICATE IS THE ONE THE REST OF THE FILE ALREADY USES —
+ * `heartbeatAgeMs` inside DOCTOR_ZOMBIE_STATE_WARN_HOURS, the same one
+ * `countStaleSessionStates` and the summarizer cost line read — so "stale" and
+ * "live" can no longer contradict each other in the same run. And it is scoped
+ * to this repo's hubUrl/repoId, because a teammate's session in another
+ * checkout is not evidence about THIS repo's hooks.
+ *
+ * ONE PARSE PASS, keeping each state beside its file. The earlier capture
+ * check built its repo filter and its liveness mask as two separate arrays and
+ * then indexed one by the other's positions, so element i of the filtered list
+ * was tested against the i-th newest file on the machine — a different session
+ * (review finding B2-02).
+ */
+const readLiveRepoSessions = async (
+  home: string,
+  hubUrl: string,
+  repoId: string,
+  now: Date,
+): Promise<LiveRepoSessions> => {
+  const listing = await listSessionStateFiles(home, SESSION_STATE_SCAN_MAX_FILES);
+  if (listing.files.length === 0) {
+    return EMPTY_LIVE_SESSIONS;
+  }
+  const nowMs = now.getTime();
+  const maxAgeMs = DOCTOR_ZOMBIE_STATE_WARN_HOURS * MS_PER_HOUR;
+  const parsed = await Promise.all(
+    listing.files.map(async (file) =>
+      SessionCountersSchema.safeParse(await readJsonOrNull(file.path)),
+    ),
+  );
+  const sessions = parsed
+    .filter((entry) => entry.success)
+    .map((entry) => entry.data)
+    .filter((state) => state.hubUrl === hubUrl && state.repoId === repoId)
+    .filter((state) => {
+      const ageMs = heartbeatAgeMs(state, nowMs);
+      return ageMs !== null && ageMs <= maxAgeMs;
+    });
+  const startedAges = sessions
+    .map((state) => nowMs - Date.parse(state.startedAt))
+    .filter((ageMs) => !Number.isNaN(ageMs));
+  return {
+    sessions,
+    oldestAgeMs: startedAges.length === 0 ? null : Math.max(...startedAges),
+  };
+};
 
 export interface CaptureFacts {
   /** True when at least one state file carried the counter at all. */
@@ -1844,35 +1962,12 @@ export const captureCheck = (facts: CaptureFacts): Check => {
     : check("PASS", name, summary);
 };
 
-const checkCapture = async (
-  home: string,
-  hubUrl: string,
-  repoId: string,
-  now: Date,
-): Promise<Check> => {
-  const listing = await listSessionStateFiles(home, SESSION_STATE_SCAN_MAX_FILES);
-  const parsed = await Promise.all(
-    listing.files.map(async (file) =>
-      CaptureCountersSchema.safeParse(await readJsonOrNull(file.path)),
-    ),
-  );
-  const mine = parsed
-    .filter((entry) => entry.success)
-    .map((entry) => entry.data)
-    .filter((state) => state.hubUrl === hubUrl && state.repoId === repoId);
-  // Stale sessions are excluded for the same reason the cost line excludes
-  // them: a corpse's counters describe a session nobody is running.
-  const live = await Promise.all(
-    listing.files.map(async (file) => {
-      const state = SessionStateSchema.safeParse(await readJsonOrNull(file.path));
-      if (!state.success) {
-        return false;
-      }
-      const ageMs = heartbeatAgeMs(state.data, now.getTime());
-      return ageMs === null || ageMs <= DOCTOR_ZOMBIE_STATE_WARN_HOURS * MS_PER_HOUR;
-    }),
-  );
-  const counted = mine.filter((_state, index) => live[index] !== false);
+/**
+ * Stale sessions are excluded for the same reason the cost line excludes them:
+ * a corpse's counters describe a session nobody is running.
+ */
+const checkCapture = (live: LiveRepoSessions): Check => {
+  const counted = live.sessions;
   return captureCheck({
     measured: counted.some((state) => state.editToolFires !== undefined),
     fires: counted.reduce((total, state) => total + (state.editToolFires ?? 0), 0),
@@ -1940,7 +2035,7 @@ export const hintsCheck = (
 const checkHints = async (
   ctx: HubContext,
   repoId: string,
-  home: string,
+  live: LiveRepoSessions,
 ): Promise<Check> => {
   const result = await getHintStats(ctx, repoId);
   const probe: HintsProbe = result.ok
@@ -1952,16 +2047,7 @@ const checkHints = async (
             ? "absent"
             : "unmeasured",
       };
-  return hintsCheck(probe, await hasLiveSessionState(home));
-};
-
-/** A live session file plus a stale sync is exactly the silent-death signature. */
-const hasLiveSessionState = async (home: string): Promise<boolean> => {
-  try {
-    return (await readdir(join(home, "sessions"))).length > 0;
-  } catch {
-    return false;
-  }
+  return hintsCheck(probe, live.oldestAgeMs !== null);
 };
 
 /**
@@ -1987,11 +2073,13 @@ const checkLastSync = async (
   home: string,
   key: string,
   now: Date,
+  live: LiveRepoSessions,
 ): Promise<Check> => {
   const name = "last capture sync";
+  const hasLiveSession = live.oldestAgeMs !== null;
   const sync = await readSyncState(home, key);
   if (sync.lastCaptureOkAt === null) {
-    return (await hasLiveSessionState(home))
+    return hasLiveSession
       ? check(
           "WARN",
           name,
@@ -2002,7 +2090,7 @@ const checkLastSync = async (
   }
   const ageMs = now.getTime() - Date.parse(sync.lastCaptureOkAt);
   const isStale = ageMs > DOCTOR_LAST_SYNC_WARN_MINUTES * MS_PER_MINUTE;
-  return isStale && (await hasLiveSessionState(home))
+  return isStale && hasLiveSession
     ? check("WARN", name, `${formatAge(ageMs)} ago with a live session`)
     : check("PASS", name, `${formatAge(ageMs)} ago`);
 };
@@ -2177,6 +2265,15 @@ export const runDoctor = async (
   // it: an older hub 404s and the count degrades to null (§R6).
   const openSessions = await getOpenSessions(hubCtx);
   const openOnHub = openSessions.ok ? openSessions.data.length : null;
+  // The session-state scan, once, for every line that gates on "is anybody
+  // running anything here" — four of them used to answer it with a bare
+  // readdir and were all satisfied by week-old corpses (review finding B2-04).
+  const liveSessions = await readLiveRepoSessions(
+    config.home,
+    config.hubUrl,
+    identity.repoId,
+    now,
+  );
   // Whether the two PROJECT files this repo's advice keeps recommending can
   // actually reach a teammate (trial finding M11). Resolved once, passed as
   // data, so `globalInstallChecks` stays pure and testable.
@@ -2240,7 +2337,7 @@ export const runDoctor = async (
     ...(await foreignDropChecks(config.home)),
     await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
     await checkSummarizerRunner(env, config.home),
-    await checkLastSync(config.home, key, now),
+    await checkLastSync(config.home, key, now, liveSessions),
     await checkAbsences(hubCtx, identity.repoId),
     await checkPrivacy(hubCtx),
     skewCheck,
@@ -2249,11 +2346,11 @@ export const runDoctor = async (
     // Appended at the END so a sibling branch's rebase stays mechanical, and
     // because these read execution rather than configuration: the reader has
     // just been told what is WIRED, and these say what has actually RUN.
-    await checkHooksFiring(config.home, key, now),
-    await checkStatuslineRendered(config.home, key, now),
+    await checkHooksFiring(config.home, key, now, liveSessions),
+    await checkStatuslineRendered(config.home, key, now, liveSessions),
     await checkRepoConnected(identity.root, isConnectedHere),
-    await checkCapture(config.home, config.hubUrl, identity.repoId, now),
-    await checkHints(hubCtx, identity.repoId, config.home),
+    checkCapture(liveSessions),
+    await checkHints(hubCtx, identity.repoId, liveSessions),
   ]);
 };
 

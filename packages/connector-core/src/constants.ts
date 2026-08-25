@@ -593,18 +593,27 @@ export const DOCTOR_LAST_SYNC_WARN_MINUTES = 10;
  * How long a registered hook event may go without firing, while a session is
  * live, before `doctor` says so (trial finding M2).
  *
- * SIXTY MINUTES, not ten. PostToolUse fires per edit and SessionStart once per
- * session, so the quiet stretches this must survive are lunch, a meeting, a
- * long read — a ten-minute threshold would WARN through every one of them, and
- * a doctor that cries wolf daily is a doctor nobody reads. An hour still
- * catches the failure this exists for: hooks that stopped at the last agent
- * restart, at an `nvm use`, or at a `CROSSCHECK_DISABLED` and never resumed.
+ * SIXTY MINUTES, not ten. PostToolUse fires per edit, so the quiet stretches
+ * this must survive are lunch, a meeting, a long read — a ten-minute threshold
+ * would WARN through every one of them, and a doctor that cries wolf daily is
+ * a doctor nobody reads. An hour still catches the failure this exists for:
+ * hooks that stopped at the last agent restart, at an `nvm use`, or at a
+ * `CROSSCHECK_DISABLED` and never resumed.
  *
- * Applied only to the events that fire on their own (SessionStart,
- * PostToolUse, UserPromptSubmit, Stop). PreToolUse and SessionEnd render an
- * age and never WARN: the tripwire only fires on a write to a file a teammate
- * holds, and SessionEnd may legitimately never have fired on a machine whose
- * sessions are still open.
+ * Applied only to the events that fire REPEATEDLY on their own (PostToolUse,
+ * UserPromptSubmit, Stop). PreToolUse and SessionEnd render an age and never
+ * WARN: the tripwire only fires on a write to a file a teammate holds, and
+ * SessionEnd may legitimately never have fired on a machine whose sessions are
+ * still open. SESSION START IS OFF THE LIST TOO, and an earlier version of
+ * this comment argued for excluding it and then listed it anyway: it fires
+ * ONCE per session and its marker is per-repo last-writer-wins, so its age is
+ * "time since the last session started here". Three hours into one session it
+ * WARNed on a line whose own numbers read `PostToolUse 8s · Stop 30s` (review
+ * finding B2-05).
+ *
+ * The threshold also gates the NEVER-FIRED case against the session's own age
+ * (cli doctor.ts hooksFiringCheck): an event that has never fired is silence
+ * only once a session has been running long enough to have produced it.
  */
 export const DOCTOR_HOOK_SILENT_WARN_MINUTES = 60;
 /**
