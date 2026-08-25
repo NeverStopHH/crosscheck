@@ -87,8 +87,10 @@ export const ArgsSchema = z.object({
     .max(MAX_SINCE_FILTER_CHARS)
     .optional()
     .describe(
-      "Only work last active since then: a window like 14d or 72h, or an ISO date " +
-        "like 2026-08-01. At most 365 days back; omit it to search all of history.",
+      "Only work last touched since then: a window like 14d or 72h, or an ISO date " +
+        "like 2026-08-01. \"Touched\" is when the work context itself last changed — " +
+        "the same age each result prints — so claims filed into an older context do " +
+        "not pull it into the window. At most 365 days back; omit it for all of history.",
     ),
   limit: z
     .number()

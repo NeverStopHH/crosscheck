@@ -251,8 +251,22 @@ export interface SearchQuery {
    * Activity, `coalesce(updated_at, created_at)`, rather than creation: it is
    * the timestamp every surface already renders as the row's age and the one
    * decay is computed from, so a result under a 14-day window can never print
-   * "40d ago". A context opened in March and worked on yesterday IS work from
-   * the last two weeks, and filtering on created_at alone would drop it.
+   * "40d ago". A context opened in March whose title, status or intent changed
+   * yesterday IS work from the last two weeks, and filtering on created_at
+   * alone would drop it.
+   *
+   * WHAT MOVES THAT TIMESTAMP, exactly, because a filter is only as honest as
+   * the field it reads: the work context row's own update path
+   * (services/record-handlers.ts — title, description, intent, status). A
+   * CLAIM filed into the context does not touch it. So a long-running context
+   * whose only fresh activity is claims falls outside a tight window, which is
+   * a false negative and a deliberate one: including it while the same answer
+   * printed its stale age and decayed it as 40 days old would be the
+   * dishonest half of the trade. Making a context's activity include its
+   * claims is one edit to the row's timestamp, not to this predicate, and it
+   * moves ranking and every rendered age with it — a change for the block that
+   * owns decay, pinned meanwhile by "counts the context's own last change, not
+   * the claims filed into it" in test/search-filters.test.ts.
    */
   readonly since?: Date | undefined;
   readonly limit: number;

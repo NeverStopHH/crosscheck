@@ -36,6 +36,7 @@ import {
   registerTestSession,
   TEST_ADMIN_TOKEN,
   TEST_START_ISO,
+  validClaimBody,
   validWorkContextBody,
   VALID_SESSION_BODY,
 } from "./helpers.ts";
@@ -435,6 +436,62 @@ describe("GET /api/search — the since filter", () => {
     expect(result.status).toBe(400);
     expect(result.code).toBe("invalid_since");
     expect(result.message).toContain("365");
+  });
+
+  test("counts the context's own last change, not the claims filed into it", async () => {
+    // Arrange: THE SEMANTICS, pinned rather than assumed. work_contexts
+    // .updated_at moves when the context itself changes — title, description,
+    // intent, status (services/record-handlers.ts) — and a claim filed into
+    // it does not touch the row. So `since` measures the same instant every
+    // surface renders as the row's age and time decay is computed from, and a
+    // hit under a 14-day window can never print "40d ago". The cost is this
+    // test's subject: a long-running context whose only fresh activity is
+    // claims stays outside the window. Deliberate, because including it while
+    // the same answer printed its stale age would be the dishonest half.
+    const { harness, ken } = await seedCrowdedTier();
+    await seedContexts(harness, ken, "ses_ken", [
+      {
+        id: "wc_stale",
+        createdAt: OLD_CREATED_ISO,
+        targetValues: [NEEDLE_TARGET],
+      },
+    ]);
+    const filed = await postRecords(harness, ken, {
+      records: [
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_fresh",
+            workContextId: "wc_stale",
+            authorSessionId: "ses_ken",
+            createdAt: TEST_START_ISO,
+          }),
+          { sessionId: "ses_ken" },
+        ),
+      ],
+    });
+    // The claim really landed — otherwise this test would pass for the wrong
+    // reason, which is the failure mode a negative assertion invites.
+    expect(filed.data?.rejected ?? 1).toBe(0);
+
+    // Act
+    const windowed = await search(harness, ken.apiKey, {
+      query: NEEDLE_TARGET,
+      developer: "Ken",
+      since: "14d",
+    });
+    const unwindowed = await search(harness, ken.apiKey, {
+      query: NEEDLE_TARGET,
+      developer: "Ken",
+    });
+
+    // Assert: found without the window, dropped by it, because the context
+    // row itself was last touched 60 days ago — while the context Ken really
+    // did change inside the window is still there, so this is the window
+    // working, not the filter failing
+    expect(unwindowed.ids).toContain("wc_stale");
+    expect(windowed.ids).not.toContain("wc_stale");
+    expect(windowed.ids).toContain("wc_needle");
   });
 
   test("refuses a window in the future instead of answering nothing", async () => {
