@@ -16,12 +16,14 @@ import { ClaimSchema } from "./claim.ts";
  * asked; Jira's own guidance prefers an @mention over a watcher precisely
  * because it notifies once).
  *
- * `status` and `expiresAt` are on the wire because a READ carries them, and
- * they are IGNORED ON INGEST: the hub owns both. A client that could post
- * `status: "answered"` could mark its own question answered without anybody
- * answering it, and a client that could post `expiresAt` could file a
- * question that outlives the TTL for ever — a haunted briefing, which is the
- * one thing an expiring channel exists to prevent.
+ * `status`, `expiresAt` AND `createdAt` are on the wire because a READ
+ * carries them, and all three are IGNORED ON INGEST: the hub owns them. A
+ * client that could post `status: "answered"` could mark its own question
+ * answered without anybody answering it. A client that could post `expiresAt`
+ * — or `createdAt`, which is what `expiresAt` is derived from — could file a
+ * question that outlives the TTL for ever (a haunted briefing, the one thing
+ * an expiring channel exists to prevent) or backdate one past the TTL, where
+ * the open budgets, the day-rate probe and the dedup scan are all blind to it.
  */
 export const MAX_QUESTION_BODY_LENGTH = 400;
 

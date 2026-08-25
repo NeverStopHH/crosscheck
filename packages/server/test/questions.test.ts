@@ -73,6 +73,58 @@ const readQuestions = async (
   };
 };
 
+/**
+ * The RECORD path (spool replay), which carries `createdAt` on the wire —
+ * the axis the route path cannot exercise, because the route stamps its own.
+ */
+const askRecords = async (
+  harness: TestHarness,
+  party: Party,
+  bodies: readonly Record<string, unknown>[],
+): Promise<{
+  readonly accepted: number;
+  readonly rejected: number;
+  readonly firstRejection: string;
+}> => {
+  const response = await harness.app.request(
+    "/api/records",
+    jsonRequest("POST", party.developer.apiKey, {
+      records: bodies.map((body, index) => ({
+        cx: "0.1",
+        id: `env_q_${String(index)}`,
+        ts: harness.clock.now().toISOString(),
+        producer: {
+          developerId: party.developer.developerId,
+          agentKind: "claude-code",
+          sessionId: party.sessionId,
+        },
+        kind: "question",
+        body: {
+          repo: REPO,
+          authorDeveloperId: party.developer.developerId,
+          authorSessionId: party.sessionId,
+          ...body,
+        },
+      })),
+    }),
+  );
+  const parsed = (await response.json()) as {
+    data?: {
+      accepted?: number;
+      rejected?: number;
+      results?: readonly { issues?: readonly string[] }[];
+    };
+  };
+  const results = parsed.data?.results ?? [];
+  return {
+    accepted: parsed.data?.accepted ?? 0,
+    rejected: parsed.data?.rejected ?? 0,
+    firstRejection:
+      results.find((result) => (result.issues ?? []).length > 0)?.issues?.[0] ??
+      "",
+  };
+};
+
 const failureOf = async (
   response: Response,
 ): Promise<{ readonly code: string; readonly message: string }> => {
@@ -303,6 +355,60 @@ describe("asking a teammate", () => {
     const nicksView = await readQuestions(harness, nick);
     expect(nicksView.data.counts["askedExpired"]).toBe(1);
     expect(nicksView.data.counts["askedAnswered"]).toBe(0);
+  });
+
+  test("a backdated question expires on the hub's clock, not the caller's", async () => {
+    // Arrange: `expiresAt` is derived from `createdAt`, so a caller who owned
+    // `createdAt` would own the TTL — the same hole the hub already closed for
+    // `status` and `expiresAt` themselves.
+    const filed = await askRecords(harness, nick, [
+      {
+        id: "qn_future",
+        targetDeveloperId: ken.developer.developerId,
+        body: "Did the rate-limit variant ever get tried?",
+        createdAt: "2099-01-01T00:00:00.000Z",
+      },
+    ]);
+    expect(filed.accepted).toBe(1);
+    const stamped = await readQuestions(harness, ken);
+    expect(stamped.data.inbox[0]?.["createdAt"]).not.toContain("2099");
+
+    // Act: one day past the TTL of a question asked NOW.
+    harness.clock.advanceSeconds(15 * SECONDS_PER_DAY);
+
+    // Assert: gone from the target's inbox, and counted as expired for the
+    // asker — not open in the target's briefing until the year 2099.
+    const kensView = await readQuestions(harness, ken);
+    expect(kensView.data.inbox).toHaveLength(0);
+    const nicksView = await readQuestions(harness, nick);
+    expect(nicksView.data.counts["askedExpired"]).toBe(1);
+  });
+
+  test("backdating a question does not lift the hub's budgets", async () => {
+    // Arrange: a question backdated past the TTL is neither live (the two open
+    // budgets and the dedup scan all read `isLive`) nor inside the rolling 24 h
+    // the day probe counts — so an untrusted `createdAt` switches all three off
+    // at once, and the dedup scan with them.
+    const backdated = new Date(
+      harness.clock.now().getTime() - 15 * SECONDS_PER_DAY * 1000,
+    ).toISOString();
+
+    // Act: ten questions to one teammate, where the per-target budget is three.
+    const filed = await askRecords(
+      harness,
+      nick,
+      Array.from({ length: 10 }, (_unused, index) => ({
+        id: `qn_backdated_${String(index)}`,
+        targetDeveloperId: ken.developer.developerId,
+        body: `Did the retry path in importer ${String(index)} ever get tried?`,
+        createdAt: backdated,
+      })),
+    );
+
+    // Assert: the budget refused the surplus, in the same words the route uses.
+    expect(filed.accepted).toBeLessThanOrEqual(3);
+    expect(filed.rejected).toBeGreaterThan(0);
+    expect(filed.firstRejection).toContain("question budget");
   });
 
   test("a question past the TTL leaves the inbox without any cron", async () => {

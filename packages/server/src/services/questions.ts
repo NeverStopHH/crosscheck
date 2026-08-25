@@ -324,7 +324,26 @@ export const askQuestion = async (
   });
 };
 
-/** The record-kind entry point: the wire body, minus what the hub owns. */
+/**
+ * The record-kind entry point: the wire body, minus what the hub owns.
+ *
+ * `createdAt` IS ONE OF THOSE, and it is the third hub-owned field rather
+ * than the first two plus a trusted timestamp. It decides `expires_at`
+ * (createdAt + QUESTION_TTL_DAYS), which the two open budgets and every
+ * listing read through `isLive`, AND the rolling window the day-rate probe
+ * counts in — so a caller who owned it owned the TTL and all three budgets at
+ * once: a question dated 2099 never expires and outranks every honest one
+ * (`created_at DESC`), and a question backdated past the TTL is invisible to
+ * the open budgets, to the day probe and to the dedup scan, which is 60 of 60
+ * accepted. The wire value is therefore dropped, exactly like `status` and
+ * `expiresAt`.
+ *
+ * WHAT IT COSTS: a question spooled offline and flushed later is dated at the
+ * flush, not at the ask. That is the honest direction to be wrong in — the
+ * TTL then runs from the moment the hub could first show it to anybody — and
+ * it costs nothing today, because no connector produces this record kind
+ * (the tool posts to /api/questions, which already stamps `deps.now()`).
+ */
 export const askQuestionFromRecord = (
   deps: Deps,
   authorDeveloperId: string,
@@ -337,7 +356,7 @@ export const askQuestionFromRecord = (
     targetDeveloperId: body.targetDeveloperId,
     workContextId: body.workContextId,
     body: body.body,
-    createdAt: new Date(body.createdAt),
+    createdAt: deps.now(),
   });
 
 /**
