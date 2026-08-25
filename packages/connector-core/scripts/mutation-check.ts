@@ -1731,10 +1731,13 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // #17/#20: the state-file cap must be spent on the NEWEST states. In
     // readdir order (OS hash order over UUID names) the cut is arbitrary, and
-    // the live session of this repo can miss the window entirely.
+    // the live session of this repo can miss the window entirely. The sort
+    // moved into the shared listing when capture health stopped keeping a
+    // second copy of readdir+stat+sort+bound; every reader of session state
+    // now rides on this one line.
     label: "the state-file cap is spent in readdir order again",
-    file: `${CORE}/src/state/capture-health.ts`,
-    from: "    .sort((a, b) => b.modifiedAt - a.modifiedAt)",
+    file: `${CORE}/src/state/session-scan.ts`,
+    from: "    .sort((left, right) => right.mtimeMs - left.mtimeMs)",
     to: "    .sort(() => 0)",
     test: `${CLI}/test/capture-health.test.ts`,
     because:
