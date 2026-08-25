@@ -48,7 +48,6 @@ const ageSince = (iso: string | null, now: Date): string | null => {
   return Number.isNaN(ms) ? null : formatAge(now.getTime() - ms);
 };
 
-/** Counts developers, not sessions — several windows are still one teammate. */
 /**
  * `Ken last seen 10h ago` — the difference between offline and never
  * onboarded (Anhang A, A4-09).
@@ -71,6 +70,7 @@ const lastSeenSuffix = (
   return rendered.length === 0 ? "" : ` · ${rendered.join(", ")}`;
 };
 
+/** Counts developers, not sessions — several windows are still one teammate. */
 const presenceLine = (
   entries: readonly PresenceEntry[],
   syncAge: string,
