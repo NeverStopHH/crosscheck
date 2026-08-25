@@ -540,6 +540,13 @@ export const STATUS_MAX_SESSION_STATES = 50;
 
 export const PRESENCE_CACHE_TTL_MS = 10_000;
 export const STATUSLINE_MAX_CHARS = 90;
+/**
+ * Teammates the `cx 0` branch may name as last-seen (Anhang A, A4-09). Three,
+ * because the whole line is STATUSLINE_MAX_CHARS wide and `capLine` truncates
+ * whatever does not fit — the point is to tell "offline" from "never
+ * onboarded", which the first name already does.
+ */
+export const STATUSLINE_MAX_LAST_SEEN = 3;
 export const STATUSLINE_MAX_NAMES = 3;
 export const STATUSLINE_NAME_CHARS = 12;
 

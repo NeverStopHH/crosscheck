@@ -13,6 +13,7 @@ import {
   readPresenceCache,
   writePresenceCache,
 } from "@crosscheck/connector-core/state/presence-cache.ts";
+import type { LastSeenEntry } from "@crosscheck/connector-core/state/presence-cache.ts";
 import { recordStatuslineRendered } from "@crosscheck/connector-core/state/fired-markers.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { prepareHook } from "../hooks/runner.ts";
@@ -48,14 +49,39 @@ const ageSince = (iso: string | null, now: Date): string | null => {
 };
 
 /** Counts developers, not sessions — several windows are still one teammate. */
+/**
+ * `Ken last seen 10h ago` — the difference between offline and never
+ * onboarded (Anhang A, A4-09).
+ *
+ * `cx 0 · no teammates on this repo` covered both, and they need opposite
+ * responses: a teammate who logged off this morning needs nothing, a repo
+ * nobody else has ever connected to needs an onboarding conversation. The
+ * names come from the presence cache SessionStart already writes, derived
+ * from the work-context list it already fetched — no extra hub call, no extra
+ * hook budget.
+ */
+const lastSeenSuffix = (
+  lastSeen: readonly LastSeenEntry[],
+  now: Date,
+): string => {
+  const rendered = lastSeen.flatMap((entry) => {
+    const age = ageSince(entry.at, now);
+    return age === null ? [] : [`${capName(entry.name)} last seen ${age} ago`];
+  });
+  return rendered.length === 0 ? "" : ` · ${rendered.join(", ")}`;
+};
+
 const presenceLine = (
   entries: readonly PresenceEntry[],
   syncAge: string,
   now: Date,
+  lastSeen: readonly LastSeenEntry[] = [],
 ): string => {
   const teammates = groupTeammates(entries, now);
   if (teammates.length === 0) {
-    return capLine(`cx 0 · no teammates on this repo · capture ${syncAge}`);
+    return capLine(
+      `cx 0 · no teammates on this repo${lastSeenSuffix(lastSeen, now)} · capture ${syncAge}`,
+    );
   }
   return capLine(
     `cx ${teammates.length} · ${renderNames(teammates)} · capture ${syncAge}`,
@@ -106,13 +132,32 @@ const renderForContext = async (ctx: HookContext): Promise<string> => {
     if (sync.lastErrorStatus === HTTP_UNAUTHORIZED) {
       return failureLine(failureHead(HTTP_UNAUTHORIZED, "http"), captureAge);
     }
-    return presenceLine(cache.entries, captureAge ?? "never", now);
+    return presenceLine(
+      cache.entries,
+      captureAge ?? "never",
+      now,
+      cache.lastSeen,
+    );
   }
 
   const result = await getPresence(ctx.hub, ctx.identity.repoId);
   if (result.ok) {
-    await writePresenceCache(ctx.config.home, ctx.repoKey, result.data, now);
-    return presenceLine(result.data, captureAge ?? "never", now);
+    // The last-seen list is SessionStart's to derive (it holds the work
+    // contexts); this write carries whatever the cache already had, so a
+    // refresh here never erases it.
+    await writePresenceCache(
+      ctx.config.home,
+      ctx.repoKey,
+      result.data,
+      now,
+      cache?.lastSeen ?? [],
+    );
+    return presenceLine(
+      result.data,
+      captureAge ?? "never",
+      now,
+      cache?.lastSeen ?? [],
+    );
   }
 
   return failureLine(failureHead(result.status, result.kind), captureAge);
