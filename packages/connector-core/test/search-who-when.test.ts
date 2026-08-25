@@ -457,3 +457,65 @@ describe("search_related_work against a hub that predates the filters", () => {
     expect(window.text).not.toContain("developer filter");
   });
 });
+
+/**
+ * WHEN THE NAME IS NOT ENOUGH, end to end.
+ *
+ * The hub writes these sentences and the connector renders them, and the two
+ * halves have failed independently: a sentence budgeted before the reader's
+ * NFKC fold arrived cut, and one containing a phrase-filter word arrived
+ * blanked entirely. So the assertions here are on what a reader would see —
+ * the count, an address they can retype, and the next call — rather than on
+ * what either side sent.
+ *
+ * Its developers are created HERE rather than in beforeAll: they would
+ * otherwise change which spellings the unknown-name refusals above offer, and
+ * this file's tests run in order.
+ */
+describe("search_related_work when a name names several people", () => {
+  const ROBINS = 7;
+
+  test("names the true count and an address a reader can retype", async () => {
+    // Arrange: more of them than the hub's ambiguity probe reads, so the count
+    // in the sentence cannot be the page it came from
+    for (const index of Array.from({ length: ROBINS }, (_, at) => at + 1)) {
+      await createDeveloper("Robin", `robin${String(index)}@who.example.com`);
+    }
+
+    // Act
+    const result = await search(bob, { query: "login", developer: "Robin" });
+
+    // Assert
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain(`${String(ROBINS)} developers here`);
+    expect(result.text).toContain("robin1@who.example.com");
+    expect(result.text).toContain("Ask again with the exact address");
+    // The whole sentence survived the transport: it is neither cut at the
+    // connector's cap nor replaced wholesale by the phrase filter
+    expect(result.text).not.toContain("[redacted");
+    expect(result.text).toContain("a filter did not resolve to what it names");
+  });
+
+  test("the answer to the retyped address still says whose it is", async () => {
+    // Act: exactly what the refusal above told the caller to do
+    const result = await search(bob, {
+      query: "login",
+      developer: "robin3@who.example.com",
+    });
+
+    // Assert: the header does not throw away the distinction the caller just
+    // paid a refusal to make
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("Filters: Robin · robin3@who.example.com");
+  });
+
+  test("a blank developer is refused rather than quoted back as nothing", async () => {
+    // Act
+    const result = await search(bob, { query: "login", developer: "   " });
+
+    // Assert
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("blank");
+    expect(result.text).not.toContain('""');
+  });
+});
