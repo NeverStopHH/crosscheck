@@ -753,21 +753,48 @@ export const listUndeliveredAnswers = async (
   }));
 };
 
+/**
+ * The ASKER's side of the same sentence — and it is one sentence, so these
+ * numbers have to describe the same scope the inbox half does.
+ *
+ * SCOPED TO THE REPO, like the inbox. Without it `crosscheck status` inside
+ * one repo answers with hub-wide totals ("3 asked") beside a repo-scoped
+ * "none open to you", and the reader goes looking for two questions that were
+ * never asked here.
+ *
+ * THE EXPIRED COUNT IS WINDOWED to one further TTL past the expiry. Nothing
+ * can clear an expired row — `withdrawn` is unreachable, there is no reaper —
+ * so an unwindowed count makes `doctor` WARN and exit 1 for ever over one
+ * question nobody answered last spring, which is precisely the alert fatigue
+ * that makes people stop reading doctor. Reported for a fortnight, then
+ * silent; the wording says the window out loud.
+ */
 const countOwnQuestions = async (
   deps: Deps,
   developerId: string,
+  repo: string,
 ): Promise<Pick<QuestionCounts, "asked" | "askedAnswered" | "askedExpired">> => {
+  const expiredSince = new Date(
+    deps.now().getTime() - QUESTION_TTL_DAYS * MS_PER_DAY,
+  );
   const rows = await deps.db
-    .select({ status: questions.status, count: sql<number>`count(*)::int` })
+    .select({
+      asked: sql<number>`count(*)::int`,
+      askedAnswered: sql<number>`(count(*) filter (where ${questions.status} = 'answered'))::int`,
+      askedExpired: sql<number>`(count(*) filter (where ${questions.status} = 'expired' and ${questions.expiresAt} > ${expiredSince}))::int`,
+    })
     .from(questions)
-    .where(eq(questions.authorDeveloperId, developerId))
-    .groupBy(questions.status);
-  const of = (status: string): number =>
-    rows.find((row) => row.status === status)?.count ?? 0;
+    .where(
+      and(
+        eq(questions.authorDeveloperId, developerId),
+        eq(questions.repo, repo),
+      ),
+    );
+  const row = rows[0];
   return {
-    asked: rows.reduce((total, row) => total + row.count, 0),
-    askedAnswered: of("answered"),
-    askedExpired: of("expired"),
+    asked: row?.asked ?? 0,
+    askedAnswered: row?.askedAnswered ?? 0,
+    askedExpired: row?.askedExpired ?? 0,
   };
 };
 
@@ -795,7 +822,7 @@ export const listQuestions = async (
     // above — see summarizeInbox for what deriving them from a bounded,
     // newest-first listing costs.
     summarizeInbox(deps, developerId, repo),
-    countOwnQuestions(deps, developerId),
+    countOwnQuestions(deps, developerId, repo),
   ]);
   return { inbox, answers, counts: { ...backlog, ...ownCounts } };
 };

@@ -873,3 +873,84 @@ describe("the backlog counters are not capped by the listing bound", () => {
     expect(kensView.data.counts["oldestToMeFrom"]).toBe("Ada");
   });
 });
+
+/**
+ * The counters the ASKER reads. Both defects here are the same shape: a
+ * number that describes something wider than the sentence it appears in.
+ */
+describe("the asker's own counters describe this repo, and this fortnight", () => {
+  let harness: TestHarness;
+  let nick: Party;
+  let ken: Party;
+
+  beforeEach(async () => {
+    harness = await createTestHarness();
+    nick = await seatDeveloper(harness, "Nick", "nick@example.com", "ses_nick");
+    ken = await seatDeveloper(harness, "Ken", "ken@example.com", "ses_ken");
+  });
+
+  test("an expired question stops being warned about one TTL later", async () => {
+    // Arrange: one question nobody answers.
+    expect(
+      (
+        await ask(harness, nick, {
+          developer: "Ken",
+          body: "Did the rate-limit variant of the importer ever get tried?",
+        })
+      ).status,
+    ).toBe(200);
+
+    // Act: past the TTL, then far past it. Nothing can clear an expired row —
+    // `withdrawn` is unreachable and there is no reaper — so an unwindowed
+    // counter makes `crosscheck doctor` WARN and exit 1 for the rest of the
+    // install's life over one question from last spring.
+    harness.clock.advanceSeconds(15 * SECONDS_PER_DAY);
+    const justExpired = await readQuestions(harness, nick);
+    harness.clock.advanceSeconds(365 * SECONDS_PER_DAY);
+    const longAgo = await readQuestions(harness, nick);
+
+    // Assert
+    expect(justExpired.data.counts["askedExpired"]).toBe(1);
+    expect(longAgo.data.counts["askedExpired"]).toBe(0);
+  });
+
+  test("the asked counters are scoped to the repo the reader asked about", async () => {
+    // Arrange: the same developer, one question from each of two repos. The
+    // inbox half of the same sentence is repo-scoped, so a hub-wide `asked`
+    // beside it sends a reader looking for work that is not in this repo.
+    const otherRepo = "github.com/acme/other-repo";
+    expect(
+      (
+        await registerTestSession(harness, nick.developer.apiKey, {
+          id: "ses_nick_other",
+          repo: otherRepo,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await ask(harness, nick, {
+          developer: "Ken",
+          body: "Did the retry path in the importer ever get tried?",
+        })
+      ).status,
+    ).toBe(200);
+    const elsewhere = await harness.app.request(
+      "/api/questions",
+      jsonRequest("POST", nick.developer.apiKey, {
+        id: "qn_other_repo",
+        repo: otherRepo,
+        sessionId: "ses_nick_other",
+        developer: "Ken",
+        body: "Did the matcher ever get a second pass over the alias table?",
+      }),
+    );
+    expect(elsewhere.status).toBe(200);
+
+    // Act
+    const here = await readQuestions(harness, nick);
+
+    // Assert: one asked from HERE, not the two on the hub.
+    expect(here.data.counts["asked"]).toBe(1);
+  });
+});
