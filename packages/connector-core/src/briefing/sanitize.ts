@@ -405,6 +405,17 @@ export const bareUntrusted = (
  * (`bareUntrusted`) — and importing the ID class the other way round would
  * have made briefing/render.ts and mcp/render.ts a cycle.
  */
+/*
+ * ONE ALPHABET, TWO PACKAGES. The HUB validates an id against the same set
+ * before it stores one (`@crosscheck/schema`'s `SAFE_ID_PATTERN`), so an id
+ * that reaches this renderer is already what this renderer would print — which
+ * is what makes `formatQuestionEntry`'s "a row I will not vouch for is
+ * dropped" true instead of "an id I will silently rewrite into one the hub has
+ * never heard of".
+ *
+ * VERIFY: bun -e 'const a=await import("./packages/schema/src/question.ts");const b=await import("./packages/connector-core/src/briefing/sanitize.ts");console.log(a.SAFE_ID_PATTERN.source === b.SAFE_ID_PATTERN.source)'
+ * PRINTS: true
+ */
 const ID_ALPHABET_SOURCE = "A-Za-z0-9_.:-";
 const ID_ALPHABET = new RegExp(`[^${ID_ALPHABET_SOURCE}]`, "g");
 export const SAFE_ID_PATTERN = new RegExp(`^[${ID_ALPHABET_SOURCE}]+$`);

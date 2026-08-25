@@ -100,6 +100,21 @@ const checkProducerSession = async (
  * rules. A budget refusal is a REJECTION here — a spool cannot retry into a
  * budget that only frees up when somebody answers.
  */
+/**
+ * WHY THIS KIND SHIPS WITH NO PRODUCER. No connector mints a `question`
+ * record today — `ask_teammate` posts to /api/questions, which resolves the
+ * developer TERM (a record body cannot say "Kim is the name of three
+ * developers here"). So this arm is reachable only by a hand-rolled or
+ * modified client, which is exactly the threat model the budgets are written
+ * for, and it was where the TTL and all three budgets could be lifted at once
+ * through an untrusted `createdAt` (services/questions.ts, askQuestionFromRecord).
+ *
+ * It is kept rather than deleted because the hole is closed at the mechanism —
+ * the hub owns `createdAt` here exactly as it owns `status` and `expiresAt` —
+ * and because this arm is now the ONLY path that exercises that gate: the
+ * route stamps its own clock and cannot. The tests that prove a caller cannot
+ * buy themselves a longer TTL or a bigger budget run through here.
+ */
 const ingestQuestion = async (
   deps: Deps,
   developerId: string,

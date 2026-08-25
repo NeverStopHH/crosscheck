@@ -51,8 +51,11 @@ export type QuestionStatus = z.infer<typeof QuestionStatusSchema>;
  * renderer's contract ("a row I will not vouch for is dropped") true, because
  * an id that reaches the renderer is already what the renderer would print.
  *
- * VERIFY: bun -e 'const a=await import("./packages/schema/src/question.ts");const b=await import("./packages/connector-core/src/briefing/sanitize.ts");console.log(a.SAFE_ID_PATTERN.source === b.SAFE_ID_PATTERN.source)'
- * PRINTS: true
+ * ONE ALPHABET, TWO PACKAGES. The equality with the renderer's own copy is
+ * pinned as a directive in connector-core's briefing/sanitize.ts rather than
+ * here: a dynamic import of a render-layer module — even inside a comment —
+ * is what the §4.4 render-surface registry looks for, and this schema is not
+ * a render surface.
  */
 export const SAFE_ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 

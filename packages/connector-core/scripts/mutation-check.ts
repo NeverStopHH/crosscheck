@@ -1607,6 +1607,100 @@ export const MUTATIONS: readonly Mutation[] = [
       "observation — the provenance laundering the echo-loop exclusion exists to stop",
   },
   {
+    // The THIRD hub-owned field, and the one that was not. `expires_at` is
+    // derived from `created_at`, and the two open budgets, the day-rate probe
+    // and the dedup scan all read it — so a caller who owns it owns all four.
+    label: "a question's createdAt is taken from the caller",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "    createdAt: deps.now(),",
+    to: "    createdAt: new Date(body.createdAt),",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "a question dated 2099 never expires and sorts above every honest one, " +
+      "and 60 backdated inserts pass budgets that measure 20 a day",
+  },
+  {
+    // The backlog counters are the whole point of the channel's telemetry, and
+    // deriving them from the bounded page is how they go quietly stale.
+    label: "the open-question counter is capped by the listing bound",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "    openToMe: totals[0]?.count ?? 0,",
+    to: "    openToMe: Math.min(totals[0]?.count ?? 0, MAX_QUESTIONS_LISTED),",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "`crosscheck status` under-counts the backlog and the doctor's " +
+      "\"a teammate has been waiting\" WARN can never fire again",
+  },
+  {
+    // DESIGN §2.1: opt-out hides LIVE PRESENCE, never addressed communication.
+    // The plausible regression is a later block extending visibility filtering
+    // here "for consistency with presence".
+    label: "presence opt-out starts filtering questions",
+    file: `${SERVER}/src/services/questions.ts`,
+    from:
+      "    eq(questions.targetDeveloperId, developerId),\n" +
+      "    eq(questions.repo, repo),",
+    to:
+      "    eq(questions.targetDeveloperId, developerId),\n" +
+      "    eq(questions.repo, repo),\n" +
+      "    sql`NOT EXISTS (SELECT 1 FROM developers hidden WHERE hidden.id = ${developerId} AND hidden.presence_opt_out)`,",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "an opted-out teammate silently stops receiving questions, and an " +
+      "asker who is refused has learned that they opted out",
+  },
+  {
+    // The §4 solicited exception meets the §3 Tier-1 rule here, and the hub is
+    // the only place that can hold the line: the answer path bypasses the
+    // client-side declared-only gate entirely.
+    label: "a derived draft may be delivered as an answer",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: '    if (body.claim.provenance !== "declared") {',
+    to: '    if (body.claim.provenance === "no-such-provenance") {',
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "an unpromoted auto-draft is injected into a teammate's prompt as " +
+      "substance — the one thing DESIGN §3 says a Tier-1 draft never does",
+  },
+  {
+    // Answers are the ONE proactive substance path, and the exception rests on
+    // the reader already holding the frame the answer lands in.
+    label: "the answer path stops being scoped to the asker's repo",
+    file: `${SERVER}/src/services/questions.ts`,
+    from:
+      "        eq(questions.repo, repo),\n" +
+      "        gt(questions.createdAt, answerWindowStart),",
+    to: "        gt(questions.createdAt, answerWindowStart),",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "a claim body answering a question asked in another codebase is " +
+      "injected into a session that never asked it",
+  },
+  {
+    // An answer is pushed HARDER than a question: it lands in the asker's next
+    // prompt as substance, with no relevance gate in front of it.
+    label: "an answer skips the secret scan",
+    file: `${CORE}/src/mcp/tools/answer-question.ts`,
+    from: "  if (containsSecret(parsed.value.body)) {\n    return toolFailure(ANSWER_SECRET_REFUSAL);\n  }\n",
+    to: "",
+    test: `${CORE}/test/question-tools.test.ts`,
+    because:
+      "a credential in an answer body is uploaded and injected into the " +
+      "asker's context (DESIGN.md §3: drop, never redact)",
+  },
+  {
+    // The same exposure on the tool beside it: a published claim is uploaded
+    // to a shared hub and can be injected into a teammate's prompt.
+    label: "a published claim skips the secret scan",
+    file: `${CORE}/src/mcp/tools/publish-claim.ts`,
+    from: "  if (containsSecret(parsed.value.body)) {\n    return toolFailure(CLAIM_SECRET_REFUSAL);\n  }\n",
+    to: "",
+    test: `${CORE}/test/mcp-tools.test.ts`,
+    because:
+      "a credential in a claim body reaches a second machine and a second " +
+      "model's context (DESIGN.md §3: drop, never redact)",
+  },
+  {
     // R1's WHO. Every tier list is bounded at TIER_CANDIDATES, so dropping
     // the filter from the shared scope condition does not merely widen the
     // answer — the wanted row is GONE, because 30 rows the caller did not ask
@@ -1924,14 +2018,15 @@ interface Outcome {
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 6
+ * PRINTS: mcp-tools.test.ts 1
  * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
  * PRINTS: presence.test.ts 1
  * PRINTS: proxy-e2e.test.ts 1
  * PRINTS: question-delivery.test.ts 1
- * PRINTS: question-tools.test.ts 1
- * PRINTS: questions.test.ts 3
+ * PRINTS: question-tools.test.ts 2
+ * PRINTS: questions.test.ts 8
  * PRINTS: records.test.ts 1
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: render-surface-registry.test.ts 2
