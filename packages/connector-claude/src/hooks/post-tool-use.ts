@@ -257,7 +257,12 @@ export const handlePostToolUse = async (
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
     let next = withSeenTargets(fresh, files);
     for (const entry of resolution?.newlyResolved ?? []) {
-      next = withKnownWorktreeRoot(next, entry.root, entry.repoId);
+      next = withKnownWorktreeRoot(
+        next,
+        entry.root,
+        entry.repoId,
+        entry.attempts,
+      );
     }
     return {
       ...next,

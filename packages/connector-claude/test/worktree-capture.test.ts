@@ -7,10 +7,13 @@
  * null and the target was dropped, silently and uncounted (371 worktree edits
  * → 0 targets across the trial). Both shapes are pinned:
  *   D1  cwd at the main checkout A, file in worktree B;
- *   D2  cwd inside the worktree B, file in B.
+ *   D2  cwd inside the worktree B, file in B;
+ *   D3  cwd inside worktree B, file in a THIRD worktree C — the cwd's root is
+ *       not the file's root, so the free D2 candidate must not be assumed for
+ *       a path it does not contain.
  * And the drops that must STAY drops, now counted: a file in a DIFFERENT
- * connected repo (foreignRepoDrops), and a loose file under no connected root
- * (outsideRootDrops).
+ * connected repo (foreignRepoDrops) — from any cwd — and a loose file under no
+ * connected root (outsideRootDrops).
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -124,6 +127,14 @@ const repoWithWorktree = async (
   return { main, worktree, home };
 };
 
+/** One more linked worktree of an existing checkout, carrying the config. */
+const addWorktree = async (main: string, label: string): Promise<string> => {
+  const worktree = join(await mkdtemp(join(tmpdir(), `cx-wt-${label}-`)), label);
+  await git(main, ["worktree", "add", worktree, "HEAD"]);
+  paths.push(join(worktree, ".."));
+  return worktree;
+};
+
 const targetsIn = async (home: string): Promise<readonly string[]> => {
   const lines = await readSpoolLines(home, repoKey(DEAD_HUB_URL, REPO_ID));
   return lines
@@ -172,6 +183,31 @@ describe("a session at checkout A editing a file in worktree B", () => {
     // Assert
     expect(stdout).toBe("");
     expect(await targetsIn(home)).toEqual([EDITED_FILE]);
+  });
+
+  test("D3: cwd inside worktree B captures a file in worktree C", async () => {
+    // Arrange: session bound to A, a second worktree C of the same repo, and a
+    // hook whose cwd is worktree B — B contains neither the session root nor
+    // the edited file, so the free identity candidate governs nothing here
+    const { main, worktree, home } = await repoWithWorktree("d3");
+    const third = await addWorktree(main, "d3-featC");
+    await writeRepoFile(third, EDITED_FILE, "export const a = 1;\n");
+    await writeSessionState(home, sessionState(main));
+
+    // Act
+    const stdout = await runHook(
+      "post-tool-use",
+      editPayload(worktree, join(third, EDITED_FILE)),
+      env(home),
+    );
+
+    // Assert: C's own root governed the file — captured, nothing dropped
+    expect(stdout).toBe("");
+    expect(await targetsIn(home)).toEqual([EDITED_FILE]);
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.outsideRootDrops).toBe(0);
+    expect(state?.foreignRepoDrops).toBe(0);
+    expect(state?.lastEditedPathResolvedAgainst).not.toBeNull();
   });
 });
 
@@ -234,6 +270,33 @@ describe("drops that must stay drops, now counted (#17)", () => {
     expect(
       state?.knownWorktreeRoots.some((entry) => entry.repoId === "github.com/acme/web"),
     ).toBe(true);
+  });
+
+  test("a DIFFERENT repo stays foreign even from a worktree cwd", async () => {
+    // Arrange: the same second-repo touch as above, but the hook's cwd is a
+    // worktree of THIS repo — the geometry where the identity shortcut used to
+    // swallow every path and book the drop under the wrong counter
+    const { main, worktree, home } = await repoWithWorktree("foreign-from-wt");
+    const other = await repoWithWorktree(
+      "foreign-from-wt-other",
+      "git@github.com:acme/web.git",
+    );
+    await writeRepoFile(other.main, "src/app.ts", "export const b = 2;\n");
+    await writeSessionState(home, sessionState(main));
+
+    // Act
+    const stdout = await runHook(
+      "post-tool-use",
+      editPayload(worktree, join(other.main, "src/app.ts")),
+      env(home),
+    );
+
+    // Assert: foreign, not outside-root — doctor's cause stays the true one
+    expect(stdout).toBe("");
+    expect(await targetsIn(home)).toEqual([]);
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.foreignRepoDrops).toBe(1);
+    expect(state?.outsideRootDrops).toBe(0);
   });
 
   test("a loose file under no connected root is an outside-root drop", async () => {

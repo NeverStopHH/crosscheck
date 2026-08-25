@@ -18,22 +18,36 @@
  *       answer, the common in-checkout case, no git.
  *   (b) else a CANDIDATE root: the runner already resolved the CWD's identity,
  *       so when `ctx.identity.root` differs from the session root and carries
- *       the same repoId (the "cwd is inside the worktree" shape, D2), it IS
- *       the file's root — free, no git. Otherwise walk up from the file to its
- *       own connected root (`findConnectedRepoRootForFile`, fs-only, bounded).
+ *       the same repoId (the "cwd is inside the worktree" shape, D2), it is a
+ *       FREE candidate — but only for the paths it actually contains. It is
+ *       the CWD's root, not the file's: a payload whose cwd sits in worktree B
+ *       while the edited file lives in worktree C is governed by C, so the
+ *       identity candidate is taken only when `toRepoRelative` against it
+ *       succeeds, and otherwise falls through to the walk up from the file to
+ *       its own connected root (`findConnectedRepoRootForFile`, fs-only,
+ *       bounded). Skipping that fall-through dropped same-repo targets and
+ *       booked cross-repo touches as outside-root drops.
  *   (c) the candidate's repoId, from the session-state cache
  *       (`knownWorktreeRoots`, positive AND negative answers) or ONE bounded
  *       `resolveRepoIdentity` on a cache miss — never per tool call for a root
- *       already seen (hook budgets are binding).
+ *       already seen (hook budgets are binding). A cached NULL is an UNKNOWN,
+ *       not an answer: a git deadline missed once under load would otherwise
+ *       exile that worktree for the session's whole life, so a null is
+ *       re-resolved until MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS tries have been
+ *       spent on it, then stands (the budget needs a floor too).
  *   (d) same repoId → capture against the candidate; a DIFFERENT repoId → a
- *       foreign drop (counted, the first-wins rule); a candidate that still
- *       will not resolve, or none at all → an outside-root drop (counted).
+ *       foreign drop (counted, the first-wins rule); a candidate whose repoId
+ *       is UNKNOWN, one that still will not resolve, or none at all → an
+ *       outside-root drop (counted). An unresolvable root is not evidence of a
+ *       second repo, so it must never inflate the foreign count that doctor
+ *       explains as "a multi-repo workspace's touches of its second repo".
  *
  * PURE over injected primitives so the hook drives it once (a pre-pass) and
  * folds the counts, the cache additions and the #18 diagnosis root into its
  * one locked state write. ACP/Cursor do not call this — the capture flow keeps
  * its single-root default (their worktree parity is a follow-up).
  */
+import { MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS } from "../constants.ts";
 import { findConnectedRepoRootForFile } from "../config/connected-repo.ts";
 import { realpathBestEffort } from "../config/paths.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
@@ -43,10 +57,16 @@ export interface KnownWorktreeRoot {
   /** A realpath'd worktree root. */
   readonly root: string;
   /**
-   * Its repo id — a foreign root carries ITS id (≠ the session's), an
-   * unresolvable root null; both are negative answers the cache keeps.
+   * Its repo id — a foreign root carries ITS id (≠ the session's); an
+   * unresolvable root is null, which is an UNKNOWN rather than an answer.
    */
   readonly repoId: string | null;
+  /**
+   * Identity resolutions this session has already spent on the root. Only a
+   * null `repoId` reads it: a known id is final, an unknown is retried while
+   * this is below MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS.
+   */
+  readonly attempts: number;
 }
 
 export interface ResolveTouchedRootsInput {
@@ -82,7 +102,10 @@ export interface TouchedRootsResolution {
   readonly foreignDrops: number;
   /** Touches that resolved to no root of THIS session's repo. */
   readonly outsideDrops: number;
-  /** New realpath'd (root → repoId|null) answers to fold into the cache. */
+  /**
+   * New realpath'd (root → repoId|null) answers to fold into the cache, each
+   * with the attempts spent on it so a retried UNKNOWN keeps its budget.
+   */
   readonly newlyResolved: readonly KnownWorktreeRoot[];
   /**
    * The root the FIRST path resolved against, or null when it dropped — the
@@ -90,6 +113,15 @@ export interface TouchedRootsResolution {
    */
   readonly firstResolvedRoot: string | null;
 }
+
+interface CacheEntry {
+  readonly repoId: string | null;
+  readonly attempts: number;
+}
+
+/** A null repoId stands only once the attempt budget for it is spent. */
+const isRetryableUnknown = (entry: CacheEntry): boolean =>
+  entry.repoId === null && entry.attempts < MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS;
 
 const defaultResolveRootRepoId = async (
   root: string,
@@ -112,10 +144,19 @@ export const resolveTouchedRoots = async (
 
   // The cache, realpath-keyed, seeded from session state and grown in place so
   // two paths sharing a new worktree root cost identity resolution only once.
-  const cache = new Map<string, string | null>(
-    input.knownWorktreeRoots.map((entry) => [entry.root, entry.repoId]),
+  const cache = new Map<string, CacheEntry>(
+    input.knownWorktreeRoots.map((entry) => [
+      entry.root,
+      { repoId: entry.repoId, attempts: entry.attempts },
+    ]),
   );
   const newlyResolved: KnownWorktreeRoot[] = [];
+
+  // The D2 shape, judged ONCE: the cwd sits in a different checkout of this
+  // session's repo. Per path it is still only a candidate — see (b).
+  const identityIsSiblingRoot =
+    identityRootReal !== sessionRootReal &&
+    input.identityRepoId === input.sessionRepoId;
 
   const rootByPath = new Map<string, string>();
   let foreignDrops = 0;
@@ -136,11 +177,14 @@ export const resolveTouchedRoots = async (
       continue;
     }
 
-    // (b) the file's own root: the CWD's identity when it is a DIFFERENT root
-    // of the same repo (D2, free), else a bounded fs walk up from the file.
+    // (b) the file's own root. The CWD's identity is free, but it governs only
+    // the paths it CONTAINS: a cwd in worktree B says nothing about a file in
+    // worktree C, so a miss falls through to the walk instead of giving up.
+    const viaIdentity = identityIsSiblingRoot
+      ? await toRepoRelative(input.identityRoot, input.cwd, path)
+      : null;
     const candidate =
-      identityRootReal !== sessionRootReal &&
-      input.identityRepoId === input.sessionRepoId
+      viaIdentity !== null
         ? input.identityRoot
         : await resolveConnectedRoot(input.cwd, path);
     if (candidate === null) {
@@ -151,30 +195,41 @@ export const resolveTouchedRoots = async (
     // (c) the candidate's repoId — cache, then identity resolution once. The
     // D2 identity candidate already knows its repoId, so it too costs no git.
     const candidateReal = await realpath(candidate);
-    let repoId = cache.get(candidateReal);
-    if (repoId === undefined) {
+    const cached = cache.get(candidateReal);
+    let repoId: string | null;
+    if (cached !== undefined && !isRetryableUnknown(cached)) {
+      repoId = cached.repoId;
+    } else {
       repoId =
         candidateReal === identityRootReal
           ? input.identityRepoId
           : await resolveRootRepoId(candidate);
-      cache.set(candidateReal, repoId);
-      newlyResolved.push({ root: candidateReal, repoId });
+      const attempts = (cached?.attempts ?? 0) + 1;
+      cache.set(candidateReal, { repoId, attempts });
+      newlyResolved.push({ root: candidateReal, repoId, attempts });
     }
 
-    // (d) same repo → capture; different → foreign; unresolvable → outside.
-    if (repoId === input.sessionRepoId) {
-      const relative = await toRepoRelative(candidate, input.cwd, path);
-      if (relative !== null) {
-        rootByPath.set(path, candidate);
-        if (isFirst) {
-          firstResolvedRoot = candidate;
-        }
-        continue;
-      }
+    // (d) unknown → outside (an UNKNOWN is not a second repo); a different
+    // repo → foreign; same repo → capture, or outside when it will not
+    // resolve against its own root either.
+    if (repoId === null) {
       outsideDrops += 1;
       continue;
     }
-    foreignDrops += 1;
+    if (repoId !== input.sessionRepoId) {
+      foreignDrops += 1;
+      continue;
+    }
+    const relative =
+      viaIdentity ?? (await toRepoRelative(candidate, input.cwd, path));
+    if (relative === null) {
+      outsideDrops += 1;
+      continue;
+    }
+    rootByPath.set(path, candidate);
+    if (isFirst) {
+      firstResolvedRoot = candidate;
+    }
   }
 
   return {

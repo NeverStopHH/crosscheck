@@ -228,6 +228,29 @@ export const MAX_SEEN_TARGETS = 500;
 export const MAX_KNOWN_WORKTREE_ROOTS = 8;
 
 /**
+ * How many identity resolutions ONE unresolvable worktree root may cost a
+ * session before its null is taken as final (trial finding #17).
+ *
+ * A null answer is an UNKNOWN — a git deadline missed under load, git absent
+ * from the hook's PATH — not "this root belongs to no repo". Caching it
+ * forever exiles a healthy worktree for the rest of the session on one slow
+ * spawn; not caching it at all lets a genuinely broken root (a linked
+ * worktree whose admin dir was pruned) spend a git deadline on EVERY tool
+ * call for the session's whole life. Retrying and then standing bounds both:
+ * an unresolvable root costs a session at most this many bounded resolutions,
+ * spread across separate hook invocations — the per-root worst case in git
+ * deadline is
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS * c.GIT_TIMEOUT_MS)'
+ * PRINTS: 3000
+ *
+ * and each hook's own withBudget cuts its share long before that. A KNOWN id
+ * (this repo's or a foreign one) is final on the first answer and never
+ * retried.
+ */
+export const MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS = 2;
+
+/**
  * The spool's only cap, and the reason compaction no longer exists: an append
  * that would push a session's data file past this is REFUSED and counted,
  * rather than making room by rewriting a file other processes append to.

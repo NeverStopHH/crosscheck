@@ -105,16 +105,22 @@ const SessionStateObjectSchema = z.looseObject({
    * Per-session cache of worktree roots this session has already resolved
    * (trial finding #17): `root` is the realpath'd worktree root of a touched
    * file, `repoId` its resolved repo id — a FOREIGN root sits here under its
-   * own id, an unresolvable one as null — both negative answers cached so a
-   * repeated touch costs no git either. FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS
-   * by `withKnownWorktreeRoot`.
-   * Default [] keeps every pre-#17 state file parsing.
+   * own id, an unresolvable one as null — both cached so a repeated touch
+   * costs no git either. `attempts` counts the identity resolutions the root
+   * has already cost: a null is an UNKNOWN, not an answer, so capture/touched-
+   * root.ts re-resolves it until MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS are spent
+   * (a git deadline missed once must not exile a healthy worktree for the
+   * session). FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS by
+   * `withKnownWorktreeRoot`.
+   * Defaults keep every pre-#17 state file parsing — an entry written before
+   * `attempts` existed reads as one attempt spent.
    */
   knownWorktreeRoots: z
     .array(
       z.object({
         root: z.string().min(1),
         repoId: z.string().min(1).nullable(),
+        attempts: z.number().int().min(1).default(1),
       }),
     )
     .default([]),
@@ -393,19 +399,22 @@ export const withBriefingSolvedRefs = (
  * #17), so the per-tool capture path never resolves the same root's identity
  * twice. Dedup by root (a cache, not a log — a re-resolution replaces the old
  * answer) and FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS, the withSeenTargets
- * shape. A foreign root is remembered under its own repoId and an
- * unresolvable one as null, so a repeated foreign/unresolvable touch is also
- * free after the first.
+ * shape. A foreign root is remembered under its own repoId, so a repeated
+ * foreign touch is free after the first. An UNRESOLVABLE root is remembered
+ * as null WITH the attempts spent on it, which is what lets the resolver
+ * retry it a bounded number of times instead of treating one missed git
+ * deadline as a permanent verdict.
  */
 export const withKnownWorktreeRoot = (
   state: SessionState,
   root: string,
   repoId: string | null,
+  attempts = 1,
 ): SessionState => {
   const withoutRoot = state.knownWorktreeRoots.filter(
     (entry) => entry.root !== root,
   );
-  const merged = [...withoutRoot, { root, repoId }];
+  const merged = [...withoutRoot, { root, repoId, attempts }];
   return {
     ...state,
     knownWorktreeRoots:
