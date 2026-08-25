@@ -1607,8 +1607,9 @@ export const MUTATIONS: readonly Mutation[] = [
     // indistinguishable from a teammate's.
     label: "the filter line stops saying the developer is the reader",
     file: `${CORE}/src/mcp/render.ts`,
-    from: "  return filters.isSelf === true ? `${name} (you)` : name;",
-    to: "  return name;",
+    from:
+      "  const labelled = filters.isSelf === true ? `${name} (you)` : name;",
+    to: "  const labelled = name;",
     test: `${CORE}/test/mcp-render.test.ts`,
     because:
       "a reader's own work comes back labelled exactly like a teammate's, " +
@@ -1731,8 +1732,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // looking for the sixth is told by name that they do not exist.
     label: "the ambiguity refusal counts only the rows it read",
     file: `${SERVER}/src/services/developer-lookup.ts`,
-    from: "      `${echo} is the name of ${String(totalCount)} developers here: ` +",
-    to: "      `${echo} is the name of ${String(candidates.length)} developers here: ` +",
+    from:
+      "    `${echo} is the name of ${String(totalCount)} developers here: ${list}. ` +",
+    to:
+      "    `${echo} is the name of ${String(candidates.length)} developers here: ${list}. ` +",
     test: `${SERVER}/test/search-filters.test.ts`,
     because:
       "the sentence reports the page size as the team, so a caller is told " +
