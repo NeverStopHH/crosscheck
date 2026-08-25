@@ -12,6 +12,8 @@ import {
 } from "../src/index.ts";
 import {
   ensureDir,
+  spoolCursorPath,
+  spoolDataPath,
   spoolDir,
   spoolDropsPath,
   spoolFlushLockPath,
@@ -224,6 +226,54 @@ describe("crosscheck doctor foreign-repo drops check (trial finding #9)", () => 
     // Act + Assert: no line at all — zero is not news
     const result = await runCli(["doctor"], doctorEnv(home), repo);
     expect(result.stdout).not.toContain("foreign-repo drops");
+  });
+});
+
+/**
+ * Anhang A, A4-10: `readCursorOffset` refuses any cursor that fails
+ * `isSameFile`, and half of that identity is the inode — so a `~/.crosscheck`
+ * that was copied or restored gets new inodes and every ALREADY-DELIVERED
+ * line reads as pending. 315 phantom records were observed on one such home,
+ * and `spool depth` reported them in the voice it uses for real backlog.
+ * Replay is safe (the hub dedups); the line just has to say which kind of
+ * pending it is looking at.
+ */
+describe("crosscheck doctor spool depth wording", () => {
+  test("a cursor from a different file explains the pending count", async () => {
+    // Arrange: one delivered record, plus a cursor whose stored identity
+    // belongs to a file that no longer exists at that path.
+    const { repo, home } = await fixture();
+    const key = repoKey(HUB_URL, REPO_ID);
+    await ensureDir(spoolDir(home, key));
+    await writeFile(
+      spoolDataPath(home, key, "restored-session"),
+      `${JSON.stringify({ id: "env_1", kind: "work_context" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      spoolCursorPath(home, key, "restored-session"),
+      `${JSON.stringify({ ino: 999_999, firstLine: "0".repeat(32), offset: 0 })}\n`,
+      "utf8",
+    );
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("cursor identity changed for 1 session file");
+    expect(result.stdout).toContain("the hub deduplicates them");
+  });
+
+  test("an ordinary spool says nothing extra", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  spool depth  0 pending records");
+    expect(result.stdout).not.toContain("cursor identity changed");
   });
 });
 
