@@ -242,6 +242,11 @@ describe("targets-only pointer (trial finding #19)", () => {
     // session surfaces. The hub excludes the caller today; §4 makes the
     // selector the second line of defence, and one self-pointer would spend a
     // teammate's slot out of the five a session gets.
+    //
+    // GREEN ON MAIN too, like the three negatives below — main answers silence
+    // to every candidate, so this is not a red-first proof either. What it
+    // guards is this branch's own gate: the mutation "the targets-only pointer
+    // points at the reader's own work" fails here and nowhere else.
     expect(
       select([context({ developerId: SELF_DEVELOPER }, [], [fileTarget()])]).kind,
     ).toBe("silence");

@@ -9,8 +9,11 @@
  * Elapsed times are printed so a slow run is a number in the log, not a guess.
  *
  * A wall clock cannot be red-first: main measures the same budgets at the same
- * order of magnitude (post-tool-use 47 ms cold / 43 ms warm, pre-tool-use
- * 39/38) because it does no resolution at all. These are MEASUREMENTS of the
+ * order of magnitude — two samples on one machine gave post-tool-use 47/43 and
+ * 40/33 ms cold/warm, pre-tool-use 39/38 and 34/34 — because it does no
+ * resolution at all. Read those as an order of magnitude, not a constant: they
+ * move with machine load, which is why the assertions below compare against
+ * the budget rather than a fixed number. These are MEASUREMENTS of the
  * new cost, not proofs of the new behaviour — the behaviour is pinned by
  * worktree-capture.test.ts, and the cache's HIT path (the reason the warm
  * number stays flat) by the resolution COUNT in
