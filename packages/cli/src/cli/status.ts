@@ -3,10 +3,16 @@ import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
+import { formatQuestionCounts } from "@crosscheck/connector-core/briefing/questions.ts";
 import { formatAbsenceLine, formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
-import { getAbsences, getPresence, getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
+import {
+  getAbsences,
+  getPresence,
+  getPrivacySettings,
+  getQuestions,
+} from "@crosscheck/connector-core/http/hub.ts";
 import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
@@ -97,6 +103,13 @@ export const runStatus = async (
   // Own privacy state (DESIGN.md §2.1) — so "why can't anyone see me" and
   // "why do I never see Robin" are answered here instead of chasing ghosts.
   // An older hub without the endpoint prints no lines, same fail-open.
+  // The question channel's backlog (roadmap R2), both directions. A hub too
+  // old to serve it, or an unreachable one, simply prints no line — the same
+  // fail-open every other hub-fed line here has.
+  const questions = await getQuestions(hubCtx, identity.repoId);
+  const questionLines = questions.ok
+    ? [`questions: ${formatQuestionCounts(questions.data.counts, now)}`]
+    : [];
   const privacy = await getPrivacySettings(hubCtx);
   const privacyLines = privacy.ok
     ? [
@@ -160,6 +173,7 @@ export const runStatus = async (
         : ["commit authors without a recent session:", ...absenceLines]),
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       ...foreignDropLines,
+      ...questionLines,
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `intent: ${formatIntentCost(intentCost)}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,

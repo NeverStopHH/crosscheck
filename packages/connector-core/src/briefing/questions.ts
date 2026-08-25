@@ -26,8 +26,8 @@
  */
 import { MAX_QUESTION_BODY_LENGTH } from "@crosscheck/schema";
 
-import { MS_PER_DAY } from "../constants.ts";
-import type { InboxQuestion } from "../http/hub.ts";
+import { DOCTOR_QUESTION_OPEN_WARN_DAYS, MS_PER_DAY } from "../constants.ts";
+import type { InboxQuestion, QuestionCounts } from "../http/hub.ts";
 import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
 
 /** Bounded like a work-context title everywhere else on a briefing line. */
@@ -109,4 +109,71 @@ export const formatQuestionEntry = (
       ? ""
       : ` · about work context ${contextId}: «${title}»`;
   return `${facts.join(" · ")}${about}\n  asks: «${body}» · answer_question ${id}`;
+};
+
+/**
+ * The counters, in ONE sentence both `crosscheck status` and `doctor` print
+ * (roadmap R2 observability). Two surfaces stating the same facts in two
+ * spellings is how they come to disagree, and the numbers are the whole
+ * point: an asynchronous channel whose backlog is invisible is a channel
+ * people stop trusting.
+ *
+ * No untrusted text reaches this function — every value is a number the hub
+ * counted — so it is not a render surface, only the one place the words live.
+ */
+export const formatQuestionCounts = (
+  counts: QuestionCounts,
+  now: Date,
+): string => {
+  const oldestMs =
+    counts.oldestToMeAt === null ? null : ageMsFrom(counts.oldestToMeAt, now);
+  const oldest =
+    oldestMs === null
+      ? ""
+      : ` (oldest ${String(Math.max(0, Math.floor(oldestMs / MS_PER_DAY)))}d)`;
+  const toMe =
+    counts.openToMe === 0
+      ? "none open to you"
+      : `${String(counts.openToMe)} open to you${oldest}`;
+  const asked =
+    counts.asked === 0
+      ? "none asked"
+      : `${String(counts.asked)} asked (${String(counts.askedAnswered)} answered)`;
+  const expired =
+    counts.askedExpired === 0
+      ? []
+      : [`${String(counts.askedExpired)} of yours expired unanswered`];
+  return [toMe, asked, ...expired].join(" · ");
+};
+
+/**
+ * The WARN path, so this counter is never PASS-only (the finding-#14 lesson).
+ * TWO failures, and they are different people's problems: a question that has
+ * been waiting on YOU past half its life, and a question YOU asked that
+ * expired with no answer. Null = nothing to warn about.
+ */
+export const questionWarning = (
+  counts: QuestionCounts,
+  now: Date,
+): string | null => {
+  const oldestMs =
+    counts.oldestToMeAt === null ? null : ageMsFrom(counts.oldestToMeAt, now);
+  const oldestDays =
+    oldestMs === null ? 0 : Math.floor(oldestMs / MS_PER_DAY);
+  const stale =
+    counts.openToMe > 0 && oldestDays >= DOCTOR_QUESTION_OPEN_WARN_DAYS
+      ? [
+          `a teammate has been waiting ${String(oldestDays)}d for an answer from you ` +
+            "(list_open_questions shows what, answer_question replies)",
+        ]
+      : [];
+  const expired =
+    counts.askedExpired > 0
+      ? [
+          `${String(counts.askedExpired)} question${counts.askedExpired === 1 ? "" : "s"} ` +
+            "you asked expired unanswered — nobody was told, and nothing retries",
+        ]
+      : [];
+  const reasons = [...stale, ...expired];
+  return reasons.length === 0 ? null : reasons.join("; ");
 };

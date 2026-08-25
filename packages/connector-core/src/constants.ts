@@ -474,6 +474,18 @@ export const STALENESS_MAX_PATHS = 20;
  */
 export const MAX_QUESTION_POINTERS = 3;
 
+/**
+ * When `doctor` starts calling an unanswered question a problem. A question
+ * expires after QUESTION_TTL_DAYS = 14 on the hub, so half the window is the
+ * point where "nobody has answered yet" stops being normal and starts being
+ * the failure this channel is most likely to have: an open thread nobody acts
+ * on, which is what every prior-art system warns about.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.DOCTOR_QUESTION_OPEN_WARN_DAYS * 2 === s.QUESTION_TTL_DAYS)'
+ * PRINTS: true
+ */
+export const DOCTOR_QUESTION_OPEN_WARN_DAYS = 7;
+
 export const MAX_SOLVED_POINTERS = 2;
 /**
  * FIFO cap on the remembered briefing pointers (state/session-state.ts).

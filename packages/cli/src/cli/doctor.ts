@@ -63,7 +63,15 @@ import {
   recommendedTimeoutMs,
 } from "@crosscheck/connector-core/http/latency.ts";
 import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
-import { getAbsences, getPrivacySettings } from "@crosscheck/connector-core/http/hub.ts";
+import {
+  getAbsences,
+  getPrivacySettings,
+  getQuestions,
+} from "@crosscheck/connector-core/http/hub.ts";
+import {
+  formatQuestionCounts,
+  questionWarning,
+} from "@crosscheck/connector-core/briefing/questions.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
@@ -933,6 +941,36 @@ const checkIntentCost = async (
 };
 
 /**
+ * The question channel's backlog (roadmap R2), as a health check rather than
+ * a list — the lines belong to `crosscheck status` and to the briefing, the
+ * same split absence findings use.
+ *
+ * NEVER PASS-ONLY (the finding-#14 lesson). Two WARN paths, and they are
+ * different people's problems: a teammate has been waiting on YOU past half
+ * a question's life, and a question YOU asked expired with nobody told. Both
+ * are the failure this channel is most likely to have — an open thread that
+ * nothing retries and nobody acts on.
+ *
+ * "not measured" is a PASS, exactly as in checkAbsences: an older hub without
+ * the endpoint says nothing about this install's health.
+ */
+const checkQuestions = async (
+  ctx: HubContext,
+  repoId: string,
+  now: Date,
+): Promise<Check> => {
+  const result = await getQuestions(ctx, repoId);
+  if (!result.ok) {
+    return check("PASS", "questions", "not measured");
+  }
+  const line = formatQuestionCounts(result.data.counts, now);
+  const warning = questionWarning(result.data.counts, now);
+  return warning === null
+    ? check("PASS", "questions", line)
+    : check("WARN", "questions", `${line} — ${warning}`);
+};
+
+/**
  * The remedy a failed runner probe names, by what the binary said — each a
  * DIFFERENT fix, which is why the first output line is printed at all:
  * "Not logged in" is the developer's login, "unknown option" is the CLI's
@@ -1330,6 +1368,7 @@ export const runDoctor = async (
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now),
     await checkAbsences(hubCtx, identity.repoId),
+    await checkQuestions(hubCtx, identity.repoId, now),
     await checkPrivacy(hubCtx),
     skewCheck,
     bunfigCheck,
