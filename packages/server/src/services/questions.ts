@@ -706,10 +706,19 @@ const summarizeInbox = async (
  * `hint_deliveries` is the durable store — one row per (session, ref) — and
  * the probe asks whether ANY session of this developer already carries this
  * claim id. Indexed by hint_deliveries_ref_session_idx.
+ *
+ * SCOPED TO THE REPO THE QUESTION WAS ASKED FROM, like the inbox beside it.
+ * An answer is the one thing the prompt path may inject as SUBSTANCE (the §4
+ * solicited exception), and that exception rests on the reader already
+ * holding the frame it lands in — which is false when the frame is a
+ * different codebase and a different problem, possibly days later. So a
+ * cross-repo answer waits until its asker next works in the repo they asked
+ * from, which is also the only place it is legible.
  */
 export const listUndeliveredAnswers = async (
   deps: Deps,
   developerId: string,
+  repo: string,
 ): Promise<readonly AnsweredQuestion[]> => {
   const rows = await deps.db
     .select({
@@ -729,6 +738,7 @@ export const listUndeliveredAnswers = async (
     .where(
       and(
         eq(questions.authorDeveloperId, developerId),
+        eq(questions.repo, repo),
         sql`NOT EXISTS (
           SELECT 1 FROM hint_deliveries delivered
           JOIN agent_sessions reader ON reader.id = delivered.session_id
@@ -817,7 +827,7 @@ export const listQuestions = async (
     // solicited, and hiding the answer to a question this developer asked
     // would be absurd whatever they think of the answerer.
     listInbox(deps, developerId, repo, true),
-    listUndeliveredAnswers(deps, developerId),
+    listUndeliveredAnswers(deps, developerId, repo),
     // The counters come from SQL over the same predicate, NEVER from the page
     // above — see summarizeInbox for what deriving them from a bounded,
     // newest-first listing costs.

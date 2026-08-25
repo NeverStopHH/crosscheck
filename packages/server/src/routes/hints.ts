@@ -54,7 +54,10 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // Both queries are bounded and indexed; they run in parallel.
     const [candidates, answers] = await Promise.all([
       listHintCandidates(deps, c.get("developer").id, parsed.data),
-      listUndeliveredAnswers(deps, c.get("developer").id),
+      // `repo` on BOTH: the answers are scoped exactly like the candidates
+      // beside them, so solicited substance from another codebase cannot land
+      // in a session that never asked it (services/questions.ts says why).
+      listUndeliveredAnswers(deps, c.get("developer").id, parsed.data.repo),
     ]);
     return ok(c, { candidates, answers });
   });

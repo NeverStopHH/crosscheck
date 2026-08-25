@@ -55,6 +55,7 @@ const ask = async (
 const readQuestions = async (
   harness: TestHarness,
   party: Party,
+  repo: string = REPO,
 ): Promise<{
   readonly status: number;
   readonly data: {
@@ -64,7 +65,7 @@ const readQuestions = async (
   };
 }> => {
   const response = await harness.app.request(
-    `/api/questions?repo=${encodeURIComponent(REPO)}`,
+    `/api/questions?repo=${encodeURIComponent(repo)}`,
     jsonRequest("GET", party.developer.apiKey),
   );
   const body = (await response.json()) as { data?: unknown };
@@ -586,9 +587,46 @@ describe("answering a question", () => {
     expect(answered.status).toBe(400);
     expect((await failureOf(answered)).code).toBe("validation_failed");
   });
+
+  test("an answer to a question asked in another repo waits in that repo", async () => {
+    // Arrange: Nick asks from a SECOND repo, and Ken answers it. The inbox
+    // half of this channel is repo-scoped; the answer half was scoped by
+    // nothing, so the substance landed in whatever session read next.
+    const otherRepo = "github.com/acme/other-repo";
+    expect(
+      (
+        await registerTestSession(harness, nick.developer.apiKey, {
+          id: "ses_nick_other",
+          repo: otherRepo,
+        })
+      ).status,
+    ).toBe(200);
+    const elsewhere = await harness.app.request(
+      "/api/questions",
+      jsonRequest("POST", nick.developer.apiKey, {
+        id: "qn_other_repo",
+        repo: otherRepo,
+        sessionId: "ses_nick_other",
+        developer: "Ken",
+        body: "Who owns the alias table in the matcher now?",
+      }),
+    );
+    expect(elsewhere.status).toBe(200);
+    expect((await answerAs(ken, {}, "qn_other_repo")).status).toBe(200);
+
+    // Act: Nick reads from the repo he is working in today.
+    const here = await readQuestions(harness, nick);
+
+    // Assert: not injected into a session that never asked it — and not lost
+    // either: it is waiting where the question was written.
+    expect(here.data.answers).toHaveLength(0);
+    const there = await readQuestions(harness, nick, otherRepo);
+    expect(there.data.answers).toHaveLength(1);
+  });
 });
 
 /**
+ * MUTE, decided and pinned (spec: "decide, document and test mute semantics/**
  * MUTE, decided and pinned (spec: "decide, document and test mute semantics
  * explicitly"). A mute is reader-side and covers the reader's UNASKED
  * surfaces; it has never been a boundary. So:
