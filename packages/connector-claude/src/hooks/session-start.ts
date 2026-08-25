@@ -56,6 +56,17 @@ const INITIAL_STATUS = "analyzing";
  * (git/repo-identity.ts resolveBranch) and counts too: an orchestration
  * worktree detached at a commit the default branch already contains is an
  * ancestor of it forever, and every context it opens would be born landed.
+ *
+ * DELIBERATELY OVER-BROAD FOR DETACHED HEADS, and this is the one place to
+ * say so: a session detached at a commit the default branch does NOT contain
+ * (a PR head, say) is skipped as well, without an ancestry probe of its own —
+ * that probe would be a git call on the SessionStart path, and the direction
+ * it saves is the false-POSITIVE one. What the over-approximation costs is a
+ * genuine landing going unmarked by THIS session; the next session on this
+ * repo that runs from a branch marks it, because `collectLanded` walks the
+ * repo's open contexts rather than only its own. A repo where nobody ever
+ * works from a named branch therefore stops producing landed evidence — a
+ * silence, where today's behaviour is 118 of 127 contexts wrongly landed.
  */
 export const isOnDefaultBranch = (
   branch: string,
