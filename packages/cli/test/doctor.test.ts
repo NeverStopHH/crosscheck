@@ -37,11 +37,45 @@ const doctorEnv = (home: string) => ({
 });
 
 const paths: string[] = [];
+const stops: (() => void)[] = [];
 
 afterEach(async () => {
+  for (const stop of stops) {
+    stop();
+  }
+  stops.length = 0;
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
   paths.length = 0;
 });
+
+/** A hub whose `?open=1` answers with `count` silent-but-open sessions. */
+const startOpenSessionsHub = (
+  count: number,
+): { readonly url: string; readonly stop: () => void } => {
+  const sessions = Array.from({ length: count }, (_unused, index) => ({
+    id: `ses_${String(index)}`,
+    repo: REPO_ID,
+    branch: "main",
+    status: "done",
+    lastHeartbeatAt: new Date(Date.now() - MS_PER_DAY).toISOString(),
+  }));
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request) => {
+      const { pathname } = new URL(request.url);
+      if (pathname === "/api/sessions") {
+        return Promise.resolve(Response.json({ ok: true, data: { sessions } }));
+      }
+      return Promise.resolve(Response.json({ ok: true, data: {} }));
+    },
+  });
+  return {
+    url: `http://127.0.0.1:${String(server.port)}`,
+    stop: () => {
+      server.stop(true);
+    },
+  };
+};
 
 const fixture = async (): Promise<{
   readonly repo: string;
@@ -442,6 +476,47 @@ describe("crosscheck doctor unclosed sessions check", () => {
 
     // Act
     const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  unclosed sessions  none");
+  });
+
+  test("the hub's number is named as sessions that STOPPED reporting", async () => {
+    // Arrange: a hub answering ?open=1 with two rows. The endpoint returns
+    // only sessions that are open AND silent past the reaper's window
+    // (services/sessions.ts listOpenSessions), so the sentence has to say so —
+    // "holds 1 of your sessions open" read as a defect on every machine with
+    // somebody working on it (review finding B2-03).
+    const { repo, home } = await fixture();
+    const hub = startOpenSessionsHub(2);
+    stops.push(hub.stop);
+
+    // Act
+    const result = await runCli(
+      ["doctor"],
+      { ...doctorEnv(home), CROSSCHECK_HUB_URL: hub.url },
+      repo,
+    );
+
+    // Assert
+    expect(result.stdout).toContain("WARN  unclosed sessions");
+    expect(result.stdout).toContain(
+      "hub still holds 2 of your sessions open with no heartbeat",
+    );
+  });
+
+  test("a hub with no silent sessions leaves the line at PASS", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+    const hub = startOpenSessionsHub(0);
+    stops.push(hub.stop);
+
+    // Act
+    const result = await runCli(
+      ["doctor"],
+      { ...doctorEnv(home), CROSSCHECK_HUB_URL: hub.url },
+      repo,
+    );
 
     // Assert
     expect(result.stdout).toContain("PASS  unclosed sessions  none");

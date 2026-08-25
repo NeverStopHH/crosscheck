@@ -21,9 +21,12 @@ export const sessionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   router.use("*", developerAuth(deps));
 
   /**
-   * GET /api/sessions?open=1&mine=1 — what the hub still believes is running
-   * (trial finding M6). `doctor`'s `unclosed sessions` line prefers this
-   * count and falls back to its local markers when a hub does not have it.
+   * GET /api/sessions?open=1&mine=1 — rows the hub still holds open that have
+   * STOPPED reporting (trial finding M6, narrowed by review finding B2-03).
+   * `doctor`'s `unclosed sessions` line prefers this count and falls back to
+   * its local markers when a hub does not have it. `open` deliberately does
+   * not mean "running": a caller's own live session is open, and answering it
+   * here made that line WARN for as long as anybody was working.
    */
   router.get("/", async (c) => {
     if (c.req.query("open") !== "1") {

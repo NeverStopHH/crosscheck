@@ -393,28 +393,46 @@ export interface ListOpenSessionsOptions {
   /** Only the caller's own sessions. */
   readonly mine?: boolean;
   readonly limit?: number;
+  /** Silence required before a row counts; defaults to the reaper's window. */
+  readonly staleHours?: number;
 }
 
 /**
- * Sessions the hub still believes are running (trial finding M6).
+ * Sessions the hub still believes are running AND that stopped reporting
+ * (trial finding M6, corrected by review finding B2-03).
  *
  * `doctor`'s `unclosed sessions` line counted only local `.pending-end`
  * markers that had aged out, so it read "none" on a machine with 100 zombie
  * state files and a hub holding 104 never-ended sessions. This is the number
  * that makes that line true, and it is the hub's answer rather than a guess
  * assembled from local files.
+ *
+ * THE STALENESS HALF IS NOT OPTIONAL. A first version answered every row with
+ * `ended_at IS NULL`, which includes the session the caller is running right
+ * now — so the line WARNed from a developer's first session onward and its
+ * PASS state was unreachable while anybody worked, on a check whose exit code
+ * scripts gate on. `open` therefore means "open and silent past the reaper's
+ * own window": the same threshold `reapStaleSessions` uses, so the count and
+ * the reap can never disagree, and a number above zero always names rows a
+ * reaper pass has not reached yet (an older hub, a bounded pass, a hub not
+ * restarted since the reaper shipped).
  */
 export const listOpenSessions = async (
   deps: Deps,
   developerId: string,
   options: ListOpenSessionsOptions = {},
 ): Promise<readonly SessionView[]> => {
+  const cutoff = new Date(
+    deps.now().getTime() -
+      (options.staleHours ?? SESSION_REAP_STALE_HOURS) * MS_PER_HOUR,
+  );
   const rows = await deps.db
     .select()
     .from(agentSessions)
     .where(
       and(
         isNull(agentSessions.endedAt),
+        lt(agentSessions.lastHeartbeatAt, cutoff),
         ...(options.mine === true
           ? [eq(agentSessions.developerId, developerId)]
           : []),

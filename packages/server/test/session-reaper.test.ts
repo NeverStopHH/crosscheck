@@ -139,7 +139,49 @@ describe("reapStaleSessions", () => {
 });
 
 describe("GET /api/sessions?open=1", () => {
-  test("lists what the hub still believes is running, and drops the reaped", async () => {
+  test("a session that is heartbeating is NOT listed as open", async () => {
+    // Arrange: one perfectly healthy session, twenty seconds into its life —
+    // the state every developer is in while they work
+    const { harness, developer } = await seed();
+    await registerTestSession(harness, developer.apiKey);
+    harness.clock.advanceSeconds(20);
+    await harness.app.request(
+      "/api/sessions/ses_01/heartbeat",
+      jsonRequest("POST", developer.apiKey, {}),
+    );
+
+    // Act
+    const open = await listOpenSessions(
+      { db: harness.db, now: harness.clock.now },
+      developer.developerId,
+      { mine: true },
+    );
+
+    // Assert: "open" has to mean "open and no longer reporting", or doctor's
+    // `unclosed sessions` line WARNs for as long as anybody is working
+    // (review finding B2-03)
+    expect(open).toHaveLength(0);
+  });
+
+  test("a session silent for two hours is not open yet either", async () => {
+    // Arrange: past the presence TTL and past the zombie-state hour, but well
+    // inside a working day — a long read, a meeting, lunch
+    const { harness, developer } = await seed();
+    await registerTestSession(harness, developer.apiKey);
+    harness.clock.advanceSeconds(2 * HOUR_SECONDS);
+
+    // Act
+    const open = await listOpenSessions(
+      { db: harness.db, now: harness.clock.now },
+      developer.developerId,
+      { mine: true },
+    );
+
+    // Assert: the threshold is the reaper's, so the line and the reap agree
+    expect(open).toHaveLength(0);
+  });
+
+  test("lists the silent backlog, and drops it once the reaper runs", async () => {
     // Arrange: two sessions, one of them silent for seven hours
     const { harness, developer } = await seed();
     await registerTestSession(harness, developer.apiKey, { id: "ses_stale" });
@@ -160,12 +202,12 @@ describe("GET /api/sessions?open=1", () => {
       data: { sessions: { id: string }[] };
     };
 
-    // Assert
-    expect(before).toHaveLength(1);
+    // Assert: the backlog is what the endpoint is for. ses_stale was the only
+    // row worth naming and the reap closed it; ses_fresh is a session someone
+    // is running, which is not an unclosed session (review finding B2-03).
+    expect(before.map((session) => session.id)).toEqual(["ses_stale"]);
     expect(response.status).toBe(200);
-    expect(body.data.sessions.map((session) => session.id)).toEqual([
-      "ses_fresh",
-    ]);
+    expect(body.data.sessions).toEqual([]);
   });
 
   test("registering a session reaps the registering developer's own corpses", async () => {

@@ -1150,10 +1150,18 @@ const checkSpool = async (
   // hub — 104 of the trial hub's 127 were exactly that — so the local marker
   // count is a floor and the hub's number is the fact. An older hub sends
   // null and the line reads as it always did.
+  //
+  // "WITH NO HEARTBEAT" is load-bearing, not decoration. The endpoint answers
+  // only rows that are open AND silent past the reaper's own window
+  // (server services/sessions.ts listOpenSessions); an earlier version
+  // answered every open row, which includes the session the reader is running
+  // right now, so this line WARNed from a developer's first session onward and
+  // could never reach PASS while anybody worked (review finding B2-03). The
+  // sentence has to say which of the two it means.
   const hubPart =
     openOnHub === null || openOnHub === 0
       ? ""
-      : `, hub still holds ${String(openOnHub)} of your sessions open`;
+      : `, hub still holds ${String(openOnHub)} of your sessions open with no heartbeat`;
   const unclosedCheck =
     unclosed.sessions > 0 || zombies.stale > 0 || (openOnHub ?? 0) > 0
       ? check("WARN", "unclosed sessions", `${expiredPart}${zombiePart}${hubPart}`)
