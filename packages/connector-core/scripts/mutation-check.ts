@@ -1453,8 +1453,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // corpses satisfy all of them.
     label: "doctor counts a dead session state file as a live session",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "      const ageMs = sessionSilentForMs(state, mtimeMs, nowMs);" + "\n" + "      return ageMs !== null && ageMs <= maxAgeMs;",
-    to: "      return true;",
+    from: "  const sessions = health.sessions.filter((session) => !session.isStale);",
+    to: "  const sessions = health.sessions;",
     test: `${CLI}/test/doctor-hooks-firing.test.ts`,
     because:
       "one run prints `1 of 1 session state file stale >1h` beside `a " +
@@ -1559,6 +1559,23 @@ export const MUTATIONS: readonly Mutation[] = [
       "every home is mostly corpses (the trial found 104 of 127 sessions " +
       "never closed), so the check that exists to name a capture failing NOW " +
       "cries wolf about dead ones and stops being read",
+  },
+  {
+    // Review finding B2-L2, the other half: the four gates must read the SAME
+    // scan, not merely the same predicate. Dropping the argument puts doctor
+    // back on the narrow default cap for its capture and hints lines while the
+    // rest of the report is derived from the same read — which is how one run
+    // printed `no open session of this repo on this machine` beside `the
+    // session is running`.
+    label: "doctor answers 'is a session live' from two different scans",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    now,\n    SESSION_STATE_SCAN_MAX_FILES,\n  );",
+    to: "    now,\n  );",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "on a home with more than fifty state files the capture and hints lines " +
+      "are computed over a different set than the four liveness gates, and " +
+      "the report contradicts itself about whether a session is running",
   },
   {
     // The mtime half of `sessionSilentForMs`. `lastHeartbeatAt` has exactly two
@@ -1839,7 +1856,7 @@ interface Outcome {
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
- * PRINTS: doctor-capture.test.ts 3
+ * PRINTS: doctor-capture.test.ts 4
  * PRINTS: doctor-global.test.ts 1
  * PRINTS: doctor-hooks-firing.test.ts 1
  * PRINTS: doctor-last-sync.test.ts 1

@@ -292,6 +292,44 @@ describe("the capture check reads THIS repo's sessions, whatever the mtime order
     expect(line).not.toContain("idle");
   });
 
+  test("one scan, so no two lines answer 'is a session live' differently", async () => {
+    // Arrange: 61 state files, of which this repo's only live session is the
+    // OLDEST written — outside a 50-file cap, inside a 200-file one. Doctor
+    // used to run BOTH: the capture and hints lines came off the narrow scan,
+    // `last capture sync`, `hooks firing` and `statusline last rendered` off
+    // the wide one, and on a home this size they answered differently.
+    const { repo, home } = await fixture("doctor-capture-caps");
+    const hubUrl = hubWith({
+      stats: { delivered: 0, pulled: 0, claims: 0, windowDays: 7 },
+      contexts: [listRow()],
+    });
+    await seedSession(home, repo, hubUrl, "mine-live", {
+      editToolFires: 9,
+      targetsCapturedCount: 0,
+    });
+    await setMtime(home, "mine-live", Date.now() - 5 * 60 * 1000);
+    for (let index = 0; index < 60; index += 1) {
+      await seedSession(
+        home,
+        repo,
+        hubUrl,
+        `other-${String(index).padStart(2, "0")}`,
+        { repoId: OTHER_REPO },
+      );
+    }
+
+    // Act
+    const result = await runFixtureDoctor(home, repo, hubUrl);
+
+    // Assert: one report printed `PASS capture no open session of this repo on
+    // this machine` beside `WARN last capture sync … the session is running`.
+    const capture = lineWith(result.stdout, "  capture  ");
+    expect(capture).not.toContain("no open session of this repo");
+    expect(capture).toContain("9 edit-tool fires → 0 targets");
+    expect(result.stdout).toContain("the session is running");
+    expect(result.stdout).not.toContain("(cap 50)");
+  });
+
   test("a session quiet for hours is stale on every line, not just one", async () => {
     // Arrange: 7 fires, 0 targets, and nothing said for three hours — inside
     // the 24 h idle window and outside the 1 h one the rest of doctor reads.

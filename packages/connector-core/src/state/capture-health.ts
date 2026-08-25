@@ -99,8 +99,10 @@ export interface CaptureHealth {
   readonly idleSessions: number;
   /** State files this home holds (all repos, all hubs) — the cut's denominator. */
   readonly statesTotal: number;
-  /** State files actually opened: the newest STATUS_MAX_SESSION_STATES of them. */
+  /** State files actually opened: the newest `statesCap` of them. */
   readonly statesRead: number;
+  /** The cap this read was given — the caller's, so a surface can name it. */
+  readonly statesCap: number;
   /** Opened files whose contents were not session state (corrupt, half-written). */
   readonly statesUnparsed: number;
   readonly fires: number;
@@ -124,6 +126,7 @@ const NO_HEALTH: CaptureHealth = {
   idleSessions: 0,
   statesTotal: 0,
   statesRead: 0,
+  statesCap: STATUS_MAX_SESSION_STATES,
   statesUnparsed: 0,
   fires: 0,
   targets: 0,
@@ -166,15 +169,25 @@ const readStateFile = async (
   }
 };
 
+/**
+ * `limit` is the caller's, because the two surfaces are asked different
+ * questions. `status` prints one repo's totals and takes
+ * STATUS_MAX_SESSION_STATES; `doctor` derives EVERY "is anybody running
+ * anything here" gate from this one read and takes the wider
+ * SESSION_STATE_SCAN_MAX_FILES, so its lines cannot disagree by having been
+ * computed over different sets. It comes back as `statesCap` so the surface
+ * naming the cut names the real number.
+ */
 export const readCaptureHealth = async (
   home: string,
   hubUrl: string,
   repoId: string,
   now: Date = new Date(),
+  limit: number = STATUS_MAX_SESSION_STATES,
 ): Promise<CaptureHealth> => {
   // Newest first, THEN the cap — the shared listing (state/session-scan.ts),
   // which also hands back the mtime each session's liveness is measured with.
-  const listing = await listSessionStateFiles(home, STATUS_MAX_SESSION_STATES);
+  const listing = await listSessionStateFiles(home, limit);
   const read = await Promise.all(
     listing.files.map(async (file) => ({
       file,
@@ -234,6 +247,7 @@ export const readCaptureHealth = async (
       ...NO_HEALTH,
       statesTotal: listing.filesSeen,
       statesRead: listing.files.length,
+      statesCap: limit,
       statesUnparsed: read.filter(
         (entry) => entry.parsed !== GONE && !entry.parsed.success,
       ).length,

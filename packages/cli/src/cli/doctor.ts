@@ -43,7 +43,6 @@ import {
   REGISTERED_HOOK_EVENT_NAMES,
   SECONDS_PER_MINUTE,
   SESSION_STATE_SCAN_MAX_FILES,
-  STATUS_MAX_SESSION_STATES,
   SUMMARIZER_CLAUDE_MIN_VERSION,
   TRIPWIRE_MODE_ENV,
   TRIPWIRE_MODE_NOTICE,
@@ -1646,7 +1645,7 @@ const captureChecks = (health: CaptureHealth, now: Date): readonly Check[] => {
           check(
             "WARN",
             "capture",
-            `read the ${String(health.statesRead)} most recently written of ${String(health.statesTotal)} session state files (cap ${String(STATUS_MAX_SESSION_STATES)}) — every count below is of those; older sessions of this repo are not in them. State files are deleted at SessionEnd, so a large number of them means sessions that never ended`,
+            `read the ${String(health.statesRead)} most recently written of ${String(health.statesTotal)} session state files (cap ${String(health.statesCap)}) — every count below is of those; older sessions of this repo are not in them. State files are deleted at SessionEnd, so a large number of them means sessions that never ended`,
           ),
         ];
   if (health.sessions.length === 0) {
@@ -1709,7 +1708,7 @@ const checkHints = async (
     return check("PASS", "hints", "not measured (hub unreachable)");
   }
   const stats = await getHintStats(ctx, repoId);
-  const hasOpenSession = health.sessions.some((session) => !session.isIdle);
+  const hasOpenSession = health.sessions.some((session) => !session.isStale);
   // The hub's own repo-wide count when it sends one (M1), else the sum over
   // the contexts page. The endpoint's number is the better one — the page is
   // capped at the hub's list maximum, so a big repo's older contexts are not
@@ -2078,46 +2077,35 @@ const checkRepoConnected = async (
   );
 
 /**
- * ── Capture health, as a number (trial finding M1) ─────────────────────────
+ * ── One scan, every liveness gate (review findings B2-01/B2-02/B2-L2) ──────
  *
- * `status` printed the spool depth and the cross-repo drop count; nothing
- * anywhere printed how many TARGETS a session had captured. So the H1
- * cross-worktree drop — a session whose every edit landed outside the repo it
- * was bound to, capturing nothing at all — produced `spool: 0 pending, 0
- * dropped`, 24 PASS lines and not one sentence about the thing that had
- * stopped working.
+ * Four doctor WARNs gate on "is anybody running anything here", and they used
+ * to answer it from `readdir(<home>/sessions).length > 0` — no age test and no
+ * repo test — so on the trial machine's 100 files, 75 of them corpses, all
+ * four were permanently satisfied by dead sessions: one line printed `1 of 1
+ * session state file stale >1h` while three others said `a session is live`
+ * and `the session is running`.
  *
- * WHERE THE COUNTERS COME FROM. The write side is the sibling capture branch,
- * which books `editToolFires` into session state. This reads them through a
- * LOCAL loose view with defaults rather than through `SessionStateSchema`, for
- * two reasons: `SessionStateSchema` is a `looseObject`, so the fields survive
- * a parse it does not know about, and a doctor that hard-required them could
- * not ship before the branch that writes them. When no state file carries the
- * counter at all, the line says "not measured" at PASS instead of printing a
- * fabricated zero.
+ * There is now ONE reader for all of it — `readCaptureHealth`, which doctor
+ * calls at SESSION_STATE_SCAN_MAX_FILES — because a second scan is a second
+ * answer. The merged tree briefly had two: a 200-file/1h scan feeding `last
+ * capture sync`, `hooks firing` and `statusline last rendered`, and a
+ * 50-file/24h one feeding `capture` and the `hints` WARN gate. On a home with
+ * more than fifty state files they diverged, and the divergence reached the
+ * report: `PASS capture no open session of this repo on this machine` beside
+ * `WARN last capture sync … the session is running`, computed over different
+ * sets of files.
  *
- * NO AGE IN THE LINE. Nothing timestamps an individual target, so "last 4m
- * ago" would have to be inferred from a state file's mtime — which moves for
- * a heartbeat as readily as for a capture. A number that is true beats a
- * freshness claim that is nearly true.
+ * The predicate is `isStale` — `sessionSilentForMs` inside
+ * DOCTOR_ZOMBIE_STATE_WARN_HOURS, the same silence `countStaleSessionStates`
+ * and the summarizer cost line read — so "stale" and "live" cannot contradict
+ * each other in the same run. And it is scoped to this repo's hubUrl/repoId,
+ * because a teammate's session in another checkout is not evidence about THIS
+ * repo's hooks.
  */
-const SessionCountersSchema = z.looseObject({
-  hubUrl: z.string().default(""),
-  repoId: z.string().default(""),
-  // Read for the LIVENESS half, which is why the defaults are the unreadable
-  // values: a file that carries neither timestamp cannot be dated, and an
-  // undatable file is not evidence of a running session (sessionSilentForMs).
-  startedAt: z.string().default(""),
-  lastHeartbeatAt: z.string().nullable().default(null),
-  seenTargets: z.array(z.string()).default([]),
-  editToolFires: z.number().int().min(0).optional(),
-});
-
-type SessionCounters = z.infer<typeof SessionCountersSchema>;
-
 export interface LiveRepoSessions {
-  /** State files of THIS repo whose session is still reporting, newest first. */
-  readonly sessions: readonly SessionCounters[];
+  /** Sessions of THIS repo that are still saying something, newest first. */
+  readonly sessions: readonly SessionCaptureHealth[];
   /**
    * How long the OLDEST of them has been running, or null when none is live.
    *
@@ -2129,69 +2117,13 @@ export interface LiveRepoSessions {
   readonly oldestAgeMs: number | null;
 }
 
-const EMPTY_LIVE_SESSIONS: LiveRepoSessions = {
-  sessions: [],
-  oldestAgeMs: null,
-};
-
-/**
- * The session-state scan, done ONCE, for every line that needs to know
- * whether anybody is running anything here.
- *
- * `hasLiveSessionState` used to answer this with `readdir(<home>/sessions)
- * .length > 0` — no age test and no repo test — and it gated four separate
- * WARNs. A state file is only deleted at SessionEnd and the connector-side
- * reap only clears files past MAX_SPOOL_AGE_DAYS = 7, so on the trial machine
- * 75 of 100 files were corpses and all four gates were permanently satisfied
- * by dead sessions: one line printed "1 of 1 session state file stale >1h"
- * while three others said "a session is live" and "the session is running"
- * (review finding B2-04/B2-L2).
- *
- * THE PREDICATE IS THE ONE THE REST OF THE FILE ALREADY USES —
- * `sessionSilentForMs` inside DOCTOR_ZOMBIE_STATE_WARN_HOURS, the same one
- * `countStaleSessionStates` and the summarizer cost line read — so "stale" and
- * "live" can no longer contradict each other in the same run. And it is scoped
- * to this repo's hubUrl/repoId, because a teammate's session in another
- * checkout is not evidence about THIS repo's hooks.
- *
- * ONE PARSE PASS, keeping each state beside its file. The earlier capture
- * check built its repo filter and its liveness mask as two separate arrays and
- * then indexed one by the other's positions, so element i of the filtered list
- * was tested against the i-th newest file on the machine — a different session
- * (review finding B2-02).
- */
-const readLiveRepoSessions = async (
-  home: string,
-  hubUrl: string,
-  repoId: string,
+const liveRepoSessions = (
+  health: CaptureHealth,
   now: Date,
-): Promise<LiveRepoSessions> => {
-  const listing = await listSessionStateFiles(home, SESSION_STATE_SCAN_MAX_FILES);
-  if (listing.files.length === 0) {
-    return EMPTY_LIVE_SESSIONS;
-  }
-  const nowMs = now.getTime();
-  const maxAgeMs = DOCTOR_ZOMBIE_STATE_WARN_HOURS * MS_PER_HOUR;
-  const parsed = await Promise.all(
-    listing.files.map(async (file) => ({
-      mtimeMs: file.mtimeMs,
-      result: SessionCountersSchema.safeParse(await readJsonOrNull(file.path)),
-    })),
-  );
-  const sessions = parsed
-    .flatMap((entry) =>
-      entry.result.success
-        ? [{ mtimeMs: entry.mtimeMs, state: entry.result.data }]
-        : [],
-    )
-    .filter(({ state }) => state.hubUrl === hubUrl && state.repoId === repoId)
-    .filter(({ mtimeMs, state }) => {
-      const ageMs = sessionSilentForMs(state, mtimeMs, nowMs);
-      return ageMs !== null && ageMs <= maxAgeMs;
-    })
-    .map(({ state }) => state);
+): LiveRepoSessions => {
+  const sessions = health.sessions.filter((session) => !session.isStale);
   const startedAges = sessions
-    .map((state) => nowMs - Date.parse(state.startedAt))
+    .map((session) => now.getTime() - Date.parse(session.startedAt))
     .filter((ageMs) => !Number.isNaN(ageMs));
   return {
     sessions,
@@ -2414,15 +2346,6 @@ export const runDoctor = async (
   // it: an older hub 404s and the count degrades to null (§R6).
   const openSessions = await getOpenSessions(hubCtx);
   const openOnHub = openSessions.ok ? openSessions.data.length : null;
-  // The session-state scan, once, for every line that gates on "is anybody
-  // running anything here" — four of them used to answer it with a bare
-  // readdir and were all satisfied by week-old corpses (review finding B2-04).
-  const liveSessions = await readLiveRepoSessions(
-    config.home,
-    config.hubUrl,
-    identity.repoId,
-    now,
-  );
   // Whether the two PROJECT files this repo's advice keeps recommending can
   // actually reach a teammate (trial finding M11). Resolved once, passed as
   // data, so `globalInstallChecks` stays pure and testable.
@@ -2445,14 +2368,19 @@ export const runDoctor = async (
     ];
     return wired.length > 0 ? wired : [projectPath];
   })();
-  // Capture + hint counters of this repo's open sessions (#17/#18/#20), read
-  // once and shared by the capture and hints checks below.
+  // The session-state scan, ONCE, for every line of this report: the capture
+  // counters (#17/#18/#20), the hints WARN gate, and the four lines that gate
+  // on "is anybody running anything here". At the WIDER of the two caps,
+  // because doctor's answer must not depend on which fifty files a busy home
+  // wrote most recently.
   const captureHealth = await readCaptureHealth(
     config.home,
     config.hubUrl,
     identity.repoId,
     now,
+    SESSION_STATE_SCAN_MAX_FILES,
   );
+  const liveSessions = liveRepoSessions(captureHealth, now);
   return summarize([
     configCheck,
     identityCheck,
