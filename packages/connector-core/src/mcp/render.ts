@@ -42,6 +42,7 @@ import {
   bareUntrusted as bare,
   safeId,
   sanitizeUntrusted,
+  spanRedactedUntrusted,
 } from "../briefing/sanitize.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import type { SolvedFileDrift } from "../git/solved-staleness.ts";
@@ -86,6 +87,19 @@ export const quoted = (
   raw: string,
   maxChars: number = MAX_TITLE_CHARS,
 ): string => `«${sanitizeUntrusted(raw, maxChars)}»`;
+
+/**
+ * The same frame, for text whose BODY is the answer rather than a label.
+ *
+ * `quoted` above blanks the whole value when the phrase filter matches, which
+ * is right for a title and wrong for a hub refusal: there the value is the
+ * reason and the next call, so blanking it leaves the reader with a redaction
+ * marker instead of an address. Everything else is identical — the same clean,
+ * the same cap, the same « » — only the phrase branch is narrowed to the span
+ * it matched (briefing/sanitize.ts states the trade and who else may use it).
+ */
+const quotedSpanRedacted = (raw: string, maxChars: number): string =>
+  `«${spanRedactedUntrusted(raw, maxChars)}»`;
 
 /**
  * A tool's answer that CONTAINS quoted data, as a document rather than a
@@ -722,7 +736,7 @@ export const renderSearchFilterRefusal = (
     queryLine(quoted(query)),
     "Nothing was searched: a filter did not resolve to what it names, so this is " +
       "not a result about anyone's work.",
-    `The hub said: ${quoted(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,
+    `The hub said: ${quotedSpanRedacted(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,
   ].join("\n");
 
 /**

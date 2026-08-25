@@ -303,6 +303,52 @@ export const sanitizeUntrusted = (
   return `${cutWellFormed(cleaned, maxChars - ELLIPSIS.length)}${ELLIPSIS}`;
 };
 
+/** What replaces a matched phrase when the SPAN goes rather than the body. */
+export const REDACTED_SPAN = "[redacted]";
+
+/** The same nine branches, global, so every occurrence is replaced. */
+const INJECTION_SPAN_PATTERN = new RegExp(
+  `(${INJECTION_BRANCHES.join("|")})`,
+  "gi",
+);
+
+/**
+ * The same defence, applied to the MATCHED SPAN instead of to the whole body.
+ *
+ * `sanitizeUntrusted` above blanks everything as soon as one branch matches,
+ * and for a work-context title that is the right trade: the title is a label,
+ * and a label that reads like an instruction is worth losing. It is the wrong
+ * trade wherever the body IS the answer — a hub refusal, whose entire payload
+ * is the reason nothing was searched plus the names and addresses to retry
+ * with. There, one `override`-shaped word anywhere in the sentence took away
+ * every candidate spelling and the whole next step, and the reader was left
+ * with a redaction marker where their next call should have been.
+ *
+ * Everything else is unchanged and still runs first: NFKC, the separators, the
+ * invisibles, the characters the renderer owns, the length cap, and the « »
+ * frame plus the quoted-data notice at the call site. This narrows ONE branch
+ * of the defence, on surfaces that opt in.
+ *
+ * NOT THE DEFAULT, deliberately. Widening it to titles, claim bodies and hints
+ * is audit row M14 and a decision of its own — that work also owes the AUTHOR a
+ * warning when their text would render redacted, which this has no way to give.
+ * Two callers today: `quotedSpanRedacted` in mcp/render.ts, and this comment.
+ */
+export const spanRedactedUntrusted = (
+  raw: string,
+  maxChars: number = MAX_TITLE_CHARS,
+): string => {
+  const cleaned = cleanUntrusted(raw);
+  if (cleaned.length === 0) {
+    return "";
+  }
+  const redacted = cleaned.replace(INJECTION_SPAN_PATTERN, REDACTED_SPAN);
+  if (redacted.length <= maxChars) {
+    return redacted;
+  }
+  return `${cutWellFormed(redacted, maxChars - ELLIPSIS.length)}${ELLIPSIS}`;
+};
+
 /**
  * Characters the renderers use as LINE STRUCTURE, removed from every field
  * printed bare outside the « » frame.

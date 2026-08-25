@@ -662,6 +662,42 @@ describe("renderSearchFilterRefusal", () => {
     }
   });
 
+  /**
+   * THE REFUSAL'S WHOLE PAYLOAD IS NAMES AND ADDRESSES, so blanking it blanks
+   * the answer.
+   *
+   * `sanitizeUntrusted` replaces the WHOLE body with REDACTED_TITLE as soon as
+   * one of the nine phrase branches matches anywhere in it — a rule written for
+   * a work-context title, where losing the title costs a label. Here the body
+   * IS the next step: the reason nothing was searched, the candidate spellings,
+   * the addresses to retype. A service account called `override-bot`, or a
+   * caller who typed `act as` into the developer argument, took all of it away.
+   */
+  test("keeps the reason and the names when one word trips the phrase filter", () => {
+    // Arrange: the hub's real sentence about a real service account.
+    // Act
+    const rendered = renderSearchFilterRefusal(
+      "login 500s",
+      '"overide-bot" matches no developer on this hub, so nothing was ' +
+        "searched. Closest known names: override-bot, Nick. Ask again with a " +
+        "name or address the hub knows.",
+    );
+
+    // Assert: the sentence survives — the reason, the other candidate and the
+    // next step — and only the matched span is gone
+    expect(rendered).not.toContain(REDACTED_TITLE);
+    expect(rendered).toContain("matches no developer on this hub");
+    expect(rendered).toContain("Nick");
+    expect(rendered).toContain("Ask again with a name or address");
+    // The span itself does not reach the reader as an instruction
+    expect(rendered).not.toContain("override");
+    expect(rendered).toContain("[redacted]");
+    // and the frame is still the renderer's alone
+    for (const line of rendered.split("\n")) {
+      expect(line.split("«").length - 1).toBeLessThanOrEqual(1);
+    }
+  });
+
   test("does not let a hostile hub mint its own quote frame", () => {
     // Arrange: the hub's message is untrusted prose like any other
     // (mcp/tools/shared.ts states the threat model). The payload is chosen NOT

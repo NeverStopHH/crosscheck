@@ -1647,6 +1647,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "with an exact address and never shown one",
   },
   {
+    // The phrase filter is all-or-nothing, and a refusal is all payload: the
+    // reason nothing was searched, the candidate spellings, the addresses to
+    // retype. A hub whose team holds a service account called `override-bot` —
+    // or a caller who typed `act as` into the developer argument — got the
+    // whole sentence replaced by a redaction marker and no next call at all.
+    label: "one filter word blanks a whole hub refusal again",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "`The hub said: ${quotedSpanRedacted(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,",
+    to: "`The hub said: ${quoted(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a refusal naming a teammate whose display name contains one of the " +
+      "nine filter phrases arrives as `[redacted: title looked like an " +
+      "instruction]` — no reason, no spelling, no address",
+  },
+  {
     // The bound was right and the UNIT was wrong. Every connector normalizes to
     // NFKC before it counts, and NFKC never shrinks — so counting raw code
     // units passes a sentence the reader receives cut. Plain ASCII reaches it:
@@ -1747,7 +1763,7 @@ interface Outcome {
  * PRINTS: latency.test.ts 3
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
- * PRINTS: mcp-render.test.ts 3
+ * PRINTS: mcp-render.test.ts 4
  * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1

@@ -48,8 +48,17 @@ export const MAX_REFUSAL_CHARS = 200;
  * renderer-owned characters go — so normalizing is the upper bound on what the
  * reader counts, which is the safe side to be wrong on.
  *
- * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/briefing/sanitize.ts");const s="a…b";console.log(s.length, s.normalize("NFKC").length, c.cleanUntrusted(s).length)'
- * PRINTS: 3 5 5
+ * That the reader's pipeline really starts with that fold is pinned the same
+ * way the 200 above is — by grep across the package boundary, not by an import
+ * this package is not allowed to have:
+ *
+ * VERIFY: grep -c 'normalize("NFKC")' packages/connector-core/src/briefing/sanitize.ts
+ * PRINTS: 1
+ *
+ * and that the fold GROWS the one character this module inserts itself:
+ *
+ * VERIFY: bun -e 'const s="a…b";console.log(s.length, s.normalize("NFKC").length)'
+ * PRINTS: 3 5
  */
 export const asRendered = (sentence: string): string =>
   sentence.normalize("NFKC");
