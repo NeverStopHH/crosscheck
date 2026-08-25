@@ -1693,6 +1693,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "the teammate they are looking for is not on this hub",
   },
   {
+    // The rationale clause is what pays for the first address. Refusing to
+    // spend it is the plausible edit — the sentence reads better complete —
+    // and it costs the reader every address at any org whose addresses are
+    // longer than the list budget: "3 of them, none short enough to name
+    // here" beside "Ask again with the exact address".
+    label: "an ambiguity refusal keeps its rationale and names nobody",
+    file: `${SERVER}/src/services/developer-lookup.ts`,
+    from: "  const naming = fitRefusal(build(true), term);",
+    to: "  const naming = fitRefusal(build(false), term);",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "a team with 69-character addresses is told to ask again with an exact " +
+      "address by a sentence that shows none",
+  },
+  {
     // The connector's own half of the same defect: cutting the echo BEFORE
     // normalizing means `maxChars` characters of a caller's term can be
     // eighteen times that on screen.
@@ -1788,7 +1803,7 @@ interface Outcome {
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: render-surface-registry.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
- * PRINTS: search-filters.test.ts 8
+ * PRINTS: search-filters.test.ts 9
  * PRINTS: search-who-when.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: session.test.ts 1

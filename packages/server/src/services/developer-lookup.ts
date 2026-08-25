@@ -26,7 +26,7 @@
 import { asc } from "drizzle-orm";
 
 import { developers } from "../db/schema.ts";
-import { asRendered, fitRefusal } from "./refusal.ts";
+import { asRendered, fitRefusal, MAX_REFUSAL_CHARS } from "./refusal.ts";
 import { resolveDeveloperRef } from "./developer-settings.ts";
 import type { DeveloperCandidate } from "./developer-settings.ts";
 import type { MuteEntryView } from "./developer-settings.ts";
@@ -255,28 +255,57 @@ const listAndCount = (
  * frames a hub message as quoted data before a model sees it
  * (mcp/tools/shared.ts).
  */
+/**
+ * Why guessing is worse — true, worth saying, and the FIRST thing worth
+ * dropping when the sentence is short of room, because a reader holding an
+ * exact address does not need to be told why they should not guess.
+ */
+const AMBIGUITY_WHY = "; a guess would credit the wrong person";
+
 export const describeAmbiguousDeveloper = (
   term: string,
   candidates: readonly DeveloperCandidate[],
   totalCount: number,
-): string =>
-  fitRefusal(
-    (echo, listChars) =>
-      `${echo} is the name of ${String(totalCount)} developers here: ` +
-      `${
-        listAndCount(
-          // Normalized, never cut: an address is for RETYPING, and the form
-          // the reader can retype is the one their connector renders.
-          candidates.map((person) => asRendered(person.email)),
-          listChars,
-          // The hub's count, never the page's — the page is at most
-          // AMBIGUITY_PROBE_LIMIT rows and the sentence must not shrink the
-          // team to fit it.
-          totalCount,
-        ).text
-      }. Ask again with the exact address; a guess would credit the wrong person.`,
-    term,
-  );
+): string => {
+  // Normalized, never cut: an address is for RETYPING, and the form the reader
+  // can retype is the one their connector renders.
+  const addresses = candidates.map((person) => asRendered(person.email));
+  const sentence = (echo: string, list: string, why: string): string =>
+    `${echo} is the name of ${String(totalCount)} developers here: ${list}. ` +
+    `Ask again with the exact address${why}.`;
+  /**
+   * ONE WHOLE ADDRESS, OR THE SENTENCE HAS NO NEXT ACTION AT ALL. Budgeted
+   * normally, a list of addresses all longer than `listChars` shows none of
+   * them and falls back to "N of them, none short enough to name here" —
+   * beside "Ask again with the exact address", which is the same dead end
+   * e541ed0 closed for names and left standing here.
+   *
+   * So the yield order gains a middle step. The echo still gives up characters
+   * first; then the RATIONALE clause is spent, which buys 38 characters — more
+   * than enough for a corporate address; only then does the list give up room.
+   * `mayPay` false is the last resort for an address longer than the whole
+   * budget, where naming it would push the sentence past the cap a connector
+   * quotes and the reader would lose the next step as well as the address.
+   */
+  const build =
+    (mayPay: boolean) =>
+    (echo: string, listChars: number): string => {
+      const budgeted = listAndCount(addresses, listChars, totalCount);
+      if (budgeted.shown > 0 || !mayPay) {
+        return sentence(echo, budgeted.text, AMBIGUITY_WHY);
+      }
+      const first = addresses[0] ?? "";
+      return sentence(
+        echo,
+        listAndCount(addresses, first.length, totalCount).text,
+        "",
+      );
+    };
+  const naming = fitRefusal(build(true), term);
+  return asRendered(naming).length <= MAX_REFUSAL_CHARS
+    ? naming
+    : fitRefusal(build(false), term);
+};
 
 export const describeUnknownDeveloper = (
   term: string,

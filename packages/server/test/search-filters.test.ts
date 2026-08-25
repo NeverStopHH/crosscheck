@@ -297,6 +297,75 @@ describe("GET /api/search — the developer filter", () => {
     expect(listed + more).toBe(KIMS);
   });
 
+  test("names one address whole even when every address is long", async () => {
+    // Arrange: e541ed0 closed this dead end for NAMES — a suggestion list that
+    // named nobody became a list of shortened names — on the stated grounds
+    // that a name is for RECOGNITION and survives losing its tail while an
+    // address is for RETYPING and a cut one is a different, wrong address. The
+    // consequence was left standing on the address path: three Alexes at a
+    // company with 69-character addresses got "3 of them, none short enough to
+    // name here" beside "Ask again with the exact address", which is a
+    // sentence with no next action anywhere in it.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    const LONG_ADDRESSES = [
+      "alexandra.kowalczyk@engineering-platform.acme-corporation.example.com",
+      "alexander.petrov.jr@engineering-platform.acme-corporation.example.com",
+      "alexis.moreau.iii@engineering-platform.acme-corporation.example.com",
+    ] as const;
+    for (const email of LONG_ADDRESSES) {
+      await addTestDeveloperWithSession(harness, "Alex", email, {
+        id: `ses_${email.split("@")[0] ?? ""}`,
+      });
+    }
+
+    // ...and the same shape under the most echo pressure the route can put on
+    // it: the term a caller types IS the shared name, so a long shared name is
+    // the only way to force the echo to shrink on this path.
+    const LONG_SHARED_NAME =
+      "Alex (platform, please use the address the directory lists)".padEnd(
+        120,
+        "x",
+      );
+    for (const email of LONG_ADDRESSES) {
+      await addTestDeveloperWithSession(
+        harness,
+        LONG_SHARED_NAME,
+        `long.${email}`,
+        { id: `ses_long_${email.split("@")[0] ?? ""}` },
+      );
+    }
+
+    // Act
+    const short = await search(harness, nick.apiKey, {
+      query: "",
+      developer: "Alex",
+    });
+    const wide = await search(harness, nick.apiKey, {
+      query: "",
+      developer: LONG_SHARED_NAME,
+    });
+
+    // Assert: one address arrives whole — the rationale clause is what pays
+    // for it, and a reader holding an address does not need to be told why
+    // guessing is worse
+    for (const result of [short, wide]) {
+      expect(result.status).toBe(400);
+      expect(result.message).not.toContain("none short enough");
+      // The page is ordered by address, so the one it can name is the first
+      // alphabetically — a deterministic sentence per hub, not a per-row race.
+      expect(result.message).toContain(
+        [...LONG_ADDRESSES].sort()[0] ?? "",
+      );
+      expect(result.message).toContain("3 developers here");
+      expect(result.message).toContain("Ask again with the exact address");
+      expect(result.message.normalize("NFKC").length).toBeLessThanOrEqual(
+        MAX_REFUSAL_CHARS,
+      );
+    }
+  });
+
   test("answers an unknown name with an error naming the closest developers", async () => {
     // Arrange: the whole point. An empty result to a misspelt name reads as
     // "Ken has done nothing", and a model will act on that.
