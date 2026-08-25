@@ -45,6 +45,15 @@ export {
 export type { AgentSession, Intent, Target, WorkContext } from "./session.ts";
 
 export {
+  MAX_QUESTION_BODY_LENGTH,
+  QUESTION_STATUSES,
+  QuestionAnswerSchema,
+  QuestionSchema,
+  QuestionStatusSchema,
+} from "./question.ts";
+export type { Question, QuestionAnswer, QuestionStatus } from "./question.ts";
+
+export {
   HINT_REF_KINDS,
   HintDeliverySchema,
   HintSchema,

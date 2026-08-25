@@ -320,3 +320,65 @@ CREATE INDEX IF NOT EXISTS work_contexts_activity_idx
 -- DEVELOPER_SUGGESTION_SCAN). Bounded listing, index behind the ORDER BY.
 CREATE INDEX IF NOT EXISTS developers_name_idx
   ON developers (name, email);
+
+-- ── The asynchronous question channel (roadmap R2) ──────────────────────────
+
+-- A question addressed to a teammate: one row, targeted, expiring, answered
+-- by a claim. The addressee CHECK is what makes "never a broadcast" a
+-- database fact rather than a service promise, and the body CHECK mirrors
+-- MAX_QUESTION_BODY_LENGTH in @crosscheck/schema (pinned by ddl-sync.test.ts).
+CREATE TABLE IF NOT EXISTS questions (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  author_developer_id text NOT NULL REFERENCES developers(id),
+  author_session_id text NOT NULL REFERENCES agent_sessions(id),
+  target_developer_id text REFERENCES developers(id),
+  work_context_id text REFERENCES work_contexts(id),
+  body text NOT NULL,
+  status text NOT NULL,
+  created_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL,
+  CONSTRAINT questions_body_length_check CHECK (char_length(body) <= 400),
+  CONSTRAINT questions_addressee_check
+    CHECK (target_developer_id IS NOT NULL OR work_context_id IS NOT NULL)
+);
+
+-- The inbox read ("open questions for me, newest first") and the per-target
+-- budget probe are the same range; without this index both scan every
+-- question on the hub on every SessionStart briefing.
+CREATE INDEX IF NOT EXISTS questions_target_status_created_idx
+  ON questions (target_developer_id, status, created_at DESC);
+
+-- The second addressee axis: questions asked ABOUT one work context. A plain
+-- foreign key, which Postgres does not index on its own.
+CREATE INDEX IF NOT EXISTS questions_work_context_idx
+  ON questions (work_context_id);
+
+-- The asker's own side: outbox counters, the per-author open budget and the
+-- per-day rate probe all read this one range.
+CREATE INDEX IF NOT EXISTS questions_author_created_idx
+  ON questions (author_developer_id, created_at DESC);
+
+-- The `answers` edge: one claim answering one question. Its own table rather
+-- than a claim_edges kind, because claim_edges.to_claim_id is a foreign key
+-- into claims and an answers edge would have to point it at a question id.
+CREATE TABLE IF NOT EXISTS question_answers (
+  question_id text NOT NULL REFERENCES questions(id),
+  claim_id text NOT NULL REFERENCES claims(id),
+  answerer_developer_id text NOT NULL REFERENCES developers(id),
+  created_at timestamptz NOT NULL,
+  PRIMARY KEY (question_id, claim_id)
+);
+
+-- "Which question does this claim answer" — asked per claim on the asker's
+-- delivery path; the primary key leads on question_id and cannot serve it.
+CREATE INDEX IF NOT EXISTS question_answers_claim_idx
+  ON question_answers (claim_id);
+
+-- "Delivered exactly once" for an answer is a cross-SESSION promise: the
+-- asker's per-session seen-set dies with the session, so the durable store is
+-- hint_deliveries, probed as "has any session of this developer already been
+-- handed this claim id". ref_id had no index at all, which made that probe a
+-- scan of every delivery row on the UserPromptSubmit hot path.
+CREATE INDEX IF NOT EXISTS hint_deliveries_ref_session_idx
+  ON hint_deliveries (ref_id, session_id);

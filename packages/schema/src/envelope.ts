@@ -4,6 +4,7 @@ import { ClaimEdgeSchema, ClaimSchema } from "./claim.ts";
 import { CommitEvidenceSchema } from "./commit-evidence.ts";
 import { HintDeliverySchema, HintSchema } from "./hint.ts";
 import { LandedEvidenceSchema } from "./landed-evidence.ts";
+import { QuestionAnswerSchema, QuestionSchema } from "./question.ts";
 import {
   AgentSessionSchema,
   TargetSchema,
@@ -47,6 +48,8 @@ const RECORD_BODY_SCHEMAS = {
   target: TargetSchema,
   hint: HintSchema,
   hint_delivery: HintDeliverySchema,
+  question: QuestionSchema,
+  question_answer: QuestionAnswerSchema,
 } as const;
 
 export type KnownRecordKind = keyof typeof RECORD_BODY_SCHEMAS;

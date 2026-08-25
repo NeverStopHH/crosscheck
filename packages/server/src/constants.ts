@@ -67,6 +67,45 @@ export const SOLVED_MATCH_MAX_PAIR_ROWS = 200;
  */
 export const MAX_DRAFTS_LISTED = 20;
 
+// ── The asynchronous question channel (roadmap R2) ─────────────────────────
+
+/**
+ * How long an unanswered question stays open. Applied LAZILY on read (no
+ * cron, no background job): every listing demands `expires_at > now()` in
+ * SQL, and the asker's own route flips the status of their own expired rows
+ * when it passes over them. A question that outlived its window is a haunted
+ * briefing — Slack's follow-up bots track a question "for a chosen amount of
+ * time" for the same reason, and two weeks is one sprint plus slack.
+ */
+export const QUESTION_TTL_DAYS = 14;
+
+/**
+ * Spam budgets, hub-enforced (a modified connector must not be able to lift
+ * them). Three axes, because they fail differently:
+ *
+ *   PER AUTHOR — how many questions one person may have waiting anywhere. The
+ *   ceiling on "I asked everyone about everything and now nobody answers
+ *   anything".
+ *   PER TARGET — how many of those may point at ONE teammate. Without it a
+ *   single author can spend their whole allowance on one person's briefing,
+ *   which is exactly the "Questions for you" block filling up with one voice.
+ *   PER DAY — a rate limit over a rolling 24 h, so an agent in a loop cannot
+ *   burn and re-burn the open budget by withdrawing and re-asking.
+ */
+export const MAX_OPEN_QUESTIONS_PER_AUTHOR = 5;
+export const MAX_OPEN_QUESTIONS_PER_TARGET = 3;
+export const MAX_QUESTIONS_PER_AUTHOR_PER_DAY = 20;
+
+/** Most inbox questions one GET /api/questions response carries. */
+export const MAX_QUESTIONS_LISTED = 20;
+
+/**
+ * Most undelivered ANSWERS one response carries. Small on purpose: they ride
+ * the UserPromptSubmit path, one per prompt, inside the hint budget — a
+ * bigger window would only buy rows the connector throws away.
+ */
+export const MAX_QUESTION_ANSWERS_LISTED = 3;
+
 export const EVENT_KINDS = {
   DEVELOPER_CREATED: "developer_created",
   SESSION_STARTED: "session_started",
@@ -75,6 +114,8 @@ export const EVENT_KINDS = {
   WORK_CONTEXT_UPDATED: "work_context_updated",
   CLAIM_ADDED: "claim_added",
   CLAIM_EDGE_ADDED: "claim_edge_added",
+  QUESTION_ASKED: "question_asked",
+  QUESTION_ANSWERED: "question_answered",
 } as const;
 
 export type EventKind = (typeof EVENT_KINDS)[keyof typeof EVENT_KINDS];

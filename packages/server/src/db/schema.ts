@@ -22,7 +22,9 @@ import {
   CLAIM_STATUSES,
   EDGE_KINDS,
   MAX_CLAIM_BODY_LENGTH,
+  MAX_QUESTION_BODY_LENGTH,
   PROVENANCES,
+  QUESTION_STATUSES,
   SESSION_STATUSES,
   TARGET_KINDS,
 } from "@crosscheck/schema";
@@ -376,4 +378,111 @@ export const hintDeliveries = pgTable("hint_deliveries", {
   refId: text("ref_id").notNull(),
   deliveredAt: timestamptz("delivered_at").notNull(),
   pulledAt: timestamptz("pulled_at"),
-});
+}, (table) => [
+  // "Delivered exactly once" for a question ANSWER is a cross-SESSION promise
+  // (services/questions.ts): the asker's seen-set dies with their session, so
+  // the durable store is this table, asked as "has any session of this
+  // developer already been handed this claim id". `ref_id` had no index at
+  // all, which made that probe a scan of every delivery on the hub on the
+  // UserPromptSubmit path. Mirrored in db/bootstrap.sql.
+  index("hint_deliveries_ref_session_idx").on(table.refId, table.sessionId),
+]);
+
+/**
+ * A QUESTION addressed to a teammate (roadmap R2). Not a message queue and
+ * not a chat: one row, targeted, expiring, answered by a claim.
+ *
+ * NEVER A BROADCAST — the addressee CHECK is a database fact, not a service
+ * promise, because "no broadcast" is the property that keeps this channel
+ * from becoming the notification spam every prior-art system warns about.
+ *
+ * `status` is what the hub believes; `expires_at` is what the hub enforces.
+ * Reads never trust the status alone — every listing also demands
+ * `expires_at > now()` — so a question whose lazy flip never ran still cannot
+ * haunt a briefing (services/questions.ts states the whole TTL rule).
+ */
+export const questions = pgTable(
+  "questions",
+  {
+    id: text("id").primaryKey(),
+    /** Where it was asked from — the same string agent_sessions.repo carries. */
+    repo: text("repo").notNull(),
+    authorDeveloperId: text("author_developer_id")
+      .notNull()
+      .references(() => developers.id),
+    authorSessionId: text("author_session_id")
+      .notNull()
+      .references(() => agentSessions.id),
+    targetDeveloperId: text("target_developer_id").references(
+      () => developers.id,
+    ),
+    workContextId: text("work_context_id").references(() => workContexts.id),
+    body: text("body").notNull(),
+    status: text("status", { enum: QUESTION_STATUSES }).notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+    expiresAt: timestamptz("expires_at").notNull(),
+  },
+  (table) => [
+    check(
+      "questions_body_length_check",
+      sql`char_length(${table.body}) <= ${sql.raw(String(MAX_QUESTION_BODY_LENGTH))}`,
+    ),
+    check(
+      "questions_addressee_check",
+      sql`${table.targetDeveloperId} IS NOT NULL OR ${table.workContextId} IS NOT NULL`,
+    ),
+    // The inbox read: "open questions for me, newest first" — one lookup, and
+    // the per-target budget probe rides the same index.
+    index("questions_target_status_created_idx").on(
+      table.targetDeveloperId,
+      table.status,
+      table.createdAt.desc(),
+    ),
+    // Questions asked ABOUT one work context: the second addressee axis, and
+    // a plain foreign key Postgres does not index on its own.
+    index("questions_work_context_idx").on(table.workContextId),
+    // The asker's own side: the outbox counters, the per-author open budget,
+    // and the per-day rate probe all read this one range.
+    index("questions_author_created_idx").on(
+      table.authorDeveloperId,
+      table.createdAt.desc(),
+    ),
+  ],
+);
+
+/**
+ * The `answers` EDGE: one claim answering one question.
+ *
+ * Its own table rather than a new `claim_edges.kind`, and the reason is
+ * referential integrity: `claim_edges.to_claim_id` is a foreign key into
+ * `claims`, so an "answers" edge stored there would have to point a claim
+ * column at a question id — a lie the database would either reject or, worse,
+ * accept once somebody dropped the constraint. The table IS the edge kind.
+ *
+ * MANY ANSWERS PER QUESTION by design (the first flips the question's status,
+ * later ones still attach) — GitHub Discussions marks one reply as THE answer
+ * without deleting the rest, and the later replies are often the correction.
+ */
+export const questionAnswers = pgTable(
+  "question_answers",
+  {
+    questionId: text("question_id")
+      .notNull()
+      .references(() => questions.id),
+    claimId: text("claim_id")
+      .notNull()
+      .references(() => claims.id),
+    answererDeveloperId: text("answerer_developer_id")
+      .notNull()
+      .references(() => developers.id),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    // One claim answers one question once; a spool replay is a duplicate, not
+    // a second answer.
+    primaryKey({ columns: [table.questionId, table.claimId] }),
+    // "Which question does this claim answer" — the asker's delivery path
+    // asks it per claim, and the PK leads on question_id and cannot serve it.
+    index("question_answers_claim_idx").on(table.claimId),
+  ],
+);
