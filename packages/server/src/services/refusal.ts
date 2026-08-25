@@ -26,7 +26,38 @@
  */
 export const MAX_REFUSAL_CHARS = 200;
 
-/** Widest echo of the caller's own term, when the sentence has room for it. */
+/**
+ * The sentence AS THE READER WILL COUNT IT.
+ *
+ * The bound above is only kept if it is measured in the same unit the cut uses,
+ * and it is not this side that cuts: a connector runs the message through
+ * `sanitizeUntrusted`, whose first step is `.normalize("NFKC")`, and compares
+ * the result against its own 200 (connector-core briefing/sanitize.ts). NFKC
+ * NEVER SHRINKS and often grows — U+2026 becomes three dots, ﬁ becomes two
+ * letters, U+FDFA becomes eighteen — so a sentence counted raw is counted in a
+ * unit nobody downstream uses.
+ *
+ * Plain ASCII is enough to break it: the ellipsis this module inserts when it
+ * cuts an echo costs one character here and three there, which turns a sentence
+ * built to exactly 200 into 202 as read, and the reader loses the tail of the
+ * only next step the refusal offers.
+ *
+ * NFKC alone rather than the connector's whole `cleanUntrusted`: the hub does
+ * not depend on any connector package (see the note above), and the rest of that
+ * pipeline only ever REMOVES characters — separators collapse, invisibles and
+ * renderer-owned characters go — so normalizing is the upper bound on what the
+ * reader counts, which is the safe side to be wrong on.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/briefing/sanitize.ts");const s="a…b";console.log(s.length, s.normalize("NFKC").length, c.cleanUntrusted(s).length)'
+ * PRINTS: 3 5 5
+ */
+export const asRendered = (sentence: string): string =>
+  sentence.normalize("NFKC");
+
+/**
+ * Widest echo of the caller's own term, when the sentence has room for it —
+ * counted, like everything else here, on the normalized form.
+ */
 export const MAX_ECHOED_TERM_CHARS = 80;
 
 /**
@@ -42,7 +73,10 @@ export const MIN_ECHOED_TERM_CHARS = 24;
  * caller looks for a bug in a value they never sent.
  */
 export const echoedTerm = (term: string, maxChars: number): string => {
-  const trimmed = term.trim();
+  // Normalized BEFORE it is measured or cut, so `maxChars` characters of term
+  // are `maxChars` characters to the reader too. Cutting first and normalizing
+  // later is how one code point of a caller's term became eighteen on screen.
+  const trimmed = asRendered(term).trim();
   return trimmed.length <= maxChars
     ? `"${trimmed}"`
     : `"${trimmed.slice(0, maxChars)}…"`;
@@ -75,8 +109,8 @@ export const fitRefusal = (
   let echoChars = MAX_ECHOED_TERM_CHARS;
   let listChars = MAX_LISTED_CHARS;
   let sentence = build(echoedTerm(term, echoChars), listChars);
-  while (sentence.length > MAX_REFUSAL_CHARS) {
-    const over = sentence.length - MAX_REFUSAL_CHARS;
+  while (asRendered(sentence).length > MAX_REFUSAL_CHARS) {
+    const over = asRendered(sentence).length - MAX_REFUSAL_CHARS;
     if (echoChars > MIN_ECHOED_TERM_CHARS) {
       echoChars = Math.max(MIN_ECHOED_TERM_CHARS, echoChars - over);
     } else if (listChars > 0) {

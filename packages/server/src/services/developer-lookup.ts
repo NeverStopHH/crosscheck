@@ -26,7 +26,7 @@
 import { asc } from "drizzle-orm";
 
 import { developers } from "../db/schema.ts";
-import { fitRefusal } from "./refusal.ts";
+import { asRendered, fitRefusal } from "./refusal.ts";
 import { resolveDeveloperRef } from "./developer-settings.ts";
 import type { DeveloperCandidate } from "./developer-settings.ts";
 import type { MuteEntryView } from "./developer-settings.ts";
@@ -172,11 +172,16 @@ const MAX_LISTED_NAME_CHARS = 40;
 
 /** At most `maxChars` characters, ellipsis included — the caller budgets in
  * the units it counts in, so a shortened value never costs one more than it
- * was allowed and gets dropped from the list for it. */
-const shortened = (value: string, maxChars: number): string =>
-  value.length <= maxChars
-    ? value
-    : `${value.slice(0, Math.max(0, maxChars - 1))}…`;
+ * was allowed and gets dropped from the list for it. `asRendered` first,
+ * because the unit those characters are counted in is the reader's, and a
+ * display name is untrusted text that may be four times longer once the
+ * connector normalizes it (services/refusal.ts says what that costs). */
+const shortened = (value: string, maxChars: number): string => {
+  const rendered = asRendered(value);
+  return rendered.length <= maxChars
+    ? rendered
+    : `${rendered.slice(0, Math.max(0, maxChars - 1))}…`;
+};
 
 /**
  * As many of them as `maxChars` holds, then the true count of the rest.
@@ -241,7 +246,9 @@ export const describeAmbiguousDeveloper = (
     (echo, listChars) =>
       `${echo} is the name of ${String(candidates.length)} developers here: ` +
       `${listAndCount(
-        candidates.map((person) => person.email),
+        // Normalized, never cut: an address is for RETYPING, and the form the
+        // reader can retype is the one their connector renders.
+        candidates.map((person) => asRendered(person.email)),
         listChars,
       )}. Ask again with the exact address; a guess would credit the wrong person.`,
     term,

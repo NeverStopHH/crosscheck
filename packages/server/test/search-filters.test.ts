@@ -583,17 +583,68 @@ describe("GET /api/search — every refusal arrives whole", () => {
       });
     }
 
-    // Assert: every one of them refused, and every one of them fits
+    // Assert: every one of them refused, and every one of them fits — MEASURED
+    // AS THE READER COUNTS. The connector normalizes to NFKC before comparing
+    // against its own 200, and NFKC never shrinks: the ellipsis this route
+    // inserts when it cuts an echo is one character here and three there, which
+    // is enough on its own to push a 200-character sentence to 202 and arrive
+    // cut. Counting raw code units is counting in a unit nobody downstream uses.
     for (const { params, result } of refusals) {
       expect({ params, status: result.status }).toEqual({
         params,
         status: 400,
       });
-      expect({
-        params,
-        chars: result.message.length,
-        fits: result.message.length <= MAX_REFUSAL_CHARS,
-      }).toEqual({ params, chars: result.message.length, fits: true });
+      const asRead = result.message.normalize("NFKC").length;
+      expect({ params, chars: asRead, fits: asRead <= MAX_REFUSAL_CHARS }).toEqual(
+        { params, chars: asRead, fits: true },
+      );
+    }
+  });
+
+  /**
+   * The same bound, against text that EXPANDS.
+   *
+   * Two untrusted strings reach these sentences — the caller's own term and
+   * teammate display names, which the create route bounds below and not above —
+   * and NFKC folds several single characters into many: U+FDFA is one code point
+   * and eighteen characters once normalized, ﬁ is two, ½ is three. A hub that
+   * budgets before that fold sends a sentence it believes is 176 characters and
+   * the reader sees 856 of them, cut at 200 with every address and the whole
+   * next step past the cut.
+   */
+  test("a refusal fits after the expansion the reader's cut happens on", async () => {
+    // Arrange: a name that is one ligature per character, shared by three
+    // people, on a hub of its own so the suggestion order elsewhere is
+    // untouched.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    const LIGATURE_NAME = "\uFDFA".repeat(40);
+    for (const index of [1, 2, 3]) {
+      await createTestDeveloper(
+        harness,
+        LIGATURE_NAME,
+        `ligature.${String(index)}@example.com`,
+      );
+    }
+
+    // Act: ambiguity echoes the name and lists addresses; the unknown path
+    // echoes a term that expands and offers those names back.
+    const ambiguous = await search(harness, nick.apiKey, {
+      query: "",
+      developer: LIGATURE_NAME,
+    });
+    const unknown = await search(harness, nick.apiKey, {
+      query: "",
+      developer: `${"\uFDFA".repeat(80)}zz`,
+    });
+
+    // Assert: both refuse, both fit as read, and the half that carries the next
+    // action is still there after the reader's cut
+    for (const result of [ambiguous, unknown]) {
+      expect(result.status).toBe(400);
+      const asRead = result.message.normalize("NFKC");
+      expect(asRead.length).toBeLessThanOrEqual(MAX_REFUSAL_CHARS);
+      expect(asRead.slice(0, MAX_REFUSAL_CHARS)).toContain("Ask again");
     }
   });
 

@@ -1638,13 +1638,41 @@ export const MUTATIONS: readonly Mutation[] = [
     // spellings, which is the entire payload of both refusals.
     label: "a refusal keeps its whole echo and loses its addresses",
     file: `${SERVER}/src/services/refusal.ts`,
-    from: "  while (sentence.length > MAX_REFUSAL_CHARS) {",
+    from: "  while (asRendered(sentence).length > MAX_REFUSAL_CHARS) {",
     to: "  while (false) {",
     test: `${SERVER}/test/search-filters.test.ts`,
     because:
       "a long developer term pushes the candidate addresses past the 200 " +
       "characters every connector quotes, so the reader is told to ask again " +
       "with an exact address and never shown one",
+  },
+  {
+    // The bound was right and the UNIT was wrong. Every connector normalizes to
+    // NFKC before it counts, and NFKC never shrinks — so counting raw code
+    // units passes a sentence the reader receives cut. Plain ASCII reaches it:
+    // the ellipsis a cut echo inserts is one character here, three there.
+    label: "a refusal is budgeted before the reader normalizes it",
+    file: `${SERVER}/src/services/refusal.ts`,
+    from: "export const asRendered = (sentence: string): string =>\n  sentence.normalize(\"NFKC\");",
+    to: "export const asRendered = (sentence: string): string => sentence;",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "a 200-character refusal arrives as 202 and is cut by the connector " +
+      "that quotes it, and a display name of ligatures loses every address " +
+      "and the whole next step",
+  },
+  {
+    // The connector's own half of the same defect: cutting the echo BEFORE
+    // normalizing means `maxChars` characters of a caller's term can be
+    // eighteen times that on screen.
+    label: "the echoed term is cut before it is normalized",
+    file: `${SERVER}/src/services/refusal.ts`,
+    from: "  const trimmed = asRendered(term).trim();",
+    to: "  const trimmed = term.trim();",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "80 code points of a caller's term become 1440 characters in the " +
+      "reader's context, so the refusal is cut before it names anybody",
   },
 ];
 
@@ -1729,7 +1757,7 @@ interface Outcome {
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: render-surface-registry.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
- * PRINTS: search-filters.test.ts 5
+ * PRINTS: search-filters.test.ts 7
  * PRINTS: search-who-when.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: session.test.ts 1
