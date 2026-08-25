@@ -615,6 +615,48 @@ export const MUTATIONS: readonly Mutation[] = [
       "the developer is handed whatever text search thought looked similar",
   },
   {
+    // An abort is not a build failure. Fingerprinting cancellations teaches
+    // the team's memory that "the developer pressed escape" is a symptom.
+    label: "a cancelled tool is fingerprinted as a failure",
+    file: `${CONNECTOR}/src/hooks/post-tool-use-failure.ts`,
+    from: `  if (ctx.payload.is_interrupt === true) {
+    return "";
+  }`,
+    to: "",
+    test: `${CONNECTOR}/test/failure-hook.test.ts`,
+    because:
+      "every interrupted command becomes an error_fingerprint target, so the " +
+      "hub's strongest match signal fills with noise nobody diagnosed — and " +
+      "the developer is handed a solved-before line for pressing escape",
+  },
+  {
+    // The whole point of a fingerprint is that the failure TEXT stays on
+    // this machine. This puts the text on the wire instead.
+    label: "the failure probe sends the failure text",
+    file: `${CONNECTOR}/src/hooks/post-tool-use-failure.ts`,
+    from: "          fingerprint,\n          now,",
+    to: "          fingerprint: extractFailureText(ctx.payload.error),\n          now,",
+    test: `${CONNECTOR}/test/failure-hook.test.ts`,
+    because:
+      "a failing command's output — file paths, stack frames, whatever the " +
+      "tool printed — goes into a hub request URL and its access logs, on a " +
+      "path whose only wire value was supposed to be a hash",
+  },
+  {
+    // init and doctor must agree about which events are wired: this drops the
+    // registration while doctor still requires it, which is the shape where
+    // capture goes silent and the report stays green.
+    label: "the failure event stops being registered",
+    file: `${CONNECTOR}/src/cli/settings-merge.ts`,
+    from: "      PostToolUseFailure: group(`${prefix} hook post-tool-use-failure`),\n",
+    to: "",
+    test: `${CLI}/test/doctor-global.test.ts`,
+    because:
+      "a fresh install captures no error fingerprints at all — every other " +
+      "hook keeps working, so nothing looks broken until somebody asks why " +
+      "collective memory never matches anything",
+  },
+  {
     label: "the solved floor leaks into similarity guesses",
     file: `${SERVER}/src/services/search.ts`,
     from: "solvedIds.has(entry.row.id) && hasFactTier(entry.tiers)",
@@ -2159,11 +2201,12 @@ interface Outcome {
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
- * PRINTS: doctor-global.test.ts 1
+ * PRINTS: doctor-global.test.ts 2
  * PRINTS: doctor-latency.test.ts 1
  * PRINTS: doctor-summarizer-runner.test.ts 1
  * PRINTS: doctor.test.ts 1
  * PRINTS: double-wiring.test.ts 1
+ * PRINTS: failure-hook.test.ts 2
  * PRINTS: global-wiring-silence.test.ts 2
  * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2

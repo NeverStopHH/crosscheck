@@ -206,6 +206,10 @@ const settingsOnly = (checks: readonly Check[]): SettingsInspection => ({
 const REQUIRED_HOOK_EVENTS = [
   "SessionStart",
   "PostToolUse",
+  // The event failures actually arrive on. Missing, the install captures no
+  // error fingerprints at all — silently, because every other hook keeps
+  // working — which is the finding-#14 shape this list exists to prevent.
+  "PostToolUseFailure",
   "SessionEnd",
   "UserPromptSubmit",
   "PreToolUse",

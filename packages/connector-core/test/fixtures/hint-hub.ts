@@ -21,6 +21,8 @@ export interface HintHubLatency {
   tripwire: number;
   /** POST /api/records — holds a PostToolUse flush open (state-race tests). */
   records?: number;
+  /** GET /api/solved-matches — the failure-time probe's own latency dial. */
+  solvedMatches?: number;
 }
 
 export interface HintHub {
@@ -218,6 +220,7 @@ export const startHintHub = (
       }
       if (pathname === "/api/solved-matches") {
         calls.solvedMatches += 1;
+        await sleep(latency.solvedMatches ?? 0);
         lastSolvedFingerprint = new URL(request.url).searchParams.get(
           "fingerprint",
         );

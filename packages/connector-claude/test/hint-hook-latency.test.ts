@@ -17,17 +17,26 @@ import { runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import {
   HTTP_TIMEOUT_MS,
+  POST_TOOL_USE_FAILURE_BUDGET_RATIO,
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
-import { startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
+import {
+  solvedFingerprintMatch,
+  startHintHub,
+} from "../../connector-core/test/fixtures/hint-hub.ts";
 import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "latency-uuid";
 const PROMPT = "why does src/auth/refresh.ts still 500 after the key rotation";
 const BUDGET_MS = USER_PROMPT_SUBMIT_BUDGET_RATIO * HTTP_TIMEOUT_MS;
+/** The failure hook's own budget — same keystroke grade, own constant. */
+const FAILURE_BUDGET_MS = POST_TOOL_USE_FAILURE_BUDGET_RATIO * HTTP_TIMEOUT_MS;
+/** A failure text with enough signal that `fingerprint()` accepts it. */
+const FAILURE_TEXT =
+  "Exit code 1\nerror: expected 3 to be 4\n  at src/limiter.test.ts";
 /**
  * Scheduling slop over the budget race: the timer fires AT the deadline and
  * the event loop hands control back some milliseconds later. Generous enough
@@ -53,11 +62,16 @@ afterEach(async () => {
 const fixture = async (
   label: string,
   candidateLatencyMs: number,
+  solvedLatencyMs: number = 0,
 ): Promise<{ repo: string; env: Env; hub: HintHub }> => {
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   const home = await makeHome(label);
   paths.push(repo, home);
-  const hub = startHintHub({ candidates: candidateLatencyMs, tripwire: 0 });
+  const hub = startHintHub({
+    candidates: candidateLatencyMs,
+    tripwire: 0,
+    solvedMatches: solvedLatencyMs,
+  });
   hubs.push(hub);
   await writeSessionState(home, {
     hostSessionKey: SESSION_ID,
@@ -132,5 +146,72 @@ describe("the 800 ms sync budget, measured through runHook", () => {
     );
     expect(stdout).toBe("");
     expect(elapsedMs).toBeLessThanOrEqual(BUDGET_MS + RACE_SLOP_MS);
+  });
+});
+
+const failurePayload = (repo: string): string =>
+  JSON.stringify({
+    session_id: SESSION_ID,
+    cwd: repo,
+    hook_event_name: "PostToolUseFailure",
+    tool_name: "Bash",
+    tool_input: { command: "bun test" },
+    error: FAILURE_TEXT,
+    is_interrupt: false,
+  });
+
+/**
+ * The SAME split for PostToolUseFailure, and it needs its own measurement
+ * rather than inheriting the prompt hook's: this one runs inside the agent's
+ * turn (nobody is typing, so nothing else paces it), it does MORE than the
+ * prompt path per fire — a spool append for the fingerprint, the probe, the
+ * delivery append, the state write, then a bounded flush — and it is the one
+ * hook whose budget constant is new, which is exactly the kind of number
+ * that is asserted and never measured.
+ */
+describe("the PostToolUseFailure budget, measured through runHook", () => {
+  test("a responsive hub captures and answers inside the budget on every run", async () => {
+    // Arrange
+    const { repo, env, hub } = await fixture("failure-happy", 0);
+    hub.setSolvedMatches([solvedFingerprintMatch()]);
+    const elapsed: number[] = [];
+
+    // Act — run 0 delivers; later runs exercise the seen-set silent path,
+    // which still pays capture, flush and the state read.
+    for (let run = 0; run < HAPPY_RUNS; run += 1) {
+      const startedAt = performance.now();
+      await runHook("post-tool-use-failure", failurePayload(repo), env);
+      elapsed.push(Math.round(performance.now() - startedAt));
+    }
+
+    // Assert — measured, then bounded
+    console.log(
+      `[failure-latency] responsive hub, ms per run: ${elapsed.join(", ")} (budget ${String(FAILURE_BUDGET_MS)})`,
+    );
+    for (const ms of elapsed) {
+      expect(ms).toBeLessThan(FAILURE_BUDGET_MS);
+    }
+  });
+
+  test("a hub that never answers the probe is cut at the budget, in silence", async () => {
+    // Arrange
+    const { repo, env, hub } = await fixture("failure-hung", 0, UNANSWERABLE_MS);
+    hub.setSolvedMatches([solvedFingerprintMatch()]);
+
+    // Act
+    const startedAt = performance.now();
+    const stdout = await runHook(
+      "post-tool-use-failure",
+      failurePayload(repo),
+      env,
+    );
+    const elapsedMs = Math.round(performance.now() - startedAt);
+
+    // Assert — fail-open AND on time
+    console.log(
+      `[failure-latency] hung hub cut after ${String(elapsedMs)} ms (budget ${String(FAILURE_BUDGET_MS)} + slop ${String(RACE_SLOP_MS)})`,
+    );
+    expect(stdout).toBe("");
+    expect(elapsedMs).toBeLessThanOrEqual(FAILURE_BUDGET_MS + RACE_SLOP_MS);
   });
 });

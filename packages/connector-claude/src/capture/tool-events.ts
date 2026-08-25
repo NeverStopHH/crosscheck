@@ -33,6 +33,22 @@ export const HookPayloadSchema = z.looseObject({
   tool_input: z.unknown().optional(),
   tool_response: z.unknown().optional(),
   /**
+   * PostToolUseFailure only. `error` is the failure text — the same string
+   * Claude receives as the failed tool's result — and it arrives as a
+   * TOP-LEVEL field rather than inside `tool_response`, which is why the
+   * failure signal was invisible to a connector that only read PostToolUse:
+   * that event fires when a tool completes SUCCESSFULLY, so a failing `bun
+   * test` reached no capture path at all.
+   *
+   * `is_interrupt` is true when the developer aborted rather than the tool
+   * reporting an error; a cancellation is not a build failure and is not
+   * fingerprinted (the Cursor connector's handler states the same rule).
+   * Tolerant like every field here — renamed upstream, failures simply stop
+   * being captured, exactly as they already were.
+   */
+  error: z.string().optional().catch(undefined),
+  is_interrupt: z.boolean().optional().catch(undefined),
+  /**
    * Stop only: where Claude Code keeps this session's JSONL transcript (the
    * Tier-1 summarizer's input) and whether this Stop was itself forced by a
    * stop hook (the summarizer skips those — one logical turn, one gate run).

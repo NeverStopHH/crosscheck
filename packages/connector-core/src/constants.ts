@@ -65,6 +65,17 @@ export const USER_PROMPT_SUBMIT_BUDGET_RATIO = 2;
 /** PreToolUse blocks a tool call — the same keystroke-grade bound applies. */
 export const PRE_TOOL_USE_BUDGET_RATIO = 2;
 /**
+ * PostToolUseFailure runs INSIDE the agent's turn and returns
+ * `additionalContext`, so it takes the keystroke-grade bound too — not
+ * PostToolUse's maintenance budget, which is four request timeouts because
+ * that hook is async and nobody waits on it. Same 800 ms, same reason: the
+ * developer is watching a build fail and must not also watch a hook.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.POST_TOOL_USE_FAILURE_BUDGET_RATIO * c.HTTP_TIMEOUT_MS, c.POST_TOOL_USE_FAILURE_BUDGET_RATIO === c.USER_PROMPT_SUBMIT_BUDGET_RATIO)'
+ * PRINTS: 800 true
+ */
+export const POST_TOOL_USE_FAILURE_BUDGET_RATIO = 2;
+/**
  * Noise budgets (DESIGN.md §10 risk 1): at most one hint per prompt and five
  * per session, then silence for the rest of the session. MAX_HINTS_PER_PROMPT
  * is enforced structurally — the selector returns ONE selection, never a list

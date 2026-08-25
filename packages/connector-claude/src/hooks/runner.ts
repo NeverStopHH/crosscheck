@@ -1,5 +1,6 @@
 import {
   POST_TOOL_USE_BUDGET_RATIO,
+  POST_TOOL_USE_FAILURE_BUDGET_RATIO,
   PRE_TOOL_USE_BUDGET_RATIO,
   SESSION_END_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
@@ -31,6 +32,7 @@ import type { HookPayload } from "../capture/tool-events.ts";
 export type HookName =
   | "session-start"
   | "post-tool-use"
+  | "post-tool-use-failure"
   | "session-end"
   | "user-prompt-submit"
   | "pre-tool-use"
@@ -74,6 +76,7 @@ export type HookHandler = (
 const BUDGET_RATIOS: Readonly<Record<HookName, number>> = {
   "session-start": SESSION_START_BUDGET_RATIO,
   "post-tool-use": POST_TOOL_USE_BUDGET_RATIO,
+  "post-tool-use-failure": POST_TOOL_USE_FAILURE_BUDGET_RATIO,
   "session-end": SESSION_END_BUDGET_RATIO,
   "user-prompt-submit": USER_PROMPT_SUBMIT_BUDGET_RATIO,
   "pre-tool-use": PRE_TOOL_USE_BUDGET_RATIO,

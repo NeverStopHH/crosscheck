@@ -43,12 +43,12 @@
  * PRINTS: packages/connector-core/src/constants.ts
  *
  * — and `spareMs` is in turn the sole accessor on HookBudget, taken as a whole
- * deadline by the drain in each of the four hooks that host one (SessionStart,
- * SessionEnd, PostToolUse, Stop) and read once more by SessionStart's
- * deferred end:
+ * deadline by the drain in each of the five hooks that host one (SessionStart,
+ * SessionEnd, PostToolUse, PostToolUseFailure, Stop) and read once more by
+ * SessionStart's deferred end:
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 5
+ * PRINTS: 6
  */
 import { describe, expect, test } from "bun:test";
 

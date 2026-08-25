@@ -91,6 +91,47 @@ Runs immediately after a tool completes successfully.
 }
 ```
 
+### PostToolUseFailure
+
+Runs when a tool that started executing fails.
+
+#### PostToolUseFailure input
+
+| Field          | Description                                        |
+| :------------- | :------------------------------------------------- |
+| `error`        | String describing what went wrong                  |
+| `is_interrupt` | True when the failure reached Claude Code as an abort |
+
+```json
+{
+  "session_id": "abc123",
+  "cwd": "/home/dev/acme/api",
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "bun test",
+    "description": "Run test suite"
+  },
+  "error": "Exit code 1\nerror: expected 3 to be 4",
+  "is_interrupt": false
+}
+```
+
+#### PostToolUseFailure decision control
+
+| Field               | Description                                  |
+| :------------------ | :------------------------------------------- |
+| `additionalContext` | String added to Claude's context alongside the error |
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PostToolUseFailure",
+    "additionalContext": "Additional information about the failure for Claude"
+  }
+}
+```
+
 ### SessionEnd
 
 Runs when a Claude Code session ends.

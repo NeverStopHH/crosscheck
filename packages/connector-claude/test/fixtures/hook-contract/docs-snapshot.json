@@ -1,6 +1,7 @@
 {
   "event.SessionStart": true,
   "event.PostToolUse": true,
+  "event.PostToolUseFailure": true,
   "event.SessionEnd": true,
   "common.input.session_id": true,
   "common.input.cwd": true,
@@ -14,6 +15,11 @@
   "PostToolUse.input.tool_input": true,
   "PostToolUse.input.tool_response": true,
   "PostToolUse.input.file_path": true,
+  "PostToolUseFailure.input.error": true,
+  "PostToolUseFailure.input.is_interrupt": true,
+  "PostToolUseFailure.output.hookSpecificOutput": true,
+  "PostToolUseFailure.output.hookEventName": true,
+  "PostToolUseFailure.output.additionalContext": true,
   "SessionEnd.input.reason": true,
   "statusline.input.session_id": true,
   "statusline.input.cwd": true

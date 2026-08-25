@@ -387,7 +387,7 @@ describe("the drift watcher itself", () => {
       "every heading promoted one level",
       (hooks: string): string =>
         hooks.replace(/^### /gm, "#### ").replace(/^## /gm, "### "),
-      16,
+      22,
     ],
   ] as const)(
     "KNOWN LIMIT: a formatting-only rewrite reports drift (%s)",
