@@ -20,7 +20,12 @@ import {
 } from "../services/developer-settings.ts";
 // One bound for one concept: a reference too long to mute must not be short
 // enough to filter a search by (services/developer-lookup.ts).
-import { MAX_DEVELOPER_REF_CHARS } from "../services/developer-lookup.ts";
+import {
+  describeAmbiguousDeveloper,
+  describeUnknownDeveloper,
+  lookUpDeveloper,
+  MAX_DEVELOPER_REF_CHARS,
+} from "../services/developer-lookup.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const PresenceBodySchema = z.object({ optOut: z.boolean() });
@@ -29,12 +34,49 @@ const MuteBodySchema = z.object({
   developer: z.string().min(1).max(MAX_DEVELOPER_REF_CHARS),
 });
 
-/** The resolution failures shared by mute and unmute, mapped once. */
-const failForResolution = (
+/**
+ * The resolution failures shared by mute and unmute — and shared now with
+ * `GET /api/search` and `POST /api/questions` as well, which is the point.
+ *
+ * This route used to answer an ambiguous name with "several developers share
+ * that name — use their email or id", which NAMES NOBODY: a reader who knew
+ * the address would not have typed the name. R1 refused to leave a search
+ * caller there and left this caller there anyway, and R2 would have made it a
+ * third spelling. One pair of sentences now, produced by the same two
+ * functions (services/developer-lookup.ts), so a reader who was refused once
+ * has the exact address or the exact spelling to retype.
+ *
+ * The second lookup costs one bounded query and runs ONLY on the miss path —
+ * the resolution itself already happened inside addMute/removeMute, and the
+ * hot case (a name that resolves) pays nothing.
+ */
+const failForResolution = async (
   c: Context<AppEnv>,
+  deps: AppDeps,
+  ref: string,
   outcome: "not_found" | "ambiguous",
-) =>
-  outcome === "not_found"
+) => {
+  const lookup = await lookUpDeveloper(deps.db, ref);
+  if (outcome === "ambiguous" && lookup.outcome === "ambiguous") {
+    return fail(
+      c,
+      409,
+      "ambiguous_developer",
+      describeAmbiguousDeveloper(ref, lookup.candidates, lookup.totalCount),
+    );
+  }
+  if (outcome === "not_found" && lookup.outcome === "unknown") {
+    return fail(
+      c,
+      404,
+      "not_found",
+      describeUnknownDeveloper(ref, lookup.suggestions),
+    );
+  }
+  // The reference resolved differently between the two reads (a developer
+  // created or renamed in between). Saying so beats naming candidates that no
+  // longer describe the miss.
+  return outcome === "not_found"
     ? fail(c, 404, "not_found", "no developer matches that reference")
     : fail(
         c,
@@ -42,6 +84,7 @@ const failForResolution = (
         "ambiguous_developer",
         "several developers share that name — use their email or id",
       );
+};
 
 export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();
@@ -78,7 +121,7 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     switch (result.outcome) {
       case "not_found":
       case "ambiguous":
-        return failForResolution(c, result.outcome);
+        return failForResolution(c, deps, parsed.data.developer, result.outcome);
       case "self":
         return fail(c, 400, "validation_failed", "you cannot mute yourself");
       case "limit_reached":
@@ -105,7 +148,7 @@ export const settingsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     switch (result.outcome) {
       case "not_found":
       case "ambiguous":
-        return failForResolution(c, result.outcome);
+        return failForResolution(c, deps, ref, result.outcome);
       case "unmuted":
         return ok(c, {
           unmuted: result.developer,

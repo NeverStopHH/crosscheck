@@ -14,14 +14,14 @@
  * adds only what a refusal needs: which known names are close, and how to say
  * so.
  *
- * ONE CALLER TODAY, and saying so is the point: `GET /api/search`. The mute
- * route resolves the same reference through the same helper and still answers
- * an ambiguous name with "several developers share that name — use their email
- * or id", which names nobody and leaves a caller who does not know the address
- * exactly where R1 refused to leave them. Whoever adds the question channel
- * (roadmap R2, which resolves a target the same way) should route all three
- * through these two sentences in one commit, rather than growing a third
- * spelling of the same refusal.
+ * THREE CALLERS, and that is the whole point: `GET /api/search` (R1),
+ * `POST /api/questions` (R2) and the two mute routes. The mute routes used to
+ * answer an ambiguous name with "several developers share that name — use
+ * their email or id", which names NOBODY — a reader who knew the address would
+ * not have typed the name — and R2 would have made that a third spelling of
+ * one refusal. They all say the same two sentences now
+ * (routes/settings.ts `failForResolution`), so being refused once is enough to
+ * know exactly what to retype.
  */
 import { asc } from "drizzle-orm";
 

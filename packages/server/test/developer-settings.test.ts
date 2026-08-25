@@ -235,6 +235,66 @@ describe("POST /api/settings/mutes", () => {
     expect((await postMute(harness, nick, "Sam")).status).toBe(409);
     expect((await postMute(harness, nick, "Nick")).status).toBe(400);
   });
+
+  test("an ambiguous name is refused WITH the candidate addresses", async () => {
+    // Arrange: the caller spelled a name two people share, and the only way
+    // out is an address they do not have — R1 refused to leave a search
+    // caller there and this route left them there anyway.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await createTestDeveloper(harness, "Sam", "sam1@example.com");
+    await createTestDeveloper(harness, "Sam", "sam2@example.com");
+
+    // Act
+    const refused = await postMute(harness, nick, "Sam");
+
+    // Assert
+    const message = String(
+      (refused.body?.["error"] as { message?: string } | undefined)?.message ??
+        "",
+    );
+    expect(refused.status).toBe(409);
+    expect(message).toContain("sam1@example.com");
+    expect(message).toContain("sam2@example.com");
+  });
+
+  test("an unknown name is refused WITH the closest known spellings", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await createTestDeveloper(harness, "Ken Weber", "ken@example.com");
+
+    // Act
+    const refused = await postMute(harness, nick, "Kenn");
+
+    // Assert
+    const message = String(
+      (refused.body?.["error"] as { message?: string } | undefined)?.message ??
+        "",
+    );
+    expect(refused.status).toBe(404);
+    expect(message).toContain("Ken Weber");
+  });
+
+  test("unmuting refuses in the same words muting does", async () => {
+    // Arrange: two spellings of one refusal is how they drift apart.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await createTestDeveloper(harness, "Sam", "sam1@example.com");
+    await createTestDeveloper(harness, "Sam", "sam2@example.com");
+
+    // Act
+    const muting = await postMute(harness, nick, "Sam");
+    const unmuting = await deleteMute(harness, nick, "Sam");
+
+    // Assert
+    const messageOf = (result: { body: Record<string, unknown> | null }) =>
+      String(
+        (result.body?.["error"] as { message?: string } | undefined)?.message ??
+          "",
+      );
+    expect(messageOf(unmuting)).toBe(messageOf(muting));
+  });
 });
 
 describe("DELETE /api/settings/mutes/:ref", () => {
