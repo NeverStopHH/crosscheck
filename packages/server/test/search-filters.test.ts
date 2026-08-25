@@ -620,6 +620,42 @@ describe("GET /api/search — the since filter", () => {
     expect(result.message).toContain("365");
   });
 
+  test("takes a date exactly one year back, which is what the cap says", async () => {
+    // Arrange: the cap compares an instant to an instant, and Date.parse
+    // resolves a date-only term to midnight UTC — so `2025-07-24` asked at
+    // 09:00 on 2026-07-24 is 365 days AND NINE HOURS back and was refused by
+    // a sentence saying the limit is 365 days. The relative spelling of the
+    // same window, `365d`, was accepted. Jira's JQL documents exactly this
+    // granularity mismatch and answers it with startOfDay().
+    const { harness, nick } = await seedCrowdedTier();
+    // TEST_START_ISO is 2026-07-24T09:00:00.000Z.
+    const ONE_YEAR_BACK = "2025-07-24";
+    const ONE_DAY_FURTHER = "2025-07-23";
+
+    // Act
+    const atTheCap = await search(harness, nick.apiKey, {
+      query: "",
+      since: ONE_YEAR_BACK,
+    });
+    const pastTheCap = await search(harness, nick.apiKey, {
+      query: "",
+      since: ONE_DAY_FURTHER,
+    });
+    const relative = await search(harness, nick.apiKey, {
+      query: "",
+      since: "365d",
+    });
+
+    // Assert: a date-only term is compared at day granularity, so the two
+    // spellings of "the last year" agree — and the day past it still refuses,
+    // because the cap is a real bound and not a rounding
+    expect(atTheCap.status).toBe(200);
+    expect(atTheCap.filters?.since).toBe("2025-07-24T00:00:00.000Z");
+    expect(relative.status).toBe(200);
+    expect(pastTheCap.status).toBe(400);
+    expect(pastTheCap.code).toBe("invalid_since");
+  });
+
   test("counts the context's own last change, not the claims filed into it", async () => {
     // Arrange: THE SEMANTICS, pinned rather than assumed. work_contexts
     // .updated_at moves when the context itself changes — title, description,

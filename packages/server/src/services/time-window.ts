@@ -94,6 +94,24 @@ export const parseSinceWindow = (raw: string, now: Date): SinceWindow => {
   if (Number.isNaN(parsedMs)) {
     return notAWindow(term);
   }
+  /**
+   * A DATE IS COMPARED AT DAY GRANULARITY, and only against the cap.
+   *
+   * `Date.parse` resolves a date-only term to midnight UTC, so on 2026-07-24
+   * at 09:00 the term `2025-07-24` is 365 days and nine hours back — refused
+   * by a sentence saying the limit is 365 days, while `365d`, the same window
+   * spelled the other way, was accepted. The caller asked for a year and was
+   * told a year is too far. Jira's JQL documents this exact mismatch and
+   * answers it with startOfDay(); this is the same answer, applied to `now`
+   * so the term the caller typed is never silently moved.
+   *
+   * The FUTURE check below keeps the instant, deliberately: flooring there
+   * would let a date later today through, and a window starting after the
+   * hits it is filtering can only answer "nothing".
+   */
+  const capFrom = term.includes("T")
+    ? now.getTime()
+    : Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   if (parsedMs > now.getTime()) {
     return {
       ok: false,
@@ -102,7 +120,7 @@ export const parseSinceWindow = (raw: string, now: Date): SinceWindow => {
         `answer "nothing", which reads as a fact about the team. ${FORMS}.`,
     };
   }
-  if (now.getTime() - parsedMs > SEARCH_MAX_SINCE_DAYS * MS_PER_DAY) {
+  if (capFrom - parsedMs > SEARCH_MAX_SINCE_DAYS * MS_PER_DAY) {
     return tooOld();
   }
   return { ok: true, since: new Date(parsedMs) };

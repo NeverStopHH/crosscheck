@@ -1662,6 +1662,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "a question that was never asked",
   },
   {
+    // Two spellings of the same window must agree. Comparing a date-only term
+    // against the clock's INSTANT makes `2025-07-24` nine hours older than
+    // `365d` on the same afternoon, so a caller who asks for a year is told a
+    // year is more than the 365 days the sentence says are allowed.
+    label: "a date exactly one year back is refused as too old",
+    file: `${SERVER}/src/services/time-window.ts`,
+    from:
+      "  const capFrom = term.includes(\"T\")\n    ? now.getTime()\n" +
+      "    : Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());",
+    to: "  const capFrom = now.getTime();",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "the obvious way to write \"the last year\" is refused by a sentence " +
+      "naming a bound the caller did not exceed",
+  },
+  {
     // The refusal that does not fit is the refusal that cannot be acted on.
     // Deleting the shrink is the plausible edit — "the sentence reads better
     // with the whole term in it" — and it costs the addresses and the closest
@@ -1833,7 +1849,7 @@ interface Outcome {
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: render-surface-registry.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
- * PRINTS: search-filters.test.ts 9
+ * PRINTS: search-filters.test.ts 10
  * PRINTS: search-who-when.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: session.test.ts 1
