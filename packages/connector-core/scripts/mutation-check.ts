@@ -1435,6 +1435,91 @@ export const MUTATIONS: readonly Mutation[] = [
       "ticks — the silent shape that produced 0 targets for whole sessions",
   },
   {
+    // #17: the free D2 candidate is the CWD's root, not the FILE's. Taking it
+    // for every path — the shape this branch shipped first — drops a same-repo
+    // edit in a third worktree and books a second repo's file as outside-root.
+    // Pure seams: no git, so the container caveat does not apply.
+    label: "the cwd's root is assumed to govern every touched path",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "      ? await toRepoRelative(input.identityRoot, input.cwd, path)",
+    to: "      ? input.identityRoot",
+    test: `${CORE}/test/touched-root.test.ts`,
+    because:
+      "a hook whose cwd sits in worktree B silently drops an edit in worktree " +
+      "C of the SAME repo, and reports a DIFFERENT repo's file as an " +
+      "outside-root drop — doctor then names the wrong cause",
+  },
+  {
+    // #17: a null repoId is an UNKNOWN (git deadline, git missing), not a
+    // second repo. Booking it as foreign makes doctor say "your second
+    // connected repo" about a worktree whose identity simply did not resolve.
+    label: "an unresolvable root is booked as a foreign repo",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "    if (repoId === null) {",
+    to: "    if (false) {",
+    test: `${CORE}/test/touched-root.test.ts`,
+    because:
+      "one missed git deadline turns an edit in the developer's own worktree " +
+      "into a `foreign-repo drops` line, the counter doctor explains as a " +
+      "multi-repo workspace's touches of its second repo",
+  },
+  {
+    // #17's budget, asserted as a COUNT rather than a clock: the cache HIT
+    // path is why the per-tool hook does not spawn git again for a root it
+    // already judged. A wall-clock budget test cannot see this — it stayed
+    // green with the read removed, at 2.6x the warm cost.
+    label: "the worktree-root cache is never read",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "    const cached = cache.get(candidateReal);",
+    to: "    const cached = undefined;",
+    test: `${CORE}/test/touched-root.test.ts`,
+    because:
+      "every PostToolUse and PreToolUse pays resolveRepoIdentity again for a " +
+      "root already resolved this session, and the first symptom is a hook " +
+      "that loses its capture to its own budget on a loaded machine",
+  },
+  {
+    // #17/#20: the state-file cap must be spent on the NEWEST states. In
+    // readdir order (OS hash order over UUID names) the cut is arbitrary, and
+    // the live session of this repo can miss the window entirely.
+    label: "the state-file cap is spent in readdir order again",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "    .sort((a, b) => b.modifiedAt - a.modifiedAt)",
+    to: "    .sort(() => 0)",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because:
+      "on a home with more state files than the cap, `status` and `doctor` " +
+      "report an arbitrary subset — a session in the WARN shape can be " +
+      "invisible on the machine the counters were built for",
+  },
+  {
+    // #18/#20: SessionStart re-fires inside a live session (compact/resume/
+    // clear). Re-creating the state file with fresh defaults erases the very
+    // counters the diagnosis line exists to print.
+    label: "a SessionStart re-fire zeroes the capture counters",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  previous === null ||",
+    to: "  true ||",
+    test: `${CONNECTOR}/test/session-refire.test.ts`,
+    because:
+      "a session that fired 40 edit tools into nothing and then auto-compacted " +
+      "prints `0 edit-tool fires → 0 targets` and PASSes — the WARN erased by " +
+      "the compaction, on the line a remote reader is asked to paste",
+  },
+  {
+    // #19 + §4: the targets-only pointer has no claim to derive self-exclusion
+    // from, and an exact path match is exactly how the reader's OWN earlier
+    // session surfaces. The hub excludes the caller; this is the second line.
+    label: "the targets-only pointer points at the reader's own work",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "      context.workContext.developerId !== selfDeveloperId",
+    to: "      true",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "a hub that fails to exclude the caller makes the reader's own earlier " +
+      "session a hint, spending one of the five a session gets on self-noise",
+  },
+  {
     // #17's budget guard: the per-session root→repoId cache is what keeps
     // the per-tool hook from paying resolveRepoIdentity (4-6 git spawns)
     // twice for one root. Dropping the cap lets it grow per distinct root.
@@ -1453,8 +1538,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // back the structural death: a hub with 0 claims never hints at all.
     label: "the targets-only pointer is disabled",
     file: `${CORE}/src/hints/select.ts`,
-    from: '    if (context.workContext.tier === "exact") {',
-    to: "    if (false) {",
+    from: '      context.workContext.tier === "exact" &&',
+    to: "      false &&",
     test: `${CORE}/test/hint-select.test.ts`,
     because:
       "a teammate's context that targeted the very file the prompt names " +
@@ -1549,7 +1634,7 @@ interface Outcome {
  * PRINTS: briefing-parity.test.ts 2
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
- * PRINTS: capture-health.test.ts 1
+ * PRINTS: capture-health.test.ts 2
  * PRINTS: conclusion-corpus.test.ts 6
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
@@ -1565,7 +1650,7 @@ interface Outcome {
  * PRINTS: hint-flow.test.ts 2
  * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 1
- * PRINTS: hint-select.test.ts 4
+ * PRINTS: hint-select.test.ts 5
  * PRINTS: hints.test.ts 2
  * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
@@ -1582,6 +1667,7 @@ interface Outcome {
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search.test.ts 3
+ * PRINTS: session-refire.test.ts 1
  * PRINTS: session-state-transforms.test.ts 1
  * PRINTS: sessions.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
@@ -1593,6 +1679,7 @@ interface Outcome {
  * PRINTS: summarizer-child-guard.test.ts 1
  * PRINTS: summarizer-cost.test.ts 1
  * PRINTS: summarizer-worker-env.test.ts 1
+ * PRINTS: touched-root.test.ts 3
  * PRINTS: transparency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 3
  * PRINTS: worktree-capture.test.ts 2

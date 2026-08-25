@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 92
+    # PRINTS: 98
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -141,7 +141,7 @@ jobs:
     # PRINTS: summarizer/worker-env.ts 1
     # PRINTS: briefing/render.ts 2
     # PRINTS: briefing/sanitize.ts 7
-    # PRINTS: capture/touched-root.ts 1
+    # PRINTS: capture/touched-root.ts 4
     # PRINTS: config/config.ts 3
     # PRINTS: config/connected-repo.ts 2
     # PRINTS: config/hook-budget.ts 1
@@ -151,13 +151,14 @@ jobs:
     # PRINTS: flows/hint.ts 2
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/render.ts 1
-    # PRINTS: hints/select.ts 5
+    # PRINTS: hints/select.ts 6
     # PRINTS: http/hub.ts 1
     # PRINTS: http/latency.ts 1
     # PRINTS: mcp/render-referee.ts 2
     # PRINTS: mcp/render.ts 3
     # PRINTS: spool/reap.ts 1
-    # PRINTS: state/session-state.ts 1
+    # PRINTS: state/capture-health.ts 1
+    # PRINTS: state/session-state.ts 2
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
@@ -170,6 +171,7 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
     # PRINTS: briefing.ts 1
+    # PRINTS: capture-health.ts 1
     # PRINTS: capture-targets.ts 1
     # PRINTS: config.ts 3
     # PRINTS: connected-repo.ts 2
@@ -198,15 +200,15 @@ jobs:
     # PRINTS: runner.ts 2
     # PRINTS: sanitize.ts 7
     # PRINTS: search.ts 6
-    # PRINTS: select.ts 5
+    # PRINTS: select.ts 6
     # PRINTS: session-start.ts 2
-    # PRINTS: session-state.ts 1
+    # PRINTS: session-state.ts 2
     # PRINTS: sessions.ts 1
     # PRINTS: settings-merge.ts 1
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: stop.ts 2
     # PRINTS: tool-failure.ts 2
-    # PRINTS: touched-root.ts 1
+    # PRINTS: touched-root.ts 4
     # PRINTS: worker-env.ts 1
     name: Mutation proof
     runs-on: ubuntu-latest
