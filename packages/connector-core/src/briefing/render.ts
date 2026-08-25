@@ -398,22 +398,55 @@ const SOLVED_MATCH_KIND_LABELS: Readonly<Record<string, string>> = {
 };
 
 /**
- * One solved-before pointer: author, plain age, what is shared, and the pull
- * call — NEVER a claim body (§4 pointer discipline; an old answer asserted
- * at SessionStart would anchor). Exported because the SessionStart hook must
- * know which pointers the emitted briefing actually shows, to record their
- * deliveries — two spellings of this line would drift.
+ * Where the solved tree lives, when that is NOT the repo being briefed
+ * (VISION.md §1 across repos): ` · in <repo>` — BARE class, like every other
+ * short ·-separated field, because a repo id is hub text and must not be
+ * able to mint a field of its own.
+ *
+ * Three cases, and the difference between them is the honesty of the line.
+ * Absent (an older hub, which only ever matched locally) and equal both mean
+ * HERE, and here needs no words. Present, different, and unprintable after
+ * the BARE strip is the fourth case, handled by the caller: a match the
+ * reader would read as local when it is not, so the line is dropped instead.
+ */
+const solvedRepoFragment = (
+  entry: SolvedMatchEntry,
+  repoId: string,
+): string | null => {
+  if (entry.repo === undefined || entry.repo === repoId) {
+    return "";
+  }
+  const label = bareUntrusted(entry.repo);
+  return label.length === 0 ? null : ` · in ${label}`;
+};
+
+/**
+ * One solved-before pointer: author, plain age, WHERE it was solved, what is
+ * shared, and the pull call — NEVER a claim body (§4 pointer discipline; an
+ * old answer asserted at SessionStart would anchor). Exported because the
+ * SessionStart hook must know which pointers the emitted briefing actually
+ * shows, to record their deliveries — two spellings of this line would drift.
+ * `repoId` is the repo being briefed, and it is a parameter rather than a
+ * field because "elsewhere" is a fact about the READER, not about the row.
  * Null = a row this renderer will not vouch for.
  */
 export const formatSolvedLine = (
   entry: SolvedMatchEntry,
   now: Date,
+  repoId: string,
 ): string | null => {
   const id = safeId(entry.workContextId);
   const title = sanitizeUntrusted(entry.title);
   const ageMs = ageMsFrom(entry.solvedAt, now);
   const kindLabel = SOLVED_MATCH_KIND_LABELS[entry.matchedTargetKind];
-  if (id.length === 0 || title.length === 0 || ageMs === null || kindLabel === undefined) {
+  const repoFragment = solvedRepoFragment(entry, repoId);
+  if (
+    id.length === 0 ||
+    title.length === 0 ||
+    ageMs === null ||
+    kindLabel === undefined ||
+    repoFragment === null
+  ) {
     return null;
   }
   const name =
@@ -432,7 +465,7 @@ export const formatSolvedLine = (
   // U+00B7-separated like the absence and MCP lines — the structure the BARE
   // class strips from names, so an author cannot mint a field. A comma-shaped
   // line here would be structure no character class covers.
-  return `- ${author} · diagnosed ${formatSolvedAge(ageMs)} ago${landedFact} · ${kindLabel}: «${title}» · get_diagnosis ${id}`;
+  return `- ${author} · diagnosed ${formatSolvedAge(ageMs)} ago${landedFact}${repoFragment} · ${kindLabel}: «${title}» · get_diagnosis ${id}`;
 };
 
 /**
@@ -444,11 +477,15 @@ export const formatSolvedLine = (
  */
 const renderSolvedSection = (input: BriefingInput): Section => {
   const rendered = (input.solvedMatches ?? []).flatMap((entry) => {
-    const line = formatSolvedLine(entry, input.now);
+    const line = formatSolvedLine(entry, input.now, input.repoId);
     return line === null ? [] : [line];
   });
   return {
-    header: "Previously solved on this repo (get_diagnosis reads the tree):",
+    // NOT "on this repo" any more: the hub matches fingerprints across every
+    // repo it holds, and a header that promised local rows while the lines
+    // pointed elsewhere would be the wrong half of the sentence to trust.
+    // Where a match lives is stated per line, and only when it is elsewhere.
+    header: "Previously solved (get_diagnosis reads the tree):",
     lines: rendered.slice(0, MAX_SOLVED_POINTERS),
     total: rendered.length,
   };

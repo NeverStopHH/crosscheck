@@ -44,6 +44,7 @@ import type {
   PresenceEntry,
   RefereeBrief,
   RefereeClaim,
+  SolvedMatchEntry,
   TripwireSession,
   WorkContextEntry,
 } from "./http/hub.ts";
@@ -211,6 +212,24 @@ const answeredQuestionWith = (payload: string): AnsweredQuestion => ({
   answeredAt: ISO,
 });
 
+/**
+ * The payload in every untrusted slot of a solved match (VISION.md §1): the
+ * solver's display name, the tree's title, and — new with cross-repo
+ * matching — the REPO the tree lives in, which is hub text printed BARE on a
+ * ·-separated line and therefore the newest place a field could be minted.
+ * The repo deliberately differs from the briefing's own so the fragment
+ * actually renders; equal to it, the surface would render nothing to attack.
+ */
+const solvedMatchWith = (payload: string): SolvedMatchEntry => ({
+  workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+  title: payload,
+  developerName: payload,
+  repo: payload,
+  solvedAt: ISO,
+  landedAt: null,
+  matchedTargetKind: "error_fingerprint",
+});
+
 const tripwireSessionWith = (payload: string): TripwireSession => ({
   sessionId: "cc_11111111-2222-4333-8444-555555555555",
   developerId: "dev_other",
@@ -333,6 +352,25 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         presence: [],
         workContexts: [],
         questions: [inboxQuestionWith(payload)],
+        now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "briefing-solved",
+    module: "src/briefing/render.ts",
+    framing: "framed",
+    // The SOLVED slot of the briefing, which the "briefing" surface above
+    // cannot reach: it passes no matches, so the section never renders there
+    // and its three untrusted fields — solver name, tree title, and the repo
+    // the tree lives in — were attacked by nothing.
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        presence: [],
+        workContexts: [],
+        solvedMatches: [solvedMatchWith(payload)],
         now: NOW,
       }),
   },

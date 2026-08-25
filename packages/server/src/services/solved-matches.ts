@@ -7,10 +7,17 @@
  * and this feeds a SessionStart line that asserts relevance unasked — the
  * anchoring bar is the briefing's, not search's.
  *
+ * ONE HUB IS ONE TEAM MEMORY, so the candidate side is NOT limited to the
+ * asking repo: `get_diagnosis` has always been cross-repo readable, and a
+ * symptom somebody diagnosed in the web app is the same answer when it
+ * reappears in the api. What travels is decided by identity, not by
+ * convenience — see CROSS_REPO_TARGET_KIND. The row names the repo it came
+ * from so the renderer never has to guess where the reader should look.
+ *
  * Derived fresh per read like the deterministic contradictions — no stored
  * pairs, no ingest-order dependence, nothing to go stale.
  */
-import { and, asc, eq, gte, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import {
@@ -32,6 +39,17 @@ import type { Clock } from "../types.ts";
 /** Strong-match target kinds, most precise first. */
 const MATCH_TARGET_KINDS = ["error_fingerprint", "file"] as const;
 
+/**
+ * The one kind whose identity is CONTENT rather than location: a fingerprint
+ * is derived from the failure TEXT (connector-core/capture/fingerprint.ts),
+ * so it means the same thing in every checkout on this hub. A file target is
+ * a repo-RELATIVE path — `src/index.ts` names a different file in every repo
+ * — so it is identity only INSIDE one repo, and letting it travel would turn
+ * a "you have seen this before" line into the fuzzy similarity that cries
+ * wolf. This constant is therefore the cross-repo gate, not a label.
+ */
+const CROSS_REPO_TARGET_KIND = "error_fingerprint";
+
 const MS_PER_DAY = 86_400_000;
 
 interface Deps {
@@ -43,6 +61,12 @@ export interface SolvedMatchView {
   readonly workContextId: string;
   readonly title: string;
   readonly developerName: string;
+  /**
+   * The repo the SOLVED tree lives in, which is no longer necessarily the
+   * repo that asked: sent on every row, same-repo ones included, so the
+   * renderer decides by comparing rather than by guessing from an absence.
+   */
+  readonly repo: string;
   readonly solvedAt: string;
   readonly landedAt: string | null;
   /** Which shared target kind carried the match — fingerprint wins ties. */
@@ -57,7 +81,7 @@ interface PairRow {
 
 /**
  * (candidate, live, kind) triples where candidate and live share a strong
- * target on this repo and the live side was active inside the window. Both
+ * target and the live side was active inside the window on this repo. Both
  * sides may still be unsolved here — solvedness is resolved after, in one
  * bounded lookup, because the solved rule is a claims-side predicate this
  * join has no business duplicating.
@@ -98,7 +122,15 @@ const listSharedTargetPairs = async (
     .where(
       and(
         inArray(workContextTargets.kind, [...MATCH_TARGET_KINDS]),
-        eq(agentSessions.repo, repo),
+        // The CANDIDATE side may live anywhere on the hub, but only through
+        // the content-identity kind (CROSS_REPO_TARGET_KIND): a fingerprint
+        // travels, a repo-relative path does not. The LIVE side stays pinned
+        // to the asking repo — "current work" means work in the checkout the
+        // briefing is for.
+        or(
+          eq(workContextTargets.kind, CROSS_REPO_TARGET_KIND),
+          eq(agentSessions.repo, repo),
+        ),
         eq(liveSessions.repo, repo),
         gte(
           sql`coalesce(${liveContexts.updatedAt}, ${liveContexts.createdAt})`,
@@ -133,7 +165,7 @@ const hydrateMatches = async (
 ): Promise<
   ReadonlyMap<
     string,
-    { title: string; developerName: string; landedAt: Date | null }
+    { title: string; developerName: string; repo: string; landedAt: Date | null }
   >
 > => {
   if (ids.length === 0) {
@@ -145,6 +177,7 @@ const hydrateMatches = async (
       title: workContexts.title,
       landedAt: workContexts.landedAt,
       developerName: developers.name,
+      repo: agentSessions.repo,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -156,6 +189,7 @@ const hydrateMatches = async (
       {
         title: row.title,
         developerName: row.developerName,
+        repo: row.repo,
         landedAt: row.landedAt,
       },
     ]),
@@ -224,6 +258,7 @@ export const listSolvedMatches = async (
         workContextId: winner.id,
         title: row.title,
         developerName: row.developerName,
+        repo: row.repo,
         solvedAt: solvedAt.toISOString(),
         landedAt: row.landedAt === null ? null : row.landedAt.toISOString(),
         matchedTargetKind: winner.viaFingerprint

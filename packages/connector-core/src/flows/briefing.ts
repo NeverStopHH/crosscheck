@@ -155,7 +155,7 @@ export const assembleBriefing = async (
   const shownSolvedIds = solvedMatches
     .map((match: SolvedMatchEntry) => ({
       match,
-      line: formatSolvedLine(match, now),
+      line: formatSolvedLine(match, now, repoId),
     }))
     .filter((entry) => entry.line !== null)
     .slice(0, MAX_SOLVED_POINTERS)

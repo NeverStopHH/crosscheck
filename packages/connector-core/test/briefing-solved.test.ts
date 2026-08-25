@@ -44,7 +44,7 @@ describe("briefing solved-before section", () => {
     const briefing = renderBriefing(baseInput([solvedMatch()]));
 
     // Assert: months for an old diagnosis, the shared-target fact, the id.
-    expect(briefing).toContain("Previously solved on this repo");
+    expect(briefing).toContain("Previously solved (get_diagnosis reads the tree)");
     expect(briefing).toContain("get_diagnosis wc_solved");
     expect(briefing).toContain("diagnosed 5mo ago");
     expect(briefing).toContain("shared error fingerprint");
@@ -198,6 +198,43 @@ describe("briefing solved-before section", () => {
       .split("\n")
       .find((line) => line.includes("get_diagnosis wc_x"));
     expect(pointerLine?.split("·")).toHaveLength(4);
+  });
+
+  test("a match from another repo names it; one from here, or from an older hub, names none", async () => {
+    // Arrange: the SAME match three times, differing only in what the hub
+    // says about its repo — elsewhere, here, and a hub too old to say.
+    // Asserting all three together is what makes this discriminating: a
+    // renderer that simply ignored `repo` would satisfy the last two alone.
+    // Two calls because MAX_SOLVED_POINTERS caps a section at two lines.
+    const both = renderBriefing(
+      baseInput([
+        solvedMatch({ workContextId: "wc_far", repo: "github.com/acme/web" }),
+        solvedMatch({ workContextId: "wc_near", repo: "github.com/acme/api" }),
+      ]),
+    );
+    const older = renderBriefing(baseInput([solvedMatch({ workContextId: "wc_old" })]));
+
+    // Assert
+    const lineFor = (briefing: string, id: string): string =>
+      briefing.split("\n").find((line) => line.includes(`get_diagnosis ${id}`)) ??
+      "";
+    expect(lineFor(both, "wc_far")).toContain("· in github.com/acme/web ·");
+    expect(lineFor(both, "wc_near")).toContain("get_diagnosis wc_near");
+    expect(lineFor(both, "wc_near")).not.toContain(" · in ");
+    expect(lineFor(older, "wc_old")).toContain("get_diagnosis wc_old");
+    expect(lineFor(older, "wc_old")).not.toContain(" · in ");
+  });
+
+  test("a foreign repo the renderer cannot print drops the line", async () => {
+    // Arrange: a repo id that is nothing but frame characters survives the
+    // BARE strip as an empty string. Showing the line anyway would read as
+    // "solved here", which is the one thing it is not — so it is dropped.
+    const briefing = renderBriefing(
+      baseInput([solvedMatch({ repo: "«»«»" })]),
+    );
+
+    // Assert
+    expect(briefing).toBe("");
   });
 
   test("an id reduced to nothing drops the pointer — it cannot be followed", async () => {

@@ -235,13 +235,23 @@ export const getAbsences = (
 
 /**
  * One "solved before" match (VISION.md §1): a solved tree sharing a strong
- * target with current work on this repo. A POINTER on the wire by
- * construction — title, author, ages and the id to pull, never a claim body.
+ * target with current work on this repo — or, through the content-identity
+ * kind, on ANY repo of this hub, which is why the row names its own. A
+ * POINTER on the wire by construction — title, author, repo, ages and the id
+ * to pull, never a claim body.
  */
 export const SolvedMatchEntrySchema = z.looseObject({
   workContextId: z.string().min(1),
   title: z.string().min(1),
   developerName: z.string().min(1).optional(),
+  /**
+   * The repo the SOLVED tree lives in — sent on every row, this repo's rows
+   * included. OPTIONAL because a hub too old to serve it only ever matched
+   * inside the asking repo, which is exactly what "absent" then means; a
+   * newer hub's cross-repo row always carries it, and a row that claims a
+   * repo the renderer cannot print is dropped rather than shown as local.
+   */
+  repo: z.string().min(1).optional(),
   solvedAt: z.string().min(1),
   landedAt: z.string().nullable().optional(),
   /** Open string: an unknown kind renders nothing (briefing/render.ts). */

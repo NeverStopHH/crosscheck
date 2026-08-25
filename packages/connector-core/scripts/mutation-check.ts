@@ -454,6 +454,38 @@ export const MUTATIONS: readonly Mutation[] = [
       "every other search test green",
   },
   {
+    // VISION.md §1 across repos: the fingerprint is the ONE identity that
+    // travels, and this puts the candidate side back inside the asking repo.
+    label: "a solved answer in another repo stops being found",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: `or(
+          eq(workContextTargets.kind, CROSS_REPO_TARGET_KIND),
+          eq(agentSessions.repo, repo),
+        ),`,
+    to: "eq(agentSessions.repo, repo),",
+    test: `${SERVER}/test/solved-cross-repo.test.ts`,
+    because:
+      "the hub holds the answer, has matched its fingerprint, and says " +
+      "nothing because the person who solved it was working in a different " +
+      "checkout — collective memory silently becomes per-repo memory",
+  },
+  {
+    // The other direction, and the more dangerous one: letting ANY target
+    // travel makes `src/index.ts` in two unrelated repos one file.
+    label: "a repo-relative path counts as identity between repos",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: `or(
+          eq(workContextTargets.kind, CROSS_REPO_TARGET_KIND),
+          eq(agentSessions.repo, repo),
+        ),`,
+    to: "sql`true`,",
+    test: `${SERVER}/test/solved-cross-repo.test.ts`,
+    because:
+      "every repo on the hub that happens to spell a path the same way " +
+      "becomes a \"you have solved this before\" line — the cry-wolf " +
+      "failure the whole matching rule exists to avoid",
+  },
+  {
     label: "the solved floor leaks into similarity guesses",
     file: `${SERVER}/src/services/search.ts`,
     from: "solvedIds.has(entry.row.id) && hasFactTier(entry.tiers)",
@@ -2038,6 +2070,7 @@ interface Outcome {
  * PRINTS: sessions.test.ts 1
  * PRINTS: set-intent.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
+ * PRINTS: solved-cross-repo.test.ts 2
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1
  * PRINTS: stop-hook.test.ts 1
