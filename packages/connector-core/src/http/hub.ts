@@ -733,6 +733,12 @@ export type InboxQuestion = z.infer<typeof InboxQuestionSchema>;
 export const QuestionCountsSchema = z.looseObject({
   openToMe: z.number().int().min(0).default(0),
   oldestToMeAt: z.string().nullable().default(null),
+  /**
+   * Who asked that oldest one — BARE untrusted text, framed like every other
+   * teammate name at the surfaces that print it. Null from any hub too old to
+   * send it, which is why the doctor keeps its nameless wording as a fallback.
+   */
+  oldestToMeFrom: z.string().nullable().default(null),
   asked: z.number().int().min(0).default(0),
   askedAnswered: z.number().int().min(0).default(0),
   askedExpired: z.number().int().min(0).default(0),
@@ -749,6 +755,7 @@ export interface QuestionsView {
 const EMPTY_COUNTS: QuestionCounts = {
   openToMe: 0,
   oldestToMeAt: null,
+  oldestToMeFrom: null,
   asked: 0,
   askedAnswered: 0,
   askedExpired: 0,

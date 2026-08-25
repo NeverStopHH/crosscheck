@@ -38,7 +38,7 @@
  * ANSWERER's own work context (`publish_claim` semantics): it is their
  * assertion, in their own tree, and the edge is what carries it to the asker.
  */
-import { and, desc, eq, gt, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, lte, sql } from "drizzle-orm";
 import type { Question, QuestionAnswer } from "@crosscheck/schema";
 
 import {
@@ -535,6 +535,14 @@ export interface QuestionCounts {
   readonly openToMe: number;
   /** ISO of the OLDEST open question addressed to me; null when there are none. */
   readonly oldestToMeAt: string | null;
+  /**
+   * WHO asked that oldest one. The doctor's most important sentence is "a
+   * teammate has been waiting 9d", and a reader with four teammates cannot
+   * act on it without the name — the cheapest action, sending Ada one line,
+   * is not available from a sentence that will not say it is Ada. The name is
+   * already on the wire beside every inbox row; only the counters dropped it.
+   */
+  readonly oldestToMeFrom: string | null;
   readonly asked: number;
   readonly askedAnswered: number;
   readonly askedExpired: number;
@@ -589,6 +597,27 @@ export const expireOwnQuestions = async (
  * `doctor` eventually tells them it expired — without saying why, because a
  * mute a sender can detect is a mute nobody would set.
  */
+/**
+ * THE inbox predicate, extracted so the rows and the COUNTERS can never
+ * describe two different sets. The counters are computed over this same
+ * expression in SQL rather than over the returned page (below), which is the
+ * defect this extraction exists to make impossible.
+ */
+const inboxCondition = (
+  now: Date,
+  developerId: string,
+  repo: string,
+  excludeMuted: boolean,
+) =>
+  and(
+    eq(questions.targetDeveloperId, developerId),
+    eq(questions.repo, repo),
+    isLive(now),
+    ...(excludeMuted
+      ? [notMutedCondition(developerId, questions.authorDeveloperId)]
+      : []),
+  );
+
 const listInbox = async (
   deps: Deps,
   developerId: string,
@@ -604,16 +633,7 @@ const listInbox = async (
     .from(questions)
     .innerJoin(developers, eq(questions.authorDeveloperId, developers.id))
     .leftJoin(workContexts, eq(questions.workContextId, workContexts.id))
-    .where(
-      and(
-        eq(questions.targetDeveloperId, developerId),
-        eq(questions.repo, repo),
-        isLive(deps.now()),
-        ...(excludeMuted
-          ? [notMutedCondition(developerId, questions.authorDeveloperId)]
-          : []),
-      ),
-    )
+    .where(inboxCondition(deps.now(), developerId, repo, excludeMuted))
     .orderBy(desc(questions.createdAt))
     .limit(MAX_QUESTIONS_LISTED);
   return rows.map((row) => ({
@@ -626,6 +646,55 @@ const listInbox = async (
     createdAt: row.question.createdAt.toISOString(),
     expiresAt: row.question.expiresAt.toISOString(),
   }));
+};
+
+/**
+ * The BACKLOG, in SQL, over the identical predicate `listInbox` pages through.
+ *
+ * WHY NOT `inbox.length`. The rows are bounded by MAX_QUESTIONS_LISTED and
+ * ordered NEWEST FIRST, so deriving the counters from them caps the count at
+ * the listing bound and — worse — makes the oldest question the FIRST thing
+ * dropped. Seven teammates each holding their per-target allowance is 21 open
+ * questions on a ten-person team, at which point the status line under-counts
+ * and the doctor's "a teammate has been waiting" WARN can never fire again,
+ * however long anybody waits. The one number this channel exists to make
+ * visible would be the one that goes stale first.
+ *
+ * Two bounded reads on `questions_target_status_created_idx`: a count, and
+ * the single oldest row (with its author, for the sentence the doctor
+ * prints). Both run beside the listing in the same Promise.all.
+ */
+const summarizeInbox = async (
+  deps: Deps,
+  developerId: string,
+  repo: string,
+): Promise<
+  Pick<QuestionCounts, "openToMe" | "oldestToMeAt" | "oldestToMeFrom">
+> => {
+  const where = inboxCondition(deps.now(), developerId, repo, true);
+  const [totals, oldest] = await Promise.all([
+    deps.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(questions)
+      .innerJoin(developers, eq(questions.authorDeveloperId, developers.id))
+      .where(where),
+    deps.db
+      .select({
+        createdAt: questions.createdAt,
+        authorDeveloperName: developers.name,
+      })
+      .from(questions)
+      .innerJoin(developers, eq(questions.authorDeveloperId, developers.id))
+      .where(where)
+      .orderBy(asc(questions.createdAt))
+      .limit(1),
+  ]);
+  const oldestRow = oldest[0];
+  return {
+    openToMe: totals[0]?.count ?? 0,
+    oldestToMeAt: oldestRow?.createdAt.toISOString() ?? null,
+    oldestToMeFrom: oldestRow?.authorDeveloperName ?? null,
+  };
 };
 
 /**
@@ -715,27 +784,20 @@ export const listQuestions = async (
   // The asker's own expired rows are flipped first, so the counters below and
   // the doctor's "expired unanswered" warning read the same table state.
   await expireOwnQuestions(deps, developerId);
-  const [inbox, answers, ownCounts] = await Promise.all([
+  const [inbox, answers, backlog, ownCounts] = await Promise.all([
     // The BRIEFING's read: muted askers filtered, because the briefing is an
     // unasked surface. An ANSWER below is deliberately NOT filtered — it is
     // solicited, and hiding the answer to a question this developer asked
     // would be absurd whatever they think of the answerer.
     listInbox(deps, developerId, repo, true),
     listUndeliveredAnswers(deps, developerId),
+    // The counters come from SQL over the same predicate, NEVER from the page
+    // above — see summarizeInbox for what deriving them from a bounded,
+    // newest-first listing costs.
+    summarizeInbox(deps, developerId, repo),
     countOwnQuestions(deps, developerId),
   ]);
-  const oldest = inbox.reduce<string | null>(
-    (oldestAt, question) =>
-      oldestAt === null || question.createdAt < oldestAt
-        ? question.createdAt
-        : oldestAt,
-    null,
-  );
-  return {
-    inbox,
-    answers,
-    counts: { openToMe: inbox.length, oldestToMeAt: oldest, ...ownCounts },
-  };
+  return { inbox, answers, counts: { ...backlog, ...ownCounts } };
 };
 
 /**

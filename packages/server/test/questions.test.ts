@@ -10,6 +10,7 @@ import {
   WORK_CONTEXT_ID,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
+import { MAX_QUESTIONS_LISTED } from "../src/constants.ts";
 import { asRendered, MAX_REFUSAL_CHARS } from "../src/services/refusal.ts";
 
 const REPO = VALID_SESSION_BODY.repo;
@@ -814,5 +815,61 @@ describe("every question refusal fits what a connector quotes", () => {
       .filter((entry) => entry.length > MAX_REFUSAL_CHARS);
     expect(refusals.every((message) => message.length > 0)).toBe(true);
     expect(tooLong).toEqual([]);
+  });
+});
+
+/**
+ * The two numbers `crosscheck status` prints and `crosscheck doctor` warns on.
+ * They describe the BACKLOG, so a bound on the LISTING must not bound them:
+ * a channel whose backlog is invisible is a channel people stop trusting, and
+ * the oldest question is the first row a newest-first LIMIT drops.
+ */
+describe("the backlog counters are not capped by the listing bound", () => {
+  let harness: TestHarness;
+  let ken: Party;
+
+  beforeEach(async () => {
+    harness = await createTestHarness();
+    ken = await seatDeveloper(harness, "Ken", "ken@example.com", "ses_ken");
+  });
+
+  test("past MAX_QUESTIONS_LISTED the count is real and the oldest is named", async () => {
+    // Arrange: one genuinely old question from Ada, then enough fresh ones
+    // from other askers to push it out of the newest-first window. The
+    // per-target budget is per AUTHOR, so eight teammates reach 24 between
+    // them without any of them breaking a rule.
+    const ada = await seatDeveloper(harness, "Ada", "ada@example.com", "ses_ada");
+    const askedAt = harness.clock.now().toISOString();
+    const first = await ask(harness, ada, {
+      developer: "Ken",
+      body: "Did the rate-limit variant of the importer ever get tried?",
+    });
+    expect(first.status).toBe(200);
+    harness.clock.advanceSeconds(8 * SECONDS_PER_DAY);
+    for (let index = 0; index < 8; index += 1) {
+      const asker = await seatDeveloper(
+        harness,
+        `Dev${String(index)}`,
+        `dev${String(index)}@example.com`,
+        `ses_dev${String(index)}`,
+      );
+      for (const topic of ["importer", "matcher", "scheduler"]) {
+        const asked = await ask(harness, asker, {
+          developer: "Ken",
+          body: `Did the retry path in the ${topic} get tried, take ${String(index)}?`,
+        });
+        expect(asked.status).toBe(200);
+      }
+    }
+
+    // Act
+    const kensView = await readQuestions(harness, ken);
+
+    // Assert: the rows stay bounded, the counters do not, and the oldest one
+    // — the person who has actually been waiting — is the one they name.
+    expect(kensView.data.inbox).toHaveLength(MAX_QUESTIONS_LISTED);
+    expect(kensView.data.counts["openToMe"]).toBe(25);
+    expect(kensView.data.counts["oldestToMeAt"]).toBe(askedAt);
+    expect(kensView.data.counts["oldestToMeFrom"]).toBe("Ada");
   });
 });
