@@ -26,6 +26,7 @@ import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
 import { quoted, quotingText, safeId } from "../render.ts";
+import { bareUntrusted } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { askQuestion } from "../../http/hub.ts";
 import { NO_SESSION, requireOwnContext } from "./publish-claim.ts";
@@ -142,10 +143,19 @@ export const run = async (
       ),
     );
   }
+  // WHO, when the hub says so. It matters most on the workContextId-only path,
+  // where the caller asked "whoever owns it" and cannot otherwise learn who
+  // that was — and an agent reporting "I asked the owner" leaves its developer
+  // unable to tell Ken-on-holiday from Mike-at-his-desk. BARE untrusted like
+  // every other teammate name; a name that does not survive the sanitizer, or
+  // an older hub that does not send one, falls back to the pronoun.
+  const target = bareUntrusted(posted.data.targetDeveloperName ?? "");
+  const asked = target.length === 0 ? "Asked" : `Asked ${target}`;
+  const theirs = target.length === 0 ? "their" : `${target}'s`;
   return toolText(
     quotingText(
-      `Asked as ${safeId(posted.data.question?.id ?? posted.data.questionId ?? "")}: ${framed}.`,
-      "It appears in their briefing the next time they start a crosscheck session, and " +
+      `${asked} as ${safeId(posted.data.question?.id ?? posted.data.questionId ?? "")}: ${framed}.`,
+      `It appears in ${theirs} briefing the next time they start a crosscheck session, and ` +
         "their answer reaches you as a hint at one of your next prompts. Nothing " +
         "happens if they do not answer: the question expires after 14 days and " +
         "crosscheck status tells you it did. Do not wait for it — carry on.",

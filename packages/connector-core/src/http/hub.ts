@@ -810,6 +810,8 @@ export interface AskQuestionRequest {
 const AskQuestionResponseSchema = z.looseObject({
   question: z.looseObject({ id: z.string().min(1) }).optional(),
   questionId: z.string().min(1).optional(),
+  /** Who the hub resolved the question to — BARE untrusted at the surface. */
+  targetDeveloperName: z.string().min(1).optional(),
   duplicate: z.boolean().default(false),
 });
 

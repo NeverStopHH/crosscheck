@@ -208,14 +208,17 @@ const answersOf = async (
 };
 
 /**
- * The id out of the "Asked as qn_… " sentence — the caller's own next step.
- * The class deliberately EXCLUDES ":" even though an id may contain one: the
- * sentence is `Asked as <id>: «question»`, and a greedy class that allowed
- * the colon swallowed the sentence's own punctuation into the id.
+ * The id out of the "Asked <teammate> as qn_… " sentence — the caller's own
+ * next step. The class deliberately EXCLUDES ":" even though an id may contain
+ * one: the sentence is `Asked <teammate> as <id>: «question»`, and a greedy
+ * class that allowed the colon swallowed the sentence's own punctuation into
+ * the id. The teammate's name sits between "Asked" and "as" and is skipped
+ * here rather than matched, because it is untrusted text.
  */
 const askedId = (text: string): string =>
-  /(?:Asked as|already have that question open as) (qn_[\w.-]+)/.exec(text)?.[1] ??
-  "";
+  /(?:Asked[^:]* as|already have that question open as) (qn_[\w.-]+)/.exec(
+    text,
+  )?.[1] ?? "";
 
 beforeAll(async () => {
   db = await createDb();
@@ -309,6 +312,24 @@ describe("ask_teammate", () => {
     expect(result.text).toBe(QUESTION_SECRET_REFUSAL);
     expect(result.text).not.toContain(CREDENTIAL);
     expect(await inboxOf(ken)).toHaveLength(before);
+  });
+
+  test("asking by work context alone still says WHO was asked", async () => {
+    // Arrange: the tool's own description promises "crosscheck asks whoever
+    // owns it" on this path, so the caller cannot know the answer to "who"
+    // without being told — and "it appears in THEIR briefing" resolves to
+    // nobody. Mike asks, so nobody's budget is spent twice.
+
+    // Act
+    const result = await call(mike, "ask_teammate", {
+      workContextId: ken.workContextId,
+      question: "Who owns the retry policy on the importer path now?",
+    });
+
+    // Assert: the person, not a pronoun.
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("Ken Weber");
+    expect(askedId(result.text)).toMatch(/^qn_/);
   });
 
   test("a name nobody answers to comes back naming the closest spelling", async () => {

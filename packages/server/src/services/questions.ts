@@ -100,7 +100,18 @@ export interface QuestionRow {
 }
 
 export type AskOutcome =
-  | { readonly outcome: "asked"; readonly question: QuestionRow }
+  | {
+      readonly outcome: "asked";
+      readonly question: QuestionRow;
+      /**
+       * WHO was asked, in words. The row carries only `targetDeveloperId`, and
+       * on the workContextId-only path the caller never named a person at all
+       * — the tool promises "crosscheck asks whoever owns it" and then had
+       * nothing to report. One extra column on a lookup the write already
+       * makes.
+       */
+      readonly targetDeveloperName: string;
+    }
   | { readonly outcome: "duplicate"; readonly questionId: string }
   | { readonly outcome: "budget"; readonly reason: string }
   | { readonly outcome: "invalid"; readonly reason: string };
@@ -266,11 +277,12 @@ export const askQuestion = async (
       };
     }
     const targetRows = await tx
-      .select({ id: developers.id })
+      .select({ id: developers.id, name: developers.name })
       .from(developers)
       .where(eq(developers.id, targetDeveloperId))
       .limit(1);
-    if (targetRows[0] === undefined) {
+    const targetRow = targetRows[0];
+    if (targetRow === undefined) {
       return {
         outcome: "invalid" as const,
         reason: `developer "${targetDeveloperId}" not found`,
@@ -321,7 +333,11 @@ export const askQuestion = async (
       // accepted before. Nothing new, so: duplicate, not a rejection.
       return { outcome: "duplicate" as const, questionId: input.id };
     }
-    return { outcome: "asked" as const, question: toRow(row) };
+    return {
+      outcome: "asked" as const,
+      question: toRow(row),
+      targetDeveloperName: targetRow.name,
+    };
   });
 };
 

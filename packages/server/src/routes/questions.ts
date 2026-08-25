@@ -131,7 +131,14 @@ export const questionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       case "duplicate":
         return ok(c, { questionId: outcome.questionId, duplicate: true });
       case "asked":
-        return ok(c, { question: outcome.question, duplicate: false });
+        // The NAME travels beside the row: on the workContextId-only path the
+        // caller never named a person, and "it appears in their briefing" is
+        // unreadable when "their" resolves to nobody.
+        return ok(c, {
+          question: outcome.question,
+          targetDeveloperName: outcome.targetDeveloperName,
+          duplicate: false,
+        });
     }
   });
 
