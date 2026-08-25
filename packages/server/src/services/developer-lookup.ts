@@ -12,8 +12,16 @@
  * The RESOLUTION rule itself is not here — it lives once, in
  * services/developer-settings.ts, shared with the mute surfaces. This module
  * adds only what a refusal needs: which known names are close, and how to say
- * so. Both halves are shared with the question channel, so a name that
- * searches is a name you can ask with, and both surfaces refuse identically.
+ * so.
+ *
+ * ONE CALLER TODAY, and saying so is the point: `GET /api/search`. The mute
+ * route resolves the same reference through the same helper and still answers
+ * an ambiguous name with "several developers share that name — use their email
+ * or id", which names nobody and leaves a caller who does not know the address
+ * exactly where R1 refused to leave them. Whoever adds the question channel
+ * (roadmap R2, which resolves a target the same way) should route all three
+ * through these two sentences in one commit, rather than growing a third
+ * spelling of the same refusal.
  */
 import { asc } from "drizzle-orm";
 
