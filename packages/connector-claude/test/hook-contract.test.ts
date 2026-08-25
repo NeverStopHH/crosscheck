@@ -46,6 +46,7 @@ import {
   EXIT_DRIFT,
   EXIT_IN_SYNC,
   EXIT_UNREADABLE,
+  HOOK_PROBES,
   diffContract,
   extractContract,
   main as runContractWatch,
@@ -344,6 +345,21 @@ describe("the drift watcher itself", () => {
     // Assert
     expect(headings.length).toBeGreaterThan(0);
     expect([...new Set(headings)]).toEqual(headings);
+  });
+
+  /**
+   * `extractContract` builds the view with `Object.fromEntries`, which keeps the
+   * LAST entry for a repeated key and says nothing about the one it dropped —
+   * so two copies of a probe can drift apart in silence, and no pinned count can
+   * show it, because every count is taken after the dedupe. Merging two branches
+   * that had each grown a PreToolUse block left 23 entries under 21 keys.
+   */
+  test("every probe key is written once, so no copy can drift unseen", () => {
+    // Act
+    const keys = HOOK_PROBES.map((probe) => probe.key);
+
+    // Assert
+    expect([...new Set(keys)]).toEqual(keys);
   });
 
   test("fails loudly and names the observation when the snapshot disagrees", async () => {
