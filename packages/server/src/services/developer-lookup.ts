@@ -156,14 +156,52 @@ export const lookUpDeveloper = async (
 const echoTerm = (term: string): string =>
   `"${term.trim().slice(0, MAX_ECHOED_TERM_CHARS)}"`;
 
-const listPeople = (people: readonly DeveloperCandidate[]): string =>
-  people.map((person) => `${person.name} (${person.email})`).join(", ");
+/**
+ * How much of a refusal may be the LIST. THE SENTENCE HAS TO FIT: every
+ * connector caps a hub message at MAX_HUB_MESSAGE_CHARS (200) and quotes the
+ * rest away, so a refusal listing five long addresses would arrive with its
+ * actionable half missing — the exact failure it exists to prevent. Budgeted
+ * in CHARACTERS rather than in people, because a name and an address have no
+ * length in common; the count that follows is always the true one, so a list
+ * cut short still tells the reader there is more.
+ *
+ * VERIFY: grep -c "MAX_HUB_MESSAGE_CHARS = 200" packages/connector-core/src/constants.ts
+ * PRINTS: 1
+ */
+const MAX_LISTED_CHARS = 60;
+
+const listAndCount = (values: readonly string[]): string => {
+  const shown: string[] = [];
+  let used = 0;
+  for (const value of values) {
+    const cost = used === 0 ? value.length : value.length + 2;
+    if (used + cost > MAX_LISTED_CHARS) {
+      break;
+    }
+    shown.push(value);
+    used += cost;
+  }
+  const rest = values.length - shown.length;
+  const listed = shown.join(", ");
+  if (rest === 0) {
+    return listed;
+  }
+  return shown.length === 0
+    ? `${String(rest)} of them, none short enough to name here`
+    : `${listed} and ${String(rest)} more`;
+};
 
 /**
  * The refusals, in words a tired human reads at 23:00: what was asked for,
  * what this hub knows, and the exact next call. They live beside the lookup
  * because every surface that resolves a teammate refuses for the same two
  * reasons and must say the same thing.
+ *
+ * WHAT EACH ONE LISTS is decided by what the reader has to retype. Same-named
+ * candidates differ only by ADDRESS, so ambiguity lists addresses; a misspelt
+ * name is fixed by the NAME, so the suggestions list names. Neither repeats
+ * "nothing was searched" beyond once — the connector's own line says it too,
+ * and the budget is 200 characters.
  *
  * The term is the caller's own text handed back to the caller; every
  * connector frames a hub message as quoted data before a model sees it
@@ -173,14 +211,14 @@ export const describeAmbiguousDeveloper = (
   term: string,
   candidates: readonly DeveloperCandidate[],
 ): string =>
-  `${echoTerm(term)} is the name of ${String(candidates.length)} developers on this hub: ` +
-  `${listPeople(candidates)}. Nothing was searched, because picking one of them would have ` +
-  "attributed the wrong person's work. Ask again with one of those email addresses.";
+  `${echoTerm(term)} is the name of ${String(candidates.length)} developers here: ` +
+  `${listAndCount(candidates.map((person) => person.email))}. Ask again with the exact ` +
+  "address — picking one would file the work under the wrong person.";
 
 export const describeUnknownDeveloper = (
   term: string,
   suggestions: readonly DeveloperCandidate[],
 ): string =>
-  `${echoTerm(term)} matches no developer on this hub, so nothing was searched — this is ` +
-  "not a result about anyone's work. Known developers with the closest spelling: " +
-  `${listPeople(suggestions)}. Ask again with a name or email address exactly as it appears there.`;
+  `${echoTerm(term)} matches no developer on this hub, so nothing was searched. Closest ` +
+  `known names: ${listAndCount(suggestions.map((person) => person.name))}. Ask again ` +
+  "with a name or email exactly as the hub spells it.";

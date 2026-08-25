@@ -274,6 +274,42 @@ describe("GET /api/search — the developer filter", () => {
     expect(result.ids).toEqual([]);
   });
 
+  test("keeps both refusals inside the length a connector will quote", async () => {
+    // Arrange: every connector caps a hub message at MAX_HUB_MESSAGE_CHARS
+    // (200, connector-core/src/constants.ts) and quotes the rest away. A
+    // refusal listing five long addresses would arrive with its actionable
+    // half missing — the exact failure these sentences exist to prevent. Five
+    // same-named developers is the widest ambiguity the probe can report.
+    const { harness, nick } = await seedCrowdedTier();
+    for (const index of [2, 3, 4, 5]) {
+      await addTestDeveloperWithSession(
+        harness,
+        "Ken",
+        `ken.number.${String(index)}.with.a.long.address@example.com`,
+        { id: `ses_ken${String(index)}` },
+      );
+    }
+
+    // Act
+    const ambiguous = await search(harness, nick.apiKey, {
+      query: "",
+      developer: "Ken",
+    });
+    const unknown = await search(harness, nick.apiKey, {
+      query: "",
+      developer: "Kenn",
+    });
+
+    // Assert: still says how many there really are, still actionable — the
+    // list is cut to the character budget, the COUNT never is
+    expect(ambiguous.message).toContain("5 developers");
+    expect(ambiguous.message).toContain("and 4 more");
+    expect(ambiguous.message).toContain("ken.number.2");
+    expect(ambiguous.message.length).toBeLessThanOrEqual(200);
+    expect(unknown.message).toContain("Ken");
+    expect(unknown.message.length).toBeLessThanOrEqual(200);
+  });
+
   test("says which filters it applied, and that one of them is me", async () => {
     // Arrange: the renderer must be able to state the filters without guessing
     // — the same rule the vector tier follows (the hub REPORTS what it ran).
