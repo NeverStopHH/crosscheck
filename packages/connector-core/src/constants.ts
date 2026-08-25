@@ -690,14 +690,18 @@ export const DOCTOR_AGENT_CWD_TIMEOUT_MS = 1000;
  * It used to be 8 and it used to buy something: every cwd cost its own `lsof`
  * spawn on macOS, so the cap was a spawn budget. It is now ONE batched
  * `lsof -a -p <csv> -d cwd -Fn` for the whole list (cli/doctor.ts), so the cap
- * bounds a parse and nothing else — and at 8 it was actively harmful. Measured
- * on the author's Mac during the trial audit: 23 processes whose `ps comm`
- * basenames to `claude`, twelve or more of them
- * `/Applications/Claude.app/Contents/{MacOS,Frameworks}/…` desktop helpers.
- * They arrive in ps order, so eight slots were spent on helpers and a real
- * offender at position 25 read `PASS no running agent predates the hooks`.
- * Helpers are excluded by path now and the survivors are sorted newest-first;
- * 64 covers a very busy day with room.
+ * bounds a parse and nothing else — and at 8 it was actively harmful.
+ * Re-derived on the author's Mac: `ps -axo comm= | awk -F/
+ * 'tolower($NF)=="claude"' | wc -l` prints 16, of which the VS Code extension
+ * accounts for fifteen. Eight slots taken in arbitrary ps order therefore left
+ * half the machine unexamined, and an offender that happened to sort late read
+ * `PASS no running agent predates the hooks` with the agent running.
+ *
+ * WHAT FIXED IT is the newest-started-first sort before the cap, not the
+ * desktop-app exclusion beside it: exactly one process on that machine matches
+ * `.app/Contents/`, because the framework helpers are named `Claude Helper`
+ * and never basename to `claude` at all (review finding B2-L4). 64 covers a
+ * very busy day with room.
  */
 export const DOCTOR_AGENT_MAX_CWD_PROBES = 64;
 /** Parse bound on ps output — a runaway process table stays a bounded read. */

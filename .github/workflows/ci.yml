@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 93
+    # PRINTS: 97
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -125,7 +125,7 @@ jobs:
     # sentence somebody has to keep in step by hand:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
-    # PRINTS: packages/cli/src/cli/doctor.ts 9
+    # PRINTS: packages/cli/src/cli/doctor.ts 10
     # PRINTS: packages/connector-acp/src/capture/engine.ts 3
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
     # PRINTS: packages/connector-acp/src/inject/injector.ts 3
@@ -152,7 +152,7 @@ jobs:
     # PRINTS: hints/render.ts 1
     # PRINTS: hints/select.ts 4
     # PRINTS: http/client.ts 1
-    # PRINTS: http/hub.ts 1
+    # PRINTS: http/hub.ts 2
     # PRINTS: http/latency.ts 1
     # PRINTS: mcp/render-referee.ts 2
     # PRINTS: mcp/render.ts 3
@@ -165,8 +165,9 @@ jobs:
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/server/src/services/developers.ts 1
     # PRINTS: packages/server/src/services/hints.ts 1
+    # PRINTS: packages/server/src/services/records.ts 1
     # PRINTS: packages/server/src/services/search.ts 6
-    # PRINTS: packages/server/src/services/sessions.ts 2
+    # PRINTS: packages/server/src/services/sessions.ts 3
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
     # PRINTS: briefing.ts 1
@@ -176,7 +177,7 @@ jobs:
     # PRINTS: connected-repo.ts 2
     # PRINTS: constants.ts 6
     # PRINTS: developers.ts 1
-    # PRINTS: doctor.ts 9
+    # PRINTS: doctor.ts 10
     # PRINTS: engine.ts 3
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 1
@@ -184,7 +185,7 @@ jobs:
     # PRINTS: hint.ts 2
     # PRINTS: hints.ts 1
     # PRINTS: hook-budget.ts 1
-    # PRINTS: hub.ts 1
+    # PRINTS: hub.ts 2
     # PRINTS: injector.ts 3
     # PRINTS: latency.ts 1
     # PRINTS: output.ts 1
@@ -193,6 +194,7 @@ jobs:
     # PRINTS: proxy.ts 1
     # PRINTS: pump.ts 1
     # PRINTS: reap.ts 1
+    # PRINTS: records.ts 1
     # PRINTS: recover.ts 1
     # PRINTS: render-referee.ts 2
     # PRINTS: render.ts 6
@@ -202,7 +204,7 @@ jobs:
     # PRINTS: select.ts 4
     # PRINTS: session-scan.ts 1
     # PRINTS: session-start.ts 2
-    # PRINTS: sessions.ts 2
+    # PRINTS: sessions.ts 3
     # PRINTS: settings-merge.ts 1
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: stop.ts 2

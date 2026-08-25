@@ -1413,13 +1413,54 @@ export const MUTATIONS: readonly Mutation[] = [
     // wrote the fact doctor then read back three lines later.
     label: "every hub read re-stamps the capture record (the last-sync tautology)",
     file: `${CORE}/src/http/client.ts`,
-    from: "          ...(request.capture === true ? { lastCaptureOkAt: nowIso } : {}),",
+    from: "          ...(isCaptureOk(request, result.data) ? { lastCaptureOkAt: nowIso } : {}),",
     to: "          lastCaptureOkAt: nowIso,",
     test: `${CLI}/test/doctor-last-sync.test.ts`,
     because:
       "doctor prints PASS last capture sync 0s ago beside hooks that have " +
       "not fired in hours — finding #14's shape, where the surface reports " +
       "its own request back as the connector's health",
+  },
+  {
+    // Review finding B2-07. `postRecords` marks itself with a PREDICATE over
+    // the ingest summary, not a flag: ingest answers HTTP 200 with
+    // `accepted:0` for a session it refuses, and that envelope is `ok`.
+    label: "a rejected ingest batch still stamps the capture clock",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    capture: (summary) => summary.accepted + summary.duplicates > 0,",
+    to: "    capture: true,",
+    test: `${CORE}/test/spool-durability.test.ts`,
+    because:
+      "doctor, status and the statusline all print a fresh capture age " +
+      "through a session whose every record the hub is discarding",
+  },
+  {
+    // Review finding B2-01/B2-L2. Four doctor WARNs gate on "is a session
+    // live"; answering that from a bare directory listing let week-old
+    // corpses satisfy all of them.
+    label: "doctor counts a dead session state file as a live session",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      const ageMs = heartbeatAgeMs(state, nowMs);" + "\n" + "      return ageMs !== null && ageMs <= maxAgeMs;",
+    to: "      return true;",
+    test: `${CLI}/test/doctor-hooks-firing.test.ts`,
+    because:
+      "one run prints `1 of 1 session state file stale >1h` beside `a " +
+      "session is live` and `the session is running` — three lines, two " +
+      "contradictory claims about the same file",
+  },
+  {
+    // Review finding B2-01. The reaper closes sessions on silence alone, and
+    // silence is a weak signal (heartbeats are Edit/Bash-gated). A record
+    // from a session it closed is the disproof, and it has to be honoured.
+    label: "a reaped session keeps rejecting the records that disprove the reap",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "    if (session.reapedAt === null) {",
+    to: "    if (true) {",
+    test: `${SERVER}/test/session-reap-liveness.test.ts`,
+    because:
+      "a session the hub gave up on has every later record answered 200 / " +
+      "accepted:0 while the spool cursor advances past it — the whole " +
+      "afternoon lost with no drop counter and no WARN",
   },
   {
     // Trial finding M2. Without the post-race marker write, nothing on the
@@ -1443,13 +1484,34 @@ export const MUTATIONS: readonly Mutation[] = [
     // "104 of 127 sessions never ended" state restored.
     label: "the hub reaper never finds a stale session",
     file: `${SERVER}/src/services/sessions.ts`,
-    from: "        lt(agentSessions.lastHeartbeatAt, cutoff),",
-    to: "        lt(agentSessions.lastHeartbeatAt, new Date(0)),",
+    from:
+      "        lt(agentSessions.lastHeartbeatAt, cutoff)," + "\n" +
+      "        ...(options.developerId === undefined",
+    to:
+      "        lt(agentSessions.lastHeartbeatAt, new Date(0))," + "\n" +
+      "        ...(options.developerId === undefined",
     test: `${SERVER}/test/session-reaper.test.ts`,
     because:
       "sessions that stopped heartbeating stay open forever — presence, every " +
       "listing and /api/events all keep reporting work nobody is doing, which " +
       "is the state the trial hub was in",
+  },
+  {
+    // Review finding B2-03. `?open=1` answers rows that are open AND silent.
+    // Dropping the second half puts the caller's own running session in the
+    // count, which is what made doctor's line WARN for as long as anybody
+    // was working.
+    label: "the open-sessions listing counts sessions that are running",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from:
+      "        lt(agentSessions.lastHeartbeatAt, cutoff)," + "\n" +
+      "        ...(options.mine === true",
+    to: "        ...(options.mine === true",
+    test: `${SERVER}/test/session-reaper.test.ts`,
+    because:
+      "doctor's `unclosed sessions` line WARNs from a developer's first " +
+      "session onward, so its PASS state is unreachable while they work and " +
+      "the check never exits 0 again",
   },
   {
     // Trial finding M1. The capture line's ONLY reachable alarm is the
@@ -1466,35 +1528,33 @@ export const MUTATIONS: readonly Mutation[] = [
       "stopped working",
   },
   {
-    // Trial finding H6. The candidate list is sorted newest-started-first
-    // BEFORE the cap, because ps order is arbitrary: without the sort, a
-    // truncation drops candidates at random and an offender behind a screenful
-    // of desktop-app helpers is never looked at.
-    // The exclusion that stops a MacBook's desktop-app helpers being counted
-    // as coding agents. With the old cap of 8 they consumed the whole budget;
-    // with the batched lsof they no longer hide an offender, but they still
-    // make the "N agents checked" number a fiction, which is what the guard
-    // asserts.
+    // Trial finding H6, the SMALLER half. The desktop app is one process on
+    // the author's Mac — `ps -axo comm= | awk -F/ 'tolower($NF)=="claude"'
+    // | grep -c "\.app/Contents/"` prints 1, because the framework helpers are
+    // named `Claude Helper` and never basename to `claude` at all. So this
+    // exclusion is not what un-hid anything; it keeps the "N agents checked"
+    // count honest, which is what the guard asserts (review finding B2-L4).
     label: "agent-restart counts desktop-app helpers as coding agents",
     file: `${CLI}/src/cli/doctor.ts`,
     from: "      (candidate) => !APP_BUNDLE_PATTERN.test(candidate.command),",
     to: "      () => true,",
     test: `${CLI}/test/agent-restart.test.ts`,
     because:
-      "twelve or more Claude.app helpers basename to `claude` on the author's " +
-      "Mac, so the line reports two dozen agents examined where one was — and " +
-      "under the old cap of eight they hid a real offender entirely",
+      "the desktop app is counted as a coding agent, so the line reports an " +
+      "examined agent that loads no hooks and whose cwd is `/`",
   },
   {
+    // Trial finding H6, the LOAD-BEARING half: ps order is arbitrary, so a
+    // truncation that happens in it drops candidates at random.
     label: "agent-restart truncates its candidates in arbitrary ps order",
     file: `${CLI}/src/cli/doctor.ts`,
     from: "      .sort((left, right) => right.startedAtMs - left.startedAtMs)" + "\n" + "      .slice(0, DOCTOR_AGENT_MAX_CWD_PROBES);",
     to: "      .slice(0, 8);",
     test: `${CLI}/test/agent-restart.test.ts`,
     because:
-      "a real agent at ps position 25, behind two dozen Claude.app helpers, " +
-      "reads PASS no running agent predates the hooks — measured on the " +
-      "author's Mac, where 23 processes basename to `claude`",
+      "a real agent that ps happens to list past the cap reads PASS no " +
+      "running agent predates the hooks — on the author's Mac 16 processes " +
+      "basename to `claude`, so a cap of eight left half of them unexamined",
   },
   {
     label: "the summarizer cost line reads an arbitrary half of the sessions",
@@ -1559,6 +1619,7 @@ interface Outcome {
  * PRINTS: developer-emails.test.ts 1
  * PRINTS: doctor-capture.test.ts 1
  * PRINTS: doctor-global.test.ts 1
+ * PRINTS: doctor-hooks-firing.test.ts 1
  * PRINTS: doctor-last-sync.test.ts 1
  * PRINTS: doctor-latency.test.ts 1
  * PRINTS: doctor-summarizer-runner.test.ts 1
@@ -1589,10 +1650,12 @@ interface Outcome {
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search.test.ts 3
- * PRINTS: session-reaper.test.ts 1
+ * PRINTS: session-reap-liveness.test.ts 1
+ * PRINTS: session-reaper.test.ts 2
  * PRINTS: sessions.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
+ * PRINTS: spool-durability.test.ts 1
  * PRINTS: stop-gate.test.ts 1
  * PRINTS: stop-hook.test.ts 1
  * PRINTS: stop-latency.test.ts 1

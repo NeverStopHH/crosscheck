@@ -527,14 +527,32 @@ interface AgentCandidate {
 /**
  * A macOS application BUNDLE's internal executables.
  *
- * Measured on the author's Mac during the trial audit: 23 processes whose
- * `ps comm` basenames to `claude`, twelve or more of them
- * `/Applications/Claude.app/Contents/MacOS/…` and
- * `/Applications/Claude.app/Contents/Frameworks/…` — the desktop app and its
- * helpers, which are not coding agents, do not load our hooks and whose cwd is
- * `/`. They arrive in ps order, so with the old cap of eight they consumed the
- * entire candidate budget and a real offender at position 25 was never looked
- * at: `PASS no running agent predates the hooks`, with the agent running.
+ * WHAT THIS ACTUALLY REMOVES, re-derived on the author's Mac today rather than
+ * remembered:
+ *
+ *   ps -axo comm= | awk -F/ 'tolower($NF)=="claude"' | wc -l          -> 16
+ *   ps -axo comm= | awk -F/ 'tolower($NF)=="claude"' \
+ *     | grep -c "\.app/Contents/"                                     -> 1
+ *   ps -axo comm= | grep "^/Applications/Claude\.app/" \
+ *     | awk -F/ '{print $NF}' | sort -u
+ *       -> Claude / Claude Helper / Claude Helper (Renderer)
+ *          / chrome_crashpad_handler
+ *
+ * ONE process, not twelve. `parsePsLine` keeps only names that basename to
+ * `claude` or `cursor`, and the framework helpers are called `Claude Helper`
+ * and `chrome_crashpad_handler` — they were never candidates and never cost a
+ * slot. An earlier version of this comment credited them with consuming the
+ * old cap of eight and hiding an offender at position 25; that is not what
+ * happened (review finding B2-L4). The SORT below is what fixes that finding:
+ * survivors are ordered newest-started-first before the cap, so a truncation
+ * can no longer drop the candidates closest to the settings write. This
+ * pattern is cheap defence in depth — it keeps the desktop app out of the
+ * count and off the `N agents checked` line — and it is not load-bearing for
+ * H6. `test/agent-restart.test.ts` tests the two separately, so removing
+ * either one fails its own case.
+ *
+ * The desktop app is excluded on the merits regardless: it is not a coding
+ * agent, it does not load our hooks, and its cwd is `/`.
  */
 const APP_BUNDLE_PATTERN = /\.app\/Contents\//;
 

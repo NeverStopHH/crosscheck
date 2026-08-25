@@ -19,6 +19,7 @@ import {
   runDoctor,
 } from "../src/cli/doctor.ts";
 import type { AgentProcessProbe } from "../src/cli/doctor.ts";
+import { DOCTOR_AGENT_MAX_CWD_PROBES } from "@crosscheck/connector-core/constants.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const HOUR_SECONDS = 3600;
@@ -262,32 +263,63 @@ describe("the H6 blind spots", () => {
     expect(check.detail).not.toContain(settingsPath);
   });
 
-  test("Claude.app helpers never eat the candidate budget", async () => {
-    // Arrange: 24 desktop-app helpers ahead of one real agent — the measured
-    // shape on the author's Mac (23 `claude` processes, 12+ of them helpers).
+  test("the desktop app is skipped rather than checked as a coding agent", async () => {
+    // Arrange: the REAL shape macOS emits. Of the eight Claude.app processes
+    // on the author's Mac only this one basenames to `claude` — the helpers
+    // are `Claude Helper`, `Claude Helper (Renderer)` and
+    // `chrome_crashpad_handler`, so they were never candidates and never cost
+    // a slot. An earlier fixture here invented
+    // `.../Frameworks/Claude Helper/claude`, a path macOS never produces, and
+    // the comment above it credited the exclusion with fixing H6's
+    // position-25 blindness (review finding B2-L4). The sort below is what
+    // fixes that; this is one desktop process, and cheap defence in depth.
     const { repo, settingsPath } = await fixture(60);
-    const helpers = Array.from(
-      { length: 24 },
-      (_unused, index) =>
-        `  ${String(1000 + index)} 10:00:00 /Applications/Claude.app/Contents/Frameworks/Claude Helper/claude`,
-    );
-    const cwdByPid: Record<number, string> = { 4242: repo };
-    for (let index = 0; index < 24; index += 1) {
-      cwdByPid[1000 + index] = "/";
-    }
     const probe = probeOf(
-      [...helpers, "  4242 09:00:00 /usr/local/bin/claude", ""].join("\n"),
-      cwdByPid,
+      [
+        "  1000 10:00:00 /Applications/Claude.app/Contents/MacOS/Claude",
+        "  4242 09:00:00 /usr/local/bin/claude",
+        "",
+      ].join("\n"),
+      { 4242: repo, 1000: "/" },
     );
 
     // Act
     const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
 
-    // Assert: the offender at position 25 is found, and the helpers are
-    // reported as skipped rather than silently dropped.
+    // Assert: the real agent is found, and the desktop process is reported as
+    // skipped rather than silently dropped.
     expect(check.level).toBe("WARN");
     expect(check.detail).toContain("4242");
-    expect(check.detail).toContain("1 agent checked, 24 skipped");
+    expect(check.detail).toContain("1 agent checked, 1 skipped");
+  });
+
+  test("the offender past the cap survives, on the sort alone", async () => {
+    // Arrange: DOCTOR_AGENT_MAX_CWD_PROBES plain `claude` processes — no
+    // desktop-app path anywhere, so the exclusion cannot be what saves this —
+    // all older than the offender, and the offender LAST in ps order. An
+    // unsorted cap drops exactly it.
+    const { repo, settingsPath } = await fixture(60);
+    const elsewhere = await makeHome("agent-restart-cap");
+    paths.push(elsewhere);
+    const cwdByPid: Record<number, string> = { 4242: repo };
+    const lines: string[] = [];
+    for (let index = 0; index < DOCTOR_AGENT_MAX_CWD_PROBES; index += 1) {
+      const pid = 3000 + index;
+      cwdByPid[pid] = elsewhere;
+      lines.push(`  ${String(pid)} 09:00:00 /usr/local/bin/claude`);
+    }
+    lines.push("  4242 05:00 /usr/local/bin/claude", "");
+    const probe = probeOf(lines.join("\n"), cwdByPid);
+
+    // Act
+    const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
+
+    // Assert
+    expect(check.level).toBe("WARN");
+    expect(check.detail).toContain("4242");
+    expect(check.detail).toContain(
+      `${String(DOCTOR_AGENT_MAX_CWD_PROBES)} agents checked, 1 skipped`,
+    );
   });
 
   test("the newest-started candidate survives the cap, whatever ps order says", async () => {
