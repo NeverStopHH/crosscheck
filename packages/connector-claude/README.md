@@ -129,6 +129,7 @@ Precedence: environment > repo `.crosscheck.json` (hub URL only) > `~/.crosschec
 | `CROSSCHECK_TIMEOUT_MS` | Per-request budget (default 400 ms). Hook budgets scale with it. |
 | `CROSSCHECK_AGENT_KIND` | Reported agent kind (default `claude-code`). |
 | `CROSSCHECK_DISABLED=1` | Every hook prints nothing and exits 0. |
+| `CROSSCHECK_TRIPWIRE=notice` | PreToolUse tripwire emits `additionalContext` only — no `ask`. For headless `claude -p` / orchestration sessions, where Claude Code turns a hook ask into a one-shot deny of the tool call (the reason still reaches the model). Default `ask`; `status`/`doctor` print the mode. |
 
 `developerId` and `developerName` are never asked for — they are learned from the hub on first successful registration and written back.
 

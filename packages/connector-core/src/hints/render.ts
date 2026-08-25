@@ -136,17 +136,52 @@ export interface PointerHintInput {
   readonly context: HintContext;
   /** What the pointer withholds — a count; this input carries no body. */
   readonly claimCount: number;
+  /**
+   * Trial finding #19: a file the prompt named that the context touched. When
+   * present the pointer is TARGETS-ONLY (claimCount 0) and its tail states the
+   * touched-file fact instead of a claim count. `value` is teammate-controlled
+   * (a path they edited), so it goes through `bare()` + the title cap — no new
+   * untrusted path opens. `createdAt` null renders "age unknown", never a
+   * fabricated age.
+   */
+  readonly matchedTarget?: {
+    readonly value: string;
+    readonly createdAt: string | null;
+  };
   readonly drift: CommitDrift | null;
   readonly now: Date;
 }
 
 /**
+ * The targets-only tail (#19): the touched-file fact, no body. `bare()` + the
+ * title cap because the path is teammate-controlled; the age is "recorded
+ * <age> ago" only when the target carries a timestamp, else the honest
+ * "age unknown".
+ */
+const targetsPointerTail = (
+  context: HintContext,
+  matchedTarget: NonNullable<PointerHintInput["matchedTarget"]>,
+  now: Date,
+): string => {
+  const age =
+    matchedTarget.createdAt === null
+      ? "age unknown"
+      : `recorded ${ageLabel(matchedTarget.createdAt, now)}`;
+  return (
+    `It touched ${bare(matchedTarget.value, MAX_WORK_CONTEXT_TITLE_CHARS)} ` +
+    `(${age}) and carries no claims crosscheck injects unasked; the tree is ` +
+    `readable with get_diagnosis ${safeId(context.id)}.`
+  );
+};
+
+/**
  * A pointer: id + title only (§4 anchoring asymmetry — unconfirmed substance
  * is pulled deliberately, never pushed). The input type has no body field, so
- * no wording change here can leak one.
+ * no wording change here can leak one — a targets-only pointer (#19) adds a
+ * touched-file fact, still no body.
  */
 export const renderPointerHint = (input: PointerHintInput): string => {
-  const { context, claimCount, drift, now } = input;
+  const { context, claimCount, matchedTarget, drift, now } = input;
   const facts = [
     `- ${authorLabel(context.developerName)}`,
     `work context ${safeId(context.id)}`,
@@ -155,9 +190,11 @@ export const renderPointerHint = (input: PointerHintInput): string => {
   ];
   const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
   const tailLine =
-    `It carries ${String(claimCount)} claim${claimCount === 1 ? "" : "s"} crosscheck does not ` +
-    "inject unasked (substance is pushed only for evidence-backed findings); the tree is " +
-    `readable with get_diagnosis ${safeId(context.id)}.`;
+    matchedTarget === undefined
+      ? `It carries ${String(claimCount)} claim${claimCount === 1 ? "" : "s"} crosscheck does not ` +
+        "inject unasked (substance is pushed only for evidence-backed findings); the tree is " +
+        `readable with get_diagnosis ${safeId(context.id)}.`
+      : targetsPointerTail(context, matchedTarget, now);
   return fitHint([POINTER_HEADER, factsLine, tailLine]);
 };
 

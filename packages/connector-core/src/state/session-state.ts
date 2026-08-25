@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   MAX_BRIEFING_SOLVED_REFS,
+  MAX_KNOWN_WORKTREE_ROOTS,
   MAX_SEEN_TARGETS,
   MAX_TRIPWIRE_ASKED_FILES,
 } from "../constants.ts";
@@ -89,6 +90,69 @@ const SessionStateObjectSchema = z.looseObject({
    * state file parsing.
    */
   foreignRepoDrops: z.number().int().min(0).default(0),
+  /**
+   * Touches whose repo-relative path could not be resolved against ANY root
+   * of this session's repo (trial finding #17): the edited file sits outside
+   * the session's checkout AND outside every connected worktree of the same
+   * repo — a loose file next to the repo, or one whose worktree carries no
+   * committed config. Distinct from `foreignRepoDrops` (a DIFFERENT repo,
+   * counted): this is "same session, path unattributable". Before #17 this
+   * class was silently dropped and never counted. Default 0 keeps every
+   * existing state file parsing.
+   */
+  outsideRootDrops: z.number().int().min(0).default(0),
+  /**
+   * Per-session cache of worktree roots this session has already resolved
+   * (trial finding #17): `root` is the realpath'd worktree root of a touched
+   * file, `repoId` its resolved repo id — a FOREIGN root sits here under its
+   * own id, an unresolvable one as null — both cached so a repeated touch
+   * costs no git either. `attempts` counts the identity resolutions the root
+   * has already cost: a null is an UNKNOWN, not an answer, so capture/touched-
+   * root.ts re-resolves it until MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS are spent
+   * (a git deadline missed once must not exile a healthy worktree for the
+   * session). FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS by
+   * `withKnownWorktreeRoot`.
+   * Defaults keep every pre-#17 state file parsing — an entry written before
+   * `attempts` existed reads as one attempt spent.
+   */
+  knownWorktreeRoots: z
+    .array(
+      z.object({
+        root: z.string().min(1),
+        repoId: z.string().min(1).nullable(),
+        attempts: z.number().int().min(1).default(1),
+      }),
+    )
+    .default([]),
+  /**
+   * Capture observability (trial finding #17/#18/#20 — the counters `status`
+   * and `doctor` read so "N edit-tool fires → 0 targets" stops being silent):
+   *   - `editToolFires`  every edit-tool PostToolUse this session reached the
+   *     hook with, counted BEFORE the foreign/outside drops so N − M is
+   *     explainable;
+   *   - `targetsCapturedCount`  targets actually spooled (monotonic; the
+   *     seenTargets list is FIFO-capped and cannot be summed);
+   *   - `lastTargetAt`  when the last target landed;
+   *   - `lastPostToolUseTool`  the last edit-tool name the hook saw
+   *     (host-supplied, a fixed Claude Code vocabulary — bounded on display);
+   *   - `lastEditedPath` / `lastEditedPathResolvedAgainst`  the last edited
+   *     path and the root it resolved against (null = it did not resolve),
+   *     the #18 diagnosis line that closes Ken's "0 targets" cause.
+   * Defaults keep every pre-#17 state file parsing.
+   */
+  editToolFires: z.number().int().min(0).default(0),
+  targetsCapturedCount: z.number().int().min(0).default(0),
+  lastTargetAt: z.string().nullable().default(null),
+  lastPostToolUseTool: z.string().nullable().default(null),
+  lastEditedPath: z.string().nullable().default(null),
+  lastEditedPathResolvedAgainst: z.string().nullable().default(null),
+  /**
+   * How many hint candidates the prompt path has seen from the hub this
+   * session (trial finding #19/#20): the `doctor` hints check reads it to say
+   * whether a targets-only pointer was ever even POSSIBLE for this repo.
+   * Booked in flows/hint.ts. Default 0 keeps every pre-#19 state file parsing.
+   */
+  hintCandidatesSeen: z.number().int().min(0).default(0),
   /**
    * True when registration happened OUTSIDE SessionStart — PostToolUse's
    * state-less recovery, the parent-workspace/finding-#9 shape — so this
@@ -231,6 +295,75 @@ export const updateSessionState = async (
     return true;
   });
 
+/**
+ * The facts a SessionStart RE-FIRE must not erase (trial findings #17/#18/#20).
+ *
+ * Claude Code fires SessionStart again inside a LIVE session on compact,
+ * resume and clear, and that fire re-creates the state file. Re-creating it is
+ * deliberate for the per-fire lists (withBriefingSolvedRefs' header): a new
+ * briefing gets a new budget. It is wrong for the CAPTURE counters, which
+ * describe the session's work, not one fire's: a session that fired 40 edit
+ * tools into nothing and then auto-compacted printed
+ * `0 edit-tool fires → 0 targets` and PASSed — erasing exactly the WARN the
+ * counters exist to raise, on the line Ken is asked to paste.
+ *
+ * Carried only when the re-fire is the SAME binding (repo and hub): a state
+ * file bound elsewhere is another session's, and the first-wins rule above
+ * decides those, not this.
+ */
+export const withCarriedCapture = (
+  state: SessionStateInput,
+  previous: SessionState | null,
+): SessionStateInput =>
+  previous === null ||
+  previous.repoId !== state.repoId ||
+  previous.hubUrl !== state.hubUrl
+    ? state
+    : {
+        ...state,
+        editToolFires: previous.editToolFires,
+        targetsCapturedCount: previous.targetsCapturedCount,
+        lastTargetAt: previous.lastTargetAt,
+        lastPostToolUseTool: previous.lastPostToolUseTool,
+        lastEditedPath: previous.lastEditedPath,
+        lastEditedPathResolvedAgainst: previous.lastEditedPathResolvedAgainst,
+        foreignRepoDrops: previous.foreignRepoDrops,
+        outsideRootDrops: previous.outsideRootDrops,
+        hintCandidatesSeen: previous.hintCandidatesSeen,
+        // The #17 root cache is the session's, not the fire's: dropping it
+        // makes the next tool call pay git again for a root already judged.
+        knownWorktreeRoots: previous.knownWorktreeRoots,
+      };
+
+/**
+ * SessionStart's publication: create the state file, or replace one of the
+ * SAME session while carrying its capture counters (withCarriedCapture).
+ *
+ * Under the state file's own lock, because a re-fire lands INSIDE a live
+ * session: a PostToolUse can be updating state in the same window, and a
+ * read-then-write outside the lock would drop whatever it recorded. A lock
+ * that stays busy falls back to the plain create — publishing state is not
+ * optional (spool reap infers "no writer left" from its absence), so the
+ * counters lose rather than the file.
+ */
+export const publishSessionState = async (
+  home: string,
+  state: SessionStateInput,
+): Promise<void> => {
+  const published = await withLock(
+    sessionStateLockPath(home, state.hostSessionKey),
+    false,
+    async () => {
+      const previous = await readSessionState(home, state.hostSessionKey);
+      await writeSessionState(home, withCarriedCapture(state, previous));
+      return true;
+    },
+  );
+  if (!published) {
+    await writeSessionState(home, state);
+  }
+};
+
 export interface SessionStateClaim {
   /** True when THIS caller published the state; false when it adopted one. */
   readonly claimed: boolean;
@@ -330,6 +463,36 @@ export const withBriefingSolvedRefs = (
   };
 };
 
+/**
+ * Remembers a resolved worktree root → repoId for the session (trial finding
+ * #17), so the per-tool capture path never resolves the same root's identity
+ * twice. Dedup by root (a cache, not a log — a re-resolution replaces the old
+ * answer) and FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS, the withSeenTargets
+ * shape. A foreign root is remembered under its own repoId, so a repeated
+ * foreign touch is free after the first. An UNRESOLVABLE root is remembered
+ * as null WITH the attempts spent on it, which is what lets the resolver
+ * retry it a bounded number of times instead of treating one missed git
+ * deadline as a permanent verdict.
+ */
+export const withKnownWorktreeRoot = (
+  state: SessionState,
+  root: string,
+  repoId: string | null,
+  attempts = 1,
+): SessionState => {
+  const withoutRoot = state.knownWorktreeRoots.filter(
+    (entry) => entry.root !== root,
+  );
+  const merged = [...withoutRoot, { root, repoId, attempts }];
+  return {
+    ...state,
+    knownWorktreeRoots:
+      merged.length <= MAX_KNOWN_WORKTREE_ROOTS
+        ? merged
+        : merged.slice(merged.length - MAX_KNOWN_WORKTREE_ROOTS),
+  };
+};
+
 /** FIFO cap, same shape as withSeenTargets: asks are once per file. */
 export const withTripwireAsked = (
   state: SessionState,
@@ -379,6 +542,15 @@ export const deriveSessionState = (
     tripwireAskedFiles: [],
     briefingSolvedRefs: [],
     foreignRepoDrops: 0,
+    outsideRootDrops: 0,
+    knownWorktreeRoots: [],
+    editToolFires: 0,
+    targetsCapturedCount: 0,
+    lastTargetAt: null,
+    lastPostToolUseTool: null,
+    lastEditedPath: null,
+    lastEditedPathResolvedAgainst: null,
+    hintCandidatesSeen: 0,
     briefingPending: false,
     stopTurnCount: 0,
     summarizerFireCount: 0,

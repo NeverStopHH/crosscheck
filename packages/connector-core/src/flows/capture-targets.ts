@@ -42,6 +42,17 @@ export interface CaptureFileTargetsInput {
   readonly workContextId: string;
   readonly producer: Producer;
   readonly now: Date;
+  /**
+   * Per-path root override (trial finding #17): resolves the root a touched
+   * file's repo-relative id is derived against — a linked worktree of the same
+   * repo instead of the session's checkout — or null to DROP the path (a
+   * foreign or outside-root touch the caller has already counted). Omitted
+   * (Cursor, ACP) keeps the single-root behaviour: every path resolves against
+   * `repoRoot`, exactly as before. The Claude hook precomputes this map once
+   * (capture/touched-root.ts) so the git cost is paid at most once per new
+   * worktree root per session, not per tool call.
+   */
+  readonly resolveRoot?: (path: string) => string | null;
 }
 
 /**
@@ -58,7 +69,18 @@ export const captureFileTargets = async (
     if (collected.length >= MAX_TARGETS_PER_INVOCATION) {
       break;
     }
-    const relativePath = await toRepoRelative(input.repoRoot, input.cwd, path);
+    // The root the file's id is derived against: the caller's per-path
+    // override (#17: the file's own worktree) when present, else the session
+    // checkout. A null override means the caller already dropped and counted
+    // this path (foreign or outside-root), so it is skipped here.
+    const root =
+      input.resolveRoot === undefined
+        ? input.repoRoot
+        : input.resolveRoot(path);
+    if (root === null) {
+      continue;
+    }
+    const relativePath = await toRepoRelative(root, input.cwd, path);
     if (relativePath === null || isDenied(relativePath, patterns)) {
       continue;
     }

@@ -8,7 +8,7 @@
  * precision that tunes thresholds — telemetry, so every failure here is
  * non-fatal to the read it rides on.
  */
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNull } from "drizzle-orm";
 import type { HintDelivery } from "@crosscheck/schema";
 
 import { agentSessions, claims, hintDeliveries } from "../db/schema.ts";
@@ -29,6 +29,47 @@ interface Deps {
  * every other query on the hub.
  */
 export const MAX_PULL_MARKS_PER_READ = 50;
+
+/**
+ * GET /api/hints/stats (trial finding #20): the precision loop's two numbers,
+ * per repo, over a bounded trailing window — delivered hints and how many of
+ * them were pulled. Read-only, one aggregate query; `crosscheck doctor` and
+ * `status` print it when the hub is reachable. The window is capped so the
+ * aggregate stays bounded on a long-lived hub.
+ */
+export const HINT_STATS_DEFAULT_WINDOW_DAYS = 7;
+export const HINT_STATS_MAX_WINDOW_DAYS = 90;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+export interface HintStats {
+  readonly delivered: number;
+  /** Deliveries whose ref the receiving developer later read (pulled_at set). */
+  readonly pulled: number;
+  readonly windowDays: number;
+}
+
+export const readHintStats = async (
+  deps: Deps,
+  repo: string,
+  windowDays: number,
+): Promise<HintStats> => {
+  const days = Math.min(Math.max(1, Math.floor(windowDays)), HINT_STATS_MAX_WINDOW_DAYS);
+  const since = new Date(deps.now().getTime() - days * MS_PER_DAY);
+  const [row] = await deps.db
+    .select({
+      delivered: count(hintDeliveries.id),
+      // count(column) counts NON-NULL values: the pulled subset.
+      pulled: count(hintDeliveries.pulledAt),
+    })
+    .from(hintDeliveries)
+    .innerJoin(agentSessions, eq(hintDeliveries.sessionId, agentSessions.id))
+    .where(and(eq(agentSessions.repo, repo), gte(hintDeliveries.deliveredAt, since)));
+  return {
+    delivered: row?.delivered ?? 0,
+    pulled: row?.pulled ?? 0,
+    windowDays: days,
+  };
+};
 
 /**
  * Idempotent on spool replay by construction: the connector derives the

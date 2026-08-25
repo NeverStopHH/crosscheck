@@ -24,7 +24,7 @@
  *   bun test packages/connector-claude/test/hook-contract.test.ts
  *
  *   field names published in bold rather than in backticks   4 observations flip
- *   every heading promoted one level (`###` → `####`)       16 observations flip
+ *   every heading promoted one level (`###` → `####`)       20 observations flip
  *
  * That direction is a false alarm, not a missed change, so it fails safe: the
  * job goes red, somebody reads the reference and re-records with --write. The
@@ -76,12 +76,20 @@ interface FieldProbe {
   readonly field: string;
 }
 
-/** The events we register in .claude/settings.json (cli/init.ts). */
-const EVENTS = ["SessionStart", "PostToolUse", "SessionEnd"] as const;
+/**
+ * The registered events (cli/init.ts) whose documented sections carry fields
+ * we read or write. UserPromptSubmit and Stop are registered too but consume
+ * only the common input fields probed below, so they need no section probe.
+ */
+const EVENTS = ["SessionStart", "PreToolUse", "PostToolUse", "SessionEnd"] as const;
 
 /**
  * Exactly what we read off stdin (capture/tool-events.ts HookPayloadSchema) and
- * what we write back (hooks/session-start.ts). Nothing aspirational.
+ * what we write back (hooks/session-start.ts, hooks/pre-tool-use.ts). Nothing
+ * aspirational: the PreToolUse probes are the three output fields the tripwire
+ * emits — the decision, its reason, and `additionalContext` (trial finding
+ * #25), which the reference documents for PreToolUse as "added to Claude's
+ * context alongside the tool result".
  */
 const HOOK_PROBES: readonly FieldProbe[] = [
   {
@@ -114,6 +122,21 @@ const HOOK_PROBES: readonly FieldProbe[] = [
   {
     key: "SessionStart.output.additionalContext",
     section: "SessionStart",
+    field: "additionalContext",
+  },
+  {
+    key: "PreToolUse.output.permissionDecision",
+    section: "PreToolUse",
+    field: "permissionDecision",
+  },
+  {
+    key: "PreToolUse.output.permissionDecisionReason",
+    section: "PreToolUse",
+    field: "permissionDecisionReason",
+  },
+  {
+    key: "PreToolUse.output.additionalContext",
+    section: "PreToolUse",
     field: "additionalContext",
   },
   {

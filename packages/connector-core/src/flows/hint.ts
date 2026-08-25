@@ -111,6 +111,11 @@ const renderSelection = async (
     text: renderPointerHint({
       context,
       claimCount: selection.claimCount,
+      // #19: present only for a targets-only pointer, absent for the
+      // claim-count one — the renderer branches on it, still no body either way.
+      ...(selection.matchedTarget === undefined
+        ? {}
+        : { matchedTarget: selection.matchedTarget }),
       drift,
       now,
     }),
@@ -211,6 +216,17 @@ export const selectAndRenderHint = async (
   });
   if (!result.ok) {
     return "";
+  }
+  // #20 observability: book that the hub returned candidates for THIS repo, so
+  // `doctor` can tell "no hint ever fired because nothing matched" apart from
+  // "a match was possible but the selector chose silence". Only on a non-empty
+  // result — the common no-match prompt writes nothing (a monotonic counter,
+  // one bounded write inside the 800 ms budget).
+  if (result.data.length > 0) {
+    await updateSessionState(input.home, input.hostSessionKey, (fresh) => ({
+      ...fresh,
+      hintCandidatesSeen: fresh.hintCandidatesSeen + result.data.length,
+    }));
   }
   const selection = selectHint({
     // Briefing solved pointers join the seen-set — the same tree must not be

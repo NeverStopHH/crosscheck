@@ -216,6 +216,41 @@ export const MAX_TARGETS_PER_INVOCATION = 20;
 export const MAX_SEEN_TARGETS = 500;
 
 /**
+ * Per-session cache of worktree-root → repoId, so the PostToolUse/PreToolUse
+ * capture path never pays `resolveRepoIdentity` (4-6 bounded git spawns) twice
+ * for the same touched-file root (trial finding #17). FIFO-capped like
+ * MAX_SEEN_TARGETS: a session touching more than this many distinct worktree
+ * roots is not the common case, and the oldest entry falls out. Negative
+ * answers are cached too — a foreign root under ITS OWN repoId, an
+ * unresolvable root as null — so a repeated foreign touch also costs no git
+ * after the first.
+ */
+export const MAX_KNOWN_WORKTREE_ROOTS = 8;
+
+/**
+ * How many identity resolutions ONE unresolvable worktree root may cost a
+ * session before its null is taken as final (trial finding #17).
+ *
+ * A null answer is an UNKNOWN — a git deadline missed under load, git absent
+ * from the hook's PATH — not "this root belongs to no repo". Caching it
+ * forever exiles a healthy worktree for the rest of the session on one slow
+ * spawn; not caching it at all lets a genuinely broken root (a linked
+ * worktree whose admin dir was pruned) spend a git deadline on EVERY tool
+ * call for the session's whole life. Retrying and then standing bounds both:
+ * an unresolvable root costs a session at most this many bounded resolutions,
+ * spread across separate hook invocations — the per-root worst case in git
+ * deadline is
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS * c.GIT_TIMEOUT_MS)'
+ * PRINTS: 3000
+ *
+ * and each hook's own withBudget cuts its share long before that. A KNOWN id
+ * (this repo's or a foreign one) is final on the first answer and never
+ * retried.
+ */
+export const MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS = 2;
+
+/**
  * The spool's only cap, and the reason compaction no longer exists: an append
  * that would push a session's data file past this is REFUSED and counted,
  * rather than making room by rewriting a file other processes append to.
@@ -459,6 +494,24 @@ export const SUMMARIZER_FAILURE_MAX_CHARS = 120;
  */
 export const DOCTOR_SUMMARIZER_SILENT_FIRES_WARN = 3;
 /**
+ * `crosscheck doctor` calls a live session's capture silently dead once this
+ * many edit-tool PostToolUse fires have produced ZERO targets (trial findings
+ * #17/#18/#20, cli/doctor.ts `capture` check): below it, one or two edits that
+ * landed nowhere are a denylisted lockfile or a loose file — noise; at it,
+ * the remainder is the worktree signature — 371 edits, 0 targets, and no
+ * surface said so. Same threshold shape as the summarizer's.
+ */
+export const DOCTOR_CAPTURE_SILENT_FIRES_WARN = 3;
+/** Most per-session capture lines doctor prints; the rest is a count. */
+export const DOCTOR_CAPTURE_MAX_SESSION_LINES = 5;
+/**
+ * Display caps for the developer's OWN local facts on the doctor capture line
+ * (a repo root, an edited path, a host tool name) — not teammate text, but
+ * bounded so one 4 KB path cannot drown the report.
+ */
+export const DOCTOR_PATH_MAX_CHARS = 120;
+export const DOCTOR_TOOL_NAME_MAX_CHARS = 40;
+/**
  * The slice the doctor's runner probe hands the REAL argv: a progress
  * report the prompt names out explicitly, so a working runner answers NONE
  * and a non-NONE answer is a precision note, not a failure.
@@ -515,8 +568,30 @@ export const SUMMARIZER_MODEL = "haiku";
 export const STOP_BUDGET_RATIO = 2;
 /** Draft pointers one briefing may spend — pointer discipline like solved. */
 export const MAX_DRAFT_POINTERS = 2;
-/** Most session state files one cost scan reads (status/doctor, bounded). */
+/**
+ * Most session state files one scan reads (status/doctor, bounded).
+ *
+ * The cap is spent NEWEST FIRST — the readers stat and sort by mtime before
+ * slicing, and report "read K of M" when the cut bites. Taken in readdir order
+ * the cut is effectively random (UUID file names, OS hash order), which on a
+ * home with more state files than this silently hid the very session the
+ * surface was asked about: sessions never end on their own, so the tail is
+ * long (the trial measured 100 state files, 75 idle over an hour).
+ */
 export const STATUS_MAX_SESSION_STATES = 50;
+
+/**
+ * When a session state file stops counting as ACTIVE on the capture surfaces.
+ *
+ * A state file is deleted at SessionEnd, so its presence means "this session
+ * never ended" — which is not the same as "running": the trial found 104 of
+ * 127 hub sessions never closed (killed orchestration agents, closed
+ * terminals), and there is no reaper. Their counters are real and stay in the
+ * totals; what must not be claimed is that they are live. PostToolUse
+ * heartbeats every HEARTBEAT_MIN_INTERVAL_MS while tools fire, so a full day
+ * of silence is well past any plausible think-time.
+ */
+export const STATUS_SESSION_IDLE_HOURS = 24;
 
 export const PRESENCE_CACHE_TTL_MS = 10_000;
 export const STATUSLINE_MAX_CHARS = 90;
@@ -635,6 +710,35 @@ export const CLAUDE_SETTINGS_FILE = "settings.json";
 export const POST_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
 /** Tripwire fires on writes only — Bash carries no file to overlap on. */
 export const PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
+
+/**
+ * The PreToolUse tripwire mode (trial finding #25 + Q2). DESIGN §4 makes `ask`
+ * normative and it stays the default. But a headless `claude -p` /
+ * Agent-SDK subagent — most of Nick's live sessions — cannot show a permission
+ * prompt, so Claude Code turns a hook `ask` into a ONE-SHOT DENY of that tool
+ * call, with the reason delivered to the model. Measured on real `claude -p`
+ * runs against a throwaway hub across 15 variants; the ask half and the
+ * notice half are summarized in the batch's PR body.
+ *
+ * There is no TRUSTWORTHY per-hook signal for headless, which is NOT the same
+ * as no signal — stated measured so nobody "fixes" this into an auto-detector:
+ * a `claude -p` whose caller left CLAUDE_CODE_ENTRYPOINT unset hands the hook
+ * `sdk-cli`, but a caller-supplied value survives verbatim (the same headless
+ * run reported `sdk-cli` and `claude-vscode` depending only on the spawn env),
+ * and orchestration subagents are spawned FROM a Claude Code session, so the
+ * parent's interactive value leaks into exactly the shape a detector exists
+ * for. stdin is a pipe in interactive sessions too, and the payload carries no
+ * flag. So this is an explicit knob instead.
+ *   ask     (default) — emit `ask` AND `additionalContext` (§4, DESIGN.md:97).
+ *   notice            — emit `additionalContext` ONLY, no decision: the model
+ *                       is briefed, the tool is never blocked. For
+ *                       orchestration/CI sessions that must not one-shot-deny.
+ * `additionalContext` is emitted in BOTH modes (#25): the tripwire reason,
+ * carrying the get_diagnosis id, reached the human alone before.
+ */
+export const TRIPWIRE_MODE_ENV = "CROSSCHECK_TRIPWIRE";
+export const TRIPWIRE_MODE_ASK = "ask";
+export const TRIPWIRE_MODE_NOTICE = "notice";
 
 /**
  * Project-scoped MCP registration, committed alongside `.claude/settings.json`
