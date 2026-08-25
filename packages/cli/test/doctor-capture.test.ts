@@ -31,6 +31,22 @@
  *     directions;
  *   - zero claims with NO session open here is a fresh team, not a defect: a
  *     warning that greets every new install is one nobody reads.
+ *
+ * And three the merge itself made necessary:
+ *
+ *   - how long a session has been SILENT is the newest of its heartbeat, its
+ *     start and its own state file's mtime, so a session that is dropping
+ *     every edit into a foreign checkout — and therefore never heartbeats —
+ *     keeps its WARN;
+ *   - ONE scan answers "is a session live" for every line of the report, so
+ *     `capture` and `last capture sync` cannot be computed over different sets
+ *     of state files;
+ *   - an absent counter is not a zero, and a rejected key is not an
+ *     unreachable hub.
+ *
+ * CORPSE FIXTURES BACK-DATE THE FILE, not only the stamps. Every writer of a
+ * state file is one of that session's own hooks, so a file written a moment
+ * ago belongs to a session that is running whatever its stamps claim.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, rm, utimes, writeFile } from "node:fs/promises";

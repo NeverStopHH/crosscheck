@@ -1847,7 +1847,7 @@ export interface HookFireFacts {
   readonly firedAt: Readonly<Record<string, string>>;
   /**
    * How long the oldest live session on this repo has been running, or null
-   * when none is (doctor's readLiveRepoSessions).
+   * when none is (`liveRepoSessions`, derived from the one scan below).
    *
    * An AGE rather than a boolean, because the never-fired case needs it. A
    * stale marker is only news while something is supposed to be running — and
