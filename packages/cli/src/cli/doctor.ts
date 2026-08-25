@@ -21,6 +21,7 @@ import {
   DOCTOR_STATUSLINE_SILENT_WARN_MINUTES,
   DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   EXIT_FAIL,
+  GIT_TIMEOUT_MS,
   EXIT_OK,
   EXIT_WARN,
   LATENCY_PROBE_TIMEOUT_MS,
@@ -33,6 +34,7 @@ import {
   PRIVATE_FILE_MODE,
   PROBE_REPO,
   REGISTERED_HOOK_EVENTS,
+  REPO_CONFIG_FILE,
   REGISTERED_HOOK_EVENT_NAMES,
   SECONDS_PER_MINUTE,
   SESSION_STATE_SCAN_MAX_FILES,
@@ -81,7 +83,11 @@ import {
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { HintStats } from "@crosscheck/connector-core/http/hub.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
-import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
+import {
+  countCursorIdentityMismatches,
+  oldestSpoolLineMs,
+  spoolDepth,
+} from "@crosscheck/connector-core/spool/files.ts";
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
 import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
 import {
@@ -1065,12 +1071,23 @@ const checkSpool = async (
   openOnHub: number | null,
 ): Promise<readonly Check[]> => {
   const depth = await spoolDepth(home, key);
+  // WHY those records are pending, when the answer is "this home was copied"
+  // (Anhang A, A4-10). The level is still whatever the thresholds decide —
+  // this is wording, not a new alarm — but a restored `~/.crosscheck` reports
+  // every delivered line as pending (315 phantoms observed on one), and
+  // without the sentence that reads exactly like stuck data.
+  const mismatches = await countCursorIdentityMismatches(home, key);
+  const depthDetail =
+    `${depth} pending records` +
+    (mismatches === 0
+      ? ""
+      : ` — cursor identity changed for ${String(mismatches)} session file${mismatches === 1 ? "" : "s"} (this home was copied or restored); those records replay and the hub deduplicates them`);
   const depthCheck =
     depth > DOCTOR_SPOOL_DEPTH_FAIL
-      ? check("FAIL", "spool depth", `${depth} pending records`)
+      ? check("FAIL", "spool depth", depthDetail)
       : depth > DOCTOR_SPOOL_DEPTH_WARN
-        ? check("WARN", "spool depth", `${depth} pending records`)
-        : check("PASS", "spool depth", `${depth} pending records`);
+        ? check("WARN", "spool depth", depthDetail)
+        : check("PASS", "spool depth", depthDetail);
 
   const oldestMs = await oldestSpoolLineMs(home, key);
   const ageHours =
@@ -1673,6 +1690,93 @@ const countStaleSessionStates = async (
 };
 
 /**
+ * Whether `.crosscheck.json` will reach a teammate (Anhang A, A4-07).
+ *
+ * `runDoctor` reads the file only as a boolean — `isConnectedHere`, which
+ * decides whether the parent-workspace scan runs — and never says a word about
+ * it. That matters because the file is the ONLY thing that makes a repo
+ * reportable (DESIGN.md §2.1): a checkout that lacks it is silent for
+ * everybody who works in it, and one that has it UNTRACKED is silent for
+ * everybody except the person who ran `init`. On a fresh clone of a repo whose
+ * main branch carries the file, both states are fine — which is why this is a
+ * LOW finding — but a branch that predates the commit shows `??` and nothing
+ * on any surface explains why teammates see nothing there.
+ *
+ * PURE: the tracked verdict comes in as data, because `git ls-files` is the
+ * caller's spawn to make.
+ */
+export const repoConnectedCheck = (
+  present: boolean,
+  tracked: boolean | null,
+): Check => {
+  const name = "repo connected";
+  if (!present) {
+    return check(
+      "WARN",
+      name,
+      `no ${REPO_CONFIG_FILE} here — sessions starting in this repo report nothing; run crosscheck init`,
+    );
+  }
+  if (tracked === false) {
+    // PASS, not WARN, and the difference is what a reader can act on RIGHT
+    // NOW. `crosscheck init` writes this file and cannot commit it, so every
+    // correct install is untracked for the minutes before the commit — a WARN
+    // there greets every new developer with a defect they have not caused.
+    // The sentence still says the thing that matters. ABSENT stays a WARN,
+    // which is the state the finding is actually about: a branch that predates
+    // the commit, where every session in the repo is silent and nothing else
+    // says why.
+    return check(
+      "PASS",
+      name,
+      `${REPO_CONFIG_FILE} present but untracked — commit it, or teammates' sessions stay silent in this repo`,
+    );
+  }
+  return tracked === null
+    ? check(
+        "PASS",
+        name,
+        `${REPO_CONFIG_FILE} present (git could not say whether it is tracked)`,
+      )
+    : check("PASS", name, `${REPO_CONFIG_FILE} present and tracked`);
+};
+
+/**
+ * `git ls-files --error-unmatch` exits non-zero for an untracked path, which
+ * `runBoundedCommand` reports as null — the same null a missing git gives. So
+ * the tracked answer is taken from the STDOUT of the plain listing instead:
+ * the path echoed back means tracked, silence means either untracked or no
+ * git, and the second `rev-parse` tells those apart (the check-ignore shape).
+ */
+const isRepoConfigTracked = async (
+  repoRoot: string,
+): Promise<boolean | null> => {
+  const listed = await runBoundedCommand(
+    ["git", "ls-files", "--", REPO_CONFIG_FILE],
+    repoRoot,
+    GIT_TIMEOUT_MS,
+  );
+  if (listed !== null) {
+    return true;
+  }
+  const inWorkTree = await runBoundedCommand(
+    ["git", "rev-parse", "--is-inside-work-tree"],
+    repoRoot,
+    GIT_TIMEOUT_MS,
+  );
+  return inWorkTree === "true" ? false : null;
+};
+
+const checkRepoConnected = async (
+  repoRoot: string,
+  present: boolean,
+): Promise<Check> =>
+  repoConnectedCheck(
+    present,
+    present ? await isRepoConfigTracked(repoRoot) : null,
+  );
+
+/**
  * ── Capture health, as a number (trial finding M1) ─────────────────────────
  *
  * `status` printed the spool depth and the cross-repo drop count; nothing
@@ -2112,6 +2216,7 @@ export const runDoctor = async (
     // just been told what is WIRED, and these say what has actually RUN.
     await checkHooksFiring(config.home, key, now),
     await checkStatuslineRendered(config.home, key, now),
+    await checkRepoConnected(identity.root, isConnectedHere),
     await checkCapture(config.home, config.hubUrl, identity.repoId, now),
     await checkHints(hubCtx, identity.repoId, config.home),
   ]);
