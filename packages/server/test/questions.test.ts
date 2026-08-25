@@ -588,6 +588,29 @@ describe("answering a question", () => {
     expect((await failureOf(answered)).code).toBe("validation_failed");
   });
 
+  test("a derived draft cannot be sent as an answer", async () => {
+    // Arrange: a Tier-1 draft is `provenance: derived`, capped at 0.5, and
+    // DESIGN §3 says such a claim is never proactively injected to a teammate
+    // — only surfaced as a pull-able pointer. An answer IS proactively
+    // injected, as substance, under the §4 solicited exception, so the two
+    // rules meet here and the hub is the only place that can hold the line.
+
+    // Act
+    const answered = await answerAs(ken, {
+      provenance: "derived",
+      confidence: 0.4,
+    });
+
+    // Assert
+    expect(answered.status).toBe(400);
+    const failure = await failureOf(answered);
+    expect(failure.code).toBe("question_not_answerable");
+    expect(failure.message).toContain("derived");
+    // The contrast: the same claim declared is accepted, so the gate is about
+    // provenance and not about the body.
+    expect((await answerAs(ken)).status).toBe(200);
+  });
+
   test("an answer to a question asked in another repo waits in that repo", async () => {
     // Arrange: Nick asks from a SECOND repo, and Ken answers it. The inbox
     // half of this channel is repo-scoped; the answer half was scoped by

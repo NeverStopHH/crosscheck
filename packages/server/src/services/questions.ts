@@ -371,6 +371,23 @@ export const ANSWER_NOT_ADDRESSED =
   "the teammate it names or the owner of the context it is about — " +
   "list_open_questions shows the ones you can answer.";
 
+/**
+ * DERIVED STAYS POINTER-ONLY, and this is the surface where that rule and the
+ * §4 solicited exception meet. A Tier-1 draft is `provenance: derived`,
+ * confidence capped at 0.5, and DESIGN §3 says such a claim is NEVER
+ * proactively injected to a teammate — only surfaced as a pull-able pointer.
+ * An answer is proactively injected, as SUBSTANCE, into the asker's next
+ * prompt. So an answer must be something a person or their agent DECLARED.
+ *
+ * It costs nothing today: `answer_question` only ever sends `declared`. The
+ * gate exists because the hub is the only place that can hold the line — the
+ * declared-only gate on the unsolicited path runs client side (hints/select.ts),
+ * and the answer path bypasses that selector entirely.
+ */
+export const ANSWER_NOT_DECLARED =
+  "an answer is delivered to the asker as substance, so it cannot be a derived " +
+  "draft — promote it with review_draft first, or answer in your own words.";
+
 export type AnswerOutcome =
   | {
       readonly outcome: "answered";
@@ -459,6 +476,9 @@ export const answerQuestion = async (
     );
     if (!found.ok) {
       return { outcome: "refused" as const, reason: found.reason };
+    }
+    if (body.claim.provenance !== "declared") {
+      return { outcome: "refused" as const, reason: ANSWER_NOT_DECLARED };
     }
     // The SAME gate a published claim passes (record-handlers.ts): ownership
     // of the author session, the context must exist, dedup, similarity.
