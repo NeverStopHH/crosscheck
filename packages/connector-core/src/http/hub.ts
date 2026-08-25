@@ -251,6 +251,12 @@ export interface WorkContextWindow {
  * CONTEXT_MAX_AGE_DAYS, the same 14 days the briefing already filters to
  * client-side — so the window narrows the TRANSFER without changing what any
  * surface renders.
+ *
+ * That last clause is only true because the hub ages a row the way the
+ * renderer does, by `coalesce(updated_at, created_at)` (server
+ * services/diagnosis.ts). Filtering on `created_at` alone made the sentence
+ * false: a context created three weeks ago and updated an hour ago is inside
+ * this window and was outside the hub's (review finding B2-06).
  */
 export const getWorkContexts = (
   ctx: HubContext,

@@ -100,6 +100,74 @@ describe("work-context listing window", () => {
     expect(all).toHaveLength(5);
   });
 
+  test("a context UPDATED inside the window survives it, however old it is", async () => {
+    // Arrange: a long-lived context on a three-week branch, touched an hour
+    // ago. Every consumer ages a context by `updatedAt ?? createdAt` — the
+    // briefing renderer, deriveLastSeen, the statusline's last-seen suffix —
+    // so a window that filtered on createdAt alone dropped rows those surfaces
+    // would have rendered, and dropped them from collectLanded's reach too
+    // (review finding B2-06).
+    const seeded = await createHarnessWithSession();
+    const result = await postRecords(seeded.harness, seeded.developer, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_long_lived",
+            title: "three-week branch",
+            createdAt: new Date(NOW_MS - 20 * DAY_MS).toISOString(),
+            updatedAt: new Date(NOW_MS - 60 * 60 * 1000).toISOString(),
+          }),
+        ),
+      ],
+    });
+    expect(result.data?.accepted).toBe(1);
+    const since = new Date(NOW_MS - 14 * DAY_MS).toISOString();
+
+    // Act
+    const windowed = await listWith(
+      seeded,
+      `&since=${encodeURIComponent(since)}`,
+    );
+
+    // Assert
+    expect(windowed.map((row) => row.id)).toEqual(["wc_long_lived"]);
+  });
+
+  test("a truncated page keeps the rows a reader would have used", async () => {
+    // Arrange: an old context touched today, beside a newer untouched one.
+    // Ordering has to follow the same expression the window filters on, or
+    // the newest-first cap discards the freshest work first.
+    const seeded = await createHarnessWithSession();
+    await postRecords(seeded.harness, seeded.developer, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_touched_today",
+            title: "old but active",
+            createdAt: new Date(NOW_MS - 20 * DAY_MS).toISOString(),
+            updatedAt: new Date(NOW_MS - 60 * 60 * 1000).toISOString(),
+          }),
+        ),
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            id: "wc_quiet",
+            title: "newer but untouched",
+            createdAt: new Date(NOW_MS - 2 * DAY_MS).toISOString(),
+          }),
+        ),
+      ],
+    });
+
+    // Act
+    const one = await listWith(seeded, "&limit=1");
+
+    // Assert
+    expect(one.map((row) => row.id)).toEqual(["wc_touched_today"]);
+  });
+
   test("?limit= bounds the page, newest first", async () => {
     // Arrange
     const seeded = await createHarnessWithSession();

@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, inArray, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 
 import { WORK_CONTEXT_LIST_MAX } from "../constants.ts";
 
@@ -239,6 +239,23 @@ const targetCountsFor = async (
   return new Map(rows.map((row) => [row.workContextId, row.targetCount]));
 };
 
+/**
+ * How OLD a context is, in the one expression every consumer already uses.
+ *
+ * The window and the ordering both read this rather than `created_at`. The
+ * connector's renderer ages a context by `updatedAt ?? createdAt`
+ * (briefing/render.ts), and so do `deriveLastSeen` and the statusline's
+ * last-seen suffix — so a window on `created_at` dropped rows those surfaces
+ * would have rendered: a context created three weeks ago and touched an hour
+ * ago is inside the client's 14 days and was outside the server's (review
+ * finding B2-06). The same expression orders the page, because a newest-first
+ * cap has to keep the rows a reader would have used.
+ *
+ * It looked harmless on the trial hub only because 125 of 127 rows had
+ * `updated_at` null, which is exactly why it would have landed unnoticed.
+ */
+const contextActivityAt = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
+
 export const listWorkContextsByRepo = async (
   db: Db,
   viewerDeveloperId: string,
@@ -273,7 +290,7 @@ export const listWorkContextsByRepo = async (
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
         ...(window.since === undefined
           ? []
-          : [gte(workContexts.createdAt, window.since)]),
+          : [gte(contextActivityAt, window.since)]),
       ),
     )
     .groupBy(
@@ -285,7 +302,7 @@ export const listWorkContextsByRepo = async (
     // Newest first, then the cap: a truncated page must keep the rows the
     // reader would have used, and every consumer of this list wants recent
     // work (the briefing filters to CONTEXT_MAX_AGE_DAYS client-side).
-    .orderBy(desc(workContexts.createdAt))
+    .orderBy(desc(contextActivityAt))
     .limit(limit);
   const targetCounts = await targetCountsFor(
     db,
