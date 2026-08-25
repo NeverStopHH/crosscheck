@@ -1678,6 +1678,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "and the whole next step",
   },
   {
+    // A refusal may LIST fewer people than it COUNTS — the list is budgeted in
+    // characters, the count never is. Counting the array is the plausible edit,
+    // and it silently rewrites the number to the ambiguity probe's page size:
+    // a hub with twelve Kims tells the reader there are five, and the caller
+    // looking for the sixth is told by name that they do not exist.
+    label: "the ambiguity refusal counts only the rows it read",
+    file: `${SERVER}/src/services/developer-lookup.ts`,
+    from: "      `${echo} is the name of ${String(totalCount)} developers here: ` +",
+    to: "      `${echo} is the name of ${String(candidates.length)} developers here: ` +",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "the sentence reports the page size as the team, so a caller is told " +
+      "the teammate they are looking for is not on this hub",
+  },
+  {
     // The connector's own half of the same defect: cutting the echo BEFORE
     // normalizing means `maxChars` characters of a caller's term can be
     // eighteen times that on screen.
@@ -1773,7 +1788,7 @@ interface Outcome {
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: render-surface-registry.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
- * PRINTS: search-filters.test.ts 7
+ * PRINTS: search-filters.test.ts 8
  * PRINTS: search-who-when.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: session.test.ts 1

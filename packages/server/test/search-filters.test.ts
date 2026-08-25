@@ -258,6 +258,45 @@ describe("GET /api/search — the developer filter", () => {
     expect(result.message).toContain("ken.other@example.com");
   });
 
+  test("counts every developer of that name, not the rows it read", async () => {
+    // Arrange: the ambiguity probe is a PAGE — resolveDeveloperRef reads
+    // AMBIGUITY_PROBE_LIMIT rows so the refusal can name people. If the
+    // sentence counts that array, its number is the page size, and a hub with
+    // twelve Kims tells the reader there are five. Worse than a short list: a
+    // caller looking for the sixth Kim is told by name that they do not exist,
+    // and the sentence's own next step ("ask again with the exact address")
+    // asserts an address the sentence has just denied.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    const KIMS = 12;
+    for (const index of Array.from({ length: KIMS }, (_, at) => at)) {
+      await addTestDeveloperWithSession(
+        harness,
+        "Kim",
+        `kim${String(index).padStart(2, "0")}@example.com`,
+        { id: `ses_kim${String(index)}` },
+      );
+    }
+
+    // Act
+    const result = await search(harness, nick.apiKey, {
+      query: "",
+      developer: "Kim",
+    });
+
+    // Assert: the true count, and a remainder counted from it — the list is
+    // budgeted in characters and may be cut, the COUNT never is
+    expect(result.status).toBe(400);
+    expect(result.code).toBe("ambiguous_developer");
+    expect(result.message).toContain(`${String(KIMS)} developers here`);
+    expect(result.message).toContain("kim00@example.com");
+    expect(result.message).toMatch(/and (\d+) more/);
+    const listed = [...result.message.matchAll(/kim\d\d@example\.com/g)].length;
+    const more = Number(/and (\d+) more/.exec(result.message)?.[1] ?? "0");
+    expect(listed + more).toBe(KIMS);
+  });
+
   test("answers an unknown name with an error naming the closest developers", async () => {
     // Arrange: the whole point. An empty result to a misspelt name reads as
     // "Ken has done nothing", and a model will act on that.
@@ -281,7 +320,8 @@ describe("GET /api/search — the developer filter", () => {
     // (200, connector-core/src/constants.ts) and quotes the rest away. A
     // refusal listing five long addresses would arrive with its actionable
     // half missing — the exact failure these sentences exist to prevent. Five
-    // same-named developers is the widest ambiguity the probe can report.
+    // same-named developers, each with a long address: more than the list can
+    // hold, so the sentence has to cut the list and keep the count.
     const { harness, nick } = await seedCrowdedTier();
     for (const index of [2, 3, 4, 5]) {
       await addTestDeveloperWithSession(
@@ -548,9 +588,13 @@ describe("GET /api/search — every refusal arrives whole", () => {
         { id: `ses_ken${String(index)}` },
       );
     }
-    // Five people whose shared name is itself long — the ambiguity refusal
-    // echoes the term, so this is the widest one a caller can actually reach.
-    for (const index of [1, 2, 3, 4, 5]) {
+    // People whose shared name is itself long — the ambiguity refusal echoes
+    // the term, so this is the widest one a caller can actually reach. MORE
+    // OF THEM THAN THE PROBE READS (AMBIGUITY_PROBE_LIMIT is 5), because a
+    // fixture seeded to exactly the page size makes the count assertion below
+    // true by construction and hides the defect where the sentence counts the
+    // page instead of the hub.
+    for (const index of [1, 2, 3, 4, 5, 6, 7, 8]) {
       await addTestDeveloperWithSession(
         seeded.harness,
         WIDEST_NAME,
@@ -668,7 +712,7 @@ describe("GET /api/search — every refusal arrives whole", () => {
     // Assert: the count is never abbreviated, an address arrives WHOLE (a cut
     // address is a different, wrong address), the suggestions still name
     // somebody rather than counting them, and the echo says it was cut
-    expect(ambiguous.message).toContain("5 developers");
+    expect(ambiguous.message).toContain("8 developers");
     expect(ambiguous.message).toContain(
       "long.name.1.with.a.long.address@example.com",
     );

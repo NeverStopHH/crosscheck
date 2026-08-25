@@ -93,7 +93,11 @@ export const searchRoutes = (deps: AppDeps): Hono<AppEnv> => {
           c,
           400,
           "ambiguous_developer",
-          describeAmbiguousDeveloper(developerTerm, lookup.candidates),
+          describeAmbiguousDeveloper(
+            developerTerm,
+            lookup.candidates,
+            lookup.totalCount,
+          ),
         );
       }
       if (lookup.outcome === "unknown") {

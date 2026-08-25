@@ -99,7 +99,15 @@ export type ResolveDeveloperResult =
   | { readonly outcome: "not_found" }
   | {
       readonly outcome: "ambiguous";
+      /** A PAGE of them — at most AMBIGUITY_PROBE_LIMIT, see below. */
       readonly candidates: readonly DeveloperCandidate[];
+      /**
+       * How many there really are. Separate from the page on purpose: a
+       * refusal may list fewer people than it counts, and the number is the
+       * one thing in the sentence that must never be the page size — see
+       * `describeAmbiguousDeveloper`.
+       */
+      readonly totalCount: number;
     };
 
 /**
@@ -107,8 +115,29 @@ export type ResolveDeveloperResult =
  * is all the mute surfaces ever needed; the search and question filters have
  * to NAME the candidates, so the probe reads a few more and the refusal lists
  * what it found. Bounded either way — a page of Kens is not a useful sentence.
+ *
+ * BOUNDING THE PAGE IS NOT BOUNDING THE COUNT, and conflating the two is how
+ * a hub with twelve Kims came to say it had five. The page decides how many
+ * people a refusal can NAME; `countByName` below decides what it may CLAIM.
  */
 const AMBIGUITY_PROBE_LIMIT = 5;
+
+/**
+ * How many developers this hub spells that way — all of them, not a page.
+ *
+ * Runs only on the ambiguity path, which is already a refusal rather than an
+ * answer, and only after the page came back with more than one row: the hot
+ * case (a reference that resolves) is still the two indexed point lookups and
+ * nothing else. One team's worth of rows, over the same predicate the page
+ * used, so the two numbers can never be about different sets.
+ */
+const countByName = async (db: Db, loweredName: string): Promise<number> => {
+  const counted = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(developers)
+    .where(eq(sql`lower(${developers.name})`, loweredName));
+  return counted[0]?.total ?? 0;
+};
 
 /**
  * Resolves a CLI-supplied reference to one developer: exact id first, then
@@ -160,7 +189,11 @@ export const resolveDeveloperRef = async (
     .orderBy(asc(developers.email))
     .limit(AMBIGUITY_PROBE_LIMIT);
   if (byName.length > 1) {
-    return { outcome: "ambiguous", candidates: byName };
+    return {
+      outcome: "ambiguous",
+      candidates: byName,
+      totalCount: await countByName(db, trimmed.toLowerCase()),
+    };
   }
   const match = byName[0];
   if (match !== undefined) {

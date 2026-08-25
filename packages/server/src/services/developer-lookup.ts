@@ -58,6 +58,8 @@ export type DeveloperLookup =
   | {
       readonly outcome: "ambiguous";
       readonly candidates: readonly DeveloperCandidate[];
+      /** Every developer of that name, not just the page above. */
+      readonly totalCount: number;
     }
   | {
       readonly outcome: "unknown";
@@ -154,7 +156,11 @@ export const lookUpDeveloper = async (
     return resolved;
   }
   if (resolved.outcome === "ambiguous") {
-    return { outcome: "ambiguous", candidates: resolved.candidates };
+    return {
+      outcome: "ambiguous",
+      candidates: resolved.candidates,
+      totalCount: resolved.totalCount,
+    };
   }
   return { outcome: "unknown", suggestions: await suggestSpellings(db, term) };
 };
@@ -192,11 +198,18 @@ const shortened = (value: string, maxChars: number): string => {
  * `maxChars` comes from `fitRefusal`, which knows what the sentence around it
  * has left — the list is the last thing asked to give up room, and the first
  * thing a reader needs.
+ *
+ * `total` IS NOT `values.length` WHEREVER THE VALUES ARE A PAGE. That promise
+ * one paragraph up was broken the moment a caller handed in the five rows an
+ * ambiguity probe read: the "and N more" was then counted from the page, so a
+ * hub with twelve Kims said five and offered two more. Callers whose values
+ * really are the whole set leave it out.
  */
 const listAndCount = (
   values: readonly string[],
   maxChars: number,
-): string => {
+  total: number = values.length,
+): { readonly text: string; readonly shown: number } => {
   const shown: string[] = [];
   let used = 0;
   for (const value of values) {
@@ -207,14 +220,18 @@ const listAndCount = (
     shown.push(value);
     used += cost;
   }
-  const rest = values.length - shown.length;
+  const rest = total - shown.length;
   const listed = shown.join(", ");
-  if (rest === 0) {
-    return listed;
+  if (rest <= 0) {
+    return { text: listed, shown: shown.length };
   }
-  return shown.length === 0
-    ? `${String(rest)} of them, none short enough to name here`
-    : `${listed} and ${String(rest)} more`;
+  return {
+    text:
+      shown.length === 0
+        ? `${String(rest)} of them, none short enough to name here`
+        : `${listed} and ${String(rest)} more`,
+    shown: shown.length,
+  };
 };
 
 /**
@@ -241,16 +258,23 @@ const listAndCount = (
 export const describeAmbiguousDeveloper = (
   term: string,
   candidates: readonly DeveloperCandidate[],
+  totalCount: number,
 ): string =>
   fitRefusal(
     (echo, listChars) =>
-      `${echo} is the name of ${String(candidates.length)} developers here: ` +
-      `${listAndCount(
-        // Normalized, never cut: an address is for RETYPING, and the form the
-        // reader can retype is the one their connector renders.
-        candidates.map((person) => asRendered(person.email)),
-        listChars,
-      )}. Ask again with the exact address; a guess would credit the wrong person.`,
+      `${echo} is the name of ${String(totalCount)} developers here: ` +
+      `${
+        listAndCount(
+          // Normalized, never cut: an address is for RETYPING, and the form
+          // the reader can retype is the one their connector renders.
+          candidates.map((person) => asRendered(person.email)),
+          listChars,
+          // The hub's count, never the page's — the page is at most
+          // AMBIGUITY_PROBE_LIMIT rows and the sentence must not shrink the
+          // team to fit it.
+          totalCount,
+        ).text
+      }. Ask again with the exact address; a guess would credit the wrong person.`,
     term,
   );
 
@@ -261,14 +285,18 @@ export const describeUnknownDeveloper = (
   fitRefusal(
     (echo, listChars) =>
       `${echo} matches no developer on this hub, so nothing was searched. Closest ` +
-      `known names: ${listAndCount(
-        suggestions.map((person) =>
-          // Shortened to whatever the sentence has left, never to nothing: a
-          // list that names one recognisable spelling beats a list that names
-          // a count, and the reader retypes a name rather than copying it.
-          shortened(person.name, Math.min(MAX_LISTED_NAME_CHARS, listChars)),
-        ),
-        listChars,
-      )}. Ask again with a name or address the hub knows.`,
+      `known names: ${
+        listAndCount(
+          suggestions.map((person) =>
+            // Shortened to whatever the sentence has left, never to nothing: a
+            // list that names one recognisable spelling beats a list that names
+            // a count, and the reader retypes a name rather than copying it.
+            shortened(person.name, Math.min(MAX_LISTED_NAME_CHARS, listChars)),
+          ),
+          listChars,
+          // No page here: DEVELOPER_SUGGESTION_LIMIT spellings is the whole
+          // offer, so the count and the values are about the same set.
+        ).text
+      }. Ask again with a name or address the hub knows.`,
     term,
   );
