@@ -38,7 +38,7 @@ import { hintDeliveryRecord, UNKNOWN_DEVELOPER_ID } from "../capture/records.ts"
 import type { HintRefKind, Producer } from "../capture/records.ts";
 import { resolveCommitDrift } from "../git/commit-drift.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
-import { getHintCandidates } from "../http/hub.ts";
+import { getHintCandidates, postRecords } from "../http/hub.ts";
 import type { AnsweredQuestion, HubContext } from "../http/hub.ts";
 import { recordDeliveredHintHash } from "../hints/delivered-store.ts";
 import { hintBodyHash } from "../hints/echo.ts";
@@ -150,11 +150,31 @@ const selectAnswer = (
   return answers.find((answer) => !seen.has(answer.claimId));
 };
 
-/** False when the seen-set could not be updated — then nothing may be emitted. */
+/**
+ * False when the seen-set could not be updated — then nothing may be emitted.
+ *
+ * `shipNow` POSTS the delivery record instead of only spooling it, and it is
+ * the ANSWER path that asks for it. "Delivered exactly once" across SESSIONS
+ * is the hub's promise, and the hub can only keep it once a hint_deliveries
+ * row exists — a spool append creates none, and UserPromptSubmit is the one
+ * hook that never flushes. So between the render and the session's next
+ * PostToolUse or Stop (minutes, on a long agent turn) every other live session
+ * of the same developer still reads that answer as undelivered and injects it
+ * again, spending one of its five hint slots on a repeat.
+ *
+ * ONLY the answer path, deliberately. A repeated POINTER costs one duplicate
+ * line; an extra hub round trip on EVERY prompt costs the 800 ms hook budget,
+ * and an answer is rare (at most MAX_QUESTION_ANSWERS_LISTED are ever waiting).
+ * BEST EFFORT: a hub that refuses or times out leaves the spooled copy to
+ * close the window at the next flush, exactly as before — the record carries
+ * the same deterministic delivery id, so the hub absorbs the replay as a
+ * duplicate rather than a second telemetry row.
+ */
 const recordDelivery = async (
   input: SelectAndRenderHintInput,
   state: SessionState,
   delivery: Delivery,
+  shipNow = false,
 ): Promise<boolean> => {
   const producer: Producer = {
     developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
@@ -163,19 +183,18 @@ const recordDelivery = async (
   };
   // A local append, microseconds; the next flush ships it, and a dead hub
   // leaves it spooled like any other record (idempotent by delivery id).
+  const record = hintDeliveryRecord(
+    state.crosscheckSessionId,
+    delivery.refKind,
+    delivery.refId,
+    producer,
+    input.now,
+  );
   await appendRecords(
     input.home,
     input.repoKey,
     input.hostSessionKey,
-    [
-      hintDeliveryRecord(
-        state.crosscheckSessionId,
-        delivery.refKind,
-        delivery.refId,
-        producer,
-        input.now,
-      ),
-    ],
+    [record],
     input.now,
   );
   // Freshest state, under the state lock — and FIRST WRITER WINS, decided on
@@ -204,6 +223,12 @@ const recordDelivery = async (
   // this session, so a busy lock here must not cost the hint.
   if (remembered && delivery.bodyHash !== null) {
     await recordDeliveredHintHash(input.home, input.repoKey, delivery.bodyHash);
+  }
+  // After the seen-set, never before: a shipped delivery for a hint this
+  // session then declined to emit would tell the hub it was handed something
+  // it never saw.
+  if (remembered && shipNow) {
+    await postRecords(input.hub, [record]);
   }
   return remembered;
 };
@@ -259,7 +284,7 @@ export const selectAndRenderHint = async (
         bodyHash: hintBodyHash(answer.claimBody),
         text,
       };
-      return (await recordDelivery(input, state, delivery)) ? text : "";
+      return (await recordDelivery(input, state, delivery, true)) ? text : "";
     }
   }
   const selection = selectHint({

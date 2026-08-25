@@ -325,6 +325,44 @@ describe("the answer to my own question, on the prompt path", () => {
     expect(text).not.toContain("crosscheck pointer");
   });
 
+  test("the answer's delivery reaches the HUB in the same prompt", async () => {
+    // Arrange: "delivered exactly once" ACROSS sessions is the hub's promise,
+    // and the hub can only keep it once a hint_deliveries row exists. A spool
+    // append does not create one — UserPromptSubmit never flushes — so between
+    // the render and the next PostToolUse or Stop (minutes, on a long turn)
+    // every other live session of the same developer still reads the answer as
+    // undelivered and injects it again.
+    const f = await fixture("qd-ships");
+    f.hub.setCandidates([]);
+    f.hub.setAnswers([answeredQuestion()]);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert: emitted, and the delivery is already on the hub.
+    expect(text).toContain(`«${ANSWER_BODY}»`);
+    expect(f.hub.calls.records).toBe(1);
+    const shipped = f.hub.postedRecords[0] as { kind?: string; body?: { refId?: string } };
+    expect(shipped.kind).toBe("hint_delivery");
+    expect(shipped.body?.refId).toBe(ANSWER_CLAIM_ID);
+  });
+
+  test("an UNSOLICITED pointer is spooled, not shipped mid-prompt", async () => {
+    // The contrast, and it is the reason this is not simply "flush on every
+    // prompt": a pointer repeated across sessions costs one duplicate line,
+    // while an extra hub round trip on EVERY prompt costs the hook budget.
+    const f = await fixture("qd-pointer-spooled");
+    f.hub.setCandidates([proposedOnlyCandidate()]);
+    f.hub.setAnswers([]);
+
+    // Act
+    const text = await selectAndRenderHint(flowInput(f));
+
+    // Assert
+    expect(text).toContain("crosscheck pointer");
+    expect(f.hub.calls.records).toBe(0);
+  });
+
   test("an answer is delivered exactly once and spends one hint slot", async () => {
     // Arrange
     const f = await fixture("qd-once");

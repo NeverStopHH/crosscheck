@@ -29,6 +29,8 @@ export interface HintHub {
   /** Answers to the CALLER's own questions, on the same bounded response. */
   readonly setAnswers: (answers: readonly unknown[]) => void;
   readonly setTripwireSessions: (sessions: readonly unknown[]) => void;
+  /** Every record body POSTed to /api/records, in order — the delivery pins. */
+  readonly postedRecords: readonly Record<string, unknown>[];
   readonly stop: () => void;
 }
 
@@ -168,6 +170,7 @@ export const startHintHub = (
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
   let answers: readonly unknown[] = [];
   let tripwireSessions: readonly unknown[] = [];
+  const postedRecords: Record<string, unknown>[] = [];
   const server = Bun.serve({
     port: 0,
     fetch: async (request) => {
@@ -185,6 +188,7 @@ export const startHintHub = (
       if (pathname === "/api/records") {
         const body = (await request.json()) as { records: readonly unknown[] };
         calls.records += 1;
+        postedRecords.push(...(body.records as Record<string, unknown>[]));
         await sleep(latency.records ?? 0);
         return Response.json({
           ok: true,
@@ -207,6 +211,7 @@ export const startHintHub = (
     url: `http://127.0.0.1:${server.port}`,
     calls,
     latency,
+    postedRecords,
     setCandidates: (next) => {
       candidates = next;
     },
