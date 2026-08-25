@@ -771,13 +771,22 @@ const QuestionsResponseSchema = z
     };
   });
 
+/**
+ * The reader's own question state. `answerable` asks for the PULL shape —
+ * the same inbox WITHOUT the reader's mute filter, which is what
+ * `list_open_questions` wants: a mute covers unasked surfaces, and a pull is
+ * not one (DESIGN.md §2.1). The briefing asks without it. An older hub
+ * ignores the parameter and answers the muted shape, which is the safe
+ * direction to be wrong in: it shows less, never more.
+ */
 export const getQuestions = (
   ctx: HubContext,
   repo: string,
+  options: { readonly answerable?: boolean } = {},
 ): Promise<HubResult<QuestionsView>> =>
   hubRequest(ctx, {
     method: "GET",
-    path: `/api/questions${encodeRepo(repo)}`,
+    path: `/api/questions${encodeRepo(repo)}${options.answerable === true ? "&answerable=1" : ""}`,
     schema: QuestionsResponseSchema,
   });
 

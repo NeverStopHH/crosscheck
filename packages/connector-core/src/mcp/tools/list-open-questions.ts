@@ -127,7 +127,12 @@ export const run = async (
   if (!parsed.ok) {
     return parsed.result;
   }
-  const fetched = await getQuestions(ctx.hub, ctx.identity.repoId);
+  // The PULL shape: no mute filter. A mute suppresses a teammate from the
+  // reader's unasked surfaces — the briefing block — and has never been a
+  // boundary; this tool is the deliberate ask, like get_diagnosis.
+  const fetched = await getQuestions(ctx.hub, ctx.identity.repoId, {
+    answerable: true,
+  });
   if (!fetched.ok) {
     return hubFailure(ctx, fetched);
   }

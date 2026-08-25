@@ -58,6 +58,7 @@ import {
   workContexts,
 } from "../db/schema.ts";
 import { ingestClaimWithin, prepareClaimVector } from "./record-handlers.ts";
+import { notMutedCondition } from "./visibility.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
 import type { Clock } from "../types.ts";
@@ -555,10 +556,25 @@ export const expireOwnQuestions = async (
   return expired.length;
 };
 
+/**
+ * MUTE, and the one place this channel has to decide what it means
+ * (DESIGN.md §2.1). A mute is reader-side and covers the reader's UNASKED
+ * surfaces; it has never been a boundary. The briefing block is unasked, so
+ * a muted asker's question is filtered out of it — IN THE WHERE, before the
+ * bound, so a muted developer's questions cannot crowd an includable one out
+ * of MAX_QUESTIONS_LISTED. `list_open_questions` is a deliberate pull and
+ * passes `excludeMuted: false`, exactly as a muted teammate's tree stays
+ * readable through `get_diagnosis`.
+ *
+ * The ASKER is never told. Their question is simply not answered, and
+ * `doctor` eventually tells them it expired — without saying why, because a
+ * mute a sender can detect is a mute nobody would set.
+ */
 const listInbox = async (
   deps: Deps,
   developerId: string,
   repo: string,
+  excludeMuted: boolean,
 ): Promise<readonly InboxQuestion[]> => {
   const rows = await deps.db
     .select({
@@ -574,6 +590,9 @@ const listInbox = async (
         eq(questions.targetDeveloperId, developerId),
         eq(questions.repo, repo),
         isLive(deps.now()),
+        ...(excludeMuted
+          ? [notMutedCondition(developerId, questions.authorDeveloperId)]
+          : []),
       ),
     )
     .orderBy(desc(questions.createdAt))
@@ -678,7 +697,11 @@ export const listQuestions = async (
   // the doctor's "expired unanswered" warning read the same table state.
   await expireOwnQuestions(deps, developerId);
   const [inbox, answers, ownCounts] = await Promise.all([
-    listInbox(deps, developerId, repo),
+    // The BRIEFING's read: muted askers filtered, because the briefing is an
+    // unasked surface. An ANSWER below is deliberately NOT filtered — it is
+    // solicited, and hiding the answer to a question this developer asked
+    // would be absurd whatever they think of the answerer.
+    listInbox(deps, developerId, repo, true),
     listUndeliveredAnswers(deps, developerId),
     countOwnQuestions(deps, developerId),
   ]);
@@ -696,12 +719,17 @@ export const listQuestions = async (
   };
 };
 
-/** Questions a caller may answer — the `list_open_questions` tool's read. */
+/**
+ * Questions a caller may answer — the `list_open_questions` tool's read, and
+ * a deliberate PULL: no mute filter, for the same reason `get_diagnosis` has
+ * none. A mute is a preference about what arrives unasked.
+ */
 export const listAnswerableQuestions = (
   deps: Deps,
   developerId: string,
   repo: string,
-): Promise<readonly InboxQuestion[]> => listInbox(deps, developerId, repo);
+): Promise<readonly InboxQuestion[]> =>
+  listInbox(deps, developerId, repo, false);
 
 /** Raw rows by id — the scale probe and the tests that assert stored state. */
 export const readQuestionRows = async (

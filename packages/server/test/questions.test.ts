@@ -482,6 +482,144 @@ describe("answering a question", () => {
 });
 
 /**
+ * MUTE, decided and pinned (spec: "decide, document and test mute semantics
+ * explicitly"). A mute is reader-side and covers the reader's UNASKED
+ * surfaces; it has never been a boundary. So:
+ *
+ *   the BRIEFING inbox is unasked      -> a muted asker's question is suppressed
+ *   list_open_questions is a PULL      -> it still lists them
+ *   an ANSWER to my own question       -> solicited, never suppressed
+ *
+ * And the asker learns nothing: they are not told, their question is simply
+ * not answered, and `doctor` eventually tells THEM it expired.
+ */
+describe("mute and the question channel", () => {
+  let harness: TestHarness;
+  let nick: Party;
+  let ken: Party;
+
+  const mute = async (reader: Party, ref: string): Promise<void> => {
+    const response = await harness.app.request(
+      "/api/settings/mutes",
+      jsonRequest("POST", reader.developer.apiKey, { developer: ref }),
+    );
+    expect(response.status).toBe(200);
+  };
+
+  const answerableFor = async (
+    party: Party,
+  ): Promise<readonly Record<string, unknown>[]> => {
+    const response = await harness.app.request(
+      `/api/questions?repo=${encodeURIComponent(REPO)}&answerable=1`,
+      jsonRequest("GET", party.developer.apiKey),
+    );
+    const body = (await response.json()) as {
+      data: { inbox: readonly Record<string, unknown>[] };
+    };
+    return body.data.inbox;
+  };
+
+  beforeEach(async () => {
+    harness = await createTestHarness();
+    nick = await seatDeveloper(harness, "Nick", "nick@example.com", "ses_nick");
+    ken = await seatDeveloper(harness, "Ken", "ken@example.com", "ses_ken");
+  });
+
+  test("a muted asker's question leaves the briefing inbox but stays pullable", async () => {
+    // Arrange: the CONTRAST first — unmuted, the question is in the inbox.
+    const asked = await ask(harness, nick, {
+      developer: "Ken",
+      body: "Did the rate-limit variant of the importer ever get tried?",
+    });
+    expect(asked.status).toBe(200);
+    expect((await readQuestions(harness, ken)).data.inbox).toHaveLength(1);
+
+    // Act
+    await mute(ken, "Nick");
+
+    // Assert: gone from the unasked surface…
+    expect((await readQuestions(harness, ken)).data.inbox).toHaveLength(0);
+    // …and still there for the deliberate pull, like a muted teammate's tree.
+    expect(await answerableFor(ken)).toHaveLength(1);
+  });
+
+  test("the asker is told nothing — a mute is never disclosed", async () => {
+    // Arrange
+    await mute(ken, "Nick");
+
+    // Act
+    const asked = await ask(harness, nick, {
+      developer: "Ken",
+      body: "Does the matcher retry on a 429 already?",
+    });
+
+    // Assert: the ask succeeds exactly as it would to an unmuted teammate.
+    expect(asked.status).toBe(200);
+    const body = (await asked.json()) as {
+      data: { question: { id: string }; duplicate: boolean };
+    };
+    expect(body.data.duplicate).toBe(false);
+    expect(body.data.question.id).toMatch(/^qn_/);
+    const nicksView = await readQuestions(harness, nick);
+    expect(nicksView.data.counts["asked"]).toBe(1);
+  });
+
+  test("an answer to my own question is solicited, so a mute never hides it", async () => {
+    // Arrange: Nick mutes Ken, then asks Ken something anyway.
+    const filed = await harness.app.request(
+      "/api/records",
+      jsonRequest("POST", ken.developer.apiKey, {
+        records: [
+          {
+            cx: "0.1",
+            id: "env_wc_ken",
+            ts: harness.clock.now().toISOString(),
+            producer: {
+              developerId: ken.developer.developerId,
+              agentKind: "claude-code",
+              sessionId: ken.sessionId,
+            },
+            kind: "work_context",
+            body: validWorkContextBody({
+              id: "wc_ken",
+              sessionId: ken.sessionId,
+            }),
+          },
+        ],
+      }),
+    );
+    expect(filed.status).toBe(200);
+    await mute(nick, "Ken");
+    const asked = await ask(harness, nick, {
+      developer: "Ken",
+      body: "Is the uploader backoff shared with the importer?",
+    });
+    const questionId = (
+      (await asked.json()) as { data: { question: { id: string } } }
+    ).data.question.id;
+
+    // Act
+    const answered = await harness.app.request(
+      `/api/questions/${questionId}/answers`,
+      jsonRequest("POST", ken.developer.apiKey, {
+        claim: validClaimBody({
+          id: "clm_answer",
+          workContextId: "wc_ken",
+          authorSessionId: ken.sessionId,
+          body: "Yes — one shared token bucket.",
+          createdAt: harness.clock.now().toISOString(),
+        }),
+      }),
+    );
+
+    // Assert
+    expect(answered.status).toBe(200);
+    const nicksView = await readQuestions(harness, nick);
+    expect(nicksView.data.answers).toHaveLength(1);
+  });
+});
+
+/**
  * Every refusal this channel can send is QUOTED by the connector at
  * MAX_HUB_MESSAGE_CHARS and the rest is dropped (mcp/tools/shared.ts), so a
  * sentence past the bound arrives with its actionable half missing — which is

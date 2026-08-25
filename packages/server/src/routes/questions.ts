@@ -34,6 +34,7 @@ import {
 import {
   answerQuestion,
   askQuestion,
+  listAnswerableQuestions,
   listQuestions,
 } from "../services/questions.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -138,6 +139,19 @@ export const questionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const repo = c.req.query("repo");
     if (repo === undefined || repo.length === 0) {
       return fail(c, 400, "validation_failed", "repo is required");
+    }
+    // `?answerable=1` is the PULL shape (`list_open_questions`): the same
+    // inbox without the reader's mute filter, because a mute covers unasked
+    // surfaces and a pull is not one (DESIGN.md §2.1). Everything else — the
+    // answers and the counters — is identical, so the tool still makes one
+    // call.
+    if (c.req.query("answerable") !== undefined) {
+      const inbox = await listAnswerableQuestions(
+        deps,
+        c.get("developer").id,
+        repo,
+      );
+      return ok(c, { inbox, answers: [], counts: null });
     }
     const view = await listQuestions(deps, c.get("developer").id, repo);
     return ok(c, view);

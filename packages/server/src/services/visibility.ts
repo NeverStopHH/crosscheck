@@ -55,12 +55,25 @@
  *                                   is dropped when EITHER side is muted —
  *                                   the pointer names both authors)
  *   7. GET /api/absences          — my briefing's absence lines about X
+ *   8. GET /api/questions         — the "Questions for you" block in my
+ *                                   briefing (roadmap R2). Addressed
+ *                                   communication, but the BRIEFING is an
+ *                                   unasked surface, which is exactly what
+ *                                   mute covers
  *
  * Mute is a reader preference, not a boundary: the deliberate pull paths —
  * GET /api/search (search_related_work), GET /api/work-contexts/:id/diagnosis
- * (get_diagnosis), GET /api/contradictions/:id/brief (get_referee_brief) —
- * stay unfiltered, and the raw events feed is a subscription, not an
- * injection, so it is not muted either.
+ * (get_diagnosis), GET /api/contradictions/:id/brief (get_referee_brief),
+ * GET /api/questions?answerable=1 (list_open_questions) — stay unfiltered,
+ * and the raw events feed is a subscription, not an injection, so it is not
+ * muted either. The ANSWER to a question I asked is likewise never muted: it
+ * is solicited, and hiding the answer to my own question would be absurd
+ * whatever I think of the answerer.
+ *
+ * PRESENCE OPT-OUT deliberately does NOT cover questions. It hides where a
+ * developer is and when they last ran an agent; a question addressed to them
+ * by name is neither, they receive it exactly as anybody else does, and the
+ * asker learns nothing about their presence through it.
  */
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
