@@ -282,6 +282,24 @@ export const getSolvedMatches = (
   });
 
 /**
+ * The failure-time probe: solved trees carrying THIS exact fingerprint,
+ * asked once, the moment a tool fails. Same route and same row shape as the
+ * listing above — a hub too old to know the parameter ignores it and answers
+ * the ordinary listing, whose rows the caller's seen-set then drops, so an
+ * old hub costs one wasted round trip and never a wrong hint.
+ */
+export const getSolvedMatchesForFingerprint = (
+  ctx: HubContext,
+  repo: string,
+  fingerprint: string,
+): Promise<HubResult<readonly SolvedMatchEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/solved-matches${encodeRepo(repo)}&fingerprint=${encodeURIComponent(fingerprint)}`,
+    schema: tolerantList("matches", SolvedMatchEntrySchema),
+  });
+
+/**
  * One of the developer's OWN unreviewed Tier-1 drafts (DESIGN.md §3 Tier 1
  * promotion loop). The hub only ever serves the CALLER's drafts here, so a
  * body is self-directed text — still sanitized at render like everything

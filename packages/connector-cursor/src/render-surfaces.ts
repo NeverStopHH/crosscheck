@@ -6,8 +6,9 @@
  * (connector-core/test/render-surface-registry.test.ts) fails the build on
  * one that does not.
  *
- * The three Block-7 surfaces — the sessionStart briefing and the
- * failure-matched hint (claim + pointer variants) — are CORPUS surfaces
+ * The Block-7 surfaces — the sessionStart briefing, the
+ * failure-matched hint (claim + pointer variants) and the solved-before
+ * hint — are CORPUS surfaces
  * that attack the REAL emitted payload: each adapter plants the payload in
  * every untrusted slot, renders through the core renderer, ENCODES into the
  * hook's actual stdout JSON (`cursorInjectionOutput`) and DECODES back the
@@ -21,6 +22,7 @@ import type {
   HintClaimCandidate,
   IntentEntry,
   PresenceEntry,
+  SolvedMatchEntry,
   WorkContextEntry,
 } from "@crosscheck/connector-core/http/hub.ts";
 
@@ -28,6 +30,7 @@ import {
   cursorBriefingContext,
   cursorClaimHintContext,
   cursorPointerHintContext,
+  cursorSolvedHintContext,
 } from "./inject/output.ts";
 
 const NOW = new Date("2026-08-19T12:00:00.000Z");
@@ -86,6 +89,17 @@ const hintContextWith = (payload: string) => ({
   createdAt: ISO,
 });
 
+const solvedMatchWith = (payload: string): SolvedMatchEntry => ({
+  workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+  title: payload,
+  developerName: payload,
+  repo: payload,
+  solvedAt: ISO,
+  landedAt: null,
+  matchedTargetKind: "error_fingerprint",
+  rootCause: payload,
+});
+
 export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
@@ -113,6 +127,22 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         drift: null,
         now: NOW,
       }),
+  },
+  {
+    kind: "corpus",
+    name: "cursor-solved-hint-context",
+    module: "src/inject/output.ts",
+    framing: "framed",
+    // The failure-time surface (VISION.md §1). It is the only Cursor
+    // injection that carries a teammate-written BODY unasked — the recorded
+    // root cause — so it goes through the same JSON round trip as its
+    // siblings rather than being trusted because the core renderer built it.
+    render: (payload) =>
+      cursorSolvedHintContext(
+        solvedMatchWith(payload),
+        "github.com/acme/api",
+        NOW,
+      ),
   },
   {
     kind: "corpus",

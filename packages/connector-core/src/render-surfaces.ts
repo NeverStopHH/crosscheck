@@ -23,6 +23,7 @@ import {
   renderAnswerHint,
   renderClaimHint,
   renderPointerHint,
+  renderSolvedHint,
   renderTripwireReason,
 } from "./hints/render.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
@@ -423,6 +424,17 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     kind: "corpus",
+    name: "solved-hint",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    // The failure-time surface (VISION.md §1): the same untrusted slots as
+    // the briefing's solved entry — solver name, tree title, repo, recorded
+    // cause — but arriving mid-turn under a header of their own.
+    render: (payload) =>
+      renderSolvedHint(solvedMatchWith(payload), "github.com/acme/api", NOW),
+  },
+  {
+    kind: "corpus",
     name: "tripwire-reason",
     module: "src/hints/render.ts",
     framing: "framed",
@@ -553,6 +565,13 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/flows/hint.ts",
     note: "emits renderClaimHint/renderPointerHint output verbatim (registered above)",
     corpusCoveredBy: ["test/hint-flow.test.ts"],
+  },
+  {
+    kind: "composite",
+    name: "solved-hint-flow",
+    module: "src/flows/solved-hint.ts",
+    note: "emits renderSolvedHint output verbatim (registered above); no string of its own",
+    corpusCoveredBy: ["test/solved-hint-flow.test.ts"],
   },
   {
     kind: "composite",

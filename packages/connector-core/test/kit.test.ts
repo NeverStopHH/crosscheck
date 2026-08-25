@@ -36,6 +36,7 @@ import * as heartbeatFlow from "../src/flows/heartbeat.ts";
 import * as endFlow from "../src/flows/end-session.ts";
 import * as briefingFlow from "../src/flows/briefing.ts";
 import * as hintFlow from "../src/flows/hint.ts";
+import * as solvedHintFlow from "../src/flows/solved-hint.ts";
 import * as launcher from "../src/config/launcher.ts";
 import * as hookBudgetModule from "../src/config/hook-budget.ts";
 import * as secretScan from "../src/capture/secret-scan.ts";
@@ -132,6 +133,7 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["getContradictions", hub.getContradictions],
   ["getDrafts", hub.getDrafts],
   ["getSolvedMatches", hub.getSolvedMatches],
+  ["getSolvedMatchesForFingerprint", hub.getSolvedMatchesForFingerprint],
   ["getTripwireSessions", hub.getTripwireSessions],
   // The session flows (§1.3, extracted in Block 4)
   ["registerSessionFlow", registerFlow.registerSessionFlow],
@@ -145,6 +147,7 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["assembleBriefing", briefingFlow.assembleBriefing],
   ["recordBriefingDeliveries", briefingFlow.recordBriefingDeliveries],
   ["selectAndRenderHint", hintFlow.selectAndRenderHint],
+  ["selectAndRenderSolvedHint", solvedHintFlow.selectAndRenderSolvedHint],
   // Capture
   ["buildEnvelope", records.buildEnvelope],
   ["workContextRecord", records.workContextRecord],

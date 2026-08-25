@@ -5,7 +5,7 @@
  * content is EXCLUSIVELY the core renderers' output — the briefing from
  * `renderBriefing` (via the `assembleBriefing` flow), the hints from
  * `renderClaimHint`/`renderPointerHint` (via the `selectAndRenderHint`
- * flow). §1.4's rule made mechanical: any future Cursor-specific framing
+ * flow) and `renderSolvedHint` (via `selectAndRenderSolvedHint`). §1.4's rule made mechanical: any future Cursor-specific framing
  * text is renderer-owned literal text that must be added HERE, on a
  * registered §4.4 surface the corpus attacks — never inline in a handler.
  *
@@ -23,11 +23,13 @@ import type { BriefingInput } from "@crosscheck/connector-core/briefing/render.t
 import {
   renderClaimHint,
   renderPointerHint,
+  renderSolvedHint,
 } from "@crosscheck/connector-core/hints/render.ts";
 import type {
   ClaimHintInput,
   PointerHintInput,
 } from "@crosscheck/connector-core/hints/render.ts";
+import type { SolvedMatchEntry } from "@crosscheck/connector-core/http/hub.ts";
 
 import { CURSOR_ADDITIONAL_CONTEXT_KEY } from "../constants.ts";
 
@@ -71,3 +73,13 @@ export const cursorClaimHintContext = (input: ClaimHintInput): string =>
 /** The delivered pointer-hint composition, as the §4.4 corpus attacks it. */
 export const cursorPointerHintContext = (input: PointerHintInput): string =>
   deliveredAdditionalContext(cursorInjectionOutput(renderPointerHint(input)));
+
+/** The delivered solved-hint composition, as the §4.4 corpus attacks it. */
+export const cursorSolvedHintContext = (
+  entry: SolvedMatchEntry,
+  repoId: string,
+  now: Date,
+): string =>
+  deliveredAdditionalContext(
+    cursorInjectionOutput(renderSolvedHint(entry, repoId, now)),
+  );

@@ -570,6 +570,51 @@ export const MUTATIONS: readonly Mutation[] = [
       "asserted rather than pointed at",
   },
   {
+    // The failure-time hint fires inside an agent turn, where nobody is
+    // typing and nothing else rate-limits it. Its two guards are the session
+    // cap and the seen-set; this removes the cap check.
+    label: "the failure-time hint ignores the session hint budget",
+    file: `${CORE}/src/flows/solved-hint.ts`,
+    from: `  if (state.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION) {
+    return "";
+  }
+  const result = await getSolvedMatchesForFingerprint(`,
+    to: "  const result = await getSolvedMatchesForFingerprint(",
+    test: `${CORE}/test/solved-hint-flow.test.ts`,
+    because:
+      "a session retrying one failing command pays a hub round trip on every " +
+      "attempt and can spend its whole hint allowance on one loop, which is " +
+      "the noise DESIGN.md \u00a710 risk 1 forbids",
+  },
+  {
+    // And the other guard: the briefing's solved pointers are a SEPARATE
+    // list from the delivered refs, so consulting only the latter repeats a
+    // pointer the reader was already shown at SessionStart.
+    label: "the failure-time hint forgets what the briefing already showed",
+    file: `${CORE}/src/flows/solved-hint.ts`,
+    from: "    ...state.briefingSolvedRefs,\n",
+    to: "",
+    test: `${CORE}/test/solved-hint-flow.test.ts`,
+    because:
+      "the same solved tree is pointed at twice in one session — once at " +
+      "SessionStart and again mid-turn — which reads as two findings and is one",
+  },
+  {
+    // Precedence: content identity beats similarity. This stops the probe
+    // and lets the text search answer a failure the hub had already settled.
+    label: "a diagnosed failure gets a similarity guess instead",
+    file: `${CURSOR}/src/handlers/tool-failure.ts`,
+    from: `  const solvedText =
+    briefingText.length === 0 && fingerprint !== null
+      ? await attemptSolvedHint(ctx, fingerprint)
+      : "";`,
+    to: '  const solvedText = "";',
+    test: `${CURSOR}/test/injection.test.ts`,
+    because:
+      "the hub holds an evidenced, vouched answer for this exact failure and " +
+      "the developer is handed whatever text search thought looked similar",
+  },
+  {
     label: "the solved floor leaks into similarity guesses",
     file: `${SERVER}/src/services/search.ts`,
     from: "solvedIds.has(entry.row.id) && hasFactTier(entry.tiers)",
@@ -994,8 +1039,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // cursor dual-signal case) both selected and both emitted. First writer
     // wins is decided INSIDE the locked transform; deleting the check-and-set
     // reverts to the blind append and the concurrent pin must notice.
+    // RE-ANCHORED, not weakened: the check-and-set moved to
+    // hints/delivery.ts when the failure-time solved hint became its second
+    // caller, so this now guards BOTH hint paths through one edit.
     label: "concurrent failure signals deliver the same hint twice",
-    file: `${CORE}/src/flows/hint.ts`,
+    file: `${CORE}/src/hints/delivery.ts`,
     from:
       "    (fresh) =>\n" +
       "      fresh.deliveredHintRefs.includes(delivery.refId) ||\n" +
@@ -2127,7 +2175,7 @@ interface Outcome {
  * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
- * PRINTS: injection.test.ts 2
+ * PRINTS: injection.test.ts 3
  * PRINTS: injector.test.ts 4
  * PRINTS: intent-hook.test.ts 1
  * PRINTS: intent-worker.test.ts 1
@@ -2156,6 +2204,7 @@ interface Outcome {
  * PRINTS: set-intent.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
  * PRINTS: solved-cross-repo.test.ts 4
+ * PRINTS: solved-hint-flow.test.ts 2
  * PRINTS: solved-intent.test.ts 3
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1

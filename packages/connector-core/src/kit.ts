@@ -122,6 +122,7 @@ export {
   getHintCandidates,
   getPresence,
   getSolvedMatches,
+  getSolvedMatchesForFingerprint,
   getTripwireSessions,
   getWorkContexts,
   heartbeatSession,
@@ -178,6 +179,8 @@ export type {
 } from "./flows/briefing.ts";
 export { selectAndRenderHint } from "./flows/hint.ts";
 export type { SelectAndRenderHintInput } from "./flows/hint.ts";
+export { selectAndRenderSolvedHint } from "./flows/solved-hint.ts";
+export type { SelectAndRenderSolvedHintInput } from "./flows/solved-hint.ts";
 
 // ── Capture ─────────────────────────────────────────────────────────────────
 export {

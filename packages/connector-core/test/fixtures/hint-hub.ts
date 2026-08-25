@@ -8,6 +8,8 @@
 export interface HintHubCalls {
   candidates: number;
   tripwire: number;
+  /** GET /api/solved-matches — the failure-time fingerprint probe. */
+  solvedMatches: number;
   records: number;
   other: number;
 }
@@ -29,6 +31,10 @@ export interface HintHub {
   /** Answers to the CALLER's own questions, on the same bounded response. */
   readonly setAnswers: (answers: readonly unknown[]) => void;
   readonly setTripwireSessions: (sessions: readonly unknown[]) => void;
+  /** Rows GET /api/solved-matches answers with. */
+  readonly setSolvedMatches: (matches: readonly unknown[]) => void;
+  /** The `?fingerprint=` of the last solved-match probe, or null. */
+  readonly lastSolvedFingerprint: () => string | null;
   /** Every record body POSTed to /api/records, in order — the delivery pins. */
   readonly postedRecords: readonly Record<string, unknown>[];
   readonly stop: () => void;
@@ -147,6 +153,25 @@ export const answeredQuestion = (): Record<string, unknown> => ({
   answeredAt: "2026-08-19T09:00:00.000Z",
 });
 
+/**
+ * One solved tree carrying the failure's own fingerprint — a FINGERPRINT
+ * match, so it is the shape allowed to quote its recorded cause.
+ */
+export const SOLVED_CONTEXT_ID = "wc_solved_before";
+export const SOLVED_ROOT_CAUSE =
+  "The ingestion mapping drops the key id on rotation";
+
+export const solvedFingerprintMatch = (): Record<string, unknown> => ({
+  workContextId: SOLVED_CONTEXT_ID,
+  title: "Refresh 500s after key rotation",
+  developerName: "Nick",
+  repo: "github.com/acme/web",
+  solvedAt: "2026-03-12T08:00:00.000Z",
+  landedAt: null,
+  matchedTargetKind: "error_fingerprint",
+  rootCause: SOLVED_ROOT_CAUSE,
+});
+
 export const activeTeammateSession = (): Record<string, unknown> => ({
   sessionId: "cc_nick",
   developerId: TEAMMATE_DEVELOPER_ID,
@@ -169,10 +194,18 @@ const sleep = (ms: number): Promise<void> =>
 export const startHintHub = (
   latency: HintHubLatency = { candidates: 0, tripwire: 0 },
 ): HintHub => {
-  const calls: HintHubCalls = { candidates: 0, tripwire: 0, records: 0, other: 0 };
+  const calls: HintHubCalls = {
+    candidates: 0,
+    tripwire: 0,
+    solvedMatches: 0,
+    records: 0,
+    other: 0,
+  };
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
   let answers: readonly unknown[] = [];
   let tripwireSessions: readonly unknown[] = [];
+  let solvedMatches: readonly unknown[] = [];
+  let lastSolvedFingerprint: string | null = null;
   const postedRecords: Record<string, unknown>[] = [];
   const server = Bun.serve({
     port: 0,
@@ -182,6 +215,13 @@ export const startHintHub = (
         calls.candidates += 1;
         await sleep(latency.candidates);
         return Response.json({ ok: true, data: { candidates, answers } });
+      }
+      if (pathname === "/api/solved-matches") {
+        calls.solvedMatches += 1;
+        lastSolvedFingerprint = new URL(request.url).searchParams.get(
+          "fingerprint",
+        );
+        return Response.json({ ok: true, data: { matches: solvedMatches } });
       }
       if (pathname === "/api/hints/tripwire") {
         calls.tripwire += 1;
@@ -224,6 +264,10 @@ export const startHintHub = (
     setTripwireSessions: (next) => {
       tripwireSessions = next;
     },
+    setSolvedMatches: (next) => {
+      solvedMatches = next;
+    },
+    lastSolvedFingerprint: () => lastSolvedFingerprint,
     stop: () => {
       server.stop(true);
     },

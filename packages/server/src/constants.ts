@@ -85,6 +85,29 @@ export const SOLVED_MATCH_MAX_INTENT_CANDIDATES = 20;
 export const SOLVED_MATCH_MAX_INTENT_FINDINGS = 1;
 
 /**
+ * The FINGERPRINT PROBE (`?fingerprint=`), asked the moment a tool fails
+ * rather than at SessionStart. Read bound on contexts carrying one exact
+ * fingerprint: a single normalized failure shared by more work contexts than
+ * this is pathological, and the (kind, value) index makes the lookup one
+ * seek either way.
+ */
+export const SOLVED_MATCH_MAX_PROBE_ROWS = 200;
+/**
+ * Findings one probe answers with. The caller renders ONE hint; the surplus
+ * exists only so a match this session has already been shown does not make
+ * the probe answer "nothing".
+ */
+export const SOLVED_MATCH_MAX_PROBE_FINDINGS = 3;
+/**
+ * Longest `?fingerprint=` the route accepts. A fingerprint is
+ * `sha256:` + FINGERPRINT_HASH_CHARS hex (39 characters,
+ * connector-core/capture/fingerprint.ts); the slack is for a future
+ * algorithm label, not for prose — an unbounded value would be a free
+ * string parameter on an indexed lookup.
+ */
+export const SOLVED_MATCH_MAX_FINGERPRINT_CHARS = 128;
+
+/**
  * Most unreviewed Tier-1 drafts one GET /api/drafts response carries
  * (DESIGN.md §3 Tier 1 promotion loop). Well above what the summarizer cap
  * lets one session mint, and bounded like every list query:

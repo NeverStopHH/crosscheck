@@ -28,6 +28,8 @@ import {
   SOLVED_MATCH_MAX_INTENT_FINDINGS,
   SOLVED_MATCH_MAX_LIVE_INTENTS,
   SOLVED_MATCH_MAX_PAIR_ROWS,
+  SOLVED_MATCH_MAX_PROBE_FINDINGS,
+  SOLVED_MATCH_MAX_PROBE_ROWS,
 } from "../constants.ts";
 import {
   agentSessions,
@@ -321,6 +323,106 @@ const hydrateMatches = async (
 };
 
 /**
+ * Assembles the wire rows for a set of winning context ids — hydration, the
+ * solved dates, and the root-cause bodies for the ones allowed to carry one.
+ * Shared by the briefing listing and the fingerprint probe so the two cannot
+ * answer differently about the same tree.
+ */
+const toMatchViews = async (
+  db: Db,
+  winners: readonly (MatchStrength & { id: string })[],
+  solvedInfo: ReadonlyMap<string, Date>,
+): Promise<readonly SolvedMatchView[]> => {
+  const [display, rootCauses] = await Promise.all([
+    hydrateMatches(
+      db,
+      winners.map((winner) => winner.id),
+    ),
+    // Bodies only for the trees that will be allowed to carry one, so a
+    // file-matched tree's claim never leaves the hub at all.
+    listSolvedRootCauses(
+      db,
+      winners
+        .filter((winner) => winner.viaFingerprint)
+        .map((winner) => winner.id),
+    ),
+  ]);
+  return winners.flatMap((winner) => {
+    const row = display.get(winner.id);
+    const solvedAt = solvedInfo.get(winner.id);
+    if (row === undefined || solvedAt === undefined) {
+      return [];
+    }
+    return [
+      {
+        workContextId: winner.id,
+        title: row.title,
+        developerName: row.developerName,
+        repo: row.repo,
+        solvedAt: solvedAt.toISOString(),
+        landedAt: row.landedAt === null ? null : row.landedAt.toISOString(),
+        matchedTargetKind: matchKindOf(winner),
+        rootCause: rootCauses.get(winner.id) ?? null,
+      },
+    ];
+  });
+};
+
+/**
+ * Solved trees carrying THIS EXACT error fingerprint, newest diagnosis
+ * first — the probe a connector runs the moment a tool fails, instead of
+ * waiting for the next SessionStart to say the answer already existed.
+ *
+ * No live-side join and no repo filter, and both absences are the point.
+ * The "current work" the briefing listing has to infer is not a guess here:
+ * the caller is holding the failure. And a fingerprint is content identity,
+ * so it travels across every repo on the hub exactly as it does in the
+ * listing (CROSS_REPO_TARGET_KIND).
+ *
+ * Every row is a fingerprint match by construction, so every solved one may
+ * carry its recorded cause.
+ */
+export const listSolvedByFingerprint = async (
+  deps: Deps,
+  viewerDeveloperId: string,
+  fingerprint: string,
+): Promise<readonly SolvedMatchView[]> => {
+  const candidates = await deps.db
+    .selectDistinct({ id: workContextTargets.workContextId })
+    .from(workContextTargets)
+    .innerJoin(
+      workContexts,
+      eq(workContexts.id, workContextTargets.workContextId),
+    )
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(
+      and(
+        eq(workContextTargets.kind, CROSS_REPO_TARGET_KIND),
+        eq(workContextTargets.value, fingerprint),
+        notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+      ),
+    )
+    .orderBy(asc(workContextTargets.workContextId))
+    .limit(SOLVED_MATCH_MAX_PROBE_ROWS);
+  if (candidates.length === 0) {
+    return [];
+  }
+  const ids = candidates.map((row) => row.id);
+  const solvedInfo = await listSolvedInfo(deps.db, ids);
+  const winners = ids
+    .filter((id) => solvedInfo.has(id))
+    .map((id) => ({
+      id,
+      viaFingerprint: true,
+      viaIntent: false,
+      solvedAtMs: solvedInfo.get(id)?.getTime() ?? 0,
+    }))
+    .sort((left, right) => right.solvedAtMs - left.solvedAtMs)
+    .slice(0, SOLVED_MATCH_MAX_PROBE_FINDINGS);
+  return toMatchViews(deps.db, winners, solvedInfo);
+};
+
+/**
  * Solved trees sharing a strong target with currently active work on `repo`,
  * fingerprint matches first, then most recently solved. Bounded end to end:
  * pair rows, the solved lookup (over pair-bounded ids), the hydration, and
@@ -388,37 +490,5 @@ export const listSolvedMatches = async (
     )
     .slice(0, SOLVED_MATCH_MAX_FINDINGS);
 
-  const [display, rootCauses] = await Promise.all([
-    hydrateMatches(
-      deps.db,
-      winners.map((winner) => winner.id),
-    ),
-    // Bodies only for the trees that will be allowed to carry one, so a
-    // file-matched tree's claim never leaves the hub at all.
-    listSolvedRootCauses(
-      deps.db,
-      winners
-        .filter((winner) => winner.viaFingerprint)
-        .map((winner) => winner.id),
-    ),
-  ]);
-  return winners.flatMap((winner) => {
-    const row = display.get(winner.id);
-    const solvedAt = solvedInfo.get(winner.id);
-    if (row === undefined || solvedAt === undefined) {
-      return [];
-    }
-    return [
-      {
-        workContextId: winner.id,
-        title: row.title,
-        developerName: row.developerName,
-        repo: row.repo,
-        solvedAt: solvedAt.toISOString(),
-        landedAt: row.landedAt === null ? null : row.landedAt.toISOString(),
-        matchedTargetKind: matchKindOf(winner),
-        rootCause: rootCauses.get(winner.id) ?? null,
-      },
-    ];
-  });
+  return toMatchViews(deps.db, winners, solvedInfo);
 };

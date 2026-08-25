@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 132
+    # PRINTS: 135
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -151,8 +151,10 @@ jobs:
     # PRINTS: constants.ts 6
     # PRINTS: flows/briefing.ts 1
     # PRINTS: flows/capture-targets.ts 1
-    # PRINTS: flows/hint.ts 3
+    # PRINTS: flows/hint.ts 2
+    # PRINTS: flows/solved-hint.ts 2
     # PRINTS: git/ssh-hostname.ts 2
+    # PRINTS: hints/delivery.ts 1
     # PRINTS: hints/render.ts 1
     # PRINTS: hints/select.ts 6
     # PRINTS: http/hub.ts 1
@@ -168,7 +170,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
-    # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 2
+    # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 3
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/schema/src/session.ts 1
     # PRINTS: packages/server/src/constants.ts 1
@@ -194,6 +196,7 @@ jobs:
     # PRINTS: config.ts 3
     # PRINTS: connected-repo.ts 2
     # PRINTS: constants.ts 7
+    # PRINTS: delivery.ts 1
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 1
     # PRINTS: doctor.ts 6
@@ -201,7 +204,7 @@ jobs:
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 1
     # PRINTS: gate.ts 6
-    # PRINTS: hint.ts 3
+    # PRINTS: hint.ts 2
     # PRINTS: hints.ts 1
     # PRINTS: hook-budget.ts 1
     # PRINTS: hub.ts 1
@@ -232,12 +235,13 @@ jobs:
     # PRINTS: sessions.ts 1
     # PRINTS: set-intent.ts 1
     # PRINTS: settings-merge.ts 1
+    # PRINTS: solved-hint.ts 2
     # PRINTS: solved-matches.ts 5
     # PRINTS: solved.ts 1
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: stop.ts 2
     # PRINTS: time-window.ts 1
-    # PRINTS: tool-failure.ts 2
+    # PRINTS: tool-failure.ts 3
     # PRINTS: user-prompt-submit.ts 1
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 1

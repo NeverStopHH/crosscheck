@@ -31,6 +31,7 @@ import {
   UNKNOWN_AUTHOR,
   formatAge,
   formatSolvedAge,
+  formatSolvedLine,
 } from "../briefing/render.ts";
 import { bareUntrusted as bare } from "../briefing/sanitize.ts";
 import { quoted, safeId } from "../mcp/render.ts";
@@ -39,6 +40,7 @@ import type {
   AnsweredQuestion,
   HintClaimCandidate,
   HintContextCandidate,
+  SolvedMatchEntry,
   TripwireSession,
 } from "../http/hub.ts";
 
@@ -243,6 +245,32 @@ export const renderAnswerHint = (
     `It is recorded as claim ${safeId(answer.claimId)} — name that claim id as evidence ` +
     `when you record what it supports${tree}.`;
   return fitHint([ANSWER_HEADER, answerLine, questionLine, tailLine]);
+};
+
+/**
+ * The failure-time solved hint (VISION.md §1): the tool this session just
+ * ran failed, the failure's fingerprint is one a diagnosis on this hub
+ * already settled, and this is the sentence that says so — at the moment
+ * the symptom appeared rather than at the next SessionStart, which on a
+ * long agent turn can be an hour of re-deriving an answer the team owns.
+ *
+ * The BODY of the line is `formatSolvedLine`, imported rather than re-typed:
+ * the briefing renders the same fact, and the day one of them learns to name
+ * the repo or to quote the cause, both must. Only the header is local, and
+ * it states WHY this arrived — a factual sentence, never an imperative.
+ *
+ * "" when the row is one `formatSolvedLine` will not vouch for (an id that
+ * survives nothing, an unknown match kind, a foreign repo it cannot print).
+ */
+const SOLVED_HINT_HEADER = `crosscheck: the failure just recorded carries the same error fingerprint as a diagnosis that was solved. ${QUOTED_DATA_NOTICE}`;
+
+export const renderSolvedHint = (
+  entry: SolvedMatchEntry,
+  repoId: string,
+  now: Date,
+): string => {
+  const line = formatSolvedLine(entry, now, repoId);
+  return line === null ? "" : fitHint([SOLVED_HINT_HEADER, line]);
 };
 
 /**
