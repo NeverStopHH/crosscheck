@@ -25,8 +25,13 @@ export const SyncStateSchema = z.looseObject({
    * own reachability probe and the statusline's presence poll included, so a
    * surface that read it was reading what it had just written — `PASS last
    * sync 0s ago` printed beside hooks that had not fired in hours. This field
-   * only moves when the hook path itself succeeded, which is what makes the
-   * age non-tautological.
+   * only moves when the hook path itself succeeded AND the hub did something
+   * with what it sent, which is what makes the age non-tautological. The
+   * second half is not pedantry: ingest answers HTTP 200 with `accepted:0,
+   * rejected:N` for a session it believes has ended, so stamping on the
+   * envelope alone left this field fresh through a session whose every record
+   * was being discarded (review finding B2-07). `postRecords` therefore marks
+   * itself with a predicate over the ingest summary, not a flag.
    *
    * `null` on every state file written before this field existed, and on a
    * machine whose hooks have never reached the hub — the two are told apart by

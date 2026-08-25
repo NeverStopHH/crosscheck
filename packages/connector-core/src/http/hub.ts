@@ -29,7 +29,11 @@ export type { HubContext, HubResult } from "./client.ts";
  * stamped the capture record would report the reader's own request back as the
  * connector's health (trial finding H5, the `last sync 0s ago` tautology).
  *
- * VERIFY: grep -c "captur[e]: true" packages/connector-core/src/http/hub.ts
+ * Three of the four are a flat `true`; `postRecords` passes a PREDICATE,
+ * because a 200 from ingest can still mean `accepted:0` (review finding
+ * B2-07). The count below is of the mark, whichever form it takes.
+ *
+ * VERIFY: grep -c "captur[e]: " packages/connector-core/src/http/hub.ts
  * PRINTS: 4
  * (the bracket keeps this directive from counting itself.)
  */
@@ -184,7 +188,13 @@ export const postRecords = (
     path: "/api/records",
     schema: IngestSummarySchema,
     body: { records },
-    capture: true,
+    // The OUTCOME, not the transport. Ingest answers HTTP 200 with
+    // `accepted:0, rejected:N` when it refuses the producer session, and that
+    // envelope is `ok` — so a flat `true` here stamped `lastCaptureOkAt` on a
+    // batch that captured nothing, and doctor, `status` and the statusline all
+    // read `0s ago` through a session whose every record was being discarded
+    // (review finding B2-07).
+    capture: (summary) => summary.accepted + summary.duplicates > 0,
   });
 
 /**
