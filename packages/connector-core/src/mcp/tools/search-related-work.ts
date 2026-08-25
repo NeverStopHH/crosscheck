@@ -172,6 +172,9 @@ const filterView = (
       ? {}
       : {
           developerName: filters.developer.name,
+          ...(filters.developer.email === null
+            ? {}
+            : { developerEmail: filters.developer.email }),
           isSelf: filters.developer.isSelf,
         }),
     ...(Number.isNaN(sinceMs)

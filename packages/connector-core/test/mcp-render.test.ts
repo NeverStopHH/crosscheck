@@ -591,6 +591,32 @@ describe("renderSearchResults names the filters that ran", () => {
     expect(rendered.split("\n").length - control.split("\n").length).toBe(1);
   });
 
+  test("names the address when the display name does not identify", () => {
+    // Arrange: the hub sends the address ONLY when the display name is shared
+    // (routes/search.ts). Two people called Ken differ by address alone — that
+    // is the reasoning the whole ambiguity refusal is built on — so an answer
+    // whose header says "Ken" re-collapses the distinction the caller just
+    // paid a refusal to make, and every row below it is labelled "Ken" too.
+    // Act
+    const rendered = renderSearchResults([hit(workContext(), 60_000)], "login", {
+      filters: {
+        developerName: "Ken",
+        developerEmail: "ken.ohara@example.com",
+        sinceAgeMs: FOURTEEN_DAYS_MS,
+      },
+    });
+
+    // Assert
+    expect(rendered).toContain(
+      "Filters: Ken · ken.ohara@example.com · active in the last 14d",
+    );
+    // A unique name sends no address, and the line does not grow one
+    const unique = renderSearchResults([hit(workContext(), 60_000)], "login", {
+      filters: { developerName: "Nick", sinceAgeMs: FOURTEEN_DAYS_MS },
+    });
+    expect(unique).toContain("Filters: Nick · active in the last 14d");
+  });
+
   test("marks a filter that names the reader as the reader's own work", () => {
     // Arrange: search deliberately does not exclude the caller, so a
     // self-filter is legitimate — but a result that looked like a teammate's

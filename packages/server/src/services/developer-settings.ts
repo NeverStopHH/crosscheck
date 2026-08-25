@@ -202,6 +202,39 @@ export const resolveDeveloperRef = async (
   return { outcome: "not_found" };
 };
 
+/**
+ * The developer's address, but ONLY when their display name is shared.
+ *
+ * The same fact the ambiguity refusal is built on, asked on the success path:
+ * two people called Ken differ by ADDRESS, so an answer that names the filter
+ * "Ken" re-collapses exactly the distinction a caller paid a refusal to make.
+ * Null when the name identifies one person, because an address nobody needs is
+ * a teammate's address published for nothing (DESIGN.md §10).
+ *
+ * One point lookup plus the same `countByName` the ambiguity path uses — two
+ * small queries rather than one correlated subquery, which is the version that
+ * reads right and is wrong: aliasing the table inside the subquery makes the
+ * outer reference resolve to the alias, so the predicate compares a row to
+ * itself and every name looks shared. On the developer-filter path only, and a
+ * filtered search already did more work than this.
+ */
+export const sharedNameEmail = async (
+  db: Db,
+  developerId: string,
+): Promise<string | null> => {
+  const rows = await db
+    .select({ name: developers.name, email: developers.email })
+    .from(developers)
+    .where(eq(developers.id, developerId))
+    .limit(1);
+  const row = rows[0];
+  if (row === undefined) {
+    return null;
+  }
+  const sharing = await countByName(db, row.name.toLowerCase());
+  return sharing > 1 ? row.email : null;
+};
+
 export type AddMuteResult =
   | {
       readonly outcome: "muted";

@@ -71,7 +71,11 @@ interface SearchView {
   readonly ids: readonly string[];
   readonly names: readonly string[];
   readonly filters: {
-    readonly developer: { name: string; isSelf: boolean } | null;
+    readonly developer: {
+      name: string;
+      email: string | null;
+      isSelf: boolean;
+    } | null;
     readonly since: string | null;
   } | null;
 }
@@ -436,10 +440,56 @@ describe("GET /api/search — the developer filter", () => {
       developer: "Ken",
     });
 
-    // Assert
-    expect(mine.filters?.developer).toEqual({ name: "Nick", isSelf: true });
-    expect(theirs.filters?.developer).toEqual({ name: "Ken", isSelf: false });
+    // Assert: no address on either, because neither display name is shared on
+    // this hub — the test below is the one that seeds a second Ken
+    expect(mine.filters?.developer).toEqual({
+      name: "Nick",
+      email: null,
+      isSelf: true,
+    });
+    expect(theirs.filters?.developer).toEqual({
+      name: "Ken",
+      email: null,
+      isSelf: false,
+    });
     expect(mine.filters?.since).toBeNull();
+  });
+
+  test("reports the address when two developers share the display name", async () => {
+    // Arrange: the caller who did what the ambiguity refusal told them to do —
+    // retyped the exact address — gets an answer the renderer can only label
+    // with the display name, which is the one thing that does not identify the
+    // person. The hub already knows whether the name is shared; the renderer
+    // would have to guess.
+    const { harness, nick } = await seedCrowdedTier();
+    await addTestDeveloperWithSession(harness, "Ken", "ken.ohara@example.com", {
+      id: "ses_ohara",
+    });
+
+    // Act
+    const shared = await search(harness, nick.apiKey, {
+      query: "",
+      developer: "ken.ohara@example.com",
+    });
+    const unique = await search(harness, nick.apiKey, {
+      query: "",
+      developer: "Nick",
+    });
+
+    // Assert: the address rides along exactly when the name is not enough —
+    // it is a teammate's address, so it is sent when it is needed and not
+    // otherwise
+    expect(shared.status).toBe(200);
+    expect(shared.filters?.developer).toEqual({
+      name: "Ken",
+      email: "ken.ohara@example.com",
+      isSelf: false,
+    });
+    expect(unique.filters?.developer).toEqual({
+      name: "Nick",
+      email: null,
+      isSelf: true,
+    });
   });
 
   test("an empty query with a developer filter lists that person's recent work", async () => {

@@ -345,6 +345,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         {
           filters: {
             developerName: payload,
+            developerEmail: payload,
             sinceAgeMs: 14 * 24 * 3_600_000,
           },
         },
@@ -374,6 +375,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       renderSearchResults([], payload, {
         filters: {
           developerName: payload,
+          developerEmail: payload,
           isSelf: true,
           sinceAgeMs: 14 * 24 * 3_600_000,
         },

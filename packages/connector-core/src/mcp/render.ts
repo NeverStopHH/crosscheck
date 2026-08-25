@@ -608,6 +608,11 @@ const SEARCH_METHOD_SEMANTIC =
  */
 export interface SearchFilterView {
   readonly developerName?: string | undefined;
+  /**
+   * The address, present only when the hub says the display name is shared —
+   * see the fragment below for why an answer sometimes has to carry it.
+   */
+  readonly developerEmail?: string | undefined;
   /** The filter names the READER — see the fragment below for why it shows. */
   readonly isSelf?: boolean | undefined;
   readonly sinceAgeMs?: number | undefined;
@@ -640,7 +645,15 @@ const developerFragment = (filters: SearchFilterView): string | null => {
   if (name.length === 0) {
     return null;
   }
-  return filters.isSelf === true ? `${name} (you)` : name;
+  const labelled = filters.isSelf === true ? `${name} (you)` : name;
+  // THE ADDRESS, WHEN THE NAME IS NOT ENOUGH. The hub sends it exactly when
+  // two people share this display name — the same fact its ambiguity refusal
+  // is built on — so a caller who was refused, retyped the exact address and
+  // got an answer does not read a header that has thrown that away again.
+  // BARE like the name: an address is author-written text, not a frame.
+  const email =
+    filters.developerEmail === undefined ? "" : bare(filters.developerEmail);
+  return email.length === 0 ? labelled : `${labelled} · ${email}`;
 };
 
 const windowFragment = (filters: SearchFilterView): string | null =>

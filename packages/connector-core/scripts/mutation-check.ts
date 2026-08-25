@@ -1615,6 +1615,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "which is a misattribution nothing in the answer lets them notice",
   },
   {
+    // Two people called Ken differ by ADDRESS — the fact the whole ambiguity
+    // refusal is built on. Dropping the address from the filter line is the
+    // tidy-looking edit, and it undoes the disambiguation the caller was
+    // refused once to perform: the header goes back to saying "Ken".
+    label: "the filter line drops the address that tells two Kens apart",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  return email.length === 0 ? labelled : `${labelled} · ${email}`;",
+    to: "  return labelled;",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a caller who retyped an exact address reads an answer headed by the " +
+      "one thing that does not identify the person it is about",
+  },
+  {
     // A filter that did not resolve is not a broken hub. Rendered as one, the
     // candidate names and the window forms are still in the text — but so is
     // "the hub refused the request", and the model retries instead of asking
@@ -1793,7 +1807,7 @@ interface Outcome {
  * PRINTS: latency.test.ts 3
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
- * PRINTS: mcp-render.test.ts 4
+ * PRINTS: mcp-render.test.ts 5
  * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1

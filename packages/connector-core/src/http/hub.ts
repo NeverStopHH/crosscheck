@@ -479,6 +479,11 @@ export type SearchResultEntry = z.infer<typeof SearchResultEntrySchema>;
 export interface SearchFilters {
   readonly developer: {
     readonly name: string;
+    /**
+     * The hub sends it only when the display name is shared; null otherwise,
+     * and null from any hub too old to send it at all.
+     */
+    readonly email: string | null;
     readonly isSelf: boolean;
   } | null;
   /** ISO instant the window starts at; null when no window was asked for. */
@@ -497,6 +502,10 @@ const SearchFiltersSchema = z.looseObject({
   developer: z
     .looseObject({
       name: z.string().min(1),
+      // Absent from a hub that predates it, and absent from a current hub
+      // whenever the name identifies one person — both mean "the name is all
+      // there is to say", which is what the renderer then prints.
+      email: z.string().min(1).nullable().default(null),
       isSelf: z.boolean().default(false),
     })
     .nullable()

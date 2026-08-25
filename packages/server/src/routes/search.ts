@@ -34,6 +34,7 @@ import {
   SEARCH_MAX_QUERY_CHARS,
   searchWorkContexts,
 } from "../services/search.ts";
+import { sharedNameEmail } from "../services/developer-settings.ts";
 import { parseSinceWindow } from "../services/time-window.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
@@ -58,6 +59,12 @@ const SearchQuerySchema = z.object({
 interface AppliedFilters {
   readonly developer: {
     readonly name: string;
+    /**
+     * Sent only when the display name is shared — the one case where naming
+     * the filter by name alone would tell the reader less than they knew
+     * before they asked (services/developer-settings.ts `sharedNameEmail`).
+     */
+    readonly email: string | null;
     readonly isSelf: boolean;
   } | null;
   readonly since: string | null;
@@ -113,7 +120,10 @@ export const searchRoutes = (deps: AppDeps): Hono<AppEnv> => {
         ...filters,
         developer: {
           name: lookup.developer.name,
-          // The hub knows who is asking; the renderer would have to guess.
+          // Both of these are things only the hub knows — whether this name
+          // belongs to one person, and who is asking. A renderer would have
+          // to guess at either.
+          email: await sharedNameEmail(deps.db, lookup.developer.id),
           isSelf: lookup.developer.id === c.get("developer").id,
         },
       };
