@@ -321,6 +321,31 @@ describe("the drift watcher itself", () => {
     expect(report.lines.join("\n")).toContain("in sync");
   });
 
+  /**
+   * `sectionBody` resolves a section to its FIRST `### ` match, so a SECOND
+   * block under the same heading is unreachable and every probe aimed at it
+   * silently reads the first one instead. Merging two branches that had each
+   * grown their own PreToolUse section produced exactly that: 35 fixture lines,
+   * the only `#### PreToolUse input` block among them, that no observation could
+   * reach — gutting the whole second block flipped 0 of 29 observations, while
+   * gutting the first flipped `PreToolUse.output.additionalContext`. The two are
+   * folded into one section now; this is what keeps them that way.
+   */
+  test("no `###` section is written twice, so no probe reads a dead block", async () => {
+    // Arrange
+    const hooks = await Bun.file(HOOKS_EXCERPT).text();
+
+    // Act
+    const headings = hooks
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("### "));
+
+    // Assert
+    expect(headings.length).toBeGreaterThan(0);
+    expect([...new Set(headings)]).toEqual(headings);
+  });
+
   test("fails loudly and names the observation when the snapshot disagrees", async () => {
     // Arrange: a snapshot claiming a field we depend on was never documented
     const dir = await mkdtemp(join(tmpdir(), "cx-contract-"));

@@ -72,6 +72,20 @@ Runs when Claude Code starts a new session or resumes an existing session.
 
 Runs after Claude creates tool parameters and before processing the tool call.
 
+#### PreToolUse input
+
+```json
+{
+  "session_id": "abc123",
+  "cwd": "/home/dev/acme/api",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/home/dev/acme/api/src/rate-limit.ts"
+  }
+}
+```
+
 #### PreToolUse decision control
 
 | Field                      | Description                                                        |
@@ -130,40 +144,6 @@ Runs when a Claude Code session ends.
   "cwd": "/home/dev/acme/api",
   "hook_event_name": "SessionEnd",
   "reason": "other"
-}
-```
-### PreToolUse
-
-Runs before a tool call is executed.
-
-#### PreToolUse input
-
-```json
-{
-  "session_id": "abc123",
-  "cwd": "/home/dev/acme/api",
-  "hook_event_name": "PreToolUse",
-  "tool_name": "Edit",
-  "tool_input": {
-    "file_path": "/home/dev/acme/api/src/rate-limit.ts"
-  }
-}
-```
-
-#### PreToolUse decision control
-
-| Field                      | Description                                    |
-| :------------------------- | :--------------------------------------------- |
-| `permissionDecision`       | One of `allow`, `deny` or `ask`                 |
-| `permissionDecisionReason` | Shown to the user when the decision is `ask`    |
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "ask",
-    "permissionDecisionReason": "Robin is editing this file right now"
-  }
 }
 ```
 
