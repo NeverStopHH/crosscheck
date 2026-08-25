@@ -295,6 +295,75 @@ export const updateSessionState = async (
     return true;
   });
 
+/**
+ * The facts a SessionStart RE-FIRE must not erase (trial findings #17/#18/#20).
+ *
+ * Claude Code fires SessionStart again inside a LIVE session on compact,
+ * resume and clear, and that fire re-creates the state file. Re-creating it is
+ * deliberate for the per-fire lists (withBriefingSolvedRefs' header): a new
+ * briefing gets a new budget. It is wrong for the CAPTURE counters, which
+ * describe the session's work, not one fire's: a session that fired 40 edit
+ * tools into nothing and then auto-compacted printed
+ * `0 edit-tool fires → 0 targets` and PASSed — erasing exactly the WARN the
+ * counters exist to raise, on the line Ken is asked to paste.
+ *
+ * Carried only when the re-fire is the SAME binding (repo and hub): a state
+ * file bound elsewhere is another session's, and the first-wins rule above
+ * decides those, not this.
+ */
+export const withCarriedCapture = (
+  state: SessionStateInput,
+  previous: SessionState | null,
+): SessionStateInput =>
+  previous === null ||
+  previous.repoId !== state.repoId ||
+  previous.hubUrl !== state.hubUrl
+    ? state
+    : {
+        ...state,
+        editToolFires: previous.editToolFires,
+        targetsCapturedCount: previous.targetsCapturedCount,
+        lastTargetAt: previous.lastTargetAt,
+        lastPostToolUseTool: previous.lastPostToolUseTool,
+        lastEditedPath: previous.lastEditedPath,
+        lastEditedPathResolvedAgainst: previous.lastEditedPathResolvedAgainst,
+        foreignRepoDrops: previous.foreignRepoDrops,
+        outsideRootDrops: previous.outsideRootDrops,
+        hintCandidatesSeen: previous.hintCandidatesSeen,
+        // The #17 root cache is the session's, not the fire's: dropping it
+        // makes the next tool call pay git again for a root already judged.
+        knownWorktreeRoots: previous.knownWorktreeRoots,
+      };
+
+/**
+ * SessionStart's publication: create the state file, or replace one of the
+ * SAME session while carrying its capture counters (withCarriedCapture).
+ *
+ * Under the state file's own lock, because a re-fire lands INSIDE a live
+ * session: a PostToolUse can be updating state in the same window, and a
+ * read-then-write outside the lock would drop whatever it recorded. A lock
+ * that stays busy falls back to the plain create — publishing state is not
+ * optional (spool reap infers "no writer left" from its absence), so the
+ * counters lose rather than the file.
+ */
+export const publishSessionState = async (
+  home: string,
+  state: SessionStateInput,
+): Promise<void> => {
+  const published = await withLock(
+    sessionStateLockPath(home, state.hostSessionKey),
+    false,
+    async () => {
+      const previous = await readSessionState(home, state.hostSessionKey);
+      await writeSessionState(home, withCarriedCapture(state, previous));
+      return true;
+    },
+  );
+  if (!published) {
+    await writeSessionState(home, state);
+  }
+};
+
 export interface SessionStateClaim {
   /** True when THIS caller published the state; false when it adopted one. */
   readonly claimed: boolean;
