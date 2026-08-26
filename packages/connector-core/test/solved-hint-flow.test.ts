@@ -373,10 +373,28 @@ describe("selectAndRenderSolvedHint (the failure-time recipe)", () => {
   test(
     "hostile hub rows stay inside the untrusted classes",
     async () => {
+      // ONE fixture for the whole corpus, swapped per payload — not one per
+      // payload. A full fixture is a home, a repo (which shells out to git)
+      // and a fresh local hub, and building 56 of them was not just slow, it
+      // was a broken signal: this file is the named guard for four mutation
+      // entries, and mutation-check ABANDONS the whole run when a guard is
+      // red unmutated — blaming a container without git, which for a timeout
+      // is the wrong lead entirely.
+      //
+      // MEASURED on macOS 26 arm64, this file whole, before and after
+      // hoisting: solo 5.87 s -> 1.40 s. Under 16 concurrent copies (the
+      // busy-shared-runner shape) 6 of 16 exceeded the 20 s bound with the
+      // slowest at 28.66 s; after, 16 of 16 green with the slowest at
+      // 6.15 s. Re-run the load probe rather than only the solo time:
+      //
+      //   for i in $(seq 16); do bun test <this file> & done; wait
+      const f = await fixture("sh-corpus");
       let delivered = 0;
       for (const { id, payload } of INJECTION_CORPUS) {
-        // Arrange
-        const f = await fixture(`sh-corpus-${id}`, {}, [
+        // Arrange: the row changes, the fixture does not — and the state
+        // file goes back to its fresh shape so each payload starts with an
+        // empty seen-set, an unspent budget and no fingerprint probed yet.
+        f.hub.setSolvedMatches([
           {
             ...solvedFingerprintMatch(),
             title: payload,
@@ -385,6 +403,7 @@ describe("selectAndRenderSolvedHint (the failure-time recipe)", () => {
             rootCause: payload,
           },
         ]);
+        await writeSessionState(f.home, freshState({ repo: f.repo, hubUrl: f.hub.url }));
 
         // Act
         const text = await selectAndRenderSolvedHint(flowInput(f));

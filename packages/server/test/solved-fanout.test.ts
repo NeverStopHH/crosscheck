@@ -171,6 +171,15 @@ describe("the solved-match listing on a crowded hub", () => {
    * SOLVED_MATCH_ACTIVE_WINDOW_DAYS. Every existing live-side test seeds a
    * solved tree with NO partner at all, and a self-match is excluded anyway —
    * so dropping the live filter entirely broke none of them.
+   *
+   * WHAT ITS RED PROOF IS, stated so a later reader does not mistake this
+   * test for evidence of a change: the GUARANTEE predates the block that
+   * added this file. Run unchanged against the block base it passes, so it
+   * proves nothing about any commit here. Its red is the mutation entry
+   * "any context anywhere counts as current work", which removes the
+   * `inArray(liveTargets.workContextId, liveIds)` line and is caught by this
+   * test name — that is the whole of its evidence, and it is enough, but it
+   * is not a base-commit red.
    */
   test("a partner that is stale, or in another repo, is not current work", async () => {
     // Arrange
