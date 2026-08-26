@@ -220,16 +220,21 @@ describe("GET /api/solved-matches intent tier", () => {
       { id: "ses_ken" },
     );
     await seed(context, solvedTreeRecords("wc_solved", OLD_SESSION, SOLVED_TITLE));
-    const posted = await context.harness.app.request(
-      "/api/records",
-      jsonRequest("POST", teammate.apiKey, {
-        records: intentContextRecords(
-          "Debugging why webhook signature checks reject retries",
-          "ses_ken",
-        ),
-      }),
-    );
+    // Through `postRecords`, which rewrites the envelope's placeholder
+    // producer to the AUTHENTICATED developer — posting Ken's records by
+    // hand leaves the default id in the envelope, and the hub rejects the
+    // batch with "producer.developerId: does not match authenticated
+    // developer" while still answering 200. The arrangement is therefore
+    // asserted on `accepted`, not on the status: a rejected record makes the
+    // silence below true for a reason that has nothing to do with the tier.
+    const posted = await postRecords(context.harness, teammate, {
+      records: intentContextRecords(
+        "Debugging why webhook signature checks reject retries",
+        "ses_ken",
+      ),
+    });
     expect(posted.status).toBe(200);
+    expect(posted.data?.accepted).toBe(1);
 
     // Act
     const theirs = await fetchMatches(context.harness, context.developer.apiKey);

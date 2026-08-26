@@ -22,6 +22,14 @@ const SOLVED_CONTEXT_ID = "wc_prev";
 const SOLVED_ROOT_CAUSE = "The ingestion mapping drops the key id on rotation";
 const FAILURE_TEXT =
   "Exit code 1\nerror: expected 3 to be 4\n  at limiter.test.ts";
+/**
+ * An abort's text, and it has to be long enough to fingerprint: `fingerprint()`
+ * refuses anything under FINGERPRINT_MIN_CHARS = 32, so a short "Interrupted by
+ * user" is dropped by the LENGTH FLOOR whether or not the abort guard is there
+ * — and a test written on it passes with the guard deleted.
+ */
+const ABORT_TEXT =
+  "Exit code 130\nThe command was aborted while it was still running\n  at limiter.test.ts";
 
 interface RecordedEnvelope {
   readonly kind: string;
@@ -236,7 +244,7 @@ describe("PostToolUseFailure", () => {
     const aborted = await runHook(
       "post-tool-use-failure",
       failurePayload(f.repo, "s1", {
-        error: "Interrupted by user",
+        error: ABORT_TEXT,
         is_interrupt: true,
       }),
       f.env,
@@ -245,6 +253,16 @@ describe("PostToolUseFailure", () => {
     // Assert: still exactly the one fingerprint from the real failure.
     expect(aborted).toBe("");
     expect(fingerprintTargets(f.hub)).toHaveLength(1);
+
+    // …and the SECOND control, which is what makes the flag the reason: the
+    // IDENTICAL text without it IS captured. Without this, the length floor
+    // above would satisfy the assertion on its own.
+    await runHook(
+      "post-tool-use-failure",
+      failurePayload(f.repo, "s1", { error: ABORT_TEXT, is_interrupt: false }),
+      f.env,
+    );
+    expect(fingerprintTargets(f.hub)).toHaveLength(2);
   });
 
   test("an unregistered session captures nothing and registers nothing", async () => {
