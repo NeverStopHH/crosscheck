@@ -24,12 +24,14 @@
  *
  * NO BEFORE-EDIT TRIPWIRE IS POSSIBLE ON THIS HOST TODAY. Cursor documents no
  * `beforeFileEdit`/`beforeWrite` (cursor.com/docs/hooks, read 2026-08-26).
- * `preToolUse` does fire before a `Write`, but its only outputs are
- * `permission: "allow" | "deny"` plus messages the docs describe as shown
- * "when the action is denied"; `"ask"` is, verbatim, "accepted by the schema
- * but not enforced for `preToolUse` today", and the event has no
- * `additional_context`. So the only way to put text in front of the model
- * before an edit is to DENY it — past the ladder's structural ceiling (the
+ * `preToolUse` does fire before a `Write`, but its outputs are
+ * `permission: "allow" | "deny"`, two messages the docs describe as shown
+ * "when the action is denied", and `updated_input` — verbatim, "Modified tool
+ * input to use instead", which REWRITES the edit rather than briefing the
+ * model, so it is past the same ceiling as a deny. `"ask"` is, verbatim,
+ * "accepted by the schema but not enforced for `preToolUse` today", and the
+ * event has no `additional_context`. So the only way to put text in front of
+ * the model before an edit is to DENY it — past the structural ceiling (the
  * Claude tripwire holds exactly one decision literal, `ASK_DECISION`, and
  * three mutation entries keep deny impossible). It is not wired, and the
  * README / docs/adapters/INSTALL.md parity tables say so in those words.

@@ -15,7 +15,7 @@ behind it:
 Capture is only worth what the *weakest* host does, so this table is the
 promise, per connector, and it is kept honest by tests rather than by intent:
 `packages/connector-{claude,cursor,acp}/test/worktree-capture.test.ts` pin the
-first four columns per host, `packages/cli/test/connector-capture-health.test.ts`
+first four rows per host, `packages/cli/test/connector-capture-health.test.ts`
 pins the fifth on both non-Claude hosts in a PASS **and** in a WARN state, and
 `packages/connector-core/src/capture/touched-root.ts` carries a `verify-claims`
 directive that names the connectors going through the shared resolution — a
@@ -26,7 +26,7 @@ fourth one that forgets it fails CI rather than losing edits quietly.
 | **Capture** — what a target comes from | `PostToolUse` for `Edit`/`Write`/`MultiEdit`/`NotebookEdit` | `afterFileEdit`, the single capture row on this host | `session/update` `tool_call` locations and diff paths, plus the `fs/write_text_file` request |
 | **Worktree resolution** — an edit in a linked worktree of the same repo | yes | yes | yes |
 | **Drop counters** — a touch that could not be captured | `foreign-repo` and `outside-root`, split and counted | same | same |
-| **Capture health** in `crosscheck status` / `doctor` | `N edit-tool fires → M targets`, last tool, last edited path + the root it resolved against, WARN at 3 fires with 0 targets | same, with the event name `afterFileEdit` as the tool | same, with the ACP tool-call `kind` (or `fs/write_text_file`) as the tool |
+| **Capture health** in `crosscheck status` / `doctor` | `N edit-tool fires → M targets`, last tool, last edited path + the root it resolved against, WARN at 3 fires with 0 targets | same, with the event name `afterFileEdit` as the tool | same, with the ACP tool-call `kind` (or `fs/write_text_file`) as the tool. One edit an agent signals BOTH ways reads `2 fires → 1 target`: both are honest edit signals, dropping either would leave some real agent permanently at `0 → 0` and unable to WARN, and the doubling can never cause a FALSE warn because the first signal captures the target (pinned in `connector-acp/test/worktree-capture.test.ts`) |
 | **Before-edit tripwire** — telling the model about an overlap *before* it edits | yes — `PreToolUse`, `permissionDecision: "ask"` plus the facts as `additionalContext` | **not possible on this host today** | **not possible on this host today** |
 
 The last row is a limitation we document rather than a gap we forgot, and each
@@ -36,10 +36,12 @@ source and fetch date (`connector-cursor/src/handlers/file-edit.ts`,
 
 - **Cursor** — there is no `beforeFileEdit`/`beforeWrite` event
   (cursor.com/docs/hooks, read 2026-08-26). `preToolUse` does fire before a
-  `Write`, but its outputs are `permission: "allow" | "deny"` with messages the
-  docs describe as shown *"when the action is denied"*; of `"ask"` the same page
-  says, verbatim, that it *"is accepted by the schema but not enforced for
-  `preToolUse` today"*, and the event has no `additional_context`. So the only
+  `Write`, but its outputs are `permission: "allow" | "deny"`, two messages the
+  docs describe as shown *"when the action is denied"*, and `updated_input` —
+  *"Modified tool input to use instead"*, which rewrites the edit rather than
+  briefing the model, so it is past the same ceiling as a deny; of `"ask"` the
+  same page says, verbatim, that it *"is accepted by the schema but not enforced
+  for `preToolUse` today"*, and the event has no `additional_context`. So the only
   way to put words in front of the model before an edit is to **block** it —
   past the ceiling this ladder is built to respect. It is not wired.
   (Cursor's forum additionally reports `ask` being ignored in the field on
