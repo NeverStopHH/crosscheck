@@ -12,9 +12,15 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { formatGhostLine } from "../src/briefing/ghost.ts";
-import { renderBriefing } from "../src/briefing/render.ts";
-import { MAX_GHOST_POINTERS } from "../src/constants.ts";
+import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+
+import { formatGhostLine, ghostDraftBody } from "../src/briefing/ghost.ts";
+import { formatDraftLine, renderBriefing } from "../src/briefing/render.ts";
+import {
+  GHOST_SENTENCE_MAX_CHARS,
+  MAX_GHOST_POINTERS,
+  MAX_TITLE_CHARS,
+} from "../src/constants.ts";
 import type { GhostCheckEntry } from "../src/http/hub.ts";
 
 const NOW = new Date("2026-08-18T12:00:00.000Z");
@@ -145,6 +151,54 @@ describe("the ghost-check line", () => {
       formatGhostLine(ghostCheck({ lastActiveAt: "not a date" }), NOW),
     ).toBeNull();
     expect(formatGhostLine(ghostCheck({ workContextId: "«»" }), NOW)).toBeNull();
+  });
+});
+
+describe("the ghost draft body", () => {
+  /**
+   * The ONE surface a ghost draft is met on is the briefing's own-drafts
+   * block, and that block cuts a body at MAX_TITLE_CHARS. So the attribution
+   * has to survive 80 characters, not 400 — a name appended after a
+   * model sentence is a name the reader never sees.
+   */
+  const draftLineFor = (sentence: string): string => {
+    const line = formatDraftLine(
+      {
+        id: "clm_ghost",
+        workContextId: "wc_mine",
+        kind: "hypothesis",
+        body: ghostDraftBody(sentence, ghostCheck()),
+        status: "proposed",
+        confidence: 0.4,
+        createdAt: FIVE_MINUTES_AGO,
+      },
+      NOW,
+    );
+    return line ?? "";
+  };
+
+  test("names the teammate even after the briefing cuts the body", () => {
+    // The longest sentence this writer allows — the prompt asks for at most
+    // GHOST_SENTENCE_MAX_CHARS and the worker cuts there, so this is the
+    // worst case a real answer reaches, not a contrived one.
+    const longest = "x".repeat(GHOST_SENTENCE_MAX_CHARS);
+    expect(draftLineFor(longest)).toContain("Ken");
+    expect(draftLineFor(longest)).toContain("review_draft clm_ghost");
+    // And a short one still reads as a sentence rather than a label dump.
+    expect(draftLineFor("Both plans redefine what verifyToken returns")).toContain(
+      "Ken's live plan collides: Both plans redefine what verifyToken returns",
+    );
+  });
+
+  test("the worst case still fits the claim the hub will store", () => {
+    const worst = ghostDraftBody(
+      "x".repeat(GHOST_SENTENCE_MAX_CHARS),
+      ghostCheck({
+        developerName: "N".repeat(MAX_TITLE_CHARS * 5),
+        workContextId: "w".repeat(400),
+      }),
+    );
+    expect(worst.length).toBeLessThanOrEqual(MAX_CLAIM_BODY_LENGTH);
   });
 });
 

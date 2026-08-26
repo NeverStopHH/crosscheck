@@ -439,7 +439,7 @@ describe("the gated ghost check", () => {
     // nobody would leave the reader a finding with no next action: they could
     // not open the tree and could not tell who to talk to.
     expect(claim?.body).toBe(
-      `${COLLISION} — Ken's live plan: get_diagnosis ${ken.workContextId}`,
+      `Ken's live plan collides: ${COLLISION} — get_diagnosis ${ken.workContextId}`,
     );
     expect(claim?.workContextId).toBe(alice.workContextId);
     expect(claim?.kind).toBe("hypothesis");

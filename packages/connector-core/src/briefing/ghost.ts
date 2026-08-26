@@ -173,20 +173,27 @@ export const formatGhostLine = (
  * opens `review_draft` on a sentence about a collision with nobody, and has
  * neither a tree to read nor a person to ask.
  *
- * Sanitized like the line above it — BARE name, allowlisted id — because both
- * come from the hub, and this string is stored rather than only printed.
+ * Sanitized like the line above it — BARE name — because it comes from the
+ * hub, and this string is stored rather than only printed.
  */
-export const ghostAttribution = (entry: GhostCheckEntry): string => {
-  const plan = `${teammateName(entry)}'s live plan`;
-  const id = safeId(entry.workContextId);
-  return id.length === 0 ? plan : `${plan}: get_diagnosis ${id}`;
-};
+export const ghostAttribution = (entry: GhostCheckEntry): string =>
+  `${teammateName(entry)}'s live plan`;
 
 /**
- * The ghost DRAFT body: the model's one sentence, then the attribution. The
- * composition lives beside the line rather than in the worker so a ghost
- * check reads the same way wherever it is met, and so the untrusted halves go
- * through the same two sanitizers in both places.
+ * The ghost DRAFT body: WHOSE plan it collides with, then the model's one
+ * sentence, then the tree. The composition lives beside the line rather than
+ * in the worker so a ghost check reads the same way wherever it is met, and
+ * so the untrusted halves go through the same two sanitizers in both places.
+ *
+ * THE PERSON LEADS, and that is a measurement rather than a preference. The
+ * only surface a ghost draft is ever met on is the briefing's own-drafts
+ * block, whose `formatDraftLine` cuts a body at MAX_TITLE_CHARS = 80 — while
+ * the sentence itself may be GHOST_SENTENCE_MAX_CHARS = 200. With the
+ * attribution appended, every sentence over 73 characters rendered as a
+ * truncated hypothesis and a `review_draft` id with no teammate and no tree
+ * on the line at all: the reader could not open it and could not tell who to
+ * ask, which is the failure the attribution was added to remove. Leading with
+ * it makes the name survive the cut for every sentence length there is.
  *
  * The sentence itself is NOT sanitized here and must not be: it is this
  * machine's own model output, already bounded, echo-checked and secret-scanned
@@ -204,7 +211,11 @@ export const ghostAttribution = (entry: GhostCheckEntry): string => {
 export const ghostDraftBody = (
   sentence: string,
   entry: GhostCheckEntry,
-): string => `${sentence} — ${ghostAttribution(entry)}`;
+): string => {
+  const id = safeId(entry.workContextId);
+  const collision = `${ghostAttribution(entry)} collides: ${sentence}`;
+  return id.length === 0 ? collision : `${collision} — get_diagnosis ${id}`;
+};
 
 /**
  * The one header both surfaces print. The briefing composes it into a
