@@ -482,6 +482,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "matching work happening now",
   },
   {
+    // The same bound one path over. The failure-time probe reads a window of
+    // contexts carrying the fingerprint; this puts the traffic back into it.
+    label: "a crowded fingerprint hides the answer from the probe",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: `        solvedCandidateCondition(workContextTargets.workContextId),
+        notMutedCondition(viewerDeveloperId, agentSessions.developerId),`,
+    to: "        notMutedCondition(viewerDeveloperId, agentSessions.developerId),",
+    test: `${SERVER}/test/solved-probe.test.ts`,
+    because:
+      "200 ordinary contexts that merely hit the same failure fill the probe " +
+      "window ahead of the one tree that diagnosed it, so the failure-time " +
+      "hint goes permanently silent on the most common symptoms — and fails " +
+      "to SILENCE, which the precision counter reads as nothing shown",
+  },
+  {
     // VISION.md §1 across repos: the fingerprint is the ONE identity that
     // travels, and this puts the candidate side back inside the asking repo.
     label: "a solved answer in another repo stops being found",

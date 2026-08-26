@@ -425,6 +425,21 @@ const toMatchViews = async (
  * so it travels across every repo on the hub exactly as it does in the
  * listing (CROSS_REPO_TARGET_KIND).
  *
+ * THE CANDIDATE SIDE IS BOUNDED ON SOLVEDNESS, exactly as the listing's is
+ * and for the same defect. An equality on one hot value is cheap, but the
+ * window it fills is not the same thing as the answer: every context that
+ * ever hit that failure carries the value, solved or not, and only a
+ * handful of them ever hold a diagnosis. Measured with one solved tree plus
+ * N unsolved contexts on one fingerprint, the probe answered the tree at
+ * N = 199 and went SILENT at N = SOLVED_MATCH_MAX_PROBE_ROWS
+ * (test/solved-probe.test.ts). It fails to silence, which is the shape
+ * nothing reports: no row is shown, so the precision counter has nothing to
+ * count and `doctor` says PASS. The `solvedCandidateCondition` below is
+ * necessary-and-not-sufficient (services/solved.ts), with `listSolvedInfo`
+ * still the authority afterwards — so the window holds rows that could be
+ * answers, and ordering it newest-context-first keeps the freshest of them
+ * rather than whichever ids happened to sort low.
+ *
  * Every row is a fingerprint match by construction, so every solved one may
  * carry its recorded cause.
  */
@@ -434,7 +449,12 @@ export const listSolvedByFingerprint = async (
   fingerprint: string,
 ): Promise<readonly SolvedMatchView[]> => {
   const candidates = await deps.db
-    .selectDistinct({ id: workContextTargets.workContextId })
+    .selectDistinct({
+      id: workContextTargets.workContextId,
+      // Selected because SELECT DISTINCT restricts ORDER BY to the selected
+      // columns — the same constraint the pair query's comment records.
+      createdAt: workContexts.createdAt,
+    })
     .from(workContextTargets)
     .innerJoin(
       workContexts,
@@ -445,10 +465,17 @@ export const listSolvedByFingerprint = async (
       and(
         eq(workContextTargets.kind, CROSS_REPO_TARGET_KIND),
         eq(workContextTargets.value, fingerprint),
+        // Traffic out, answers in — see the header. Necessary, never
+        // sufficient: listSolvedInfo below is still the authority.
+        solvedCandidateCondition(workContextTargets.workContextId),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
       ),
     )
-    .orderBy(asc(workContextTargets.workContextId))
+    // Newest context first, then a stable id order so repeated probes of one
+    // fingerprint answer alike. An ascending id was neither: it is
+    // uncorrelated with solvedness AND with recency, so the cap dropped
+    // whichever answers happened to sort high.
+    .orderBy(desc(workContexts.createdAt), asc(workContextTargets.workContextId))
     .limit(SOLVED_MATCH_MAX_PROBE_ROWS);
   if (candidates.length === 0) {
     return [];

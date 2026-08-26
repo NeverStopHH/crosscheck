@@ -94,10 +94,15 @@ export const SOLVED_MATCH_MAX_INTENT_FINDINGS = 1;
 
 /**
  * The FINGERPRINT PROBE (`?fingerprint=`), asked the moment a tool fails
- * rather than at SessionStart. Read bound on contexts carrying one exact
- * fingerprint: a single normalized failure shared by more work contexts than
- * this is pathological, and the (kind, value) index makes the lookup one
- * seek either way.
+ * rather than at SessionStart. Read bound on the contexts carrying one exact
+ * fingerprint THAT COULD BE ANSWERS — the query applies
+ * `solvedCandidateCondition` first, so the crowd of ordinary sessions that
+ * merely hit the same failure never fills this window. That qualifier is the
+ * whole reason 200 is a comfortable bound rather than a low one: a hot
+ * fingerprint on a real hub is shared by hundreds of contexts (the block's
+ * own scale probe seeded 2000), while the trees that hold a diagnosis of it
+ * are a handful. The (kind, value) index makes the lookup one seek either
+ * way.
  */
 export const SOLVED_MATCH_MAX_PROBE_ROWS = 200;
 /**
