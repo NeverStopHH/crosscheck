@@ -14,10 +14,12 @@ import { join } from "node:path";
 
 import {
   checkAgentRestart,
+  parseLsofCwds,
   parsePsEtime,
   runDoctor,
 } from "../src/cli/doctor.ts";
 import type { AgentProcessProbe } from "../src/cli/doctor.ts";
+import { DOCTOR_AGENT_MAX_CWD_PROBES } from "@crosscheck/connector-core/constants.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const HOUR_SECONDS = 3600;
@@ -53,7 +55,15 @@ const probeOf = (
   cwdByPid: Readonly<Record<number, string | null>>,
 ): AgentProcessProbe => ({
   listProcesses: async () => psOutput,
-  resolveCwd: async (pid) => cwdByPid[pid] ?? null,
+  // One call for the whole batch — a pid missing from the map is one whose
+  // cwd could not be resolved.
+  resolveCwds: async (pids) =>
+    new Map(
+      pids.flatMap((pid) => {
+        const cwd = cwdByPid[pid];
+        return cwd === undefined || cwd === null ? [] : [[pid, cwd] as const];
+      }),
+    ),
 });
 
 describe("parsePsEtime", () => {
@@ -75,7 +85,7 @@ describe("checkAgentRestart", () => {
     const probe = probeOf(`  4242 10:00:00 claude\n`, { 4242: repo });
 
     // Act
-    const check = await checkAgentRestart(repo, settingsPath, probe, Date.now());
+    const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
 
     // Assert
     expect(check.level).toBe("WARN");
@@ -92,7 +102,7 @@ describe("checkAgentRestart", () => {
     const probe = probeOf(`  4242 10:00:00 claude\n`, { 4242: elsewhere });
 
     // Act
-    const check = await checkAgentRestart(repo, settingsPath, probe, Date.now());
+    const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
 
     // Assert: the false-positive pin
     expect(check.level).toBe("PASS");
@@ -104,7 +114,7 @@ describe("checkAgentRestart", () => {
     const probe = probeOf(`  4242 05:00 claude\n`, { 4242: repo });
 
     // Act
-    const check = await checkAgentRestart(repo, settingsPath, probe, Date.now());
+    const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
 
     // Assert
     expect(check.level).toBe("PASS");
@@ -116,7 +126,7 @@ describe("checkAgentRestart", () => {
     const probe = probeOf(`  4242 10:00:00 claude\n`, { 4242: null });
 
     // Act
-    const check = await checkAgentRestart(repo, settingsPath, probe, Date.now());
+    const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
 
     // Assert
     expect(check.level).toBe("PASS");
@@ -137,7 +147,7 @@ describe("checkAgentRestart", () => {
     );
 
     // Act
-    const check = await checkAgentRestart(repo, settingsPath, probe, Date.now());
+    const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
 
     // Assert
     expect(check.level).toBe("PASS");
@@ -150,7 +160,7 @@ describe("checkAgentRestart", () => {
     // Act
     const check = await checkAgentRestart(
       repo,
-      settingsPath,
+      [settingsPath],
       probeOf(null, {}),
       Date.now(),
     );
@@ -167,7 +177,7 @@ describe("checkAgentRestart", () => {
       listProcesses: async () => {
         throw new Error("ps exploded");
       },
-      resolveCwd: async () => {
+      resolveCwds: async () => {
         throw new Error("lsof exploded");
       },
     };
@@ -175,7 +185,7 @@ describe("checkAgentRestart", () => {
     // Act + Assert: missing file
     const missing = await checkAgentRestart(
       repo,
-      join(repo, ".claude", "no-such-settings.json"),
+      [join(repo, ".claude", "no-such-settings.json")],
       probeOf("  4242 10:00:00 claude\n", { 4242: repo }),
       Date.now(),
     );
@@ -186,11 +196,198 @@ describe("checkAgentRestart", () => {
     const { repo: repo2, settingsPath } = await fixture(60);
     const survived = await checkAgentRestart(
       repo2,
-      settingsPath,
+      [settingsPath],
       throwing,
       Date.now(),
     );
     expect(survived.level).toBe("PASS");
+  });
+});
+
+describe("the H6 blind spots", () => {
+  test("the GLOBAL settings file is measured when the project has none", async () => {
+    // Arrange: the worktree shape — no project settings at all, the hooks
+    // live in ~/.claude/settings.json, written a minute ago, and an agent has
+    // been running in this repo for ten hours.
+    const repo = await makeRepo("agent-restart-global", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("agent-restart-global");
+    paths.push(repo, home);
+    const globalSettings = join(home, ".claude", "settings.json");
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(globalSettings, "{}\n", "utf8");
+    const minuteAgo = new Date(Date.now() - 60 * 1000);
+    await utimes(globalSettings, minuteAgo, minuteAgo);
+    const probe = probeOf(`  4242 10:00:00 claude\n`, { 4242: repo });
+
+    // Act: only the global path exists — on the pre-fix tree the project
+    // path was the ONLY candidate and this read "not measured".
+    const check = await checkAgentRestart(
+      repo,
+      [join(repo, ".claude", "settings.json"), globalSettings],
+      probe,
+      Date.now(),
+    );
+
+    // Assert
+    expect(check.level).toBe("WARN");
+    expect(check.detail).toContain(globalSettings);
+  });
+
+  test("the NEWEST of two wired files decides, and is named", async () => {
+    // Arrange: a project stub from an hour ago beside a global file written a
+    // minute ago — the double-wiring shape. The agent started ten minutes ago:
+    // after the stub, before the global write.
+    const { repo, settingsPath } = await fixture(HOUR_SECONDS);
+    const home = await makeHome("agent-restart-newest");
+    paths.push(home);
+    const globalSettings = join(home, ".claude", "settings.json");
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(globalSettings, "{}\n", "utf8");
+    const minuteAgo = new Date(Date.now() - 60 * 1000);
+    await utimes(globalSettings, minuteAgo, minuteAgo);
+    const probe = probeOf(`  4242 10:00 claude\n`, { 4242: repo });
+
+    // Act
+    const check = await checkAgentRestart(
+      repo,
+      [settingsPath, globalSettings],
+      probe,
+      Date.now(),
+    );
+
+    // Assert: measured against the newer file, and it says which one
+    expect(check.level).toBe("WARN");
+    expect(check.detail).toContain(globalSettings);
+    expect(check.detail).not.toContain(settingsPath);
+  });
+
+  test("the desktop app is skipped rather than checked as a coding agent", async () => {
+    // Arrange: the REAL shape macOS emits. Of the eight Claude.app processes
+    // on the author's Mac only this one basenames to `claude` — the helpers
+    // are `Claude Helper`, `Claude Helper (Renderer)` and
+    // `chrome_crashpad_handler`, so they were never candidates and never cost
+    // a slot. An earlier fixture here invented
+    // `.../Frameworks/Claude Helper/claude`, a path macOS never produces, and
+    // the comment above it credited the exclusion with fixing H6's
+    // position-25 blindness (review finding B2-L4). The sort below is what
+    // fixes that; this is one desktop process, and cheap defence in depth.
+    const { repo, settingsPath } = await fixture(60);
+    const probe = probeOf(
+      [
+        "  1000 10:00:00 /Applications/Claude.app/Contents/MacOS/Claude",
+        "  4242 09:00:00 /usr/local/bin/claude",
+        "",
+      ].join("\n"),
+      { 4242: repo, 1000: "/" },
+    );
+
+    // Act
+    const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
+
+    // Assert: the real agent is found, and the desktop process is reported as
+    // skipped rather than silently dropped.
+    expect(check.level).toBe("WARN");
+    expect(check.detail).toContain("4242");
+    expect(check.detail).toContain("1 agent checked, 1 skipped");
+  });
+
+  test("the offender past the cap survives, on the sort alone", async () => {
+    // Arrange: DOCTOR_AGENT_MAX_CWD_PROBES plain `claude` processes — no
+    // desktop-app path anywhere, so the exclusion cannot be what saves this —
+    // all older than the offender, and the offender LAST in ps order. An
+    // unsorted cap drops exactly it.
+    const { repo, settingsPath } = await fixture(60);
+    const elsewhere = await makeHome("agent-restart-cap");
+    paths.push(elsewhere);
+    const cwdByPid: Record<number, string> = { 4242: repo };
+    const lines: string[] = [];
+    for (let index = 0; index < DOCTOR_AGENT_MAX_CWD_PROBES; index += 1) {
+      const pid = 3000 + index;
+      cwdByPid[pid] = elsewhere;
+      lines.push(`  ${String(pid)} 09:00:00 /usr/local/bin/claude`);
+    }
+    lines.push("  4242 05:00 /usr/local/bin/claude", "");
+    const probe = probeOf(lines.join("\n"), cwdByPid);
+
+    // Act
+    const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
+
+    // Assert
+    expect(check.level).toBe("WARN");
+    expect(check.detail).toContain("4242");
+    expect(check.detail).toContain(
+      `${String(DOCTOR_AGENT_MAX_CWD_PROBES)} agents checked, 1 skipped`,
+    );
+  });
+
+  test("the newest-started candidate survives the cap, whatever ps order says", async () => {
+    // Arrange: ten real agents, all older than the settings file, none of them
+    // a desktop-app helper — so the exclusion cannot be what saves this. The
+    // one in THIS repo started most recently and is LAST in ps output, which
+    // is exactly where an unsorted cap of eight would drop it.
+    const { repo, settingsPath } = await fixture(60);
+    const elsewhere = await makeHome("agent-restart-crowd");
+    paths.push(elsewhere);
+    const cwdByPid: Record<number, string> = { 4242: repo };
+    const lines: string[] = [];
+    for (let index = 0; index < 10; index += 1) {
+      const pid = 2000 + index;
+      cwdByPid[pid] = elsewhere;
+      lines.push(`  ${String(pid)} 09:${String(index).padStart(2, "0")}:00 /usr/local/bin/claude`);
+    }
+    // Five minutes: after every decoy above, still before the settings write.
+    lines.push("  4242 05:00 /usr/local/bin/claude", "");
+    const probe = probeOf(lines.join("\n"), cwdByPid);
+
+    // Act
+    const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
+
+    // Assert
+    expect(check.level).toBe("WARN");
+    expect(check.detail).toContain("4242");
+  });
+
+  test("a clean PASS still says how much was examined", async () => {
+    // Arrange
+    const { repo, settingsPath } = await fixture(60);
+    const elsewhere = await makeHome("agent-restart-elsewhere");
+    paths.push(elsewhere);
+    const probe = probeOf(`  4242 10:00:00 claude\n`, { 4242: elsewhere });
+
+    // Act
+    const check = await checkAgentRestart(repo, [settingsPath], probe, Date.now());
+
+    // Assert
+    expect(check.level).toBe("PASS");
+    expect(check.detail).toContain("1 agent checked, 0 skipped");
+    expect(check.detail).toContain(settingsPath);
+  });
+});
+
+describe("parseLsofCwds", () => {
+  test("carries the current pid across the repeating p/f/n field groups", () => {
+    // Arrange: the shape `lsof -a -p <csv> -d cwd -Fn` prints
+    const output = ["p101", "fcwd", "n/repo/one", "p202", "fcwd", "n/repo/two", ""].join(
+      "\n",
+    );
+
+    // Act
+    const cwds = parseLsofCwds(output);
+
+    // Assert
+    expect(cwds.get(101)).toBe("/repo/one");
+    expect(cwds.get(202)).toBe("/repo/two");
+    expect(cwds.size).toBe(2);
+  });
+
+  test("a pid with no n line is simply absent, and garbage never throws", () => {
+    // Arrange + Act
+    const cwds = parseLsofCwds(["p303", "fcwd", "pnot-a-pid", "n/orphan", ""].join("\n"));
+
+    // Assert: the orphan path belongs to nobody, so nobody gets it
+    expect(cwds.size).toBe(0);
   });
 });
 

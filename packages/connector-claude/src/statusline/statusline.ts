@@ -13,6 +13,8 @@ import {
   readPresenceCache,
   writePresenceCache,
 } from "@crosscheck/connector-core/state/presence-cache.ts";
+import type { LastSeenEntry } from "@crosscheck/connector-core/state/presence-cache.ts";
+import { recordStatuslineRendered } from "@crosscheck/connector-core/state/fired-markers.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { prepareHook } from "../hooks/runner.ts";
 import type { HookContext } from "../hooks/runner.ts";
@@ -46,45 +48,129 @@ const ageSince = (iso: string | null, now: Date): string | null => {
   return Number.isNaN(ms) ? null : formatAge(now.getTime() - ms);
 };
 
+/**
+ * `Ken last seen 10h ago` — the difference between offline and never
+ * onboarded (Anhang A, A4-09).
+ *
+ * `cx 0 · no teammates on this repo` covered both, and they need opposite
+ * responses: a teammate who logged off this morning needs nothing, a repo
+ * nobody else has ever connected to needs an onboarding conversation. The
+ * names come from the presence cache SessionStart already writes, derived
+ * from the work-context list it already fetched — no extra hub call, no extra
+ * hook budget.
+ */
+const lastSeenSuffix = (
+  lastSeen: readonly LastSeenEntry[],
+  now: Date,
+): string => {
+  const rendered = lastSeen.flatMap((entry) => {
+    const age = ageSince(entry.at, now);
+    return age === null ? [] : [`${capName(entry.name)} last seen ${age} ago`];
+  });
+  return rendered.length === 0 ? "" : ` · ${rendered.join(", ")}`;
+};
+
 /** Counts developers, not sessions — several windows are still one teammate. */
 const presenceLine = (
   entries: readonly PresenceEntry[],
   syncAge: string,
   now: Date,
+  lastSeen: readonly LastSeenEntry[] = [],
 ): string => {
   const teammates = groupTeammates(entries, now);
   if (teammates.length === 0) {
-    return capLine(`cx 0 · no teammates on this repo · sync ${syncAge}`);
+    return capLine(
+      `cx 0 · no teammates on this repo${lastSeenSuffix(lastSeen, now)} · capture ${syncAge}`,
+    );
   }
   return capLine(
-    `cx ${teammates.length} · ${renderNames(teammates)} · sync ${syncAge}`,
+    `cx ${teammates.length} · ${renderNames(teammates)} · capture ${syncAge}`,
   );
 };
+
+const HTTP_UNAUTHORIZED = 401;
+
+/**
+ * What a hub failure MEANS, in the reader's words — trial finding M4.
+ *
+ * This used to branch on `result.ok` alone, so a rotated or revoked api key
+ * (HTTP 401, an answer) rendered `cx ! hub unreachable · last sync 2h` and
+ * sent the developer to check their network for a credential problem. The
+ * status and the kind are both on `HubResult` already (http/client.ts); all
+ * four states below name their own remedy, and every one keeps the age.
+ *
+ * GARBAGE IS ITS OWN KIND and only its own kind. `kind: "http"` is assigned
+ * exactly when a well-formed error envelope PARSED (client.ts parseEnvelope),
+ * which is the opposite of malformed — so folding it in here rendered a hub
+ * whose database was wedged as `hub answered garbage` and pointed the reader
+ * at a protocol or version problem (review finding B2-L5). A 5xx, a 403 and a
+ * 404 are a hub that is up and failing, and the status is the actionable part.
+ */
+const failureHead = (
+  status: number,
+  kind: "network" | "http" | "malformed",
+): string => {
+  if (status === HTTP_UNAUTHORIZED) {
+    return "key rejected · crosscheck login";
+  }
+  if (kind === "network") {
+    return "hub unreachable";
+  }
+  if (kind === "malformed") {
+    return "hub answered garbage";
+  }
+  return `hub error ${String(status)}`;
+};
+
+const failureLine = (head: string, age: string | null): string =>
+  capLine(age === null ? `cx ! ${head}` : `cx ! ${head} · last capture ${age}`);
 
 const renderForContext = async (ctx: HookContext): Promise<string> => {
   const now = ctx.now();
   const cache = await readPresenceCache(ctx.config.home, ctx.repoKey);
   const sync = await readSyncState(ctx.config.home, ctx.repoKey);
+  // The CAPTURE stamp (state/sync-state.ts), not `lastOkAt`: this very
+  // function's presence poll used to write `lastOkAt` and the next render read
+  // it back as `sync 0s`, which is the statusline's half of H5. A read is not
+  // capture-marked, so what shows here is when a HOOK last got through.
+  const captureAge = ageSince(sync.lastCaptureOkAt, now);
 
   if (cache !== null && isCacheFresh(cache, now)) {
+    // A fresh cache means no call was made — so a 401 booked by the last real
+    // call is the newest thing known about the hub, and saying "sync 12s"
+    // over it would launder a rejected key into health (M4's cached path).
+    if (sync.lastErrorStatus === HTTP_UNAUTHORIZED) {
+      return failureLine(failureHead(HTTP_UNAUTHORIZED, "http"), captureAge);
+    }
     return presenceLine(
       cache.entries,
-      ageSince(sync.lastOkAt, now) ?? "0s",
+      captureAge ?? "never",
       now,
+      cache.lastSeen,
     );
   }
 
   const result = await getPresence(ctx.hub, ctx.identity.repoId);
   if (result.ok) {
-    await writePresenceCache(ctx.config.home, ctx.repoKey, result.data, now);
-    return presenceLine(result.data, "0s", now);
+    // The last-seen list is SessionStart's to derive (it holds the work
+    // contexts); this write carries whatever the cache already had, so a
+    // refresh here never erases it.
+    await writePresenceCache(
+      ctx.config.home,
+      ctx.repoKey,
+      result.data,
+      now,
+      cache?.lastSeen ?? [],
+    );
+    return presenceLine(
+      result.data,
+      captureAge ?? "never",
+      now,
+      cache?.lastSeen ?? [],
+    );
   }
 
-  const lastOkAge = ageSince(sync.lastOkAt, now);
-  if (lastOkAge === null) {
-    return "cx ! never synced";
-  }
-  return capLine(`cx ! hub unreachable · last sync ${lastOkAge}`);
+  return failureLine(failureHead(result.status, result.kind), captureAge);
 };
 
 /**
@@ -100,7 +186,16 @@ export const runStatusline = async (
     if (ctx === null) {
       return "";
     }
-    return await renderForContext(ctx);
+    const line = await renderForContext(ctx);
+    // The RENDERED fact, which nothing recorded before (trial finding H7).
+    // `doctor`'s `statusline registered` line reads the settings file and
+    // reports what it says — and the statusline is a terminal-TUI feature, so
+    // on a machine whose sessions are all `--output-format stream-json` the
+    // registration is perfect and the function is never called. Written after
+    // the line is in hand and swallowing its own errors: a statusline that
+    // prints nothing is worse than one that fails to record itself.
+    await recordStatuslineRendered(ctx.config.home, ctx.repoKey, ctx.now());
+    return line;
   } catch {
     return "";
   }

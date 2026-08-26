@@ -250,7 +250,14 @@ describe("the state-file cap is spent newest first (#17/#20)", () => {
 
 describe("an open session is not the same as a live one (#20)", () => {
   test("a session silent past the idle window is named, not counted as live", async () => {
-    // Arrange: one session that spoke a minute ago, one silent for over a day
+    // Arrange: one session that spoke a minute ago, one silent for over a day.
+    // The corpse's state file is BACK-DATED as well as its heartbeat, because
+    // silence is measured off the newest of the heartbeat, the start and the
+    // file's own mtime: every writer of that file is one of the session's own
+    // hooks, so a file written a moment ago belongs to a session that is
+    // running whatever its heartbeat says (state/session-scan.ts). A fixture
+    // that back-dates only the stamp is not a corpse, it is a session whose
+    // hooks stopped reaching the hub — the shape the WARN exists to catch.
     const { repo, home } = await fixture("ch-idle");
     await seedSession(home, repo, "ch-idle-fresh", {
       editToolFires: 1,
@@ -262,6 +269,8 @@ describe("an open session is not the same as a live one (#20)", () => {
       startedAt: new Date(Date.now() - A_DAY_MS).toISOString(),
       lastHeartbeatAt: new Date(Date.now() - A_DAY_MS).toISOString(),
     });
+    const dead = new Date(Date.now() - A_DAY_MS);
+    await utimes(join(home, "sessions", "ch-idle-old.json"), dead, dead);
 
     // Act
     const health = await readCaptureHealth(home, DEAD_HUB_URL, REPO_ID);

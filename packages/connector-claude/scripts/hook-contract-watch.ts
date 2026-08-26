@@ -24,7 +24,7 @@
  *   bun test packages/connector-claude/test/hook-contract.test.ts
  *
  *   field names published in bold rather than in backticks   4 observations flip
- *   every heading promoted one level (`###` → `####`)       20 observations flip
+ *   every heading promoted one level (`###` → `####`)       27 observations flip
  *
  * That direction is a false alarm, not a missed change, so it fails safe: the
  * job goes red, somebody reads the reference and re-records with --write. The
@@ -41,6 +41,8 @@
  *   ... --write                                        # accept drift as a diff
  */
 import { resolve } from "node:path";
+
+import { REGISTERED_HOOK_EVENT_NAMES } from "@crosscheck/connector-core/constants.ts";
 
 export const HOOKS_DOC_URL = "https://code.claude.com/docs/en/hooks.md";
 export const STATUSLINE_DOC_URL = "https://code.claude.com/docs/en/statusline.md";
@@ -77,21 +79,48 @@ interface FieldProbe {
 }
 
 /**
- * The registered events (cli/init.ts) whose documented sections carry fields
- * we read or write. UserPromptSubmit and Stop are registered too but consume
- * only the common input fields probed below, so they need no section probe.
+ * The events we register in .claude/settings.json — READ FROM THE SAME LIST
+ * the installer and the doctor read (connector-core constants.ts).
+ *
+ * It used to be a second literal here, and it drifted the way a hand-kept
+ * second list always does: three events where `buildSettingsPlan` writes six
+ * and doctor's requirement names six (trial finding M17), under a comment that
+ * still said "the events we register". The consequence was not cosmetic — the
+ * whole PreToolUse section, the tripwire's decision contract included, sat
+ * outside the watched surface, so Anthropic could have renamed any of it and
+ * the only symptom would have been tripwires that silently stopped asking. It
+ * was patched on one branch by adding PreToolUse to the literal, which fixed
+ * that one event and left the drift class intact; reading the registered list
+ * fixes both.
+ *
+ * THE LIST IS DELIBERATELY WIDER THAN "sections with fields we parse". A
+ * narrower literal here was the drift itself: UserPromptSubmit and Stop
+ * consume only the common input fields probed below, which is an argument for
+ * skipping their section probe and NOT an argument for keeping a second list —
+ * the moment either event starts carrying a field of its own, a hand-kept
+ * literal is the thing that stays silent about it. A section that documents
+ * none of our fields simply contributes no observation, so the wider list
+ * costs nothing and cannot drift.
  */
-const EVENTS = ["SessionStart", "PreToolUse", "PostToolUse", "SessionEnd"] as const;
+const EVENTS = REGISTERED_HOOK_EVENT_NAMES;
 
 /**
  * Exactly what we read off stdin (capture/tool-events.ts HookPayloadSchema) and
  * what we write back (hooks/session-start.ts, hooks/pre-tool-use.ts). Nothing
- * aspirational: the PreToolUse probes are the three output fields the tripwire
- * emits — the decision, its reason, and `additionalContext` (trial finding
- * #25), which the reference documents for PreToolUse as "added to Claude's
- * context alongside the tool result".
+ * aspirational: the PreToolUse probes are the four output observations the
+ * tripwire emits — the decision, its reason, the literal `ask` it sends, and
+ * `additionalContext` (trial finding #25), which the reference documents for
+ * PreToolUse as "added to Claude's context alongside the tool result".
+ *
+ * KEYS ARE UNIQUE, and hook-contract.test.ts asserts it. `extractContract`
+ * builds the view with `Object.fromEntries`, which keeps the LAST entry for a
+ * repeated key and reports nothing — so two copies of one probe can drift apart
+ * in silence, which is the second-hand-kept-list class M17 exists to remove.
+ * Merging two branches that had each grown a PreToolUse block left exactly
+ * that: 23 entries under 21 keys, and no count could show it, because every
+ * count is taken after the dedupe.
  */
-const HOOK_PROBES: readonly FieldProbe[] = [
+export const HOOK_PROBES: readonly FieldProbe[] = [
   {
     key: "common.input.session_id",
     section: "Common input fields",
@@ -160,6 +189,39 @@ const HOOK_PROBES: readonly FieldProbe[] = [
     field: "file_path",
   },
   { key: "SessionEnd.input.reason", section: "SessionEnd", field: "reason" },
+  /**
+   * The third name in the tripwire's decision contract (DESIGN.md §4), and the
+   * only one no probe above already covers. `ask` is a VALUE rather than a
+   * field name — it appears as `"permissionDecision": "ask"` — and
+   * `mentionsField` finds it anyway, because the rule is "quote-delimited
+   * token", which is exactly what a documented enum value looks like.
+   * (`"task"` does not match: the regex needs a quote or backtick immediately
+   * before the `a`.) A rename of the value alone would leave every other
+   * observation true and every tripwire silently un-asked.
+   */
+  { key: "PreToolUse.output.ask", section: "PreToolUse", field: "ask" },
+  /** The prompt path: what we read, and what we hand back (flows/hint.ts). */
+  {
+    key: "UserPromptSubmit.input.prompt",
+    section: "UserPromptSubmit",
+    field: "prompt",
+  },
+  {
+    key: "UserPromptSubmit.output.additionalContext",
+    section: "UserPromptSubmit",
+    field: "additionalContext",
+  },
+  /** The Tier-1 summarizer gate reads both (summarizer/gate.ts, hooks/stop.ts). */
+  {
+    key: "Stop.input.transcript_path",
+    section: "Stop",
+    field: "transcript_path",
+  },
+  {
+    key: "Stop.input.stop_hook_active",
+    section: "Stop",
+    field: "stop_hook_active",
+  },
 ];
 
 /** The statusline doc is small, so the whole page is the search space. */

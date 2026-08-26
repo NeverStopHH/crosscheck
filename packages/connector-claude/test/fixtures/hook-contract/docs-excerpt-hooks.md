@@ -72,6 +72,20 @@ Runs when Claude Code starts a new session or resumes an existing session.
 
 Runs after Claude creates tool parameters and before processing the tool call.
 
+#### PreToolUse input
+
+```json
+{
+  "session_id": "abc123",
+  "cwd": "/home/dev/acme/api",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/home/dev/acme/api/src/rate-limit.ts"
+  }
+}
+```
+
 #### PreToolUse decision control
 
 | Field                      | Description                                                        |
@@ -130,5 +144,60 @@ Runs when a Claude Code session ends.
   "cwd": "/home/dev/acme/api",
   "hook_event_name": "SessionEnd",
   "reason": "other"
+}
+```
+
+### UserPromptSubmit
+
+Runs when the user submits a prompt, before Claude processes it.
+
+#### UserPromptSubmit input
+
+| Field    | Description               |
+| :------- | :------------------------ |
+| `prompt` | The prompt the user typed |
+
+```json
+{
+  "session_id": "abc123",
+  "cwd": "/home/dev/acme/api",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "why does the rate limiter drop bursts"
+}
+```
+
+#### UserPromptSubmit decision control
+
+| Field               | Description                      |
+| :------------------ | :------------------------------- |
+| `additionalContext` | String added to Claude's context |
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "Robin diagnosed this last week"
+  }
+}
+```
+
+### Stop
+
+Runs when the main Claude Code agent has finished responding.
+
+#### Stop input
+
+| Field              | Description                                            |
+| :----------------- | :----------------------------------------------------- |
+| `transcript_path`  | Path to the conversation JSON                           |
+| `stop_hook_active` | True when Claude is already continuing from a stop hook |
+
+```json
+{
+  "session_id": "abc123",
+  "cwd": "/home/dev/acme/api",
+  "hook_event_name": "Stop",
+  "transcript_path": "/home/dev/.claude/projects/acme-api/abc123.jsonl",
+  "stop_hook_active": false
 }
 ```

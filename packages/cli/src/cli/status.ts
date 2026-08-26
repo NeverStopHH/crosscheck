@@ -91,16 +91,27 @@ const targetsLine = (health: CaptureHealth, now: Date): string => {
 };
 
 /**
- * Hint visibility (#19/#20): delivered = the live sessions' seen-sets here;
+ * Hint visibility (#19/#20/M1): delivered = the live sessions' seen-sets here;
  * the hub's delivered/pulled over its bounded window when it answers (an
  * older hub has no /api/hints/stats — "not measured", never a guess);
- * candidates = what the hub returned for this repo's prompts.
+ * candidates = what the hub returned for this repo's prompts; and the repo's
+ * claim count, which is the load-bearing one — the selector only ever
+ * proposes claims, so a repo with none delivers nothing however good the
+ * ranking is, and `delivered 0` alone reads like a tuning problem. It sits
+ * OUTSIDE the window clause because the hub does not window it.
  */
 const hintsLine = (health: CaptureHealth, stats: HubResult<HintStats>): string => {
   const hubPart = stats.ok
     ? `hub ${String(stats.data.windowDays)}d: ${String(stats.data.delivered)} delivered, ${String(stats.data.pulled)} pulled`
     : "pulled: not measured";
-  return `hints: delivered ${String(health.hintsDelivered)} (${hubPart}), candidates ${String(health.hintCandidatesSeen)}`;
+  // Printed only when the hub SAYS it: an older hub omits the field, and a
+  // fabricated "0 claims" is exactly the false structural verdict the number
+  // exists to prevent.
+  const claims =
+    stats.ok && stats.data.claims !== undefined
+      ? ` · claims on this repo ${String(stats.data.claims)}`
+      : "";
+  return `hints: delivered ${String(health.hintsDelivered)} (${hubPart}), candidates ${String(health.hintCandidatesSeen)}${claims}`;
 };
 
 /** The Q2 knob, visible: which PreToolUse decision this machine's hooks emit. */
@@ -164,16 +175,24 @@ export const runStatus = async (
     foreignDrops.drops === 0
       ? []
       : [`foreign-repo drops: ${formatForeignDropLine(foreignDrops)}`];
+  // repoKey "" so this command's own three reads do not stamp the sync record
+  // it is about to print (trial finding H5): with the real key, `status` wrote
+  // `lastOkAt` and then reported it, so the age it showed was always its own.
+  // The capture stamp was never at risk — reads are not capture-marked
+  // (http/hub.ts) — but `last capture sync` is read beside `lastSyncAt`, and a
+  // surface that reports its own writes teaches nobody anything.
   const hubCtx = {
     hubUrl: config.hubUrl,
     apiKey: config.apiKey,
     timeoutMs: config.timeoutMs,
     home: config.home,
-    repoKey: key,
+    repoKey: "",
     now: () => now,
   };
   const presence = await getPresence(hubCtx, identity.repoId);
-  // The hub's delivered/pulled window (#20) — fail-open like every hub read.
+  // The hub's delivered/pulled window and this repo's claim count (#20/M1) —
+  // fail-open like every hub read: a hub that cannot answer costs the hub half
+  // of the hints line, never the local half.
   const hintStats = await getHintStats(hubCtx, identity.repoId);
   // Absence findings share the briefing's line formatter, so both surfaces
   // state the same facts the same way. A hub without the endpoint (or any
@@ -235,7 +254,9 @@ export const runStatus = async (
       hintsLine(captureHealth, hintStats),
       tripwireLine(env),
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
-      `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
+      // The CAPTURE stamp, not `lastOkAt`: only register/heartbeat/records/end
+      // move it, so this age is the hook path's and not this command's (H5).
+      `last capture sync: ${ageOrNever(sync.lastCaptureOkAt, now)}`,
       "",
     ].join("\n"),
     exitCode: presence.ok ? EXIT_OK : EXIT_UNREACHABLE,

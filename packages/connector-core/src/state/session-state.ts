@@ -197,6 +197,26 @@ const SessionStateObjectSchema = z.looseObject({
    */
   summarizerFailCount: z.number().int().min(0).default(0),
   summarizerLastFailure: z.string().nullable().default(null),
+  /**
+   * Runs that ANSWERED and whose answer was neither a claim nor NONE (trial
+   * finding M5). Two of thirty-two live answers during the trial were the
+   * model talking to the developer instead of the slice ("I've paused and I'm
+   * waiting for your direction…", both on `rejection` slices): parse.ts
+   * returns null for them, `isNoneAnswer` is false, and nothing was booked at
+   * all — so they hid inside the fires-minus-outcomes remainder alongside
+   * runner failures, which have a completely different fix. A run the model
+   * answered badly is a PROMPT problem; a run the runner lost is a machine
+   * problem. Default 0 keeps every pre-M5 state file parsing.
+   */
+  summarizerUnparsedCount: z.number().int().min(0).default(0),
+  /**
+   * Intent captures this session has fired. ADDITIVE AND UNWRITTEN HERE on
+   * purpose: `feat/session-intent` owns the writer, and this default-0 field
+   * plus the cost line's "print it only when > 0" rule means that branch can
+   * start booking into it without a second edit to this schema or to the
+   * surfaces that read it.
+   */
+  intentFireCount: z.number().int().min(0).default(0),
 });
 
 /**
@@ -560,5 +580,7 @@ export const deriveSessionState = (
     summarizerDraftCount: 0,
     summarizerFailCount: 0,
     summarizerLastFailure: null,
+    summarizerUnparsedCount: 0,
+    intentFireCount: 0,
   };
 };

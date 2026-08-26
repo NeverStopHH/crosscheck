@@ -25,6 +25,7 @@
  */
 import {
   FINGERPRINT_SOURCE_CHARS,
+  HTTP_NOT_FOUND,
   MAX_SEEN_TARGETS,
 } from "@crosscheck/connector-core/constants.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
@@ -866,13 +867,20 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
             async (crosscheckSessionId) => {
               const roomMs = remaining();
               if (roomMs <= 0) {
-                return false;
+                return "retry";
               }
               const result = await endSession(
                 { ...hub, timeoutMs: Math.min(hub.timeoutMs, roomMs) },
                 crosscheckSessionId,
               );
-              return result.ok;
+              if (result.ok) {
+                return "ended";
+              }
+              // Terminal on 404, like the Claude and Cursor connectors (trial
+              // finding M6): a hub that has never heard of this session will
+              // never hear of it, so retrying the marker until it ages out
+              // buys one wasted call per proxy exit and nothing else.
+              return result.status === HTTP_NOT_FOUND ? "gone" : "retry";
             },
           );
         }

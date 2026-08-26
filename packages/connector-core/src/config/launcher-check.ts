@@ -27,6 +27,7 @@ import type { Env } from "./paths.ts";
 import {
   isEphemeralInstallPath,
   isOwnCrosscheckBin,
+  isVersionManagerPath,
   realpathOrSelf,
 } from "./launcher.ts";
 
@@ -93,6 +94,18 @@ export const checkLauncherCommand = async (
       return health(
         "WARN",
         `${hit} resolves into a package-runner cache (${real}) — it dies on cache eviction; install permanently and rerun crosscheck init`,
+      );
+    }
+    // Trial finding M9: a version manager gives each runtime version its own
+    // bin directory, so the bare name resolves TODAY and is gone after
+    // `nvm use`. Every hook then exits 127 — loudly, but the capture is lost
+    // until somebody notices. Reported here because nothing else on the
+    // machine can: the hook itself is silent by design and `init` has already
+    // run by the time the switch happens.
+    if (isVersionManagerPath(real)) {
+      return health(
+        "WARN",
+        `${hit} resolves through a node version manager (${real}) — it disappears on \`nvm use\` or a runtime upgrade and every hook then exits 127; pin it with \`crosscheck init --global --command-prefix "<bun> <entry>"\`, or rerun crosscheck init --global after switching versions`,
       );
     }
     return health("PASS", hit);

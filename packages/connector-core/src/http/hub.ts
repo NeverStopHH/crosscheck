@@ -20,6 +20,24 @@ import type { HubContext, HubResult } from "./client.ts";
  */
 export type { HubContext, HubResult } from "./client.ts";
 
+/**
+ * WHICH CALLS BELOW ARE CAPTURE-MARKED — the four the hook path makes:
+ * `registerSession`, `heartbeatSession`, `endSession`, `postRecords`. Nothing
+ * else. Every read (presence, work contexts, absences, drafts, diagnosis,
+ * hints, referee, privacy, solved matches) stays unmarked on purpose: they are
+ * what doctor, `status` and the statusline themselves call, and a read that
+ * stamped the capture record would report the reader's own request back as the
+ * connector's health (trial finding H5, the `last sync 0s ago` tautology).
+ *
+ * Three of the four are a flat `true`; `postRecords` passes a PREDICATE,
+ * because a 200 from ingest can still mean `accepted:0` (review finding
+ * B2-07). The count below is of the mark, whichever form it takes.
+ *
+ * VERIFY: grep -c "captur[e]: " packages/connector-core/src/http/hub.ts
+ * PRINTS: 4
+ * (the bracket keeps this directive from counting itself.)
+ */
+
 export const PresenceEntrySchema = z.looseObject({
   sessionId: z.string().min(1),
   developerId: z.string().min(1),
@@ -47,9 +65,10 @@ export const WorkContextEntrySchema = z.looseObject({
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
   /**
-   * Cheap aggregates `doctor` reads (trial finding #20): how many claims and
-   * targets the tree carries. Optional — an older hub omits targetCount, and
-   * the check then says the targets are unknown rather than 0.
+   * Cheap aggregates `doctor` reads (trial findings #20 + M1): how many claims
+   * and deterministic targets the tree carries. Optional because an older hub
+   * omits them — and the surfaces that read them must say the targets are
+   * unknown rather than print a fabricated zero.
    */
   claimCount: z.number().int().min(0).optional(),
   targetCount: z.number().int().min(0).optional(),
@@ -134,6 +153,7 @@ export const registerSession = (
     path: "/api/sessions",
     schema: SessionResponseSchema,
     body: input,
+    capture: true,
   });
 
 export const heartbeatSession = (
@@ -146,6 +166,7 @@ export const heartbeatSession = (
     path: `/api/sessions/${encodeURIComponent(sessionId)}/heartbeat`,
     schema: z.unknown(),
     body: status === undefined ? {} : { status },
+    capture: true,
   });
 
 export const endSession = (
@@ -157,6 +178,7 @@ export const endSession = (
     path: `/api/sessions/${encodeURIComponent(sessionId)}/end`,
     schema: z.unknown(),
     body: { status: "done" },
+    capture: true,
   });
 
 export const postRecords = (
@@ -168,6 +190,41 @@ export const postRecords = (
     path: "/api/records",
     schema: IngestSummarySchema,
     body: { records },
+    // The OUTCOME, not the transport. Ingest answers HTTP 200 with
+    // `accepted:0, rejected:N` when it refuses the producer session, and that
+    // envelope is `ok` — so a flat `true` here stamped `lastCaptureOkAt` on a
+    // batch that captured nothing, and doctor, `status` and the statusline all
+    // read `0s ago` through a session whose every record was being discarded
+    // (review finding B2-07).
+    capture: (summary) => summary.accepted + summary.duplicates > 0,
+  });
+
+/**
+ * One session the hub still believes is running (trial finding M6).
+ *
+ * Only the fields `doctor` prints: a count and, for the oldest, an age. The
+ * hub's number beats every local guess here, because a session that was killed
+ * on THIS machine may have left no local trace at all while the hub's row is
+ * still open — which is precisely the 104-of-127 state the trial found.
+ */
+export const OpenSessionEntrySchema = z.looseObject({
+  id: z.string().min(1),
+  repo: z.string().min(1),
+  branch: z.string().min(1),
+  status: z.string().min(1),
+  lastHeartbeatAt: z.string().min(1),
+});
+
+export type OpenSessionEntry = z.infer<typeof OpenSessionEntrySchema>;
+
+/** An older hub has no such route and answers 404 — a plain HubResult failure. */
+export const getOpenSessions = (
+  ctx: HubContext,
+): Promise<HubResult<readonly OpenSessionEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/sessions?open=1&mine=1",
+    schema: tolerantList("sessions", OpenSessionEntrySchema),
   });
 
 export const getPresence = (
@@ -180,15 +237,47 @@ export const getPresence = (
     schema: tolerantList("sessions", PresenceEntrySchema),
   });
 
+export interface WorkContextWindow {
+  /** ISO instant; omitted = no window. */
+  readonly since?: string;
+  readonly limit?: number;
+}
+
+/**
+ * The listing, with the window passed EXPLICITLY (trial finding M8).
+ *
+ * The hub's default is still "everything, capped" — deliberately, so a 0.7.2
+ * connector that sends no parameters does not silently lose rows to a
+ * server-chosen window. A connector that knows about the window therefore has
+ * to ask for it, which is what this signature is. The caller derives it from
+ * CONTEXT_MAX_AGE_DAYS, the same 14 days the briefing already filters to
+ * client-side — so the window narrows the TRANSFER without changing what any
+ * surface renders.
+ *
+ * That last clause is only true because the hub ages a row the way the
+ * renderer does, by `coalesce(updated_at, created_at)` (server
+ * services/diagnosis.ts). Filtering on `created_at` alone made the sentence
+ * false: a context created three weeks ago and updated an hour ago is inside
+ * this window and was outside the hub's (review finding B2-06).
+ */
 export const getWorkContexts = (
   ctx: HubContext,
   repo: string,
-): Promise<HubResult<readonly WorkContextEntry[]>> =>
-  hubRequest(ctx, {
+  window: WorkContextWindow = {},
+): Promise<HubResult<readonly WorkContextEntry[]>> => {
+  const params = new URLSearchParams({ repo });
+  if (window.since !== undefined) {
+    params.set("since", window.since);
+  }
+  if (window.limit !== undefined) {
+    params.set("limit", String(window.limit));
+  }
+  return hubRequest(ctx, {
     method: "GET",
-    path: `/api/work-contexts${encodeRepo(repo)}`,
+    path: `/api/work-contexts?${params.toString()}`,
     schema: tolerantList("workContexts", WorkContextEntrySchema),
   });
+};
 
 /**
  * One absence finding. Names only — the hub keeps commit
@@ -428,6 +517,25 @@ export const getDiagnosis = (
   });
 
 /**
+ * The same tree, with NO hint telemetry (trial finding V1-X1).
+ *
+ * `getDiagnosis` above marks the reader's hint deliveries pulled, which is
+ * right for a developer following a hint and wrong for everything else — an
+ * audit that walked 113 contexts through it would have written 113 "the hint
+ * worked" signals. Tooling that only wants to look uses this door. An older
+ * hub answers 404, which is a plain `HubResult` failure like any other.
+ */
+export const getWorkContextPure = (
+  ctx: HubContext,
+  workContextId: string,
+): Promise<HubResult<Diagnosis>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/work-contexts/${encodeURIComponent(workContextId)}`,
+    schema: DiagnosisEnvelopeSchema,
+  });
+
+/**
  * One hub search result. A superset of WorkContextEntry: the hub adds the
  * match tier and fused score. Both optional on the wire so an older hub's
  * plain rows still parse — the renderer never prints them anyway.
@@ -593,14 +701,26 @@ export const getHintCandidates = (
 };
 
 /**
- * GET /api/hints/stats (trial finding #20): delivered/pulled hints for a repo
- * over the hub's bounded window. Read by `doctor`/`status` only — an older hub
- * answers 404 and the surfaces say "not measured".
+ * GET /api/hints/stats (trial findings #20 + M1): delivered/pulled hints for a
+ * repo over the hub's bounded window, plus the repo's claim count. Read by
+ * `doctor`/`status` only — an older hub answers 404 and the surfaces say "not
+ * measured".
+ *
+ * `claims` is the load-bearing one: the selector only ever proposes claims, so
+ * a repo with none delivers no hints however good the ranking is, and
+ * `delivered: 0` alone reads like a tuning problem rather than the structural
+ * fact it is. OPTIONAL — never defaulted — while the other three are required,
+ * the same discipline `targetCount` above uses: a hub on the released 0.7.3
+ * shape answers this route with the window and no claim count, and a default
+ * would turn "this hub does not say" into the "0 claims" the WARN exists to
+ * name. Absent means unknown, and the surfaces fall back to what they can
+ * count themselves.
  */
 export const HintStatsSchema = z.looseObject({
   delivered: z.number().int().min(0),
   pulled: z.number().int().min(0),
   windowDays: z.number().int().min(1),
+  claims: z.number().int().min(0).optional(),
 });
 
 export type HintStats = z.infer<typeof HintStatsSchema>;

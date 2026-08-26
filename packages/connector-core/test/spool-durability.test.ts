@@ -7,6 +7,7 @@
  * counted in `.drops`.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import type { DeferredEnder } from "../src/spool/reap.ts";
 import { open, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
@@ -45,6 +46,7 @@ import type { SessionSpool } from "../src/spool/files.ts";
 import { rescueTail } from "../src/spool/reap.ts";
 import { appendOnce, appendThroughHandle } from "../src/spool/write.ts";
 import { writeSessionState } from "../src/state/session-state.ts";
+import { readSyncState } from "../src/state/sync-state.ts";
 import { makeHome } from "./helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
@@ -112,6 +114,36 @@ const acceptingHub = (received: string[]) =>
     },
   });
 
+/**
+ * A hub that answers 200 with `accepted:0, rejected:N` — the shape ingest
+ * produces for a session it believes has ended (server checkProducerSession).
+ */
+const rejectingHub = () =>
+  Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      const body = (await request.json()) as {
+        records: readonly { id: string }[];
+      };
+      return Response.json({
+        ok: true,
+        data: {
+          results: body.records.map((_record, index) => ({
+            index,
+            status: "rejected",
+            issues: [
+              "producer.sessionId: session has already ended — late writes are rejected",
+            ],
+          })),
+          accepted: 0,
+          duplicates: 0,
+          ignored: 0,
+          rejected: body.records.length,
+        },
+      });
+    },
+  });
+
 /** Backdates a data file so it reads as an appender that has gone quiet. */
 const idleSince = async (path: string, ageMs: number): Promise<void> => {
   const when = new Date(NOW.getTime() - ageMs);
@@ -154,6 +186,60 @@ describe("reap against an appender that holds a handle", () => {
     expect(await Bun.file(dataPath).exists()).toBe(true);
     expect(await readSpoolLines(path, KEY)).toHaveLength(1);
     expect((await readDropSummary(path, KEY)).records).toBe(0);
+  });
+
+  test("a batch the hub rejected in full is counted, not reported as capture", async () => {
+    // Arrange: two records, and a hub that answers HTTP 200 with accepted:0.
+    // The envelope is `ok`, so every surface downstream read this as a
+    // successful capture while the cursor advanced past the records and the
+    // work was gone — H4's deafness, reachable through nothing but a hub
+    // verdict (review finding B2-07).
+    const path = await home();
+    const server = rejectingHub();
+    const ctx = hubContext(path, `http://127.0.0.1:${String(server.port)}`);
+    await appendRecords(
+      path,
+      KEY,
+      SESSION,
+      [envelope("lost-a"), envelope("lost-b")],
+      NOW,
+    );
+
+    // Act
+    await flushSpool(
+      ctx,
+      { sessionId: "cc_live", developerId: "dev_1" },
+      AMPLE_BUDGET_MS,
+    );
+
+    // Assert: `last capture sync` must not read fresh, and the two records
+    // have to appear in the one ledger that survives them
+    const sync = await readSyncState(path, KEY);
+    expect(sync.lastCaptureOkAt).toBeNull();
+    expect((await readDropSummary(path, KEY)).records).toBe(2);
+    server.stop(true);
+  });
+
+  test("a batch the hub accepted still stamps the capture clock", async () => {
+    // Arrange
+    const path = await home();
+    const received: string[] = [];
+    const server = acceptingHub(received);
+    const ctx = hubContext(path, `http://127.0.0.1:${String(server.port)}`);
+    await appendRecords(path, KEY, SESSION, [envelope("kept")], NOW);
+
+    // Act
+    await flushSpool(
+      ctx,
+      { sessionId: "cc_live", developerId: "dev_1" },
+      AMPLE_BUDGET_MS,
+    );
+
+    // Assert
+    const sync = await readSyncState(path, KEY);
+    expect(sync.lastCaptureOkAt).toBe(NOW.toISOString());
+    expect((await readDropSummary(path, KEY)).records).toBe(0);
+    server.stop(true);
   });
 
   test("keeps a fully delivered data file while an appender holds a handle", async () => {
@@ -607,14 +693,18 @@ describe("the end SessionEnd deferred", () => {
     );
   };
 
-  /** Records what reap asked to end, and whether the hub played along. */
+  /**
+   * Records what reap asked to end, and whether the hub played along. Three
+   * outcomes since M6: `"retry"` keeps the marker, `"ended"` and `"gone"` both
+   * spend it — see spool/reap.ts DeferredEndOutcome.
+   */
   const enderThat = (
     succeeds: boolean,
     seen: string[],
-  ): ((sessionId: string) => Promise<boolean>) =>
+  ): DeferredEnder =>
     async (sessionId: string) => {
       seen.push(sessionId);
-      return succeeds;
+      return succeeds ? "ended" : "retry";
     };
 
   test("ends the session once its backlog has reached the hub", async () => {

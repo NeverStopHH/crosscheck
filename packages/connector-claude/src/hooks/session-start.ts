@@ -1,4 +1,7 @@
-import { MAX_WORK_CONTEXT_TITLE_CHARS } from "@crosscheck/connector-core/constants.ts";
+import {
+  HTTP_NOT_FOUND,
+  MAX_WORK_CONTEXT_TITLE_CHARS,
+} from "@crosscheck/connector-core/constants.ts";
 import { rememberDeveloper } from "@crosscheck/connector-core/config/config.ts";
 import { sanitizeUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveDefaultBranchRef } from "@crosscheck/connector-core/git/default-branch.ts";
@@ -29,11 +32,55 @@ import {
   hasSpendablePendingEnd,
   reapSpool,
 } from "@crosscheck/connector-core/spool/reap.ts";
-import type { DeferredEnder } from "@crosscheck/connector-core/spool/reap.ts";
-import { writePresenceCache } from "@crosscheck/connector-core/state/presence-cache.ts";
+import type {
+  DeferredEndOutcome,
+  DeferredEnder,
+} from "@crosscheck/connector-core/spool/reap.ts";
+import {
+  deriveLastSeen,
+  writePresenceCache,
+} from "@crosscheck/connector-core/state/presence-cache.ts";
+import { reapStaleSessionStates } from "@crosscheck/connector-core/state/session-reap.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const INITIAL_STATUS = "analyzing";
+
+/**
+ * Whether this session is sitting ON the default branch (or detached), so its
+ * base commit is an ancestor of the default ref by construction rather than by
+ * having landed anything (Anhang A, A5-9).
+ *
+ * `defaultBranchRef` is a REMOTE-tracking ref — `origin/main` — while
+ * `identity.branch` is the local name, so the comparison is against the
+ * segment after the remote. A detached HEAD renders as `detached@<sha>`
+ * (git/repo-identity.ts resolveBranch) and counts too: an orchestration
+ * worktree detached at a commit the default branch already contains is an
+ * ancestor of it forever, and every context it opens would be born landed.
+ *
+ * DELIBERATELY OVER-BROAD FOR DETACHED HEADS, and this is the one place to
+ * say so: a session detached at a commit the default branch does NOT contain
+ * (a PR head, say) is skipped as well, without an ancestry probe of its own —
+ * that probe would be a git call on the SessionStart path, and the direction
+ * it saves is the false-POSITIVE one. What the over-approximation costs is a
+ * genuine landing going unmarked by THIS session; the next session on this
+ * repo that runs from a branch marks it, because `collectLanded` walks the
+ * repo's open contexts rather than only its own. A repo where nobody ever
+ * works from a named branch therefore stops producing landed evidence — a
+ * silence, where today's behaviour is 118 of 127 contexts wrongly landed.
+ */
+export const isOnDefaultBranch = (
+  branch: string,
+  defaultBranchRef: string | null,
+): boolean => {
+  if (branch.startsWith("detached@") || branch === "HEAD") {
+    return true;
+  }
+  if (defaultBranchRef === null) {
+    return false;
+  }
+  const localName = defaultBranchRef.split("/").at(-1) ?? defaultBranchRef;
+  return branch === localName || branch === defaultBranchRef;
+};
 
 const MS_PER_DAY = 86_400_000;
 
@@ -92,16 +139,28 @@ const selfName = (
  */
 const deferredEnder =
   (ctx: HookContext, budget: HookBudget): DeferredEnder =>
-  async (crosscheckSessionId: string): Promise<boolean> => {
+  async (crosscheckSessionId: string): Promise<DeferredEndOutcome> => {
     const roomMs = budget.spareMs();
     if (roomMs <= 0) {
-      return false;
+      return "retry";
     }
     const result = await endSession(
       { ...ctx.hub, timeoutMs: Math.min(ctx.hub.timeoutMs, roomMs) },
       crosscheckSessionId,
     );
-    return result.ok;
+    if (result.ok) {
+      return "ended";
+    }
+    // A 404 is TERMINAL for a deferred end (trial finding M6): the hub has
+    // never heard of this session — the failed-first-register shape — so
+    // there is nothing to end and no later attempt can change that. Retrying
+    // it cost a hub call on every SessionStart until the marker aged out
+    // seven days later; the trial machine was carrying one 48 hours old.
+    //
+    // SCOPE: this is the DEFERRED-end path only. A 404 on a LIVE session's
+    // heartbeat means something else entirely (re-register), and that ladder
+    // belongs to the capture branch — `flows/heartbeat.ts` is untouched here.
+    return result.status === HTTP_NOT_FOUND ? "gone" : "retry";
   };
 
 /**
@@ -172,6 +231,21 @@ export const handleSessionStart = async (
     now,
     collectLanded: async (workContexts) => {
       const defaultBranchRef = await defaultBranchRefPromise;
+      // The A5-9 guard, and it lives HERE rather than inside
+      // `collectLandedCommits`, which stays a pure ancestry question.
+      //
+      // "Landed" is supposed to mean "this branch's work reached the default
+      // branch". The ancestry test alone cannot say that: a session running ON
+      // the default branch — or detached at one of its ancestors, which is
+      // every orchestration worktree — has a base commit that is an ancestor
+      // from the moment it starts, before it has done anything at all. 118 of
+      // the trial hub's 127 contexts read "landed", 79 of them within sixty
+      // seconds of being created. Skipping the whole collection from such a
+      // session is what makes the label mean what the surface claims; a
+      // session on a real feature branch is unaffected.
+      if (isOnDefaultBranch(ctx.identity.branch, defaultBranchRef)) {
+        return [];
+      }
       const openBaseCommits = workContexts.flatMap((entry: WorkContextEntry) =>
         entry.landedAt === null || entry.landedAt === undefined
           ? (entry.baseCommit === undefined ? [] : [entry.baseCommit])
@@ -197,7 +271,16 @@ export const handleSessionStart = async (
     await rememberDeveloper(ctx.config, developerId, selfName(presence, developerId));
   }
   if (assembled.presenceFetched) {
-    await writePresenceCache(ctx.config.home, ctx.repoKey, presence, now);
+    // The last-seen list rides along (Anhang A, A4-09): SessionStart already
+    // holds the work contexts, so telling "offline" from "never onboarded"
+    // costs one pure derivation and no hub call.
+    await writePresenceCache(
+      ctx.config.home,
+      ctx.repoKey,
+      presence,
+      now,
+      deriveLastSeen(assembled.workContexts, developerId),
+    );
   }
   // A local append, microseconds: the maintenance flush below ships it, and a
   // dead hub leaves it spooled like any other record. Appended after the work
@@ -294,6 +377,15 @@ export const handleSessionStart = async (
     now,
     deferredEnder(ctx, budget),
   );
+  // Session-state corpses, bounded (trial finding M6). Deliberately AFTER
+  // reapSpool: a state file is what stops its spool being reaped
+  // (spool/reap.ts isSessionLive), so removing it here means the spool goes on
+  // the NEXT SessionStart rather than this one — which is right, because this
+  // run has already spent its file budget. Our own state file is excluded by
+  // name as well as by age.
+  await reapStaleSessionStates(ctx.config.home, now, {
+    keepHostSessionKey: ctx.payload.session_id,
+  });
 
   if (briefing.length === 0) {
     return "";

@@ -127,6 +127,15 @@ export const agentSessions = pgTable(
     startedAt: timestamptz("started_at").notNull(),
     lastHeartbeatAt: timestamptz("last_heartbeat_at").notNull(),
     endedAt: timestamptz("ended_at"),
+    /**
+     * Set beside `ended_at` when the HUB closed this session on a guess
+     * (services/sessions.ts reapStaleSessions), null for every end the
+     * connector asked for. The two are different claims: a SessionEnd is a
+     * fact reported by the session, a reap is an inference from silence — and
+     * an inference has to be revocable, because the only evidence that can
+     * disprove it (a record from the session) arrives after the write.
+     */
+    reapedAt: timestamptz("reaped_at"),
   },
   (table) => [
     index("agent_sessions_repo_idx").on(table.repo),

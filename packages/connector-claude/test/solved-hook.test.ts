@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { runHook } from "../src/index.ts";
+import { isOnDefaultBranch } from "../src/hooks/session-start.ts";
 import type { Env } from "../src/index.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { runGit } from "@crosscheck/connector-core/git/git.ts";
@@ -207,7 +208,18 @@ interface Fixture {
   readonly mainSha: string;
 }
 
-/** A repo whose origin/main covers HEAD, hub listing that commit as a base. */
+/**
+ * A repo whose origin/main covers HEAD, hub listing that commit as a base.
+ *
+ * ON A FEATURE BRANCH, since A5-9. The fixture used to sit on `main`, which
+ * made the landed assertion below pass for the wrong reason: a session on the
+ * default branch has a base commit that is an ancestor of it from the moment
+ * it starts, so "landed" was true before any work existed — 118 of the trial
+ * hub's 127 contexts, 79 of them within sixty seconds of creation. SessionStart
+ * now skips landed collection from such a session entirely
+ * (hooks/session-start.ts isOnDefaultBranch), so the branch here is what makes
+ * the ancestry question a real one.
+ */
 const fixture = async (
   label: string,
   options: HubOptions = {},
@@ -219,6 +231,7 @@ const fixture = async (
     "refs/remotes/origin/HEAD",
     "refs/remotes/origin/main",
   ]);
+  await git(repo, ["checkout", "-q", "-b", "feat/solved-fixture"]);
   const mainSha = await runGit(["rev-parse", "HEAD"], repo);
   if (mainSha === null) {
     throw new Error("fixture repo has no HEAD");
@@ -259,6 +272,24 @@ const briefingOf = (stdout: string): string => {
   return parsed.hookSpecificOutput.additionalContext;
 };
 
+describe("isOnDefaultBranch", () => {
+  test("the default branch, both spellings, and a detached HEAD count", () => {
+    // Arrange + Act + Assert
+    expect(isOnDefaultBranch("main", "origin/main")).toBe(true);
+    expect(isOnDefaultBranch("origin/main", "origin/main")).toBe(true);
+    expect(isOnDefaultBranch("detached@abc1234", "origin/main")).toBe(true);
+    expect(isOnDefaultBranch("HEAD", "origin/main")).toBe(true);
+  });
+
+  test("a feature branch does not, and an unknown default ref does not guess", () => {
+    // Arrange + Act + Assert
+    expect(isOnDefaultBranch("feat/thing", "origin/main")).toBe(false);
+    // Null default ref: landed collection is skipped downstream anyway, so
+    // claiming "on the default branch" here would be a second guess.
+    expect(isOnDefaultBranch("feat/thing", null)).toBe(false);
+  });
+});
+
 describe("session-start solved-before integration", () => {
   test("the briefing carries the solved pointer with its plain age", async () => {
     // Arrange
@@ -288,6 +319,41 @@ describe("session-start solved-before integration", () => {
     expect(delivery).toBeDefined();
     expect(delivery?.body["refKind"]).toBe("work_context");
     expect(delivery?.body["refId"]).toBe(SOLVED_CONTEXT_ID);
+  });
+
+  /**
+   * Anhang A, A5-9: "landed" is supposed to mean "this branch's work reached
+   * the default branch". The ancestry test alone cannot say that — a session
+   * ON the default branch has a base commit that is an ancestor of it from
+   * the moment it starts. 118 of the trial hub's 127 contexts read "landed",
+   * 79 of them within sixty seconds of being created.
+   */
+  test("a session ON the default branch reports nothing landed", async () => {
+    // Arrange: the same fixture, put back on main
+    const { repo, env, hub } = await fixture("solved-on-main");
+    await git(repo, ["checkout", "-q", "main"]);
+
+    // Act
+    await runHook("session-start", sessionStart(repo, "s-main"), env);
+
+    // Assert: no landed evidence at all — not an empty one, none
+    expect(
+      hub.recordsSeen.find((record) => record.kind === "landed_evidence"),
+    ).toBeUndefined();
+  });
+
+  test("a session detached on an ancestor reports nothing landed either", async () => {
+    // Arrange: every orchestration worktree's shape
+    const { repo, env, hub, mainSha } = await fixture("solved-detached");
+    await git(repo, ["checkout", "-q", "--detach", mainSha]);
+
+    // Act
+    await runHook("session-start", sessionStart(repo, "s-detached"), env);
+
+    // Assert
+    expect(
+      hub.recordsSeen.find((record) => record.kind === "landed_evidence"),
+    ).toBeUndefined();
   });
 
   test("base commits proven ancestors of the default branch are reported landed", async () => {

@@ -1,4 +1,6 @@
-import { and, asc, count, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+
+import { WORK_CONTEXT_LIST_MAX } from "../constants.ts";
 
 import {
   agentSessions,
@@ -67,13 +69,32 @@ export interface WorkContextListEntry extends WorkContextView {
   readonly developerName: string;
   readonly claimCount: number;
   /**
-   * How many targets the tree carries (trial finding #20): the cheap
-   * aggregate `crosscheck doctor` reads to tell "this repo has 0 claims AND 0
-   * targets — nothing for a hint to match on" apart from "targets exist, a
-   * prompt naming one would point". A correlated subquery, NOT a second
-   * leftJoin: joining targets beside claims would cross-multiply claimCount.
+   * How many deterministic targets this context captured (trial findings
+   * #20 + M1).
+   *
+   * The cheap aggregate `crosscheck doctor` reads to tell "this repo has 0
+   * claims AND 0 targets — nothing for a hint to match on" apart from
+   * "targets exist, a prompt naming one would point"; and the number that
+   * answers "is capture working at all", since a context with claims and zero
+   * targets is a session that reported its existence and nothing it touched —
+   * the H1 cross-worktree drop's signature, invisible on every surface before.
+   *
+   * A correlated subquery, NOT a second leftJoin: joining targets beside
+   * claims would cross-multiply claimCount.
    */
   readonly targetCount: number;
+}
+
+export interface WorkContextListWindow {
+  /**
+   * Oldest ACTIVITY to include — `coalesce(updated_at, created_at)`, the same
+   * expression the hub and the renderer age a row by; omitted = no window (see
+   * §M8). Naming `created_at` here was the pre-B2-06 defect written down: a
+   * context created three weeks ago and updated an hour ago is inside this
+   * window, and a reader who trusts the field doc concludes it has aged out.
+   */
+  readonly since?: Date;
+  readonly limit?: number;
 }
 
 export interface ClaimView {
@@ -201,11 +222,35 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
   createdAt: row.createdAt.toISOString(),
 });
 
+/**
+ * How OLD a context is, in the one expression every consumer already uses.
+ *
+ * The window and the ordering both read this rather than `created_at`. The
+ * connector's renderer ages a context by `updatedAt ?? createdAt`
+ * (briefing/render.ts), and so do `deriveLastSeen` and the statusline's
+ * last-seen suffix — so a window on `created_at` dropped rows those surfaces
+ * would have rendered: a context created three weeks ago and touched an hour
+ * ago is inside the client's 14 days and was outside the server's (review
+ * finding B2-06). The same expression orders the page, because a newest-first
+ * cap has to keep the rows a reader would have used.
+ *
+ * It looked harmless on the trial hub only because 125 of 127 rows had
+ * `updated_at` null, which is exactly why it would have landed unnoticed.
+ */
+const contextActivityAt = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
+
 export const listWorkContextsByRepo = async (
   db: Db,
   viewerDeveloperId: string,
   repo: string,
+  window: WorkContextListWindow = {},
 ): Promise<readonly WorkContextListEntry[]> => {
+  // Capped HERE rather than rejected at the route, the EventsQuerySchema
+  // discipline: a caller asking for 10 000 rows gets the cap, not a 400.
+  const limit = Math.min(
+    window.limit ?? WORK_CONTEXT_LIST_MAX,
+    WORK_CONTEXT_LIST_MAX,
+  );
   const rows = await db
     .select({
       workContext: workContexts,
@@ -228,6 +273,9 @@ export const listWorkContextsByRepo = async (
       and(
         eq(agentSessions.repo, repo),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+        ...(window.since === undefined
+          ? []
+          : [gte(contextActivityAt, window.since)]),
       ),
     )
     .groupBy(
@@ -236,7 +284,11 @@ export const listWorkContextsByRepo = async (
       developers.name,
       agentSessions.baseCommit,
     )
-    .orderBy(desc(workContexts.createdAt));
+    // Newest first, then the cap: a truncated page must keep the rows the
+    // reader would have used, and every consumer of this list wants recent
+    // work (the briefing filters to CONTEXT_MAX_AGE_DAYS client-side).
+    .orderBy(desc(contextActivityAt))
+    .limit(limit);
   return rows.map((row) => ({
     ...toWorkContextView(row.workContext, row.baseCommit),
     developerId: row.developerId,

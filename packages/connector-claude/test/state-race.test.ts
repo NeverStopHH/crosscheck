@@ -84,6 +84,8 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
+  summarizerUnparsedCount: 0,
+  intentFireCount: 0,
 });
 
 interface Fixture {

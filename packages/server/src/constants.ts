@@ -10,6 +10,80 @@ export const SSE_KEEPALIVE_INTERVAL_MS = 15_000;
 export const EVENTS_DEFAULT_LIMIT = 100;
 export const EVENTS_MAX_LIMIT = 500;
 
+/**
+ * Hard cap on one `GET /api/work-contexts` page (trial finding M8).
+ *
+ * The listing had no LIMIT and no window at all: 127 rows / 56 928 bytes on
+ * the trial hub after three days, growing ~40 rows a day, fetched by every
+ * SessionStart under a 400 ms budget (2000 ms for the teammate on tailscale).
+ * Serialisation was measured and is NOT the problem — 14 600 rows render in
+ * 112-143 ms on loopback — the multi-megabyte TRANSFER over a tailnet is.
+ *
+ * The default is deliberately NOT a 14-day window, and the ledger's first
+ * reading said it should be. A server-side default window silently truncates
+ * every connector that does not know to ask for more, and 0.7.2 connectors
+ * send no parameters at all. So the server's default stays "everything",
+ * bounded by this cap and ordered newest-first, and the NEW connector passes
+ * `?since=&limit=` explicitly (connector-core http/hub.ts getWorkContexts).
+ *
+ * SIX HUNDRED, so that the WINDOW is the binding limit and not the cap. The
+ * first version of this was 200 and defended itself with "an old connector
+ * against a 250-row repo then loses the oldest 50 — which it already discards
+ * client-side at CONTEXT_MAX_AGE_DAYS = 14". That arithmetic contradicts this
+ * comment's own measurement: at ~40 rows a day, fourteen days is about 560
+ * rows, so 200 bit at roughly FIVE days — well inside the window both
+ * connectors use, and the new connector asked for 200 too (review finding
+ * B2-09). It mattered beyond the briefing: this same listing feeds
+ * `collectLanded` (connector-claude hooks/session-start.ts), so no context
+ * older than the cap could ever be marked landed, and open contexts on
+ * longer-lived branches would have gone quietly stale.
+ *
+ * 600 covers fourteen days at the observed rate with room, and costs nothing
+ * measurable — 14 600 rows serialise in 112-143 ms, so 600 is noise on the
+ * wire as well as in the database.
+ */
+export const WORK_CONTEXT_LIST_MAX = 600;
+
+/**
+ * How long a session may go without a heartbeat before the hub closes it
+ * (trial finding M6).
+ *
+ * `/api/events` on the trial hub: 127 sessions started, 23 ended, **104 never
+ * ended**. `services/sessions.ts endSession` was the only writer of
+ * `ended_at` and nothing anywhere ran on a timer, so a killed orchestration
+ * agent, a closed terminal or a SessionEnd that never got its budget left a
+ * session "live" forever — visible in presence until its 90-second TTL, and
+ * open in every listing and every event stream after that.
+ *
+ * SIX HOURS, which is 240x PRESENCE_TTL_SECONDS — and the number is the LEAST
+ * important half of the design, because six hours of silence does not mean the
+ * session is dead. The heartbeat this reads only moves on an Edit or a Bash
+ * PostToolUse (connector-claude post-tool-use.ts, the ledger's M7), so a
+ * session that spent the afternoon prompting, reading and reviewing crosses
+ * six hours routinely while being fully alive, and one left open overnight
+ * crosses it every single night. An earlier draft of this comment claimed such
+ * a session "gets a loud 409 already_ended on its next heartbeat rather than
+ * silent data loss"; it got neither. `flows/heartbeat.ts` discards the
+ * HubResult by design, and ingest answered its records HTTP 200 /
+ * `accepted:0` / `rejected:N` while `spool/flush.ts` advanced the cursor past
+ * them — the loss was silent and total (review finding B2-01).
+ *
+ * SO THE VERDICT IS NOT ALLOWED TO BE FINAL. Two mechanisms carry that, both
+ * in services/records.ts: an accepted flush refreshes `last_heartbeat_at`, so
+ * a session that captures anything never becomes a candidate; and a record
+ * from a session the hub DID close reopens it (`reviveReapedSession`) instead
+ * of being rejected. A wrong reap therefore costs a listing entry until the
+ * session next speaks, never its work. A SessionEnd the connector reported
+ * stays final — `reaped_at` is what tells the two apart.
+ */
+export const SESSION_REAP_STALE_HOURS = 6;
+/** Sessions one reaper pass closes — a bounded UPDATE, never a table sweep. */
+export const SESSION_REAP_MAX_PER_PASS = 100;
+/** How often the hub's own reaper runs. Started in startServer only. */
+export const SESSION_REAP_INTERVAL_MS = 15 * 60 * 1000;
+/** Bound on `GET /api/sessions?open=1`. */
+export const OPEN_SESSIONS_MAX = 200;
+
 /** Upper bound for one POST /api/records spool flush; larger batches get 422. */
 export const MAX_INGEST_BATCH = 100;
 

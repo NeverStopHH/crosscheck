@@ -1056,8 +1056,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // dev machine, and that noise is how doctors get ignored.
     label: "the agent-restart check convicts on name and age alone",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "      if (cwd !== null && (await isInsideRepo(repoRoot, cwd))) {",
-    to: "      if (cwd !== null) {",
+    // The cwd map replaced the per-pid probe with M6's batched lsof, so the
+    // gate now reads `cwds.get(pid)`; the defect it re-introduces is the same
+    // one — convicting on name and age without asking WHERE the agent runs.
+    from: "      if (cwd !== undefined && (await isInsideRepo(repoRoot, cwd))) {",
+    to: "      if (cwd !== undefined) {",
     test: `${CLI}/test/agent-restart.test.ts`,
     because:
       "an agent running in a DIFFERENT repo is flagged as predating this " +
@@ -1416,6 +1419,267 @@ export const MUTATIONS: readonly Mutation[] = [
       "reads PASS while every summarizer fire can run the buggy cleanup and " +
       "delete their older conversation history",
   },
+  {
+    // Trial finding H5, the tautology itself. `recordSync` stamps the CAPTURE
+    // record only for the four hook-path calls; making every request capture
+    // -marked restores exactly the shipped defect, where doctor's own probe
+    // wrote the fact doctor then read back three lines later.
+    label: "every hub read re-stamps the capture record (the last-sync tautology)",
+    file: `${CORE}/src/http/client.ts`,
+    from: "          ...(isCaptureOk(request, result.data) ? { lastCaptureOkAt: nowIso } : {}),",
+    to: "          lastCaptureOkAt: nowIso,",
+    test: `${CLI}/test/doctor-last-sync.test.ts`,
+    because:
+      "doctor prints PASS last capture sync 0s ago beside hooks that have " +
+      "not fired in hours — finding #14's shape, where the surface reports " +
+      "its own request back as the connector's health",
+  },
+  {
+    // Review finding B2-07. `postRecords` marks itself with a PREDICATE over
+    // the ingest summary, not a flag: ingest answers HTTP 200 with
+    // `accepted:0` for a session it refuses, and that envelope is `ok`.
+    label: "a rejected ingest batch still stamps the capture clock",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    capture: (summary) => summary.accepted + summary.duplicates > 0,",
+    to: "    capture: true,",
+    test: `${CORE}/test/spool-durability.test.ts`,
+    because:
+      "doctor, status and the statusline all print a fresh capture age " +
+      "through a session whose every record the hub is discarding",
+  },
+  {
+    // Review finding B2-01/B2-L2. Four doctor WARNs gate on "is a session
+    // live"; answering that from a bare directory listing let week-old
+    // corpses satisfy all of them.
+    label: "doctor counts a dead session state file as a live session",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const sessions = health.sessions.filter((session) => !session.isStale);",
+    to: "  const sessions = health.sessions;",
+    test: `${CLI}/test/doctor-hooks-firing.test.ts`,
+    because:
+      "one run prints `1 of 1 session state file stale >1h` beside `a " +
+      "session is live` and `the session is running` — three lines, two " +
+      "contradictory claims about the same file",
+  },
+  {
+    // Review finding B2-01. The reaper closes sessions on silence alone, and
+    // silence is a weak signal (heartbeats are Edit/Bash-gated). A record
+    // from a session it closed is the disproof, and it has to be honoured.
+    label: "a reaped session keeps rejecting the records that disprove the reap",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "    if (session.reapedAt === null) {",
+    to: "    if (true) {",
+    test: `${SERVER}/test/session-reap-liveness.test.ts`,
+    because:
+      "a session the hub gave up on has every later record answered 200 / " +
+      "accepted:0 while the spool cursor advances past it — the whole " +
+      "afternoon lost with no drop counter and no WARN",
+  },
+  {
+    // Trial finding M2. Without the post-race marker write, nothing on the
+    // machine records that a hook ever ran, and every hook check in doctor
+    // falls back to reading configuration — which is what let eleven of its
+    // twenty-six lines PASS while the thing they name was dead.
+    label: "no hook records that it fired",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    if (resolved.value !== null) {",
+    to: "    if ((resolved.value as unknown) === undefined) {",
+    test: `${CONNECTOR}/test/hooks-fired-marker.test.ts`,
+    because:
+      "an agent that predates the wiring, a launcher lost to `nvm use` and a " +
+      "CROSSCHECK_DISABLED all read PASS again, because configuration is the " +
+      "only thing left to read",
+  },
+  {
+    // Trial finding M6. The reaper's whole safety AND its whole point live in
+    // this predicate; dropping the staleness half would close live sessions,
+    // so the mutation drops the OTHER half — the cutoff — which is the
+    // "104 of 127 sessions never ended" state restored.
+    label: "the hub reaper never finds a stale session",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from:
+      "        lt(agentSessions.lastHeartbeatAt, cutoff)," + "\n" +
+      "        ...(options.developerId === undefined",
+    to:
+      "        lt(agentSessions.lastHeartbeatAt, new Date(0))," + "\n" +
+      "        ...(options.developerId === undefined",
+    test: `${SERVER}/test/session-reaper.test.ts`,
+    because:
+      "sessions that stopped heartbeating stay open forever — presence, every " +
+      "listing and /api/events all keep reporting work nobody is doing, which " +
+      "is the state the trial hub was in",
+  },
+  {
+    // Review finding B2-03. `?open=1` answers rows that are open AND silent.
+    // Dropping the second half puts the caller's own running session in the
+    // count, which is what made doctor's line WARN for as long as anybody
+    // was working.
+    label: "the open-sessions listing counts sessions that are running",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from:
+      "        lt(agentSessions.lastHeartbeatAt, cutoff)," + "\n" +
+      "        ...(options.mine === true",
+    to: "        ...(options.mine === true",
+    test: `${SERVER}/test/session-reaper.test.ts`,
+    because:
+      "doctor's `unclosed sessions` line WARNs from a developer's first " +
+      "session onward, so its PASS state is unreachable while they work and " +
+      "the check never exits 0 again",
+  },
+  {
+    // Trial finding M1. The capture line's ONLY reachable alarm is the
+    // fires-without-targets case; downgrading it to PASS restores the silence
+    // in which a session whose every edit was discarded looked healthy.
+    // RE-POINTED at the surviving check when the two capture implementations
+    // were merged: the pure `captureCheck` this used to mutate is gone with
+    // the second surface it belonged to, and `captureChecks` is the one line
+    // left. Same defect, same guard file.
+    label: "capture reports edits that became nothing as healthy",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    return isCaptureSilentlyDead(session)" + "\n" + "      ? check(" + "\n" + '          "WARN",',
+    to: "    return isCaptureSilentlyDead(session)" + "\n" + "      ? check(" + "\n" + '          "PASS",',
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "a session editing files in a different worktree captures nothing, and " +
+      "doctor prints 24 PASS lines with no sentence about the thing that " +
+      "stopped working",
+  },
+  {
+    // Review finding B2-04, ported onto this side's predicate when the two
+    // capture checks were merged. Dropping the liveness term makes a CORPSE's
+    // counters raise the live-capture alarm again — a state file lives until
+    // SessionEnd and most sessions never end, so on a real home this WARNs
+    // about yesterday, every run, with a remedy nobody can trigger.
+    label: "a corpse's counters raise the live-capture alarm again",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "  !session.isStale &&\n  session.editToolFires >= DOCTOR_CAPTURE_SILENT_FIRES_WARN",
+    to: "  session.editToolFires >= DOCTOR_CAPTURE_SILENT_FIRES_WARN",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "every home is mostly corpses (the trial found 104 of 127 sessions " +
+      "never closed), so the check that exists to name a capture failing NOW " +
+      "cries wolf about dead ones and stops being read",
+  },
+  {
+    // The cut line says the read was TRUNCATED; the sentence under it must not
+    // then assert something about the whole machine. The one shape where that
+    // is wrong is the one that matters — a home with more state files than the
+    // cap whose only session of this repo is not among the newest of them.
+    label: "a truncated capture read still speaks for the whole machine",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    const where = cut.length === 0",
+    to: "    const where = true",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "`no open session of this repo on this machine` is printed under a line " +
+      "saying the reader looked at 200 of 240 state files",
+  },
+  {
+    // The absent-versus-zero distinction on the capture line. The schema
+    // defaults the counters to 0 so a pre-#17 state file parses; printing that
+    // zero fabricates a measurement for a session that may have been editing
+    // all morning under a connector that did not write them.
+    label: "the capture line prints a defaulted zero as a measurement",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const counters = session.countersMeasured",
+    to: "  const counters = true",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "a developer who upgraded mid-session reads `0 edit-tool fires → 0 " +
+      "targets` as a healthy measured zero rather than as a session whose " +
+      "counters did not exist when it started",
+  },
+  {
+    // Review finding M3 in miniature: a line that blames the hub for a local
+    // credential problem. Collapsing the two failures makes the hints line
+    // assert a network fault under `FAIL hub reachable invalid api key`.
+    label: "the hints line calls a rejected key an unreachable hub",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from:
+      '      contexts.kind === "network"' +
+      "\n" +
+      '        ? "not measured (hub unreachable)"' +
+      "\n" +
+      '        : "not measured",',
+    to: '      "not measured (hub unreachable)",',
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "a developer whose key was rotated reads three lines about one hub, one " +
+      "of them asserting a network failure that did not happen",
+  },
+  {
+    // Review finding B2-L2, the other half: the four gates must read the SAME
+    // scan, not merely the same predicate. Dropping the argument puts doctor
+    // back on the narrow default cap for its capture and hints lines while the
+    // rest of the report is derived from the same read — which is how one run
+    // printed `no open session of this repo on this machine` beside `the
+    // session is running`.
+    label: "doctor answers 'is a session live' from two different scans",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    now,\n    SESSION_STATE_SCAN_MAX_FILES,\n  );",
+    to: "    now,\n  );",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "on a home with more than fifty state files the capture and hints lines " +
+      "are computed over a different set than the four liveness gates, and " +
+      "the report contradicts itself about whether a session is running",
+  },
+  {
+    // The mtime half of `sessionSilentForMs`. `lastHeartbeatAt` has exactly two
+    // writers in the tree, and PostToolUse returns BEFORE its heartbeat on the
+    // foreign-repo path (#9's first-wins rule), so a session whose every edit
+    // lands in another checkout books fires and drops forever without one.
+    // Measuring silence from the stamp alone makes that session read as a
+    // corpse a day in — the one shape the capture WARN exists to name.
+    label: "liveness ignores that the session just wrote its own state file",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "sessionSilentForMs(state, file.mtimeMs, nowMs)",
+    to: "sessionSilentForMs(state, null, nowMs)",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "24 hours in, doctor PASSes a session that is dropping every edit right " +
+      "now while status on the same machine tells the reader to run doctor",
+  },
+  {
+    // Trial finding H6, the SMALLER half. The desktop app is one process on
+    // the author's Mac — `ps -axo comm= | awk -F/ 'tolower($NF)=="claude"'
+    // | grep -c "\.app/Contents/"` prints 1, because the framework helpers are
+    // named `Claude Helper` and never basename to `claude` at all. So this
+    // exclusion is not what un-hid anything; it keeps the "N agents checked"
+    // count honest, which is what the guard asserts (review finding B2-L4).
+    label: "agent-restart counts desktop-app helpers as coding agents",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      (candidate) => !APP_BUNDLE_PATTERN.test(candidate.command),",
+    to: "      () => true,",
+    test: `${CLI}/test/agent-restart.test.ts`,
+    because:
+      "the desktop app is counted as a coding agent, so the line reports an " +
+      "examined agent that loads no hooks and whose cwd is `/`",
+  },
+  {
+    // Trial finding H6, the LOAD-BEARING half: ps order is arbitrary, so a
+    // truncation that happens in it drops candidates at random.
+    label: "agent-restart truncates its candidates in arbitrary ps order",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      .sort((left, right) => right.startedAtMs - left.startedAtMs)" + "\n" + "      .slice(0, DOCTOR_AGENT_MAX_CWD_PROBES);",
+    to: "      .slice(0, 8);",
+    test: `${CLI}/test/agent-restart.test.ts`,
+    because:
+      "a real agent that ps happens to list past the cap reads PASS no " +
+      "running agent predates the hooks — on the author's Mac 16 processes " +
+      "basename to `claude`, so a cap of eight left half of them unexamined",
+  },
+  {
+    label: "the summarizer cost line reads an arbitrary half of the sessions",
+    file: `${CORE}/src/state/session-scan.ts`,
+    from: "    .sort((left, right) => right.mtimeMs - left.mtimeMs)",
+    to: "    .sort((left, right) => left.name.localeCompare(right.name))",
+    test: `${CLI}/test/summarizer-cost.test.ts`,
+    because:
+      "the cost and the silently-dead WARN are computed from whichever files " +
+      "the slice happened to land on, so the same machine reports different " +
+      "spend depending on filesystem order",
+  },
   // ── Trial findings #17/#19/#20/#25: capture signal ───────────────────────
   {
     // #17: an edit in a linked git worktree of the SAME repo resolved to null
@@ -1481,10 +1745,13 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // #17/#20: the state-file cap must be spent on the NEWEST states. In
     // readdir order (OS hash order over UUID names) the cut is arbitrary, and
-    // the live session of this repo can miss the window entirely.
+    // the live session of this repo can miss the window entirely. The sort
+    // moved into the shared listing when capture health stopped keeping a
+    // second copy of readdir+stat+sort+bound; every reader of session state
+    // now rides on this one line.
     label: "the state-file cap is spent in readdir order again",
-    file: `${CORE}/src/state/capture-health.ts`,
-    from: "    .sort((a, b) => b.modifiedAt - a.modifiedAt)",
+    file: `${CORE}/src/state/session-scan.ts`,
+    from: "    .sort((left, right) => right.mtimeMs - left.mtimeMs)",
     to: "    .sort(() => 0)",
     test: `${CLI}/test/capture-health.test.ts`,
     because:
@@ -1630,7 +1897,7 @@ interface Outcome {
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
- * PRINTS: agent-restart.test.ts 1
+ * PRINTS: agent-restart.test.ts 3
  * PRINTS: briefing-parity.test.ts 2
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
@@ -1639,7 +1906,10 @@ interface Outcome {
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
+ * PRINTS: doctor-capture.test.ts 7
  * PRINTS: doctor-global.test.ts 1
+ * PRINTS: doctor-hooks-firing.test.ts 1
+ * PRINTS: doctor-last-sync.test.ts 1
  * PRINTS: doctor-latency.test.ts 1
  * PRINTS: doctor-summarizer-runner.test.ts 1
  * PRINTS: doctor.test.ts 1
@@ -1654,6 +1924,7 @@ interface Outcome {
  * PRINTS: hints.test.ts 2
  * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
+ * PRINTS: hooks-fired-marker.test.ts 1
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: injection.test.ts 2
  * PRINTS: injector.test.ts 4
@@ -1667,17 +1938,20 @@ interface Outcome {
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search.test.ts 3
+ * PRINTS: session-reap-liveness.test.ts 1
+ * PRINTS: session-reaper.test.ts 2
  * PRINTS: session-refire.test.ts 1
  * PRINTS: session-state-transforms.test.ts 1
  * PRINTS: sessions.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
+ * PRINTS: spool-durability.test.ts 1
  * PRINTS: stop-gate.test.ts 1
  * PRINTS: stop-hook.test.ts 1
  * PRINTS: stop-latency.test.ts 1
  * PRINTS: summarizer-argv.test.ts 1
  * PRINTS: summarizer-child-guard.test.ts 1
- * PRINTS: summarizer-cost.test.ts 1
+ * PRINTS: summarizer-cost.test.ts 2
  * PRINTS: summarizer-worker-env.test.ts 1
  * PRINTS: touched-root.test.ts 3
  * PRINTS: transparency.test.ts 1

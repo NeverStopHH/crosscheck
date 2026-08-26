@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   ended_at timestamptz
 );
 
+-- Reap bookkeeping (review finding B2-01): tells a hub-inferred end from a
+-- connector-reported one, so the inferred one can be revoked when a record
+-- from that session proves it wrong. ALTER so one statement covers fresh
+-- databases and ones created before the column.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS reaped_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS agent_sessions_repo_idx
   ON agent_sessions (repo);
 CREATE INDEX IF NOT EXISTS agent_sessions_heartbeat_idx

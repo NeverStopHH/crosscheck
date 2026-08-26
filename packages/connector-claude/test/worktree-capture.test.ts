@@ -87,6 +87,8 @@ const sessionState = (repoRoot: string): SessionState => ({
   summarizerDraftCount: 0,
   summarizerFailCount: 0,
   summarizerLastFailure: null,
+  summarizerUnparsedCount: 0,
+  intentFireCount: 0,
 });
 
 const env = (home: string): Env => ({

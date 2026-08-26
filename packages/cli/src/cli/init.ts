@@ -20,6 +20,8 @@ import {
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { mergeMcpConfig } from "@crosscheck/connector-core/config/mcp-config.ts";
 import {
+  isVersionManagerPath,
+  realpathOrSelf,
   resolveCommandPrefix,
   resolveLauncher as resolveLauncherWithEntry,
   resolveMcpLauncher,
@@ -27,6 +29,7 @@ import {
 import type { Launcher } from "@crosscheck/connector-core/config/launcher.ts";
 import { buildSettingsPlan, mergeClaudeSettings } from "@crosscheck/connector-claude";
 import { readGlobalWiring } from "./doctor-global.ts";
+import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
 import {
   backUp,
   readJsonConfig,
@@ -251,6 +254,7 @@ export const runInit = async (
   // install must not veto it — but the double wiring is said out loud with
   // the cleanup command, never left for someone to discover via doctor.
   const globalWiring = await readGlobalWiring(env);
+  const mcpIgnored = await isPathIgnored(identity.root, MCP_CONFIG_FILE);
 
   const notes = [
     ...(merged.statuslineInstalled
@@ -261,6 +265,17 @@ export const runInit = async (
     // The entry launcher is an absolute path of THIS machine. It runs here —
     // that is the point — but the committed .mcp.json will not run for a
     // teammate until they rerun init (or put crosscheck on PATH) themselves.
+    // Trial finding M9: the bare `crosscheck` on PATH belongs to ONE runtime
+    // version here, so `nvm use` (or a node upgrade) takes the name with it
+    // and every hook fires exit 127 until somebody reruns init. Said at write
+    // time because that is when the choice is being made; doctor's `hook
+    // launcher` line repeats it for installs that already exist.
+    ...(launcher.kind === "bare" &&
+    isVersionManagerPath(await realpathOrSelf(launcher.path))
+      ? [
+          `note: ${launcher.path} resolves through a node version manager — the hooks' bare \`crosscheck\` disappears on \`nvm use\` or a runtime upgrade; pin it with ${INIT_COMMAND_PREFIX_FLAG} "<bun> <entry>" if you switch versions`,
+        ]
+      : []),
     ...(launcher.kind === "entry"
       ? [
           "launcher is an absolute path on this machine — teammates must run crosscheck init once too (or npm install -g crosscheck-hub)",
@@ -282,7 +297,14 @@ export const runInit = async (
       // Said explicitly because it is the ONLY delivery mechanism: a teammate
       // gets the tools from this file arriving in their checkout, and nowhere
       // else. An uncommitted .mcp.json is an install that works for one person.
-      `commit ${MCP_CONFIG_FILE} so teammates get the mcp tools on git pull`,
+      //
+      // Unless the repo ignores it (trial finding M11) — in the monorepo the
+      // trial ran in, `.mcp.json` sits at `.gitignore:5`, so "commit it" was
+      // advice nobody could follow and the real remedy was never printed. A
+      // `null` verdict (git could not answer) keeps the original line.
+      mcpIgnored === true
+        ? `${MCP_CONFIG_FILE} is gitignored in this repo, so teammates cannot receive it — they need \`crosscheck init --global\` on their own machines`
+        : `commit ${MCP_CONFIG_FILE} so teammates get the mcp tools on git pull`,
       // The same one-PR rule for the Cursor pair — and the gitignore warning
       // the design's rules-file rejection earned: an ignored .cursor/ is an
       // install that silently works for one person only.

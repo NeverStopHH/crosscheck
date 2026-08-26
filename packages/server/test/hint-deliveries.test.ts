@@ -199,6 +199,14 @@ describe("get_diagnosis marks deliveries pulled (the precision loop)", () => {
   });
 });
 
+/**
+ * WHICH IMPLEMENTATION THESE GUARD, after the #20 and M1 rounds were merged:
+ * `readHintStats`, the one reader left on this route. It kept #20's trailing
+ * window (`windowDays`, clamped) and gained M1's repo-wide `claims` count,
+ * which is deliberately NOT windowed — a claim published before the window
+ * still gives a hint something to point at — so it appears in every body
+ * below and moves with the repo, not with the delivery window.
+ */
 describe("GET /api/hints/stats — delivered/pulled per repo (trial finding #20)", () => {
   const REPO = "github.com/acme/api";
   const statsFor = async (
@@ -250,9 +258,10 @@ describe("GET /api/hints/stats — delivered/pulled per repo (trial finding #20)
     // Act
     const result = await statsFor(harness, developer, `?repo=${encodeURIComponent(REPO)}`);
 
-    // Assert: 2 in the 7-day window, 1 pulled, the window stated
+    // Assert: 2 in the 7-day window, 1 pulled, the window stated, and the
+    // repo's one claim — the seeded tree's, outside the window question
     expect(result.status).toBe(200);
-    expect(result.data).toEqual({ delivered: 2, pulled: 1, windowDays: 7 });
+    expect(result.data).toEqual({ delivered: 2, pulled: 1, windowDays: 7, claims: 1 });
   });
 
   test("another repo's deliveries do not count", async () => {
@@ -282,9 +291,10 @@ describe("GET /api/hints/stats — delivered/pulled per repo (trial finding #20)
       `?repo=${encodeURIComponent("github.com/acme/web")}`,
     );
 
-    // Assert
-    expect(api.data).toEqual({ delivered: 0, pulled: 0, windowDays: 7 });
-    expect(web.data).toEqual({ delivered: 1, pulled: 0, windowDays: 7 });
+    // Assert: `claims` is repo-scoped the same way the deliveries are — the
+    // seeded tree is on api, and web has nothing published on it at all
+    expect(api.data).toEqual({ delivered: 0, pulled: 0, windowDays: 7, claims: 1 });
+    expect(web.data).toEqual({ delivered: 1, pulled: 0, windowDays: 7, claims: 0 });
   });
 
   test("the window is bounded: days is clamped to the maximum, repo is required", async () => {

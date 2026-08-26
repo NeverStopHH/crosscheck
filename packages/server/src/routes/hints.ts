@@ -1,8 +1,9 @@
 /**
  * GET /api/hints/candidates — one bounded call for the UserPromptSubmit hook.
  * GET /api/hints/tripwire — one bounded call for the PreToolUse tripwire.
- * GET /api/hints/stats — delivered/pulled per repo over a bounded window, for
- *   `crosscheck doctor`/`status` (trial finding #20); read-only.
+ * GET /api/hints/stats — delivered/pulled per repo over a bounded window plus
+ *   the repo's claim count, for `crosscheck doctor`/`status` (trial findings
+ *   #20 + M1); read-only.
  *
  * Both serve hook paths with hard sync budgets (DESIGN.md §4), so both are a
  * single service call over bounded queries; ranking beyond the search service
@@ -82,6 +83,14 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     return ok(c, { sessions });
   });
 
+  /**
+   * GET /api/hints/stats — delivered/pulled over the window plus the repo's
+   * claim count, so a connector can say whether hints are reaching anybody
+   * (trial findings #20 + M1).
+   *
+   * NOT on a hook path: `crosscheck status` and `doctor` call it, both
+   * human-run, and both degrade to "not measured" when an older hub 404s it.
+   */
   router.get("/stats", async (c) => {
     const parsed = StatsQuerySchema.safeParse({
       repo: c.req.query("repo"),
