@@ -25,7 +25,7 @@ import { join } from "node:path";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
-import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
+import { DERIVED_CONFIDENCE_CAP, MAX_INTENT_SUMMARY_CHARS } from "@crosscheck/schema";
 
 import {
   GHOST_DERIVED_CONFIDENCE,
@@ -39,7 +39,7 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
-import { runGhostWorker } from "../src/ghost/worker.ts";
+import { intentSummaryOf, runGhostWorker } from "../src/ghost/worker.ts";
 
 const ADMIN_TOKEN = "ghost-worker-admin";
 const REPO_ID = "github.com/acme/api";
@@ -553,6 +553,34 @@ describe("the gated ghost check", () => {
     expect(state.ghostLastFailure).toBeNull();
     expect(state.ghostFireCount).toBe(0);
     expect(state.ghostNoOverlapCount).toBe(0);
+  });
+
+  test("a teammate's intent reaches the model bounded", () => {
+    // The hub caps its own writes at MAX_INTENT_SUMMARY_CHARS, so this shape
+    // needs a MODIFIED hub — which is the threat model mcp-hostile-hub.test.ts
+    // exists for. Every other input to this prompt is bounded by the connector
+    // itself (GHOST_CLAIM_BODY_MAX_CHARS, GHOST_MAX_TEAMMATE_CLAIMS); this one
+    // went to `claude -p` on the developer's own quota exactly as it arrived.
+    const entry = {
+      workContextId: ken.workContextId,
+      title: "Session store migration",
+      developerId: ken.developerId,
+      developerName: "Ken",
+      intent: {
+        summary: "x".repeat(MAX_INTENT_SUMMARY_CHARS * 50),
+        provenance: "declared",
+      },
+      lastActiveAt: new Date().toISOString(),
+      sharedTargets: [],
+      sharedTargetCount: 2,
+      intentTokenHits: 0,
+    };
+    expect(intentSummaryOf(entry).length).toBe(MAX_INTENT_SUMMARY_CHARS);
+    // The control: an ordinary sentence is passed through untouched.
+    expect(
+      intentSummaryOf({ ...entry, intent: { summary: THEIR_INTENT, provenance: "declared" } }),
+    ).toBe(THEIR_INTENT);
+    expect(intentSummaryOf({ ...entry, intent: null })).toBe("");
   });
 
   test("a session with no intent of its own compares nothing", async () => {

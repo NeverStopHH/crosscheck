@@ -36,6 +36,7 @@ import {
   GHOST_DERIVED_CONFIDENCE,
   GHOST_SENTENCE_MAX_CHARS,
 } from "@crosscheck/connector-core/constants.ts";
+import { MAX_INTENT_SUMMARY_CHARS } from "@crosscheck/schema";
 import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
 import { loadReportableConfig } from "@crosscheck/connector-core/config/config.ts";
 import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
@@ -148,10 +149,25 @@ const hubFor = async (
   };
 };
 
-/** The teammate's stated sentence, or "" — the wire intent is tolerant. */
-const intentSummaryOf = (entry: GhostCheckEntry): string => {
+/**
+ * The teammate's stated sentence, or "" — the wire intent is tolerant.
+ *
+ * BOUNDED HERE, and it is the only input to this prompt that was not. The
+ * claim bodies are cut at GHOST_CLAIM_BODY_MAX_CHARS and counted at
+ * GHOST_MAX_TEAMMATE_CLAIMS, and the reader's own intent was bounded when it
+ * was written; this one arrived off the wire, where IntentEntrySchema is
+ * deliberately tolerant and carries no maximum. An ordinary hub caps its own
+ * writes at MAX_INTENT_SUMMARY_CHARS, so this cut only ever bites on a
+ * modified or hostile one — which is precisely the hub this codebase assumes
+ * (test/mcp-hostile-hub.test.ts), and the cost of trusting it here is a
+ * multi-megabyte stdin spent on the developer's own model quota, booked as an
+ * ordinary runner loss with nothing to say why.
+ */
+export const intentSummaryOf = (entry: GhostCheckEntry): string => {
   const intent = entry.intent;
-  return intent === null || intent === undefined ? "" : intent.summary;
+  return intent === null || intent === undefined
+    ? ""
+    : cutWellFormed(intent.summary, MAX_INTENT_SUMMARY_CHARS);
 };
 
 const runGhostCheck = async (

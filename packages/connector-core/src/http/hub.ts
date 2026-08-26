@@ -30,6 +30,11 @@ export type { HubContext, HubResult } from "./client.ts";
  * which is strict because nobody but this connector writes the field.
  */
 export const IntentEntrySchema = z.looseObject({
+  // No maximum on purpose, and every CONSUMER therefore owes one: dropping a
+  // whole intent because a hub sent a long one would cost an ordinary row its
+  // plan clause. The renderers cut at INTENT_MAX_CHARS (briefing/intent.ts)
+  // and the ghost worker at MAX_INTENT_SUMMARY_CHARS before this sentence
+  // reaches a model's stdin (connector-claude ghost/worker.ts).
   summary: z.string().min(1),
   provenance: z.string().min(1),
   confidence: z.number().min(0).max(1).optional(),
