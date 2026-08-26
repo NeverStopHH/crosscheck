@@ -454,6 +454,34 @@ export const MUTATIONS: readonly Mutation[] = [
       "every other search test green",
   },
   {
+    // The bound that keeps the shared-target join from being quadratic in
+    // one busy repo's traffic. Removing it puts every context that ever
+    // shared a value back into the join.
+    label: "a crowded hub hides the answer it is holding",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "        solvedCandidateCondition(workContextTargets.workContextId),\n",
+    to: "",
+    test: `${SERVER}/test/solved-fanout.test.ts`,
+    because:
+      "400 unsolved contexts sharing one hot fingerprint fill the pair " +
+      "window ahead of the single solved tree that shares it, so the " +
+      "briefing says nothing on exactly the busy hub where the team memory " +
+      "is worth the most — measured at 1.2 s and zero matches",
+  },
+  {
+    // The live side's own bound: without it the "current work" half of the
+    // match is not current, not work, and not on this repo.
+    label: "any context anywhere counts as current work",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "        inArray(liveTargets.workContextId, liveIds),\n",
+    to: "",
+    test: `${SERVER}/test/solved-fanout.test.ts`,
+    because:
+      "a tree whose only partner is a context abandoned three months ago, " +
+      "or one in somebody else's checkout, is announced at SessionStart as " +
+      "matching work happening now",
+  },
+  {
     // VISION.md §1 across repos: the fingerprint is the ONE identity that
     // travels, and this puts the candidate side back inside the asking repo.
     label: "a solved answer in another repo stops being found",
@@ -2295,6 +2323,7 @@ interface Outcome {
  * PRINTS: solved-cli.test.ts 1
  * PRINTS: solved-counts.test.ts 1
  * PRINTS: solved-cross-repo.test.ts 4
+ * PRINTS: solved-fanout.test.ts 2
  * PRINTS: solved-hint-flow.test.ts 2
  * PRINTS: solved-intent.test.ts 3
  * PRINTS: solved-ranking.test.ts 2

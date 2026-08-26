@@ -31,7 +31,7 @@
  * knowledge is what the floor protects; presentation states each separately.
  */
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import type { SQL } from "drizzle-orm";
+import type { AnyColumn, SQL } from "drizzle-orm";
 
 import { claimEdges, claims } from "../db/schema.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
@@ -104,6 +104,36 @@ const solvedClaimCondition = (contextIds: readonly string[]): SQL =>
         )
     )`,
   ) as SQL;
+
+/**
+ * A NECESSARY condition for solvedness, as a correlated EXISTS over whichever
+ * work-context column a listing already has in hand — the cheap half of the
+ * predicate above (status + provenance + evidence), WITHOUT the supersedes
+ * and deadlock probes.
+ *
+ * WHY A SECOND, WEAKER SPELLING EXISTS at all, when this file's whole point
+ * is that the solved rule has one: because a listing that JOINS to find
+ * candidates has to bound what it reads BEFORE it can ask a claims-side
+ * question about each one, and "every context that ever shared this value"
+ * is not a bounded set. The solved-match listing paid for that with a
+ * measured 1.2 s and, worse, with the answer itself falling out of its own
+ * LIMIT behind hundreds of unsolved contexts sharing one hot fingerprint
+ * (test/solved-fanout.test.ts).
+ *
+ * THE DIRECTION IS THE CONTRACT: this may over-include, never under-include.
+ * It admits a superseded or deadlocked tree; `listSolvedInfo` — still run by
+ * every caller afterwards, on the ids this narrowed down to — then refuses
+ * it. So the trust rule keeps exactly one spelling; this is a read bound
+ * wearing its shape, and a tree it wrongly admits costs a row, never a claim.
+ */
+export const solvedCandidateCondition = (contextId: SQL | AnyColumn): SQL =>
+  sql`EXISTS (
+    SELECT 1 FROM claims sc
+     WHERE sc.work_context_id = ${contextId}
+       AND sc.status = ${SOLVED_CLAIM_STATUS}
+       AND sc.provenance = ${DECLARED_PROVENANCE}
+       AND jsonb_array_length(sc.evidence_refs) >= ${SOLVED_MIN_EVIDENCE_REFS}
+  )`;
 
 /**
  * Which of `contextIds` are solved, and when — `solvedAt` is the newest

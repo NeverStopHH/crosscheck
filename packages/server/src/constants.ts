@@ -56,6 +56,14 @@ export const SOLVED_MATCH_ACTIVE_WINDOW_DAYS = 14;
 export const SOLVED_MATCH_MAX_FINDINGS = 5;
 /** Read bound on shared-target pair rows considered per query. */
 export const SOLVED_MATCH_MAX_PAIR_ROWS = 200;
+/**
+ * Read bound on the LIVE side of the shared-target join: the repo's most
+ * recently active contexts, and no more. "Current work" is a small set by
+ * definition — the briefing itself shows a handful — and this is the cap that
+ * keeps a self-join of the target table from being quadratic in the traffic
+ * of one busy repo (services/solved-matches.ts states the measurement).
+ */
+export const SOLVED_MATCH_MAX_LIVE_CONTEXTS = 200;
 
 /**
  * The INTENT tier (VISION.md §1: symptoms are fingerprints, targets AND the

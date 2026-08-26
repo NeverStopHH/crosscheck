@@ -22,6 +22,7 @@ import { alias } from "drizzle-orm/pg-core";
 
 import {
   SOLVED_MATCH_ACTIVE_WINDOW_DAYS,
+  SOLVED_MATCH_MAX_LIVE_CONTEXTS,
   SOLVED_MATCH_INTENT_MIN_TOKEN_HITS,
   SOLVED_MATCH_MAX_FINDINGS,
   SOLVED_MATCH_MAX_INTENT_CANDIDATES,
@@ -38,7 +39,11 @@ import {
   workContextTargets,
 } from "../db/schema.ts";
 import { ftsTokens } from "./search.ts";
-import { listSolvedInfo, listSolvedRootCauses } from "./solved.ts";
+import {
+  listSolvedInfo,
+  listSolvedRootCauses,
+  solvedCandidateCondition,
+} from "./solved.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -123,10 +128,32 @@ interface PairRow {
 
 /**
  * (candidate, live, kind) triples where candidate and live share a strong
- * target and the live side was active inside the window on this repo. Both
- * sides may still be unsolved here — solvedness is resolved after, in one
- * bounded lookup, because the solved rule is a claims-side predicate this
- * join has no business duplicating.
+ * target and the live side was active inside the window on this repo.
+ *
+ * BOUNDED ON BOTH SIDES BEFORE THEY MEET, which is the whole shape of this
+ * query and was learned the hard way. A join of the target table against
+ * itself makes a row per PAIR, so N contexts sharing one value — a lockfile,
+ * or the error every session hits — cost N², and the LIMIT can only apply
+ * after the ORDER BY has materialized all of them. Measured on a seeded hub
+ * of 10^4 contexts: 1.2 s with 2000 contexts sharing one fingerprint, on the
+ * SessionStart path whose whole hook budget is 1000 ms. Worse than the time,
+ * the ANSWER fell out: 400 unsolved contexts sharing a hot fingerprint fill
+ * the pair window ahead of the one solved tree that shares it, so the busiest
+ * hub is the one where collective memory silently says nothing
+ * (test/solved-fanout.test.ts). Hence two bounds:
+ *
+ *   - the CANDIDATE side must already hold a claim that could make it solved
+ *     (solvedCandidateCondition — necessary, never sufficient, with the
+ *     authoritative rule still applied by listSolvedInfo below). Unsolved
+ *     crowds never enter the join at all, which is what makes both the cost
+ *     and the window a function of ANSWERS rather than of traffic;
+ *   - the LIVE side is the repo's most recently active contexts, capped at
+ *     SOLVED_MATCH_MAX_LIVE_CONTEXTS. "Current work" is a small set by
+ *     definition, and capping it caps the multiplier that is left.
+ *
+ * Both sides may still be unsolved after all that — solvedness is resolved
+ * once, in one bounded lookup, because the full solved rule is a claims-side
+ * predicate this join has no business duplicating.
  */
 const listSharedTargetPairs = async (
   deps: Deps,
@@ -139,6 +166,27 @@ const listSharedTargetPairs = async (
   const cutoff = new Date(
     deps.now().getTime() - SOLVED_MATCH_ACTIVE_WINDOW_DAYS * MS_PER_DAY,
   );
+  // The live side, bounded before it multiplies anything: the repo's freshest
+  // active contexts, and no more of them than the cap. Ordered by activity so
+  // the cap drops the stalest work rather than an arbitrary page.
+  const liveIds = deps.db
+    .select({ id: liveContexts.id })
+    .from(liveContexts)
+    .innerJoin(liveSessions, eq(liveContexts.sessionId, liveSessions.id))
+    .where(
+      and(
+        eq(liveSessions.repo, repo),
+        gte(
+          sql`coalesce(${liveContexts.updatedAt}, ${liveContexts.createdAt})`,
+          cutoff,
+        ),
+      ),
+    )
+    .orderBy(
+      desc(sql`coalesce(${liveContexts.updatedAt}, ${liveContexts.createdAt})`),
+      asc(liveContexts.id),
+    )
+    .limit(SOLVED_MATCH_MAX_LIVE_CONTEXTS);
   return deps.db
     .selectDistinct({
       candidateId: workContextTargets.workContextId,
@@ -159,11 +207,13 @@ const listSharedTargetPairs = async (
       eq(workContexts.id, workContextTargets.workContextId),
     )
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .innerJoin(liveContexts, eq(liveContexts.id, liveTargets.workContextId))
-    .innerJoin(liveSessions, eq(liveContexts.sessionId, liveSessions.id))
     .where(
       and(
         inArray(workContextTargets.kind, [...MATCH_TARGET_KINDS]),
+        // Necessary, not sufficient (services/solved.ts): a candidate that
+        // could not become an answer never enters the join, so the pair count
+        // is a function of the hub's ANSWERS rather than of its traffic.
+        solvedCandidateCondition(workContextTargets.workContextId),
         // The CANDIDATE side may live anywhere on the hub, but only through
         // the content-identity kind (CROSS_REPO_TARGET_KIND): a fingerprint
         // travels, a repo-relative path does not. The LIVE side stays pinned
@@ -173,11 +223,7 @@ const listSharedTargetPairs = async (
           eq(workContextTargets.kind, CROSS_REPO_TARGET_KIND),
           eq(agentSessions.repo, repo),
         ),
-        eq(liveSessions.repo, repo),
-        gte(
-          sql`coalesce(${liveContexts.updatedAt}, ${liveContexts.createdAt})`,
-          cutoff,
-        ),
+        inArray(liveTargets.workContextId, liveIds),
         // The viewer's mutes apply to the CANDIDATE side — the solved author
         // this pointer would name in the briefing (services/visibility.ts).
         // The live side is not filtered: it is never named in the pointer.
