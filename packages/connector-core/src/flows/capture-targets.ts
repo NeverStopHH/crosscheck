@@ -46,11 +46,14 @@ export interface CaptureFileTargetsInput {
    * Per-path root override (trial finding #17): resolves the root a touched
    * file's repo-relative id is derived against — a linked worktree of the same
    * repo instead of the session's checkout — or null to DROP the path (a
-   * foreign or outside-root touch the caller has already counted). Omitted
-   * (Cursor, ACP) keeps the single-root behaviour: every path resolves against
-   * `repoRoot`, exactly as before. The Claude hook precomputes this map once
-   * (capture/touched-root.ts) so the git cost is paid at most once per new
-   * worktree root per session, not per tool call.
+   * foreign or outside-root touch the caller has already counted). Omitting it
+   * keeps the pre-#17 single-root behaviour: every path resolves against
+   * `repoRoot`. NO CONNECTOR OMITS IT ANY MORE — `flows/capture-touched-files.ts`
+   * is the one place that builds this call, and it precomputes the map once per
+   * event (capture/touched-root.ts) so the git cost is paid at most once per NEW
+   * worktree root per session, never per tool call. The option survives because
+   * it is the seam the unit tests drive, and because an ABSENT hook and one
+   * returning null must stay different answers.
    */
   readonly resolveRoot?: (path: string) => string | null;
 }
