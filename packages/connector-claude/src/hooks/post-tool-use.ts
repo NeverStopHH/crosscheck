@@ -10,21 +10,21 @@ import {
   isEditTool,
   isFailureResponse,
 } from "../capture/tool-events.ts";
-import {
-  captureFailure,
-  captureFileTargets,
-} from "@crosscheck/connector-core/flows/capture-targets.ts";
-import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
+import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
+import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSession } from "@crosscheck/connector-core/http/hub.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
+  diagnosisPath,
+  withCaptureBookkeeping,
+} from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
+import {
   claimSessionState,
   deriveSessionState,
   readSessionState,
   updateSessionState,
-  withKnownWorktreeRoot,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -169,6 +169,11 @@ export const handlePostToolUse = async (
   // this session reports to. The count is what keeps the drop honest.
   const editFired = isEditTool(ctx.payload.tool_name);
   if (state.repoId !== ctx.identity.repoId) {
+    // Screened and bounded exactly as the capture path's own #18 write is
+    // (connector-core/state/capture-bookkeeping.ts): this path comes from the
+    // MODEL's tool input, and `containsSecret` refuses the same string as a
+    // capture target.
+    const droppedPath = diagnosisPath(extractFilePaths(ctx.payload.tool_input)[0]);
     await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
       ...fresh,
       foreignRepoDrops: fresh.foreignRepoDrops + 1,
@@ -176,6 +181,18 @@ export const handlePostToolUse = async (
       // honest even when the cwd itself is a foreign repo (trial #17/#18).
       editToolFires: fresh.editToolFires + (editFired ? 1 : 0),
       lastPostToolUseTool: ctx.payload.tool_name ?? fresh.lastPostToolUseTool,
+      // ...and the #18 fields, but ONLY when nothing has filled them yet.
+      // doctor prints the drop counts exclusively inside its
+      // `lastEditedPath !== null` branch, so a session whose every edit was
+      // dropped here read `N edit-tool fires → 0 targets · last edited path
+      // resolved: no edit yet` — a line that denies the edits it has just
+      // counted and hides the number that explains them. A drop must still
+      // never ERASE a diagnosis a real capture produced: after a good in-repo
+      // edit, the last edited path stays that edit (pinned in
+      // test/worktree-capture.test.ts). Fill an empty one, overwrite none.
+      ...(editFired && droppedPath !== null && fresh.lastEditedPath === null
+        ? { lastEditedPath: droppedPath, lastEditedPathResolvedAgainst: null }
+        : {}),
     }));
     return "";
   }
@@ -192,23 +209,10 @@ export const handlePostToolUse = async (
   // resolvable root of this repo. ONE pre-pass, so the git cost is paid at
   // most once per NEW worktree root per session (the cache), never per tool.
   const paths = extractFilePaths(ctx.payload.tool_input);
-  const resolution =
-    paths.length === 0
-      ? null
-      : await resolveTouchedRoots({
-          paths,
-          cwd: ctx.payload.cwd,
-          sessionRepoRoot: state.repoRoot,
-          sessionRepoId: state.repoId,
-          identityRoot: ctx.identity.root,
-          identityRepoId: ctx.identity.repoId,
-          knownWorktreeRoots: state.knownWorktreeRoots,
-        });
-  // The §1.3 flows (flows/capture-targets.ts): targets first, then the
-  // fingerprint — the same spool order the combined batch used to produce.
-  // Claude-side stays exactly the payload parsing: which fields carry paths,
-  // what counts as a failure response.
-  const files = await captureFileTargets({
+  // The §1.3 flows: targets first, then the fingerprint — the same spool order
+  // the combined batch used to produce. Claude-side stays exactly the payload
+  // parsing: which fields carry paths, what counts as a failure response.
+  const { captured: files, resolution } = await captureTouchedFiles({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
     hostSessionKey: ctx.payload.session_id,
@@ -220,11 +224,10 @@ export const handlePostToolUse = async (
     workContextId: state.workContextId,
     producer,
     now,
-    // #17: the file's own worktree root, precomputed above; null drops the
-    // path (foreign/outside — already counted in `resolution`).
-    ...(resolution === null
-      ? {}
-      : { resolveRoot: (path: string) => resolution.rootByPath.get(path) ?? null }),
+    sessionRepoId: state.repoId,
+    identityRoot: ctx.identity.root,
+    identityRepoId: ctx.identity.repoId,
+    knownWorktreeRoots: state.knownWorktreeRoots,
   });
   if (isFailureResponse(ctx.payload.tool_response)) {
     await captureFailure({
@@ -254,33 +257,16 @@ export const handlePostToolUse = async (
   // tripwire marker inside this hook's window, and a stale whole-file write
   // here would erase it (test/state-race.test.ts). The #17 root cache and the
   // #18/#20 capture counters fold in here too — the ONE mid-session write.
-  await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
-    let next = withSeenTargets(fresh, files);
-    for (const entry of resolution?.newlyResolved ?? []) {
-      next = withKnownWorktreeRoot(
-        next,
-        entry.root,
-        entry.repoId,
-        entry.attempts,
-      );
-    }
-    return {
-      ...next,
-      ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
-      editToolFires: fresh.editToolFires + (editFired ? 1 : 0),
-      targetsCapturedCount: fresh.targetsCapturedCount + files.length,
-      ...(files.length > 0 ? { lastTargetAt: now.toISOString() } : {}),
-      lastPostToolUseTool: ctx.payload.tool_name ?? fresh.lastPostToolUseTool,
-      foreignRepoDrops: fresh.foreignRepoDrops + (resolution?.foreignDrops ?? 0),
-      outsideRootDrops: fresh.outsideRootDrops + (resolution?.outsideDrops ?? 0),
-      ...(editFired && paths.length > 0
-        ? {
-            lastEditedPath: paths[0] ?? fresh.lastEditedPath,
-            lastEditedPathResolvedAgainst:
-              resolution?.firstResolvedRoot ?? null,
-          }
-        : {}),
-    };
-  });
+  await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
+    ...withCaptureBookkeeping(withSeenTargets(fresh, files), {
+      resolution,
+      capturedCount: files.length,
+      editFired,
+      toolLabel: ctx.payload.tool_name ?? null,
+      firstPath: paths[0] ?? null,
+      now,
+    }),
+    ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
+  }));
   return "";
 };

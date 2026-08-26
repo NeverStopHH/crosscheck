@@ -94,7 +94,13 @@ const resolveEditedFile = async (
     await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
       resolution.newlyResolved.reduce(
         (next, entry) =>
-          withKnownWorktreeRoot(next, entry.root, entry.repoId, entry.attempts),
+          withKnownWorktreeRoot(
+            next,
+            entry.root,
+            entry.repoId,
+            entry.attempts,
+            entry.stamp,
+          ),
         fresh,
       ),
     );

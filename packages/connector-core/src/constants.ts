@@ -228,6 +228,18 @@ export const MAX_SEEN_TARGETS = 500;
 export const MAX_KNOWN_WORKTREE_ROOTS = 8;
 
 /**
+ * Tool-call ids an ACP session remembers as ALREADY having booked their
+ * edit-tool fire (capture/engine.ts). One fire belongs to one tool CALL, not
+ * to one wire row: an agent may announce a call with no `kind`, reveal
+ * `kind: "edit"` on a revision, and keep revising it as it runs. FIFO-capped
+ * like MAX_SEEN_TARGETS and for the same reason — a week-long proxy session
+ * must cost bounded memory. Evicting the oldest can only ever cost a DOUBLE
+ * count on a call still being revised after this many others have started,
+ * which is the same direction the cap has always traded in.
+ */
+export const MAX_FIRED_TOOL_CALLS = 256;
+
+/**
  * How many identity resolutions ONE unresolvable worktree root may cost a
  * session before its null is taken as final (trial finding #17).
  *

@@ -113,6 +113,93 @@ Everything fails open: if the hub is down, hooks print nothing, exit 0, and spoo
 
 **Capture and hint health are printed, not assumed** (trial findings #17–#20). Edits in a linked `git worktree` of the repo are captured under their repo-relative path whichever checkout the session registered at (the file's own worktree root decides, once per root per session, cached in session state); a touch of a *different* repo stays a counted `foreign-repo` drop and a file under no root of this repo is a counted `outside-root` drop. `crosscheck status` prints `targets: N captured by K open sessions (last …) · outside-root drops M` (every optional clause only when it is non-zero, like the `foreign-repo drops:` line), `hints: delivered N (hub 7d: D delivered, P pulled), candidates K` and `tripwire: ask|notice`; `crosscheck doctor` adds a per-session `capture` check — `N edit-tool fires → M targets · repoRoot … · heartbeat … · last tool … · last edited path resolved: yes (against …)|no — <the path> (…drops)` — that WARNs when 3+ edit-tool fires produced zero targets, a `hints` check that says what would make a hint possible when the hub holds 0 claims (a prompt naming a file a teammate's context touched now yields a body-less *targets-only* pointer; no claim needed), and a `tripwire mode` line. The hub's `GET /api/hints/stats?repo=…&days=7` and the `targetCount` on `GET /api/work-contexts` rows feed those lines. **Open, not live:** a session state file exists until `SessionEnd` deletes it, and most sessions never end, so a session silent for over a day is named `idle` rather than counted as running; the reader takes the newest state files by mtime — 50 for `status`, 200 for `doctor`, whose every liveness line is derived from that one read so no two of them can disagree about whether a session is running — and says `read K of M state files` when that cut bites, because a truncated read and a dead capture must not print the same thing. How long a session has been silent is the newest of its heartbeat, its start and its state file's own mtime, so a session whose every edit lands in a foreign checkout (and which therefore never heartbeats) is still named as live capture that is failing; a state file written before the counters existed says `counters not measured` rather than printing a zero it never measured. The counters survive a `SessionStart` re-fire (compact/resume/clear) — they describe the session's work, not one fire's.
 
+### Per-connector parity — what each host actually supports
+
+Capture is only worth what the *weakest* host does, so this table is the
+promise, per connector, and it is kept honest by tests rather than by intent:
+`packages/connector-{claude,cursor,acp}/test/worktree-capture.test.ts` pin rows
+1-4 per host in that host's session state, and
+`packages/cli/test/connector-capture-health.test.ts` pins how row 4 READS on
+`crosscheck status` / `doctor` for both non-Claude hosts, in a PASS **and** in a
+WARN state (row 5 is a limitation, not a behaviour: it is pinned on Claude by
+`connector-claude/test/tripwire-hook.test.ts` and documented, with its vendor
+source, in the two module headers named below). And
+`packages/connector-core/src/capture/touched-root.ts` carries a `verify-claims`
+directive that names the connectors going through the shared resolution — a
+fourth one that forgets it fails CI rather than losing edits quietly.
+
+| | Claude Code | Cursor IDE | ACP agents (Zed, JetBrains, Neovim, Emacs × Gemini CLI, cursor-agent, Goose, …) |
+|---|---|---|---|
+| **Capture** — what a target comes from | `PostToolUse` for `Edit`/`Write`/`MultiEdit`/`NotebookEdit` | `afterFileEdit`, the single capture row on this host | `session/update` `tool_call` locations and diff paths, plus the `fs/write_text_file` request |
+| **Worktree resolution** — an edit in a linked worktree of the same repo | yes | yes | yes |
+| **Drop counters** — a touch that could not be captured | `foreign-repo` and `outside-root`, split and counted | same | same |
+| **Capture health** in `crosscheck status` / `doctor` | `N edit-tool fires → M targets`, last tool, last edited path + the root it resolved against, WARN at 3 fires with 0 targets on a session still being heard from | same, with the event name `afterFileEdit` as the tool | same, with the ACP tool-call `kind` (or `fs/write_text_file`) as the tool. One edit an agent signals BOTH ways reads `2 fires → 1 target`: both are honest edit signals, dropping either would leave some real agent permanently at `0 → 0` and unable to WARN, and the doubling can never cause a FALSE warn because the first signal captures the target (pinned in `connector-acp/test/worktree-capture.test.ts`) |
+| **Before-edit tripwire** — telling the model about an overlap *before* it edits | yes — `PreToolUse`, `permissionDecision: "ask"` plus the facts as `additionalContext` | **not possible on this host today** | **not possible on this host today** |
+
+The last row is a limitation we document rather than a gap we forgot, and each
+of those two connectors' module headers carries the same sentences with its
+source and fetch date (`connector-cursor/src/handlers/file-edit.ts`,
+`connector-acp/src/capture/engine.ts`):
+
+- **Cursor** — there is no `beforeFileEdit`/`beforeWrite` event
+  (cursor.com/docs/hooks, read 2026-08-26). `preToolUse` does fire before a
+  `Write`, but its outputs are `permission: "allow" | "deny"`, two messages the
+  docs describe as shown *"when the action is denied"*, and `updated_input` —
+  *"Modified tool input to use instead"*, which rewrites the edit rather than
+  briefing the model, so it is past the same ceiling as a deny; of `"ask"` the
+  same page says, verbatim, that it *"is accepted by the schema but not enforced
+  for `preToolUse` today"*, and the event has no `additional_context`. So the only
+  way to put words in front of the model before an edit is to **block** it —
+  past the ceiling this ladder is built to respect. It is not wired.
+  And it is not a docs caution that might quietly start working: on
+  `beforeShellExecution`, an event whose documented output *does* include
+  `"ask"`, users report it being ignored in the field — the command runs in
+  the same turn (forum.cursor.com/t/beforeshellexecution-returns-permission-ask-but-sandboxed-agent-shell-still-runs-the-command-sandbox-true/155438
+  and .../beforeshellexecution-hook-permissions-allow-ask-ignored-allow-list-takes-precedence/144244,
+  both read 2026-08-26).
+- **ACP** — the before-edit signals genuinely are on the wire
+  (`session/request_permission` carries the whole `ToolCallUpdate` with its
+  `locations`; a `tool_call` may arrive with `status: "pending"`,
+  agentclientprotocol.com/protocol/schema, read 2026-08-26). None is usable
+  without breaking the proxy's prime directive: the pump **forwards first and
+  observes a copy**, the agent→client direction has no line-decision seam at
+  all, the only client→agent message that follows a permission request is the
+  human's own answer, and `_meta` is explicitly not a channel a client may be
+  assumed to surface. Giving that direction a seam means parsing and re-emitting
+  agent bytes on the forward path — exactly what
+  `packages/connector-acp/test/transparency.test.ts` exists to forbid.
+
+Both hosts *can* be told about an overlap **one beat late** — Cursor through
+`postToolUse` `additional_context`, ACP through the existing `session/prompt`
+injection point and the crosscheck MCP server the launcher already advertises.
+That is a notice after the edit, not a tripwire before it, and it is deliberately
+not shipped under the tripwire's name.
+
+Measured cost of the new resolution, as the RANGE over five runs on one
+machine (macOS arm64, Bun 1.3.13, warm APFS). Ranges rather than single figures
+because that is what the commands actually print: the top of each is the first
+run after a cold process, and every one of them is a fraction of its budget.
+Reproduce with the commands; do not read the numbers as constants.
+
+| Host | cold (first touch of a new worktree root) | warm (same root again) | budget · command |
+|---|---|---|---|
+| Claude Code | 94-302 ms (`PostToolUse`) · 91-132 ms (`PreToolUse`) | 42-109 ms · 40-60 ms | 1600 / 800 ms · `bun test packages/connector-claude/test/capture-latency.test.ts` |
+| Cursor | 92-116 ms | 41-50 ms | 1600 ms · `bun test packages/connector-cursor/test/capture-latency.test.ts` |
+| ACP | 61-69 ms | 6 ms | off the forward path — 200 worktree tool calls flooded through the real pump with the real engine attached forwarded byte-identically in 183-363 ms and dropped 0 capture lines · `bun test packages/connector-acp/test/capture-latency.test.ts` |
+
+Inside CI's container (`oven/bun:1`, Bun 1.4.0) the same three commands print
+6-8 / 5-7 ms and 6-7 / 3 ms for Claude, 7-8 / 4 ms for Cursor, and 9-11 / 6-9 ms
+for ACP with the 200-call flood in 207-231 ms, 0 dropped — an order of magnitude
+under the same budgets. That lane needs `apt-get install -y git` first: the
+image ships without it, and these suites shell out to `git worktree add`.
+
+The cache is what those warm numbers are: one `resolveRepoIdentity` per NEW
+worktree root per session, never per edit, remembered in session state
+(`knownWorktreeRoots`) across re-registrations. An unresolvable root is an
+UNKNOWN rather than an answer and is retried a bounded number of times before it
+stands, so one missed `git` deadline cannot exile a healthy worktree for the
+session's life.
+
 **The PreToolUse tripwire in headless sessions.** The tripwire answers an edit of a file an active teammate targeted with `permissionDecision: "ask"` plus the same facts (and the `get_diagnosis` id) as `additionalContext`, so the model is briefed, not only the human. A headless `claude -p` / Agent-SDK session cannot show a prompt, and Claude Code turns that ask into a **one-shot deny of that tool call with the reason delivered to the model** (the next identical edit passes — one ask per file per session). A headless marker exists but cannot be trusted — `CLAUDE_CODE_ENTRYPOINT` reads `sdk-cli` only when the caller left it unset, and an orchestration subagent inherits its parent's interactive value — so this is an explicit knob rather than a detector: export `CROSSCHECK_TRIPWIRE=notice` in orchestration/CI sessions and the hook emits `additionalContext` only — briefed, never blocked. `status`/`doctor` print the mode. The default stays `ask` (DESIGN.md §4).
 
 ### Where the Tier-1 draft summarizer runs

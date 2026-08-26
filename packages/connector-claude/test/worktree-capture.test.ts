@@ -382,6 +382,74 @@ describe("the foreign-repo guard is still load-bearing after #17 (#9)", () => {
       afterOwn?.lastEditedPathResolvedAgainst ?? null,
     );
   });
+
+  test("a foreign-cwd touch NAMES itself when no in-repo edit ever did", async () => {
+    // Arrange: the other half of the rule above. With nothing to preserve,
+    // leaving the #18 fields empty produced a doctor line that denied the
+    // edits it had just counted — `N edit-tool fires → 0 targets · last
+    // edited path resolved: no edit yet` — and hid the foreign drop count,
+    // which doctor renders ONLY inside its `lastEditedPath !== null` branch.
+    const { main, home } = await repoWithWorktree("guard-first");
+    const foreign = await makeRepo("guard-first-foreign", {
+      remote: "git@github.com:acme/web.git",
+    });
+    await writeFile(
+      join(foreign, ".crosscheck.json"),
+      `${JSON.stringify({ hubUrl: DEAD_HUB_URL }, null, 2)}\n`,
+      "utf8",
+    );
+    await git(foreign, ["add", "."]);
+    await git(foreign, ["commit", "-m", "config"]);
+    await writeRepoFile(foreign, "src/app.ts", "export const b = 2;\n");
+    paths.push(foreign);
+    await writeSessionState(home, sessionState(main));
+
+    // Act: the session's FIRST edit has a foreign cwd
+    await runHook(
+      "post-tool-use",
+      editPayload(foreign, join(foreign, "src/app.ts")),
+      env(home),
+    );
+
+    // Assert
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.editToolFires).toBe(1);
+    expect(state?.foreignRepoDrops).toBe(1);
+    expect(state?.lastEditedPath).toBe(join(foreign, "src/app.ts"));
+    expect(state?.lastEditedPathResolvedAgainst).toBeNull();
+  });
+
+  test("a secret-shaped dropped path is refused, and the drop still counts", async () => {
+    // Arrange: the path this guard stores comes from the MODEL's own
+    // tool_input. `withCaptureBookkeeping` screens and bounds the same field
+    // on the capture path (finding A5) and `containsSecret` refuses an
+    // identical string as a capture TARGET — so writing it here unscreened
+    // was the one way round that screen, into the state file and onto the
+    // doctor line.
+    const { main, home } = await repoWithWorktree("guard-secret");
+    const foreign = await makeRepo("guard-secret-foreign", {
+      remote: "git@github.com:acme/web.git",
+    });
+    await writeFile(
+      join(foreign, ".crosscheck.json"),
+      `${JSON.stringify({ hubUrl: DEAD_HUB_URL }, null, 2)}\n`,
+      "utf8",
+    );
+    await git(foreign, ["add", "."]);
+    await git(foreign, ["commit", "-m", "config"]);
+    paths.push(foreign);
+    await writeSessionState(home, sessionState(main));
+    const secretish = join(foreign, `ghp_${"0123456789".repeat(4)}`, "x.ts");
+
+    // Act
+    await runHook("post-tool-use", editPayload(foreign, secretish), env(home));
+
+    // Assert: refused, and still counted
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.lastEditedPath).toBeNull();
+    expect(state?.editToolFires).toBe(1);
+    expect(state?.foreignRepoDrops).toBe(1);
+  });
 });
 
 describe("the tripwire trips on a worktree file (#17 pre-tool-use)", () => {
