@@ -340,6 +340,31 @@ describe("a foreign-repo workspace still shows the edit that caused the drop", (
     expect(state?.lastEditedPathResolvedAgainst).toBeNull();
   });
 
+  test("a secret-shaped dropped path is refused, and the drop still counts", async () => {
+    // Arrange: `withCaptureBookkeeping` screens and bounds the one #18 path an
+    // agent gets to choose (finding A5), but THIS guard writes the same field
+    // directly — and the path it writes is the host's `file_path`, which the
+    // model chose. An identical string is REFUSED as a capture target by
+    // `containsSecret`; storing it here put it in the state file and on the
+    // doctor line, which is the one way round that screen.
+    const { main, home } = await repoWithWorktree("cur-foreign-secret");
+    const other = await repoWithWorktree("cur-foreign-secret-web", "git@github.com:acme/web.git");
+    await writeSessionState(home, sessionState(main));
+    const secretish = join(other.main, `ghp_${"0123456789".repeat(4)}`, "x.ts");
+
+    // Act: the workspace is the foreign repo, so the guard books the drop
+    await runCursorHook("afterFileEdit", editPayload(other.main, secretish), env(home));
+
+    // Assert: nothing of the path survives...
+    const state = await readSessionState(home, HOST_KEY);
+    expect(state?.lastEditedPath).toBeNull();
+    // ...and the drop it would have explained is still counted, so the WARN
+    // this round exists to make reachable still fires.
+    expect(state?.foreignRepoDrops).toBe(1);
+    expect(state?.editToolFires).toBe(1);
+    expect(state?.lastPostToolUseTool).toBe("afterFileEdit");
+  });
+
   test("a non-edit cursor event never inflates the fire counter", async () => {
     // Arrange: the same foreign-workspace shape on the shell row — that event
     // is not an edit, so it may book the drop and nothing else.

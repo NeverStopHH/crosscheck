@@ -418,6 +418,38 @@ describe("the foreign-repo guard is still load-bearing after #17 (#9)", () => {
     expect(state?.lastEditedPath).toBe(join(foreign, "src/app.ts"));
     expect(state?.lastEditedPathResolvedAgainst).toBeNull();
   });
+
+  test("a secret-shaped dropped path is refused, and the drop still counts", async () => {
+    // Arrange: the path this guard stores comes from the MODEL's own
+    // tool_input. `withCaptureBookkeeping` screens and bounds the same field
+    // on the capture path (finding A5) and `containsSecret` refuses an
+    // identical string as a capture TARGET — so writing it here unscreened
+    // was the one way round that screen, into the state file and onto the
+    // doctor line.
+    const { main, home } = await repoWithWorktree("guard-secret");
+    const foreign = await makeRepo("guard-secret-foreign", {
+      remote: "git@github.com:acme/web.git",
+    });
+    await writeFile(
+      join(foreign, ".crosscheck.json"),
+      `${JSON.stringify({ hubUrl: DEAD_HUB_URL }, null, 2)}\n`,
+      "utf8",
+    );
+    await git(foreign, ["add", "."]);
+    await git(foreign, ["commit", "-m", "config"]);
+    paths.push(foreign);
+    await writeSessionState(home, sessionState(main));
+    const secretish = join(foreign, `ghp_${"0123456789".repeat(4)}`, "x.ts");
+
+    // Act
+    await runHook("post-tool-use", editPayload(foreign, secretish), env(home));
+
+    // Assert: refused, and still counted
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.lastEditedPath).toBeNull();
+    expect(state?.editToolFires).toBe(1);
+    expect(state?.foreignRepoDrops).toBe(1);
+  });
 });
 
 describe("the tripwire trips on a worktree file (#17 pre-tool-use)", () => {

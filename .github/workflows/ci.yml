@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 132
+    # PRINTS: 135
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -133,7 +133,7 @@ jobs:
     # PRINTS: packages/connector-acp/src/pump.ts 1
     # PRINTS: packages/connector-acp/src/wire/v1.ts 1
     # PRINTS: cli/settings-merge.ts 1
-    # PRINTS: hooks/post-tool-use.ts 2
+    # PRINTS: hooks/post-tool-use.ts 3
     # PRINTS: hooks/pre-tool-use.ts 3
     # PRINTS: hooks/runner.ts 2
     # PRINTS: hooks/stop.ts 2
@@ -161,12 +161,12 @@ jobs:
     # PRINTS: mcp/render-referee.ts 2
     # PRINTS: mcp/render.ts 3
     # PRINTS: spool/reap.ts 1
-    # PRINTS: state/capture-bookkeeping.ts 5
+    # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 2
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 3
-    # PRINTS: packages/connector-cursor/src/handlers/recover.ts 3
+    # PRINTS: packages/connector-cursor/src/handlers/recover.ts 4
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
     # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 2
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
@@ -179,7 +179,7 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
     # PRINTS: briefing.ts 1
-    # PRINTS: capture-bookkeeping.ts 5
+    # PRINTS: capture-bookkeeping.ts 6
     # PRINTS: capture-health.ts 2
     # PRINTS: capture-targets.ts 1
     # PRINTS: capture-touched-files.ts 1
@@ -202,13 +202,13 @@ jobs:
     # PRINTS: latency.ts 1
     # PRINTS: output.ts 1
     # PRINTS: payload.ts 1
-    # PRINTS: post-tool-use.ts 2
+    # PRINTS: post-tool-use.ts 3
     # PRINTS: pre-tool-use.ts 3
     # PRINTS: proxy.ts 1
     # PRINTS: pump.ts 1
     # PRINTS: reap.ts 1
     # PRINTS: records.ts 1
-    # PRINTS: recover.ts 3
+    # PRINTS: recover.ts 4
     # PRINTS: render-referee.ts 2
     # PRINTS: render.ts 6
     # PRINTS: runner.ts 3

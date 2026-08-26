@@ -16,6 +16,8 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
+import { diagnosisPath } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
+
 import type { CursorHookContext } from "../runner.ts";
 
 export const IMPLEMENTING_STATUS = "implementing";
@@ -62,27 +64,32 @@ export interface RequireSessionStateOptions {
 const withForeignRepoDrop = (
   fresh: SessionState,
   options: RequireSessionStateOptions,
-): SessionState => ({
-  ...fresh,
-  foreignRepoDrops: fresh.foreignRepoDrops + 1,
-  // Counted BEFORE the drop, exactly as the Claude hook does.
-  editToolFires: fresh.editToolFires + (options.editFired === true ? 1 : 0),
-  lastPostToolUseTool: options.toolLabel ?? fresh.lastPostToolUseTool,
-  // Fill an EMPTY #18 diagnosis, never overwrite one: a drop must not erase a
-  // path a real capture resolved (the Claude twin pins that in
-  // connector-claude/test/worktree-capture.test.ts), and it must not leave a
-  // conversation that has fired N edits saying `no edit yet` either.
-  ...(options.editFired === true &&
-  options.touchedPath !== undefined &&
-  fresh.lastEditedPath === null
-    ? {
-        lastEditedPath: options.touchedPath,
-        // It resolved against nothing: the repo it belongs to is not this
-        // session's, which is what the line has to be able to say.
-        lastEditedPathResolvedAgainst: null,
-      }
-    : {}),
-});
+): SessionState => {
+  // Screened and bounded exactly as the capture path's own #18 write is
+  // (connector-core/state/capture-bookkeeping.ts): the host hands us the path
+  // the model asked to edit, and `containsSecret` refuses the same string as a
+  // capture target — so this second writer may not skip the screen.
+  const touched = diagnosisPath(options.touchedPath);
+  return {
+    ...fresh,
+    foreignRepoDrops: fresh.foreignRepoDrops + 1,
+    // Counted BEFORE the drop, exactly as the Claude hook does.
+    editToolFires: fresh.editToolFires + (options.editFired === true ? 1 : 0),
+    lastPostToolUseTool: options.toolLabel ?? fresh.lastPostToolUseTool,
+    // Fill an EMPTY #18 diagnosis, never overwrite one: a drop must not erase a
+    // path a real capture resolved (the Claude twin pins that in
+    // connector-claude/test/worktree-capture.test.ts), and it must not leave a
+    // conversation that has fired N edits saying `no edit yet` either.
+    ...(options.editFired === true && touched !== null && fresh.lastEditedPath === null
+      ? {
+          lastEditedPath: touched,
+          // It resolved against nothing: the repo it belongs to is not this
+          // session's, which is what the line has to be able to say.
+          lastEditedPathResolvedAgainst: null,
+        }
+      : {}),
+  };
+};
 
 /**
  * The stored state, or the state a fresh register just wrote — null only

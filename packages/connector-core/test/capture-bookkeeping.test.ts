@@ -355,6 +355,27 @@ describe("the two diagnosis fields the agent gets to choose (finding A5)", () =>
     expect(after.lastPostToolUseTool).toBe("afterFileEdit");
   });
 
+  test("a label that cleans to nothing keeps the previous one", () => {
+    // Arrange: the ACP `kind` is `z.string().min(1)`, so an agent may send a
+    // label made only of control characters. Stripping them leaves "", which
+    // doctor renders as a blank `last tool ` — strictly worse than the
+    // `none yet` a null keeps.
+    const before = { ...state(), lastPostToolUseTool: "edit" };
+
+    // Act
+    const after = withCaptureBookkeeping(before, {
+      resolution: resolution({}),
+      capturedCount: 0,
+      editFired: true,
+      toolLabel: "\u0001\u0002\u200b",
+      firstPath: null,
+      now: NOW,
+    });
+
+    // Assert
+    expect(after.lastPostToolUseTool).toBe("edit");
+  });
+
   test("a path carrying a secret is refused, not stored and printed", () => {
     // Arrange: the identical string would be REFUSED as a capture target by
     // `containsSecret` inside captureFileTargets. Storing it in the state

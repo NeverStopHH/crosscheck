@@ -57,8 +57,31 @@ const boundedLabel = (value: string | null, max: number): string | null => {
     return null;
   }
   const clean = value.replace(/[\p{Cc}\p{Cf}]/gu, "");
+  // Nothing legible left is nothing to say: an all-control-character label
+  // would otherwise become `""`, which doctor prints as `last tool ` — worse
+  // than the `none yet` that a null keeps.
+  if (clean.length === 0) {
+    return null;
+  }
   return clean.length <= max ? clean : `…${clean.slice(clean.length - (max - 1))}`;
 };
+
+/**
+ * The #18 `lastEditedPath` as it may be STORED — bounded to what doctor can
+ * display, and REFUSED outright when it carries a secret.
+ *
+ * Exported because the fold below is not the only writer: each host's
+ * foreign-repo guard (connector-claude/src/hooks/post-tool-use.ts,
+ * connector-cursor/src/handlers/recover.ts) fills the same field before any
+ * capture can run, from the same untrusted source — the path the MODEL put in
+ * its tool input. `containsSecret` refuses that string as a capture TARGET, so
+ * a second writer that skips the screen is a way round it into the state file
+ * and onto the doctor line. One helper, every writer.
+ */
+export const diagnosisPath = (value: string | null | undefined): string | null =>
+  value === null || value === undefined || containsSecret(value)
+    ? null
+    : boundedLabel(value, DOCTOR_PATH_MAX_CHARS);
 
 export interface CaptureBookkeepingInput {
   /**
@@ -126,10 +149,7 @@ export const withCaptureBookkeeping = (
   // not to trust: `firstPath` is a `locations[].path` off the wire and the
   // label is the agent's own `kind`. Bounded and screened here, at the one
   // place all three hosts share, so Claude and Cursor are covered with it.
-  const diagnosisPath =
-    input.firstPath === null || containsSecret(input.firstPath)
-      ? null
-      : boundedLabel(input.firstPath, DOCTOR_PATH_MAX_CHARS);
+  const storedPath = diagnosisPath(input.firstPath);
   return {
     ...next,
     editToolFires: next.editToolFires + (input.editFired ? 1 : 0),
@@ -141,9 +161,9 @@ export const withCaptureBookkeeping = (
       next.lastPostToolUseTool,
     foreignRepoDrops: next.foreignRepoDrops + (evidence?.foreignDrops ?? 0),
     outsideRootDrops: next.outsideRootDrops + (evidence?.outsideDrops ?? 0),
-    ...(input.editFired && diagnosisPath !== null
+    ...(input.editFired && storedPath !== null
       ? {
-          lastEditedPath: diagnosisPath,
+          lastEditedPath: storedPath,
           lastEditedPathResolvedAgainst: input.resolution?.firstResolvedRoot ?? null,
         }
       : {}),

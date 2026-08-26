@@ -16,7 +16,10 @@ import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { registerSession } from "@crosscheck/connector-core/http/hub.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
-import { withCaptureBookkeeping } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
+import {
+  diagnosisPath,
+  withCaptureBookkeeping,
+} from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
 import {
   claimSessionState,
   deriveSessionState,
@@ -166,7 +169,11 @@ export const handlePostToolUse = async (
   // this session reports to. The count is what keeps the drop honest.
   const editFired = isEditTool(ctx.payload.tool_name);
   if (state.repoId !== ctx.identity.repoId) {
-    const droppedPath = extractFilePaths(ctx.payload.tool_input)[0];
+    // Screened and bounded exactly as the capture path's own #18 write is
+    // (connector-core/state/capture-bookkeeping.ts): this path comes from the
+    // MODEL's tool input, and `containsSecret` refuses the same string as a
+    // capture target.
+    const droppedPath = diagnosisPath(extractFilePaths(ctx.payload.tool_input)[0]);
     await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
       ...fresh,
       foreignRepoDrops: fresh.foreignRepoDrops + 1,
@@ -183,7 +190,7 @@ export const handlePostToolUse = async (
       // never ERASE a diagnosis a real capture produced: after a good in-repo
       // edit, the last edited path stays that edit (pinned in
       // test/worktree-capture.test.ts). Fill an empty one, overwrite none.
-      ...(editFired && droppedPath !== undefined && fresh.lastEditedPath === null
+      ...(editFired && droppedPath !== null && fresh.lastEditedPath === null
         ? { lastEditedPath: droppedPath, lastEditedPathResolvedAgainst: null }
         : {}),
     }));

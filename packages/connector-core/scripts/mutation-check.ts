@@ -1885,8 +1885,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // one way round it.
     label: "a secret-shaped path is stored in the state file and printed",
     file: `${CORE}/src/state/capture-bookkeeping.ts`,
-    from: "    input.firstPath === null || containsSecret(input.firstPath)",
-    to: "    input.firstPath === null",
+    from: "  value === null || value === undefined || containsSecret(value)",
+    to: "  value === null || value === undefined",
     test: `${CORE}/test/capture-bookkeeping.test.ts`,
     because:
       "a path containing a credential is written to the session state and " +
@@ -1898,8 +1898,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // untrusted wire with only the 1 MiB per-line parse cap above them.
     label: "an agent-chosen path is stored at whatever length it likes",
     file: `${CORE}/src/state/capture-bookkeeping.ts`,
-    from: "      : boundedLabel(input.firstPath, DOCTOR_PATH_MAX_CHARS);",
-    to: "      : input.firstPath;",
+    from: "    : boundedLabel(value, DOCTOR_PATH_MAX_CHARS);",
+    to: "    : value;",
     test: `${CORE}/test/capture-bookkeeping.test.ts`,
     because:
       "one session/update with a megabyte-scale path writes a state file that " +
@@ -1946,6 +1946,41 @@ export const MUTATIONS: readonly Mutation[] = [
       "a worktree torn down and stood up again from a DIFFERENT repo captures " +
       "that repo's files into this one's work context under repo-relative " +
       "paths, with both drop counters reading 0",
+  },
+  {
+    // Finding A5 had two more writers than the fold: each host's foreign-repo
+    // guard fills the same #18 field BEFORE any capture runs, from the path
+    // the MODEL chose. Skipping the screen there is a way round the sanitizer
+    // every captured target has to clear, into the state file and onto the
+    // doctor line.
+    label: "a claude foreign-repo drop stores the model's path unscreened",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "    const droppedPath = diagnosisPath(extractFilePaths(ctx.payload.tool_input)[0]);",
+    to: "    const droppedPath = extractFilePaths(ctx.payload.tool_input)[0] ?? null;",
+    test: `${CONNECTOR}/test/worktree-capture.test.ts`,
+    because:
+      "a credential-shaped path the model asked to edit in a foreign repo is " +
+      "stored in the session state and printed by `crosscheck doctor`",
+  },
+  {
+    label: "a cursor foreign-repo drop stores the model's path unscreened",
+    file: `${CURSOR}/src/handlers/recover.ts`,
+    from: "  const touched = diagnosisPath(options.touchedPath);",
+    to: "  const touched = options.touchedPath ?? null;",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because: "the same leak on the host whose guard books the drop for the whole session",
+  },
+  {
+    // A label that cleans to nothing must keep the previous one, not blank it:
+    // doctor renders null as `none yet` and an empty string as `last tool `.
+    label: "an all-control-character label blanks the doctor line",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from: "  if (clean.length === 0) {\n    return null;\n  }",
+    to: "  if (clean.length === 0 && max < 0) {\n    return null;\n  }",
+    test: `${CORE}/test/capture-bookkeeping.test.ts`,
+    because:
+      "an agent whose tool `kind` is control characters only erases the tool " +
+      "name on the one line a developer is asked to paste",
   },
   // ── Trial findings #17/#19/#20/#25: capture signal ───────────────────────
   {
@@ -2201,9 +2236,9 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 3
- * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 2
+ * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 1
- * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 2
+ * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
@@ -2225,7 +2260,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 3
  * PRINTS: packages/connector-cursor/test/injection.test.ts 2
- * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 6
+ * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/server/test/developer-emails.test.ts 1
  * PRINTS: packages/server/test/hints.test.ts 2
  * PRINTS: packages/server/test/search.test.ts 3
