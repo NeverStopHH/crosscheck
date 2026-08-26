@@ -48,6 +48,21 @@ const SHARED = ["src/auth/token.ts", "src/auth/session.ts"] as const;
 const MY_INTENT = "Make verifyToken refetch the JWKS on an unknown kid";
 const THEIR_INTENT = "Move the session store behind an interface";
 const THEIR_DECLARED = "verifyToken returns null on an unknown kid today";
+/**
+ * A LEGAL declared observation longer than GHOST_SENTENCE_MAX_CHARS, and a
+ * legal one carrying a line break. Both are ordinary claim bodies — the hub
+ * caps a body at MAX_CLAIM_BODY_LENGTH = 400 — and both survive every
+ * reduction the answer takes on its way out, which is what makes them the
+ * shapes a hash of the WHOLE body can never match.
+ */
+const THEIR_LONG =
+  "verifyToken returns null on an unknown kid today, and the JWKS cache is " +
+  "only refreshed by the hourly timer, so a rotated key rejects every request " +
+  "until that timer fires again — which is the failure the retry budget was " +
+  "meant to absorb and does not";
+const THEIR_MULTILINE =
+  "The session store keeps the decoded claims, not the raw token.\n" +
+  "Anything that re-reads the kid therefore has to go back to the cache.";
 const THEIR_DRAFT = "the session store probably caches the old kid";
 const COLLISION = "Both change what verifyToken returns for an unknown kid";
 
@@ -324,6 +339,32 @@ const seedKensOverlap = async (): Promise<void> => {
       createdAt: new Date().toISOString(),
     }),
     envelopeFor(ken, "claim", {
+      id: "clm_ken_long",
+      workContextId: ken.workContextId,
+      authorSessionId: ken.sessionId,
+      kind: "observation",
+      body: THEIR_LONG,
+      status: "proposed",
+      confidence: 0.8,
+      captureMode: "agent",
+      provenance: "declared",
+      evidenceRefs: [],
+      createdAt: new Date().toISOString(),
+    }),
+    envelopeFor(ken, "claim", {
+      id: "clm_ken_multiline",
+      workContextId: ken.workContextId,
+      authorSessionId: ken.sessionId,
+      kind: "observation",
+      body: THEIR_MULTILINE,
+      status: "proposed",
+      confidence: 0.8,
+      captureMode: "agent",
+      provenance: "declared",
+      evidenceRefs: [],
+      createdAt: new Date().toISOString(),
+    }),
+    envelopeFor(ken, "claim", {
       id: "clm_ken_draft",
       workContextId: ken.workContextId,
       authorSessionId: ken.sessionId,
@@ -411,7 +452,7 @@ describe("the gated ghost check", () => {
   });
 
   test("a sentence that parrots what it was shown is dropped", async () => {
-    // Ken's own claim, in the three shapes a parroting model returns it: the
+    // Ken's own claim, in the five shapes a parroting model returns it: the
     // BODY on its own (what a model told "never repeat the input" actually
     // produces when it does), the body re-cased and re-spaced, and the whole
     // labelled line it was handed. Only the last of those carries the
@@ -421,6 +462,14 @@ describe("the gated ghost check", () => {
       ["the body verbatim", THEIR_DECLARED],
       ["the body re-cased", `  ${THEIR_DECLARED.toUpperCase()}  `],
       ["the labelled line", `observation (proposed): ${THEIR_DECLARED}`],
+      // The two shapes an EQUALITY hash can never match, because the answer
+      // is reduced twice on its way out — the first non-empty LINE, then
+      // GHOST_SENTENCE_MAX_CHARS — while the hash is taken over the whole
+      // body. A teammate can force either deliberately by writing a long or
+      // multi-line declared claim whose opening they want republished under
+      // somebody else's name.
+      ["a body longer than the sentence bound", THEIR_LONG],
+      ["a body with a line break", THEIR_MULTILINE],
     ];
     for (const [label, output] of shapes) {
       const parrot = await makeFakeModel({ output });

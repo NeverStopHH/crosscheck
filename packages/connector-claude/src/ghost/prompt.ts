@@ -75,7 +75,11 @@ export interface GhostInput {
  * parrots actually returns, because "never repeat the input" is a rule about
  * the finding and no model re-emits the `kind (status):` label with it. A
  * guard keyed on the line alone would therefore only catch the shape nobody
- * sends — which is why the worker hashes both.
+ * sends — which is why the worker checks both, and checks them by CONTAINMENT
+ * rather than by equality: a body may be longer than the answer's own sentence
+ * bound or carry a line break, and the answer reaches the guard reduced to its
+ * first line and cut, so only "is this the beginning of what we showed it" is
+ * answerable (hints/echo.ts isRestatementOf).
  */
 export interface DeclaredClaim {
   /** The claim body as the model sees it, bounded. */

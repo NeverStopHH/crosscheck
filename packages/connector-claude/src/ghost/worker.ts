@@ -47,7 +47,10 @@ import {
 import { ghostDraftBody } from "@crosscheck/connector-core/briefing/ghost.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
 import { readDeliveredHintHashes } from "@crosscheck/connector-core/hints/delivered-store.ts";
-import { hintBodyHash, isEchoOfDeliveredHint } from "@crosscheck/connector-core/hints/echo.ts";
+import {
+  isEchoOfDeliveredHint,
+  isRestatementOf,
+} from "@crosscheck/connector-core/hints/echo.ts";
 import { getDiagnosis, getGhostChecks } from "@crosscheck/connector-core/http/hub.ts";
 import type { GhostCheckEntry, HubContext } from "@crosscheck/connector-core/http/hub.ts";
 import { checkClaim } from "@crosscheck/connector-core/mcp/violations.ts";
@@ -239,10 +242,20 @@ const runGhostCheck = async (
  * hash is the delivered-hint hash (normalised the way the hub normalises a
  * body for dedup), so "the same words" means the same thing on both sides.
  *
- * BOTH SHAPES ARE HASHED, and the body is the one that matters: the model is
+ * BOTH SHAPES ARE CHECKED, and the body is the one that matters: the model is
  * handed `kind (status): body` and returns a finding, so a parrot returns the
  * BODY — keying this on the labelled line alone would guard the shape nobody
  * sends (ghost/prompt.ts DeclaredClaim says the same from the other side).
+ *
+ * AND IT IS CONTAINMENT RATHER THAN AN EQUALITY HASH, because by the time the
+ * answer reaches here it has been reduced TWICE — `firstSentence` keeps only
+ * the first non-empty line, then `cutWellFormed` cuts it to
+ * GHOST_SENTENCE_MAX_CHARS. A claim body may be longer than that bound and may
+ * carry a line break (both are legal at GHOST_CLAIM_BODY_MAX_CHARS), so a hash
+ * over the whole body could not coincide with the reduced answer even when the
+ * model returned that body byte for byte. `isRestatementOf` asks the question
+ * the reductions leave answerable: is this the BEGINNING of something we just
+ * showed it.
  */
 const appendGhostDraft = async (
   home: string,
@@ -252,11 +265,8 @@ const appendGhostDraft = async (
   shownClaims: readonly DeclaredClaim[],
   env: Env,
 ): Promise<void> => {
-  const shownHashes = shownClaims.flatMap((claim) => [
-    hintBodyHash(claim.body),
-    hintBodyHash(claim.line),
-  ]);
-  if (isEchoOfDeliveredHint(sentence, shownHashes)) {
+  const shownTexts = shownClaims.flatMap((claim) => [claim.body, claim.line]);
+  if (isRestatementOf(sentence, shownTexts)) {
     await bookFailure(home, args.claudeSessionId, DROPPED_INPUT_ECHO);
     return;
   }
