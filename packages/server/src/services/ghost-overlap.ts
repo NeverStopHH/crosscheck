@@ -70,6 +70,7 @@ import {
   GHOST_INTENT_MIN_TOKEN_HITS,
   GHOST_MAX_CONTEXT_TARGETS,
   GHOST_MAX_FINDINGS,
+  GHOST_MAX_FINDINGS_PER_DEVELOPER,
   GHOST_MAX_INTENT_CANDIDATES,
   GHOST_MAX_OWN_CONTEXTS,
   GHOST_MAX_PAIR_ROWS,
@@ -529,6 +530,31 @@ const qualifies = (candidate: Candidate): boolean =>
   candidate.intentTokenHits >= GHOST_INTENT_MIN_TOKEN_HITS;
 
 /**
+ * A stateful filter that lets each developer through at most
+ * GHOST_MAX_FINDINGS_PER_DEVELOPER times. Applied to an ALREADY SORTED list,
+ * so "the first one through" is that developer's strongest context.
+ *
+ * One person with three worktrees is one person, and a block they fill alone
+ * is a block the teammate who is in the reader's way for a different reason
+ * never reaches (the constant states the rule the questions block states for
+ * itself). The doctor line counts the same way — distinct developers, not
+ * rows — so "N teammates working where you are" is a fact about people.
+ */
+const withinPerDeveloperCap = (): ((entry: {
+  readonly row: DisplayRow;
+}) => boolean) => {
+  const seen = new Map<string, number>();
+  return ({ row }) => {
+    const used = seen.get(row.developerId) ?? 0;
+    if (used >= GHOST_MAX_FINDINGS_PER_DEVELOPER) {
+      return false;
+    }
+    seen.set(row.developerId, used + 1);
+    return true;
+  };
+};
+
+/**
  * Overlaps between the reader's live plan and their teammates' — strongest
  * reason first (a shared failure, then the most shared values, then the most
  * shared intent words), then the freshest. Bounded end to end: every query
@@ -604,6 +630,10 @@ export const listGhostOverlaps = async (
         right.row.lastActiveAt.getTime() - left.row.lastActiveAt.getTime() ||
         left.candidate.id.localeCompare(right.candidate.id),
     )
+    // Per DEVELOPER before per finding, and the order is the whole point:
+    // the ranking has run, so what this drops is one person's WEAKER
+    // contexts and never somebody else's only one.
+    .filter(withinPerDeveloperCap())
     .slice(0, GHOST_MAX_FINDINGS)
     .map(({ candidate, row }) => ({
       workContextId: candidate.id,

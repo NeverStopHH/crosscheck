@@ -271,11 +271,20 @@ describe("ghost checks, the deterministic overlap", () => {
     // cool that is two shared values and therefore a notice — which is
     // exactly the false alarm the hot rule exists to remove, and the control
     // that makes the silence below mean something.
+    //
+    // A DIFFERENT developer on purpose: one teammate holds at most
+    // GHOST_MAX_FINDINGS_PER_DEVELOPER lines, so a neighbour context of Ken's
+    // would vanish below for a reason that has nothing to do with lockfiles.
     const neighbourSession = "ses_neighbour";
-    await registerTestSession(harness, them.apiKey, { id: neighbourSession });
+    const neighbour = await addTestDeveloperWithSession(
+      harness,
+      "Mike",
+      "mike@example.com",
+      { id: neighbourSession },
+    );
     await seed(
       harness,
-      them,
+      neighbour,
       contextRecords(
         "wc_neighbour",
         neighbourSession,
@@ -675,6 +684,64 @@ describe("ghost checks, the deterministic overlap", () => {
       .set({ landedAt: new Date() })
       .where(eq(workContexts.id, MY_CONTEXT));
     expect(await fetchGhostChecks(harness, me.apiKey)).toEqual([]);
+  });
+
+  test("one teammate's worktrees never hold the whole block", async () => {
+    const { harness, me, them } = await setup();
+    const mine = ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"];
+    await seed(
+      harness,
+      me,
+      contextRecords(
+        MY_CONTEXT,
+        MY_SESSION,
+        "Token refresh rework",
+        mine.map((value) => ({ kind: "file", value })),
+      ),
+    );
+    // Ken runs three worktrees, each sharing THREE of my files — so each of
+    // them outranks Mike, and by context count alone they fill every slot.
+    for (let index = 0; index < 3; index += 1) {
+      const sessionId = `ses_ken_${String(index)}`;
+      await registerTestSession(harness, them.apiKey, { id: sessionId });
+      await seed(
+        harness,
+        them,
+        contextRecords(
+          `wc_ken_${String(index)}`,
+          sessionId,
+          `Session store migration ${String(index)}`,
+          mine.slice(0, 3).map((value) => ({ kind: "file", value })),
+        ),
+      );
+    }
+    const mike = await addTestDeveloperWithSession(
+      harness,
+      "Mike",
+      "mike@example.com",
+      { id: "ses_mike" },
+    );
+    await seed(
+      harness,
+      mike,
+      contextRecords(
+        "wc_mike",
+        "ses_mike",
+        "Retry budget rework",
+        mine.slice(2).map((value) => ({ kind: "file", value })),
+      ),
+    );
+
+    const checks = await fetchGhostChecks(harness, me.apiKey);
+    const names = checks.map((row) => row.developerName);
+    // Mike is in my way too, and one voice must not hold the block against
+    // everybody else — the rule MAX_QUESTION_POINTERS states for questions.
+    expect(names).toContain("Mike");
+    expect(names.filter((name) => name === "Ken").length).toBe(1);
+    // Ken keeps his STRONGEST context, not an arbitrary one.
+    expect(
+      checks.find((row) => row.developerName === "Ken")?.sharedTargetCount,
+    ).toBe(3);
   });
 
   test("a muted teammate's plan is not reported to me", async () => {

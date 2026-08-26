@@ -346,6 +346,25 @@ export const GHOST_MAX_PAIR_ROWS =
 export const GHOST_MAX_FINDINGS = 3;
 
 /**
+ * Findings ONE DEVELOPER may hold in that answer. One, and the argument is
+ * the one MAX_QUESTION_POINTERS makes on the connector side: a block filled
+ * by a single voice is a block the second voice never reaches. A developer
+ * running three worktrees on this repo has three contexts, each of them a
+ * legitimate overlap, and by raw strength they take all GHOST_MAX_FINDINGS
+ * slots — so the teammate who is in the reader's way for a different reason
+ * never reaches the wire at all, and the reader, who is expected to ACT on
+ * this block, never learns about them.
+ *
+ * Their STRONGEST context survives, so nothing about the person is lost:
+ * the ranking has already run when this cap is applied, and `get_diagnosis`
+ * on that context reaches the rest of their tree.
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");console.log(s.GHOST_MAX_FINDINGS_PER_DEVELOPER < s.GHOST_MAX_FINDINGS)'
+ * PRINTS: true
+ */
+export const GHOST_MAX_FINDINGS_PER_DEVELOPER = 1;
+
+/**
  * Shared values named on the wire per finding. The reader is told the total
  * separately, so this bounds the LINE, not the fact. Three is what fits on
  * one briefing line beside a name, an age and an intent.

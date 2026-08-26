@@ -20,6 +20,8 @@ import {
   readGhostCost,
 } from "@crosscheck/connector-claude";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
+import { planOverlapCheck } from "../src/cli/doctor.ts";
 import { runCli } from "../src/index.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
@@ -195,6 +197,51 @@ describe("ghost telemetry surfaces", () => {
     const brokenLine = lineWith(brokenRun.stdout, "ghost checks");
     expect(brokenLine).toContain("WARN");
     expect(brokenLine).toContain("the hub did not answer");
+  });
+
+  test("the overlap line counts teammates, never their worktrees", () => {
+    const row = (
+      workContextId: string,
+      developerId: string,
+      developerName: string,
+    ): GhostCheckEntry => ({
+      workContextId,
+      title: "Session store migration",
+      developerId,
+      developerName,
+      intent: null,
+      lastActiveAt: new Date().toISOString(),
+      sharedTargets: [],
+      sharedTargetCount: 2,
+      intentTokenHits: 0,
+    });
+    const ok = (
+      data: readonly GhostCheckEntry[],
+    ): { readonly ok: true; readonly data: readonly GhostCheckEntry[]; readonly dateHeader: string | null } => ({
+      ok: true,
+      data,
+      dateHeader: null,
+    });
+
+    // Ken, in three worktrees. One person is in my way, not three.
+    expect(
+      planOverlapCheck(
+        ok([
+          row("wc_k1", "dev_ken", "Ken"),
+          row("wc_k2", "dev_ken", "Ken"),
+          row("wc_k3", "dev_ken", "Ken"),
+        ]),
+      ).detail,
+    ).toBe("1 teammate working where you are");
+    // The control: two PEOPLE do read as two.
+    expect(
+      planOverlapCheck(
+        ok([row("wc_k1", "dev_ken", "Ken"), row("wc_m1", "dev_mike", "Mike")]),
+      ).detail,
+    ).toBe("2 teammates working where you are");
+    expect(planOverlapCheck(ok([])).detail).toBe(
+      "no teammate is working where you are",
+    );
   });
 
   test("a hub that cannot answer the overlap is 'not measured', not a fault", async () => {

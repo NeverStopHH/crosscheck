@@ -52,7 +52,7 @@ import {
 import { runBoundedCommand } from "@crosscheck/connector-core/git/git.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
-import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
+import type { HubContext, HubResult } from "@crosscheck/connector-core/http/client.ts";
 import {
   describeConnectionFailure,
   refineRefusedCause,
@@ -70,6 +70,7 @@ import {
   getQuestions,
   getSolvedMatchCounts,
 } from "@crosscheck/connector-core/http/hub.ts";
+import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
 import {
   formatQuestionCounts,
   questionWarning,
@@ -984,16 +985,22 @@ const checkGhostCost = (states: readonly SessionState[]): Check => {
  * unreachable one — is why this feature would be silent, and that is a
  * different sentence from "the model layer is broken". `not measured` is a
  * PASS: an older hub is a deployment state, not a fault on this machine.
+ *
+ * THE COUNT IS OF PEOPLE, not of rows, and the two are not the same number:
+ * one teammate running three worktrees on this repo has three work contexts,
+ * and "3 teammates working where you are" about one person is a plain
+ * untruth. Today's hub already caps a developer at
+ * GHOST_MAX_FINDINGS_PER_DEVELOPER lines, but this line is also read against
+ * OLDER hubs, and a check that is only correct against the hub shipped beside
+ * it is a check that will be wrong the week the cap changes.
  */
-const checkGhostOverlap = async (
-  ctx: HubContext,
-  repoId: string,
-): Promise<Check> => {
-  const result = await getGhostChecks(ctx, repoId);
+export const planOverlapCheck = (
+  result: HubResult<readonly GhostCheckEntry[]>,
+): Check => {
   if (!result.ok) {
     return check("PASS", "plan overlap", "not measured");
   }
-  const count = result.data.length;
+  const count = new Set(result.data.map((entry) => entry.developerId)).size;
   return check(
     "PASS",
     "plan overlap",
@@ -1002,6 +1009,11 @@ const checkGhostOverlap = async (
       : `${String(count)} teammate${count === 1 ? "" : "s"} working where you are`,
   );
 };
+
+const checkGhostOverlap = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<Check> => planOverlapCheck(await getGhostChecks(ctx, repoId));
 
 /**
  * The question channel's backlog (roadmap R2), as a health check rather than
