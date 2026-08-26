@@ -27,6 +27,7 @@
 import {
   AGE_HOURS_BEFORE_DAYS,
   GHOST_SHARED_VALUE_MAX_CHARS,
+  HOURS_PER_DAY,
   MAX_GHOST_POINTERS,
   MAX_TITLE_CHARS,
   MINUTES_PER_HOUR,
@@ -73,7 +74,7 @@ export const formatGhostAge = (ageMs: number): string => {
   const hours = Math.floor(minutes / MINUTES_PER_HOUR);
   return hours < AGE_HOURS_BEFORE_DAYS
     ? `${String(hours)}h ago`
-    : `${String(Math.floor(hours / 24))}d ago`;
+    : `${String(Math.floor(hours / HOURS_PER_DAY))}d ago`;
 };
 
 /**
