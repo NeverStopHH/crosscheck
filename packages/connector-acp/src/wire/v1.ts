@@ -208,7 +208,9 @@ const DiffContentSchema = z.looseObject({
   path: z.string().min(1).optional(),
 });
 
-const TOOL_CALL_UPDATES = new Set(["tool_call", "tool_call_update"]);
+/** The row that ANNOUNCES a tool call; the other one revises it. */
+const NEW_TOOL_CALL = "tool_call";
+const TOOL_CALL_UPDATES = new Set([NEW_TOOL_CALL, "tool_call_update"]);
 const DIFF_CONTENT_TYPE = "diff";
 
 /**
@@ -235,6 +237,27 @@ export interface ToolCallUpdate {
   readonly toolKind: string | null;
   readonly status: string | null;
   readonly rawOutput: unknown;
+  /**
+   * True for `sessionUpdate: "tool_call"` — the row that ANNOUNCES a tool
+   * call — and false for every later `tool_call_update` on the same call.
+   *
+   * The two are folded into one shape above (TOOL_CALL_UPDATES) because the
+   * capture mapping treats their payloads identically, and that is still
+   * right for paths and failures. It is NOT right for counting: agents
+   * commonly repeat the whole update — `kind` included — on each status
+   * change, so a fire counted per row would report three edit-tool fires for
+   * one edit and corrupt the `N fires -> M targets` ratio the doctor WARN is
+   * measured on. One fire per tool call is also exactly what the Claude
+   * reference counts.
+   *
+   * This is an ADDITIVE field on a version-pinned module: nothing that
+   * existed changed shape, and no new wire fact is parsed — the
+   * discriminator was already on the wire and simply thrown away. Deduping on
+   * `toolCallId` would have been the alternative and costs the same, since
+   * SessionUpdateParamsSchema models no such field either; per-call is the
+   * smaller semantic claim.
+   */
+  readonly isNewToolCall: boolean;
 }
 
 export interface SessionUpdate {
@@ -271,6 +294,7 @@ export const parseSessionUpdateParams = (
       toolKind: parsed.update.kind ?? null,
       status: parsed.update.status ?? null,
       rawOutput: parsed.update.rawOutput,
+      isNewToolCall: parsed.update.sessionUpdate === NEW_TOOL_CALL,
     },
   };
 };

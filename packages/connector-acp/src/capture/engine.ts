@@ -26,6 +26,7 @@
 import {
   FINGERPRINT_SOURCE_CHARS,
   HTTP_NOT_FOUND,
+  MAX_KNOWN_WORKTREE_ROOTS,
   MAX_SEEN_TARGETS,
 } from "@crosscheck/connector-core/constants.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
@@ -35,10 +36,9 @@ import { isDisabled, loadReportableConfig } from "@crosscheck/connector-core/con
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import {
-  captureFailure,
-  captureFileTargets,
-} from "@crosscheck/connector-core/flows/capture-targets.ts";
+import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
+import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
+import type { KnownWorktreeRoot } from "@crosscheck/connector-core/capture/touched-root.ts";
 import {
   assembleBriefing,
   recordBriefingDeliveries,
@@ -60,8 +60,10 @@ import {
   acpAgentKind,
   acpHostSessionKey,
 } from "@crosscheck/connector-core/state/host-session-key.ts";
+import { withCaptureBookkeeping } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
 import {
   updateSessionState,
+  withKnownWorktreeRoot,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
 
@@ -209,6 +211,16 @@ interface CaptureSession {
   developerId: string | null;
   lastHeartbeatAt: string | null;
   readonly seenTargets: Set<string>;
+  /**
+   * The #17 per-session worktree-root cache, in memory beside `seenTargets`
+   * and for the same reason: the engine deliberately never reads its state
+   * file back. Newly resolved roots are ALSO persisted through the one
+   * `updateSessionState` below, so `crosscheck doctor` can see them and a
+   * Claude or Cursor hook on the same home is not affected — but a resumed
+   * session (`session/load`) starts this twin empty and pays git once more
+   * per root. That is the stated trade, not an oversight.
+   */
+  knownWorktreeRoots: readonly KnownWorktreeRoot[];
   turns: number;
   ended: boolean;
   /** Null when injection is off for this proxy or the session is disabled. */
@@ -303,6 +315,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     developerId: null,
     lastHeartbeatAt: null,
     seenTargets: new Set(),
+    knownWorktreeRoots: [],
     turns: 0,
     ended: true,
     briefing: null,
@@ -378,6 +391,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       developerId: registered.developerId,
       lastHeartbeatAt: at.toISOString(),
       seenTargets: new Set(),
+      knownWorktreeRoots: [],
       turns: 0,
       ended: false,
       briefing: null,
@@ -439,29 +453,95 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
 
   // ── the capture actions (§2.4 rows) ───────────────────────────────────────
 
+  /**
+   * What the observed event was, for the capture health this session owes
+   * `crosscheck status` and the doctor `capture` check.
+   */
+  interface CaptureEvent {
+    /**
+     * Whether this event is an EDIT. Two ACP rows qualify: a `tool_call` row
+     * whose kind is `edit`, and an `fs/write_text_file` request (the client
+     * performs that write, so on an agent that only ever writes this way it
+     * is the sole edit signal there is — not counting it would leave such a
+     * session permanently at `0 fires -> 0 targets`, unable to WARN). An
+     * agent that emits BOTH for one edit therefore books two fires; that
+     * cannot produce a false WARN, since the first of them captures the
+     * target. What must never happen is one tool call ticking once per
+     * STATUS change, which `isNewToolCall` prevents.
+     */
+    readonly editFired: boolean;
+    /** `lastPostToolUseTool` for this host: the ToolCallUpdate kind, or the method. */
+    readonly toolLabel: string | null;
+  }
+
+  /** The in-memory root cache, dedup-by-root and FIFO-capped like seenTargets. */
+  const rememberWorktreeRoots = (
+    session: CaptureSession,
+    resolved: readonly KnownWorktreeRoot[],
+  ): void => {
+    if (resolved.length === 0) {
+      return;
+    }
+    const roots = resolved.map((entry) => entry.root);
+    const merged = [
+      ...session.knownWorktreeRoots.filter((entry) => !roots.includes(entry.root)),
+      ...resolved,
+    ];
+    session.knownWorktreeRoots =
+      merged.length <= MAX_KNOWN_WORKTREE_ROOTS
+        ? merged
+        : merged.slice(merged.length - MAX_KNOWN_WORKTREE_ROOTS);
+  };
+
+  /**
+   * The §2.4 target row, with the #17 worktree resolution and the #18/#20
+   * capture health.
+   *
+   * THE BOOKKEEPING WRITE IS NOT BEHIND THE CAPTURE. It used to be: this
+   * function returned early when `captured.length === 0`, which is EXACTLY
+   * the case the counters exist for. Booked from behind that return,
+   * `editToolFires` would always equal `targetsCapturedCount`,
+   * `isCaptureSilentlyDead` would be structurally unreachable and the doctor
+   * WARN could never fire for an ACP session — PASS-only telemetry. The write
+   * is still skipped when NOTHING happened (no fire, no drop, no capture, no
+   * newly resolved root), so a read-only tool call still costs no state write.
+   */
   const captureTargets = async (
     session: CaptureSession,
     paths: readonly string[],
+    event: CaptureEvent,
   ): Promise<void> => {
-    if (paths.length === 0 || session.hub === null || session.config === null) {
+    // `identity === null` is a DISABLED session (those never reach here), and
+    // it is guarded rather than papered over with `?? session.cwd`: the
+    // resolver needs a real repo id to tell a foreign touch from an own one.
+    if (session.hub === null || session.config === null || session.identity === null) {
       return;
     }
-    const captured = await captureFileTargets({
+    if (paths.length === 0 && !event.editFired) {
+      return;
+    }
+    const at = now();
+    // On ACP the session identity IS the session cwd's identity, so the free
+    // "cwd sits in a sibling worktree" candidate can never apply here and
+    // every out-of-checkout path takes the bounded fs walk. The per-session
+    // cache above is what keeps that once per root rather than once per edit.
+    const { captured, resolution } = await captureTouchedFiles({
       home: session.config.home,
       repoKey: session.repoKey ?? "",
       hostSessionKey: session.hostSessionKey,
-      repoRoot: session.identity?.root ?? session.cwd,
+      repoRoot: session.identity.root,
       cwd: session.cwd,
       paths,
       denylist: session.config.denylist ?? null,
       seenTargets: [...session.seenTargets],
       workContextId: session.workContextId,
       producer: producerFor(session),
-      now: now(),
+      now: at,
+      sessionRepoId: session.identity.repoId,
+      identityRoot: session.identity.root,
+      identityRepoId: session.identity.repoId,
+      knownWorktreeRoots: session.knownWorktreeRoots,
     });
-    if (captured.length === 0) {
-      return;
-    }
     for (const path of captured) {
       session.seenTargets.add(path);
     }
@@ -477,12 +557,30 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       }
       session.seenTargets.delete(oldest.value);
     }
+    rememberWorktreeRoots(session, resolution?.newlyResolved ?? []);
     counters.targets += captured.length;
-    await updateSessionState(
-      session.config.home,
-      session.hostSessionKey,
-      (fresh) => withSeenTargets(fresh, captured),
-    );
+    const booksSomething =
+      captured.length > 0 ||
+      event.editFired ||
+      (resolution !== null &&
+        (resolution.foreignDrops > 0 ||
+          resolution.outsideDrops > 0 ||
+          resolution.newlyResolved.length > 0));
+    if (booksSomething) {
+      await updateSessionState(session.config.home, session.hostSessionKey, (fresh) =>
+        withCaptureBookkeeping(withSeenTargets(fresh, captured), {
+          resolution,
+          capturedCount: captured.length,
+          editFired: event.editFired,
+          toolLabel: event.toolLabel,
+          firstPath: paths[0] ?? null,
+          now: at,
+        }),
+      );
+    }
+    if (captured.length === 0) {
+      return;
+    }
     await flushSpool(
       session.hub,
       { sessionId: session.crosscheckSessionId, developerId: session.developerId },
@@ -571,7 +669,13 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     session: CaptureSession,
     toolCall: ToolCallUpdate,
   ): Promise<void> => {
-    await captureTargets(session, toolCall.paths);
+    await captureTargets(session, toolCall.paths, {
+      // ONE fire per tool call, never per status change (wire/v1.ts
+      // `isNewToolCall`): an edit arriving pending, then in_progress, then
+      // completed is one edit.
+      editFired: toolCall.isNewToolCall && toolCall.toolKind === EDIT_TOOL_KIND,
+      toolLabel: toolCall.toolKind,
+    });
     if (toolCall.status === FAILED_STATUS) {
       // The §2.4 failure row: string fields joined, tail-sliced — the
       // IDENTICAL extractor + normalizer as the Claude hook path.
@@ -764,7 +868,10 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         const params = parseFsWriteParams(message.params);
         const session = params === null ? null : liveSession(params.sessionId);
         if (session !== null && params !== null) {
-          await captureTargets(session, [params.path]);
+          await captureTargets(session, [params.path], {
+            editFired: true,
+            toolLabel: WIRE_METHODS.fsWriteTextFile,
+          });
         }
       }
       return;
