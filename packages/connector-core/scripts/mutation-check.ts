@@ -459,7 +459,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // shared a value back into the join.
     label: "a crowded hub hides the answer it is holding",
     file: `${SERVER}/src/services/solved-matches.ts`,
-    from: "        solvedCandidateCondition(workContextTargets.workContextId),\n",
+    // The line alone appears twice now — the pair join and the failure probe
+    // each carry it — so the anchor is the comment above THIS one.
+    from: `        // is a function of the hub's ANSWERS rather than of its traffic.
+        solvedCandidateCondition(workContextTargets.workContextId),
+`,
     to: "",
     test: `${SERVER}/test/solved-fanout.test.ts`,
     because:
