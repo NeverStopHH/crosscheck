@@ -38,6 +38,14 @@
  *     context touching fifty values is a rename or a formatter run, and it
  *     would otherwise collide with everybody.
  *
+ * SELF-EXCLUSION, PRESENCE OPT-OUT AND MUTE are in the WHERE of all THREE
+ * queries — the two tiers AND the rarity pre-filter that decides which values
+ * reach them (listCoolTargets) — never after a LIMIT. The pre-filter is the
+ * one that is easy to forget and the one where forgetting it is worst: a
+ * value's rarity decides whether a tier ever sees it, so a muted or opted-out
+ * developer counted there would silently shape what the reader is shown while
+ * staying invisible to them.
+ *
  * LIVE MEANS UNFINISHED, not merely recent: an ended session and a landed
  * work context are both excluded on both sides (liveWorkConditions), because
  * inside a seven-day window most contexts on an active repo are branches
@@ -312,8 +320,27 @@ const listOwnTargets = async (
     });
 };
 
+/**
+ * The reader's own values MINUS the hot ones — a lockfile, the router, the
+ * config every session edits (GHOST_HOT_TARGET_MAX_CONTEXTS).
+ *
+ * IT COUNTS THE POPULATION THE READER COULD BE TOLD ABOUT, which is why the
+ * same three predicates the two tiers carry are in this WHERE as well.
+ * Counting everybody looked harmless — a lockfile is a lockfile whoever
+ * touches it — and is not: a developer with nineteen live worktrees on one
+ * repo, or nineteen contexts of a colleague the reader MUTED, or of one who
+ * opted OUT of presence, pushes a value over the bar on their own, and the
+ * teammate who really shares those two files then vanishes with no way to see
+ * why. An invisible developer deciding what the reader is shown inverts the
+ * intent of both controls, and the reader's own parallel worktrees —
+ * GHOST_MAX_OWN_CONTEXTS exists to support them — would sabotage themselves.
+ *
+ * The bar therefore reads: how many contexts that could appear in this
+ * reader's answer carry this value.
+ */
 const listCoolTargets = async (
   deps: Deps,
+  viewerDeveloperId: string,
   repo: string,
   ownTargets: readonly SharedValue[],
 ): Promise<readonly SharedValue[]> => {
@@ -333,7 +360,15 @@ const listCoolTargets = async (
       eq(workContexts.id, workContextTargets.workContextId),
     )
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(and(condition, eq(agentSessions.repo, repo)))
+    .where(
+      and(
+        condition,
+        eq(agentSessions.repo, repo),
+        ne(agentSessions.developerId, viewerDeveloperId),
+        visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId),
+        notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+      ),
+    )
     .groupBy(workContextTargets.kind, workContextTargets.value);
   return rows
     .filter((row) => row.contexts <= GHOST_HOT_TARGET_MAX_CONTEXTS)
@@ -578,7 +613,12 @@ export const listGhostOverlaps = async (
     deps,
     ownContexts.map((context) => context.id),
   );
-  const coolTargets = await listCoolTargets(deps, repo, ownTargets);
+  const coolTargets = await listCoolTargets(
+    deps,
+    viewerDeveloperId,
+    repo,
+    ownTargets,
+  );
   // The two tiers read different tables and neither needs the other's answer.
   const [pairs, intentHits] = await Promise.all([
     listPairRows(deps, viewerDeveloperId, repo, coolTargets, cutoff),

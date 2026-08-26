@@ -744,6 +744,83 @@ describe("ghost checks, the deterministic overlap", () => {
     ).toBe(3);
   });
 
+  test("the hot bar counts only teammates I could be told about", async () => {
+    // One over the bar once the reader's own context and Ken's are added, so
+    // every mode below is exactly at the threshold and nothing else moves.
+    const extras = GHOST_HOT_TARGET_MAX_CONTEXTS - 1;
+    const plan = [
+      { kind: "file", value: "src/a.ts" },
+      { kind: "file", value: "src/b.ts" },
+    ];
+    for (const mode of ["mine", "muted", "opted out"] as const) {
+      const { harness, me, them } = await setup();
+      await seed(
+        harness,
+        me,
+        contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", plan),
+      );
+      await seed(
+        harness,
+        them,
+        contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", plan),
+      );
+      // The control, per mode: Ken is a notice before the extra carriers
+      // exist, so his disappearance can only be the rarity count's doing.
+      expect(
+        (await fetchGhostChecks(harness, me.apiKey)).map(
+          (row) => row.workContextId,
+        ),
+      ).toEqual([THEIR_CONTEXT]);
+
+      const carrierSession = `ses_carriers_${mode.replace(" ", "_")}`;
+      const carrier =
+        mode === "mine"
+          ? me
+          : await addTestDeveloperWithSession(harness, "Mike", "mike@example.com", {
+              id: carrierSession,
+            });
+      if (mode === "mine") {
+        await registerTestSession(harness, me.apiKey, { id: carrierSession });
+      }
+      const carriers = Array.from({ length: extras }, (_unused, index) =>
+        contextRecords(
+          `wc_carrier_${String(index)}`,
+          carrierSession,
+          `Other worktree ${String(index)}`,
+          plan,
+        ),
+      ).flat();
+      for (let at = 0; at < carriers.length; at += INGEST_CHUNK) {
+        await seed(harness, carrier, carriers.slice(at, at + INGEST_CHUNK));
+      }
+      if (mode === "muted") {
+        const muted = await harness.app.request(
+          "/api/settings/mutes",
+          jsonRequest("POST", me.apiKey, { developer: carrier.developerId }),
+        );
+        expect(muted.status).toBe(200);
+      }
+      if (mode === "opted out") {
+        const optedOut = await harness.app.request(
+          "/api/settings/presence",
+          jsonRequest("PUT", carrier.apiKey, { optOut: true }),
+        );
+        expect(optedOut.status).toBe(200);
+      }
+      expect(extras + 2).toBeGreaterThan(GHOST_HOT_TARGET_MAX_CONTEXTS);
+
+      // Contexts the reader can NEVER be shown — their own worktrees, a
+      // developer they muted, a developer who opted out of presence — must
+      // not spend the rarity budget for a value. Otherwise an invisible
+      // developer decides what the reader sees, which inverts both controls.
+      expect(
+        (await fetchGhostChecks(harness, me.apiKey)).map(
+          (row) => row.workContextId,
+        ),
+      ).toEqual([THEIR_CONTEXT]);
+    }
+  });
+
   test("a muted teammate's plan is not reported to me", async () => {
     const { harness, me, them } = await setup();
     await seed(
