@@ -196,6 +196,40 @@ describe("briefing solved-before section", () => {
     }
   });
 
+  test("an answer older than two years reads in years, not in months", async () => {
+    // Arrange: this block removed every reason an old row would not surface
+    // — matches now travel across repos and there is no maximum age — so a
+    // five-year-old diagnosis leading a briefing line is a real shape. The
+    // formatter exists so the reader does not have to divide; "68mo" is the
+    // same arithmetic one unit up.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          solvedAt: new Date(NOW.getTime() - 2027 * DAY_MS).toISOString(),
+        }),
+      ]),
+    );
+
+    // Assert
+    expect(briefing).toContain("diagnosed 5y 7mo ago");
+    expect(briefing).not.toContain("67mo");
+  });
+
+  test("just under the year threshold still reads in months", async () => {
+    // The CONTROL for the case above: without it, a formatter that said
+    // "y" for everything would pass it.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          solvedAt: new Date(NOW.getTime() - 690 * DAY_MS).toISOString(),
+        }),
+      ]),
+    );
+
+    // Assert
+    expect(briefing).toContain("diagnosed 23mo ago");
+  });
+
   test("an unknown match kind drops the line rather than inventing a sentence", async () => {
     // Act: a newer hub's kind this renderer does not know — same honesty rule
     // as the absence section's unknown-kind handling.

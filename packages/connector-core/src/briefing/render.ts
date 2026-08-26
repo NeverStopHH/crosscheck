@@ -13,10 +13,12 @@ import {
   MAX_TEAMMATES,
   MAX_TITLE_CHARS,
   MINUTES_PER_HOUR,
+  MONTHS_PER_YEAR,
   MS_PER_DAY,
   MS_PER_SECOND,
   SECONDS_PER_MINUTE,
   SOLVED_AGE_MONTHS_THRESHOLD_DAYS,
+  SOLVED_AGE_YEARS_THRESHOLD_MONTHS,
   SOLVED_ROOT_CAUSE_MAX_CHARS,
 } from "../constants.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
@@ -380,15 +382,29 @@ const renderContradictionSection = (input: BriefingInput): Section => {
 
 /**
  * A solved diagnosis's age, stated plainly (honest presentation): days up to
- * SOLVED_AGE_MONTHS_THRESHOLD_DAYS, months beyond — "diagnosed 5mo ago"
- * reads at a glance where "152d" asks the reader to divide.
+ * SOLVED_AGE_MONTHS_THRESHOLD_DAYS, months beyond, YEARS beyond
+ * SOLVED_AGE_YEARS_THRESHOLD_MONTHS — "diagnosed 5mo ago" reads at a glance
+ * where "152d" asks the reader to divide, and "5y 7mo ago" reads where
+ * "67mo" asks the same question one unit up. The year step is not
+ * hypothetical here: matches travel across repos and this surface has no
+ * maximum age, so a diagnosis from before a rewrite can lead a briefing line
+ * and the reader has to be able to see that at a glance.
  */
 export const formatSolvedAge = (ageMs: number): string => {
   const days = Math.floor(Math.max(0, ageMs) / MS_PER_DAY);
-  if (days >= SOLVED_AGE_MONTHS_THRESHOLD_DAYS) {
-    return `${String(Math.floor(days / DAYS_PER_MONTH_APPROX))}mo`;
+  if (days < SOLVED_AGE_MONTHS_THRESHOLD_DAYS) {
+    return formatAge(ageMs);
   }
-  return formatAge(ageMs);
+  const months = Math.floor(days / DAYS_PER_MONTH_APPROX);
+  if (months < SOLVED_AGE_YEARS_THRESHOLD_MONTHS) {
+    return `${String(months)}mo`;
+  }
+  const years = Math.floor(months / MONTHS_PER_YEAR);
+  const rest = months % MONTHS_PER_YEAR;
+  // A whole number of years says so rather than trailing an empty "0mo".
+  return rest === 0
+    ? `${String(years)}y`
+    : `${String(years)}y ${String(rest)}mo`;
 };
 
 /**

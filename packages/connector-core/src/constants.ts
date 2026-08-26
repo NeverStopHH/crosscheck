@@ -507,6 +507,16 @@ export const MAX_BRIEFING_SOLVED_REFS = 20;
 /** Solved ages render as days up to here, months beyond ("diagnosed 5mo ago"). */
 export const SOLVED_AGE_MONTHS_THRESHOLD_DAYS = 60;
 export const DAYS_PER_MONTH_APPROX = 30;
+/**
+ * …and as YEARS beyond here ("diagnosed 5y 8mo ago"). Two years is where the
+ * month count stops reading at a glance and starts asking the reader to
+ * divide, which is the one thing the formatter exists to avoid. It is
+ * reachable: solved matches travel across repos, there is no maximum age,
+ * and this surface deliberately still shows an old answer — saying plainly
+ * how old it is, which "68mo" does not.
+ */
+export const SOLVED_AGE_YEARS_THRESHOLD_MONTHS = 24;
+export const MONTHS_PER_YEAR = 12;
 
 // ── The asynchronous question channel (roadmap R2) ────────────────────
 
