@@ -14,11 +14,13 @@
  * and is therefore excluded from both sides.
  */
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 
 import {
   GHOST_HOT_TARGET_MAX_CONTEXTS,
   GHOST_MAX_CONTEXT_TARGETS,
 } from "../src/constants.ts";
+import { agentSessions, workContexts } from "../src/db/schema.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -617,7 +619,65 @@ describe("ghost checks, the deterministic overlap", () => {
     expect(after[0]?.sharedTargetCount).toBe(2);
   });
 
-  test("a muted teammate\'s plan is not reported to me", async () => {
+  test("an ended session and a merged context are not live work", async () => {
+    const { harness, me, them } = await setup();
+    const plan = [
+      { kind: "file", value: "src/auth/token.ts" },
+      { kind: "file", value: "src/auth/session.ts" },
+    ];
+    await seed(
+      harness,
+      me,
+      contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", plan),
+    );
+    await seed(
+      harness,
+      them,
+      contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", plan),
+    );
+    // The control: inside the activity window this IS a notice, so each
+    // silence below is one predicate's doing and not an empty hub.
+    expect(
+      (await fetchGhostChecks(harness, me.apiKey)).map((row) => row.workContextId),
+    ).toEqual([THEIR_CONTEXT]);
+
+    // Ken stopped working. The context is still inside
+    // GHOST_ACTIVE_WINDOW_DAYS, and a finished session is not a collision.
+    await harness.db
+      .update(agentSessions)
+      .set({ endedAt: new Date(), status: "done" })
+      .where(eq(agentSessions.id, THEIR_SESSION));
+    expect(await fetchGhostChecks(harness, me.apiKey)).toEqual([]);
+
+    // Ken is working again, but on a branch that already landed on the
+    // default branch. Merged work cannot collide with anything either.
+    await harness.db
+      .update(agentSessions)
+      .set({ endedAt: null, status: VALID_SESSION_BODY.status })
+      .where(eq(agentSessions.id, THEIR_SESSION));
+    expect(
+      (await fetchGhostChecks(harness, me.apiKey)).map((row) => row.workContextId),
+    ).toEqual([THEIR_CONTEXT]);
+    await harness.db
+      .update(workContexts)
+      .set({ landedAt: new Date() })
+      .where(eq(workContexts.id, THEIR_CONTEXT));
+    expect(await fetchGhostChecks(harness, me.apiKey)).toEqual([]);
+
+    // The same rule on MY side: a plan of mine that already landed is not a
+    // plan anybody can still collide with, so it drives no comparison.
+    await harness.db
+      .update(workContexts)
+      .set({ landedAt: null })
+      .where(eq(workContexts.id, THEIR_CONTEXT));
+    await harness.db
+      .update(workContexts)
+      .set({ landedAt: new Date() })
+      .where(eq(workContexts.id, MY_CONTEXT));
+    expect(await fetchGhostChecks(harness, me.apiKey)).toEqual([]);
+  });
+
+  test("a muted teammate's plan is not reported to me", async () => {
     const { harness, me, them } = await setup();
     await seed(
       harness,

@@ -215,6 +215,14 @@ export const MAX_QUESTION_ANSWERS_LISTED = 3;
  * is for. ConE (Maddila et al., TOSEM 2021) drops a pull request from its
  * concurrent-edit analysis after 30 days for the same reason — theirs is a
  * branch's lifetime, ours a session's.
+ *
+ * IT IS ONE OF THREE BOUNDS AND THE WEAKEST, which is worth stating because
+ * it was once the only one. Recency is not liveness: inside these seven days
+ * a session that ENDED and a context that already LANDED both look freshly
+ * touched, and most contexts on an active repo inside a week are merged
+ * branches. Those two are excluded by their own columns
+ * (services/ghost-overlap.ts liveWorkConditions); this window only decides
+ * how far back unfinished work still counts.
  */
 export const GHOST_ACTIVE_WINDOW_DAYS = 7;
 

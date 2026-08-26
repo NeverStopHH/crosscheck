@@ -38,10 +38,28 @@
  *     context touching fifty values is a rename or a formatter run, and it
  *     would otherwise collide with everybody.
  *
+ * LIVE MEANS UNFINISHED, not merely recent: an ended session and a landed
+ * work context are both excluded on both sides (liveWorkConditions), because
+ * inside a seven-day window most contexts on an active repo are branches
+ * somebody already merged. The activity window decides how far back
+ * unfinished work counts and nothing else.
+ *
  * Derived fresh per read like the deterministic contradictions and the solved
  * matches — nothing stored, nothing to go stale, no ingest-order dependence.
  */
-import { and, asc, count, desc, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
@@ -144,6 +162,38 @@ const notASweepCondition = (contextId: SQL | AnyPgColumn): SQL =>
   ) <= ${GHOST_MAX_CONTEXT_TARGETS}`;
 
 /**
+ * STILL LIVE WORK, on either side of the comparison — the predicate the
+ * activity window alone cannot express.
+ *
+ * `coalesce(updated_at, created_at)` inside GHOST_ACTIVE_WINDOW_DAYS says a
+ * row was TOUCHED recently. It does not say the work is unfinished, and on any
+ * active repo most contexts inside a seven-day window are branches somebody
+ * already merged: without these two predicates a briefing line reported a
+ * session that ended six days ago, on a context that landed five days ago, as
+ * a collision — which is DESIGN.md §10 risk 8's failure exactly, a warning
+ * fired by ordinary co-location. `ended_at` is the session's own "I stopped",
+ * `landed_at` is this codebase's "this already merged", and merged work
+ * cannot collide with anything.
+ *
+ * WHAT IS DELIBERATELY NOT HERE is the tripwire's second predicate,
+ * `last_heartbeat_at > presenceCutoff` (services/hints.ts listTargetSessions).
+ * The tripwire fires at the instant of an edit and must therefore mean this
+ * second; a ghost check answers "whose plan meets mine", and a teammate who
+ * opened this branch yesterday and is at lunch is still in the reader's way.
+ * So the horizon stays GHOST_ACTIVE_WINDOW_DAYS and the SURFACE stops
+ * asserting the present tense instead (briefing/ghost.ts GHOST_SECTION_HEADER,
+ * DESIGN.md §4) — one of the two had to give, and this is the half that costs
+ * the reader nothing true.
+ *
+ * Presence opt-out and mute still apply on both tiers regardless: what this
+ * discloses is presence-class whether or not the heartbeat is fresh.
+ */
+const liveWorkConditions = (): readonly SQL[] => [
+  isNull(agentSessions.endedAt),
+  isNull(workContexts.landedAt),
+];
+
+/**
  * `(kind, value) IN (…)` written as one OR branch per kind, so each branch is
  * an index range on work_context_targets_kind_value_idx. A flat OR over
  * tuples would be one branch per pair and a plan nobody can predict.
@@ -190,6 +240,9 @@ const listOwnContexts = async (
         eq(agentSessions.repo, repo),
         eq(agentSessions.developerId, viewerDeveloperId),
         gte(activityExpression, cutoff),
+        // My OWN finished work drives no comparison either: a plan that
+        // landed is not a plan anybody can still collide with.
+        ...liveWorkConditions(),
       ),
     )
     .orderBy(desc(activityExpression), asc(workContexts.id))
@@ -337,6 +390,7 @@ const listPairRows = async (
         // with themselves (DESIGN.md §4, the tripwire's rule).
         ne(agentSessions.developerId, viewerDeveloperId),
         gte(activityExpression, cutoff),
+        ...liveWorkConditions(),
         notASweepCondition(workContextTargets.workContextId),
         // A ghost line says a named teammate is working on this NOW, which is
         // presence-class information: opt-out hides it, exactly as it hides
@@ -401,6 +455,7 @@ const listIntentHits = async (
         eq(agentSessions.repo, repo),
         ne(agentSessions.developerId, viewerDeveloperId),
         gte(activityExpression, cutoff),
+        ...liveWorkConditions(),
         sql`${workContexts.tsv} @@ ${anyToken}`,
         sql`${hits} >= ${GHOST_INTENT_MIN_TOKEN_HITS}`,
         notASweepCondition(workContexts.id),
