@@ -424,6 +424,72 @@ export const INTENT_DERIVED_CONFIDENCE = 0.4;
  */
 export const DOCTOR_INTENT_SILENT_FIRES_WARN = 2;
 
+// ── Ghost commits: the gated model layer (VISION.md §3) ────────────────────
+
+/**
+ * Ghost checks one session may spend. ONE, and the reason is the same one
+ * VISION §3 gives for the whole feature being gated: the deterministic half
+ * costs nothing and runs on every SessionStart and every declaration, while
+ * this half is a model call on the developer's own quota that answers a
+ * question a session only asks once — "does anybody else's plan collide with
+ * mine". A second call would compare the same two plans again.
+ *
+ * Re-declaring an intent re-opens the DEBT (state/session-state.ts
+ * withRecordedIntent) but not the allowance: the debt is what makes the check
+ * run at all, and this is what stops it running twice.
+ */
+export const GHOST_MAX_FIRES_PER_SESSION = 1;
+
+/**
+ * Confidence a ghost sentence carries, fixed here and never model-chosen —
+ * the derived-intent rule applied to a second derived surface, and under the
+ * cap the shared wire contract enforces (DERIVED_CONFIDENCE_CAP,
+ * @crosscheck/schema). A collision the model INFERRED from two sentences is
+ * the weakest thing this product produces; it is a draft the author reviews,
+ * never a finding a teammate is shown.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.GHOST_DERIVED_CONFIDENCE < s.DERIVED_CONFIDENCE_CAP, c.GHOST_DERIVED_CONFIDENCE === c.INTENT_DERIVED_CONFIDENCE)'
+ * PRINTS: true true
+ */
+export const GHOST_DERIVED_CONFIDENCE = 0.4;
+
+/**
+ * Teammate claims the ghost input may carry. DECLARED ones only, and only
+ * from the ONE overlapping context — the model is being asked whether two
+ * plans collide, and a longer list buys context the question does not need
+ * while widening what a single call reads.
+ */
+export const GHOST_MAX_TEAMMATE_CLAIMS = 5;
+
+/**
+ * How much of one teammate claim body reaches the model. Long enough for a
+ * root cause, short enough that five of them plus two intents stay a small
+ * prompt — the same "bounded slice" rule the summarizer's tail applies.
+ */
+export const GHOST_CLAIM_BODY_MAX_CHARS = 300;
+
+/**
+ * The longest ghost sentence that becomes a draft. Bounded by THIS writer
+ * rather than by the schema, like every other model output here, and well
+ * inside MAX_CLAIM_BODY_LENGTH so the draft line renders without an ellipsis.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.GHOST_SENTENCE_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH)'
+ * PRINTS: true
+ */
+export const GHOST_SENTENCE_MAX_CHARS = 200;
+
+/**
+ * `crosscheck doctor` calls the ghost layer silently dead once this many
+ * fires have landed neither a NONE nor a draft — AND on any booked failure at
+ * all. The intent capture's threshold and its reasoning verbatim: a ghost
+ * check fires at most once per session (GHOST_MAX_FIRES_PER_SESSION), so
+ * waiting for three would mean three sessions of silence before doctor spoke.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DOCTOR_GHOST_SILENT_FIRES_WARN === c.DOCTOR_INTENT_SILENT_FIRES_WARN)'
+ * PRINTS: true
+ */
+export const DOCTOR_GHOST_SILENT_FIRES_WARN = 2;
+
 // ── Absence detection ───────────────────────────────────────────────────────
 
 /** How far back the SessionStart commit-authorship scan looks. */

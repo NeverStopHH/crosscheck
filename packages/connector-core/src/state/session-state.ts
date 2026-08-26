@@ -193,6 +193,21 @@ const SessionStateObjectSchema = z.looseObject({
    * and this says how often the free half had something to say at all.
    */
   ghostNoticeCount: z.number().int().min(0).default(0),
+  /**
+   * The GATED half's telemetry (VISION.md §3), the derived-intent counters'
+   * shape and the same lesson behind it (finding #14): a fire that lands
+   * nothing must be a number somebody can explain. `noOverlap` is the outcome
+   * that costs no tokens at all — the deterministic core found nobody, so no
+   * model ran — and it is counted separately precisely so it never reads as a
+   * failure. Bounded by the writer (ghost/gate.ts), defaults keep every older
+   * state file parsing.
+   */
+  ghostFireCount: z.number().int().min(0).default(0),
+  ghostNoOverlapCount: z.number().int().min(0).default(0),
+  ghostNoneCount: z.number().int().min(0).default(0),
+  ghostDraftCount: z.number().int().min(0).default(0),
+  ghostFailCount: z.number().int().min(0).default(0),
+  ghostLastFailure: z.string().nullable().default(null),
 });
 
 /**
@@ -504,5 +519,11 @@ export const deriveSessionState = (
     workContextIntent: null,
     ghostPending: false,
     ghostNoticeCount: 0,
+    ghostFireCount: 0,
+    ghostNoOverlapCount: 0,
+    ghostNoneCount: 0,
+    ghostDraftCount: 0,
+    ghostFailCount: 0,
+    ghostLastFailure: null,
   };
 };

@@ -29,6 +29,17 @@
  * it). The prompt text itself NEVER leaves the machine — only the model's
  * one sentence can, and only from the worker, after its gates.
  *
+ * AND ONE MORE THING THAT DELIVERS NOTHING: the ghost check (VISION.md §3).
+ * When an intent has been recorded and nothing has compared it against the
+ * team's live plans yet, session state carries `ghostPending` — the debt shape
+ * `briefingPending` already uses — and this hook claims it under the lock and
+ * spawns the detached ghost worker. Identical cost to the intent fire: one
+ * state read the hook was making anyway, one lock round, one unref'd spawn,
+ * no hub call and no model wait. The DEBT exists because the writer that
+ * records an intent is either `set_intent` (an MCP call in connector-core,
+ * which cannot reach a Claude-specific worker) or the intent worker itself
+ * (already detached, and its job is the intent).
+ *
  * This hook is the Claude-specific shell: payload fields in,
  * `hookSpecificOutput` envelope out.
  */
@@ -47,6 +58,7 @@ import {
   readSessionState,
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import { hasGhostAllowance, withGhostClaimed } from "../ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "../intent/gate.ts";
 import { summarizerWorkerEnv } from "../summarizer/worker-env.ts";
 import type { HookContext } from "./runner.ts";
@@ -56,6 +68,14 @@ const INTENT_WORKER_ENTRY_PATH = resolve(
   import.meta.dir,
   "..",
   "intent",
+  "worker-entry.ts",
+);
+
+/** The ghost worker's own entry, beside it (ghost/worker-entry.ts). */
+const GHOST_WORKER_ENTRY_PATH = resolve(
+  import.meta.dir,
+  "..",
+  "ghost",
   "worker-entry.ts",
 );
 
@@ -69,23 +89,16 @@ const envelope = (text: string): string =>
 
 /**
  * Fire-and-forget, the Stop hook's shape: the child is unref'd, its stdio
- * ignored, a spawn failure swallowed — the fire is already booked and losing
- * one intent is the cheap outcome (fail open). The prompt reaches the worker
- * through the FILE path on argv — never the prompt itself, which `ps` would
- * show, and never stdin, which a detached child cannot be handed by a hook
- * that exits first.
+ * ignored, a spawn failure swallowed — the work is already booked and losing
+ * one worker is the cheap outcome (fail open). ONE helper for both detached
+ * workers this hook can start, so the worker env, the ignored stdio and the
+ * unref are decided once: the pair drifting apart is how a child ends up
+ * inheriting the parent session's markers (trial finding #14).
  */
-const spawnIntentWorker = (ctx: HookContext, promptFile: string): void => {
+const spawnDetached = (ctx: HookContext, cmd: readonly string[]): void => {
   try {
     const proc = Bun.spawn({
-      cmd: [
-        process.execPath,
-        INTENT_WORKER_ENTRY_PATH,
-        "--session",
-        ctx.payload.session_id,
-        "--prompt-file",
-        promptFile,
-      ],
+      cmd: [...cmd],
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
@@ -93,8 +106,24 @@ const spawnIntentWorker = (ctx: HookContext, promptFile: string): void => {
     });
     proc.unref();
   } catch {
-    // Fail open — the fire slot is spent, the intent is lost, nothing breaks.
+    // Fail open — the fire slot is spent, the work is lost, nothing breaks.
   }
+};
+
+/**
+ * The prompt reaches the intent worker through the FILE path on argv — never
+ * the prompt itself, which `ps` would show, and never stdin, which a detached
+ * child cannot be handed by a hook that exits first.
+ */
+const spawnIntentWorker = (ctx: HookContext, promptFile: string): void => {
+  spawnDetached(ctx, [
+    process.execPath,
+    INTENT_WORKER_ENTRY_PATH,
+    "--session",
+    ctx.payload.session_id,
+    "--prompt-file",
+    promptFile,
+  ]);
 };
 
 /**
@@ -136,12 +165,50 @@ const maybeSpawnIntentWorker = async (ctx: HookContext): Promise<void> => {
   }
 };
 
+/**
+ * Pay the ghost debt, at most once per session and only when one is owed.
+ *
+ * The DEBT is claimed here and the FIRE is booked in the worker, which is not
+ * a split for its own sake: the fire pays for a MODEL CALL, and the worker is
+ * the first place that knows whether the deterministic core found anybody to
+ * compare against. Claiming the debt here is what stops two racing hooks from
+ * spawning two workers; checking the allowance here as well is what stops a
+ * re-declared intent from spawning a worker that would only exit again.
+ */
+const maybeSpawnGhostWorker = async (ctx: HookContext): Promise<void> => {
+  try {
+    const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
+    if (state === null || !state.ghostPending || !hasGhostAllowance(state)) {
+      return;
+    }
+    const claimed = await updateSessionState(
+      ctx.config.home,
+      ctx.payload.session_id,
+      withGhostClaimed,
+    );
+    if (!claimed) {
+      return;
+    }
+    spawnDetached(ctx, [
+      process.execPath,
+      GHOST_WORKER_ENTRY_PATH,
+      "--session",
+      ctx.payload.session_id,
+    ]);
+  } catch {
+    // Fail open: the prompt hook's own job (briefing or hint) is untouched.
+  }
+};
+
 export const handleUserPromptSubmit = async (
   ctx: HookContext,
 ): Promise<string> => {
   // The derived-intent fire delivers nothing and runs first, so it happens
   // on the first substantive prompt whatever else this hook goes on to emit.
   await maybeSpawnIntentWorker(ctx);
+  // The ghost debt, likewise: nothing is emitted here, and a session that
+  // owes nothing pays one state read it had already made.
+  await maybeSpawnGhostWorker(ctx);
   // The deferred briefing never reads the prompt text, so it sits BEFORE the
   // hint pipeline's meaning floor and secret gate: a session owed a briefing
   // gets it whatever the first prompt says. Exactly-once and the

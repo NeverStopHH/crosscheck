@@ -271,6 +271,12 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
     workContextIntent: null,
     ghostPending: false,
     ghostNoticeCount: 0,
+    ghostFireCount: 0,
+    ghostNoOverlapCount: 0,
+    ghostNoneCount: 0,
+    ghostDraftCount: 0,
+    ghostFailCount: 0,
+    ghostLastFailure: null,
   });
 
   test("a failing tool output carrying a credential produces NO request containing it — and no candidates query at all", async () => {

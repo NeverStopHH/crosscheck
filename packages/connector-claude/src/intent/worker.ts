@@ -45,6 +45,7 @@ import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
 import {
   readSessionState,
   updateSessionState,
+  withRecordedIntent,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { withIntentFailure, withIntentNone, withIntentSet } from "./gate.ts";
@@ -214,7 +215,13 @@ const appendIntent = async (
   );
   // Booked AFTER the spool append: "intent set" means the record exists on
   // disk, not that the model merely offered a sentence (telemetry honesty).
-  await updateSessionState(home, claudeSessionId, withIntentSet);
+  // The same write records the sentence and opens the ghost debt (VISION §3):
+  // a derived intent is a plan like a declared one, and the next prompt hook
+  // compares it against the team's — this worker deliberately does NOT run
+  // that check itself, so one detached process stays one model call.
+  await updateSessionState(home, claudeSessionId, (state) =>
+    withIntentSet(withRecordedIntent(state, sentence)),
+  );
 };
 
 /** Entry point behind intent/worker-entry.ts — always exits 0. */

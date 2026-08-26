@@ -233,6 +233,12 @@ describe("fail-open within budget", () => {
         workContextIntent: null,
         ghostPending: false,
         ghostNoticeCount: 0,
+        ghostFireCount: 0,
+        ghostNoOverlapCount: 0,
+        ghostNoneCount: 0,
+        ghostDraftCount: 0,
+        ghostFailCount: 0,
+        ghostLastFailure: null,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -338,6 +344,12 @@ describe("fail-open within budget", () => {
         workContextIntent: null,
         ghostPending: false,
         ghostNoticeCount: 0,
+        ghostFireCount: 0,
+        ghostNoOverlapCount: 0,
+        ghostNoneCount: 0,
+        ghostDraftCount: 0,
+        ghostFailCount: 0,
+        ghostLastFailure: null,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -500,6 +512,12 @@ describe("fail-open within budget", () => {
         workContextIntent: null,
         ghostPending: false,
         ghostNoticeCount: 0,
+        ghostFireCount: 0,
+        ghostNoOverlapCount: 0,
+        ghostNoneCount: 0,
+        ghostDraftCount: 0,
+        ghostFailCount: 0,
+        ghostLastFailure: null,
       } satisfies SessionState);
 
       // Act

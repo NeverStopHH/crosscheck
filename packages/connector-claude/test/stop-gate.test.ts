@@ -68,6 +68,12 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   workContextIntent: null,
   ghostPending: false,
   ghostNoticeCount: 0,
+  ghostFireCount: 0,
+  ghostNoOverlapCount: 0,
+  ghostNoneCount: 0,
+  ghostDraftCount: 0,
+  ghostFailCount: 0,
+  ghostLastFailure: null,
   ...overrides,
 });
 

@@ -16,6 +16,9 @@ export {
 export { runIntentWorker } from "./intent/worker.ts";
 export { formatIntentCost, isIntentSilentlyDead, readIntentCost } from "./intent/cost.ts";
 export type { IntentCost } from "./intent/cost.ts";
+// The gated ghost-check surface (VISION.md §3): the worker entry the prompt
+// hook spawns when a recorded intent still owes a comparison.
+export { runGhostWorker } from "./ghost/worker.ts";
 // The runner's own surface for `doctor` (trial finding #14): the real argv,
 // the real worker env, the booked-failure formatter and the active probe.
 export {
