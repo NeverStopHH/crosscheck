@@ -625,9 +625,28 @@ export const MUTATIONS: readonly Mutation[] = [
     to: "",
     test: `${CONNECTOR}/test/failure-hook.test.ts`,
     because:
-      "every interrupted command becomes an error_fingerprint target, so the " +
-      "hub's strongest match signal fills with noise nobody diagnosed — and " +
-      "the developer is handed a solved-before line for pressing escape",
+      "every failure that reached Claude Code as an abort becomes an " +
+      "error_fingerprint target, so the hub's strongest match signal fills " +
+      "with noise nobody diagnosed — and the developer is handed a " +
+      "solved-before line for a command that never finished",
+  },
+  {
+    // The OTHER half of the abort story, and the half the reference says is
+    // the real one: cancelling a running tool fires no failure event, so the
+    // interruption arrives as a tool RESULT on the success event. This drops
+    // the marker that recognises it there.
+    label: "an abort is fingerprinted as a failure on PostToolUse",
+    file: `${CONNECTOR}/src/capture/tool-events.ts`,
+    from: `  if (record["interrupted"] === true) {
+    return false;
+  }
+`,
+    to: "",
+    test: `${CONNECTOR}/test/fingerprint.test.ts`,
+    because:
+      "an interruption message — text every session on the hub produces — " +
+      "becomes an error_fingerprint target, and a fingerprint is the one " +
+      "signal collective memory trusts as content identity ACROSS repos",
   },
   {
     // The whole point of a fingerprint is that the failure TEXT stays on
@@ -2233,6 +2252,7 @@ interface Outcome {
  * PRINTS: doctor.test.ts 1
  * PRINTS: double-wiring.test.ts 1
  * PRINTS: failure-hook.test.ts 2
+ * PRINTS: fingerprint.test.ts 1
  * PRINTS: global-wiring-silence.test.ts 2
  * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2

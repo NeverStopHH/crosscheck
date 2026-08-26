@@ -47,8 +47,13 @@ export const handlePostToolUseFailure = async (
   ctx: HookContext,
   budget: HookBudget,
 ): Promise<string> => {
-  // A cancelled tool is not a broken build. Fingerprinting aborts would fill
-  // the team's memory with "the developer pressed escape".
+  // An abort is not a broken build. The reference is precise about what this
+  // flag covers — "true when the failure reached Claude Code as an abort
+  // rather than as an error the tool reported" — and equally precise that it
+  // is not the whole abort story: cancelling a RUNNING tool fires no failure
+  // event at all, its interruption arriving as a tool RESULT on PostToolUse.
+  // That half is guarded there, by the `interrupted` marker isFailureResponse
+  // reads (capture/tool-events.ts).
   if (ctx.payload.is_interrupt === true) {
     return "";
   }

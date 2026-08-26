@@ -83,6 +83,28 @@ describe("isFailureResponse", () => {
     expect(isFailureResponse({ success: false })).toBe(true);
   });
 
+  /**
+   * The hooks reference, on `PostToolUseFailure.is_interrupt`: "Cancelling a
+   * running tool does not fire this hook; the tool result carries the
+   * interruption message instead" — so an ABORT reaches this connector HERE,
+   * on the success event, and the failure hook's `is_interrupt` guard is on a
+   * door aborts do not use. `interrupted` is a documented field of the Bash
+   * tool's output shape (the `updatedToolOutput` example), which is why it is
+   * the marker read.
+   */
+  test("an abort is not a failure, whatever else the result carries", () => {
+    expect(isFailureResponse({ interrupted: true })).toBe(false);
+    // The abort marker outranks every error marker in the same record: a
+    // cancelled command can still report a non-zero exit, and "the developer
+    // pressed escape" is text every session produces — the one input that
+    // would fill the fingerprint index, which is the only signal collective
+    // memory treats as content identity across repos.
+    expect(isFailureResponse({ interrupted: true, is_error: true })).toBe(false);
+    expect(isFailureResponse({ interrupted: true, exitCode: 130 })).toBe(false);
+    // …and it is the marker that decides, not the field being present.
+    expect(isFailureResponse({ interrupted: false, is_error: true })).toBe(true);
+  });
+
   test("treats a missing failure marker as success", () => {
     expect(isFailureResponse({ stdout: "ok" })).toBe(false);
     expect(isFailureResponse({ exitCode: 0 })).toBe(false);

@@ -40,9 +40,13 @@ export const HookPayloadSchema = z.looseObject({
    * that event fires when a tool completes SUCCESSFULLY, so a failing `bun
    * test` reached no capture path at all.
    *
-   * `is_interrupt` is true when the developer aborted rather than the tool
-   * reporting an error; a cancellation is not a build failure and is not
-   * fingerprinted (the Cursor connector's handler states the same rule).
+   * `is_interrupt` is, in the reference's words, "true when the failure
+   * reached Claude Code as an abort rather than as an error the tool
+   * reported" — not a build failure, and not fingerprinted (the Cursor
+   * connector's handler states the same rule). It is NOT the whole abort
+   * story: cancelling a RUNNING tool fires no failure event at all, and its
+   * interruption arrives as a tool result on PostToolUse, where
+   * `isFailureResponse` reads the `interrupted` marker instead.
    * Tolerant like every field here — renamed upstream, failures simply stop
    * being captured, exactly as they already were.
    */
@@ -95,12 +99,29 @@ export const extractFilePaths = (toolInput: unknown): readonly string[] => {
 /**
  * Conservative failure detection: an explicit failure marker must be present.
  * "No such field" means "not a failure", never "assume failure".
+ *
+ * AN ABORT IS NOT A FAILURE, and this event is where aborts actually arrive.
+ * The hooks reference says of `PostToolUseFailure.is_interrupt`: "Cancelling a
+ * running tool does not fire this hook; the tool result carries the
+ * interruption message instead" — so the guard the failure hook carries is on
+ * a door a cancelled tool does not use, and the interruption lands HERE, on
+ * the success event, as a tool RESULT. `interrupted` is a documented field of
+ * the Bash tool's output shape.
  */
 export const isFailureResponse = (toolResponse: unknown): boolean => {
   if (typeof toolResponse !== "object" || toolResponse === null) {
     return false;
   }
   const record = toolResponse as Record<string, unknown>;
+  // Before every error marker, because a cancelled call can carry one too and
+  // the abort is the stronger fact about it. What it buys is the fingerprint
+  // index staying an index of DIAGNOSED failures: "the developer pressed
+  // escape" is text every session on the hub produces, and a fingerprint is
+  // the one signal collective memory trusts as content identity ACROSS repos
+  // (server/services/solved-matches.ts, CROSS_REPO_TARGET_KIND).
+  if (record["interrupted"] === true) {
+    return false;
+  }
   if (record["is_error"] === true || record["isError"] === true) {
     return true;
   }
