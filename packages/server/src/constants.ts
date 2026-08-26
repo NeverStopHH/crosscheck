@@ -202,6 +202,115 @@ export const QUESTION_ANSWER_WINDOW_DAYS = QUESTION_TTL_DAYS * 2;
  */
 export const MAX_QUESTION_ANSWERS_LISTED = 3;
 
+// ── Ghost commits: deterministic plan overlap (VISION.md §3) ───────────────
+
+/**
+ * How recently a teammate's work context must have moved before this surface
+ * calls it a LIVE PLAN. Shorter than the solved window
+ * (SOLVED_MATCH_ACTIVE_WINDOW_DAYS = 14) because the two answer different
+ * questions: a solved tree is history and stays useful for as long as the
+ * code does, while a ghost check asserts that somebody is working on this
+ * NOW. One working week is the horizon in which two plans still meet; past
+ * it the honest sentence is "Ken looked at this once", which is what search
+ * is for. ConE (Muşlu et al., TOSEM 2021) drops a pull request from its
+ * concurrent-edit analysis after 30 days for the same reason — theirs is a
+ * branch's lifetime, ours a session's.
+ */
+export const GHOST_ACTIVE_WINDOW_DAYS = 7;
+
+/**
+ * The reader's own contexts the overlap is computed FROM, freshest first. A
+ * session has one work context by construction; the slack is for a developer
+ * running parallel worktrees on one repo, whose plans are all theirs.
+ */
+export const GHOST_MAX_OWN_CONTEXTS = 3;
+
+/**
+ * A work context carrying more target values than this is EXCLUDED from both
+ * sides of the overlap join — mine and theirs alike.
+ *
+ * It is a sweep, not a plan: a mass rename, a formatter run, a dependency
+ * bump. Sharing a file with a sweep says nothing about whether two designs
+ * collide, and a sweep shares files with everybody, so admitting one would
+ * make every session on the repo collide with it. This is ConE's own filter
+ * (pull requests touching more than 50 files are dropped, their 90th
+ * percentile of change size) applied to the unit we have.
+ */
+export const GHOST_MAX_CONTEXT_TARGETS = 50;
+
+/**
+ * A target value shared by more work contexts than this is dropped before
+ * anything is counted: a lockfile, the router, the config every session
+ * edits. ConE's "rarely concurrently edited" heuristic, which is the half of
+ * that paper doing the precision work — they exclude files edited more than
+ * 20 times a month, computed weekly over three months of history. We cannot
+ * afford a batch job, so the same idea is one indexed aggregate over the
+ * values the reader's own session already holds: hot values are dropped by
+ * count, at read time, with no history table to keep.
+ *
+ * It is also the fan-out bound. Every surviving value is shared by at most
+ * this many contexts, so no single hot value can fill the pair window ahead
+ * of the values that mean something — the defect measured on the solved
+ * surface at 1.2 s (services/solved-matches.ts), prevented here by
+ * construction rather than by a cap on the crowd.
+ */
+export const GHOST_HOT_TARGET_MAX_CONTEXTS = 20;
+
+/**
+ * Distinct shared target values a foreign context needs before the
+ * deterministic core will name it — UNLESS the shared kind is an error
+ * fingerprint, where one is enough (GHOST_FINGERPRINT_MIN_SHARED).
+ *
+ * A COUNT rather than ConE's Extent-of-Overlap ratio (they flag a pair at
+ * >= 50 % of the reference change's files), and the difference is forced by
+ * the unit: a ratio needs a denominator, and at SessionStart a live work
+ * context has captured two or three targets, so one shared file is already
+ * 50 % of it. A ratio over a denominator that small is the prediction
+ * theatre this feature is supposed to avoid. Two shared values is a
+ * sentence a reader can check.
+ */
+export const GHOST_MIN_SHARED_TARGETS = 2;
+
+/**
+ * Shared error fingerprints that qualify on their own. ONE: a fingerprint is
+ * derived from the failure TEXT (connector-core/capture/fingerprint.ts), so
+ * two contexts carrying it are hitting the same failure rather than sitting
+ * near each other — the same content-identity argument that lets a
+ * fingerprint travel across repos on the solved surface.
+ */
+export const GHOST_FINGERPRINT_MIN_SHARED = 1;
+
+/**
+ * Distinct words of the reader's OWN intent a foreign context's searchable
+ * doc must match before text alone earns a notice. The same floor and the
+ * same reasoning as SOLVED_MATCH_INTENT_MIN_TOKEN_HITS — a count somebody
+ * can check, never a tuned relevance score — and it is what catches VISION
+ * §3's own case: two plans that touch no common file yet and still collide.
+ */
+export const GHOST_INTENT_MIN_TOKEN_HITS = 3;
+
+/** Read bound on candidate rows the intent tier scores per query. */
+export const GHOST_MAX_INTENT_CANDIDATES = 20;
+
+/**
+ * Read bound on shared-target pair rows. Every surviving value is shared by
+ * at most GHOST_HOT_TARGET_MAX_CONTEXTS contexts, so this window always
+ * holds at least GHOST_MAX_PAIR_ROWS / GHOST_HOT_TARGET_MAX_CONTEXTS
+ * distinct values — the per-value starvation the solved surface had to
+ * measure cannot arise here.
+ */
+export const GHOST_MAX_PAIR_ROWS = 400;
+
+/** Findings one response carries, strongest reason first. */
+export const GHOST_MAX_FINDINGS = 3;
+
+/**
+ * Shared values named on the wire per finding. The reader is told the total
+ * separately, so this bounds the LINE, not the fact. Three is what fits on
+ * one briefing line beside a name, an age and an intent.
+ */
+export const GHOST_MAX_SHARED_SHOWN = 3;
+
 export const EVENT_KINDS = {
   DEVELOPER_CREATED: "developer_created",
   SESSION_STARTED: "session_started",

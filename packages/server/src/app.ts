@@ -6,6 +6,7 @@ import { contradictionsRoutes } from "./routes/contradictions.ts";
 import { developersRoutes } from "./routes/developers.ts";
 import { draftsRoutes } from "./routes/drafts.ts";
 import { eventsRoutes } from "./routes/events.ts";
+import { ghostChecksRoutes } from "./routes/ghost-checks.ts";
 import { hintsRoutes } from "./routes/hints.ts";
 import { presenceRoutes } from "./routes/presence.ts";
 import { questionsRoutes } from "./routes/questions.ts";
@@ -32,6 +33,7 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/contradictions", contradictionsRoutes(deps));
   app.route("/api/absences", absencesRoutes(deps));
   app.route("/api/solved-matches", solvedMatchesRoutes(deps));
+  app.route("/api/ghost-checks", ghostChecksRoutes(deps));
   // The asynchronous question channel (roadmap R2). A route of its own, not
   // only a record kind, because asking resolves a developer NAME and a
   // misspelt one must come back naming the closest spellings.
