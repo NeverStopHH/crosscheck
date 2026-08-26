@@ -20,15 +20,6 @@ import type { CursorHookContext } from "../runner.ts";
 
 export const IMPLEMENTING_STATUS = "implementing";
 
-/**
- * The stored state, or the state a fresh register just wrote — null only
- * when even the flow could not produce one (fail open, capture skipped) or
- * when the touch belongs to a DIFFERENT repo than the session registered
- * with (first-wins, trial finding #9 — the Claude post-tool-use guard's
- * twin): one conversation is ONE crosscheck session bound to one repo, so a
- * foreign-repo touch is dropped and counted rather than captured under the
- * wrong repo.
- */
 export interface RequireSessionStateOptions {
   /**
    * Whether the event that is asking IS an edit. The Claude twin counts the
@@ -42,6 +33,15 @@ export interface RequireSessionStateOptions {
   readonly editFired?: boolean;
 }
 
+/**
+ * The stored state, or the state a fresh register just wrote — null only
+ * when even the flow could not produce one (fail open, capture skipped) or
+ * when the touch belongs to a DIFFERENT repo than the session registered
+ * with (first-wins, trial finding #9 — the Claude post-tool-use guard's
+ * twin): one conversation is ONE crosscheck session bound to one repo, so a
+ * foreign-repo touch is dropped and counted rather than captured under the
+ * wrong repo.
+ */
 export const requireSessionState = async (
   ctx: CursorHookContext,
   options: RequireSessionStateOptions = {},

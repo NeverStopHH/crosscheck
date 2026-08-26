@@ -22,6 +22,24 @@
  * the prompt path), so it cannot reach the spool, the state files, or the
  * log. Same for diff texts, fs write content and terminal command text.
  * Local logging carries ids, slugs and counts — paths and content never.
+ *
+ * CAPTURE-ONLY: NO BEFORE-EDIT TRIPWIRE IS POSSIBLE ON THIS HOST TODAY, and
+ * that is a limitation this file documents rather than a gap it forgot. The
+ * signals genuinely exist on the wire — `session/request_permission` carries
+ * the whole `ToolCallUpdate` with its `locations`, and a `tool_call` may
+ * arrive with `status: "pending"` (agentclientprotocol.com/protocol/schema,
+ * read 2026-08-26). None of them is usable without breaking prime directive
+ * 1: the pump forwards first and hands this engine a COPY, so by the time a
+ * pending edit is seen the client already has it; the agent->client direction
+ * is a pure byte pump with no line-decision seam at all (injection exists
+ * only on c2a); the only client->agent message following a permission request
+ * is the human's own answer, which may never be forged; and `_meta` is
+ * explicitly not a channel a client may be assumed to surface. Giving a2c a
+ * seam means parsing and re-emitting agent bytes on the forward path —
+ * exactly what test/transparency.test.ts exists to forbid. An overlap can
+ * still be mentioned ONE BEAT LATE through the existing `session/prompt`
+ * injection point; that is a notice after the edit, not a tripwire, and the
+ * README / docs/adapters/INSTALL.md parity tables say so in those words.
  */
 import {
   FINGERPRINT_SOURCE_CHARS,
@@ -63,7 +81,6 @@ import {
 import { withCaptureBookkeeping } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
 import {
   updateSessionState,
-  withKnownWorktreeRoot,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
 

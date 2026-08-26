@@ -66,16 +66,9 @@ export const CursorPayloadSchema = z.looseObject({
   failure_type: z.string().optional().catch(undefined),
   is_interrupt: z.boolean().optional().catch(undefined),
   /**
-   * Tool events carry their own cwd; relative paths resolve against it.
-   *
-   * AN EMPTY STRING IS ABSENT, folded here at the boundary rather than at
-   * each use. A live Cursor 3.13.25 `preToolUse` capture carries `cwd: ""`
-   * twice in one payload (top level and inside `tool_input`), and `??` folds
-   * `undefined` and `null` but NOT `""` — so an empty one would flow through
-   * to `resolve("", filePath)`, i.e. the hook process's own working
-   * directory. Harmless while `cwd` only backed one `resolve()`; load-bearing
-   * since #17, where it feeds the connected-root walk and both
-   * `toRepoRelative` calls inside the resolver.
+   * Tool events carry their own cwd; relative paths resolve against it. An
+   * EMPTY one is folded to absent at the parse boundary — see
+   * `withoutEmptyCwd` below for the payload that made that necessary.
    */
   cwd: z.string().optional().catch(undefined),
 });
