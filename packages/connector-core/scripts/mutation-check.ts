@@ -1878,6 +1878,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "tool to look at",
   },
   {
+    // Review finding P3. `??` folds undefined and null but NOT "", and Cursor
+    // demonstrably sends `cwd: ""`. The guard test only sees this with a
+    // RELATIVE file_path — `resolve("", "/abs")` is `/abs`, so the absolute
+    // version of that test stayed green with this line deleted.
+    label: "an empty cursor cwd resolves against the hook's own directory",
+    file: `${CURSOR}/src/payload.ts`,
+    from: "  return parsed.success ? withoutEmptyCwd(parsed.data) : null;",
+    to: "  return parsed.success ? parsed.data : null;",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "a Cursor build sending `cwd: \"\"` with a relative file_path resolves " +
+      "the edit against the hook process's working directory, so the touch " +
+      "drops as outside-root and the edit is lost silently",
+  },
+  {
     // Review finding A4. The cache key is only a DIRECTORY PATH, and the
     // fixed-path worktree convention reuses it. Guard shells out to git.
     label: "a reused worktree path keeps the old checkout's repo id",
@@ -2161,7 +2176,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 3
  * PRINTS: packages/connector-cursor/test/injection.test.ts 2
- * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 5
+ * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 6
  * PRINTS: packages/server/test/developer-emails.test.ts 1
  * PRINTS: packages/server/test/hints.test.ts 2
  * PRINTS: packages/server/test/search.test.ts 3

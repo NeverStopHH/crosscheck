@@ -185,20 +185,31 @@ describe("a cursor conversation at checkout A editing a file in worktree B", () 
     // field is in our looseObject schema, and after #17 it feeds the connected
     // -root walk and both toRepoRelative calls — an empty one resolving
     // against the hook process's own cwd would silently drop the edit.
-    const { main, worktree, home } = await repoWithWorktree("cur-empty-cwd");
-    await writeRepoFile(worktree, EDITED_FILE, "export const a = 1;\n");
+    //
+    // THE PATH IS RELATIVE ON PURPOSE, and that is the whole test. With an
+    // ABSOLUTE file_path this case passes with the fold DELETED, because
+    // `resolve("", "/abs/x.ts")` is `/abs/x.ts` — the fold cannot be seen and
+    // the guard pins nothing. A relative one is resolved against the empty
+    // cwd, i.e. against the HOOK PROCESS's own working directory.
+    const { main, home } = await repoWithWorktree("cur-empty-cwd");
+    await writeRepoFile(main, EDITED_FILE, "export const a = 1;\n");
     await writeSessionState(home, sessionState(main));
 
-    // Act
+    // Act: documented resolution is "relative to the event's cwd when
+    // present, the workspace root else" — and an EMPTY cwd is not present
     const stdout = await runCursorHook(
       "afterFileEdit",
-      editPayload(main, join(worktree, EDITED_FILE), { cwd: "" }),
+      editPayload(main, EDITED_FILE, { cwd: "" }),
       env(home),
     );
 
-    // Assert
+    // Assert: captured under its repo-relative path, and nothing dropped —
+    // unfolded, the target list is empty and a drop is counted instead
     expect(stdout).toBe("{}");
     expect(await targetsIn(home)).toEqual([EDITED_FILE]);
+    const state = await readSessionState(home, HOST_KEY);
+    expect(state?.outsideRootDrops).toBe(0);
+    expect(state?.foreignRepoDrops).toBe(0);
   });
 });
 

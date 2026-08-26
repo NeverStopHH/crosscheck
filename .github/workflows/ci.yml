@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 111
+    # PRINTS: 112
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -168,6 +168,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
     # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 2
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
+    # PRINTS: packages/connector-cursor/src/payload.ts 1
     # PRINTS: packages/server/src/services/developers.ts 1
     # PRINTS: packages/server/src/services/hints.ts 1
     # PRINTS: packages/server/src/services/records.ts 1
@@ -196,6 +197,7 @@ jobs:
     # PRINTS: injector.ts 3
     # PRINTS: latency.ts 1
     # PRINTS: output.ts 1
+    # PRINTS: payload.ts 1
     # PRINTS: post-tool-use.ts 2
     # PRINTS: pre-tool-use.ts 3
     # PRINTS: proxy.ts 1
