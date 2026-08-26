@@ -21,6 +21,8 @@ import {
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { repoKey, sessionSlug } from "@crosscheck/connector-core/config/paths.ts";
+import { readSessionSpool } from "@crosscheck/connector-core/spool/files.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 import {
   solvedFingerprintMatch,
@@ -63,7 +65,7 @@ const fixture = async (
   label: string,
   candidateLatencyMs: number,
   solvedLatencyMs: number = 0,
-): Promise<{ repo: string; env: Env; hub: HintHub }> => {
+): Promise<{ repo: string; home: string; env: Env; hub: HintHub }> => {
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   const home = await makeHome(label);
   paths.push(repo, home);
@@ -90,6 +92,7 @@ const fixture = async (
   });
   return {
     repo,
+    home,
     hub,
     env: {
       CROSSCHECK_HOME: home,
@@ -178,13 +181,23 @@ describe("the PostToolUseFailure budget, measured through runHook", () => {
 
     // Act — run 0 delivers; later runs exercise the seen-set silent path,
     // which still pays capture, flush and the state read.
+    const stdout: string[] = [];
     for (let run = 0; run < HAPPY_RUNS; run += 1) {
       const startedAt = performance.now();
-      await runHook("post-tool-use-failure", failurePayload(repo), env);
+      stdout.push(await runHook("post-tool-use-failure", failurePayload(repo), env));
       elapsed.push(Math.round(performance.now() - startedAt));
     }
 
-    // Assert — measured, then bounded
+    // Assert — the WORK first, because a budget is only a measurement of a
+    // hook that did it: an unregistered event, a dropped handler or a probe
+    // nobody calls all finish in a millisecond and would pass every bound
+    // below. Run 0 must carry the solved answer, the later runs must be the
+    // seen-set's silence rather than a hook that never spoke.
+    expect(stdout[0]).toContain("get_diagnosis");
+    expect(stdout.slice(1)).toEqual(["", "", "", ""]);
+    expect(hub.calls.solvedMatches).toBeGreaterThan(0);
+
+    // …then measured, then bounded
     console.log(
       `[failure-latency] responsive hub, ms per run: ${elapsed.join(", ")} (budget ${String(FAILURE_BUDGET_MS)})`,
     );
@@ -195,7 +208,11 @@ describe("the PostToolUseFailure budget, measured through runHook", () => {
 
   test("a hub that never answers the probe is cut at the budget, in silence", async () => {
     // Arrange
-    const { repo, env, hub } = await fixture("failure-hung", 0, UNANSWERABLE_MS);
+    const { repo, home, env, hub } = await fixture(
+      "failure-hung",
+      0,
+      UNANSWERABLE_MS,
+    );
     hub.setSolvedMatches([solvedFingerprintMatch()]);
 
     // Act
@@ -207,7 +224,22 @@ describe("the PostToolUseFailure budget, measured through runHook", () => {
     );
     const elapsedMs = Math.round(performance.now() - startedAt);
 
-    // Assert — fail-open AND on time
+    // Assert — fail-open AND on time. The CAPTURE is asserted first: the
+    // hook's whole ordering promise is that a slow hub costs the hint and
+    // never the fingerprint, and without this line an empty stdout after a
+    // millisecond would satisfy every bound here.
+    const spool = await readSessionSpool(
+      home,
+      repoKey(hub.url, REPO_ID),
+      sessionSlug(SESSION_ID),
+    );
+    const captured = spool.lines
+      .map((line) => JSON.parse(line) as { kind: string; body: Record<string, unknown> })
+      .filter(
+        (record) =>
+          record.kind === "target" && record.body["kind"] === "error_fingerprint",
+      );
+    expect(captured).toHaveLength(1);
     console.log(
       `[failure-latency] hung hub cut after ${String(elapsedMs)} ms (budget ${String(FAILURE_BUDGET_MS)} + slop ${String(RACE_SLOP_MS)})`,
     );
