@@ -845,8 +845,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // it), so the replay test now reads the persisted state directly.
     label: "the cursor file-edit forgets its seen-set between hooks",
     file: `${CURSOR}/src/handlers/file-edit.ts`,
-    from: "    ...withSeenTargets(fresh, files),\n",
-    to: "    ...fresh,\n",
+    // Re-pointed when the #17 port folded the capture counters into the same
+    // write: the seen-set merge is now the inner call of that fold, so the
+    // anchor moved while the defect it re-creates did not.
+    from: "withSeenTargets(fresh, files)",
+    to: "fresh",
     test: `${CURSOR}/test/handlers.test.ts`,
     because:
       "every afterFileEdit re-captures and re-appends every seen target — " +
@@ -1680,6 +1683,140 @@ export const MUTATIONS: readonly Mutation[] = [
       "the slice happened to land on, so the same machine reports different " +
       "spend depending on filesystem order",
   },
+  // ── The #17 connector parity round: worktree resolution, drop counters and
+  // capture health on EVERY host, not only Claude Code. Six of the eight
+  // guards below shell out to git (makeRepo + `git worktree add`), so the
+  // container caveat recorded on assertGuardIsGreen applies to them.
+  {
+    // The join between the resolver and the capture flow lives in ONE place
+    // now, precisely so a connector cannot forget it. Dropping the spread
+    // restores the pre-#17 single-root behaviour for EVERY host at once: an
+    // edit in a linked worktree resolves to null against the session's
+    // checkout and is dropped, and only the outside-root counter ticks.
+    label: "the shared capture flow forgets the file's own worktree root",
+    file: `${CORE}/src/flows/capture-touched-files.ts`,
+    from:
+      "    ...(resolution === null\n" +
+      "      ? {}\n" +
+      "      : {\n" +
+      "          resolveRoot: (path: string): string | null =>\n" +
+      "            resolution.rootByPath.get(path) ?? null,\n" +
+      "        }),\n",
+    to: "",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "every connector is back to the H1 defect at once — a session at " +
+      "checkout A captures nothing from worktree B of the same repo, on the " +
+      "one seam that exists so no host can get this wrong on its own",
+  },
+  {
+    // The per-session root cache, on the Cursor side. A wall clock cannot see
+    // this (the B1 reviewers proved it: the budget test stayed green with the
+    // cache read removed, at 2.6x the warm cost), so the guard asserts the
+    // recorded attempt COUNT of an unresolvable root instead.
+    label: "the cursor hook stops feeding its worktree-root cache",
+    file: `${CURSOR}/src/handlers/file-edit.ts`,
+    from: "    knownWorktreeRoots: state.knownWorktreeRoots,",
+    to: "    knownWorktreeRoots: [],",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "every afterFileEdit pays resolveRepoIdentity again for a root this " +
+      "conversation already judged, and a root that never resolves is " +
+      "retried forever instead of standing after its attempt budget",
+  },
+  {
+    // The same cache on the ACP side, where it is an IN-MEMORY twin of the
+    // persisted list — and where it matters more, because the ACP session
+    // identity is the session cwd's identity, so the free cwd-in-worktree
+    // candidate never applies and every out-of-checkout path walks.
+    label: "the acp engine stops feeding its worktree-root cache",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "      knownWorktreeRoots: session.knownWorktreeRoots,",
+    to: "      knownWorktreeRoots: [],",
+    test: `${ACP}/test/worktree-capture.test.ts`,
+    because:
+      "the capture chain pays resolveRepoIdentity again for every touch of a " +
+      "root it already judged, which is queue pressure on a serialized chain " +
+      "whose overflow silently DROPS capture lines",
+  },
+  {
+    // The drop split is what doctor turns into a cause. An unresolvable root
+    // reported as foreign makes doctor say "your second connected repo" about
+    // a worktree whose identity simply did not resolve — and the counters are
+    // folded for all three connectors by this one transform.
+    label: "the capture drop counters are swapped for every connector",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from:
+      "    foreignRepoDrops: next.foreignRepoDrops + (input.resolution?.foreignDrops ?? 0),",
+    to:
+      "    foreignRepoDrops: next.foreignRepoDrops + (input.resolution?.outsideDrops ?? 0),",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "a touch of a DIFFERENT connected repo and a file under no root at all " +
+      "trade places on every host, so the one line doctor prints to explain " +
+      "the drop names the wrong cause",
+  },
+  {
+    // THE ACP TRAP, re-created verbatim. The bookkeeping write used to sit
+    // behind `if (captured.length === 0) return` — exactly the case the
+    // counters exist for. From behind it, editToolFires always equals
+    // targetsCapturedCount, isCaptureSilentlyDead is structurally unreachable
+    // and the doctor WARN can never fire for an ACP session: PASS-only
+    // telemetry, which is the failure this whole round exists to end.
+    label: "the acp counter write hides behind the capture again",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "    rememberWorktreeRoots(session, resolution?.newlyResolved ?? []);",
+    to:
+      "    if (captured.length === 0) {\n      return;\n    }\n" +
+      "    rememberWorktreeRoots(session, resolution?.newlyResolved ?? []);",
+    test: `${CLI}/test/connector-capture-health.test.ts`,
+    because:
+      "an ACP session whose every edit lands outside this repo prints " +
+      "`0 edit-tool fires -> 0 targets` and PASSes — the silence the " +
+      "counters were added to break, back on the surface a remote reader " +
+      "is asked to paste",
+  },
+  {
+    // The Cursor half of the same invariant: afterFileEdit IS the edit event,
+    // so it must count as a fire whether or not anything was captured.
+    label: "a cursor edit is not counted as an edit-tool fire",
+    file: `${CURSOR}/src/handlers/file-edit.ts`,
+    from: "      editFired: true,\n",
+    to: "      editFired: false,\n",
+    test: `${CLI}/test/connector-capture-health.test.ts`,
+    because:
+      "a Cursor conversation editing into a second repo all day reports " +
+      "`0 edit-tool fires -> 0 targets` and PASSes, so the doctor check that " +
+      "exists to name that shape can never reach it",
+  },
+  {
+    // The foreign-repo guard's own fire, the Claude twin of post-tool-use.ts
+    // counting BEFORE its early return. Without it a conversation whose
+    // workspace resolves to a foreign repo drops silently.
+    label: "a cursor foreign-repo drop hides the edit that caused it",
+    file: `${CURSOR}/src/handlers/recover.ts`,
+    from: "        editToolFires: fresh.editToolFires + editFires,\n",
+    to: "",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "the drop is counted but the edit that caused it is not, so `N fires " +
+      "-> 0 targets` reads as a session that never edited anything rather " +
+      "than one whose every edit went to the wrong repo",
+  },
+  {
+    // wire/v1.ts folds `tool_call` and `tool_call_update` into one shape, and
+    // agents commonly repeat the whole update — kind included — on each status
+    // change. Counting per row reports three fires for one edit.
+    label: "an acp tool_call_update ticks the fire counter again",
+    file: `${ACP}/src/wire/v1.ts`,
+    from: "      isNewToolCall: parsed.update.sessionUpdate === NEW_TOOL_CALL,",
+    to: "      isNewToolCall: true,",
+    test: `${ACP}/test/worktree-capture.test.ts`,
+    because:
+      "one edit arriving pending, in_progress and completed books three " +
+      "edit-tool fires, so the `N fires -> M targets` ratio the WARN is " +
+      "measured on is wrong by a factor nobody can see",
+  },
   // ── Trial findings #17/#19/#20/#25: capture signal ───────────────────────
   {
     // #17: an edit in a linked git worktree of the SAME repo resolved to null
@@ -1892,71 +2029,71 @@ interface Outcome {
  * comment said "the same file backs 5 mutations", which is the count grouped by
  * the MUTATED SOURCE file: a real number about a different column of the same
  * table, and not the one this map performs. The directive below therefore
- * groups by test, and the one in .github/workflows/ci.yml groups by file; two
- * columns, two commands, neither transcribed from the other.
+ * groups by test PATH — by basename until the #17 parity round, when three
+ * different `worktree-capture.test.ts` files started collapsing into one
+ * number that named no file — and the one in .github/workflows/ci.yml groups
+ * by mutated file; two columns, two commands, neither transcribed from the
+ * other.
  *
- * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
- * PRINTS: absence-render.test.ts 1
- * PRINTS: agent-restart.test.ts 3
- * PRINTS: briefing-parity.test.ts 2
- * PRINTS: budget.test.ts 1
- * PRINTS: capture-hardening.test.ts 2
- * PRINTS: capture-health.test.ts 2
- * PRINTS: conclusion-corpus.test.ts 6
- * PRINTS: config-parse.test.ts 1
- * PRINTS: connected-repo.test.ts 2
- * PRINTS: developer-emails.test.ts 1
- * PRINTS: doctor-capture.test.ts 7
- * PRINTS: doctor-global.test.ts 1
- * PRINTS: doctor-hooks-firing.test.ts 1
- * PRINTS: doctor-last-sync.test.ts 1
- * PRINTS: doctor-latency.test.ts 1
- * PRINTS: doctor-summarizer-runner.test.ts 1
- * PRINTS: doctor.test.ts 1
- * PRINTS: double-wiring.test.ts 1
- * PRINTS: global-wiring-silence.test.ts 2
- * PRINTS: handlers.test.ts 3
- * PRINTS: hint-budget.test.ts 2
- * PRINTS: hint-flow.test.ts 2
- * PRINTS: hint-hook.test.ts 1
- * PRINTS: hint-render.test.ts 1
- * PRINTS: hint-select.test.ts 5
- * PRINTS: hints.test.ts 2
- * PRINTS: hook-budget.test.ts 2
- * PRINTS: hook-reserve.test.ts 1
- * PRINTS: hooks-fired-marker.test.ts 1
- * PRINTS: injection-corpus.test.ts 6
- * PRINTS: injection.test.ts 2
- * PRINTS: injector.test.ts 4
- * PRINTS: latency.test.ts 3
- * PRINTS: mcp-injection.test.ts 4
- * PRINTS: mcp-referee-render.test.ts 2
- * PRINTS: mcp-render.test.ts 1
- * PRINTS: pool-starvation.test.ts 1
- * PRINTS: precision-corpus.test.ts 1
- * PRINTS: proxy-e2e.test.ts 1
- * PRINTS: recovery-race.test.ts 1
- * PRINTS: repo-ssh-determinism.test.ts 2
- * PRINTS: search.test.ts 3
- * PRINTS: session-reap-liveness.test.ts 1
- * PRINTS: session-reaper.test.ts 2
- * PRINTS: session-refire.test.ts 1
- * PRINTS: session-state-transforms.test.ts 1
- * PRINTS: sessions.test.ts 1
- * PRINTS: settings-merge-removal.test.ts 1
- * PRINTS: solved-ranking.test.ts 2
- * PRINTS: spool-durability.test.ts 1
- * PRINTS: stop-gate.test.ts 1
- * PRINTS: stop-hook.test.ts 1
- * PRINTS: stop-latency.test.ts 1
- * PRINTS: summarizer-argv.test.ts 1
- * PRINTS: summarizer-child-guard.test.ts 1
- * PRINTS: summarizer-cost.test.ts 2
- * PRINTS: summarizer-worker-env.test.ts 1
- * PRINTS: touched-root.test.ts 3
- * PRINTS: transparency.test.ts 1
- * PRINTS: tripwire-hook.test.ts 3
- * PRINTS: worktree-capture.test.ts 2
+ * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
+ * PRINTS: packages/cli/test/agent-restart.test.ts 1
+ * PRINTS: packages/cli/test/capture-health.test.ts 2
+ * PRINTS: packages/cli/test/connector-capture-health.test.ts 2
+ * PRINTS: packages/cli/test/doctor-global.test.ts 1
+ * PRINTS: packages/cli/test/doctor-latency.test.ts 1
+ * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 1
+ * PRINTS: packages/cli/test/doctor.test.ts 1
+ * PRINTS: packages/cli/test/summarizer-cost.test.ts 1
+ * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
+ * PRINTS: packages/connector-acp/test/injector.test.ts 4
+ * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
+ * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
+ * PRINTS: packages/connector-acp/test/transparency.test.ts 1
+ * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 2
+ * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
+ * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
+ * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
+ * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
+ * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
+ * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
+ * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
+ * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
+ * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
+ * PRINTS: packages/connector-claude/test/stop-gate.test.ts 1
+ * PRINTS: packages/connector-claude/test/stop-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
+ * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 1
+ * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
+ * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
+ * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 2
+ * PRINTS: packages/connector-core/test/absence-render.test.ts 1
+ * PRINTS: packages/connector-core/test/config-parse.test.ts 1
+ * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-render.test.ts 1
+ * PRINTS: packages/connector-core/test/hint-select.test.ts 5
+ * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
+ * PRINTS: packages/connector-core/test/latency.test.ts 3
+ * PRINTS: packages/connector-core/test/mcp-injection.test.ts 4
+ * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 2
+ * PRINTS: packages/connector-core/test/mcp-render.test.ts 1
+ * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
+ * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
+ * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 1
+ * PRINTS: packages/connector-core/test/touched-root.test.ts 3
+ * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
+ * PRINTS: packages/connector-cursor/test/budget.test.ts 1
+ * PRINTS: packages/connector-cursor/test/handlers.test.ts 3
+ * PRINTS: packages/connector-cursor/test/injection.test.ts 2
+ * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 4
+ * PRINTS: packages/server/test/developer-emails.test.ts 1
+ * PRINTS: packages/server/test/hints.test.ts 2
+ * PRINTS: packages/server/test/search.test.ts 3
+ * PRINTS: packages/server/test/sessions.test.ts 1
+ * PRINTS: packages/server/test/solved-ranking.test.ts 2
  */
 const greenGuards = new Map<string, boolean>();
 

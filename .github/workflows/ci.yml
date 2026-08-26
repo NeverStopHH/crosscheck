@@ -131,6 +131,7 @@ jobs:
     # PRINTS: packages/connector-acp/src/inject/injector.ts 3
     # PRINTS: packages/connector-acp/src/proxy.ts 1
     # PRINTS: packages/connector-acp/src/pump.ts 1
+    # PRINTS: packages/connector-acp/src/wire/v1.ts 1
     # PRINTS: cli/settings-merge.ts 1
     # PRINTS: hooks/post-tool-use.ts 2
     # PRINTS: hooks/pre-tool-use.ts 3
@@ -148,6 +149,7 @@ jobs:
     # PRINTS: constants.ts 7
     # PRINTS: flows/briefing.ts 1
     # PRINTS: flows/capture-targets.ts 1
+    # PRINTS: flows/capture-touched-files.ts 1
     # PRINTS: flows/hint.ts 2
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/render.ts 1
@@ -161,8 +163,8 @@ jobs:
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 2
-    # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 1
-    # PRINTS: packages/connector-cursor/src/handlers/recover.ts 1
+    # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 3
+    # PRINTS: packages/connector-cursor/src/handlers/recover.ts 2
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
     # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 2
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
@@ -184,7 +186,7 @@ jobs:
     # PRINTS: doctor.ts 14
     # PRINTS: engine.ts 3
     # PRINTS: fd-io.ts 1
-    # PRINTS: file-edit.ts 1
+    # PRINTS: file-edit.ts 3
     # PRINTS: gate.ts 6
     # PRINTS: hint.ts 2
     # PRINTS: hints.ts 1
@@ -215,6 +217,7 @@ jobs:
     # PRINTS: stop.ts 2
     # PRINTS: tool-failure.ts 2
     # PRINTS: touched-root.ts 4
+    # PRINTS: v1.ts 1
     # PRINTS: worker-env.ts 1
     name: Mutation proof
     runs-on: ubuntu-latest
