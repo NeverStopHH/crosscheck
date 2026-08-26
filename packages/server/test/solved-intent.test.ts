@@ -14,6 +14,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { SOLVED_MATCH_MAX_INTENT_CANDIDATES } from "../src/constants.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -101,6 +102,28 @@ const solvedTreeRecords = (
       evidenceRefs: [`${contextId}_evidence`],
       body: "The ingestion mapping drops the key id on rotation",
       createdAt: OLD_ISO,
+    }),
+    { sessionId },
+  ),
+];
+
+/**
+ * An ORDINARY work context: the same words in its searchable doc, no claims
+ * at all. The crowd a busy team makes on one topic.
+ */
+const plainContextRecords = (
+  contextId: string,
+  sessionId: string,
+  title: string,
+): readonly Record<string, unknown>[] => [
+  recordEnvelope(
+    "work_context",
+    validWorkContextBody({
+      id: contextId,
+      sessionId,
+      title,
+      description: undefined,
+      createdAt: TEST_START_ISO,
     }),
     { sessionId },
   ),
@@ -252,6 +275,42 @@ describe("GET /api/solved-matches intent tier", () => {
     const mine = await fetchMatches(context.harness, context.developer.apiKey);
     expect(mine.map((match) => match.workContextId)).toEqual(["wc_solved"]);
   });
+
+  test("a crowded topic does not hide the answer it is holding", async () => {
+    // Arrange: the whole team is working on webhooks. One old tree holds the
+    // diagnosis; SOLVED_MATCH_MAX_INTENT_CANDIDATES ordinary contexts on the
+    // same repo carry the same words in their searchable doc and none of
+    // them holds anything. They are fresher than the answer and match the
+    // same number of words, so they sort ahead of it — and the candidate
+    // window is exactly that many rows wide.
+    const context = await setup();
+    await seed(context, solvedTreeRecords("wc_solved", OLD_SESSION, SOLVED_TITLE));
+    for (let index = 0; index < SOLVED_MATCH_MAX_INTENT_CANDIDATES; index += 1) {
+      await seed(
+        context,
+        plainContextRecords(
+          `wc_crowd_${String(index)}`,
+          OLD_SESSION,
+          SOLVED_TITLE,
+        ),
+      );
+    }
+    await seed(
+      context,
+      intentContextRecords(
+        "Debugging why webhook signature checks reject retries",
+      ),
+    );
+
+    // Act
+    const matches = await fetchMatches(context.harness, context.developer.apiKey);
+
+    // Assert: the crowd is traffic, not answers, so the window is filled with
+    // trees that could BE the answer. Without that bound the busiest repo is
+    // the one where collective memory says nothing.
+    expect(matches.map((match) => match.workContextId)).toEqual(["wc_solved"]);
+    expect(matches[0]?.matchedTargetKind).toBe("session_intent");
+  }, 30_000);
 
   test("the intent tier stays inside this repo, unlike the fingerprint tier", async () => {
     // Arrange: the same matching tree, this time solved in another repo.

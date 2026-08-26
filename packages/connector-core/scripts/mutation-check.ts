@@ -482,6 +482,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "matching work happening now",
   },
   {
+    // And the third window: the intent tier's candidate page. This puts every
+    // context that shares the words back into it, solved or not.
+    label: "a crowded topic hides the answer it is holding",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "        solvedCandidateCondition(workContexts.id),\n",
+    to: "",
+    test: `${SERVER}/test/solved-intent.test.ts`,
+    because:
+      "a team all working on webhooks fills the 20-row intent window with " +
+      "each other's ordinary contexts, so the tier that exists for a fresh " +
+      "SessionStart — no targets captured, no failures hit — goes silent on " +
+      "the repo where the team memory is worth the most",
+  },
+  {
     // The same bound one path over. The failure-time probe reads a window of
     // contexts carrying the fingerprint; this puts the traffic back into it.
     label: "a crowded fingerprint hides the answer from the probe",

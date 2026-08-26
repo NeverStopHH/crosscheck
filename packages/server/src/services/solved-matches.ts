@@ -267,6 +267,16 @@ const listSharedTargetPairs = async (
  *   - and what it earns is a POINTER. `rootCause` is fingerprint-only, so a
  *     tree reached this way is a line saying WHERE the answer is, never the
  *     answer.
+ *
+ * BOUNDED ON SOLVEDNESS like the pair join above, and the same defect is
+ * why: the candidate window is SOLVED_MATCH_MAX_INTENT_CANDIDATES rows wide
+ * and ordered by word count first, so a team all working on one topic fills
+ * it with each other's ordinary contexts and the one tree holding the answer
+ * drops out. Measured with one solved tree and N same-repo contexts carrying
+ * the same words: the answer came back at N = 19 and the tier went silent at
+ * N = SOLVED_MATCH_MAX_INTENT_CANDIDATES (test/solved-intent.test.ts). The
+ * crowd only has to match as MANY words as the answer, not more — fewer, and
+ * it sorts below and is harmless.
  */
 const listIntentMatchIds = async (
   deps: Deps,
@@ -322,6 +332,12 @@ const listIntentMatchIds = async (
         notInArray(workContexts.id, sourceIds),
         sql`${workContexts.tsv} @@ ${anyToken}`,
         sql`${hits} >= ${SOLVED_MATCH_INTENT_MIN_TOKEN_HITS}`,
+        // The same bound the target tier carries, for the same reason: this
+        // window is SOLVED_MATCH_MAX_INTENT_CANDIDATES rows wide, and a team
+        // all working on one topic fills it with each other's ordinary
+        // contexts. Necessary, never sufficient (services/solved.ts) — the
+        // authoritative rule is still applied by listSolvedInfo afterwards.
+        solvedCandidateCondition(workContexts.id),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
       ),
     )
