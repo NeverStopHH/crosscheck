@@ -1830,7 +1830,9 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${CORE}/src/state/capture-bookkeeping.ts`,
     from: "  const evidence = input.editFired ? input.resolution : null;",
     to: "  const evidence = input.resolution;",
-    test: `${CLI}/test/connector-capture-health.test.ts`,
+    // The CLI WARN suite cannot see this half: it never emits a NON-edit touch
+    // that drops. "a READ of another repo raises no drop counter at all" does.
+    test: `${ACP}/test/worktree-capture.test.ts`,
     because:
       "one in-repo read makes the silently-dead WARN unreachable for the rest " +
       "of the session, and one read of a second connected repo raises the " +
@@ -2166,7 +2168,7 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: packages/cli/test/agent-restart.test.ts 1
  * PRINTS: packages/cli/test/capture-health.test.ts 2
- * PRINTS: packages/cli/test/connector-capture-health.test.ts 4
+ * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/doctor-global.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 1
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 1
@@ -2177,7 +2179,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
- * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 4
+ * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1

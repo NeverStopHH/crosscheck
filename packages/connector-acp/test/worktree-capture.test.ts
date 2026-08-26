@@ -247,6 +247,44 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
     expect(state?.seenTargets).toEqual([EDITED_FILE]);
   });
 
+  test("a repeated edit row carrying NO tool-call id still ticks once", async () => {
+    // Arrange: the fire is keyed on `toolCallId`, so the test above no longer
+    // exercises `isNewToolCall` at all — the id dedupe answers first, and the
+    // discriminator could be hard-wired to `true` with every guard still
+    // green (mutation-check measured exactly that). A row with NO id is
+    // non-conformant but must still answer, and there the announce-row rule
+    // is the only thing left to tell one edit from its own restatement.
+    const { main, worktree } = await repoWithWorktree("acp-noid");
+    await writeRepoFile(worktree, EDITED_FILE, "export const a = 1;\n");
+    const h = await harnessAt("acp-noid", main);
+    const sessionId = "sess_noid";
+    const hostKey = `acp-fake-agent--${sessionId}`;
+    const path = join(worktree, EDITED_FILE);
+
+    // Act: an announce and the same call restated — neither carries an id
+    handshake(h, sessionId, main);
+    h.capture.offer(
+      "a2c",
+      editUpdate(sessionId, path, { toolCallId: undefined, status: "pending" }),
+    );
+    h.capture.offer(
+      "a2c",
+      toolCallUpdate(sessionId, {
+        sessionUpdate: "tool_call_update",
+        kind: "edit",
+        status: "completed",
+        locations: [{ path }],
+      }),
+    );
+    await h.capture.settle();
+
+    // Assert: the restatement is not a second edit
+    const state = await readSessionState(h.home, hostKey);
+    expect(state?.editToolFires).toBe(1);
+    expect(state?.targetsCapturedCount).toBe(1);
+    expect(state?.seenTargets).toEqual([EDITED_FILE]);
+  });
+
   test("an edit announced with no kind still books its fire", async () => {
     // Arrange: `ToolCall.kind` is OPTIONAL on the announce row (the ACP schema
     // defaults it to "other"), so an agent may legitimately say
