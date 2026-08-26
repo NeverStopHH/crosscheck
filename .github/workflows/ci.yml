@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 115
+    # PRINTS: 132
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -125,7 +125,7 @@ jobs:
     # sentence somebody has to keep in step by hand:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
-    # PRINTS: packages/cli/src/cli/doctor.ts 6
+    # PRINTS: packages/cli/src/cli/doctor.ts 14
     # PRINTS: packages/connector-acp/src/capture/engine.ts 6
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
     # PRINTS: packages/connector-acp/src/inject/injector.ts 3
@@ -162,7 +162,8 @@ jobs:
     # PRINTS: mcp/render.ts 3
     # PRINTS: spool/reap.ts 1
     # PRINTS: state/capture-bookkeeping.ts 5
-    # PRINTS: state/capture-health.ts 1
+    # PRINTS: state/capture-health.ts 2
+    # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 2
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 3
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 3
@@ -179,14 +180,15 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
     # PRINTS: briefing.ts 1
     # PRINTS: capture-bookkeeping.ts 5
-    # PRINTS: capture-health.ts 1
+    # PRINTS: capture-health.ts 2
     # PRINTS: capture-targets.ts 1
+    # PRINTS: capture-touched-files.ts 1
     # PRINTS: client.ts 1
     # PRINTS: config.ts 3
     # PRINTS: connected-repo.ts 2
     # PRINTS: constants.ts 7
     # PRINTS: developers.ts 1
-    # PRINTS: doctor.ts 6
+    # PRINTS: doctor.ts 14
     # PRINTS: engine.ts 6
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 3
@@ -205,6 +207,7 @@ jobs:
     # PRINTS: proxy.ts 1
     # PRINTS: pump.ts 1
     # PRINTS: reap.ts 1
+    # PRINTS: records.ts 1
     # PRINTS: recover.ts 3
     # PRINTS: render-referee.ts 2
     # PRINTS: render.ts 6

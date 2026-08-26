@@ -2166,14 +2166,17 @@ interface Outcome {
  * other.
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
- * PRINTS: packages/cli/test/agent-restart.test.ts 1
+ * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
+ * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-global.test.ts 1
+ * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
+ * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 1
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 1
  * PRINTS: packages/cli/test/doctor.test.ts 1
- * PRINTS: packages/cli/test/summarizer-cost.test.ts 1
+ * PRINTS: packages/cli/test/summarizer-cost.test.ts 2
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
  * PRINTS: packages/connector-acp/test/injector.test.ts 4
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
@@ -2187,6 +2190,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
+ * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
@@ -2215,6 +2219,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 1
+ * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
@@ -2224,6 +2229,8 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 1
  * PRINTS: packages/server/test/hints.test.ts 2
  * PRINTS: packages/server/test/search.test.ts 3
+ * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
+ * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
  */
