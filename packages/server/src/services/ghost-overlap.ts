@@ -21,11 +21,12 @@
  * never leave through it either — a ghost row is a POINTER (title, author,
  * intent, id) and the anchoring asymmetry is untouched (DESIGN.md §4).
  *
- * PRECISION IS TWO EXCLUSIONS, both borrowed from ConE (Muşlu, Nagappan et
- * al., "ConE: A Concurrent Edit Detection Tool for Large-scale Software
- * Development", TOSEM 2021), the only deployed system in this space with
- * published numbers — 775 notifications over 26 000 pull requests, 71.5 %
- * rated useful:
+ * PRECISION IS TWO EXCLUSIONS, both borrowed from ConE (Maddila, Nagappan,
+ * Bird, Gousios, van Deursen, "ConE: A Concurrent Edit Detection Tool for
+ * Large-scale Software Development", TOSEM 31(2), 2021), the only deployed
+ * system in this space with published numbers — 775 notifications over
+ * 26 000 pull requests on 234 repositories, 554 of them (71.5 %) rated
+ * useful:
  *
  *   - a HOT value is dropped (GHOST_HOT_TARGET_MAX_CONTEXTS): a lockfile or
  *     the config every session edits is not evidence of a plan. This is also

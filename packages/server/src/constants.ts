@@ -212,7 +212,7 @@ export const MAX_QUESTION_ANSWERS_LISTED = 3;
  * code does, while a ghost check asserts that somebody is working on this
  * NOW. One working week is the horizon in which two plans still meet; past
  * it the honest sentence is "Ken looked at this once", which is what search
- * is for. ConE (Muşlu et al., TOSEM 2021) drops a pull request from its
+ * is for. ConE (Maddila et al., TOSEM 2021) drops a pull request from its
  * concurrent-edit analysis after 30 days for the same reason — theirs is a
  * branch's lifetime, ours a session's.
  */
@@ -242,11 +242,19 @@ export const GHOST_MAX_CONTEXT_TARGETS = 50;
  * A target value shared by more work contexts than this is dropped before
  * anything is counted: a lockfile, the router, the config every session
  * edits. ConE's "rarely concurrently edited" heuristic, which is the half of
- * that paper doing the precision work — they exclude files edited more than
- * 20 times a month, computed weekly over three months of history. We cannot
- * afford a batch job, so the same idea is one indexed aggregate over the
- * values the reader's own session already holds: hot values are dropped by
- * count, at read time, with no history table to keep.
+ * that paper doing the precision work.
+ *
+ * THEIRS IS A BINARY, OURS IS A COUNT, and the difference is the batch job we
+ * cannot run. ConE builds its RCE list by SET SUBTRACTION — every file edited
+ * in the last three months, minus every file that appeared in two overlapping
+ * pull requests at once — and refreshes it weekly, so a file that was ever
+ * concurrently edited in the window is not rare and gets no notification. A
+ * hub answering a SessionStart GET has no three-month batch and no list to
+ * keep, so rarity here is one indexed aggregate over the values the reader's
+ * own session already holds, and the bar is a COUNT of how many contexts
+ * share the value rather than "any at all". That is deliberately LOOSER than
+ * ConE: they would drop a value two people ever touched together, and we
+ * would not — dropping those is what a ghost check exists to report.
  *
  * It is also the fan-out bound. Every surviving value is shared by at most
  * this many contexts, so no single hot value can fill the pair window ahead
@@ -261,13 +269,15 @@ export const GHOST_HOT_TARGET_MAX_CONTEXTS = 20;
  * deterministic core will name it — UNLESS the shared kind is an error
  * fingerprint, where one is enough (GHOST_FINGERPRINT_MIN_SHARED).
  *
- * A COUNT rather than ConE's Extent-of-Overlap ratio (they flag a pair at
- * >= 50 % of the reference change's files), and the difference is forced by
- * the unit: a ratio needs a denominator, and at SessionStart a live work
- * context has captured two or three targets, so one shared file is already
- * 50 % of it. A ratio over a denominator that small is the prediction
- * theatre this feature is supposed to avoid. Two shared values is a
- * sentence a reader can check.
+ * A COUNT rather than ConE's Extent-of-Overlap ratio, and the difference is
+ * forced by the unit: their bar is EOO >= 50 % of the reference change's
+ * files AND more than two overlapping files, and a ratio needs a denominator.
+ * At SessionStart a live work context has captured two or three targets, so
+ * one shared file is already 50 % of it — a ratio over a denominator that
+ * small is the prediction theatre this feature is supposed to avoid. What
+ * survives the translation is the half that carries: their file-count floor,
+ * chosen because the distribution drops sharply after two. Two shared values
+ * is also a sentence a reader can check.
  */
 export const GHOST_MIN_SHARED_TARGETS = 2;
 

@@ -5,8 +5,9 @@
  * Every test here is really about the FLOOR and the two exclusions, because
  * that is the whole difference between a warning system people keep and one
  * they turn off. ConE — the only deployed concurrent-edit detector with
- * published numbers (Muşlu, Nagappan et al., TOSEM 2021: 775 notifications
- * over 26 000 pull requests, 71.5 % rated useful) — spends most of its design
+ * published numbers (Maddila, Nagappan et al., TOSEM 2021: 775 notifications
+ * over 26 000 pull requests, 554 of them rated useful) — spends most of its
+ * design
  * on exactly this: how much overlap is enough, and which files must never
  * count. So: one shared file is not a plan, one shared FAILURE is; a lockfile
  * everybody touches is nothing; a fifty-file sweep collides with everybody
