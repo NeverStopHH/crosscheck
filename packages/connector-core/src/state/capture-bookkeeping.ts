@@ -41,7 +41,11 @@ export interface CaptureBookkeepingInput {
   readonly resolution: TouchedRootsResolution | null;
   /** Targets actually spooled by this invocation. */
   readonly capturedCount: number;
-  /** Whether this event was an edit — counted even when everything dropped. */
+  /**
+   * Whether this event was an edit — counted even when everything dropped,
+   * and the gate on whether the resolution's targets and drops count as
+   * evidence about edit capture at all (argued in the fold below).
+   */
   readonly editFired: boolean;
   /** Host label for `lastPostToolUseTool`; null keeps the previous one. */
   readonly toolLabel: string | null;
@@ -61,17 +65,37 @@ export const withCaptureBookkeeping = (
   input: CaptureBookkeepingInput,
 ): SessionState => {
   let next = state;
+  // The cache is a cache: a root a READ taught the session is just as true as
+  // one an edit taught it, and re-judging it would pay git twice.
   for (const entry of input.resolution?.newlyResolved ?? []) {
     next = withKnownWorktreeRoot(next, entry.root, entry.repoId, entry.attempts);
   }
+  // WHAT THE RATIO IS DIVIDED BY MUST ALSO BE EDITS. `editToolFires` counts
+  // edits, so a target or a drop only counts as evidence about EDIT capture
+  // when the event that produced it was an edit. Claude and Cursor cannot tell
+  // the difference — no non-edit event there carries a file path — but ACP is
+  // a host where `tool_call kind: "read"` arrives with `locations`, and there
+  // both halves were dishonest: three in-repo reads fed `targetsCapturedCount`
+  // while `editToolFires` counted only edits, which put
+  // `isCaptureSilentlyDead` (fires >= DOCTOR_CAPTURE_SILENT_FIRES_WARN AND
+  // targets === 0) out of reach for the rest of the session — the PASS-only
+  // telemetry these counters exist to end — and one read of a second connected
+  // repo raised the machine-wide `foreign-repo drops` WARN, telling a
+  // developer who had edited nothing to re-open a workspace.
+  //
+  // A non-edit touch still SPOOLS its targets and still stamps `lastTargetAt`:
+  // it is real work context, it is simply not evidence about whether edit
+  // capture is alive.
+  const evidence = input.editFired ? input.resolution : null;
   return {
     ...next,
     editToolFires: next.editToolFires + (input.editFired ? 1 : 0),
-    targetsCapturedCount: next.targetsCapturedCount + input.capturedCount,
+    targetsCapturedCount:
+      next.targetsCapturedCount + (input.editFired ? input.capturedCount : 0),
     ...(input.capturedCount > 0 ? { lastTargetAt: input.now.toISOString() } : {}),
     lastPostToolUseTool: input.toolLabel ?? next.lastPostToolUseTool,
-    foreignRepoDrops: next.foreignRepoDrops + (input.resolution?.foreignDrops ?? 0),
-    outsideRootDrops: next.outsideRootDrops + (input.resolution?.outsideDrops ?? 0),
+    foreignRepoDrops: next.foreignRepoDrops + (evidence?.foreignDrops ?? 0),
+    outsideRootDrops: next.outsideRootDrops + (evidence?.outsideDrops ?? 0),
     ...(input.editFired && input.firstPath !== null
       ? {
           lastEditedPath: input.firstPath,

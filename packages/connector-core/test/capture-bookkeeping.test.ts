@@ -10,6 +10,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { DOCTOR_CAPTURE_SILENT_FIRES_WARN } from "../src/constants.ts";
 import { withCaptureBookkeeping } from "../src/state/capture-bookkeeping.ts";
 import type { TouchedRootsResolution } from "../src/capture/touched-root.ts";
 import { deriveSessionState } from "../src/state/session-state.ts";
@@ -118,12 +119,73 @@ describe("the counters a WARN is measured on", () => {
       now: NOW,
     });
 
-    // Assert: the last EDITED path is still the last edit
+    // Assert: the last EDITED path is still the last edit, and the read's
+    // captured target is NOT added to the ratio's numerator (see below)
     expect(after.editToolFires).toBe(1);
-    expect(after.targetsCapturedCount).toBe(2);
+    expect(after.targetsCapturedCount).toBe(1);
     expect(after.lastEditedPath).toBe("/repos/api/src/a.ts");
     expect(after.lastEditedPathResolvedAgainst).toBe("/repos/api");
     expect(after.lastPostToolUseTool).toBe("read");
+  });
+
+  test("a non-edit touch's captured targets cannot mask the WARN", () => {
+    // Arrange: three in-repo READS, each capturing a target — the shape only
+    // ACP can produce, because only there does a non-edit tool call carry
+    // `locations`. Then DOCTOR_CAPTURE_SILENT_FIRES_WARN edits that all drop.
+    let session = state();
+    for (const path of ["/repos/api/a.ts", "/repos/api/b.ts", "/repos/api/c.ts"]) {
+      session = withCaptureBookkeeping(session, {
+        resolution: resolution({ firstResolvedRoot: "/repos/api" }),
+        capturedCount: 1,
+        editFired: false,
+        toolLabel: "read",
+        firstPath: path,
+        now: NOW,
+      });
+    }
+
+    // Act
+    for (let index = 0; index < DOCTOR_CAPTURE_SILENT_FIRES_WARN; index += 1) {
+      session = withCaptureBookkeeping(session, {
+        resolution: resolution({ foreignDrops: 1 }),
+        capturedCount: 0,
+        editFired: true,
+        toolLabel: "edit",
+        firstPath: "/repos/other/src/x.ts",
+        now: NOW,
+      });
+    }
+
+    // Assert: fires >= the threshold AND targets 0 — the predicate the doctor
+    // WARN is measured on stays reachable, and the reads' targets did not
+    // silently become evidence that edit capture is alive
+    expect(session.editToolFires).toBe(DOCTOR_CAPTURE_SILENT_FIRES_WARN);
+    expect(session.targetsCapturedCount).toBe(0);
+    // ...while the reads' targets DID land, so the moment one did is stamped
+    expect(session.lastTargetAt).toBe(NOW.toISOString());
+  });
+
+  test("a non-edit touch's drops never raise a foreign-repo WARN", () => {
+    // Arrange: a session that has edited NOTHING, whose agent read a file in
+    // a second connected repo and a file under no root at all
+    const before = state();
+
+    // Act
+    const after = withCaptureBookkeeping(before, {
+      resolution: resolution({ foreignDrops: 1, outsideDrops: 1 }),
+      capturedCount: 0,
+      editFired: false,
+      toolLabel: "read",
+      firstPath: "/repos/web/src/app.ts",
+      now: NOW,
+    });
+
+    // Assert: doctor WARNs machine-wide on drops > 0, and "one agent session
+    // reports to one repo — open the other repo as its own session" is not
+    // advice a session that never edited anything has earned
+    expect(after.foreignRepoDrops).toBe(0);
+    expect(after.outsideRootDrops).toBe(0);
+    expect(after.editToolFires).toBe(0);
   });
 
   test("a null tool label keeps the previous one rather than erasing it", () => {

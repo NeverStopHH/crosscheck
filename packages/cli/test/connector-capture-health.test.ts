@@ -230,6 +230,26 @@ const acpEditLine = (absolutePath: string, id: number): ObservedLine =>
     },
   });
 
+/**
+ * A NON-edit tool call carrying `locations` — the shape no other host can
+ * produce, and the one that used to make the WARN below unreachable.
+ */
+const acpReadLine = (absolutePath: string, id: number): ObservedLine =>
+  wireLine({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId: ACP_SESSION_ID,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: `read_${String(id)}`,
+        kind: "read",
+        status: "completed",
+        locations: [{ path: absolutePath }],
+      },
+    },
+  });
+
 const acpHandshake = (
   capture: ReturnType<typeof createAcpCapture>,
   cwd: string,
@@ -322,6 +342,41 @@ describe("an ACP session on the capture surfaces", () => {
     expect(line).toContain(ACP_KEY.slice(0, 8));
     expect(line).toContain("outside-root drop");
     expect(line).toContain("last edited path resolved: no");
+  });
+
+  test("WARN: a READ that captured a target cannot mask the edit silence", async () => {
+    // Arrange: the agent reads one in-repo file (a target IS captured), then
+    // edits only files under no connected root of this repo. Because
+    // ACP runs capture for EVERY tool_call kind, the read's target used to be
+    // added to `targetsCapturedCount`, so `isCaptureSilentlyDead` (fires ≥
+    // threshold AND targets === 0) could not fire for the rest of the session
+    // and doctor reported the H1 worktree silence as a PASS.
+    const { main, home } = await repoWithWorktree("cch-acp-mask");
+    await writeRepoFile(main, "src/read-me.ts", "export const r = 1;\n");
+    const loose = await mkdtemp(join(tmpdir(), "cx-cch-mask-"));
+    paths.push(loose);
+    await writeFile(join(loose, "x.ts"), "export const c = 3;\n", "utf8");
+    const capture = acpCapture(home);
+
+    // Act
+    acpHandshake(capture, main);
+    capture.offer("a2c", acpReadLine(join(main, "src/read-me.ts"), 1));
+    for (let fire = 0; fire < DOCTOR_CAPTURE_SILENT_FIRES_WARN; fire += 1) {
+      capture.offer("a2c", acpEditLine(join(loose, "x.ts"), fire));
+    }
+    await capture.settle();
+    const doctor = await runCli(["doctor"], cliEnv(home), main);
+
+    // Assert: the read's target is in the spool but not in the ratio
+    const state = await readSessionState(home, ACP_KEY);
+    expect(state?.seenTargets).toEqual(["src/read-me.ts"]);
+    expect(state?.targetsCapturedCount).toBe(0);
+    const line = lineWith(doctor.stdout, "  capture  ");
+    expect(line).toContain("WARN  capture");
+    expect(line).toContain(
+      `${String(DOCTOR_CAPTURE_SILENT_FIRES_WARN)} edit-tool fires → 0 targets`,
+    );
+    expect(line).toContain("outside-root drop");
   });
 
   test("both connectors' sessions are told apart on one machine", async () => {

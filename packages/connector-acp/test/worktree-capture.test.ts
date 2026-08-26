@@ -25,7 +25,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS } from "@crosscheck/connector-core/constants.ts";
+import {
+  DOCTOR_CAPTURE_SILENT_FIRES_WARN,
+  MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS,
+} from "@crosscheck/connector-core/constants.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import {
@@ -290,6 +293,100 @@ describe("ACP drops that must stay drops, now counted (#17)", () => {
     const state = await readSessionState(h.home, `acp-fake-agent--${sessionId}`);
     expect(state?.outsideRootDrops).toBe(1);
     expect(state?.foreignRepoDrops).toBe(0);
+  });
+});
+
+describe("what an ACP NON-edit tool call may and may not book", () => {
+  test("in-repo READS cannot mask the WARN for edits that all drop", async () => {
+    // Arrange: the shape only this host can produce — a non-edit tool call
+    // carrying `locations`. ACP feeds `captureTargets` for EVERY tool_call
+    // kind, so three in-repo reads used to book three targets while
+    // `editToolFires` counted only edits: `isCaptureSilentlyDead` (fires >=
+    // DOCTOR_CAPTURE_SILENT_FIRES_WARN AND targets === 0) then could not fire
+    // again for the life of the session, and doctor printed the H1 silence as
+    // a PASS.
+    const { main } = await repoWithWorktree("acp-mask");
+    const other = await repoWithWorktree("acp-mask-web", "git@github.com:acme/web.git");
+    await writeRepoFile(other.worktree, "src/app.ts", "export const b = 2;\n");
+    for (const name of ["src/r1.ts", "src/r2.ts", "src/r3.ts"]) {
+      await writeRepoFile(main, name, "export const r = 1;\n");
+    }
+    const h = await harnessAt("acp-mask", main);
+    const sessionId = "sess_mask";
+    const hostKey = `acp-fake-agent--${sessionId}`;
+    handshake(h, sessionId, main);
+
+    // Act: three in-repo reads, then DOCTOR_CAPTURE_SILENT_FIRES_WARN edits
+    // into a linked worktree of a DIFFERENT repo — every one of them drops
+    for (const [index, name] of ["src/r1.ts", "src/r2.ts", "src/r3.ts"].entries()) {
+      h.capture.offer(
+        "a2c",
+        editUpdate(sessionId, join(main, name), {
+          toolCallId: `read_${index}`,
+          kind: "read",
+        }),
+      );
+    }
+    for (let index = 0; index < DOCTOR_CAPTURE_SILENT_FIRES_WARN; index += 1) {
+      h.capture.offer(
+        "a2c",
+        editUpdate(sessionId, join(other.worktree, "src/app.ts"), {
+          toolCallId: `edit_${index}`,
+        }),
+      );
+    }
+    await h.capture.settle();
+
+    // Assert: the reads' targets landed in the spool (they are work context),
+    // and NONE of them became evidence that edit capture is alive
+    const state = await readSessionState(h.home, hostKey);
+    expect(h.capture.counters().targets).toBe(3);
+    expect(state?.seenTargets.length).toBe(3);
+    expect(state?.editToolFires).toBe(DOCTOR_CAPTURE_SILENT_FIRES_WARN);
+    expect(state?.targetsCapturedCount).toBe(0);
+    expect(state?.foreignRepoDrops).toBe(DOCTOR_CAPTURE_SILENT_FIRES_WARN);
+  });
+
+  test("a READ of another repo raises no drop counter at all", async () => {
+    // Arrange: doctor WARNs machine-wide the moment a drop counter moves, and
+    // its remedy is "open the other repo as its own workspace/session" —
+    // advice a session that has edited nothing has not earned. On Claude the
+    // matcher makes this impossible (Bash carries no file_path); here it is
+    // one `kind: "read"` with `locations`.
+    const { main } = await repoWithWorktree("acp-readdrop");
+    const other = await repoWithWorktree("acp-readdrop-web", "git@github.com:acme/web.git");
+    await writeRepoFile(other.worktree, "src/app.ts", "export const b = 2;\n");
+    const loose = await mkdtemp(join(tmpdir(), "cx-acp-readloose-"));
+    cleanups.push(loose);
+    await writeFile(join(loose, "x.ts"), "export const c = 3;\n", "utf8");
+    const h = await harnessAt("acp-readdrop", main);
+    const sessionId = "sess_readdrop";
+    const hostKey = `acp-fake-agent--${sessionId}`;
+
+    // Act
+    handshake(h, sessionId, main);
+    h.capture.offer(
+      "a2c",
+      editUpdate(sessionId, join(other.worktree, "src/app.ts"), {
+        toolCallId: "read_foreign",
+        kind: "read",
+      }),
+    );
+    h.capture.offer(
+      "a2c",
+      editUpdate(sessionId, join(loose, "x.ts"), {
+        toolCallId: "read_loose",
+        kind: "read",
+      }),
+    );
+    await h.capture.settle();
+
+    // Assert
+    const state = await readSessionState(h.home, hostKey);
+    expect(state?.foreignRepoDrops).toBe(0);
+    expect(state?.outsideRootDrops).toBe(0);
+    expect(state?.editToolFires).toBe(0);
+    expect(state?.targetsCapturedCount).toBe(0);
   });
 });
 
