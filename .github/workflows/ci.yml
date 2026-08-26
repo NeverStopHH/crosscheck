@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 152
+    # PRINTS: 160
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -133,6 +133,8 @@ jobs:
     # PRINTS: packages/connector-acp/src/pump.ts 1
     # PRINTS: capture/tool-events.ts 1
     # PRINTS: cli/settings-merge.ts 2
+    # PRINTS: ghost/cost.ts 1
+    # PRINTS: ghost/worker.ts 2
     # PRINTS: hooks/post-tool-use-failure.ts 2
     # PRINTS: hooks/post-tool-use.ts 2
     # PRINTS: hooks/pre-tool-use.ts 1
@@ -143,6 +145,7 @@ jobs:
     # PRINTS: summarizer/gate.ts 6
     # PRINTS: summarizer/runner.ts 1
     # PRINTS: summarizer/worker-env.ts 1
+    # PRINTS: briefing/ghost.ts 1
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/questions.ts 1
     # PRINTS: briefing/render.ts 5
@@ -168,7 +171,7 @@ jobs:
     # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/publish-claim.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
-    # PRINTS: mcp/tools/set-intent.ts 1
+    # PRINTS: mcp/tools/set-intent.ts 2
     # PRINTS: spool/reap.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 1
@@ -180,6 +183,7 @@ jobs:
     # PRINTS: packages/server/src/routes/search.ts 1
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developers.ts 1
+    # PRINTS: packages/server/src/services/ghost-overlap.ts 3
     # PRINTS: packages/server/src/services/hints.ts 1
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
@@ -200,6 +204,7 @@ jobs:
     # PRINTS: config.ts 3
     # PRINTS: connected-repo.ts 2
     # PRINTS: constants.ts 7
+    # PRINTS: cost.ts 1
     # PRINTS: delivery.ts 1
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 1
@@ -208,6 +213,8 @@ jobs:
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 1
     # PRINTS: gate.ts 6
+    # PRINTS: ghost-overlap.ts 3
+    # PRINTS: ghost.ts 1
     # PRINTS: hint.ts 2
     # PRINTS: hints.ts 1
     # PRINTS: hook-budget.ts 1
@@ -239,7 +246,7 @@ jobs:
     # PRINTS: session-start.ts 2
     # PRINTS: session.ts 1
     # PRINTS: sessions.ts 1
-    # PRINTS: set-intent.ts 1
+    # PRINTS: set-intent.ts 2
     # PRINTS: settings-merge.ts 2
     # PRINTS: solved-counts.ts 1
     # PRINTS: solved-hint.ts 4
@@ -252,7 +259,7 @@ jobs:
     # PRINTS: tool-failure.ts 3
     # PRINTS: user-prompt-submit.ts 1
     # PRINTS: worker-env.ts 1
-    # PRINTS: worker.ts 1
+    # PRINTS: worker.ts 3
     name: Mutation proof
     runs-on: ubuntu-latest
     steps:

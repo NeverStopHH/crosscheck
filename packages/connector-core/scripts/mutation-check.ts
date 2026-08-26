@@ -2370,6 +2370,136 @@ export const MUTATIONS: readonly Mutation[] = [
       "80 code points of a caller's term become 1440 characters in the " +
       "reader's context, so the refusal is cut before it names anybody",
   },
+  {
+    // THE GATE this whole feature is sold on (VISION.md §3): the model runs
+    // only when the deterministic core found somebody. This makes a missing
+    // candidate into an empty one, so the check fires on a repo where nobody
+    // shares a file, a failure or a topic — a token spend on every session of
+    // every quiet team, and the outcome booked as a fire rather than as the
+    // free skip it is.
+    label: "a ghost check runs with nobody to compare against",
+    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    from: `  const candidate = overlaps.data[0];
+  if (candidate === undefined) {
+    // THE GATE, and the reason this feature costs a quiet repo nothing.
+    await updateSessionState(home, args.claudeSessionId, withGhostNoOverlap);
+    return;
+  }`,
+    to: `  const candidate = overlaps.data[0] ?? {
+    workContextId: "",
+    title: "",
+    developerId: "",
+    lastActiveAt: "",
+    sharedTargets: [],
+    sharedTargetCount: 0,
+    intentTokenHits: 0,
+  };`,
+    test: `${CONNECTOR}/test/ghost-worker.test.ts`,
+    because:
+      "the gated half fires on a repo with no overlap at all: a model call " +
+      "per session for every quiet team, and a 'fire' where the honest " +
+      "outcome is 'skipped, nobody to compare'",
+  },
+  {
+    // The echo-loop rule pointed at THIS call's own input. The guard stays,
+    // fed nothing — so a sentence that merely restates the teammate claim the
+    // model was just shown is spooled as this session's derived observation,
+    // under a fresh id and a fresh timestamp.
+    label: "a ghost sentence repeats the claim it was shown",
+    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    from: "  const shownHashes = shownClaimLines.map((line) => hintBodyHash(line));",
+    to: "  const shownHashes: readonly string[] = [];",
+    test: `${CONNECTOR}/test/ghost-worker.test.ts`,
+    because:
+      "a teammate's declared finding comes back as the reader's own derived " +
+      "claim — provenance laundering by paraphrase, which is the exact " +
+      "failure the echo-loop exclusion exists to stop",
+  },
+  {
+    // Self-exclusion in the WHERE, the tripwire's rule (DESIGN.md §4). A
+    // developer running parallel worktrees on one repo would collide with
+    // themselves on every file they touch twice.
+    label: "the plan overlap forgets whose plan it is",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: `        ne(agentSessions.developerId, viewerDeveloperId),
+        gte(activityExpression, cutoff),
+        notASweepCondition(workContextTargets.workContextId),`,
+    to: `        gte(activityExpression, cutoff),
+        notASweepCondition(workContextTargets.workContextId),`,
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "a second worktree of the reader's own becomes a teammate colliding " +
+      "with them, on every file the two share",
+  },
+  {
+    // ConE's rarely-concurrently-edited heuristic (TOSEM 2021), which is the
+    // half of that paper doing the precision work. Without it a lockfile
+    // everybody edits is evidence of a plan, and the pair window fills with
+    // the values that mean least.
+    label: "a lockfile everybody touches counts as a shared plan",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "    .filter((row) => row.contexts <= GHOST_HOT_TARGET_MAX_CONTEXTS)",
+    to: "    .filter(() => true)",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "every session that edits the lockfile collides with every other one: " +
+      "the notice fires on the values that carry the least information, and " +
+      "the crowd can fill the pair window ahead of the real overlap",
+  },
+  {
+    // The floor. One shared file is one file; two is a plan (and one shared
+    // FINGERPRINT is content identity, which is why that branch stays).
+    label: "one shared file is enough to call it a collision",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "  candidate.shared.length >= GHOST_MIN_SHARED_TARGETS ||",
+    to: "  candidate.shared.length >= 1 ||",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "the notice fires on a single shared path, which on a busy repo is " +
+      "everybody — the prediction theatre this feature was built not to be",
+  },
+  {
+    // "hit the same failure" is a fact a tired human can act on; 39
+    // characters of sha256 on a briefing line is not.
+    label: "the ghost line prints the fingerprint hash at the reader",
+    file: `${CORE}/src/briefing/ghost.ts`,
+    from: "    .filter((target) => target.kind !== FINGERPRINT_KIND)",
+    to: "    .filter(() => true)",
+    test: `${CORE}/test/ghost-render.test.ts`,
+    because:
+      "a briefing line spends its width on a hash nobody can read, and the " +
+      "clause that says what actually happened is buried beside it",
+  },
+  {
+    // "No PASS-only telemetry" (the finding-#14 lesson). A ghost check fires
+    // at most once per session, so waiting for the silent-fires threshold
+    // means a booked failure can sit through a whole session unreported —
+    // which is why ANY failure warns, and this drops that branch.
+    label: "a booked ghost failure stops warning anybody",
+    file: `${CONNECTOR}/src/ghost/cost.ts`,
+    from: `export const isGhostSilentlyDead = (cost: GhostCost): boolean =>
+  cost.fails > 0 ||
+  (cost.fires >= DOCTOR_GHOST_SILENT_FIRES_WARN && cost.nones + cost.drafts === 0);`,
+    to: `export const isGhostSilentlyDead = (cost: GhostCost): boolean =>
+  cost.fires >= DOCTOR_GHOST_SILENT_FIRES_WARN && cost.nones + cost.drafts === 0;`,
+    test: `${CLI}/test/ghost-cost.test.ts`,
+    because:
+      "a dead runner, an unanswerable hub or a dropped sentence reads PASS " +
+      "on doctor until two whole sessions have fired and answered nothing",
+  },
+  {
+    // The declaration-time delivery (VISION.md §3): stating the plan is the
+    // first moment it can be compared, and this drops the answer.
+    label: "set_intent stops saying who else is in there",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "  const ghost = await deliverGhostNotice(ctx, own);",
+    to: "  const ghost: readonly string[] = [];",
+    test: `${CORE}/test/ghost-declare.test.ts`,
+    because:
+      "declaring a plan that collides with a live teammate's answers as if " +
+      "nobody were there, and the reader learns it at the next SessionStart " +
+      "at the earliest",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -2428,6 +2558,11 @@ interface Outcome {
  * PRINTS: double-wiring.test.ts 1
  * PRINTS: failure-hook.test.ts 2
  * PRINTS: fingerprint.test.ts 1
+ * PRINTS: ghost-cost.test.ts 1
+ * PRINTS: ghost-declare.test.ts 1
+ * PRINTS: ghost-overlap.test.ts 3
+ * PRINTS: ghost-render.test.ts 1
+ * PRINTS: ghost-worker.test.ts 2
  * PRINTS: global-wiring-silence.test.ts 2
  * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2
