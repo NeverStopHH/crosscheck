@@ -365,6 +365,68 @@ export const getSolvedMatchesForFingerprint = (
  * machine-derived. `captureMode`/`dedupCount` optional: an older shape stays
  * parseable and the renderer does not use them.
  */
+/**
+ * One value the reader's own session and a teammate's both carry (VISION.md
+ * §3). `kind` is an OPEN string: a hub that learns a new target kind must not
+ * cost this connector the whole row, and the renderer maps kinds it knows and
+ * prints nothing for the rest.
+ */
+export const GhostSharedTargetSchema = z.looseObject({
+  kind: z.string().min(1),
+  value: z.string().min(1),
+});
+
+export type GhostSharedTarget = z.infer<typeof GhostSharedTargetSchema>;
+
+/**
+ * One teammate whose LIVE plan overlaps the reader's own — a POINTER, like
+ * every other proactive teammate surface: who, since when, what is shared,
+ * what they say they are doing, and the id that reads their tree. No claim
+ * body is on this wire at all (DESIGN.md §4).
+ *
+ * THE SAMPLE IS FINGERPRINT-FIRST, and the renderer depends on it: the hub
+ * sorts `sharedTargets` by kind ascending before bounding it, and
+ * "error_fingerprint" sorts first, so a shared FAILURE is always inside the
+ * sample when one exists (packages/server/src/services/ghost-overlap.ts). The
+ * renderer therefore reads "did we hit the same failure" off the sample
+ * rather than needing a second count on the wire. A hub that stopped sorting
+ * would cost the line its strongest clause, which is what the render test
+ * pins.
+ */
+export const GhostCheckEntrySchema = z.looseObject({
+  workContextId: z.string().min(1),
+  title: z.string().min(1),
+  developerId: z.string().min(1),
+  developerName: z.string().min(1).optional(),
+  intent: tolerantIntent,
+  lastActiveAt: z.string().min(1),
+  sharedTargets: z.array(GhostSharedTargetSchema).catch([]),
+  sharedTargetCount: z.number().int().min(0).catch(0),
+  /**
+   * Distinct words of the READER'S OWN intent this context matched. Any
+   * positive value is already above the hub's floor — the hub never reports a
+   * count below it — so the renderer needs no copy of that constant.
+   */
+  intentTokenHits: z.number().int().min(0).catch(0),
+});
+
+export type GhostCheckEntry = z.infer<typeof GhostCheckEntrySchema>;
+
+/**
+ * One more parallel GET inside the SessionStart fetch block, and the call
+ * `set_intent` repeats the moment a plan is declared. Fail open: a hub too
+ * old to serve it renders no section.
+ */
+export const getGhostChecks = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<readonly GhostCheckEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/ghost-checks${encodeRepo(repo)}`,
+    schema: tolerantList("ghostChecks", GhostCheckEntrySchema),
+  });
+
 export const DraftEntrySchema = z.looseObject({
   id: z.string().min(1),
   workContextId: z.string().min(1),

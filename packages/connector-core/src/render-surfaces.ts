@@ -39,6 +39,7 @@ import { composeDetachedTitle } from "./flows/work-context-title.ts";
 import type {
   AnsweredQuestion,
   Diagnosis,
+  GhostCheckEntry,
   HintClaimCandidate,
   InboxQuestion,
   IntentEntry,
@@ -101,6 +102,7 @@ export type RenderSurface = CorpusRenderSurface | CompositeRenderSurface;
  */
 export const RENDER_LAYER_MODULES: readonly string[] = [
   "src/briefing/sanitize.ts",
+  "src/briefing/ghost.ts",
   "src/briefing/intent.ts",
   "src/briefing/questions.ts",
   "src/briefing/render.ts",
@@ -175,6 +177,28 @@ const hintContextWith = (payload: string) => ({
   developerId: "dev_other",
   developerName: payload,
   createdAt: ISO,
+});
+
+/**
+ * The payload in EVERY untrusted slot of a ghost check (VISION.md §3): the
+ * teammate's display name, their work-context title, their intent sentence,
+ * and — the slot no other surface has — a SHARED TARGET VALUE. A file path is
+ * hub-sent text that lands OUTSIDE the « » frame beside the reader's own
+ * facts, so it is the newest way to try to mint a field on a briefing line.
+ */
+const ghostCheckWith = (payload: string): GhostCheckEntry => ({
+  workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+  title: payload,
+  developerId: "dev_other",
+  developerName: payload,
+  intent: intentWith(payload),
+  lastActiveAt: ISO,
+  sharedTargets: [
+    { kind: "error_fingerprint", value: payload },
+    { kind: "file", value: payload },
+  ],
+  sharedTargetCount: 4,
+  intentTokenHits: 3,
 });
 
 /**
@@ -379,6 +403,25 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         presence: [],
         workContexts: [],
         solvedMatches: [solvedMatchWith(payload)],
+        now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "briefing-ghost",
+    module: "src/briefing/ghost.ts",
+    framing: "framed",
+    // The GHOST slot of the briefing, which neither surface above can reach:
+    // they pass no ghost checks, so the section never renders there and its
+    // four untrusted fields — teammate name, title, intent and the shared
+    // target VALUE — were attacked by nothing.
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        presence: [],
+        workContexts: [],
+        ghostChecks: [ghostCheckWith(payload)],
         now: NOW,
       }),
   },

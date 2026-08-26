@@ -521,6 +521,28 @@ export const MONTHS_PER_YEAR = 12;
 // ── The asynchronous question channel (roadmap R2) ────────────────────
 
 /**
+ * Ghost-check lines one SessionStart briefing shows (VISION.md §3). TWO, the
+ * solved pointers' ceiling and for the same budget reason — but the product
+ * reason is stronger here: a collision notice is something the reader is
+ * expected to ACT on, by opening a tree or messaging a person, and one or two
+ * names is a decision while three is a list to skim. The hub returns up to
+ * GHOST_MAX_FINDINGS so a row this renderer will not vouch for costs the
+ * section a line rather than its content:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.MAX_GHOST_POINTERS < s.GHOST_MAX_FINDINGS)'
+ * PRINTS: true
+ */
+export const MAX_GHOST_POINTERS = 2;
+
+/**
+ * How much of a shared file path or symbol a ghost line prints. A path is a
+ * BARE field on a line that already carries a name, an age and a framed
+ * intent, and three of them share the line — the briefing budget, not the
+ * value, is what this bounds.
+ */
+export const GHOST_SHARED_VALUE_MAX_CHARS = 60;
+
+/**
  * Most questions the SessionStart briefing shows at once (roadmap R2).
  * Three, and the ceiling is not arbitrary: MAX_OPEN_QUESTIONS_PER_TARGET on
  * the hub is also three, so one teammate can fill this block exactly once and

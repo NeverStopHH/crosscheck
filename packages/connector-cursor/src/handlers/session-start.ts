@@ -11,7 +11,7 @@
  * any maintenance, and every hub call the maintenance can make is held to
  * `spareMs` (the reserve is what carries the briefing out of the hook; the
  * measurements live on HOOK_RESERVE_RATIO). The briefing itself is
- * `assembleBriefing`: six parallel hub GETs each bounded by the per-request
+ * `assembleBriefing`: eight parallel hub GETs each bounded by the per-request
  * timeout, fail-open per section — a hung hub costs sections, never the
  * hook. budget.test.ts measures that degraded path; the per-request
  * timeouts carry those bounds, and the race backstop itself is pinned

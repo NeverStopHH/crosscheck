@@ -8,6 +8,7 @@ import {
   MAX_CONTEXTS,
   MAX_CONTRADICTION_POINTERS,
   MAX_DRAFT_POINTERS,
+  MAX_GHOST_POINTERS,
   MAX_QUESTION_POINTERS,
   MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
@@ -26,11 +27,13 @@ import type {
   ContradictionEntry,
   ContradictionSide,
   DraftEntry,
+  GhostCheckEntry,
   InboxQuestion,
   PresenceEntry,
   SolvedMatchEntry,
   WorkContextEntry,
 } from "../http/hub.ts";
+import { formatGhostLine } from "./ghost.ts";
 import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
 import { fitQuestionEntries, formatQuestionEntry } from "./questions.ts";
 import type { IntentLabel } from "./intent.ts";
@@ -106,6 +109,8 @@ export interface BriefingInput {
   readonly drafts?: readonly DraftEntry[] | undefined;
   /** Open questions addressed to the reader; omitted or empty renders none. */
   readonly questions?: readonly InboxQuestion[] | undefined;
+  /** Teammates whose live plan overlaps the reader's; empty renders none. */
+  readonly ghostChecks?: readonly GhostCheckEntry[] | undefined;
 }
 
 interface Section {
@@ -225,6 +230,38 @@ const renderQuestionSection = (input: BriefingInput): Section => {
     header:
       "Questions for you (answer_question replies; unanswered ones expire):",
     lines: fitQuestionEntries(rendered.slice(0, MAX_QUESTION_POINTERS)),
+    total: rendered.length,
+  };
+};
+
+/**
+ * "Teammates working on the same things right now" (VISION.md §3), placed
+ * AFTER presence and BEFORE the teammate work contexts.
+ *
+ * That is one position and two arguments. Presence orients — who is around at
+ * all — and a ghost line is a REFINEMENT of it: of the people you just read,
+ * this one is in your files. The teammate-contexts block below is the AMBIENT
+ * version of the same information, every open context on the repo with no
+ * reason attached, so when the briefing is full the ambient list must give way
+ * before the specific collision and not the other way round.
+ *
+ * It stays below "Questions for you", which is the ordering that block already
+ * argues for: an addressed question expires, a collision does not.
+ *
+ * NOTHING HERE BLOCKS ANYTHING, and the header says so out loud. This is a
+ * briefing line, not a permission decision — the reader chooses whether to
+ * open a tree or say something, and nothing in the pipeline waits on either.
+ */
+const renderGhostSection = (input: BriefingInput): Section => {
+  const rendered = (input.ghostChecks ?? []).flatMap((entry) => {
+    const line = formatGhostLine(entry, input.now);
+    return line === null ? [] : [line];
+  });
+  return {
+    header:
+      "Teammates working on the same things right now " +
+      "(get_diagnosis reads their tree; nothing here blocks you):",
+    lines: rendered.slice(0, MAX_GHOST_POINTERS),
     total: rendered.length,
   };
 };
@@ -804,6 +841,7 @@ export const renderBriefing = (input: BriefingInput): string => {
   const sections = [
     renderQuestionSection(input),
     renderPresenceSection(input),
+    renderGhostSection(input),
     renderContextSection(input),
     renderContradictionSection(input),
     renderSolvedSection(input),

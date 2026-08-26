@@ -1,6 +1,6 @@
 /**
  * `assembleBriefing` (DESIGN-agent-agnostic.md §1.3) — the session-start
- * briefing recipe as an extracted function: six parallel hub GETs → drift for
+ * briefing recipe as an extracted function: eight parallel hub GETs → drift for
  * the teammates that will actually be shown → `renderBriefing` → the solved
  * pointers the EMITTED text really contains.
  *
@@ -35,6 +35,7 @@ import {
   getAbsences,
   getContradictions,
   getDrafts,
+  getGhostChecks,
   getPresence,
   getQuestions,
   getSolvedMatches,
@@ -105,6 +106,7 @@ export const assembleBriefing = async (
     solvedMatchesResult,
     draftsResult,
     questionsResult,
+    ghostChecksResult,
   ] = await Promise.all([
     getPresence(hub, repoId),
     getWorkContexts(hub, repoId),
@@ -116,6 +118,10 @@ export const assembleBriefing = async (
     // extra wall clock: the whole fetch is still one per-request hub timeout,
     // and a hub too old to serve it simply renders no section (fail open).
     getQuestions(hub, repoId),
+    // VISION §3. Also in the parallel block, and for the same reason plus one
+    // more: the SessionStart budget is 1000 ms and this GET must cost the
+    // hook nothing but its share of the one timeout the block already spends.
+    getGhostChecks(hub, repoId),
   ]);
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
@@ -126,6 +132,7 @@ export const assembleBriefing = async (
   const solvedMatches = solvedMatchesResult.ok ? solvedMatchesResult.data : [];
   const drafts = draftsResult.ok ? draftsResult.data : [];
   const questions = questionsResult.ok ? questionsResult.data.inbox : [];
+  const ghostChecks = ghostChecksResult.ok ? ghostChecksResult.data : [];
 
   // Only the teammates that will actually be shown cost a git process; the
   // optional rider shares the fan-out window, so both together still cost one
@@ -150,6 +157,7 @@ export const assembleBriefing = async (
     solvedMatches,
     drafts,
     questions,
+    ghostChecks,
   });
 
   const shownSolvedIds = solvedMatches
