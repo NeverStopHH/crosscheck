@@ -179,8 +179,12 @@ describe("the PostToolUseFailure budget, measured through runHook", () => {
     hub.setSolvedMatches([solvedFingerprintMatch()]);
     const elapsed: number[] = [];
 
-    // Act — run 0 delivers; later runs exercise the seen-set silent path,
-    // which still pays capture, flush and the state read.
+    // Act — the same failing command five times, the retry-loop shape. Run 0
+    // delivers; the later runs are the SILENT path and still pay capture,
+    // flush and the state read, which is what these four measurements are
+    // about. Their silence is the probed-fingerprint set rather than the
+    // seen-set now: one fingerprint is asked about once per session, so
+    // runs 1-4 stop before the hub (flows/solved-hint.ts).
     const stdout: string[] = [];
     for (let run = 0; run < HAPPY_RUNS; run += 1) {
       const startedAt = performance.now();
@@ -195,7 +199,10 @@ describe("the PostToolUseFailure budget, measured through runHook", () => {
     // seen-set's silence rather than a hook that never spoke.
     expect(stdout[0]).toContain("get_diagnosis");
     expect(stdout.slice(1)).toEqual(["", "", "", ""]);
-    expect(hub.calls.solvedMatches).toBeGreaterThan(0);
+    // Asked ONCE across the five, not "at least once": the repeats are the
+    // whole point of a retry loop, and paying a round trip for each of them
+    // is the cost this hook has no way to bound afterwards.
+    expect(hub.calls.solvedMatches).toBe(1);
 
     // …then measured, then bounded
     console.log(

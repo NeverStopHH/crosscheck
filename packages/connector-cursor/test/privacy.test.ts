@@ -250,6 +250,7 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
     briefingSolvedRefs: [],
+    probedFingerprints: [],
     foreignRepoDrops: 0,
     briefingPending: false,
     stopTurnCount: 0,

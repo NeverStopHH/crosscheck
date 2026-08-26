@@ -20,9 +20,22 @@
  * hint) is silent rather than repeated.
  *
  * ZERO COST WHEN THERE IS NOTHING TO SAY, and the ordering is deliberate:
- * the state read and the cap check are local and run first, so a session
- * that has spent its budget makes no hub call at all. One bounded GET
- * follows, against an indexed equality lookup on the fingerprint.
+ * everything local runs first, so a session with nothing to gain makes no
+ * hub call at all. Two local gates, and the second is the one that matters
+ * on a retry loop. The session CAP only moves when a hint was actually
+ * DELIVERED, so on the common paths — the hub holds nothing, or it holds a
+ * tree this session was already shown — the cap is never reached and every
+ * repeat of one failure used to buy another GET. Measured through the real
+ * hook: 40 identical `bun test` failures produced 40 probes of ONE
+ * fingerprint against a hub holding nothing, and 4475 ms of agent-turn
+ * latency across 10 of them against a hub that never answered — the case a
+ * degraded hub is least able to absorb. So a fingerprint is asked about ONCE
+ * per session (`probedFingerprints`, the withTripwireAsked shape), claimed
+ * under the state lock BEFORE the call so two hooks racing one failure ask
+ * once between them. What that costs is stated rather than hidden: a
+ * fingerprint whose answer only appears mid-session — a teammate solving it
+ * while this session runs — is not asked about again until the next session.
+ * One bounded GET follows, against an indexed equality lookup.
  *
  * NO SECRET GATE HERE, because there is nothing new to gate: the only value
  * that goes on the wire is the fingerprint, and `fingerprint()` already
@@ -37,7 +50,11 @@ import { getSolvedMatchesForFingerprint } from "../http/hub.ts";
 import type { HubContext } from "../http/hub.ts";
 import { rememberHintDelivery } from "../hints/delivery.ts";
 import { renderSolvedHint } from "../hints/render.ts";
-import { readSessionState } from "../state/session-state.ts";
+import {
+  readSessionState,
+  updateSessionState,
+  withProbedFingerprint,
+} from "../state/session-state.ts";
 
 export interface SelectAndRenderSolvedHintInput {
   readonly home: string;
@@ -63,6 +80,29 @@ export const selectAndRenderSolvedHint = async (
     return "";
   }
   if (state.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION) {
+    return "";
+  }
+  // REDUNDANT WITH THE CHECK-AND-SET BELOW, and recorded so it is not
+  // re-reported as a gap: deleting it reddens no test, because the transform
+  // refuses an already-probed fingerprint on its own. It stays because a
+  // retry loop hits this line dozens of times a minute and the fast path
+  // costs a comparison where the slow one takes a file lock and re-reads the
+  // state — the same trade as the empty-string guard in briefing/sanitize.ts.
+  if (state.probedFingerprints.includes(input.fingerprint)) {
+    return "";
+  }
+  // CLAIM THE QUESTION, under the state lock, before spending anything on
+  // it: the lockless read above is what a racing sibling hook also passed
+  // (Cursor fires two signals for one failure), so the check-and-set is what
+  // makes "asked once" true rather than "asked twice, quickly". THIS is the
+  // guard the mutation entry names. A state write that fails costs this
+  // fingerprint its probe, never a second one.
+  const claimed = await updateSessionState(input.home, input.hostSessionKey, (fresh) =>
+    fresh.probedFingerprints.includes(input.fingerprint)
+      ? null
+      : withProbedFingerprint(fresh, input.fingerprint),
+  );
+  if (!claimed) {
     return "";
   }
   const result = await getSolvedMatchesForFingerprint(

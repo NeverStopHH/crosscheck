@@ -644,6 +644,27 @@ export const MUTATIONS: readonly Mutation[] = [
       "the noise DESIGN.md \u00a710 risk 1 forbids",
   },
   {
+    // The third guard, and the only one that bounds the hub CALLS rather
+    // than the lines: one fingerprint is asked about once per session.
+    label: "one failure in a retry loop buys a hub call every time",
+    file: `${CORE}/src/flows/solved-hint.ts`,
+    from: `  const claimed = await updateSessionState(input.home, input.hostSessionKey, (fresh) =>
+    fresh.probedFingerprints.includes(input.fingerprint)
+      ? null
+      : withProbedFingerprint(fresh, input.fingerprint),
+  );
+  if (!claimed) {
+    return "";
+  }
+`,
+    to: "",
+    test: `${CORE}/test/solved-hint-flow.test.ts`,
+    because:
+      "the hint cap only moves when something was DELIVERED, so a hub that " +
+      "holds nothing — the common case — never reaches it, and every retry " +
+      "of one failing command pays another GET inside the agent's turn",
+  },
+  {
     // And the other guard: the briefing's solved pointers are a SEPARATE
     // list from the delivered refs, so consulting only the latter repeats a
     // pointer the reader was already shown at SessionStart.

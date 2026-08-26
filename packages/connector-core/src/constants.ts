@@ -97,6 +97,15 @@ export const HINT_MIN_TOKEN_CHARS = 3;
 /** Tripwire asks once per file per session; FIFO cap on the remembered set. */
 export const MAX_TRIPWIRE_ASKED_FILES = 100;
 /**
+ * The failure-time solved probe asks the hub about a fingerprint ONCE per
+ * session; FIFO cap on the remembered set, the MAX_TRIPWIRE_ASKED_FILES
+ * shape. Sized for the distinct failures one session produces rather than
+ * for its total failures — the whole point is that a retry loop repeats ONE
+ * fingerprint, and a session that genuinely hits 100 different failures has
+ * spent its five hint slots long before this cap matters.
+ */
+export const MAX_PROBED_FINGERPRINTS = 100;
+/**
  * Echo-loop exclusion across sessions (DESIGN.md §3): delivered-hint body
  * hashes persist per repo so yesterday's hint cannot come back as today's
  * derived draft. FIFO like MAX_SEEN_TARGETS — at 5 substance hints/session

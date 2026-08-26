@@ -8,8 +8,14 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { MAX_BRIEFING_SOLVED_REFS } from "../src/constants.ts";
-import { withBriefingSolvedRefs } from "../src/state/session-state.ts";
+import {
+  MAX_BRIEFING_SOLVED_REFS,
+  MAX_PROBED_FINGERPRINTS,
+} from "../src/constants.ts";
+import {
+  withBriefingSolvedRefs,
+  withProbedFingerprint,
+} from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 
 const baseState = (): SessionState => ({
@@ -27,6 +33,7 @@ const baseState = (): SessionState => ({
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   briefingSolvedRefs: [],
+  probedFingerprints: [],
   foreignRepoDrops: 0,
   briefingPending: false,
   stopTurnCount: 0,
@@ -87,5 +94,38 @@ describe("withBriefingSolvedRefs", () => {
 
     // Assert
     expect(original.briefingSolvedRefs).toEqual([]);
+  });
+});
+
+describe("withProbedFingerprint", () => {
+  test("asking about one fingerprint twice records it once", () => {
+    // Arrange / Act: the shape a racing hook produces — two processes past
+    // the lockless read, both re-entering the transform with one value.
+    const once = withProbedFingerprint(baseState(), "sha256:aaaa");
+    const twice = withProbedFingerprint(once, "sha256:aaaa");
+
+    // Assert
+    expect(twice.probedFingerprints).toEqual(["sha256:aaaa"]);
+  });
+
+  test("the list is FIFO-capped like its sibling state lists", () => {
+    // Arrange
+    const values = Array.from(
+      { length: MAX_PROBED_FINGERPRINTS + 1 },
+      (_, i) => `sha256:${String(i)}`,
+    );
+
+    // Act
+    const state = values.reduce(
+      (accumulated, value) => withProbedFingerprint(accumulated, value),
+      baseState(),
+    );
+
+    // Assert: the oldest question fell out, the newest survives.
+    expect(state.probedFingerprints).toHaveLength(MAX_PROBED_FINGERPRINTS);
+    expect(state.probedFingerprints[0]).toBe("sha256:1");
+    expect(state.probedFingerprints.at(-1)).toBe(
+      `sha256:${String(values.length - 1)}`,
+    );
   });
 });

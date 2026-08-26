@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   MAX_BRIEFING_SOLVED_REFS,
+  MAX_PROBED_FINGERPRINTS,
   MAX_SEEN_TARGETS,
   MAX_TRIPWIRE_ASKED_FILES,
 } from "../constants.ts";
@@ -80,6 +81,16 @@ const SessionStateObjectSchema = z.looseObject({
    * a briefing pointer is the briefing's budget, not the prompt path's.
    */
   briefingSolvedRefs: z.array(z.string().min(1)).default([]),
+  /**
+   * Error fingerprints the failure-time solved probe has already ASKED the
+   * hub about in this session (VISION.md §1). Separate from every list
+   * beside it because it records a QUESTION rather than a delivery: the
+   * others move only when something was shown, and the probe's cost is paid
+   * whether or not anything comes back — which is exactly the case a retry
+   * loop produces dozens of times a minute. Default keeps every existing
+   * state file parsing.
+   */
+  probedFingerprints: z.array(z.string().min(1)).default([]),
   /**
    * Touches of files in a DIFFERENT connected repo, dropped under the
    * first-wins rule (trial finding #9): one agent session is ONE crosscheck
@@ -353,6 +364,25 @@ export const withBriefingSolvedRefs = (
   };
 };
 
+/**
+ * FIFO cap, same shape as withTripwireAsked: the hub is asked about one
+ * fingerprint once per session. Dedup on merge, because the caller's
+ * check-and-set may re-enter with the same value from a racing hook.
+ */
+export const withProbedFingerprint = (
+  state: SessionState,
+  fingerprint: string,
+): SessionState => {
+  const merged = [...new Set([...state.probedFingerprints, fingerprint])];
+  return {
+    ...state,
+    probedFingerprints:
+      merged.length <= MAX_PROBED_FINGERPRINTS
+        ? merged
+        : merged.slice(merged.length - MAX_PROBED_FINGERPRINTS),
+  };
+};
+
 /** FIFO cap, same shape as withSeenTargets: asks are once per file. */
 export const withTripwireAsked = (
   state: SessionState,
@@ -401,6 +431,7 @@ export const deriveSessionState = (
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
     briefingSolvedRefs: [],
+    probedFingerprints: [],
     foreignRepoDrops: 0,
     briefingPending: false,
     stopTurnCount: 0,

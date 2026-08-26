@@ -84,6 +84,7 @@ const freshState = (
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   briefingSolvedRefs: [],
+  probedFingerprints: [],
   foreignRepoDrops: 0,
   briefingPending: false,
   stopTurnCount: 0,
@@ -238,6 +239,44 @@ describe("selectAndRenderSolvedHint (the failure-time recipe)", () => {
     // Assert: silence, and the probe never left the machine.
     expect(text).toBe("");
     expect(f.hub.calls.solvedMatches).toBe(0);
+  });
+
+  test("one fingerprint costs one hub round trip, however often it fails", async () => {
+    // Arrange: the hub holds NOTHING for this fingerprint — the overwhelmingly
+    // common case, and the one the old code paid most for, because the
+    // session cap only moves when a hint is actually delivered. A retry loop
+    // therefore probed on every single failure, for ever.
+    const f = await fixture("sh-storm", {}, []);
+
+    // Act: the same failing command, over and over, inside one agent turn.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect(await selectAndRenderSolvedHint(flowInput(f))).toBe("");
+    }
+
+    // Assert: asked once. And the CONTROL, so "one call" is not satisfied by
+    // a flow that stopped calling the hub at all — a DIFFERENT fingerprint in
+    // the same session is a different question and is still asked.
+    expect(f.hub.calls.solvedMatches).toBe(1);
+    await selectAndRenderSolvedHint(
+      flowInput(f, "sha256:99998888777766665555444433332222"),
+    );
+    expect(f.hub.calls.solvedMatches).toBe(2);
+  });
+
+  test("a delivered fingerprint is not re-probed either", async () => {
+    // Arrange: the hub DOES hold the answer, so the first failure spends a
+    // slot. The seen-set already kept the second failure silent — but only
+    // after paying for the round trip that produced the row it then dropped.
+    const f = await fixture("sh-storm-hit");
+
+    // Act
+    const first = await selectAndRenderSolvedHint(flowInput(f));
+    const second = await selectAndRenderSolvedHint(flowInput(f));
+
+    // Assert
+    expect(first.length).toBeGreaterThan(0);
+    expect(second).toBe("");
+    expect(f.hub.calls.solvedMatches).toBe(1);
   });
 
   test("no session state means silence, not recovery", async () => {
