@@ -53,6 +53,7 @@ const run = async (
     readonly identityRepoId?: string;
     readonly knownWorktreeRoots?: readonly KnownWorktreeRoot[];
     readonly repoIdOf?: (root: string) => string | null;
+    readonly stampOf?: (root: string) => string | null;
   },
 ): Promise<{
   readonly resolution: Awaited<ReturnType<typeof resolveTouchedRoots>>;
@@ -78,6 +79,13 @@ const run = async (
       calls.resolved.push(root);
       return repoIdOf(root);
     },
+    // Absent by default: these roots do not exist on disk, so the real reader
+    // would return null for every one of them and the cache would behave
+    // exactly as it did before stamps — which is the point of null meaning
+    // "unknowable" rather than "different".
+    ...(input.stampOf === undefined
+      ? {}
+      : { readRootStamp: async (root: string) => input.stampOf?.(root) ?? null }),
   });
   return { resolution, calls };
 };
@@ -161,7 +169,7 @@ describe("an unresolvable root is an unknown, not a second repo", () => {
     // Arrange: the same root cached as unknown after one spent attempt
     const file = `${ROOT_C}/src/x.ts`;
     const cachedAfter = (attempts: number): readonly KnownWorktreeRoot[] => [
-      { root: ROOT_C, repoId: null, attempts },
+      { root: ROOT_C, repoId: null, attempts, stamp: null },
     ];
 
     // Act: git is healthy again on the retry, and the root resolves
@@ -184,7 +192,7 @@ describe("an unresolvable root is an unknown, not a second repo", () => {
     expect(retried.calls.resolved).toEqual([ROOT_C]);
     expect([...retried.resolution.rootByPath]).toEqual([[file, ROOT_C]]);
     expect(retried.resolution.newlyResolved).toEqual([
-      { root: ROOT_C, repoId: REPO_ID, attempts: 2 },
+      { root: ROOT_C, repoId: REPO_ID, attempts: 2, stamp: null },
     ]);
     expect(settled.calls.resolved).toEqual([]);
     expect(settled.resolution.outsideDrops).toBe(1);
@@ -208,7 +216,7 @@ describe("the per-session root cache is the budget (finding #17)", () => {
     expect(resolution.rootByPath.size).toBe(2);
     expect(calls.resolved).toEqual([ROOT_C]);
     expect(resolution.newlyResolved).toEqual([
-      { root: ROOT_C, repoId: REPO_ID, attempts: 1 },
+      { root: ROOT_C, repoId: REPO_ID, attempts: 1, stamp: null },
     ]);
   });
 
@@ -221,13 +229,90 @@ describe("the per-session root cache is the budget (finding #17)", () => {
       paths: [file],
       cwd: ROOT_A,
       identityRoot: ROOT_A,
-      knownWorktreeRoots: [{ root: ROOT_C, repoId: REPO_ID, attempts: 1 }],
+      knownWorktreeRoots: [{ root: ROOT_C, repoId: REPO_ID, attempts: 1, stamp: null }],
     });
 
     // Assert: the HIT path — no spawn, nothing new to write back
     expect([...resolution.rootByPath]).toEqual([[file, ROOT_C]]);
     expect(calls.resolved).toEqual([]);
     expect(resolution.newlyResolved).toEqual([]);
+  });
+
+  test("a cached answer whose CHECKOUT was replaced is judged again", async () => {
+    // Arrange: the cache is keyed by a directory PATH, and a fixed-path
+    // worktree convention reuses that path. Torn down and stood up again from
+    // another repo, the entry used to stand forever — the second repo's files
+    // were captured under THIS repo's key with both drop counters at 0.
+    const file = `${ROOT_C}/src/secret-of-other-repo.ts`;
+
+    // Act: the entry remembers checkout "s1"; "s2" is what is there now
+    const { resolution, calls } = await run({
+      paths: [file],
+      cwd: ROOT_A,
+      identityRoot: ROOT_A,
+      knownWorktreeRoots: [
+        { root: ROOT_C, repoId: REPO_ID, attempts: 1, stamp: "s1" },
+      ],
+      stampOf: () => "s2",
+      repoIdOf: () => OTHER_REPO_ID,
+    });
+
+    // Assert: re-judged, and the answer is the new checkout's — a FOREIGN
+    // drop, which is what a touch of a different repo is
+    expect(calls.resolved).toEqual([ROOT_C]);
+    expect(resolution.foreignDrops).toBe(1);
+    expect(resolution.rootByPath.size).toBe(0);
+    // ...and the replacement starts its own attempt budget
+    expect(resolution.newlyResolved).toEqual([
+      { root: ROOT_C, repoId: OTHER_REPO_ID, attempts: 1, stamp: "s2" },
+    ]);
+  });
+
+  test("an UNKNOWABLE stamp leaves the cached answer standing", async () => {
+    // Arrange: null is "cannot tell", never "different" — a failing stat must
+    // not turn the cache into one git spawn per touch, which is the budget
+    // the cache exists to hold.
+    const file = `${ROOT_C}/src/one.ts`;
+
+    // Act
+    const { resolution, calls } = await run({
+      paths: [file],
+      cwd: ROOT_A,
+      identityRoot: ROOT_A,
+      knownWorktreeRoots: [
+        { root: ROOT_C, repoId: REPO_ID, attempts: 1, stamp: "s1" },
+      ],
+      stampOf: () => null,
+    });
+
+    // Assert
+    expect(calls.resolved).toEqual([]);
+    expect([...resolution.rootByPath]).toEqual([[file, ROOT_C]]);
+  });
+
+  test("an UNSTAMPED entry is accepted once, then bound to what is there", async () => {
+    // Arrange: every entry in a state file written before stamps existed. It
+    // must behave exactly as it did — no git — and be bound from then on.
+    const file = `${ROOT_C}/src/one.ts`;
+
+    // Act
+    const { resolution, calls } = await run({
+      paths: [file],
+      cwd: ROOT_A,
+      identityRoot: ROOT_A,
+      knownWorktreeRoots: [
+        { root: ROOT_C, repoId: REPO_ID, attempts: 1, stamp: null },
+      ],
+      stampOf: () => "s1",
+    });
+
+    // Assert: the answer stood, no identity was resolved, and the entry now
+    // carries the checkout it was accepted against
+    expect(calls.resolved).toEqual([]);
+    expect([...resolution.rootByPath]).toEqual([[file, ROOT_C]]);
+    expect(resolution.newlyResolved).toEqual([
+      { root: ROOT_C, repoId: REPO_ID, attempts: 1, stamp: "s1" },
+    ]);
   });
 
   test("a known FOREIGN root is final: cached once, never re-resolved", async () => {
@@ -239,7 +324,9 @@ describe("the per-session root cache is the budget (finding #17)", () => {
       paths: [file],
       cwd: ROOT_A,
       identityRoot: ROOT_A,
-      knownWorktreeRoots: [{ root: ROOT_OTHER, repoId: OTHER_REPO_ID, attempts: 1 }],
+      knownWorktreeRoots: [
+        { root: ROOT_OTHER, repoId: OTHER_REPO_ID, attempts: 1, stamp: null },
+      ],
     });
 
     // Assert

@@ -113,7 +113,9 @@ const SessionStateObjectSchema = z.looseObject({
    * session). FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS by
    * `withKnownWorktreeRoot`.
    * Defaults keep every pre-#17 state file parsing — an entry written before
-   * `attempts` existed reads as one attempt spent.
+   * `attempts` existed reads as one attempt spent, and one written before
+   * `stamp` existed reads as UNSTAMPED (capture/touched-root.ts: accepted
+   * once, then bound to whatever checkout is at that path now).
    */
   knownWorktreeRoots: z
     .array(
@@ -121,6 +123,7 @@ const SessionStateObjectSchema = z.looseObject({
         root: z.string().min(1),
         repoId: z.string().min(1).nullable(),
         attempts: z.number().int().min(1).default(1),
+        stamp: z.string().min(1).nullable().default(null),
       }),
     )
     .default([]),
@@ -499,11 +502,17 @@ export const withKnownWorktreeRoot = (
   root: string,
   repoId: string | null,
   attempts = 1,
+  /**
+   * The checkout this answer was read from (capture/touched-root.ts). Null
+   * means "unknowable here", which is what an unstamped entry from an older
+   * state file and a root whose `.git` could not be stat'd both look like.
+   */
+  stamp: string | null = null,
 ): SessionState => {
   const withoutRoot = state.knownWorktreeRoots.filter(
     (entry) => entry.root !== root,
   );
-  const merged = [...withoutRoot, { root, repoId, attempts }];
+  const merged = [...withoutRoot, { root, repoId, attempts, stamp }];
   return {
     ...state,
     knownWorktreeRoots:

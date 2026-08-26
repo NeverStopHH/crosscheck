@@ -34,7 +34,13 @@
  *       not an answer: a git deadline missed once under load would otherwise
  *       exile that worktree for the session's whole life, so a null is
  *       re-resolved until MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS tries have been
- *       spent on it, then stands (the budget needs a floor too).
+ *       spent on it, then stands (the budget needs a floor too). A POSITIVE
+ *       answer is not final either, because the key is only a directory path:
+ *       every entry carries the `stamp` of the checkout it was read from, and
+ *       a path whose checkout has been REPLACED — the fixed-path worktree
+ *       convention, `git worktree remove` then `git worktree add` from another
+ *       repo — is judged again. Without that the second repo's files were
+ *       captured under the first repo's key with both drop counters at 0.
  *   (d) same repoId → capture against the candidate; a DIFFERENT repoId → a
  *       foreign drop (counted, the first-wins rule); a candidate whose repoId
  *       is UNKNOWN, one that still will not resolve, or none at all → an
@@ -71,8 +77,14 @@
 // PRINTS: packages/connector-acp/src/capture/engine.ts
 // PRINTS: packages/connector-claude/src/hooks/post-tool-use.ts
 // PRINTS: packages/connector-cursor/src/handlers/file-edit.ts
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
+
 import { MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS } from "../constants.ts";
-import { findConnectedRepoRootForFile } from "../config/connected-repo.ts";
+import {
+  GIT_ENTRY_NAME,
+  findConnectedRepoRootForFile,
+} from "../config/connected-repo.ts";
 import { realpathBestEffort } from "../config/paths.ts";
 import { resolveRepoIdentity } from "../git/repo-identity.ts";
 import { toRepoRelative } from "./target-paths.ts";
@@ -91,6 +103,26 @@ export interface KnownWorktreeRoot {
    * this is below MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS.
    */
   readonly attempts: number;
+  /**
+   * WHICH CHECKOUT the answer above was read from — `dev:ino:birthtime` of the
+   * root's `.git` entry. Without it a positive answer stood forever against a
+   * key that is only a directory PATH, and a fixed-path worktree convention
+   * (`~/worktrees/feature`) torn down and stood up again from a DIFFERENT repo
+   * inherited the first repo's id: the second repo's files were spooled into
+   * the first repo's work context under repo-relative ids, with both drop
+   * counters reading 0.
+   *
+   * Deliberately not the mtime: a main checkout's `.git` DIRECTORY changes
+   * mtime on every commit, which would re-spend git on a root already judged
+   * and break the budget the cache exists to hold. `dev:ino:birthtime` is
+   * stable across commits and changes when the entry is recreated.
+   *
+   * Null is "unknowable", never "different": an entry from a state file
+   * written before this field existed, and a `.git` that could not be stat'd.
+   * Only a stamp that is known AND different invalidates, so the cache can
+   * never start paying git per touch because a stat is failing.
+   */
+  readonly stamp: string | null;
 }
 
 export interface ResolveTouchedRootsInput {
@@ -117,6 +149,8 @@ export interface ResolveTouchedRootsInput {
   ) => Promise<string | null>;
   readonly resolveRootRepoId?: (root: string) => Promise<string | null>;
   readonly realpath?: (path: string) => Promise<string>;
+  /** Reads a root's checkout stamp; see `KnownWorktreeRoot.stamp`. */
+  readonly readRootStamp?: (root: string) => Promise<string | null>;
 }
 
 export interface TouchedRootsResolution {
@@ -141,17 +175,42 @@ export interface TouchedRootsResolution {
 interface CacheEntry {
   readonly repoId: string | null;
   readonly attempts: number;
+  readonly stamp: string | null;
 }
 
 /** A null repoId stands only once the attempt budget for it is spent. */
 const isRetryableUnknown = (entry: CacheEntry): boolean =>
   entry.repoId === null && entry.attempts < MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS;
 
+/**
+ * A cached answer belongs to the checkout it was read from. Only a stamp that
+ * is KNOWN on both sides and differs is evidence that the directory now holds
+ * a different checkout; anything unknowable leaves the answer standing, so a
+ * failing stat can never turn the cache into a git call per touch.
+ */
+const isDifferentCheckout = (
+  entry: CacheEntry,
+  stamp: string | null,
+): boolean => entry.stamp !== null && stamp !== null && entry.stamp !== stamp;
+
 const defaultResolveRootRepoId = async (
   root: string,
 ): Promise<string | null> => {
   const identity = await resolveRepoIdentity(root);
   return identity?.repoId ?? null;
+};
+
+/**
+ * `dev:ino:birthtime` of the root's `.git` entry — a file for a linked
+ * worktree, a directory for a main checkout, and recreated by `git worktree
+ * add` either way. One `stat`, paid only on the slow path (a touch that is
+ * already outside the session checkout), never on the fast path.
+ */
+const defaultReadRootStamp = async (root: string): Promise<string | null> => {
+  const stats = await stat(join(root, GIT_ENTRY_NAME)).catch(() => null);
+  return stats === null
+    ? null
+    : `${String(stats.dev)}:${String(stats.ino)}:${String(stats.birthtimeMs)}`;
 };
 
 export const resolveTouchedRoots = async (
@@ -162,6 +221,7 @@ export const resolveTouchedRoots = async (
   const resolveRootRepoId =
     input.resolveRootRepoId ?? defaultResolveRootRepoId;
   const realpath = input.realpath ?? realpathBestEffort;
+  const readRootStamp = input.readRootStamp ?? defaultReadRootStamp;
 
   const sessionRootReal = await realpath(input.sessionRepoRoot);
   const identityRootReal = await realpath(input.identityRoot);
@@ -171,7 +231,7 @@ export const resolveTouchedRoots = async (
   const cache = new Map<string, CacheEntry>(
     input.knownWorktreeRoots.map((entry) => [
       entry.root,
-      { repoId: entry.repoId, attempts: entry.attempts },
+      { repoId: entry.repoId, attempts: entry.attempts, stamp: entry.stamp },
     ]),
   );
   const newlyResolved: KnownWorktreeRoot[] = [];
@@ -220,17 +280,33 @@ export const resolveTouchedRoots = async (
     // D2 identity candidate already knows its repoId, so it too costs no git.
     const candidateReal = await realpath(candidate);
     const cached = cache.get(candidateReal);
+    // WHICH CHECKOUT is at that path now. One `stat`, and only here — the
+    // fast path (a) never reaches this, so an in-checkout edit pays nothing.
+    const stamp = await readRootStamp(candidateReal);
+    const replaced = cached !== undefined && isDifferentCheckout(cached, stamp);
     let repoId: string | null;
-    if (cached !== undefined && !isRetryableUnknown(cached)) {
+    if (cached !== undefined && !replaced && !isRetryableUnknown(cached)) {
       repoId = cached.repoId;
+      // An answer from a state file written before stamps existed is accepted
+      // once and BOUND from now on: the first touch after an upgrade behaves
+      // exactly as it always did, every later one is protected, and no git is
+      // spent to get there.
+      if (cached.stamp === null && stamp !== null) {
+        const bound = { repoId, attempts: cached.attempts, stamp };
+        cache.set(candidateReal, bound);
+        newlyResolved.push({ root: candidateReal, ...bound });
+      }
     } else {
       repoId =
         candidateReal === identityRootReal
           ? input.identityRepoId
           : await resolveRootRepoId(candidate);
-      const attempts = (cached?.attempts ?? 0) + 1;
-      cache.set(candidateReal, { repoId, attempts });
-      newlyResolved.push({ root: candidateReal, repoId, attempts });
+      // A REPLACED checkout starts its own attempt budget: what the previous
+      // directory at this path spent says nothing about this one.
+      const attempts = replaced ? 1 : (cached?.attempts ?? 0) + 1;
+      const answer = { repoId, attempts, stamp };
+      cache.set(candidateReal, answer);
+      newlyResolved.push({ root: candidateReal, ...answer });
     }
 
     // (d) unknown → outside (an UNKNOWN is not a second repo); a different

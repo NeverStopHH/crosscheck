@@ -224,8 +224,13 @@ describe("the root cache and the drops it explains", () => {
     const after = withCaptureBookkeeping(before, {
       resolution: resolution({
         newlyResolved: [
-          { root: "/repos/api-featB", repoId: "github.com/acme/api", attempts: 1 },
-          { root: "/repos/mystery", repoId: null, attempts: 2 },
+          {
+            root: "/repos/api-featB",
+            repoId: "github.com/acme/api",
+            attempts: 1,
+            stamp: "1:2:3",
+          },
+          { root: "/repos/mystery", repoId: null, attempts: 2, stamp: null },
         ],
         outsideDrops: 1,
       }),
@@ -239,8 +244,13 @@ describe("the root cache and the drops it explains", () => {
     // Assert: a positive and an UNKNOWN answer are both remembered, and the
     // unknown keeps its attempt budget so the resolver may retry it
     expect(after.knownWorktreeRoots).toEqual([
-      { root: "/repos/api-featB", repoId: "github.com/acme/api", attempts: 1 },
-      { root: "/repos/mystery", repoId: null, attempts: 2 },
+      {
+        root: "/repos/api-featB",
+        repoId: "github.com/acme/api",
+        attempts: 1,
+        stamp: "1:2:3",
+      },
+      { root: "/repos/mystery", repoId: null, attempts: 2, stamp: null },
     ]);
   });
 
@@ -274,7 +284,9 @@ describe("the root cache and the drops it explains", () => {
     withCaptureBookkeeping(before, {
       resolution: resolution({
         foreignDrops: 1,
-        newlyResolved: [{ root: "/repos/x", repoId: null, attempts: 1 }],
+        newlyResolved: [
+          { root: "/repos/x", repoId: null, attempts: 1, stamp: null },
+        ],
       }),
       capturedCount: 1,
       editFired: true,

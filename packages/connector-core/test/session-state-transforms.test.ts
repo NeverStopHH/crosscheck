@@ -111,8 +111,8 @@ describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {
 
     // Assert: both cached, the negative answer kept as null
     expect(state.knownWorktreeRoots).toEqual([
-      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1 },
-      { root: "/wt/foreign", repoId: null, attempts: 1 },
+      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null },
+      { root: "/wt/foreign", repoId: null, attempts: 1, stamp: null },
     ]);
   });
 
@@ -125,7 +125,7 @@ describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {
 
     // Assert: one entry, the newest answer
     expect(second.knownWorktreeRoots).toEqual([
-      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1 },
+      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null },
     ]);
   });
 

@@ -68,7 +68,13 @@ export const withCaptureBookkeeping = (
   // The cache is a cache: a root a READ taught the session is just as true as
   // one an edit taught it, and re-judging it would pay git twice.
   for (const entry of input.resolution?.newlyResolved ?? []) {
-    next = withKnownWorktreeRoot(next, entry.root, entry.repoId, entry.attempts);
+    next = withKnownWorktreeRoot(
+      next,
+      entry.root,
+      entry.repoId,
+      entry.attempts,
+      entry.stamp,
+    );
   }
   // WHAT THE RATIO IS DIVIDED BY MUST ALSO BE EDITS. `editToolFires` counts
   // edits, so a target or a drop only counts as evidence about EDIT capture

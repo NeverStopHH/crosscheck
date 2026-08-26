@@ -361,6 +361,49 @@ describe("a foreign-repo workspace still shows the edit that caused the drop", (
   });
 });
 
+describe("a worktree PATH that is torn down and rebuilt from another repo", () => {
+  test("does not capture the new repo's file under this repo", async () => {
+    // Arrange: the fixed-path convention (~/worktrees/feature) plus a long
+    // conversation. The cache is keyed by the realpath'd DIRECTORY, so a
+    // positive answer that stood forever meant the second checkout inherited
+    // the first one's repo id: another repo's file was spooled into this
+    // repo's work context under a repo-relative path, and BOTH drop counters
+    // stayed 0 — nothing on `status` or `doctor` said a word.
+    const { main, worktree, home } = await repoWithWorktree("cur-reuse");
+    await writeRepoFile(worktree, EDITED_FILE, "export const a = 1;\n");
+    await writeSessionState(home, sessionState(main));
+
+    // Act 1: one edit in worktree B caches its root as THIS repo
+    await runCursorHook(
+      "afterFileEdit",
+      editPayload(main, join(worktree, EDITED_FILE)),
+      env(home),
+    );
+    const cached = await readSessionState(home, HOST_KEY);
+
+    // Act 2: the same PATH is torn down and stood up again from another repo
+    await git(main, ["worktree", "remove", "--force", worktree]);
+    const other = await repoWithWorktree("cur-reuse-web", "git@github.com:acme/web.git");
+    await git(other.main, ["worktree", "add", worktree, "HEAD"]);
+    await writeRepoFile(worktree, "src/secret-of-other-repo.ts", "export const b = 2;\n");
+    await runCursorHook(
+      "afterFileEdit",
+      editPayload(main, join(worktree, "src/secret-of-other-repo.ts")),
+      env(home),
+    );
+
+    // Assert: the first edit is captured, the second is a FOREIGN drop — the
+    // counter doctor explains as "a multi-repo workspace's touches of its
+    // second repo", which is exactly what this is
+    expect(cached?.knownWorktreeRoots.some((entry) => entry.repoId === REPO_ID)).toBe(true);
+    expect(await targetsIn(home)).toEqual([EDITED_FILE]);
+    const state = await readSessionState(home, HOST_KEY);
+    expect(state?.foreignRepoDrops).toBe(1);
+    expect(state?.editToolFires).toBe(2);
+    expect(state?.targetsCapturedCount).toBe(1);
+  });
+});
+
 describe("the session's worktree-root cache is fed to the resolver", () => {
   test("a cached answer decides the touch, so no root is judged by git twice", async () => {
     // Arrange: worktree B really belongs to THIS repo, but the session state
@@ -378,6 +421,9 @@ describe("the session's worktree-root cache is fed to the resolver", () => {
             root: await realpathBestEffort(worktree),
             repoId: "github.com/acme/somewhere-else",
             attempts: 1,
+            // UNSTAMPED, like every entry an older state file holds: the
+            // answer stands, which is what this test is about.
+            stamp: null,
           },
         ],
       }),
