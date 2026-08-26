@@ -559,6 +559,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "even supposed to have sent",
   },
   {
+    // DESIGN.md §4 again, the other half: an injected claim states its trust
+    // labels. This drops the confidence check, so an unlabelled body prints.
+    label: "a hedged root cause is injected as a settled answer",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: `    entry.rootCauseConfidence === null ||
+    entry.rootCauseConfidence === undefined
+`,
+    to: "    entry.rootCause === undefined\n",
+    test: `${CORE}/test/briefing-solved.test.ts`,
+    because:
+      "a teammate's 0.05 guess — legal, honest, and what publish_claim's own " +
+      "description invites — is pushed into another developer's briefing " +
+      "under a header saying the diagnosis was solved, with nothing on the " +
+      "line to tell the reader it was never confirmed",
+  },
+  {
     // The same rule on the HUB side: what is not rendered is not sent.
     label: "a solved body is sent for a match that will never print it",
     file: `${SERVER}/src/services/solved-matches.ts`,

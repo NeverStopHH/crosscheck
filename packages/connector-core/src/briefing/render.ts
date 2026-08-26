@@ -448,20 +448,59 @@ const solvedRepoFragment = (
 export const SUBSTANCE_MATCH_KIND = "error_fingerprint";
 
 /**
+ * Decimals on a printed confidence — the same 2 the MCP renderer, the hint
+ * renderer and the two hub pages each state locally. A local constant per
+ * render module is this codebase's shape for it; importing it from
+ * mcp/render.ts would make that file and this one a cycle (it already
+ * imports from here), which is the same reason the id alphabet moved into
+ * briefing/sanitize.ts.
+ */
+const CONFIDENCE_DECIMALS = 2;
+
+/**
  * The recorded cause as its OWN indented line, or "" — one « » pair per
  * line is the rule, and the pointer line already spends its pair on the
  * title. Same shape as the work-context intent line.
+ *
+ * IT CARRIES ITS TRUST LABELS, like every other substance this product
+ * injects (renderClaimHint, renderAnswerHint, DESIGN.md §4: an injected
+ * claim states author, kind, status, confidence, provenance and age). The
+ * author and the age are already on the pointer line above; what is left,
+ * and what VARIES, is the certainty. Nothing upstream is a floor on it — the
+ * solved predicate gates on status, provenance, evidence and disputes, and
+ * `publish_claim` takes the number from the model — so "It is probably X,
+ * but I never confirmed it" at 0.05 is a legal, honest `likely_root_cause`
+ * and makes its tree SOLVED on every surface. Unlabelled, this line would
+ * present that hedge to a reader who never asked as the settled answer, on
+ * the one surface where relevance is itself an inference.
+ *
+ * `provenance declared` is a constant rather than a variable — the solved
+ * predicate admits no other — and it is printed anyway, because the reader
+ * weighing this line should not have to know which labels were filtered out
+ * upstream to read the ones that are here.
+ *
+ * A cause arriving WITHOUT its confidence (a hub older than the field) keeps
+ * its pointer and loses its body: substance without labels is not something
+ * this renderer vouches for, and `get_diagnosis <id>` is one call away.
  */
 const solvedRootCauseLine = (entry: SolvedMatchEntry): string => {
   if (
     entry.matchedTargetKind !== SUBSTANCE_MATCH_KIND ||
     entry.rootCause === null ||
-    entry.rootCause === undefined
+    entry.rootCause === undefined ||
+    entry.rootCauseConfidence === null ||
+    entry.rootCauseConfidence === undefined
   ) {
     return "";
   }
   const body = sanitizeUntrusted(entry.rootCause, SOLVED_ROOT_CAUSE_MAX_CHARS);
-  return body.length === 0 ? "" : `\n  root cause: «${body}»`;
+  if (body.length === 0) {
+    return "";
+  }
+  // U+00B7-separated facts then a colon then the framed body — the
+  // renderClaimHint shape, so one reader reads both the same way.
+  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · provenance declared`;
+  return `\n  root cause · ${labels}: «${body}»`;
 };
 
 /**

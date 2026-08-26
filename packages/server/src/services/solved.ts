@@ -174,12 +174,28 @@ export const listSolvedInfo = async (
  */
 export const SOLVED_ROOT_CAUSE_MAX_ROWS = 50;
 
+/** A solved tree's recorded cause, with the label the reader weighs it by. */
+export interface SolvedRootCause {
+  readonly body: string;
+  /**
+   * THE CLAIM'S OWN CONFIDENCE, carried because this body is injected into a
+   * reader's context unasked and every other injected claim prints its
+   * labels (DESIGN.md §4). Nothing in the solved predicate is a floor on it:
+   * `publish_claim` takes the number from the model, and a 0.05 hedge with
+   * one evidence ref is a legal, honest `likely_root_cause`. So the number
+   * travels and the renderer states it, rather than the surface quietly
+   * presenting a guess as a settled answer.
+   */
+  readonly confidence: number;
+}
+
 /**
  * What each solved tree of `contextIds` says the cause WAS — the newest
  * qualifying claim's body, which is by construction the same claim whose
  * createdAt `listSolvedInfo` reports as `solvedAt`: same predicate, same
  * ordering key, so the sentence a reader sees and the age printed beside it
- * always describe one claim.
+ * always describe one claim. Its confidence rides along for the same reason:
+ * one claim, one set of labels.
  *
  * Newest-first plus first-wins in JS rather than DISTINCT ON: the row cap
  * above keeps it small, and the two readers then share the predicate instead
@@ -188,7 +204,7 @@ export const SOLVED_ROOT_CAUSE_MAX_ROWS = 50;
 export const listSolvedRootCauses = async (
   db: Db,
   contextIds: readonly string[],
-): Promise<ReadonlyMap<string, string>> => {
+): Promise<ReadonlyMap<string, SolvedRootCause>> => {
   if (contextIds.length === 0) {
     return new Map();
   }
@@ -196,15 +212,19 @@ export const listSolvedRootCauses = async (
     .select({
       workContextId: claims.workContextId,
       body: claims.body,
+      confidence: claims.confidence,
     })
     .from(claims)
     .where(solvedClaimCondition(contextIds))
     .orderBy(desc(claims.createdAt))
     .limit(SOLVED_ROOT_CAUSE_MAX_ROWS);
-  const newest = new Map<string, string>();
+  const newest = new Map<string, SolvedRootCause>();
   for (const row of rows) {
     if (!newest.has(row.workContextId)) {
-      newest.set(row.workContextId, row.body);
+      newest.set(row.workContextId, {
+        body: row.body,
+        confidence: row.confidence,
+      });
     }
   }
   return newest;

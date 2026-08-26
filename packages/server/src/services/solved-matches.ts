@@ -98,6 +98,15 @@ export interface SolvedMatchView {
    * not rendered is not sent (the V2-X4 rule).
    */
   readonly rootCause: string | null;
+  /**
+   * The confidence of the very claim `rootCause` quotes — null exactly when
+   * `rootCause` is. It travels because the body is INJECTED, and DESIGN.md
+   * §4 requires an injected claim to carry its trust labels; the solved
+   * predicate gates on status, provenance, evidence and disputes, never on
+   * certainty, so a hedge published at 0.05 is as SOLVED as a confirmed
+   * finding and only this number tells the two apart on the line.
+   */
+  readonly rootCauseConfidence: number | null;
 }
 
 /** Why a tree matched, strongest reason first — fingerprint ≻ file ≻ intent. */
@@ -424,7 +433,8 @@ const toMatchViews = async (
         solvedAt: solvedAt.toISOString(),
         landedAt: row.landedAt === null ? null : row.landedAt.toISOString(),
         matchedTargetKind: matchKindOf(winner),
-        rootCause: rootCauses.get(winner.id) ?? null,
+        rootCause: rootCauses.get(winner.id)?.body ?? null,
+        rootCauseConfidence: rootCauses.get(winner.id)?.confidence ?? null,
       },
     ];
   });

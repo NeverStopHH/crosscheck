@@ -266,6 +266,15 @@ export const SolvedMatchEntrySchema = z.looseObject({
    * (briefing/render.ts `solvedRootCauseLine`).
    */
   rootCause: z.string().min(1).nullable().optional(),
+  /**
+   * The confidence of the claim `rootCause` quotes. OPTIONAL on the wire and
+   * REQUIRED at render: a body without its labels is substance this renderer
+   * will not vouch for, so the cause line is dropped and the pointer stays
+   * (briefing/render.ts `solvedRootCauseLine`). Optional because the field
+   * is younger than the type and a hub is allowed to be older; required at
+   * render because DESIGN.md §4's rule is about what reaches the reader.
+   */
+  rootCauseConfidence: z.number().min(0).max(1).nullable().optional(),
 });
 
 export type SolvedMatchEntry = z.infer<typeof SolvedMatchEntrySchema>;

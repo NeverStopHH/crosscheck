@@ -233,6 +233,9 @@ const solvedMatchWith = (payload: string): SolvedMatchEntry => ({
   landedAt: null,
   matchedTargetKind: "error_fingerprint",
   rootCause: payload,
+  // Required at render, so the corpus would stop covering the cause line
+  // without it — the body is only sanitized when it is printed.
+  rootCauseConfidence: 0.9,
 });
 
 const tripwireSessionWith = (payload: string): TripwireSession => ({

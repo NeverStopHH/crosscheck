@@ -26,6 +26,9 @@ const solvedMatch = (
   solvedAt: new Date(NOW.getTime() - 150 * DAY_MS).toISOString(),
   landedAt: null,
   matchedTargetKind: "error_fingerprint",
+  // The label the cause line is required to carry; overrides may drop it,
+  // and one test below does exactly that.
+  rootCauseConfidence: 0.9,
   ...overrides,
 });
 
@@ -121,7 +124,53 @@ describe("briefing solved-before section", () => {
     expect(lines[topicAt]).toContain("shared topic with your session intent");
     expect(lines[topicAt + 1] ?? "").not.toContain("root cause");
     expect(briefing).toContain("shared error fingerprint with current work");
-    expect(briefing).toContain("  root cause: «");
+    expect(briefing).toContain(
+      "  root cause · confidence 0.90 · provenance declared: «",
+    );
+  });
+
+  test("an injected cause says how sure its author was", async () => {
+    // Arrange: a hedge, published honestly and legally — `publish_claim`
+    // takes the confidence straight from the model and the solved predicate
+    // has no floor, so a 0.05 guess makes a tree SOLVED on every surface.
+    // Every other substance this product injects prints its trust labels
+    // (renderClaimHint, renderAnswerHint, DESIGN.md §4); this is the one
+    // surface that pushes a body at a reader who did not ask for it.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          rootCause:
+            "It is probably the rotation dropping the key id, but I never confirmed it",
+          rootCauseConfidence: 0.05,
+        }),
+      ]),
+    );
+
+    // Assert
+    const causeLine = briefing
+      .split("\n")
+      .find((line) => line.startsWith("  root cause"));
+    expect(causeLine).toContain("confidence 0.05");
+    expect(causeLine).toContain("provenance declared");
+    expect(causeLine).toContain("«It is probably the rotation");
+  });
+
+  test("a cause arriving without its confidence is not injected", async () => {
+    // Arrange: substance without its labels is not something this renderer
+    // vouches for, so the ENTRY keeps its pointer and loses the body — the
+    // reader can still pull the tree with get_diagnosis.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          rootCause: "The ingestion mapping drops the key id on rotation",
+          rootCauseConfidence: undefined,
+        }),
+      ]),
+    );
+
+    // Assert
+    expect(briefing).toContain("get_diagnosis wc_solved");
+    expect(briefing).not.toContain("root cause");
   });
 
   test("an unknown match kind drops the line rather than inventing a sentence", async () => {
@@ -284,7 +333,8 @@ describe("briefing solved-before section", () => {
     );
     const fileAt = lines.findIndex((line) => line.includes("get_diagnosis wc_file"));
     expect(lines[fingerprintAt + 1]).toBe(
-      "  root cause: «The ingestion mapping drops the key id on rotation»",
+      "  root cause · confidence 0.90 · provenance declared: " +
+        "«The ingestion mapping drops the key id on rotation»",
     );
     expect(lines[fileAt + 1] ?? "").not.toContain("root cause");
     // One « » pair per line stays true with two framed values in one entry.
@@ -304,7 +354,7 @@ describe("briefing solved-before section", () => {
     // Assert
     const causeLine = briefing
       .split("\n")
-      .find((line) => line.startsWith("  root cause:"));
+      .find((line) => line.startsWith("  root cause"));
     expect(causeLine).toBeDefined();
     expect(causeLine?.length).toBeLessThan(long.length);
     expect(causeLine).toContain("«");

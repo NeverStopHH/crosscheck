@@ -172,6 +172,7 @@ export const solvedFingerprintMatch = (): Record<string, unknown> => ({
   landedAt: null,
   matchedTargetKind: "error_fingerprint",
   rootCause: SOLVED_ROOT_CAUSE,
+  rootCauseConfidence: 0.9,
 });
 
 export const activeTeammateSession = (): Record<string, unknown> => ({

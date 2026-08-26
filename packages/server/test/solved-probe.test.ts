@@ -116,6 +116,9 @@ describe("the failure-time fingerprint probe", () => {
     expect(rows.map((row) => row.workContextId)).toEqual(["wc_here"]);
     expect(rows[0]?.matchedTargetKind).toBe("error_fingerprint");
     expect(rows[0]?.rootCause).toBe(ROOT_CAUSE);
+    // The label travels WITH the body: the connector will not print an
+    // injected cause it cannot say the certainty of (DESIGN.md §4).
+    expect(rows[0]?.rootCauseConfidence).toBe(0.9);
   });
 
   test("a tree carrying the fingerprint but nothing solved is not an answer", async () => {
