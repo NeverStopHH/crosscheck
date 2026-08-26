@@ -33,6 +33,14 @@ export interface GhostCost {
   readonly fires: number;
   /** Checks the deterministic core answered with nobody: no model, no cost. */
   readonly noOverlap: number;
+  /**
+   * Checks that never got an answer OUT OF THE HUB — a hub too old for
+   * /api/ghost-checks, or an unreachable one. Its own number for the reason
+   * `noOverlap` has one: nothing local failed, so this must not read as a
+   * local failure. `doctor`'s `plan overlap` line is what says which of the
+   * two it is.
+   */
+  readonly noHubAnswer: number;
   /** Fires the model answered NONE — two plans that do not collide. */
   readonly nones: number;
   /** Fires that put a derived draft on the spool. */
@@ -52,6 +60,7 @@ const NO_COST: GhostCost = {
   notices: 0,
   fires: 0,
   noOverlap: 0,
+  noHubAnswer: 0,
   nones: 0,
   drafts: 0,
   fails: 0,
@@ -68,6 +77,7 @@ export const summarizeGhostCost = (
       notices: total.notices + state.ghostNoticeCount,
       fires: total.fires + state.ghostFireCount,
       noOverlap: total.noOverlap + state.ghostNoOverlapCount,
+      noHubAnswer: total.noHubAnswer + state.ghostNoHubAnswerCount,
       nones: total.nones + state.ghostNoneCount,
       drafts: total.drafts + state.ghostDraftCount,
       fails: total.fails + state.ghostFailCount,
@@ -101,10 +111,18 @@ export const formatGhostCost = (cost: GhostCost): string => {
   const lastPart = cost.lastFailure === null ? "" : `: last "${cost.lastFailure}"`;
   const failsPart =
     cost.fails === 0 ? "" : `, ${String(cost.fails)} failed${lastPart}`;
+  // Named, never folded into the failures beside it: the reader has to be
+  // able to tell "my hub is older than my connector" from "my model call
+  // died", because the two have different remedies and only one of them is
+  // on this machine.
+  const noHubPart =
+    cost.noHubAnswer === 0
+      ? ""
+      : `, ${String(cost.noHubAnswer)} not measured (the hub could not answer)`;
   return (
     `${noticesPart} · ${firesPart} ` +
     `(${String(cost.noOverlap)} skipped, nobody to compare; ${String(cost.nones)} NONE, ` +
-    `${String(cost.drafts)} drafted${failsPart}) across ${sessionsPart}`
+    `${String(cost.drafts)} drafted${failsPart}${noHubPart}) across ${sessionsPart}`
   );
 };
 
@@ -112,6 +130,12 @@ export const formatGhostCost = (cost: GhostCost): string => {
  * Doctor's WARN rule, the intent capture's verbatim: any booked failure at
  * all, or DOCTOR_GHOST_SILENT_FIRES_WARN fires that landed neither a NONE nor
  * a draft. Never PASS-only (the finding-#14 lesson).
+ *
+ * WHAT IS DELIBERATELY NOT A WARNING, second entry: a hub that could not
+ * answer the overlap query. `noHubAnswer` is deployment state, not a fault on
+ * this machine, and warning on it made this line contradict the `plan overlap`
+ * line two rows below — same condition, one WARN and one PASS — while sending
+ * the reader to the summarizer runner probe, which is not the cause.
  *
  * WHAT IS DELIBERATELY NOT A WARNING: an unspent allowance. A session that
  * showed notices and never fired is the common shape of a one-prompt session

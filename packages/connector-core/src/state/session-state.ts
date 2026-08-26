@@ -208,6 +208,16 @@ const SessionStateObjectSchema = z.looseObject({
    */
   ghostFireCount: z.number().int().min(0).default(0),
   ghostNoOverlapCount: z.number().int().min(0).default(0),
+  /**
+   * Checks that could not run because the HUB could not answer the overlap
+   * query — a hub too old for the route, or an unreachable one. Its own
+   * counter and not a failure, for the reason `noOverlap` has one: nothing on
+   * this machine is broken, so nothing on this machine may be booked as
+   * broken. Folded into `ghostFailCount` it made `doctor` WARN that the model
+   * layer was dead, one line above the `plan overlap` PASS describing the very
+   * same condition, and sent the reader to their local `claude` binary.
+   */
+  ghostNoHubAnswerCount: z.number().int().min(0).default(0),
   ghostNoneCount: z.number().int().min(0).default(0),
   ghostDraftCount: z.number().int().min(0).default(0),
   ghostFailCount: z.number().int().min(0).default(0),
@@ -568,6 +578,7 @@ export const deriveSessionState = (
     ghostNoticeCount: 0,
     ghostFireCount: 0,
     ghostNoOverlapCount: 0,
+    ghostNoHubAnswerCount: 0,
     ghostNoneCount: 0,
     ghostDraftCount: 0,
     ghostFailCount: 0,

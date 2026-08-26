@@ -530,6 +530,31 @@ describe("the gated ghost check", () => {
     expect(state.ghostLastFailure).not.toBeNull();
   });
 
+  test("a hub that cannot answer is a deployment state, not a loss", async () => {
+    const marker = join(await tempDir("ghost-oldhub"), "invoked");
+    const model = await makeFakeModel({ output: COLLISION, invokedMarker: marker });
+    // A hub URL nothing is listening on: the same shape as a connector rolled
+    // out ahead of its hub, or a developer on a plane.
+    const fix = await aliceFixture("oldhub", model);
+    const offline = { ...fix.env, CROSSCHECK_HUB_URL: "http://127.0.0.1:9" };
+    await writeSessionState(fix.home, {
+      ...(await stateOf(fix)),
+      hubUrl: "http://127.0.0.1:9",
+    });
+
+    expect(await runGhostWorker(["--session", fix.hostSessionKey], offline)).toBe(0);
+    expect(await Bun.file(marker).exists()).toBe(false);
+    const state = await stateOf(fix);
+    // Nothing on this machine is broken, so nothing on this machine is
+    // booked as broken: `doctor` has one line for "the hub could not answer"
+    // and it is `plan overlap`, not a WARN pointing at the local runner.
+    expect(state.ghostNoHubAnswerCount).toBe(1);
+    expect(state.ghostFailCount).toBe(0);
+    expect(state.ghostLastFailure).toBeNull();
+    expect(state.ghostFireCount).toBe(0);
+    expect(state.ghostNoOverlapCount).toBe(0);
+  });
+
   test("a session with no intent of its own compares nothing", async () => {
     const marker = join(await tempDir("ghost-noplan"), "invoked");
     const model = await makeFakeModel({ output: COLLISION, invokedMarker: marker });

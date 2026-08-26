@@ -133,6 +133,8 @@ const check = (level: CheckLevel, name: string, detail: string): Check => ({
 const MS_PER_MINUTE = MS_PER_SECOND * SECONDS_PER_MINUTE;
 const MS_PER_HOUR = MS_PER_MINUTE * MINUTES_PER_HOUR;
 const HTTP_UNAUTHORIZED = 401;
+/** A hub that predates a route answers 404 — a deployment state, not a fault. */
+const HTTP_NOT_FOUND = 404;
 
 const checkConfig = async (home: string): Promise<Check> => {
   const path = configPath(home);
@@ -986,6 +988,22 @@ const checkGhostCost = (states: readonly SessionState[]): Check => {
  * different sentence from "the model layer is broken". `not measured` is a
  * PASS: an older hub is a deployment state, not a fault on this machine.
  *
+ * FOUR OUTCOMES, NOT ONE, because "not ok" hides the only one worth acting on.
+ * A 404 means this hub predates the route. A network failure means the machine
+ * cannot reach any hub, and doctor's own connectivity checks own that. An
+ * answer that does not PARSE is a hub whose shape this connector does not
+ * know — the same tolerant posture every other reader here takes. All three
+ * are deployment states and all three PASS with the reason named rather than
+ * a bare "not measured".
+ *
+ * The fourth is the one worth a WARN: an ERROR STATUS other than 404 means
+ * the endpoint EXISTS and is FAILING — a query that throws on a missing index,
+ * a migration that did not run, a 401 — and nothing else on a doctor run would
+ * say so. The connector books those sessions as `noHubAnswer`, which is
+ * deliberately not a warning, so a silent PASS here would leave the operator
+ * with no line at all. Fail open must never mean silently dead
+ * (DESIGN.md §10 risk 5).
+ *
  * THE COUNT IS OF PEOPLE, not of rows, and the two are not the same number:
  * one teammate running three worktrees on this repo has three work contexts,
  * and "3 teammates working where you are" about one person is a plain
@@ -998,7 +1016,24 @@ export const planOverlapCheck = (
   result: HubResult<readonly GhostCheckEntry[]>,
 ): Check => {
   if (!result.ok) {
-    return check("PASS", "plan overlap", "not measured");
+    if (result.kind === "http" && result.status !== HTTP_NOT_FOUND) {
+      return check(
+        "WARN",
+        "plan overlap",
+        `the hub answered ${String(result.status)} for /api/ghost-checks — ` +
+          "the overlap query is failing rather than absent, so this feature " +
+          "is silent on every session against this hub",
+      );
+    }
+    return check(
+      "PASS",
+      "plan overlap",
+      result.status === HTTP_NOT_FOUND
+        ? "not measured (this hub has no /api/ghost-checks yet)"
+        : result.kind === "network"
+          ? "not measured (the hub could not be reached)"
+          : "not measured (this hub's answer did not parse)",
+    );
   }
   const count = new Set(result.data.map((entry) => entry.developerId)).size;
   return check(

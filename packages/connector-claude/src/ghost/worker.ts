@@ -66,6 +66,7 @@ import {
   withGhostDraft,
   withGhostFailure,
   withGhostFire,
+  withGhostNoHubAnswer,
   withGhostNone,
   withGhostNoOverlap,
 } from "./gate.ts";
@@ -96,7 +97,6 @@ export const parseGhostWorkerArgs = (
 };
 
 /** Booked drops, named so status/doctor can say why a fire landed nothing. */
-const DROPPED_NO_HUB_ANSWER = "dropped: the hub did not answer the overlap query";
 const DROPPED_EMPTY_ANSWER = "dropped: empty answer";
 const DROPPED_INPUT_ECHO = "dropped: the sentence repeats a claim it was shown";
 const DROPPED_HINT_ECHO = "dropped: the sentence echoes a delivered hint";
@@ -175,7 +175,17 @@ const runGhostCheck = async (
   }
   const overlaps = await getGhostChecks(hub, state.repoId);
   if (!overlaps.ok) {
-    await bookFailure(home, args.claudeSessionId, DROPPED_NO_HUB_ANSWER);
+    // NOT a failure. A hub too old for /api/ghost-checks, or one this machine
+    // cannot reach, is a deployment state — the connector rolled out ahead of
+    // the hub, or a developer on a plane — and booking it as a model-layer
+    // loss made `doctor` WARN that the summarizer runner was broken on a
+    // machine where nothing was. `plan overlap` is the line that owns this
+    // condition, and it can tell an absent endpoint from a failing one.
+    await updateSessionState(
+      home,
+      args.claudeSessionId,
+      withGhostNoHubAnswer,
+    );
     return;
   }
   const candidate = overlaps.data[0];

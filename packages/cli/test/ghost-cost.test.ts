@@ -20,6 +20,7 @@ import {
   readGhostCost,
 } from "@crosscheck/connector-claude";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import type { HubResult } from "@crosscheck/connector-core/http/client.ts";
 import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
 import { planOverlapCheck } from "../src/cli/doctor.ts";
 import { runCli } from "../src/index.ts";
@@ -110,6 +111,7 @@ describe("ghost telemetry surfaces", () => {
       notices: 0,
       fires: 0,
       noOverlap: 1,
+      noHubAnswer: 0,
       nones: 0,
       drafts: 0,
       fails: 0,
@@ -123,6 +125,7 @@ describe("ghost telemetry surfaces", () => {
       notices: 1,
       fires: 1,
       noOverlap: 0,
+      noHubAnswer: 0,
       nones: 0,
       drafts: 0,
       fails: 1,
@@ -137,6 +140,7 @@ describe("ghost telemetry surfaces", () => {
       sessions: 1,
       notices: 0,
       noOverlap: 0,
+      noHubAnswer: 0,
       nones: 0,
       drafts: 0,
       fails: 0,
@@ -187,16 +191,19 @@ describe("ghost telemetry surfaces", () => {
     expect(quietLine).toContain("PASS");
     expect(quietLine).toContain("skipped, nobody to compare");
 
+    // A LOCAL loss: the model ran and its answer was dropped here. Anything
+    // the hub could not answer belongs on the `plan overlap` line instead,
+    // so this WARN never points at the runner for a deployment state.
     const broken = await fixture("gdoctor-broken");
     await seedSession(broken.home, broken.repo, "gb", {
       ghostFireCount: 1,
       ghostFailCount: 1,
-      ghostLastFailure: "dropped: the hub did not answer the overlap query",
+      ghostLastFailure: "dropped: secret-like text",
     });
     const brokenRun = await runCli(["doctor"], env(broken.home), broken.repo);
     const brokenLine = lineWith(brokenRun.stdout, "ghost checks");
     expect(brokenLine).toContain("WARN");
-    expect(brokenLine).toContain("the hub did not answer");
+    expect(brokenLine).toContain("secret-like text");
   });
 
   test("the overlap line counts teammates, never their worktrees", () => {
@@ -242,6 +249,62 @@ describe("ghost telemetry surfaces", () => {
     expect(planOverlapCheck(ok([])).detail).toBe(
       "no teammate is working where you are",
     );
+  });
+
+  test("an unanswerable hub is counted, and never as a model-layer loss", () => {
+    const base = {
+      sessions: 1,
+      notices: 0,
+      fires: 0,
+      noOverlap: 0,
+      noHubAnswer: 0,
+      nones: 0,
+      drafts: 0,
+      fails: 0,
+      lastFailure: null,
+    };
+    const line = formatGhostCost({ ...base, noHubAnswer: 2 });
+    expect(line).toContain("2 not measured (the hub could not answer)");
+    expect(line).not.toContain("failed");
+    // A connector rolled out ahead of its hub is a healthy machine. The one
+    // voice for that condition is `plan overlap`, not a WARN sending the
+    // reader to their own `claude` binary.
+    expect(isGhostSilentlyDead({ ...base, noHubAnswer: 5 })).toBe(false);
+    // The control: a REAL model-layer loss still warns.
+    expect(isGhostSilentlyDead({ ...base, fires: 1, fails: 1 })).toBe(true);
+  });
+
+  test("plan overlap tells an absent endpoint from a broken one", () => {
+    const failed = (
+      kind: "network" | "http" | "malformed",
+      status: number,
+    ): HubResult<readonly GhostCheckEntry[]> => ({
+      ok: false,
+      kind,
+      status,
+      code: "test",
+      message: "test",
+    });
+
+    // ABSENT: a hub that predates this feature. A deployment state.
+    const absent = planOverlapCheck(failed("http", 404));
+    expect(absent.level).toBe("PASS");
+    expect(absent.detail).toContain("no /api/ghost-checks");
+    // UNREACHABLE: nothing here is broken either, and doctor's connectivity
+    // checks own that condition.
+    const offline = planOverlapCheck(failed("network", 0));
+    expect(offline.level).toBe("PASS");
+    expect(offline.detail).toContain("could not be reached");
+    // UNPARSEABLE: a hub whose shape this connector does not know, which is
+    // the tolerant posture every other reader here takes.
+    const strange = planOverlapCheck(failed("malformed", 200));
+    expect(strange.level).toBe("PASS");
+    expect(strange.detail).toContain("did not parse");
+    // BROKEN: the endpoint exists and is failing — a missing migration, a
+    // schema drift. Nothing else on this run would say so.
+    const broken = planOverlapCheck(failed("http", 500));
+    expect(broken.level).toBe("WARN");
+    expect(broken.detail).toContain("500");
   });
 
   test("a hub that cannot answer the overlap is 'not measured', not a fault", async () => {

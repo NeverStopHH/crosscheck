@@ -43,6 +43,19 @@ export const withGhostNoOverlap = (state: SessionState): SessionState => ({
   ghostNoOverlapCount: state.ghostNoOverlapCount + 1,
 });
 
+/**
+ * The HUB could not answer the overlap query — an older hub without the route,
+ * or an unreachable one. Booked here rather than as a failure, and the
+ * distinction is the same one `withGhostNoOverlap` makes: a failure means
+ * something on THIS machine lost a model call, and the remedy doctor prints
+ * for one is the summarizer runner probe. A deployment state has exactly one
+ * honest voice on `doctor` and it is the `plan overlap` line.
+ */
+export const withGhostNoHubAnswer = (state: SessionState): SessionState => ({
+  ...state,
+  ghostNoHubAnswerCount: state.ghostNoHubAnswerCount + 1,
+});
+
 /** The model saw the two plans and said they do not collide. */
 export const withGhostNone = (state: SessionState): SessionState => ({
   ...state,

@@ -88,6 +88,7 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   ghostNoticeCount: 0,
   ghostFireCount: 0,
   ghostNoOverlapCount: 0,
+  ghostNoHubAnswerCount: 0,
   ghostNoneCount: 0,
   ghostDraftCount: 0,
   ghostFailCount: 0,
