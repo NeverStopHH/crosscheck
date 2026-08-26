@@ -470,8 +470,19 @@ export const GHOST_CLAIM_BODY_MAX_CHARS = 300;
 
 /**
  * The longest ghost sentence that becomes a draft. Bounded by THIS writer
- * rather than by the schema, like every other model output here, and well
- * inside MAX_CLAIM_BODY_LENGTH so the draft line renders without an ellipsis.
+ * rather than by the schema, like every other model output here, and short
+ * enough that the sentence PLUS the attribution the worker appends — the
+ * teammate's name and their context id, both bounded by the sanitizers —
+ * still fits MAX_CLAIM_BODY_LENGTH.
+ *
+ * WHAT IT IS NOT is short enough to escape the briefing's draft line, which
+ * cuts a body at MAX_TITLE_CHARS = 80 and marks the cut. That is deliberate
+ * and is the shape every other draft on that block already has: the line is a
+ * POINTER and `review_draft` is the pull.
+ *
+ * The worst case is composed through the real function and checked where
+ * that function lives (briefing/ghost.ts ghostDraftBody); here is the half
+ * this constant owns.
  *
  * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.GHOST_SENTENCE_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH)'
  * PRINTS: true

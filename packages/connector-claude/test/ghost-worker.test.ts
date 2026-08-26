@@ -394,7 +394,12 @@ describe("the gated ghost check", () => {
     const claims = await spooledClaims(fix);
     expect(claims.length).toBe(1);
     const claim = claims[0]?.body;
-    expect(claim?.body).toBe(COLLISION);
+    // The sentence, and then WHOSE plan it collides with — a draft that named
+    // nobody would leave the reader a finding with no next action: they could
+    // not open the tree and could not tell who to talk to.
+    expect(claim?.body).toBe(
+      `${COLLISION} — Ken's live plan: get_diagnosis ${ken.workContextId}`,
+    );
     expect(claim?.workContextId).toBe(alice.workContextId);
     expect(claim?.kind).toBe("hypothesis");
     expect(claim?.status).toBe("proposed");

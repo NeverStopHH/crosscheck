@@ -2402,6 +2402,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "outcome is 'skipped, nobody to compare'",
   },
   {
+    // WHOSE plan the sentence collides with. The model is shown "SESSION B"
+    // and never a name, so the attribution is the worker's to attach — and
+    // without it `review_draft` shows a finding about a collision with
+    // nobody, with no tree to open and no person to ask.
+    label: "a ghost draft names nobody",
+    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    from: "    body: ghostDraftBody(sentence, candidate),",
+    to: "    body: sentence,",
+    test: `${CONNECTOR}/test/ghost-worker.test.ts`,
+    because:
+      "the one thing the gated half produces arrives unattributable: a " +
+      "sentence about two plans, on the reader's own context, naming " +
+      "neither the teammate nor the tree it came from",
+  },
+  {
     // The echo-loop rule pointed at THIS call's own input. The guard stays,
     // fed nothing — so a sentence that merely restates the teammate claim the
     // model was just shown is spooled as this session's derived observation,
@@ -2598,7 +2613,7 @@ interface Outcome {
  * PRINTS: ghost-declare.test.ts 1
  * PRINTS: ghost-overlap.test.ts 4
  * PRINTS: ghost-render.test.ts 1
- * PRINTS: ghost-worker.test.ts 3
+ * PRINTS: ghost-worker.test.ts 4
  * PRINTS: global-wiring-silence.test.ts 2
  * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2

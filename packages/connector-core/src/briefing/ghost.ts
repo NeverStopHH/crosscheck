@@ -152,6 +152,53 @@ export const formatGhostLine = (
 };
 
 /**
+ * WHOSE plan the row is about, as a clause a stored sentence can carry.
+ *
+ * The gated half's answer (connector-claude ghost/worker.ts) becomes a DRAFT
+ * on the reader's own context, and the model is never told who the other
+ * session belongs to — it is shown "SESSION B" precisely so it cannot invent
+ * anything about a named person. So the name is attached HERE, deterministically,
+ * from the same row the deterministic half returned: without it the reader
+ * opens `review_draft` on a sentence about a collision with nobody, and has
+ * neither a tree to read nor a person to ask.
+ *
+ * Sanitized like the line above it — BARE name, allowlisted id — because both
+ * come from the hub, and this string is stored rather than only printed.
+ */
+export const ghostAttribution = (entry: GhostCheckEntry): string => {
+  const name =
+    entry.developerName === undefined ? "" : bareUntrusted(entry.developerName);
+  const who = name.length === 0 ? `${UNKNOWN_TEAMMATE}'s` : `${name}'s`;
+  const id = safeId(entry.workContextId);
+  const plan = `${who} live plan`;
+  return id.length === 0 ? plan : `${plan}: get_diagnosis ${id}`;
+};
+
+/**
+ * The ghost DRAFT body: the model's one sentence, then the attribution. The
+ * composition lives beside the line rather than in the worker so a ghost
+ * check reads the same way wherever it is met, and so the untrusted halves go
+ * through the same two sanitizers in both places.
+ *
+ * The sentence itself is NOT sanitized here and must not be: it is this
+ * machine's own model output, already bounded, echo-checked and secret-scanned
+ * by the worker, and it is framed by `formatDraftLine` when it is shown —
+ * the summarizer's drafts travel exactly this way.
+ *
+ * The worst case a body can reach — the longest sentence this writer allows,
+ * beside a name and an id longer than either sanitizer will pass — still fits
+ * the claim the hub will store. Composed through this function rather than
+ * added up from literals, so a wording change here re-runs the arithmetic:
+ *
+ * VERIFY: bun -e 'const g=await import("./packages/connector-core/src/briefing/ghost.ts");const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(g.ghostDraftBody("x".repeat(c.GHOST_SENTENCE_MAX_CHARS),{workContextId:"w".repeat(400),title:"t",developerId:"d",developerName:"N".repeat(400),intent:null,lastActiveAt:"",sharedTargets:[],sharedTargetCount:0,intentTokenHits:0}).length <= s.MAX_CLAIM_BODY_LENGTH)'
+ * PRINTS: true
+ */
+export const ghostDraftBody = (
+  sentence: string,
+  entry: GhostCheckEntry,
+): string => `${sentence} — ${ghostAttribution(entry)}`;
+
+/**
  * The one header both surfaces print. The briefing composes it into a
  * `Section` and `set_intent` prints it as a block; a second literal would be
  * a second place for "nothing here blocks you" to be dropped, which is the

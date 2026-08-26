@@ -44,6 +44,7 @@ import {
   buildEnvelope,
   UNKNOWN_DEVELOPER_ID,
 } from "@crosscheck/connector-core/capture/records.ts";
+import { ghostDraftBody } from "@crosscheck/connector-core/briefing/ghost.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
 import { readDeliveredHintHashes } from "@crosscheck/connector-core/hints/delivered-store.ts";
 import { hintBodyHash, isEchoOfDeliveredHint } from "@crosscheck/connector-core/hints/echo.ts";
@@ -226,7 +227,7 @@ const runGhostCheck = async (
     await bookFailure(home, args.claudeSessionId, DROPPED_EMPTY_ANSWER);
     return;
   }
-  await appendGhostDraft(home, args, sentence, shown, env);
+  await appendGhostDraft(home, args, sentence, candidate, shown, env);
 };
 
 /**
@@ -247,6 +248,7 @@ const appendGhostDraft = async (
   home: string,
   args: GhostWorkerArgs,
   sentence: string,
+  candidate: GhostCheckEntry,
   shownClaims: readonly DeclaredClaim[],
   env: Env,
 ): Promise<void> => {
@@ -290,7 +292,10 @@ const appendGhostDraft = async (
     // nobody has seen the two changes meet, and the kind is what a reader
     // weighs the sentence by.
     kind: "hypothesis",
-    body: sentence,
+    // The sentence plus WHOSE plan it collides with (briefing/ghost.ts): the
+    // gates above run on what the MODEL said, and the attribution the reader
+    // needs is added after they have all passed.
+    body: ghostDraftBody(sentence, candidate),
     status: "proposed",
     confidence: GHOST_DERIVED_CONFIDENCE,
     captureMode: "auto",
