@@ -117,9 +117,13 @@ Everything fails open: if the hub is down, hooks print nothing, exit 0, and spoo
 
 Capture is only worth what the *weakest* host does, so this table is the
 promise, per connector, and it is kept honest by tests rather than by intent:
-`packages/connector-{claude,cursor,acp}/test/worktree-capture.test.ts` pin the
-first four rows per host, `packages/cli/test/connector-capture-health.test.ts`
-pins the fifth on both non-Claude hosts in a PASS **and** in a WARN state, and
+`packages/connector-{claude,cursor,acp}/test/worktree-capture.test.ts` pin rows
+1-4 per host in that host's session state, and
+`packages/cli/test/connector-capture-health.test.ts` pins how row 4 READS on
+`crosscheck status` / `doctor` for both non-Claude hosts, in a PASS **and** in a
+WARN state (row 5 is a limitation, not a behaviour: it is pinned on Claude by
+`connector-claude/test/tripwire-hook.test.ts` and documented, with its vendor
+source, in the two module headers named below). And
 `packages/connector-core/src/capture/touched-root.ts` carries a `verify-claims`
 directive that names the connectors going through the shared resolution — a
 fourth one that forgets it fails CI rather than losing edits quietly.
@@ -129,7 +133,7 @@ fourth one that forgets it fails CI rather than losing edits quietly.
 | **Capture** — what a target comes from | `PostToolUse` for `Edit`/`Write`/`MultiEdit`/`NotebookEdit` | `afterFileEdit`, the single capture row on this host | `session/update` `tool_call` locations and diff paths, plus the `fs/write_text_file` request |
 | **Worktree resolution** — an edit in a linked worktree of the same repo | yes | yes | yes |
 | **Drop counters** — a touch that could not be captured | `foreign-repo` and `outside-root`, split and counted | same | same |
-| **Capture health** in `crosscheck status` / `doctor` | `N edit-tool fires → M targets`, last tool, last edited path + the root it resolved against, WARN at 3 fires with 0 targets | same, with the event name `afterFileEdit` as the tool | same, with the ACP tool-call `kind` (or `fs/write_text_file`) as the tool. One edit an agent signals BOTH ways reads `2 fires → 1 target`: both are honest edit signals, dropping either would leave some real agent permanently at `0 → 0` and unable to WARN, and the doubling can never cause a FALSE warn because the first signal captures the target (pinned in `connector-acp/test/worktree-capture.test.ts`) |
+| **Capture health** in `crosscheck status` / `doctor` | `N edit-tool fires → M targets`, last tool, last edited path + the root it resolved against, WARN at 3 fires with 0 targets on a session still being heard from | same, with the event name `afterFileEdit` as the tool | same, with the ACP tool-call `kind` (or `fs/write_text_file`) as the tool. One edit an agent signals BOTH ways reads `2 fires → 1 target`: both are honest edit signals, dropping either would leave some real agent permanently at `0 → 0` and unable to WARN, and the doubling can never cause a FALSE warn because the first signal captures the target (pinned in `connector-acp/test/worktree-capture.test.ts`) |
 | **Before-edit tripwire** — telling the model about an overlap *before* it edits | yes — `PreToolUse`, `permissionDecision: "ask"` plus the facts as `additionalContext` | **not possible on this host today** | **not possible on this host today** |
 
 The last row is a limitation we document rather than a gap we forgot, and each
@@ -147,9 +151,12 @@ source and fetch date (`connector-cursor/src/handlers/file-edit.ts`,
   for `preToolUse` today"*, and the event has no `additional_context`. So the only
   way to put words in front of the model before an edit is to **block** it —
   past the ceiling this ladder is built to respect. It is not wired.
-  (Cursor's forum additionally reports `ask` being ignored in the field on
-  `beforeShellExecution`, an event whose docs *do* promise it — so this is not
-  a docs caution that might quietly start working.)
+  And it is not a docs caution that might quietly start working: on
+  `beforeShellExecution`, an event whose documented output *does* include
+  `"ask"`, users report it being ignored in the field — the command runs in
+  the same turn (forum.cursor.com/t/beforeshellexecution-returns-permission-ask-but-sandboxed-agent-shell-still-runs-the-command-sandbox-true/155438
+  and .../beforeshellexecution-hook-permissions-allow-ask-ignored-allow-list-takes-precedence/144244,
+  both read 2026-08-26).
 - **ACP** — the before-edit signals genuinely are on the wire
   (`session/request_permission` carries the whole `ToolCallUpdate` with its
   `locations`; a `tool_call` may arrive with `status: "pending"`,
@@ -168,14 +175,23 @@ injection point and the crosscheck MCP server the launcher already advertises.
 That is a notice after the edit, not a tripwire before it, and it is deliberately
 not shipped under the tripwire's name.
 
-Measured cost of the new resolution on this machine (Bun 1.3.13, warm APFS —
-reproduce with the commands, do not read the numbers as constants):
+Measured cost of the new resolution, as the RANGE over five runs on one
+machine (macOS arm64, Bun 1.3.13, warm APFS). Ranges rather than single figures
+because that is what the commands actually print: the top of each is the first
+run after a cold process, and every one of them is a fraction of its budget.
+Reproduce with the commands; do not read the numbers as constants.
 
 | Host | cold (first touch of a new worktree root) | warm (same root again) | budget · command |
 |---|---|---|---|
-| Claude Code | 103 ms (`PostToolUse`) · 102 ms (`PreToolUse`) | 43 ms · 41 ms | 1600 / 800 ms · `bun test packages/connector-claude/test/capture-latency.test.ts` |
-| Cursor | 101 ms | 47 ms | 1600 ms · `bun test packages/connector-cursor/test/capture-latency.test.ts` |
-| ACP | 68 ms | 10 ms | off the forward path — 200 worktree tool calls flooded through the real pump with the real engine attached forwarded byte-identically and dropped 0 capture lines · `bun test packages/connector-acp/test/capture-latency.test.ts` |
+| Claude Code | 94-302 ms (`PostToolUse`) · 91-132 ms (`PreToolUse`) | 42-109 ms · 40-60 ms | 1600 / 800 ms · `bun test packages/connector-claude/test/capture-latency.test.ts` |
+| Cursor | 92-116 ms | 41-50 ms | 1600 ms · `bun test packages/connector-cursor/test/capture-latency.test.ts` |
+| ACP | 61-69 ms | 6 ms | off the forward path — 200 worktree tool calls flooded through the real pump with the real engine attached forwarded byte-identically in 183-363 ms and dropped 0 capture lines · `bun test packages/connector-acp/test/capture-latency.test.ts` |
+
+Inside CI's container (`oven/bun:1`, Bun 1.4.0) the same three commands print
+6-8 / 5-7 ms and 6-7 / 3 ms for Claude, 7-8 / 4 ms for Cursor, and 9-11 / 6-9 ms
+for ACP with the 200-call flood in 207-231 ms, 0 dropped — an order of magnitude
+under the same budgets. That lane needs `apt-get install -y git` first: the
+image ships without it, and these suites shell out to `git worktree add`.
 
 The cache is what those warm numbers are: one `resolveRepoIdentity` per NEW
 worktree root per session, never per edit, remembered in session state
