@@ -20,7 +20,10 @@ import {
   POST_TOOL_USE_FAILURE_BUDGET_RATIO,
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
-import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  readSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { repoKey, sessionSlug } from "@crosscheck/connector-core/config/paths.ts";
 import { readSessionSpool } from "@crosscheck/connector-core/spool/files.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
@@ -65,6 +68,7 @@ const fixture = async (
   label: string,
   candidateLatencyMs: number,
   solvedLatencyMs: number = 0,
+  stateOverrides: Record<string, unknown> = {},
 ): Promise<{ repo: string; home: string; env: Env; hub: HintHub }> => {
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   const home = await makeHome(label);
@@ -89,6 +93,7 @@ const fixture = async (
     deliveredHintRefs: [],
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
+    ...stateOverrides,
   });
   return {
     repo,
@@ -149,6 +154,47 @@ describe("the 800 ms sync budget, measured through runHook", () => {
     );
     expect(stdout).toBe("");
     expect(elapsedMs).toBeLessThanOrEqual(BUDGET_MS + RACE_SLOP_MS);
+  });
+});
+
+/**
+ * The GHOST DEBT on the same hook, measured rather than assumed (VISION.md
+ * §3). The two tests above never exercise it — their fixture owes nothing —
+ * so without this the new branch would be a claim about a budget nobody
+ * checked. What run 0 pays here is one state read the hook was making anyway,
+ * one lock round to claim the flag, and one unref'd spawn; runs 1-4 pay the
+ * lockless pre-check alone, which is the shape that has to stay cheap because
+ * it runs on EVERY prompt for the rest of the session.
+ */
+describe("the ghost debt inside the same 800 ms budget", () => {
+  test("run 0 claims the debt and spawns, and every run stays inside", async () => {
+    // Arrange — a session that declared an intent and owes the comparison.
+    const { repo, home, env } = await fixture("ghost-debt", 0, 0, {
+      workContextTitle: "detached@0badc0f · fix: refresh 500s @ api",
+      workContextStatus: "analyzing",
+      workContextIntent: "Make verifyToken refetch the JWKS on an unknown kid",
+      ghostPending: true,
+    });
+    const elapsed: number[] = [];
+
+    // Act
+    for (let run = 0; run < HAPPY_RUNS; run += 1) {
+      const startedAt = performance.now();
+      await runHook("user-prompt-submit", payload(repo), env);
+      elapsed.push(Math.round(performance.now() - startedAt));
+    }
+
+    // Assert — the debt really was claimed on this path, exactly once...
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.ghostPending).toBe(false);
+    // ...and the measurement is of a hook that DID the work, not one that
+    // skipped it.
+    console.log(
+      `[ghost-debt] responsive hub, ms per run: ${elapsed.join(", ")} (budget ${String(BUDGET_MS)})`,
+    );
+    for (const ms of elapsed) {
+      expect(ms).toBeLessThan(BUDGET_MS);
+    }
   });
 });
 
