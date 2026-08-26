@@ -42,11 +42,35 @@
  *       second repo, so it must never inflate the foreign count that doctor
  *       explains as "a multi-repo workspace's touches of its second repo".
  *
- * PURE over injected primitives so the hook drives it once (a pre-pass) and
+ * PURE over injected primitives so the caller drives it once (a pre-pass) and
  * folds the counts, the cache additions and the #18 diagnosis root into its
- * one locked state write. ACP/Cursor do not call this — the capture flow keeps
- * its single-root default (their worktree parity is a follow-up).
+ * one locked state write.
+ *
+ * EVERY CONNECTOR CALLS THIS, and that is a claim rather than a hope. It was
+ * once true that only the Claude hooks did — Cursor and ACP kept the capture
+ * flow's single-root default and so lost every edit made in a linked worktree,
+ * uncounted, on hosts nobody was measuring. The join is now one shared flow
+ * (flows/capture-touched-files.ts), and its callers are pinned below: a fourth
+ * connector that captures without it shows up as a line this claim did not
+ * predict, which is a stronger tripwire than a count that stays at zero
+ * because the new site was never counted. The flow itself carries the mirror
+ * directive — that nothing else constructs a raw `captureFileTargets` call.
+ *
+ * The one caller here that is NOT a capture site is the Claude PreToolUse
+ * tripwire (hooks/pre-tool-use.ts), which resolves the first edited path's
+ * root to ask the hub about it and deliberately books no drop counters: the
+ * tripwire is not a capture path, and double-counting a path PostToolUse will
+ * also see would corrupt the very ratio the doctor WARN is measured on.
+ *
+ * The directive lives in line comments because the glob it needs would end a
+ * block comment mid-word, and it spells the open paren as a bracket
+ * expression so the claim does not match ITSELF and report this file as a
+ * fourth connector.
  */
+// VERIFY: grep -rl --include='*.ts' 'captureTouchedFiles[(]{' packages/*/src | sort
+// PRINTS: packages/connector-acp/src/capture/engine.ts
+// PRINTS: packages/connector-claude/src/hooks/post-tool-use.ts
+// PRINTS: packages/connector-cursor/src/handlers/file-edit.ts
 import { MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS } from "../constants.ts";
 import { findConnectedRepoRootForFile } from "../config/connected-repo.ts";
 import { realpathBestEffort } from "../config/paths.ts";
