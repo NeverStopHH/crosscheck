@@ -10,7 +10,11 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { DOCTOR_CAPTURE_SILENT_FIRES_WARN } from "../src/constants.ts";
+import {
+  DOCTOR_CAPTURE_SILENT_FIRES_WARN,
+  DOCTOR_PATH_MAX_CHARS,
+  DOCTOR_TOOL_NAME_MAX_CHARS,
+} from "../src/constants.ts";
 import { withCaptureBookkeeping } from "../src/state/capture-bookkeeping.ts";
 import type { TouchedRootsResolution } from "../src/capture/touched-root.ts";
 import { deriveSessionState } from "../src/state/session-state.ts";
@@ -300,5 +304,78 @@ describe("the root cache and the drops it explains", () => {
     expect(before.foreignRepoDrops).toBe(0);
     expect(before.knownWorktreeRoots).toEqual([]);
     expect(before.lastEditedPath).toBeNull();
+  });
+});
+
+describe("the two diagnosis fields the agent gets to choose (finding A5)", () => {
+  test("a huge path is stored bounded, not verbatim", () => {
+    // Arrange: on Claude and Cursor these strings come from the trusted host,
+    // but on ACP `firstPath` is a `locations[].path` off the untrusted wire
+    // and `toolLabel` is the agent's own `kind`. Neither had a length bound,
+    // so one session/update with a ~1 MiB path wrote a megabyte-scale state
+    // file that every later capture, `crosscheck status` and `crosscheck
+    // doctor` then re-parsed and re-wrote under the state lock.
+    const before = state();
+    const huge = `/repos/api/${"a".repeat(300_000)}.ts`;
+
+    // Act
+    const after = withCaptureBookkeeping(before, {
+      resolution: resolution({ outsideDrops: 1 }),
+      capturedCount: 0,
+      editFired: true,
+      toolLabel: "x".repeat(300_000),
+      firstPath: huge,
+      now: NOW,
+    });
+
+    // Assert: bounded to what can ever be DISPLAYED, keeping the TAIL — the
+    // same rule and the same direction as doctor's own renderer, so nothing a
+    // reader used to see changes
+    expect(after.lastEditedPath?.length).toBe(DOCTOR_PATH_MAX_CHARS);
+    expect(after.lastEditedPath?.endsWith("aaa.ts")).toBe(true);
+    expect(after.lastPostToolUseTool?.length).toBe(DOCTOR_TOOL_NAME_MAX_CHARS);
+  });
+
+  test("a path that fits is stored byte-for-byte", () => {
+    // Arrange: the bound must be invisible for every real path
+    const before = state();
+
+    // Act
+    const after = withCaptureBookkeeping(before, {
+      resolution: resolution({ outsideDrops: 1 }),
+      capturedCount: 0,
+      editFired: true,
+      toolLabel: "afterFileEdit",
+      firstPath: "/repos/api/src/auth/refresh.ts",
+      now: NOW,
+    });
+
+    // Assert
+    expect(after.lastEditedPath).toBe("/repos/api/src/auth/refresh.ts");
+    expect(after.lastPostToolUseTool).toBe("afterFileEdit");
+  });
+
+  test("a path carrying a secret is refused, not stored and printed", () => {
+    // Arrange: the identical string would be REFUSED as a capture target by
+    // `containsSecret` inside captureFileTargets. Storing it in the state
+    // file — which doctor prints — was the one way round that screen. The
+    // fixture below is a synthetic non-credential shaped to trip the matcher.
+    const before = state();
+
+    // Act
+    const after = withCaptureBookkeeping(before, {
+      resolution: resolution({ outsideDrops: 1 }),
+      capturedCount: 0,
+      editFired: true,
+      toolLabel: "edit",
+      firstPath: `/tmp/ghp_${"0123456789".repeat(4)}/x.ts`,
+      now: NOW,
+    });
+
+    // Assert: the diagnosis field stays empty rather than becoming a leak
+    expect(after.lastEditedPath).toBeNull();
+    // ...and the drop it explains is still counted, so the WARN still fires
+    expect(after.editToolFires).toBe(1);
+    expect(after.outsideRootDrops).toBe(1);
   });
 });

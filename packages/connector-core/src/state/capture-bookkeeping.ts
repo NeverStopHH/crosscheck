@@ -30,7 +30,35 @@
  */
 import { withKnownWorktreeRoot } from "./session-state.ts";
 import type { SessionState } from "./session-state.ts";
+import { containsSecret } from "../capture/secret-scan.ts";
+import {
+  DOCTOR_PATH_MAX_CHARS,
+  DOCTOR_TOOL_NAME_MAX_CHARS,
+} from "../constants.ts";
 import type { TouchedRootsResolution } from "../capture/touched-root.ts";
+
+/**
+ * Bounds one agent-chosen diagnosis string to what can ever be DISPLAYED.
+ *
+ * Same rule and same DIRECTION as doctor's own `boundedLocal` — control
+ * characters stripped, the TAIL kept behind an ellipsis, because the end of a
+ * path is the informative half. A value that already fits is returned
+ * byte-for-byte, so for every real path and tool name this is invisible; a
+ * value that does not fit is stored exactly as doctor would have rendered it,
+ * so the reader sees the same line either way and the state file stops being
+ * a place an agent can park a megabyte.
+ *
+ * Deliberately a second copy of that rule rather than a shared import: this
+ * one bounds what is WRITTEN (connector-core, on the untrusted boundary), the
+ * renderer bounds what is SHOWN (cli, which may not be imported from here).
+ */
+const boundedLabel = (value: string | null, max: number): string | null => {
+  if (value === null) {
+    return null;
+  }
+  const clean = value.replace(/[\p{Cc}\p{Cf}]/gu, "");
+  return clean.length <= max ? clean : `…${clean.slice(clean.length - (max - 1))}`;
+};
 
 export interface CaptureBookkeepingInput {
   /**
@@ -93,18 +121,29 @@ export const withCaptureBookkeeping = (
   // it is real work context, it is simply not evidence about whether edit
   // capture is alive.
   const evidence = input.editFired ? input.resolution : null;
+  // THESE TWO FIELDS ARE THE ONLY AGENT-CHOSEN STRINGS THIS TRANSFORM STORES,
+  // and on ACP the agent is the party the proxy exists to be transparent TO,
+  // not to trust: `firstPath` is a `locations[].path` off the wire and the
+  // label is the agent's own `kind`. Bounded and screened here, at the one
+  // place all three hosts share, so Claude and Cursor are covered with it.
+  const diagnosisPath =
+    input.firstPath === null || containsSecret(input.firstPath)
+      ? null
+      : boundedLabel(input.firstPath, DOCTOR_PATH_MAX_CHARS);
   return {
     ...next,
     editToolFires: next.editToolFires + (input.editFired ? 1 : 0),
     targetsCapturedCount:
       next.targetsCapturedCount + (input.editFired ? input.capturedCount : 0),
     ...(input.capturedCount > 0 ? { lastTargetAt: input.now.toISOString() } : {}),
-    lastPostToolUseTool: input.toolLabel ?? next.lastPostToolUseTool,
+    lastPostToolUseTool:
+      boundedLabel(input.toolLabel, DOCTOR_TOOL_NAME_MAX_CHARS) ??
+      next.lastPostToolUseTool,
     foreignRepoDrops: next.foreignRepoDrops + (evidence?.foreignDrops ?? 0),
     outsideRootDrops: next.outsideRootDrops + (evidence?.outsideDrops ?? 0),
-    ...(input.editFired && input.firstPath !== null
+    ...(input.editFired && diagnosisPath !== null
       ? {
-          lastEditedPath: input.firstPath,
+          lastEditedPath: diagnosisPath,
           lastEditedPathResolvedAgainst: input.resolution?.firstResolvedRoot ?? null,
         }
       : {}),

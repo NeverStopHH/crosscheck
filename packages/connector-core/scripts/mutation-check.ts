@@ -1878,6 +1878,33 @@ export const MUTATIONS: readonly Mutation[] = [
       "tool to look at",
   },
   {
+    // Review finding A5. The same string would be REFUSED as a capture target
+    // by this very screen; storing it in the state file doctor prints was the
+    // one way round it.
+    label: "a secret-shaped path is stored in the state file and printed",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from: "    input.firstPath === null || containsSecret(input.firstPath)",
+    to: "    input.firstPath === null",
+    test: `${CORE}/test/capture-bookkeeping.test.ts`,
+    because:
+      "a path containing a credential is written to the session state and " +
+      "then printed by `crosscheck doctor`, past the one sanitizer every " +
+      "captured target has to clear",
+  },
+  {
+    // The same finding's length half: on ACP both strings come off the
+    // untrusted wire with only the 1 MiB per-line parse cap above them.
+    label: "an agent-chosen path is stored at whatever length it likes",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from: "      : boundedLabel(input.firstPath, DOCTOR_PATH_MAX_CHARS);",
+    to: "      : input.firstPath;",
+    test: `${CORE}/test/capture-bookkeeping.test.ts`,
+    because:
+      "one session/update with a megabyte-scale path writes a state file that " +
+      "every later capture, `crosscheck status` and `crosscheck doctor` then " +
+      "re-parse and re-write under the state lock",
+  },
+  {
     // Review finding P4. The kit is the documented surface a NEW connector
     // programs against, and it offered only the pre-#17 `captureFileTargets`.
     label: "the kit hides the worktree-aware capture entry point",
@@ -2170,6 +2197,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 2
  * PRINTS: packages/connector-core/test/absence-render.test.ts 1
+ * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
