@@ -256,11 +256,15 @@ export const GHOST_MAX_CONTEXT_TARGETS = 50;
  * ConE: they would drop a value two people ever touched together, and we
  * would not — dropping those is what a ghost check exists to report.
  *
- * It is also the fan-out bound. Every surviving value is shared by at most
- * this many contexts, so no single hot value can fill the pair window ahead
- * of the values that mean something — the defect measured on the solved
- * surface at 1.2 s (services/solved-matches.ts), prevented here by
- * construction rather than by a cap on the crowd.
+ * It is also the fan-out bound, and the honest statement of it is a PRODUCT
+ * rather than a sentence about one value: every surviving value is shared by
+ * at most this many contexts, and the reader holds at most
+ * GHOST_MAX_OWN_CONTEXTS x GHOST_MAX_CONTEXT_TARGETS of them, so the pair
+ * query's whole answer is bounded by the three together (GHOST_MAX_PAIR_ROWS,
+ * which says what that costs when the bound is read as a budget instead). The
+ * defect measured on the solved surface at 1.2 s
+ * (services/solved-matches.ts) is prevented here by that arithmetic rather
+ * than by a cap on the crowd.
  */
 export const GHOST_HOT_TARGET_MAX_CONTEXTS = 20;
 
@@ -303,13 +307,32 @@ export const GHOST_INTENT_MIN_TOKEN_HITS = 3;
 export const GHOST_MAX_INTENT_CANDIDATES = 20;
 
 /**
- * Read bound on shared-target pair rows. Every surviving value is shared by
- * at most GHOST_HOT_TARGET_MAX_CONTEXTS contexts, so this window always
- * holds at least GHOST_MAX_PAIR_ROWS / GHOST_HOT_TARGET_MAX_CONTEXTS
- * distinct values — the per-value starvation the solved surface had to
- * measure cannot arise here.
+ * Read bound on shared-target pair rows — ARITHMETIC rather than a budget,
+ * and it has to be. The reader holds at most GHOST_MAX_OWN_CONTEXTS x
+ * GHOST_MAX_CONTEXT_TARGETS distinct values (the sweep rule makes that a
+ * ceiling rather than a hope), and every value that survives the hot rule is
+ * carried by at most GHOST_HOT_TARGET_MAX_CONTEXTS foreign contexts the
+ * reader may be told about. Their product is the most rows the pair query can
+ * return, so this window cannot cut.
+ *
+ * A SMALLER NUMBER IS NOT A SAFE ONE, and the 400 that stood here was not.
+ * The reasoning it rested on was about ONE hot value, and no single value can
+ * crowd the window — the AGGREGATE of many merely-warm values does. Forty-five
+ * values on nine foreign contexts each is 405 legal rows, and because the
+ * window is spent value-alphabetically the teammate whose paths sort late
+ * loses BOTH of his rows. Truncating this query does not hide rows, it
+ * corrupts a count: at GHOST_MIN_SHARED_TARGETS = 2 a context whose two rows
+ * straddle the cut is judged below the floor and dropped whole, so the answer
+ * is not a short list but an EMPTY one. That shape is pinned by "a crowd of
+ * warm values never empties the pair window" in test/ghost-overlap.test.ts.
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");console.log(s.GHOST_MAX_PAIR_ROWS === s.GHOST_MAX_OWN_CONTEXTS * s.GHOST_MAX_CONTEXT_TARGETS * s.GHOST_HOT_TARGET_MAX_CONTEXTS, s.GHOST_MAX_PAIR_ROWS)'
+ * PRINTS: true 3000
  */
-export const GHOST_MAX_PAIR_ROWS = 400;
+export const GHOST_MAX_PAIR_ROWS =
+  GHOST_MAX_OWN_CONTEXTS *
+  GHOST_MAX_CONTEXT_TARGETS *
+  GHOST_HOT_TARGET_MAX_CONTEXTS;
 
 /** Findings one response carries, strongest reason first. */
 export const GHOST_MAX_FINDINGS = 3;

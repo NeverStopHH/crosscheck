@@ -29,9 +29,11 @@
  * useful:
  *
  *   - a HOT value is dropped (GHOST_HOT_TARGET_MAX_CONTEXTS): a lockfile or
- *     the config every session edits is not evidence of a plan. This is also
- *     the fan-out bound, so the N² crowding the solved surface had to measure
- *     at 1.2 s cannot arise here;
+ *     the config every session edits is not evidence of a plan. With the
+ *     reader's own value list bounded by the sweep rule, the two together are
+ *     also the fan-out bound — a PRODUCT, not a sentence about one value —
+ *     so the N² crowding the solved surface had to measure at 1.2 s cannot
+ *     arise here;
  *   - a SWEEP is dropped from both sides (GHOST_MAX_CONTEXT_TARGETS): a
  *     context touching fifty values is a rename or a formatter run, and it
  *     would otherwise collide with everybody.
@@ -295,11 +297,13 @@ interface PairRow {
  * on a live foreign context of this repo.
  *
  * BOUNDED BEFORE IT MULTIPLIES, the lesson services/solved-matches.ts paid
- * for: the value list is the reader's own and capped, every value in it is
- * shared by at most GHOST_HOT_TARGET_MAX_CONTEXTS contexts, and sweeps are
- * excluded — so GHOST_MAX_PAIR_ROWS is a ceiling nothing approaches by
- * crowding, and no single hot value can push the values that matter out of
- * the window.
+ * for: the value list is the reader's own and capped by the sweep rule, and
+ * every value in it is shared by at most GHOST_HOT_TARGET_MAX_CONTEXTS
+ * foreign contexts. GHOST_MAX_PAIR_ROWS is exactly that product, so the LIMIT
+ * below is a safety valve the query cannot reach rather than a budget the
+ * crowd competes for — and it has to be, because this window cutting does not
+ * shorten the answer, it corrupts the count the floor is read off (the
+ * constant records the measurement).
  */
 const listPairRows = async (
   deps: Deps,

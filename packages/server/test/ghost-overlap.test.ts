@@ -46,6 +46,10 @@ const FINGERPRINT = "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f0";
  */
 const OWN_SWEEP_TARGETS = 110;
 
+/** Warm values the crowd carries, each on CROWD_SHARERS foreign contexts. */
+const CROWD_VALUES = 45;
+const CROWD_SHARERS = 9;
+
 /** Records per POST /api/records — the route refuses more (MAX_INGEST_BATCH). */
 const INGEST_CHUNK = 100;
 
@@ -550,7 +554,70 @@ describe("ghost checks, the deterministic overlap", () => {
     expect(after[0]?.sharedTargetCount).toBe(2);
   });
 
-  test("a muted teammate's plan is not reported to me", async () => {
+  test("a crowd of warm values never empties the pair window", async () => {
+    const { harness, me, them } = await setup();
+    // The crowd is WARM, not hot: each value is carried by CROWD_SHARERS
+    // foreign contexts plus mine, well under GHOST_HOT_TARGET_MAX_CONTEXTS,
+    // so no exclusion touches it. None of these contexts can ever be a
+    // finding either — one shared value is below GHOST_MIN_SHARED_TARGETS.
+    // What they do is fill the pair window ahead of Ken, because the window
+    // is spent value-alphabetically and "src/crowd-*" sorts before "src/z*".
+    const crowdValues = Array.from(
+      { length: CROWD_VALUES },
+      (_unused, index) => `src/crowd-${String(index).padStart(3, "0")}.ts`,
+    );
+    const plan = ["src/z0-token.ts", "src/z1-session.ts"];
+    await seed(
+      harness,
+      me,
+      contextRecords(
+        MY_CONTEXT,
+        MY_SESSION,
+        "Token refresh rework",
+        [...crowdValues, ...plan].map((value) => ({ kind: "file", value })),
+      ),
+    );
+    await seed(
+      harness,
+      them,
+      contextRecords(
+        THEIR_CONTEXT,
+        THEIR_SESSION,
+        "Session store migration",
+        plan.map((value) => ({ kind: "file", value })),
+      ),
+    );
+    // The control FIRST: with no crowd Ken is a notice, so the silence below
+    // can only be the crowd's doing.
+    expect(
+      (await fetchGhostChecks(harness, me.apiKey)).map((row) => row.workContextId),
+    ).toEqual([THEIR_CONTEXT]);
+
+    const crowdSession = "ses_crowd";
+    await registerTestSession(harness, them.apiKey, { id: crowdSession });
+    const crowd = crowdValues.flatMap((value, valueIndex) =>
+      Array.from({ length: CROWD_SHARERS }, (_unused, sharer) =>
+        contextRecords(
+          `wc_crowd_${String(valueIndex)}_${String(sharer)}`,
+          crowdSession,
+          `Unrelated work ${String(valueIndex)}.${String(sharer)}`,
+          [{ kind: "file", value }],
+        ),
+      ).flat(),
+    );
+    for (let at = 0; at < crowd.length; at += INGEST_CHUNK) {
+      await seed(harness, them, crowd.slice(at, at + INGEST_CHUNK));
+    }
+    expect(CROWD_VALUES * CROWD_SHARERS).toBeGreaterThan(400);
+    expect(CROWD_SHARERS + 1).toBeLessThan(GHOST_HOT_TARGET_MAX_CONTEXTS);
+
+    const after = await fetchGhostChecks(harness, me.apiKey);
+    // Ken still shares both of my files, and no crowd context ever qualifies.
+    expect(after.map((row) => row.workContextId)).toEqual([THEIR_CONTEXT]);
+    expect(after[0]?.sharedTargetCount).toBe(2);
+  });
+
+  test("a muted teammate\'s plan is not reported to me", async () => {
     const { harness, me, them } = await setup();
     await seed(
       harness,
