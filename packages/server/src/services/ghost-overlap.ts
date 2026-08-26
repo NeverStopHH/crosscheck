@@ -195,11 +195,23 @@ const listOwnContexts = async (
 };
 
 /**
- * The reader's own strong target values, with the sweep rule applied per
- * context: a context over the cap contributes NOTHING rather than an
- * arbitrary prefix of itself. The table has no timestamp, so "the newest 50
- * targets" is not a thing this schema can answer honestly — dropping the
- * whole context is the rule that can be stated.
+ * The reader's own strong target values, with the sweep rule applied IN THE
+ * QUERY: a context over the cap contributes NOTHING rather than an arbitrary
+ * prefix of itself. The table has no timestamp, so "the newest 50 targets" is
+ * not a thing this schema can answer honestly — dropping the whole context is
+ * the rule that can be stated.
+ *
+ * THE EXCLUSION HAS TO BE THE DATABASE'S, not a filter over the rows that
+ * came back, and that is not tidiness. With the sweeps admitted, one renaming
+ * worktree of mine holds more targets than the whole read window my contexts
+ * share, and the window is spent in id order — so the sweep took the budget
+ * and the context beside it, the one carrying my real plan, arrived empty and
+ * this surface went silent for me. Excluded here, every surviving context
+ * carries at most GHOST_MAX_CONTEXT_TARGETS rows, which makes the bound below
+ * an arithmetic ceiling rather than a race between my own contexts. It is
+ * also the SAME predicate the foreign side applies (listPairRows), so "a
+ * sweep is dropped from both sides" is now one rule rather than two spellings
+ * that counted different kinds.
  */
 const listOwnTargets = async (
   deps: Deps,
@@ -219,6 +231,7 @@ const listOwnTargets = async (
       and(
         inArray(workContextTargets.workContextId, [...ownIds]),
         inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
+        notASweepCondition(workContextTargets.workContextId),
       ),
     )
     .orderBy(
@@ -226,37 +239,22 @@ const listOwnTargets = async (
       asc(workContextTargets.kind),
       asc(workContextTargets.value),
     )
-    // One row past the cap per context is enough to KNOW a context is a
-    // sweep, and stops one huge context from filling the read.
-    .limit(ownIds.length * (GHOST_MAX_CONTEXT_TARGETS + 1));
-  const byContext = new Map<string, SharedValue[]>();
-  for (const row of rows) {
-    byContext.set(row.workContextId, [
-      ...(byContext.get(row.workContextId) ?? []),
-      { kind: row.kind as OverlapKind, value: row.value },
-    ]);
-  }
-  const kept = [...byContext.values()].filter(
-    (targets) => targets.length <= GHOST_MAX_CONTEXT_TARGETS,
-  );
+    // Every context left is under the cap, so this is what all of them
+    // together can hold — no context can spend another's share.
+    .limit(ownIds.length * GHOST_MAX_CONTEXT_TARGETS);
   const seen = new Set<string>();
-  return kept.flat().filter((target) => {
-    const key = `${target.kind} ${target.value}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
+  return rows
+    .map((row) => ({ kind: row.kind as OverlapKind, value: row.value }))
+    .filter((target) => {
+      const key = `${target.kind} ${target.value}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
 };
 
-/**
- * The reader's own values MINUS the hot ones — ConE's rarely-concurrently-
- * edited heuristic as one indexed aggregate instead of a weekly batch job.
- * Counted ON THIS REPO: `src/index.ts` names a different file in every repo
- * on the hub, so a hub-wide count would call every ordinary path hot and
- * silence the surface on exactly the hubs it is meant for.
- */
 const listCoolTargets = async (
   deps: Deps,
   repo: string,

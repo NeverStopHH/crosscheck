@@ -2433,6 +2433,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "with them, on every file the two share",
   },
   {
+    // The sweep rule as the DATABASE's, not a filter over what came back.
+    // With sweeps admitted, one renaming worktree of the reader's own holds
+    // more targets than the whole window their contexts share, and the window
+    // is spent in id order.
+    label: "one sweep of mine spends my other context's read window",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: `        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
+        notASweepCondition(workContextTargets.workContextId),`,
+    to: "        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "a mass rename in one of my worktrees takes the read budget and the " +
+      "context beside it, so the surface goes silent for me on the plan I " +
+      "am actually working on",
+  },
+  {
     // ConE's rarely-concurrently-edited heuristic (TOSEM 2021), which is the
     // half of that paper doing the precision work. Without it a lockfile
     // everybody edits is evidence of a plan, and the pair window fills with
@@ -2561,7 +2577,7 @@ interface Outcome {
  * PRINTS: fingerprint.test.ts 1
  * PRINTS: ghost-cost.test.ts 1
  * PRINTS: ghost-declare.test.ts 1
- * PRINTS: ghost-overlap.test.ts 3
+ * PRINTS: ghost-overlap.test.ts 4
  * PRINTS: ghost-render.test.ts 1
  * PRINTS: ghost-worker.test.ts 2
  * PRINTS: global-wiring-silence.test.ts 2

@@ -38,6 +38,16 @@ const MY_CONTEXT = "wc_mine";
 const THEIR_CONTEXT = "wc_theirs";
 const FINGERPRINT = "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f0";
 
+/**
+ * Targets on the sweeping worktree of the test above: more than the whole
+ * read window that two of my own contexts share, so a bound spent in id
+ * order would leave the other context nothing.
+ */
+const OWN_SWEEP_TARGETS = 110;
+
+/** Records per POST /api/records — the route refuses more (MAX_INGEST_BATCH). */
+const INGEST_CHUNK = 100;
+
 interface GhostView {
   readonly workContextId: string;
   readonly developerName: string;
@@ -489,6 +499,54 @@ describe("ghost checks, the deterministic overlap", () => {
         .map((row) => row.workContextId)
         .sort(),
     ).toEqual([THEIR_CONTEXT, "wc_third"].sort());
+  });
+
+  test("my own sweep never silences my other worktree's plan", async () => {
+    const { harness, me, them } = await setup();
+    const plan = [
+      { kind: "file", value: "src/auth/token.ts" },
+      { kind: "file", value: "src/auth/session.ts" },
+    ];
+    // My REAL plan, in its own worktree, and the teammate who shares it.
+    const planSession = "ses_mine_plan";
+    await registerTestSession(harness, me.apiKey, { id: planSession });
+    await seed(
+      harness,
+      me,
+      contextRecords("wc_mine_b_plan", planSession, "Token refresh rework", plan),
+    );
+    await seed(
+      harness,
+      them,
+      contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", plan),
+    );
+    // The control FIRST: without the sweep this is a notice, so the silence
+    // below can only be the sweep's doing.
+    expect(
+      (await fetchGhostChecks(harness, me.apiKey)).map((row) => row.workContextId),
+    ).toEqual([THEIR_CONTEXT]);
+
+    // Now the other worktree does a mass rename. It is a sweep and must
+    // contribute nothing — but it must not take my other context's targets
+    // with it, which is what a read bound spent id-first would do.
+    const sweep = contextRecords(
+      "wc_mine_a_sweep",
+      MY_SESSION,
+      "Rename the whole module",
+      Array.from({ length: OWN_SWEEP_TARGETS }, (_unused, index) => ({
+        kind: "file",
+        value: `src/generated/mine-${String(index)}.ts`,
+      })),
+    );
+    // MAX_INGEST_BATCH is 100, and this sweep is deliberately larger than one
+    // batch — the same shape a real rename arrives in.
+    for (let at = 0; at < sweep.length; at += INGEST_CHUNK) {
+      await seed(harness, me, sweep.slice(at, at + INGEST_CHUNK));
+    }
+    expect(OWN_SWEEP_TARGETS).toBeGreaterThan(GHOST_MAX_CONTEXT_TARGETS);
+    const after = await fetchGhostChecks(harness, me.apiKey);
+    expect(after.map((row) => row.workContextId)).toEqual([THEIR_CONTEXT]);
+    expect(after[0]?.sharedTargetCount).toBe(2);
   });
 
   test("a muted teammate's plan is not reported to me", async () => {
