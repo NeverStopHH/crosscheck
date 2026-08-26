@@ -133,7 +133,9 @@ fourth one that forgets it fails CI rather than losing edits quietly.
 | **Before-edit tripwire** — telling the model about an overlap *before* it edits | yes — `PreToolUse`, `permissionDecision: "ask"` plus the facts as `additionalContext` | **not possible on this host today** | **not possible on this host today** |
 
 The last row is a limitation we document rather than a gap we forgot, and each
-host's module header carries the same sentences with its source and fetch date:
+of those two connectors' module headers carries the same sentences with its
+source and fetch date (`connector-cursor/src/handlers/file-edit.ts`,
+`connector-acp/src/capture/engine.ts`):
 
 - **Cursor** — there is no `beforeFileEdit`/`beforeWrite` event
   (cursor.com/docs/hooks, read 2026-08-26). `preToolUse` does fire before a
