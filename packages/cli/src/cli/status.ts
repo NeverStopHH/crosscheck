@@ -115,10 +115,13 @@ export const runStatus = async (
   // The solved-pointer precision loop (VISION.md §1): what this repo's
   // "solved before" lines actually earned. A hub too old to answer, or an
   // unreachable one, simply prints no line — the same fail-open every other
-  // hub-fed line here has.
+  // hub-fed line here has. The noun is what the rows ARE — every delivered
+  // pointer at a tree that is solved today, including an ordinary teammate
+  // pointer — and not this feature's name, which would be a superset
+  // labelled as one surface (hints/precision.ts says why).
   const solvedCounts = await getSolvedMatchCounts(hubCtx, identity.repoId);
   const solvedLines = solvedCounts.ok
-    ? [`solved matches: ${formatSolvedCounts(solvedCounts.data)}`]
+    ? [`solved-tree pointers: ${formatSolvedCounts(solvedCounts.data)}`]
     : [];
   const privacy = await getPrivacySettings(hubCtx);
   const privacyLines = privacy.ok

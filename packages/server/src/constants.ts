@@ -122,7 +122,7 @@ export const SOLVED_MATCH_MAX_FINGERPRINT_CHARS = 128;
 
 /**
  * The precision loop's window (services/solved-counts.ts): how far back
- * "solved matches: N shown, M pulled" looks. Long enough that a quiet week
+ * "solved-tree pointers: N shown, M opened" looks. Long enough that a quiet week
  * does not read as a dead surface, short enough that the numbers describe
  * how the tool behaves NOW rather than how it behaved in the spring.
  */

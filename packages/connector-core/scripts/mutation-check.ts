@@ -833,6 +833,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "collective memory never matches anything",
   },
   {
+    // The WARN's whole job is to be acted on. This takes the action back off
+    // it and leaves a sentence about crosscheck's own internals.
+    label: "the precision WARN diagnoses the tool and names no next step",
+    file: `${CORE}/src/hints/precision.ts`,
+    from: `; every solved line prints its " +
+    "id, and get_diagnosis <id> reads the tree"`,
+    to: '"',
+    test: `${CLI}/test/solved-cli.test.ts`,
+    because:
+      "the reader is told their tool may be wrong with nothing to do about " +
+      "it, so the warning trains them to skip it — and a counter nobody " +
+      "acts on is PASS-only again, the finding-#14 shape it exists to catch",
+  },
+  {
     // The counter is about SOLVED pointers, not about every work-context
     // hint. Dropping the solvedness resolution totals the whole ledger.
     label: "the solved counter counts every pointer as a solved one",

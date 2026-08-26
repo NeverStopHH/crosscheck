@@ -993,11 +993,15 @@ const checkQuestions = async (
  * happening now, unasked, and this is the one line that says whether anybody
  * ever opened one.
  *
- * NEVER PASS-ONLY (the finding-#14 lesson). The WARN is not "few pulls" — it
+ * NEVER PASS-ONLY (the finding-#14 lesson). The WARN is not "few opens" — it
  * is pointers shown repeatedly and opened NEVER, which is what this surface
  * looks like when its matches are wrong. Below the evidence floor
  * (hints/precision.ts) there is nothing to say, and saying it anyway would
- * be the same over-claiming the warning exists to catch.
+ * be the same over-claiming the warning exists to catch. The check is named
+ * for the ROWS it counts — every delivered pointer at a tree solved today,
+ * an ordinary teammate pointer included — rather than for this feature,
+ * whose name over a superset would blame the solved matcher for another
+ * surface's precision (hints/precision.ts states the rule and the fix).
  *
  * "not measured" is a PASS, exactly as in checkQuestions and checkAbsences:
  * an older hub without the counters says nothing about this install.
@@ -1008,13 +1012,13 @@ const checkSolvedMatches = async (
 ): Promise<Check> => {
   const result = await getSolvedMatchCounts(ctx, repoId);
   if (!result.ok) {
-    return check("PASS", "solved matches", "not measured");
+    return check("PASS", "solved-tree pointers", "not measured");
   }
   const line = formatSolvedCounts(result.data);
   const warning = solvedPrecisionWarning(result.data);
   return warning === null
-    ? check("PASS", "solved matches", line)
-    : check("WARN", "solved matches", `${line} — ${warning}`);
+    ? check("PASS", "solved-tree pointers", line)
+    : check("WARN", "solved-tree pointers", `${line} — ${warning}`);
 };
 
 /**

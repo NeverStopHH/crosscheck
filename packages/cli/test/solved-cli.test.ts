@@ -156,14 +156,15 @@ const deliverPointer = async (contextId: string): Promise<void> => {
 };
 
 /**
- * The doctor's OWN "solved matches" line, matched on the check NAME rather
- * than on a substring — the temp home is called cx-home-solved-cli-… and a
- * substring match would happily find the "config present" path line.
+ * The doctor's OWN "solved-tree pointers" line, matched on the check NAME
+ * rather than on a substring — the temp home is called cx-home-solved-cli-…
+ * and a substring match would happily find the "config present" path line.
  */
 const solvedLineOf = (stdout: string): string =>
   stdout
     .split("\n")
-    .find((line) => /\b(?:PASS|WARN|FAIL) +solved matches /.test(line)) ?? "";
+    .find((line) => /\b(?:PASS|WARN|FAIL) +solved-tree pointers /.test(line)) ??
+  "";
 
 beforeAll(async () => {
   db = await createDb();
@@ -202,7 +203,7 @@ describe("the solved-match precision loop on status and doctor", () => {
     const doctor = await runFor(["doctor"]);
 
     // Assert
-    expect(status.stdout).toContain("solved matches: not measured yet");
+    expect(status.stdout).toContain("solved-tree pointers: not measured yet");
     expect(solvedLineOf(doctor.stdout)).toContain("PASS");
     expect(solvedLineOf(doctor.stdout)).toContain("not measured yet");
   });
@@ -223,12 +224,17 @@ describe("the solved-match precision loop on status and doctor", () => {
     // Assert: status states the pair plainly; doctor names the problem and
     // what it means — never a bare number.
     expect(status.stdout).toContain(
-      `solved matches: ${String(DOCTOR_SOLVED_SHOWN_WARN)} shown, 0 pulled in the last`,
+      `solved-tree pointers: ${String(DOCTOR_SOLVED_SHOWN_WARN)} shown, 0 opened in the last`,
     );
     const line = solvedLineOf(doctor.stdout);
     expect(line).toContain("WARN");
     expect(line).toContain("shown and");
     expect(line).toContain("ignored");
+    // A WARN that diagnoses the product to the reader and stops there gets
+    // skipped, which makes the counter PASS-only in practice — the exact
+    // failure it was added to prevent. So it ends with the call, the way
+    // questionWarning does one block over.
+    expect(line).toContain("get_diagnosis <id>");
   });
 
   test("opening one tree clears the warning and the count follows", async () => {
@@ -243,7 +249,7 @@ describe("the solved-match precision loop on status and doctor", () => {
 
     // Assert
     expect(status.stdout).toContain(
-      `solved matches: ${String(DOCTOR_SOLVED_SHOWN_WARN)} shown, 1 pulled in the last`,
+      `solved-tree pointers: ${String(DOCTOR_SOLVED_SHOWN_WARN)} shown, 1 opened in the last`,
     );
     expect(solvedLineOf(doctor.stdout)).toContain("PASS");
   });
