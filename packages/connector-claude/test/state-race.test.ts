@@ -83,6 +83,9 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   intentSetCount: 0,
   intentFailCount: 0,
   intentLastFailure: null,
+  workContextIntent: null,
+  ghostPending: false,
+  ghostNoticeCount: 0,
 });
 
 interface Fixture {

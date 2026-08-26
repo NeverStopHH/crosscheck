@@ -102,6 +102,9 @@ const freshState = (
   intentSetCount: 0,
   intentFailCount: 0,
   intentLastFailure: null,
+  workContextIntent: null,
+  ghostPending: false,
+  ghostNoticeCount: 0,
   ...overrides,
 });
 

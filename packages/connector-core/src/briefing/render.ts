@@ -33,7 +33,7 @@ import type {
   SolvedMatchEntry,
   WorkContextEntry,
 } from "../http/hub.ts";
-import { formatGhostLine } from "./ghost.ts";
+import { formatGhostLine, GHOST_SECTION_HEADER } from "./ghost.ts";
 import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
 import { fitQuestionEntries, formatQuestionEntry } from "./questions.ts";
 import type { IntentLabel } from "./intent.ts";
@@ -258,9 +258,7 @@ const renderGhostSection = (input: BriefingInput): Section => {
     return line === null ? [] : [line];
   });
   return {
-    header:
-      "Teammates working on the same things right now " +
-      "(get_diagnosis reads their tree; nothing here blocks you):",
+    header: GHOST_SECTION_HEADER,
     lines: rendered.slice(0, MAX_GHOST_POINTERS),
     total: rendered.length,
   };

@@ -167,6 +167,32 @@ const SessionStateObjectSchema = z.looseObject({
   intentSetCount: z.number().int().min(0).default(0),
   intentFailCount: z.number().int().min(0).default(0),
   intentLastFailure: z.string().nullable().default(null),
+  /**
+   * The intent sentence this session last put on the hub (VISION.md §3), and
+   * the reason it is stored rather than re-read: the ghost check compares
+   * MY plan with a teammate's, and the detached worker that runs it has no
+   * other way to know what this session said it was doing. Written by both
+   * writers — `set_intent` and the derived-intent worker — right after the
+   * record reaches the hub or the spool, so what is here is what a teammate
+   * would see.
+   */
+  workContextIntent: z.string().min(1).nullable().default(null),
+  /**
+   * A ghost check is OWED (VISION.md §3): an intent was recorded and nothing
+   * has compared it against the team's live plans yet. The DEBT shape, not a
+   * spawn: `set_intent` runs inside an MCP call in connector-core, which
+   * cannot reach a Claude-specific worker, so it books the debt and the next
+   * UserPromptSubmit pays it — exactly how `briefingPending` carries a
+   * briefing a late-registered session never got.
+   */
+  ghostPending: z.boolean().default(false),
+  /**
+   * Deterministic ghost notices this session actually SHOWED the reader (the
+   * briefing block plus the `set_intent` answer). The precision half of the
+   * counter pair: the model layer's outcomes say what the gated call bought,
+   * and this says how often the free half had something to say at all.
+   */
+  ghostNoticeCount: z.number().int().min(0).default(0),
 });
 
 /**
@@ -398,6 +424,32 @@ export const withTripwireAsked = (
   };
 };
 
+/**
+ * An intent reached the hub or the spool (VISION.md §3): remember the
+ * sentence and book the ghost-check debt in ONE transform, because they are
+ * one fact — a plan the team has not been compared against yet. Re-declaring
+ * an intent re-opens the debt on purpose; the new sentence is a new plan, and
+ * the per-session fire cap is what stops that from becoming a second model
+ * call (ghost/gate.ts owns the cap).
+ */
+export const withRecordedIntent = (
+  state: SessionState,
+  summary: string,
+): SessionState => ({
+  ...state,
+  workContextIntent: summary,
+  ghostPending: true,
+});
+
+/** A deterministic ghost notice was SHOWN — booked by whoever emitted it. */
+export const withGhostNotices = (
+  state: SessionState,
+  shown: number,
+): SessionState =>
+  shown <= 0
+    ? state
+    : { ...state, ghostNoticeCount: state.ghostNoticeCount + shown };
+
 export interface DeriveSessionStateInput {
   readonly hostSessionKey: string;
   readonly repoId: string;
@@ -449,5 +501,8 @@ export const deriveSessionState = (
     intentSetCount: 0,
     intentFailCount: 0,
     intentLastFailure: null,
+    workContextIntent: null,
+    ghostPending: false,
+    ghostNoticeCount: 0,
   };
 };

@@ -27,6 +27,7 @@
 import {
   AGE_HOURS_BEFORE_DAYS,
   GHOST_SHARED_VALUE_MAX_CHARS,
+  MAX_GHOST_POINTERS,
   MAX_TITLE_CHARS,
   MINUTES_PER_HOUR,
   MS_PER_SECOND,
@@ -148,4 +149,43 @@ export const formatGhostLine = (
     ...(plan === null ? [] : [plan]),
     `get_diagnosis ${id}`,
   ].join(" · ");
+};
+
+/**
+ * The one header both surfaces print. The briefing composes it into a
+ * `Section` and `set_intent` prints it as a block; a second literal would be
+ * a second place for "nothing here blocks you" to be dropped, which is the
+ * half of the sentence that keeps this feature advisory.
+ */
+export const GHOST_SECTION_HEADER =
+  "Teammates working on the same things right now " +
+  "(get_diagnosis reads their tree; nothing here blocks you):";
+
+export interface GhostNotice {
+  /** The block, or "" when no row survived — callers print nothing then. */
+  readonly text: string;
+  /** Lines actually shown, for the counter the reader's own state keeps. */
+  readonly shown: number;
+}
+
+/**
+ * The ghost block as `set_intent` returns it, bounded exactly as the briefing
+ * bounds its section. No "+N more" tail here: the briefing has a character
+ * budget it must account for, while a tool answer is read once by the agent
+ * that just declared the plan, and a count of rows it cannot reach would be
+ * noise rather than a next action.
+ */
+export const renderGhostNotice = (
+  entries: readonly GhostCheckEntry[],
+  now: Date,
+): GhostNotice => {
+  const lines = entries
+    .flatMap((entry) => {
+      const line = formatGhostLine(entry, now);
+      return line === null ? [] : [line];
+    })
+    .slice(0, MAX_GHOST_POINTERS);
+  return lines.length === 0
+    ? { text: "", shown: 0 }
+    : { text: [GHOST_SECTION_HEADER, ...lines].join("\n"), shown: lines.length };
 };
