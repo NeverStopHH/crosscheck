@@ -49,6 +49,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   // the registry test rejects.
   {
     kind: "composite",
+    name: "claude-ghost-draft",
+    module: "src/ghost/worker.ts",
+    note: "the draft body is composed by ghostDraftBody, the registered core surface briefing-ghost-draft-body, which is where the hostile corpus attacks the teammate name and context id; the sentence beside them is this machine's own model output, bounded, echo-checked and secret-scanned here, and framed by formatDraftLine when it is shown",
+  },
+  {
+    kind: "composite",
     name: "claude-tripwire-ask",
     module: "src/hooks/pre-tool-use.ts",
     note: "emits renderTripwireReason output verbatim (registered core surface); covered in test/tripwire-hook.test.ts",

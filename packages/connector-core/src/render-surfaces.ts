@@ -19,6 +19,7 @@
  */
 import type { CommitDrift } from "./git/commit-drift.ts";
 import { renderBriefing } from "./briefing/render.ts";
+import { ghostDraftBody } from "./briefing/ghost.ts";
 import {
   renderAnswerHint,
   renderClaimHint,
@@ -424,6 +425,23 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         ghostChecks: [ghostCheckWith(payload)],
         now: NOW,
       }),
+  },
+  {
+    kind: "corpus",
+    name: "briefing-ghost-draft-body",
+    module: "src/briefing/ghost.ts",
+    framing: "sanitized",
+    // The ghost DRAFT body, which is the one ghost string that is STORED
+    // rather than only printed: the gated half's sentence plus the teammate
+    // it collides with, on its way into a claim the hub keeps. Only the two
+    // hub-sent halves are attacked here — the name and the context id —
+    // because the sentence is this machine's own model output and travels
+    // like every other draft body (briefing/ghost.ts says why).
+    render: (payload) =>
+      ghostDraftBody(
+        "Both plans change what verifyToken returns for an unknown kid",
+        ghostCheckWith(payload),
+      ),
   },
   {
     kind: "corpus",

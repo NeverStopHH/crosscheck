@@ -57,9 +57,19 @@ const WORKSPACE_PACKAGES_ROOT = join(import.meta.dir, "..", "..");
  * Import specifiers that ARE the render layer, however they are reached —
  * relative (`../briefing/sanitize.ts`) or cross-package
  * (`@crosscheck/connector-core/briefing/sanitize.ts`).
+ *
+ * DERIVED FROM `RENDER_LAYER_MODULES`, never written out again. It was a hand
+ * kept literal, and the two drifted exactly as a duplicated list does: the
+ * registry named `briefing/questions.ts` and `briefing/ghost.ts` as render
+ * layer while this pattern still listed three briefing modules, so a module
+ * reaching either of those was flagged by nothing and §4.4's "a new render
+ * file that skips registration is a RED BUILD" was not true of them.
  */
-const RENDER_LAYER_SPECIFIER =
-  /(briefing\/(?:sanitize|intent|render)|hints\/render|mcp\/render(?:-referee)?)\.ts$/;
+const RENDER_LAYER_SPECIFIER = new RegExp(
+  `(?:${RENDER_LAYER_MODULES.map((module) =>
+    module.replace(/^src\//, "").replace(/\./g, "\\."),
+  ).join("|")})$`,
+);
 
 /**
  * The render layer's value exports. An import of any of these names flags
@@ -91,6 +101,13 @@ const RENDER_IDENTIFIERS: ReadonlySet<string> = new Set([
   "formatIntentLabel",
   "intentFragment",
   "renderIntent",
+  "formatGhostLine",
+  "formatGhostAge",
+  "renderGhostNotice",
+  "ghostAttribution",
+  "ghostDraftBody",
+  "formatQuestionEntry",
+  "fitQuestionEntries",
 ]);
 
 /** import/export-from statements: clause + specifier. */
@@ -309,6 +326,26 @@ describe("§4.4: unregistered render surfaces are a red build", () => {
     expect(labels).toContain("connector-acp");
     expect(labels).toContain("connector-cursor");
     expect(labels).toContain("cli");
+  });
+
+  test("the specifier pattern matches EVERY module the registry calls render layer", () => {
+    // The meta-test can only flag an import it recognises, so this pattern IS
+    // the coverage of the rule above. It was written out by hand beside the
+    // list it mirrors, and drifted: briefing/questions.ts (R2) and
+    // briefing/ghost.ts (VISION §3) joined RENDER_LAYER_MODULES while the
+    // pattern still named three briefing modules, so a module rendering a
+    // question entry or a ghost line was flagged by nothing at all.
+    for (const module of RENDER_LAYER_MODULES) {
+      const path = module.replace(/^src\//, "");
+      expect(RENDER_LAYER_SPECIFIER.test(`../${path}`), module).toBe(true);
+      expect(
+        RENDER_LAYER_SPECIFIER.test(`@crosscheck/connector-core/${path}`),
+        module,
+      ).toBe(true);
+    }
+    // And still only those: a neighbouring module of the same shape is not
+    // render layer, or every importer in the workspace would need a row.
+    expect(RENDER_LAYER_SPECIFIER.test("../briefing/cut.ts")).toBe(false);
   });
 
   test("the ACP and Cursor injection surfaces stay registered by NAME — module cover is not surface cover", () => {
