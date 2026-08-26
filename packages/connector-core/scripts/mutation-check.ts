@@ -559,6 +559,23 @@ export const MUTATIONS: readonly Mutation[] = [
       "even supposed to have sent",
   },
   {
+    // The recorded cause is the sentence the whole surface exists to
+    // deliver; this puts it back on the whole-body blanker.
+    label: "one everyday word blanks the answer a solved tree holds",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: `  const body = spanRedactedUntrusted(
+    entry.rootCause,
+    SOLVED_ROOT_CAUSE_MAX_CHARS,
+  );`,
+    to: "  const body = sanitizeUntrusted(entry.rootCause, SOLVED_ROOT_CAUSE_MAX_CHARS);",
+    test: `${CORE}/test/briefing-solved.test.ts`,
+    because:
+      "a real cause containing `override` or `you must` renders as " +
+      "\u00ab[redacted: title looked like an instruction]\u00bb — a message " +
+      "about a title the reader never saw, in place of the one sentence the " +
+      "feature exists to hand them",
+  },
+  {
     // DESIGN.md §4 again, the other half: an injected claim states its trust
     // labels. This drops the confidence check, so an unlabelled body prints.
     label: "a hedged root cause is injected as a settled answer",

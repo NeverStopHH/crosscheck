@@ -332,7 +332,12 @@ const INJECTION_SPAN_PATTERN = new RegExp(
  * NOT THE DEFAULT, deliberately. Widening it to titles, claim bodies and hints
  * is audit row M14 and a decision of its own — that work also owes the AUTHOR a
  * warning when their text would render redacted, which this has no way to give.
- * Two callers today: `quotedSpanRedacted` in mcp/render.ts, and this comment.
+ * Three callers today, and both real ones share one property: the body IS the
+ * answer, so blanking it leaves the reader with a marker where their next step
+ * should have been. `quotedSpanRedacted` in mcp/render.ts (a hub refusal — the
+ * names and addresses to retry with), `solvedRootCauseLine` in
+ * briefing/render.ts (the recorded cause of a solved diagnosis, whose delivery
+ * is the whole reason that surface exists), and this comment.
  */
 export const spanRedactedUntrusted = (
   raw: string,

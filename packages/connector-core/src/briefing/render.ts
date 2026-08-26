@@ -32,7 +32,12 @@ import type {
 import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
 import { fitQuestionEntries, formatQuestionEntry } from "./questions.ts";
 import type { IntentLabel } from "./intent.ts";
-import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
+import {
+  bareUntrusted,
+  safeId,
+  sanitizeUntrusted,
+  spanRedactedUntrusted,
+} from "./sanitize.ts";
 
 /**
  * Exported because the MCP tools put the SAME untrusted text into the same
@@ -482,6 +487,22 @@ const CONFIDENCE_DECIMALS = 2;
  * A cause arriving WITHOUT its confidence (a hub older than the field) keeps
  * its pointer and loses its body: substance without labels is not something
  * this renderer vouches for, and `get_diagnosis <id>` is one call away.
+ *
+ * SPAN REDACTION, NOT WHOLE-BODY BLANKING — the second surface to opt in,
+ * after the hub refusal, and for the identical reason stated there: this
+ * body IS the answer. `sanitizeUntrusted` returns REDACTED_TITLE as soon as
+ * one of nine phrase branches matches anywhere, and four of them are
+ * everyday English inside a real diagnosis — `override`, `you must`,
+ * `disregard`, `act as`. A cause reading "the per-repo override is applied
+ * before the default is read" then rendered as
+ * «[redacted: title looked like an instruction]», which is wrong twice: the
+ * redacted thing is a cause and not a title, and it did not look like an
+ * instruction, it contained one common word. Everything else is unchanged
+ * and still runs first — NFKC, separators, invisibles, the characters the
+ * renderer owns, the 200-character bound, the « » frame and the quoted-data
+ * notice — so this narrows ONE branch on ONE surface. Telling the AUTHOR
+ * their body would render redacted is the other half of audit row M14 and is
+ * not here.
  */
 const solvedRootCauseLine = (entry: SolvedMatchEntry): string => {
   if (
@@ -493,7 +514,10 @@ const solvedRootCauseLine = (entry: SolvedMatchEntry): string => {
   ) {
     return "";
   }
-  const body = sanitizeUntrusted(entry.rootCause, SOLVED_ROOT_CAUSE_MAX_CHARS);
+  const body = spanRedactedUntrusted(
+    entry.rootCause,
+    SOLVED_ROOT_CAUSE_MAX_CHARS,
+  );
   if (body.length === 0) {
     return "";
   }

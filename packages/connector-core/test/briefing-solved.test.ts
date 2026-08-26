@@ -173,6 +173,29 @@ describe("briefing solved-before section", () => {
     expect(briefing).not.toContain("root cause");
   });
 
+  test("a cause containing an everyday word still reaches the reader", async () => {
+    // Arrange: "override" and "you must" are two of the sanitizer's nine
+    // phrase branches, and `sanitizeUntrusted` blanks the WHOLE body as soon
+    // as one matches. That is the right trade for a TITLE — a label that
+    // reads like an instruction is worth losing — and the wrong one here,
+    // where the body IS the answer the whole feature exists to deliver.
+    for (const cause of [
+      "the per-repo override is applied before the default is read, so the rotated key id never lands",
+      "you must not reuse the cached client after a rotation; it holds the old key id",
+    ]) {
+      const briefing = renderBriefing(baseInput([solvedMatch({ rootCause: cause })]));
+
+      // Assert: the matched SPAN goes, the sentence stays, and nothing tells
+      // the reader about a "title" they never saw.
+      const causeLine = briefing
+        .split("\n")
+        .find((line) => line.startsWith("  root cause"));
+      expect(causeLine, cause).not.toContain("looked like an instruction");
+      expect(causeLine, cause).toContain("[redacted]");
+      expect(causeLine, cause).toContain("key id");
+    }
+  });
+
   test("an unknown match kind drops the line rather than inventing a sentence", async () => {
     // Act: a newer hub's kind this renderer does not know — same honesty rule
     // as the absence section's unknown-kind handling.
