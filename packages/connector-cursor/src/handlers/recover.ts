@@ -29,15 +29,32 @@ export const IMPLEMENTING_STATUS = "implementing";
  * foreign-repo touch is dropped and counted rather than captured under the
  * wrong repo.
  */
+export interface RequireSessionStateOptions {
+  /**
+   * Whether the event that is asking IS an edit. The Claude twin counts the
+   * fire in hooks/post-tool-use.ts BEFORE its foreign-repo guard can return,
+   * for one reason: a conversation whose workspace resolves to a foreign repo
+   * would otherwise print `0 edit-tool fires -> 0 targets` and PASS — the
+   * exact silence these counters exist to end. Only afterFileEdit passes
+   * true; the shell, postToolUse and failure rows are not edits and must not
+   * inflate the ratio the doctor WARN is measured on.
+   */
+  readonly editFired?: boolean;
+}
+
 export const requireSessionState = async (
   ctx: CursorHookContext,
+  options: RequireSessionStateOptions = {},
 ): Promise<SessionState | null> => {
+  const editFires = options.editFired === true ? 1 : 0;
   const stored = await readSessionState(ctx.config.home, ctx.hostSessionKey);
   if (stored !== null) {
     if (stored.repoId !== ctx.identity.repoId) {
       await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
         ...fresh,
         foreignRepoDrops: fresh.foreignRepoDrops + 1,
+        // Counted BEFORE the drop, exactly as the Claude hook does.
+        editToolFires: fresh.editToolFires + editFires,
       }));
       return null;
     }
@@ -84,6 +101,7 @@ export const requireSessionState = async (
     await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
       ...fresh,
       foreignRepoDrops: fresh.foreignRepoDrops + 1,
+      editToolFires: fresh.editToolFires + editFires,
     }));
     return null;
   }
