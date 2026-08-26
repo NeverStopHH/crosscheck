@@ -320,15 +320,23 @@ const checkSettings = async (
   const unexpected = ownedCommands.filter(
     (entry) => !(REQUIRED_HOOK_EVENTS as readonly string[]).includes(entry.event),
   );
+  // A SYMPTOM AND THE REMEDY, like its user-scope sibling and like the
+  // launcher line printed under it. This is not a rare message: adding an
+  // event to REQUIRED_HOOK_EVENTS makes it the default state of every
+  // already-installed project until somebody re-runs init, and a bare event
+  // id is a name the reader has never seen with nothing to do about it —
+  // which ends either in a hand-edited settings.json that drifts from what
+  // init writes, or in the FAIL being ignored while capture stays silent.
+  const missingHooksDetail = `missing: ${missing.join(", ")} — rerun crosscheck init to register them`;
   const hooksCheck =
     ownedCommands.length === 0
       ? // The statusLine-only shape (finding #13's second variant): the
         // project file exists but registers no crosscheck hooks at all, so
         // the question falls through to user scope exactly as if the file
         // were absent.
-        hooksViaScopes(global, `missing: ${missing.join(", ")}`)
+        hooksViaScopes(global, missingHooksDetail)
       : missing.length > 0
-        ? check("FAIL", "hooks registered", `missing: ${missing.join(", ")}`)
+        ? check("FAIL", "hooks registered", missingHooksDetail)
         : unexpected.length > 0
           ? check(
               "WARN",

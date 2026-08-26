@@ -805,6 +805,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "path whose only wire value was supposed to be a hash",
   },
   {
+    // The FAIL every already-installed user meets after an event joins the
+    // required list. This takes the remedy back off it.
+    label: "the hooks FAIL names an event and no way to fix it",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: " \u2014 rerun crosscheck init to register them`;",
+    to: "`;",
+    test: `${CLI}/test/doctor-global.test.ts`,
+    because:
+      "`FAIL hooks registered  missing: PostToolUseFailure` names an " +
+      "internal event id and no next action, so the reader either " +
+      "hand-edits settings.json into a state init did not write or ignores " +
+      "it while the install captures nothing",
+  },
+  {
     // init and doctor must agree about which events are wired: this drops the
     // registration while doctor still requires it, which is the shape where
     // capture goes silent and the report stays green.
