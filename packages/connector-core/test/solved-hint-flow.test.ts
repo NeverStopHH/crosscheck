@@ -17,6 +17,7 @@ import { rm } from "node:fs/promises";
 
 import { MAX_HINTS_PER_SESSION } from "../src/constants.ts";
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
+import { sanitizeUntrusted } from "../src/briefing/sanitize.ts";
 import { repoKey, sessionSlug } from "../src/config/paths.ts";
 import { selectAndRenderSolvedHint } from "../src/flows/solved-hint.ts";
 import type { HubContext } from "../src/http/client.ts";
@@ -191,6 +192,13 @@ describe("selectAndRenderSolvedHint (the failure-time recipe)", () => {
     // Arrange: SessionStart showed this very tree, so the reader has seen it.
     // The briefing refs are a separate list from the delivered refs, and a
     // flow that consulted only its own list would repeat the pointer.
+    // The CONTROL is the identical fixture WITHOUT that ref and it runs
+    // first: silence is evidence of the seen-set only when the same input
+    // without it speaks.
+    const control = await fixture("sh-briefed-control");
+    expect(
+      (await selectAndRenderSolvedHint(flowInput(control))).length,
+    ).toBeGreaterThan(0);
     const f = await fixture("sh-briefed", {
       briefingSolvedRefs: [SOLVED_CONTEXT_ID],
     });
@@ -203,7 +211,20 @@ describe("selectAndRenderSolvedHint (the failure-time recipe)", () => {
   });
 
   test("a spent hint budget costs no hub call at all", async () => {
-    // Arrange: the session already delivered its allowance.
+    // Arrange: the CONTROL keeps ONE slot free and must spend it on a hub
+    // call — without it, "no hub call" below is satisfied by a flow that
+    // never calls the hub at all.
+    const control = await fixture("sh-capped-control", {
+      deliveredHintRefs: Array.from(
+        { length: MAX_HINTS_PER_SESSION - 1 },
+        (_, index) => `clm_${String(index)}`,
+      ),
+    });
+    expect(
+      (await selectAndRenderSolvedHint(flowInput(control))).length,
+    ).toBeGreaterThan(0);
+    expect(control.hub.calls.solvedMatches).toBe(1);
+    // …and the session that already delivered its whole allowance.
     const f = await fixture("sh-capped", {
       deliveredHintRefs: Array.from(
         { length: MAX_HINTS_PER_SESSION },
@@ -220,20 +241,35 @@ describe("selectAndRenderSolvedHint (the failure-time recipe)", () => {
   });
 
   test("no session state means silence, not recovery", async () => {
-    // Arrange: a home with no state file for this host session.
+    // Arrange: the SAME home speaks while its state file exists, so the
+    // silence after the file is gone is the missing state rather than a flow
+    // that never says anything.
     const f = await fixture("sh-nostate");
+    expect(
+      (await selectAndRenderSolvedHint(flowInput(f))).length,
+    ).toBeGreaterThan(0);
+    expect(f.hub.calls.solvedMatches).toBe(1);
     await rm(`${f.home}/sessions`, { recursive: true, force: true });
 
     // Act
     const text = await selectAndRenderSolvedHint(flowInput(f));
 
-    // Assert
+    // Assert: no output, and no SECOND probe — the cap and the seen-set both
+    // live in that file, so a flow without it must not reach the hub.
     expect(text).toBe("");
-    expect(f.hub.calls.solvedMatches).toBe(0);
+    expect(f.hub.calls.solvedMatches).toBe(1);
   });
 
   test("a hub with nothing solved for this fingerprint stays silent", async () => {
-    // Arrange
+    // Arrange: the CONTROL is the identical fixture whose hub HAS the tree,
+    // and it must both speak and claim a slot.
+    const control = await fixture("sh-empty-control");
+    expect(
+      (await selectAndRenderSolvedHint(flowInput(control))).length,
+    ).toBeGreaterThan(0);
+    expect(
+      (await readSessionState(control.home, HOST_KEY))?.deliveredHintRefs,
+    ).toEqual([SOLVED_CONTEXT_ID]);
     const f = await fixture("sh-empty", {}, []);
 
     // Act
@@ -248,6 +284,7 @@ describe("selectAndRenderSolvedHint (the failure-time recipe)", () => {
   test(
     "hostile hub rows stay inside the untrusted classes",
     async () => {
+      let delivered = 0;
       for (const { id, payload } of INJECTION_CORPUS) {
         // Arrange
         const f = await fixture(`sh-corpus-${id}`, {}, [
@@ -263,15 +300,24 @@ describe("selectAndRenderSolvedHint (the failure-time recipe)", () => {
         // Act
         const text = await selectAndRenderSolvedHint(flowInput(f));
 
-        // Assert
-        if (text.length === 0) {
+        // Assert — a hostile row MAY be dropped, but only for the one reason
+        // this renderer has: a title that sanitizes to nothing, and then the
+        // whole entry goes. Any other silence is a payload this loop would
+        // have skipped without asserting on it — which is how a corpus test
+        // passes against a surface that says nothing at all.
+        if (sanitizeUntrusted(payload).length === 0) {
+          expect(text, id).toBe("");
           continue;
         }
+        delivered += 1;
         expect(text, id).toContain(QUOTED_DATA_NOTICE);
         for (const line of text.split("\n")) {
           assertUntrustedCharacters(line, `${id}: ${line}`);
         }
       }
+      // The corpus is not all blanking titles: most payloads DID reach a
+      // reader, sanitized, which is what the invariants above were checked on.
+      expect(delivered).toBeGreaterThan(0);
     },
     CORPUS_TIMEOUT_MS,
   );
