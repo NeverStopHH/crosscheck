@@ -1878,6 +1878,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "tool to look at",
   },
   {
+    // Review finding P4. The kit is the documented surface a NEW connector
+    // programs against, and it offered only the pre-#17 `captureFileTargets`.
+    label: "the kit hides the worktree-aware capture entry point",
+    file: `${CORE}/src/kit.ts`,
+    from: 'export { captureTouchedFiles } from "./flows/capture-touched-files.ts";\n',
+    to: "",
+    test: `${CORE}/test/kit.test.ts`,
+    because:
+      "a fifth connector written against the facade and the package README " +
+      "calls the raw flow, gets pre-#17 single-root behaviour, and loses " +
+      "every linked-worktree edit with no counter and no guard firing",
+  },
+  {
     // Review finding P3. `??` folds undefined and null but NOT "", and Cursor
     // demonstrably sends `cwd: ""`. The guard test only sees this with a
     // RELATIVE file_path — `resolve("", "/abs")` is `/abs`, so the absolute
@@ -2164,6 +2177,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-render.test.ts 1
  * PRINTS: packages/connector-core/test/hint-select.test.ts 5
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
+ * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 4
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 2
