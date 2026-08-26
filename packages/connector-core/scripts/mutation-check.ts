@@ -672,8 +672,8 @@ export const MUTATIONS: readonly Mutation[] = [
     from: `  if (state.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION) {
     return "";
   }
-  const result = await getSolvedMatchesForFingerprint(`,
-    to: "  const result = await getSolvedMatchesForFingerprint(",
+`,
+    to: "",
     test: `${CORE}/test/solved-hint-flow.test.ts`,
     because:
       "a session retrying one failing command pays a hub round trip on every " +

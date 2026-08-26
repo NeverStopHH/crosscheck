@@ -83,11 +83,15 @@ export const selectAndRenderSolvedHint = async (
     return "";
   }
   // REDUNDANT WITH THE CHECK-AND-SET BELOW, and recorded so it is not
-  // re-reported as a gap: deleting it reddens no test, because the transform
-  // refuses an already-probed fingerprint on its own. It stays because a
-  // retry loop hits this line dozens of times a minute and the fast path
-  // costs a comparison where the slow one takes a file lock and re-reads the
-  // state — the same trade as the empty-string guard in briefing/sanitize.ts.
+  // re-reported as a gap: the transform refuses an already-probed
+  // fingerprint on its own, so deleting these three lines reddens NOTHING.
+  // Measured by deleting them here on macOS 26 arm64: solved-hint-flow.test.ts
+  // printed 11 pass / 0 fail and the whole of packages/connector-core printed
+  // 845 pass / 0 fail. Trust the shape over those totals, which age on every
+  // test anyone adds. It stays because a retry loop reaches this line dozens
+  // of times a minute and the fast path costs one comparison where the slow
+  // one takes the state lock and re-reads the file — the same trade, and the
+  // same disclosure, as the empty-string guard in briefing/sanitize.ts.
   if (state.probedFingerprints.includes(input.fingerprint)) {
     return "";
   }
