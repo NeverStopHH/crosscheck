@@ -2410,14 +2410,14 @@ interface Outcome {
  * PRINTS: absence-render.test.ts 1
  * PRINTS: agent-restart.test.ts 1
  * PRINTS: briefing-parity.test.ts 2
- * PRINTS: briefing-solved.test.ts 1
+ * PRINTS: briefing-solved.test.ts 3
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
  * PRINTS: conclusion-corpus.test.ts 6
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
- * PRINTS: doctor-global.test.ts 2
+ * PRINTS: doctor-global.test.ts 3
  * PRINTS: doctor-latency.test.ts 1
  * PRINTS: doctor-summarizer-runner.test.ts 1
  * PRINTS: doctor.test.ts 1
@@ -2429,7 +2429,7 @@ interface Outcome {
  * PRINTS: hint-budget.test.ts 2
  * PRINTS: hint-flow.test.ts 2
  * PRINTS: hint-hook.test.ts 1
- * PRINTS: hint-render.test.ts 1
+ * PRINTS: hint-render.test.ts 2
  * PRINTS: hint-select.test.ts 5
  * PRINTS: hints.test.ts 2
  * PRINTS: hook-budget.test.ts 2
@@ -2463,12 +2463,13 @@ interface Outcome {
  * PRINTS: sessions.test.ts 1
  * PRINTS: set-intent.test.ts 1
  * PRINTS: settings-merge-removal.test.ts 1
- * PRINTS: solved-cli.test.ts 1
+ * PRINTS: solved-cli.test.ts 2
  * PRINTS: solved-counts.test.ts 1
  * PRINTS: solved-cross-repo.test.ts 4
  * PRINTS: solved-fanout.test.ts 2
- * PRINTS: solved-hint-flow.test.ts 2
- * PRINTS: solved-intent.test.ts 3
+ * PRINTS: solved-hint-flow.test.ts 4
+ * PRINTS: solved-intent.test.ts 4
+ * PRINTS: solved-probe.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
  * PRINTS: stop-gate.test.ts 1
  * PRINTS: stop-hook.test.ts 1
