@@ -278,9 +278,10 @@ describe("set_intent and the ghost check", () => {
 
     const text = await declare(alice, "Rework how verifyToken refetches the JWKS");
     expect(text).toContain(GHOST_SECTION_HEADER);
-    expect(text).toContain("- Ken · last active");
-    expect(text).toContain(`also on ${SHARED[1]}, ${SHARED[0]}`);
-    expect(text).toContain("intent: «Move the session store behind an interface»");
+    expect(text).toContain(
+      "- Ken · intent: «Move the session store behind an interface» · last active",
+    );
+    expect(text).toContain(`shares ${SHARED[1]}, ${SHARED[0]}`);
     expect(text).toContain(`get_diagnosis ${ken.workContextId}`);
     // A POINTER: the answer carries no claim body and asks for no decision.
     expect(text).toContain("nothing here blocks you");
@@ -311,6 +312,6 @@ describe("set_intent and the ghost check", () => {
       "Rework how verifyToken refetches the JWKS",
     );
     expect(alicesText).toContain(GHOST_SECTION_HEADER);
-    expect(alicesText).toContain("- Dora · last active");
+    expect(alicesText).toContain("- Dora · intent: «Rewrite the token refresh guard»");
   });
 });

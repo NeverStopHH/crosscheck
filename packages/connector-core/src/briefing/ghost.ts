@@ -79,7 +79,7 @@ export const formatGhostAge = (ageMs: number): string => {
 
 /**
  * The overlap clauses, strongest first — a shared failure, then the shared
- * values by name, then the shared topic. Empty means this row has no reason
+ * values by name, then how many words of the reader's own intent matched. Empty means this row has no reason
  * a reader could check, and the caller drops it rather than printing a name
  * with no "why": a warning nobody can evaluate is the prediction theatre
  * this feature was built to avoid.
@@ -98,11 +98,21 @@ const overlapClauses = (entry: GhostCheckEntry): readonly string[] => {
   // the two and false about the size of the collision.
   const hidden = Math.max(0, entry.sharedTargetCount - sample.length);
   const more = hidden === 0 ? "" : ` (+${String(hidden)} more of yours)`;
-  const values = named.length === 0 ? [] : [`also on ${named.join(", ")}${more}`];
-  // Any positive count is already above the hub's floor (http/hub.ts), so no
-  // copy of that constant lives here.
-  const topic = entry.intentTokenHits > 0 ? ["same topic as your intent"] : [];
-  return [...failure, ...values, ...topic];
+  // "shares", not "also on": "also" wants an antecedent, and on a row with no
+  // failure clause before it there is none.
+  const values = named.length === 0 ? [] : [`shares ${named.join(", ")}${more}`];
+  // THE COUNT, not "same topic as your intent". Any positive value is already
+  // above the hub's floor (http/hub.ts), so no copy of that constant lives
+  // here — but the number itself is on the wire and throwing it away made
+  // this the one clause a reader cannot check, on the tier with the weakest
+  // evidence behind it. Its neighbours name theirs ("hit the same failure",
+  // "shares a.ts, b.ts"); DESIGN.md §10 risk 8 promises a COUNT rule the
+  // reader can check against the line, and "three words of your intent" is
+  // that promise kept.
+  const hits = entry.intentTokenHits;
+  const words =
+    hits > 0 ? [`${String(hits)} word${hits === 1 ? "" : "s"} of your intent`] : [];
+  return [...failure, ...values, ...words];
 };
 
 /**
@@ -155,9 +165,16 @@ export const formatGhostLine = (
   // mint a field of its own.
   return [
     `- ${who}`,
+    // THEIR plan next to THEM. `intentFragment` is deliberately
+    // possessive-free (briefing/intent.ts keeps one spelling for every
+    // surface), so what binds the bare `intent:` label to a person is
+    // POSITION — and after a clause containing the words "your intent" the
+    // nearest preceding noun was the reader, so the teammate's sentence read
+    // as the reader's own echoed back and got skipped. It is the one clause
+    // on the line worth reading.
+    ...(plan === null ? [] : [plan]),
     `last active ${formatGhostAge(ageMs)}`,
     ...clauses,
-    ...(plan === null ? [] : [plan]),
     `get_diagnosis ${id}`,
   ].join(" · ");
 };

@@ -58,11 +58,17 @@ const framePairs = (text: string): number => {
 };
 
 describe("the ghost-check line", () => {
-  test("names who, since when, which of my files, and the call", () => {
+  test("names who, what they say they are doing, then why and the call", () => {
+    // THEIR plan sits next to THEM. The bare `intent:` label is the one
+    // spelling every surface uses, so what binds it to a person is position:
+    // after a clause reading "your intent" it read as the reader's own
+    // sentence echoed back, which is the one clause on the line they would
+    // have wanted to read.
     const line = formatGhostLine(ghostCheck(), NOW);
     expect(line).toBe(
-      "- Ken · last active 5m ago · also on src/auth/session.ts, src/auth/token.ts · " +
-        "intent: «Move the session store behind an interface» · get_diagnosis wc_theirs",
+      "- Ken · intent: «Move the session store behind an interface» · " +
+        "last active 5m ago · shares src/auth/session.ts, src/auth/token.ts · " +
+        "get_diagnosis wc_theirs",
     );
     expect(framePairs(line ?? "")).toBe(1);
   });
@@ -83,7 +89,7 @@ describe("the ghost-check line", () => {
     expect(line).not.toContain("sha256");
     // The control: the file beside it IS named, so what suppressed the hash
     // is the kind and not a blanket refusal to print shared values.
-    expect(line).toContain("also on src/auth/token.ts");
+    expect(line).toContain("shares src/auth/token.ts");
   });
 
   test("the overlap the sample does not fit is stated, not implied", () => {
@@ -98,16 +104,29 @@ describe("the ghost-check line", () => {
       }),
       NOW,
     );
-    expect(line).toContain("also on a.ts, b.ts, c.ts (+4 more of yours)");
+    expect(line).toContain("shares a.ts, b.ts, c.ts (+4 more of yours)");
   });
 
-  test("two plans sharing no file still read as one topic", () => {
+  test("the weakest tier prints the count a reader can check", () => {
+    // The neighbouring clauses name their evidence ("hit the same failure",
+    // "shares a.ts, b.ts"); this tier has no target evidence at all, so a
+    // bare "same topic" was the least falsifiable sentence on the line and
+    // sat on the tier most likely to be wrong. The count is already on the
+    // wire — printing it costs nothing and makes the tier checkable.
     const line = formatGhostLine(
       ghostCheck({ sharedTargets: [], sharedTargetCount: 0, intentTokenHits: 4 }),
       NOW,
     );
-    expect(line).toContain("same topic as your intent");
-    expect(line).not.toContain("also on");
+    expect(line).toContain("4 words of your intent");
+    expect(line).not.toContain("shares");
+    // Singular-safe, because a row can qualify on one word beside a shared
+    // failure.
+    expect(
+      formatGhostLine(
+        ghostCheck({ sharedTargets: [], sharedTargetCount: 0, intentTokenHits: 1 }),
+        NOW,
+      ),
+    ).toContain("1 word of your intent");
   });
 
   test("a row with no checkable reason is dropped", () => {

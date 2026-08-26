@@ -382,7 +382,7 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
     });
 
     // Assert — ONE of the two rows rendered, and the counter says one.
-    expect(assembled.briefing).toContain("- Ken · last active");
+    expect(assembled.briefing).toContain("- Ken · titled «Session store migration»");
     expect(assembled.briefing).not.toContain("wc_reasonless");
     expect(assembled.shownGhostCount).toBe(1);
     const state = await readSessionState(home, HOST_KEY);
