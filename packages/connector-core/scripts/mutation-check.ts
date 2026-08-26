@@ -2510,6 +2510,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "everybody — the prediction theatre this feature was built not to be",
   },
   {
+    // The BARE class on the one ghost field that is a person's name. It sits
+    // outside the « » frame beside the reader's own facts, on a line built
+    // from U+00B7 separators — so an unsanitized name is a field of its own.
+    label: "the ghost line prints a teammate's name unsanitized",
+    file: `${CORE}/src/briefing/ghost.ts`,
+    from: `  const name =
+    entry.developerName === undefined ? "" : bareUntrusted(entry.developerName);`,
+    to: '  const name = entry.developerName ?? "";',
+    test: `${CORE}/test/mcp-hostile-hub.test.ts`,
+    because:
+      "a hub-chosen display name mints its own line in the answer set_intent " +
+      "hands back the moment a plan is declared",
+  },
+  {
     // "hit the same failure" is a fact a tired human can act on; 39
     // characters of sha256 on a briefing line is not.
     label: "the ghost line prints the fingerprint hash at the reader",
@@ -2630,6 +2644,7 @@ interface Outcome {
  * PRINTS: intent-hook.test.ts 1
  * PRINTS: intent-worker.test.ts 1
  * PRINTS: latency.test.ts 3
+ * PRINTS: mcp-hostile-hub.test.ts 1
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 6

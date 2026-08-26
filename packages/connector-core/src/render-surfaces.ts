@@ -688,7 +688,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     kind: "composite",
     name: "mcp-tool-set-intent",
     module: "src/mcp/tools/set-intent.ts",
-    note: "ids through safeId; the echoed summary through quoted under quotingText",
+    note: "ids through safeId; the echoed summary through quoted under quotingText; the ghost block through renderGhostNotice, whose every field is hub-sent (teammate name, title, intent, shared path)",
     corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
   },
   {
