@@ -121,6 +121,18 @@ const planFragment = (entry: GhostCheckEntry): string | null => {
 };
 
 /**
+ * The teammate as the BARE field every ghost surface prints, or the honest
+ * fallback. ONE spelling: the line and the stored attribution both name the
+ * same person the same way, and a sanitizer that has to be remembered twice
+ * is a sanitizer that will be dropped once.
+ */
+const teammateName = (entry: GhostCheckEntry): string => {
+  const name =
+    entry.developerName === undefined ? "" : bareUntrusted(entry.developerName);
+  return name.length === 0 ? UNKNOWN_TEAMMATE : name;
+};
+
+/**
  * One ghost check as the single line every surface prints. Null = a row this
  * renderer will not vouch for: an id outside the allowlist, an unparseable
  * timestamp, or no checkable reason at all.
@@ -135,9 +147,7 @@ export const formatGhostLine = (
   if (id.length === 0 || ageMs === null || clauses.length === 0) {
     return null;
   }
-  const name =
-    entry.developerName === undefined ? "" : bareUntrusted(entry.developerName);
-  const who = name.length === 0 ? UNKNOWN_TEAMMATE : name;
+  const who = teammateName(entry);
   const plan = planFragment(entry);
   // U+00B7-separated facts, the shape of every other teammate line here — the
   // structure the BARE class strips from names and values, so neither can
@@ -166,11 +176,8 @@ export const formatGhostLine = (
  * come from the hub, and this string is stored rather than only printed.
  */
 export const ghostAttribution = (entry: GhostCheckEntry): string => {
-  const name =
-    entry.developerName === undefined ? "" : bareUntrusted(entry.developerName);
-  const who = name.length === 0 ? `${UNKNOWN_TEAMMATE}'s` : `${name}'s`;
+  const plan = `${teammateName(entry)}'s live plan`;
   const id = safeId(entry.workContextId);
-  const plan = `${who} live plan`;
   return id.length === 0 ? plan : `${plan}: get_diagnosis ${id}`;
 };
 

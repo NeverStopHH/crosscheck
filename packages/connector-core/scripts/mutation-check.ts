@@ -2516,8 +2516,9 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "the ghost line prints a teammate's name unsanitized",
     file: `${CORE}/src/briefing/ghost.ts`,
     from: `  const name =
-    entry.developerName === undefined ? "" : bareUntrusted(entry.developerName);`,
-    to: '  const name = entry.developerName ?? "";',
+    entry.developerName === undefined ? "" : bareUntrusted(entry.developerName);
+  return name.length === 0 ? UNKNOWN_TEAMMATE : name;`,
+    to: "  return entry.developerName ?? UNKNOWN_TEAMMATE;",
     test: `${CORE}/test/mcp-hostile-hub.test.ts`,
     because:
       "a hub-chosen display name mints its own line in the answer set_intent " +
