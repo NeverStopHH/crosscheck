@@ -10,15 +10,9 @@
  * per session state — so there is no token estimate here: the count IS the
  * spend indicator.
  */
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
-
-import {
-  DOCTOR_INTENT_SILENT_FIRES_WARN,
-  STATUS_MAX_SESSION_STATES,
-} from "@crosscheck/connector-core/constants.ts";
-import { readJsonOrNull } from "@crosscheck/connector-core/config/paths.ts";
-import { SessionStateSchema } from "@crosscheck/connector-core/state/session-state.ts";
+import { DOCTOR_INTENT_SILENT_FIRES_WARN } from "@crosscheck/connector-core/constants.ts";
+import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 export interface IntentCost {
   /** Live sessions of this repo+hub that were counted. */
@@ -46,42 +40,29 @@ const NO_COST: IntentCost = {
   lastFailure: null,
 };
 
-/** Bounded scan, the summarizer cost's: at most STATUS_MAX_SESSION_STATES files. */
+/** Sums states the caller already read — one scan for all three counters. */
+export const summarizeIntentCost = (
+  states: readonly SessionState[],
+): IntentCost =>
+  states.reduce<IntentCost>(
+    (total, state) => ({
+      sessions: total.sessions + 1,
+      fires: total.fires + state.intentFireCount,
+      nones: total.nones + state.intentNoneCount,
+      sets: total.sets + state.intentSetCount,
+      fails: total.fails + state.intentFailCount,
+      lastFailure: state.intentLastFailure ?? total.lastFailure,
+    }),
+    NO_COST,
+  );
+
+/** Scan-and-sum, for a caller that wants only this one figure. */
 export const readIntentCost = async (
   home: string,
   hubUrl: string,
   repoId: string,
-): Promise<IntentCost> => {
-  let names: readonly string[];
-  try {
-    names = await readdir(join(home, "sessions"));
-  } catch {
-    return NO_COST;
-  }
-  const parsed = await Promise.all(
-    names
-      .filter((name) => name.endsWith(".json"))
-      .slice(0, STATUS_MAX_SESSION_STATES)
-      .map(async (name) =>
-        SessionStateSchema.safeParse(await readJsonOrNull(join(home, "sessions", name))),
-      ),
-  );
-  return parsed
-    .filter((entry) => entry.success)
-    .map((entry) => entry.data)
-    .filter((state) => state.hubUrl === hubUrl && state.repoId === repoId)
-    .reduce<IntentCost>(
-      (total, state) => ({
-        sessions: total.sessions + 1,
-        fires: total.fires + state.intentFireCount,
-        nones: total.nones + state.intentNoneCount,
-        sets: total.sets + state.intentSetCount,
-        fails: total.fails + state.intentFailCount,
-        lastFailure: state.intentLastFailure ?? total.lastFailure,
-      }),
-      NO_COST,
-    );
-};
+): Promise<IntentCost> =>
+  summarizeIntentCost(await readLiveSessionStates(home, hubUrl, repoId));
 
 /** The one spelling of the intent fact both CLI surfaces print. */
 export const formatIntentCost = (cost: IntentCost): string => {

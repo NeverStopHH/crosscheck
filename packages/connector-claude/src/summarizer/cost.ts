@@ -17,15 +17,9 @@
  * at ~0.017). The line is a spend INDICATOR on the developer's quota —
  * "is this firing at all, and how often" — not a bill.
  */
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
-
-import {
-  DOCTOR_SUMMARIZER_SILENT_FIRES_WARN,
-  STATUS_MAX_SESSION_STATES,
-} from "@crosscheck/connector-core/constants.ts";
-import { readJsonOrNull } from "@crosscheck/connector-core/config/paths.ts";
-import { SessionStateSchema } from "@crosscheck/connector-core/state/session-state.ts";
+import { DOCTOR_SUMMARIZER_SILENT_FIRES_WARN } from "@crosscheck/connector-core/constants.ts";
+import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 export interface SummarizerCost {
   /** Live sessions of this repo+hub that were counted. */
@@ -59,49 +53,34 @@ const NO_COST: SummarizerCost = {
 };
 
 /**
- * Bounded scan of the session-state directory: at most
- * STATUS_MAX_SESSION_STATES files are read — more live sessions than that on
- * one machine is not a cost question anymore.
+ * Sums states the CALLER has already read. `crosscheck status` and `doctor`
+ * print three model-cost lines and used to scan the session directory three
+ * times over; the scan is now `readLiveSessionStates` and lives in one place
+ * (state/session-state.ts states why).
  */
+export const summarizeSummarizerCost = (
+  states: readonly SessionState[],
+): SummarizerCost =>
+  states.reduce<SummarizerCost>(
+    (total, state) => ({
+      sessions: total.sessions + 1,
+      fires: total.fires + state.summarizerFireCount,
+      nones: total.nones + state.summarizerNoneCount,
+      drafts: total.drafts + state.summarizerDraftCount,
+      fails: total.fails + state.summarizerFailCount,
+      lastFailure: state.summarizerLastFailure ?? total.lastFailure,
+      estimatedTokens: total.estimatedTokens + state.summarizerEstimatedTokens,
+    }),
+    NO_COST,
+  );
+
+/** Scan-and-sum, for a caller that wants only this one figure. */
 export const readSummarizerCost = async (
   home: string,
   hubUrl: string,
   repoId: string,
-): Promise<SummarizerCost> => {
-  let names: readonly string[];
-  try {
-    names = await readdir(join(home, "sessions"));
-  } catch {
-    return NO_COST;
-  }
-  const parsed = await Promise.all(
-    names
-      .filter((name) => name.endsWith(".json"))
-      .slice(0, STATUS_MAX_SESSION_STATES)
-      .map(async (name) =>
-        SessionStateSchema.safeParse(
-          await readJsonOrNull(join(home, "sessions", name)),
-        ),
-      ),
-  );
-  return parsed
-    .filter((entry) => entry.success)
-    .map((entry) => entry.data)
-    .filter((state) => state.hubUrl === hubUrl && state.repoId === repoId)
-    .reduce<SummarizerCost>(
-      (total, state) => ({
-        sessions: total.sessions + 1,
-        fires: total.fires + state.summarizerFireCount,
-        nones: total.nones + state.summarizerNoneCount,
-        drafts: total.drafts + state.summarizerDraftCount,
-        fails: total.fails + state.summarizerFailCount,
-        lastFailure: state.summarizerLastFailure ?? total.lastFailure,
-        estimatedTokens:
-          total.estimatedTokens + state.summarizerEstimatedTokens,
-      }),
-      NO_COST,
-    );
-};
+): Promise<SummarizerCost> =>
+  summarizeSummarizerCost(await readLiveSessionStates(home, hubUrl, repoId));
 
 /**
  * The one spelling of the cost fact both CLI surfaces print. The outcome

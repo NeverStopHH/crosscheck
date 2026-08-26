@@ -1,3 +1,6 @@
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+
 import { z } from "zod";
 
 import {
@@ -5,6 +8,7 @@ import {
   MAX_PROBED_FINGERPRINTS,
   MAX_SEEN_TARGETS,
   MAX_TRIPWIRE_ASKED_FILES,
+  STATUS_MAX_SESSION_STATES,
 } from "../constants.ts";
 import {
   readJsonOrNull,
@@ -464,6 +468,49 @@ export const withGhostNotices = (
   shown <= 0
     ? state
     : { ...state, ghostNoticeCount: state.ghostNoticeCount + shown };
+
+/**
+ * The LIVE session states of one repo+hub, in one bounded scan (at most
+ * STATUS_MAX_SESSION_STATES files — more live sessions than that on one
+ * machine is not a cost question any more).
+ *
+ * ONE SCAN, not one per counter, and that is the whole reason this exists.
+ * `crosscheck status` and `doctor` each print three model-cost lines — the
+ * summarizer, the derived intent and the ghost check — and every one of them
+ * used to readdir and re-parse the same directory. Three passes over the same
+ * files on a surface a human runs by hand is the shape of the problem, not a
+ * constant to tune; each cost module now SUMS states it is handed, and this
+ * is the only place that reads them.
+ *
+ * Fail open like every read on a status path: an unreadable directory is an
+ * empty list, and a state file that does not parse is skipped rather than
+ * costing the scan.
+ */
+export const readLiveSessionStates = async (
+  home: string,
+  hubUrl: string,
+  repoId: string,
+): Promise<readonly SessionState[]> => {
+  let names: readonly string[];
+  try {
+    names = await readdir(join(home, "sessions"));
+  } catch {
+    return [];
+  }
+  const parsed = await Promise.all(
+    names
+      .filter((name) => name.endsWith(".json"))
+      .slice(0, STATUS_MAX_SESSION_STATES)
+      .map(async (name) =>
+        SessionStateSchema.safeParse(
+          await readJsonOrNull(join(home, "sessions", name)),
+        ),
+      ),
+  );
+  return parsed
+    .flatMap((entry) => (entry.success ? [entry.data] : []))
+    .filter((state) => state.hubUrl === hubUrl && state.repoId === repoId);
+};
 
 export interface DeriveSessionStateInput {
   readonly hostSessionKey: string;

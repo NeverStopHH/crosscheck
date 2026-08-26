@@ -23,11 +23,14 @@ import {
 } from "@crosscheck/connector-core/state/foreign-drops.ts";
 import { spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
+import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
 import {
+  formatGhostCost,
   formatIntentCost,
   formatSummarizerCost,
-  readIntentCost,
-  readSummarizerCost,
+  summarizeGhostCost,
+  summarizeIntentCost,
+  summarizeSummarizerCost,
 } from "@crosscheck/connector-claude";
 import type { CliResult } from "./login.ts";
 
@@ -65,17 +68,25 @@ export const runStatus = async (
   const key = repoKey(config.hubUrl, identity.repoId);
   const sync = await readSyncState(config.home, key);
   const depth = await spoolDepth(config.home, key);
-  // Cost visibility (DESIGN.md §10 risk 7): a local fact, printed whether or
-  // not the hub answers; the figure is an estimate and the line says so.
-  const summarizerCost = await readSummarizerCost(
+  // Cost visibility (DESIGN.md §10 risk 7): local facts, printed whether or
+  // not the hub answers. THREE model-cost lines out of ONE scan of the
+  // session-state directory — the summarizer's estimate, the derived-intent
+  // fires and the ghost checks — because this is a surface a human runs by
+  // hand and three passes over the same files is a cost nobody asked for.
+  const liveStates = await readLiveSessionStates(
     config.home,
     config.hubUrl,
     identity.repoId,
   );
+  const summarizerCost = summarizeSummarizerCost(liveStates);
   // The derived-intent fires and what came of them (trial finding #16):
   // one Haiku call per session state, the outcome split so a fire that
   // landed nothing is never an invisible number.
-  const intentCost = await readIntentCost(config.home, config.hubUrl, identity.repoId);
+  const intentCost = summarizeIntentCost(liveStates);
+  // The ghost checks (VISION.md §3): the free deterministic notices first,
+  // then the gated model half with the not-called count named, so a quiet
+  // team never reads as a broken runner.
+  const ghostCost = summarizeGhostCost(liveStates);
   const drops = await readDropSummary(config.home, key);
   // A batch the ledger itself could not take is recorded as a marker, not a count,
   // so the summed total understates it. `doctor` says the same; both must agree.
@@ -190,6 +201,7 @@ export const runStatus = async (
       ...solvedLines,
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `intent: ${formatIntentCost(intentCost)}`,
+      `ghost checks: ${formatGhostCost(ghostCost)}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
       "",
     ].join("\n"),

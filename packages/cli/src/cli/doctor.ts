@@ -65,6 +65,7 @@ import {
 import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
 import {
   getAbsences,
+  getGhostChecks,
   getPrivacySettings,
   getQuestions,
   getSolvedMatchCounts,
@@ -81,18 +82,23 @@ import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/
 import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
 import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
+import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher-check.ts";
 import {
+  formatGhostCost,
   formatIntentCost,
   formatSummarizerCost,
   formatSummarizerFailure,
   isBelowSummarizerVersionFloor,
+  isGhostSilentlyDead,
   isIntentSilentlyDead,
   isSummarizerSilentlyDead,
   probeSummarizerRunner,
-  readIntentCost,
-  readSummarizerCost,
+  summarizeGhostCost,
+  summarizeIntentCost,
+  summarizeSummarizerCost,
 } from "@crosscheck/connector-claude";
 import type {
   SummarizerFailure,
@@ -916,12 +922,8 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
  * old counts sit right above a runner probe that PASSes — a line saying
  * "the runner is failing" there contradicted the check it pointed at.
  */
-const checkSummarizerCost = async (
-  home: string,
-  hubUrl: string,
-  repoId: string,
-): Promise<Check> => {
-  const cost = await readSummarizerCost(home, hubUrl, repoId);
+const checkSummarizerCost = (states: readonly SessionState[]): Check => {
+  const cost = summarizeSummarizerCost(states);
   const line = formatSummarizerCost(cost);
   return isSummarizerSilentlyDead(cost)
     ? check(
@@ -941,12 +943,8 @@ const checkSummarizerCost = async (
  * intent; never a PASS-only counter (the finding-#14 lesson). The runner is
  * the summarizer's, so the remedy is one check down — no second probe.
  */
-const checkIntentCost = async (
-  home: string,
-  hubUrl: string,
-  repoId: string,
-): Promise<Check> => {
-  const cost = await readIntentCost(home, hubUrl, repoId);
+const checkIntentCost = (states: readonly SessionState[]): Check => {
+  const cost = summarizeIntentCost(states);
   const line = formatIntentCost(cost);
   return isIntentSilentlyDead(cost)
     ? check(
@@ -955,6 +953,54 @@ const checkIntentCost = async (
         `${line} — fires that landed neither a NONE nor an intent; see the summarizer runner check (counts are per live session and clear at SessionEnd)`,
       )
     : check("PASS", "intent capture", line);
+};
+
+/**
+ * The GATED ghost check (VISION.md §3), the intent capture's sibling with the
+ * same rule and one extra fact on the line: how many checks were SKIPPED
+ * because the deterministic core found nobody. That number is the feature
+ * working, not failing, which is exactly why it has to be printed beside the
+ * fires rather than folded into them — a quiet team must never read as a dead
+ * runner. WARNs on any booked failure and on DOCTOR_GHOST_SILENT_FIRES_WARN
+ * fires that landed neither a NONE nor a draft; never PASS-only (the
+ * finding-#14 lesson). The runner is the summarizer's, so the remedy is one
+ * check down — no second probe.
+ */
+const checkGhostCost = (states: readonly SessionState[]): Check => {
+  const cost = summarizeGhostCost(states);
+  const line = formatGhostCost(cost);
+  return isGhostSilentlyDead(cost)
+    ? check(
+        "WARN",
+        "ghost checks",
+        `${line} — checks that landed neither a NONE nor a draft; see the summarizer runner check (counts are per live session and clear at SessionEnd)`,
+      )
+    : check("PASS", "ghost checks", line);
+};
+
+/**
+ * Can the hub answer the OVERLAP query at all? The deterministic half is the
+ * part that runs on every SessionStart, so a hub too old for it — or an
+ * unreachable one — is why this feature would be silent, and that is a
+ * different sentence from "the model layer is broken". `not measured` is a
+ * PASS: an older hub is a deployment state, not a fault on this machine.
+ */
+const checkGhostOverlap = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<Check> => {
+  const result = await getGhostChecks(ctx, repoId);
+  if (!result.ok) {
+    return check("PASS", "plan overlap", "not measured");
+  }
+  const count = result.data.length;
+  return check(
+    "PASS",
+    "plan overlap",
+    count === 0
+      ? "no teammate is working where you are"
+      : `${String(count)} teammate${count === 1 ? "" : "s"} working where you are`,
+  );
 };
 
 /**
@@ -1389,6 +1435,13 @@ export const runDoctor = async (
   // whichever scope satisfies the hooks requirement (finding #13).
   const launcherCommand =
     settingsInspection.launcherCommand ?? globalWiring.launcherCommand;
+  // ONE bounded scan of the session-state directory, shared by the three
+  // model-cost checks below (state/session-state.ts states why).
+  const liveStates = await readLiveSessionStates(
+    config.home,
+    config.hubUrl,
+    identity.repoId,
+  );
   return summarize([
     configCheck,
     identityCheck,
@@ -1414,13 +1467,17 @@ export const runDoctor = async (
     mcpUsableCheck(true, config.hubUrl),
     ...(await checkSpool(config.home, key, now)),
     ...(await foreignDropChecks(config.home)),
-    await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
-    await checkIntentCost(config.home, config.hubUrl, identity.repoId),
+    // ONE scan of the session-state directory for all three model-cost
+    // checks (state/session-state.ts readLiveSessionStates says why).
+    checkSummarizerCost(liveStates),
+    checkIntentCost(liveStates),
+    checkGhostCost(liveStates),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now),
     await checkAbsences(hubCtx, identity.repoId),
     await checkQuestions(hubCtx, identity.repoId, now),
     await checkSolvedMatches(hubCtx, identity.repoId),
+    await checkGhostOverlap(hubCtx, identity.repoId),
     await checkPrivacy(hubCtx),
     skewCheck,
     bunfigCheck,

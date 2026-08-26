@@ -19,6 +19,17 @@ export type { IntentCost } from "./intent/cost.ts";
 // The gated ghost-check surface (VISION.md §3): the worker entry the prompt
 // hook spawns when a recorded intent still owes a comparison.
 export { runGhostWorker } from "./ghost/worker.ts";
+export {
+  formatGhostCost,
+  isGhostSilentlyDead,
+  readGhostCost,
+  summarizeGhostCost,
+} from "./ghost/cost.ts";
+export type { GhostCost } from "./ghost/cost.ts";
+// The shared model-cost scan's per-counter summarizers (state/session-state.ts
+// readLiveSessionStates reads the directory once for all three).
+export { summarizeSummarizerCost } from "./summarizer/cost.ts";
+export { summarizeIntentCost } from "./intent/cost.ts";
 // The runner's own surface for `doctor` (trial finding #14): the real argv,
 // the real worker env, the booked-failure formatter and the active probe.
 export {
