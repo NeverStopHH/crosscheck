@@ -1,6 +1,6 @@
 /**
  * The ONE spelling of a ghost check (VISION.md §3) — the briefing's
- * "Teammates working on the same things right now" block and, through the
+ * "Teammates working where you are" block and, through the
  * same formatter, the sentence `set_intent` returns the moment a plan is
  * declared. Two spellings of this line would be two places for the pointer
  * discipline to slip.
@@ -222,10 +222,28 @@ export const ghostDraftBody = (
  * `Section` and `set_intent` prints it as a block; a second literal would be
  * a second place for "nothing here blocks you" to be dropped, which is the
  * half of the sentence that keeps this feature advisory.
+ *
+ * IT CLAIMS NO TENSE ITS OWN LINES CANNOT KEEP. It used to say "right now"
+ * over a window of GHOST_ACTIVE_WINDOW_DAYS = 7, so the header sat directly
+ * above lines reading "last active 6d ago" — and a reader who takes that at
+ * face value, pings a teammate about a file they last touched last week and
+ * learns the block overstates is a reader who stops reading the block. Each
+ * line carries its own age; the header states WHERE, and lets the age say
+ * WHEN.
+ *
+ * IT NAMES BOTH TOOLS, in the house shape the questions block uses
+ * ("answer_question replies"). A collision is something the reader is
+ * expected to ACT on — by opening a tree or by talking to the person — and
+ * `get_diagnosis` alone answers only the first half. `ask_teammate` takes
+ * exactly the two things a ghost line already hands over, the teammate and
+ * their work-context id, so the one action that settles "are we about to undo
+ * each other's work" stops being undiscoverable from the block that raised
+ * the question.
  */
 export const GHOST_SECTION_HEADER =
-  "Teammates working on the same things right now " +
-  "(get_diagnosis reads their tree; nothing here blocks you):";
+  "Teammates working where you are " +
+  "(get_diagnosis reads their tree, ask_teammate asks them; " +
+  "nothing here blocks you):";
 
 export interface GhostNotice {
   /** The block, or "" when no row survived — callers print nothing then. */

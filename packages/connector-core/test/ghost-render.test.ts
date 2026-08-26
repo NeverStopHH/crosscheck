@@ -235,7 +235,7 @@ describe("the ghost-check briefing block", () => {
   test("renders after presence and before the ambient contexts", () => {
     const briefing = briefingWith([ghostCheck()]);
     const presenceAt = briefing.indexOf("Teammate sessions active now:");
-    const ghostAt = briefing.indexOf("Teammates working on the same things");
+    const ghostAt = briefing.indexOf("Teammates working where you are");
     const contextsAt = briefing.indexOf("Ambient teammate context");
     expect(presenceAt).toBeGreaterThanOrEqual(0);
     expect(ghostAt).toBeGreaterThan(presenceAt);
@@ -244,6 +244,28 @@ describe("the ghost-check briefing block", () => {
 
   test("the header says out loud that nothing here blocks", () => {
     expect(briefingWith([ghostCheck()])).toContain("nothing here blocks you");
+  });
+
+  test("the header claims no tense its own lines cannot keep", () => {
+    // GHOST_ACTIVE_WINDOW_DAYS is a week, so a row six days old is legal and
+    // the header sits directly above it. "right now" over "last active 6d
+    // ago" is the overstatement that teaches a reader to skip the block.
+    const sixDaysAgo = new Date(
+      NOW.getTime() - 6 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const briefing = briefingWith([ghostCheck({ lastActiveAt: sixDaysAgo })]);
+    expect(briefing).toContain("last active 6d ago");
+    expect(briefing).not.toContain("right now");
+  });
+
+  test("the header names the tool that ASKS, not only the one that reads", () => {
+    // A collision is something the reader is expected to act on, and the
+    // product's answer to "someone else is in my files" is to ask them.
+    // ask_teammate takes exactly the two things a ghost line already hands
+    // over: the teammate and their work-context id.
+    const briefing = briefingWith([ghostCheck()]);
+    expect(briefing).toContain("get_diagnosis");
+    expect(briefing).toContain("ask_teammate");
   });
 
   test("bounded at MAX_GHOST_POINTERS, and says how many it withheld", () => {
@@ -266,10 +288,10 @@ describe("the ghost-check briefing block", () => {
     // The control: the identical briefing WITH one overlap does carry the
     // header, so the absence below is the empty list and not a dead section.
     expect(briefingWith([ghostCheck()])).toContain(
-      "Teammates working on the same things",
+      "Teammates working where you are",
     );
     expect(briefingWith([])).not.toContain(
-      "Teammates working on the same things",
+      "Teammates working where you are",
     );
   });
 });

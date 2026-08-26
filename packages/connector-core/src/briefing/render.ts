@@ -235,7 +235,7 @@ const renderQuestionSection = (input: BriefingInput): Section => {
 };
 
 /**
- * "Teammates working on the same things right now" (VISION.md §3), placed
+ * "Teammates working where you are" (VISION.md §3), placed
  * AFTER presence and BEFORE the teammate work contexts.
  *
  * That is one position and two arguments. Presence orients — who is around at
