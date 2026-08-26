@@ -44,6 +44,7 @@
 import {
   FINGERPRINT_SOURCE_CHARS,
   HTTP_NOT_FOUND,
+  MAX_FIRED_TOOL_CALLS,
   MAX_KNOWN_WORKTREE_ROOTS,
   MAX_SEEN_TARGETS,
 } from "@crosscheck/connector-core/constants.ts";
@@ -238,6 +239,16 @@ interface CaptureSession {
    * per root. That is the stated trade, not an oversight.
    */
   knownWorktreeRoots: readonly KnownWorktreeRoot[];
+  /**
+   * Tool CALL ids whose edit-tool fire is already booked. The fire belongs to
+   * the call, not to the row that happened to reveal its kind: `kind` is
+   * optional on the announce row, so an agent that says
+   * `tool_call {status: "pending"}` and only then reveals `kind: "edit"` used
+   * to book no fire at all — every one of its edits dropped, counted, and the
+   * doctor WARN unreachable for the session's whole life. FIFO-capped
+   * (MAX_FIRED_TOOL_CALLS) beside `seenTargets`.
+   */
+  readonly firedToolCalls: Set<string>;
   turns: number;
   ended: boolean;
   /** Null when injection is off for this proxy or the session is disabled. */
@@ -333,6 +344,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     lastHeartbeatAt: null,
     seenTargets: new Set(),
     knownWorktreeRoots: [],
+    firedToolCalls: new Set(),
     turns: 0,
     ended: true,
     briefing: null,
@@ -409,6 +421,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       lastHeartbeatAt: at.toISOString(),
       seenTargets: new Set(),
       knownWorktreeRoots: [],
+      firedToolCalls: new Set(),
       turns: 0,
       ended: false,
       briefing: null,
@@ -481,10 +494,13 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
      * performs that write, so on an agent that only ever writes this way it
      * is the sole edit signal there is — not counting it would leave such a
      * session permanently at `0 fires -> 0 targets`, unable to WARN). An
-     * agent that emits BOTH for one edit therefore books two fires; that
-     * cannot produce a false WARN, since the first of them captures the
-     * target. What must never happen is one tool call ticking once per
-     * STATUS change, which `isNewToolCall` prevents.
+     * agent that emits BOTH for one edit therefore books two fires against
+     * ONE target — a `2 fires -> 1 target` ratio that is measured rather than
+     * assumed (test/worktree-capture.test.ts drives both signals for one edit
+     * and pins it, and the parity tables say it in words). It cannot produce
+     * a false WARN, since the first of the two captures the target. What must
+     * never happen is one tool call ticking once per STATUS change, which
+     * `booksEditFire` prevents by counting on the tool CALL's own id.
      */
     readonly editFired: boolean;
     /** `lastPostToolUseTool` for this host: the ToolCallUpdate kind, or the method. */
@@ -682,15 +698,51 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     );
   };
 
+  /**
+   * ONE fire per tool CALL, never per wire row: an edit arriving pending,
+   * then in_progress, then completed is one edit, and agents repeat the whole
+   * update — `kind` included — on every status change.
+   *
+   * The identity is `toolCallId`, not "is this the announce row". `kind` is
+   * OPTIONAL on the announce (wire/v1.ts, and the ACP schema's own `"other"`
+   * default), so an agent that announces `tool_call {status: "pending"}` and
+   * reveals `kind: "edit"` on the revision booked ZERO fires under the
+   * row-based rule while its drops were counted — `0 edit-tool fires ->
+   * 0 targets`, a PASS, for a session losing every edit. A row with NO id at
+   * all is not conformant but must still answer, and falls back to the
+   * announce-row rule.
+   */
+  const booksEditFire = (
+    session: CaptureSession,
+    toolCall: ToolCallUpdate,
+  ): boolean => {
+    if (toolCall.toolKind !== EDIT_TOOL_KIND) {
+      return false;
+    }
+    const id = toolCall.toolCallId;
+    if (id === null) {
+      return toolCall.isNewToolCall;
+    }
+    if (session.firedToolCalls.has(id)) {
+      return false;
+    }
+    session.firedToolCalls.add(id);
+    while (session.firedToolCalls.size > MAX_FIRED_TOOL_CALLS) {
+      const oldest = session.firedToolCalls.values().next();
+      if (oldest.done) {
+        break;
+      }
+      session.firedToolCalls.delete(oldest.value);
+    }
+    return true;
+  };
+
   const handleToolCall = async (
     session: CaptureSession,
     toolCall: ToolCallUpdate,
   ): Promise<void> => {
     await captureTargets(session, toolCall.paths, {
-      // ONE fire per tool call, never per status change (wire/v1.ts
-      // `isNewToolCall`): an edit arriving pending, then in_progress, then
-      // completed is one edit.
-      editFired: toolCall.isNewToolCall && toolCall.toolKind === EDIT_TOOL_KIND,
+      editFired: booksEditFire(session, toolCall),
       toolLabel: toolCall.toolKind,
     });
     if (toolCall.status === FAILED_STATUS) {

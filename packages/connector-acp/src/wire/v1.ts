@@ -223,6 +223,7 @@ const SessionUpdateParamsSchema = z.looseObject({
   sessionId: z.string().min(1),
   update: z.looseObject({
     sessionUpdate: z.string().min(1),
+    toolCallId: z.string().min(1).optional().catch(undefined),
     kind: z.string().min(1).optional().catch(undefined),
     status: z.string().min(1).optional().catch(undefined),
     locations: z.array(z.unknown()).optional().catch(undefined),
@@ -234,6 +235,14 @@ const SessionUpdateParamsSchema = z.looseObject({
 export interface ToolCallUpdate {
   /** Location paths + diff-content paths, in wire order. PATHS ONLY. */
   readonly paths: readonly string[];
+  /**
+   * The agent's own id for this tool CALL, carried by both the announce row
+   * and every later revision of it — the identity the edit-tool fire is
+   * counted on (capture/engine.ts). Null only for a row that omits it, which
+   * the ACP schema does not permit but a tolerant parser must survive; the
+   * `isNewToolCall` fallback below is what such a row falls back to.
+   */
+  readonly toolCallId: string | null;
   readonly toolKind: string | null;
   readonly status: string | null;
   readonly rawOutput: unknown;
@@ -250,12 +259,18 @@ export interface ToolCallUpdate {
    * measured on. One fire per tool call is also exactly what the Claude
    * reference counts.
    *
-   * This is an ADDITIVE field on a version-pinned module: nothing that
-   * existed changed shape, and no new wire fact is parsed — the
-   * discriminator was already on the wire and simply thrown away. Deduping on
-   * `toolCallId` would have been the alternative and costs the same, since
-   * SessionUpdateParamsSchema models no such field either; per-call is the
-   * smaller semantic claim.
+   * It is the FALLBACK discriminator, not the primary one. Counting on this
+   * alone booked ZERO fires for an agent that announces
+   * `tool_call {status: "pending"}` and only reveals `kind: "edit"` on the
+   * following revision — `kind` is optional on the announce row (the schema
+   * above, and the ACP schema's own `"other"` default), so that agent is
+   * conformant and its WARN was structurally unreachable. `toolCallId` is the
+   * identity the fire is counted on now; this stands in for a row that
+   * carries no id at all.
+   *
+   * Both are ADDITIVE fields on a version-pinned module: nothing that existed
+   * changed shape, and no new wire FACT is parsed — both discriminators were
+   * already on the wire and simply thrown away.
    */
   readonly isNewToolCall: boolean;
 }
@@ -291,6 +306,7 @@ export const parseSessionUpdateParams = (
     sessionId,
     toolCall: {
       paths: [...locationPaths, ...diffPaths],
+      toolCallId: parsed.update.toolCallId ?? null,
       toolKind: parsed.update.kind ?? null,
       status: parsed.update.status ?? null,
       rawOutput: parsed.update.rawOutput,

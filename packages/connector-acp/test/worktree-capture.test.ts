@@ -167,6 +167,42 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
     expect(state?.lastPostToolUseTool).toBe("fs/write_text_file");
   });
 
+  test("one edit signalled BOTH ways books two fires against one target", async () => {
+    // Arrange: an agent may announce `tool_call kind: "edit"` AND ask the
+    // client to perform the write. Both are honest edit signals and both are
+    // counted, so the ratio a human reads is 2 → 1 for one edit. That trade
+    // is deliberate — dropping either signal leaves some real agent
+    // permanently at `0 fires → 0 targets`, unable to WARN — and it can never
+    // produce a FALSE warn, because the first of the two captures the target.
+    // Pinned so the distortion is a measured number rather than an assurance.
+    const { main, worktree } = await repoWithWorktree("acp-both");
+    await writeRepoFile(worktree, EDITED_FILE, "export const a = 1;\n");
+    const h = await harnessAt("acp-both", main);
+    const sessionId = "sess_both";
+    const hostKey = `acp-fake-agent--${sessionId}`;
+    const path = join(worktree, EDITED_FILE);
+
+    // Act
+    handshake(h, sessionId, main);
+    h.capture.offer("a2c", editUpdate(sessionId, path));
+    h.capture.offer(
+      "a2c",
+      wireLine({
+        jsonrpc: "2.0",
+        id: 78,
+        method: "fs/write_text_file",
+        params: { sessionId, path, content: "export const a = 2;\n" },
+      }),
+    );
+    await h.capture.settle();
+
+    // Assert
+    const state = await readSessionState(h.home, hostKey);
+    expect(state?.editToolFires).toBe(2);
+    expect(state?.targetsCapturedCount).toBe(1);
+    expect(state?.seenTargets).toEqual([EDITED_FILE]);
+  });
+
   test("one edit arriving pending then completed ticks the fire counter ONCE", async () => {
     // Arrange: `wire/v1.ts` folds `tool_call` and `tool_call_update` into one
     // shape, and agents commonly repeat the whole ToolCallUpdate — kind and
@@ -209,6 +245,56 @@ describe("an ACP session at checkout A editing a file in worktree B", () => {
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(1);
     expect(state?.seenTargets).toEqual([EDITED_FILE]);
+  });
+
+  test("an edit announced with no kind still books its fire", async () => {
+    // Arrange: `ToolCall.kind` is OPTIONAL on the announce row (the ACP schema
+    // defaults it to "other"), so an agent may legitimately say
+    // `tool_call {status: "pending"}` first and reveal `kind: "edit"` plus the
+    // locations on the FOLLOWING `tool_call_update`. Counting the fire on the
+    // announce ROW rather than on the tool CALL booked zero fires for such an
+    // agent — every drop counted, `isCaptureSilentlyDead` unreachable for the
+    // life of the session, doctor printing `0 edit-tool fires → 0 targets`
+    // as a PASS. Same shape after a `session/load` resume whose announce row
+    // the proxy never saw.
+    const { main } = await repoWithWorktree("acp-nokind");
+    const loose = await mkdtemp(join(tmpdir(), "cx-acp-nokind-"));
+    cleanups.push(loose);
+    await writeFile(join(loose, "x.ts"), "export const c = 3;\n", "utf8");
+    const h = await harnessAt("acp-nokind", main);
+    const sessionId = "sess_nokind";
+    const hostKey = `acp-fake-agent--${sessionId}`;
+
+    // Act
+    handshake(h, sessionId, main);
+    for (let index = 0; index < DOCTOR_CAPTURE_SILENT_FIRES_WARN; index += 1) {
+      h.capture.offer(
+        "a2c",
+        toolCallUpdate(sessionId, {
+          sessionUpdate: "tool_call",
+          toolCallId: `call_${String(index)}`,
+          status: "pending",
+        }),
+      );
+      h.capture.offer(
+        "a2c",
+        toolCallUpdate(sessionId, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: `call_${String(index)}`,
+          kind: "edit",
+          status: "completed",
+          locations: [{ path: join(loose, "x.ts") }],
+        }),
+      );
+    }
+    await h.capture.settle();
+
+    // Assert: one fire per tool CALL — the WARN threshold is reachable
+    const state = await readSessionState(h.home, hostKey);
+    expect(state?.editToolFires).toBe(DOCTOR_CAPTURE_SILENT_FIRES_WARN);
+    expect(state?.outsideRootDrops).toBe(DOCTOR_CAPTURE_SILENT_FIRES_WARN);
+    expect(state?.targetsCapturedCount).toBe(0);
+    expect(state?.lastPostToolUseTool).toBe("edit");
   });
 });
 
