@@ -32,6 +32,7 @@
  * text has its own gate in flows/hint.ts.
  */
 import { MAX_HINTS_PER_SESSION } from "../constants.ts";
+import { SUBSTANCE_MATCH_KIND } from "../briefing/render.ts";
 import { getSolvedMatchesForFingerprint } from "../http/hub.ts";
 import type { HubContext } from "../http/hub.ts";
 import { rememberHintDelivery } from "../hints/delivery.ts";
@@ -79,7 +80,18 @@ export const selectAndRenderSolvedHint = async (
     ...state.deliveredHintRefs,
     ...state.briefingSolvedRefs,
   ]);
-  const match = result.data.find((entry) => !seen.has(entry.workContextId));
+  // THE KIND THE HEADER NAMES, required here and not only at render time.
+  // `renderSolvedHint` refuses a weaker kind on its own, but a `find` that
+  // picked the first unseen row and left the refusal to the renderer would
+  // go silent whenever an older hub put a file-matched row above the
+  // fingerprint one — the answer sitting one row down, dropped by the guard
+  // meant to protect it. Filtering here picks the row the header can vouch
+  // for, wherever in the page it arrived.
+  const match = result.data.find(
+    (entry) =>
+      entry.matchedTargetKind === SUBSTANCE_MATCH_KIND &&
+      !seen.has(entry.workContextId),
+  );
   if (match === undefined) {
     return "";
   }

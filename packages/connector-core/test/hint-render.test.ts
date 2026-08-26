@@ -4,11 +4,13 @@ import { MAX_HINT_TEXT_LENGTH } from "@crosscheck/schema";
 import {
   renderClaimHint,
   renderPointerHint,
+  renderSolvedHint,
   renderTripwireReason,
 } from "../src/hints/render.ts";
 import type {
   HintClaimCandidate,
   HintContextCandidate,
+  SolvedMatchEntry,
   TripwireSession,
 } from "../src/http/hub.ts";
 import {
@@ -410,5 +412,54 @@ describe("the teammate's intent on hints and the tripwire (trial finding #16)", 
     expect(lines.length).toBe(4);
     for (const line of lines) assertUntrustedCharacters(line, line);
     expect(countOf(lines[2] ?? "", "«")).toBe(1);
+  });
+});
+
+/**
+ * The failure-time hint's HEADER is a claim of its own — "the failure just
+ * recorded carries the same error fingerprint as a diagnosis that was
+ * solved" — and these pin that it is only ever printed over a row that
+ * supports it. The flow (`selectAndRenderSolvedHint`) filters on the same
+ * kind before it gets here; this is the renderer's own half, and it is what
+ * a caller that forgot would fall back on.
+ */
+describe("renderSolvedHint", () => {
+  const solvedEntry = (
+    overrides: Partial<SolvedMatchEntry> = {},
+  ): SolvedMatchEntry => ({
+    workContextId: "wc_solved",
+    title: "Refresh 500s after key rotation",
+    developerName: "Ken",
+    repo: "github.com/acme/api",
+    solvedAt: "2026-03-12T08:00:00.000Z",
+    landedAt: null,
+    matchedTargetKind: "error_fingerprint",
+    rootCause: null,
+    ...overrides,
+  });
+
+  test("a fingerprint row carries the header that names it", () => {
+    // Arrange / Act
+    const text = renderSolvedHint(solvedEntry(), "github.com/acme/api", NOW);
+
+    // Assert
+    expect(text).toContain("the same error fingerprint");
+    expect(text).toContain("get_diagnosis wc_solved");
+  });
+
+  test("a file or intent row gets no sentence claiming identity", () => {
+    // Arrange: the rows an older hub answers this route with — it ignores
+    // `?fingerprint=` and returns the ordinary shared-target listing.
+    for (const kind of ["file", "session_intent", "symbol"]) {
+      // Act
+      const text = renderSolvedHint(
+        solvedEntry({ matchedTargetKind: kind }),
+        "github.com/acme/api",
+        NOW,
+      );
+
+      // Assert: silence, rather than a header contradicting its own line.
+      expect(text, kind).toBe("");
+    }
   });
 });

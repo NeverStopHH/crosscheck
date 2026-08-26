@@ -28,6 +28,7 @@ import { MAX_WORK_CONTEXT_TITLE_CHARS } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
 import {
   QUOTED_DATA_NOTICE,
+  SUBSTANCE_MATCH_KIND,
   UNKNOWN_AUTHOR,
   formatAge,
   formatSolvedAge,
@@ -260,7 +261,22 @@ export const renderAnswerHint = (
  * it states WHY this arrived — a factual sentence, never an imperative.
  *
  * "" when the row is one `formatSolvedLine` will not vouch for (an id that
- * survives nothing, an unknown match kind, a foreign repo it cannot print).
+ * survives nothing, an unknown match kind, a foreign repo it cannot print)
+ * — or one whose kind does not support the header, below.
+ *
+ * THE HEADER IS ITSELF A CLAIM, and the kind check is what makes it true.
+ * It asserts CONTENT IDENTITY: the failure just recorded is byte-identical,
+ * after normalization, to one somebody already settled. Only
+ * SUBSTANCE_MATCH_KIND says that. Every other kind `formatSolvedLine` can
+ * render — a shared file, an overlap with the reader's session intent —
+ * would put "same error fingerprint" above a line reading "shared file with
+ * current work", two sentences contradicting each other in one block.
+ *
+ * It is reachable, not hypothetical: a hub that predates `?fingerprint=`
+ * ignores the parameter and answers the ordinary shared-target listing on
+ * the same route (http/hub.ts), which is precisely a page of file- and
+ * intent-matched rows. The connector ships ahead of the hub often enough
+ * that this is the ordinary upgrade order, not a hostile case.
  */
 const SOLVED_HINT_HEADER = `crosscheck: the failure just recorded carries the same error fingerprint as a diagnosis that was solved. ${QUOTED_DATA_NOTICE}`;
 
@@ -269,6 +285,9 @@ export const renderSolvedHint = (
   repoId: string,
   now: Date,
 ): string => {
+  if (entry.matchedTargetKind !== SUBSTANCE_MATCH_KIND) {
+    return "";
+  }
   const line = formatSolvedLine(entry, now, repoId);
   return line === null ? "" : fitHint([SOLVED_HINT_HEADER, line]);
 };

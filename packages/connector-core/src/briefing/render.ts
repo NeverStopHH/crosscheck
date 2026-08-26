@@ -436,8 +436,16 @@ const solvedRepoFragment = (
  * although the hub already applies it, because a body arriving beside a
  * weaker kind is exactly what a newer hub with different rules — or a
  * hostile one — would send.
+ *
+ * EXPORTED because the failure-time hint needs the same constant for a
+ * second reason: its header ASSERTS this kind ("the same error fingerprint
+ * as a diagnosis that was solved"), so a row of any other kind makes the
+ * header a false sentence about the row printed under it — the same defect
+ * one level up from the body this constant was written for. One name, two
+ * checks (hints/render.ts, flows/solved-hint.ts); a second literal would be
+ * a second rule.
  */
-const SUBSTANCE_MATCH_KIND = "error_fingerprint";
+export const SUBSTANCE_MATCH_KIND = "error_fingerprint";
 
 /**
  * The recorded cause as its OWN indented line, or "" — one « » pair per

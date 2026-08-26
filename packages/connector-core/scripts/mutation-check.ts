@@ -628,6 +628,38 @@ export const MUTATIONS: readonly Mutation[] = [
       "SessionStart and again mid-turn — which reads as two findings and is one",
   },
   {
+    // The failure hint's HEADER asserts content identity. This lets the flow
+    // hand it whatever row arrived first, which against a hub that predates
+    // `?fingerprint=` is a file- or intent-matched row.
+    label: "the failure hint trusts a hub that ignored the fingerprint",
+    file: `${CORE}/src/flows/solved-hint.ts`,
+    from: `    (entry) =>
+      entry.matchedTargetKind === SUBSTANCE_MATCH_KIND &&
+      !seen.has(entry.workContextId),`,
+    to: "    (entry) => !seen.has(entry.workContextId),",
+    test: `${CORE}/test/solved-hint-flow.test.ts`,
+    because:
+      "an older hub answers the ordinary shared-target listing on the same " +
+      "route, so a row matched on a shared FILE arrives above the " +
+      "fingerprint one and the flow goes silent holding the answer",
+  },
+  {
+    // The renderer's own half of the same rule: the header is printed by
+    // this function, so this function has to require the kind it names.
+    label: "the failure hint's header outruns the row under it",
+    file: `${CORE}/src/hints/render.ts`,
+    from: `  if (entry.matchedTargetKind !== SUBSTANCE_MATCH_KIND) {
+    return "";
+  }
+`,
+    to: "",
+    test: `${CORE}/test/hint-render.test.ts`,
+    because:
+      "\"the same error fingerprint as a diagnosis that was solved\" is " +
+      "printed above a line reading \"shared file with current work\" — two " +
+      "sentences contradicting each other inside one injected block",
+  },
+  {
     // Precedence: content identity beats similarity. This stops the probe
     // and lets the text search answer a failure the hub had already settled.
     label: "a diagnosed failure gets a similarity guess instead",

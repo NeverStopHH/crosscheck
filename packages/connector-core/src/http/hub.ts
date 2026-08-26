@@ -324,9 +324,19 @@ export const getSolvedMatchCounts = (
 /**
  * The failure-time probe: solved trees carrying THIS exact fingerprint,
  * asked once, the moment a tool fails. Same route and same row shape as the
- * listing above — a hub too old to know the parameter ignores it and answers
- * the ordinary listing, whose rows the caller's seen-set then drops, so an
- * old hub costs one wasted round trip and never a wrong hint.
+ * listing above — which is exactly why an OLDER HUB IS A CORRECTNESS
+ * PROBLEM here and not only a wasted round trip: a hub that predates the
+ * parameter ignores it and answers the ordinary shared-target listing, so
+ * this call returns file- and intent-matched rows under a caller whose
+ * header asserts content identity.
+ *
+ * The seen-set does NOT save that case, and an earlier version of this
+ * comment claimed it did. It holds this session's delivered refs plus the
+ * handful of pointers the briefing showed — empty on a fresh session — so
+ * on the common path it drops nothing. What makes an old hub safe is the
+ * caller REQUIRING `matchedTargetKind` to be the kind its sentence names,
+ * in `selectAndRenderSolvedHint` and again in `renderSolvedHint`; against
+ * such a hub the probe then costs one wasted round trip and stays silent.
  */
 export const getSolvedMatchesForFingerprint = (
   ctx: HubContext,

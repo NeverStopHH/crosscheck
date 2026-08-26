@@ -281,6 +281,56 @@ describe("selectAndRenderSolvedHint (the failure-time recipe)", () => {
     expect(state?.deliveredHintRefs).toEqual([]);
   });
 
+  test("a row that is not a fingerprint match earns no identity claim", async () => {
+    // Arrange: the header this flow prepends asserts CONTENT IDENTITY — "the
+    // failure just recorded carries the same error fingerprint". A hub too
+    // old to know `?fingerprint=` ignores it and answers the ordinary
+    // shared-target listing, whose rows matched on a shared FILE or on the
+    // reader's session intent; this fixture's hub is exactly that hub,
+    // because it answers `setSolvedMatches` regardless of the parameter.
+    // The CONTROL is the same fixture with the kind the header names, so the
+    // silence below is the kind check and not a flow that says nothing.
+    const control = await fixture("sh-kind-control");
+    expect(
+      (await selectAndRenderSolvedHint(flowInput(control))).length,
+    ).toBeGreaterThan(0);
+
+    for (const kind of ["file", "session_intent"]) {
+      const f = await fixture(`sh-kind-${kind}`, {}, [
+        { ...solvedFingerprintMatch(), matchedTargetKind: kind, rootCause: null },
+      ]);
+
+      // Act
+      const text = await selectAndRenderSolvedHint(flowInput(f));
+
+      // Assert: silence, and no hint slot spent on a claim of identity the
+      // row underneath it contradicts.
+      expect(text, kind).toBe("");
+      expect(
+        (await readSessionState(f.home, HOST_KEY))?.deliveredHintRefs,
+        kind,
+      ).toEqual([]);
+    }
+  });
+
+  test("a weaker row does not hide the fingerprint row behind it", async () => {
+    // Arrange: an old hub answers the ordinary listing, so the fingerprint
+    // row can arrive anywhere in it. A flow that took the first unseen entry
+    // and then refused it on kind would go silent while the answer sat one
+    // row down.
+    const f = await fixture("sh-kind-order", {}, [
+      { ...solvedFingerprintMatch(), workContextId: "wc_file_only", matchedTargetKind: "file", rootCause: null },
+      solvedFingerprintMatch(),
+    ]);
+
+    // Act
+    const text = await selectAndRenderSolvedHint(flowInput(f));
+
+    // Assert
+    expect(text).toContain(`get_diagnosis ${SOLVED_CONTEXT_ID}`);
+    expect(text).not.toContain("wc_file_only");
+  });
+
   test(
     "hostile hub rows stay inside the untrusted classes",
     async () => {
