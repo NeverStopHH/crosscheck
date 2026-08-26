@@ -237,7 +237,7 @@ export const getAbsences = (
  * One "solved before" match (VISION.md §1): a solved tree sharing a strong
  * target with current work on this repo — or, through the content-identity
  * kind, on ANY repo of this hub, which is why the row names its own. A
- * A pointer plus, for the strongest match only, the one sentence the tree
+ * pointer plus, for the strongest match only, the one sentence the tree
  * settled on: title, author, repo, ages, the id to pull, and `rootCause`
  * (DESIGN.md §4 — evidence makes a claim trustworthy, content identity makes
  * it relevant, and asserting it unasked needs both).

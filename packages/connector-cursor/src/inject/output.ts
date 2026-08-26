@@ -5,9 +5,10 @@
  * content is EXCLUSIVELY the core renderers' output — the briefing from
  * `renderBriefing` (via the `assembleBriefing` flow), the hints from
  * `renderClaimHint`/`renderPointerHint` (via the `selectAndRenderHint`
- * flow) and `renderSolvedHint` (via `selectAndRenderSolvedHint`). §1.4's rule made mechanical: any future Cursor-specific framing
- * text is renderer-owned literal text that must be added HERE, on a
- * registered §4.4 surface the corpus attacks — never inline in a handler.
+ * flow) and `renderSolvedHint` (via `selectAndRenderSolvedHint`). §1.4's
+ * rule made mechanical: any future Cursor-specific framing text is
+ * renderer-owned literal text that must be added HERE, on a registered §4.4
+ * surface the corpus attacks — never inline in a handler.
  *
  * THE EMITTED PAYLOAD IS JSON, and that is what the corpus must survive:
  * the hook prints `{"additional_context": "<text>"}` on stdout and Cursor
