@@ -821,6 +821,45 @@ describe("ghost checks, the deterministic overlap", () => {
     }
   });
 
+  test("a big implementation still collides through the intent", async () => {
+    const { harness, me, them } = await setup();
+    await seed(
+      harness,
+      me,
+      contextRecords(
+        MY_CONTEXT,
+        MY_SESSION,
+        "Unrelated title",
+        [{ kind: "file", value: "src/mine-only.ts" }],
+        declaredIntent("Rework the webhook signature verification retries"),
+      ),
+    );
+    // Their context is over GHOST_MAX_CONTEXT_TARGETS — a sixty-file
+    // implementation session, which is ordinary work and not a rename. The
+    // sweep rule is an argument about SHARING A FILE with somebody who shares
+    // files with everybody; this tier shares no file at all.
+    const theirs = contextRecords(
+      THEIR_CONTEXT,
+      THEIR_SESSION,
+      "Webhook signature verification rejects retries",
+      Array.from(
+        { length: GHOST_MAX_CONTEXT_TARGETS + 1 },
+        (_unused, index) => ({
+          kind: "file",
+          value: `src/theirs-${String(index)}.ts`,
+        }),
+      ),
+    );
+    for (let at = 0; at < theirs.length; at += INGEST_CHUNK) {
+      await seed(harness, them, theirs.slice(at, at + INGEST_CHUNK));
+    }
+
+    const checks = await fetchGhostChecks(harness, me.apiKey);
+    expect(checks.map((row) => row.workContextId)).toEqual([THEIR_CONTEXT]);
+    expect(checks[0]?.sharedTargetCount).toBe(0);
+    expect(checks[0]?.intentTokenHits).toBeGreaterThanOrEqual(3);
+  });
+
   test("a muted teammate's plan is not reported to me", async () => {
     const { harness, me, them } = await setup();
     await seed(

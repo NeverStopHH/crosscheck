@@ -454,6 +454,18 @@ const listPairRows = async (
  * sentence about what ONE developer is doing, and matching teammates against
  * each other's sentences would put lines in this briefing about a topic
  * nobody here raised (the argument solved-matches.ts makes for the same tier).
+ *
+ * NO SWEEP RULE HERE, and that is the one place it does not belong. The sweep
+ * exclusion is an argument about SHARING A FILE: a context touching fifty
+ * values shares files with everybody, so sharing one with it says nothing.
+ * This tier shares no value at all — it matches the reader's own intent words
+ * against the foreign context's doc, which is built from its title, intent
+ * and claims and knows nothing about its target count. A sixty-file
+ * implementation session is ordinary work, not a rename, and excluding it
+ * here silently deleted VISION §3's own flagship case: two plans that touch
+ * no common file and still collide. The tier keeps its own bar instead —
+ * GHOST_INTENT_MIN_TOKEN_HITS distinct words — and its own bound,
+ * GHOST_MAX_INTENT_CANDIDATES.
  */
 const listIntentHits = async (
   deps: Deps,
@@ -494,7 +506,6 @@ const listIntentHits = async (
         ...liveWorkConditions(),
         sql`${workContexts.tsv} @@ ${anyToken}`,
         sql`${hits} >= ${GHOST_INTENT_MIN_TOKEN_HITS}`,
-        notASweepCondition(workContexts.id),
         visiblePresenceCondition(viewerDeveloperId, agentSessions.developerId),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
       ),

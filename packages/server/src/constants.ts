@@ -235,7 +235,9 @@ export const GHOST_MAX_OWN_CONTEXTS = 3;
 
 /**
  * A work context carrying more target values than this is EXCLUDED from both
- * sides of the overlap join — mine and theirs alike.
+ * sides of the SHARED-TARGET tier — mine and theirs alike. The INTENT tier is
+ * deliberately untouched by it: that tier shares no value, so the argument
+ * below does not reach it (services/ghost-overlap.ts listIntentHits).
  *
  * It is a sweep, not a plan: a mass rename, a formatter run, a dependency
  * bump. Sharing a file with a sweep says nothing about whether two designs
