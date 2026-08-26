@@ -1207,6 +1207,7 @@ export const MUTATIONS: readonly Mutation[] = [
       "            crosscheckSessionId: session.crosscheckSessionId,\n" +
       "            producer: producerFor(session),\n" +
       "            shownSolvedIds: assembled.shownSolvedIds,\n" +
+      "            shownGhostCount: assembled.shownGhostCount,\n" +
       "            now: now(),\n" +
       "          });\n",
     to: "",
