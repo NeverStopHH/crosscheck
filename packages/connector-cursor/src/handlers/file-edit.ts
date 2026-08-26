@@ -69,7 +69,15 @@ export const handleAfterFileEdit = async (
   // An edit event IS an edit-tool fire: booked whether or not anything is
   // captured, including on the foreign-repo path inside requireSessionState,
   // so "N fires → 0 targets" stays honest instead of reading as silence.
-  const state = await requireSessionState(ctx, { editFired: true });
+  const state = await requireSessionState(ctx, {
+    editFired: true,
+    toolLabel: AFTER_FILE_EDIT_TOOL,
+    // Named on the drop path too, or the WARN that drop raises says `last
+    // tool none yet` about a conversation that has just fired N edits.
+    ...(ctx.payload.file_path === undefined
+      ? {}
+      : { touchedPath: ctx.payload.file_path }),
+  });
   if (state === null) {
     return "";
   }

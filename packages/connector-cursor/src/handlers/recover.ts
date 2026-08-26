@@ -31,7 +31,58 @@ export interface RequireSessionStateOptions {
    * inflate the ratio the doctor WARN is measured on.
    */
   readonly editFired?: boolean;
+  /**
+   * What `lastPostToolUseTool` should read for the event that is asking — the
+   * event NAME on this host, since no Cursor hook payload carries a tool name
+   * (handlers/file-edit.ts). Passed in rather than imported so this module
+   * keeps no edge back to the handlers that call it.
+   */
+  readonly toolLabel?: string;
+  /** The path the event touched, as the host spelled it (edits only). */
+  readonly touchedPath?: string;
 }
+
+/**
+ * The first-wins drop, booked AND named.
+ *
+ * The counters alone made a doctor line that contradicted itself: the drop
+ * counts are rendered only inside doctor's `lastEditedPath !== null` branch,
+ * so a conversation dropping here printed `3 edit-tool fires -> 0 targets ...
+ * last tool none yet - last edited path resolved: no edit yet`, with the three
+ * foreign drops nowhere on the line. Three claims about a session that had
+ * just fired three edits, on the one surface a developer is asked to paste.
+ *
+ * The drop itself is counted whatever the event was, unlike the per-path
+ * resolution drops (connector-core/state/capture-bookkeeping.ts folds those
+ * only for an edit): this is not a touch that failed to resolve, it is the
+ * whole SESSION being bound to another repo, which is equally true of a shell
+ * row. The #18 diagnosis fields still describe the last EDIT only, and only
+ * when no real capture has already described one.
+ */
+const withForeignRepoDrop = (
+  fresh: SessionState,
+  options: RequireSessionStateOptions,
+): SessionState => ({
+  ...fresh,
+  foreignRepoDrops: fresh.foreignRepoDrops + 1,
+  // Counted BEFORE the drop, exactly as the Claude hook does.
+  editToolFires: fresh.editToolFires + (options.editFired === true ? 1 : 0),
+  lastPostToolUseTool: options.toolLabel ?? fresh.lastPostToolUseTool,
+  // Fill an EMPTY #18 diagnosis, never overwrite one: a drop must not erase a
+  // path a real capture resolved (the Claude twin pins that in
+  // connector-claude/test/worktree-capture.test.ts), and it must not leave a
+  // conversation that has fired N edits saying `no edit yet` either.
+  ...(options.editFired === true &&
+  options.touchedPath !== undefined &&
+  fresh.lastEditedPath === null
+    ? {
+        lastEditedPath: options.touchedPath,
+        // It resolved against nothing: the repo it belongs to is not this
+        // session's, which is what the line has to be able to say.
+        lastEditedPathResolvedAgainst: null,
+      }
+    : {}),
+});
 
 /**
  * The stored state, or the state a fresh register just wrote — null only
@@ -46,16 +97,12 @@ export const requireSessionState = async (
   ctx: CursorHookContext,
   options: RequireSessionStateOptions = {},
 ): Promise<SessionState | null> => {
-  const editFires = options.editFired === true ? 1 : 0;
   const stored = await readSessionState(ctx.config.home, ctx.hostSessionKey);
   if (stored !== null) {
     if (stored.repoId !== ctx.identity.repoId) {
-      await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
-        ...fresh,
-        foreignRepoDrops: fresh.foreignRepoDrops + 1,
-        // Counted BEFORE the drop, exactly as the Claude hook does.
-        editToolFires: fresh.editToolFires + editFires,
-      }));
+      await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) =>
+        withForeignRepoDrop(fresh, options),
+      );
       return null;
     }
     return stored;
@@ -98,11 +145,9 @@ export const requireSessionState = async (
     return null;
   }
   if (state.repoId !== ctx.identity.repoId) {
-    await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
-      ...fresh,
-      foreignRepoDrops: fresh.foreignRepoDrops + 1,
-      editToolFires: fresh.editToolFires + editFires,
-    }));
+    await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) =>
+      withForeignRepoDrop(fresh, options),
+    );
     return null;
   }
   return state;

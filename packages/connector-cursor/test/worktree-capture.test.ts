@@ -319,6 +319,14 @@ describe("a foreign-repo workspace still shows the edit that caused the drop", (
     expect(state?.foreignRepoDrops).toBe(1);
     expect(state?.editToolFires).toBe(1);
     expect(state?.targetsCapturedCount).toBe(0);
+    // ...and NAMES it. doctor renders the drop counts only inside its
+    // `lastEditedPath !== null` branch, so a drop booked without these two
+    // fields produces `N edit-tool fires -> 0 targets - last tool none yet -
+    // last edited path resolved: no edit yet` with the drops invisible: a
+    // WARN that contradicts itself and diagnoses nothing.
+    expect(state?.lastPostToolUseTool).toBe("afterFileEdit");
+    expect(state?.lastEditedPath).toBe(join(other.main, "src/app.ts"));
+    expect(state?.lastEditedPathResolvedAgainst).toBeNull();
   });
 
   test("a non-edit cursor event never inflates the fire counter", async () => {
@@ -346,6 +354,10 @@ describe("a foreign-repo workspace still shows the edit that caused the drop", (
     const state = await readSessionState(home, HOST_KEY);
     expect(state?.foreignRepoDrops).toBe(1);
     expect(state?.editToolFires).toBe(0);
+    // ...and it is not an edit, so it names no edited path either: the #18
+    // line must keep describing the last EDIT, not the last event.
+    expect(state?.lastEditedPath).toBeNull();
+    expect(state?.lastPostToolUseTool).toBeNull();
   });
 });
 

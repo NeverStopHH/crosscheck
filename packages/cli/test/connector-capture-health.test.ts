@@ -199,6 +199,54 @@ describe("a cursor conversation on the capture surfaces", () => {
     expect(line).toContain("last edited path resolved: no");
     expect(line).toContain("foreign-repo");
   });
+
+  test("WARN: the WORKSPACE is the foreign repo and the line still diagnoses", async () => {
+    // Arrange: the other shape of the same drop — the conversation registered
+    // in repo A, but the panel resolved to a second connected repo, so the
+    // first-wins guard in handlers/recover.ts returns BEFORE any resolution
+    // runs. The counters were booked there and nothing else was, and doctor
+    // prints the drop counts only inside its `lastEditedPath !== null`
+    // branch: the WARN read `3 edit-tool fires → 0 targets · last tool none
+    // yet · last edited path resolved: no edit yet` — three claims about a
+    // session that had just fired three edits, with the drop count invisible.
+    const { main, home } = await repoWithWorktree("cch-cur-fw");
+    const other = await makeRepo("cch-cur-fw-web", {
+      remote: "git@github.com:acme/web.git",
+    });
+    await writeFile(
+      join(other, ".crosscheck.json"),
+      `${JSON.stringify({ hubUrl: DEAD_HUB_URL }, null, 2)}\n`,
+      "utf8",
+    );
+    await git(other, ["add", "."]);
+    await git(other, ["commit", "-m", "config"]);
+    paths.push(other);
+    await writeRepoFile(other, "src/app.ts", "export const b = 2;\n");
+    await seedSession(home, main, CURSOR_KEY);
+
+    // Act: the WORKSPACE itself is the foreign repo
+    for (let fire = 0; fire < DOCTOR_CAPTURE_SILENT_FIRES_WARN; fire += 1) {
+      await runCursorHook(
+        "afterFileEdit",
+        cursorEdit(other, join(other, "src/app.ts")),
+        hookEnv(home),
+      );
+    }
+    const doctor = await runCli(["doctor"], cliEnv(home), main);
+
+    // Assert: one line that agrees with itself and names the tool, the path
+    // and the count
+    const line = lineWith(doctor.stdout, "  capture  ");
+    expect(line).toContain("WARN  capture");
+    expect(line).toContain(
+      `${String(DOCTOR_CAPTURE_SILENT_FIRES_WARN)} edit-tool fires → 0 targets`,
+    );
+    expect(line).toContain("last tool afterFileEdit");
+    expect(line).not.toContain("no edit yet");
+    expect(line).toContain(
+      `${String(DOCTOR_CAPTURE_SILENT_FIRES_WARN)} foreign-repo`,
+    );
+  });
 });
 
 // ── ACP ─────────────────────────────────────────────────────────────────────

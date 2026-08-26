@@ -166,6 +166,7 @@ export const handlePostToolUse = async (
   // this session reports to. The count is what keeps the drop honest.
   const editFired = isEditTool(ctx.payload.tool_name);
   if (state.repoId !== ctx.identity.repoId) {
+    const droppedPath = extractFilePaths(ctx.payload.tool_input)[0];
     await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
       ...fresh,
       foreignRepoDrops: fresh.foreignRepoDrops + 1,
@@ -173,6 +174,18 @@ export const handlePostToolUse = async (
       // honest even when the cwd itself is a foreign repo (trial #17/#18).
       editToolFires: fresh.editToolFires + (editFired ? 1 : 0),
       lastPostToolUseTool: ctx.payload.tool_name ?? fresh.lastPostToolUseTool,
+      // ...and the #18 fields, but ONLY when nothing has filled them yet.
+      // doctor prints the drop counts exclusively inside its
+      // `lastEditedPath !== null` branch, so a session whose every edit was
+      // dropped here read `N edit-tool fires → 0 targets · last edited path
+      // resolved: no edit yet` — a line that denies the edits it has just
+      // counted and hides the number that explains them. A drop must still
+      // never ERASE a diagnosis a real capture produced: after a good in-repo
+      // edit, the last edited path stays that edit (pinned in
+      // test/worktree-capture.test.ts). Fill an empty one, overwrite none.
+      ...(editFired && droppedPath !== undefined && fresh.lastEditedPath === null
+        ? { lastEditedPath: droppedPath, lastEditedPathResolvedAgainst: null }
+        : {}),
     }));
     return "";
   }
