@@ -10,6 +10,73 @@ behind it:
 | Cursor IDE | `connector-cursor` | `crosscheck init --global --cursor` (`~/.cursor/hooks.json` + `~/.cursor/mcp.json`, local sessions) or `crosscheck init --cursor` (repo-committed `.cursor/hooks.json` + `.cursor/mcp.json`) |
 | Any ACP client × any ACP agent (Zed, JetBrains, Neovim, Emacs × Gemini CLI, cursor-agent, Goose, …) | `connector-acp` | wrap the agent command: `crosscheck acp -- <agent cmd…>` (per-user editor config) |
 
+## Per-connector parity — what each host actually supports
+
+Capture is only worth what the *weakest* host does, so this table is the
+promise, per connector, and it is kept honest by tests rather than by intent:
+`packages/connector-{claude,cursor,acp}/test/worktree-capture.test.ts` pin the
+first four columns per host, `packages/cli/test/connector-capture-health.test.ts`
+pins the fifth on both non-Claude hosts in a PASS **and** in a WARN state, and
+`packages/connector-core/src/capture/touched-root.ts` carries a `verify-claims`
+directive that names the connectors going through the shared resolution — a
+fourth one that forgets it fails CI rather than losing edits quietly.
+
+| | Claude Code | Cursor IDE | ACP agents (Zed, JetBrains, Neovim, Emacs × Gemini CLI, cursor-agent, Goose, …) |
+|---|---|---|---|
+| **Capture** — what a target comes from | `PostToolUse` for `Edit`/`Write`/`MultiEdit`/`NotebookEdit` | `afterFileEdit`, the single capture row on this host | `session/update` `tool_call` locations and diff paths, plus the `fs/write_text_file` request |
+| **Worktree resolution** — an edit in a linked worktree of the same repo | yes | yes | yes |
+| **Drop counters** — a touch that could not be captured | `foreign-repo` and `outside-root`, split and counted | same | same |
+| **Capture health** in `crosscheck status` / `doctor` | `N edit-tool fires → M targets`, last tool, last edited path + the root it resolved against, WARN at 3 fires with 0 targets | same, with the event name `afterFileEdit` as the tool | same, with the ACP tool-call `kind` (or `fs/write_text_file`) as the tool |
+| **Before-edit tripwire** — telling the model about an overlap *before* it edits | yes — `PreToolUse`, `permissionDecision: "ask"` plus the facts as `additionalContext` | **not possible on this host today** | **not possible on this host today** |
+
+The last row is a limitation we document rather than a gap we forgot, and each
+host's module header carries the same sentences with its source and fetch date:
+
+- **Cursor** — there is no `beforeFileEdit`/`beforeWrite` event
+  (cursor.com/docs/hooks, read 2026-08-26). `preToolUse` does fire before a
+  `Write`, but its outputs are `permission: "allow" | "deny"` with messages the
+  docs describe as shown *"when the action is denied"*; of `"ask"` the same page
+  says, verbatim, that it *"is accepted by the schema but not enforced for
+  `preToolUse` today"*, and the event has no `additional_context`. So the only
+  way to put words in front of the model before an edit is to **block** it —
+  past the ceiling this ladder is built to respect. It is not wired.
+  (Cursor's forum additionally reports `ask` being ignored in the field on
+  `beforeShellExecution`, an event whose docs *do* promise it — so this is not
+  a docs caution that might quietly start working.)
+- **ACP** — the before-edit signals genuinely are on the wire
+  (`session/request_permission` carries the whole `ToolCallUpdate` with its
+  `locations`; a `tool_call` may arrive with `status: "pending"`,
+  agentclientprotocol.com/protocol/schema, read 2026-08-26). None is usable
+  without breaking the proxy's prime directive: the pump **forwards first and
+  observes a copy**, the agent→client direction has no line-decision seam at
+  all, the only client→agent message that follows a permission request is the
+  human's own answer, and `_meta` is explicitly not a channel a client may be
+  assumed to surface. Giving that direction a seam means parsing and re-emitting
+  agent bytes on the forward path — exactly what
+  `packages/connector-acp/test/transparency.test.ts` exists to forbid.
+
+Both hosts *can* be told about an overlap **one beat late** — Cursor through
+`postToolUse` `additional_context`, ACP through the existing `session/prompt`
+injection point and the crosscheck MCP server the launcher already advertises.
+That is a notice after the edit, not a tripwire before it, and it is deliberately
+not shipped under the tripwire's name.
+
+Measured cost of the new resolution on this machine (Bun 1.3.13, warm APFS —
+reproduce with the commands, do not read the numbers as constants):
+
+| Host | cold (first touch of a new worktree root) | warm (same root again) | budget · command |
+|---|---|---|---|
+| Claude Code | 103 ms (`PostToolUse`) · 102 ms (`PreToolUse`) | 43 ms · 41 ms | 1600 / 800 ms · `bun test packages/connector-claude/test/capture-latency.test.ts` |
+| Cursor | 101 ms | 47 ms | 1600 ms · `bun test packages/connector-cursor/test/capture-latency.test.ts` |
+| ACP | 68 ms | 10 ms | off the forward path — 200 worktree tool calls flooded through the real pump with the real engine attached forwarded byte-identically and dropped 0 capture lines · `bun test packages/connector-acp/test/capture-latency.test.ts` |
+
+The cache is what those warm numbers are: one `resolveRepoIdentity` per NEW
+worktree root per session, never per edit, remembered in session state
+(`knownWorktreeRoots`) across re-registrations. An unresolvable root is an
+UNKNOWN rather than an answer and is retried a bounded number of times before it
+stands, so one missed `git` deadline cannot exile a healthy worktree for the
+session's life.
+
 Everything below assumes a reachable hub and a login:
 
 ```sh
