@@ -178,6 +178,7 @@ const deliverBriefing = async (
     crosscheckSessionId,
     producer,
     shownSolvedIds: assembled.shownSolvedIds,
+    shownGhostCount: assembled.shownGhostCount,
     now,
   });
   await recordInjectionOutcome(ctx.config.home, {

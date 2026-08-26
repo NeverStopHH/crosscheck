@@ -287,6 +287,7 @@ export const handleSessionStart = async (
     crosscheckSessionId,
     producer,
     shownSolvedIds: assembled.shownSolvedIds,
+    shownGhostCount: assembled.shownGhostCount,
     now,
   });
 

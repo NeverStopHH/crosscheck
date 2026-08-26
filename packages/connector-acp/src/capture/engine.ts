@@ -939,6 +939,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
             crosscheckSessionId: session.crosscheckSessionId,
             producer: producerFor(session),
             shownSolvedIds: assembled.shownSolvedIds,
+            shownGhostCount: assembled.shownGhostCount,
             now: now(),
           });
           return { kind: "text", text: assembled.briefing };
