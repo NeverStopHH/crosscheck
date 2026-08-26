@@ -406,17 +406,29 @@ describe("the gated ghost check", () => {
   });
 
   test("a sentence that parrots what it was shown is dropped", async () => {
-    // The model returns Ken's own claim line, verbatim, as its "finding".
-    const parrot = await makeFakeModel({
-      output: `observation (proposed): ${THEIR_DECLARED}`,
-    });
-    const echoed = await aliceFixture("echo", parrot);
-    await runGhostWorker(["--session", echoed.hostSessionKey], echoed.env);
-    expect(await spooledClaims(echoed)).toEqual([]);
-    const state = await stateOf(echoed);
-    expect(state.ghostFailCount).toBe(1);
-    expect(state.ghostLastFailure).toContain("repeats a claim it was shown");
-    expect(state.ghostDraftCount).toBe(0);
+    // Ken's own claim, in the three shapes a parroting model returns it: the
+    // BODY on its own (what a model told "never repeat the input" actually
+    // produces when it does), the body re-cased and re-spaced, and the whole
+    // labelled line it was handed. Only the last of those carries the
+    // "kind (status): " prefix, so a guard keyed on the line rather than on
+    // the claim would catch the shape nobody sends and miss the two real ones.
+    const shapes: readonly (readonly [string, string])[] = [
+      ["the body verbatim", THEIR_DECLARED],
+      ["the body re-cased", `  ${THEIR_DECLARED.toUpperCase()}  `],
+      ["the labelled line", `observation (proposed): ${THEIR_DECLARED}`],
+    ];
+    for (const [label, output] of shapes) {
+      const parrot = await makeFakeModel({ output });
+      const echoed = await aliceFixture(`echo-${label.replace(/\s+/g, "-")}`, parrot);
+      await runGhostWorker(["--session", echoed.hostSessionKey], echoed.env);
+      expect(await spooledClaims(echoed), label).toEqual([]);
+      const state = await stateOf(echoed);
+      expect(state.ghostFailCount, label).toBe(1);
+      expect(state.ghostLastFailure, label).toContain(
+        "repeats a claim it was shown",
+      );
+      expect(state.ghostDraftCount, label).toBe(0);
+    }
 
     // THE CONTROL: an ORIGINAL sentence from the identical setup is spooled,
     // so what dropped the draft above is the echo rule and nothing else.

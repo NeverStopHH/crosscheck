@@ -2408,13 +2408,32 @@ export const MUTATIONS: readonly Mutation[] = [
     // under a fresh id and a fresh timestamp.
     label: "a ghost sentence repeats the claim it was shown",
     file: `${CONNECTOR}/src/ghost/worker.ts`,
-    from: "  const shownHashes = shownClaimLines.map((line) => hintBodyHash(line));",
+    from: `  const shownHashes = shownClaims.flatMap((claim) => [
+    hintBodyHash(claim.body),
+    hintBodyHash(claim.line),
+  ]);`,
     to: "  const shownHashes: readonly string[] = [];",
     test: `${CONNECTOR}/test/ghost-worker.test.ts`,
     because:
       "a teammate's declared finding comes back as the reader's own derived " +
       "claim — provenance laundering by paraphrase, which is the exact " +
       "failure the echo-loop exclusion exists to stop",
+  },
+  {
+    // The half of the echo key that a real parrot trips. The model is shown
+    // `kind (status): body` and asked for a finding, so what it repeats is
+    // the BODY — hashing only the labelled line guards a shape nobody sends.
+    label: "the echo key only knows the label, not the claim",
+    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    from: `  const shownHashes = shownClaims.flatMap((claim) => [
+    hintBodyHash(claim.body),
+    hintBodyHash(claim.line),
+  ]);`,
+    to: "  const shownHashes = shownClaims.map((claim) => hintBodyHash(claim.line));",
+    test: `${CONNECTOR}/test/ghost-worker.test.ts`,
+    because:
+      "the guard still passes its own test while a verbatim repeat of the " +
+      "teammate's claim body is spooled as the reader's own derived finding",
   },
   {
     // Self-exclusion in the WHERE, the tripwire's rule (DESIGN.md §4). A
@@ -2579,7 +2598,7 @@ interface Outcome {
  * PRINTS: ghost-declare.test.ts 1
  * PRINTS: ghost-overlap.test.ts 4
  * PRINTS: ghost-render.test.ts 1
- * PRINTS: ghost-worker.test.ts 2
+ * PRINTS: ghost-worker.test.ts 3
  * PRINTS: global-wiring-silence.test.ts 2
  * PRINTS: handlers.test.ts 3
  * PRINTS: hint-budget.test.ts 2

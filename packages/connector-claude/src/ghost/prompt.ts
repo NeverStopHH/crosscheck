@@ -70,22 +70,37 @@ export interface GhostInput {
 }
 
 /**
+ * One teammate claim the model is shown, kept as BOTH shapes it can come
+ * back as. The line is what goes on stdin; the body is what a model that
+ * parrots actually returns, because "never repeat the input" is a rule about
+ * the finding and no model re-emits the `kind (status):` label with it. A
+ * guard keyed on the line alone would therefore only catch the shape nobody
+ * sends — which is why the worker hashes both.
+ */
+export interface DeclaredClaim {
+  /** The claim body as the model sees it, bounded. */
+  readonly body: string;
+  /** That body under its kind and status — the stdin line. */
+  readonly line: string;
+}
+
+/**
  * The teammate's declared claims as the bounded lines the model sees. Sorted
  * by nothing: the hub returns a diagnosis tree in its own order and reordering
  * it here would be a second ranking nobody could explain — the bound is what
  * makes this small, not a choice about which finding matters.
  */
-export const declaredClaimLines = (
+export const declaredClaims = (
   claims: readonly DiagnosisClaim[],
-): readonly string[] =>
+): readonly DeclaredClaim[] =>
   claims
     .filter((claim) => claim.provenance === DECLARED_PROVENANCE)
     .slice(0, GHOST_MAX_TEAMMATE_CLAIMS)
-    .map(
-      (claim) =>
-        `${claim.kind} (${claim.status}): ${cutWellFormed(claim.body, GHOST_CLAIM_BODY_MAX_CHARS)}`,
-    )
-    .filter((line) => line.length > 0);
+    .map((claim) => {
+      const body = cutWellFormed(claim.body, GHOST_CLAIM_BODY_MAX_CHARS);
+      return { body, line: `${claim.kind} (${claim.status}): ${body}` };
+    })
+    .filter((claim) => claim.body.length > 0);
 
 /** The stdin block. Labelled plainly; the model is never told to obey it. */
 export const renderGhostInput = (input: GhostInput): string =>

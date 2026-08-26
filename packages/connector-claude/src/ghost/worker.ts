@@ -65,7 +65,8 @@ import {
   withGhostNone,
   withGhostNoOverlap,
 } from "./gate.ts";
-import { declaredClaimLines, renderGhostInput, resolveGhostArgv } from "./prompt.ts";
+import { declaredClaims, renderGhostInput, resolveGhostArgv } from "./prompt.ts";
+import type { DeclaredClaim } from "./prompt.ts";
 import { isNoneAnswer } from "../summarizer/parse.ts";
 import {
   formatSummarizerFailure,
@@ -195,11 +196,11 @@ const runGhostCheck = async (
   // Their declared claims are CONTEXT, not a requirement: a tree with none,
   // or a diagnosis read that fails, still leaves two intents to compare.
   const tree = await getDiagnosis(hub, candidate.workContextId);
-  const claimLines = tree.ok ? declaredClaimLines(tree.data.claims) : [];
+  const shown = tree.ok ? declaredClaims(tree.data.claims) : [];
   const input = renderGhostInput({
     ownIntent: state.workContextIntent,
     theirIntent: intentSummaryOf(candidate),
-    theirClaims: claimLines,
+    theirClaims: shown.map((claim) => claim.line),
   });
   const result = await runSummarizer(
     resolveGhostArgv(env),
@@ -225,7 +226,7 @@ const runGhostCheck = async (
     await bookFailure(home, args.claudeSessionId, DROPPED_EMPTY_ANSWER);
     return;
   }
-  await appendGhostDraft(home, args, sentence, claimLines, env);
+  await appendGhostDraft(home, args, sentence, shown, env);
 };
 
 /**
@@ -236,15 +237,23 @@ const runGhostCheck = async (
  * paraphrase, which is exactly what the echo-loop rule exists to stop. The
  * hash is the delivered-hint hash (normalised the way the hub normalises a
  * body for dedup), so "the same words" means the same thing on both sides.
+ *
+ * BOTH SHAPES ARE HASHED, and the body is the one that matters: the model is
+ * handed `kind (status): body` and returns a finding, so a parrot returns the
+ * BODY — keying this on the labelled line alone would guard the shape nobody
+ * sends (ghost/prompt.ts DeclaredClaim says the same from the other side).
  */
 const appendGhostDraft = async (
   home: string,
   args: GhostWorkerArgs,
   sentence: string,
-  shownClaimLines: readonly string[],
+  shownClaims: readonly DeclaredClaim[],
   env: Env,
 ): Promise<void> => {
-  const shownHashes = shownClaimLines.map((line) => hintBodyHash(line));
+  const shownHashes = shownClaims.flatMap((claim) => [
+    hintBodyHash(claim.body),
+    hintBodyHash(claim.line),
+  ]);
   if (isEchoOfDeliveredHint(sentence, shownHashes)) {
     await bookFailure(home, args.claudeSessionId, DROPPED_INPUT_ECHO);
     return;
