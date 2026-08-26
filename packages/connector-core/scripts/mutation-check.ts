@@ -1747,9 +1747,9 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "the capture drop counters are swapped for every connector",
     file: `${CORE}/src/state/capture-bookkeeping.ts`,
     from:
-      "    foreignRepoDrops: next.foreignRepoDrops + (input.resolution?.foreignDrops ?? 0),",
+      "    foreignRepoDrops: next.foreignRepoDrops + (evidence?.foreignDrops ?? 0),",
     to:
-      "    foreignRepoDrops: next.foreignRepoDrops + (input.resolution?.outsideDrops ?? 0),",
+      "    foreignRepoDrops: next.foreignRepoDrops + (evidence?.outsideDrops ?? 0),",
     test: `${CURSOR}/test/worktree-capture.test.ts`,
     because:
       "a touch of a DIFFERENT connected repo and a file under no root at all " +
@@ -1795,7 +1795,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // workspace resolves to a foreign repo drops silently.
     label: "a cursor foreign-repo drop hides the edit that caused it",
     file: `${CURSOR}/src/handlers/recover.ts`,
-    from: "        editToolFires: fresh.editToolFires + editFires,\n",
+    from:
+      "  editToolFires: fresh.editToolFires + (options.editFired === true ? 1 : 0),\n",
     to: "",
     test: `${CURSOR}/test/worktree-capture.test.ts`,
     because:
@@ -1816,6 +1817,78 @@ export const MUTATIONS: readonly Mutation[] = [
       "one edit arriving pending, in_progress and completed books three " +
       "edit-tool fires, so the `N fires -> M targets` ratio the WARN is " +
       "measured on is wrong by a factor nobody can see",
+  },
+  // ── Review round A/B on the parity port: the four holes the round's own
+  // fixes closed. Each of these shipped GREEN once, which is why they are
+  // catalogued rather than trusted.
+  {
+    // Review finding A1/P2. `editToolFires` counts edits, so the numerator and
+    // the denominator of the ratio must be measured on the same event set.
+    // ACP is the only host where a NON-edit row carries file paths, and there
+    // both halves were dishonest at once.
+    label: "a non-edit touch counts as evidence about edit capture",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from: "  const evidence = input.editFired ? input.resolution : null;",
+    to: "  const evidence = input.resolution;",
+    test: `${CLI}/test/connector-capture-health.test.ts`,
+    because:
+      "one in-repo read makes the silently-dead WARN unreachable for the rest " +
+      "of the session, and one read of a second connected repo raises the " +
+      "machine-wide foreign-drop WARN for a session that edited nothing",
+  },
+  {
+    // The same finding's other half: a read's captured targets still SPOOL —
+    // they are real work context — but they are not evidence that edit
+    // capture is alive, which is the only question the ratio asks.
+    label: "a non-edit touch inflates the captured-target count",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from:
+      "      next.targetsCapturedCount + (input.editFired ? input.capturedCount : 0),",
+    to: "      next.targetsCapturedCount + input.capturedCount,",
+    test: `${ACP}/test/worktree-capture.test.ts`,
+    because:
+      "three reads before 200 dropped worktree edits render as `200 edit-tool " +
+      "fires -> 3 targets` and PASS, which is exactly the H1 silence this " +
+      "round exists to end",
+  },
+  {
+    // Review finding A2. `kind` is OPTIONAL on the announce row, so the fire
+    // has to be keyed on the tool CALL, not on "is this the announce".
+    label: "an acp edit revealed after its announce books no fire",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "    if (session.firedToolCalls.has(id)) {\n      return false;\n    }",
+    to: "    if (!toolCall.isNewToolCall) {\n      return false;\n    }",
+    test: `${ACP}/test/worktree-capture.test.ts`,
+    because:
+      "an agent that announces `tool_call {status: \"pending\"}` and reveals " +
+      "`kind: \"edit\"` on the revision books zero fires while its drops are " +
+      "counted, so the WARN is structurally unreachable for that agent",
+  },
+  {
+    // Review finding A3/P5. The counters alone made doctor contradict itself
+    // on the one surface a developer is asked to paste.
+    label: "a cursor foreign-repo drop names no tool",
+    file: `${CURSOR}/src/handlers/recover.ts`,
+    from: "  lastPostToolUseTool: options.toolLabel ?? fresh.lastPostToolUseTool,\n",
+    to: "",
+    test: `${CLI}/test/connector-capture-health.test.ts`,
+    because:
+      "doctor prints `3 edit-tool fires -> 0 targets ... last tool none yet` " +
+      "in one line, so the reader cannot tell which conversation or which " +
+      "tool to look at",
+  },
+  {
+    // Review finding A4. The cache key is only a DIRECTORY PATH, and the
+    // fixed-path worktree convention reuses it. Guard shells out to git.
+    label: "a reused worktree path keeps the old checkout's repo id",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "    if (cached !== undefined && !replaced && !isRetryableUnknown(cached)) {",
+    to: "    if (cached !== undefined && !isRetryableUnknown(cached)) {",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "a worktree torn down and stood up again from a DIFFERENT repo captures " +
+      "that repo's files into this one's work context under repo-relative " +
+      "paths, with both drop counters reading 0",
   },
   // ── Trial findings #17/#19/#20/#25: capture signal ───────────────────────
   {
@@ -2038,7 +2111,7 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: packages/cli/test/agent-restart.test.ts 1
  * PRINTS: packages/cli/test/capture-health.test.ts 2
- * PRINTS: packages/cli/test/connector-capture-health.test.ts 2
+ * PRINTS: packages/cli/test/connector-capture-health.test.ts 4
  * PRINTS: packages/cli/test/doctor-global.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 1
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 1
@@ -2049,7 +2122,7 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
- * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 2
+ * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 4
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
@@ -2088,7 +2161,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 3
  * PRINTS: packages/connector-cursor/test/injection.test.ts 2
- * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 4
+ * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 5
  * PRINTS: packages/server/test/developer-emails.test.ts 1
  * PRINTS: packages/server/test/hints.test.ts 2
  * PRINTS: packages/server/test/search.test.ts 3
