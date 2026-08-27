@@ -805,6 +805,21 @@ export const SUMMARIZER_FAILURE_MAX_CHARS = 120;
  */
 export const DOCTOR_SUMMARIZER_SILENT_FIRES_WARN = 3;
 /**
+ * `crosscheck doctor` WARNs once this many well-formed answers have been
+ * REFUSED with no draft kept (audit rows M16 / A3-4, summarizer/cost.ts
+ * isSummarizerAlwaysRejected). The model is speaking and the developer's own
+ * quota is being spent, so this is a different remedy from a dead runner — a
+ * drifted prompt, a slice that lost its ask, a model that role-plays.
+ *
+ * 2 rather than the silence threshold's 3: one refusal is ordinary (a draft
+ * that echoed a delivered teammate hint is the echo guard doing its job), two
+ * with nothing kept is a pattern. Never a PASS-only counter.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DOCTOR_SUMMARIZER_REJECTED_WARN, c.DOCTOR_SUMMARIZER_REJECTED_WARN < c.DOCTOR_SUMMARIZER_SILENT_FIRES_WARN)'
+ * PRINTS: 2 true
+ */
+export const DOCTOR_SUMMARIZER_REJECTED_WARN = 2;
+/**
  * The slice the doctor's runner probe hands the REAL argv: a progress
  * report the prompt names out explicitly, so a working runner answers NONE
  * and a non-NONE answer is a precision note, not a failure.

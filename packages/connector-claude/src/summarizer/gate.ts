@@ -262,6 +262,32 @@ export const withSummarizerDraft = (state: SessionState): SessionState => ({
 });
 
 /**
+ * An answer the CONNECTOR refused (audit rows M16 / A3-4) — role-play, an
+ * echo of the prompt or of a delivered hint, a credential-shaped body, a
+ * claim the wire contract would not take. The model spoke and the quota was
+ * spent, so this is neither a runner failure nor a NONE nor a draft: it is
+ * its own outcome, and booking it is what stops `doctor` reading a session
+ * whose every answer was refused as a runner that never spoke.
+ *
+ * The reason is one of summarizer/reject.ts's constants — the connector's own
+ * words, never the rejected body, because it is printed into a terminal and
+ * frequently into an agent's context.
+ */
+export const withSummarizerRejection = (
+  state: SessionState,
+  reason: string,
+): SessionState => ({
+  ...state,
+  summarizerRejectCount: state.summarizerRejectCount + 1,
+  // The same bound and the same surrogate-safe cut the failure reason gets.
+  // The reason is one of summarizer/reject.ts's own constants, so it is never
+  // the model's text — but the cut stays, because a writer that trusts its
+  // caller is one refactor away from writing an unbounded string into the
+  // file every surface reads.
+  summarizerLastRejection: cutWellFormed(reason, SUMMARIZER_FAILURE_MAX_CHARS),
+});
+
+/**
  * A run the RUNNER lost (trial finding #14) — binary missing, non-zero
  * exit, deadline — booked by the worker with the reason as
  * runner.ts formatSummarizerFailure renders it. The bound lives HERE, on

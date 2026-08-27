@@ -171,9 +171,14 @@ describe("renderBriefing", () => {
 
   test("stays inside the char budget and reports what it hid", () => {
     // Arrange
+    // ONE CONTEXT PER DEVELOPER since audit row M15-rest: the section renders
+    // one line per teammate, so fifty contexts belonging to Alice are one
+    // entry and this test would measure the grouping instead of the budget.
     const contexts = Array.from({ length: 50 }, (_unused, index) =>
       contextEntry({
         id: `wc_${index}`,
+        developerId: `dev_${index}`,
+        developerName: `Teammate ${index}`,
         title: `Investigation number ${index} into the active-seat rollup`,
       }),
     );

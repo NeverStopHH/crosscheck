@@ -2963,6 +2963,53 @@ export const MUTATIONS: readonly Mutation[] = [
       "the hub sends work far outside the reader's own render window and the " +
       "bound is spent on rows the briefing was always going to drop",
   },
+  {
+    // Audit rows M16 / A3-4. Measured on the conclusion corpus: at 20 tool
+    // results of 2 KB, 7 of 7 gate-positive slices lost their ask.
+    label: "a long turn reaches the model without its ask",
+    file: `${CONNECTOR}/src/summarizer/transcript.ts`,
+    from: '  const head = ask === undefined ? "" : `${ask}\\n${OMITTED_MARKER}\\n`;',
+    to: '  const head = "";',
+    test: `${CONNECTOR}/test/stop-gate.test.ts`,
+    because:
+      "the model is asked what a turn concluded while holding only its last " +
+      "tool output, and answers about the last thing it can see",
+  },
+  {
+    // The shape a tail-degraded slice produces most: the conversation
+    // continuing, filed as somebody's finding.
+    label: "a role-played plan is filed as a teammate-visible draft",
+    file: `${CONNECTOR}/src/summarizer/worker.ts`,
+    from: "  if (isRolePlayAnswer(draft.body)) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/summarizer-worker.test.ts`,
+    because:
+      "a plan nobody has carried out is published as a derived claim on the " +
+      "author's tree, where teammates meet it as a finding",
+  },
+  {
+    // Every one of these refusals used to be a silent return.
+    label: "a refused answer is dropped in silence again",
+    file: `${CONNECTOR}/src/summarizer/worker.ts`,
+    from: "      withSummarizerRejection(fresh, reason),",
+    to: "      fresh,",
+    test: `${CONNECTOR}/test/summarizer-worker.test.ts`,
+    because:
+      "a fire whose answer nobody kept is indistinguishable from a runner " +
+      "that never spoke, and the quota was spent either way",
+  },
+  {
+    // Two different remedies: a dead runner and a model whose every answer is
+    // refused. Folding them sends the reader to the wrong check.
+    label: "doctor stops warning when every answer is refused",
+    file: `${CONNECTOR}/src/summarizer/cost.ts`,
+    from: "  cost.rejects >= DOCTOR_SUMMARIZER_REJECTED_WARN && cost.drafts === 0;",
+    to: "  false;",
+    test: "packages/cli/test/summarizer-cost.test.ts",
+    because:
+      "the developer keeps paying for answers nothing keeps, and the only " +
+      "line that would have said so reads PASS",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -3082,13 +3129,14 @@ interface Outcome {
  * PRINTS: solved-intent.test.ts 4
  * PRINTS: solved-probe.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
- * PRINTS: stop-gate.test.ts 1
+ * PRINTS: stop-gate.test.ts 2
  * PRINTS: stop-hook.test.ts 1
  * PRINTS: stop-latency.test.ts 1
  * PRINTS: summarizer-argv.test.ts 1
  * PRINTS: summarizer-child-guard.test.ts 1
- * PRINTS: summarizer-cost.test.ts 1
+ * PRINTS: summarizer-cost.test.ts 2
  * PRINTS: summarizer-worker-env.test.ts 1
+ * PRINTS: summarizer-worker.test.ts 2
  * PRINTS: transparency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1
  * PRINTS: work-context-listing.test.ts 2

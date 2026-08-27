@@ -17,7 +17,10 @@
  * at ~0.017). The line is a spend INDICATOR on the developer's quota —
  * "is this firing at all, and how often" — not a bill.
  */
-import { DOCTOR_SUMMARIZER_SILENT_FIRES_WARN } from "@crosscheck/connector-core/constants.ts";
+import {
+  DOCTOR_SUMMARIZER_REJECTED_WARN,
+  DOCTOR_SUMMARIZER_SILENT_FIRES_WARN,
+} from "@crosscheck/connector-core/constants.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
@@ -38,6 +41,17 @@ export interface SummarizerCost {
    */
   readonly fails: number;
   readonly lastFailure: string | null;
+  /**
+   * Answers the CONNECTOR refused (audit rows M16 / A3-4) — role-play, an
+   * echo of the prompt or of a delivered hint, a credential-shaped body, a
+   * claim the wire contract would not take — with one booked reason in the
+   * connector's own words (summarizer/reject.ts never quotes the body). The
+   * model SPOKE for each of these and the quota was spent, so they are not
+   * runner failures; before they were booked they were invisible, and a
+   * session whose every answer was refused read as a dead runner.
+   */
+  readonly rejects: number;
+  readonly lastRejection: string | null;
   /** Rough figure at ~4 chars/token — an estimate, never a bill. */
   readonly estimatedTokens: number;
 }
@@ -49,6 +63,8 @@ const NO_COST: SummarizerCost = {
   drafts: 0,
   fails: 0,
   lastFailure: null,
+  rejects: 0,
+  lastRejection: null,
   estimatedTokens: 0,
 };
 
@@ -69,6 +85,8 @@ export const summarizeSummarizerCost = (
       drafts: total.drafts + state.summarizerDraftCount,
       fails: total.fails + state.summarizerFailCount,
       lastFailure: state.summarizerLastFailure ?? total.lastFailure,
+      rejects: total.rejects + state.summarizerRejectCount,
+      lastRejection: state.summarizerLastRejection ?? total.lastRejection,
       estimatedTokens: total.estimatedTokens + state.summarizerEstimatedTokens,
     }),
     NO_COST,
@@ -104,18 +122,44 @@ export const formatSummarizerCost = (cost: SummarizerCost): string => {
     cost.lastFailure === null ? "" : `: last "${cost.lastFailure}"`;
   const failsPart =
     cost.fails === 0 ? "" : `, ${String(cost.fails)} failed${lastPart}`;
+  // Rejections read AFTER the failures and say why, because "2 refused" with
+  // no reason is the number nobody can act on — and the reason is this
+  // connector's own sentence, never the model's body.
+  const rejectedReason =
+    cost.lastRejection === null ? "" : `: last "${cost.lastRejection}"`;
+  const rejectsPart =
+    cost.rejects === 0
+      ? ""
+      : `, ${String(cost.rejects)} refused${rejectedReason}`;
   return (
-    `${String(cost.fires)} runs (${String(cost.nones)} NONE, ${draftsPart}${failsPart}), ` +
+    `${String(cost.fires)} runs (${String(cost.nones)} NONE, ${draftsPart}${failsPart}${rejectsPart}), ` +
     `~${String(cost.estimatedTokens)} tokens (estimate) across ${sessionsPart}`
   );
 };
 
 /**
  * The finding-#14 signature: fires enough to mean it, and not ONE answered
- * — no NONE, no draft. Below DOCTOR_SUMMARIZER_SILENT_FIRES_WARN a lost
- * run is noise; from it on, fail-open has become silently dead and doctor
- * must say so (DESIGN.md §4: "fail-open must never mean silently dead").
+ * — no NONE, no draft, and (since audit row A3-4) no refused answer either.
+ * A refusal means the model SPOKE, so counting it as silence would send the
+ * reader to the runner probe for a problem that is in the answers. Below
+ * DOCTOR_SUMMARIZER_SILENT_FIRES_WARN a lost run is noise; from it on,
+ * fail-open has become silently dead and doctor must say so (DESIGN.md §4:
+ * "fail-open must never mean silently dead").
  */
 export const isSummarizerSilentlyDead = (cost: SummarizerCost): boolean =>
   cost.fires >= DOCTOR_SUMMARIZER_SILENT_FIRES_WARN &&
-  cost.nones + cost.drafts === 0;
+  cost.nones + cost.drafts + cost.rejects === 0;
+
+/**
+ * The other half of the same honesty rule (audit rows M16 / A3-4): the model
+ * is answering, every answer is being refused, and nothing has landed. That
+ * is a different remedy from a broken runner — a drifted prompt, a slice that
+ * lost its ask, a model that role-plays — so it gets its own WARN with the
+ * booked reason rather than being folded into "none answered".
+ *
+ * One refusal is ordinary: a session whose only draft echoed a teammate hint
+ * is the echo guard working. From DOCTOR_SUMMARIZER_REJECTED_WARN on, with
+ * nothing kept, the developer is paying for answers nobody uses.
+ */
+export const isSummarizerAlwaysRejected = (cost: SummarizerCost): boolean =>
+  cost.rejects >= DOCTOR_SUMMARIZER_REJECTED_WARN && cost.drafts === 0;

@@ -101,6 +101,7 @@ import {
   isBelowSummarizerVersionFloor,
   isGhostSilentlyDead,
   isIntentSilentlyDead,
+  isSummarizerAlwaysRejected,
   isSummarizerSilentlyDead,
   probeSummarizerRunner,
   summarizeGhostCost,
@@ -934,13 +935,24 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
 const checkSummarizerCost = (states: readonly SessionState[]): Check => {
   const cost = summarizeSummarizerCost(states);
   const line = formatSummarizerCost(cost);
-  return isSummarizerSilentlyDead(cost)
-    ? check(
-        "WARN",
-        "summarizer cost",
-        `${line} — ${String(cost.fires)} runs fired, none answered — see the summarizer runner check (these counts are per live session and clear at SessionEnd)`,
-      )
-    : check("PASS", "summarizer cost", line);
+  if (isSummarizerSilentlyDead(cost)) {
+    return check(
+      "WARN",
+      "summarizer cost",
+      `${line} — ${String(cost.fires)} runs fired, none answered — see the summarizer runner check (these counts are per live session and clear at SessionEnd)`,
+    );
+  }
+  // The model IS answering and nothing is being kept (audit rows M16 / A3-4).
+  // Its own WARN, and its own remedy: the runner probe would PASS here and
+  // send the reader looking in the wrong place.
+  if (isSummarizerAlwaysRejected(cost)) {
+    return check(
+      "WARN",
+      "summarizer cost",
+      `${line} — every answer was refused and no draft was kept; the reason above says which gate refused it (these counts are per live session and clear at SessionEnd)`,
+    );
+  }
+  return check("PASS", "summarizer cost", line);
 };
 
 /**

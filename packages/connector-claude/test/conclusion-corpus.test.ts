@@ -275,6 +275,13 @@ describe("conclusion corpus: the worker/spool path", () => {
     });
   }
 
+  // Bun's 5 s default is not enough for this one: it runs EVERY positive
+  // through the real worker at once, and each of those spawns a process. The
+  // per-fixture tests above are the same work one at a time and stay inside
+  // the default; this aggregate timed out on a laptop with nothing else
+  // running, which reads as a regression rather than as a slow machine.
+  const YIELD_TIMEOUT_MS = 60_000;
+
   test("draft yield holds the floor — every positive spools its draft", async () => {
     const yields = await Promise.all(
       positives.map(async (fixture) => {
@@ -291,7 +298,7 @@ describe("conclusion corpus: the worker/spool path", () => {
     );
     const rate = yields.filter(Boolean).length / positives.length;
     expect(rate).toBeGreaterThanOrEqual(FLOOR_CONCLUSION_DRAFT_YIELD);
-  });
+  }, YIELD_TIMEOUT_MS);
 });
 
 describe("conclusion corpus: the prompt names the widened contract", () => {

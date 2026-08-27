@@ -451,6 +451,11 @@ describe("the gated ghost check", () => {
     expect((await stateOf(fix)).ghostDraftCount).toBe(1);
   });
 
+  // Six worker runs, each spawning a fake model process, in one test. Bun's
+  // 5 s default is not enough for that on an idle laptop, and a timeout here
+  // reads as "the echo guard broke" rather than as "the machine was busy".
+  const PARROT_TIMEOUT_MS = 60_000;
+
   test("a sentence that parrots what it was shown is dropped", async () => {
     // Ken's own claim, in the five shapes a parroting model returns it: the
     // BODY on its own (what a model told "never repeat the input" actually
@@ -490,7 +495,7 @@ describe("the gated ghost check", () => {
     const fresh = await aliceFixture("echo-control", original);
     await runGhostWorker(["--session", fresh.hostSessionKey], fresh.env);
     expect((await spooledClaims(fresh)).length).toBe(1);
-  });
+  }, PARROT_TIMEOUT_MS);
 
   test("a credential-shaped sentence never reaches the spool", async () => {
     const leaky = await makeFakeModel({

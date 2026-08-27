@@ -105,6 +105,76 @@ describe("summarizer cost surfaces", () => {
     expect(result.stdout).toContain("~1200 tokens (estimate)");
   });
 
+  test("status names the refused answers and why (M16 / A3-4)", async () => {
+    // A refusal is not a NONE and not a failure: the model answered and the
+    // quota was spent, and before it was booked the line said nothing at all.
+    const repo = await makeRepo("cost-refused", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-refused");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-refused-a", {
+      summarizerFireCount: 3,
+      summarizerEstimatedTokens: 1200,
+      summarizerNoneCount: 1,
+      summarizerRejectCount: 2,
+      summarizerLastRejection:
+        "role-play: the answer narrated the next step instead of a conclusion",
+    });
+
+    const result = await runCli(["status"], env(home), repo);
+
+    expect(result.stdout).toContain("2 refused");
+    expect(result.stdout).toContain("role-play");
+  });
+
+  test("doctor WARNs when every answer is refused and nothing lands", async () => {
+    // The remedy differs from a dead runner's, so the WARN is its own: the
+    // runner probe would PASS here and send the reader to the wrong check.
+    const repo = await makeRepo("cost-refused-doctor", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-refused-doctor");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-refused-doctor-a", {
+      summarizerFireCount: 2,
+      summarizerEstimatedTokens: 900,
+      summarizerRejectCount: 2,
+      summarizerLastRejection:
+        "echo: the answer repeated the instructions it was given",
+    });
+
+    const result = await runCli(["doctor"], env(home), repo);
+
+    expect(result.stdout).toContain("WARN  summarizer cost");
+    expect(result.stdout).toContain("every answer was refused");
+    // And it does NOT claim the runner never spoke — that is the other WARN.
+    expect(result.stdout).not.toContain("runs fired, none answered");
+  });
+
+  test("one refusal beside a kept draft stays a PASS", async () => {
+    // The control on the threshold: an echoed draft refused once, with a real
+    // draft kept, is the guards working — nagging there is how a WARN stops
+    // being read.
+    const repo = await makeRepo("cost-refused-ok", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-refused-ok");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-refused-ok-a", {
+      summarizerFireCount: 2,
+      summarizerEstimatedTokens: 900,
+      summarizerDraftCount: 1,
+      summarizerRejectCount: 1,
+      summarizerLastRejection:
+        "echo: the answer was a teammate hint this repo had already delivered",
+    });
+
+    const result = await runCli(["doctor"], env(home), repo);
+
+    expect(result.stdout).toContain("PASS  summarizer cost");
+  });
+
   test("doctor carries a summarizer cost check, PASS and marked estimate", async () => {
     const repo = await makeRepo("cost-doctor", {
       remote: "git@github.com:acme/api.git",

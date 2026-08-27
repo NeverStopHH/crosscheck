@@ -149,6 +149,19 @@ const SessionStateObjectSchema = z.looseObject({
   summarizerFailCount: z.number().int().min(0).default(0),
   summarizerLastFailure: z.string().nullable().default(null),
   /**
+   * Rejection telemetry per fire (audit rows M16 / A3-4): how many answers
+   * came back well-formed and were still refused — role-play, an echo of the
+   * prompt or of a delivered teammate hint, a credential-shaped body, a claim
+   * the wire contract would not take — plus the most recent reason IN THE
+   * CONNECTOR'S OWN WORDS (summarizer/reject.ts never quotes the body). Every
+   * one of these used to be a silent `return` inside the worker, so a fire
+   * whose answer nobody kept was indistinguishable from a runner that never
+   * spoke. Bounded by the writer like the failure reason. Defaults keep every
+   * pre-rejection state file parsing.
+   */
+  summarizerRejectCount: z.number().int().min(0).default(0),
+  summarizerLastRejection: z.string().nullable().default(null),
+  /**
    * The work-context title and status this session registered with (trial
    * finding #16): an intent UPDATE record must carry both (the wire schema
    * requires them), so the derived-intent worker and `set_intent` read them
@@ -566,6 +579,8 @@ export const deriveSessionState = (
     summarizerDraftCount: 0,
     summarizerFailCount: 0,
     summarizerLastFailure: null,
+    summarizerRejectCount: 0,
+    summarizerLastRejection: null,
     workContextTitle: null,
     workContextStatus: null,
     intentFireCount: 0,

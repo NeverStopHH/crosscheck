@@ -225,9 +225,45 @@ const blockText = (block: ContentBlock): string | null => {
 };
 
 /**
+ * The turn's own ASK, as this renderer labels it: a user line that is not a
+ * tool result. `readTurnSlice` starts the slice at the last real user prompt,
+ * so on an ordinary turn the first such line IS the question the turn is
+ * about; on a turn longer than the tail window there is none, and the caller
+ * falls back to the tail alone.
+ */
+const ASK_PREFIX = "user: ";
+const TOOL_RESULT_PREFIX = "user: tool_result:";
+
+/**
+ * Said out loud, because a slice that silently jumps from the question to the
+ * last few tool results reads as a complete turn, and a model asked to
+ * conclude from it will conclude from what it can see.
+ */
+const OMITTED_MARKER = "[... middle of this turn omitted for length ...]";
+
+/**
  * The slice as plain text: role-labelled lines, each block capped, the whole
- * capped at SUMMARIZER_SLICE_MAX_CHARS keeping the TAIL — when a turn is too
- * long, the diagnosis is at its end, not its start.
+ * capped at SUMMARIZER_SLICE_MAX_CHARS.
+ *
+ * HEAD PLUS TAIL, not tail alone (audit rows M16 / A3-4). It kept only the
+ * last 24,000 characters, and on a long turn — a build log, a test run, a
+ * file read — that window closed above the user's own question, so the model
+ * was asked what this turn concluded while holding only its final tool
+ * output. The trial measured 60 % of gate-positive slices arriving that way,
+ * and a summarizer that cannot see the ask answers about the last thing it
+ * can see: the narration and role-play `summarizer/reject.ts` now has to
+ * refuse.
+ *
+ * The fix is the position-bias result rather than a bigger window: models
+ * retrieve reliably from the START and the END of a context and least
+ * reliably from the middle (Liu et al., "Lost in the Middle", TACL 2024), so
+ * the ask is prepended and the tail keeps the rest of the SAME budget. The
+ * token bill does not move by one character — SUMMARIZER_SLICE_MAX_CHARS is
+ * unchanged and the result is still measured against it — which is why this
+ * is preferred to raising SUMMARIZER_TAIL_BYTES, the other half of the audit
+ * row: that would have paid for the ask with the developer's own quota
+ * (DESIGN.md §10 risk 7) on every fire, including the many that do not need
+ * it.
  */
 export const extractSliceText = (raw: string): string => {
   const rendered = raw
@@ -245,5 +281,19 @@ export const extractSliceText = (raw: string): string => {
       });
     })
     .join("\n");
-  return rendered.slice(-SUMMARIZER_SLICE_MAX_CHARS);
+  if (rendered.length <= SUMMARIZER_SLICE_MAX_CHARS) {
+    return rendered;
+  }
+  const lines = rendered.split("\n");
+  const ask = lines.find(
+    (line) => line.startsWith(ASK_PREFIX) && !line.startsWith(TOOL_RESULT_PREFIX),
+  );
+  // No ask in the slice at all (a turn longer than the tail window, so the
+  // read began mid-turn), or an ask so long it would leave no room for the
+  // conclusion: the tail alone, exactly as before.
+  const head = ask === undefined ? "" : `${ask}\n${OMITTED_MARKER}\n`;
+  if (head.length === 0 || head.length >= SUMMARIZER_SLICE_MAX_CHARS) {
+    return rendered.slice(-SUMMARIZER_SLICE_MAX_CHARS);
+  }
+  return `${head}${rendered.slice(-(SUMMARIZER_SLICE_MAX_CHARS - head.length))}`;
 };

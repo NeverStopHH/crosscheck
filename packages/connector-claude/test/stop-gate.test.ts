@@ -12,6 +12,7 @@ import { join } from "node:path";
 import {
   SUMMARIZER_DEBOUNCE_TURNS,
   SUMMARIZER_MAX_FIRES_PER_SESSION,
+  SUMMARIZER_SLICE_MAX_CHARS,
   SUMMARIZER_TAIL_BYTES,
 } from "@crosscheck/connector-core/constants.ts";
 import {
@@ -58,6 +59,8 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   summarizerDraftCount: 0,
   summarizerFailCount: 0,
   summarizerLastFailure: null,
+  summarizerRejectCount: 0,
+  summarizerLastRejection: null,
   workContextTitle: null,
   workContextStatus: null,
   intentFireCount: 0,
@@ -242,6 +245,84 @@ const writeTranscript = async (content: string): Promise<string> => {
   await writeFile(path, content, "utf8");
   return path;
 };
+
+describe("a long turn keeps the ask, not only its tail (M16 / A3-4)", () => {
+  /** ~2 KB per tool result — a build log, a file read, a test run. */
+  const padding = (blocks: number): string =>
+    Array.from({ length: blocks }, (_unused, n) =>
+      toolResult(`step ${String(n)} output ${"x".repeat(2000)}`),
+    ).join("");
+
+  const longTurn = (): string =>
+    userText("why does the importer stall at 40 rps") +
+    padding(20) +
+    assistantText(
+      "Root cause: the uploader and the importer share one token bucket",
+    );
+
+  test("the question the turn is about survives a 40 KB turn", async () => {
+    // Arrange: 20 tool results of 2 KB each — far past
+    // SUMMARIZER_SLICE_MAX_CHARS, so the old tail-only window closed above
+    // the ask. Measured on the conclusion corpus: 7 of 7 gate-positive
+    // slices lost their ask at this padding, 0 of 7 after this change.
+    const path = await writeTranscript(longTurn());
+
+    // Act
+    const slice = await readTurnSlice(path);
+    const text = extractSliceText(slice?.raw ?? "");
+
+    // Assert: the ask AND the conclusion, inside the unchanged budget
+    expect(text).toContain("why does the importer stall at 40 rps");
+    expect(text).toContain("share one token bucket");
+    expect(text.length).toBeLessThanOrEqual(SUMMARIZER_SLICE_MAX_CHARS);
+  });
+
+  test("the slice says the middle is missing rather than reading whole", async () => {
+    // A slice that jumps from the question to the last tool results looks
+    // like a complete turn, and a model asked to conclude from it concludes
+    // from what it can see.
+    const path = await writeTranscript(longTurn());
+    const text = extractSliceText((await readTurnSlice(path))?.raw ?? "");
+
+    expect(text).toContain("middle of this turn omitted");
+    // …and the marker sits between the two halves, not at either end.
+    const marker = text.indexOf("middle of this turn omitted");
+    expect(text.indexOf("why does the importer stall")).toBeLessThan(marker);
+    expect(text.indexOf("share one token bucket")).toBeGreaterThan(marker);
+  });
+
+  test("a turn that fits is not rearranged and says nothing was dropped", async () => {
+    // The control: the head+tail composition applies ONLY when the budget
+    // bites, so an ordinary turn reaches the model exactly as before.
+    const path = await writeTranscript(
+      userText("why does bun test fail here") +
+        toolResult("1 fail — TypeError: cursor is undefined") +
+        assistantText("The root cause is the stale cursor id"),
+    );
+    const text = extractSliceText((await readTurnSlice(path))?.raw ?? "");
+
+    expect(text).not.toContain("omitted");
+    expect(text.split("\n")[0]).toBe("user: why does bun test fail here");
+  });
+
+  test("with no ask in the window at all, the tail alone is still the answer", async () => {
+    // A turn longer than SUMMARIZER_TAIL_BYTES: the read begins mid-turn and
+    // there is no user prompt to prepend. Degrading to the tail is the old
+    // behaviour and stays correct — inventing a head would be worse.
+    // Each block is capped at SUMMARIZER_BLOCK_MAX_CHARS = 2000, so twenty of
+    // them are ~40 KB rendered — the budget really does bite here, which is
+    // what makes this a test of the no-ask branch rather than of a short turn.
+    const raw =
+      Array.from({ length: 20 }, (_unused, n) =>
+        assistantText(`step ${String(n)} ${"y".repeat(2000)}`),
+      ).join("") + assistantText("The root cause is the stale cursor id");
+    const text = extractSliceText(raw);
+
+    expect(text.length).toBe(SUMMARIZER_SLICE_MAX_CHARS);
+    expect(text).toContain("stale cursor id");
+    expect(text).not.toContain("omitted");
+  });
+});
 
 describe("turn slice from the transcript tail", () => {
   test("the slice starts at the LAST real user prompt, not a tool result", async () => {

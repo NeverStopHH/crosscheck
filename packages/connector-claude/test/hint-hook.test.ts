@@ -79,6 +79,8 @@ const sessionState = (
   summarizerDraftCount: 0,
   summarizerFailCount: 0,
   summarizerLastFailure: null,
+  summarizerRejectCount: 0,
+  summarizerLastRejection: null,
   workContextTitle: null,
   workContextStatus: null,
   intentFireCount: 0,

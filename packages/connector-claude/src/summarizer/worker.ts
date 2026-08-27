@@ -31,13 +31,24 @@ import {
   withSummarizerDraft,
   withSummarizerFailure,
   withSummarizerNone,
+  withSummarizerRejection,
 } from "./gate.ts";
 import { isNoneAnswer, parseSummarizerOutput } from "./parse.ts";
+import {
+  isPromptEcho,
+  isRolePlayAnswer,
+  REJECTED_CONTRACT,
+  REJECTED_HINT_ECHO,
+  REJECTED_PROMPT_ECHO,
+  REJECTED_ROLE_PLAY,
+  REJECTED_SECRET,
+} from "./reject.ts";
 import {
   formatSummarizerFailure,
   resolveSummarizerArgv,
   resolveSummarizerTimeoutMs,
   runSummarizer,
+  SUMMARIZER_PROMPT,
 } from "./runner.ts";
 import { extractSliceText, readSliceRange } from "./transcript.ts";
 import { ensureSummarizerCwd } from "./worker-env.ts";
@@ -126,6 +137,28 @@ const summarizeTurn = async (args: WorkerArgs, env: Env): Promise<void> => {
     return;
   }
 
+  // Every refusal below is BOOKED (audit rows M16 / A3-4): each was a silent
+  // `return`, so a fire whose well-formed answer nobody kept looked exactly
+  // like a runner that never spoke — and the quota was spent either way.
+  const reject = async (reason: string): Promise<void> => {
+    await updateSessionState(home, args.claudeSessionId, (fresh) =>
+      withSummarizerRejection(fresh, reason),
+    );
+  };
+
+  // ROLE-PLAY, before anything else: the model answered as the agent whose
+  // turn it read and narrated the next step, which the prompt already says is
+  // not a conclusion. It is the shape a tail-degraded slice produces most.
+  if (isRolePlayAnswer(draft.body)) {
+    await reject(REJECTED_ROLE_PLAY);
+    return;
+  }
+  // The instructions, handed back on schema.
+  if (isPromptEcho(draft.body, SUMMARIZER_PROMPT)) {
+    await reject(REJECTED_PROMPT_ECHO);
+    return;
+  }
+
   // FRESH state for the exclusions: hints may have been delivered while the
   // model ran, and a session that ended meanwhile has nothing to attribute
   // to — its state file is gone and the draft dies with it (honest).
@@ -143,11 +176,16 @@ const summarizeTurn = async (args: WorkerArgs, env: Env): Promise<void> => {
   );
   const deliveredHashes = [...fresh.deliveredHintHashes, ...persistedHashes];
   if (isEchoOfDeliveredHint(draft.body, deliveredHashes)) {
+    await reject(REJECTED_HINT_ECHO);
     return;
   }
   // Secret scan before anything can leave the machine: a hit DROPS the
   // draft, never redacts it (capture/secret-scan.ts states why).
   if (containsSecret(draft.body)) {
+    // Booked WITHOUT the match, like every other secret refusal in this
+    // product: the count says a drop happened, the reason says which class,
+    // and neither says what was in it.
+    await reject(REJECTED_SECRET);
     return;
   }
 
@@ -170,6 +208,7 @@ const summarizeTurn = async (args: WorkerArgs, env: Env): Promise<void> => {
   // The shared wire contract, reused not duplicated: ClaimSchema behind
   // checkClaim enforces the derived-confidence cap the same way the hub does.
   if (!checkClaim(claim).ok) {
+    await reject(REJECTED_CONTRACT);
     return;
   }
 

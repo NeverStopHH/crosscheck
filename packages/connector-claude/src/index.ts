@@ -8,6 +8,7 @@ export { runStatusline } from "./statusline/statusline.ts";
 export { runSummarizeWorker } from "./summarizer/worker.ts";
 export {
   formatSummarizerCost,
+  isSummarizerAlwaysRejected,
   isSummarizerSilentlyDead,
   readSummarizerCost,
 } from "./summarizer/cost.ts";
