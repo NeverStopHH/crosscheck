@@ -24,7 +24,8 @@
  *
  * WHAT IT PUBLISHES, and only behind --publish: one DERIVED, PROPOSED claim per
  * finding, at CONFERENCE_DERIVED_CONFIDENCE, on the freshest of the two
- * contexts the finding names — a Tier-1 draft like every other model sentence
+ * contexts the finding names (orderedPair, never the letter the model wrote
+ * first) — a Tier-1 draft like every other model sentence
  * here, pointer-only until somebody promotes it with review_draft. It needs a
  * session of its own to author them (the hub only accepts claims from a
  * session the caller owns), which is registered and ENDED inside the run.
@@ -175,6 +176,30 @@ const shownTexts = (sessions: readonly LabelledSession[]): readonly string[] =>
     ]),
   );
 
+/**
+ * The two sides of a finding in the HUB'S order — freshest first — rather than
+ * in the order the model happened to write its two letters.
+ *
+ * "A+B" and "B+A" are the same finding, and which one a model emits is a coin
+ * toss. Two things downstream must not be decided by that toss: which of the
+ * two trees a --publish draft is FILED ON, and which side a reader meets first
+ * on every page. Freshest is the same rule the rest of this product uses when
+ * one row has to speak for a developer (services/presence.ts, mergeGroup), and
+ * the tie is broken by id so the answer is total.
+ */
+const orderedPair = (
+  left: ConferenceContext,
+  right: ConferenceContext,
+  rank: ReadonlyMap<string, number>,
+): readonly [ConferenceContext, ConferenceContext] => {
+  const leftRank = rank.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+  const rightRank = rank.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+  if (leftRank !== rightRank) {
+    return leftRank < rightRank ? [left, right] : [right, left];
+  }
+  return left.id.localeCompare(right.id) <= 0 ? [left, right] : [right, left];
+};
+
 const runModel = async (
   sessions: readonly LabelledSession[],
   env: Env,
@@ -252,6 +277,8 @@ const runModel = async (
   const byLabel = new Map(
     sent.map((session) => [session.label, session.context]),
   );
+  // The hub's own ordering of the slice, freshest first — see orderedPair.
+  const rank = new Map(sent.map((session, index) => [session.context.id, index]));
   const shown = shownTexts(sent);
   const findings = answer.findings
     .flatMap((finding): readonly ConferenceFinding[] => {
@@ -266,7 +293,7 @@ const runModel = async (
       if (isRestatementOf(finding.sentence, shown) || containsSecret(finding.sentence)) {
         return [];
       }
-      return [{ sentence: finding.sentence, contexts: [left, right] }];
+      return [{ sentence: finding.sentence, contexts: orderedPair(left, right, rank) }];
     })
     .slice(0, CONFERENCE_MAX_FINDINGS);
   return {
@@ -296,7 +323,6 @@ const publishFindings = async (
   repoId: string,
   branch: string,
   findings: readonly ConferenceFinding[],
-  developerId: string | null,
   env: Env,
   now: Date,
 ): Promise<{ readonly published: number; readonly problem: string | null }> => {
@@ -346,7 +372,6 @@ const publishFindings = async (
         now,
       );
     });
-    void developerId;
     const posted = await postRecords(hub, envelopes);
     if (!posted.ok) {
       return { published: 0, problem: "the hub refused the records" };
@@ -435,7 +460,6 @@ export const runConference = async (
         identity.repoId,
         identity.branch,
         model.findings,
-        config.developerId,
         env,
         now,
       )
