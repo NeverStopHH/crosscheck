@@ -95,7 +95,13 @@ afterAll(() => {
 const hubContext = (home: string): HubContext => ({
   hubUrl: hub.url,
   apiKey: "test-key",
-  timeoutMs: 2000,
+  // 20 s, not the product's 2 s: this deadline is the TEST's patience with a
+  // fake hub on localhost, never a bound the product ships (the real ones are
+  // measured in connector-claude's hook-budget tests). At 2 s the whole-suite
+  // run flaked — 225 files, many spawning processes — and a hint that never
+  // arrived read as a delivery defect: `an answer is delivered exactly once`
+  // failed on an empty string, once, under load.
+  timeoutMs: 20_000,
   home,
   repoKey: repoKey(hub.url, REPO_ID),
   now: () => NOW,
