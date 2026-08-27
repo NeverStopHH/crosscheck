@@ -636,6 +636,45 @@ describe("the conference command", () => {
     expect(report).not.toContain(`- «${KEN_DECLARED}»`);
   });
 
+  test("a sentence carrying a credential is dropped, never written to the page", async () => {
+    // Arrange: the report is a FILE on disk that people paste around, and
+    // --publish would put the same sentence on the hub. A model that read a
+    // teammate's claim about a leaked key and repeated the key is the one way
+    // this command can spill one.
+    const secret = "ghp_abcdefghijklmnopqrstuvwxyz0123";
+    const model = await makeFakeModel({
+      output: `A+B: both sessions authenticate with ${secret} directly`,
+    });
+
+    // Act
+    const result = await runConferenceFor(["--publish"], {
+      CROSSCHECK_SUMMARIZER_CMD: model,
+    });
+
+    // Assert: dropped whole rather than redacted, and the page never quotes
+    // what it matched.
+    const report = await reportOf(result.stdout);
+    expect(report).not.toContain(secret);
+    expect(result.stdout).not.toContain(secret);
+    expect(result.stdout).toContain("no shared-cause finding");
+    expect(
+      (await claimsOn(ALICE_CONTEXT)).some((entry) => entry.body.includes(secret)),
+    ).toBe(false);
+
+    // THE CONTROL: the identical run with the credential taken out of the
+    // sentence DOES land, so the drop above is the scan and not the shape of
+    // the answer.
+    const clean = await makeFakeModel({
+      output: "A+B: both sessions authenticate against the same stale key id",
+    });
+    const kept = await runConferenceFor([], {
+      CROSSCHECK_SUMMARIZER_CMD: clean,
+    });
+    expect(await reportOf(kept.stdout)).toContain(
+      "both sessions authenticate against the same stale key id",
+    );
+  });
+
   test("a lost model call is booked as a failure and the page still lands", async () => {
     // Arrange
     const model = await makeFakeModel({ output: "", exitCode: 9 });

@@ -2581,6 +2581,96 @@ export const MUTATIONS: readonly Mutation[] = [
       "nobody were there, and the reader learns it at the next SessionStart " +
       "at the earliest",
   },
+  {
+    // The agent conference (VISION.md §2). A teammate's Tier-1 draft is a
+    // machine guess nobody vouched for; feeding one to a model that produces
+    // another derived sentence launders a guess into a second guess with a
+    // fresh timestamp — the corpus refuses them in the SELECT, not in a
+    // renderer that could forget.
+    label: "the conference reads a teammate's machine drafts",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "        eq(claims.provenance, DECLARED_PROVENANCE),",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because:
+      "the one call in this product that reads the whole team's work at " +
+      "once is handed everybody's unconfirmed drafts, and every sentence it " +
+      "produces inherits their confidence without saying so",
+  },
+  {
+    // The label allowlist as WHAT WAS SENT rather than what the hub named.
+    // The input bound drops whole sessions from the end, and the hub's own
+    // caps reach it with ordinary data.
+    label: "a conference finding names a session nobody sent",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "  const sent = fitSessions(sessions);",
+    to: "  const sent = sessions;",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a sentence about a tree the model was never shown is accepted, " +
+      "printed as a finding and — behind --publish — filed on that tree, " +
+      "which is a synthesis of two things nobody compared",
+  },
+  {
+    // Which of the two trees a --publish draft lands on must not be decided
+    // by which letter the model happened to write first.
+    label: "the model chooses whose tree the conference draft lands on",
+    file: `${CLI}/src/cli/conference.ts`,
+    from:
+      "      return [{ sentence: finding.sentence, contexts: orderedPair(left, right, rank) }];",
+    to: "      return [{ sentence: finding.sentence, contexts: [left, right] }];",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "\"A+B\" and \"B+A\" are the same finding, so a coin toss inside the " +
+      "model decides whose diagnosis tree carries a machine-written draft " +
+      "and which side a reader meets first",
+  },
+  {
+    // The secret gate on the one model sentence this product writes to a FILE
+    // and, behind a flag, to the hub.
+    label: "a conference finding skips the secret scan",
+    file: `${CLI}/src/cli/conference.ts`,
+    from:
+      "      if (isRestatementOf(finding.sentence, shown) || containsSecret(finding.sentence)) {",
+    to: "      if (isRestatementOf(finding.sentence, shown)) {",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a model that read a teammate's claim about a leaked credential and " +
+      "repeated it writes the credential into a report on disk, and posts " +
+      "it to the hub whenever --publish is given",
+  },
+  {
+    // One session too big to send must cost the team that session, not the
+    // whole conference.
+    label: "one oversized session silences the whole conference",
+    file: `${CONNECTOR}/src/conference/prompt.ts`,
+    from: `    if (total + cost > CONFERENCE_MAX_INPUT_CHARS) {
+      continue;
+    }`,
+    to: `    if (total + cost > CONFERENCE_MAX_INPUT_CHARS) {
+      break;
+    }`,
+    test: `${CONNECTOR}/test/conference-prompt.test.ts`,
+    because:
+      "the sessions arrive freshest first, so one context carrying more " +
+      "claims than its own cap allows sits at the head and empties every " +
+      "teammate's conference input behind it",
+  },
+  {
+    // Tier 1, and nothing more. A conference sentence is a machine's guess
+    // across two trees nobody has confirmed (DESIGN.md §3).
+    label: "a conference finding is published as declared",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: `          captureMode: "auto",
+          provenance: "derived",`,
+    to: `          captureMode: "agent",
+          provenance: "declared",`,
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a model's cross-tree hypothesis enters the hub with the standing of " +
+      "something a person stated, so it ranks as evidence and never has to " +
+      "pass review_draft",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -2629,6 +2719,9 @@ interface Outcome {
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
  * PRINTS: conclusion-corpus.test.ts 6
+ * PRINTS: conference-cli.test.ts 4
+ * PRINTS: conference-prompt.test.ts 1
+ * PRINTS: conference.test.ts 1
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1
