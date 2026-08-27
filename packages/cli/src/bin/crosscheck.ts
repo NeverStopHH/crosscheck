@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { EXIT_FAIL, EXIT_OK, EXIT_USAGE, STDIN_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
+import { EXIT_FAIL, EXIT_OK, STDIN_TIMEOUT_MS } from "@crosscheck/connector-core/constants.ts";
 import {
   isHookName,
   runHook,
@@ -164,6 +164,14 @@ const main = async (): Promise<void> => {
   process.exit(result.exitCode);
 };
 
-await main().catch(() => {
-  process.exit(EXIT_USAGE);
+// NEVER SILENT. This catch used to exit EXIT_USAGE with nothing on either
+// stream, so any unexpected throw anywhere in the CLI looked to an operator
+// exactly like a mistyped command — measured on `crosscheck conference` under
+// a read-only home: two pre-run lines, empty stderr, exit 64. An exception is
+// a failure, not a usage error, so it says what it was and exits EXIT_FAIL.
+await main().catch((error: unknown) => {
+  console.error(
+    `crosscheck failed: ${error instanceof Error ? error.message : String(error)}`,
+  );
+  process.exit(EXIT_FAIL);
 });

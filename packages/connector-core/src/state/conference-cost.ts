@@ -121,6 +121,23 @@ export const recordConferenceRun = async (
   outcome: ConferenceRunOutcome,
   now: Date,
 ): Promise<void> => {
+  try {
+    await bookRun(home, key, outcome, now);
+  } catch {
+    // FAIL-OPEN, and it has to be HERE rather than only in the doc comment
+    // above: `withLock` mkdirs the lock's directory, so a home that is
+    // read-only, full or owned by somebody else threw straight out of this
+    // function and out of `crosscheck conference` with it — the counter cost
+    // the run instead of the run costing the counter.
+  }
+};
+
+const bookRun = async (
+  home: string,
+  key: string,
+  outcome: ConferenceRunOutcome,
+  now: Date,
+): Promise<void> => {
   await withLock(conferenceCostLockPath(home, key), undefined, async () => {
     const current = await readConferenceCost(home, key);
     const next: ConferenceCost = {

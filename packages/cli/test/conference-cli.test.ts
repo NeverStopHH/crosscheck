@@ -19,6 +19,8 @@ import type { Db } from "@crosscheck/server";
 import {
   CONFERENCE_DERIVED_CONFIDENCE,
   CONFERENCE_MAX_INPUT_CHARS,
+  EXIT_FAIL,
+  EXIT_USAGE,
 } from "@crosscheck/connector-core/constants.ts";
 import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 import { readConferenceCost } from "@crosscheck/connector-core/state/conference-cost.ts";
@@ -1198,5 +1200,88 @@ describe("a hub whose contexts do not fit the input bound", () => {
     expect(run.spawned).toBe(false);
     expect(run.written.join("\n")).not.toContain("about 0 input tokens");
     expect(run.report).toContain("only 0 of 2 sessions fit");
+  });
+});
+
+/**
+ * THE DELIVERABLE IS THE PAGE, and a command whose only output is a file has
+ * to say something when the file cannot be written. The module header promises
+ * "THE REPORT IS ALWAYS WRITTEN when the hub answered"; this is what happens
+ * when the filesystem disagrees.
+ */
+describe("a home the report cannot be written to", () => {
+  test("the page is printed and the failure named, never a silent exit", async () => {
+    // Arrange: the shape a cron job hits — a home owned by somebody else, a
+    // full disk, or a read-only mount.
+    const readOnly = await tempDir("ro-home");
+    const model = await makeFakeModel({ output: "NONE" });
+    await chmod(readOnly, 0o500);
+
+    try {
+      // Act
+      const result = await runConference(
+        [],
+        envFor(aliceKey, {
+          CROSSCHECK_SUMMARIZER_CMD: model,
+          CROSSCHECK_HOME: readOnly,
+          HOME: readOnly,
+        }),
+        repo,
+        () => undefined,
+      );
+
+      // Assert: the page itself, the cause, the directory, and an exit code
+      // that means "this failed" rather than "you typed it wrong".
+      expect(result.stdout).toContain("# Team conference");
+      expect(result.stdout).toContain("could not write the report to ");
+      expect(result.stdout).toContain(readOnly);
+      expect(result.exitCode).toBe(EXIT_FAIL);
+      expect(result.exitCode).not.toBe(EXIT_USAGE);
+    } finally {
+      await chmod(readOnly, 0o700);
+    }
+  });
+
+  test("the REAL bin says it too, instead of exiting 64 in silence", async () => {
+    // Arrange: the entry point a cron job actually runs — `main().catch`
+    // printed nothing and exited EXIT_USAGE for any throw at all.
+    const readOnly = await tempDir("ro-bin");
+    const model = await makeFakeModel({ output: "NONE" });
+    await chmod(readOnly, 0o500);
+
+    try {
+      // Act
+      const child = Bun.spawn(
+        [
+          process.execPath,
+          join(import.meta.dir, "..", "src", "bin", "crosscheck.ts"),
+          "conference",
+        ],
+        {
+          cwd: repo,
+          env: envFor(aliceKey, {
+            CROSSCHECK_SUMMARIZER_CMD: model,
+            CROSSCHECK_HOME: readOnly,
+            HOME: readOnly,
+            PATH: process.env["PATH"] ?? "",
+          }),
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+
+      // Assert: not exit 64, and not an empty terminal.
+      expect(code).not.toBe(EXIT_USAGE);
+      expect(code).toBe(EXIT_FAIL);
+      expect(`${stdout}${stderr}`).toContain("could not write the report to ");
+      expect(stdout).toContain("# Team conference");
+    } finally {
+      await chmod(readOnly, 0o700);
+    }
   });
 });

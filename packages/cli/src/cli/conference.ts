@@ -30,12 +30,15 @@
  * session of its own to author them (the hub only accepts claims from a
  * session the caller owns), which is registered and ENDED inside the run.
  */
+import { dirname } from "node:path";
+
 import {
   CONFERENCE_DERIVED_CONFIDENCE,
   CONFERENCE_MAX_FINDINGS,
   CONFERENCE_MAX_INPUT_CHARS,
   CONFERENCE_MAX_WALL_MS,
   DEFAULT_AGENT_KIND,
+  EXIT_FAIL,
   EXIT_OK,
   EXIT_UNREACHABLE,
   EXIT_USAGE,
@@ -485,6 +488,32 @@ const corpusFailureLine = (
   );
 };
 
+/**
+ * The write, and the reason it is the one call here that is caught.
+ *
+ * Every other failure in this command already returns a sentence: an
+ * unreachable hub, a lost model call, a hub that refused the records. The
+ * write did not, and `bin/crosscheck.ts` ends with a `catch` that exits
+ * EXIT_USAGE and prints NOTHING — so a cron job whose ~/.crosscheck is
+ * root-owned, or whose disk is full, saw two pre-run lines, no error on either
+ * stream and exit 64, the code this CLI reserves for a mistyped command, while
+ * --publish kept filing drafts on the team's trees every night.
+ *
+ * Returns the cause rather than throwing it: the caller has the page in memory
+ * and the publish result in hand, and both belong in what it prints.
+ */
+const writeReport = async (
+  path: string,
+  report: string,
+): Promise<string | null> => {
+  try {
+    await writePrivateFile(path, report);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+};
+
 /** UTC minute, filename-safe — stable, sortable, and no clock arithmetic. */
 const reportStamp = (now: Date): string =>
   now.toISOString().slice(0, 16).replace(/[:T]/g, "-");
@@ -563,8 +592,10 @@ export const runConference = async (
     modelOutcome: model.outcome,
     now,
   });
-  const path = conferenceReportPath(config.home, key, reportStamp(now));
-  await writePrivateFile(path, report);
+  // BOOKED BEFORE THE PAGE IS WRITTEN. The counters are what `status` and
+  // `doctor` read, and a run whose report could not be written still HAPPENED
+  // — booking it after the write meant a failing disk silently unbooked every
+  // run as well as losing every page.
   await recordConferenceRun(
     config.home,
     key,
@@ -578,6 +609,8 @@ export const runConference = async (
     },
     now,
   );
+  const path = conferenceReportPath(config.home, key, reportStamp(now));
+  const writeFailure = await writeReport(path, report);
   const findingsLine =
     model.findings.length === 0
       ? "no shared-cause finding"
@@ -589,10 +622,29 @@ export const runConference = async (
           : `published nothing: ${publishOutcome.problem}`,
       ]
     : [];
+  const summary =
+    `conference: ${findingsLine}, ${String(corpus.data.overlaps.length)} duplicated-work pairs, ` +
+    `${String(corpus.data.contradictions.length)} contradictions, ${String(corpus.data.questions.length)} open questions`;
+  if (writeFailure !== null) {
+    // THE PAGE IS THE DELIVERABLE and it is already in memory, so it is
+    // printed rather than lost. Everything that DID happen is stated in the
+    // same breath, because a nightly --publish has already filed drafts on
+    // teammates' trees by the time this line is reached.
+    return {
+      stdout: [
+        summary,
+        ...publishLine,
+        `could not write the report to ${dirname(path)}: ${writeFailure}.`,
+        "The page is printed below; anything published above is already on the hub.",
+        "",
+        report,
+      ].join("\n"),
+      exitCode: EXIT_FAIL,
+    };
+  }
   return {
     stdout: [
-      `conference: ${findingsLine}, ${String(corpus.data.overlaps.length)} duplicated-work pairs, ` +
-        `${String(corpus.data.contradictions.length)} contradictions, ${String(corpus.data.questions.length)} open questions`,
+      summary,
       ...publishLine,
       `report: ${path}`,
       "",
