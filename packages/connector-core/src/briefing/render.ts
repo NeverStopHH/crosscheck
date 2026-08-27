@@ -8,6 +8,7 @@ import {
   MAX_CONTEXTS,
   MAX_CONTRADICTION_POINTERS,
   MAX_DRAFT_POINTERS,
+  MAX_BRIEFING_GHOST_CHARS,
   MAX_GHOST_POINTERS,
   MAX_QUESTION_POINTERS,
   MAX_SOLVED_POINTERS,
@@ -33,6 +34,7 @@ import type {
   SolvedMatchEntry,
   WorkContextEntry,
 } from "../http/hub.ts";
+import { fitEntries } from "./fit.ts";
 import { formatGhostLine, GHOST_SECTION_HEADER } from "./ghost.ts";
 import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
 import { fitQuestionEntries, formatQuestionEntry } from "./questions.ts";
@@ -251,6 +253,16 @@ const renderQuestionSection = (input: BriefingInput): Section => {
  * NOTHING HERE BLOCKS ANYTHING, and the header says so out loud. This is a
  * briefing line, not a permission decision — the reader chooses whether to
  * open a tree or say something, and nothing in the pipeline waits on either.
+ *
+ * Bounded TWICE, exactly as the questions block above is: at
+ * MAX_GHOST_POINTERS items and at MAX_BRIEFING_GHOST_CHARS characters. The
+ * second bound is not belt-and-braces — a ghost line composes a name, an
+ * intent, up to three of the reader's own paths and an id, and the two
+ * longest ones the formatter can produce measured 983 characters, half the
+ * briefing, which the item bound admits and every section below pays for.
+ * Rows are dropped WHOLE (briefing/fit.ts) and the count of them is reported
+ * by appendSection's own "+N more not shown", because a truncated ghost line
+ * loses the `get_diagnosis` id that is its entire next action.
  */
 const renderGhostSection = (input: BriefingInput): Section => {
   const rendered = (input.ghostChecks ?? []).flatMap((entry) => {
@@ -259,7 +271,10 @@ const renderGhostSection = (input: BriefingInput): Section => {
   });
   return {
     header: GHOST_SECTION_HEADER,
-    lines: rendered.slice(0, MAX_GHOST_POINTERS),
+    lines: fitEntries(
+      rendered.slice(0, MAX_GHOST_POINTERS),
+      MAX_BRIEFING_GHOST_CHARS,
+    ),
     total: rendered.length,
   };
 };

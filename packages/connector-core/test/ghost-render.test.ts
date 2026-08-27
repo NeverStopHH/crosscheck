@@ -14,10 +14,16 @@ import { describe, expect, test } from "bun:test";
 
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
-import { formatGhostLine, ghostDraftBody } from "../src/briefing/ghost.ts";
+import {
+  formatGhostLine,
+  GHOST_SECTION_HEADER,
+  ghostDraftBody,
+} from "../src/briefing/ghost.ts";
 import { formatDraftLine, renderBriefing } from "../src/briefing/render.ts";
 import {
   GHOST_SENTENCE_MAX_CHARS,
+  GHOST_SHARED_VALUE_MAX_CHARS,
+  MAX_BRIEFING_GHOST_CHARS,
   MAX_GHOST_POINTERS,
   MAX_TITLE_CHARS,
 } from "../src/constants.ts";
@@ -26,6 +32,15 @@ import type { GhostCheckEntry } from "../src/http/hub.ts";
 const NOW = new Date("2026-08-18T12:00:00.000Z");
 const FIVE_MINUTES_AGO = "2026-08-18T11:55:00.000Z";
 const FINGERPRINT = "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f0";
+
+/**
+ * The two measurements MAX_BRIEFING_GHOST_CHARS was chosen between, pinned
+ * here rather than stated in prose so a wording change re-runs the arithmetic
+ * instead of quietly invalidating the budget: one row with every field at its
+ * cap, and the pair of ordinary monorepo rows that must both survive.
+ */
+const MAXIMAL_GHOST_LINE_CHARS = 491;
+const REALISTIC_GHOST_PAIR_CHARS = 705;
 
 const ghostCheck = (
   overrides: Partial<GhostCheckEntry> = {},
@@ -301,6 +316,120 @@ describe("the ghost-check briefing block", () => {
     expect(briefing).toContain(
       `(+${String(many.length - MAX_GHOST_POINTERS)} more not shown)`,
     );
+  });
+
+  /**
+   * The block's own lines, as the character bound counts them: everything
+   * between the header and the first line that is not an entry.
+   */
+  const ghostLinesOf = (briefing: string): readonly string[] => {
+    const lines = briefing.split("\n");
+    const start = lines.indexOf(GHOST_SECTION_HEADER);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const after = lines.slice(start + 1);
+    const end = after.findIndex((line) => !line.startsWith("- "));
+    return end === -1 ? after : after.slice(0, end);
+  };
+
+  /** Every bounded field of a ghost row pushed to its own cap. */
+  const maximalGhostCheck = (index: number): GhostCheckEntry =>
+    ghostCheck({
+      workContextId: `wc_cc_${"a".repeat(30)}${String(index)}`,
+      developerName: "N".repeat(MAX_TITLE_CHARS * 2),
+      intent: {
+        summary: "I".repeat(MAX_TITLE_CHARS * 5),
+        provenance: "declared",
+        confidence: 1,
+        capturedAt: FIVE_MINUTES_AGO,
+      },
+      sharedTargets: [
+        { kind: "error_fingerprint", value: FINGERPRINT },
+        {
+          kind: "file",
+          value: `src/${"p".repeat(GHOST_SHARED_VALUE_MAX_CHARS)}.ts`,
+        },
+        {
+          kind: "file",
+          value: `lib/${"q".repeat(GHOST_SHARED_VALUE_MAX_CHARS)}.ts`,
+        },
+      ],
+      sharedTargetCount: 99,
+      intentTokenHits: 12,
+    });
+
+  /** An ordinary monorepo collision: the case the feature exists for. */
+  const realisticGhostCheck = (id: string): GhostCheckEntry =>
+    ghostCheck({
+      workContextId: id,
+      developerName: "Ken Weber",
+      intent: {
+        summary:
+          "Move the session store behind an interface so the JWKS cache can be swapped",
+        provenance: "declared",
+        confidence: 1,
+        capturedAt: FIVE_MINUTES_AGO,
+      },
+      sharedTargets: [
+        { kind: "error_fingerprint", value: FINGERPRINT },
+        {
+          kind: "file",
+          value: "packages/server/src/services/auth/session-store.ts",
+        },
+        {
+          kind: "file",
+          value: "packages/server/src/services/auth/jwks-cache.ts",
+        },
+      ],
+      sharedTargetCount: 7,
+      intentTokenHits: 3,
+    });
+
+  test("bounded in CHARACTERS too, and drops a row whole rather than cutting it", () => {
+    // Arrange: two rows with every bounded field at its cap. MAX_GHOST_POINTERS
+    // admits both, and admitting both is what the item bound cannot see — the
+    // pair composes 983 characters under a 114-character header, half of
+    // MAX_BRIEFING_CHARS spent on two pointer lines, and the five sections
+    // below (contexts, contradictions, solved-before, drafts, absences) give
+    // way whole to it.
+    const firstEntry = maximalGhostCheck(1);
+    const maximal = [firstEntry, maximalGhostCheck(2)];
+    const first = formatGhostLine(firstEntry, NOW);
+    if (first === null) {
+      throw new Error("a maximal ghost row must still render");
+    }
+    expect(first.length).toBe(MAXIMAL_GHOST_LINE_CHARS);
+
+    // Act
+    const briefing = briefingWith(maximal);
+    const lines = ghostLinesOf(briefing);
+
+    // Assert: the block fits its own budget, and what it kept is a WHOLE row
+    // — a cut ghost line loses the get_diagnosis id that is its next action.
+    expect(lines.join("\n").length).toBeLessThanOrEqual(
+      MAX_BRIEFING_GHOST_CHARS,
+    );
+    expect(lines.length).toBe(1);
+    expect(lines[0]).toBe(first);
+    expect(briefing).toContain("(+1 more not shown)");
+  });
+
+  test("two ordinary monorepo rows both survive the character bound", () => {
+    // The control, and the reason the bound is 800 rather than the questions
+    // block's 700: two teammates in the reader's files is the case this
+    // feature exists for, so a budget that dropped the second would be the
+    // fix causing the failure it was written to prevent.
+    const realistic = [
+      realisticGhostCheck("wc_cc_0f1e2d3c4b5a6978-8796a5b4c3d2e1f0"),
+      realisticGhostCheck("wc_cc_1a2b3c4d5e6f7890-0987f6e5d4c3b2a1"),
+    ];
+    const briefing = briefingWith(realistic);
+    const lines = ghostLinesOf(briefing);
+    expect(lines.length).toBe(2);
+    expect(lines.join("\n").length).toBe(REALISTIC_GHOST_PAIR_CHARS);
+    expect(lines.join("\n").length).toBeLessThanOrEqual(
+      MAX_BRIEFING_GHOST_CHARS,
+    );
+    expect(briefing).not.toContain("more not shown");
   });
 
   test("no overlap renders no section at all", () => {

@@ -33,6 +33,7 @@ import {
   QUESTION_EXPIRY_REPORT_DAYS,
 } from "../constants.ts";
 import type { InboxQuestion, QuestionCounts } from "../http/hub.ts";
+import { fitEntries } from "./fit.ts";
 import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
 
 /** Bounded like a work-context title everywhere else on a briefing line. */
@@ -132,18 +133,17 @@ export const formatQuestionEntry = (
  * whatever it costs — a briefing that shows "somebody is waiting and I will
  * not tell you who" would be worse than a long line — and the section's
  * "+N more not shown" then carries the rest.
+ *
+ * The reducer itself lives in briefing/fit.ts: the ghost block needs the same
+ * arithmetic for the same reason, and a second copy of it would be a second
+ * place for "drop whole, keep the first" to be weakened. What stays here is
+ * this block's own DEFAULT — the questions budget — so no caller has to
+ * remember which constant belongs to which section.
  */
 export const fitQuestionEntries = (
   entries: readonly string[],
   maxChars: number = MAX_BRIEFING_QUESTION_CHARS,
-): readonly string[] =>
-  entries.reduce<readonly string[]>((kept, entry) => {
-    if (kept.length === 0) {
-      return [entry];
-    }
-    const candidate = [...kept, entry];
-    return candidate.join("\n").length > maxChars ? kept : candidate;
-  }, []);
+): readonly string[] => fitEntries(entries, maxChars);
 
 /**
  * The counters, in ONE sentence both `crosscheck status` and `doctor` print

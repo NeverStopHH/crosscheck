@@ -2535,6 +2535,23 @@ export const MUTATIONS: readonly Mutation[] = [
       "clause that says what actually happened is buried beside it",
   },
   {
+    // The block's SECOND bound. Two ghost lines at their caps compose 983
+    // characters under a 114-character header — half the briefing — and the
+    // item bound cannot see it, so every section below gives way whole.
+    label: "the ghost block is bounded in items but not in characters",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: `    lines: fitEntries(
+      rendered.slice(0, MAX_GHOST_POINTERS),
+      MAX_BRIEFING_GHOST_CHARS,
+    ),`,
+    to: "    lines: rendered.slice(0, MAX_GHOST_POINTERS),",
+    test: `${CORE}/test/ghost-render.test.ts`,
+    because:
+      "two pointer lines take half of MAX_BRIEFING_CHARS, and the teammate " +
+      "contexts, contradictions, solved-before pointers, draft reminders " +
+      "and absences below them are cut whole to pay for it",
+  },
+  {
     // "No PASS-only telemetry" (the finding-#14 lesson). A ghost check fires
     // at most once per session, so waiting for the silent-fires threshold
     // means a booked failure can sit through a whole session unreported —
@@ -2625,7 +2642,7 @@ interface Outcome {
  * PRINTS: ghost-cost.test.ts 1
  * PRINTS: ghost-declare.test.ts 1
  * PRINTS: ghost-overlap.test.ts 4
- * PRINTS: ghost-render.test.ts 1
+ * PRINTS: ghost-render.test.ts 2
  * PRINTS: ghost-worker.test.ts 4
  * PRINTS: global-wiring-silence.test.ts 2
  * PRINTS: handlers.test.ts 3

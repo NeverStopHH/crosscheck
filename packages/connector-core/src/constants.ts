@@ -612,6 +612,47 @@ export const MONTHS_PER_YEAR = 12;
 export const MAX_GHOST_POINTERS = 2;
 
 /**
+ * The most CHARACTERS the ghost block may take out of the briefing. Bounded
+ * in items AND in characters for the reason the questions block already
+ * states: the item bound alone is not a bound.
+ *
+ * MEASURED through the real formatter rather than added up from literals,
+ * because a ghost line is a composition and its worst case is not the sum of
+ * its caps. Two MAXIMAL rows — a name and an intent at their render caps, a
+ * shared fingerprint, GHOST_MAX_SHARED_SHOWN paths at
+ * GHOST_SHARED_VALUE_MAX_CHARS each, a "+N more of yours" tail, the word
+ * count and a full-length id — compose 491 characters each, so the block
+ * measured 983 characters of lines under a 114-character header: 1098 of
+ * MAX_BRIEFING_CHARS, HALF the briefing, for two pointer lines. The five
+ * sections below it (teammate contexts, contradictions, solved-before,
+ * draft reminders, absences) give way whole to that, which is the ordering
+ * appendSection enforces and not one anybody chose.
+ *
+ * 800 is where the measurements put it. Two REALISTIC monorepo rows — long
+ * nested paths, a shared failure, a declared intent and a "+N more" tail —
+ * compose 705 characters, and BOTH must survive: two teammates in the
+ * reader's files is the case this feature exists for, and a bound that drops
+ * the second would be the fix causing the failure. Two maximal rows do not
+ * fit, and the second is reported by the section's own "+N more not shown".
+ *
+ * It is LARGER than the questions block's bound for one fewer item, and that
+ * is deliberate rather than an oversight: a ghost line carries up to
+ * GHOST_MAX_SHARED_SHOWN × GHOST_SHARED_VALUE_MAX_CHARS characters of the
+ * READER'S OWN paths, which no question line carries, and there is no
+ * `list_open_ghost_checks` to read a dropped row from — a question left out
+ * is deferred, a ghost row left out is only counted. The ordering the budget
+ * states is untouched by this number: appendSection fills the questions
+ * block FIRST, so this bounds a section, it does not rank one.
+ *
+ * The two bounded blocks together can never fill the briefing, which is what
+ * keeps the sections below reachable at all:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_BRIEFING_GHOST_CHARS + c.MAX_BRIEFING_QUESTION_CHARS < c.MAX_BRIEFING_CHARS)'
+ * PRINTS: true
+ */
+export const MAX_BRIEFING_GHOST_CHARS = 800;
+
+/**
  * How much of a shared file path or symbol a ghost line prints. A path is a
  * BARE field on a line that already carries a name, an age and a framed
  * intent, and three of them share the line — the briefing budget, not the
