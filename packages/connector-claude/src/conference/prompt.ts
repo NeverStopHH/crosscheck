@@ -142,8 +142,14 @@ export const fitSessions = (
   for (const session of sessions) {
     // +1 for the newline this block would cost when joined.
     const cost = sessionBlock(session).length + 1;
+    // SKIPPED, NOT STOPPED AT. Stopping would let ONE oversized session at the
+    // head empty the whole input — and the sessions arrive freshest first, so
+    // the head is exactly where a hub that is modified or hostile would put
+    // it. The per-field cuts bound every BODY, which leaves the NUMBER of
+    // claims in one context as the only way to blow this bound; a hub sending
+    // two hundred of them must cost the team that one session, not all of them.
     if (total + cost > CONFERENCE_MAX_INPUT_CHARS) {
-      break;
+      continue;
     }
     kept.push(session);
     total += cost;

@@ -18,6 +18,7 @@ import { SUMMARIZER_LEAN_FLAGS } from "../src/summarizer/runner.ts";
 import {
   CONFERENCE_PROMPT,
   estimateInputTokens,
+  fitSessions,
   labelSessions,
   parseConferenceAnswer,
   renderConferenceInput,
@@ -122,6 +123,42 @@ describe("the conference input", () => {
     for (const line of input.split("\n")) {
       expect(line.length).toBeLessThanOrEqual(CONFERENCE_MAX_INPUT_CHARS);
     }
+    // AND SOMETHING SURVIVED. Every assertion above is an upper bound, and an
+    // empty string satisfies all of them — so without this line the test is
+    // green on an input that dropped the whole team.
+    expect(input).toContain("SESSION B intends:");
+  });
+
+  test("one session too big to send does not silence the ones behind it", () => {
+    // Arrange: the shape the document bound exists for — a hub that is
+    // modified or hostile, sending one context with far more claims than its
+    // own cap allows. The per-field cut bounds each BODY, so only the number
+    // of them can blow the document.
+    const flood = contextWith("wc_a", "A", {
+      claims: Array.from({ length: 200 }, (_, index) => ({
+        id: `clm_${String(index)}`,
+        kind: "observation",
+        status: "proposed",
+        confidence: 0.6,
+        provenance: "declared",
+        body: "y".repeat(290),
+        authorDeveloperName: "A",
+        createdAt: ISO,
+      })),
+    });
+
+    // Act
+    const sessions = labelSessions([flood, contextWith("wc_b", "B")]);
+    const input = renderConferenceInput(sessions);
+
+    // Assert: the one that cannot fit is dropped, and ONLY it. A hub that can
+    // empty every teammate's conference by sending one fat context is a
+    // denial of service with a 200 on it.
+    expect(input).not.toContain("SESSION A intends:");
+    expect(input).toContain("SESSION B intends:");
+    expect(input.length).toBeLessThanOrEqual(CONFERENCE_MAX_INPUT_CHARS);
+    // And the label that was not sent is not one the answer may use.
+    expect(fitSessions(sessions).map((session) => session.label)).toEqual(["B"]);
   });
 });
 
