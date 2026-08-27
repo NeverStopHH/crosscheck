@@ -33,6 +33,7 @@ export type { GhostCost } from "./ghost/cost.ts";
 export {
   CONFERENCE_PROMPT,
   estimateInputTokens,
+  fitSessions,
   labelSessions,
   parseConferenceAnswer,
   renderConferenceInput,

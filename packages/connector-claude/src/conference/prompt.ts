@@ -100,44 +100,65 @@ const claimLines = (context: ConferenceContext): readonly string[] =>
     })
     .filter((line) => line.length > 0);
 
+/** One session as the model reads it: the plan, then the recorded findings. */
+const sessionBlock = (session: LabelledSession): string => {
+  const intent = session.context.intent;
+  const summary =
+    intent === null || intent === undefined
+      ? ""
+      : cutWellFormed(intent.summary, MAX_INTENT_SUMMARY_CHARS);
+  const claims = claimLines(session.context);
+  return [
+    `SESSION ${session.label} intends: ${summary.length === 0 ? "(not stated)" : summary}`,
+    ...(claims.length === 0
+      ? [`SESSION ${session.label} has recorded no findings.`]
+      : [`SESSION ${session.label} has recorded:`, ...claims]),
+  ].join("\n");
+};
+
 /**
- * The stdin block. Labelled plainly; the model is never told to obey it.
+ * WHICH sessions fit in one input, and therefore which ones the model is
+ * allowed to have an opinion about.
  *
  * BOUNDED TWICE — per field, then over the whole document. The per-field cuts
  * are what keep an ordinary run small; CONFERENCE_MAX_INPUT_CHARS is what
  * holds when the hub is modified or hostile, and it is applied by dropping
  * WHOLE sessions from the end rather than by cutting the text, so no session
  * is shown to the model as half a sentence.
+ *
+ * IT IS THE CALLER'S ANSWER TO TWO QUESTIONS, not one, which is why it is its
+ * own exported function rather than a local of the renderer. A session the
+ * bound left out was never compared, so it must not be namable in the answer
+ * and must not be counted in the cost line — and the hub's own caps reach this
+ * bound with ordinary data (twelve contexts at CONFERENCE_MAX_CLAIMS_PER_CONTEXT
+ * claims of CONFERENCE_CLAIM_BODY_MAX_CHARS is nearly twice it), so this is the
+ * everyday path and not a hostile one.
+ */
+export const fitSessions = (
+  sessions: readonly LabelledSession[],
+): readonly LabelledSession[] => {
+  const kept: LabelledSession[] = [];
+  let total = 0;
+  for (const session of sessions) {
+    // +1 for the newline this block would cost when joined.
+    const cost = sessionBlock(session).length + 1;
+    if (total + cost > CONFERENCE_MAX_INPUT_CHARS) {
+      break;
+    }
+    kept.push(session);
+    total += cost;
+  }
+  return kept;
+};
+
+/**
+ * The stdin block. Labelled plainly; the model is never told to obey it.
+ * Renders exactly the sessions `fitSessions` keeps, so what was sent and what
+ * may be named can never be two different lists.
  */
 export const renderConferenceInput = (
   sessions: readonly LabelledSession[],
-): string => {
-  const blocks = sessions.map((session) => {
-    const intent = session.context.intent;
-    const summary =
-      intent === null || intent === undefined
-        ? ""
-        : cutWellFormed(intent.summary, MAX_INTENT_SUMMARY_CHARS);
-    const claims = claimLines(session.context);
-    return [
-      `SESSION ${session.label} intends: ${summary.length === 0 ? "(not stated)" : summary}`,
-      ...(claims.length === 0
-        ? [`SESSION ${session.label} has recorded no findings.`]
-        : [`SESSION ${session.label} has recorded:`, ...claims]),
-    ].join("\n");
-  });
-  const kept: string[] = [];
-  let total = 0;
-  for (const block of blocks) {
-    // +1 for the newline this block would cost when joined.
-    if (total + block.length + 1 > CONFERENCE_MAX_INPUT_CHARS) {
-      break;
-    }
-    kept.push(block);
-    total += block.length + 1;
-  }
-  return kept.join("\n");
-};
+): string => fitSessions(sessions).map(sessionBlock).join("\n");
 
 /**
  * The pre-run estimate, and it is an ESTIMATE. No tokenizer runs on this

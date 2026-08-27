@@ -75,6 +75,7 @@ import {
 import {
   ensureSummarizerCwd,
   estimateInputTokens,
+  fitSessions,
   labelSessions,
   parseConferenceAnswer,
   renderConferenceInput,
@@ -188,7 +189,13 @@ const runModel = async (
         : "only one session on this repo has anything to compare",
     );
   }
-  const input = renderConferenceInput(sessions);
+  // WHAT IS ACTUALLY SENT, which is not always every session the hub named:
+  // the input bound drops whole sessions from the end, and the hub's own caps
+  // reach that bound with ordinary data. Everything downstream — the cost
+  // line, the labels an answer may use, the attribution — is derived from
+  // THIS list, so a session nobody showed the model can never be named by it.
+  const sent = fitSessions(sessions);
+  const input = renderConferenceInput(sent);
   const remainingMs = deadlineAt - Date.now();
   if (remainingMs <= 0) {
     return SKIPPED("the wall-clock cap was reached before the model could run");
@@ -197,7 +204,7 @@ const runModel = async (
   const timeoutMs = Math.min(resolveSummarizerTimeoutMs(env), remainingMs);
   write(
     `conference: sending about ${String(estimateInputTokens(input))} input tokens ` +
-      `(${String(input.length)} characters) from ${String(sessions.length)} sessions ` +
+      `(${String(input.length)} characters) from ${String(sent.length)} sessions ` +
       `to the local model, capped at ${String(Math.round(timeoutMs / 1000))} s`,
   );
   const result = await runSummarizer(resolveConferenceArgv(env), input, timeoutMs, env, {
@@ -217,7 +224,7 @@ const runModel = async (
   }
   const answer = parseConferenceAnswer(
     result.stdout,
-    new Set(sessions.map((session) => session.label)),
+    new Set(sent.map((session) => session.label)),
   );
   if (answer.kind === "none") {
     return {
@@ -243,9 +250,9 @@ const runModel = async (
     };
   }
   const byLabel = new Map(
-    sessions.map((session) => [session.label, session.context]),
+    sent.map((session) => [session.label, session.context]),
   );
-  const shown = shownTexts(sessions);
+  const shown = shownTexts(sent);
   const findings = answer.findings
     .flatMap((finding): readonly ConferenceFinding[] => {
       const left = byLabel.get(finding.labelA);
