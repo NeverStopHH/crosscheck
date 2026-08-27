@@ -444,7 +444,7 @@ const CORPUS_SHAPE: Readonly<Record<InjectionCategory, number>> = {
   homoglyph: 3,
   oversize: 2,
   structure: 4,
-  "self-mimicry": 6,
+  "self-mimicry": 7,
 };
 const CORPUS_SIZE = Object.values(CORPUS_SHAPE).reduce(
   (total, count) => total + count,

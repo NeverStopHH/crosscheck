@@ -365,11 +365,20 @@ export const spanRedactedUntrusted = (
  * second confidence and a second author, and every character in it is
  * legitimate, so no defence above that reasons about CHARACTERS can see it.
  *
- * Titles keep both deliberately (the U+00B7 entry in the table above): a title
- * lands INSIDE the frame, so the separator forges structure only within
+ * U+2014 EM DASH joined them when the conference report shipped: that page
+ * separates a line's FACTS from the CALL that reads them with " — " on four
+ * line shapes (conference/report.ts), so a display name of `Ken — get_diagnosis
+ * wc_<attacker>` mints a second, followable pointer at a tree the attacker
+ * chose, and the report is written for a human — often an agent, pasted in —
+ * to read later. It is the same class as the U+00B7 forgery and it belongs in
+ * the same strip; the reason it was missed is that no character invariant can
+ * see it, which is why the report's own tests now count call tokens per line.
+ *
+ * Titles keep all three deliberately (the U+00B7 entry in the table above): a
+ * title lands INSIDE the frame, so a separator forges structure only within
  * visible quotes, and stripping punctuation there would mangle ordinary prose.
  */
-const RENDERER_STRUCTURE = /[·:]/g;
+const RENDERER_STRUCTURE = /[·:\u2014]/g;
 
 /**
  * A short field a renderer prints OUTSIDE the frame: a claim's kind and
