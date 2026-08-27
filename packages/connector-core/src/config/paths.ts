@@ -223,7 +223,13 @@ export const presenceCachePath = (home: string, key: string): string =>
 export const conferenceDir = (home: string, key: string): string =>
   join(home, "conferences", key);
 
-/** One report, named by the run's own UTC minute — stable and sortable. */
+/**
+ * One report, named by the run's own UTC SECOND — stable and sortable, and
+ * with a `-2`, `-3` suffix from the caller when two runs land on the same one
+ * (cli/conference.ts freeReportPath). It was the MINUTE, which meant a
+ * scheduler retrying after a transient hub error silently replaced the page it
+ * had just written while printing both paths as if both existed.
+ */
 export const conferenceReportPath = (
   home: string,
   key: string,

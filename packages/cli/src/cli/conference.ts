@@ -680,9 +680,44 @@ const writeReport = async (
   }
 };
 
-/** UTC minute, filename-safe — stable, sortable, and no clock arithmetic. */
+/** UTC second, filename-safe — stable, sortable, and no clock arithmetic. */
 const reportStamp = (now: Date): string =>
-  now.toISOString().slice(0, 16).replace(/[:T]/g, "-");
+  now.toISOString().slice(0, 19).replace(/[:T]/g, "-");
+
+/**
+ * Runs that could still land on the same second before one gives up and
+ * overwrites. Ten, because a page is written once per `crosscheck conference`
+ * and nobody runs eleven of them inside one second; the bound exists so this
+ * loop is arithmetic rather than unbounded filesystem probing.
+ */
+const CONFERENCE_MAX_REPORTS_PER_SECOND = 10;
+
+/**
+ * A path no earlier run has already taken.
+ *
+ * The stamp used to be the UTC MINUTE, so a scheduler retrying after a
+ * transient hub error — or a human re-running with --publish straight after a
+ * dry run — silently replaced the first page, and the path was printed both
+ * times so nothing looked wrong. paths.ts argues that reports are deliberately
+ * never reaped; losing one to a filename collision was the odd exception.
+ */
+const freeReportPath = async (
+  home: string,
+  key: string,
+  stamp: string,
+): Promise<string> => {
+  const first = conferenceReportPath(home, key, stamp);
+  if (!(await Bun.file(first).exists())) {
+    return first;
+  }
+  for (let nth = 2; nth <= CONFERENCE_MAX_REPORTS_PER_SECOND; nth += 1) {
+    const candidate = conferenceReportPath(home, key, `${stamp}-${String(nth)}`);
+    if (!(await Bun.file(candidate).exists())) {
+      return candidate;
+    }
+  }
+  return first;
+};
 
 export const runConference = async (
   argv: readonly string[],
@@ -798,7 +833,7 @@ export const runConference = async (
     },
     now,
   );
-  const path = conferenceReportPath(config.home, key, reportStamp(now));
+  const path = await freeReportPath(config.home, key, reportStamp(now));
   const writeFailure = await writeReport(path, report);
   const findingsLine =
     model.findings.length === 0

@@ -748,6 +748,28 @@ describe("the conference command", () => {
     }
   });
 
+  test("two runs in the same minute leave two pages, not one", async () => {
+    // Arrange: a scheduler retrying after a transient hub error, or a human
+    // re-running with --publish straight after a dry run. paths.ts states
+    // that reports are deliberately never reaped, which makes losing one to a
+    // filename collision the odd exception.
+    const model = await makeFakeModel({ output: "NONE" });
+
+    // Act
+    const first = await runConferenceFor([], { CROSSCHECK_SUMMARIZER_CMD: model });
+    const second = await runConferenceFor([], { CROSSCHECK_SUMMARIZER_CMD: model });
+    const pathOf = (stdout: string): string =>
+      (stdout.split("\n").find((line) => line.startsWith("report: ")) ?? "").slice(
+        "report: ".length,
+      );
+
+    // Assert: both pages are on disk, and the printed path is the page that
+    // was written — not one the next run silently replaced.
+    expect(pathOf(first.stdout)).not.toBe(pathOf(second.stdout));
+    expect(await Bun.file(pathOf(first.stdout)).exists()).toBe(true);
+    expect(await Bun.file(pathOf(second.stdout)).exists()).toBe(true);
+  });
+
   test("an unknown flag is a usage error, not a silent full run", async () => {
     // Act
     const result = await runConferenceFor(["--publish-everything"], {});
