@@ -18,7 +18,8 @@
  */
 import { and, asc, desc, eq } from "drizzle-orm";
 
-import { claims, workContextTargets, workContexts } from "../db/schema.ts";
+import { agentSessions, claims, workContextTargets, workContexts } from "../db/schema.ts";
+import { derivedTokenLine, repoLabelOf, titleForDoc } from "./search-tokens.ts";
 import type { DbExecutor } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
 
@@ -49,6 +50,14 @@ export interface NormalizedDocInput {
   readonly title: string;
   readonly status: string;
   /**
+   * The owning session's repo label (`github.com/acme/api` → `api`), or null
+   * when there is none to take off — a `local:` id, or a caller that genuinely
+   * does not know. REQUIRED rather than optional so the decision is made at
+   * every call site: null means "nothing to strip", never "not sure"
+   * (services/search-tokens.ts `titleForDoc` says what comes off and why).
+   */
+  readonly repoLabel: string | null;
+  /**
    * The session's intent sentence (trial finding #16): indexed like the
    * title, so a teammate's prompt that shares only the TOPIC — no file, no
    * claim — still reaches the context through the FTS tier and becomes a
@@ -69,19 +78,35 @@ export const intentSummaryOf = (
   return typeof summary === "string" && summary.length > 0 ? summary : null;
 };
 
-/** Pure builder — the single place that decides what the doc contains. */
-export const buildNormalizedDoc = (input: NormalizedDocInput): string =>
-  [
-    input.title,
+/**
+ * Pure builder — the single place that decides what the doc contains.
+ *
+ * The DERIVED TOKEN LINE sits between the description and the target values,
+ * and that position is the cap talking rather than taste: the slice below cuts
+ * from the END, so anything behind the claim summaries would be the first
+ * thing a claim-heavy context loses, and the token line is what makes a branch
+ * name and a path findable AT ALL (audit row M12-rest). Its own bound keeps
+ * the trade small — DERIVED_TOKENS_MAX_CHARS is 7.5 % of the doc cap.
+ *
+ * Claim summaries are NOT tokenized. They are prose, which the english
+ * configuration already splits correctly, and a fifty-claim context would
+ * spend the whole token bound on words that are in the document twice already.
+ */
+export const buildNormalizedDoc = (input: NormalizedDocInput): string => {
+  const title = titleForDoc(input.title, input.repoLabel);
+  return [
+    title,
     input.status,
     input.intentSummary ?? "",
     input.description ?? "",
+    derivedTokenLine([title, ...input.targetValues]),
     ...input.targetValues,
     ...input.claimSummaries,
   ]
     .filter((part) => part.length > 0)
     .join("\n")
     .slice(0, NORMALIZED_DOC_MAX_CHARS);
+};
 
 /**
  * Rebuilds and stores the doc for one work context from current rows.
@@ -100,8 +125,13 @@ export const refreshNormalizedDoc = async (
       status: workContexts.status,
       intent: workContexts.intent,
       description: workContexts.description,
+      // The repo the owning session runs on — one more column of the row this
+      // query already fetches, joined on the session's primary key, so the
+      // label M13 strips costs no extra round trip.
+      repo: agentSessions.repo,
     })
     .from(workContexts)
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(eq(workContexts.id, workContextId))
     .limit(1);
   const context = contextRows[0];
@@ -125,6 +155,7 @@ export const refreshNormalizedDoc = async (
   const doc = buildNormalizedDoc({
     title: context.title,
     status: context.status,
+    repoLabel: repoLabelOf(context.repo),
     intentSummary: intentSummaryOf(context.intent),
     description: context.description,
     targetValues: targetRows.map((row) => row.value),

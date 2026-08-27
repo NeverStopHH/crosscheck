@@ -255,6 +255,9 @@ describe("intent in the normalized doc (trial finding #16)", () => {
   });
 
   test("buildNormalizedDoc folds the intent summary right after the status", () => {
+    // The whole document, byte for byte — including where the derived token
+    // line sits (audit row M12-rest): after the description and BEFORE the
+    // target values, because NORMALIZED_DOC_MAX_CHARS cuts from the end.
     expect(
       buildNormalizedDoc({
         title: "T",
@@ -263,7 +266,8 @@ describe("intent in the normalized doc (trial finding #16)", () => {
         description: null,
         targetValues: ["src/a.ts"],
         claimSummaries: ["observation: O"],
+        repoLabel: null,
       }),
-    ).toBe("T\nanalyzing\nI\nsrc/a.ts\nobservation: O");
+    ).toBe("T\nanalyzing\nI\nsrc ts\nsrc/a.ts\nobservation: O");
   });
 });

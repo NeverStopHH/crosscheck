@@ -2806,6 +2806,34 @@ export const MUTATIONS: readonly Mutation[] = [
       "the page it just wrote, and the path is printed both times so nothing " +
       "looks wrong",
   },
+  {
+    // Audit row M12-rest. The default text-search parser reads a branch name
+    // and a path as ONE `file` token, so without the derived word bag the
+    // document is unsearchable by the words inside either.
+    label: "the branch-token split is reverted",
+    file: `${SERVER}/src/services/normalized-doc.ts`,
+    from: "    derivedTokenLine([title, ...input.targetValues]),",
+    to: '    "",',
+    test: `${SERVER}/test/search-tokens.test.ts`,
+    because:
+      "'chore/remove-agent-internal-auth-bypass' indexes as one token, so a " +
+      "teammate searching «auth bypass» finds nothing and files the second " +
+      "copy of the work",
+  },
+  {
+    // Audit row M13, the other half of the same document. The label is on
+    // every context of the repo, so it discriminates nothing while matching
+    // any query that merely names the repo.
+    label: "the repo label is back in the FTS doc",
+    file: `${SERVER}/src/services/search-tokens.ts`,
+    from: "  const suffix = repoLabel === null ? null : ` @ ${repoLabel}`;",
+    to: "  const suffix = null;",
+    test: `${SERVER}/test/search-tokens.test.ts`,
+    because:
+      "every work context on the repo carries ` @ <repo>`, so the repo's own " +
+      "name becomes a lexical match against all of them — and a lexical match " +
+      "is what this product turns into an unasked teammate hint",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -2908,6 +2936,7 @@ interface Outcome {
  * PRINTS: render-surface-registry.test.ts 2
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search-filters.test.ts 10
+ * PRINTS: search-tokens.test.ts 2
  * PRINTS: search-who-when.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: session.test.ts 1
