@@ -25,6 +25,13 @@
  *                                   filter would leave the raw feed a
  *                                   modified connector reads as a presence
  *                                   bypass
+ *   5. GET /api/ghost-checks      — the "teammates working where you are"
+ *                                   block in my briefing and in set_intent's
+ *                                   answer (VISION.md §3). A ghost line
+ *                                   asserts that a NAMED teammate is working
+ *                                   in these files NOW, which is presence-
+ *                                   class exactly as the tripwire is, and it
+ *                                   carries their last-active age out loud
  *
  * The subject's OWN reads are unaffected on every surface — the control is
  * over what OTHERS see. Deliberately NOT covered, because opt-out hides live
@@ -60,6 +67,13 @@
  *                                   communication, but the BRIEFING is an
  *                                   unasked surface, which is exactly what
  *                                   mute covers
+ *   9. GET /api/ghost-checks      — the same block as 5 above, reached
+ *                                   unasked at SessionStart. Both conditions
+ *                                   sit in the WHERE of BOTH tiers AND of
+ *                                   the hot-value pre-filter that decides
+ *                                   which values reach them, so a muted or
+ *                                   opted-out developer cannot decide what
+ *                                   the reader is shown either
  *
  * Mute is a reader preference, not a boundary: the deliberate pull paths —
  * GET /api/search (search_related_work), GET /api/work-contexts/:id/diagnosis
