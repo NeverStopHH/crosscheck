@@ -53,6 +53,8 @@ import type {
   ConferenceFinding,
   ConferenceModelOutcome,
 } from "@crosscheck/connector-core/conference/report.ts";
+import { describeConnectionFailure } from "@crosscheck/connector-core/http/connection-error.ts";
+import type { ConnectionCause } from "@crosscheck/connector-core/http/connection-error.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import {
   endSession,
@@ -394,6 +396,84 @@ const publishFindings = async (
   }
 };
 
+/** A hub that predates a route answers 404 — cli/doctor.ts owns the same rule. */
+const HTTP_NOT_FOUND = 404;
+
+/** The first status that is a refusal rather than an answer. */
+const HTTP_CLIENT_ERROR = 400;
+
+/**
+ * The conference's OWN request timeout, and the one place in this product
+ * where `config.timeoutMs` is deliberately not the bound.
+ *
+ * config.timeoutMs is HTTP_TIMEOUT_MS (400 ms) or whatever `login` measured,
+ * and it is sized for a hook running inside a developer's keystroke — the
+ * UserPromptSubmit path spends it inside an 800 ms budget. A conference is the
+ * one caller that is explicitly not a hook: it prints a wall clock, waits for
+ * a local model call, and a human is watching it. Leaving it on the hook's
+ * timeout made CONFERENCE_MAX_WALL_MS unreachable — the request aborted ~89x
+ * earlier than the ceiling the module header promises — and booked the result
+ * as `noHubAnswer`, a counter doctor reads as a deployment state.
+ *
+ * Never SHORTER than the configured timeout: a hub far enough away that login
+ * measured a second must not be given less than that because the wall clock
+ * has nearly run out.
+ */
+const withinWallClock = (hub: HubContext, deadlineAt: number): HubContext => ({
+  ...hub,
+  timeoutMs: Math.max(
+    hub.timeoutMs,
+    Math.min(CONFERENCE_MAX_WALL_MS, deadlineAt - Date.now()),
+  ),
+});
+
+/**
+ * WHY the corpus did not arrive, in a sentence that names the cause, the
+ * address and who moves it — cli/doctor.ts planOverlapCheck already splits
+ * these three states for the ghost endpoint and this is the same split.
+ *
+ * A bare "(http 404)" reads identically to a bare "(http 500)", and the two
+ * need different people: 404 is a hub older than this CLI and nobody has to
+ * be paged; anything else is an endpoint that exists and is failing.
+ */
+const corpusFailureLine = (
+  failure: { readonly kind: string; readonly status: number; readonly message: string; readonly cause?: ConnectionCause },
+  hubUrl: string,
+  timeoutMs: number,
+): string => {
+  const spent = "Nothing was read and nothing was spent.";
+  if (failure.kind === "http" && failure.status === HTTP_NOT_FOUND) {
+    return (
+      `this hub has no conference endpoint yet — it is older than this ` +
+      `crosscheck. Ask whoever runs ${hubUrl} to update it. ${spent}`
+    );
+  }
+  if (failure.kind === "http") {
+    return (
+      `the hub answered ${String(failure.status)} for /api/conference — the ` +
+      `endpoint exists and is failing, so a conference is silent against ` +
+      `${hubUrl} until somebody looks at it. ${spent}`
+    );
+  }
+  if (failure.kind === "network") {
+    return `${describeConnectionFailure(failure.cause ?? "unknown", { hubUrl, timeoutMs }, failure.message)}. ${spent}`;
+  }
+  // Malformed splits too: an unreadable body BEHIND an error status is
+  // something other than a crosscheck hub answering on that port, while an
+  // unreadable body behind a 200 is two versions that disagree on the shape.
+  if (failure.status >= HTTP_CLIENT_ERROR) {
+    return (
+      `${hubUrl} answered ${String(failure.status)} and this crosscheck could ` +
+      `not read the body — is a crosscheck hub really serving that address? ` +
+      `${spent}`
+    );
+  }
+  return (
+    `this hub answered in a shape this crosscheck cannot read — the two are ` +
+    `on different versions. ${spent}`
+  );
+};
+
 /** UTC minute, filename-safe — stable, sortable, and no clock arithmetic. */
 const reportStamp = (now: Date): string =>
   now.toISOString().slice(0, 16).replace(/[:T]/g, "-");
@@ -434,15 +514,13 @@ export const runConference = async (
     repoKey: key,
     now: () => new Date(),
   };
-  const corpus = await getConference(hub, identity.repoId);
+  const reading = withinWallClock(hub, deadlineAt);
+  const corpus = await getConference(reading, identity.repoId);
   if (!corpus.ok) {
     // Deployment state, not a local fault — the ghost check's own distinction.
     await recordConferenceRun(config.home, key, { noHubAnswer: true }, now);
     return {
-      stdout:
-        `the hub could not answer the conference query (${corpus.kind}` +
-        `${corpus.kind === "http" ? ` ${String(corpus.status)}` : ""}) — ` +
-        "nothing was read and nothing was spent\n",
+      stdout: `${corpusFailureLine(corpus, config.hubUrl, reading.timeoutMs)}\n`,
       exitCode: EXIT_UNREACHABLE,
     };
   }
@@ -456,7 +534,10 @@ export const runConference = async (
   const model = await runModel(sessions, env, config.home, deadlineAt, write);
   const publishOutcome = options.publish
     ? await publishFindings(
-        hub,
+        // The wall clock again, recomputed: a POST that aborts at the hook's
+        // 400 ms after the hub already committed is how "published nothing"
+        // becomes a lie about drafts that exist on teammates' trees.
+        withinWallClock(hub, deadlineAt),
         identity.repoId,
         identity.branch,
         model.findings,

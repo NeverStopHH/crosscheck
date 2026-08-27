@@ -734,7 +734,10 @@ describe("the conference command", () => {
 
       // Assert
       expect(result.exitCode).not.toBe(0);
-      expect(result.stdout).toContain("nothing was read and nothing was spent");
+      expect(result.stdout).toContain("Nothing was read and nothing was spent");
+      // And it names what that port actually did rather than a bare code.
+      expect(result.stdout).toContain("503");
+      expect(result.stdout).toContain("is a crosscheck hub really serving");
       expect(await Bun.file(marker).exists()).toBe(false);
     } finally {
       dead.stop(true);
@@ -907,5 +910,151 @@ describe("the sessions the character bound dropped", () => {
     expect(
       result.written.some((line) => line.includes("read 12 work contexts")),
     ).toBe(true);
+  });
+});
+
+/**
+ * WHAT THE COMMAND SAYS WHEN THE HUB IS THE PROBLEM. Three states that look
+ * identical through a bare status code and need three different people to do
+ * three different things: a hub older than this CLI, a hub whose endpoint is
+ * failing, and a hub that is simply slower than one hook's request timeout.
+ */
+describe("a hub the conference cannot read", () => {
+  const EMPTY_CORPUS = JSON.stringify({
+    ok: true,
+    data: {
+      conference: {
+        contexts: [],
+        overlaps: [],
+        questions: [],
+        contradictions: [],
+        contextsInWindow: 0,
+        contextsInWindowCapped: false,
+        windowDays: 14,
+      },
+    },
+  });
+
+  const withHub = async (
+    handler: (request: Request) => Response | Promise<Response>,
+    extraEnv: Record<string, string>,
+    run: (url: string) => Promise<void>,
+  ): Promise<void> => {
+    const fake = Bun.serve({ port: 0, fetch: handler });
+    try {
+      await run(`http://127.0.0.1:${String(fake.port)}`);
+    } finally {
+      fake.stop(true);
+    }
+    void extraEnv;
+  };
+
+  test("a hub slower than the hook timeout still answers the conference", async () => {
+    // Arrange: a hub that takes SIX TIMES the request timeout every hook on
+    // this machine runs under. A conference is the one caller that is not a
+    // hook — it owns a 90 s wall clock and prints it — so the hook's 400 ms
+    // must not be the bound that decides whether the feature works at all.
+    const model = await makeFakeModel({ output: "NONE" });
+    await withHub(
+      async (request) => {
+        if (new URL(request.url).pathname !== "/api/conference") {
+          return new Response(JSON.stringify({ ok: true, data: {} }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        await Bun.sleep(1_200);
+        return new Response(EMPTY_CORPUS, {
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+      {},
+      async (url) => {
+        // Act
+        const result = await runConference(
+          [],
+          {
+            ...envFor(aliceKey, { CROSSCHECK_SUMMARIZER_CMD: model }),
+            CROSSCHECK_HUB_URL: url,
+            CROSSCHECK_TIMEOUT_MS: "200",
+          },
+          repo,
+          () => undefined,
+        );
+
+        // Assert
+        expect(result.stdout).not.toContain("nothing was read");
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("report: ");
+      },
+    );
+  });
+
+  test("a hub too old for the route is named as older, not as a 404", async () => {
+    // Arrange: the state a team is in for exactly as long as it takes to
+    // update the hub — a deployment fact, and the only one of the three that
+    // nobody needs to be paged for.
+    const model = await makeFakeModel({ output: "NONE" });
+    await withHub(
+      () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error: { code: "not_found", message: "no such route" },
+          }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        ),
+      {},
+      async (url) => {
+        // Act
+        const result = await runConference(
+          [],
+          {
+            ...envFor(aliceKey, { CROSSCHECK_SUMMARIZER_CMD: model }),
+            CROSSCHECK_HUB_URL: url,
+          },
+          repo,
+          () => undefined,
+        );
+
+        // Assert: the sentence names the cause, the address and who moves it.
+        expect(result.stdout).toContain("older than this crosscheck");
+        expect(result.stdout).toContain(url);
+        expect(result.stdout).toContain("Nothing was read and nothing was spent");
+      },
+    );
+  });
+
+  test("an endpoint that exists and is failing says so, not the same sentence", async () => {
+    // Arrange: the CONTRAST to the test above — same shape, different status,
+    // and this one is the one somebody has to look at.
+    const model = await makeFakeModel({ output: "NONE" });
+    await withHub(
+      () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error: { code: "internal", message: "boom" },
+          }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        ),
+      {},
+      async (url) => {
+        // Act
+        const result = await runConference(
+          [],
+          {
+            ...envFor(aliceKey, { CROSSCHECK_SUMMARIZER_CMD: model }),
+            CROSSCHECK_HUB_URL: url,
+          },
+          repo,
+          () => undefined,
+        );
+
+        // Assert
+        expect(result.stdout).not.toContain("older than this crosscheck");
+        expect(result.stdout).toContain("500");
+        expect(result.stdout).toContain("exists and is failing");
+      },
+    );
   });
 });
