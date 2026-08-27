@@ -50,9 +50,10 @@ import {
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
 import { isRestatementOf } from "@crosscheck/connector-core/hints/echo.ts";
-import { renderConferenceReport } from "@crosscheck/connector-core/conference/report.ts";
+import { plural, renderConferenceReport } from "@crosscheck/connector-core/conference/report.ts";
 import type {
   ConferenceFinding,
   ConferenceModelOutcome,
@@ -101,7 +102,9 @@ export const CONFERENCE_USAGE = [
   "  pass over them and writes a Markdown report (the path is printed)",
   "",
   "  --publish   also file each finding as a derived, proposed draft on the",
-  "              hub, pointer-only until somebody promotes it (review_draft)",
+  "              FRESHER of the two work contexts it names — which may be a",
+  "              teammate's tree, authored under your name — pointer-only",
+  "              until somebody promotes it (review_draft)",
   "",
 ].join("\n");
 
@@ -324,6 +327,45 @@ const runModel = async (
   };
 };
 
+/** The owner of a tree, through the same BARE strip every printed name takes. */
+const nameOfContext = (context: ConferenceContext): string => {
+  const name = bareUntrusted(context.developerName ?? "");
+  return name.length === 0 ? "a teammate" : name;
+};
+
+/**
+ * The published draft's body, and WHY the person leads it.
+ *
+ * The only surface a draft is ever met on is the briefing's own-drafts block,
+ * whose `formatDraftLine` cuts a body at MAX_TITLE_CHARS = 80. The first
+ * wording was `Conference finding: <sentence> — also see get_diagnosis <id>`,
+ * and that pointer could never survive: 20 characters of prefix plus 68 of
+ * " — also see get_diagnosis <wc_ id>" is 88, so the cut took the pointer for
+ * EVERY sentence length there is, including the empty one. The reader met a
+ * statement about two pieces of work and was never shown the second one.
+ *
+ * So the TREE THIS DRAFT SITS ON leads instead — the measurement
+ * briefing/ghost.ts made for the ghost draft, and the same fix. Which tree it
+ * is is precisely the fact the author cannot otherwise see: their own drafts
+ * block shows the body and nothing else, and `orderedPair` frequently picks a
+ * teammate's tree. The id of the OTHER side stays at the end where the cut may
+ * take it, because a name a reader can ask beats an id they would have to
+ * paste somewhere.
+ *
+ * VERIFY: bun -e 'const {MAX_TITLE_CHARS}=await import("./packages/connector-core/src/constants.ts");console.log(MAX_TITLE_CHARS - "Conference finding on Ken Weber\'s tree: ".length, MAX_TITLE_CHARS - "Conference finding: ".length - " — also see get_diagnosis wc_cc_2b1f0e7c-0d4a-4a1e-9f6a-2c3d4e5f6a7b".length)'
+ * PRINTS: 40 -8
+ */
+const conferenceDraftBody = (finding: ConferenceFinding): string => {
+  const target = finding.contexts[0] as ConferenceContext;
+  const other = finding.contexts[1];
+  const attribution =
+    other === undefined ? "" : ` — also see get_diagnosis ${other.id}`;
+  return (
+    `Conference finding on ${nameOfContext(target)}'s tree: ` +
+    `${finding.sentence}${attribution}`
+  );
+};
+
 /**
  * Files each finding as a Tier-1 draft. Needs a session of its own — the hub
  * refuses a claim whose author session belongs to somebody else — which is
@@ -334,6 +376,15 @@ const runModel = async (
  * is watching, and "published 2 findings" has to mean the hub took them. A
  * failure says so and the report on disk is untouched.
  */
+interface PublishOutcome {
+  readonly published: number;
+  /** Findings the hub already had from an earlier run — added, not counted. */
+  readonly duplicates: number;
+  readonly problem: string | null;
+  /** Whose tree each draft landed on, in the order they were filed. */
+  readonly landed: readonly { readonly owner: string; readonly contextId: string }[];
+}
+
 const publishFindings = async (
   hub: HubContext,
   repoId: string,
@@ -341,9 +392,9 @@ const publishFindings = async (
   findings: readonly ConferenceFinding[],
   env: Env,
   now: Date,
-): Promise<{ readonly published: number; readonly problem: string | null }> => {
+): Promise<PublishOutcome> => {
   if (findings.length === 0) {
-    return { published: 0, problem: null };
+    return { published: 0, duplicates: 0, problem: null, landed: [] };
   }
   const sessionId = `cc_${crypto.randomUUID()}`;
   const registered = await registerSession(hub, {
@@ -355,9 +406,21 @@ const publishFindings = async (
     status: "analyzing",
   });
   if (!registered.ok) {
-    return { published: 0, problem: "the hub would not open a session to file them under" };
+    return {
+      published: 0,
+      duplicates: 0,
+      problem: "the hub would not open a session to file them under",
+      landed: [],
+    };
   }
   try {
+    const landed = findings.map((finding) => {
+      const target = finding.contexts[0] as ConferenceContext;
+      return {
+        owner: nameOfContext(target),
+        contextId: target.id,
+      };
+    });
     const envelopes = findings.map((finding) => {
       const target = finding.contexts[0] as ConferenceContext;
       const other = finding.contexts[1];
@@ -372,7 +435,7 @@ const publishFindings = async (
           // A cause the model INFERRED across two trees is a hypothesis:
           // nobody has seen it, and the kind is what a reader weighs it by.
           kind: "hypothesis",
-          body: `Conference finding: ${finding.sentence}${attribution}`,
+          body: conferenceDraftBody(finding),
           status: "proposed",
           confidence: CONFERENCE_DERIVED_CONFIDENCE,
           captureMode: "auto",
@@ -390,14 +453,24 @@ const publishFindings = async (
     });
     const posted = await postRecords(hub, envelopes);
     if (!posted.ok) {
-      return { published: 0, problem: "the hub refused the records" };
+      return {
+        published: 0,
+        duplicates: 0,
+        problem: "the hub refused the records",
+        landed: [],
+      };
     }
     // The SUMMARY, not the per-record list: `results` is optional on this
     // wire (an older hub omits it), and a publish that silently counted zero
-    // because a field was absent would print a number that is not true.
+    // because a field was absent would print a number that is not true. The
+    // two halves are kept APART on the way out: a duplicate is a draft an
+    // earlier run already filed, and counting it as published is how a log
+    // reports a draft that was never created.
     const accepted = posted.data.accepted + posted.data.duplicates;
     return {
       published: accepted,
+      duplicates: posted.data.duplicates,
+      landed,
       problem:
         accepted === envelopes.length
           ? null
@@ -486,6 +559,37 @@ const corpusFailureLine = (
     `this hub answered in a shape this crosscheck cannot read — the two are ` +
     `on different versions. ${spent}`
   );
+};
+
+/**
+ * What --publish did, per tree rather than as a bare count.
+ *
+ * `orderedPair` files on the FRESHER of the two contexts, which is frequently
+ * a teammate's — the hub allows that on purpose — so "published 1 as derived
+ * drafts" let a reader close the terminal believing they had filed something
+ * on their own work while the claim sat on somebody else's tree under their
+ * name. The line names the owner, the tree and the call that opens it.
+ */
+const publishedLines = (outcome: PublishOutcome): readonly string[] => {
+  if (outcome.problem !== null) {
+    return [`published nothing: ${outcome.problem}`];
+  }
+  if (outcome.landed.length === 0) {
+    return [];
+  }
+  const already =
+    outcome.duplicates === 0
+      ? ""
+      : ` (${String(outcome.duplicates)} already filed by an earlier run)`;
+  const one = outcome.landed.length === 1;
+  return [
+    `published ${plural(outcome.landed.length, "finding")} as ` +
+      `${one ? "a derived draft" : "derived drafts"}${already} — ` +
+      "pointer-only until review_draft promotes one:",
+    ...outcome.landed.map(
+      (entry) => `  on ${entry.owner}'s tree — get_diagnosis ${entry.contextId}`,
+    ),
+  ];
 };
 
 /**
@@ -584,7 +688,7 @@ export const runConference = async (
         env,
         now,
       )
-    : { published: 0, problem: null };
+    : { published: 0, duplicates: 0, problem: null, landed: [] };
   const report = renderConferenceReport({
     repoId: identity.repoId,
     corpus: corpus.data,
@@ -616,11 +720,7 @@ export const runConference = async (
       ? "no shared-cause finding"
       : `${String(model.findings.length)} shared-cause finding${model.findings.length === 1 ? "" : "s"}`;
   const publishLine = options.publish
-    ? [
-        publishOutcome.problem === null
-          ? `published ${String(publishOutcome.published)} as derived drafts (review_draft promotes one)`
-          : `published nothing: ${publishOutcome.problem}`,
-      ]
+    ? publishedLines(publishOutcome)
     : [];
   const summary =
     `conference: ${findingsLine}, ${String(corpus.data.overlaps.length)} duplicated-work pairs, ` +

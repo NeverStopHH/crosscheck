@@ -25,6 +25,7 @@ import {
 import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 import { readConferenceCost } from "@crosscheck/connector-core/state/conference-cost.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import { formatDraftLine } from "@crosscheck/connector-core/briefing/render.ts";
 
 import { runCli } from "../src/index.ts";
 import { runConference } from "../src/cli/conference.ts";
@@ -568,12 +569,13 @@ describe("the conference command", () => {
     });
 
     // Assert
-    expect(result.stdout).toContain("published 1 as derived drafts");
+    expect(result.stdout).toContain("published 1 finding as a derived draft");
+    expect(result.stdout).toContain(`on Alice Ng's tree — get_diagnosis ${ALICE_CONTEXT}`);
     const onAlice = (await claimsOn(ALICE_CONTEXT)).filter((entry) =>
-      entry.body.startsWith("Conference finding:"),
+      entry.body.startsWith("Conference finding"),
     );
     const onKen = (await claimsOn(KEN_CONTEXT)).filter((entry) =>
-      entry.body.startsWith("Conference finding:"),
+      entry.body.startsWith("Conference finding"),
     );
     expect(onAlice.length).toBe(1);
     expect(onKen.length).toBe(0);
@@ -1283,5 +1285,190 @@ describe("a home the report cannot be written to", () => {
     } finally {
       await chmod(readOnly, 0o700);
     }
+  });
+});
+
+/**
+ * WHOSE TREE, and whether the reader is ever told. `orderedPair` files on the
+ * FRESHER of the two contexts, which is frequently a teammate's — the hub
+ * permits it on purpose ("extending someone else's diagnosis tree is the
+ * product") — and both freshest-first tests above are constructed so Alice's
+ * own tree wins, so the cross-developer path had no coverage at all.
+ */
+describe("a finding published on somebody else's tree", () => {
+  const TEAM_REPO_ID = "github.com/acme/team";
+  const TEAM_ALICE_SESSION = "cc_team_alice";
+  const TEAM_KEN_SESSION = "cc_team_ken";
+  const TEAM_ALICE_CONTEXT = "wc_team_alice";
+  const TEAM_KEN_CONTEXT = "wc_team_ken";
+  const TEAM_SENTENCE =
+    "Both sessions are circling the same stale key id that the rotation leaves behind";
+  let teamRepo: string;
+
+  beforeAll(async () => {
+    teamRepo = await makeRepo("conference-team", {
+      remote: "git@github.com:acme/team.git",
+    });
+    temps.push(teamRepo);
+    for (const [key, sessionId] of [
+      [aliceKey, TEAM_ALICE_SESSION],
+      [kenKey, TEAM_KEN_SESSION],
+    ] as const) {
+      await post("/api/sessions", key, {
+        id: sessionId,
+        agentKind: "claude-code",
+        repo: TEAM_REPO_ID,
+        branch: "feat/importer",
+        baseCommit: "a1b2c3d4",
+        status: "analyzing",
+      });
+    }
+    // ALICE FIRST this time, so KEN'S tree is the freshest of the two and the
+    // draft lands on a teammate — the arrangement the two tests above cannot
+    // reach and the one this describe exists for.
+    await send(aliceKey, [
+      envelope(
+        "work_context",
+        {
+          id: TEAM_ALICE_CONTEXT,
+          sessionId: TEAM_ALICE_SESSION,
+          title: "Importer drops rotated key ids",
+          status: "analyzing",
+          intent: {
+            summary: ALICE_INTENT,
+            provenance: "declared",
+            confidence: 0.9,
+            capturedAt: new Date().toISOString(),
+          },
+          createdAt: new Date().toISOString(),
+        },
+        aliceId,
+        TEAM_ALICE_SESSION,
+      ),
+      envelope(
+        "claim",
+        claim("cl_team_alice", TEAM_ALICE_CONTEXT, TEAM_ALICE_SESSION, {
+          body: "The mapping loses the key id whenever a rotation is in flight",
+        }),
+        aliceId,
+        TEAM_ALICE_SESSION,
+      ),
+    ]);
+    await send(kenKey, [
+      envelope(
+        "work_context",
+        {
+          id: TEAM_KEN_CONTEXT,
+          sessionId: TEAM_KEN_SESSION,
+          title: "Refresh 500s after key rotation",
+          status: "analyzing",
+          intent: {
+            summary: KEN_INTENT,
+            provenance: "declared",
+            confidence: 0.9,
+            capturedAt: new Date().toISOString(),
+          },
+          createdAt: new Date().toISOString(),
+        },
+        kenId,
+        TEAM_KEN_SESSION,
+      ),
+      envelope(
+        "claim",
+        claim("cl_team_ken", TEAM_KEN_CONTEXT, TEAM_KEN_SESSION, {
+          body: KEN_DECLARED,
+        }),
+        kenId,
+        TEAM_KEN_SESSION,
+      ),
+    ]);
+  });
+
+  test("Ken's tree is the freshest of the two on this repo", async () => {
+    // The arrangement, asserted rather than assumed.
+    expect(await corpusContextIds(TEAM_REPO_ID)).toEqual([
+      TEAM_KEN_CONTEXT,
+      TEAM_ALICE_CONTEXT,
+    ]);
+  });
+
+  test("the printed line names the teammate whose tree it landed on", async () => {
+    // Arrange
+    const model = await makeFakeModel({ output: `A+B: ${TEAM_SENTENCE}` });
+
+    // Act
+    const result = await runConference(
+      ["--publish"],
+      envFor(aliceKey, { CROSSCHECK_SUMMARIZER_CMD: model }),
+      teamRepo,
+      () => undefined,
+    );
+
+    // Assert: not a bare count. Alice closed the terminal believing she had
+    // filed something on her own work; the claim is on Ken's tree, under her
+    // name, and Ken meets it tomorrow.
+    expect(result.stdout).toContain("Ken Weber");
+    expect(result.stdout).toContain(`get_diagnosis ${TEAM_KEN_CONTEXT}`);
+    expect(result.stdout).toContain("review_draft");
+    const onKen = (await claimsOn(TEAM_KEN_CONTEXT)).filter((entry) =>
+      entry.body.startsWith("Conference finding"),
+    );
+    expect(onKen.length).toBe(1);
+    expect((await claimsOn(TEAM_ALICE_CONTEXT)).filter((entry) =>
+      entry.body.startsWith("Conference finding"),
+    ).length).toBe(0);
+  });
+
+  test("the teammate's name survives the briefing's 80-character cut", async () => {
+    // Arrange: the ONLY surface a draft is met on cuts a body at
+    // MAX_TITLE_CHARS — the same measurement the ghost draft was reordered by.
+    const onKen = (await claimsOn(TEAM_KEN_CONTEXT)).find((entry) =>
+      entry.body.startsWith("Conference finding"),
+    );
+    expect(onKen).toBeDefined();
+
+    // Act
+    const line = formatDraftLine(
+      {
+        id: "clm_conference_draft",
+        workContextId: TEAM_KEN_CONTEXT,
+        kind: "hypothesis",
+        status: "proposed",
+        confidence: CONFERENCE_DERIVED_CONFIDENCE,
+        body: onKen?.body ?? "",
+        createdAt: new Date().toISOString(),
+      },
+      new Date(),
+    );
+
+    // Assert: the reader learns WHO the finding is about on the line itself.
+    expect(line).toContain("Ken Weber");
+    expect(line).toContain("review_draft");
+  });
+
+  test("a re-run says the hub already had it instead of counting it twice", async () => {
+    // Arrange: the same sentence again — the hub dedups on the normalised
+    // body, so the second run adds nothing.
+    const before = (await claimsOn(TEAM_KEN_CONTEXT)).filter((entry) =>
+      entry.body.startsWith("Conference finding"),
+    ).length;
+    const model = await makeFakeModel({ output: `A+B: ${TEAM_SENTENCE}` });
+
+    // Act
+    const result = await runConference(
+      ["--publish"],
+      envFor(aliceKey, { CROSSCHECK_SUMMARIZER_CMD: model }),
+      teamRepo,
+      () => undefined,
+    );
+
+    // Assert: a log that reconciles against the hub, rather than one that
+    // reports a draft it did not add.
+    expect(result.stdout).toContain("already filed by an earlier run");
+    expect(
+      (await claimsOn(TEAM_KEN_CONTEXT)).filter((entry) =>
+        entry.body.startsWith("Conference finding"),
+      ).length,
+    ).toBe(before);
   });
 });
