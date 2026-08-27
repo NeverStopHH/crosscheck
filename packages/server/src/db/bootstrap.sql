@@ -362,6 +362,13 @@ CREATE INDEX IF NOT EXISTS questions_work_context_idx
 CREATE INDEX IF NOT EXISTS questions_author_created_idx
   ON questions (author_developer_id, created_at DESC);
 
+-- The team-wide axis (VISION.md §2): "every open question of THIS repo,
+-- oldest first", which the conference report reads and which no index above
+-- can serve — both of those lead with a person. Without it a conference on a
+-- hub holding a thousand questions scans all of them. Mirrored in db/schema.ts.
+CREATE INDEX IF NOT EXISTS questions_repo_status_created_idx
+  ON questions (repo, status, created_at);
+
 -- The `answers` edge: one claim answering one question. Its own table rather
 -- than a claim_edges kind, because claim_edges.to_claim_id is a foreign key
 -- into claims and an answers edge would have to point it at a question id.

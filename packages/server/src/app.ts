@@ -2,6 +2,7 @@ import { Hono } from "hono";
 
 import { fail } from "./http/envelope.ts";
 import { absencesRoutes } from "./routes/absences.ts";
+import { conferenceRoutes } from "./routes/conference.ts";
 import { contradictionsRoutes } from "./routes/contradictions.ts";
 import { developersRoutes } from "./routes/developers.ts";
 import { draftsRoutes } from "./routes/drafts.ts";
@@ -34,6 +35,10 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/absences", absencesRoutes(deps));
   app.route("/api/solved-matches", solvedMatchesRoutes(deps));
   app.route("/api/ghost-checks", ghostChecksRoutes(deps));
+  // The conference corpus (VISION.md §2). Never a hook and never automatic:
+  // this route only ever answers a `crosscheck conference` a human or their
+  // scheduler started, which is why it is a deliberate-pull surface.
+  app.route("/api/conference", conferenceRoutes(deps));
   // The asynchronous question channel (roadmap R2). A route of its own, not
   // only a record kind, because asking resolves a developer NAME and a
   // misspelt one must come back naming the closest spellings.

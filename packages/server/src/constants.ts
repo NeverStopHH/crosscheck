@@ -391,3 +391,68 @@ export const EVENT_KINDS = {
 } as const;
 
 export type EventKind = (typeof EVENT_KINDS)[keyof typeof EVENT_KINDS];
+// ── Agent conferences (VISION.md §2) ────────────────────────────────────────
+
+/**
+ * How far back a conference reads. Fourteen days, the solved matcher's window
+ * rather than the ghost check's seven, because the two answer different
+ * questions: a ghost check asks who is in my way RIGHT NOW, a conference asks
+ * what this team has been circling — and an investigation somebody paused over
+ * a weekend is exactly the kind a synthesis is supposed to find again.
+ */
+export const CONFERENCE_ACTIVE_WINDOW_DAYS = 14;
+
+/**
+ * Work contexts one conference may read, freshest first.
+ *
+ * Twelve is what a report a human reads in a minute can name, and it is also
+ * what the model layer can be shown without the input becoming a document
+ * nobody can check: every context contributes an intent sentence and up to
+ * CONFERENCE_MAX_CLAIMS_PER_CONTEXT claim lines, so the whole prompt stays
+ * inside a few thousand characters whose cost the run prints BEFORE it spends
+ * anything.
+ */
+export const CONFERENCE_MAX_CONTEXTS = 12;
+
+/**
+ * Declared claims read per context, newest first — the per-context bound that
+ * makes the whole read arithmetic rather than a race between contexts. One
+ * indexed lookup per context (claims_work_context_created_idx), so a tree with
+ * nine hundred claims spends five rows here exactly like a tree with six; a
+ * single `IN (…)` over all twelve would let that one tree take the entire
+ * window and empty the eleven beside it, which is the defect Block 4 measured
+ * on the reader's own targets.
+ */
+export const CONFERENCE_MAX_CLAIMS_PER_CONTEXT = 5;
+
+/** Rows the claim read can return in total — the product, stated once. */
+export const CONFERENCE_MAX_CLAIM_ROWS =
+  CONFERENCE_MAX_CONTEXTS * CONFERENCE_MAX_CLAIMS_PER_CONTEXT;
+
+/**
+ * A claim body as the conference reads it. Long enough for a real finding,
+ * short enough that twelve contexts of them stay a bounded prompt; the report
+ * quotes the same cut text, so what the model saw and what the human reads are
+ * the same sentence.
+ */
+export const CONFERENCE_CLAIM_BODY_MAX_CHARS = 300;
+
+/** Open questions one report may name, oldest first (the stalest is the finding). */
+export const CONFERENCE_MAX_QUESTIONS = 10;
+
+/** Contradiction candidates one report may name — each is a referee brief away. */
+export const CONFERENCE_MAX_CONTRADICTIONS = 5;
+
+/**
+ * Duplicated-work pairs one report may name. Pairs, never a matrix: twelve
+ * contexts admit sixty-six comparisons and a report listing them all is the
+ * "wall of text" §8 of the spec forbids.
+ */
+export const CONFERENCE_MAX_OVERLAP_PAIRS = 5;
+
+/**
+ * How far the "read 12 of N" count is allowed to look. A count is a scan, and
+ * a report line is not worth an unbounded one on a hub with ten thousand work
+ * contexts — past this the line says "500+" and means it.
+ */
+export const CONFERENCE_MAX_COUNTED_CONTEXTS = 500;

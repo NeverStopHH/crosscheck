@@ -106,7 +106,7 @@ import type { Clock } from "../types.ts";
  * symbols: it is a coarse label ("auth", "the ingest pipeline") that recurs
  * across unrelated work, and this feeds a line asserting relevance unasked.
  */
-const OVERLAP_TARGET_KINDS = ["error_fingerprint", "file", "symbol"] as const;
+export const OVERLAP_TARGET_KINDS = ["error_fingerprint", "file", "symbol"] as const;
 
 /**
  * The kind as the COLUMN types it, kept apart from `GhostSharedTarget.kind`
@@ -114,9 +114,9 @@ const OVERLAP_TARGET_KINDS = ["error_fingerprint", "file", "symbol"] as const;
  * row from a newer hub without this enum, and a query must not be able to
  * name a kind the column has never held.
  */
-type OverlapKind = (typeof OVERLAP_TARGET_KINDS)[number];
+export type OverlapKind = (typeof OVERLAP_TARGET_KINDS)[number];
 
-interface SharedValue {
+export interface SharedValue {
   readonly kind: OverlapKind;
   readonly value: string;
 }
@@ -164,7 +164,7 @@ export interface GhostOverlapView {
  * not a plan (see the header). Correlated, and cheap because the count rides
  * the targets primary key, whose leading column is work_context_id.
  */
-const notASweepCondition = (contextId: SQL | AnyPgColumn): SQL =>
+export const notASweepCondition = (contextId: SQL | AnyPgColumn): SQL =>
   sql`(
     SELECT count(*) FROM work_context_targets sweep_targets
      WHERE sweep_targets.work_context_id = ${contextId}
@@ -207,7 +207,7 @@ const liveWorkConditions = (): readonly SQL[] => [
  * an index range on work_context_targets_kind_value_idx. A flat OR over
  * tuples would be one branch per pair and a plan nobody can predict.
  */
-const targetValueCondition = (
+export const targetValueCondition = (
   targets: readonly SharedValue[],
 ): SQL | undefined => {
   const byKind = new Map<OverlapKind, string[]>();
@@ -220,7 +220,7 @@ const targetValueCondition = (
   return branches.length === 0 ? undefined : or(...branches);
 };
 
-const activityExpression = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
+export const activityExpression = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
 
 interface OwnContext {
   readonly id: string;

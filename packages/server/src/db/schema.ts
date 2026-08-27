@@ -473,6 +473,15 @@ export const questions = pgTable(
       table.authorDeveloperId,
       table.createdAt.desc(),
     ),
+    // The team-wide axis (VISION.md §2): "every open question of THIS repo,
+    // oldest first" — the conference report's question section. Neither index
+    // above can serve it; both lead with a person. Mirrored in
+    // db/bootstrap.sql.
+    index("questions_repo_status_created_idx").on(
+      table.repo,
+      table.status,
+      table.createdAt,
+    ),
   ],
 );
 
