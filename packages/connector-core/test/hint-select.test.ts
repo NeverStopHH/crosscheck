@@ -156,6 +156,22 @@ describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
     expect(select([context({}, [unknownProvenance])]).kind).toBe("pointer");
   });
 
+  test("a claim whose body the hub withheld is a pointer, never «»", () => {
+    // The client half of audit row V2-X4. The hub now sends `body: ""` for
+    // every claim nobody vouched for, and a hub that withholds MORE than that
+    // is exactly the hub this connector must survive: without this rule the
+    // reader is handed a fully trust-labelled sentence with empty quotes
+    // where the finding should be, which reads as "Nick found nothing".
+    const withheld = claim({ id: "clm_withheld", body: "" });
+    expect(select([context({}, [withheld])]).kind).toBe("pointer");
+    // The control on the same arrangement: the identical claim WITH its body
+    // is substance, so this is a rule about the empty body and not about the
+    // fixture failing some other gate.
+    expect(select([context({}, [claim({ id: "clm_withheld" })])]).kind).toBe(
+      "claim",
+    );
+  });
+
   test("substance in a lower-ranked context beats a pointer in a higher one", () => {
     const weak = context(
       { id: "wc_weak" },

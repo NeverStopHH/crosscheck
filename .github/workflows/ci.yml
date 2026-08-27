@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 183
+    # PRINTS: 185
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -165,7 +165,7 @@ jobs:
     # PRINTS: hints/delivery.ts 1
     # PRINTS: hints/precision.ts 2
     # PRINTS: hints/render.ts 2
-    # PRINTS: hints/select.ts 6
+    # PRINTS: hints/select.ts 7
     # PRINTS: http/hub.ts 1
     # PRINTS: http/latency.ts 1
     # PRINTS: mcp/render-referee.ts 2
@@ -190,7 +190,7 @@ jobs:
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developers.ts 1
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
-    # PRINTS: packages/server/src/services/hints.ts 1
+    # PRINTS: packages/server/src/services/hints.ts 2
     # PRINTS: packages/server/src/services/normalized-doc.ts 1
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
@@ -227,7 +227,7 @@ jobs:
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: hint.ts 2
-    # PRINTS: hints.ts 1
+    # PRINTS: hints.ts 2
     # PRINTS: hook-budget.ts 1
     # PRINTS: hub.ts 1
     # PRINTS: injector.ts 3
@@ -257,7 +257,7 @@ jobs:
     # PRINTS: search-related-work.ts 1
     # PRINTS: search-tokens.ts 1
     # PRINTS: search.ts 10
-    # PRINTS: select.ts 6
+    # PRINTS: select.ts 7
     # PRINTS: session-start.ts 2
     # PRINTS: session.ts 1
     # PRINTS: sessions.ts 1

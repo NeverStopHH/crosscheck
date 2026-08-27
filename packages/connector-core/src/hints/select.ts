@@ -97,9 +97,23 @@ const isSettled = (claim: HintClaimCandidate): boolean =>
 const isDeclared = (claim: HintClaimCandidate): boolean =>
   claim.provenance === "declared";
 
+/**
+ * A body the hub did not send is not substance to inject (audit row V2-X4).
+ * The hub withholds the body of every claim nobody vouched for
+ * (packages/server/src/services/hints.ts), so an empty body normally arrives
+ * beside a provenance the rule above already refuses — this check is about the
+ * OTHER hub: one that withholds more, or differently, or ships an empty body
+ * under a declared label. Without it the reader is handed a fully
+ * trust-labelled sentence with empty quotes where the finding should be, which
+ * reads as "Nick looked and found nothing".
+ */
+const hasBody = (claim: HintClaimCandidate): boolean =>
+  claim.body.trim().length > 0;
+
 /** The asymmetry, in one predicate: provenance and evidence first, then kind or status. */
 const isInjectable = (claim: HintClaimCandidate): boolean =>
   isDeclared(claim) &&
+  hasBody(claim) &&
   hasEvidence(claim) &&
   claim.status !== "superseded" &&
   (isNegativeKnowledge(claim) || isSettled(claim));

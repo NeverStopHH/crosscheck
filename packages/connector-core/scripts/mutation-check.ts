@@ -2807,6 +2807,32 @@ export const MUTATIONS: readonly Mutation[] = [
       "looks wrong",
   },
   {
+    // Audit row V2-X4. The client-side declared-only gate stays either way;
+    // this is about the BYTES, which is the only half that holds against a
+    // connector nobody in this repo wrote.
+    label: "the hint wire ships an unpromoted draft's body",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: 'body: row.claim.provenance === DECLARED_PROVENANCE ? row.claim.body : "",',
+    to: "body: row.claim.body,",
+    test: `${SERVER}/test/hints.test.ts`,
+    because:
+      "a machine guess nobody reviewed — including a ghost draft a THIRD " +
+      "party influenced through a model — lands on every teammate's machine " +
+      "in full, one client change away from being rendered as a finding",
+  },
+  {
+    // The other half of V2-X4, on the reader's side of the wire.
+    label: "a withheld claim body renders as empty substance",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  hasBody(claim) &&",
+    to: "",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "a hub that withholds a body the selector still accepts produces a " +
+      "fully trust-labelled hint with «» where the finding should be, which " +
+      "reads as «Nick looked and found nothing»",
+  },
+  {
     // Audit row M12-rest. The default text-search parser reads a branch name
     // and a path as ONE `file` token, so without the derived word bag the
     // document is unsearchable by the words inside either.
@@ -2908,8 +2934,8 @@ interface Outcome {
  * PRINTS: hint-flow.test.ts 2
  * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 2
- * PRINTS: hint-select.test.ts 5
- * PRINTS: hints.test.ts 2
+ * PRINTS: hint-select.test.ts 6
+ * PRINTS: hints.test.ts 3
  * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1
  * PRINTS: injection-corpus.test.ts 6

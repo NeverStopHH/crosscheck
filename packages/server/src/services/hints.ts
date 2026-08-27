@@ -202,7 +202,24 @@ const listClaimsForContext = async (
     evidenceRefCount: row.claim.evidenceRefs.length,
     authorDeveloperId: row.authorDeveloperId,
     authorDeveloperName: row.authorDeveloperName,
-    body: row.claim.body,
+    // WITHHELD unless somebody vouched for it (audit row V2-X4). A derived,
+    // unreviewed draft is nobody's answer — `hints/select.ts` has always
+    // refused to render one as substance, but a CLIENT that declines to print
+    // a body is a different guarantee from the body never crossing the wire,
+    // and only the second one holds against a modified connector, a shared
+    // machine, or the next surface somebody adds to this response. It matters
+    // more since ghost checks shipped: a ghost draft is text a THIRD party
+    // influenced through a model, and it rides this wire like any other claim
+    // body of its context (DESIGN.md §3).
+    //
+    // The ROW still travels: a pointer states how many claims it withholds,
+    // and dropping the row would make that count lie.
+    //
+    // Positive equality on the declared value, the same rule the selector
+    // applies, so the wire cannot drift into allowing what the renderer
+    // refuses: an unknown provenance is one nobody vouched for, and it fails
+    // closed.
+    body: row.claim.provenance === DECLARED_PROVENANCE ? row.claim.body : "",
     createdAt: row.claim.createdAt.toISOString(),
   }));
 };
