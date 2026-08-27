@@ -521,21 +521,26 @@ export const readConference = async (
   const cutoff = new Date(
     deps.now().getTime() - CONFERENCE_ACTIVE_WINDOW_DAYS * MS_PER_DAY,
   );
-  const [contexts, window, questionRows, contradictions] = await Promise.all([
+  const [contexts, window, questionRows] = await Promise.all([
     listRecentContexts(deps, repo, cutoff),
     countContextsInWindow(deps, repo, cutoff),
     listOpenQuestions(deps, viewerDeveloperId, repo),
-    // The deliberate-pull posture again: no `excludeMutedForDeveloperId`, the
-    // same call findContradictionById makes, for the same reason.
+  ]);
+  const ids = contexts.map((context) => context.id);
+  const [claimLists, sliceTargets, contradictions] = await Promise.all([
+    Promise.all(ids.map((id) => listContextClaims(deps, id))),
+    listSliceTargets(deps, ids),
+    // SECOND, because it needs the slice. The deliberate-pull posture again:
+    // no `excludeMutedForDeveloperId`, the same call findContradictionById
+    // makes, for the same reason. But bounded to the contexts this report
+    // printed — an unbounded (kind, value) self-join over a repo's whole
+    // history held this hub for 23.7 s on a seeded 10^4-context repo, and a
+    // pair whose live side is not on the page is a pointer to nothing.
     listContradictions(deps.db, {
       repo,
       limit: CONFERENCE_MAX_CONTRADICTIONS,
+      liveSideWorkContextIds: ids,
     }),
-  ]);
-  const ids = contexts.map((context) => context.id);
-  const [claimLists, sliceTargets] = await Promise.all([
-    Promise.all(ids.map((id) => listContextClaims(deps, id))),
-    listSliceTargets(deps, ids),
   ]);
   const hotValues = await listHotValues(
     deps,

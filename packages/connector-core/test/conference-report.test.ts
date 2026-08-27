@@ -169,7 +169,9 @@ describe("the conference report", () => {
 
     // Assert: a section that vanishes is indistinguishable from one that
     // failed, which is the whole finding-#14 lesson applied to a document.
-    expect(report).toContain("No two open claims on this repo contradict each other.");
+    expect(report).toContain(
+      "No claim in the work read above is contradicted by a rejected one.",
+    );
     expect(report).toContain(
       "No two people on this repo are working the same files or the same failure.",
     );

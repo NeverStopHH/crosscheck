@@ -249,7 +249,13 @@ const contradictionSection = (
   return [
     "## Contradictions worth refereeing",
     ...(lines.length === 0
-      ? ["No two open claims on this repo contradict each other."]
+      ? [
+          // Scoped, because the hub's answer is: the tier is bounded to the
+          // contexts printed above (services/contradictions.ts
+          // liveSideWorkContextIds), so "on this repo" would be a wider claim
+          // than the read behind it.
+          "No claim in the work read above is contradicted by a rejected one.",
+        ]
       : lines),
   ];
 };

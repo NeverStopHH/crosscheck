@@ -16,8 +16,13 @@ import { eq } from "drizzle-orm";
 import {
   CONFERENCE_MAX_CLAIMS_PER_CONTEXT,
   CONFERENCE_MAX_CONTEXTS,
+  GHOST_HOT_TARGET_MAX_CONTEXTS,
 } from "../src/constants.ts";
-import { agentSessions, workContexts } from "../src/db/schema.ts";
+import {
+  agentSessions,
+  workContexts,
+  workContextTargets,
+} from "../src/db/schema.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -394,5 +399,121 @@ describe("the conference corpus", () => {
     expect(mine?.claims.map((claim) => claim.body)).toEqual([
       "The quiet tree still has something to say",
     ]);
+  });
+  test("a file every context touches is not a contradiction candidate", async () => {
+    // Arrange: the CONTRAST first — a RARE shared file pairs two opposite
+    // theories, which is the signal this tier exists for.
+    const { harness, me, them } = await setup();
+    const rare = [{ kind: "file", value: "src/auth/token.ts" }];
+    await seed(harness, them, [
+      ...contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", rare),
+      claimRecord(THEIR_CONTEXT, THEIR_SESSION, "clm_open", {
+        kind: "root_cause",
+        body: "Rotation drops the old kid too early",
+        status: "proposed",
+      }),
+    ]);
+    await seed(harness, me, [
+      ...contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", rare),
+      claimRecord(MY_CONTEXT, MY_SESSION, "clm_rejected", {
+        kind: "root_cause",
+        body: "Rotation was never the cause here",
+        status: "rejected",
+      }),
+    ]);
+    expect((await fetchConference(harness, me.apiKey)).contradictions.length).toBe(1);
+
+    // Act: the same two theories now share a LOCKFILE instead — a value more
+    // than GHOST_HOT_TARGET_MAX_CONTEXTS contexts of this repo carry. The
+    // filler contexts are landed, so they are out of the slice the report
+    // reads and the ONLY thing they change is the value's rarity.
+    await harness.db
+      .delete(workContextTargets)
+      .where(eq(workContextTargets.value, "src/auth/token.ts"));
+    const hot = [{ kind: "file", value: "bun.lock" }];
+    await seed(harness, me, [
+      ...contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", hot),
+    ]);
+    await seed(harness, them, [
+      ...contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", hot),
+    ]);
+    for (let index = 0; index < GHOST_HOT_TARGET_MAX_CONTEXTS - 1; index += 1) {
+      const id = `wc_filler_${String(index)}`;
+      await seed(harness, me, [
+        ...contextRecords(id, MY_SESSION, `Filler ${String(index)}`, hot),
+      ]);
+      await harness.db
+        .update(workContexts)
+        .set({ landedAt: new Date() })
+        .where(eq(workContexts.id, id));
+    }
+
+    // Assert: a lockfile two dozen sessions edit is not evidence that two
+    // theories are about the same thing — and pairing on it is what makes
+    // this join quadratic (the 24 s the reviewer measured).
+    const conference = await fetchConference(harness, me.apiKey);
+    expect(conference.contexts.map((context) => context.id).sort()).toEqual([
+      MY_CONTEXT,
+      THEIR_CONTEXT,
+    ]);
+    expect(conference.contradictions).toEqual([]);
+  });
+
+  test("a contradiction outside the contexts the report read is not in it", async () => {
+    // Arrange: the pair sits on the two OLDEST contexts, pushed out of the
+    // CONFERENCE_MAX_CONTEXTS slice by fresher work.
+    const { harness, me, them } = await setup();
+    const rare = [{ kind: "file", value: "src/auth/token.ts" }];
+    await seed(harness, them, [
+      ...contextRecords(THEIR_CONTEXT, THEIR_SESSION, "Session store migration", rare),
+      claimRecord(THEIR_CONTEXT, THEIR_SESSION, "clm_open", {
+        kind: "root_cause",
+        body: "Rotation drops the old kid too early",
+        status: "proposed",
+      }),
+    ]);
+    await seed(harness, me, [
+      ...contextRecords(MY_CONTEXT, MY_SESSION, "Token refresh rework", rare),
+      claimRecord(MY_CONTEXT, MY_SESSION, "clm_rejected", {
+        kind: "root_cause",
+        body: "Rotation was never the cause here",
+        status: "rejected",
+      }),
+    ]);
+    expect((await fetchConference(harness, me.apiKey)).contradictions.length).toBe(1);
+
+    // Act: age the pair, then fill the window with fresher contexts.
+    await harness.db
+      .update(workContexts)
+      .set({ updatedAt: new Date(Date.parse(TEST_START_ISO) - 60_000) })
+      .where(eq(workContexts.id, MY_CONTEXT));
+    await harness.db
+      .update(workContexts)
+      .set({ updatedAt: new Date(Date.parse(TEST_START_ISO) - 60_000) })
+      .where(eq(workContexts.id, THEIR_CONTEXT));
+    for (let index = 0; index < CONFERENCE_MAX_CONTEXTS; index += 1) {
+      await seed(harness, me, [
+        ...contextRecords(`wc_fresh_${String(index)}`, MY_SESSION, `Fresh ${String(index)}`),
+      ]);
+    }
+
+    // Assert: every other tier of this corpus is bounded by the slice, and
+    // this one is now too — a pair whose live side the report never printed
+    // has no context line a reader could open it against.
+    const conference = await fetchConference(harness, me.apiKey);
+    expect(conference.contexts.map((context) => context.id)).not.toContain(MY_CONTEXT);
+    expect(conference.contradictions).toEqual([]);
+
+    // Assert: and the repo-wide listing still has it — the bound is this
+    // report's, not the hub's.
+    const listed = await harness.app.request(
+      `/api/contradictions?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", me.apiKey),
+    );
+    expect(listed.status).toBe(200);
+    const body = (await listed.json()) as {
+      data: { candidates: readonly unknown[] };
+    };
+    expect(body.data.candidates.length).toBe(1);
   });
 });
