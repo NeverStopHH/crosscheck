@@ -367,10 +367,10 @@ const nameOfContext = (context: ConferenceContext): string => {
  * take it, because a name a reader can ask beats an id they would have to
  * paste somewhere.
  *
- * VERIFY: bun -e 'const {MAX_TITLE_CHARS}=await import("./packages/connector-core/src/constants.ts");console.log(MAX_TITLE_CHARS - "Conference finding on Ken Weber\'s tree: ".length, MAX_TITLE_CHARS - "Conference finding: ".length - " — also see get_diagnosis wc_cc_2b1f0e7c-0d4a-4a1e-9f6a-2c3d4e5f6a7b".length)'
+ * VERIFY: bun -e 'const c=await import("./packages/cli/src/cli/conference.ts");const {MAX_TITLE_CHARS}=await import("./packages/connector-core/src/constants.ts");const side=(id,name)=>({id,title:"t",developerId:"d",developerName:name,intent:null,lastActiveAt:"",claims:[]});const body=c.conferenceDraftBody({sentence:"S",contexts:[side("wc_cc_2b1f0e7c-0d4a-4a1e-9f6a-2c3d4e5f6a7b","Ken Weber"),side("wc_cc_3c2f1e8d-1e5b-4b2f-8a7b-3d4e5f6a7b8c","Alice Ng")]});console.log(MAX_TITLE_CHARS - body.indexOf("S"), MAX_TITLE_CHARS - "Conference finding: ".length - " — also see get_diagnosis wc_cc_3c2f1e8d-1e5b-4b2f-8a7b-3d4e5f6a7b8c".length)'
  * PRINTS: 40 -8
  */
-const conferenceDraftBody = (finding: ConferenceFinding): string => {
+export const conferenceDraftBody = (finding: ConferenceFinding): string => {
   const target = finding.contexts[0] as ConferenceContext;
   const other = finding.contexts[1];
   const attribution =

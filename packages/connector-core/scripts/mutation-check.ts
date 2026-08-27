@@ -2671,6 +2671,141 @@ export const MUTATIONS: readonly Mutation[] = [
       "something a person stated, so it ranks as evidence and never has to " +
       "pass review_draft",
   },
+  {
+    // ConE's rarity rule, INSIDE the (kind, value) self-join. Without it a
+    // lockfile every session touches pairs itself once per ordered pair of
+    // contexts.
+    label: "a lockfile pairs every context with every other",
+    file: `${SERVER}/src/services/contradictions.ts`,
+    from: "        rareTargetCondition(repo, targetsOpen),",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because:
+      "one ordinary lockfile row per context turns this join into 10^8 rows " +
+      "and held a seeded 10^4-context hub for 23.7 s in one query, while " +
+      "reporting pairs whose only evidence is that both sessions ran an " +
+      "install",
+  },
+  {
+    // Every other tier of the conference corpus is bounded by the slice the
+    // report prints; this one has to be too.
+    label: "the conference reads contradictions it never printed a side of",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "      liveSideWorkContextIds: ids,",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because:
+      "a pair whose live side is not on the page is a pointer to nothing, " +
+      "and the unbounded join is the other half of the 23.7 s",
+  },
+  {
+    // U+2014 is the conference report's own field separator, so an untrusted
+    // BARE field that keeps it mints a second, followable pointer.
+    label: "a display name mints a conference pointer of its own",
+    file: `${CORE}/src/briefing/sanitize.ts`,
+    from: "const RENDERER_STRUCTURE = /[·:\\u2014]/g;",
+    to: "const RENDERER_STRUCTURE = /[·:]/g;",
+    test: `${CORE}/test/conference-report.test.ts`,
+    because:
+      "a teammate whose display name is `Ken — get_diagnosis wc_<attacker>` " +
+      "makes four line shapes of every conference report on the repo read as " +
+      "genuine crosscheck calls at a tree the attacker chose",
+  },
+  {
+    // The two-session floor counts what was SENT, not what the hub named.
+    label: "the conference model runs on one session or on none",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "  if (sent.length < 2) {",
+    to: "  if (sessions.length < 2) {",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a model shown one session cannot produce an A+B line at all, so the " +
+      "call is spent to be told nothing and the answer is then booked " +
+      "unreadable — a standing doctor WARN with nothing wrong with the model",
+  },
+  {
+    // The reader's own item bound on a deterministic section.
+    label: "a hub can print thousands of questions onto one page",
+    file: `${CORE}/src/conference/report.ts`,
+    from: "    .slice(0, CONFERENCE_MAX_QUESTIONS_SHOWN)\n",
+    to: "",
+    test: `${CORE}/test/conference-report.test.ts`,
+    because:
+      "5,000 questions and 5,000 contradictions rendered 10,615 lines and " +
+      "1,375,379 bytes, where the feature is defined as one page a human " +
+      "reads in a minute",
+  },
+  {
+    // The deliverable is the page, and a command whose only output is a file
+    // has to say something when the file cannot be written.
+    label: "the conference dies in silence when the page cannot land",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: `  try {
+    await writePrivateFile(path, report);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }`,
+    to: `  await writePrivateFile(path, report);
+  return null;`,
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a cron run whose home is read-only saw two pre-run lines, nothing on " +
+      "either stream and exit 64 — the code this CLI reserves for a mistyped " +
+      "command — while --publish kept filing drafts on the team's trees",
+  },
+  {
+    // One unreviewed conference draft per tree; review_draft makes room.
+    label: "nightly conferences pile paraphrases onto one tree",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: `  const filable = model.findings.filter(
+    (finding) => !(held ?? new Map()).has((finding.contexts[0] as ConferenceContext).id),
+  );`,
+    to: "  const filable = model.findings;",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "the hub dedups on the normalised body, which a real model defeats by " +
+      "paraphrasing, so a scheduler files ~30 near-identical hypotheses a " +
+      "month on a teammate's tree and evicts their own drafts from the " +
+      "briefing",
+  },
+  {
+    // The remedy comes from the counter that fired.
+    label: "the conference WARN blames the answer format for a lost call",
+    file: `${CORE}/src/state/conference-cost.ts`,
+    from: "  ...(cost.fails > 0\n    ? [\"the model call did not come back — see the summarizer runner check\"]\n    : []),",
+    to: "",
+    test: `${CORE}/test/conference-cost.test.ts`,
+    because:
+      "an operator whose claude binary went missing is sent hunting a " +
+      "prompt-format drift that never happened, on the one surface that is " +
+      "supposed to say what to do",
+  },
+  {
+    // A conference is the one caller that is not a hook.
+    label: "the conference hub read runs on a hook's request timeout",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "  const corpus = await getConference(reading, identity.repoId);",
+    to: "  const corpus = await getConference(hub, identity.repoId);",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "config.timeoutMs is 400 ms and sized for a keystroke, so the read " +
+      "aborts ~89x before CONFERENCE_MAX_WALL_MS and books noHubAnswer — a " +
+      "counter doctor reads as a deployment state",
+  },
+  {
+    // Reports are deliberately never reaped; losing one to a filename
+    // collision is the odd exception.
+    label: "two conferences a minute apart overwrite one page",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "  const path = await freeReportPath(config.home, key, reportStamp(now));",
+    to: "  const path = conferenceReportPath(config.home, key, reportStamp(now));",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a scheduler retrying after a transient hub error silently replaces " +
+      "the page it just wrote, and the path is printed both times so nothing " +
+      "looks wrong",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -2719,9 +2854,11 @@ interface Outcome {
  * PRINTS: budget.test.ts 1
  * PRINTS: capture-hardening.test.ts 2
  * PRINTS: conclusion-corpus.test.ts 6
- * PRINTS: conference-cli.test.ts 4
+ * PRINTS: conference-cli.test.ts 9
+ * PRINTS: conference-cost.test.ts 1
  * PRINTS: conference-prompt.test.ts 1
- * PRINTS: conference.test.ts 1
+ * PRINTS: conference-report.test.ts 2
+ * PRINTS: conference.test.ts 3
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: developer-emails.test.ts 1

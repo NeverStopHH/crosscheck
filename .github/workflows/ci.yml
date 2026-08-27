@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 171
+    # PRINTS: 181
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -125,7 +125,7 @@ jobs:
     # sentence somebody has to keep in step by hand:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
-    # PRINTS: packages/cli/src/cli/conference.ts 4
+    # PRINTS: packages/cli/src/cli/conference.ts 9
     # PRINTS: packages/cli/src/cli/doctor.ts 7
     # PRINTS: packages/connector-acp/src/capture/engine.ts 3
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
@@ -151,7 +151,8 @@ jobs:
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/questions.ts 1
     # PRINTS: briefing/render.ts 6
-    # PRINTS: briefing/sanitize.ts 7
+    # PRINTS: briefing/sanitize.ts 8
+    # PRINTS: conference/report.ts 1
     # PRINTS: config/config.ts 3
     # PRINTS: config/connected-repo.ts 2
     # PRINTS: config/hook-budget.ts 1
@@ -175,6 +176,7 @@ jobs:
     # PRINTS: mcp/tools/search-related-work.ts 1
     # PRINTS: mcp/tools/set-intent.ts 2
     # PRINTS: spool/reap.ts 1
+    # PRINTS: state/conference-cost.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
@@ -183,7 +185,8 @@ jobs:
     # PRINTS: packages/schema/src/session.ts 1
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/routes/search.ts 1
-    # PRINTS: packages/server/src/services/conference.ts 1
+    # PRINTS: packages/server/src/services/conference.ts 2
+    # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developers.ts 1
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
@@ -204,10 +207,12 @@ jobs:
     # PRINTS: ask-teammate.ts 1
     # PRINTS: briefing.ts 1
     # PRINTS: capture-targets.ts 1
-    # PRINTS: conference.ts 5
+    # PRINTS: conference-cost.ts 1
+    # PRINTS: conference.ts 11
     # PRINTS: config.ts 3
     # PRINTS: connected-repo.ts 2
     # PRINTS: constants.ts 7
+    # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 1
     # PRINTS: delivery.ts 1
     # PRINTS: developer-lookup.ts 2
@@ -243,8 +248,9 @@ jobs:
     # PRINTS: refusal.ts 3
     # PRINTS: render-referee.ts 2
     # PRINTS: render.ts 16
+    # PRINTS: report.ts 1
     # PRINTS: runner.ts 2
-    # PRINTS: sanitize.ts 7
+    # PRINTS: sanitize.ts 8
     # PRINTS: search-related-work.ts 1
     # PRINTS: search.ts 10
     # PRINTS: select.ts 6
