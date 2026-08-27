@@ -41,6 +41,7 @@ const FINGERPRINT = "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f0";
  */
 const MAXIMAL_GHOST_LINE_CHARS = 491;
 const REALISTIC_GHOST_PAIR_CHARS = 705;
+const GHOST_HEADER_CHARS = 114;
 
 const ghostCheck = (
   overrides: Partial<GhostCheckEntry> = {},
@@ -393,6 +394,7 @@ describe("the ghost-check briefing block", () => {
     // way whole to it.
     const firstEntry = maximalGhostCheck(1);
     const maximal = [firstEntry, maximalGhostCheck(2)];
+    expect(GHOST_SECTION_HEADER.length).toBe(GHOST_HEADER_CHARS);
     const first = formatGhostLine(firstEntry, NOW);
     if (first === null) {
       throw new Error("a maximal ghost row must still render");

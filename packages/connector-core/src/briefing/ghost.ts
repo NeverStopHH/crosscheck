@@ -270,11 +270,20 @@ export interface GhostNotice {
 }
 
 /**
- * The ghost block as `set_intent` returns it, bounded exactly as the briefing
- * bounds its section. No "+N more" tail here: the briefing has a character
- * budget it must account for, while a tool answer is read once by the agent
- * that just declared the plan, and a count of rows it cannot reach would be
- * noise rather than a next action.
+ * The ghost block as `set_intent` returns it, bounded in ITEMS exactly as the
+ * briefing bounds its section — and deliberately not in CHARACTERS, which is
+ * the one place the two surfaces differ.
+ *
+ * The briefing spends a shared 2200-character budget that eight sections
+ * compete for, so its ghost block carries a second bound
+ * (MAX_BRIEFING_GHOST_CHARS, applied in briefing/render.ts) and the sections
+ * below it are what a long ghost row would otherwise cost. A tool answer
+ * competes with nothing: it is read once, by the agent that just declared the
+ * plan, in reply to a call it made itself. Dropping a row here would hide a
+ * collision to save characters nobody else needs.
+ *
+ * No "+N more" tail either, for the same reason: a count of rows this answer
+ * cannot reach would be noise rather than a next action.
  */
 export const renderGhostNotice = (
   entries: readonly GhostCheckEntry[],
