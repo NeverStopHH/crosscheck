@@ -254,8 +254,10 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the briefing stops framing quoted teammate text",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "status ${status}: «${title}»",
-    to: "status ${status}: ${title}",
+    // Re-anchored when the section became one line per TEAMMATE (audit row
+    // M15-rest): the fold count now sits between the status and the frame.
+    from: "status ${status}${more}: «${shown.title}»",
+    to: "status ${status}${more}: ${shown.title}",
     test: `${CORE}/test/injection-corpus.test.ts`,
     because:
       "teammate-authored text arrives unquoted and unlabelled, which is the " +
@@ -1020,22 +1022,43 @@ export const MUTATIONS: readonly Mutation[] = [
       "unasked in the reader's context",
   },
   {
-    // The golden-fixture corpus's own guard (DESIGN.md §4 telemetry bullet).
-    // hint-select.test.ts pins this predicate at the unit level; the corpus
-    // entry exists so the END-TO-END harness itself cannot be hollowed out —
-    // a corpus that stayed green under this weakening would be measuring
-    // nothing. Like tripwire-hook.test.ts, this guard shells out to git
-    // (makeRepo) — the assertGuardIsGreen container caveat applies to it too.
-    label: "a summarizer draft reaches the corpus reader as substance",
+    // RE-POINTED, and the reason is a second defence rather than a weaker
+    // guard. This entry used to be checked by the END-TO-END corpus, and it
+    // stopped being caught there the moment audit row V2-X4 landed: the hub
+    // now withholds the BODY of every claim nobody vouched for
+    // (services/hints.ts), so a corpus draft arrives body-less and
+    // `hasBody` refuses it whatever this predicate says. The product is
+    // safer and the harness is blinder — exactly the trade worth writing
+    // down. `hint-select.test.ts` builds its candidates directly, so it can
+    // express the one hub this rule still defends against: one that ships a
+    // derived body under a declared-looking label.
+    label: "a summarizer draft reaches the reader as substance",
     file: `${CORE}/src/hints/select.ts`,
     from: '  claim.provenance === "declared";',
     to: "  claim.provenance.length > 0;",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "derived provenance counts as vouched, so a Tier-1 draft " +
+      "(likely_root_cause, evidence refs, confidence at the 0.5 cap) is " +
+      "injected under trust labels — the asymmetry §4 exists for",
+  },
+  {
+    // The END-TO-END harness's own guard, in its place: a corpus that stays
+    // green under a real ranking regression is measuring nothing. Recorded
+    // at build time on 2026-08-11 (the corpus README's harness-can-fail
+    // section) and made CONTINUOUS here, because the entry that used to hold
+    // that role now reddens a unit test instead. Like tripwire-hook.test.ts,
+    // this guard shells out to git (makeRepo) — the assertGuardIsGreen
+    // container caveat applies to it too.
+    label: "solved trees decay out of the reader's window again",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "export const SOLVED_DECAY_FLOOR = 0.7;",
+    to: "export const SOLVED_DECAY_FLOOR = 0;",
     test: `${CORE}/test/precision-corpus.test.ts`,
     because:
-      "derived provenance counts as vouched, so the corpus's Tier-1 draft " +
-      "(likely_root_cause, evidence refs, confidence at the 0.5 cap) is " +
-      "injected under trust labels — pr_thumbs_derived must red on pointer " +
-      "discipline, or the precision harness is decoration",
+      "a 70-day solved tree decays below three fresh noise contexts and " +
+      "falls out of HINT_MAX_CONTEXTS, so the answer somebody already found " +
+      "is never delivered — pr_idx_solved_recall must red",
   },
   {
     label: "the summarizer's per-session fire cap is quietly raised",
@@ -1806,8 +1829,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // into the PASS the trial read for a week while every run was dying.
     label: "doctor calls a summarizer that never answers healthy",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: '    ? check(\n        "WARN",\n        "summarizer cost",',
-    to: '    ? check(\n        "PASS",\n        "summarizer cost",',
+    // Re-anchored when the check gained a second WARN (audit rows M16 /
+    // A3-4): the ternary became two branches, and this is the silent-runner
+    // one, which the mutation still turns into a PASS.
+    from: '      "WARN",\n      "summarizer cost",\n      `${line} — ${String(cost.fires)} runs fired',
+    to: '      "PASS",\n      "summarizer cost",\n      `${line} — ${String(cost.fires)} runs fired',
     test: `${CLI}/test/summarizer-cost.test.ts`,
     because:
       "\"PASS summarizer cost 17 runs (0 NONE, 0 drafts)\" — fail-open that " +
@@ -1970,7 +1996,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // still untrusted PROSE from another developer.
     label: "a question body reaches the briefing unsanitized",
     file: `${CORE}/src/briefing/questions.ts`,
-    from: "  const body = sanitizeUntrusted(question.body, MAX_QUESTION_BODY_LENGTH);",
+    // Re-anchored when a question body became BODY class (audit row M14):
+    // the span redaction is the sanitizer here, and dropping it is the same
+    // defect the corpus catches.
+    from: "  const body = spanRedactedUntrusted(question.body, MAX_QUESTION_BODY_LENGTH);",
     to: "  const body = question.body;",
     test: `${CORE}/test/render-surface-registry.test.ts`,
     because:
@@ -2303,7 +2332,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // whole sentence replaced by a redaction marker and no next call at all.
     label: "one filter word blanks a whole hub refusal again",
     file: `${CORE}/src/mcp/render.ts`,
-    from: "`The hub said: ${quotedSpanRedacted(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,",
+    // Re-anchored when the span-redacting frame became the exported
+    // `quotedBody` (audit row M14): same call, one name for every body
+    // surface instead of one private spelling.
+    from: "`The hub said: ${quotedBody(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,",
     to: "`The hub said: ${quoted(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,",
     test: `${CORE}/test/mcp-render.test.ts`,
     because:
@@ -3099,7 +3131,7 @@ interface Outcome {
  * PRINTS: hint-flow.test.ts 2
  * PRINTS: hint-hook.test.ts 1
  * PRINTS: hint-render.test.ts 3
- * PRINTS: hint-select.test.ts 6
+ * PRINTS: hint-select.test.ts 7
  * PRINTS: hints.test.ts 3
  * PRINTS: hook-budget.test.ts 2
  * PRINTS: hook-reserve.test.ts 1

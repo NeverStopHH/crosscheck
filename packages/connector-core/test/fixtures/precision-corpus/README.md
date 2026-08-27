@@ -51,17 +51,24 @@ debatable probes:
 A green harness is decoration until it has been watched going red for the
 right reason. Two proofs, both against this corpus:
 
-- Continuous: `scripts/mutation-check.ts` re-introduces "derived provenance
-  counts as vouched" (`hints/select.ts` `isDeclared` → any non-empty
-  provenance) and `test/precision-corpus.test.ts` must red on
-  `pr_thumbs_derived` (substance precision, pointer discipline and pointer
-  recall all fall below floor).
-- Recorded at build time (2026-08-11): `SOLVED_DECAY_FLOOR = 0` in
-  `packages/server/src/services/search.ts` turned exactly
-  `pr_idx_solved_recall` red — "expected substance, observed pointer" — the
-  70-day solved tree decayed below the three fresh noise contexts and fell
-  out of `HINT_MAX_CONTEXTS`. Both edits were reverted; the suite is green
-  at HEAD.
+- Continuous: `scripts/mutation-check.ts` sets `SOLVED_DECAY_FLOOR = 0` in
+  `packages/server/src/services/search.ts` and `test/precision-corpus.test.ts`
+  must red on `pr_idx_solved_recall` — "expected substance, observed pointer":
+  the 70-day solved tree decays below the three fresh noise contexts and falls
+  out of `HINT_MAX_CONTEXTS`. First recorded by hand on 2026-08-11; checked on
+  every run since audit row M16's round.
+- No longer continuous, and the reason is a SECOND DEFENCE rather than a
+  weaker guard: "derived provenance counts as vouched" (`hints/select.ts`
+  `isDeclared` → any non-empty provenance) used to red `pr_thumbs_derived`
+  here. Audit row V2-X4 made the hub withhold the BODY of every claim nobody
+  vouched for (`server/src/services/hints.ts`), so the corpus's Tier-1 draft
+  now arrives body-less and `hasBody` refuses it whatever the provenance rule
+  says — the mutation reddens nothing end to end. It was re-pointed at
+  `test/hint-select.test.ts`, which builds its candidates directly and can
+  express the one hub the client rule still defends against: one that ships a
+  derived body under a declared-looking label. The product got safer; this
+  harness got blinder about that one rule, and both halves are written down
+  rather than discovered later.
 - Recorded 2026-08-11, for the two review-added probes: hollowing
   `notSuperseded` (services/hints.ts) turned exactly `pr_pipe_revision_seen`
   red — the RETRACTED `clm_pipe_old` served as substance under full trust

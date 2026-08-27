@@ -19,13 +19,23 @@
  * VERIFY: bun -e 'const {loadCorpus}=await import("./packages/connector-core/test/fixtures/precision-corpus/format.ts");const c=await loadCorpus();const p=c.scenarios.flatMap(s=>s.probes);const by=k=>p.filter(x=>x.expect===k).length;console.log(c.scenarios.length,p.length,by("substance"),by("pointer"),by("silence"))'
  * PRINTS: 10 28 10 4 14
  *
- * THE HARNESS CAN FAIL — proven, not assumed, in two ways. Continuously:
- * scripts/mutation-check.ts re-introduces "derived provenance counts as
- * vouched" (hints/select.ts isDeclared → any non-empty provenance) and this
- * file must go red on pr_thumbs_derived (pointer discipline + recall).
- * Historically at build time: SOLVED_DECAY_FLOOR = 0 turned
- * pr_idx_solved_recall red (solved tree decayed out of HINT_MAX_CONTEXTS,
- * observed pointer at a noise context) — the corpus README records the runs.
+ * THE HARNESS CAN FAIL — proven, not assumed. Continuously:
+ * scripts/mutation-check.ts sets SOLVED_DECAY_FLOOR = 0 in
+ * services/search.ts and this file must go red on pr_idx_solved_recall — the
+ * 70-day solved tree decays below three fresh noise contexts, falls out of
+ * HINT_MAX_CONTEXTS, and the answer somebody already found is never
+ * delivered. That regression was recorded by hand at build time on
+ * 2026-08-11 (the corpus README) and is now checked on every run.
+ *
+ * IT USED TO BE A DIFFERENT MUTATION, and why it moved is worth knowing:
+ * "derived provenance counts as vouched" (hints/select.ts isDeclared → any
+ * non-empty provenance) stopped reddening this corpus when audit row V2-X4
+ * landed. The hub now withholds the BODY of every claim nobody vouched for
+ * (server/src/services/hints.ts), so the corpus's Tier-1 draft arrives
+ * body-less and `hasBody` refuses it whatever the provenance rule says. The
+ * product gained a second line of defence and this harness lost its view of
+ * the first — which is precisely why that entry now names hint-select.test.ts,
+ * where a hub that DOES ship such a body can be expressed.
  */
 import { describe, expect, test } from "bun:test";
 
