@@ -2423,11 +2423,9 @@ export const MUTATIONS: readonly Mutation[] = [
     // under a fresh id and a fresh timestamp.
     label: "a ghost sentence repeats the claim it was shown",
     file: `${CONNECTOR}/src/ghost/worker.ts`,
-    from: `  const shownHashes = shownClaims.flatMap((claim) => [
-    hintBodyHash(claim.body),
-    hintBodyHash(claim.line),
-  ]);`,
-    to: "  const shownHashes: readonly string[] = [];",
+    from:
+      "  const shownTexts = shownClaims.flatMap((claim) => [claim.body, claim.line]);",
+    to: "  const shownTexts: readonly string[] = [];",
     test: `${CONNECTOR}/test/ghost-worker.test.ts`,
     because:
       "a teammate's declared finding comes back as the reader's own derived " +
@@ -2440,11 +2438,9 @@ export const MUTATIONS: readonly Mutation[] = [
     // the BODY — hashing only the labelled line guards a shape nobody sends.
     label: "the echo key only knows the label, not the claim",
     file: `${CONNECTOR}/src/ghost/worker.ts`,
-    from: `  const shownHashes = shownClaims.flatMap((claim) => [
-    hintBodyHash(claim.body),
-    hintBodyHash(claim.line),
-  ]);`,
-    to: "  const shownHashes = shownClaims.map((claim) => hintBodyHash(claim.line));",
+    from:
+      "  const shownTexts = shownClaims.flatMap((claim) => [claim.body, claim.line]);",
+    to: "  const shownTexts = shownClaims.map((claim) => claim.line);",
     test: `${CONNECTOR}/test/ghost-worker.test.ts`,
     because:
       "the guard still passes its own test while a verbatim repeat of the " +
@@ -2456,11 +2452,13 @@ export const MUTATIONS: readonly Mutation[] = [
     // themselves on every file they touch twice.
     label: "the plan overlap forgets whose plan it is",
     file: `${SERVER}/src/services/ghost-overlap.ts`,
-    from: `        ne(agentSessions.developerId, viewerDeveloperId),
-        gte(activityExpression, cutoff),
-        notASweepCondition(workContextTargets.workContextId),`,
-    to: `        gte(activityExpression, cutoff),
-        notASweepCondition(workContextTargets.workContextId),`,
+    from: `        // Self-exclusion in the WHERE, never after the LIMIT: a developer
+        // with three worktrees on one repo must not fill their own window
+        // with themselves (DESIGN.md §4, the tripwire's rule).
+        ne(agentSessions.developerId, viewerDeveloperId),`,
+    to: `        // Self-exclusion in the WHERE, never after the LIMIT: a developer
+        // with three worktrees on one repo must not fill their own window
+        // with themselves (DESIGN.md §4, the tripwire's rule).`,
     test: `${SERVER}/test/ghost-overlap.test.ts`,
     because:
       "a second worktree of the reader's own becomes a teammate colliding " +
