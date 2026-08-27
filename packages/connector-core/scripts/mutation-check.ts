@@ -3010,6 +3010,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "the developer keeps paying for answers nothing keeps, and the only " +
       "line that would have said so reads PASS",
   },
+  {
+    // Audit row A2-6. Nothing on this hub is ever MARKED solved: solvedness
+    // is derived per read from the tree itself, so there is no flag, nobody
+    // who set it, and no way to unset it.
+    label: "the hint says a diagnosis was marked solved",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return ` · from a diagnosis whose root cause was recorded ${age} ago`;",
+    to: "  return ` · from a diagnosis marked solved ${age} ago`;",
+    test: `${CORE}/test/hint-render.test.ts`,
+    because:
+      "the reader weighs the body as somebody's settled decision, and looks " +
+      "for the marking and the person behind it — neither exists",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -3085,7 +3098,7 @@ interface Outcome {
  * PRINTS: hint-budget.test.ts 2
  * PRINTS: hint-flow.test.ts 2
  * PRINTS: hint-hook.test.ts 1
- * PRINTS: hint-render.test.ts 2
+ * PRINTS: hint-render.test.ts 3
  * PRINTS: hint-select.test.ts 6
  * PRINTS: hints.test.ts 3
  * PRINTS: hook-budget.test.ts 2
