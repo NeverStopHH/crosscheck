@@ -518,7 +518,17 @@ const publishFindings = async (
       return {
         published: 0,
         duplicates: 0,
-        problem: "the hub refused the records",
+        // "REFUSED" ONLY WHEN THE HUB SAID SO. A POST that was aborted or lost
+        // on the wire may have been committed on the other side, and telling
+        // an operator "published nothing" invites the re-run that files the
+        // drafts a second time. An http failure is an answer; anything else is
+        // an unknown, and it is said as one.
+        problem:
+          posted.kind === "http"
+            ? `the hub refused the records (${String(posted.status)})`
+            : `the hub did not answer the publish (${posted.kind}) — up to ` +
+              `${plural(envelopes.length, "draft")} may already be on the hub; ` +
+              "check before re-running",
         landed: [],
       };
     }
