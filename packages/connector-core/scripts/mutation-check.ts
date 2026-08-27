@@ -2847,6 +2847,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "copy of the work",
   },
   {
+    // The precision half of M12-rest, and the one that was MEASURED rather
+    // than reasoned: without this filter the golden corpus goes red on two
+    // probes, because one shared FTS token qualifies a context and `src`/`ts`
+    // are in every path on every repo.
+    label: "build layout is indexed as a topic",
+    file: `${SERVER}/src/services/search-tokens.ts`,
+    from: "        !PATH_SCAFFOLDING.has(part.toLowerCase()),",
+    to: "        true,",
+    test: `${SERVER}/test/search-tokens.test.ts`,
+    because:
+      "every context on the hub becomes a lexical match for any prompt that " +
+      "names any file, so an evidence-backed claim from an unrelated tree is " +
+      "injected as substance — measured on auth-jwt/pr_auth_self and " +
+      "ws-proposed/pr_ws_pointer",
+  },
+  {
     // Audit row M13, the other half of the same document. The label is on
     // every context of the repo, so it discriminates nothing while matching
     // any query that merely names the repo.
@@ -2962,7 +2978,7 @@ interface Outcome {
  * PRINTS: render-surface-registry.test.ts 2
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search-filters.test.ts 10
- * PRINTS: search-tokens.test.ts 2
+ * PRINTS: search-tokens.test.ts 3
  * PRINTS: search-who-when.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: session.test.ts 1

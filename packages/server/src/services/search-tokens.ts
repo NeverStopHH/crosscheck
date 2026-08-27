@@ -56,6 +56,81 @@ const TOKEN_MIN_CHARS = 2;
  */
 export const DERIVED_TOKENS_MAX_CHARS = 600;
 
+/**
+ * Parts that say WHERE code lives or WHAT TYPE a file is, never what the work
+ * is about — dropped from the derived bag only, so the verbatim path is
+ * untouched and the exact tier still matches `src/auth/refresh.ts` whole.
+ *
+ * THIS LIST IS NOT DECORATION; IT WAS MEASURED. Splitting paths without it
+ * turned the golden precision corpus red on two probes at once
+ * (test/fixtures/precision-corpus, run 2026-08-27):
+ *
+ *   auth-jwt/pr_auth_self       expected silence, observed substance
+ *   ws-proposed/pr_ws_pointer   expected pointer, observed substance
+ *
+ * Both for the same reason. `src` and `ts` are parts of nearly every path on
+ * every repo, so indexing them made every context a lexical match for every
+ * prompt that names any file — and this pipeline's precision floor is TIER
+ * MEMBERSHIP, not rank: one shared FTS token is enough to qualify a context,
+ * after which an evidence-backed claim inside it is injected as substance
+ * (the corpus states that openly at `pr_limits_oneword_debatable`). A search
+ * engine absorbs `src` through IDF, which needs corpus-wide statistics; this
+ * builder writes ONE row at ingest time and has none, so the same job is done
+ * by a list — exactly as `to_tsvector('english', …)` does it for `the` and
+ * `after` one layer up.
+ *
+ * The entries are therefore the words that would be at the top of an IDF
+ * table for source paths: build-layout directories and file extensions.
+ * Nothing here is a domain word. `internal`, `core`, `hints`, `auth` and
+ * their kind stay indexed — they are what a teammate would search for.
+ */
+const PATH_SCAFFOLDING: ReadonlySet<string> = new Set([
+  // Where code lives.
+  "src",
+  "lib",
+  "libs",
+  "test",
+  "tests",
+  "spec",
+  "specs",
+  "dist",
+  "build",
+  "out",
+  "bin",
+  "node",
+  "modules",
+  "packages",
+  "package",
+  "app",
+  "apps",
+  "index",
+  // What type a file is.
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "mjs",
+  "cjs",
+  "json",
+  "md",
+  "yml",
+  "yaml",
+  "toml",
+  "lock",
+  "txt",
+  "sh",
+  "sql",
+  "css",
+  "scss",
+  "html",
+  "py",
+  "go",
+  "rs",
+  "rb",
+  "php",
+  "java",
+]);
+
 /** Everything that is not a letter or a digit separates two parts. */
 const DELIMITER_PATTERN = /[^\p{L}\p{N}]+/u;
 
@@ -76,7 +151,11 @@ const partsOf = (value: string): readonly string[] =>
   value
     .split(DELIMITER_PATTERN)
     .flatMap((chunk) => chunk.split(CAMEL_BOUNDARY_PATTERN))
-    .filter((part) => part.length >= TOKEN_MIN_CHARS);
+    .filter(
+      (part) =>
+        part.length >= TOKEN_MIN_CHARS &&
+        !PATH_SCAFFOLDING.has(part.toLowerCase()),
+    );
 
 /**
  * The deduplicated word bag for a set of values, as one line, bounded.

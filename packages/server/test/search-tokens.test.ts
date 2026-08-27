@@ -88,8 +88,25 @@ describe("the FTS document splits identifiers into words (M12-rest)", () => {
     ]);
     expect(doc).toContain("packages/connector-core/src/hints/select.ts");
     const words = wordsOf(doc);
-    for (const part of ["packages", "connector", "core", "src", "hints", "select"]) {
+    for (const part of ["connector", "core", "hints", "select"]) {
       expect(words).toContain(part);
+    }
+  });
+
+  test("build layout and file types are not topics", () => {
+    // MEASURED, not assumed. Indexing `src`, `packages` and `ts` turned the
+    // golden precision corpus red on two probes — auth-jwt/pr_auth_self and
+    // ws-proposed/pr_ws_pointer — because this pipeline's precision floor is
+    // TIER MEMBERSHIP: one shared FTS token qualifies a context, and every
+    // repo's every path carries those three words, so any prompt naming any
+    // file matched every context on the hub.
+    const words = wordsOf(
+      docFor("Login 500s on staging", "api", [
+        "packages/connector-core/src/hints/select.ts",
+      ]),
+    );
+    for (const scaffolding of ["packages", "src", "ts"]) {
+      expect(words).not.toContain(scaffolding);
     }
   });
 
@@ -107,16 +124,16 @@ describe("the FTS document splits identifiers into words (M12-rest)", () => {
   });
 
   test("one-letter fragments and repeated segments cost the doc nothing", () => {
-    // Three paths repeat `src`; a doc that pays for each copy spends the
-    // character cap on nothing. And `a` in `src/a/one.ts` is noise the english
-    // config drops at index time — it is not worth a byte here either.
+    // Three paths repeat `alpha`; a doc that pays for each copy spends the
+    // character cap on nothing. And `a` in `alpha/a/one.md` is noise the
+    // english config drops at index time — not worth a byte here either.
     const doc = docFor("Login 500s on staging", "api", [
-      "src/a/one.ts",
-      "src/b/two.ts",
-      "src/c/three.ts",
+      "alpha/a/one.md",
+      "alpha/b/two.md",
+      "alpha/c/three.md",
     ]);
     // Once in each of the three verbatim target lines, once in the token bag.
-    expect(doc.split(/\bsrc\b/).length - 1).toBe(4);
+    expect(doc.split(/\balpha\b/).length - 1).toBe(4);
     expect(wordsOf(doc)).not.toContain("a");
   });
 

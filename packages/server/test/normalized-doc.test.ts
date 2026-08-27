@@ -264,10 +264,12 @@ describe("intent in the normalized doc (trial finding #16)", () => {
         status: "analyzing",
         intentSummary: "I",
         description: null,
-        targetValues: ["src/a.ts"],
+        targetValues: ["src/auth/refresh.ts"],
         claimSummaries: ["observation: O"],
         repoLabel: null,
       }),
-    ).toBe("T\nanalyzing\nI\nsrc ts\nsrc/a.ts\nobservation: O");
+    ).toBe(
+      "T\nanalyzing\nI\nauth refresh\nsrc/auth/refresh.ts\nobservation: O",
+    );
   });
 });
