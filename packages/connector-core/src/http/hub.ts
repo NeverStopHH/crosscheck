@@ -1326,3 +1326,127 @@ export const getTripwireSessions = (
     schema: tolerantList("sessions", TripwireSessionSchema),
   });
 };
+
+/**
+ * One declared claim as a conference reads it (VISION.md §2) — the trust
+ * labels an injected claim always carries, because the report prints them
+ * beside every body it quotes.
+ *
+ * `provenance` is REQUIRED, like the referee brief's and for the same reason:
+ * it is a trust label, and a hub that will not state it does not get the claim
+ * rendered as substance.
+ */
+export const ConferenceClaimSchema = z.looseObject({
+  id: z.string().min(1),
+  kind: z.string().min(1),
+  status: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+  provenance: z.string().min(1),
+  body: z.string(),
+  authorDeveloperName: z.string().min(1).optional(),
+  createdAt: z.string().min(1),
+});
+
+export type ConferenceClaim = z.infer<typeof ConferenceClaimSchema>;
+
+export const ConferenceContextSchema = z.looseObject({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  developerId: z.string().min(1),
+  developerName: z.string().min(1).optional(),
+  status: z.string().min(1).optional(),
+  intent: tolerantIntent,
+  lastActiveAt: z.string().min(1),
+  claims: z.array(ConferenceClaimSchema).catch([]),
+});
+
+export type ConferenceContext = z.infer<typeof ConferenceContextSchema>;
+
+export const ConferenceOverlapSchema = z.looseObject({
+  workContextIdA: z.string().min(1),
+  workContextIdB: z.string().min(1),
+  sharedTargets: z.array(GhostSharedTargetSchema).catch([]),
+  sharedTargetCount: z.number().int().min(0).catch(0),
+});
+
+export type ConferenceOverlap = z.infer<typeof ConferenceOverlapSchema>;
+
+/**
+ * An open question, as the conference sees it: WHO asked, WHO is waiting and
+ * since when. There is no `body` field on this schema and the hub sends none —
+ * a question is addressed to one person, and a report about the team is not
+ * that person (packages/server/src/services/conference.ts states the rule).
+ */
+export const ConferenceQuestionSchema = z.looseObject({
+  id: z.string().min(1),
+  authorDeveloperName: z.string().min(1),
+  targetDeveloperName: z.string().nullable().optional(),
+  workContextId: z.string().nullable().optional(),
+  workContextTitle: z.string().nullable().optional(),
+  createdAt: z.string().min(1),
+  /** True only when this reader may answer — the report prints the call off it. */
+  isForReader: z.boolean().catch(false),
+});
+
+export type ConferenceQuestion = z.infer<typeof ConferenceQuestionSchema>;
+
+export interface ConferenceCorpus {
+  readonly contexts: readonly ConferenceContext[];
+  readonly overlaps: readonly ConferenceOverlap[];
+  readonly questions: readonly ConferenceQuestion[];
+  readonly contradictions: readonly ContradictionEntry[];
+  readonly contextsInWindow: number;
+  readonly contextsInWindowCapped: boolean;
+  readonly windowDays: number;
+}
+
+/**
+ * Tolerant per LIST, never per document: a hub that garbles one context must
+ * cost the report that context, not the whole run — the posture every other
+ * listing here takes. The counters fall back to what the rows themselves say,
+ * so a report can never claim to have read less than it prints.
+ */
+const ConferenceResponseSchema = z
+  .looseObject({
+    conference: z.looseObject({
+      contexts: z.array(z.unknown()).default([]),
+      overlaps: z.array(z.unknown()).default([]),
+      questions: z.array(z.unknown()).default([]),
+      contradictions: z.array(z.unknown()).default([]),
+      contextsInWindow: z.number().int().min(0).catch(0),
+      contextsInWindowCapped: z.boolean().catch(false),
+      windowDays: z.number().int().min(1).catch(0),
+    }),
+  })
+  .transform((value): ConferenceCorpus => {
+    const contexts = parseRows(value.conference.contexts, ConferenceContextSchema).rows;
+    return {
+      contexts,
+      overlaps: parseRows(value.conference.overlaps, ConferenceOverlapSchema).rows,
+      questions: parseRows(value.conference.questions, ConferenceQuestionSchema).rows,
+      contradictions: parseRows(value.conference.contradictions, ContradictionEntrySchema)
+        .rows,
+      contextsInWindow: Math.max(
+        value.conference.contextsInWindow,
+        contexts.length,
+      ),
+      contextsInWindowCapped: value.conference.contextsInWindowCapped,
+      windowDays: value.conference.windowDays,
+    };
+  });
+
+/**
+ * The conference's ONE hub call (VISION.md §2) — never from a hook, only from
+ * `crosscheck conference`. Fail open like every other reader here: a hub too
+ * old for the route, or an unreachable one, is a run that says so and spends
+ * nothing.
+ */
+export const getConference = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<ConferenceCorpus>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/conference${encodeRepo(repo)}`,
+    schema: ConferenceResponseSchema,
+  });

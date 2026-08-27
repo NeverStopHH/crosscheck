@@ -1099,3 +1099,88 @@ export const MAX_ID_CHARS = 64;
  * refused record needs a paragraph.
  */
 export const MAX_HUB_MESSAGE_CHARS = 200;
+
+// ── Agent conferences (VISION.md §2) ────────────────────────────────────────
+
+/**
+ * Shared-cause findings ONE report may carry. Three, and the bound is about
+ * trust rather than space: a synthesis that names three things a human can
+ * check is a briefing, and one that names fifteen is a wall of text nobody
+ * reads to the end — which is how a warning system stops being read at all.
+ * The deterministic sections beside it are bounded by the hub.
+ */
+export const CONFERENCE_MAX_FINDINGS = 3;
+
+/**
+ * One finding's sentence. The ghost check's bound, because it is the same
+ * kind of sentence — one claim about where two pieces of work meet — and a
+ * published finding becomes a claim body the same way.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.CONFERENCE_SENTENCE_MAX_CHARS === c.GHOST_SENTENCE_MAX_CHARS, c.CONFERENCE_SENTENCE_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH)'
+ * PRINTS: true true
+ */
+export const CONFERENCE_SENTENCE_MAX_CHARS = 200;
+
+/**
+ * Claims quoted UNDER one finding, per context. Two: enough to show why the
+ * model said what it said — VISION §2's own requirement that a conference is
+ * formatted as a referee brief (evidence for each position) rather than as a
+ * verdict — without turning one finding into a page.
+ */
+export const CONFERENCE_MAX_EVIDENCE_PER_CONTEXT = 2;
+
+/**
+ * A quoted claim body in the report. The hub already cuts at its own
+ * CONFERENCE_CLAIM_BODY_MAX_CHARS, so this is the reader's second bound
+ * rather than the first — the posture every consumer of a tolerant wire field
+ * takes here.
+ */
+export const CONFERENCE_BODY_MAX_CHARS = 300;
+
+/**
+ * How long a whole `crosscheck conference` may take, model call included.
+ * A hard ceiling rather than a hint: the run prints its estimate first and
+ * this is the promise that goes with it, in the shape the LLM cost literature
+ * calls quote-as-ceiling — estimate, cap, absorb the overrun. Ninety seconds
+ * is one bounded hub read plus one lean local model call
+ * (SUMMARIZER_TIMEOUT_MS) with room for a slow machine, and it is short
+ * enough that a human waits for it rather than walking away.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.CONFERENCE_MAX_WALL_MS > c.SUMMARIZER_TIMEOUT_MS)'
+ * PRINTS: true
+ */
+export const CONFERENCE_MAX_WALL_MS = 90_000;
+
+/**
+ * The characters-per-token rule of thumb the pre-run estimate uses. It is an
+ * ESTIMATE and the line says so: no tokenizer runs on this machine, and a
+ * figure printed as if it were measured would be the kind of false precision
+ * this project keeps out of its telemetry.
+ */
+export const CONFERENCE_CHARS_PER_TOKEN = 4;
+
+/**
+ * The model input's own ceiling, applied after every per-context bound. The
+ * hub's caps already make the input small; this is what holds when a hub is
+ * modified or hostile, and it is what the printed estimate can never exceed.
+ */
+export const CONFERENCE_MAX_INPUT_CHARS = 12_000;
+
+/**
+ * A published conference finding is a Tier-1 DRAFT like every other model
+ * sentence in this product: derived, proposed, under the cap, pointer-only
+ * until a human promotes it with review_draft.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.CONFERENCE_DERIVED_CONFIDENCE === c.GHOST_DERIVED_CONFIDENCE, c.CONFERENCE_DERIVED_CONFIDENCE < s.DERIVED_CONFIDENCE_CAP)'
+ * PRINTS: true true
+ */
+export const CONFERENCE_DERIVED_CONFIDENCE = 0.4;
+
+/**
+ * Runs whose model answer this machine could not read at all before `doctor`
+ * WARNs. Not a count of NONEs — a NONE is a legitimate answer and the usual
+ * one — but of answers in a shape the parser does not know, which is what a
+ * drifted prompt or a changed binary looks like from here and is invisible
+ * otherwise (the finding-#14 lesson).
+ */
+export const DOCTOR_CONFERENCE_UNREADABLE_WARN = 1;

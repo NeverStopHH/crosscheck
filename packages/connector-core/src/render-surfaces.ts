@@ -19,6 +19,7 @@
  */
 import type { CommitDrift } from "./git/commit-drift.ts";
 import { renderBriefing } from "./briefing/render.ts";
+import { renderConferenceReport } from "./conference/report.ts";
 import { ghostDraftBody } from "./briefing/ghost.ts";
 import {
   renderAnswerHint,
@@ -39,6 +40,9 @@ import { renderRefereeBrief } from "./mcp/render-referee.ts";
 import { composeDetachedTitle } from "./flows/work-context-title.ts";
 import type {
   AnsweredQuestion,
+  ConferenceContext,
+  ConferenceCorpus,
+  ContradictionEntry,
   Diagnosis,
   GhostCheckEntry,
   HintClaimCandidate,
@@ -200,6 +204,101 @@ const ghostCheckWith = (payload: string): GhostCheckEntry => ({
   ],
   sharedTargetCount: 4,
   intentTokenHits: 3,
+});
+
+/**
+ * One conference context with the payload in each of its own untrusted slots
+ * — the owner's display name, the title, the intent sentence, and a DECLARED
+ * claim whose kind, status, provenance, author and BODY all carry it. The
+ * body is the slot that matters most: a conference report is the one surface
+ * that quotes a teammate's finding at length, because the reader asked for it.
+ */
+const conferenceContextWith = (
+  payload: string,
+  id: string,
+): ConferenceContext => ({
+  id,
+  title: payload,
+  developerId: "dev_other",
+  developerName: payload,
+  status: payload,
+  intent: intentWith(payload),
+  lastActiveAt: ISO,
+  claims: [
+    {
+      id: "cl_0001",
+      kind: payload,
+      status: payload,
+      confidence: 0.8,
+      provenance: payload,
+      body: payload,
+      authorDeveloperName: payload,
+      createdAt: ISO,
+    },
+  ],
+});
+
+const contradictionEntryWith = (payload: string): ContradictionEntry => ({
+  id: "cx_0001",
+  claimA: {
+    id: "cl_000a",
+    workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+    kind: payload,
+    status: payload,
+    authorDeveloperName: payload,
+  },
+  claimB: {
+    id: "cl_000b",
+    workContextId: "wc_cc_22222222-2222-4333-8444-555555555555",
+    kind: payload,
+    status: payload,
+    authorDeveloperName: payload,
+  },
+  reason: payload,
+  similarity: 0.94,
+});
+
+const CONFERENCE_CONTEXT_A = "wc_cc_11111111-2222-4333-8444-555555555555";
+const CONFERENCE_CONTEXT_B = "wc_cc_22222222-2222-4333-8444-555555555555";
+
+/**
+ * The whole conference corpus with the payload in every slot at once: two
+ * contexts, the SHARED TARGET VALUE between them (hub text printed BARE, the
+ * ghost line's newest field-minting surface), a question whose asker, target
+ * and context title all carry it — and no question BODY, because the hub
+ * sends none — and a contradiction pointer naming both sides.
+ */
+const conferenceCorpusWith = (payload: string): ConferenceCorpus => ({
+  contexts: [
+    conferenceContextWith(payload, CONFERENCE_CONTEXT_A),
+    conferenceContextWith(payload, CONFERENCE_CONTEXT_B),
+  ],
+  overlaps: [
+    {
+      workContextIdA: CONFERENCE_CONTEXT_A,
+      workContextIdB: CONFERENCE_CONTEXT_B,
+      sharedTargets: [
+        { kind: "error_fingerprint", value: payload },
+        { kind: "file", value: payload },
+      ],
+      sharedTargetCount: 4,
+    },
+  ],
+  questions: [
+    {
+      id: "qn_11111111-2222-4333-8444-555555555555",
+      authorDeveloperName: payload,
+      targetDeveloperName: payload,
+      workContextId: CONFERENCE_CONTEXT_A,
+      workContextTitle: payload,
+      createdAt: ISO,
+      isForReader: true,
+    },
+  ],
+  contradictions: [contradictionEntryWith(payload)],
+  contextsInWindow: 47,
+  contextsInWindowCapped: false,
+  windowDays: 14,
 });
 
 /**
@@ -442,6 +541,51 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         "Both plans change what verifyToken returns for an unknown kid",
         ghostCheckWith(payload),
       ),
+  },
+  {
+    kind: "corpus",
+    name: "conference-report",
+    module: "src/conference/report.ts",
+    framing: "framed",
+    // The one surface that quotes teammate BODIES at length (VISION.md §2),
+    // written to a file a human — and often an agent, pasted in — reads
+    // later. Every slot at once: the repo label, two contexts with their
+    // names, titles, intents and claims, the shared VALUES between them, an
+    // open question's people, a contradiction's two sides, and the model's
+    // own sentence.
+    render: (payload) =>
+      renderConferenceReport({
+        repoId: payload,
+        corpus: conferenceCorpusWith(payload),
+        findings: [
+          {
+            sentence: payload,
+            contexts: [
+              conferenceContextWith(payload, CONFERENCE_CONTEXT_A),
+              conferenceContextWith(payload, CONFERENCE_CONTEXT_B),
+            ],
+          },
+        ],
+        modelOutcome: { kind: "answered" },
+        now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "conference-report-model-failure",
+    module: "src/conference/report.ts",
+    framing: "framed",
+    // The branch the entry above cannot reach: what the nested `claude` SAID
+    // when the run was lost, on its way onto the page. Model/CLI stdout is
+    // untrusted text and this is the only place the report prints any.
+    render: (payload) =>
+      renderConferenceReport({
+        repoId: "github.com/acme/api",
+        corpus: conferenceCorpusWith("rate limit fix"),
+        findings: [],
+        modelOutcome: { kind: "failed", reason: payload },
+        now: NOW,
+      }),
   },
   {
     kind: "corpus",
