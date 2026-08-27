@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 189
+    # PRINTS: 193
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -147,10 +147,11 @@ jobs:
     # PRINTS: summarizer/gate.ts 6
     # PRINTS: summarizer/runner.ts 1
     # PRINTS: summarizer/worker-env.ts 1
+    # PRINTS: briefing/context-group.ts 1
     # PRINTS: briefing/ghost.ts 2
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/questions.ts 2
-    # PRINTS: briefing/render.ts 6
+    # PRINTS: briefing/render.ts 7
     # PRINTS: briefing/sanitize.ts 9
     # PRINTS: conference/report.ts 1
     # PRINTS: config/config.ts 3
@@ -189,6 +190,7 @@ jobs:
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developers.ts 1
+    # PRINTS: packages/server/src/services/diagnosis.ts 2
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hints.ts 2
     # PRINTS: packages/server/src/services/normalized-doc.ts 1
@@ -214,11 +216,13 @@ jobs:
     # PRINTS: config.ts 3
     # PRINTS: connected-repo.ts 2
     # PRINTS: constants.ts 7
+    # PRINTS: context-group.ts 1
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 1
     # PRINTS: delivery.ts 1
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 1
+    # PRINTS: diagnosis.ts 2
     # PRINTS: doctor.ts 7
     # PRINTS: engine.ts 3
     # PRINTS: fd-io.ts 1
@@ -250,7 +254,7 @@ jobs:
     # PRINTS: recover.ts 1
     # PRINTS: refusal.ts 3
     # PRINTS: render-referee.ts 2
-    # PRINTS: render.ts 16
+    # PRINTS: render.ts 17
     # PRINTS: report.ts 1
     # PRINTS: runner.ts 2
     # PRINTS: sanitize.ts 9

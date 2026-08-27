@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -66,6 +66,8 @@ export interface WorkContextListEntry extends WorkContextView {
    * instead of being looked up in the 90 s presence list by the reader. */
   readonly developerName: string;
   readonly claimCount: number;
+  /** Captured files and symbols — work recorded before any claim was made. */
+  readonly targetCount: number;
 }
 
 export interface ClaimView {
@@ -193,10 +195,33 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
   createdAt: row.createdAt.toISOString(),
 });
 
+/**
+ * Upper bound on the briefing's related-work listing.
+ *
+ * IT USED TO HAVE NONE, and this is the hottest listing on the product: every
+ * SessionStart reads it inside a 1000 ms budget. On a seeded hub of 10^4 work
+ * contexts and 10^5 claims it answered with all ten thousand rows in ~150 ms
+ * of database time plus the JSON of every one of them, for a section that
+ * renders five lines — the shape non-negotiable 5 exists to forbid (no
+ * unbounded listing, an index behind every bound).
+ *
+ * 200 rather than the five the section shows, because the connector groups
+ * per developer and counts what it folded: the rows beyond the first five
+ * teammates are what makes "3 more contexts" a fact rather than a guess. On a
+ * repo with more than 200 contexts active inside the window the fold counts
+ * are of the freshest 200 — an undercount, which is the direction that never
+ * invents work nobody is doing.
+ */
+export const WORK_CONTEXT_LIST_LIMIT = 200;
+
+/** The timestamp every surface renders as a row's age, and the one the index is on. */
+const contextActivity = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
+
 export const listWorkContextsByRepo = async (
   db: Db,
   viewerDeveloperId: string,
   repo: string,
+  since?: Date,
 ): Promise<readonly WorkContextListEntry[]> => {
   const rows = await db
     .select({
@@ -204,12 +229,22 @@ export const listWorkContextsByRepo = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       baseCommit: agentSessions.baseCommit,
-      claimCount: count(claims.id),
+      // Scalar subqueries rather than the LEFT JOIN + GROUP BY this query used
+      // to carry: the join multiplied every context by its claims (100,000
+      // rows aggregated to answer about 10,000) and could only ever count ONE
+      // thing, so a second count meant a second fan-out. Each subquery is one
+      // index lookup on the leading column of its own key —
+      // claims_work_context_created_idx and work_context_targets' primary key.
+      // ::int because count() is bigint, which arrives as a string.
+      claimCount: sql<number>`(select count(*)::int from ${claims} where ${claims.workContextId} = ${workContexts.id})`,
+      // Audit row M15-rest: a session that captured files but published no
+      // claim yet is real work, and the briefing prefers it over an empty
+      // shell when it picks which context speaks for a teammate.
+      targetCount: sql<number>`(select count(*)::int from ${workContextTargets} where ${workContextTargets.workContextId} = ${workContexts.id})`,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
-    .leftJoin(claims, eq(claims.workContextId, workContexts.id))
     // The viewer's mutes apply — this listing feeds the briefing's related-
     // work pointers (an unasked surface). Opt-out does NOT: these rows are
     // published knowledge, not live presence (services/visibility.ts). The
@@ -218,20 +253,27 @@ export const listWorkContextsByRepo = async (
       and(
         eq(agentSessions.repo, repo),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+        // The caller's window, in the WHERE and not after the bound: without
+        // it the LIMIT would hand back the freshest 200 rows of ALL TIME and
+        // the reader's own filter would then drop most of them, which is a
+        // bound that narrows the answer instead of bounding the work.
+        since === undefined
+          ? undefined
+          : sql`${contextActivity} >= ${since.toISOString()}::timestamptz`,
       ),
     )
-    .groupBy(
-      workContexts.id,
-      agentSessions.developerId,
-      developers.name,
-      agentSessions.baseCommit,
-    )
-    .orderBy(desc(workContexts.createdAt));
+    // Activity, not creation: it is the timestamp the rows are FILTERED by
+    // above and rendered by downstream, and the one `work_contexts_activity_idx`
+    // is built on — ordering by anything else would make the bound cut a
+    // different set from the one the window selected.
+    .orderBy(sql`${contextActivity} DESC`)
+    .limit(WORK_CONTEXT_LIST_LIMIT);
   return rows.map((row) => ({
     ...toWorkContextView(row.workContext, row.baseCommit),
     developerId: row.developerId,
     developerName: row.developerName,
     claimCount: row.claimCount,
+    targetCount: row.targetCount,
   }));
 };
 

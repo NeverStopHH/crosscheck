@@ -34,6 +34,7 @@ import type {
   SolvedMatchEntry,
   WorkContextEntry,
 } from "../http/hub.ts";
+import { groupContextsByDeveloper } from "./context-group.ts";
 import { fitEntries } from "./fit.ts";
 import { formatGhostLine, GHOST_SECTION_HEADER } from "./ghost.ts";
 import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
@@ -329,39 +330,69 @@ const authorNameFor = (
 const contextTimestamp = (context: WorkContextEntry): string =>
   context.updatedAt ?? context.createdAt;
 
+/**
+ * A session that DID something: it recorded a claim, or tier-0 capture logged
+ * a file it touched. Both counts are optional on the wire — an older hub sends
+ * neither — and an absent count reads as "no evidence of work", which is the
+ * direction that never promotes an empty shell over a real investigation.
+ */
+const hasRecordedWork = (context: WorkContextEntry): boolean =>
+  (context.claimCount ?? 0) > 0 || (context.targetCount ?? 0) > 0;
+
+/**
+ * ONE LINE PER TEAMMATE, not per context (audit row M15-rest). The grouping
+ * rules and why they are in their own module: briefing/context-group.ts.
+ *
+ * `total` counts TEAMMATES, so appendSection's "(+N more not shown)" says how
+ * many people did not fit rather than how many rows were folded — the folded
+ * ones are stated on the line that folded them, and counting them twice would
+ * be the same context reported as missing in two different places.
+ */
 const renderContextSection = (input: BriefingInput): Section => {
   const maxAgeMs = CONTEXT_MAX_AGE_DAYS * MS_PER_DAY;
   const eligible = input.workContexts
     .filter((context) => context.developerId !== input.selfDeveloperId)
-    .map((context) => ({
-      context,
-      ageMs: ageMsFrom(contextTimestamp(context), input.now),
-    }))
-    .filter(
-      (entry): entry is { context: WorkContextEntry; ageMs: number } =>
-        entry.ageMs !== null && entry.ageMs <= maxAgeMs,
-    )
-    .sort((left, right) => left.ageMs - right.ageMs);
+    .flatMap((context) => {
+      const ageMs = ageMsFrom(contextTimestamp(context), input.now);
+      const title = sanitizeUntrusted(context.title);
+      if (ageMs === null || ageMs > maxAgeMs || title.length === 0) {
+        return [];
+      }
+      return [
+        {
+          context,
+          developerId: context.developerId,
+          title,
+          ageMs,
+          hasRecordedWork: hasRecordedWork(context),
+        },
+      ];
+    });
+  const groups = groupContextsByDeveloper(eligible);
 
-  const lines = eligible.slice(0, MAX_CONTEXTS).flatMap(({ context, ageMs }) => {
-    const title = sanitizeUntrusted(context.title);
-    if (title.length === 0) {
-      return [];
-    }
-    const author = authorNameFor(context, input.presence);
-    const status = sanitizeUntrusted(context.status);
+  const lines = groups.slice(0, MAX_CONTEXTS).map(({ shown, collapsed }) => {
+    const author = authorNameFor(shown.context, input.presence);
+    const status = sanitizeUntrusted(shown.context.status);
+    // The fold count sits with the facts, BEFORE the frame: every line in this
+    // section carries exactly one « » pair and the title closes it, so a count
+    // appended after the quotes would be the second untrusted-looking thing on
+    // the line and would break the shape the injection corpus pins.
+    const more =
+      collapsed === 0
+        ? ""
+        : `, ${String(collapsed)} more context${collapsed === 1 ? "" : "s"}`;
     // The intent on ITS OWN line (one « » pair per line, the framed-surface
     // invariant), indented under the context it belongs to — but inside the
     // SAME entry string, so appendSection's "+N more" arithmetic still counts
-    // one context per entry and the two lines are kept or dropped together.
-    const intent = renderIntent(context.intent);
-    const entry = `- ${author}, ${formatAge(ageMs)} ago, status ${status}: «${title}»`;
-    return [intent === null ? entry : `${entry}\n  ${intent}`];
+    // one teammate per entry and the two lines are kept or dropped together.
+    const intent = renderIntent(shown.context.intent);
+    const entry = `- ${author}, ${formatAge(shown.ageMs)} ago, status ${status}${more}: «${shown.title}»`;
+    return intent === null ? entry : `${entry}\n  ${intent}`;
   });
   return {
     header: "Teammate work contexts on this repo:",
     lines,
-    total: eligible.length,
+    total: groups.length,
   };
 };
 

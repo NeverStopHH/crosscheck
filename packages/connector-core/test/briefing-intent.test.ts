@@ -144,9 +144,14 @@ describe("briefing: teammate work contexts carry their intent on an indented lin
   test("the intent line is kept or dropped WITH its context by the budget", () => {
     // Arrange: five contexts, each with a long intent — the budget cannot fit
     // them all, and whatever it shows must come in whole two-line entries.
+    //
+    // ONE CONTEXT PER DEVELOPER, since audit row M15-rest: the section renders
+    // one line per teammate, so five contexts belonging to one person are one
+    // entry and this test would measure the grouping instead of the budget.
     const contexts = Array.from({ length: MAX_CONTEXTS }, (_unused, index) =>
       context({
         id: `wc_${String(index)}`,
+        developerId: `dev_${String(index)}`,
         developerName: `Teammate ${String(index)} ${"n".repeat(60)}`,
         title: `Rate limiter ${String(index)} ${"t".repeat(90)}`,
         intent: derived(`Intent ${String(index)} ${"i".repeat(INTENT_MAX_CHARS)}`),

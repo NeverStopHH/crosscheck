@@ -2914,6 +2914,55 @@ export const MUTATIONS: readonly Mutation[] = [
       "renderer reads that as skip-this-item, and the author is told nothing " +
       "at all while teammates get no line",
   },
+  {
+    // Audit row M15-rest. A work context is created per SESSION, so one
+    // teammate's three worktrees filled a five-line section on their own.
+    label: "the briefing lists one line per context again",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const groups = groupContextsByDeveloper(eligible);",
+    to: "  const groups = eligible.map((entry) => ({ shown: entry, collapsed: 0 }));",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "one busy teammate takes the whole section and the teammate working " +
+      "somewhere else never reaches the briefing at all",
+  },
+  {
+    // The preference that stops the emptiest context speaking for a person:
+    // starting a session is what creates one, so the freshest is often the
+    // one that has done nothing.
+    label: "an empty session speaks for the teammate again",
+    file: `${CORE}/src/briefing/context-group.ts`,
+    from: "  if (candidate.hasRecordedWork !== current.hasRecordedWork) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "the reader is pointed at a session that recorded nothing while the " +
+      "investigation beside it, with claims in it, is the one they needed",
+  },
+  {
+    // Non-negotiable 5, on the hottest listing in the product: every
+    // SessionStart reads it inside a 1000 ms budget.
+    label: "the briefing's listing loses its row bound",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    .limit(WORK_CONTEXT_LIST_LIMIT);",
+    to: "    .limit(1_000_000);",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "a repo with ten thousand work contexts answers SessionStart with ten " +
+      "thousand rows for a section that renders five lines",
+  },
+  {
+    // The window has to run in the WHERE: a bound applied to an unwindowed
+    // ORDER BY hands back the freshest rows of ALL TIME.
+    label: "the listing ignores the window the reader asked for",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "          : sql`${contextActivity} >= ${since.toISOString()}::timestamptz`,",
+    to: "          : undefined,",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "the hub sends work far outside the reader's own render window and the " +
+      "bound is spent on rows the briefing was always going to drop",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -2958,6 +3007,7 @@ interface Outcome {
  * PRINTS: absence-render.test.ts 1
  * PRINTS: agent-restart.test.ts 1
  * PRINTS: body-redaction.test.ts 2
+ * PRINTS: briefing-contexts.test.ts 2
  * PRINTS: briefing-parity.test.ts 2
  * PRINTS: briefing-solved.test.ts 3
  * PRINTS: budget.test.ts 1
@@ -3041,6 +3091,7 @@ interface Outcome {
  * PRINTS: summarizer-worker-env.test.ts 1
  * PRINTS: transparency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1
+ * PRINTS: work-context-listing.test.ts 2
  */
 const greenGuards = new Map<string, boolean>();
 

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
+import {
+  CONFERENCE_ACTIVE_WINDOW_DAYS,
+  CONTEXT_MAX_AGE_DAYS,
+} from "../constants.ts";
 import { hubRequest } from "./client.ts";
 import type { HubContext, HubResult } from "./client.ts";
 
@@ -76,6 +79,15 @@ export const WorkContextEntrySchema = z.looseObject({
   landedAt: z.string().nullable().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
+  /**
+   * How much work this context actually holds (audit row M15-rest). Both are
+   * OPTIONAL and both `.catch(undefined)`: an older hub sends neither, a
+   * hostile one may send anything, and the briefing reads an absent or
+   * unusable count as "no evidence of work" — the direction in which an empty
+   * session never outranks a real investigation.
+   */
+  claimCount: z.number().int().min(0).optional().catch(undefined),
+  targetCount: z.number().int().min(0).optional().catch(undefined),
 });
 
 export type WorkContextEntry = z.infer<typeof WorkContextEntrySchema>;
@@ -203,13 +215,24 @@ export const getPresence = (
     schema: tolerantList("sessions", PresenceEntrySchema),
   });
 
+/**
+ * The briefing's related-work listing, ASKED FOR AS A WINDOW.
+ *
+ * `since` is the same CONTEXT_MAX_AGE_DAYS the renderer filters by, sent so
+ * the hub can bound the answer instead of serving every work context the repo
+ * ever had — 10,000 rows for a section that prints five lines, measured on a
+ * seeded hub. It is sent rather than hard-coded on the hub so the window has
+ * ONE definition, the renderer's; a hub too old to know the parameter ignores
+ * it and answers as before, which is exactly what the renderer's own filter
+ * already handles.
+ */
 export const getWorkContexts = (
   ctx: HubContext,
   repo: string,
 ): Promise<HubResult<readonly WorkContextEntry[]>> =>
   hubRequest(ctx, {
     method: "GET",
-    path: `/api/work-contexts${encodeRepo(repo)}`,
+    path: `/api/work-contexts${encodeRepo(repo)}&since=${String(CONTEXT_MAX_AGE_DAYS)}d`,
     schema: tolerantList("workContexts", WorkContextEntrySchema),
   });
 

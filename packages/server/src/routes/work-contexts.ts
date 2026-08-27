@@ -6,6 +6,7 @@ import { RepoQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { getDiagnosis, listWorkContextsByRepo } from "../services/diagnosis.ts";
 import { markHintsPulled } from "../services/hint-deliveries.ts";
+import { parseSinceWindow } from "../services/time-window.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
@@ -18,10 +19,23 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
 
+    // `since` is OPTIONAL here, unlike on /api/search where it is a filter the
+    // caller chose and a bad one has to be refused loudly. Here it is the
+    // reader's own render window (CONTEXT_MAX_AGE_DAYS), sent so the hub can
+    // bound its answer — so an unparseable one falls back to the unwindowed
+    // listing, which the LIMIT bounds anyway and the reader filters again. The
+    // same parser as the search route, so the two spellings cannot drift.
+    const sinceTerm = c.req.query("since");
+    const window =
+      sinceTerm === undefined || sinceTerm.trim().length === 0
+        ? null
+        : parseSinceWindow(sinceTerm, deps.now());
+
     const workContexts = await listWorkContextsByRepo(
       deps.db,
       c.get("developer").id,
       parsed.data.repo,
+      window !== null && window.ok ? window.since : undefined,
     );
     return ok(c, { workContexts });
   });
