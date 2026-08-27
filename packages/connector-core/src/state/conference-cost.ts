@@ -24,6 +24,7 @@
 import { z } from "zod";
 
 import { DOCTOR_CONFERENCE_UNREADABLE_WARN, SUMMARIZER_FAILURE_MAX_CHARS } from "../constants.ts";
+import { plural } from "../conference/report.ts";
 import { cutWellFormed } from "../briefing/cut.ts";
 import {
   conferenceCostLockPath,
@@ -198,7 +199,6 @@ export const formatConferenceCost = (
   if (cost.runs === 0) {
     return "never run (crosscheck conference is opt-in)";
   }
-  const runs = `${String(cost.runs)} run${cost.runs === 1 ? "" : "s"}`;
   const last = cost.lastRunAt === null ? "" : ` (last ${ageOf(cost.lastRunAt, now)})`;
   const published =
     cost.published === 0 ? "" : `, ${String(cost.published)} published`;
@@ -209,14 +209,17 @@ export const formatConferenceCost = (
   const unreadable =
     cost.unreadable === 0
       ? ""
-      : `, ${String(cost.unreadable)} unreadable answer${cost.unreadable === 1 ? "" : "s"}`;
+      : `, ${plural(cost.unreadable, "unreadable answer")}`;
   const noHub =
     cost.noHubAnswer === 0
       ? ""
       : `, ${String(cost.noHubAnswer)} not measured (the hub could not answer)`;
   return (
-    `${runs}${last} · ${String(cost.findings)} findings ` +
-    `(${String(cost.nones)} NONE, ${String(cost.skipped)} nothing to synthesize` +
+    `${plural(cost.runs, "run")}${last} · ${plural(cost.findings, "finding")} ` +
+    // "had nothing to compare" rather than "nothing to synthesize": it is the
+    // phrase the report itself already uses for the same state, and "0 nothing
+    // to synthesize" is not a sentence in any register.
+    `(${String(cost.nones)} said NONE, ${String(cost.skipped)} had nothing to compare` +
     `${published}${failed}${unreadable}${noHub})`
   );
 };
@@ -232,4 +235,50 @@ export const formatConferenceCost = (
  * makes a reader stop reading `doctor` (the finding-#14 lesson cuts both ways).
  */
 export const isConferenceSilentlyDead = (cost: ConferenceCost): boolean =>
-  cost.fails > 0 || cost.unreadable >= DOCTOR_CONFERENCE_UNREADABLE_WARN;
+  conferenceRemedies(cost).length > 0;
+
+/**
+ * A feature that has never once completed here, which is the one shape of
+ * "the hub could not answer" that is NOT a deployment blip.
+ *
+ * Self-clearing by construction: one run that reaches the hub takes
+ * `noHubAnswer` below `runs` and the line goes quiet again — no threshold to
+ * decay, no counter file to edit by hand. That matters because these counters
+ * are cumulative and nothing ever resets them, so a rule of the shape
+ * "N failures ever" would yellow doctor forever after one bad week.
+ */
+const hasNeverReachedHub = (cost: ConferenceCost): boolean =>
+  cost.runs > 0 && cost.noHubAnswer === cost.runs;
+
+/**
+ * WHAT TO DO, chosen by the counter that actually fired.
+ *
+ * One string for two different faults sent an operator whose `claude` binary
+ * had gone missing to hunt a prompt-format drift that never happened — the
+ * two faults are named apart everywhere else in this feature, and then the one
+ * surface a human reads folded their remedies together.
+ *
+ * Empty means PASS. Never-run is deliberately not in here: this command is
+ * opt-in by design and a doctor that nags a team for not running a synthesis
+ * would be the autonomous background process the feature is not.
+ */
+export const conferenceRemedies = (
+  cost: ConferenceCost,
+): readonly string[] => [
+  ...(cost.unreadable >= DOCTOR_CONFERENCE_UNREADABLE_WARN
+    ? [
+        "an unreadable answer means the model did not keep the answer format " +
+          "this version parses — see the summarizer runner check",
+      ]
+    : []),
+  ...(cost.fails > 0
+    ? ["the model call did not come back — see the summarizer runner check"]
+    : []),
+  ...(hasNeverReachedHub(cost)
+    ? [
+        "no conference has ever reached this hub — run `crosscheck conference` " +
+          "once by hand: it names which of the three states it met (a hub older " +
+          "than this CLI, an endpoint that is failing, or an unreachable one)",
+      ]
+    : []),
+];

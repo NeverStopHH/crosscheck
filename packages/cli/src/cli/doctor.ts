@@ -84,8 +84,8 @@ import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
 import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
 import {
+  conferenceRemedies,
   formatConferenceCost,
-  isConferenceSilentlyDead,
   readConferenceCost,
 } from "@crosscheck/connector-core/state/conference-cost.ts";
 import type { ConferenceCost } from "@crosscheck/connector-core/state/conference-cost.ts";
@@ -990,13 +990,14 @@ const checkIntentCost = (states: readonly SessionState[]): Check => {
  */
 const checkConferenceCost = (cost: ConferenceCost, now: Date): Check => {
   const line = formatConferenceCost(cost, now);
-  return isConferenceSilentlyDead(cost)
-    ? check(
-        "WARN",
-        "conference",
-        `${line} — see the summarizer runner check; an unreadable answer means the model did not keep the answer format this version parses`,
-      )
-    : check("PASS", "conference", line);
+  // THE REMEDY COMES FROM THE COUNTER THAT FIRED. One string for both faults
+  // sent an operator whose model call was simply lost hunting an answer-format
+  // drift that never happened — the two are named apart in every other place
+  // this feature touches, so they are named apart here too.
+  const remedies = conferenceRemedies(cost);
+  return remedies.length === 0
+    ? check("PASS", "conference", line)
+    : check("WARN", "conference", `${line} — ${remedies.join("; ")}`);
 };
 
 const checkGhostCost = (states: readonly SessionState[]): Check => {

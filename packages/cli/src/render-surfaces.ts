@@ -18,6 +18,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     kind: "composite",
+    name: "cli-conference",
+    module: "src/cli/conference.ts",
+    note: "the command's own stdout, not the page: the tree owner's display name through bareUntrusted before it is printed or composed into a draft body, and formatAge on a renderer-built age. The report itself is rendered by connector-core's registered conference-report surface, and the model's sentence reaches both already bounded, echo-checked and secret-scanned",
+  },
+  {
+    kind: "composite",
     name: "cli-status",
     module: "src/cli/status.ts",
     note: "formatAbsenceLine + formatAge from the core render layer; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment)",

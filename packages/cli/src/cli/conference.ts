@@ -803,13 +803,15 @@ export const runConference = async (
   const findingsLine =
     model.findings.length === 0
       ? "no shared-cause finding"
-      : `${String(model.findings.length)} shared-cause finding${model.findings.length === 1 ? "" : "s"}`;
+      : plural(model.findings.length, "shared-cause finding");
   const publishLine = options.publish
     ? [...heldLines, ...publishedLines(publishOutcome)]
     : [];
   const summary =
-    `conference: ${findingsLine}, ${String(corpus.data.overlaps.length)} duplicated-work pairs, ` +
-    `${String(corpus.data.contradictions.length)} contradictions, ${String(corpus.data.questions.length)} open questions`;
+    `conference: ${findingsLine}, ` +
+    `${plural(corpus.data.overlaps.length, "duplicated-work pair")}, ` +
+    `${plural(corpus.data.contradictions.length, "contradiction")}, ` +
+    `${plural(corpus.data.questions.length, "open question")}`;
   if (writeFailure !== null) {
     // THE PAGE IS THE DELIVERABLE and it is already in memory, so it is
     // printed rather than lost. Everything that DID happen is stated in the
