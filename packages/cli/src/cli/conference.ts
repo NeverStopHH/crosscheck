@@ -50,6 +50,7 @@ import {
   writePrivateFile,
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
 import { isRestatementOf } from "@crosscheck/connector-core/hints/echo.ts";
@@ -64,6 +65,7 @@ import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identit
 import {
   endSession,
   getConference,
+  getDrafts,
   postRecords,
   registerSession,
 } from "@crosscheck/connector-core/http/hub.ts";
@@ -327,6 +329,19 @@ const runModel = async (
   };
 };
 
+/**
+ * How a conference draft is recognised on a tree it was filed on earlier.
+ *
+ * Prefix rather than a stored marker, because a claim body is all the hub
+ * keeps: `conferenceDraftBody` composes every one of them, and this is the one
+ * other place that has to know the shape. A wording change here breaks the
+ * guard silently, so the two are asserted against each other:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/cli/src/cli/conference.ts");console.log(c.CONFERENCE_DRAFT_PREFIX)'
+ * PRINTS: Conference finding on
+ */
+export const CONFERENCE_DRAFT_PREFIX = "Conference finding on";
+
 /** The owner of a tree, through the same BARE strip every printed name takes. */
 const nameOfContext = (context: ConferenceContext): string => {
   const name = bareUntrusted(context.developerName ?? "");
@@ -364,6 +379,53 @@ const conferenceDraftBody = (finding: ConferenceFinding): string => {
     `Conference finding on ${nameOfContext(target)}'s tree: ` +
     `${finding.sentence}${attribution}`
   );
+};
+
+/**
+ * The trees that already carry an unreviewed conference draft of this author's.
+ *
+ * WHY THIS EXISTS. The hub's dedup gate keys on the normalised BODY, which a
+ * re-worded model sentence defeats by construction — and the feature's own
+ * docs say it is "often a scheduled command on a machine with no live
+ * session". Left alone, a nightly `--publish` files up to
+ * CONFERENCE_MAX_FINDINGS fresh hypotheses every night, worded slightly
+ * differently each time, on trees that are frequently teammates'; after a
+ * month one tree carries ~90 machine-written drafts nobody asked for and
+ * nothing reaps. Worse, `/api/drafts` is newest-first and the briefing shows
+ * MAX_DRAFT_POINTERS of them, so the conference's sentences evict the
+ * auto-captured drafts that block exists for.
+ *
+ * ONE UNREVIEWED DRAFT PER TREE is the bound: promoting or rejecting it with
+ * `review_draft` is what makes room for the next, which is the same "a human
+ * has to touch it" gate the whole Tier-1 posture rests on.
+ *
+ * ACCEPTED BOUND: `/api/drafts` returns the newest MAX_DRAFTS_LISTED of this
+ * developer's drafts, so an author sitting on more unreviewed drafts than
+ * that can push an older conference draft out of the answer and file a second
+ * one on that tree. The listing that would have to grow is the hub's, and a
+ * guard that is right for the first twenty is worth more than none.
+ */
+const unreviewedConferenceTrees = async (
+  hub: HubContext,
+  repoId: string,
+): Promise<ReadonlyMap<string, { readonly id: string; readonly createdAt: string }> | null> => {
+  const drafts = await getDrafts(hub, repoId);
+  if (!drafts.ok) {
+    return null;
+  }
+  const byContext = new Map<string, { id: string; createdAt: string }>();
+  for (const draft of drafts.data) {
+    if (!draft.body.startsWith(CONFERENCE_DRAFT_PREFIX)) {
+      continue;
+    }
+    if (!byContext.has(draft.workContextId)) {
+      byContext.set(draft.workContextId, {
+        id: draft.id,
+        createdAt: draft.createdAt,
+      });
+    }
+  }
+  return byContext;
 };
 
 /**
@@ -676,6 +738,29 @@ export const runConference = async (
       `${String(corpus.data.contradictions.length)} contradiction candidates from ${config.hubUrl}`,
   );
   const model = await runModel(sessions, env, config.home, deadlineAt, write);
+  const held = options.publish
+    ? await unreviewedConferenceTrees(withinWallClock(hub, deadlineAt), identity.repoId)
+    : new Map<string, { readonly id: string; readonly createdAt: string }>();
+  const filable = model.findings.filter(
+    (finding) => !(held ?? new Map()).has((finding.contexts[0] as ConferenceContext).id),
+  );
+  const heldLines =
+    held === null
+      ? options.publish
+        ? ["could not check for earlier conference drafts — publishing anyway"]
+        : []
+      : model.findings.flatMap((finding) => {
+          const target = finding.contexts[0] as ConferenceContext;
+          const standing = held.get(target.id);
+          return standing === undefined
+            ? []
+            : [
+                `not published: a conference draft from ` +
+                  `${formatAge(Math.max(0, now.getTime() - Date.parse(standing.createdAt)))} ago ` +
+                  `is still unreviewed on ${nameOfContext(target)}'s tree — ` +
+                  `review_draft ${standing.id} first`,
+              ];
+        });
   const publishOutcome = options.publish
     ? await publishFindings(
         // The wall clock again, recomputed: a POST that aborts at the hook's
@@ -684,7 +769,7 @@ export const runConference = async (
         withinWallClock(hub, deadlineAt),
         identity.repoId,
         identity.branch,
-        model.findings,
+        filable,
         env,
         now,
       )
@@ -720,7 +805,7 @@ export const runConference = async (
       ? "no shared-cause finding"
       : `${String(model.findings.length)} shared-cause finding${model.findings.length === 1 ? "" : "s"}`;
   const publishLine = options.publish
-    ? publishedLines(publishOutcome)
+    ? [...heldLines, ...publishedLines(publishOutcome)]
     : [];
   const summary =
     `conference: ${findingsLine}, ${String(corpus.data.overlaps.length)} duplicated-work pairs, ` +

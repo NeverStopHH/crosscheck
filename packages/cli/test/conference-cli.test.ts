@@ -1446,13 +1446,73 @@ describe("a finding published on somebody else's tree", () => {
     expect(line).toContain("review_draft");
   });
 
-  test("a re-run says the hub already had it instead of counting it twice", async () => {
-    // Arrange: the same sentence again — the hub dedups on the normalised
-    // body, so the second run adds nothing.
+  test("a hub that will not list drafts publishes anyway and counts the duplicate apart", async () => {
+    // Arrange: a proxy that answers everything except /api/drafts, so the
+    // one-unreviewed-draft guard cannot read and has to fail OPEN — the
+    // posture every reader here takes. The same sentence again, so the hub's
+    // own body dedup is what the run then meets.
     const before = (await claimsOn(TEAM_KEN_CONTEXT)).filter((entry) =>
       entry.body.startsWith("Conference finding"),
     ).length;
+    expect(before).toBe(1);
     const model = await makeFakeModel({ output: `A+B: ${TEAM_SENTENCE}` });
+    const proxy = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/api/drafts") {
+          return new Response(
+            JSON.stringify({ ok: false, error: { code: "boom", message: "no" } }),
+            { status: 500, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return fetch(`${hubUrl}${url.pathname}${url.search}`, {
+          method: request.method,
+          headers: request.headers,
+          ...(request.method === "GET" ? {} : { body: await request.text() }),
+        });
+      },
+    });
+
+    try {
+      // Act
+      const result = await runConference(
+        ["--publish"],
+        {
+          ...envFor(aliceKey, { CROSSCHECK_SUMMARIZER_CMD: model }),
+          CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(proxy.port)}`,
+        },
+        teamRepo,
+        () => undefined,
+      );
+
+      // Assert: it says it could not check, publishes, and then reports the
+      // duplicate APART from the publish — a log that reconciles against the
+      // hub instead of naming a draft it did not add.
+      expect(result.stdout).toContain("could not check for earlier conference drafts");
+      expect(result.stdout).toContain("already filed by an earlier run");
+      expect(
+        (await claimsOn(TEAM_KEN_CONTEXT)).filter((entry) =>
+          entry.body.startsWith("Conference finding"),
+        ).length,
+      ).toBe(before);
+    } finally {
+      proxy.stop(true);
+    }
+  });
+
+  test("a paraphrase is refused while last night's draft is still unreviewed", async () => {
+    // Arrange: the hub dedups on the normalised body, which a real model
+    // defeats by construction — it paraphrases. A nightly scheduler would put
+    // ~30 near-identical hypotheses a month on one teammate's tree, and the
+    // briefing's two draft slots would always be the newest two of them.
+    const drafts = (await claimsOn(TEAM_KEN_CONTEXT)).filter((entry) =>
+      entry.body.startsWith("Conference finding"),
+    );
+    expect(drafts.length).toBe(1);
+    const model = await makeFakeModel({
+      output: `A+B: The stale key id left behind by a rotation is what both are circling`,
+    });
 
     // Act
     const result = await runConference(
@@ -1462,13 +1522,19 @@ describe("a finding published on somebody else's tree", () => {
       () => undefined,
     );
 
-    // Assert: a log that reconciles against the hub, rather than one that
-    // reports a draft it did not add.
-    expect(result.stdout).toContain("already filed by an earlier run");
+    // Assert: refused, and the sentence names the tree, the age and the call
+    // that clears it — not the hub's duplicate path, which this paraphrase
+    // would sail straight through.
+    expect(result.stdout).toContain("still unreviewed on Ken Weber's tree");
+    expect(result.stdout).toContain("review_draft ");
+    expect(result.stdout).not.toContain("already filed by an earlier run");
     expect(
       (await claimsOn(TEAM_KEN_CONTEXT)).filter((entry) =>
         entry.body.startsWith("Conference finding"),
       ).length,
-    ).toBe(before);
+    ).toBe(1);
+    // THE CONTROL: the finding was real and the page still carries it — only
+    // the FILING was refused.
+    expect(await reportOf(result.stdout)).toContain("stale key id left behind");
   });
 });
