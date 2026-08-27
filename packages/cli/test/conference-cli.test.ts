@@ -1058,3 +1058,145 @@ describe("a hub the conference cannot read", () => {
     );
   });
 });
+
+/**
+ * The floor and the bound, in the order they have to be applied. Two sessions
+ * is the floor because a shared cause is a statement about two pieces of work
+ * — and the list the floor must count is WHAT WAS SENT, not what the hub
+ * named. CONFERENCE_MAX_INPUT_CHARS exists for a hub that is modified or
+ * hostile, so these fixtures are one.
+ */
+describe("a hub whose contexts do not fit the input bound", () => {
+  /** A context whose block alone is wider than CONFERENCE_MAX_INPUT_CHARS. */
+  const oversizeContext = (id: string): Record<string, unknown> => ({
+    id,
+    title: `Investigation ${id}`,
+    developerId: "dev_big",
+    developerName: "Big",
+    status: "analyzing",
+    intent: { summary: `Investigation ${id}`, provenance: "declared" },
+    lastActiveAt: new Date().toISOString(),
+    claims: Array.from({ length: 60 }, (_unused, index) => ({
+      id: `clm_${id}_${String(index)}`,
+      kind: "evidence",
+      status: "proposed",
+      confidence: 0.8,
+      provenance: "declared",
+      body: "y".repeat(400),
+      authorDeveloperName: "Big",
+      createdAt: new Date().toISOString(),
+    })),
+  });
+
+  const ordinaryContext = (id: string): Record<string, unknown> => ({
+    ...oversizeContext(id),
+    claims: [
+      {
+        id: `clm_${id}_only`,
+        kind: "evidence",
+        status: "proposed",
+        confidence: 0.8,
+        provenance: "declared",
+        body: "the refresh path reads the key id too early",
+        authorDeveloperName: "Big",
+        createdAt: new Date().toISOString(),
+      },
+    ],
+  });
+
+  const corpusHub = (contexts: readonly Record<string, unknown>[]) =>
+    Bun.serve({
+      port: 0,
+      fetch: (request) =>
+        new URL(request.url).pathname === "/api/conference"
+          ? new Response(
+              JSON.stringify({
+                ok: true,
+                data: {
+                  conference: {
+                    contexts,
+                    overlaps: [],
+                    questions: [],
+                    contradictions: [],
+                    contextsInWindow: contexts.length,
+                    contextsInWindowCapped: false,
+                    windowDays: 14,
+                  },
+                },
+              }),
+              { headers: { "Content-Type": "application/json" } },
+            )
+          : new Response(JSON.stringify({ ok: true, data: {} }), {
+              headers: { "Content-Type": "application/json" },
+            }),
+    });
+
+  const runAgainst = async (
+    contexts: readonly Record<string, unknown>[],
+  ): Promise<{
+    readonly stdout: string;
+    readonly written: readonly string[];
+    readonly spawned: boolean;
+    readonly report: string;
+  }> => {
+    const marker = join(await tempDir("floor"), "invoked");
+    const model = await makeFakeModel({
+      output: "A+B: both are the same bug",
+      invokedMarker: marker,
+    });
+    const hub = corpusHub(contexts);
+    const written: string[] = [];
+    try {
+      const result = await runConference(
+        [],
+        {
+          ...envFor(aliceKey, { CROSSCHECK_SUMMARIZER_CMD: model }),
+          CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(hub.port)}`,
+        },
+        repo,
+        (line) => {
+          written.push(line);
+        },
+      );
+      return {
+        stdout: result.stdout,
+        written,
+        spawned: await Bun.file(marker).exists(),
+        report: await reportOf(result.stdout),
+      };
+    } finally {
+      hub.stop(true);
+    }
+  };
+
+  test("one session left after the bound spends no model call", async () => {
+    // Act: two comparable sessions, only one of which fits.
+    const run = await runAgainst([
+      oversizeContext("wc_floor_big"),
+      ordinaryContext("wc_floor_small"),
+    ]);
+
+    // Assert: a call on ONE session cannot produce an "A+B" line, so it is a
+    // call spent to be told nothing — and the answer would then be booked
+    // `unreadable`, which is a standing doctor WARN nothing ever clears.
+    expect(run.spawned).toBe(false);
+    expect(run.stdout).toContain("no shared-cause finding");
+    // And the page says WHICH bound cut it, not "nothing to compare".
+    expect(run.report).toContain("only 1 of 2 sessions fit");
+    expect(run.written.join("\n")).not.toContain("from 1 sessions");
+  });
+
+  test("no session left after the bound never sends empty stdin", async () => {
+    // Act: neither context fits on its own.
+    const run = await runAgainst([
+      oversizeContext("wc_floor_big_a"),
+      oversizeContext("wc_floor_big_b"),
+    ]);
+
+    // Assert: the quote-before-you-spend property — the run must not print
+    // "about 0 input tokens" and then spawn a model on an empty document.
+    expect(run.spawned).toBe(false);
+    expect(run.written.join("\n")).not.toContain("about 0 input tokens");
+    expect(run.report).toContain("only 0 of 2 sessions fit");
+  });
+});

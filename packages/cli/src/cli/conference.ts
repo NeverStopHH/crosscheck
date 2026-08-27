@@ -33,6 +33,7 @@
 import {
   CONFERENCE_DERIVED_CONFIDENCE,
   CONFERENCE_MAX_FINDINGS,
+  CONFERENCE_MAX_INPUT_CHARS,
   CONFERENCE_MAX_WALL_MS,
   DEFAULT_AGENT_KIND,
   EXIT_OK,
@@ -209,19 +210,29 @@ const runModel = async (
   deadlineAt: number,
   write: ConferenceWriter,
 ): Promise<ModelRun> => {
-  if (sessions.length < 2) {
-    return SKIPPED(
-      sessions.length === 0
-        ? "no session on this repo has a plan or a finding to compare"
-        : "only one session on this repo has anything to compare",
-    );
-  }
   // WHAT IS ACTUALLY SENT, which is not always every session the hub named:
   // the input bound drops whole sessions from the end, and the hub's own caps
   // reach that bound with ordinary data. Everything downstream — the cost
   // line, the labels an answer may use, the attribution — is derived from
   // THIS list, so a session nobody showed the model can never be named by it.
   const sent = fitSessions(sessions);
+  // THE FLOOR IS COUNTED ON `sent`, NOT ON WHAT THE HUB NAMED, and the order
+  // is the whole point: two is the floor because a shared cause is a statement
+  // about TWO pieces of work, and a model shown one session cannot produce an
+  // "A+B" line at all. Checking the floor first spent a real call on one
+  // session — or, when neither context fit, on an empty document after
+  // quoting "about 0 input tokens" — and then booked the answer `unreadable`,
+  // which is a doctor WARN with no decay and nothing wrong with the model.
+  if (sent.length < 2) {
+    return SKIPPED(
+      sessions.length < 2
+        ? sessions.length === 0
+          ? "no session on this repo has a plan or a finding to compare"
+          : "only one session on this repo has anything to compare"
+        : `only ${String(sent.length)} of ${String(sessions.length)} sessions fit ` +
+          `the ${String(CONFERENCE_MAX_INPUT_CHARS)}-character input bound`,
+    );
+  }
   const input = renderConferenceInput(sent);
   const remainingMs = deadlineAt - Date.now();
   if (remainingMs <= 0) {
