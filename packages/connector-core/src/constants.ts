@@ -1184,3 +1184,31 @@ export const CONFERENCE_DERIVED_CONFIDENCE = 0.4;
  * otherwise (the finding-#14 lesson).
  */
 export const DOCTOR_CONFERENCE_UNREADABLE_WARN = 1;
+
+/**
+ * The reader's OWN item bounds on the three deterministic report sections.
+ *
+ * They mirror the hub's caps (server/src/constants.ts) rather than trusting
+ * them, for the reason fitSessions exists one module over: the hub's caps are
+ * what holds when the hub is this version, and CONFERENCE_MAX_INPUT_CHARS is
+ * what holds when it is modified, older, newer or hostile. Without them a hub
+ * answering with five thousand questions turns "one page a human reads in a
+ * minute" into 1,375,379 bytes and 10,615 lines, measured — and nothing in
+ * the run notices or says so. The cut is always STATED on its own line, the
+ * way the coverage line already states a capped context count.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.CONFERENCE_MAX_QUESTIONS_SHOWN===s.CONFERENCE_MAX_QUESTIONS, c.CONFERENCE_MAX_CONTRADICTIONS_SHOWN===s.CONFERENCE_MAX_CONTRADICTIONS, c.CONFERENCE_MAX_OVERLAP_PAIRS_SHOWN===s.CONFERENCE_MAX_OVERLAP_PAIRS, c.CONFERENCE_ACTIVE_WINDOW_DAYS===s.CONFERENCE_ACTIVE_WINDOW_DAYS)'
+ * PRINTS: true true true true
+ */
+export const CONFERENCE_MAX_QUESTIONS_SHOWN = 10;
+export const CONFERENCE_MAX_CONTRADICTIONS_SHOWN = 5;
+export const CONFERENCE_MAX_OVERLAP_PAIRS_SHOWN = 5;
+
+/**
+ * The activity window this connector ASSUMES when a hub will not state its
+ * own. The wire field falls back to this rather than to zero: the coverage
+ * line prints it directly, and "active in the last 0 days" is a sentence that
+ * asserts a window nobody could have been active in — on the one line whose
+ * whole job is telling the reader what was NOT read.
+ */
+export const CONFERENCE_ACTIVE_WINDOW_DAYS = 14;

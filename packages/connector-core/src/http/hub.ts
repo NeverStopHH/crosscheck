@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
 import type { HubContext, HubResult } from "./client.ts";
 
@@ -1415,7 +1416,13 @@ const ConferenceResponseSchema = z
       contradictions: z.array(z.unknown()).default([]),
       contextsInWindow: z.number().int().min(0).catch(0),
       contextsInWindowCapped: z.boolean().catch(false),
-      windowDays: z.number().int().min(1).catch(0),
+      // The window this connector ASSUMES, never zero: the coverage line
+      // prints this number directly, and the sibling schema 110 lines up
+      // (workContexts) already takes this posture with `.default(30)`. A hub
+      // that will not state its window is described by our assumption; a
+      // report that claims to have read "the last 0 days" is describing a
+      // window nobody could have been active in.
+      windowDays: z.number().int().min(1).catch(CONFERENCE_ACTIVE_WINDOW_DAYS),
     }),
   })
   .transform((value): ConferenceCorpus => {

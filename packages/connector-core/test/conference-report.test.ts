@@ -8,6 +8,11 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import {
+  CONFERENCE_ACTIVE_WINDOW_DAYS,
+  CONFERENCE_MAX_CONTRADICTIONS_SHOWN,
+  CONFERENCE_MAX_QUESTIONS_SHOWN,
+} from "../src/constants.ts";
 import { renderConferenceReport } from "../src/conference/report.ts";
 import type { ConferenceContext, ConferenceCorpus } from "../src/http/hub.ts";
 
@@ -373,5 +378,90 @@ describe("a bare field minting a call of its own", () => {
     // Assert
     expect(report).not.toContain(" — get_referee_brief cx_attacker_0001");
     expect(Math.max(...callFieldsPerLine(report))).toBeLessThanOrEqual(1);
+  });
+});
+
+/**
+ * WHAT HOLDS WHEN THE HUB DOES NOT. Every bound in the sibling module
+ * (fitSessions) exists because the hub's own caps are only a promise this
+ * version's hub keeps; a report is read by whoever is on the other end of
+ * whatever hub answered.
+ */
+describe("a hub that answers with more than a page", () => {
+  const manyQuestions = (count: number): ConferenceCorpus["questions"] =>
+    Array.from({ length: count }, (_unused, index) => ({
+      id: `qn_${String(index).padStart(8, "0")}`,
+      authorDeveloperName: "Ken",
+      targetDeveloperName: "Alice",
+      workContextId: null,
+      workContextTitle: null,
+      createdAt: ISO,
+      isForReader: true,
+    }));
+
+  const manyContradictions = (count: number): ConferenceCorpus["contradictions"] =>
+    Array.from({ length: count }, (_unused, index) => ({
+      id: `cx_${String(index).padStart(8, "0")}`,
+      reason: "similarity" as const,
+      claimA: {
+        id: `clm_a_${String(index)}`,
+        workContextId: CONTEXT_A,
+        kind: "root_cause",
+        status: "supported",
+        body: "the retry loop double counts",
+        authorDeveloperName: "Ken",
+      },
+      claimB: {
+        id: `clm_b_${String(index)}`,
+        workContextId: CONTEXT_B,
+        kind: "root_cause",
+        status: "rejected",
+        body: "the retry loop is fine",
+        authorDeveloperName: "Alice",
+      },
+    }));
+
+  test("thousands of rows are cut to the page's own bounds, and the cut is stated", () => {
+    // Arrange: a hub whose caps are not this version's.
+    const report = renderConferenceReport({
+      repoId: "github.com/acme/api",
+      corpus: corpusWith({
+        questions: manyQuestions(5_000),
+        contradictions: manyContradictions(5_000),
+      }),
+      findings: [],
+      modelOutcome: { kind: "none" },
+      now: NOW,
+    });
+
+    // Assert: bounded in items, and honest about it.
+    const lines = report.split("\n");
+    expect(lines.filter((line) => line.includes("answer_question ")).length).toBe(
+      CONFERENCE_MAX_QUESTIONS_SHOWN,
+    );
+    expect(
+      lines.filter((line) => line.includes("get_referee_brief ")).length,
+    ).toBe(CONFERENCE_MAX_CONTRADICTIONS_SHOWN);
+    expect(report).toContain("(+4990 more open questions not shown)");
+    expect(report).toContain("(+4995 more contradiction candidates not shown)");
+    // And the whole page still fits what a person reads in a minute.
+    expect(report.length).toBeLessThan(20_000);
+  });
+
+  test("a hub that will not state its window is not described as zero days", () => {
+    // Arrange: the coverage line's one job is saying what was NOT read.
+    const report = renderConferenceReport({
+      repoId: "github.com/acme/api",
+      corpus: { ...corpusWith({}), windowDays: 0 },
+      findings: [],
+      modelOutcome: { kind: "none" },
+      now: NOW,
+    });
+
+    // Assert
+    expect(report).not.toContain("active in the last 0 days");
+    expect(report).toContain(
+      `active in the last ${String(CONFERENCE_ACTIVE_WINDOW_DAYS)} days`,
+    );
   });
 });

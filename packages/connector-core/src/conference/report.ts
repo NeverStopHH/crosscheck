@@ -43,9 +43,13 @@
  * PRINTS: true
  */
 import {
+  CONFERENCE_ACTIVE_WINDOW_DAYS,
   CONFERENCE_BODY_MAX_CHARS,
+  CONFERENCE_MAX_CONTRADICTIONS_SHOWN,
   CONFERENCE_MAX_EVIDENCE_PER_CONTEXT,
   CONFERENCE_MAX_FINDINGS,
+  CONFERENCE_MAX_OVERLAP_PAIRS_SHOWN,
+  CONFERENCE_MAX_QUESTIONS_SHOWN,
   CONFERENCE_SENTENCE_MAX_CHARS,
   GHOST_SHARED_VALUE_MAX_CHARS,
   MAX_HUB_MESSAGE_CHARS,
@@ -101,8 +105,22 @@ export interface ConferenceReportInput {
 }
 
 /** "1 open question" / "2 open questions" — a tired reader notices. */
-const plural = (count: number, singular: string): string =>
+export const plural = (count: number, singular: string): string =>
   `${String(count)} ${singular}${count === 1 ? "" : "s"}`;
+
+/**
+ * What a section CUT, on its own line — never implied by a short list.
+ *
+ * The three deterministic sections render the HUB's rows, and the hub's caps
+ * are a promise only this version's hub keeps. It is the same argument
+ * fitSessions makes one module over: CONFERENCE_MAX_INPUT_CHARS is what holds
+ * when a hub is modified or hostile. Measured without these bounds, a corpus
+ * of 5,000 questions and 5,000 contradictions rendered 10,615 lines and
+ * 1,375,379 bytes — a wall of text where the feature is defined as one page —
+ * and nothing in the run noticed or said so.
+ */
+const cutNote = (total: number, shown: number, noun: string): readonly string[] =>
+  total <= shown ? [] : [`(+${String(total - shown)} more ${noun} not shown)`];
 
 const ageMsFrom = (iso: string, now: Date): number | null => {
   const ms = Date.parse(iso);
@@ -235,17 +253,19 @@ const sharedCauseSection = (input: ConferenceReportInput): readonly string[] => 
 const contradictionSection = (
   input: ConferenceReportInput,
 ): readonly string[] => {
-  const lines = input.corpus.contradictions.flatMap((entry) => {
-    const id = safeId(entry.id);
-    if (id.length === 0) {
-      return [];
-    }
-    const left = `${nameOf(entry.claimA.authorDeveloperName)} (${bareUntrusted(entry.claimA.kind)}, ${bareUntrusted(entry.claimA.status)})`;
-    const right = `${nameOf(entry.claimB.authorDeveloperName)} (${bareUntrusted(entry.claimB.kind)}, ${bareUntrusted(entry.claimB.status)})`;
-    return [
-      `- ${left} and ${right} hold opposite positions, found by ${bareUntrusted(entry.reason)} — get_referee_brief ${id}`,
-    ];
-  });
+  const lines = input.corpus.contradictions
+    .slice(0, CONFERENCE_MAX_CONTRADICTIONS_SHOWN)
+    .flatMap((entry) => {
+      const id = safeId(entry.id);
+      if (id.length === 0) {
+        return [];
+      }
+      const left = `${nameOf(entry.claimA.authorDeveloperName)} (${bareUntrusted(entry.claimA.kind)}, ${bareUntrusted(entry.claimA.status)})`;
+      const right = `${nameOf(entry.claimB.authorDeveloperName)} (${bareUntrusted(entry.claimB.kind)}, ${bareUntrusted(entry.claimB.status)})`;
+      return [
+        `- ${left} and ${right} hold opposite positions, found by ${bareUntrusted(entry.reason)} — get_referee_brief ${id}`,
+      ];
+    });
   return [
     "## Contradictions worth refereeing",
     ...(lines.length === 0
@@ -257,6 +277,11 @@ const contradictionSection = (
           "No claim in the work read above is contradicted by a rejected one.",
         ]
       : lines),
+    ...cutNote(
+      input.corpus.contradictions.length,
+      CONFERENCE_MAX_CONTRADICTIONS_SHOWN,
+      "contradiction candidates",
+    ),
   ];
 };
 
@@ -288,32 +313,39 @@ const overlapSection = (input: ConferenceReportInput): readonly string[] => {
   const byId = new Map(
     input.corpus.contexts.map((context) => [context.id, context]),
   );
-  const lines = input.corpus.overlaps.flatMap((overlap) => {
-    const left = byId.get(overlap.workContextIdA);
-    const right = byId.get(overlap.workContextIdB);
-    if (left === undefined || right === undefined) {
-      return [];
-    }
-    const leftLine = contextLine(left, "  ");
-    const rightLine = contextLine(right, "  ");
-    if (leftLine === null || rightLine === null) {
-      return [];
-    }
-    const clauses = overlapClauses(overlap);
-    if (clauses.length === 0) {
-      return [];
-    }
-    return [
-      `- ${nameOf(left.developerName)} and ${nameOf(right.developerName)} ${clauses.join(", ")}`,
-      leftLine,
-      rightLine,
-    ];
-  });
+  const lines = input.corpus.overlaps
+    .slice(0, CONFERENCE_MAX_OVERLAP_PAIRS_SHOWN)
+    .flatMap((overlap) => {
+      const left = byId.get(overlap.workContextIdA);
+      const right = byId.get(overlap.workContextIdB);
+      if (left === undefined || right === undefined) {
+        return [];
+      }
+      const leftLine = contextLine(left, "  ");
+      const rightLine = contextLine(right, "  ");
+      if (leftLine === null || rightLine === null) {
+        return [];
+      }
+      const clauses = overlapClauses(overlap);
+      if (clauses.length === 0) {
+        return [];
+      }
+      return [
+        `- ${nameOf(left.developerName)} and ${nameOf(right.developerName)} ${clauses.join(", ")}`,
+        leftLine,
+        rightLine,
+      ];
+    });
   return [
     "## Duplicated work",
     ...(lines.length === 0
       ? ["No two people on this repo are working the same files or the same failure."]
       : lines),
+    ...cutNote(
+      input.corpus.overlaps.length,
+      CONFERENCE_MAX_OVERLAP_PAIRS_SHOWN,
+      "duplicated-work pairs",
+    ),
   ];
 };
 
@@ -349,13 +381,20 @@ const questionLine = (
 };
 
 const questionSection = (input: ConferenceReportInput): readonly string[] => {
-  const lines = input.corpus.questions.flatMap((question) => {
-    const line = questionLine(question, input.now);
-    return line === null ? [] : [line];
-  });
+  const lines = input.corpus.questions
+    .slice(0, CONFERENCE_MAX_QUESTIONS_SHOWN)
+    .flatMap((question) => {
+      const line = questionLine(question, input.now);
+      return line === null ? [] : [line];
+    });
   return [
     "## Questions nobody has answered",
     ...(lines.length === 0 ? ["No question on this repo is still open."] : lines),
+    ...cutNote(
+      input.corpus.questions.length,
+      CONFERENCE_MAX_QUESTIONS_SHOWN,
+      "open questions",
+    ),
   ];
 };
 
@@ -373,9 +412,15 @@ const coverageLine = (corpus: ConferenceCorpus): string => {
   const total = corpus.contextsInWindowCapped
     ? `${String(corpus.contextsInWindow)} or more`
     : String(corpus.contextsInWindow);
+  // A hub that will not state its window is described by the window this
+  // connector assumes, never by zero: "active in the last 0 days" asserts a
+  // window nobody could have been active in, on the one line whose whole job
+  // is telling the reader what was NOT read.
+  const days =
+    corpus.windowDays > 0 ? corpus.windowDays : CONFERENCE_ACTIVE_WINDOW_DAYS;
   return (
     `Read ${String(corpus.contexts.length)} of ${total} work contexts active in the ` +
-    `last ${plural(corpus.windowDays, "day")}, ${plural(claims, "declared claim")}, ` +
+    `last ${plural(days, "day")}, ${plural(claims, "declared claim")}, ` +
     `${plural(corpus.questions.length, "open question")} and ` +
     `${plural(corpus.contradictions.length, "contradiction candidate")}.`
   );
