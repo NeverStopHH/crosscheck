@@ -144,21 +144,33 @@ const titleFragment = (raw: string): string | null => {
 };
 
 /**
- * One work context as the line that names its owner, its plan and the call
- * that reads it. Null when the id is not one this renderer will print: a
- * pointer whose id the allowlist rejects has no next action, and a line with
- * no next action is what §8 of the spec calls a bare id.
+ * One work context as the line that names its owner, WHEN they last touched
+ * it, its plan and the call that reads it. Null when the id is not one this
+ * renderer will print: a pointer whose id the allowlist rejects has no next
+ * action, and a line with no next action is what §8 of the spec calls a bare
+ * id.
+ *
+ * THE AGE IS NOT DECORATION. This corpus deliberately includes contexts whose
+ * session ENDED (services/conference.ts: "live means unmerged, not
+ * unattended") over a fourteen-day window, so "Alice and Ken both changed
+ * src/auth/refresh.ts" is true of work that stopped a fortnight ago exactly as
+ * often as of work happening now — and a reader who pings a teammate about a
+ * collision that ended two weeks ago has been misled by a true sentence. The
+ * hub computes and sends `lastActiveAt` for this; the line prints it.
  */
 const contextLine = (
   context: ConferenceContext,
   indent: string,
+  now: Date,
 ): string | null => {
   const id = safeId(context.id);
   if (id.length === 0) {
     return null;
   }
   const title = titleFragment(context.title);
-  return `${indent}- ${nameOf(context.developerName)}: ${
+  const age = ageOf(context.lastActiveAt, now);
+  const when = age === null ? "at an unreadable time" : `${age} ago`;
+  return `${indent}- ${nameOf(context.developerName)}, last active ${when}: ${
     title === null ? "an untitled piece of work" : title
   } — get_diagnosis ${id}`;
 };
@@ -195,7 +207,7 @@ const findingLines = (
     return [];
   }
   const sides = finding.contexts.flatMap((context) => {
-    const line = contextLine(context, "  ");
+    const line = contextLine(context, "  ", now);
     if (line === null) {
       return [];
     }
@@ -321,8 +333,8 @@ const overlapSection = (input: ConferenceReportInput): readonly string[] => {
       if (left === undefined || right === undefined) {
         return [];
       }
-      const leftLine = contextLine(left, "  ");
-      const rightLine = contextLine(right, "  ");
+      const leftLine = contextLine(left, "  ", input.now);
+      const rightLine = contextLine(right, "  ", input.now);
       if (leftLine === null || rightLine === null) {
         return [];
       }
@@ -360,14 +372,20 @@ const questionLine = (
   const age = ageOf(question.createdAt, now);
   const waited = age === null ? "" : ` for ${age}`;
   const asker = nameOf(question.authorDeveloperName);
-  // The call ONLY when this reader may answer — the hub decides that
-  // (isForReader), never the renderer, and a call the reader cannot make
-  // would be the "next action" that fails.
-  const next = question.isForReader ? ` — answer_question ${id}` : ` — ${id}`;
   const target =
     question.targetDeveloperName === undefined || question.targetDeveloperName === null
       ? null
       : bareUntrusted(question.targetDeveloperName);
+  // The call ONLY when this reader may answer — the hub decides that
+  // (isForReader), never the renderer, and a call the reader cannot make
+  // would be the "next action" that fails. What used to stand in for it was
+  // the raw id, which is not a next action at all: it is the bare id §8
+  // forbids, forty characters wide, and several of them read as a wall of
+  // uuids. A sentence says the same thing and can be acted on — by asking the
+  // person it names.
+  const next = question.isForReader
+    ? ` — answer_question ${id}`
+    : ` — only ${target === null || target.length === 0 ? "its addressee" : target} can answer this one`;
   if (target !== null && target.length > 0) {
     return `- ${asker} has been waiting on ${target}${waited}${next}`;
   }

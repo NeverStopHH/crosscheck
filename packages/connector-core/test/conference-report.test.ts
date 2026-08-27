@@ -89,8 +89,12 @@ describe("the conference report", () => {
     // Assert: the sentence, both people, both trees, and the evidence under
     // each with every trust label an injected claim carries (DESIGN.md §4).
     expect(report).toContain("«Both sessions change what an unknown kid means on the refresh path»");
-    expect(report).toContain(`Nick: «Token refresh rework» — get_diagnosis ${CONTEXT_A}`);
-    expect(report).toContain(`Ken: «Session store migration» — get_diagnosis ${CONTEXT_B}`);
+    expect(report).toContain(
+      `Nick, last active 3h ago: «Token refresh rework» — get_diagnosis ${CONTEXT_A}`,
+    );
+    expect(report).toContain(
+      `Ken, last active 3h ago: «Session store migration» — get_diagnosis ${CONTEXT_B}`,
+    );
     expect(report).toContain(
       "Nick recorded root_cause (likely_root_cause) · confidence 0.8 · provenance declared · 3h ago: «The refresh path trusts a rotated kid»",
     );
@@ -214,7 +218,10 @@ describe("the conference report", () => {
     // Assert: who waits on whom and for how long, with the call ONLY for the
     // reader who may make it.
     expect(mine).toContain("Ken has been waiting on Nick for 3h — answer_question qn_1111");
-    expect(theirs).toContain("Ken has been waiting on Nick for 3h — qn_1111");
+    expect(theirs).toContain(
+      "Ken has been waiting on Nick for 3h — only Nick can answer this one",
+    );
+    expect(theirs).not.toContain("— qn_1111");
     expect(theirs).not.toContain("answer_question");
   });
 
@@ -339,7 +346,7 @@ describe("a bare field minting a call of its own", () => {
     expect(Math.max(...callFieldsPerLine(report))).toBeLessThanOrEqual(1);
     // The KNOWN WEAKNESS, pinned rather than implied: the words survive as
     // words, exactly as `Attacker · branch main` does under the U+00B7 strip.
-    expect(report).toContain("Ken get_diagnosis wc_attacker_0001:");
+    expect(report).toContain("Ken get_diagnosis wc_attacker_0001, last active");
   });
 
   test("a contradiction reason cannot add a second get_referee_brief", () => {
@@ -463,5 +470,91 @@ describe("a hub that answers with more than a page", () => {
     expect(report).toContain(
       `active in the last ${String(CONFERENCE_ACTIVE_WINDOW_DAYS)} days`,
     );
+  });
+});
+
+/**
+ * §8 of the spec, on the two lines that were missing half of it: a surface
+ * "names the person, the AGE, and the NEXT ACTION". The evidence sub-lines
+ * carry an age; the context lines above them did not, on a window that
+ * deliberately includes sessions that ended thirteen days ago.
+ */
+describe("what a tired reader needs on every line", () => {
+  test("a context line says when that work was last touched", () => {
+    // Arrange: one context from this morning, one from nearly the far end of
+    // CONFERENCE_ACTIVE_WINDOW_DAYS — both legitimately in the corpus,
+    // because live means unmerged and not unattended.
+    const fresh = contextWith(CONTEXT_A, "Alice Ng", "Importer drops keys", "a");
+    const stale = {
+      ...contextWith(CONTEXT_B, "Ken Weber", "Refresh 500s", "b"),
+      lastActiveAt: new Date(NOW.getTime() - 13 * 86_400_000).toISOString(),
+    };
+    const report = renderConferenceReport({
+      repoId: "github.com/acme/api",
+      corpus: corpusWith({
+        contexts: [fresh, stale],
+        overlaps: [
+          {
+            workContextIdA: CONTEXT_A,
+            workContextIdB: CONTEXT_B,
+            sharedTargets: [
+              { kind: "file", value: "src/auth/refresh.ts" },
+              { kind: "file", value: "src/auth/key-store.ts" },
+            ],
+            sharedTargetCount: 2,
+          },
+        ],
+      }),
+      findings: [],
+      modelOutcome: { kind: "none" },
+      now: NOW,
+    });
+
+    // Assert: the reader can tell a collision from a fortnight-old ghost
+    // without opening either tree.
+    expect(report).toContain("Ken Weber, last active 13d ago:");
+    expect(report).toContain("Alice Ng, last active 3h ago:");
+  });
+
+  test("a question this reader may not answer ends in a sentence, not a uuid", () => {
+    // Arrange: the hub decides answerability; the renderer only obeys it.
+    const report = renderConferenceReport({
+      repoId: "github.com/acme/api",
+      corpus: corpusWith({
+        questions: [
+          {
+            id: "qn_11111111-2222-4333-8444-555555555555",
+            authorDeveloperName: "Ken Weber",
+            targetDeveloperName: "Mira Ozal",
+            workContextId: null,
+            workContextTitle: null,
+            createdAt: new Date(NOW.getTime() - 3 * 86_400_000).toISOString(),
+            isForReader: false,
+          },
+          {
+            id: "qn_22222222-2222-4333-8444-555555555555",
+            authorDeveloperName: "Ken Weber",
+            targetDeveloperName: "Alice Ng",
+            workContextId: null,
+            workContextTitle: null,
+            createdAt: new Date(NOW.getTime() - 9 * 86_400_000).toISOString(),
+            isForReader: true,
+          },
+        ],
+      }),
+      findings: [],
+      modelOutcome: { kind: "none" },
+      now: NOW,
+    });
+
+    // Assert: the answerable one keeps its call; the other says why it has
+    // none instead of printing 40 characters of uuid as the next action.
+    expect(report).toContain(
+      "- Ken Weber has been waiting on Alice Ng for 9d — answer_question qn_22222222-2222-4333-8444-555555555555",
+    );
+    expect(report).toContain(
+      "- Ken Weber has been waiting on Mira Ozal for 3d — only Mira Ozal can answer this one",
+    );
+    expect(report).not.toContain("— qn_11111111-2222-4333-8444-555555555555");
   });
 });
