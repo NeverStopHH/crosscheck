@@ -31,6 +31,16 @@
  * corpus with the payload in every untrusted slot: developer names, titles,
  * intents, claim bodies and their labels, shared target values, and the model's
  * own sentence.
+ *
+ * DESIGN.md §4 states this feature's bounds as figures, and a document that
+ * disagrees with the code is worse than one that stays quiet — DESIGN is where
+ * a reviewer checks whether the bound they were promised is the bound that
+ * runs. verify-claims does not scan Markdown, so the doc is pinned from here
+ * instead. Thousands separators are normalised because the prose writes
+ * "12 000" where the constant is 12000.
+ *
+ * VERIFY: bun -e 'const d=(await Bun.file("docs/DESIGN.md").text()).replace(/(\d) (\d)/g,"$1$2");const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(["`CONFERENCE_MAX_FINDINGS` = "+c.CONFERENCE_MAX_FINDINGS,"`CONFERENCE_MAX_CONTEXTS` = "+s.CONFERENCE_MAX_CONTEXTS,"`CONFERENCE_MAX_CLAIMS_PER_CONTEXT` = "+s.CONFERENCE_MAX_CLAIMS_PER_CONTEXT,"`CONFERENCE_MAX_INPUT_CHARS` = "+c.CONFERENCE_MAX_INPUT_CHARS,"`CONFERENCE_MAX_WALL_MS` = "+c.CONFERENCE_MAX_WALL_MS/1000+" s","`CONFERENCE_DERIVED_CONFIDENCE` = "+c.CONFERENCE_DERIVED_CONFIDENCE,"last "+s.CONFERENCE_ACTIVE_WINDOW_DAYS+" days"].every((x)=>d.includes(x)))'
+ * PRINTS: true
  */
 import {
   CONFERENCE_BODY_MAX_CHARS,
