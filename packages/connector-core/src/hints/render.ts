@@ -85,6 +85,19 @@ const authorLabel = (name: string | undefined): string => {
  * string itself is never printed, so no fourth untrusted path opens here.
  * Empty for open contexts, unknown kinds, and unparseable timestamps: an
  * undecorated hint, never a wrong label.
+ *
+ * WHAT THE SENTENCE MAY SAY (audit row A2-6). It used to read "from a
+ * diagnosis marked solved 5mo ago", and nothing on this hub is ever MARKED
+ * solved: solvedness is derived fresh on every read from the tree itself — a
+ * standing `likely_root_cause` that is declared, evidence-backed, not
+ * superseded and not deadlocked (packages/server/src/services/solved.ts) — so
+ * there is no flag, nobody who set it, and no way to unset it. The timestamp
+ * is not a marking either: `solvedAt` is the newest qualifying claim's own
+ * createdAt, which is exactly why the briefing spells the identical value
+ * "diagnosed 5mo ago" (briefing/render.ts formatSolvedLine). The label now
+ * states what actually happened — somebody recorded a root cause, and this is
+ * how long ago — which is both true and the reason a reader should weigh this
+ * body differently from an open theory.
  */
 const solvedLabel = (context: HintContext, now: Date): string => {
   if (context.resultKind !== "solved") {
@@ -98,7 +111,7 @@ const solvedLabel = (context: HintContext, now: Date): string => {
     return "";
   }
   const age = formatSolvedAge(Math.max(0, now.getTime() - solvedMs));
-  return ` · from a diagnosis marked solved ${age} ago`;
+  return ` · from a diagnosis whose root cause was recorded ${age} ago`;
 };
 
 const ageLabel = (iso: string, now: Date): string => {

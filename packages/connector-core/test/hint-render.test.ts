@@ -158,7 +158,33 @@ describe("solved-tree hints say what they are (VISION.md §1)", () => {
     });
 
     // Assert
-    expect(text).toContain("from a diagnosis marked solved 5mo ago");
+    expect(text).toContain(
+      "from a diagnosis whose root cause was recorded 5mo ago",
+    );
+  });
+
+  test("the label never claims somebody marked anything (audit row A2-6)", () => {
+    // Nothing on this hub is ever MARKED solved. Solvedness is derived fresh
+    // on every read from the tree itself — a standing likely_root_cause that
+    // is declared, evidence-backed, unsuperseded and undisputed
+    // (services/solved.ts) — and `solvedAt` is that claim's own createdAt,
+    // which is why the briefing spells the identical value "diagnosed 5mo
+    // ago". The old wording invited a reader to go looking for a mark, for
+    // whoever set it, and for a way to unset it; none of the three exists.
+    const text = renderClaimHint({
+      claim: claim({ kind: "root_cause", status: "likely_root_cause" }),
+      context: workContext({
+        resultKind: "solved",
+        solvedAt: "2026-03-10T08:00:00.000Z",
+      }),
+      drift: null,
+      now: NOW,
+    });
+
+    expect(text).not.toContain("marked solved");
+    // The control: the fact itself is still stated on this very line, so the
+    // rule is about the wording and not about a label that stopped printing.
+    expect(text).toContain("root cause was recorded");
   });
 
   test("an open context carries no solved fact", () => {
@@ -171,7 +197,7 @@ describe("solved-tree hints say what they are (VISION.md §1)", () => {
     });
 
     // Assert
-    expect(text).not.toContain("marked solved");
+    expect(text).not.toContain("from a diagnosis");
   });
 
   test("a result kind this renderer does not know is not a solved label", () => {
@@ -187,7 +213,7 @@ describe("solved-tree hints say what they are (VISION.md §1)", () => {
     });
 
     // Assert
-    expect(text).not.toContain("marked solved");
+    expect(text).not.toContain("from a diagnosis");
     expect(text).not.toContain("certified_fresh");
   });
 
@@ -204,7 +230,9 @@ describe("solved-tree hints say what they are (VISION.md §1)", () => {
     });
 
     // Assert
-    expect(text).toContain("from a diagnosis marked solved 5mo ago");
+    expect(text).toContain(
+      "from a diagnosis whose root cause was recorded 5mo ago",
+    );
   });
 });
 
