@@ -56,7 +56,12 @@ import {
   MAX_TITLE_CHARS,
 } from "../constants.ts";
 import { QUOTED_DATA_NOTICE, formatAge } from "../briefing/render.ts";
-import { bareUntrusted, safeId, sanitizeUntrusted } from "../briefing/sanitize.ts";
+import {
+  bareUntrusted,
+  safeId,
+  sanitizeUntrusted,
+  spanRedactedUntrusted,
+} from "../briefing/sanitize.ts";
 import type {
   ConferenceClaim,
   ConferenceContext,
@@ -184,7 +189,10 @@ const evidenceLine = (
   now: Date,
   indent: string,
 ): string | null => {
-  const body = sanitizeUntrusted(claim.body, CONFERENCE_BODY_MAX_CHARS);
+  // BODY class (audit row M14): this line exists to carry the recorded
+  // finding, so a phrase branch takes the phrase and not the evidence. The
+  // TITLE one line up stays label class.
+  const body = spanRedactedUntrusted(claim.body, CONFERENCE_BODY_MAX_CHARS);
   if (body.length === 0) {
     return null;
   }
@@ -202,7 +210,13 @@ const findingLines = (
   finding: ConferenceFinding,
   now: Date,
 ): readonly string[] => {
-  const sentence = sanitizeUntrusted(finding.sentence, CONFERENCE_SENTENCE_MAX_CHARS);
+  // BODY class too, and the one place in this product where a MODEL wrote the
+  // text: same reasoning, one word must not cost the whole finding, and the
+  // span redaction still removes the instruction-shaped part of it.
+  const sentence = spanRedactedUntrusted(
+    finding.sentence,
+    CONFERENCE_SENTENCE_MAX_CHARS,
+  );
   if (sentence.length === 0) {
     return [];
   }

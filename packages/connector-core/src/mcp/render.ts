@@ -89,16 +89,30 @@ export const quoted = (
 ): string => `«${sanitizeUntrusted(raw, maxChars)}»`;
 
 /**
- * The same frame, for text whose BODY is the answer rather than a label.
+ * The same frame, for text whose BODY is the answer rather than a label — the
+ * class rule of audit row M14.
  *
  * `quoted` above blanks the whole value when the phrase filter matches, which
- * is right for a title and wrong for a hub refusal: there the value is the
- * reason and the next call, so blanking it leaves the reader with a redaction
- * marker instead of an address. Everything else is identical — the same clean,
- * the same cap, the same « » — only the phrase branch is narrowed to the span
- * it matched (briefing/sanitize.ts states the trade and who else may use it).
+ * is right for a LABEL (a title is a name for something, and a name that reads
+ * like an instruction is worth losing) and wrong wherever the value IS the
+ * answer: a hub refusal, whose payload is the reason and the next call; a
+ * recorded root cause; a question somebody has to answer. Four of the nine
+ * phrase branches are everyday English inside a real finding — `override`,
+ * `you must`, `disregard`, `act as` — so blanking handed the reader a
+ * redaction marker where the answer should have been, and the AUTHOR never
+ * learned it had happened (`redactionNote` in briefing/sanitize.ts is the
+ * other half of the row).
+ *
+ * Everything else is identical: the same clean, the same cap, the same « »,
+ * the same quoted-data notice around the document. Only the phrase branch is
+ * narrowed to the span it matched, so an attack string is still gone — by the
+ * span rather than by the sentence.
+ *
+ * EXPORTED because the other body surfaces frame too (hints/render.ts,
+ * briefing/questions.ts, conference/report.ts): a second `«${…}»` spelling
+ * would be a second thing to weaken, exactly as the header says of `quoted`.
  */
-const quotedSpanRedacted = (raw: string, maxChars: number): string =>
+export const quotedBody = (raw: string, maxChars: number): string =>
   `«${spanRedactedUntrusted(raw, maxChars)}»`;
 
 /**
@@ -175,7 +189,7 @@ const claimLine = (
     `provenance ${bare(claim.provenance)}`,
     authorLabel(index, claim.authorSessionId),
   ];
-  return `${facts.join(" · ")}${evidence}${seen}: ${quoted(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
+  return `${facts.join(" · ")}${evidence}${seen}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
 };
 
 const edgeLine = (
@@ -185,7 +199,7 @@ const edgeLine = (
   const note =
     edge.note === null || edge.note === undefined || edge.note.length === 0
       ? ""
-      : `: ${quoted(edge.note)}`;
+      : `: ${quotedBody(edge.note, MAX_TITLE_CHARS)}`;
   return `- ${safeId(edge.fromClaimId)} ${bare(edge.kind)} ${safeId(edge.toClaimId)} · by ${authorLabel(index, edge.authorSessionId)}${note}`;
 };
 
@@ -758,7 +772,7 @@ export const renderSearchFilterRefusal = (
     queryLine(quoted(query)),
     "Nothing was searched: a filter did not resolve to what it names, so this is " +
       "not a result about anyone's work.",
-    `The hub said: ${quotedSpanRedacted(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,
+    `The hub said: ${quotedBody(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,
   ].join("\n");
 
 /**

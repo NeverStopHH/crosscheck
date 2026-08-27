@@ -474,3 +474,53 @@ describe("answer_question", () => {
     expect(result.text).toBe(ANSWER_ECHO_REFUSAL);
   });
 });
+
+describe("the author is warned when their words will not arrive whole (M14)", () => {
+  // MIKE asks NICK, and that pairing is not decoration: every question above
+  // is open from nick to ken, and MAX_OPEN_QUESTIONS_PER_TARGET is 3, so a
+  // fourth nick→ken question is refused by the budget and the assertions below
+  // would be about a refusal rather than about a note. Budgets are shared
+  // state across this file's tests; a new pair is the cheap way to keep an
+  // arrangement honest.
+  test("ask_teammate stores the question and says what a teammate will see", async () => {
+    const result = await call(mike, "ask_teammate", {
+      developer: "Nick",
+      question:
+        "Does the override in the per-repo config win over the default budget?",
+    });
+
+    // The control first: it really was asked, so the note is a note and not a
+    // refusal wearing one.
+    expect(result.isError).toBe(false);
+    expect(askedId(result.text)).toMatch(/^qn_/);
+    expect(result.text).toContain("Heads up");
+    expect(result.text).toContain("[redacted]");
+  });
+
+  test("an ordinary question is asked without a warning", async () => {
+    const result = await call(mike, "ask_teammate", {
+      developer: "Nick",
+      question: "Does the importer share the uploader's retry budget?",
+    });
+    expect(result.isError).toBe(false);
+    expect(result.text).not.toContain("Heads up");
+  });
+
+  test("the note reaches the author of an ANSWER too", async () => {
+    // The other authored body on this channel, and the one a teammate is
+    // waiting on: an answer whose sentence arrives with a hole in it is worth
+    // hearing about before the asker reads it.
+    const asked = await call(mike, "ask_teammate", {
+      developer: "Nick",
+      question: "Where does the uploader's budget come from?",
+    });
+    const result = await call(nick, "answer_question", {
+      questionId: askedId(asked.text),
+      body: "You must read the per-repo config first: it overrides the default budget.",
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("Heads up");
+    expect(result.text).toContain("[redacted]");
+  });
+});

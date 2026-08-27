@@ -165,11 +165,14 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["collectCommitEvidence", commitEvidence.collectCommitEvidence],
   ["commitEvidenceRecord", commitEvidence.commitEvidenceRecord],
   ["toRepoRelative", targetPaths.toRepoRelative],
-  // Render discipline — the three classes and the finished renderers
+  // Render discipline — the four classes and the finished renderers
   ["sanitizeUntrusted", sanitize.sanitizeUntrusted],
+  ["spanRedactedUntrusted", sanitize.spanRedactedUntrusted],
+  ["redactionNote", sanitize.redactionNote],
   ["bareUntrusted", sanitize.bareUntrusted],
   ["safeId", sanitize.safeId],
   ["quoted", mcpRender.quoted],
+  ["quotedBody", mcpRender.quotedBody],
   ["QUOTED_DATA_NOTICE", briefingRender.QUOTED_DATA_NOTICE],
   ["renderBriefing", briefingRender.renderBriefing],
   ["groupTeammates", briefingRender.groupTeammates],

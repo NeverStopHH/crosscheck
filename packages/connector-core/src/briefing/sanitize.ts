@@ -447,3 +447,78 @@ export const SAFE_ID_PATTERN = new RegExp(`^[${ID_ALPHABET_SOURCE}]+$`);
  */
 export const safeId = (raw: string): string =>
   raw.replace(ID_ALPHABET, "").slice(0, MAX_ID_CHARS);
+
+/**
+ * What to tell the AUTHOR when their own words will not reach a teammate
+ * intact — the second half of audit row M14.
+ *
+ * A body is stored exactly as written; the redaction happens at RENDER time on
+ * somebody else's machine, which means that without this note the author never
+ * learns that a sentence of theirs arrives with a hole in it, that their stated
+ * intent arrives as a marker, or that the whole item was dropped. The remedy
+ * the moderation literature settles on for hidden content is the cheap one:
+ * tell the author. This is that notification, for the one such rule this
+ * product has.
+ *
+ * IT NEVER QUOTES THE MATCH BACK. Not out of secrecy — the author wrote it —
+ * but because this string is returned into the context of an agent that is
+ * about to act on what it reads, and pasting an instruction-shaped phrase
+ * there is the exact thing the phrase filter exists to prevent. The author
+ * gets a count and the class of the problem; their body is in front of them.
+ *
+ * IT MEASURES THE REAL PIPELINE rather than describing it. The whole-blanking
+ * branch asks `sanitizeUntrusted` itself, by POSITIVE equality on
+ * REDACTED_TITLE, so the note cannot claim a blanking the renderer does not do
+ * (and an unknown future outcome fails closed to "no note"); the span branch
+ * counts with INJECTION_SPAN_PATTERN, the same constant `spanRedactedUntrusted`
+ * replaces with; the vanish branch asks `cleanUntrusted`, which every surface
+ * runs first. A re-typed copy of any of the three would be free to disagree
+ * with the code it describes, which is the defect this file already fixed once
+ * by exporting INJECTION_BRANCHES.
+ *
+ * `blankWhole` names the LABEL class (a work-context title, a stated intent),
+ * where the surface drops the value entirely rather than the span. Null means
+ * nothing would be redacted and the caller says nothing at all — a note on
+ * every ordinary publish would be noise, and noise is what stops warnings
+ * being read.
+ *
+ * There is deliberately no length argument. The count is what the filter
+ * matches in the whole text; a surface that ALSO cuts for length may show
+ * fewer of them, and a note that said "two" where a reader sees one would be
+ * worse than a note that stays about the text the author wrote.
+ */
+export const redactionNote = (
+  raw: string,
+  options: { readonly blankWhole?: boolean } = {},
+): string | null => {
+  const cleaned = cleanUntrusted(raw);
+  if (cleaned.length === 0) {
+    // The severest outcome and the one nothing else reports: every renderer
+    // treats "" as "skip the item", so the author's text does not arrive
+    // shortened — it does not arrive at all, and no surface says so.
+    return (
+      "Heads up: none of this text survives the safety pass teammates read " +
+      "through (it is punctuation, quote marks or invisible characters only), " +
+      "so it reaches nobody. It is stored as written; add words to it."
+    );
+  }
+  if (options.blankWhole === true) {
+    return sanitizeUntrusted(raw) === REDACTED_TITLE
+      ? "Heads up: this text reads as an instruction, so teammates will see it " +
+          `blanked whole as ${REDACTED_TITLE} rather than as your words. ` +
+          "Rephrasing it is the only way through — it is stored either way."
+      : null;
+  }
+  const matches = cleaned.match(INJECTION_SPAN_PATTERN);
+  if (matches === null || matches.length === 0) {
+    return null;
+  }
+  const count = matches.length;
+  const phrases = count === 1 ? "phrase" : "phrases";
+  return (
+    `Heads up: ${String(count)} ${phrases} in this text read as an ` +
+    `instruction, so teammates will see ${REDACTED_SPAN} in their place. ` +
+    "The rest of the sentence arrives; rephrase if those words carried the " +
+    "meaning."
+  );
+};

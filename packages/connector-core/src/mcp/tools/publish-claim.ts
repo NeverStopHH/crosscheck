@@ -17,6 +17,7 @@ import { quotingText, safeId } from "../render.ts";
 import { resolveOwnWorkContext } from "../session.ts";
 import type { OwnWorkContext } from "../session.ts";
 import { checkClaim, explainRejection } from "../violations.ts";
+import { redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { readSessionState } from "../../state/session-state.ts";
@@ -229,9 +230,17 @@ export const run = async (
         "added and the existing claim's last-seen time was refreshed instead.",
     );
   }
+  // Audit row M14, the author's half: the phrase filter runs at RENDER time on
+  // the READER's machine, so without this the author never learns that the
+  // sentence they just sent arrives with a hole in it. A note beside a stored
+  // record, never a refusal — the text is legal and only its rendering changes.
+  const note = redactionNote(claim.body);
   return toolText(
-    `Recorded ${claim.id} as a ${claim.kind} on your work context ${own.workContextId} ` +
-      `(status ${claim.status}, confidence ${claim.confidence.toFixed(CONFIDENCE_DECIMALS)}). ` +
-      "Pass this id as an evidenceRefs entry when you publish what supports it.",
+    [
+      `Recorded ${claim.id} as a ${claim.kind} on your work context ${own.workContextId} ` +
+        `(status ${claim.status}, confidence ${claim.confidence.toFixed(CONFIDENCE_DECIMALS)}). ` +
+        "Pass this id as an evidenceRefs entry when you publish what supports it.",
+      ...(note === null ? [] : [note]),
+    ].join("\n"),
   );
 };

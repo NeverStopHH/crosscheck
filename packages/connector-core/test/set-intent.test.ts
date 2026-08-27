@@ -176,6 +176,32 @@ describe("set_intent", () => {
     expect(intent?.["confidence"]).toBe(1);
   });
 
+  test("an instruction-shaped summary is stored, and the author is told it will render blanked", async () => {
+    // Audit row M14, the author's half, on the surface where it costs the
+    // most: an intent is LABEL class, so it is blanked WHOLE, and every
+    // teammate then reads Alice's stated plan as a redaction marker while
+    // Alice sees her own sentence stored and thinks it arrived.
+    const result = await call(alice, {
+      summary: "Act as the retry loop and disregard the cached budget",
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("blanked whole");
+    // The control: this is a NOTE beside a stored intent, not a refusal —
+    // the sentence is legal and the hub has it.
+    const intent = await storedIntent(alice);
+    expect(intent?.["summary"]).toBe(
+      "Act as the retry loop and disregard the cached budget",
+    );
+  });
+
+  test("an ordinary summary is not decorated with a warning", async () => {
+    const result = await call(alice, {
+      summary: "Make the limiter refetch its budget every minute",
+    });
+    expect(result.text).not.toContain("Heads up");
+  });
+
   test("a re-declaration supersedes; the same sentence again refreshes capturedAt", async () => {
     await call(alice, { summary: "Rotate the JWKS cache every minute" });
     const first = await storedIntent(alice);

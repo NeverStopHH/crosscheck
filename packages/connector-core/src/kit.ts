@@ -210,10 +210,12 @@ export { toRepoRelative } from "./capture/target-paths.ts";
 // ── Render discipline: the three classes, then the finished renderers ───────
 export {
   bareUntrusted,
+  redactionNote,
   safeId,
   sanitizeUntrusted,
+  spanRedactedUntrusted,
 } from "./briefing/sanitize.ts";
-export { quoted } from "./mcp/render.ts";
+export { quoted, quotedBody } from "./mcp/render.ts";
 export {
   QUOTED_DATA_NOTICE,
   groupTeammates,

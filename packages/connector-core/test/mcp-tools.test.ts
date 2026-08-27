@@ -293,6 +293,33 @@ describe("publish_claim", () => {
     );
   });
 
+  test("a body with an instruction-shaped phrase is stored and the author is warned", async () => {
+    // Audit row M14, the author's half. The redaction happens at RENDER time
+    // on somebody ELSE's machine, so without this note the author never learns
+    // that their finding reaches a teammate with a hole in it.
+    const result = await call(alice, "publish_claim", {
+      kind: "observation",
+      body: "The per-repo override is read before the default, so the second flush wins",
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("Heads up");
+    expect(result.text).toContain("[redacted]");
+    // The control: a note, not a refusal — the claim is on the tree, whole.
+    const read = await call(alice, "get_diagnosis", {
+      workContextId: alice.workContextId,
+    });
+    expect(read.text).toContain("so the second flush wins");
+  });
+
+  test("an ordinary body is acknowledged without a warning", async () => {
+    const result = await call(alice, "publish_claim", {
+      kind: "observation",
+      body: "The pool leaks one connection for every key rotation",
+    });
+    expect(result.text).not.toContain("Heads up");
+  });
+
   test("reports a re-published claim as already recorded, not as new", async () => {
     // Arrange: the hub's dedup gate is deterministic on normalized body
     // (services/record-handlers.ts) and an agent must not believe it added a

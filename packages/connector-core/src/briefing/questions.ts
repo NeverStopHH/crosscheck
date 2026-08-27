@@ -34,7 +34,12 @@ import {
 } from "../constants.ts";
 import type { InboxQuestion, QuestionCounts } from "../http/hub.ts";
 import { fitEntries } from "./fit.ts";
-import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
+import {
+  bareUntrusted,
+  safeId,
+  sanitizeUntrusted,
+  spanRedactedUntrusted,
+} from "./sanitize.ts";
 
 /** Bounded like a work-context title everywhere else on a briefing line. */
 const MAX_QUESTION_CONTEXT_TITLE_CHARS = 80;
@@ -76,7 +81,11 @@ export const formatQuestionEntry = (
   now: Date,
 ): string | null => {
   const id = safeId(question.id);
-  const body = sanitizeUntrusted(question.body, MAX_QUESTION_BODY_LENGTH);
+  // BODY class, not label class (audit row M14): a question IS its text, and
+  // "you must", "override" and "disregard" are ordinary words in one. Blanking
+  // the whole body left the target a marker they could not answer and the
+  // asker a question that expired for no reason either of them could see.
+  const body = spanRedactedUntrusted(question.body, MAX_QUESTION_BODY_LENGTH);
   const askedAgeMs = ageMsFrom(question.createdAt, now);
   const expiry = formatExpiry(question.expiresAt, now);
   if (

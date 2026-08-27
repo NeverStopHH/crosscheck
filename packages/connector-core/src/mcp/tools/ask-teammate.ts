@@ -26,7 +26,7 @@ import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
 import { quoted, quotingText, safeId } from "../render.ts";
-import { bareUntrusted } from "../../briefing/sanitize.ts";
+import { bareUntrusted, redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { askQuestion } from "../../http/hub.ts";
 import { NO_SESSION, requireOwnContext } from "./publish-claim.ts";
@@ -130,6 +130,12 @@ export const run = async (
   if (!posted.ok) {
     return hubFailure(ctx, posted);
   }
+  // Audit row M14, the author's half: the phrase filter runs at RENDER time on
+  // the READER's machine, so without this the author never learns that the
+  // sentence they just sent arrives with a hole in it. A note beside a stored
+  // record, never a refusal — the text is legal and only its rendering changes.
+  const note = redactionNote(question);
+  const notes = note === null ? [] : [note];
   const framed = quoted(question, MAX_QUESTION_BODY_LENGTH);
   if (posted.data.duplicate) {
     // The house rule, applied to this channel: a record that carries nothing
@@ -140,6 +146,7 @@ export const run = async (
         `You already have that question open as ${safeId(posted.data.questionId ?? "")}: ${framed}.`,
         "Nothing was sent a second time. It is still waiting for an answer, and it " +
           "expires 14 days after you first asked it.",
+        ...notes,
       ),
     );
   }
@@ -159,6 +166,7 @@ export const run = async (
         "their answer reaches you as a hint at one of your next prompts. Nothing " +
         "happens if they do not answer: the question expires after 14 days and " +
         "crosscheck status tells you it did. Do not wait for it — carry on.",
+      ...notes,
     ),
   );
 };

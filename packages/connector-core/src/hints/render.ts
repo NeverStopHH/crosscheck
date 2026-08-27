@@ -4,13 +4,20 @@
  * (DESIGN.md §10 risk 2). It therefore builds from the SAME three classes the
  * briefing and the MCP tools use, imported rather than re-typed:
  *
- *   PROSE  — `quoted` (mcp/render.ts): sanitize + « » frame. One definition,
- *            already covered by the frame mutation in scripts/mutation-check.ts.
+ *   LABEL  — `quoted` (mcp/render.ts): sanitize + « » frame, blanked whole if
+ *            the phrase filter matches. Titles. One definition, already covered
+ *            by the frame mutation in scripts/mutation-check.ts.
+ *   BODY   — `quotedBody` (mcp/render.ts): the same frame and the same cap,
+ *            with the phrase filter narrowed to the SPAN it matched (audit row
+ *            M14). Claim bodies, answers, the question an answer replies to —
+ *            everything whose text IS the answer rather than a name for one.
  *   BARE   — `bareUntrusted` (briefing/sanitize.ts) for short fields outside
  *            the frame: author names, kinds, statuses, branches.
  *   ID     — `safeId` (mcp/render.ts): allowlisted, an agent passes it back.
  *
- * There is no fourth path. Every line carries at most one « » pair — the
+ * There is no fifth path, and LABEL/BODY differ in exactly one branch — both
+ * still NFKC-normalize, strip the invisibles, strip the characters the renderer
+ * owns and cap the length. Every line carries at most one « » pair — the
  * notice, which contains its own pair, gets a line to itself, the same lesson
  * the MCP search header learned (mcp/render.ts `searchHeader`).
  *
@@ -35,7 +42,7 @@ import {
   formatSolvedLine,
 } from "../briefing/render.ts";
 import { bareUntrusted as bare } from "../briefing/sanitize.ts";
-import { quoted, safeId } from "../mcp/render.ts";
+import { quoted, quotedBody, safeId } from "../mcp/render.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import type {
   AnsweredQuestion,
@@ -168,7 +175,7 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     `provenance ${bare(claim.provenance)}`,
     ageLabel(claim.createdAt, now),
   ];
-  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quoted(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
+  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
   const contextLine =
     `Recorded on work context ${safeId(context.id)} ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} — ` +
     "the full tree is readable with get_diagnosis.";
@@ -241,10 +248,10 @@ export const renderAnswerHint = (
     `provenance ${bare(answer.provenance)}`,
     ageLabel(answer.answeredAt, now),
   ];
-  const answerLine = `${facts.join(" · ")}: ${quoted(answer.claimBody, MAX_CLAIM_BODY_LENGTH)}`;
+  const answerLine = `${facts.join(" · ")}: ${quotedBody(answer.claimBody, MAX_CLAIM_BODY_LENGTH)}`;
   // The question on its own line, because both are framed values and every
   // line here carries at most one « » pair.
-  const questionLine = `You asked ${safeId(answer.questionId)}: ${quoted(answer.questionBody, MAX_QUESTION_BODY_LENGTH)}`;
+  const questionLine = `You asked ${safeId(answer.questionId)}: ${quotedBody(answer.questionBody, MAX_QUESTION_BODY_LENGTH)}`;
   // THE NEXT ACTION CARRIES ITS ARGUMENT. get_diagnosis takes exactly one — a
   // work-context id — so naming the tool without it sent the reader's agent to
   // invent an id and collect "Ids are not guessable". An older hub that sends

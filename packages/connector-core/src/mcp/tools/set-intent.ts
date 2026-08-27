@@ -37,6 +37,7 @@ import { quoted, quotingText, safeId } from "../render.ts";
 import type { OwnWorkContext } from "../session.ts";
 import { checkIntent, explainRejection } from "../violations.ts";
 import { renderGhostNotice } from "../../briefing/ghost.ts";
+import { redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { getGhostChecks, postRecords } from "../../http/hub.ts";
@@ -217,11 +218,20 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
     workContextStatus: parsed.value.status === undefined ? fresh.workContextStatus : status,
   }));
   const ghost = await deliverGhostNotice(ctx, own);
+  // Audit row M14, the author's half. An intent is LABEL class — every surface
+  // that shows it blanks it WHOLE when the phrase filter matches — so without
+  // this note the author reads their own sentence back from this tool while
+  // every teammate reads a redaction marker as the author's stated plan. A
+  // note, never a refusal: the sentence is legal, it is stored, and only its
+  // RENDERING is affected.
+  const note = redactionNote(parsed.value.summary, { blankWhole: true });
+  const notes = note === null ? [] : [note];
   const framed = quoted(parsed.value.summary, MAX_INTENT_SUMMARY_CHARS);
   if (outcome?.status === "duplicate") {
     return toolText(
       quotingText(
         `That intent is already recorded on your work context ${safeId(own.workContextId)}: ${framed}. Nothing changed.`,
+        ...notes,
         ...ghost,
       ),
     );
@@ -232,6 +242,7 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
       "It is declared (confidence 1) and replaces any intent crosscheck derived from your " +
         "first prompt; teammates' briefings, prompt hints and the file-overlap tripwire " +
         "now show it. Calling set_intent again supersedes it.",
+      ...notes,
       ...ghost,
     ),
   );

@@ -27,6 +27,7 @@ import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
 import { quoted, quotingText, safeId } from "../render.ts";
 import { checkClaim } from "../violations.ts";
+import { redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { answerQuestion } from "../../http/hub.ts";
@@ -152,12 +153,19 @@ export const run = async (
   if (!posted.ok) {
     return hubFailure(ctx, posted);
   }
+  // Audit row M14, the author's half: the phrase filter runs at RENDER time on
+  // the READER's machine, so without this the author never learns that the
+  // sentence they just sent arrives with a hole in it. A note beside a stored
+  // record, never a refusal — the text is legal and only its rendering changes.
+  const note = redactionNote(parsed.value.body);
+  const notes = note === null ? [] : [note];
   const framed = quoted(parsed.value.body, MAX_CLAIM_BODY_LENGTH);
   if (posted.data.duplicate) {
     return toolText(
       quotingText(
         `That answer is already recorded against ${safeId(parsed.value.questionId)}: ${framed}.`,
         "Nothing was sent a second time.",
+        ...notes,
       ),
     );
   }
@@ -168,6 +176,7 @@ export const run = async (
         "teammate who asked at one of their next prompts. If you learn something " +
         "that changes it, answer again — both answers are kept and the newer one " +
         "arrives beside the first.",
+      ...notes,
     ),
   );
 };

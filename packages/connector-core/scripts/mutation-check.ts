@@ -2876,6 +2876,44 @@ export const MUTATIONS: readonly Mutation[] = [
       "name becomes a lexical match against all of them — and a lexical match " +
       "is what this product turns into an unasked teammate hint",
   },
+  {
+    // Audit row M14, the class rule. A question IS its text, and four of the
+    // nine phrase branches are ordinary English inside one.
+    label: "a question body is blanked whole by the phrase filter",
+    file: `${CORE}/src/briefing/questions.ts`,
+    from: "  const body = spanRedactedUntrusted(question.body, MAX_QUESTION_BODY_LENGTH);",
+    to: "  const body = sanitizeUntrusted(question.body, MAX_QUESTION_BODY_LENGTH);",
+    test: `${CORE}/test/body-redaction.test.ts`,
+    because:
+      "a teammate is handed a redaction marker in place of the question they " +
+      "are being asked to answer, and it expires unanswered because neither " +
+      "of them can see what was lost",
+  },
+  {
+    // Audit row M14, the author's half. The redaction happens on somebody
+    // ELSE's machine, so nothing else in the product can tell the author.
+    label: "the author is never told their words render redacted",
+    file: `${CORE}/src/mcp/tools/publish-claim.ts`,
+    from: "  const note = redactionNote(claim.body);",
+    to: "  const note = null;",
+    test: `${CORE}/test/mcp-tools.test.ts`,
+    because:
+      "the author reads their own sentence back from the tool and believes it " +
+      "arrived, while every teammate reads it with a hole in it",
+  },
+  {
+    // The severest outcome of the safety pass, and the one the phrase filter
+    // never sees: nothing survives the clean, so every surface skips the item.
+    label: "text that reaches nobody is reported as arriving",
+    file: `${CORE}/src/briefing/sanitize.ts`,
+    from: "  if (cleaned.length === 0) {\n    // The severest outcome",
+    to: "  if (false) {\n    // The severest outcome",
+    test: `${CORE}/test/body-redaction.test.ts`,
+    because:
+      "a body of punctuation and quote marks alone cleans to \"\", every " +
+      "renderer reads that as skip-this-item, and the author is told nothing " +
+      "at all while teammates get no line",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -2919,6 +2957,7 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
  * PRINTS: agent-restart.test.ts 1
+ * PRINTS: body-redaction.test.ts 2
  * PRINTS: briefing-parity.test.ts 2
  * PRINTS: briefing-solved.test.ts 3
  * PRINTS: budget.test.ts 1
@@ -2964,7 +3003,7 @@ interface Outcome {
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 6
- * PRINTS: mcp-tools.test.ts 1
+ * PRINTS: mcp-tools.test.ts 2
  * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1
