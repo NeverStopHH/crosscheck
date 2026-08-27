@@ -83,6 +83,12 @@ import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/
 import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
 import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
+import {
+  formatConferenceCost,
+  isConferenceSilentlyDead,
+  readConferenceCost,
+} from "@crosscheck/connector-core/state/conference-cost.ts";
+import type { ConferenceCost } from "@crosscheck/connector-core/state/conference-cost.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
@@ -969,6 +975,30 @@ const checkIntentCost = (states: readonly SessionState[]): Check => {
  * finding-#14 lesson). The runner is the summarizer's, so the remedy is one
  * check down — no second probe.
  */
+/**
+ * The agent conference (VISION.md §2), and the one model-cost line whose
+ * counters are a FILE rather than live session state — a conference is a
+ * command, often a scheduled one, and its history has to survive the session
+ * that is not there.
+ *
+ * NEVER RUN IS A PASS, loudly. This command is opt-in by design and a doctor
+ * that nags a team for not running a synthesis would be the autonomous
+ * background process the feature deliberately is not. What WARNs is a lost
+ * model call, and an answer this machine could not read — a drifted prompt or
+ * a changed binary, which no other surface would ever mention (the finding-#14
+ * lesson).
+ */
+const checkConferenceCost = (cost: ConferenceCost, now: Date): Check => {
+  const line = formatConferenceCost(cost, now);
+  return isConferenceSilentlyDead(cost)
+    ? check(
+        "WARN",
+        "conference",
+        `${line} — see the summarizer runner check; an unreadable answer means the model did not keep the answer format this version parses`,
+      )
+    : check("PASS", "conference", line);
+};
+
 const checkGhostCost = (states: readonly SessionState[]): Check => {
   const cost = summarizeGhostCost(states);
   const line = formatGhostCost(cost);
@@ -1489,6 +1519,10 @@ export const runDoctor = async (
     config.hubUrl,
     identity.repoId,
   );
+  // Its own small file, not session state: a conference is a command — often a
+  // scheduled one — and its history has to survive on a machine where no
+  // session is live at all (state/conference-cost.ts says why).
+  const conferenceCost = await readConferenceCost(config.home, key);
   return summarize([
     configCheck,
     identityCheck,
@@ -1519,6 +1553,7 @@ export const runDoctor = async (
     checkSummarizerCost(liveStates),
     checkIntentCost(liveStates),
     checkGhostCost(liveStates),
+    checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now),
     await checkAbsences(hubCtx, identity.repoId),

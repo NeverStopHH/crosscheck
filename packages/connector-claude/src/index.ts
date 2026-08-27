@@ -26,6 +26,23 @@ export {
   summarizeGhostCost,
 } from "./ghost/cost.ts";
 export type { GhostCost } from "./ghost/cost.ts";
+// The agent conference's model half (VISION.md §2): what `crosscheck
+// conference` shows the model, how it labels the sessions so an answer can be
+// attributed deterministically, and how the answer is read back. No worker
+// entry — a conference is a command a human runs, never a detached spawn.
+export {
+  CONFERENCE_PROMPT,
+  estimateInputTokens,
+  labelSessions,
+  parseConferenceAnswer,
+  renderConferenceInput,
+  resolveConferenceArgv,
+} from "./conference/prompt.ts";
+export type {
+  ConferenceAnswer,
+  LabelledSession,
+  ParsedFinding,
+} from "./conference/prompt.ts";
 // The shared model-cost scan's per-counter summarizers (state/session-state.ts
 // readLiveSessionStates reads the directory once for all three).
 export { summarizeSummarizerCost } from "./summarizer/cost.ts";

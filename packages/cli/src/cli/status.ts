@@ -25,6 +25,10 @@ import { spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
 import {
+  formatConferenceCost,
+  readConferenceCost,
+} from "@crosscheck/connector-core/state/conference-cost.ts";
+import {
   formatGhostCost,
   formatIntentCost,
   formatSummarizerCost,
@@ -87,6 +91,10 @@ export const runStatus = async (
   // then the gated model half with the not-called count named, so a quiet
   // team never reads as a broken runner.
   const ghostCost = summarizeGhostCost(liveStates);
+  // The conference counters (VISION.md §2). A LOCAL file rather than session
+  // state: a conference is a command, often run from a scheduler at 03:00,
+  // and its numbers must survive on a machine with no live session at all.
+  const conferenceCost = await readConferenceCost(config.home, key);
   const drops = await readDropSummary(config.home, key);
   // A batch the ledger itself could not take is recorded as a marker, not a count,
   // so the summed total understates it. `doctor` says the same; both must agree.
@@ -202,6 +210,7 @@ export const runStatus = async (
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `intent: ${formatIntentCost(intentCost)}`,
       `ghost checks: ${formatGhostCost(ghostCost)}`,
+      `conference: ${formatConferenceCost(conferenceCost, now)}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
       "",
     ].join("\n"),

@@ -209,6 +209,35 @@ export const deliveredHintsPath = (home: string, key: string): string =>
 export const presenceCachePath = (home: string, key: string): string =>
   join(home, "cache", `${key}-presence.json`);
 
+/**
+ * Where `crosscheck conference` leaves its reports (VISION.md §2). Under the
+ * crosscheck home rather than in the repo: a report quotes teammates' claims,
+ * so it is private-file material like every other state file here, and a
+ * document that appears in `git status` after a command that promised to
+ * change nothing is a surprise nobody asked for.
+ *
+ * Reports are NOT reaped. They are the artifact the command exists to
+ * produce, and deleting a page a human may not have read yet to save a few
+ * kilobytes is not a trade this project makes silently.
+ */
+export const conferenceDir = (home: string, key: string): string =>
+  join(home, "conferences", key);
+
+/** One report, named by the run's own UTC minute — stable and sortable. */
+export const conferenceReportPath = (
+  home: string,
+  key: string,
+  stamp: string,
+): string => join(conferenceDir(home, key), `conference-${stamp}.md`);
+
+/** The counters `crosscheck status` and `doctor` read for this repo+hub. */
+export const conferenceCostPath = (home: string, key: string): string =>
+  join(home, "state", `${key}-conference.json`);
+
+/** Its lock: two conferences at once must not lose a count between them. */
+export const conferenceCostLockPath = (home: string, key: string): string =>
+  `${conferenceCostPath(home, key)}.lock`;
+
 export const ensureDir = async (path: string): Promise<void> => {
   await mkdir(path, { recursive: true, mode: HOME_DIR_MODE });
 };

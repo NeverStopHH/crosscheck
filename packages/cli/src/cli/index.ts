@@ -1,5 +1,10 @@
 import { EXIT_OK, EXIT_USAGE } from "@crosscheck/connector-core/constants.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import {
+  CONFERENCE_FLAG_PUBLISH,
+  CONFERENCE_USAGE,
+  runConference,
+} from "./conference.ts";
 import { runDoctor } from "./doctor.ts";
 import { interceptHelpOrUnknownFlag } from "./help.ts";
 import type { HelpSpec } from "./help.ts";
@@ -43,6 +48,8 @@ const USAGE = [
   "                            .cursor/mcp.json (Cursor IDE capture, same one-PR install)",
   "  status                    hub, repo, teammates, spool, last sync",
   "  doctor                    diagnose the local install",
+  "  conference [--publish]    read this repo's open work, run ONE bounded",
+  "                            local model pass over it and write a report",
   "  presence [off|on]         hide/show your live presence to teammates",
   "  mute <developer>          stop seeing hints/pointers about them (mute list to review)",
   "  unmute <developer>        see their hints/pointers again",
@@ -93,6 +100,10 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
   },
   status: { usage: STATUS_USAGE },
   doctor: { usage: DOCTOR_USAGE },
+  conference: {
+    usage: CONFERENCE_USAGE,
+    booleanFlags: [CONFERENCE_FLAG_PUBLISH],
+  },
   presence: { usage: PRESENCE_USAGE },
   mute: { usage: MUTE_USAGE },
   unmute: { usage: MUTE_USAGE },
@@ -159,6 +170,10 @@ export const runCli = async (
       return runStatus(env, cwd);
     case "doctor":
       return runDoctor(env, cwd);
+    // VISION.md §2. A human's command and never a hook: the only model call in
+    // this product that is not spawned by a session event.
+    case "conference":
+      return runConference(rest, env, cwd);
     case "presence":
       return runPresence(rest, env, cwd);
     case "mute":
