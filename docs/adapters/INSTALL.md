@@ -111,7 +111,7 @@ to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
   `CLAUDE_CODE_SESSION_*`/child-session/messaging/task-list/SSE-port/
   remote/bridge/resume names, plugin and project-dir variables — the list
   is `PARENT_SESSION_MARKER_PATTERN` in
-  `packages/connector-claude/src/summarizer/worker-env.ts`); the nested
+  `packages/connector-core/src/model/worker-env.ts`); the nested
   `claude` additionally never sees `CROSSCHECK_API_KEY`. `USER` must be in it (the macOS
   keychain lookup keys on it — `Not logged in · Please run /login` is what
   its absence looks like); API-key (`ANTHROPIC_API_KEY`), Bedrock/Vertex

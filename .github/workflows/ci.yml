@@ -147,7 +147,7 @@ jobs:
     # PRINTS: summarizer/cost.ts 1
     # PRINTS: summarizer/gate.ts 6
     # PRINTS: summarizer/transcript.ts 2
-    # PRINTS: summarizer/worker.ts 2
+    # PRINTS: summarizer/worker.ts 1
     # PRINTS: briefing/context-group.ts 1
     # PRINTS: briefing/ghost.ts 2
     # PRINTS: briefing/intent.ts 1
@@ -177,6 +177,7 @@ jobs:
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/search-related-work.ts 1
     # PRINTS: mcp/tools/set-intent.ts 2
+    # PRINTS: model/gates.ts 1
     # PRINTS: model/runner.ts 1
     # PRINTS: model/worker-env.ts 1
     # PRINTS: spool/reap.ts 1
@@ -231,6 +232,7 @@ jobs:
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 1
     # PRINTS: gate.ts 6
+    # PRINTS: gates.ts 1
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: hint.ts 2
@@ -282,7 +284,7 @@ jobs:
     # PRINTS: transcript.ts 2
     # PRINTS: user-prompt-submit.ts 1
     # PRINTS: worker-env.ts 1
-    # PRINTS: worker.ts 7
+    # PRINTS: worker.ts 6
     name: Mutation proof
     runs-on: ubuntu-latest
     steps:

@@ -3025,7 +3025,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // The shape a tail-degraded slice produces most: the conversation
     // continuing, filed as somebody's finding.
     label: "a role-played plan is filed as a teammate-visible draft",
-    file: `${CONNECTOR}/src/summarizer/worker.ts`,
+    file: `${CORE}/src/model/gates.ts`,
     from: "  if (isRolePlayAnswer(draft.body)) {",
     to: "  if (false) {",
     test: `${CONNECTOR}/test/summarizer-worker.test.ts`,
