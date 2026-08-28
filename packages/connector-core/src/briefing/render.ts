@@ -710,13 +710,23 @@ const renderSolvedSection = (input: BriefingInput): Section => {
  * confirm/edit/discard, which needs the assertion in front of the agent.
  * Still sanitized and capped: it is LLM-derived text, not trusted bytes.
  * Null = a row this renderer will not vouch for.
+ *
+ * BODY class, by the same rule the rest of M14 follows, and this surface is
+ * the one where the LABEL trade ("a name that reads like an instruction is
+ * worth losing") is most obviously wrong: the sentence IS the decision. It is
+ * also the only body surface with no author to warn — `redactionNote` is
+ * addressed to the person who typed the words, and nobody typed these; the
+ * Stop-hook summarizer wrote them on this machine. Blanked whole, the loop
+ * asked the agent to confirm, edit or discard a hole, and the same body then
+ * came back blanked a second time from review_draft's own confirmation while
+ * get_diagnosis showed it span-redacted — one text, three renderings.
  */
 export const formatDraftLine = (
   entry: DraftEntry,
   now: Date,
 ): string | null => {
   const id = safeId(entry.id);
-  const body = sanitizeUntrusted(entry.body, MAX_TITLE_CHARS);
+  const body = spanRedactedUntrusted(entry.body, MAX_TITLE_CHARS);
   const ageMs = ageMsFrom(entry.createdAt, now);
   if (id.length === 0 || body.length === 0 || ageMs === null) {
     return null;

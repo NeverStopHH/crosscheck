@@ -2949,6 +2949,32 @@ export const MUTATIONS: readonly Mutation[] = [
       "of them can see what was lost",
   },
   {
+    // Audit row M14 on the one body surface with no author to warn: the
+    // summarizer wrote this text on the reader's own machine, so a redaction
+    // here is visible to nobody at all.
+    label: "the reader's own draft reminder is blanked whole",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const body = spanRedactedUntrusted(entry.body, MAX_TITLE_CHARS);",
+    to: "  const body = sanitizeUntrusted(entry.body, MAX_TITLE_CHARS);",
+    test: `${CORE}/test/body-redaction.test.ts`,
+    because:
+      "the promotion loop asks the agent to confirm, edit or discard an " +
+      "assertion it cannot read, so a correct finding is unpromotable from " +
+      "the surface built to promote it — and no note tells anybody why",
+  },
+  {
+    // The other end of the same loop.
+    label: "the promote echo blanks the claim it just promoted",
+    file: `${CORE}/src/mcp/tools/review-draft.ts`,
+    from: "${quotedBody(body, MAX_CLAIM_BODY_LENGTH)}",
+    to: "${`«${sanitizeUntrusted(body, MAX_CLAIM_BODY_LENGTH)}»`}",
+    test: `${CORE}/test/body-redaction.test.ts`,
+    because:
+      "the agent asks which assertion it promoted and is answered with a " +
+      "redaction marker, so it cannot tell a successful promotion from a " +
+      "destroyed one",
+  },
+  {
     // Audit row M14's class rule, at its single definition. The two classes
     // are one character apart in the source and opposite in effect, and the
     // author-facing echoes reached the wrong one for a release.
