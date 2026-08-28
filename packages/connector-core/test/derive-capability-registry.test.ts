@@ -144,6 +144,7 @@ interface ConnectorPackage {
 const MANIFEST_EXPORTS: Readonly<Record<string, string>> = {
   "connector-claude": "CLAUDE_CAPABILITY_MANIFEST",
   "connector-cursor": "CURSOR_CAPABILITY_MANIFEST",
+  "connector-acp": "ACP_CAPABILITY_MANIFEST",
 };
 
 const loadPackages = async (): Promise<readonly ConnectorPackage[]> => {

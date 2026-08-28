@@ -1577,7 +1577,34 @@ export const runDoctor = async (
     skewCheck,
     bunfigCheck,
     ...(await checkCursor(identity.root, env, config.home, key, liveStates)),
+    ...(await checkAcp(config.home, liveStates)),
   ]);
+};
+
+/**
+ * The ACP section, owned by connector-acp: what crosscheck infers behind the
+ * transparent proxy and every refusal, one sentence each — or, on a machine
+ * that has never run the proxy, ONE line saying so. DYNAMIC import like the
+ * bin's `acp` branch and like the Cursor section beside it, and its failure is
+ * contained the same way: a broken acp package must cost its section, never
+ * the doctor.
+ */
+const checkAcp = async (
+  home: string,
+  liveStates: readonly SessionState[],
+): Promise<readonly Check[]> => {
+  try {
+    const { acpDoctorChecks } = await import("@crosscheck/connector-acp");
+    // The SAME session scan the model-cost lines above used; the ACP section
+    // filters it to sessions whose host key carries the `acp-` prefix, so a
+    // Claude session's booked failure can never light up an ACP rung.
+    const checks = await acpDoctorChecks({ home, liveStates });
+    return checks.map((entry) => check(entry.level, entry.name, entry.detail));
+  } catch {
+    return [
+      check("WARN", "acp proxy", "acp section unavailable (connector-acp failed to load)"),
+    ];
+  }
 };
 
 /**
