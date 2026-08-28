@@ -35,33 +35,33 @@ import {
   EXIT_OK,
   GHOST_DERIVED_CONFIDENCE,
   GHOST_SENTENCE_MAX_CHARS,
-} from "@crosscheck/connector-core/constants.ts";
+} from "../../constants.ts";
 import { MAX_INTENT_SUMMARY_CHARS } from "@crosscheck/schema";
-import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
-import { loadReportableConfig } from "@crosscheck/connector-core/config/config.ts";
-import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths.ts";
-import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { cutWellFormed } from "../../briefing/cut.ts";
+import { loadReportableConfig } from "../../config/config.ts";
+import { crosscheckHome, repoKey } from "../../config/paths.ts";
+import type { Env } from "../../config/paths.ts";
 import {
   buildEnvelope,
   UNKNOWN_DEVELOPER_ID,
-} from "@crosscheck/connector-core/capture/records.ts";
-import { ghostDraftBody } from "@crosscheck/connector-core/briefing/ghost.ts";
-import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
-import { readDeliveredHintHashes } from "@crosscheck/connector-core/hints/delivered-store.ts";
+} from "../../capture/records.ts";
+import { ghostDraftBody } from "../../briefing/ghost.ts";
+import { containsSecret } from "../../capture/secret-scan.ts";
+import { readDeliveredHintHashes } from "../../hints/delivered-store.ts";
 import {
   isEchoOfDeliveredHint,
   isRestatementOf,
-} from "@crosscheck/connector-core/hints/echo.ts";
-import { getDiagnosis, getGhostChecks } from "@crosscheck/connector-core/http/hub.ts";
-import type { GhostCheckEntry, HubContext } from "@crosscheck/connector-core/http/hub.ts";
-import { checkClaim } from "@crosscheck/connector-core/mcp/violations.ts";
-import { mintClaimId } from "@crosscheck/connector-core/mcp/tools/shared.ts";
-import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
+} from "../../hints/echo.ts";
+import { getDiagnosis, getGhostChecks } from "../../http/hub.ts";
+import type { GhostCheckEntry, HubContext } from "../../http/hub.ts";
+import { checkClaim } from "../../mcp/violations.ts";
+import { mintClaimId } from "../../mcp/tools/shared.ts";
+import { appendRecords } from "../../spool/append.ts";
 import {
   readSessionState,
   updateSessionState,
-} from "@crosscheck/connector-core/state/session-state.ts";
-import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+} from "../../state/session-state.ts";
+import type { SessionState } from "../../state/session-state.ts";
 import {
   hasGhostAllowance,
   withGhostDraft,
@@ -73,13 +73,13 @@ import {
 } from "./gate.ts";
 import { declaredClaims, renderGhostInput, resolveGhostArgv } from "./prompt.ts";
 import type { DeclaredClaim } from "./prompt.ts";
-import { isNoneAnswer } from "@crosscheck/connector-core/model/parse.ts";
+import { isNoneAnswer } from "../../model/parse.ts";
 import {
   formatSummarizerFailure,
   resolveSummarizerTimeoutMs,
   runSummarizer,
-} from "@crosscheck/connector-core/model/runner.ts";
-import { ensureSummarizerCwd } from "@crosscheck/connector-core/model/worker-env.ts";
+} from "../../model/runner.ts";
+import { ensureSummarizerCwd } from "../../model/worker-env.ts";
 
 export interface GhostWorkerArgs {
   readonly claudeSessionId: string;

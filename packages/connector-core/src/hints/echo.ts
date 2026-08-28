@@ -37,7 +37,7 @@ export const isEchoOfDeliveredHint = (
 /**
  * The same rule where the ORIGINAL TEXT is still in hand rather than only its
  * hash — the ghost worker, which holds the very claim bodies it just showed
- * the model (connector-claude ghost/worker.ts).
+ * the model (core derive/ghost/worker.ts).
  *
  * IT IS CONTAINMENT, NOT EQUALITY, and that is the whole reason it exists. A
  * hash matches one string; an answer reaches this guard REDUCED — the first

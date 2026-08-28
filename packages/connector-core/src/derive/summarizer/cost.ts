@@ -20,9 +20,9 @@
 import {
   DOCTOR_SUMMARIZER_REJECTED_WARN,
   DOCTOR_SUMMARIZER_SILENT_FIRES_WARN,
-} from "@crosscheck/connector-core/constants.ts";
-import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
-import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+} from "../../constants.ts";
+import { readLiveSessionStates } from "../../state/session-state.ts";
+import type { SessionState } from "../../state/session-state.ts";
 
 export interface SummarizerCost {
   /** Live sessions of this repo+hub that were counted. */

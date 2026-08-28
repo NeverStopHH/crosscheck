@@ -15,7 +15,7 @@ import {
   deriveSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { withSummarizerFailure } from "../src/summarizer/gate.ts";
+import { withSummarizerFailure } from "@crosscheck/connector-core/derive/summarizer/gate.ts";
 import { formatSummarizerFailure } from "@crosscheck/connector-core/model/runner.ts";
 
 const baseState = (): SessionState =>

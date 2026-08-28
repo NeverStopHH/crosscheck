@@ -2,7 +2,7 @@
  * Ghost commits, deterministic half (VISION.md §3): which teammate's LIVE
  * plan overlaps the reader's own, and on what. No model runs here and none
  * has to — this query alone yields a factual notice, and the model layer
- * above it (connector-claude ghost/worker.ts) is gated on this returning a
+ * above it (core derive/ghost/worker.ts) is gated on this returning a
  * candidate, so a repo with no overlap costs no tokens at all.
  *
  * FOUR SIGNALS, ONE RULE EACH, no score. A foreign context qualifies when it

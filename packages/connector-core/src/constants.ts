@@ -379,7 +379,7 @@ export const DETACHED_SUBJECT_MAX_CHARS = 60;
  */
 export const INTENT_MAX_CHARS = 120;
 /**
- * "Substantive" for the derived-intent fire (connector-claude intent/gate.ts):
+ * "Substantive" for the derived-intent fire (core derive/intent/gate.ts):
  * the FIRST user prompt of a session at least this long — below it sits
  * "yes", "go on", "/clear", a pasted path — and not a slash command, not a
  * bare yes/no, with at least one word of HINT_MIN_TOKEN_CHARS. One fire per

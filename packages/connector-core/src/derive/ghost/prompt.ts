@@ -28,11 +28,11 @@ import {
   GHOST_MAX_TEAMMATE_CLAIMS,
   GHOST_SENTENCE_MAX_CHARS,
   SUMMARIZER_MODEL,
-} from "@crosscheck/connector-core/constants.ts";
-import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
-import type { DiagnosisClaim } from "@crosscheck/connector-core/http/hub.ts";
-import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { SUMMARIZER_LEAN_FLAGS } from "@crosscheck/connector-core/model/runner.ts";
+} from "../../constants.ts";
+import { cutWellFormed } from "../../briefing/cut.ts";
+import type { DiagnosisClaim } from "../../http/hub.ts";
+import type { Env } from "../../config/paths.ts";
+import { SUMMARIZER_LEAN_FLAGS } from "../../model/runner.ts";
 
 /** Only what a person or their agent stated — never a machine draft. */
 const DECLARED_PROVENANCE = "declared";
@@ -48,7 +48,7 @@ const DECLARED_PROVENANCE = "declared";
  * will find one; being told that agreement is the normal outcome is the only
  * lever this design has on that.
  *
- * VERIFY: bun -e 'const p=await import("./packages/connector-claude/src/ghost/prompt.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(p.GHOST_PROMPT.includes(`at most ${c.GHOST_SENTENCE_MAX_CHARS} characters`))'
+ * VERIFY: bun -e 'const p=await import("./packages/connector-core/src/derive/ghost/prompt.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(p.GHOST_PROMPT.includes(`at most ${c.GHOST_SENTENCE_MAX_CHARS} characters`))'
  * PRINTS: true
  */
 export const GHOST_PROMPT =

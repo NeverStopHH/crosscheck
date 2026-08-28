@@ -58,8 +58,8 @@ import {
   readSessionState,
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
-import { hasGhostAllowance, withGhostClaimed } from "../ghost/gate.ts";
-import { isSubstantivePrompt, withIntentFire } from "../intent/gate.ts";
+import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
+import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
 import { summarizerWorkerEnv } from "@crosscheck/connector-core/model/worker-env.ts";
 import type { HookContext } from "./runner.ts";
 

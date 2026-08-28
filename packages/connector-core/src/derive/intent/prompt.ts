@@ -8,9 +8,9 @@
  */
 import {
   SUMMARIZER_LEAN_FLAGS,
-} from "@crosscheck/connector-core/model/runner.ts";
-import { INTENT_MAX_CHARS, SUMMARIZER_MODEL } from "@crosscheck/connector-core/constants.ts";
-import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+} from "../../model/runner.ts";
+import { INTENT_MAX_CHARS, SUMMARIZER_MODEL } from "../../constants.ts";
+import type { Env } from "../../config/paths.ts";
 
 /**
  * One sentence or NONE. Third person, bounded, and explicitly NOT the prompt
@@ -26,7 +26,7 @@ import type { Env } from "@crosscheck/connector-core/config/paths.ts";
  * sentence it was told to keep short — the one thing a one-line intent
  * cannot afford. Pinned by test/intent-worker.test.ts.
  *
- * VERIFY: bun -e 'const p=await import("./packages/connector-claude/src/intent/prompt.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(p.INTENT_PROMPT.includes(`at most ${c.INTENT_MAX_CHARS} characters`))'
+ * VERIFY: bun -e 'const p=await import("./packages/connector-core/src/derive/intent/prompt.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(p.INTENT_PROMPT.includes(`at most ${c.INTENT_MAX_CHARS} characters`))'
  * PRINTS: true
  */
 export const INTENT_PROMPT =

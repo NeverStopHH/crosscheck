@@ -30,12 +30,11 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   // (registered in core as hint-flow); user-prompt-submit.ts no longer touches
   // the render layer itself, so a row here would be a decorative registration
   // the registry test rejects.
-  {
-    kind: "composite",
-    name: "claude-ghost-draft",
-    module: "src/ghost/worker.ts",
-    note: "the draft body is composed by ghostDraftBody, the registered core surface briefing-ghost-draft-body, which is where the hostile corpus attacks the teammate name and context id; the sentence beside them is this machine's own model output, bounded, echo-checked and secret-scanned here, and framed by formatDraftLine when it is shown",
-  },
+  // `claude-ghost-draft` is no longer registered here: the ghost worker moved
+  // to connector-core (src/derive/ghost/worker.ts) so Cursor and ACP can pay
+  // the same debt, and its registration moved with it (core's
+  // `derive-ghost-draft`). A row here would name a module this package no
+  // longer contains.
   {
     kind: "composite",
     name: "claude-tripwire-ask",

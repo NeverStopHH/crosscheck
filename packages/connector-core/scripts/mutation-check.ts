@@ -1592,7 +1592,7 @@ export const MUTATIONS: readonly Mutation[] = [
   // gate — the exact un-widening that WAS finding #12.
   {
     label: "the gate stops hearing declared verdicts",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from:
       "  (hasVerdictLanguage(sliceText) ||\n" +
       "    hasRejectionLanguage(sliceText) ||\n",
@@ -1605,7 +1605,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "the gate stops hearing ruled-out approaches",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from:
       "    hasRejectionLanguage(sliceText) ||\n    hasSuiteFlip(sliceText) ||\n",
     to: "    hasSuiteFlip(sliceText) ||\n",
@@ -1617,7 +1617,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "a suite flipping red to green stops being a conclusion",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from:
       "    hasSuiteFlip(sliceText) ||\n    hasReviewFindingSignal(sliceText)) &&\n",
     to: "    hasReviewFindingSignal(sliceText)) &&\n",
@@ -1629,7 +1629,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "a verdict-free findings list stops being a conclusion",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from: "    hasReviewFindingSignal(sliceText)) &&\n",
     to: "    false) &&\n",
     test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
@@ -1642,7 +1642,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "review findings stop anchoring the conclusion gate",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from: "    hasReviewFindingShape(sliceText) ||\n",
     to: "",
     test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
@@ -1655,7 +1655,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "commit and merge boundaries stop anchoring the conclusion gate",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from: "    hasCommitBoundary(sliceText));",
     to: "    false);",
     test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
@@ -1875,7 +1875,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // The privacy line of the whole feature: the raw prompt never leaves the
     // machine, only the model's one sentence. This ships the prompt instead.
     label: "the intent worker ships the raw prompt",
-    file: `${CONNECTOR}/src/intent/worker.ts`,
+    file: `${CORE}/src/derive/intent/worker.ts`,
     from: "    summary: sentence,",
     to: "    summary: cutWellFormed(prompt, MAX_INTENT_SUMMARY_CHARS),",
     test: `${CONNECTOR}/test/intent-worker.test.ts`,
@@ -2411,7 +2411,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // every quiet team, and the outcome booked as a fire rather than as the
     // free skip it is.
     label: "a ghost check runs with nobody to compare against",
-    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    file: `${CORE}/src/derive/ghost/worker.ts`,
     from: `  const candidate = overlaps.data[0];
   if (candidate === undefined) {
     // THE GATE, and the reason this feature costs a quiet repo nothing.
@@ -2439,7 +2439,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // without it `review_draft` shows a finding about a collision with
     // nobody, with no tree to open and no person to ask.
     label: "a ghost draft names nobody",
-    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    file: `${CORE}/src/derive/ghost/worker.ts`,
     from: "    body: ghostDraftBody(sentence, candidate),",
     to: "    body: sentence,",
     test: `${CONNECTOR}/test/ghost-worker.test.ts`,
@@ -2454,7 +2454,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // model was just shown is spooled as this session's derived observation,
     // under a fresh id and a fresh timestamp.
     label: "a ghost sentence repeats the claim it was shown",
-    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    file: `${CORE}/src/derive/ghost/worker.ts`,
     from:
       "  const shownTexts = shownClaims.flatMap((claim) => [claim.body, claim.line]);",
     to: "  const shownTexts: readonly string[] = [];",
@@ -2469,7 +2469,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // `kind (status): body` and asked for a finding, so what it repeats is
     // the BODY — hashing only the labelled line guards a shape nobody sends.
     label: "the echo key only knows the label, not the claim",
-    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    file: `${CORE}/src/derive/ghost/worker.ts`,
     from:
       "  const shownTexts = shownClaims.flatMap((claim) => [claim.body, claim.line]);",
     to: "  const shownTexts = shownClaims.map((claim) => claim.line);",
@@ -2589,7 +2589,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // means a booked failure can sit through a whole session unreported —
     // which is why ANY failure warns, and this drops that branch.
     label: "a booked ghost failure stops warning anybody",
-    file: `${CONNECTOR}/src/ghost/cost.ts`,
+    file: `${CORE}/src/derive/ghost/cost.ts`,
     from: `export const isGhostSilentlyDead = (cost: GhostCost): boolean =>
   cost.fails > 0 ||
   (cost.fires >= DOCTOR_GHOST_SILENT_FIRES_WARN && cost.nones + cost.drafts === 0);`,
@@ -3048,7 +3048,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // Two different remedies: a dead runner and a model whose every answer is
     // refused. Folding them sends the reader to the wrong check.
     label: "doctor stops warning when every answer is refused",
-    file: `${CONNECTOR}/src/summarizer/cost.ts`,
+    file: `${CORE}/src/derive/summarizer/cost.ts`,
     from: "  cost.rejects >= DOCTOR_SUMMARIZER_REJECTED_WARN && cost.drafts === 0;",
     to: "  false;",
     test: "packages/cli/test/summarizer-cost.test.ts",

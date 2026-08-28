@@ -38,7 +38,7 @@ export const IntentEntrySchema = z.looseObject({
   // whole intent because a hub sent a long one would cost an ordinary row its
   // plan clause. The renderers cut at INTENT_MAX_CHARS (briefing/intent.ts)
   // and the ghost worker at MAX_INTENT_SUMMARY_CHARS before this sentence
-  // reaches a model's stdin (connector-claude ghost/worker.ts).
+  // reaches a model's stdin (core derive/ghost/worker.ts).
   summary: z.string().min(1),
   provenance: z.string().min(1),
   confidence: z.number().min(0).max(1).optional(),

@@ -9,9 +9,9 @@ import {
   HINT_MIN_TOKEN_CHARS,
   INTENT_MIN_PROMPT_CHARS,
   SUMMARIZER_FAILURE_MAX_CHARS,
-} from "@crosscheck/connector-core/constants.ts";
-import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
-import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+} from "../../constants.ts";
+import { cutWellFormed } from "../../briefing/cut.ts";
+import type { SessionState } from "../../state/session-state.ts";
 
 /**
  * A bare acknowledgement is not a task: "yes", "ok go ahead", "continue.",

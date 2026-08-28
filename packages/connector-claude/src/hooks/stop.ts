@@ -27,7 +27,7 @@ import {
   summarizerFireAllowed,
   withStopTurn,
   withSummarizerFire,
-} from "../summarizer/gate.ts";
+} from "@crosscheck/connector-core/derive/summarizer/gate.ts";
 import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
 import { extractSliceText, readTurnSlice } from "../summarizer/transcript.ts";
 import type { TurnSlice } from "../summarizer/transcript.ts";

@@ -30,7 +30,7 @@ import {
   withSummarizerFailure,
   withSummarizerNone,
   withSummarizerRejection,
-} from "./gate.ts";
+} from "@crosscheck/connector-core/derive/summarizer/gate.ts";
 import { gateModelAnswer } from "@crosscheck/connector-core/model/gates.ts";
 import {
   formatSummarizerFailure,

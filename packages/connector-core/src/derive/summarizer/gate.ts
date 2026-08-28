@@ -23,9 +23,9 @@ import {
   SUMMARIZER_DEBOUNCE_TURNS,
   SUMMARIZER_FAILURE_MAX_CHARS,
   SUMMARIZER_MAX_FIRES_PER_SESSION,
-} from "@crosscheck/connector-core/constants.ts";
-import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
-import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+} from "../../constants.ts";
+import { cutWellFormed } from "../../briefing/cut.ts";
+import type { SessionState } from "../../state/session-state.ts";
 
 /**
  * A test runner invoked as a command. Anchored to a word boundary on both

@@ -11,22 +11,22 @@ export {
   isSummarizerAlwaysRejected,
   isSummarizerSilentlyDead,
   readSummarizerCost,
-} from "./summarizer/cost.ts";
+} from "@crosscheck/connector-core/derive/summarizer/cost.ts";
 // The derived-intent surface (trial finding #16): the worker entry the
 // prompt hook spawns, and the cost read/format pair `status`/`doctor` print.
-export { runIntentWorker } from "./intent/worker.ts";
-export { formatIntentCost, isIntentSilentlyDead, readIntentCost } from "./intent/cost.ts";
-export type { IntentCost } from "./intent/cost.ts";
+export { runIntentWorker } from "@crosscheck/connector-core/derive/intent/worker.ts";
+export { formatIntentCost, isIntentSilentlyDead, readIntentCost } from "@crosscheck/connector-core/derive/intent/cost.ts";
+export type { IntentCost } from "@crosscheck/connector-core/derive/intent/cost.ts";
 // The gated ghost-check surface (VISION.md §3): the worker entry the prompt
 // hook spawns when a recorded intent still owes a comparison.
-export { runGhostWorker } from "./ghost/worker.ts";
+export { runGhostWorker } from "@crosscheck/connector-core/derive/ghost/worker.ts";
 export {
   formatGhostCost,
   isGhostSilentlyDead,
   readGhostCost,
   summarizeGhostCost,
-} from "./ghost/cost.ts";
-export type { GhostCost } from "./ghost/cost.ts";
+} from "@crosscheck/connector-core/derive/ghost/cost.ts";
+export type { GhostCost } from "@crosscheck/connector-core/derive/ghost/cost.ts";
 // The agent conference's model half (VISION.md §2): what `crosscheck
 // conference` shows the model, how it labels the sessions so an answer can be
 // attributed deterministically, and how the answer is read back. No worker
@@ -47,8 +47,8 @@ export type {
 } from "./conference/prompt.ts";
 // The shared model-cost scan's per-counter summarizers (state/session-state.ts
 // readLiveSessionStates reads the directory once for all three).
-export { summarizeSummarizerCost } from "./summarizer/cost.ts";
-export { summarizeIntentCost } from "./intent/cost.ts";
+export { summarizeSummarizerCost } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
+export { summarizeIntentCost } from "@crosscheck/connector-core/derive/intent/cost.ts";
 // The runner's own surface for `doctor` (trial finding #14): the real argv,
 // the real worker env, the booked-failure formatter and the active probe.
 //

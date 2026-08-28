@@ -7,6 +7,6 @@
  * input is named by flags (the prompt FILE, never the prompt) — and the exit
  * code is the worker's own (nothing downstream reads it).
  */
-import { runIntentWorker } from "./worker.ts";
+import { runIntentWorker } from "@crosscheck/connector-core/derive/intent/worker.ts";
 
 process.exit(await runIntentWorker(process.argv.slice(2), process.env));

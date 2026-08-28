@@ -39,7 +39,7 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
-import { intentSummaryOf, runGhostWorker } from "../src/ghost/worker.ts";
+import { intentSummaryOf, runGhostWorker } from "@crosscheck/connector-core/derive/ghost/worker.ts";
 
 const ADMIN_TOKEN = "ghost-worker-admin";
 const REPO_ID = "github.com/acme/api";

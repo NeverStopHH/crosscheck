@@ -42,7 +42,7 @@ import {
   isCaptureMoment,
   isConclusionMoment,
   isDiagnosisMoment,
-} from "../src/summarizer/gate.ts";
+} from "@crosscheck/connector-core/derive/summarizer/gate.ts";
 import { parseSummarizerOutput } from "@crosscheck/connector-core/model/parse.ts";
 import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
 import { extractSliceText, readTurnSlice } from "../src/summarizer/transcript.ts";

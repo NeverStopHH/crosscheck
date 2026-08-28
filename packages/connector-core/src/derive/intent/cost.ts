@@ -10,9 +10,9 @@
  * per session state — so there is no token estimate here: the count IS the
  * spend indicator.
  */
-import { DOCTOR_INTENT_SILENT_FIRES_WARN } from "@crosscheck/connector-core/constants.ts";
-import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
-import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { DOCTOR_INTENT_SILENT_FIRES_WARN } from "../../constants.ts";
+import { readLiveSessionStates } from "../../state/session-state.ts";
+import type { SessionState } from "../../state/session-state.ts";
 
 export interface IntentCost {
   /** Live sessions of this repo+hub that were counted. */

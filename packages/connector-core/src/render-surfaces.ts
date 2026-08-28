@@ -615,6 +615,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       }),
   },
   {
+    kind: "composite",
+    name: "derive-ghost-draft",
+    module: "src/derive/ghost/worker.ts",
+    note: "the draft body is composed by ghostDraftBody, the registered core surface briefing-ghost-draft-body, which is where the hostile corpus attacks the teammate name and context id; the sentence beside them is this machine's own model output, bounded, echo-checked and secret-scanned here, and framed by formatDraftLine when it is shown",
+  },
+  {
     kind: "corpus",
     name: "open-questions-list",
     module: "src/mcp/tools/list-open-questions.ts",

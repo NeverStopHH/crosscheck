@@ -25,7 +25,7 @@ import {
   withSummarizerDraft,
   withSummarizerFire,
   withSummarizerNone,
-} from "../src/summarizer/gate.ts";
+} from "@crosscheck/connector-core/derive/summarizer/gate.ts";
 import {
   extractSliceText,
   OMITTED_MARKER,

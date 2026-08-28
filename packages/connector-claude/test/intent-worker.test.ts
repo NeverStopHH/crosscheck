@@ -31,8 +31,8 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome } from "../../connector-core/test/helpers.ts";
 import { INTENT_MAX_CHARS } from "@crosscheck/connector-core/constants.ts";
-import { resolveIntentArgv } from "../src/intent/prompt.ts";
-import { parseIntentWorkerArgs, runIntentWorker } from "../src/intent/worker.ts";
+import { resolveIntentArgv } from "@crosscheck/connector-core/derive/intent/prompt.ts";
+import { parseIntentWorkerArgs, runIntentWorker } from "@crosscheck/connector-core/derive/intent/worker.ts";
 
 const SESSION_ID = "intent-worker-uuid";
 const REPO_ID = "github.com/acme/api";

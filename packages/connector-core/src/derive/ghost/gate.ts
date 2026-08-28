@@ -15,9 +15,9 @@
 import {
   GHOST_MAX_FIRES_PER_SESSION,
   SUMMARIZER_FAILURE_MAX_CHARS,
-} from "@crosscheck/connector-core/constants.ts";
-import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
-import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+} from "../../constants.ts";
+import { cutWellFormed } from "../../briefing/cut.ts";
+import type { SessionState } from "../../state/session-state.ts";
 
 /** Has this session still got its one ghost check? */
 export const hasGhostAllowance = (state: SessionState): boolean =>

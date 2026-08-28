@@ -25,38 +25,38 @@ import {
   DEFAULT_AGENT_KIND,
   EXIT_OK,
   INTENT_DERIVED_CONFIDENCE,
-} from "@crosscheck/connector-core/constants.ts";
-import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
+} from "../../constants.ts";
+import { cutWellFormed } from "../../briefing/cut.ts";
 import {
   crosscheckHome,
   readTextOrNull,
   removeFile,
   repoKey,
-} from "@crosscheck/connector-core/config/paths.ts";
-import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+} from "../../config/paths.ts";
+import type { Env } from "../../config/paths.ts";
 import {
   UNKNOWN_DEVELOPER_ID,
   workContextRecord,
-} from "@crosscheck/connector-core/capture/records.ts";
-import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
-import { readDeliveredHintHashes } from "@crosscheck/connector-core/hints/delivered-store.ts";
-import { isEchoOfDeliveredHint } from "@crosscheck/connector-core/hints/echo.ts";
-import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
+} from "../../capture/records.ts";
+import { containsSecret } from "../../capture/secret-scan.ts";
+import { readDeliveredHintHashes } from "../../hints/delivered-store.ts";
+import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
+import { appendRecords } from "../../spool/append.ts";
 import {
   readSessionState,
   updateSessionState,
   withRecordedIntent,
-} from "@crosscheck/connector-core/state/session-state.ts";
-import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+} from "../../state/session-state.ts";
+import type { SessionState } from "../../state/session-state.ts";
 import { withIntentFailure, withIntentNone, withIntentSet } from "./gate.ts";
 import { resolveIntentArgv } from "./prompt.ts";
-import { isNoneAnswer } from "@crosscheck/connector-core/model/parse.ts";
+import { isNoneAnswer } from "../../model/parse.ts";
 import {
   formatSummarizerFailure,
   resolveSummarizerTimeoutMs,
   runSummarizer,
-} from "@crosscheck/connector-core/model/runner.ts";
-import { ensureSummarizerCwd } from "@crosscheck/connector-core/model/worker-env.ts";
+} from "../../model/runner.ts";
+import { ensureSummarizerCwd } from "../../model/worker-env.ts";
 
 export interface IntentWorkerArgs {
   readonly claudeSessionId: string;
