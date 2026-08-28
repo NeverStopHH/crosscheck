@@ -60,7 +60,7 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { hasGhostAllowance, withGhostClaimed } from "../ghost/gate.ts";
 import { isSubstantivePrompt, withIntentFire } from "../intent/gate.ts";
-import { summarizerWorkerEnv } from "../summarizer/worker-env.ts";
+import { summarizerWorkerEnv } from "@crosscheck/connector-core/model/worker-env.ts";
 import type { HookContext } from "./runner.ts";
 
 /** The intent worker's own entry, INSIDE this package (intent/worker-entry.ts). */

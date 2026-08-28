@@ -8,7 +8,7 @@
  */
 import {
   SUMMARIZER_LEAN_FLAGS,
-} from "../summarizer/runner.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
 import { INTENT_MAX_CHARS, SUMMARIZER_MODEL } from "@crosscheck/connector-core/constants.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 

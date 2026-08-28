@@ -764,7 +764,7 @@ export const SUMMARIZER_BLOCK_MAX_CHARS = 2_000;
  * loaded the developer's whole settings stack took 35–116 s to answer a
  * trivial slice (measured four runs on 2026-08-21), so the 30 s deadline
  * killed every fire before the model spoke. The lean argv
- * (summarizer/runner.ts) brings a run to ~9 s; the doubled deadline is the
+ * (model/runner.ts) brings a run to ~9 s; the doubled deadline is the
  * margin for a cold Haiku or a slower laptop — the worker is detached, so
  * a longer deadline costs nothing on the keyboard.
  *
@@ -774,7 +774,7 @@ export const SUMMARIZER_BLOCK_MAX_CHARS = 2_000;
 export const SUMMARIZER_TIMEOUT_MS = 60_000;
 /**
  * The env marker the summarizer's nested `claude -p` carries
- * (summarizer/worker-env.ts sets it on the worker, summarizer/runner.ts on
+ * (model/worker-env.ts sets it on the worker, model/runner.ts on
  * the model process): EVERY crosscheck hook entry exits silently when it is
  * set (hooks/runner.ts, connector-cursor/src/runner.ts). Trial finding #14:
  * the nested claude ran crosscheck's own globally installed hooks, minting

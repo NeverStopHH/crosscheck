@@ -1785,7 +1785,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // widens the parent-marker denylist to swallow it — the allowlist's
     // defect, re-created one name at a time.
     label: "the summarizer worker's env drops USER again",
-    file: `${CONNECTOR}/src/summarizer/worker-env.ts`,
+    file: `${CORE}/src/model/worker-env.ts`,
     from: "  /^CLAUDECODE$|^CLAUDE_PID$|^CLAUDE_CODE_(SESSION_|CHILD_SESSION$|ENTRYPOINT$|MESSAGING_|TASK_LIST_ID$|SSE_PORT$|REMOTE|RESUME_FROM_SESSION$|BRIDGE_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;",
     to: "  /^USER$|^CLAUDECODE$|^CLAUDE_PID$|^CLAUDE_CODE_(SESSION_|CHILD_SESSION$|ENTRYPOINT$|MESSAGING_|TASK_LIST_ID$|SSE_PORT$|REMOTE|RESUME_FROM_SESSION$|BRIDGE_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;",
     test: `${CONNECTOR}/test/summarizer-worker-env.test.ts`,
@@ -1814,7 +1814,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // nested claude loads the developer's whole settings stack (~10 MCP
     // servers, plugins, hooks) — 35–116 s measured against a 30 s deadline.
     label: "the nested claude loads the whole settings stack again",
-    file: `${CONNECTOR}/src/summarizer/runner.ts`,
+    file: `${CORE}/src/model/runner.ts`,
     from: '  "--setting-sources",\n  "",\n',
     to: "",
     test: `${CONNECTOR}/test/summarizer-argv.test.ts`,

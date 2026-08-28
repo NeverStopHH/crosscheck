@@ -9,29 +9,12 @@
 import type { RenderSurface } from "@crosscheck/connector-core/render-surfaces.ts";
 
 import { resolveWorkContextTitle } from "./hooks/session-start.ts";
-import { formatSummarizerFailure } from "./summarizer/runner.ts";
 
+// The model-failure line is no longer registered here: runner.ts moved to
+// connector-core (src/model/runner.ts) so every connector can spawn a model,
+// and its registration moved with it (core's `model-failure-line`). A row
+// here would name a module this package no longer contains.
 export const RENDER_SURFACES: readonly RenderSurface[] = [
-  {
-    kind: "corpus",
-    name: "claude-summarizer-failure-line",
-    module: "src/summarizer/runner.ts",
-    framing: "bare",
-    // What the nested claude SAID when a run was lost (trial finding #14) —
-    // CLI/model stdout, untrusted — on its way into session state
-    // (summarizerLastFailure) and from there onto the status and doctor
-    // lines: its first line through bareUntrusted, the whole line bounded
-    // to SUMMARIZER_FAILURE_MAX_CHARS. The probe's first-line and version
-    // fields come through the same function (bareSummarizerLine).
-    render: (payload) =>
-      formatSummarizerFailure({
-        ok: false,
-        reason: "exit",
-        exitCode: 1,
-        detail: payload,
-        elapsedMs: 0,
-      }),
-  },
   {
     kind: "corpus",
     name: "claude-work-context-title",

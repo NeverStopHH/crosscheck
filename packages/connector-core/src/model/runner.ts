@@ -1,14 +1,24 @@
 /**
- * The injectable summarizer runner (DESIGN.md §3 Tier 1). The DEFAULT is
- * headless `claude -p` on a Haiku-class model — the developer's existing
- * Claude Code auth, no new API key (§2 "summarizer auth") — and
- * CROSSCHECK_SUMMARIZER_CMD swaps the whole binary for an executable path,
- * which is how every test fakes it: no test depends on a real claude binary
- * or the network.
+ * The injectable model runner (DESIGN.md §3 Tier 1) — CORE's, not a
+ * connector's. It moved here from connector-claude unchanged
+ * (DESIGN-agent-agnostic.md §1.1, move first, generalize after), because
+ * every connector could already READ and ASK and only Claude could have
+ * anything DERIVED: the machinery, not the platform, was the reason.
  *
- * THIS NEVER RUNS INSIDE A HOOK BUDGET. The Stop hook spawns the detached
- * worker and exits; the worker calls this, and the hard timeout here is what
- * keeps a hung binary from accumulating — a kill, not a wait.
+ * HOST-AGNOSTIC, BACKEND-OPINIONATED. Nothing below knows which agent is
+ * running — the contract is slice on stdin, one answer on stdout. What it
+ * does have is a DEFAULT BACKEND: headless `claude -p` on a Haiku-class
+ * model, the developer's existing Claude Code auth and no new API key (§2
+ * "summarizer auth"). That is a backend choice, and
+ * CROSSCHECK_SUMMARIZER_CMD replaces the whole binary with an executable
+ * path — which is how every test fakes it (no test depends on a real claude
+ * binary or the network) and the reason a foreign model is already possible
+ * in principle.
+ *
+ * THIS NEVER RUNS INSIDE A HOOK BUDGET. Its caller is a DETACHED worker that
+ * the connector's trigger spawns and never waits for — today the Claude
+ * connector's Stop, UserPromptSubmit and ghost paths — so the hard timeout
+ * here is what keeps a hung binary from accumulating: a kill, not a wait.
  *
  * THE NESTED CLAUDE IS A MODEL CALL, NOT A SESSION (trial finding #14). A
  * plain `claude -p` loads the developer's whole settings stack — ~10 MCP
@@ -17,9 +27,10 @@
  * globally installed hooks from inside the summarizer (phantom sessions,
  * and a Stop hook that could fire the summarizer again). SUMMARIZER_LEAN_FLAGS
  * below strip all of that; the marker env (SUMMARIZER_CHILD_ENV) is the
- * guard that holds even where a flag does not.
+ * guard that holds even where a flag does not. Both are BACKEND hygiene,
+ * applied on every spawn from here, not knowledge any one connector holds.
  */
-import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
+import { bareUntrusted } from "../briefing/sanitize.ts";
 import {
   SUMMARIZER_CHILD_ENV,
   SUMMARIZER_CHILD_ON,
@@ -27,8 +38,8 @@ import {
   SUMMARIZER_MODEL,
   SUMMARIZER_OUTPUT_MAX_BYTES,
   SUMMARIZER_TIMEOUT_MS,
-} from "@crosscheck/connector-core/constants.ts";
-import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+} from "../constants.ts";
+import type { Env } from "../config/paths.ts";
 
 /**
  * What the model is asked, verbatim. One assertion or NONE — the tolerant
@@ -94,7 +105,7 @@ export const SUMMARIZER_PROMPT =
  * and doctor WARNs on a CLI below the floor. CROSSCHECK_SUMMARIZER_CMD
  * still replaces the binary WHOLESALE — no flag reaches an override (tests).
  *
- * VERIFY: bun -e 'const {SUMMARIZER_LEAN_FLAGS: f} = await import("./packages/connector-claude/src/summarizer/runner.ts"); console.log(f.filter((x) => x.startsWith("--")).join(" "))'
+ * VERIFY: bun -e 'const {SUMMARIZER_LEAN_FLAGS: f} = await import("./packages/connector-core/src/model/runner.ts"); console.log(f.filter((x) => x.startsWith("--")).join(" "))'
  * PRINTS: --setting-sources --strict-mcp-config --mcp-config --no-session-persistence --tools --max-turns
  */
 export const SUMMARIZER_LEAN_FLAGS: readonly string[] = [
@@ -294,7 +305,7 @@ const HUB_KEY_ENV = "CROSSCHECK_API_KEY";
 /**
  * The child's environment: the caller's, undefined values and the hub key
  * dropped, plus the child marker — set HERE as well as by
- * summarizer/worker-env.ts, so the nested claude carries it even when a
+ * model/worker-env.ts, so the nested claude carries it even when a
  * caller built the env by hand (the doctor probe, an operator's one-off).
  */
 const childEnv = (env: Env): Record<string, string> => ({
@@ -447,7 +458,7 @@ const LABEL_SEPARATOR = ": ";
  * "error: unknown option '--tools'") pass untouched; doctor's remedy tests
  * the RAW detail, so its advice is unaffected by the redaction.
  *
- * VERIFY: bun -e 'const {formatSummarizerFailure: f} = await import("./packages/connector-claude/src/summarizer/runner.ts"); console.log(f({ok:false,reason:"exit",exitCode:1,detail:"Not logged in · Please run /login",elapsedMs:1}), "|", f({ok:false,reason:"timeout",timeoutMs:60000,elapsedMs:60000}), "|", f({ok:false,reason:"spawn",detail:"Executable not found in $PATH: \"claude\"",elapsedMs:1}), "|", f({ok:false,reason:"exit",exitCode:2,detail:"z".repeat(500),elapsedMs:1}).length)'
+ * VERIFY: bun -e 'const {formatSummarizerFailure: f} = await import("./packages/connector-core/src/model/runner.ts"); console.log(f({ok:false,reason:"exit",exitCode:1,detail:"Not logged in · Please run /login",elapsedMs:1}), "|", f({ok:false,reason:"timeout",timeoutMs:60000,elapsedMs:60000}), "|", f({ok:false,reason:"spawn",detail:"Executable not found in $PATH: \"claude\"",elapsedMs:1}), "|", f({ok:false,reason:"exit",exitCode:2,detail:"z".repeat(500),elapsedMs:1}).length)'
  * PRINTS: exit 1: Not logged in Please run /login | timed out after 60 s | could not start: Executable not found in $PATH "claude" | 120
  */
 export const formatSummarizerFailure = (failure: SummarizerFailure): string => {

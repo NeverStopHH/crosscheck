@@ -1,6 +1,8 @@
 /**
- * The environment the detached Tier-1 worker — and through it the nested
- * `claude -p` — inherits from the Stop hook (trial finding #14).
+ * The environment the detached Tier-1 worker — and through it the model
+ * binary it spawns — inherits from the trigger that started it (trial
+ * finding #14). CORE's, so every connector's trigger builds the child
+ * environment the same way instead of each re-deriving the denylist.
  *
  * PASS-THROUGH MINUS A DENYLIST, not an allowlist. The first cut forwarded
  * exactly PATH, HOME and the CROSSCHECK_* knobs, and on a Mac logged in
@@ -21,12 +23,12 @@
 import {
   SUMMARIZER_CHILD_ENV,
   SUMMARIZER_CHILD_ON,
-} from "@crosscheck/connector-core/constants.ts";
+} from "../constants.ts";
 import {
   ensureDir,
   summarizerCwdPath,
-} from "@crosscheck/connector-core/config/paths.ts";
-import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+} from "../config/paths.ts";
+import type { Env } from "../config/paths.ts";
 
 /**
  * The neutral directory the nested claude runs FROM (core paths.ts
@@ -68,7 +70,7 @@ export const ensureSummarizerCwd = async (
  * through — a denylist that swept CLAUDE_ wholesale would take the auth
  * names with it.
  *
- * VERIFY: bun -e 'const {PARENT_SESSION_MARKER_PATTERN: p} = await import("./packages/connector-claude/src/summarizer/worker-env.ts"); console.log(["CLAUDECODE","CLAUDE_CODE_SESSION_ID","CLAUDE_CODE_ENTRYPOINT","CLAUDE_CODE_MESSAGING_SOCKET","CLAUDE_CODE_MESSAGING_TOKEN","CLAUDE_PLUGIN_ROOT","CLAUDE_PLUGIN_DATA","CLAUDE_PROJECT_DIR","CLAUDE_AGENT_SDK_VERSION","CLAUDE_PID","CLAUDE_CODE_CHILD_SESSION","CLAUDE_CODE_SESSION_ACCESS_TOKEN","CLAUDE_CODE_TASK_LIST_ID","CLAUDE_CODE_SSE_PORT","CLAUDE_CODE_REMOTE_SESSION_ID","CLAUDE_CODE_RESUME_FROM_SESSION","CLAUDE_CODE_BRIDGE_SESSION_ID"].filter((n) => p.test(n)).length, ["USER","HOME","PATH","ANTHROPIC_API_KEY","CLAUDE_CODE_OAUTH_TOKEN","CLAUDE_CODE_USE_BEDROCK","CLAUDE_CONFIG_DIR","AWS_PROFILE","HTTPS_PROXY","CLAUDE_CODE_EXECPATH","CLAUDE_EFFORT"].filter((n) => p.test(n)).length)'
+ * VERIFY: bun -e 'const {PARENT_SESSION_MARKER_PATTERN: p} = await import("./packages/connector-core/src/model/worker-env.ts"); console.log(["CLAUDECODE","CLAUDE_CODE_SESSION_ID","CLAUDE_CODE_ENTRYPOINT","CLAUDE_CODE_MESSAGING_SOCKET","CLAUDE_CODE_MESSAGING_TOKEN","CLAUDE_PLUGIN_ROOT","CLAUDE_PLUGIN_DATA","CLAUDE_PROJECT_DIR","CLAUDE_AGENT_SDK_VERSION","CLAUDE_PID","CLAUDE_CODE_CHILD_SESSION","CLAUDE_CODE_SESSION_ACCESS_TOKEN","CLAUDE_CODE_TASK_LIST_ID","CLAUDE_CODE_SSE_PORT","CLAUDE_CODE_REMOTE_SESSION_ID","CLAUDE_CODE_RESUME_FROM_SESSION","CLAUDE_CODE_BRIDGE_SESSION_ID"].filter((n) => p.test(n)).length, ["USER","HOME","PATH","ANTHROPIC_API_KEY","CLAUDE_CODE_OAUTH_TOKEN","CLAUDE_CODE_USE_BEDROCK","CLAUDE_CONFIG_DIR","AWS_PROFILE","HTTPS_PROXY","CLAUDE_CODE_EXECPATH","CLAUDE_EFFORT"].filter((n) => p.test(n)).length)'
  * PRINTS: 17 0
  */
 export const PARENT_SESSION_MARKER_PATTERN =

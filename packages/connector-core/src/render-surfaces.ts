@@ -20,6 +20,7 @@
 import type { CommitDrift } from "./git/commit-drift.ts";
 import { renderBriefing } from "./briefing/render.ts";
 import { renderConferenceReport } from "./conference/report.ts";
+import { formatSummarizerFailure } from "./model/runner.ts";
 import { ghostDraftBody } from "./briefing/ghost.ts";
 import {
   renderAnswerHint,
@@ -585,6 +586,32 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         findings: [],
         modelOutcome: { kind: "failed", reason: payload },
         now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "model-failure-line",
+    module: "src/model/runner.ts",
+    framing: "bare",
+    // What the MODEL BINARY said when a run was lost (trial finding #14) —
+    // CLI/model stdout, untrusted — on its way into session state
+    // (summarizerLastFailure) and from there onto the status and doctor
+    // lines: its first line through bareUntrusted, the whole line bounded
+    // to SUMMARIZER_FAILURE_MAX_CHARS. The probe's first-line and version
+    // fields come through the same function (bareSummarizerLine).
+    //
+    // REGISTERED HERE SINCE THE SEAM MOVED: the runner was
+    // connector-claude's (its registry named it
+    // `claude-summarizer-failure-line`) until every connector needed to be
+    // able to spawn a model. One door, one registration, one corpus run —
+    // wherever the failure line is eventually printed.
+    render: (payload) =>
+      formatSummarizerFailure({
+        ok: false,
+        reason: "exit",
+        exitCode: 1,
+        detail: payload,
+        elapsedMs: 0,
       }),
   },
   {

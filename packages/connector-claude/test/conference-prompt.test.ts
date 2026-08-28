@@ -14,7 +14,7 @@ import {
   CONFERENCE_SENTENCE_MAX_CHARS,
 } from "@crosscheck/connector-core/constants.ts";
 import type { ConferenceContext } from "@crosscheck/connector-core/http/hub.ts";
-import { SUMMARIZER_LEAN_FLAGS } from "../src/summarizer/runner.ts";
+import { SUMMARIZER_LEAN_FLAGS } from "@crosscheck/connector-core/model/runner.ts";
 import {
   CONFERENCE_PROMPT,
   estimateInputTokens,

@@ -50,13 +50,13 @@ import {
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { withIntentFailure, withIntentNone, withIntentSet } from "./gate.ts";
 import { resolveIntentArgv } from "./prompt.ts";
-import { isNoneAnswer } from "../summarizer/parse.ts";
+import { isNoneAnswer } from "@crosscheck/connector-core/model/parse.ts";
 import {
   formatSummarizerFailure,
   resolveSummarizerTimeoutMs,
   runSummarizer,
-} from "../summarizer/runner.ts";
-import { ensureSummarizerCwd } from "../summarizer/worker-env.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
+import { ensureSummarizerCwd } from "@crosscheck/connector-core/model/worker-env.ts";
 
 export interface IntentWorkerArgs {
   readonly claudeSessionId: string;

@@ -73,13 +73,13 @@ import {
 } from "./gate.ts";
 import { declaredClaims, renderGhostInput, resolveGhostArgv } from "./prompt.ts";
 import type { DeclaredClaim } from "./prompt.ts";
-import { isNoneAnswer } from "../summarizer/parse.ts";
+import { isNoneAnswer } from "@crosscheck/connector-core/model/parse.ts";
 import {
   formatSummarizerFailure,
   resolveSummarizerTimeoutMs,
   runSummarizer,
-} from "../summarizer/runner.ts";
-import { ensureSummarizerCwd } from "../summarizer/worker-env.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
+import { ensureSummarizerCwd } from "@crosscheck/connector-core/model/worker-env.ts";
 
 export interface GhostWorkerArgs {
   readonly claudeSessionId: string;

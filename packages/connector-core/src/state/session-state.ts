@@ -152,8 +152,8 @@ const SessionStateObjectSchema = z.looseObject({
    * Rejection telemetry per fire (audit rows M16 / A3-4): how many answers
    * came back well-formed and were still refused — role-play, an echo of the
    * prompt or of a delivered teammate hint, a credential-shaped body, a claim
-   * the wire contract would not take — plus the most recent reason IN THE
-   * CONNECTOR'S OWN WORDS (summarizer/reject.ts never quotes the body). Every
+   * the wire contract would not take — plus the most recent reason IN
+   * CROSSCHECK'S OWN WORDS (core model/reject.ts never quotes the body). Every
    * one of these used to be a silent `return` inside the worker, so a fire
    * whose answer nobody kept was indistinguishable from a runner that never
    * spoke. Bounded by the writer like the failure reason. Defaults keep every

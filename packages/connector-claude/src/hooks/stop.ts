@@ -28,10 +28,10 @@ import {
   withStopTurn,
   withSummarizerFire,
 } from "../summarizer/gate.ts";
-import { SUMMARIZER_PROMPT } from "../summarizer/runner.ts";
+import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
 import { extractSliceText, readTurnSlice } from "../summarizer/transcript.ts";
 import type { TurnSlice } from "../summarizer/transcript.ts";
-import { summarizerWorkerEnv } from "../summarizer/worker-env.ts";
+import { summarizerWorkerEnv } from "@crosscheck/connector-core/model/worker-env.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 /**
@@ -54,7 +54,7 @@ const WORKER_ENTRY_PATH = resolve(
  * one draft is the cheap outcome (fail open).
  *
  * The env is the hook's own minus the parent-session markers, plus the
- * crosscheck home and the child marker (summarizer/worker-env.ts says why
+ * crosscheck home and the child marker (core model/worker-env.ts says why
  * an allowlist here lost every fire of the trial — finding #14).
  */
 const spawnSummarizeWorker = (

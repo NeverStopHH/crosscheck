@@ -33,7 +33,7 @@ import {
   withSummarizerNone,
   withSummarizerRejection,
 } from "./gate.ts";
-import { isNoneAnswer, parseSummarizerOutput } from "./parse.ts";
+import { isNoneAnswer, parseSummarizerOutput } from "@crosscheck/connector-core/model/parse.ts";
 import {
   isPromptEcho,
   isRolePlayAnswer,
@@ -42,16 +42,16 @@ import {
   REJECTED_PROMPT_ECHO,
   REJECTED_ROLE_PLAY,
   REJECTED_SECRET,
-} from "./reject.ts";
+} from "@crosscheck/connector-core/model/reject.ts";
 import {
   formatSummarizerFailure,
   resolveSummarizerArgv,
   resolveSummarizerTimeoutMs,
   runSummarizer,
   SUMMARIZER_PROMPT,
-} from "./runner.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
 import { extractSliceText, readSliceRange } from "./transcript.ts";
-import { ensureSummarizerCwd } from "./worker-env.ts";
+import { ensureSummarizerCwd } from "@crosscheck/connector-core/model/worker-env.ts";
 
 interface WorkerArgs {
   readonly transcriptPath: string;

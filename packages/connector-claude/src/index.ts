@@ -51,22 +51,28 @@ export { summarizeSummarizerCost } from "./summarizer/cost.ts";
 export { summarizeIntentCost } from "./intent/cost.ts";
 // The runner's own surface for `doctor` (trial finding #14): the real argv,
 // the real worker env, the booked-failure formatter and the active probe.
+//
+// PASS-THROUGH SINCE THE SEAM MOVED. runner.ts and worker-env.ts are
+// connector-core's now (src/model/), so any connector can spawn a model;
+// they are re-exported here unchanged so this package's surface — and every
+// caller of it, packages/cli included — is byte-for-byte what it was. The
+// probe below is still this package's own.
 export {
   SUMMARIZER_LEAN_FLAGS,
   formatSummarizerFailure,
   resolveSummarizerArgv,
   resolveSummarizerTimeoutMs,
   runSummarizer,
-} from "./summarizer/runner.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
 export type {
   SummarizerFailure,
   SummarizerResult,
-} from "./summarizer/runner.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
 export {
   PARENT_SESSION_MARKER_PATTERN,
   ensureSummarizerCwd,
   summarizerWorkerEnv,
-} from "./summarizer/worker-env.ts";
+} from "@crosscheck/connector-core/model/worker-env.ts";
 export {
   isBelowSummarizerVersionFloor,
   probeSummarizerRunner,

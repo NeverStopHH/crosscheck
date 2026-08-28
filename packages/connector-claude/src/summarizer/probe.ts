@@ -25,15 +25,15 @@ import {
   SUMMARIZER_CLAUDE_MIN_VERSION,
 } from "@crosscheck/connector-core/constants.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { isNoneAnswer } from "./parse.ts";
+import { isNoneAnswer } from "@crosscheck/connector-core/model/parse.ts";
 import {
   bareSummarizerLine,
   resolveSummarizerArgv,
   resolveSummarizerTimeoutMs,
   runSummarizer,
-} from "./runner.ts";
-import type { SummarizerFailure } from "./runner.ts";
-import { ensureSummarizerCwd, summarizerWorkerEnv } from "./worker-env.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
+import type { SummarizerFailure } from "@crosscheck/connector-core/model/runner.ts";
+import { ensureSummarizerCwd, summarizerWorkerEnv } from "@crosscheck/connector-core/model/worker-env.ts";
 
 /** The binary the default argv names — what the PATH check looks for. */
 const CLAUDE_BINARY = "claude";

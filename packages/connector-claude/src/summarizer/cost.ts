@@ -44,8 +44,8 @@ export interface SummarizerCost {
   /**
    * Answers the CONNECTOR refused (audit rows M16 / A3-4) — role-play, an
    * echo of the prompt or of a delivered hint, a credential-shaped body, a
-   * claim the wire contract would not take — with one booked reason in the
-   * connector's own words (summarizer/reject.ts never quotes the body). The
+   * claim the wire contract would not take — with one booked reason in
+   * crosscheck's own words (core model/reject.ts never quotes the body). The
    * model SPOKE for each of these and the quota was spent, so they are not
    * runner failures; before they were booked they were invisible, and a
    * session whose every answer was refused read as a dead runner.

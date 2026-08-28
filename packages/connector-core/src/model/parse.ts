@@ -1,5 +1,6 @@
 /**
- * Tolerant parsing of the summarizer's stdout (DESIGN.md §3 Tier 1): the
+ * Tolerant parsing of a model's stdout (DESIGN.md §3 Tier 1), in core so
+ * every connector's worker parses the same way: the
  * contract is "schema-validated claim JSON or the literal NONE", and
  * ANYTHING else is discarded silently — a draft is a bonus, never worth an
  * error surface. Models wrap JSON in prose and fences, so the parse hunts
@@ -12,7 +13,7 @@ import {
   MAX_CLAIM_BODY_LENGTH,
 } from "@crosscheck/schema";
 
-import { SUMMARIZER_DEFAULT_CONFIDENCE } from "@crosscheck/connector-core/constants.ts";
+import { SUMMARIZER_DEFAULT_CONFIDENCE } from "../constants.ts";
 
 /** `NONE`, tolerantly: spacing, case, and a stray full stop are all still NONE. */
 const NONE_PATTERN = /^none[.!]?$/i;

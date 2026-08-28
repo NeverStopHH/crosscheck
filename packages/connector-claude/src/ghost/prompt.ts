@@ -32,7 +32,7 @@ import {
 import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
 import type { DiagnosisClaim } from "@crosscheck/connector-core/http/hub.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { SUMMARIZER_LEAN_FLAGS } from "../summarizer/runner.ts";
+import { SUMMARIZER_LEAN_FLAGS } from "@crosscheck/connector-core/model/runner.ts";
 
 /** Only what a person or their agent stated — never a machine draft. */
 const DECLARED_PROVENANCE = "declared";

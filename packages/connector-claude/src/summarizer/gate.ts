@@ -269,7 +269,7 @@ export const withSummarizerDraft = (state: SessionState): SessionState => ({
  * its own outcome, and booking it is what stops `doctor` reading a session
  * whose every answer was refused as a runner that never spoke.
  *
- * The reason is one of summarizer/reject.ts's constants — the connector's own
+ * The reason is one of core model/reject.ts's constants — crosscheck's own
  * words, never the rejected body, because it is printed into a terminal and
  * frequently into an agent's context.
  */
@@ -280,7 +280,7 @@ export const withSummarizerRejection = (
   ...state,
   summarizerRejectCount: state.summarizerRejectCount + 1,
   // The same bound and the same surrogate-safe cut the failure reason gets.
-  // The reason is one of summarizer/reject.ts's own constants, so it is never
+  // The reason is one of core model/reject.ts's own constants, so it is never
   // the model's text — but the cut stays, because a writer that trusts its
   // caller is one refactor away from writing an unbounded string into the
   // file every surface reads.

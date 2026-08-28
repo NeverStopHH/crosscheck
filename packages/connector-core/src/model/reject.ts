@@ -1,6 +1,7 @@
 /**
- * What a well-formed summarizer answer may still not BE (audit rows M16 /
- * A3-4).
+ * What a well-formed model answer may still not BE (audit rows M16 / A3-4).
+ * In core with the rest of the seam: these are properties of what a MODEL
+ * says, identical whichever agent's turn produced the slice.
  *
  * `parse.ts` decides whether stdout is a claim-shaped JSON document. It says
  * nothing about what the document contains, and two shapes get through it
@@ -11,7 +12,8 @@
  *   That is a plan, and the prompt says plans are not conclusions; filed as a
  *   `derived` claim it becomes a teammate-visible draft asserting work that
  *   nobody has done. It is the failure mode a tail-degraded slice produces
- *   most (transcript.ts): shown only the last tool outputs and no question,
+ *   most (a tail-degraded slice): shown only the last tool outputs and no
+ *   question,
  *   the likeliest completion is the conversation continuing.
  *
  *   PROMPT ECHO — the model hands the instructions back: "the conclusion as

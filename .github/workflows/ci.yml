@@ -146,9 +146,7 @@ jobs:
     # PRINTS: intent/worker.ts 1
     # PRINTS: summarizer/cost.ts 1
     # PRINTS: summarizer/gate.ts 6
-    # PRINTS: summarizer/runner.ts 1
     # PRINTS: summarizer/transcript.ts 2
-    # PRINTS: summarizer/worker-env.ts 1
     # PRINTS: summarizer/worker.ts 2
     # PRINTS: briefing/context-group.ts 1
     # PRINTS: briefing/ghost.ts 2
@@ -179,6 +177,8 @@ jobs:
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/search-related-work.ts 1
     # PRINTS: mcp/tools/set-intent.ts 2
+    # PRINTS: model/runner.ts 1
+    # PRINTS: model/worker-env.ts 1
     # PRINTS: spool/reap.ts 1
     # PRINTS: state/conference-cost.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 1
