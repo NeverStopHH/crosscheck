@@ -53,6 +53,9 @@ import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
 
 const WORKSPACE_PACKAGES_ROOT = join(import.meta.dir, "..", "..");
 
+/** This package's root, so a RENDER_LAYER_MODULES path can be imported. */
+const CORE_ROOT = join(import.meta.dir, "..");
+
 /**
  * Import specifiers that ARE the render layer, however they are reached —
  * relative (`../briefing/sanitize.ts`) or cross-package
@@ -81,6 +84,11 @@ const RENDER_IDENTIFIERS: ReadonlySet<string> = new Set([
   "bareUntrusted",
   "safeId",
   "quoted",
+  "quotedBody",
+  "spanRedactedUntrusted",
+  "redactionNote",
+  "REDACTED_TITLE",
+  "REDACTED_SPAN",
   "quotingText",
   "renderBriefing",
   "renderClaimHint",
@@ -346,6 +354,50 @@ describe("§4.4: unregistered render surfaces are a red build", () => {
     // And still only those: a neighbouring module of the same shape is not
     // render layer, or every importer in the workspace would need a row.
     expect(RENDER_LAYER_SPECIFIER.test("../briefing/cut.ts")).toBe(false);
+  });
+
+  test("every render name a BARREL re-exports is one the meta-test flags", async () => {
+    // RENDER_IDENTIFIERS is the whole coverage of the barrel route. A module
+    // reaching the render layer through a relative or cross-package path is
+    // caught by RENDER_LAYER_SPECIFIER, but src/index.ts and src/kit.ts are
+    // themselves RENDER_BARREL_MODULES and therefore exempt from the specifier
+    // rule — so an import through them is caught by NAME or by nothing.
+    //
+    // Hand-kept, that set drifts the moment a barrel re-exports a new render
+    // value, exactly as RENDER_LAYER_SPECIFIER drifted from RENDER_LAYER_MODULES
+    // before it was derived. Derived here for the same reason: the barrels and
+    // the render layer are both read, and their intersection is the rule.
+    const layerValues = new Set<string>();
+    for (const module of RENDER_LAYER_MODULES) {
+      const loaded: Record<string, unknown> = await import(
+        join(CORE_ROOT, module)
+      );
+      for (const [name, value] of Object.entries(loaded)) {
+        if (typeof value === "function" || typeof value === "string") {
+          layerValues.add(name);
+        }
+      }
+    }
+    // A render layer with no value exports would make this test vacuous.
+    expect(layerValues.size).toBeGreaterThan(0);
+
+    const unflagged: string[] = [];
+    for (const barrel of RENDER_BARREL_MODULES) {
+      const loaded: Record<string, unknown> = await import(
+        join(CORE_ROOT, barrel)
+      );
+      for (const name of Object.keys(loaded)) {
+        if (layerValues.has(name) && !RENDER_IDENTIFIERS.has(name)) {
+          unflagged.push(`${barrel} re-exports ${name}`);
+        }
+      }
+    }
+
+    expect(
+      unflagged.sort(),
+      `render value(s) reachable through a barrel but absent from RENDER_IDENTIFIERS: ${unflagged.join(", ")} — ` +
+        "add the name, or the barrel route into the render layer is unguarded",
+    ).toEqual([]);
   });
 
   test("the ACP and Cursor injection surfaces stay registered by NAME — module cover is not surface cover", () => {
