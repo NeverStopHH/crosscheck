@@ -2870,7 +2870,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // document is unsearchable by the words inside either.
     label: "the branch-token split is reverted",
     file: `${SERVER}/src/services/normalized-doc.ts`,
-    from: "    derivedTokenLine([title, ...input.targetValues]),",
+    from: "    derivedTokenLine([title, ...input.targetValues], input.repoLabel),",
     to: '    "",',
     test: `${SERVER}/test/search-tokens.test.ts`,
     because:
@@ -2893,6 +2893,33 @@ export const MUTATIONS: readonly Mutation[] = [
       "names any file, so an evidence-backed claim from an unrelated tree is " +
       "injected as substance — measured on auth-jwt/pr_auth_self and " +
       "ws-proposed/pr_ws_pointer",
+  },
+  {
+    // The second half of the same filter, added after a review measured four
+    // ordinary sentences pulling a teammate's root cause out of a restock bug.
+    label: "a program's layer names are indexed as topics",
+    file: `${SERVER}/src/services/search-tokens.ts`,
+    from: '  "services",',
+    to: '  "servicesx",',
+    test: `${SERVER}/test/search-tokens.test.ts`,
+    because:
+      "«restart the services» qualifies every context whose paths cross a " +
+      "services directory — which is most of them — and one qualified " +
+      "context is all an evidence-backed claim needs to be injected",
+  },
+  {
+    // Audit row M13's path half. `titleForDoc` blanks a title that IS a
+    // default branch; nothing filtered the token bag, which is built from
+    // every target VALUE.
+    label: "main and the repo label return through the token bag",
+    file: `${SERVER}/src/services/search-tokens.ts`,
+    from: "      if (seen.has(part) || lowered === label || DEFAULT_BRANCH_LABELS.has(lowered)) {",
+    to: "      if (seen.has(part)) {",
+    test: `${SERVER}/test/search-tokens.test.ts`,
+    because:
+      "every Go, Rust and Java repo has a main.go, main.rs or Main.java, so " +
+      "«rebase onto main» — the sentence M13 exists to neutralize — matches " +
+      "again through the path instead of through the title",
   },
   {
     // Audit row M13, the other half of the same document. The label is on

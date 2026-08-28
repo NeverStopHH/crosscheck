@@ -231,8 +231,9 @@ describe("the FTS document keeps the repo label and the default branch out (M13)
     );
     expect(words).not.toContain("main");
     expect(words).not.toContain("Main");
-    // The control: everything else in those paths is still indexed.
-    for (const part of ["cmd", "acme", "rebase", "chore"]) {
+    // The control: everything else in those paths is still indexed. (`cmd`
+    // is not among them — it is build layout, dropped by PATH_SCAFFOLDING.)
+    for (const part of ["acme", "rebase", "chore"]) {
       expect(words, part).toContain(part);
     }
   });
@@ -242,10 +243,10 @@ describe("the FTS document keeps the repo label and the default branch out (M13)
     // is also a directory in its own tree — `api`, `server`, `web` — put the
     // label straight back into the bag from any path that crosses it.
     const words = wordsOf(
-      docFor("feat/importer-retry @ api", "api", ["services/api/handler.ts"]),
+      docFor("feat/importer-retry @ api", "api", ["services/api/shipment.ts"]),
     );
     expect(words).not.toContain("api");
-    for (const part of ["importer", "retry", "handler"]) {
+    for (const part of ["importer", "retry", "shipment"]) {
       expect(words, part).toContain(part);
     }
   });
@@ -277,6 +278,36 @@ describe("through the real generated tsvector", () => {
 
     // Assert
     expect(await matches(harness, "auth bypass")).toBe(true);
+    expect(await matches(harness, "api")).toBe(false);
+  });
+
+  test("a Go session's cmd/main.go is not the answer to «rebase onto main»", async () => {
+    // The title half of M13 was guarded; this is the path half. `cmd/main.go`
+    // is the ordinary entry point of a Go program, so before the token bag
+    // consulted DEFAULT_BRANCH_LABELS every Go repo on the hub answered the
+    // sentence M13 exists to neutralize.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            title: "feat/importer-retry @ api",
+            description: undefined,
+          }),
+        ),
+        recordEnvelope("target", {
+          workContextId: validWorkContextBody({}).id,
+          kind: "file",
+          value: "cmd/main.go",
+        }),
+      ],
+    });
+    // The control: the row exists and is findable by what its author named it.
+    expect(await matches(harness, "importer retry")).toBe(true);
+    expect(await matches(harness, "rebase onto main")).toBe(false);
+    expect(await matches(harness, "main")).toBe(false);
+    // …and the repo label is still not a way in, now via the path.
     expect(await matches(harness, "api")).toBe(false);
   });
 

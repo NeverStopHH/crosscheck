@@ -200,6 +200,27 @@ const CAMEL_BOUNDARY_PATTERN =
   /(?<=\p{Ll}|\p{N})(?=\p{Lu})|(?<=\p{Lu})(?=\p{Lu}\p{Ll})/gu;
 
 /**
+ * Branch names that say nothing about what anybody is doing. `main` is not a
+ * topic: every session that has not cut a branch yet sits on it, so indexing it
+ * makes "rebase onto main" — a sentence a developer types several times a day —
+ * a lexical match against every one of those sessions, and a lexical match is
+ * what this product turns into a teammate hint (audit row M13). `master` is the
+ * same branch under the older default and is here for the same reason.
+ *
+ * Consulted TWICE, because M13 has two doors and closing one left the other
+ * open. `titleForDoc` below blanks a title that IS a default branch; this set
+ * is also handed to the token bag, because the bag is built from the branch
+ * name and from every target VALUE — and `cmd/main.go`, `src/main.rs` and
+ * `app/src/main/java/…` are the ordinary shapes of three languages. On those
+ * repos M13's own sentence matched again, through the path.
+ *
+ * Still a rule about a LABEL and never about the word: `the main loop
+ * deadlocks` keeps its `main`, because the title is prose the human wrote and
+ * the bag is only ever built from identifiers.
+ */
+const DEFAULT_BRANCH_LABELS: ReadonlySet<string> = new Set(["main", "master"]);
+
+/**
  * The words inside one identifier, path or branch name — never the identifier
  * itself, which the caller already stores verbatim.
  */
@@ -216,6 +237,14 @@ const partsOf = (value: string): readonly string[] =>
 /**
  * The deduplicated word bag for a set of values, as one line, bounded.
  *
+ * `repoLabel` is dropped from the bag for the reason `titleForDoc` strips the
+ * ` @ <repo>` suffix: it is this product's own label, every context on the
+ * repo carries it, so it discriminates nothing while matching a query that
+ * merely names the repo. The suffix strip is an EXACT match on the composed
+ * title, so a repo whose name is also a directory in its own tree — `api`,
+ * `server`, `web` — put the label straight back through any path crossing it
+ * (`services/api/handler.ts`).
+ *
  * DEDUPLICATED because the repetition is total: every path in a monorepo starts
  * `packages/<name>/src`, and a hundred of them would spend the whole bound on
  * three words. First-seen order, so the bag is deterministic and re-ingesting
@@ -225,12 +254,17 @@ const partsOf = (value: string): readonly string[] =>
  * A value that is already one word contributes that word, which the document
  * carries verbatim anyway; the dedupe absorbs it.
  */
-export const derivedTokenLine = (values: readonly string[]): string => {
+export const derivedTokenLine = (
+  values: readonly string[],
+  repoLabel: string | null,
+): string => {
+  const label = repoLabel?.toLowerCase() ?? null;
   const seen = new Set<string>();
   let line = "";
   for (const value of values) {
     for (const part of partsOf(value)) {
-      if (seen.has(part)) {
+      const lowered = part.toLowerCase();
+      if (seen.has(part) || lowered === label || DEFAULT_BRANCH_LABELS.has(lowered)) {
         continue;
       }
       seen.add(part);
@@ -262,19 +296,6 @@ export const repoLabelOf = (repoId: string): string | null => {
   const last = repoId.split("/").at(-1)?.trim();
   return last === undefined || last.length === 0 ? null : last;
 };
-
-/**
- * Branch names that say nothing about what anybody is doing. `main` is not a
- * topic: every session that has not cut a branch yet sits on it, so indexing it
- * makes "rebase onto main" — a sentence a developer types several times a day —
- * a lexical match against every one of those sessions, and a lexical match is
- * what this product turns into a teammate hint (audit row M13). `master` is the
- * same branch under the older default and is here for the same reason.
- *
- * A rule about a TITLE THAT IS ONLY A BRANCH LABEL, never about the word:
- * `the main loop deadlocks` keeps its `main`, because somebody wrote it.
- */
-const DEFAULT_BRANCH_LABELS: ReadonlySet<string> = new Set(["main", "master"]);
 
 /**
  * The title as the FTS document may carry it: without the ` @ <repo>` suffix

@@ -99,7 +99,7 @@ export const buildNormalizedDoc = (input: NormalizedDocInput): string => {
     input.status,
     input.intentSummary ?? "",
     input.description ?? "",
-    derivedTokenLine([title, ...input.targetValues]),
+    derivedTokenLine([title, ...input.targetValues], input.repoLabel),
     ...input.targetValues,
     ...input.claimSummaries,
   ]
