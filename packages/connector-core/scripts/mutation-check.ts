@@ -3032,7 +3032,7 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "the briefing lists one line per context again",
     file: `${CORE}/src/briefing/render.ts`,
     from: "  const groups = groupContextsByDeveloper(eligible);",
-    to: "  const groups = eligible.map((entry) => ({ shown: entry, collapsed: 0 }));",
+    to: "  const groups = eligible.map((entry) => ({ shown: entry, otherTitles: 0 }));",
     test: `${CORE}/test/briefing-contexts.test.ts`,
     because:
       "one busy teammate takes the whole section and the teammate working " +

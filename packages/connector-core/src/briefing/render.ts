@@ -370,17 +370,23 @@ const renderContextSection = (input: BriefingInput): Section => {
     });
   const groups = groupContextsByDeveloper(eligible);
 
-  const lines = groups.slice(0, MAX_CONTEXTS).map(({ shown, collapsed }) => {
+  const lines = groups.slice(0, MAX_CONTEXTS).map(({ shown, otherTitles }) => {
     const author = authorNameFor(shown.context, input.presence);
     const status = sanitizeUntrusted(shown.context.status);
     // The fold count sits with the facts, BEFORE the frame: every line in this
     // section carries exactly one « » pair and the title closes it, so a count
     // appended after the quotes would be the second untrusted-looking thing on
     // the line and would break the shape the injection corpus pins.
+    // The noun names what the number counts: DISTINCT other titles, not rows.
+    // It read ", N more contexts" while counting titles, so a teammate with
+    // the same branch open in three worktrees and one other investigation was
+    // announced as having two sessions running when he had four — and this
+    // number is the only quantitative fact on the line a reader uses to decide
+    // whether to interrupt him.
     const more =
-      collapsed === 0
+      otherTitles === 0
         ? ""
-        : `, ${String(collapsed)} more context${collapsed === 1 ? "" : "s"}`;
+        : `, ${String(otherTitles)} other piece${otherTitles === 1 ? "" : "s"} of work`;
     // The intent on ITS OWN line (one « » pair per line, the framed-surface
     // invariant), indented under the context it belongs to — but inside the
     // SAME entry string, so appendSection's "+N more" arithmetic still counts

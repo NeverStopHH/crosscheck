@@ -207,7 +207,8 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
  *
  * 200 rather than the five the section shows, because the connector groups
  * per developer and counts what it folded: the rows beyond the first five
- * teammates are what makes "3 more contexts" a fact rather than a guess. On a
+ * teammates are what makes "3 other pieces of work" a fact rather than a
+ * guess. On a
  * repo with more than 200 contexts active inside the window the fold counts
  * are of the freshest 200 — an undercount, which is the direction that never
  * invents work nobody is doing.

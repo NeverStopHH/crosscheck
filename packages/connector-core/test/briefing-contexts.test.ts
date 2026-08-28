@@ -73,7 +73,7 @@ describe("one line per teammate, not per context", () => {
     const lines = contextLines(rendered);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("«Login 500s on staging»");
-    expect(lines[0]).toContain("2 more contexts");
+    expect(lines[0]).toContain("2 other pieces of work");
     expect(rendered).not.toContain("«Cube rebuild is slow»");
   });
 
@@ -89,8 +89,31 @@ describe("one line per teammate, not per context", () => {
     );
 
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("1 more context");
-    expect(lines[0]).not.toContain("2 more");
+    expect(lines[0]).toContain("1 other piece of work");
+    expect(lines[0]).not.toContain("2 other");
+  });
+
+  test("the count says what it counts — pieces of work, not contexts", () => {
+    // Ken: FOUR eligible contexts under TWO titles, the exact case this
+    // module exists for ("three worktrees, or restarting their agent three
+    // times on the same branch"). Counting distinct work is the right choice
+    // and the doc comment says so; the noun on the line was the untruth. A
+    // reader deciding whether to interrupt Ken read "1 more context" and
+    // believed he had two sessions open when he had four.
+    const lines = contextLines(
+      render([
+        context({ id: "wc_1", title: "Importer retries forever", createdAt: minutesAgo(3) }),
+        context({ id: "wc_2", title: "Importer retries forever", createdAt: minutesAgo(9) }),
+        context({ id: "wc_3", title: "Importer retries forever", createdAt: minutesAgo(14) }),
+        context({ id: "wc_4", title: "Login 500s on staging", createdAt: minutesAgo(30) }),
+      ]),
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("1 other piece of work");
+    // The number is right; it is the noun that was wrong. "context" is what
+    // the reader would have counted rows of, and there are three others.
+    expect(lines[0]).not.toContain("more context");
   });
 
   test("a teammate with one context reads exactly as it did before", () => {
@@ -198,7 +221,7 @@ describe("which context speaks for the teammate", () => {
 
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("«Just started»");
-    expect(lines[0]).toContain("1 more context");
+    expect(lines[0]).toContain("1 other piece of work");
   });
 });
 
@@ -234,8 +257,8 @@ describe("the grouping rules themselves", () => {
     expect(backwards.map((group) => group.shown.title)).toEqual(
       forwards.map((group) => group.shown.title),
     );
-    expect(backwards.map((group) => group.collapsed)).toEqual(
-      forwards.map((group) => group.collapsed),
+    expect(backwards.map((group) => group.otherTitles)).toEqual(
+      forwards.map((group) => group.otherTitles),
     );
   });
 
