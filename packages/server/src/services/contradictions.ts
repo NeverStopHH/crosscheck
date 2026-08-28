@@ -178,23 +178,35 @@ const repoTouchCondition = (
       )`;
 
 /**
- * ConE's rarity rule, applied INSIDE the (kind, value) self-join rather than
- * after it — the same GHOST_HOT_TARGET_MAX_CONTEXTS bar the ghost check and
- * the conference's own overlap tier apply, and the reason it has to sit here
- * is arithmetic rather than taste.
+ * The rarity rule for the derived join: the same GHOST_HOT_TARGET_MAX_CONTEXTS
+ * bar the ghost check and the conference's overlap tier apply.
  *
- * A lockfile, a router or a barrel file that most sessions touch is carried by
- * every context in the repo, so the self-join pairs it with ITSELF once per
- * ordered pair of contexts: 10^4 contexts sharing one value is 10^8 rows
- * before a single claim is looked at. Measured on a seeded 10^4-context repo
- * with one ordinary lockfile row per context, this join answered in 23,700 ms;
- * with this condition it answers in 1,732 ms, and the conference's own
- * slice bound takes the same read to 97 ms.
+ * IT IS A CORRECTNESS RULE, NOT A SPEED ONE, and that distinction is measured
+ * rather than argued. Two theories are not about the same thing because both
+ * sessions edited bun.lock, and a "contradiction worth refereeing" found that
+ * way is the prediction theatre the ghost check's own exclusions exist to
+ * prevent. What it does NOT do is stop the work: the planner applies it as an
+ * anti-join ABOVE the (kind, value) fan-out, so every hot pair is still built
+ * and paid for before it is discarded.
  *
- * IT IS ALSO THE CORRECTNESS RULE, not only the speed one: two theories are
- * not about the same thing because both sessions edited bun.lock, and a
- * "contradiction worth refereeing" found that way is the prediction theatre
- * the ghost check's own exclusions exist to prevent.
+ * MEASURED on a seeded 10^4-context repo — one unique file per context, one
+ * value shared by five contexts, and in the "hot" arm one value per forty
+ * contexts — reading GET /api/contradictions' own call, median of three:
+ *
+ *   hot crowd absent    40,000 self-join pairs, all kept       53 ms
+ *   hot crowd present  430,000 self-join pairs,  40,000 kept  292 ms
+ *
+ * Identical answers, 5.5x the cost. So the only bound that removes the
+ * fan-out is the CALLER'S SLICE below (liveSideWorkContextIds), which takes
+ * that same read to 6 ms. routes/contradictions.ts passes no slice, so the
+ * route is still linear in the crowd — a known residual, not a claim of
+ * boundedness. Nothing here is a hook budget: connector-core's
+ * HTTP_TIMEOUT_MS cuts the briefing's fan-out at 400 ms and the section is
+ * dropped, which is why SessionStart stays inside 1000 ms while this read
+ * does not.
+ *
+ * VERIFY: grep -c liveSideWorkContextIds packages/server/src/routes/contradictions.ts
+ * PRINTS: 0
  *
  * ONLY WHEN A REPO IS NAMED, and that is a consistency requirement rather
  * than an omission. Rarity is a property of ONE repo (ghost-overlap.ts
