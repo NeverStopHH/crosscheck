@@ -3221,7 +3221,7 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
  * PRINTS: agent-restart.test.ts 1
- * PRINTS: body-redaction.test.ts 2
+ * PRINTS: body-redaction.test.ts 5
  * PRINTS: briefing-contexts.test.ts 2
  * PRINTS: briefing-parity.test.ts 2
  * PRINTS: briefing-solved.test.ts 3
@@ -3275,14 +3275,14 @@ interface Outcome {
  * PRINTS: presence.test.ts 1
  * PRINTS: proxy-e2e.test.ts 1
  * PRINTS: question-delivery.test.ts 1
- * PRINTS: question-tools.test.ts 2
+ * PRINTS: question-tools.test.ts 3
  * PRINTS: questions.test.ts 8
  * PRINTS: records.test.ts 1
  * PRINTS: recovery-race.test.ts 1
  * PRINTS: render-surface-registry.test.ts 2
  * PRINTS: repo-ssh-determinism.test.ts 2
  * PRINTS: search-filters.test.ts 10
- * PRINTS: search-tokens.test.ts 3
+ * PRINTS: search-tokens.test.ts 5
  * PRINTS: search-who-when.test.ts 1
  * PRINTS: search.test.ts 3
  * PRINTS: session.test.ts 1
@@ -3297,7 +3297,7 @@ interface Outcome {
  * PRINTS: solved-intent.test.ts 4
  * PRINTS: solved-probe.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
- * PRINTS: stop-gate.test.ts 3
+ * PRINTS: stop-gate.test.ts 4
  * PRINTS: stop-hook.test.ts 1
  * PRINTS: stop-latency.test.ts 1
  * PRINTS: summarizer-argv.test.ts 1
@@ -3307,7 +3307,7 @@ interface Outcome {
  * PRINTS: summarizer-worker.test.ts 2
  * PRINTS: transparency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1
- * PRINTS: work-context-listing.test.ts 2
+ * PRINTS: work-context-listing.test.ts 3
  */
 const greenGuards = new Map<string, boolean>();
 
