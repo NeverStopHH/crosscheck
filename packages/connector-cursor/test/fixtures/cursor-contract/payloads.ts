@@ -68,6 +68,39 @@ export const SESSION_START_INPUT_BACKGROUND = {
 } as const;
 
 /**
+ * Source: cursor.com/docs/hooks — "beforeSubmitPrompt": "Called right after
+ * user hits send but before backend request. Can prevent submission."
+ * Input `{prompt, attachments}`, output `{continue, user_message}`.
+ * Recorded 2026-08-28 (the re-read that opened this event for the
+ * derived-intent rung).
+ *
+ * `attachments` is recorded and NEVER parsed — the connector's schema has no
+ * entry for it and the privacy suite keeps the name on its banned list. It is
+ * here for the same reason `user_email` is: tolerating unknown fields is part
+ * of the contract, and a fixture trimmed to what we read could not prove it.
+ */
+export const BEFORE_SUBMIT_PROMPT_INPUT = {
+  ...COMMON_INPUT,
+  hook_event_name: "beforeSubmitPrompt",
+  prompt: "Fix the rate limiter so the refresh endpoint stops 500ing",
+  attachments: [
+    { type: "file", file_path: "/home/dev/acme/api/src/rate-limit.ts" },
+  ],
+} as const;
+
+/**
+ * The same event with an EMPTY prompt — a submit carrying only attachments.
+ * NOT a published example: it is the shape that decides why `prompt` is a
+ * presence-only drift field rather than a mapped one (src/payload.ts). An
+ * empty prompt is ordinary use and must not be counted as contract drift; a
+ * MISSING `prompt` key is a rename and must be.
+ */
+export const BEFORE_SUBMIT_PROMPT_EMPTY = {
+  ...BEFORE_SUBMIT_PROMPT_INPUT,
+  prompt: "",
+} as const;
+
+/**
  * Source: cursor.com/docs/hooks — "afterFileEdit": {file_path, edits:
  * [{old_string, new_string}]}. The edit strings are file CONTENT and are
  * never parsed past tolerance, never uploaded (Tier-0: paths only) — the

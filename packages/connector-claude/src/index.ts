@@ -1,4 +1,8 @@
 export { runHook, isHookName } from "./hooks/index.ts";
+// What this connector can make a model do, declared as data (§4.4's sibling
+// pin for the derive rungs): connector-core/test/derive-capability-registry
+// reads it against what this package actually ships.
+export { CLAUDE_CAPABILITY_MANIFEST } from "./capabilities.ts";
 export type { HookName, HookContext } from "./hooks/runner.ts";
 export { runStatusline } from "./statusline/statusline.ts";
 // The Tier-1 summarizer surface (Claude-specific by construction, DESIGN.md
@@ -27,10 +31,11 @@ export {
   summarizeGhostCost,
 } from "@crosscheck/connector-core/derive/ghost/cost.ts";
 export type { GhostCost } from "@crosscheck/connector-core/derive/ghost/cost.ts";
-// The agent conference's model half (VISION.md §2): what `crosscheck
-// conference` shows the model, how it labels the sessions so an answer can be
-// attributed deterministically, and how the answer is read back. No worker
-// entry — a conference is a command a human runs, never a detached spawn.
+// The agent conference's model half (VISION.md §2) moved to connector-core
+// (src/derive/conference/prompt.ts) when it became every connector's: a
+// conference is a command a human runs, so it was never Claude-specific —
+// only Claude-located. Re-exported here unchanged so this package's public
+// surface is byte-identical and packages/cli needed no edit.
 export {
   CONFERENCE_PROMPT,
   estimateInputTokens,
@@ -39,12 +44,12 @@ export {
   parseConferenceAnswer,
   renderConferenceInput,
   resolveConferenceArgv,
-} from "./conference/prompt.ts";
+} from "@crosscheck/connector-core/derive/conference/prompt.ts";
 export type {
   ConferenceAnswer,
   LabelledSession,
   ParsedFinding,
-} from "./conference/prompt.ts";
+} from "@crosscheck/connector-core/derive/conference/prompt.ts";
 // The shared model-cost scan's per-counter summarizers (state/session-state.ts
 // readLiveSessionStates reads the directory once for all three).
 export { summarizeSummarizerCost } from "@crosscheck/connector-core/derive/summarizer/cost.ts";

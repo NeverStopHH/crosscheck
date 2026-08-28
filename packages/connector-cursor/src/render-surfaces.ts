@@ -26,6 +26,7 @@ import type {
   WorkContextEntry,
 } from "@crosscheck/connector-core/http/hub.ts";
 
+import { cursorCapabilityDetail } from "./doctor.ts";
 import {
   cursorBriefingContext,
   cursorClaimHintContext,
@@ -146,6 +147,26 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         "github.com/acme/api",
         NOW,
       ),
+  },
+  {
+    kind: "corpus",
+    name: "cursor-derive-capability-line",
+    module: "src/doctor.ts",
+    framing: "bare",
+    // The derive rungs' own doctor line. Its head is renderer-owned literal
+    // (the rung and the manifest's platform sentence, capabilities.ts), and
+    // its tail is NOT: `lastFailure` is whatever the model binary printed
+    // when a fire was lost, read back out of a session-state file and
+    // printed into a terminal — and, through a Bash `crosscheck doctor`,
+    // into an agent's context. BARE class, so the corpus holds it to the
+    // character invariants and to carrying no frame characters at all.
+    render: (payload) =>
+      cursorCapabilityDetail({
+        rung: "reduced",
+        sentence: "the stop payload carries a transcript pointer",
+        failures: 2,
+        lastFailure: payload,
+      }),
   },
   {
     kind: "corpus",

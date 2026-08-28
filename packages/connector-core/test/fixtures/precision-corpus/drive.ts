@@ -485,6 +485,8 @@ const probeSessionState = (
   summarizerFailCount: 0,
   summarizerLastFailure: null,
   summarizerRejectCount: 0,
+  summarizerNoSliceCount: 0,
+  summarizerLastNoSlice: null,
   summarizerLastRejection: null,
   workContextTitle: null,
   workContextStatus: null,

@@ -160,6 +160,18 @@ const SessionStateObjectSchema = z.looseObject({
    * pre-rejection state file parsing.
    */
   summarizerRejectCount: z.number().int().min(0).default(0),
+  /**
+   * Turns where the gate wanted to look and there was NOTHING TO LOOK AT:
+   * the host sent no transcript, the file could not be read, or its tail
+   * decoded to nothing. No model ran, so this is not a fire and not a
+   * failure — `ghostNoOverlapCount`'s lesson, applied one tier down. Folded
+   * into `summarizerFailCount` it would send a Cursor user whose build
+   * simply has transcripts disabled to their local `claude` binary, which is
+   * working perfectly. The reason is one of the connector's own constants,
+   * bounded by the writer.
+   */
+  summarizerNoSliceCount: z.number().int().min(0).default(0),
+  summarizerLastNoSlice: z.string().nullable().default(null),
   summarizerLastRejection: z.string().nullable().default(null),
   /**
    * The work-context title and status this session registered with (trial
@@ -580,6 +592,8 @@ export const deriveSessionState = (
     summarizerFailCount: 0,
     summarizerLastFailure: null,
     summarizerRejectCount: 0,
+    summarizerNoSliceCount: 0,
+    summarizerLastNoSlice: null,
     summarizerLastRejection: null,
     workContextTitle: null,
     workContextStatus: null,

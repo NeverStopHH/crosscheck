@@ -2685,7 +2685,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // One session too big to send must cost the team that session, not the
     // whole conference.
     label: "one oversized session silences the whole conference",
-    file: `${CONNECTOR}/src/conference/prompt.ts`,
+    file: `${CORE}/src/derive/conference/prompt.ts`,
     from: `    if (total + cost > CONFERENCE_MAX_INPUT_CHARS) {
       continue;
     }`,
@@ -3046,7 +3046,10 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // Every one of these refusals used to be a silent return.
     label: "a refused answer is dropped in silence again",
-    file: `${CONNECTOR}/src/summarizer/worker.ts`,
+    // The gate-to-spool half of the worker moved to core when Cursor needed
+    // it; the Claude worker still reaches it, so the same guard still sees
+    // the same silence.
+    file: `${CORE}/src/derive/summarizer/derive.ts`,
     from: "      withSummarizerRejection(fresh, reason),",
     to: "      fresh,",
     test: `${CONNECTOR}/test/summarizer-worker.test.ts`,

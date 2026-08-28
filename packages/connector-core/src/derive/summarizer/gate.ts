@@ -288,6 +288,30 @@ export const withSummarizerRejection = (
 });
 
 /**
+ * A turn the gate could not even look at: the host produced no slice.
+ *
+ * ITS OWN OUTCOME, and the distinction is `withGhostNoOverlap`'s, one tier
+ * down. A failure means something on THIS machine lost a model call, and the
+ * remedy doctor prints for one is the model runner probe. "Cursor sent
+ * `transcript_path: null` because this build has transcripts disabled" is a
+ * DEPLOYMENT STATE: no model ran, no quota was spent, and the local `claude`
+ * binary the remedy would send the reader to is working perfectly. Folded
+ * into the failures it would also flip the finding-#14 WARN on a machine
+ * where nothing is broken.
+ *
+ * The reason is the CONNECTOR's own constant, never a host string, and it is
+ * bounded here like every other reason this file writes.
+ */
+export const withSummarizerNoSlice = (
+  state: SessionState,
+  reason: string,
+): SessionState => ({
+  ...state,
+  summarizerNoSliceCount: state.summarizerNoSliceCount + 1,
+  summarizerLastNoSlice: cutWellFormed(reason, SUMMARIZER_FAILURE_MAX_CHARS),
+});
+
+/**
  * A run the RUNNER lost (trial finding #14) — binary missing, non-zero
  * exit, deadline — booked by the worker with the reason as
  * runner.ts formatSummarizerFailure renders it. The bound lives HERE, on

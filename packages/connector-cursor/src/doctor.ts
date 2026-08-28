@@ -1,11 +1,18 @@
 /**
  * The doctor's Cursor section (design §3.4): hooks file present + entries
- * owned + all seven events registered + nothing failClosed, launcher health
+ * owned + all eight events registered + nothing failClosed, launcher health
  * (the shared core probes — a bare `crosscheck` is executed via --version,
  * absolute-path launchers are existence/cache-checked), `.cursor/mcp.json` entry
  * owned, last-observed cursor_version ≥ 1.7, and the contract-drift
  * counters — rule 6 on this surface: cursor hooks are silent by design, so
  * doctor is the only place a renamed payload field ever becomes a sentence.
+ *
+ * SINCE THE DERIVE RUNGS: what crosscheck INFERS inside Cursor, and what it
+ * deliberately does not, one sentence each from the static manifest
+ * (capabilities.ts). The refusals are printed ALWAYS and as PASS lines — a
+ * decision nobody can find is indistinguishable from a bug nobody fixed, and
+ * every one of them is the platform working as documented, not this machine
+ * failing.
  *
  * "Not installed" is a PASS, not a warning: the Cursor connector is
  * optional per repo, and a warning nobody can act on teaches people to
@@ -18,6 +25,9 @@ import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts
 import { MCP_SERVER_KEY } from "@crosscheck/connector-core/constants.ts";
 import { readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { summarizeSummarizerCost } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
+import { bareSummarizerLine } from "@crosscheck/connector-core/model/runner.ts";
+import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 
 import {
@@ -27,6 +37,8 @@ import {
   MIN_CURSOR_HOOKS_MAJOR,
   MIN_CURSOR_HOOKS_MINOR,
 } from "./constants.ts";
+import { CURSOR_CAPABILITY_MANIFEST } from "./capabilities.ts";
+import { NO_SLICE_NO_TRANSCRIPT } from "./derive/transcript.ts";
 import { readContractDrift } from "./drift.ts";
 import { readInjectionLedger } from "./inject/ledger.ts";
 import { isOwnedCursorCommand } from "./init/hooks-merge.ts";
@@ -50,6 +62,14 @@ export interface CursorDoctorInput {
   readonly env: Env;
   readonly home: string;
   readonly repoKey: string;
+  /**
+   * The live session states the CALLER already read (`doctor` scans the
+   * session directory once for all its model-cost lines). Optional, and its
+   * absence is honest rather than convenient: with no states the capability
+   * lines say what the platform allows and stay quiet about what has happened,
+   * which is exactly true on a machine where nothing has run yet.
+   */
+  readonly liveStates?: readonly SessionState[];
 }
 
 interface OwnedEntry {
@@ -180,6 +200,132 @@ const injectionCheck = async (home: string): Promise<CursorCheck> => {
   );
 };
 
+/**
+ * ONE capability line's text — the rung and its platform sentence, plus what
+ * this machine has booked against it.
+ *
+ * A REGISTERED RENDER SURFACE (§4.4, `cursor-derive-capability-line`), and
+ * not decoratively: `lastFailure` is the model BINARY's own stdout on its way
+ * out of session state, so it goes through `bareSummarizerLine` here — the
+ * same door core's `model-failure-line` uses — before it can reach a terminal
+ * or, through a Bash `crosscheck doctor`, an agent's context. The writers
+ * that fill the field already bound it, and this is the second lock rather
+ * than the first: a state file is a file, and a doctor line that trusts one
+ * is one hostile write away from carrying whatever is in it.
+ */
+export const cursorCapabilityDetail = (input: {
+  readonly rung: string;
+  readonly sentence: string;
+  readonly failures: number;
+  readonly lastFailure: string | null;
+}): string => {
+  const head = `${input.rung} — ${input.sentence}`;
+  if (input.failures === 0) {
+    return head;
+  }
+  const said =
+    input.lastFailure === null ? "" : bareSummarizerLine(input.lastFailure);
+  return (
+    `${head}; ${String(input.failures)} fire${input.failures === 1 ? "" : "s"} booked a failure` +
+    (said.length === 0 ? "" : `, last "${said}"`) +
+    " — see the summarizer runner check (counts are per live session and clear at SessionEnd)"
+  );
+};
+
+/**
+ * WHAT CROSSCHECK INFERS INSIDE CURSOR, printed as sentences.
+ *
+ * One line per declared capability and one per declared refusal
+ * (capabilities.ts holds both as data). The refusals are the half that is
+ * easy to skip and the half rule 4 is about: a thing this product decided not
+ * to do on this platform, printed in words, so nobody has to reverse-engineer
+ * a silence. They are PASS lines — a refusal is a decision working, not a
+ * fault — and they say the platform reason, never a roadmap.
+ *
+ * A capability WARNs only when this machine has booked something against it:
+ * a rung is not a health check, and warning on a platform limit nobody can
+ * act on is how doctor gets ignored (the absence-check lesson).
+ */
+const capabilityChecks = (
+  liveStates: readonly SessionState[],
+): readonly CursorCheck[] => {
+  const summarizer = summarizeSummarizerCost(liveStates);
+  const intentFails = liveStates.reduce(
+    (total, state) => total + state.intentFailCount,
+    0,
+  );
+  const intentLastFailure = liveStates.reduce<string | null>(
+    (last, state) => state.intentLastFailure ?? last,
+    null,
+  );
+  const ghostFails = liveStates.reduce(
+    (total, state) => total + state.ghostFailCount,
+    0,
+  );
+  const ghostLastFailure = liveStates.reduce<string | null>(
+    (last, state) => state.ghostLastFailure ?? last,
+    null,
+  );
+  const booked: Readonly<
+    Record<string, { readonly count: number; readonly last: string | null }>
+  > = {
+    intent: { count: intentFails, last: intentLastFailure },
+    ghost: { count: ghostFails, last: ghostLastFailure },
+    summarizer: { count: summarizer.fails, last: summarizer.lastFailure },
+    conference: { count: 0, last: null },
+  };
+  return CURSOR_CAPABILITY_MANIFEST.capabilities.map((capability) => {
+    const outcome = booked[capability.name] ?? { count: 0, last: null };
+    const detail = cursorCapabilityDetail({
+      rung: capability.rung,
+      sentence: capability.sentence,
+      failures: outcome.count,
+      lastFailure: outcome.last,
+    });
+    return check(
+      outcome.count === 0 ? "PASS" : "WARN",
+      `${capability.name} (cursor)`,
+      detail,
+    );
+  });
+};
+
+/**
+ * The CONDITIONAL refusal inside the summarizer rung, and the reason it is
+ * its own line rather than a footnote on the one above: "your Cursor sends no
+ * transcript" and "your model runner is broken" have nothing to do with each
+ * other, and folding the first into the runner's WARN would send a reader
+ * whose install is perfect to debug a binary that works. Only printed once
+ * this machine has actually seen it — before that there is nothing to say.
+ */
+const transcriptRefusalCheck = (
+  liveStates: readonly SessionState[],
+): readonly CursorCheck[] => {
+  const noTranscript = liveStates.filter(
+    (state) => state.summarizerLastNoSlice === NO_SLICE_NO_TRANSCRIPT,
+  );
+  if (noTranscript.length === 0) {
+    return [];
+  }
+  const turns = noTranscript.reduce(
+    (total, state) => total + state.summarizerNoSliceCount,
+    0,
+  );
+  return [
+    check(
+      "PASS",
+      "summarizer transcript (cursor)",
+      `this Cursor build provides no transcript — Tier-1 capture off; deterministic capture unaffected (${String(turns)} turn${turns === 1 ? "" : "s"} so far)`,
+    ),
+  ];
+};
+
+/** The refusals, always printed: a decision nobody can find is a bug. */
+const refusalChecks = (): readonly CursorCheck[] =>
+  CURSOR_CAPABILITY_MANIFEST.refusals.map((refusal) =>
+    check("PASS", `${refusal.name} (cursor)`, refusal.sentence),
+  );
+
 const mcpCheck = async (repoRoot: string): Promise<CursorCheck> => {
   const path = join(repoRoot, CURSOR_DIR, CURSOR_MCP_FILE);
   const raw = await readTextOrNull(path);
@@ -304,5 +450,8 @@ export const cursorDoctorChecks = async (
     versionCheck(sync.cursorVersion),
     await driftCheck(input.home),
     await injectionCheck(input.home),
+    ...capabilityChecks(input.liveStates ?? []),
+    ...transcriptRefusalCheck(input.liveStates ?? []),
+    ...refusalChecks(),
   ];
 };

@@ -36,12 +36,12 @@ import {
   CONFERENCE_MAX_INPUT_CHARS,
   CONFERENCE_SENTENCE_MAX_CHARS,
   SUMMARIZER_MODEL,
-} from "@crosscheck/connector-core/constants.ts";
+} from "../../constants.ts";
 import { MAX_INTENT_SUMMARY_CHARS } from "@crosscheck/schema";
-import { cutWellFormed } from "@crosscheck/connector-core/briefing/cut.ts";
-import type { ConferenceContext } from "@crosscheck/connector-core/http/hub.ts";
-import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { SUMMARIZER_LEAN_FLAGS } from "@crosscheck/connector-core/model/runner.ts";
+import { cutWellFormed } from "../../briefing/cut.ts";
+import type { ConferenceContext } from "../../http/hub.ts";
+import type { Env } from "../../config/paths.ts";
+import { SUMMARIZER_LEAN_FLAGS } from "../../model/runner.ts";
 
 /** The label alphabet — A, B, C … one per session the model is shown. */
 const LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -57,7 +57,7 @@ const LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
  * separate investigations are usually separate, and a model asked to find a
  * shared cause will find one.
  *
- * VERIFY: bun -e 'const p=await import("./packages/connector-claude/src/conference/prompt.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(p.CONFERENCE_PROMPT.includes(`at most ${c.CONFERENCE_SENTENCE_MAX_CHARS} characters`), p.CONFERENCE_PROMPT.includes(`at most ${c.CONFERENCE_MAX_FINDINGS} lines`))'
+ * VERIFY: bun -e 'const p=await import("./packages/connector-core/src/derive/conference/prompt.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(p.CONFERENCE_PROMPT.includes(`at most ${c.CONFERENCE_SENTENCE_MAX_CHARS} characters`), p.CONFERENCE_PROMPT.includes(`at most ${c.CONFERENCE_MAX_FINDINGS} lines`))'
  * PRINTS: true true
  */
 export const CONFERENCE_PROMPT =

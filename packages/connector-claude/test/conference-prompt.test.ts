@@ -23,7 +23,7 @@ import {
   parseConferenceAnswer,
   renderConferenceInput,
   resolveConferenceArgv,
-} from "../src/conference/prompt.ts";
+} from "@crosscheck/connector-core/derive/conference/prompt.ts";
 
 const ISO = "2026-08-18T09:00:00.000Z";
 

@@ -1576,14 +1576,15 @@ export const runDoctor = async (
     await checkPrivacy(hubCtx),
     skewCheck,
     bunfigCheck,
-    ...(await checkCursor(identity.root, env, config.home, key)),
+    ...(await checkCursor(identity.root, env, config.home, key, liveStates)),
   ]);
 };
 
 /**
  * The Cursor section (design §3.4), owned by connector-cursor: hooks file +
  * entries + launcher + mcp entry + observed version + contract-drift
- * counters. DYNAMIC import like the bin's cursor-hook branch, and its
+ * counters, and — since the derive rungs — what crosscheck infers inside
+ * Cursor plus every refusal, one sentence each. DYNAMIC import like the bin's cursor-hook branch, and its
  * failure is contained — a broken cursor package must cost its section,
  * never the doctor.
  */
@@ -1592,12 +1593,23 @@ const checkCursor = async (
   env: Env,
   home: string,
   key: string,
+  liveStates: readonly SessionState[],
 ): Promise<readonly Check[]> => {
   try {
     const { cursorDoctorChecks } = await import(
       "@crosscheck/connector-cursor"
     );
-    const checks = await cursorDoctorChecks({ repoRoot, env, home, repoKey: key });
+    const checks = await cursorDoctorChecks({
+      repoRoot,
+      env,
+      home,
+      repoKey: key,
+      // The SAME scan the model-cost lines above used (one read of the
+      // session directory for every derive figure doctor prints); the cursor
+      // section spends it on the one fact only it can explain — whether this
+      // Cursor build has been sending a transcript at all.
+      liveStates,
+    });
     return checks.map((entry) => check(entry.level, entry.name, entry.detail));
   } catch {
     return [

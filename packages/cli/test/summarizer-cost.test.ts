@@ -118,6 +118,8 @@ describe("summarizer cost surfaces", () => {
       summarizerEstimatedTokens: 1200,
       summarizerNoneCount: 1,
       summarizerRejectCount: 2,
+      summarizerNoSliceCount: 0,
+      summarizerLastNoSlice: null,
       summarizerLastRejection:
         "role-play: the answer narrated the next step instead of a conclusion",
     });
@@ -140,6 +142,8 @@ describe("summarizer cost surfaces", () => {
       summarizerFireCount: 2,
       summarizerEstimatedTokens: 900,
       summarizerRejectCount: 2,
+      summarizerNoSliceCount: 0,
+      summarizerLastNoSlice: null,
       summarizerLastRejection:
         "echo: the answer repeated the instructions it was given",
     });
@@ -166,6 +170,8 @@ describe("summarizer cost surfaces", () => {
       summarizerEstimatedTokens: 900,
       summarizerDraftCount: 1,
       summarizerRejectCount: 1,
+      summarizerNoSliceCount: 0,
+      summarizerLastNoSlice: null,
       summarizerLastRejection:
         "echo: the answer was a teammate hint this repo had already delivered",
     });

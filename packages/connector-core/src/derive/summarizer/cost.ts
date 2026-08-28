@@ -52,6 +52,15 @@ export interface SummarizerCost {
    */
   readonly rejects: number;
   readonly lastRejection: string | null;
+  /**
+   * Turns where the host had no slice to offer at all (gate.ts
+   * withSummarizerNoSlice says why this is not a failure). Zero on Claude by
+   * construction — its Stop hook has a transcript or it has no session — and
+   * the number a Cursor build with transcripts disabled shows instead of a
+   * runner WARN that would send the reader to a healthy binary.
+   */
+  readonly noSlice: number;
+  readonly lastNoSlice: string | null;
   /** Rough figure at ~4 chars/token — an estimate, never a bill. */
   readonly estimatedTokens: number;
 }
@@ -65,6 +74,8 @@ const NO_COST: SummarizerCost = {
   lastFailure: null,
   rejects: 0,
   lastRejection: null,
+  noSlice: 0,
+  lastNoSlice: null,
   estimatedTokens: 0,
 };
 
@@ -87,6 +98,8 @@ export const summarizeSummarizerCost = (
       lastFailure: state.summarizerLastFailure ?? total.lastFailure,
       rejects: total.rejects + state.summarizerRejectCount,
       lastRejection: state.summarizerLastRejection ?? total.lastRejection,
+      noSlice: total.noSlice + state.summarizerNoSliceCount,
+      lastNoSlice: state.summarizerLastNoSlice ?? total.lastNoSlice,
       estimatedTokens: total.estimatedTokens + state.summarizerEstimatedTokens,
     }),
     NO_COST,
@@ -131,8 +144,16 @@ export const formatSummarizerCost = (cost: SummarizerCost): string => {
     cost.rejects === 0
       ? ""
       : `, ${String(cost.rejects)} refused${rejectedReason}`;
+  // The sliceless turns read LAST and outside the run parentheses, because
+  // they are not runs: no model was spawned and no quota was spent.
+  const noSliceReason =
+    cost.lastNoSlice === null ? "" : `: ${cost.lastNoSlice}`;
+  const noSlicePart =
+    cost.noSlice === 0
+      ? ""
+      : `, ${String(cost.noSlice)} turn${cost.noSlice === 1 ? "" : "s"} with no slice${noSliceReason}`;
   return (
-    `${String(cost.fires)} runs (${String(cost.nones)} NONE, ${draftsPart}${failsPart}${rejectsPart}), ` +
+    `${String(cost.fires)} runs (${String(cost.nones)} NONE, ${draftsPart}${failsPart}${rejectsPart})${noSlicePart}, ` +
     `~${String(cost.estimatedTokens)} tokens (estimate) across ${sessionsPart}`
   );
 };

@@ -1,6 +1,8 @@
 <!--
   Offline stand-in for https://cursor.com/docs/hooks, recorded 2026-08-18
-  (design research pass) and re-read 2026-08-19 (Block 6 build) — NOT a
+  (design research pass), re-read 2026-08-19 (Block 6 build) and re-read
+  again 2026-08-28 (the derive rungs — beforeSubmitPrompt, transcript_path
+  and the cloud-agent table below all come from that read) — NOT a
   verbatim copy. It reproduces only the section structure and the field names
   this connector consumes, which is the surface payloads.ts encodes and
   test/contract.test.ts pins the fixtures against.
@@ -32,10 +34,25 @@ codes = hook failed, action proceeds (fail-open by default).
 `conversation_id` (stable across turns), `generation_id` (changes per user
 message), `model`, `model_id`, `model_params`, `hook_event_name`,
 `cursor_version` (e.g. "1.7.2"), `workspace_roots` (string[]), `user_email`
-(string | null), `transcript_path` (string | null).
+(string | null), `transcript_path` (string | null — "Path to the main
+conversation transcript file (null if transcripts disabled)").
 
 Environment: `CURSOR_PROJECT_DIR` (workspace root, always present),
-`CURSOR_VERSION`, `CURSOR_USER_EMAIL`, `CURSOR_TRANSCRIPT_PATH`.
+`CURSOR_VERSION`, `CURSOR_USER_EMAIL`, `CURSOR_TRANSCRIPT_PATH` ("If
+transcripts enabled"), `CURSOR_CODE_REMOTE`, `CLAUDE_PROJECT_DIR`.
+
+The transcript FILE FORMAT is documented nowhere on this page: there is no
+schema, no example and no extension for the main transcript. The connector's
+reader (src/derive/transcript.ts) is shape-tolerant for that reason and
+reports which shape it found.
+
+## Cloud agents (recorded 2026-08-28)
+
+Hooks that run in cloud agents include `beforeSubmitPrompt`, `postToolUse`,
+`postToolUseFailure`, `afterFileEdit`, `beforeShellExecution` /
+`afterShellExecution` and `stop`. `sessionStart` and `sessionEnd` do NOT:
+"Deferred while cloud agents can still start in a read-only environment" and
+"Cloud agents have no editor-lifetime session boundary" respectively.
 
 ## Events this connector registers
 
@@ -45,6 +62,19 @@ Fire-and-forget on new composer conversation. Input: `session_id` (same as
 conversation_id), `is_background_agent`, `composer_mode`. Output: `env`,
 `additional_context` (injected into initial context). Not available in cloud
 agents (deferred upstream).
+
+### beforeSubmitPrompt
+
+"Called right after user hits send but before backend request. Can prevent
+submission." Input: `prompt` ("<user prompt text>"), `attachments`
+([{`type`: "file" | "rule", `file_path`}]). Output: `continue`
+(boolean — whether to allow the submission), `user_message` (string,
+optional — shown to the user when blocked). Matcher: matched against the
+value `UserPromptSubmit`.
+
+THERE IS NO CONTEXT-INJECTION OUTPUT on this event: `additional_context` is
+not among its output fields, and the only power the output has is to block.
+This connector registers it CAPTURE-ONLY and answers `{}` on every path.
 
 ### afterFileEdit
 
@@ -86,8 +116,7 @@ Input: `session_id`, `reason` ("completed" | "aborted" | "error" |
 
 ## Events deliberately NOT registered (design §3.2)
 
-`beforeReadFile` (payload carries full file content), `beforeSubmitPrompt`
-(can block, no context-injection output), `beforeTabFileRead` /
+`beforeReadFile` (payload carries full file content), `beforeTabFileRead` /
 `afterTabFileEdit` (Tab is not agent work), `subagentStart` / `subagentStop`
 (v1.5 candidate), `preCompact`, `beforeShellExecution` / `beforeMCPExecution`
 (permission surface — we never block), `afterMCPExecution`,

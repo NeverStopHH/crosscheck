@@ -652,7 +652,7 @@ describe("every answer is directive-free JSON", () => {
   test.each(EVENTS.map((event) => [event] as const))(
     "%s answers {} with no permission/followup_message/continue keys",
     async (event) => {
-      // Arrange: the sessionStart-shaped payload reused across all seven
+      // Arrange: the sessionStart-shaped payload reused across all eight
       // events — NOT each event's own healthy fixture: for the events whose
       // mapping reads fields it lacks (afterShellExecution's output,
       // postToolUseFailure's error_message) this exercises the degrade rung,

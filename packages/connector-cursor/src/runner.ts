@@ -26,6 +26,7 @@ import {
   SESSION_END_BUDGET_RATIO,
   SESSION_START_BUDGET_RATIO,
   STOP_BUDGET_RATIO,
+  USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
 import {
   hookBudget,
@@ -85,10 +86,15 @@ export type CursorHookHandler = (
  * Which event spends which ratio is host policy (the Claude runner's
  * BUDGET_RATIOS split): sessionStart hosts register + maintenance like
  * Claude's SessionStart; the three tool-shaped events run at the tool
- * budget; stop and sessionEnd at their Claude siblings' ratios.
+ * budget; beforeSubmitPrompt, stop and sessionEnd at their Claude siblings'
+ * ratios.
  */
 const BUDGET_RATIOS: Readonly<Record<CursorHookEvent, number>> = {
   sessionStart: SESSION_START_BUDGET_RATIO,
+  // The prompt event runs at Claude's UserPromptSubmit ratio, which is the
+  // sibling it is measured against (test/budget.test.ts): it is synchronous
+  // on every submit, so the budget is the user's own felt latency.
+  beforeSubmitPrompt: USER_PROMPT_SUBMIT_BUDGET_RATIO,
   afterFileEdit: POST_TOOL_USE_BUDGET_RATIO,
   afterShellExecution: POST_TOOL_USE_BUDGET_RATIO,
   postToolUse: POST_TOOL_USE_BUDGET_RATIO,

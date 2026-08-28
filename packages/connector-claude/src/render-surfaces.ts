@@ -37,6 +37,13 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   // longer contains.
   {
     kind: "composite",
+    name: "claude-summarizer-probe-line",
+    module: "src/summarizer/probe.ts",
+    note: "the two model-derived fields doctor prints from a probe — the answer's first line and the version token — are produced ONLY by bareSummarizerLine, the BARE-class door core registers as model-failure-line and attacks with the whole injection corpus there; this module composes nothing else from the model's output",
+    corpusCoveredBy: ["../connector-core/test/render-surface-registry.test.ts"],
+  },
+  {
+    kind: "composite",
     name: "claude-tripwire-ask",
     module: "src/hooks/pre-tool-use.ts",
     note: "emits renderTripwireReason output verbatim (registered core surface); covered in test/tripwire-hook.test.ts",

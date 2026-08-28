@@ -77,21 +77,25 @@ import type {
 import { buildEnvelope } from "@crosscheck/connector-core/capture/records.ts";
 import { mintClaimId } from "@crosscheck/connector-core/mcp/tools/shared.ts";
 import { recordConferenceRun } from "@crosscheck/connector-core/state/conference-cost.ts";
+// Straight from core since the relocation: a conference is a command a
+// human runs on any host, so reaching it through the Claude connector's
+// barrel would have made a Cursor-only install depend on a package it does
+// not use.
 import {
   formatSummarizerFailure,
   resolveSummarizerTimeoutMs,
   runSummarizer,
-} from "@crosscheck/connector-claude";
+} from "@crosscheck/connector-core/model/runner.ts";
+import { ensureSummarizerCwd } from "@crosscheck/connector-core/model/worker-env.ts";
 import {
-  ensureSummarizerCwd,
   estimateInputTokens,
   fitSessions,
   labelSessions,
   parseConferenceAnswer,
   renderConferenceInput,
   resolveConferenceArgv,
-} from "@crosscheck/connector-claude";
-import type { LabelledSession } from "@crosscheck/connector-claude";
+} from "@crosscheck/connector-core/derive/conference/prompt.ts";
+import type { LabelledSession } from "@crosscheck/connector-core/derive/conference/prompt.ts";
 import type { CliResult } from "./login.ts";
 
 export const CONFERENCE_FLAG_PUBLISH = "--publish";
