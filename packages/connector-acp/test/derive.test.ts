@@ -447,7 +447,14 @@ describe("summarizer × acp: the turn slice comes off the wire copy", () => {
     // Arrange
     const h = await registered("acp-slice-turn", await makeFakeModel(CONCLUSION_ANSWER));
 
-    // Act — turn 1 carries the whole conjunction; turn 2 carries nothing
+    // Act — turn 1 carries the whole conjunction; turns 2 and 3 carry nothing.
+    //
+    // THREE turns, not two, and the reason is worth stating: the gate
+    // debounces for SUMMARIZER_DEBOUNCE_TURNS (2), so a second turn is
+    // refused on the BUDGET whatever the slice holds — a two-turn version of
+    // this test passes even with the reset deleted, which is how it was
+    // written first and what the mutation proof caught. Turn 3 is the first
+    // one where only the slice can decide.
     h.capture.offer("c2a", promptLine(33));
     h.capture.offer("a2c", chunk(VERDICT));
     h.capture.offer("a2c", failedToolCall(FAILURE));
@@ -455,16 +462,18 @@ describe("summarizer × acp: the turn slice comes off the wire copy", () => {
     await h.capture.settle();
     const afterFirst = h.capture.counters().summarizerFires;
 
-    h.capture.offer("c2a", promptLine(34));
-    h.capture.offer("a2c", promptAnswer(34));
-    await h.capture.settle();
+    for (const id of [34, 35]) {
+      h.capture.offer("c2a", promptLine(id));
+      h.capture.offer("a2c", promptAnswer(id));
+      await h.capture.settle();
+    }
 
-    // Assert — a conversation-tail slice would have fired twice
+    // Assert — a conversation-tail slice would fire again on turn 3
     expect(afterFirst).toBe(1);
     expect(h.capture.counters().summarizerFires).toBe(1);
-    expect((await readSessionState(h.home, HOST_KEY))?.stopTurnCount).toBe(2);
+    expect((await readSessionState(h.home, HOST_KEY))?.stopTurnCount).toBe(3);
     await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
-  }, 40_000);
+  }, 60_000);
 
   test("a chatty agent past the byte cap drops slice text and counts it", async () => {
     // Arrange

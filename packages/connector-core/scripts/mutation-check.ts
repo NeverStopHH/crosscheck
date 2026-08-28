@@ -1979,6 +1979,73 @@ export const MUTATIONS: readonly Mutation[] = [
       "with no surface saying so",
   },
   {
+    // THE SLICE IS A TURN, and that is the ACP rung's whole advantage over
+    // Cursor's (whose slice is a conversation tail because no documented
+    // marker separates turns). Dropping the reset silently turns this host
+    // into that one.
+    label: "the ACP turn slice quietly becomes a conversation tail",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        slices.reset(session.acpSessionId);",
+    to: "",
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "last turn's conclusion fires this turn's gate, so a capped fire is " +
+      "spent re-deriving a moment that already passed and the draft " +
+      "describes work the developer has moved on from",
+  },
+  {
+    // THE AGENT-KIND TRAP, ACP's half. The workers default to claude-code and
+    // only the trigger knows better; this restores the default.
+    label: "a Gemini session's draft is filed under Claude Code",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          agentKind: session.config.agentKind,",
+    to: '          agentKind: "claude-code",',
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "every derived intent and draft any ACP agent produces arrives on the " +
+      "hub attributed to Claude Code, and no surface on either side ever " +
+      "says otherwise",
+  },
+  {
+    // The debt this step exists to pay on this host: set_intent set the flag
+    // behind the proxy and NOTHING claimed it.
+    label: "the ACP ghost debt rots in the state file again",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        if (await maybeSpawnAcpGhostWorker(ctx)) {",
+    to: "        if (false) {",
+    test: `${ACP}/test/derive-gap.test.ts`,
+    because:
+      "a declared plan that overlaps a teammate's is never compared behind " +
+      "the proxy, and ghostPending stays true for the session's whole life " +
+      "with no surface saying so",
+  },
+  {
+    // The agent's reasoning is the most sensitive prose on this wire and is
+    // deliberately not slice material. This feeds it to the model.
+    label: "the agent's private reasoning is fed to the model",
+    file: `${ACP}/src/wire/v1.ts`,
+    from: "      parsed.update.sessionUpdate === AGENT_MESSAGE_CHUNK",
+    to: "      parsed.update.sessionUpdate.endsWith(\"_chunk\")",
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "agent_thought_chunk text joins the Tier-1 slice, so the model is " +
+      "shown the agent talking to itself and a draft can quote reasoning " +
+      "the developer never saw",
+  },
+  {
+    // The pre-existing crash this step found: a message chunk's content is a
+    // ContentBlock OBJECT, not an array of rows.
+    label: "acp-report crashes on any agent that says anything",
+    file: `${ACP}/src/report.ts`,
+    from: "          Array.isArray(content) &&",
+    to: "          true &&",
+    test: `${ACP}/test/acp-report.test.ts`,
+    because:
+      "the analyzer throws on every recording containing an " +
+      "agent_message_chunk, which is essentially all of them, so the one " +
+      "command that measures per-agent capture quality cannot be run",
+  },
+  {
     // The hub merge rule: declared over derived, enforced where spool replay
     // order cannot undo it. This lets a late derived record overwrite.
     label: "a late derived intent overwrites a declared one",
