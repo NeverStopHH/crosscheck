@@ -172,6 +172,10 @@ const summarizeTurn = async (args: WorkerArgs, env: Env): Promise<void> => {
     return;
   }
 
+  // Unreachable by construction — a `claim` outcome means resolveContext
+  // returned a context, which is where held.current is set — and kept
+  // because the alternative is a non-null assertion on the one path that
+  // writes to the spool.
   const attribution = held.current;
   if (attribution === null) {
     return;
