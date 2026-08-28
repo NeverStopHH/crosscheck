@@ -329,15 +329,29 @@ const INJECTION_SPAN_PATTERN = new RegExp(
  * frame plus the quoted-data notice at the call site. This narrows ONE branch
  * of the defence, on surfaces that opt in.
  *
- * NOT THE DEFAULT, deliberately. Widening it to titles, claim bodies and hints
- * is audit row M14 and a decision of its own — that work also owes the AUTHOR a
- * warning when their text would render redacted, which this has no way to give.
- * Three callers today, and both real ones share one property: the body IS the
- * answer, so blanking it leaves the reader with a marker where their next step
- * should have been. `quotedSpanRedacted` in mcp/render.ts (a hub refusal — the
- * names and addresses to retry with), `solvedRootCauseLine` in
- * briefing/render.ts (the recorded cause of a solved diagnosis, whose delivery
- * is the whole reason that surface exists), and this comment.
+ * STILL NOT THE DEFAULT, and the line is a CLASS rather than a call count
+ * (audit row M14, now built — an earlier version of this comment described it
+ * as unbuilt and named a caller, `quotedSpanRedacted`, that no longer exists).
+ * A LABEL is a name for something, and a name that reads like an instruction is
+ * worth losing whole: titles and stated intents keep `sanitizeUntrusted`. A
+ * BODY is the answer itself, and every surface that prints one frames it
+ * through `quotedBody` in mcp/render.ts, which is the single caller shape here
+ * — claim bodies, recorded root causes, questions and their answers, hub
+ * refusals, conference findings.
+ *
+ * The half this could not give, and no longer has to: `redactionNote` below
+ * tells the AUTHOR when their own text will reach a teammate with a hole in it,
+ * so a redaction is never something only the reader can see.
+ *
+ * The callers, derived rather than counted by hand — the last line is this
+ * directive matching its own file:
+ *
+ * VERIFY: grep -rl 'spanRedactedUntrusted(' packages/connector-core/src | sort
+ * PRINTS: packages/connector-core/src/briefing/questions.ts
+ * PRINTS: packages/connector-core/src/briefing/render.ts
+ * PRINTS: packages/connector-core/src/briefing/sanitize.ts
+ * PRINTS: packages/connector-core/src/conference/report.ts
+ * PRINTS: packages/connector-core/src/mcp/render.ts
  */
 export const spanRedactedUntrusted = (
   raw: string,
