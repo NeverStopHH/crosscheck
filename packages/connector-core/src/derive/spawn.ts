@@ -59,6 +59,24 @@ export interface DeriveSpawnInput {
   readonly agentKind: string;
   /** argv, entry path included; the caller owns which worker it is. */
   readonly cmd: readonly string[];
+  /**
+   * THE THIRD SLICE SOURCE (the design's `{stdin}`), for a trigger whose
+   * process OUTLIVES the worker it spawns.
+   *
+   * A hook process cannot use this: it exits immediately, and a detached
+   * child left holding a half-written pipe would read a truncated slice or
+   * block. That is exactly why the Claude and Cursor triggers hand their
+   * slice over as a path — a 0600 file for the intent prompt, a byte range
+   * of a transcript for the turn — and why the ACP proxy does not have to:
+   * it is a long-lived parent, so the text goes down a pipe and never
+   * becomes a file at all.
+   *
+   * The write is bounded by the caller's own cap and buffered by the sink,
+   * so this never blocks the parent's loop; the pipe is closed immediately
+   * after, because a worker reading stdin to EOF would otherwise wait for a
+   * parent that is busy proxying a wire.
+   */
+  readonly stdinText?: string | undefined;
 }
 
 /**
@@ -67,13 +85,27 @@ export interface DeriveSpawnInput {
  */
 export const spawnDeriveWorker = (input: DeriveSpawnInput): void => {
   try {
+    const wantsStdin = input.stdinText !== undefined;
     const proc = Bun.spawn({
       cmd: [...input.cmd],
-      stdin: "ignore",
+      stdin: wantsStdin ? "pipe" : "ignore",
       stdout: "ignore",
       stderr: "ignore",
       env: deriveWorkerEnv(input.env, input.home, input.agentKind),
     });
+    const sink = proc.stdin;
+    // `stdin: "pipe"` is what produces a sink, so the guard is a type
+    // narrowing rather than a real branch — but it is a REAL fail-open too:
+    // a runtime that handed back no sink must cost this draft, not throw
+    // inside a capture dispatch.
+    if (wantsStdin && sink !== undefined) {
+      sink.write(input.stdinText ?? "");
+      // Deliberately not awaited: `end()` resolves when the child has drained
+      // the pipe, and nothing here may wait on a child (the whole point of a
+      // detached worker). A rejected close is the same class of loss as a
+      // failed spawn — the fire is booked, the draft is gone, nothing breaks.
+      void Promise.resolve(sink.end()).catch(() => undefined);
+    }
     proc.unref();
   } catch {
     // Fail open — the fire slot is spent, the work is lost, nothing breaks.

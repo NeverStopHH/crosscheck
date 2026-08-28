@@ -1,4 +1,6 @@
 /** Every budget and cap the ACP proxy obeys — no magic numbers elsewhere. */
+import { SUMMARIZER_SLICE_MAX_CHARS } from "@crosscheck/connector-core/constants.ts";
+
 
 /**
  * Parse-copy cap per NDJSON line. FORWARDING IS UNAFFECTED — bytes stream
@@ -173,6 +175,29 @@ export const ACP_SESSION_SETUP_INJECT_BUDGET_MS = 2_000;
  * this package.
  */
 export const ACP_INJECT_CWD_CACHE_MAX = 64;
+
+/**
+ * ── The derive rungs (design: intent/ghost FULL, summarizer REDUCED) ────────
+ */
+
+/**
+ * Byte cap on ONE session's in-memory Tier-1 turn slice. The slice is built
+ * from the wire COPY and lives only in memory — it is never written to disk
+ * on this host — so the flood surface is memory, and the rule is the
+ * fitSessions one: past the cap, slice CONTENT is dropped and counted, memory
+ * never grows. Sized at the shared slice cap so the ACP slice can never be
+ * bigger than the one Claude's transcript reader produces, and so the whole
+ * slice fits a pipe write to the worker without the parent ever blocking.
+ */
+export const ACP_TURN_SLICE_MAX_CHARS = SUMMARIZER_SLICE_MAX_CHARS;
+
+/**
+ * Sessions whose turn slice is accumulated at once. A client can open many
+ * sessions on one proxy; each costs at most ACP_TURN_SLICE_MAX_CHARS, and
+ * past this many the oldest accumulator is evicted — the same bounded-FIFO
+ * shape as the terminal and pending maps, and for the same reason.
+ */
+export const ACP_MAX_SLICE_SESSIONS = 16;
 
 /** The shell's own convention: a command that cannot be spawned is 127. */
 export const EXIT_SPAWN_FAILURE = 127;
