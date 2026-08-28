@@ -32,17 +32,18 @@
  * cannot reach anything. Two texts now are, and each has exactly one
  * destination:
  *
- *   - the PROMPT reaches one 0600 file the intent worker unlinks in
- *     `finally`, and nothing else — never the spool, a state file, a record
+ *   - the PROMPT reaches one 0600 file the intent worker removes as its
+ *     first act, and nothing else — never the spool, a state file, a record
  *     or a log line;
  *   - the TURN SLICE (derive/slice.ts) lives in memory, byte-capped, and
  *     leaves only down a spawned worker's stdin — it touches no disk at all
  *     on this host.
  *
- * Both are pinned in test/derive-privacy.test.ts and in this suite's
- * hostile-prompt case, which was NARROWED to say exactly that rather than
- * deleted. Local logging still carries ids, slugs and counts — paths and
- * content never.
+ * Both are pinned: the prompt by capture-engine.test.ts's prompt-privacy
+ * case, NARROWED to the statement above rather than deleted (it used to say
+ * "no persisted byte", which the intent file makes false in one bounded
+ * way), and both by derive.test.ts's two privacy cases. Local logging still
+ * carries ids, slugs and counts — paths and content never.
  */
 import {
   FINGERPRINT_SOURCE_CHARS,
@@ -769,8 +770,8 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         // THE TURN STARTS HERE: the heartbeat this row always sent, then the
         // two prompt-time rungs. The prompt's TEXT is decoded now — the one
         // thing this file did not do before — and wire/v1.ts's header states
-        // where it may go: one 0600 file the intent worker unlinks in
-        // `finally`, and nowhere else. It is not logged, not spooled, not
+        // where it may go: one 0600 file the intent worker removes as its
+        // first act, and nowhere else. It is not logged, not spooled, not
         // written to state, and not read again by anything here.
         const params = parseSessionPromptParams(message.params);
         const session = params === null ? null : liveSession(params.sessionId);

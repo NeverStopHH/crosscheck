@@ -28,11 +28,11 @@
  *
  * Both are CAPPED here (MAX_WIRE_TEXT_CHARS) so one hostile line cannot cost
  * unbounded parse memory, and what the callers may do with the result is
- * pinned one layer up: the prompt reaches exactly one 0600 file the worker
- * unlinks in `finally`, the slice reaches a spawned worker's stdin and no
- * disk at all, and NEITHER may reach a spool record, a state file or a log
- * line (capture-engine.test.ts's hostile-prompt pin, narrowed rather than
- * deleted, plus derive-privacy.test.ts).
+ * pinned one layer up: the prompt reaches exactly one 0600 file the intent
+ * worker removes as its first act, the slice reaches a spawned worker's
+ * stdin and no disk at all, and NEITHER may reach a spool record, a state
+ * file or a log line (capture-engine.test.ts's prompt-privacy pin, narrowed
+ * rather than deleted, plus derive.test.ts's two privacy cases).
  */
 import { z } from "zod";
 

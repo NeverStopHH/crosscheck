@@ -119,8 +119,10 @@ const spawn = (
  * fire. The prompt reaches the worker through a 0600 FILE named on argv and
  * NOT through the pipe the slice uses, deliberately: `ps` shows argv, so the
  * prompt may not be an argument; and the intent worker's own contract — it
- * unlinks that file in `finally`, whatever happens to it — is what the
- * privacy pin rests on, unchanged and shared with two other hosts.
+ * removes that file as its FIRST act, before any branch that could return
+ * early — is what the privacy pin rests on, unchanged and shared with two
+ * other hosts. (A worker that never starts leaves nothing behind either:
+ * end-session sweeps the same path.)
  *
  * Returns whether a worker was spawned, so the engine's counter is the truth
  * rather than a guess: a caller that incremented on its own would count the

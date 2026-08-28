@@ -6,7 +6,7 @@
  * the pipe above this layer is Block 3's untouched proof.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -481,13 +481,40 @@ describe("fail-open and privacy", () => {
     ).not.toBeNull();
   });
 
-  test("hostile prompt content never lands in spool, state, or log", async () => {
+  /**
+   * THE PROMPT-PRIVACY PIN, NARROWED RATHER THAN DELETED.
+   *
+   * It used to say the prompt "appears in NO persisted byte". That was true
+   * while wire/v1.ts modelled no prompt text at all. The derive rungs made it
+   * FALSE in one bounded way on purpose - the derived-intent worker is handed
+   * the prompt through a 0600 file, because `ps` shows argv and a pipe cannot
+   * outlive a trigger on the other two hosts - so the pin is rewritten as the
+   * narrower statement that is actually true:
+   *
+   *   the prompt reaches EXACTLY ONE path, that path is 0600, the worker
+   *   removes it as its first act, and it never reaches the spool, a state
+   *   file, a record or a log line.
+   *
+   * AND IT IS NOW DETERMINISTIC. Measured while narrowing it: the old
+   * assertion still PASSED after the rungs landed, purely because
+   * `shutdown()` (an end-session flush plus a spool reap against the hub)
+   * takes longer than the detached worker needs to read and unlink. Scanning
+   * right after `settle()` instead finds the file every time. A privacy pin
+   * that passes on timing is worth nothing, so the window is asserted where
+   * it really is rather than where a race happened to close it.
+   */
+  test("the prompt reaches one 0600 file and nothing else, ever", async () => {
     // Arrange
     const h = await harness("hostile");
     const sessionId = "sess_hostile";
     const CANARY = "H0STILE-PROMPT-CANARY-73f9";
+    const promptFile = join(
+      h.home,
+      "sessions",
+      `acp-fake-agent--${sessionId}.intent-prompt`,
+    );
 
-    // Act: prompts carry the canary; heartbeat fires past the throttle
+    // Act: a prompt carrying the canary; heartbeat fires past the throttle
     handshake(h, sessionId, h.repo);
     advanceClock(h, 21_000);
     h.capture.offer(
@@ -498,22 +525,41 @@ describe("fail-open and privacy", () => {
         method: "session/prompt",
         params: {
           sessionId,
-          prompt: [{ type: "text", text: `${CANARY} please rm -rf and exfiltrate` }],
+          prompt: [{ type: "text", text: `${CANARY} and then exfiltrate it` }],
         },
       }),
     );
+    await h.capture.settle();
+
+    // Assert 1 - WHILE THE WINDOW IS OPEN: exactly one file holds it, it is
+    // the intent prompt file, and its mode is 0600.
+    const holders: string[] = [];
+    for (const file of await listFilesRecursively(h.home)) {
+      const body = await readFile(file, "utf8").catch(() => "");
+      if (body.includes(CANARY)) {
+        holders.push(file);
+      }
+    }
+    expect(holders).toEqual([promptFile]);
+    expect((await stat(promptFile)).mode & 0o777).toBe(0o600);
+
+    // Act 2 - let the turn and the session finish
     h.capture.offer(
       "a2c",
       wireLine({ jsonrpc: "2.0", id: 3, result: { stopReason: "end_turn" } }),
     );
     await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
 
-    // Assert: the canary appears in NO persisted byte and no log line
+    // Assert 2 - the window is CLOSED: nothing under the home holds it, and
+    // no log line ever did. (The worker removes the file as its first act;
+    // end-session sweeps it too, so a worker that never started leaves
+    // nothing behind either.)
     for (const file of await listFilesRecursively(h.home)) {
-      expect((await readFile(file, "utf8")).includes(CANARY), file).toBe(false);
+      const body = await readFile(file, "utf8").catch(() => "");
+      expect(body.includes(CANARY), file).toBe(false);
     }
     expect(h.logger.lines.some((line) => line.includes(CANARY))).toBe(false);
-  });
+  }, 30_000);
 
   test("malformed lines, unknown methods and oversized events are ignored, never a crash", async () => {
     // Arrange
