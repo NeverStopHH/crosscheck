@@ -282,10 +282,18 @@ export const listWorkContextsByRepo = async (
       and(
         eq(agentSessions.repo, repo),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
-        // The caller's window, in the WHERE and not after the bound: without
-        // it the LIMIT would hand back the freshest 200 rows of ALL TIME and
-        // the reader's own filter would then drop most of them, which is a
-        // bound that narrows the answer instead of bounding the work.
+        // The caller's window, in the WHERE, and the reason is the RANK
+        // above rather than the LIMIT below. Under a flat freshest-first cut
+        // it bought only bytes: every out-of-window row sorts BELOW every
+        // in-window one on the same key, so the freshest 200 of all time hold
+        // exactly the in-window rows the reader keeps anyway — an earlier
+        // version of this comment claimed otherwise and was measurably wrong.
+        // Ranking per developer changes that, because the rank is computed
+        // over whatever this WHERE leaves: a teammate's abandoned contexts
+        // from three months ago take rank 2, 3, 4 … and spend the bound on
+        // rows the reader then throws away. Pinned by "the window is in the
+        // WHERE because the rank is computed after it" in
+        // server/test/work-context-listing.test.ts.
         since === undefined
           ? undefined
           : sql`${contextActivity} >= ${since.toISOString()}::timestamptz`,

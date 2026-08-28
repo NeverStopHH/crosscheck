@@ -29,6 +29,8 @@ const REPO_QUERY = "/api/work-contexts?repo=github.com%2Facme%2Fapi";
 interface ListEntry {
   readonly id: string;
   readonly developerId: string;
+  readonly createdAt: string;
+  readonly updatedAt: string | null;
   readonly claimCount: number;
   readonly targetCount: number;
 }
@@ -267,5 +269,88 @@ describe("GET /api/work-contexts is bounded", () => {
     // answer, so the reader's grouping still meets people newest-first.
     expect(rows[0]?.id).toBe("wc_busy_0001");
     expect(rows[1]?.id).toBe("wc_mike_only");
+  });
+
+  test("the window is in the WHERE because the rank is computed after it", async () => {
+    // What `since` really buys, measured rather than argued. Under a flat
+    // freshest-first cut it bought nothing but bytes: every out-of-window row
+    // sorts BELOW every in-window one, so the freshest 200 of all time
+    // contained the same in-window rows the reader would have kept anyway.
+    // With the per-developer rank it is load-bearing — the rank is computed
+    // over whatever the WHERE left, so a teammate's 300 abandoned contexts
+    // from three months ago take rank 2, 3, 4 … and spend the bound on rows
+    // the reader then throws away.
+    const setup = await createHarnessWithSession();
+    const busy = await addTestDeveloperWithSession(
+      setup.harness,
+      "Ken",
+      "ken@example.com",
+      { id: "cc_33333333-4444-4555-8666-777777777777" },
+    );
+    await postRecords(
+      setup.harness,
+      busy,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          id: "wc_ken_live",
+          sessionId: "cc_33333333-4444-4555-8666-777777777777",
+          title: "Ken is live on the importer",
+        }),
+        { sessionId: "cc_33333333-4444-4555-8666-777777777777" },
+      ),
+    );
+    await setup.harness.db.execute(sql`
+      UPDATE work_contexts SET created_at = now() - make_interval(mins => 2),
+                               updated_at = now() - make_interval(mins => 2)
+       WHERE id = 'wc_ken_live'
+    `);
+    // Ken's 300 abandoned contexts, all far outside the 14-day window.
+    await setup.harness.db.execute(sql`
+      INSERT INTO work_contexts (id, session_id, title, status, created_at, updated_at)
+      SELECT 'wc_ken_old_' || lpad(g::text, 4, '0'),
+             'cc_33333333-4444-4555-8666-777777777777',
+             'Abandoned ' || g, 'analyzing',
+             now() - make_interval(days => 100 + g),
+             now() - make_interval(days => 100 + g)
+      FROM generate_series(1, 300) g
+    `);
+    // Nick's 250 live ones, all inside it.
+    await postRecords(
+      setup.harness,
+      setup.developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    await setup.harness.db.execute(sql`
+      INSERT INTO work_contexts (id, session_id, title, status, created_at, updated_at)
+      SELECT 'wc_nick_' || lpad(g::text, 4, '0'),
+             (SELECT session_id FROM work_contexts WHERE id = ${WORK_CONTEXT_ID}),
+             'Live ' || g, 'analyzing',
+             now() - make_interval(mins => 10 + g),
+             now() - make_interval(mins => 10 + g)
+      FROM generate_series(1, 250) g
+    `);
+
+    // Act: the reader's own filter, applied to both answers.
+    const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const inWindow = (rows: readonly ListEntry[]): number =>
+      rows.filter(
+        (row) => new Date(row.updatedAt ?? row.createdAt).getTime() >= cutoff,
+      ).length;
+    const windowed = await list(setup, `${REPO_QUERY}&since=14d`);
+    const unwindowed = await list(setup, REPO_QUERY);
+
+    // Assert: both answers are the same SIZE, and one of them is mostly rows
+    // the reader discards.
+    expect(windowed).toHaveLength(WORK_CONTEXT_LIST_LIMIT);
+    expect(unwindowed).toHaveLength(WORK_CONTEXT_LIST_LIMIT);
+    expect(inWindow(windowed)).toBe(WORK_CONTEXT_LIST_LIMIT);
+    // Measured on this fixture: 101 of the 200 unwindowed rows survive the
+    // reader's filter, so 99 slots went to work nobody is doing. The floor is
+    // 50 rather than the observed figure so the shape, not the arithmetic of
+    // one seed, is what fails.
+    expect(
+      WORK_CONTEXT_LIST_LIMIT - inWindow(unwindowed),
+    ).toBeGreaterThanOrEqual(50);
   });
 });
