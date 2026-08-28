@@ -3008,6 +3008,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "tool output, and answers about the last thing it can see",
   },
   {
+    // The prepended ask is the FIRST thing the summarizer reads, and a tool
+    // result is a `user` entry too — so widening the predicate to the role
+    // alone lets text the agent merely READ take that position.
+    label: "borrowed text can take the ask's place at the front",
+    file: `${CONNECTOR}/src/summarizer/transcript.ts`,
+    from: "                isAsk: isUser && block.type === \"text\",",
+    to: "                isAsk: isUser,",
+    test: `${CONNECTOR}/test/stop-gate.test.ts`,
+    because:
+      "a log line, a file or a fetched page beginning \"user: \" is handed to " +
+      "the model as the developer's own question, and steers a draft that " +
+      "teammates can pull",
+  },
+  {
     // The shape a tail-degraded slice produces most: the conversation
     // continuing, filed as somebody's finding.
     label: "a role-played plan is filed as a teammate-visible draft",
@@ -3174,7 +3188,7 @@ interface Outcome {
  * PRINTS: solved-intent.test.ts 4
  * PRINTS: solved-probe.test.ts 1
  * PRINTS: solved-ranking.test.ts 2
- * PRINTS: stop-gate.test.ts 2
+ * PRINTS: stop-gate.test.ts 3
  * PRINTS: stop-hook.test.ts 1
  * PRINTS: stop-latency.test.ts 1
  * PRINTS: summarizer-argv.test.ts 1

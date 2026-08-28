@@ -225,21 +225,46 @@ const blockText = (block: ContentBlock): string | null => {
 };
 
 /**
- * The turn's own ASK, as this renderer labels it: a user line that is not a
- * tool result. `readTurnSlice` starts the slice at the last real user prompt,
- * so on an ordinary turn the first such line IS the question the turn is
- * about; on a turn longer than the tail window there is none, and the caller
- * falls back to the tail alone.
+ * One rendered entry, and whether it can be the turn's ASK.
+ *
+ * THE FLAG IS DECIDED WHERE THE BLOCK IS, not read back off the rendered text
+ * afterwards, and that is the whole point of this type. Two facts are lost the
+ * moment the entries are joined into one document:
+ *
+ *   A rendered entry KEEPS THE AUTHOR'S NEWLINES. `blockText` caps a block but
+ *   does not reflow it, so a pasted failing case or a bullet list — how a
+ *   developer types half their prompts — is one entry spanning several lines,
+ *   and a finder scanning lines takes only the first of them. The first line is
+ *   routinely the least informative half ("here is the failing case:").
+ *
+ *   A TOOL RESULT IS ALSO A `user` ENTRY in this wire format, and its content
+ *   is text the agent READ — a log, a file, a fetched page. Its inner lines are
+ *   indistinguishable from an entry boundary once joined, so a line of borrowed
+ *   text beginning "user: " read back as the ask, and on the no-ask branch
+ *   below (a turn longer than the tail read, where there is no real ask) that
+ *   borrowed line was prepended at the very front of the summarizer's context
+ *   as the developer's own question. The answer it shapes is filed as a
+ *   `derived` claim teammates can pull (DESIGN.md §3), so the borrowed sentence
+ *   would be steering a surface this product treats as untrusted everywhere
+ *   else.
+ *
+ * `isAsk` is therefore positive equality on what the block WAS: a user entry
+ * carrying a text block. A tool result cannot satisfy it whatever it contains,
+ * and an unknown future block type fails closed to "not an ask".
  */
-const ASK_PREFIX = "user: ";
-const TOOL_RESULT_PREFIX = "user: tool_result:";
+interface RenderedEntry {
+  /** The role-labelled text, exactly as it goes to the model. */
+  readonly line: string;
+  /** A user TEXT block — the only thing the turn's ask can be. */
+  readonly isAsk: boolean;
+}
 
 /**
  * Said out loud, because a slice that silently jumps from the question to the
  * last few tool results reads as a complete turn, and a model asked to
  * conclude from it will conclude from what it can see.
  */
-const OMITTED_MARKER = "[... middle of this turn omitted for length ...]";
+export const OMITTED_MARKER = "[... middle of this turn omitted for length ...]";
 
 /**
  * The slice as plain text: role-labelled lines, each block capped, the whole
@@ -257,16 +282,25 @@ const OMITTED_MARKER = "[... middle of this turn omitted for length ...]";
  * The fix is the position-bias result rather than a bigger window: models
  * retrieve reliably from the START and the END of a context and least
  * reliably from the middle (Liu et al., "Lost in the Middle", TACL 2024), so
- * the ask is prepended and the tail keeps the rest of the SAME budget. The
- * token bill does not move by one character — SUMMARIZER_SLICE_MAX_CHARS is
- * unchanged and the result is still measured against it — which is why this
- * is preferred to raising SUMMARIZER_TAIL_BYTES, the other half of the audit
- * row: that would have paid for the ask with the developer's own quota
- * (DESIGN.md §10 risk 7) on every fire, including the many that do not need
- * it.
+ * the ask is prepended and the tail keeps the rest of the SAME budget.
+ *
+ * RAISING SUMMARIZER_TAIL_BYTES — the audit row's other half — was not the
+ * alternative it reads as, and an earlier version of this comment refused it
+ * for the wrong reason (that it would spend the developer's quota). It would
+ * not: TAIL_BYTES bounds the FILE READ, the cut below bounds what reaches the
+ * model, and the two are 131,072 and 24,000. Reading more of the transcript
+ * therefore costs I/O and not one token — and fixes nothing on its own,
+ * because the tail cut would close above the ask exactly as before. The
+ * constant that WOULD have paid for the ask out of the quota (DESIGN.md §10
+ * risk 7) on every fire, including the many that do not need it, is
+ * SUMMARIZER_SLICE_MAX_CHARS, and it is untouched: a transcript longer than
+ * the whole read window still yields exactly the cap, with the ask on top.
+ *
+ * VERIFY: bun -e 'const t=await import("./packages/connector-claude/src/summarizer/transcript.ts");const c=await import("./packages/connector-core/src/constants.ts");const l=(e)=>JSON.stringify(e)+"\n";const raw=l({type:"user",message:{content:[{type:"text",text:"why does the importer stall"}]}})+l({type:"user",message:{content:[{type:"tool_result",content:"x".repeat(2000)}]}}).repeat(100)+l({type:"assistant",message:{content:[{type:"text",text:"Root cause: one token bucket"}]}});const s=t.extractSliceText(raw);console.log(c.SUMMARIZER_TAIL_BYTES, c.SUMMARIZER_SLICE_MAX_CHARS, raw.length>c.SUMMARIZER_TAIL_BYTES, s.length===c.SUMMARIZER_SLICE_MAX_CHARS, s.startsWith("user: why does the importer stall"))'
+ * PRINTS: 131072 24000 true true true
  */
 export const extractSliceText = (raw: string): string => {
-  const rendered = raw
+  const entries: readonly RenderedEntry[] = raw
     .split("\n")
     .filter((lineText) => lineText.length > 0)
     .flatMap((lineText) => {
@@ -274,23 +308,33 @@ export const extractSliceText = (raw: string): string => {
       if (entry === null) {
         return [];
       }
-      const role = entry.type === "user" ? "user" : "assistant";
+      const isUser = entry.type === "user";
+      const role = isUser ? "user" : "assistant";
       return contentBlocks(entry).flatMap((block) => {
         const text = blockText(block);
-        return text === null || text.length === 0 ? [] : [`${role}: ${text}`];
+        return text === null || text.length === 0
+          ? []
+          : [
+              {
+                line: `${role}: ${text}`,
+                isAsk: isUser && block.type === "text",
+              },
+            ];
       });
-    })
-    .join("\n");
+    });
+  const rendered = entries.map((entry) => entry.line).join("\n");
   if (rendered.length <= SUMMARIZER_SLICE_MAX_CHARS) {
     return rendered;
   }
-  const lines = rendered.split("\n");
-  const ask = lines.find(
-    (line) => line.startsWith(ASK_PREFIX) && !line.startsWith(TOOL_RESULT_PREFIX),
-  );
+  // The FIRST user text block, not the first line that looks like one:
+  // `readTurnSlice` starts the slice at the last real user prompt, so on an
+  // ordinary turn that entry is the question the turn is about.
+  const ask = entries.find((entry) => entry.isAsk)?.line;
   // No ask in the slice at all (a turn longer than the tail window, so the
   // read began mid-turn), or an ask so long it would leave no room for the
-  // conclusion: the tail alone, exactly as before.
+  // conclusion: the tail alone, exactly as before. `blockText` already capped
+  // the entry at SUMMARIZER_BLOCK_MAX_CHARS, so the head is bounded at that
+  // plus the marker whatever the author pasted.
   const head = ask === undefined ? "" : `${ask}\n${OMITTED_MARKER}\n`;
   if (head.length === 0 || head.length >= SUMMARIZER_SLICE_MAX_CHARS) {
     return rendered.slice(-SUMMARIZER_SLICE_MAX_CHARS);
