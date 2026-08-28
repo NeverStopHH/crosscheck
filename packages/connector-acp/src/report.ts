@@ -59,6 +59,13 @@ export interface AcpRecordReport {
     readonly nonZeroExits: number;
   };
   readonly fsWrites: number;
+  /**
+   * `agent_message_chunk` updates carrying text — Tier-1 slice source 1, and
+   * the only one of the three that is not already a capture signal. Counted
+   * here so `acp-report` can answer the question the summarizer rung's
+   * REDUCED sentence raises: how much of the wire does THIS agent fill?
+   */
+  readonly agentMessages: number;
   readonly lines: number;
   readonly unparseable: number;
   readonly gaps: number;
@@ -118,6 +125,7 @@ export const analyzeAcpRecord = (text: string): AcpRecordReport => {
   const distinctPaths = new Set<string>();
   const terminals = { created: 0, outputs: 0, nonZeroExits: 0 };
   let fsWrites = 0;
+  let agentMessages = 0;
   let lines = 0;
   let unparseable = 0;
   let gaps = 0;
@@ -194,6 +202,9 @@ export const analyzeAcpRecord = (text: string): AcpRecordReport => {
           break;
         case WIRE_METHODS.sessionUpdate: {
           const update = parseSessionUpdateParams(message.params);
+          if (update?.agentText !== null && update?.agentText !== undefined) {
+            agentMessages += 1;
+          }
           const toolCall = update?.toolCall ?? null;
           if (toolCall === null) {
             break;
@@ -217,13 +228,26 @@ export const analyzeAcpRecord = (text: string): AcpRecordReport => {
           break;
       }
       // Diff-path presence needs the raw update rows, not the merged list.
+      //
+      // `content` IS NOT ALWAYS AN ARRAY, and assuming it was crashed this
+      // whole command: a tool call's content is an array of rows, but an
+      // `agent_message_chunk`'s is a single ContentBlock OBJECT, and one
+      // `.some` on an object throws. Every real agent streams message
+      // chunks, so `crosscheck acp-report` threw on essentially any real
+      // recording — invisible only because the fixture here used tool calls
+      // exclusively. wire/v1.ts documents the same two-shapes-one-key fact
+      // where it parses it; this is the raw-scan side of it.
       if (message.method === WIRE_METHODS.sessionUpdate) {
         const params = message.params as
-          | { update?: { content?: readonly { type?: string; path?: string }[] } }
+          | { update?: { content?: unknown } }
           | undefined;
-        const content = params?.update?.content ?? [];
+        const content = params?.update?.content;
         if (
-          content.some((row) => row?.type === "diff" && typeof row?.path === "string")
+          Array.isArray(content) &&
+          content.some(
+            (row: { type?: string; path?: string } | null) =>
+              row?.type === "diff" && typeof row?.path === "string",
+          )
         ) {
           toolCalls.withDiffPaths += 1;
         }
@@ -279,6 +303,7 @@ export const analyzeAcpRecord = (text: string): AcpRecordReport => {
     toolCalls: { ...toolCalls, distinctPaths: distinctPaths.size },
     terminals,
     fsWrites,
+    agentMessages,
     lines,
     unparseable,
     gaps,
@@ -290,6 +315,37 @@ const NONE_SEEN = "none seen";
 
 const signal = (present: boolean, detail: string): string =>
   present ? detail : NONE_SEEN;
+
+/**
+ * THE PER-AGENT DEGRADE, PRINTED AS A FACT rather than left to be discovered.
+ *
+ * The summarizer rung on this host is REDUCED for one reason: the turn slice
+ * is only what the wire happens to carry. That is a sentence in the
+ * capability manifest, and it is worth exactly as much as the reader's ability
+ * to check it — so this says which of the three sources the RECORDED agent
+ * actually emitted, and what that costs.
+ *
+ * `git commit` is the concrete case: the gate's commit-boundary anchor looks
+ * for it as a COMMAND, terminal command text is modelled by no schema here,
+ * and an agent that shells out without ACP's terminal/* methods therefore
+ * gives a slice with no executed shape in it at all. A conclusion in such a
+ * slice fires only through the prose wing, and this line is what makes that
+ * explainable instead of mysterious.
+ */
+const sliceVerdict = (report: AcpRecordReport): string => {
+  const executed =
+    report.toolCalls.failedWithOutput > 0 || report.terminals.outputs > 0;
+  if (report.agentMessages === 0 && !executed) {
+    return "nothing — this agent emitted no prose, no failure output and no terminal output, so a turn slice would be empty and the gate never fires";
+  }
+  if (!executed) {
+    return "prose only — this agent does its work outside ACP's terminal/* and reports no failure output, so a conclusion never has an executed shape beside it and only the prose wing can fire";
+  }
+  if (report.agentMessages === 0) {
+    return "executed shapes only — this agent emits no message chunks, so the gate sees what ran but never what the agent concluded about it";
+  }
+  return "prose and executed shapes — this agent fills every source the Tier-1 slice can read";
+};
 
 export const renderAcpRecordReport = (report: AcpRecordReport): string => {
   const stopReasons = Object.entries(report.stopReasons)
@@ -318,6 +374,14 @@ export const renderAcpRecordReport = (report: AcpRecordReport): string => {
       `${report.terminals.created} created, ${report.terminals.outputs} outputs, ${report.terminals.nonZeroExits} non-zero exits`,
     )}`,
     `  fs writes:   ${signal(report.fsWrites > 0, `${report.fsWrites} writes`)}`,
+    "tier-1 slice sources:",
+    `  agent prose:    ${signal(report.agentMessages > 0, `${report.agentMessages} message chunks`)}`,
+    `  failure text:   ${signal(
+      report.toolCalls.failedWithOutput > 0,
+      `${report.toolCalls.failedWithOutput} failed tool calls with output`,
+    )}`,
+    `  terminal tails: ${signal(report.terminals.outputs > 0, `${report.terminals.outputs} outputs`)}`,
+    `  verdict: ${sliceVerdict(report)}`,
     "",
   ].join("\n");
 };
@@ -338,8 +402,20 @@ export const runAcpReport = async (path: string): Promise<AcpReportResult> => {
       exitCode: EXIT_FAIL,
     };
   }
-  return {
-    stdout: renderAcpRecordReport(analyzeAcpRecord(text)),
-    exitCode: EXIT_OK,
-  };
+  try {
+    return {
+      stdout: renderAcpRecordReport(analyzeAcpRecord(text)),
+      exitCode: EXIT_OK,
+    };
+  } catch {
+    // The analyzer walks an UNTRUSTED file — a recording is whatever some
+    // agent wrote plus whatever happened to the disk. A shape it did not
+    // expect must be a sentence, exactly as an unreadable file already is,
+    // and never a stack trace: this is a development aid, and one that dies
+    // loudly teaches people to stop running it.
+    return {
+      stdout: `crosscheck acp-report: ${path} is not a readable wire recording\n`,
+      exitCode: EXIT_FAIL,
+    };
+  }
 };

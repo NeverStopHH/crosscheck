@@ -218,3 +218,131 @@ describe("runAcpReport", () => {
     expect(result.stdout).toContain("cannot read");
   });
 });
+
+/**
+ * THE TIER-1 SLICE SOURCES SECTION — the per-agent degrade the summarizer
+ * rung's REDUCED sentence points at. The rung is honest only if a reader can
+ * check it against their own agent, and these cases pin the three shapes an
+ * agent can actually be in.
+ */
+describe("tier-1 slice sources: what the summarizer rung can see per agent", () => {
+  const prose = (text: string): string =>
+    entry("a2c", {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "s1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
+        },
+      },
+    });
+
+  const HANDSHAKE: readonly string[] = [
+    entry("c2a", { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } }),
+    entry("a2c", {
+      jsonrpc: "2.0",
+      id: 1,
+      result: { protocolVersion: 1, agentInfo: { name: "Gemini CLI", version: "0.9.1" } },
+    }),
+  ];
+
+  test("an agent that only talks is named prose only, and told what that costs", () => {
+    // Arrange
+    const record = [...HANDSHAKE, prose("I think the retry loop is at fault")].join("\n");
+
+    // Act
+    const report = analyzeAcpRecord(record);
+    const text = renderAcpRecordReport(report);
+
+    // Assert
+    expect(report.agentMessages).toBe(1);
+    expect(text).toContain("tier-1 slice sources:");
+    expect(text).toContain("agent prose:    1 message chunks");
+    expect(text).toContain("verdict: prose only");
+    expect(text).toContain("terminal/*");
+  });
+
+  test("an agent that talks AND runs things fills every source", () => {
+    // Arrange
+    const record = [
+      ...HANDSHAKE,
+      prose("Verdict: the backoff window never resets"),
+      entry("a2c", { jsonrpc: "2.0", id: 9, method: "terminal/create", params: { sessionId: "s1" } }),
+      entry("c2a", { jsonrpc: "2.0", id: 9, result: { terminalId: "t1" } }),
+      entry("a2c", { jsonrpc: "2.0", id: 10, method: "terminal/output", params: { sessionId: "s1", terminalId: "t1" } }),
+      entry("c2a", {
+        jsonrpc: "2.0",
+        id: 10,
+        result: { output: "2 failed", exitStatus: { exitCode: 1 } },
+      }),
+    ].join("\n");
+
+    // Act
+    const text = renderAcpRecordReport(analyzeAcpRecord(record));
+
+    // Assert
+    expect(text).toContain("terminal tails: 1 outputs");
+    expect(text).toContain("verdict: prose and executed shapes");
+  });
+
+  test("a silent agent is told its slice would be empty, not left to guess", () => {
+    // Arrange
+    const record = HANDSHAKE.join("\n");
+
+    // Act
+    const text = renderAcpRecordReport(analyzeAcpRecord(record));
+
+    // Assert
+    expect(text).toContain("agent prose:    none seen");
+    expect(text).toContain("verdict: nothing");
+  });
+
+  test("a recording containing agent prose does not crash the command", async () => {
+    // THE REGRESSION. `update.content` is an ARRAY for a tool call and a
+    // single ContentBlock OBJECT for a message chunk; the diff-path scan
+    // called `.some` on it unguarded, so this command threw on essentially
+    // every real recording. Reproduced on 77eea1c before the fix.
+    // Arrange
+    const dir = await mkdtemp(join(tmpdir(), "cx-acp-report-prose-"));
+    const path = join(dir, "wire.ndjson");
+    await writeFile(
+      path,
+      [...HANDSHAKE, prose("I think the retry loop is at fault")].join("\n"),
+      "utf8",
+    );
+
+    // Act
+    const result = await runAcpReport(path);
+
+    // Assert
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("agent prose:    1 message chunks");
+  });
+
+  test("agent THOUGHTS are not counted as prose — they are not slice material", () => {
+    // Arrange
+    const record = [
+      ...HANDSHAKE,
+      entry("a2c", {
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "the user is probably wrong" },
+          },
+        },
+      }),
+    ].join("\n");
+
+    // Act
+    const report = analyzeAcpRecord(record);
+
+    // Assert — the report must not promise the gate a source it cannot read
+    expect(report.agentMessages).toBe(0);
+    expect(renderAcpRecordReport(report)).toContain("verdict: nothing");
+  });
+});
