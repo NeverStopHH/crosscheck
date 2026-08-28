@@ -3014,6 +3014,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "at all while teammates get no line",
   },
   {
+    // Audit row M15-rest at the hub. Grouping per developer one layer up
+    // cannot recover a developer the hub's own bound never sent.
+    label: "the listing bound is spent on one developer",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    .orderBy(sql`${contextRankPerDeveloper} ASC`, sql`${contextActivity} DESC`)",
+    to: "    .orderBy(sql`${contextActivity} DESC`)",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "a teammate running many short sessions fills all 200 rows and the " +
+      "colleague with one live investigation is absent from a section that " +
+      "looks complete — nothing counts a person who never arrived",
+  },
+  {
     // Audit row M15-rest. A work context is created per SESSION, so one
     // teammate's three worktrees filled a five-line section on their own.
     label: "the briefing lists one line per context again",

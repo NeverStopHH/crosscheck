@@ -211,11 +211,39 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
  * repo with more than 200 contexts active inside the window the fold counts
  * are of the freshest 200 — an undercount, which is the direction that never
  * invents work nobody is doing.
+ *
+ * THE BOUND IS SPENT ON BREADTH BEFORE DEPTH, and that is not a preference.
+ * Cut flat by activity, 200 rows are 200 rows of whoever is busiest: a
+ * teammate running many short sessions — the module's own premise, "three
+ * worktrees, or restarting their agent three times on the same branch" —
+ * filled the whole answer, and the colleague with one live investigation
+ * from this morning never reached the reader at all. Nothing downstream could
+ * report it either: the connector's "(+N more not shown)" is computed from
+ * the groups it RECEIVED, so a person who never arrived is not folded away,
+ * they are simply absent from a section that looks complete.
+ *
+ * `rank` below is each row's position within its own developer, so ordering
+ * by it first means every teammate's freshest context is served before
+ * anyone's second — up to 200 distinct people before depth is bought at all —
+ * while the rows inside one developer stay in the newest-first order the
+ * reader groups by.
+ *
+ * Pinned by "one busy teammate cannot push another out of the answer
+ * entirely" in server/test/work-context-listing.test.ts, beside the flat-cut
+ * test it does not replace: the bound is still 200 rows, still freshest-first
+ * inside a person, and still cuts.
  */
 export const WORK_CONTEXT_LIST_LIMIT = 200;
 
 /** The timestamp every surface renders as a row's age, and the one the index is on. */
 const contextActivity = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
+
+/**
+ * How fresh this row is WITHIN its own developer: 1 is that person's newest.
+ * Computed after the WHERE, so mutes and the caller's window narrow the set
+ * before anybody is ranked inside it.
+ */
+const contextRankPerDeveloper = sql`row_number() over (partition by ${agentSessions.developerId} order by ${contextActivity} desc)`;
 
 export const listWorkContextsByRepo = async (
   db: Db,
@@ -266,7 +294,7 @@ export const listWorkContextsByRepo = async (
     // above and rendered by downstream, and the one `work_contexts_activity_idx`
     // is built on — ordering by anything else would make the bound cut a
     // different set from the one the window selected.
-    .orderBy(sql`${contextActivity} DESC`)
+    .orderBy(sql`${contextRankPerDeveloper} ASC`, sql`${contextActivity} DESC`)
     .limit(WORK_CONTEXT_LIST_LIMIT);
   return rows.map((row) => ({
     ...toWorkContextView(row.workContext, row.baseCommit),

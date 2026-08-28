@@ -13,6 +13,7 @@ import { sql } from "drizzle-orm";
 
 import { WORK_CONTEXT_LIST_LIMIT } from "../src/services/diagnosis.ts";
 import {
+  addTestDeveloperWithSession,
   createHarnessWithSession,
   jsonRequest,
   postRecords,
@@ -27,6 +28,7 @@ const REPO_QUERY = "/api/work-contexts?repo=github.com%2Facme%2Fapi";
 
 interface ListEntry {
   readonly id: string;
+  readonly developerId: string;
   readonly claimCount: number;
   readonly targetCount: number;
 }
@@ -193,5 +195,77 @@ describe("GET /api/work-contexts is bounded", () => {
     expect(rows.map((row) => row.id)).not.toContain(
       `wc_bulk_${String(extra).padStart(4, "0")}`,
     );
+  });
+
+  test("one busy teammate cannot push another out of the answer entirely", async () => {
+    // The bound is per-DEVELOPER before it is global, because the reader of
+    // this listing groups per developer and shows one line each. A flat
+    // freshest-200 cut hands back one person's 200 worktrees and drops the
+    // teammate whose single live investigation is the whole reason to read
+    // the section — and nothing downstream can say so, because a person who
+    // never arrived cannot be counted as folded away.
+    const setup = await createHarnessWithSession();
+    await postRecords(
+      setup.harness,
+      setup.developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    await setup.harness.db.execute(sql`
+      UPDATE work_contexts
+         SET created_at = now() - make_interval(hours => 5),
+             updated_at = now() - make_interval(hours => 5)
+       WHERE id = ${WORK_CONTEXT_ID}
+    `);
+    const quiet = await addTestDeveloperWithSession(
+      setup.harness,
+      "Mike",
+      "mike@example.com",
+      { id: "cc_22222222-3333-4444-8555-666666666666" },
+    );
+    // Mike: ONE context, ten hours old — inside the 14-day window and older
+    // than every one of Nick's, so a flat cut is guaranteed to lose it.
+    await postRecords(
+      setup.harness,
+      quiet,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          id: "wc_mike_only",
+          sessionId: "cc_22222222-3333-4444-8555-666666666666",
+          title: "Mike is halfway through the importer retry",
+        }),
+        { sessionId: "cc_22222222-3333-4444-8555-666666666666" },
+      ),
+    );
+    await setup.harness.db.execute(sql`
+      UPDATE work_contexts
+         SET created_at = now() - make_interval(hours => 10),
+             updated_at = now() - make_interval(hours => 10)
+       WHERE id = 'wc_mike_only'
+    `);
+    // Nick: WORK_CONTEXT_LIST_LIMIT + 5 contexts, every one fresher than that.
+    const extra = WORK_CONTEXT_LIST_LIMIT + 5;
+    await setup.harness.db.execute(sql`
+      INSERT INTO work_contexts (id, session_id, title, status, created_at, updated_at)
+      SELECT 'wc_busy_' || lpad(g::text, 4, '0'),
+             (SELECT session_id FROM work_contexts WHERE id = ${WORK_CONTEXT_ID}),
+             'Worktree ' || g,
+             'analyzing',
+             now() - make_interval(mins => g::int),
+             now() - make_interval(mins => g::int)
+      FROM generate_series(1, ${extra}) g
+    `);
+
+    // Act: exactly what the connector sends.
+    const rows = await list(setup, `${REPO_QUERY}&since=14d`);
+
+    // Assert: still bounded, and both people are in the answer.
+    expect(rows).toHaveLength(WORK_CONTEXT_LIST_LIMIT);
+    expect(rows.map((row) => row.id)).toContain("wc_mike_only");
+    expect(new Set(rows.map((row) => row.developerId)).size).toBe(2);
+    // …and breadth comes first: the freshest context of each person leads the
+    // answer, so the reader's grouping still meets people newest-first.
+    expect(rows[0]?.id).toBe("wc_busy_0001");
+    expect(rows[1]?.id).toBe("wc_mike_only");
   });
 });
