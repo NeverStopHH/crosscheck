@@ -31,7 +31,7 @@ Four capabilities, on the rungs Cursor's platform actually allows — declared a
 |---|---|---|
 | **intent** | full | `beforeSubmitPrompt` carries the prompt; the first substantive one fires the shared derived-intent worker |
 | **ghost** | full | the debt a recorded intent opens is claimed on `stop` or `postToolUse`, whichever fires first — Cursor has no always-runs next-prompt event |
-| **summarizer** | **reduced** | Cursor documents the transcript POINTER (`transcript_path`, `CURSOR_TRANSCRIPT_PATH`) and no transcript FORMAT, so the reader is shape-tolerant and says which shape decoded |
+| **summarizer** | **reduced** | Cursor documents the transcript POINTER (`transcript_path`, `CURSOR_TRANSCRIPT_PATH`) and no transcript FORMAT. Two consequences, both named: the reader is shape-tolerant and says which shape decoded, and the slice is the bounded **tail of the conversation** rather than of the turn, because no documented marker separates turns and a guessed boundary would be a guess printed as a fact |
 | **conference** | full | `crosscheck conference` is a command a human runs; nothing about it is host-specific |
 
 **And every refusal is a doctor line, not a silence** — a decision nobody can find is indistinguishable from a bug nobody fixed:

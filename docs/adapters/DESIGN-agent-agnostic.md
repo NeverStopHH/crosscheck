@@ -508,6 +508,14 @@ silent — the same "unconnected directory talks to nobody" rule, no special-cas
   REPORTS which one matched; a tail neither decoder can use is booked as
   `summarizerNoSlice` with a named reason and printed by doctor. A missing transcript
   is never folded into runner failures, because no model ran.
+  There is a SECOND reduction, invisible in the output and therefore stated here and
+  in the reader's own header: the slice is the tail of the CONVERSATION, not of the
+  turn. The Claude reader can start at the last real user prompt because Claude Code
+  documents an entry type that means one; Cursor documents no schema, so there is no
+  marker to find and a guessed turn boundary would be a guess printed as a fact. The
+  direction of the error is the safe one — a slice with more context makes the gate's
+  conjunction slightly easier to satisfy, which spends a capped fire on a weaker
+  moment and never invents a conclusion.
 - **state.vscdb is never read.** Undocumented schema, version drift, full-transcript
   privacy blast radius; the documented `transcript_path` is the sanctioned channel and
   the Tier-1 rung above uses it.

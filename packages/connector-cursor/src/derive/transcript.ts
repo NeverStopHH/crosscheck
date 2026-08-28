@@ -43,6 +43,25 @@
  * for the same reason: the stop handler gates on the slice it read and hands
  * the detached worker EXACTLY those bounds, so a turn appended between the
  * gate decision and the worker's read cannot drift into the fire.
+ *
+ * THE SECOND REDUCTION, said out loud because it is invisible in the output:
+ * this slice is the tail of the CONVERSATION, not of the turn. The Claude
+ * reader walks its JSONL for the last real user prompt and starts the slice
+ * there — it can, because Claude Code documents an entry type that means "the
+ * user said this" and a tool result is distinguishable from it. Cursor
+ * documents no transcript schema at all, so there is no marker to find; a
+ * turn boundary guessed from an undocumented format would be a guess printed
+ * as a fact, and the gate would silently start slicing in the wrong place the
+ * day the guess stopped holding. So the slice is the bounded tail, and what
+ * the model is shown may include the end of the previous turn.
+ *
+ * The cost of that is bounded and the direction is the safe one: a slice with
+ * MORE context than the turn makes the gate's conjunction slightly easier to
+ * satisfy (a conclusion in this turn beside a test command in the last one),
+ * which spends a capped fire on a weaker moment — it never invents a
+ * conclusion, because the model is asked for one and answers NONE when there
+ * is none, and NONE is a booked outcome. The debounce and the per-session cap
+ * bound how often that can happen at all.
  */
 import {
   SUMMARIZER_BLOCK_MAX_CHARS,

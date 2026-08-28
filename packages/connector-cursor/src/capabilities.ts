@@ -32,7 +32,7 @@ export const CURSOR_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       name: "summarizer",
       rung: "reduced",
       sentence:
-        "the stop payload carries a transcript POINTER but Cursor documents no transcript FORMAT, so the slice is read shape-tolerantly and a tail that decodes to nothing is booked and named rather than guessed at",
+        "the stop payload carries a transcript POINTER but Cursor documents no transcript FORMAT, so the slice is the bounded TAIL rather than the turn (no documented marker separates turns), it is decoded shape-tolerantly, and a tail that decodes to nothing is booked and named rather than guessed at",
     },
     {
       name: "conference",
