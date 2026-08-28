@@ -85,9 +85,20 @@ Stays in `packages/connector-claude` (now honest about its name):
   `HookPayloadSchema` and the Edit/Write/Bash tool-name mapping move here too: they
   parse *Claude Code's* payloads) and the `hookSpecificOutput` response shapes.
 - `statusline/` — a Claude Code surface.
-- `summarizer/*` — Tier-1 rides headless `claude -p` on the developer's existing Claude
-  auth (DESIGN.md §2). It is Claude-specific by construction. `summarizer/gate.ts` and
-  `parse.ts` are generalizable later; not now (YAGNI — no second summarizer exists).
+- `summarizer/*` — the HOST half only: `transcript.ts` (Claude's JSONL slice),
+  `gate.ts` (the pre-fire triggers over that slice), `cost.ts`, `probe.ts`, `worker.ts`
+  and `worker-entry.ts`.
+  **Status (2026-08-28): the deferral below was overturned, on the evidence it asked
+  for.** This row used to read "Tier-1 rides headless `claude -p` … Claude-specific by
+  construction; `gate.ts` and `parse.ts` are generalizable later; not now (YAGNI — no
+  second summarizer exists)." Two more connectors exist now, and the measured gap was
+  that every agent could READ and ASK while only Claude had anything DERIVED — the
+  machinery's location, not the platform. `runner.ts`, `parse.ts`, `reject.ts` and
+  `worker-env.ts` moved verbatim to `connector-core/src/model/`, joined by
+  `model/gates.ts`, which owns the order an answer is judged in. What stayed
+  Claude-specific is what actually is: the trigger and the slice. The `claude -p`
+  default is a BACKEND choice inside the moved runner (`CROSSCHECK_SUMMARIZER_CMD`
+  already replaced it wholesale), not a host coupling.
 - `cli/init.ts`, `settings-merge.ts` — the `.claude/settings.json` + `.mcp.json`
   installer. The non-destructive-merge *pattern* is shared knowledge; the file shapes are
   host-specific. `cli/mcp-config.ts`'s `mergeMcpConfig` moves to core: Cursor's
@@ -104,7 +115,8 @@ extracted in Block 8 when the third connector proves the shape (one npm artifact
 `bin`, three connectors + server behind it).
 **Status (2026-08-19, Block 8): the debt is DISCHARGED.** `packages/cli` owns the bin
 and the host-agnostic commands (login/init/status/doctor/privacy/version);
-`connector-claude` keeps hooks, statusline, summarizer and the `.claude` settings
+`connector-claude` keeps hooks, statusline, the summarizer's host half and the
+`.claude` settings
 plan+merge (`buildSettingsPlan` moved INTO settings-merge.ts beside the merge it
 feeds), and its Stop hook spawns an in-package `summarizer/worker-entry.ts` instead of
 the moved bin. The mechanical bar was proven the Block-1 way: a 20-command bin matrix
@@ -476,8 +488,11 @@ silent — the same "unconnected directory talks to nobody" rule, no special-cas
   the adapter targets the IDE; Cursor CLI users get the ACP proxy instead, which is the
   better seam anyway.
 - **Tier-1 summarizer deferred**: `transcript_path` exists and is the sanctioned read
-  channel, but the summarizer is `claude -p`-shaped today; generalizing it is post-v1
-  and consent-gated.
+  channel. The MACHINERY is no longer the obstacle — since 2026-08-28 the runner, the
+  tolerant parse, the refusals and the gate order live in `connector-core/src/model/`
+  and take any backend through `CROSSCHECK_SUMMARIZER_CMD` — so what Cursor is still
+  missing is its own trigger and its own transcript reader, nothing shared. Still
+  post-v1 and consent-gated.
 - **state.vscdb is never read.** Undocumented schema, version drift, full-transcript
   privacy blast radius; hooks provide everything Tier-0 needs.
 
