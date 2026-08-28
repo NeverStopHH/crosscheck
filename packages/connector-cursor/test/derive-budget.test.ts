@@ -30,8 +30,9 @@ import {
 } from "@crosscheck/connector-core/constants.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+
 import { runCursorHook } from "../src/index.ts";
-import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 /** A throwaway hub on this task's own port range — instant 404s. */
