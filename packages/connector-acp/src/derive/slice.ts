@@ -59,7 +59,15 @@ const createTurnSlice = (): TurnSlice => {
       if (trimmed.length === 0) {
         return;
       }
-      const room = ACP_TURN_SLICE_MAX_CHARS - length;
+      // THE SEPARATOR COUNTS. `text()` joins the parts with a newline, so a
+      // budget that tracked only the pieces was not a budget on the string
+      // this actually produces: an agent streaming ONE CHARACTER per message
+      // chunk filled 47,999 characters against a 24,000 cap (measured), the
+      // separators doubling it exactly. Charging the newline at append time
+      // makes `text().length` equal `length`, so the cap is a cap whatever
+      // shape the wire arrives in.
+      const separator = parts.length === 0 ? 0 : 1;
+      const room = ACP_TURN_SLICE_MAX_CHARS - length - separator;
       if (room <= 0) {
         droppedChars += trimmed.length;
         return;
@@ -74,7 +82,7 @@ const createTurnSlice = (): TurnSlice => {
         return;
       }
       parts.push(trimmed);
-      length += trimmed.length;
+      length += trimmed.length + separator;
     },
     text() {
       return parts.join("\n");
@@ -110,20 +118,32 @@ export const createTurnSliceStore = (): TurnSliceStore => {
       slices.delete(oldest.value);
     }
   };
+  /**
+   * Replace one session's accumulator, evicting ONLY to make room for a key
+   * the map does not already hold.
+   *
+   * The eviction guard is not defensive noise. Resetting unconditionally
+   * evicts on every turn boundary once the map is full — and the victim is
+   * the OLDEST entry, which is some other live session, not this one. On a
+   * busy proxy that silently threw away a neighbour's accumulated turn every
+   * time anybody started a prompt, costing capture accuracy with nothing
+   * counted anywhere. Replacing an existing key changes the map's size by
+   * zero and must therefore evict nothing.
+   */
+  const put = (sessionId: string): TurnSlice => {
+    if (!slices.has(sessionId)) {
+      evictOldest();
+    }
+    const fresh = createTurnSlice();
+    slices.set(sessionId, fresh);
+    return fresh;
+  };
   return {
     for(sessionId) {
-      const existing = slices.get(sessionId);
-      if (existing !== undefined) {
-        return existing;
-      }
-      evictOldest();
-      const fresh = createTurnSlice();
-      slices.set(sessionId, fresh);
-      return fresh;
+      return slices.get(sessionId) ?? put(sessionId);
     },
     reset(sessionId) {
-      evictOldest();
-      slices.set(sessionId, createTurnSlice());
+      put(sessionId);
     },
     forget(sessionId) {
       slices.delete(sessionId);

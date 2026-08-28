@@ -1979,6 +1979,33 @@ export const MUTATIONS: readonly Mutation[] = [
       "with no surface saying so",
   },
   {
+    // Found by review, measured before it was fixed: text() joins the parts
+    // with a newline and the budget counted only the pieces, so a
+    // one-character-per-chunk agent filled 47,999 chars against a 24,000 cap.
+    label: "a chatty ACP agent doubles the turn slice past its cap",
+    file: `${ACP}/src/derive/slice.ts`,
+    from: "      const separator = parts.length === 0 ? 0 : 1;",
+    to: "      const separator = 0;",
+    test: `${ACP}/test/turn-slice.test.ts`,
+    because:
+      "the byte cap stops bounding the string the gate and the worker " +
+      "actually receive, so a hostile or merely chatty agent's message " +
+      "chunks grow proxy memory instead of being dropped and counted",
+  },
+  {
+    // Also found by review: reset() evicted unconditionally, so once the map
+    // was full every prompt threw away the OLDEST OTHER session's turn.
+    label: "an ACP turn boundary evicts a neighbour session's slice",
+    file: `${ACP}/src/derive/slice.ts`,
+    from: "    if (!slices.has(sessionId)) {",
+    to: "    if (true) {",
+    test: `${ACP}/test/turn-slice.test.ts`,
+    because:
+      "on a proxy with many live sessions, every prompt on any session " +
+      "silently discards another session's accumulated evidence — capture " +
+      "accuracy lost with nothing counted anywhere",
+  },
+  {
     // THE SLICE IS A TURN, and that is the ACP rung's whole advantage over
     // Cursor's (whose slice is a conversation tail because no documented
     // marker separates turns). Dropping the reset silently turns this host
