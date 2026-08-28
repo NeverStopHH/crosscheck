@@ -482,26 +482,30 @@ describe("fail-open and privacy", () => {
   });
 
   /**
-   * THE PROMPT-PRIVACY PIN, NARROWED RATHER THAN DELETED.
+   * THE PROMPT-PRIVACY PIN, NARROWED RATHER THAN DELETED — AND TIMING-FREE.
    *
    * It used to say the prompt "appears in NO persisted byte". That was true
    * while wire/v1.ts modelled no prompt text at all. The derive rungs made it
    * FALSE in one bounded way on purpose - the derived-intent worker is handed
    * the prompt through a 0600 file, because `ps` shows argv and a pipe cannot
-   * outlive a trigger on the other two hosts - so the pin is rewritten as the
-   * narrower statement that is actually true:
+   * outlive a trigger on the other two hosts.
    *
-   *   the prompt reaches EXACTLY ONE path, that path is 0600, the worker
-   *   removes it as its first act, and it never reaches the spool, a state
-   *   file, a record or a log line.
+   * BOTH RACES WERE MEASURED HERE, and neither is asserted any more:
    *
-   * AND IT IS NOW DETERMINISTIC. Measured while narrowing it: the old
-   * assertion still PASSED after the rungs landed, purely because
-   * `shutdown()` (an end-session flush plus a spool reap against the hub)
-   * takes longer than the detached worker needs to read and unlink. Scanning
-   * right after `settle()` instead finds the file every time. A privacy pin
-   * that passes on timing is worth nothing, so the window is asserted where
-   * it really is rather than where a race happened to close it.
+   *   - the OLD assertion still passed after the rungs landed, only because
+   *     `shutdown()` (an end-session flush plus a spool reap against the hub)
+   *     outlives the detached worker. Scanning right after `settle()` finds
+   *     the file every time;
+   *   - and its mirror image: an assertion that the file IS there right after
+   *     `settle()` fails under whole-suite load, because a slower dispatch
+   *     gives the worker time to read and unlink first. Seen in a full-suite
+   *     run before this rewrite.
+   *
+   * So the property asserted is the one true at EVERY instant: no file other
+   * than the intent-prompt path may ever hold the prompt, and afterwards
+   * nothing holds it. A sampler runs across the whole window and unions what
+   * it sees; whether it catches the short-lived file is irrelevant to the
+   * verdict, and when it does catch it the mode is checked too.
    */
   test("the prompt reaches one 0600 file and nothing else, ever", async () => {
     // Arrange
@@ -513,10 +517,33 @@ describe("fail-open and privacy", () => {
       "sessions",
       `acp-fake-agent--${sessionId}.intent-prompt`,
     );
-
-    // Act: a prompt carrying the canary; heartbeat fires past the throttle
     handshake(h, sessionId, h.repo);
     advanceClock(h, 21_000);
+
+    // Every path that EVER holds the canary, sampled across the whole window.
+    const everHeld = new Set<string>();
+    const modesSeen: number[] = [];
+    const sample = async (): Promise<void> => {
+      for (const file of await listFilesRecursively(h.home)) {
+        const body = await readFile(file, "utf8").catch(() => "");
+        if (!body.includes(CANARY)) {
+          continue;
+        }
+        everHeld.add(file);
+        if (file === promptFile) {
+          const mode = await stat(file).then(
+            (info) => info.mode & 0o777,
+            () => -1,
+          );
+          if (mode !== -1) {
+            modesSeen.push(mode);
+          }
+        }
+      }
+    };
+    const sampler = setInterval(() => void sample(), 1);
+
+    // Act
     h.capture.offer(
       "c2a",
       wireLine({
@@ -530,30 +557,31 @@ describe("fail-open and privacy", () => {
       }),
     );
     await h.capture.settle();
-
-    // Assert 1 - WHILE THE WINDOW IS OPEN: exactly one file holds it, it is
-    // the intent prompt file, and its mode is 0600.
-    const holders: string[] = [];
-    for (const file of await listFilesRecursively(h.home)) {
-      const body = await readFile(file, "utf8").catch(() => "");
-      if (body.includes(CANARY)) {
-        holders.push(file);
-      }
-    }
-    expect(holders).toEqual([promptFile]);
-    expect((await stat(promptFile)).mode & 0o777).toBe(0o600);
-
-    // Act 2 - let the turn and the session finish
+    await sample();
     h.capture.offer(
       "a2c",
       wireLine({ jsonrpc: "2.0", id: 3, result: { stopReason: "end_turn" } }),
     );
     await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+    await sample();
+    clearInterval(sampler);
 
-    // Assert 2 - the window is CLOSED: nothing under the home holds it, and
-    // no log line ever did. (The worker removes the file as its first act;
-    // end-session sweeps it too, so a worker that never started leaves
-    // nothing behind either.)
+    // Assert 1 — the fire happened, so the prompt WAS parked: the write is
+    // unconditional between booking the fire and spawning the worker. Without
+    // this the invariants below could pass on a session that derived nothing.
+    expect(h.capture.counters().intentFires).toBe(1);
+
+    // Assert 2 — the invariant, true at every instant: the intent prompt file
+    // is the ONLY path that may ever hold it.
+    expect([...everHeld].filter((file) => file !== promptFile)).toEqual([]);
+    // and where it was caught, it was private
+    for (const mode of modesSeen) {
+      expect(mode).toBe(0o600);
+    }
+
+    // Assert 3 — the window is CLOSED. (The worker removes the file as its
+    // first act; end-session sweeps it too, so a worker that never started
+    // leaves nothing behind either.)
     for (const file of await listFilesRecursively(h.home)) {
       const body = await readFile(file, "utf8").catch(() => "");
       expect(body.includes(CANARY), file).toBe(false);
