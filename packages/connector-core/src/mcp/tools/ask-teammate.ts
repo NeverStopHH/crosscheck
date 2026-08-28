@@ -25,7 +25,7 @@ import { MAX_QUESTION_BODY_LENGTH } from "@crosscheck/schema";
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
-import { quoted, quotingText, safeId } from "../render.ts";
+import { quotedBody, quotingText, safeId } from "../render.ts";
 import { bareUntrusted, redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { askQuestion } from "../../http/hub.ts";
@@ -136,7 +136,15 @@ export const run = async (
   // record, never a refusal — the text is legal and only its rendering changes.
   const note = redactionNote(question);
   const notes = note === null ? [] : [note];
-  const framed = quoted(question, MAX_QUESTION_BODY_LENGTH);
+  // BODY class, matching the note above it and the reader's own surface. It
+  // was `quoted` — LABEL class, blanks whole — for one release, and the pair
+  // then said opposite things about the same sentence on adjacent lines: the
+  // echo showed «[redacted: title looked like an instruction]» while the note
+  // underneath promised that only the phrase goes and the rest arrives. The
+  // note was the one telling the truth (briefing/questions.ts renders the
+  // question with spanRedactedUntrusted), so an author reading the echo
+  // withdrew a question their teammate had received intact.
+  const framed = quotedBody(question, MAX_QUESTION_BODY_LENGTH);
   if (posted.data.duplicate) {
     // The house rule, applied to this channel: a record that carries nothing
     // new is a duplicate, not a rejection — and the sentence names the id the

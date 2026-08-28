@@ -2949,6 +2949,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "of them can see what was lost",
   },
   {
+    // Audit row M14's class rule, at its single definition. The two classes
+    // are one character apart in the source and opposite in effect, and the
+    // author-facing echoes reached the wrong one for a release.
+    label: "the body class collapses back into the label class",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  `«${spanRedactedUntrusted(raw, maxChars)}»`;",
+    to: "  `«${sanitizeUntrusted(raw, maxChars)}»`;",
+    test: `${CORE}/test/question-tools.test.ts`,
+    because:
+      "the author's own tool tells them «[redacted: title looked like an " +
+      "instruction]» on the line above a note promising the rest of the " +
+      "sentence arrives, so a question the teammate received intact is withdrawn",
+  },
+  {
     // Audit row M14, the author's half. The redaction happens on somebody
     // ELSE's machine, so nothing else in the product can tell the author.
     label: "the author is never told their words render redacted",

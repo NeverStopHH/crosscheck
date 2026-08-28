@@ -15,6 +15,11 @@ import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
+import {
+  REDACTED_TITLE,
+  spanRedactedUntrusted,
+} from "../src/briefing/sanitize.ts";
+import { MAX_CLAIM_BODY_LENGTH, MAX_QUESTION_BODY_LENGTH } from "@crosscheck/schema";
 import { hintBodyHash } from "../src/hints/echo.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
 import type { McpContext } from "../src/mcp/context.ts";
@@ -475,6 +480,14 @@ describe("answer_question", () => {
   });
 });
 
+/** One everyday `override`; the note calls it one phrase and so does the echo. */
+const QUESTION_WITH_A_BRANCH =
+  "Does the override in the per-repo config win over the default budget?";
+
+/** `You must` plus `overrides` — two branches inside one legitimate answer. */
+const ANSWER_WITH_A_BRANCH =
+  "You must read the per-repo config first: it overrides the default budget.";
+
 describe("the author is warned when their words will not arrive whole (M14)", () => {
   // MIKE asks NICK, and that pairing is not decoration: every question above
   // is open from nick to ken, and MAX_OPEN_QUESTIONS_PER_TARGET is 3, so a
@@ -485,8 +498,7 @@ describe("the author is warned when their words will not arrive whole (M14)", ()
   test("ask_teammate stores the question and says what a teammate will see", async () => {
     const result = await call(mike, "ask_teammate", {
       developer: "Nick",
-      question:
-        "Does the override in the per-repo config win over the default budget?",
+      question: QUESTION_WITH_A_BRANCH,
     });
 
     // The control first: it really was asked, so the note is a note and not a
@@ -495,6 +507,15 @@ describe("the author is warned when their words will not arrive whole (M14)", ()
     expect(askedId(result.text)).toMatch(/^qn_/);
     expect(result.text).toContain("Heads up");
     expect(result.text).toContain("[redacted]");
+    // …and the echo shows the author the SAME shape the note promises and the
+    // teammate really receives. `toContain("[redacted]")` alone cannot tell
+    // the two apart: REDACTED_TITLE starts with the same nine characters, so
+    // a whole-blanked echo satisfies it while telling the author the opposite
+    // of what the sentence below it says.
+    expect(result.text).toContain(
+      spanRedactedUntrusted(QUESTION_WITH_A_BRANCH, MAX_QUESTION_BODY_LENGTH),
+    );
+    expect(result.text).not.toContain(REDACTED_TITLE);
   });
 
   test("an ordinary question is asked without a warning", async () => {
@@ -516,11 +537,16 @@ describe("the author is warned when their words will not arrive whole (M14)", ()
     });
     const result = await call(nick, "answer_question", {
       questionId: askedId(asked.text),
-      body: "You must read the per-repo config first: it overrides the default budget.",
+      body: ANSWER_WITH_A_BRANCH,
     });
 
     expect(result.isError).toBe(false);
     expect(result.text).toContain("Heads up");
     expect(result.text).toContain("[redacted]");
+    // The same agreement on the answer side, where the asker is waiting.
+    expect(result.text).toContain(
+      spanRedactedUntrusted(ANSWER_WITH_A_BRANCH, MAX_CLAIM_BODY_LENGTH),
+    );
+    expect(result.text).not.toContain(REDACTED_TITLE);
   });
 });
