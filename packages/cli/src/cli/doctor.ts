@@ -103,6 +103,7 @@ import {
   isIntentSilentlyDead,
   isSummarizerAlwaysRejected,
   isSummarizerSilentlyDead,
+  isSummarizerUnreadable,
   probeSummarizerRunner,
   summarizeGhostCost,
   summarizeIntentCost,
@@ -940,6 +941,18 @@ const checkSummarizerCost = (states: readonly SessionState[]): Check => {
       "WARN",
       "summarizer cost",
       `${line} — ${String(cost.fires)} runs fired, none answered — see the summarizer runner check (these counts are per live session and clear at SessionEnd)`,
+    );
+  }
+  // The model is SPEAKING and this contract cannot read a word of it. Its own
+  // WARN and its own remedy, and the one a machine running a model other than
+  // Claude reaches first: the runner probe PASSes (the binary ran and exited
+  // 0), so "see the summarizer runner check" would send the reader to a
+  // healthy binary and away from the real problem, which is output shape.
+  if (isSummarizerUnreadable(cost)) {
+    return check(
+      "WARN",
+      "summarizer cost",
+      `${line} — the model answered and nothing it said fitted the output contract; if CROSSCHECK_SUMMARIZER_CMD points at another model see docs/FOREIGN-MODELS.md (these counts are per live session and clear at SessionEnd)`,
     );
   }
   // The model IS answering and nothing is being kept (audit rows M16 / A3-4).

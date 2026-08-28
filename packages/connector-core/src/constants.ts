@@ -820,6 +820,25 @@ export const DOCTOR_SUMMARIZER_SILENT_FIRES_WARN = 3;
  */
 export const DOCTOR_SUMMARIZER_REJECTED_WARN = 2;
 /**
+ * `crosscheck doctor` WARNs once this many answers have come back in a shape
+ * the Tier-1 contract cannot read (derive/summarizer/cost.ts
+ * isSummarizerUnreadable) with no draft kept. The binary ran and exited 0, so
+ * the runner probe would PASS and send the reader to the wrong place; the
+ * remedy is the MODEL behind CROSSCHECK_SUMMARIZER_CMD, or the wrapper in
+ * front of it.
+ *
+ * The same 2 as the refusal threshold and for the same reason: one
+ * off-format answer is a model having a bad moment, two with nothing kept is
+ * a contract that is not being met. Its own constant rather than a shared
+ * one because the two are independent policies — the refusal threshold is
+ * about gates this product owns, this one is about a foreign binary's
+ * output.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DOCTOR_SUMMARIZER_UNREADABLE_WARN, c.DOCTOR_SUMMARIZER_UNREADABLE_WARN < c.DOCTOR_SUMMARIZER_SILENT_FIRES_WARN)'
+ * PRINTS: 2 true
+ */
+export const DOCTOR_SUMMARIZER_UNREADABLE_WARN = 2;
+/**
  * The slice the doctor's runner probe hands the REAL argv: a progress
  * report the prompt names out explicitly, so a working runner answers NONE
  * and a non-NONE answer is a precision note, not a failure.

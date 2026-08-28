@@ -14,6 +14,7 @@ export {
   formatSummarizerCost,
   isSummarizerAlwaysRejected,
   isSummarizerSilentlyDead,
+  isSummarizerUnreadable,
   readSummarizerCost,
 } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
 // The derived-intent surface (trial finding #16): the worker entry the

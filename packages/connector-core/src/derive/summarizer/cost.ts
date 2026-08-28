@@ -20,6 +20,7 @@
 import {
   DOCTOR_SUMMARIZER_REJECTED_WARN,
   DOCTOR_SUMMARIZER_SILENT_FIRES_WARN,
+  DOCTOR_SUMMARIZER_UNREADABLE_WARN,
 } from "../../constants.ts";
 import { readLiveSessionStates } from "../../state/session-state.ts";
 import type { SessionState } from "../../state/session-state.ts";
@@ -61,6 +62,16 @@ export interface SummarizerCost {
    */
   readonly noSlice: number;
   readonly lastNoSlice: string | null;
+  /**
+   * Answers the MODEL gave that the contract could not read — stdout that is
+   * neither claim JSON nor NONE, or nothing at all — with one booked reason
+   * in crosscheck's own words (gate.ts UNREADABLE_EMPTY / UNREADABLE_SHAPE).
+   * Zero on a working Claude by construction, and the first number to move
+   * when CROSSCHECK_SUMMARIZER_CMD points at a model with output habits of
+   * its own. Not a runner failure: the binary ran and exited 0.
+   */
+  readonly unreadable: number;
+  readonly lastUnreadable: string | null;
   /** Rough figure at ~4 chars/token — an estimate, never a bill. */
   readonly estimatedTokens: number;
 }
@@ -76,6 +87,8 @@ const NO_COST: SummarizerCost = {
   lastRejection: null,
   noSlice: 0,
   lastNoSlice: null,
+  unreadable: 0,
+  lastUnreadable: null,
   estimatedTokens: 0,
 };
 
@@ -100,6 +113,8 @@ export const summarizeSummarizerCost = (
       lastRejection: state.summarizerLastRejection ?? total.lastRejection,
       noSlice: total.noSlice + state.summarizerNoSliceCount,
       lastNoSlice: state.summarizerLastNoSlice ?? total.lastNoSlice,
+      unreadable: total.unreadable + state.summarizerUnreadableCount,
+      lastUnreadable: state.summarizerLastUnreadable ?? total.lastUnreadable,
       estimatedTokens: total.estimatedTokens + state.summarizerEstimatedTokens,
     }),
     NO_COST,
@@ -144,6 +159,16 @@ export const formatSummarizerCost = (cost: SummarizerCost): string => {
     cost.rejects === 0
       ? ""
       : `, ${String(cost.rejects)} refused${rejectedReason}`;
+  // Unreadable answers read INSIDE the run parentheses beside the refusals:
+  // the model spoke and the quota was spent for both. What separates them is
+  // that a refusal was well-formed and this was not, which is why the reason
+  // is printed rather than left to the reader to guess.
+  const unreadableReason =
+    cost.lastUnreadable === null ? "" : `: last "${cost.lastUnreadable}"`;
+  const unreadablePart =
+    cost.unreadable === 0
+      ? ""
+      : `, ${String(cost.unreadable)} unreadable${unreadableReason}`;
   // The sliceless turns read LAST and outside the run parentheses, because
   // they are not runs: no model was spawned and no quota was spent.
   const noSliceReason =
@@ -153,7 +178,7 @@ export const formatSummarizerCost = (cost: SummarizerCost): string => {
       ? ""
       : `, ${String(cost.noSlice)} turn${cost.noSlice === 1 ? "" : "s"} with no slice${noSliceReason}`;
   return (
-    `${String(cost.fires)} runs (${String(cost.nones)} NONE, ${draftsPart}${failsPart}${rejectsPart})${noSlicePart}, ` +
+    `${String(cost.fires)} runs (${String(cost.nones)} NONE, ${draftsPart}${failsPart}${rejectsPart}${unreadablePart})${noSlicePart}, ` +
     `~${String(cost.estimatedTokens)} tokens (estimate) across ${sessionsPart}`
   );
 };
@@ -169,7 +194,7 @@ export const formatSummarizerCost = (cost: SummarizerCost): string => {
  */
 export const isSummarizerSilentlyDead = (cost: SummarizerCost): boolean =>
   cost.fires >= DOCTOR_SUMMARIZER_SILENT_FIRES_WARN &&
-  cost.nones + cost.drafts + cost.rejects === 0;
+  cost.nones + cost.drafts + cost.rejects + cost.unreadable === 0;
 
 /**
  * The other half of the same honesty rule (audit rows M16 / A3-4): the model
@@ -184,3 +209,22 @@ export const isSummarizerSilentlyDead = (cost: SummarizerCost): boolean =>
  */
 export const isSummarizerAlwaysRejected = (cost: SummarizerCost): boolean =>
   cost.rejects >= DOCTOR_SUMMARIZER_REJECTED_WARN && cost.drafts === 0;
+
+/**
+ * The third honesty rule on this line, and the one a foreign model reaches
+ * first: the binary runs, exits 0 and SAYS something, and none of it fits the
+ * output contract. That is neither a dead runner (the probe would PASS and
+ * send the reader to a healthy binary) nor a refusal (those answers were
+ * well-formed), so it gets its own WARN pointing at the model and at the
+ * contract the model has to satisfy.
+ *
+ * `unreadable` is counted as SPEAKING by isSummarizerSilentlyDead above for
+ * exactly that reason: once this is non-zero, "none answered" is the wrong
+ * sentence and "the runner is broken" is the wrong remedy.
+ *
+ * One unreadable answer is ordinary — a model wanders off-format now and
+ * then. From DOCTOR_SUMMARIZER_UNREADABLE_WARN on with nothing kept, the
+ * developer is paying for answers nobody can use.
+ */
+export const isSummarizerUnreadable = (cost: SummarizerCost): boolean =>
+  cost.unreadable >= DOCTOR_SUMMARIZER_UNREADABLE_WARN && cost.drafts === 0;

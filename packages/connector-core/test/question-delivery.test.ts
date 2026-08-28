@@ -261,6 +261,8 @@ const freshState = (
   summarizerNoSliceCount: 0,
   summarizerLastNoSlice: null,
   summarizerLastRejection: null,
+  summarizerUnreadableCount: 0,
+  summarizerLastUnreadable: null,
   workContextTitle: null,
   workContextStatus: null,
   intentFireCount: 0,

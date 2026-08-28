@@ -79,7 +79,8 @@ import { containsSecret } from "../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../hints/echo.ts";
 import { mintClaimId } from "../mcp/tools/shared.ts";
 import { checkClaim } from "../mcp/violations.ts";
-import { isNoneAnswer, parseSummarizerOutput } from "./parse.ts";
+import { readModelAnswer } from "./parse.ts";
+import type { UnreadableReason } from "./parse.ts";
 import {
   isPromptEcho,
   isRolePlayAnswer,
@@ -138,14 +139,19 @@ export interface DerivedClaim {
 
 /**
  * Every way an answer can end. `unparseable` and `abandoned` are DISTINCT
- * from `rejected` on purpose: the first is a runner problem the caller leaves
- * visible as the fires-minus-outcomes remainder, the second is a session that
- * ended while the model ran and has nothing left to attribute a draft to.
- * Only `rejected` and `none` are booked as outcomes of the answer itself.
+ * from `rejected` on purpose: the first is the MODEL failing the output
+ * contract, the second is a session that ended while the model ran and has
+ * nothing left to attribute a draft to.
+ *
+ * `unparseable` carries a `why` because its two cases have different
+ * remedies: a binary that exits 0 printing NOTHING is one problem, and a
+ * binary that prints something this contract cannot read is another. Neither
+ * word is ever the model's own text — a booked reason is printed into a
+ * terminal and often into an agent's context.
  */
 export type ModelAnswerOutcome =
   | { readonly kind: "none" }
-  | { readonly kind: "unparseable" }
+  | { readonly kind: "unparseable"; readonly why: UnreadableReason }
   | { readonly kind: "abandoned" }
   | { readonly kind: "rejected"; readonly reason: string }
   | { readonly kind: "claim"; readonly claim: DerivedClaim };
@@ -170,12 +176,13 @@ export const gateModelAnswer = async (
   input: ModelAnswerGateInput,
 ): Promise<ModelAnswerOutcome> => {
   // 1. none-parse
-  const draft = parseSummarizerOutput(input.stdout);
-  if (draft === null) {
-    return isNoneAnswer(input.stdout)
+  const answer = readModelAnswer(input.stdout);
+  if (answer.kind !== "claim") {
+    return answer.kind === "none"
       ? { kind: "none" }
-      : { kind: "unparseable" };
+      : { kind: "unparseable", why: answer.why };
   }
+  const draft = answer.draft;
   // 2. role-play
   if (isRolePlayAnswer(draft.body)) {
     return REJECTED(REJECTED_ROLE_PLAY);

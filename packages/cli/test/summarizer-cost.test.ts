@@ -10,6 +10,10 @@ import { rm } from "node:fs/promises";
 import { runCli } from "../src/index.ts";
 import { readSummarizerCost } from "@crosscheck/connector-claude";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  UNREADABLE_EMPTY,
+  UNREADABLE_SHAPE,
+} from "@crosscheck/connector-core/derive/summarizer/gate.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 /** Unreachable on purpose: cost lines are local facts, no hub needed. */
@@ -154,6 +158,77 @@ describe("summarizer cost surfaces", () => {
     expect(result.stdout).toContain("every answer was refused");
     // And it does NOT claim the runner never spoke — that is the other WARN.
     expect(result.stdout).not.toContain("runs fired, none answered");
+  });
+
+  test("status names the unreadable answers and why", async () => {
+    // The outcome a machine running a model other than Claude reaches first,
+    // and the one this product booked NOWHERE until the foreign-model
+    // contract test went looking: the model answered, the quota was spent,
+    // and the only trace was the fires-minus-outcomes remainder.
+    const repo = await makeRepo("cost-unreadable", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-unreadable");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-unreadable-a", {
+      summarizerFireCount: 3,
+      summarizerEstimatedTokens: 1200,
+      summarizerNoneCount: 1,
+      summarizerUnreadableCount: 2,
+      summarizerLastUnreadable: UNREADABLE_SHAPE,
+    });
+
+    const result = await runCli(["status"], env(home), repo);
+
+    expect(result.stdout).toContain("2 unreadable");
+    expect(result.stdout).toContain("neither claim JSON nor NONE");
+  });
+
+  test("doctor WARNs on unreadable answers WITHOUT blaming the runner", async () => {
+    // The binary ran and exited 0, so the runner probe PASSes: pointing the
+    // reader at it would send them to a healthy binary. This WARN names the
+    // model and the contract instead.
+    const repo = await makeRepo("cost-unreadable-doctor", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-unreadable-doctor");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-unreadable-doctor-a", {
+      summarizerFireCount: 2,
+      summarizerEstimatedTokens: 900,
+      summarizerUnreadableCount: 2,
+      summarizerLastUnreadable: UNREADABLE_EMPTY,
+    });
+
+    const result = await runCli(["doctor"], env(home), repo);
+
+    expect(result.stdout).toContain("WARN  summarizer cost");
+    expect(result.stdout).toContain("nothing it said fitted the output contract");
+    expect(result.stdout).toContain("FOREIGN-MODELS.md");
+    // And it does NOT send the reader to the runner check: that is the other
+    // WARN, for a binary that never spoke at all.
+    expect(result.stdout).not.toContain("runs fired, none answered");
+  });
+
+  test("one unreadable answer beside a kept draft stays a PASS", async () => {
+    // The threshold's control: a model wanders off-format now and then, and
+    // a WARN that fires on that is one people learn to skip.
+    const repo = await makeRepo("cost-unreadable-ok", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-unreadable-ok");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-unreadable-ok-a", {
+      summarizerFireCount: 2,
+      summarizerEstimatedTokens: 900,
+      summarizerDraftCount: 1,
+      summarizerUnreadableCount: 1,
+      summarizerLastUnreadable: UNREADABLE_SHAPE,
+    });
+
+    const result = await runCli(["doctor"], env(home), repo);
+
+    expect(result.stdout).toContain("PASS  summarizer cost");
   });
 
   test("one refusal beside a kept draft stays a PASS", async () => {

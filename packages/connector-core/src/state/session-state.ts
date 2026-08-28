@@ -174,6 +174,24 @@ const SessionStateObjectSchema = z.looseObject({
   summarizerLastNoSlice: z.string().nullable().default(null),
   summarizerLastRejection: z.string().nullable().default(null),
   /**
+   * Answers the model GAVE and this contract could not read: stdout that is
+   * neither claim JSON nor NONE, or nothing at all. These used to be booked
+   * NOWHERE - the only trace was the fires-minus-outcomes remainder, an
+   * arithmetic gap with no reason attached - which was survivable while the
+   * binary was always a Claude whose output shape the prompts were tuned on,
+   * and stops being survivable the moment CROSSCHECK_SUMMARIZER_CMD points
+   * at a model with output habits of its own. It is NOT a runner failure
+   * (the binary ran and exited 0) and NOT a NONE (the model did not judge
+   * the turn empty), so it gets its own counter and its own doctor remedy:
+   * folded into either one, the reader is sent to the wrong place.
+   *
+   * The reason is one of gate.ts's two own sentences - never the model's
+   * text, which is printed into a terminal and often into an agent's
+   * context. Bounded by the writer like every other reason here.
+   */
+  summarizerUnreadableCount: z.number().int().min(0).default(0),
+  summarizerLastUnreadable: z.string().nullable().default(null),
+  /**
    * The work-context title and status this session registered with (trial
    * finding #16): an intent UPDATE record must carry both (the wire schema
    * requires them), so the derived-intent worker and `set_intent` read them
@@ -595,6 +613,8 @@ export const deriveSessionState = (
     summarizerNoSliceCount: 0,
     summarizerLastNoSlice: null,
     summarizerLastRejection: null,
+    summarizerUnreadableCount: 0,
+    summarizerLastUnreadable: null,
     workContextTitle: null,
     workContextStatus: null,
     intentFireCount: 0,

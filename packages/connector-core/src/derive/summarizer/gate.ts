@@ -312,6 +312,48 @@ export const withSummarizerNoSlice = (
 });
 
 /**
+ * The two sentences an UNREADABLE answer is booked with, in crosscheck's own
+ * words. They are the writer's, never the model's: a booked reason is printed
+ * by `crosscheck status` and `doctor` into a terminal and frequently into an
+ * agent's context, so quoting stdout here would be the one place this product
+ * pastes an untrusted model's text into a reader unfiltered.
+ *
+ * TWO, not one, because the remedies differ. "Printed nothing" points at the
+ * wrapper or the model's auth; "printed something unreadable" points at the
+ * model's output shape and at the contract in docs/FOREIGN-MODELS.md. A
+ * single sentence for both would send half the readers to the wrong place.
+ */
+export const UNREADABLE_EMPTY =
+  "no answer: the binary exited 0 and printed nothing";
+export const UNREADABLE_SHAPE =
+  "unreadable: the answer was neither claim JSON nor NONE";
+
+/**
+ * An answer the model GAVE that this contract could not read (parse.ts
+ * readModelAnswer). Its own outcome, and the third time this file has had to
+ * make that argument: `withSummarizerFailure` means the RUNNER lost the call
+ * and sends the reader to the binary; `withSummarizerNoSlice` means no model
+ * ran at all. Here the binary ran, exited 0 and spoke, and what it said did
+ * not fit the contract - a MODEL problem, whose remedy is the model or the
+ * wrapper in front of it.
+ *
+ * Until this existed the whole class was booked NOWHERE. That was survivable
+ * while the binary was always a Claude whose output shape the prompts were
+ * tuned on; it stops being survivable the moment CROSSCHECK_SUMMARIZER_CMD
+ * points somewhere else, because then the most likely failure in the product
+ * is the one with no counter and no reason (rule 4: fail-open must never mean
+ * silently dead).
+ */
+export const withSummarizerUnreadable = (
+  state: SessionState,
+  reason: string,
+): SessionState => ({
+  ...state,
+  summarizerUnreadableCount: state.summarizerUnreadableCount + 1,
+  summarizerLastUnreadable: cutWellFormed(reason, SUMMARIZER_FAILURE_MAX_CHARS),
+});
+
+/**
  * A run the RUNNER lost (trial finding #14) — binary missing, non-zero
  * exit, deadline — booked by the worker with the reason as
  * runner.ts formatSummarizerFailure renders it. The bound lives HERE, on

@@ -51,10 +51,13 @@ import {
 } from "../../model/runner.ts";
 import { ensureSummarizerCwd } from "../../model/worker-env.ts";
 import {
+  UNREADABLE_EMPTY,
+  UNREADABLE_SHAPE,
   withSummarizerDraft,
   withSummarizerFailure,
   withSummarizerNone,
   withSummarizerRejection,
+  withSummarizerUnreadable,
 } from "./gate.ts";
 
 export interface DeriveFromSliceInput {
@@ -123,11 +126,25 @@ export const deriveFromSlice = async (
     },
   });
 
-  // Outcome telemetry (trial finding #12's measuring stick): only an EXPLICIT
-  // NONE is booked — unparseable garbage is a runner problem, and stays
-  // visible as the fires-minus-outcomes remainder instead. `abandoned` is the
-  // ended session, which has no state file left to book anything in.
-  if (outcome.kind === "unparseable" || outcome.kind === "abandoned") {
+  // Outcome telemetry (trial finding #12's measuring stick). `abandoned` is
+  // the ended session: its state file is gone, so there is nothing left to
+  // book anything in and nothing to attribute a draft to.
+  if (outcome.kind === "abandoned") {
+    return;
+  }
+  // An answer the model GAVE that this contract could not read. It used to
+  // return silently here and live only as the fires-minus-outcomes
+  // remainder, which was survivable while the binary was always a Claude
+  // whose output shape the prompts were tuned on. With
+  // CROSSCHECK_SUMMARIZER_CMD pointing somewhere else it is the LIKELIEST
+  // outcome, so it is booked with its own reason and doctor gives it its own
+  // remedy (gate.ts withSummarizerUnreadable says why it is neither a runner
+  // failure nor a NONE).
+  if (outcome.kind === "unparseable") {
+    const reason = outcome.why === "empty" ? UNREADABLE_EMPTY : UNREADABLE_SHAPE;
+    await updateSessionState(home, hostSessionKey, (fresh) =>
+      withSummarizerUnreadable(fresh, reason),
+    );
     return;
   }
   if (outcome.kind === "none") {
