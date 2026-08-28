@@ -26,7 +26,7 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 
-import { runCursorHook } from "../src/index.ts";
+import { CURSOR_HOOK_EVENTS, runCursorHook } from "../src/index.ts";
 import type { CursorHookEvent } from "../src/index.ts";
 import { bootCursorHub } from "./fixtures/hub.ts";
 import type { CursorTestHub } from "./fixtures/hub.ts";
@@ -639,15 +639,15 @@ describe("hostile conversation ids — the shared shape rule guards the key mint
 });
 
 describe("every answer is directive-free JSON", () => {
-  const EVENTS: readonly CursorHookEvent[] = [
-    "sessionStart",
-    "afterFileEdit",
-    "afterShellExecution",
-    "postToolUse",
-    "postToolUseFailure",
-    "stop",
-    "sessionEnd",
-  ];
+  /**
+   * DERIVED from the registry, never re-typed. It was a hand-written list of
+   * seven beside a comment that said "all eight", and when
+   * `beforeSubmitPrompt` was registered the list did not grow — so the ONE
+   * event whose documented output can BLOCK the user's prompt was the one
+   * event this pin did not cover. Reading the registry makes a new event
+   * covered on the commit that adds it.
+   */
+  const EVENTS: readonly CursorHookEvent[] = CURSOR_HOOK_EVENTS;
 
   test.each(EVENTS.map((event) => [event] as const))(
     "%s answers {} with no permission/followup_message/continue keys",
@@ -675,4 +675,38 @@ describe("every answer is directive-free JSON", () => {
       expect(out).toBe("{}");
     },
   );
+
+  /**
+   * The parameterized case above reuses a sessionStart-shaped payload, which
+   * for `beforeSubmitPrompt` has no `prompt` and therefore dies at the
+   * runner's drift rung before the handler runs at all. That is worth having
+   * — the degrade rung must be directive-free too — but it leaves the HANDLER
+   * of the one event whose documented output can BLOCK the user's prompt
+   * unexercised, so this case gives it a real prompt and reaches it.
+   */
+  test("beforeSubmitPrompt with a real prompt reaches the handler and still emits nothing", async () => {
+    // Arrange
+    const f = await fixture("out-prompt-real");
+
+    // Act
+    const out = await run(
+      "beforeSubmitPrompt",
+      inRepo(
+        {
+          ...SESSION_START_INPUT,
+          hook_event_name: "beforeSubmitPrompt",
+          prompt: "why does the refresh call 500 after the key rotation",
+        },
+        f.repo,
+        "conv-out-prompt-real",
+      ),
+      f.env,
+    );
+
+    // Assert
+    const parsed = JSON.parse(out) as Record<string, unknown>;
+    expect(parsed["continue"]).toBeUndefined();
+    expect(parsed["user_message"]).toBeUndefined();
+    expect(out).toBe("{}");
+  });
 });

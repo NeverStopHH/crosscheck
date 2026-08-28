@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 203
+    # PRINTS: 204
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -184,6 +184,7 @@ jobs:
     # PRINTS: spool/reap.ts 1
     # PRINTS: state/conference-cost.ts 1
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 1
+    # PRINTS: packages/connector-cursor/src/handlers/before-submit-prompt.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
@@ -216,6 +217,7 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
     # PRINTS: answer-question.ts 1
     # PRINTS: ask-teammate.ts 1
+    # PRINTS: before-submit-prompt.ts 1
     # PRINTS: briefing.ts 1
     # PRINTS: capture-targets.ts 1
     # PRINTS: conference-cost.ts 1

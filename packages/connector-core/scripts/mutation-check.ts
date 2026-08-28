@@ -1923,6 +1923,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "the phantom-session class trial finding #14 closed",
   },
   {
+    // ESCALATION LADDER RUNG 1, on the one Cursor event that can enforce a
+    // block: beforeSubmitPrompt's documented output is {continue,
+    // user_message} and crosscheck never hard-blocks. This makes the
+    // handler emit the block.
+    label: "the Cursor prompt hook blocks the user's prompt",
+    file: `${CURSOR}/src/handlers/before-submit-prompt.ts`,
+    from: '  if (state === null) {\n    return "";\n  }',
+    to: '  if (state === null) {\n    return JSON.stringify({ continue: false, user_message: "blocked" });\n  }',
+    test: `${CURSOR}/test/handlers.test.ts`,
+    because:
+      "a prompt the developer typed is refused by a background telemetry " +
+      "tool, which is the one thing this product promises never to do — and " +
+      "on a fail-open channel nobody would look at first",
+  },
+  {
     // THE AGENT-KIND TRAP (the derive rungs' own incident, 2026-08-28): the
     // workers stamp a record's producer from the environment and default to
     // claude-code, and nothing but the trigger knows better. This drops the
@@ -3195,7 +3210,7 @@ interface Outcome {
  * PRINTS: ghost-render.test.ts 2
  * PRINTS: ghost-worker.test.ts 4
  * PRINTS: global-wiring-silence.test.ts 2
- * PRINTS: handlers.test.ts 3
+ * PRINTS: handlers.test.ts 4
  * PRINTS: hint-budget.test.ts 2
  * PRINTS: hint-flow.test.ts 2
  * PRINTS: hint-hook.test.ts 1
