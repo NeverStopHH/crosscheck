@@ -17,17 +17,17 @@ The ACP transparent proxy — Blocks 3–5 of [docs/adapters/DESIGN-agent-agnost
   - `initialize` → `agent_kind = acp:<agentInfo.name>` (`--agent-kind` overrides; `CROSSCHECK_AGENT_KIND` in the env outranks both);
   - `session/new` → repo identity from the session's own `cwd`, `hostSessionKey = acp-<agentSlug>--<sessionId>`, `registerSessionFlow` (state file BEFORE the first spool append — reap's aliveness invariant), work-context title `branch @ repo` (never prompt-derived);
   - `session/load`/`resume` → cold sessions register at REQUEST time (pinned and mutation-checked), so replayed history is captured safely (server-side natural-key dedup absorbs the repeats — pinned); a session already live in the same proxy skips the re-register, so a load storm cannot inflate counters or reset capture state;
-  - `session/prompt` → heartbeat under `HEARTBEAT_MIN_INTERVAL_MS`; the prompt **content is never parsed** — a hostile prompt cannot reach the spool, state files, or log (pinned);
+  - `session/prompt` → heartbeat under `HEARTBEAT_MIN_INTERVAL_MS`; **since the derive rungs, the prompt's text blocks are decoded** — for the derived-intent worker and nothing else. A hostile prompt still cannot reach the spool, state files, or log; it reaches exactly ONE 0600 file the worker removes as its first act (pinned, and pinned where the window actually is — see *What the proxy infers* below);
   - `tool_call`/`tool_call_update` `locations[].path` + diff-content paths → repo-relative file targets (denylist, seen-set, secret-scan); `kind: edit` → status `implementing`;
   - `status: failed` `rawOutput` → the SAME `extractFailureText` + `fingerprint()` as the Claude connector — identical bytes yield the identical `sha256:` (parity-pinned);
   - `terminal/create` → `terminal/output` → non-zero `wait_for_exit` → fingerprint from the output tail; the command text is never uploaded;
   - `fs/write_text_file` → file target (the backstop for agents that report no locations);
   - `session/close`, connection EOF, child exit → `endSessionFlow` per live session + reap with a budgeted `DeferredEnder`.
 
-  Everything is fail-open: a session in a directory with no repo or no crosscheck config is a pure pipe that talks to nobody; the capture queue is byte-capped (drops counted); a capture crash is a counter and a log line — proven by a deterministic fault seam (`CROSSCHECK_ACP_TEST_FAULT=capture-dispatch`) and mutation-checked, so the containment catch can never rot into decoration. JSON-RPC error responses on captured methods are counted, never recorded. Not captured, deliberately: prompt/response content, `rawInput`, diff old/new text, permission outcomes.
+  Everything is fail-open: a session in a directory with no repo or no crosscheck config is a pure pipe that talks to nobody; the capture queue is byte-capped (drops counted); a capture crash is a counter and a log line — proven by a deterministic fault seam (`CROSSCHECK_ACP_TEST_FAULT=capture-dispatch`) and mutation-checked, so the containment catch can never rot into decoration. JSON-RPC error responses on captured methods are counted, never recorded. Not captured, deliberately: `rawInput`, diff old/new text, terminal command text, permission outcomes, and `agent_thought_chunk` reasoning. The prompt and the turn slice ARE read now, for the derive rungs only, and neither reaches the spool, a state file or a log line — *What the proxy infers* below says exactly where each one goes.
 
   Hostile-identifier discipline: session ids are agent-minted, so the wire parsers shape every one (`safeAcpSessionId` — control/format/separator strip; overlong ids fold to a deterministic sha256) and agent names slug through the length-capped `agentSlug` before anything reaches log lines, state filenames, or `cc_`/`wc_` ids — a newline-bearing id cannot forge forensics log lines, and no id can `ENAMETOOLONG` the register flow. The in-memory seen-set is FIFO-bounded at the same `MAX_SEEN_TARGETS` as the persisted state, so an agent streaming synthetic in-repo paths costs bounded memory (all pinned in test/capture-hardening.test.ts).
-- **Capture-quality measurement** (design §6.1): `crosscheck acp-report <record-file>` analyzes an `acp --record` transcript and reports which signals the agent actually emitted — tool calls, locations, diff paths, failures with output, terminals, fs writes, plus recording honesty (gaps/oversized/unparseable). Every untrusted wire string is reduced before it renders (name → `agentSlug`, version and stop reasons → their own narrow alphabets), so a hostile transcript cannot drive the operator's terminal. This is the tool that decides each agent's documented capture level; run it against a real `--record` of Gemini CLI / cursor-agent / Goose before writing that agent's doc.
+- **Capture-quality measurement** (design §6.1): `crosscheck acp-report <record-file>` analyzes an `acp --record` transcript and reports which signals the agent actually emitted — tool calls, locations, diff paths, failures with output, terminals, fs writes, plus recording honesty (gaps/oversized/unparseable) — and, since the derive rungs, a **`tier-1 slice sources`** section: how much of the Tier-1 slice THIS agent fills (prose / failure text / terminal tails) and a verdict naming what the degrade costs. Every untrusted wire string is reduced before it renders (name → `agentSlug`, version and stop reasons → their own narrow alphabets), so a hostile transcript cannot drive the operator's terminal. This is the tool that decides each agent's documented capture level; run it against a real `--record` of Gemini CLI / cursor-agent / Goose before writing that agent's doc.
 
 ### Zed install (design §2.1/§2.6)
 
@@ -55,9 +55,83 @@ Exactly two write points, both version-gated (protocol 1 only — the injector w
 
 Every appended character renders through the core renderers via the ONE registered composition point (`src/inject/blocks.ts`, a §4.4 corpus surface — identity today, and the place any future ACP framing literal must live). When injection is off, the c2a path runs the Block-3 chunk pump untouched — byte-identity is construction, not care (`test/inject-e2e.test.ts` hashes it through the real binary; `test/line-pump.test.ts` hashes the active-but-nothing-to-inject case).
 
+## What the proxy infers (design §3.7)
+
+Before this, every agent behind the proxy could READ (briefing, hints) and ASK (the MCP
+tools) and crosscheck derived NOTHING for it: a `session/prompt` was a heartbeat, a ghost
+debt opened by `set_intent` rotted in the state file for the session's whole life, and the
+turn counter's own comment called itself "the future Tier-1 gate's tick".
+
+All four derive capabilities now run here, and `src/capabilities.ts` DECLARES them so
+`crosscheck doctor` prints one line each — including the refusals, because a decision
+nobody can find is indistinguishable from a bug nobody fixed.
+`connector-core/test/derive-capability-registry.test.ts` reads the manifest against what
+this package ships, in both directions.
+
+| Capability | Rung | Trigger |
+|---|---|---|
+| intent | full | `session/prompt` REQUEST — the first substantive prompt fires the shared worker, once per session |
+| ghost | full | the same request; ACP guarantees a next-prompt event, so the debt is paid exactly where Claude pays it |
+| summarizer | reduced | `session/prompt` RESPONSE — the turn boundary, over the turn's in-memory slice |
+| conference | full | none: `crosscheck conference` is a command a human runs |
+
+**Every rung rides the parse COPY.** Nothing was added to the forward path, nothing parses
+and re-emits agent bytes, and none of it needs `--inject`. `test/transparency.test.ts` (12
+pass / 0 fail) and `test/backpressure.test.ts` (2 pass / 0 fail) are the authority and are
+unchanged from before this work — a parity feature that cost byte transparency would not
+be parity.
+
+**The slice, and why the rung is REDUCED.** It is built from three wire sources —
+`agent_message_chunk` text, a failed tool call's extracted failure text (the same
+extractor the fingerprint uses, so a slice and a fingerprint can never disagree), and
+terminal output tails — accumulated per TURN in memory, byte-capped at
+`ACP_TURN_SLICE_MAX_CHARS` (over the cap, content is DROPPED and counted, memory never
+grows), reset on the prompt request so a cancelled turn cannot leak into the next one, and
+handed to the worker on STDIN. Terminal COMMAND text, diff bodies and fs write content are
+modelled by no schema here, so they cannot enter a slice even by accident — which is also
+why the gate's commit-boundary anchor can only match when an agent SAYS so in prose. Run
+`crosscheck acp-report` on a `--record` transcript to see which sources YOUR agent emits.
+
+**Stronger than both siblings in one way**: the proxy is a long-lived parent, so the slice
+travels down a pipe and no slice artifact is ever created on disk — Claude re-reads a JSONL
+transcript by byte range and Cursor re-reads a file whose format is documented nowhere.
+**Weaker in another**: their transcripts hold the whole turn; this holds what the wire
+carried.
+
+**Privacy, exactly.** Two texts are read that were not before, and each has exactly one
+destination:
+
+- the PROMPT reaches one 0600 file the intent worker removes as its first act (and
+  `end-session` sweeps the same path if the worker never started) — never the spool, a
+  state file, a record or a log line;
+- the TURN SLICE lives in memory and leaves only down a spawned worker's stdin — it
+  touches no disk at all on this host.
+
+The capture suite's prompt pin was NARROWED to say that rather than deleted, and made
+deterministic: it used to assert the prompt reached "no persisted byte", and it kept
+passing after the rungs landed only because `shutdown()` outlives the detached worker.
+Scanning right after `settle()` finds the file every time. It now asserts the window where
+it really is — exactly one path, mode 0600, gone afterwards, never in a log line.
+
+**Refusals**, all printed by doctor: forward-path capture (refused outright);
+`session/request_permission` (originates agent-side, forwarded untouched, never answered,
+no tool call ever blocked); `agent_thought_chunk` (reasoning is the model talking to
+itself and is not slice material); terminal command text, diff bodies and fs write content
+(unmodelled, so unreachable).
+
+**Doctor is quiet until the proxy has run here.** There is no install artifact — the proxy
+is a command you wrap your agent in — so the section prints one PASS line saying so until
+this home has an `acp-<pid>.log` or a live `acp-`-prefixed session.
+
+**Not dogfooded against a real agent yet.** Everything here is pinned against the
+protocol and a fake model binary. What CI cannot answer: whether a given agent emits
+message chunks at all, whether its tool I/O goes through ACP's terminal methods, and
+whether the derived intent that lands is any good. `crosscheck acp --record` plus
+`crosscheck acp-report` is the script for finding out.
+
 ## Deliberately absent
 
-- **Turn counting is local.** `session/prompt` responses tick an in-memory counter (the future Tier-1 gate) surfaced in the log summary; nothing is spooled for it. `cancelled`/`refusal` capture nothing in v1.
+- **A cancelled or refused turn still captures nothing in v1.** The `session/prompt` response ticks the turn counter and runs the Tier-1 gate over the turn's slice whatever the `stopReason` was — the gate judges the SLICE, not the reason the turn ended — but no Tier-0 record comes off that row.
 - **`crosscheck status`/`doctor` surfacing of drop counters** still waits; today the counters live in the log summary lines (`capture sessions=… targets=… fingerprints=…`, `inject mcp=… briefings=… hints=… skips=…`).
 
 ## Block-3 deviations from design §2, justified
@@ -84,7 +158,12 @@ Every appended character renders through the core renderers via the ONE register
 | `src/inject/line-pump.ts` | line-granular c2a forwarding while injection is active |
 | `src/inject/launcher.ts` | the ACP `mcpServers` entry via the core durable-install rules |
 | `src/inject/blocks.ts` | THE prompt-block composition point — a registered §4.4 corpus surface |
-| `src/render-surfaces.ts` | the package's §4.4 registrations (briefing block, hint blocks) |
+| `src/render-surfaces.ts` | the package's §4.4 registrations (briefing block, hint blocks, the derive capability line) |
+| `src/capabilities.ts` | the static derive manifest: four rungs + four refusals, one platform sentence each |
+| `src/doctor.ts` | the doctor's ACP section — the rungs, the refusals, or one "not used here" line |
+| `src/derive/triggers.ts` | intent + ghost on the prompt request, the Tier-1 gate on its response |
+| `src/derive/slice.ts` | the in-memory, byte-capped, per-TURN slice — never written to disk |
+| `src/derive/summarizer-worker.ts` | the detached Tier-1 worker: read the slice off stdin, hand it to the shared pipeline |
 | `src/report.ts` | `acp-report`: the §6.1 capture-quality analyzer over `--record` files |
 
 The `crosscheck` bin lives in `@crosscheck/connector-claude` until Block 8 extracts `packages/cli` (design §1.2's named debt); this package only exports `runAcpProxy` for it.

@@ -22,8 +22,11 @@ crosscheck login https://hub.example.com   # key read from stdin
 
 `crosscheck doctor` is the answer to "is it working" on every host: it checks
 launcher health, hook registration (Claude + Cursor sections), hub liveness,
-spool depth, contract drift, injection counts — and the user-level install
-state (present, absent, double-wired).
+spool depth, contract drift, injection counts, the user-level install state
+(present, absent, double-wired) — and, per connector, one line for each thing
+crosscheck can INFER on that host and one for each thing it deliberately
+cannot. The ACP section is quiet until the proxy has actually run on this
+machine, because there is nothing to install and so nothing true to say.
 
 ## The user-level ("global") install — once per machine
 
@@ -239,9 +242,20 @@ command in a terminal first; the proxy's pre-spawn refusals are loud
 In a crosscheck-connected repo the wrapped session reports presence, touched
 files and failure fingerprints, gets the team briefing appended to its first
 ready prompt, and gets crosscheck's MCP tools appended to its session setup.
-Everywhere else the wrapper is a pure byte pipe — that is the prime
-directive, and it is enforced structurally
+Since 2026-08-28 it also DERIVES: the first substantive prompt becomes a
+session intent, a ghost debt is paid on the next prompt, and each turn ends
+with the same Tier-1 gate Claude Code runs — all of it off a parsed copy of
+the wire, none of it on the forward path. Everywhere else the wrapper is a
+pure byte pipe — that is the prime directive, and it is enforced structurally
 ([`packages/connector-acp/README.md`](../../packages/connector-acp/README.md)).
+
+**ACP: a prose-only agent captures less, and says so.** The Tier-1 slice is
+whatever the wire carried, so an agent that runs its tools outside ACP's
+`terminal/*` methods gives the gate prose with no executed shape beside it.
+That is a documented reduction, not a fault. To see it for your own agent:
+`crosscheck acp --record /tmp/wire.ndjson -- <agent cmd…>`, work for a while,
+then `crosscheck acp-report /tmp/wire.ndjson` and read the
+`tier-1 slice sources` section.
 
 ## JetBrains IDEs (AI Assistant)
 

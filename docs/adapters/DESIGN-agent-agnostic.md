@@ -283,18 +283,35 @@ per-session capture state.
 | `initialize` response → `agentInfo.name/version` | `agent_kind = acp:<name>` for every session on this connection (stabilized field, 2025-10-24). `--agent-kind` overrides. |
 | `session/new` request (`cwd`, `mcpServers`) + response (`sessionId`) | Resolve repo identity from `cwd` → `registerSessionFlow` with `hostSessionKey = acpHostSessionKey(agentSlug, sessionId)` (the `acp--<agentSlug>--<sessionId>` double-dash shape from §1.3 — call the helper, never invent the string); work-context title from branch @ repo (ACP has no session title; we do not synthesize one from prompt text — same privacy posture as the Claude connector's fallback). State file written before first append, preserving reap's invariant. Kick off async briefing prefetch (§2.5). |
 | `session/load` / `session/resume` request + response | Re-register (idempotent — deterministic ids, hub answers duplicate). A session already live in the SAME proxy skips the re-register outright (no counter inflation, no re-appended work context, no seen-set reset); the cold path — a load/resume this proxy never saw born — registers at request time and is both pinned and mutation-checked. History replays as `session/update` notifications: **capture during replay is safe by construction** because every Tier-0 record dedups on a natural key server-side (`target` on (work_context, kind, value); `work_context` on id) and the injection point (`session/prompt`, client→agent) never fires during replay. Pinned by a test, not assumed (§4.2). |
-| `session/prompt` request | Heartbeat; hint fast path (§2.5). Prompt text is used as an ephemeral search query against the hub — exact parity with the Claude connector's UserPromptSubmit; never stored, never uploaded as content. |
+| `session/prompt` request | Heartbeat; hint fast path (§2.5); **and, since 2026-08-28, the turn boundary and both prompt-time derive rungs (§3.7)**. Prompt text is used as an ephemeral search query against the hub — exact parity with the Claude connector's UserPromptSubmit — and is additionally parked in ONE 0600 file for the derived-intent worker, which removes it as its first act. It is still never spooled, never written to state, never logged, and never uploaded as content. |
+| `session/update`: `agent_message_chunk` text | Tier-1 slice source 1 (§3.7), in memory only, byte-capped, never written down. `agent_thought_chunk` is deliberately NOT read. |
 | `session/update`: `tool_call` / `tool_call_update` with `locations[].path`, `content` diff paths | File targets through `captureFileTargets` (repo-relative, denylist, seen-set, secret-scan). `kind: edit` additionally drives status → `implementing` (same heuristic as the Claude connector's edit-tool heartbeat). Caveat honestly: tool-call reporting is a SHOULD; agents doing internal file I/O without reporting locations capture nothing here — `fs/write_text_file` and terminals below are the backstop. |
 | `tool_call_update` with `status: failed` → `rawOutput` | Failure text extraction (string fields joined, tail-sliced) → `fingerprint()` → `error_fingerprint` target. Identical normalizer as Claude Code = cross-agent fingerprint matching, which is the product. |
 | `terminal/create` request (`command`) correlated with `terminal/wait_for_exit` response (`exitCode ≠ 0`) + `terminal/output` | Failure fingerprint from output; command text itself is NOT uploaded (parity: the Claude connector uploads no command text either). |
 | `fs/write_text_file` request (`path`) | File target. |
-| `session/prompt` response `stopReason` | Turn counter tick (future Tier-1 gate); `cancelled`/`refusal` capture nothing in v1. |
+| `session/prompt` response `stopReason` | Turn counter tick — and, since 2026-08-28, the Tier-1 gate itself runs here over the turn's in-memory slice (§3.7). `cancelled`/`refusal` still capture nothing in v1: the gate judges the SLICE, not the reason the turn ended. |
 | `session/close` request, connection EOF, child exit | `endSessionFlow` (end + budgeted flush + reap). |
 | JSON-RPC error responses on captured methods | Counted locally; no record (a client-side error is not a build failure). |
 
-Not captured, deliberately: prompt/response content, `rawInput` bodies, diff `oldText`/
-`newText` contents (paths only), permission outcomes. Tier-0 stays metadata + hashes,
-exactly like the Claude connector.
+Not captured, deliberately: `rawInput` bodies, diff `oldText`/`newText` contents (paths
+only), terminal COMMAND text, permission outcomes, and the agent's `agent_thought_chunk`
+reasoning. Tier-0 stays metadata + hashes, exactly like the Claude connector.
+
+TWO TEXTS ARE NOW READ, and only for the derive rungs (§3.7) — this line used to say
+"prompt/response content" was among the never-parsed, and the rungs made that false in
+two bounded ways rather than one vague one:
+
+- the **prompt**, at `session/prompt`, reaching exactly one 0600 file the intent worker
+  removes as its first act (and `end-session` sweeps if the worker never started);
+- the **turn slice** — agent message chunks, a failed tool call's extracted failure text,
+  terminal output TAILS — held in memory, byte-capped, handed to a spawned worker on
+  STDIN and written to no disk at all on this host.
+
+Neither may reach a spool record, a state file or a log line. Pinned by
+`connector-acp/test/capture-engine.test.ts`'s prompt-privacy case (narrowed from "no
+persisted byte" to the true statement, and made deterministic — the old assertion passed
+only because `shutdown()` outlived the detached worker) and by `test/derive.test.ts`'s
+two privacy cases.
 
 Hostile-identifier discipline (fixer round): every identifier on this wire is
 agent-controlled, so session ids are shaped at the wire-parse boundary
@@ -563,6 +580,70 @@ by a narrower TRUE statement with its own test: the prompt reaches exactly one
 0600 file the worker unlinks in `finally` (named and proven absent afterwards),
 and `transcript_path` may be mentioned in exactly three modules and nowhere
 else.
+
+### 3.7 What an ACP agent infers (2026-08-28)
+
+Every agent behind the proxy gained the four derive capabilities, and the connector
+DECLARES them: `connector-acp/src/capabilities.ts` is a static manifest doctor prints one
+line each from. ONE manifest covers every agent the proxy can wrap, because the rungs are
+properties of the PROTOCOL; the agent only decides how much of the wire it fills, which is
+what makes the summarizer rung reduced and what `crosscheck acp-report` measures.
+
+EVERY RUNG RIDES THE PARSE COPY. Nothing here is on the forward path, nothing parses and
+re-emits agent bytes, and none of it needs `--inject` — `test/transparency.test.ts` stays
+the authority and is untouched (12 pass / 0 fail on this change and on the base commit).
+
+| Capability | Rung | Why |
+|---|---|---|
+| intent | full | `session/prompt` carries the prompt as text ContentBlocks; the first substantive one fires the shared worker. |
+| ghost | full | ACP guarantees a next-prompt event, so the debt is paid exactly where Claude pays it — no two-handler race as on Cursor. |
+| summarizer | reduced | the turn slice is only what the wire happens to carry (see below). |
+| conference | full | a command a human runs; after the relocation it needs nothing from the proxy or the agent. |
+
+WHAT MAKES THE SUMMARIZER RUNG REDUCED, precisely. The slice is built from three wire
+sources — `agent_message_chunk` text, a failed tool call's extracted failure text, and
+terminal output tails — accumulated per TURN in memory (reset on the prompt REQUEST, so a
+cancelled turn cannot leak into the next one) and handed to the worker on stdin. Terminal
+COMMAND text, diff bodies and fs write content are modelled by no schema here, so they
+cannot enter a slice even by accident. The visible consequence, stated rather than
+discovered: the gate's `hasCommitBoundary` anchor looks for `git commit` as a COMMAND and
+on this host can only match if the agent SAYS it in prose. An agent doing its tool I/O
+outside ACP's `terminal/*` methods yields a prose-only slice — `crosscheck acp-report`'s
+`tier-1 slice sources` section prints exactly which of the three a recorded agent emits,
+and a verdict naming what the degrade costs.
+
+The slice is STRONGER than both siblings in one way and weaker in another. Stronger: the
+proxy is a long-lived parent, so the slice travels down a pipe and no slice artifact is
+ever created on disk — Claude re-reads a JSONL transcript and Cursor re-reads a file whose
+format is documented nowhere. Weaker: their transcripts contain the whole turn, and this
+contains what the wire carried.
+
+REFUSALS, each printed by doctor as a PASS line with its protocol reason:
+
+- **forward-path capture**: refused outright. Every rung rides a bounded copy of each
+  line; the two §2.5 write points (the MCP server entry at session setup and the appended
+  prompt block) remain the only wire touches. A parity feature that cost byte transparency
+  would not be parity.
+- **pre-edit ask**: `session/request_permission` originates agent-side (§2.5 already said
+  it is never touched, never answered), so intercepting one would mean answering on the
+  agent's behalf ON the forward path. Forwarded untouched; no tool call is ever blocked.
+- **agent reasoning capture**: `agent_thought_chunk` is not slice material. Reasoning is
+  the model talking to itself, it is the most sensitive prose on this wire, and the gate
+  wants what the agent SAID beside what actually RAN.
+- **command and content capture**: terminal command text, diff bodies and fs write content
+  stay unmodelled — which is also the honest reason the commit-boundary anchor is
+  unreachable except through prose.
+
+"NOT USED HERE" IS ONE PASS LINE. The proxy has no install artifact — it is a command a
+developer wraps their agent in — so doctor prints the rungs only once this home has seen
+one (an `acp-<pid>.log` under the home, or a live `acp-`-prefixed session). Before that it
+says exactly that, once. Eight capability lines for a connector nobody on this machine
+runs is how doctor gets ignored (the absence-check lesson, applied to a connector with
+nothing to install).
+
+PRIVACY PIN NARROWED, NOT DELETED — see the §2.4 note under the capture table. The pin
+that said the prompt reaches "no persisted byte" now says what is true and is checked
+where the window actually is; it had been passing on a race.
 
 ---
 

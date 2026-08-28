@@ -3247,6 +3247,7 @@ interface Outcome {
  *
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: absence-render.test.ts 1
+ * PRINTS: acp-report.test.ts 1
  * PRINTS: agent-restart.test.ts 1
  * PRINTS: body-redaction.test.ts 2
  * PRINTS: briefing-contexts.test.ts 2
@@ -3262,7 +3263,8 @@ interface Outcome {
  * PRINTS: conference.test.ts 3
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
- * PRINTS: derive.test.ts 3
+ * PRINTS: derive-gap.test.ts 1
+ * PRINTS: derive.test.ts 6
  * PRINTS: developer-emails.test.ts 1
  * PRINTS: doctor-global.test.ts 3
  * PRINTS: doctor-latency.test.ts 1
