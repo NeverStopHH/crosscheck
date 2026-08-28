@@ -495,6 +495,39 @@ describe("summarizer × acp: the turn slice comes off the wire copy", () => {
   }, 40_000);
 });
 
+describe("nothing the rungs lose is lost silently", () => {
+  test("the proxy's own log states what it derived, and what it refused", async () => {
+    // RULE 4 ON THIS SURFACE. Three of the four new failure paths are booked
+    // in session state and doctor prints them per rung. The fourth —
+    // slice content the byte cap refused — is booked NOWHERE else, and it is
+    // the one that silently costs a conclusion: a turn whose verdict arrived
+    // past the cap is a miss the gate cannot report, because the gate only
+    // ever saw the part that fit.
+    // Arrange
+    const h = await registered("acp-log", await makeFakeModel(INTENT_SENTENCE));
+    const chunkChars = ACP_TURN_SLICE_MAX_CHARS;
+
+    // Act — one fire, and a flood the cap has to refuse
+    h.capture.offer("c2a", promptLine(50));
+    h.capture.offer("a2c", chunk("y".repeat(chunkChars)));
+    h.capture.offer("a2c", chunk("z".repeat(chunkChars)));
+    h.capture.offer("a2c", promptAnswer(50));
+    await h.capture.settle();
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+
+    // Assert — one line, counts only, no content
+    const line = h.logger.lines.find((entry) => entry.startsWith("derive "));
+    expect(line).toBeDefined();
+    expect(line).toContain("intent-fires=1");
+    expect(line).toContain("ghost-payments=0");
+    expect(line).toContain("summarizer-fires=");
+    expect(line).toMatch(/slice-dropped=[1-9]/);
+    // the counted text itself never appears
+    expect(line).not.toContain("yyy");
+    expect(line).not.toContain("zzz");
+  }, 40_000);
+});
+
 describe("privacy: what the two new texts are allowed to touch", () => {
   test("the prompt reaches one 0600 file the worker unlinks, and nothing else", async () => {
     // Arrange

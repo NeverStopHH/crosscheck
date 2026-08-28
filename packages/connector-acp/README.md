@@ -132,7 +132,7 @@ whether the derived intent that lands is any good. `crosscheck acp --record` plu
 ## Deliberately absent
 
 - **A cancelled or refused turn still captures nothing in v1.** The `session/prompt` response ticks the turn counter and runs the Tier-1 gate over the turn's slice whatever the `stopReason` was — the gate judges the SLICE, not the reason the turn ended — but no Tier-0 record comes off that row.
-- **`crosscheck status`/`doctor` surfacing of drop counters** still waits; today the counters live in the log summary lines (`capture sessions=… targets=… fingerprints=…`, `inject mcp=… briefings=… hints=… skips=…`).
+- **`crosscheck status`/`doctor` surfacing of drop counters** still waits; today the counters live in the log summary lines (`capture sessions=… targets=… fingerprints=…`, `inject mcp=… briefings=… hints=… skips=…`, `derive intent-fires=… ghost-payments=… summarizer-fires=… slice-dropped=…`). The derive line exists for `slice-dropped` specifically: the other three derive failure paths are booked in session state and `doctor` prints them per rung, but slice content the byte cap refused is booked nowhere else — and it is the one that silently costs a conclusion, because the gate only ever saw the part that fit.
 
 ## Block-3 deviations from design §2, justified
 

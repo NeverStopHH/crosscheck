@@ -1057,6 +1057,19 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           `turns=${counters.turns} ignored=${counters.ignored} dropped=${counters.dropped} ` +
           `errors=${counters.errors} pending-evictions=${pendingClient.evictions() + pendingAgent.evictions()}`,
       );
+      // THE DERIVE RUNGS GET THEIR OWN LINE, and `slice-dropped` is the
+      // reason it exists rather than a decoration. The other three failure
+      // paths are booked in session state and doctor prints them per rung;
+      // slice content refused by the byte cap is booked NOWHERE else, and it
+      // is the one that silently costs a conclusion — a turn whose verdict
+      // arrived past the cap is a miss the gate cannot report, because the
+      // gate only ever saw the part that fit.
+      logger.line(
+        `derive intent-fires=${counters.intentFires} ` +
+          `ghost-payments=${counters.ghostPayments} ` +
+          `summarizer-fires=${counters.summarizerFires} ` +
+          `slice-dropped=${counters.sliceDropped}`,
+      );
     },
     counters() {
       return { ...counters };

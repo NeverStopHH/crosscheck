@@ -1979,6 +1979,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "with no surface saying so",
   },
   {
+    // Rule 4 on this surface: three of the four derive failure paths are
+    // booked in session state and doctor prints them; slice content the byte
+    // cap refused is booked nowhere else, so the proxy log is its only home.
+    label: "an ACP slice the cap refused is dropped invisibly",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          `slice-dropped=${counters.sliceDropped}`,",
+    to: "          `slice-dropped=0`,",
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "a turn whose conclusion arrived past the cap is a miss no surface " +
+      "can report — the gate only ever saw the part that fit, and nothing " +
+      "anywhere says a slice was truncated",
+  },
+  {
     // Found by review, measured before it was fixed: text() joins the parts
     // with a newline and the budget counted only the pieces, so a
     // one-character-per-chunk agent filled 47,999 chars against a 24,000 cap.
@@ -3291,7 +3305,7 @@ interface Outcome {
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
  * PRINTS: derive-gap.test.ts 1
- * PRINTS: derive.test.ts 6
+ * PRINTS: derive.test.ts 7
  * PRINTS: developer-emails.test.ts 1
  * PRINTS: doctor-global.test.ts 3
  * PRINTS: doctor-latency.test.ts 1

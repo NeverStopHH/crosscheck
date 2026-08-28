@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 211
+    # PRINTS: 212
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -127,7 +127,7 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 9
     # PRINTS: packages/cli/src/cli/doctor.ts 7
-    # PRINTS: packages/connector-acp/src/capture/engine.ts 6
+    # PRINTS: packages/connector-acp/src/capture/engine.ts 7
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
     # PRINTS: packages/connector-acp/src/inject/injector.ts 3
@@ -237,7 +237,7 @@ jobs:
     # PRINTS: developers.ts 1
     # PRINTS: diagnosis.ts 2
     # PRINTS: doctor.ts 7
-    # PRINTS: engine.ts 6
+    # PRINTS: engine.ts 7
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 1
     # PRINTS: gate.ts 6
