@@ -2975,6 +2975,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "destroyed one",
   },
   {
+    // The BODY-class primitive itself. Every other M14 entry swaps spellings
+    // at a CALL SITE or drops the call; none of them neuters the one line
+    // that does the removing, so the widened path could have stopped
+    // redacting anything while all of them stayed green.
+    label: "the span redaction removes nothing at all",
+    file: `${CORE}/src/briefing/sanitize.ts`,
+    from: "  const redacted = cleaned.replace(INJECTION_SPAN_PATTERN, REDACTED_SPAN);",
+    to: "  const redacted = cleaned;",
+    test: `${CORE}/test/body-redaction.test.ts`,
+    because:
+      "claim bodies, recorded root causes, questions, answers, hub refusals " +
+      "and conference findings stop having instruction-shaped spans removed " +
+      "at all, on exactly the surfaces M14 opened to them",
+  },
+  {
     // Audit row M14's class rule, at its single definition. The two classes
     // are one character apart in the source and opposite in effect, and the
     // author-facing echoes reached the wrong one for a release.
