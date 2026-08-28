@@ -134,20 +134,13 @@ jobs:
     # PRINTS: packages/connector-acp/src/pump.ts 1
     # PRINTS: capture/tool-events.ts 1
     # PRINTS: cli/settings-merge.ts 2
-    # PRINTS: conference/prompt.ts 1
-    # PRINTS: ghost/cost.ts 1
-    # PRINTS: ghost/worker.ts 4
     # PRINTS: hooks/post-tool-use-failure.ts 2
     # PRINTS: hooks/post-tool-use.ts 2
     # PRINTS: hooks/pre-tool-use.ts 1
     # PRINTS: hooks/runner.ts 1
-    # PRINTS: hooks/stop.ts 2
+    # PRINTS: hooks/stop.ts 1
     # PRINTS: hooks/user-prompt-submit.ts 1
-    # PRINTS: intent/worker.ts 1
-    # PRINTS: summarizer/cost.ts 1
-    # PRINTS: summarizer/gate.ts 6
     # PRINTS: summarizer/transcript.ts 2
-    # PRINTS: summarizer/worker.ts 1
     # PRINTS: briefing/context-group.ts 1
     # PRINTS: briefing/ghost.ts 2
     # PRINTS: briefing/intent.ts 1
@@ -159,6 +152,14 @@ jobs:
     # PRINTS: config/connected-repo.ts 2
     # PRINTS: config/hook-budget.ts 1
     # PRINTS: constants.ts 6
+    # PRINTS: derive/conference/prompt.ts 1
+    # PRINTS: derive/ghost/cost.ts 1
+    # PRINTS: derive/ghost/worker.ts 4
+    # PRINTS: derive/intent/worker.ts 1
+    # PRINTS: derive/spawn.ts 1
+    # PRINTS: derive/summarizer/cost.ts 1
+    # PRINTS: derive/summarizer/derive.ts 1
+    # PRINTS: derive/summarizer/gate.ts 6
     # PRINTS: flows/briefing.ts 1
     # PRINTS: flows/capture-targets.ts 1
     # PRINTS: flows/hint.ts 2
@@ -224,6 +225,7 @@ jobs:
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 2
     # PRINTS: delivery.ts 1
+    # PRINTS: derive.ts 1
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 1
     # PRINTS: diagnosis.ts 2
@@ -276,15 +278,16 @@ jobs:
     # PRINTS: solved-hint.ts 4
     # PRINTS: solved-matches.ts 9
     # PRINTS: solved.ts 1
+    # PRINTS: spawn.ts 1
     # PRINTS: ssh-hostname.ts 2
-    # PRINTS: stop.ts 2
+    # PRINTS: stop.ts 1
     # PRINTS: time-window.ts 1
     # PRINTS: tool-events.ts 1
     # PRINTS: tool-failure.ts 3
     # PRINTS: transcript.ts 2
     # PRINTS: user-prompt-submit.ts 1
     # PRINTS: worker-env.ts 1
-    # PRINTS: worker.ts 6
+    # PRINTS: worker.ts 5
     name: Mutation proof
     runs-on: ubuntu-latest
     steps:

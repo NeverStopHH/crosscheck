@@ -86,8 +86,10 @@ Stays in `packages/connector-claude` (now honest about its name):
   parse *Claude Code's* payloads) and the `hookSpecificOutput` response shapes.
 - `statusline/` — a Claude Code surface.
 - `summarizer/*` — the HOST half only: `transcript.ts` (Claude's JSONL slice),
-  `gate.ts` (the pre-fire triggers over that slice), `cost.ts`, `probe.ts`, `worker.ts`
-  and `worker-entry.ts`.
+  `probe.ts`, `worker.ts` and `worker-entry.ts`. `gate.ts` and `cost.ts` followed the
+  runner into `connector-core/src/derive/summarizer/` on 2026-08-28: the gate's
+  vocabulary is about what a TURN says, not about who hosted it, and Cursor's `stop`
+  now runs the identical predicates over its own slice.
   **Status (2026-08-28): the deferral below was overturned, on the evidence it asked
   for.** This row used to read "Tier-1 rides headless `claude -p` … Claude-specific by
   construction; `gate.ts` and `parse.ts` are generalizable later; not now (YAGNI — no
@@ -99,6 +101,13 @@ Stays in `packages/connector-claude` (now honest about its name):
   Claude-specific is what actually is: the trigger and the slice. The `claude -p`
   default is a BACKEND choice inside the moved runner (`CROSSCHECK_SUMMARIZER_CMD`
   already replaced it wholesale), not a host coupling.
+  **Second step (2026-08-28): the machinery that USES the seam followed it.**
+  `intent/`, `ghost/`, the summarizer's `gate.ts`/`cost.ts` and `conference/prompt.ts`
+  are `connector-core/src/derive/` now, each connector keeps a thin `worker-entry.ts`
+  beside its own trigger, and the gate-to-spool half of the summarizer worker is
+  `derive/summarizer/derive.ts` so a host only has to produce a slice. `packages/cli`
+  imports the conference from core rather than through this package's barrel — a
+  Cursor-only install no longer needs the Claude package for a command a human runs.
 - `cli/init.ts`, `settings-merge.ts` — the `.claude/settings.json` + `.mcp.json`
   installer. The non-destructive-merge *pattern* is shared knowledge; the file shapes are
   host-specific. `cli/mcp-config.ts`'s `mergeMcpConfig` moves to core: Cursor's
@@ -406,17 +415,17 @@ Registered in `.cursor/hooks.json` (`version: 1`), each with an explicit `timeou
 
 | Cursor event | Handler behavior |
 |---|---|
+| `beforeSubmitPrompt` | CAPTURE ONLY (§3.5): the derived-intent fire on the first substantive prompt. Answers no directives on any path — the documented output is `{continue, user_message}`, which can only BLOCK, and crosscheck never blocks. |
 | `sessionStart` | `registerSessionFlow` with `hostSessionKey = cur-<conversation_id>`; repo identity from `workspace_roots[0]` (fallback `CURSOR_PROJECT_DIR`); `agent_kind = cursor-ide`. Returns `additional_context` = briefing (§3.3). Records `cursor_version` into local sync-state for `doctor`. `is_background_agent: true` → register with agent_kind `cursor-background`, no injection output. |
 | `afterFileEdit` | `file_path` → `captureFileTargets`. The `edits[]` old/new strings are **never uploaded** — path only, Tier-0 discipline. Heartbeat (throttled), status → `implementing`. |
 | `afterShellExecution` | Failure detection from exit/output fields → `captureFailure` → `error_fingerprint`. Command text not uploaded. |
 | `postToolUseFailure` | Same fingerprint path for non-shell tool failures. |
-| `postToolUse` | Heartbeat; spool flush on spare budget; hint delivery via `additional_context` (§3.3). Pays a late-registered conversation's deferred briefing first — the briefing outranks the hint for that one response (§3.3). |
-| `stop` | Turn counter (future Tier-1 gate); spool flush. Never emits `followup_message` — auto-continuing the user's session is not ours to do. |
+| `postToolUse` | Heartbeat; spool flush on spare budget; hint delivery via `additional_context` (§3.3). Pays a late-registered conversation's deferred briefing first — the briefing outranks the hint for that one response (§3.3). Also pays the ghost debt, if `stop` has not (§3.5). |
+| `stop` | The Tier-1 gate (turn count, transcript tail, fire) AND the ghost debt (§3.5); spool flush. Never emits `followup_message` — auto-continuing the user's session is not ours to do. |
 | `sessionEnd` | `endSessionFlow`. |
 
 Deliberately **not** registered: `beforeReadFile` (payload carries full file content —
-a privacy surface Tier-0 has no use for), `beforeSubmitPrompt` (it can block but has no
-context-injection output; we never block), `beforeTabFileRead`/`afterTabFileEdit`
+a privacy surface Tier-0 has no use for), `beforeTabFileRead`/`afterTabFileEdit`
 (autocomplete-grade noise; Tab is not agent work), `subagentStart/Stop` (v1.5 candidate
 once flat capture is proven), `preCompact`.
 
@@ -469,7 +478,8 @@ silent — the same "unconnected directory talks to nobody" rule, no special-cas
   trusted workspace for project hooks and hot-reloads both configs — no restart step.
 - `crosscheck doctor` gains a Cursor section: hooks.json present + entries owned +
   launcher not in an ephemeral cache, mcp.json entry owned, last-seen `cursor_version`
-  ≥ 1.7, hub liveness.
+  ≥ 1.7, hub liveness — and, since 2026-08-28, one line per derive rung and one per
+  refusal (§3.6).
 
 ### 3.5 Uncovered, said out loud
 
@@ -487,14 +497,64 @@ silent — the same "unconnected directory talks to nobody" rule, no special-cas
   ([forum](https://forum.cursor.com/t/cursor-cli-doesnt-send-all-events-defined-in-hooks/148316)) —
   the adapter targets the IDE; Cursor CLI users get the ACP proxy instead, which is the
   better seam anyway.
-- **Tier-1 summarizer deferred**: `transcript_path` exists and is the sanctioned read
-  channel. The MACHINERY is no longer the obstacle — since 2026-08-28 the runner, the
-  tolerant parse, the refusals and the gate order live in `connector-core/src/model/`
-  and take any backend through `CROSSCHECK_SUMMARIZER_CMD` — so what Cursor is still
-  missing is its own trigger and its own transcript reader, nothing shared. Still
-  post-v1 and consent-gated.
+- **Tier-1 summarizer: LANDED, reduced** (2026-08-28; this bullet used to say
+  "deferred"). The trigger is `stop` and the reader is
+  `connector-cursor/src/derive/transcript.ts`. What makes the rung REDUCED rather than
+  full is a documentation fact, not a design choice: Cursor documents the transcript
+  POINTER twice (`transcript_path`, "string | null … null if transcripts disabled";
+  `CURSOR_TRANSCRIPT_PATH`, "If transcripts enabled") and the transcript's CONTENT
+  nowhere — no schema, no example, no extension for the main file. So the reader tries
+  two decoders over the bounded tail (JSONL entries, then the tail as prose) and
+  REPORTS which one matched; a tail neither decoder can use is booked as
+  `summarizerNoSlice` with a named reason and printed by doctor. A missing transcript
+  is never folded into runner failures, because no model ran.
 - **state.vscdb is never read.** Undocumented schema, version drift, full-transcript
-  privacy blast radius; hooks provide everything Tier-0 needs.
+  privacy blast radius; the documented `transcript_path` is the sanctioned channel and
+  the Tier-1 rung above uses it.
+
+
+### 3.6 What Cursor infers (2026-08-28)
+
+Cursor gained the four derive capabilities on the rungs its platform actually
+allows, and DECLARES them: `connector-cursor/src/capabilities.ts` is a static
+manifest doctor prints one line each from, with one platform sentence per rung
+and one per REFUSAL. `connector-core/test/derive-capability-registry.test.ts`
+reads the manifest against what the package ships, in both directions — an
+undeclared trigger and an undelivered declaration are both a red build.
+
+| Capability | Rung | Why |
+|---|---|---|
+| intent | full | `beforeSubmitPrompt` carries the prompt; first substantive prompt fires the shared worker. |
+| ghost | full | the debt a recorded intent opens is claimed on `stop` or `postToolUse`, whichever fires first. |
+| summarizer | reduced | the transcript POINTER is documented, the transcript FORMAT is not (see the §3.4 bullet). |
+| conference | full | a command a human runs; after the relocation it needs nothing from the host. |
+
+REFUSALS, each printed by doctor as a PASS line with its platform reason —
+because a decision nobody can find is indistinguishable from a bug nobody fixed:
+
+- **pre-edit ask**: not possible. Cursor's `preToolUse` accepts `ask` in its
+  schema but enforces only a hard deny, and crosscheck never hard-blocks
+  (escalation ladder rung 1). Not simulated, not silently skipped.
+- **prompt-time injection**: `beforeSubmitPrompt` is registered capture-only.
+  Its documented output adds no context and can only block.
+- **response-text capture**: `afterAgentResponse` stays unregistered. It carries
+  agent prose with no work anchor, and the gate's conjunction demands an executed
+  shape; accumulating a turn across Cursor's separate hook processes would need a
+  standing content buffer on disk, which the privacy rule forbids.
+- **cloud and background agents**: `sessionStart`/`sessionEnd` are documented
+  unavailable there, so a cloud run registers through the recovery path and its
+  hub session ends by staleness. No pretend implementation.
+- **no transcript** (conditional, inside the summarizer rung): its own booked
+  outcome and its own doctor sentence — "this Cursor build provides no
+  transcript — Tier-1 capture off; deterministic capture unaffected" — never a
+  runner WARN, because no model ran.
+
+PRIVACY PINS NARROWED, NOT DELETED. Two fields left the connector's
+banned-token list because the rungs genuinely read them, and each was replaced
+by a narrower TRUE statement with its own test: the prompt reaches exactly one
+0600 file the worker unlinks in `finally` (named and proven absent afterwards),
+and `transcript_path` may be mentioned in exactly three modules and nowhere
+else.
 
 ---
 
@@ -640,7 +700,9 @@ documented `additional_context` output via the shared `assembleBriefing` flow
 (no landed rider — that stays the Claude connector's), background agents get no
 injection output; the failure-matched hint runs the shared `selectAndRenderHint`
 flow with the FAILURE TEXT as the ephemeral query (Cursor documents no
-injectable prompt-time event — `beforeSubmitPrompt` has no context output — so
+injectable prompt-time event — `beforeSubmitPrompt`'s documented output is
+`{continue, user_message}`, which can only block; that is still true, and it is
+why the 2026-08-28 registration of that event is capture-only — so
 the failure is the prompt-adjacent moment, which is also §3.3's better-anchoring
 case), delivered on `postToolUse`'s documented `additional_context` AND
 tolerantly on `postToolUseFailure` (see the q4 note below). One composition

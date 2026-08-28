@@ -98,14 +98,26 @@ Two operational notes:
   path); briefing and presence are missing until then. `crosscheck doctor`
   in the parent folder names whichever of the two states you are in.
 
-### The Tier-1 draft summarizer (Claude Code only) — what it needs
+### The Tier-1 draft summarizer — what it needs
 
-The Stop hook's summarizer is a nested `claude -p` on a Haiku-class model,
-run by a detached worker on the developer's own Claude auth. After trial
+Claude Code and Cursor both run it now (Cursor since 2026-08-28: its `stop`
+hook is the trigger and its own `transcript_path` is the slice), and both go
+through the same detached worker, so everything below applies to either host.
+
+The summarizer is a nested `claude -p` on a Haiku-class model, run by a
+detached worker on the developer's own Claude auth. After trial
 finding #14 (a whole trial in which it never answered) these are the facts
 to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
 …)`:
 
+- **Cursor: "no slice" is not a failure.** If `crosscheck doctor` shows
+  `summarizer transcript (cursor)` saying *this Cursor build provides no
+  transcript*, nothing on this machine is broken: the build sent
+  `transcript_path: null` (documented as "null if transcripts disabled") and
+  no model ran. Tier-0 capture, hints and the briefing are unaffected. The
+  same line counts turns where the transcript was there but its tail could
+  not be decoded — that one IS worth reporting, because it means Cursor's
+  transcript format moved.
 - **Login environment.** The worker inherits the hook's whole environment
   minus the parent session's own markers (`CLAUDECODE`, `CLAUDE_PID`, the
   `CLAUDE_CODE_SESSION_*`/child-session/messaging/task-list/SSE-port/
