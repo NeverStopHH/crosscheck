@@ -274,10 +274,19 @@ export const OMITTED_MARKER = "[... middle of this turn omitted for length ...]"
  * last 24,000 characters, and on a long turn — a build log, a test run, a
  * file read — that window closed above the user's own question, so the model
  * was asked what this turn concluded while holding only its final tool
- * output. The trial measured 60 % of gate-positive slices arriving that way,
- * and a summarizer that cannot see the ask answers about the last thing it
- * can see: the narration and role-play `summarizer/reject.ts` now has to
- * refuse.
+ * output, and a summarizer that cannot see the ask answers about the last
+ * thing it can see: the narration and role-play `summarizer/reject.ts` now has
+ * to refuse.
+ *
+ * HOW OFTEN, IN TWO FIGURES OF DIFFERENT STANDING. The trial measured 60 % of
+ * gate-positive slices arriving that way — HISTORICAL, taken on a live install
+ * whose transcripts are not in this tree, so no command here re-derives it and
+ * none is offered. What IS re-runnable is the same question asked of the
+ * conclusion corpus, and it is a test rather than a sentence: `conclusion
+ * corpus: a long turn still carries its own ask` in
+ * connector-claude/test/conclusion-corpus.test.ts stretches all seven
+ * gate-positive fixtures past this cut and holds every one of them to
+ * FLOOR_CONCLUSION_ASK_RETENTION.
  *
  * The fix is the position-bias result rather than a bigger window: models
  * retrieve reliably from the START and the END of a context and least
