@@ -75,8 +75,8 @@
  *
  *    THE CAP IS THE ONE INVARIANT THE CORPUS CANNOT EXERCISE, and saying so is
  *    the point. One payload in one slot is three lines of briefing: the longest
- *    all 56 payloads across all 8 slots can produce is 550 characters against
- *    the 2200 cap, 1650 short of ever reaching the assertion. So until the
+ *    all 57 payloads across all 10 slots can produce is 684 characters against
+ *    the 2200 cap, 1516 short of ever reaching the assertion. So until the
  *    `saturating briefings` block below existed, the per-line budget in
  *    render.ts's appendSection could be deleted with the whole suite green —
  *    measured, identically on macOS 26 arm64 and in oven/bun:1 under --cpus=2.
@@ -84,11 +84,25 @@
  *    every field at its cap, a shape production reaches, and lands 225
  *    characters under the cap while dropping lines it reports. It also records
  *    which of appendSection's three cap comparisons can be pinned at all — one
- *    of them provably cannot. Re-derive the 550 with:
+ *    of them provably cannot. Re-derive the 684 with:
  *
  *      bun test packages/connector-core/test/injection-corpus.test.ts
  *
  *    whose `the corpus alone cannot reach MAX_BRIEFING_CHARS` test asserts it.
+ *
+ *    Those four numbers rotted once — the sentence still said 56/8/550/1650
+ *    after the corpus and the slot list had both grown — so all three that a
+ *    command can reach are now pinned rather than counted by hand. The fourth,
+ *    1516, is 2200 - 684 and follows from the two below it.
+ *
+ * VERIFY: bun -e 'const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");console.log(INJECTION_CORPUS.length)'
+ * PRINTS: 57
+ *
+ * VERIFY: sed -n '/^const SLOTS: readonly Slot\[\] = \[/,/^\];/p' packages/connector-core/test/injection-corpus.test.ts | grep -c '^  "'
+ * PRINTS: 10
+ *
+ * VERIFY: grep -c '^const LONGEST_CORPUS_BRIEFING = 684;$' packages/connector-core/test/injection-corpus.test.ts
+ * PRINTS: 1
  *
  * 2. KNOWN-NOT-CAUGHT. The phrase filter is documented in briefing/sanitize.ts
  *    as opportunistic defence-in-depth, not a guarantee, and the cases below
