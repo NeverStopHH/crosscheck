@@ -1144,7 +1144,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // Like tripwire-hook.test.ts, this guard shells out to git (makeRepo) —
     // the assertGuardIsGreen container caveat applies to it too.
     label: "the Stop hook waits for the summarizer worker",
-    file: `${CONNECTOR}/src/hooks/stop.ts`,
+    // The spawn shape moved to core/derive/spawn.ts when Cursor needed the
+    // identical door; the Claude Stop hook still reaches it, so the same
+    // guard still sees the same blocking.
+    file: `${CORE}/src/derive/spawn.ts`,
     from: "    const proc = Bun.spawn({",
     to: "    const proc = Bun.spawnSync({",
     test: `${CONNECTOR}/test/stop-latency.test.ts`,
@@ -1904,8 +1907,15 @@ export const MUTATIONS: readonly Mutation[] = [
     // passes the hook's environment through untouched.
     label: "the intent worker inherits the parent session's markers",
     file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "      env: summarizerWorkerEnv(ctx.env, ctx.config.home),",
-    to: "      env: { ...ctx.env, CROSSCHECK_HOME: ctx.config.home } as Record<string, string>,",
+    from: `  spawnDeriveWorker({
+    env: ctx.env,
+    home: ctx.config.home,
+    agentKind: ctx.config.agentKind,
+    cmd,
+  });`,
+    to: `  try {
+    Bun.spawn({ cmd: [...cmd], stdin: "ignore", stdout: "ignore", stderr: "ignore", env: { ...ctx.env, CROSSCHECK_HOME: ctx.config.home } as Record<string, string> }).unref();
+  } catch { /* fail open */ }`,
     test: `${CONNECTOR}/test/intent-hook.test.ts`,
     because:
       "the nested claude inherits CLAUDECODE and the session id of the " +
