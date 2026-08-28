@@ -754,10 +754,25 @@ describe("the conference command", () => {
     // that reports are deliberately never reaped, which makes losing one to a
     // filename collision the odd exception.
     const model = await makeFakeModel({ output: "NONE" });
+    // Its OWN home. The shared one already holds a page per conference test in
+    // this file, and on a fast host more than CONFERENCE_MAX_REPORTS_PER_SECOND
+    // of them land on the SAME second under the SAME repo key. The suffix
+    // search then runs out and hands BOTH runs the base path, so the assertion
+    // below failed on a property of the neighbouring tests rather than of the
+    // two runs it is about. HISTORICAL, and not re-derivable from this tree
+    // because the isolation below is the fix: on linux/bun 1.4.0 the fallback
+    // fired three times inside one second during a full-suite run and this
+    // test went red, while the same file run alone was green 5 of 5.
+    const ownHome = await tempDir("two-runs");
+    const env = {
+      CROSSCHECK_SUMMARIZER_CMD: model,
+      CROSSCHECK_HOME: ownHome,
+      HOME: ownHome,
+    };
 
     // Act
-    const first = await runConferenceFor([], { CROSSCHECK_SUMMARIZER_CMD: model });
-    const second = await runConferenceFor([], { CROSSCHECK_SUMMARIZER_CMD: model });
+    const first = await runConferenceFor([], env);
+    const second = await runConferenceFor([], env);
     const pathOf = (stdout: string): string =>
       (stdout.split("\n").find((line) => line.startsWith("report: ")) ?? "").slice(
         "report: ".length,
