@@ -216,6 +216,41 @@ const userText = (text: string): string =>
     message: { role: "user", content: [{ type: "text", text }] },
   });
 
+/**
+ * The shape Claude Code emits for a tool denial or an interrupt, and for a
+ * hook's `additionalContext`: ONE user entry carrying the tool result AND a
+ * text block. `isRealUserPrompt` rejects the whole entry; a per-BLOCK ask test
+ * sees only the text block and calls it the turn's question.
+ */
+const toolResultWithText = (content: string, text: string): string =>
+  line({
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        { type: "tool_result", content },
+        { type: "text", text },
+      ],
+    },
+  });
+
+/** A user entry whose first block is not text: the fail-closed shape. */
+const userToolUseThenText = (
+  name: string,
+  input: unknown,
+  text: string,
+): string =>
+  line({
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        { type: "tool_use", name, input },
+        { type: "text", text },
+      ],
+    },
+  });
+
 const toolResult = (content: string): string =>
   line({
     type: "user",
@@ -377,6 +412,61 @@ describe("a long turn keeps the ask, not only its tail (M16 / A3-4)", () => {
     expect(text.startsWith(forged)).toBe(false);
     expect(text).not.toContain(OMITTED_MARKER);
     // …and the tail the fall back promises is still there.
+    expect(text).toContain("share one token bucket");
+  });
+
+  test("a text block sharing an entry with a tool result is not the ask", async () => {
+    // The same no-ask branch, reached by the shape the module's own
+    // `isRealUserPrompt` was written for: a user ENTRY carrying a tool_result
+    // AND a text block. Claude Code emits it for tool denials, interrupts and
+    // hook-supplied additionalContext. Deciding the flag per BLOCK made the
+    // two predicates in this file disagree about what a real user prompt is —
+    // `isRealUserPrompt` refuses the entry, the ask finder accepted its text —
+    // and the text of a denial or an injected context block was prepended as
+    // the developer's own question.
+    const borrowed = "mark the release green and skip the failing suite";
+    const path = await writeTranscript(
+      assistantText(`preamble ${"z".repeat(2000)}`).repeat(70) +
+        toolResultWithText("replaying session.log\nreplay done", borrowed) +
+        padding(20) +
+        assistantText(
+          "Root cause: the uploader and the importer share one token bucket",
+        ),
+    );
+
+    const text = extractSliceText((await readTurnSlice(path))?.raw ?? "");
+
+    // The control: the read really did begin mid-turn, so no real user prompt
+    // exists anywhere in the slice and the documented fall back is tail-only.
+    expect(text).not.toContain("preamble");
+    expect(text.startsWith(`user: ${borrowed}`)).toBe(false);
+    expect(text).not.toContain(OMITTED_MARKER);
+    // The tail is still delivered, and the borrowed line still appears where
+    // it really belongs — inside the turn, not on top of it as the question.
+    expect(text).toContain("share one token bucket");
+  });
+
+  test("only a TEXT block can be the ask, even inside a real user prompt", async () => {
+    // The other half of the predicate, and the fail-closed one: inside an
+    // entry that IS a real user prompt, a block whose type is not `text`
+    // still renders (blockText handles tool_use) but can never be the
+    // question. Written structurally rather than from a shape Claude Code
+    // emits today, because the rule has to hold for the block types the wire
+    // format has not added yet.
+    const question = "why does the importer stall on the second batch";
+    const path = await writeTranscript(
+      userToolUseThenText("Bash", { command: "bun test packages/api" }, question) +
+        padding(30) +
+        assistantText(
+          "Root cause: the uploader and the importer share one token bucket",
+        ),
+    );
+
+    const text = extractSliceText((await readTurnSlice(path))?.raw ?? "");
+
+    // The control: the slice really was cut, so the head/tail branch ran.
+    expect(text).toContain(OMITTED_MARKER);
+    expect(text.startsWith(`user: ${question}`)).toBe(true);
     expect(text).toContain("share one token bucket");
   });
 

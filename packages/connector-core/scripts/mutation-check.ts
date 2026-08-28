@@ -3075,18 +3075,32 @@ export const MUTATIONS: readonly Mutation[] = [
       "tool output, and answers about the last thing it can see",
   },
   {
-    // The prepended ask is the FIRST thing the summarizer reads, and a tool
-    // result is a `user` entry too — so widening the predicate to the role
-    // alone lets text the agent merely READ take that position.
-    label: "borrowed text can take the ask's place at the front",
+    // The BLOCK half of the predicate, which is the fail-closed one: inside
+    // an entry that really is a user prompt, a block whose type is not `text`
+    // still renders and must still never be the question.
+    label: "any rendered block of a prompt can be the ask",
     file: `${CONNECTOR}/src/summarizer/transcript.ts`,
-    from: "                isAsk: isUser && block.type === \"text\",",
-    to: "                isAsk: isUser,",
+    from: "                isAsk: entryIsAsk && block.type === \"text\",",
+    to: "                isAsk: entryIsAsk,",
     test: `${CONNECTOR}/test/stop-gate.test.ts`,
     because:
-      "a log line, a file or a fetched page beginning \"user: \" is handed to " +
-      "the model as the developer's own question, and steers a draft that " +
-      "teammates can pull",
+      "a tool_use block sitting in front of the developer's sentence is " +
+      "prepended as the turn's question instead of it, and the wire format's " +
+      "next block type would arrive open rather than closed",
+  },
+  {
+    // The ENTRY half of the same predicate, and the half that was missing:
+    // the module defines `isRealUserPrompt` for this exact question, and a
+    // per-block test disagrees with it on one shape.
+    label: "the ask finder stops asking whether the ENTRY was a prompt",
+    file: `${CONNECTOR}/src/summarizer/transcript.ts`,
+    from: "      const entryIsAsk = isRealUserPrompt(entry);",
+    to: "      const entryIsAsk = isUser;",
+    test: `${CONNECTOR}/test/stop-gate.test.ts`,
+    because:
+      "a user entry carrying a tool_result AND a text block — a tool denial, " +
+      "an interrupt, a hook's additionalContext — has its text promoted to " +
+      "the turn's question, on the branch documented as tail-only",
   },
   {
     // The shape a tail-degraded slice produces most: the conversation
