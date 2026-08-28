@@ -282,6 +282,17 @@ const writeTranscript = async (content: string): Promise<string> => {
   return path;
 };
 
+/**
+ * HOW TO SEE THESE RED, exactly. The base source for this block is
+ * `git show 1d8645b:packages/connector-claude/src/summarizer/transcript.ts`
+ * PLUS the word `export` in front of `const OMITTED_MARKER` — one word, no
+ * behaviour — because these tests import that marker and 9f313fa is the commit
+ * that exported it. Without the adaptation the file does not compile and the
+ * run is `0 pass / 1 fail / 1 error`, `SyntaxError: Export named
+ * 'OMITTED_MARKER' not found`, which looks like invented evidence rather than
+ * a red proof. With it: 24 pass / 4 fail, and the four are the four this block
+ * added.
+ */
 describe("a long turn keeps the ask, not only its tail (M16 / A3-4)", () => {
   /** ~2 KB per tool result — a build log, a file read, a test run. */
   const padding = (blocks: number): string =>
