@@ -3364,6 +3364,7 @@ interface Outcome {
  * PRINTS: summarizer-worker.test.ts 2
  * PRINTS: transparency.test.ts 1
  * PRINTS: tripwire-hook.test.ts 1
+ * PRINTS: turn-slice.test.ts 2
  * PRINTS: work-context-listing.test.ts 2
  */
 const greenGuards = new Map<string, boolean>();
