@@ -129,7 +129,63 @@ const PATH_SCAFFOLDING: ReadonlySet<string> = new Set([
   "rb",
   "php",
   "java",
+  // Which LAYER of a program, never which program. `src` says where a file
+  // sits in a build; these say where it sits in an architecture, and every
+  // architecture has all of them — so a prompt naming one names nobody's
+  // work. Measured in the golden corpus (11-generic-paths): before this
+  // half of the list, "can you look at the routes", "add a types file",
+  // "restart the services" and "who owns the handlers" each delivered a
+  // teammate's evidence-backed root cause about a restock bug as substance,
+  // four for four, because the words reached the document through a
+  // DIRECTORY segment of src/routes/stock.ts and its siblings.
+  "services",
+  "service",
+  "config",
+  "configs",
+  "types",
+  "routes",
+  "utils",
+  "util",
+  "helpers",
+  "helper",
+  "handlers",
+  "handler",
+  "components",
+  "component",
+  "middleware",
+  "controllers",
+  "controller",
+  "common",
+  "shared",
+  "cmd",
+  "pkg",
+  "scripts",
+  "assets",
+  "static",
+  "public",
+  "vendor",
 ]);
+
+/**
+ * WHAT IS DELIBERATELY NOT ABOVE, because the line is meaning and not
+ * frequency. `core`, `api`, `hooks`, `models`, `internal`, `db`, `auth` and
+ * `views` are layer names in one repo and the subject itself in the next —
+ * `hooks` is this product's whole Claude Code surface, `core` is half its
+ * package names, and the golden corpus carries its domains in exactly such
+ * directories (src/auth/refresh.ts, src/db/pool.ts, src/ws/reconnect.ts).
+ *
+ * Frequency cannot make that call, and was measured rather than assumed:
+ * across nine unrelated repositories on this machine, `services` appears as a
+ * directory segment in 4 and `auth` in 2 — the same order of magnitude — so a
+ * threshold that drops the first keeps the second only by luck. What separates
+ * them is that a reader who types `auth` is naming a subject and a reader who
+ * types `services` is naming a shape, and only a human can write that down.
+ *
+ * The cost of being wrong here is asymmetric, which is why the list stays
+ * short: a word wrongly dropped costs one lexical route to a context that is
+ * still reachable by its title, its file names and its claims, while a word
+ * wrongly kept injects a teammate's substance into an unrelated prompt.
+ */
 
 /** Everything that is not a letter or a digit separates two parts. */
 const DELIMITER_PATTERN = /[^\p{L}\p{N}]+/u;

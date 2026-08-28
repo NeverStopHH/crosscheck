@@ -110,6 +110,39 @@ describe("the FTS document splits identifiers into words (M12-rest)", () => {
     }
   });
 
+  test("a program's layers are not topics either", () => {
+    // The same rule as the test above, one class further out. `src` and `ts`
+    // say where a file sits in a BUILD; `services`, `config`, `types`,
+    // `routes` and `handlers` say where it sits in a PROGRAM — and every
+    // program has all of them, so indexing them makes "can you look at the
+    // routes" a lexical match against a restock bug. Measured in the golden
+    // corpus, scenario 11-generic-paths: four ordinary sentences, four
+    // teammate root causes delivered as substance.
+    const words = wordsOf(
+      docFor("Warehouse restock never fires @ inventory", "inventory", [
+        "packages/inventory/src/services/restock.ts",
+        "src/config/warehouse.ts",
+        "src/types/reorder.ts",
+        "src/routes/stock.ts",
+        "src/handlers/shipment.ts",
+      ]),
+    );
+    for (const layer of [
+      "services",
+      "config",
+      "types",
+      "routes",
+      "handlers",
+    ]) {
+      expect(words, layer).not.toContain(layer);
+    }
+    // The control on the same document: what the work is ABOUT survived, so
+    // this is a filter and not a switched-off tokenizer.
+    for (const topic of ["restock", "warehouse", "reorder", "stock", "shipment"]) {
+      expect(words, topic).toContain(topic);
+    }
+  });
+
   test("camelCase and snake_case identifiers split into their parts", () => {
     const words = wordsOf(
       docFor("Login 500s on staging", "api", [
@@ -180,6 +213,41 @@ describe("the FTS document keeps the repo label and the default branch out (M13)
     // so "main survived" is a decision and not an untouched document.
     expect(wordsOf(doc)).not.toContain("api");
     expect(wordsOf(doc)).toContain("main");
+  });
+
+  test("main inside a path or a branch name is not a topic either", () => {
+    // The rule above is applied to the whole TITLE, which leaves the token bag
+    // untouched — and the bag is built from the branch name and every target
+    // value. `cmd/main.go`, `src/main.rs` and `app/src/main/java/…` are the
+    // ordinary shapes of three languages, so on those repos M13's own sentence
+    // ("rebase onto main", typed several times a day) matched again through
+    // the path instead of through the title.
+    const words = wordsOf(
+      docFor("chore/rebase-main @ api", "api", [
+        "cmd/main.go",
+        "src/main.rs",
+        "app/src/main/java/com/acme/Main.java",
+      ]),
+    );
+    expect(words).not.toContain("main");
+    expect(words).not.toContain("Main");
+    // The control: everything else in those paths is still indexed.
+    for (const part of ["cmd", "acme", "rebase", "chore"]) {
+      expect(words, part).toContain(part);
+    }
+  });
+
+  test("the repo label is not a topic when a directory happens to share it", () => {
+    // The suffix strip is an exact match on ` @ <repo>`, so a repo whose name
+    // is also a directory in its own tree — `api`, `server`, `web` — put the
+    // label straight back into the bag from any path that crosses it.
+    const words = wordsOf(
+      docFor("feat/importer-retry @ api", "api", ["services/api/handler.ts"]),
+    );
+    expect(words).not.toContain("api");
+    for (const part of ["importer", "retry", "handler"]) {
+      expect(words, part).toContain(part);
+    }
   });
 
   test("a local: repo has no label to strip and keeps its whole title", () => {
