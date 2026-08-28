@@ -3178,6 +3178,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "the reader weighs the body as somebody's settled decision, and looks " +
       "for the marking and the person behind it — neither exists",
   },
+  {
+    // A NUL reaches a text column below every guard the hub writes, so the
+    // driver raises 22021 and `ingestOne` never returns. This removes the
+    // storability check and the whole batch is a 500 again.
+    label: "one unstorable byte takes a whole batch down again",
+    file: "packages/schema/src/envelope.ts",
+    from: "  const unstorable = unstorableTextPath(envelope);",
+    to: "  const unstorable = null;",
+    test: "packages/server/test/unstorable-text.test.ts",
+    because:
+      "one poisoned record loses its clean neighbours, the author reads " +
+      "only HTTP 500, and the spool never advances past it again",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
