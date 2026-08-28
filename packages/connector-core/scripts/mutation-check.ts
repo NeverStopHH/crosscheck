@@ -1923,6 +1923,47 @@ export const MUTATIONS: readonly Mutation[] = [
       "the phantom-session class trial finding #14 closed",
   },
   {
+    // THE AGENT-KIND TRAP (the derive rungs' own incident, 2026-08-28): the
+    // workers stamp a record's producer from the environment and default to
+    // claude-code, and nothing but the trigger knows better. This drops the
+    // stamp, which is exactly what the code did before derive/spawn.ts.
+    label: "a Cursor-spawned draft is filed under Claude Code",
+    file: `${CORE}/src/derive/spawn.ts`,
+    from: "  CROSSCHECK_AGENT_KIND: agentKind,",
+    to: "",
+    test: `${CURSOR}/test/derive.test.ts`,
+    because:
+      "every derived intent and draft a Cursor session produces arrives on " +
+      "the hub attributed to a Claude Code session, and nothing on either " +
+      "side ever says otherwise",
+  },
+  {
+    // Rule 4 on the Tier-1 rung Cursor can only have REDUCED: a turn the
+    // gate could not read must be booked, not shrugged off.
+    label: "a Cursor turn with no transcript is shrugged off, not booked",
+    file: `${CURSOR}/src/derive/triggers.ts`,
+    from: "    if (look.noSliceReason !== null) {",
+    to: "    if (false) {",
+    test: `${CURSOR}/test/derive.test.ts`,
+    because:
+      "a build with transcripts disabled derives nothing and says nothing " +
+      "about it, so doctor cannot tell it apart from a broken runner and " +
+      "sends the reader to a binary that works",
+  },
+  {
+    // The debt this step exists to pay: set_intent set the flag inside
+    // Cursor and NOTHING claimed it. This restores that state.
+    label: "the Cursor ghost debt rots in the state file again",
+    file: `${CURSOR}/src/handlers/stop.ts`,
+    from: "  await maybeSpawnCursorGhostWorker(ctx);",
+    to: "",
+    test: `${CURSOR}/test/derive.test.ts`,
+    because:
+      "a declared plan that overlaps a teammate's is never compared in " +
+      "Cursor, and ghostPending stays true for the session's whole life " +
+      "with no surface saying so",
+  },
+  {
     // The hub merge rule: declared over derived, enforced where spool replay
     // order cannot undo it. This lets a late derived record overwrite.
     label: "a late derived intent overwrites a declared one",
@@ -3139,6 +3180,7 @@ interface Outcome {
  * PRINTS: conference.test.ts 3
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
+ * PRINTS: derive.test.ts 3
  * PRINTS: developer-emails.test.ts 1
  * PRINTS: doctor-global.test.ts 3
  * PRINTS: doctor-latency.test.ts 1
