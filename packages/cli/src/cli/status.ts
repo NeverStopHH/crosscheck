@@ -33,6 +33,10 @@ import {
   readConferenceCost,
 } from "@crosscheck/connector-core/state/conference-cost.ts";
 import {
+  formatGitLaneCost,
+  summarizeGitLaneCost,
+} from "@crosscheck/connector-core/state/git-lane-cost.ts";
+import {
   formatGhostCost,
   formatIntentCost,
   formatSummarizerCost,
@@ -95,6 +99,10 @@ export const runStatus = async (
   // then the gated model half with the not-called count named, so a quiet
   // team never reads as a broken runner.
   const ghostCost = summarizeGhostCost(liveStates);
+  // The regression guard's SECOND evidence lane (Stage 1). Printed beside the
+  // other per-session counters and out of the same one scan: a lane whose
+  // skips are never shown is a blind spot `suspect` answers out of.
+  const gitLaneCost = summarizeGitLaneCost(liveStates);
   // The conference counters (VISION.md §2). A LOCAL file rather than session
   // state: a conference is a command, often run from a scheduler at 03:00,
   // and its numbers must survive on a machine with no live session at all.
@@ -235,6 +243,7 @@ export const runStatus = async (
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `intent: ${formatIntentCost(intentCost)}`,
       `ghost checks: ${formatGhostCost(ghostCost)}`,
+      `git evidence lane: ${formatGitLaneCost(gitLaneCost)}`,
       `conference: ${formatConferenceCost(conferenceCost, now)}`,
       `last sync: ${ageOrNever(sync.lastOkAt, now)}`,
       "",

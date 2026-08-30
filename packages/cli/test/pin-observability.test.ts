@@ -24,6 +24,11 @@
  *   5. THE TEAM SETTINGS ARE PRINTED. `suspect` naming sessions is a decision
  *      about what this tool makes visible concerning people; everybody it is
  *      about must be able to read that it is on without reading the source.
+ *   6. THE SECOND EVIDENCE LANE IS COUNTED WHERE SOMEBODY LOOKS. The Stop
+ *      hook books what its git lane recorded and how many turns it skipped,
+ *      and a counter nothing prints is the same as no counter: `suspect`
+ *      would answer "no session touched this surface" out of a blind spot
+ *      nobody could see.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
@@ -36,6 +41,7 @@ import {
 } from "@crosscheck/connector-core/config/paths.ts";
 
 import { runCli } from "../src/index.ts";
+import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import {
   git,
   makeHome,
@@ -44,6 +50,7 @@ import {
 } from "../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "pin-observability-admin";
+const REPO_ID = "github.com/acme/api";
 const PINNED = "src/workbench/usePlayback.ts";
 const SECOND = "src/workbench/PlaybackControls.tsx";
 /** Port 1 refuses instantly: an unreachable hub without the wait. */
@@ -190,6 +197,74 @@ describe("crosscheck status: the coverage denominator", () => {
     // Assert
     expect(result.stdout).toContain("pins: 1 (2 files, oldest verified");
     expect(result.stdout).toContain("— nothing else is watched");
+  });
+});
+
+describe("crosscheck status: the second evidence lane", () => {
+  test("prints what the git lane recorded and what it skipped", async () => {
+    // Arrange: a live session whose Stop turns ran the lane twice and skipped
+    // it once — the shape a loaded machine produces.
+    await writeSessionState(home, {
+      hostSessionKey: "cc-git-lane",
+      crosscheckSessionId: "cc_git_lane",
+      workContextId: "wc_cc_git_lane",
+      repoId: REPO_ID,
+      repoRoot: repo,
+      hubUrl,
+      developerId: "dev_nick",
+      startedAt: new Date().toISOString(),
+      gitTouchCount: 2,
+      gitLaneSkipped: 1,
+    });
+
+    // Act
+    const result = await runFor(["status"]);
+
+    // Assert: BOTH halves, with real numbers that include this session's
+    // contribution. A lane reported only by what it FOUND would look healthy
+    // on every turn it never ran. Read through a pattern rather than as two
+    // literal totals, because `status` sums every live session and another
+    // test in this file legitimately adds to them — a literal count would be
+    // asserting the order bun ran the describes in.
+    const lane =
+      /git evidence lane: (\d+) file\(s\) no Edit tool reported · (\d+) turn\(s\) skipped/.exec(
+        result.stdout,
+      );
+    expect(lane).not.toBeNull();
+    expect(Number(lane?.[1])).toBeGreaterThanOrEqual(2);
+    expect(Number(lane?.[2])).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("crosscheck doctor: the second evidence lane", () => {
+  test("WARNs when the lane skips more turns than it records", async () => {
+    // Arrange: the starved-machine shape. The lane is affordable on one turn
+    // in ten, so `suspect` is running mostly blind to codemods — and every
+    // individual Stop hook behaved correctly, which is exactly why nothing
+    // else would ever mention it.
+    await writeSessionState(home, {
+      hostSessionKey: "cc-git-starved",
+      crosscheckSessionId: "cc_git_starved",
+      workContextId: "wc_cc_git_starved",
+      repoId: REPO_ID,
+      repoRoot: repo,
+      hubUrl,
+      developerId: "dev_nick",
+      startedAt: new Date().toISOString(),
+      gitTouchCount: 1,
+      gitLaneSkipped: 9,
+    });
+
+    // Act
+    const result = await runFor(["doctor"]);
+
+    // Assert: the LEVEL and the REASON, not a count — `doctor` sums every
+    // live session, so a fixture in another test in this file legitimately
+    // moves the number and an exact-count assertion would only be testing
+    // the order bun happened to run them in.
+    expect(result.stdout).toContain("WARN  git evidence lane");
+    expect(result.stdout).toContain("turn(s) skipped");
+    expect(result.stdout).toContain("skipped more often than it records");
   });
 });
 

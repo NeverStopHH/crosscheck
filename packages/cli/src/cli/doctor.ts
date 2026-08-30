@@ -82,6 +82,11 @@ import {
 } from "@crosscheck/connector-core/hints/precision.ts";
 import { resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import {
+  formatGitLaneCost,
+  gitLaneWarning,
+  summarizeGitLaneCost,
+} from "@crosscheck/connector-core/state/git-lane-cost.ts";
+import {
   orphanSentence,
   orphanedPins,
   pinCoverageSentence,
@@ -1167,6 +1172,28 @@ const checkSolvedMatches = async (
 };
 
 /**
+ * The regression guard's SECOND EVIDENCE LANE, as health rather than as a
+ * count. `status` prints the pair unconditionally; this is where the pair
+ * becomes a verdict.
+ *
+ * NEVER PASS-ONLY (the finding-#14 lesson): the WARN is not "the lane was
+ * skipped" — one starved turn is the budget working as designed — but the
+ * lane being skipped MORE OFTEN THAN IT RECORDS. At that point `crosscheck
+ * suspect` is largely blind to `sed -i` and codemods while every individual
+ * Stop hook behaved correctly, so nothing else in this product would ever
+ * mention it, and suspect's "no session touched this surface" would be an
+ * artefact of a starved machine rather than a fact about the repository.
+ */
+const checkGitLane = (states: readonly SessionState[]): Check => {
+  const cost = summarizeGitLaneCost(states);
+  const line = formatGitLaneCost(cost);
+  const warning = gitLaneWarning(cost);
+  return warning === null
+    ? check("PASS", "git evidence lane", line)
+    : check("WARN", "git evidence lane", `${line} — ${warning}`);
+};
+
+/**
  * The regression guard's two checks (Stage 1, part C). Both exist because
  * their failure mode is SILENCE, which is the only failure a post-hoc guard
  * can have: nothing crashes, nothing is slow, and the answer is simply wrong
@@ -1634,6 +1661,7 @@ export const runDoctor = async (
     checkSummarizerCost(liveStates),
     checkIntentCost(liveStates),
     checkGhostCost(liveStates),
+    checkGitLane(liveStates),
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now),

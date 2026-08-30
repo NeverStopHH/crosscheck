@@ -206,11 +206,13 @@ const SessionStateObjectSchema = z.looseObject({
   /**
    * The SECOND evidence lane's telemetry (regression-guard Stage 1): how many
    * files the Stop-time `git diff --name-only` recorded that no Edit tool
-   * reported, and how many Stop turns skipped the lane because the hook's
-   * spare budget was gone. Both are counted for the finding-#14 reason — a
+   * reported, and how many Stop turns did NOT run the lane — either the
+   * hook's spare budget was gone before it started, or git did not answer
+   * inside its own deadline. Both are counted for the finding-#14 reason: a
    * lane that records nothing must be a number somebody can explain, not a
-   * silence that reads like health — and `status` prints the pair. Defaults
-   * keep every older state file parsing.
+   * silence that reads like health. `status` prints the pair and `doctor`
+   * WARNs when the skips outnumber the records (state/git-lane-cost.ts).
+   * Defaults keep every older state file parsing.
    */
   gitTouchCount: z.number().int().min(0).default(0),
   gitLaneSkipped: z.number().int().min(0).default(0),

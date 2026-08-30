@@ -122,6 +122,7 @@ export const selectAndRenderSolvedHint = async (
   // session, whichever surface got there first.
   const seen = new Set([
     ...state.deliveredHintRefs,
+    ...state.briefingSolvedRefs,
   ]);
   // THE KIND THE HEADER NAMES, required here and not only at render time.
   // `renderSolvedHint` refuses a weaker kind on its own, but a `find` that
