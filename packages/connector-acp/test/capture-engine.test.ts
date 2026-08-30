@@ -530,14 +530,16 @@ describe("fail-open and privacy", () => {
           continue;
         }
         everHeld.add(file);
-        if (file === promptFile) {
-          const mode = await stat(file).then(
-            (info) => info.mode & 0o777,
-            () => -1,
-          );
-          if (mode !== -1) {
-            modesSeen.push(mode);
-          }
+        // EVERY path caught holding it, not just the final one: the atomic
+        // write passes through a temp sibling, and that sibling holding the
+        // prompt at a readable mode would be the same leak as the real file
+        // holding it at one.
+        const mode = await stat(file).then(
+          (info) => info.mode & 0o777,
+          () => -1,
+        );
+        if (mode !== -1) {
+          modesSeen.push(mode);
         }
       }
     };
@@ -571,10 +573,23 @@ describe("fail-open and privacy", () => {
     // this the invariants below could pass on a session that derived nothing.
     expect(h.capture.counters().intentFires).toBe(1);
 
-    // Assert 2 — the invariant, true at every instant: the intent prompt file
-    // is the ONLY path that may ever hold it.
-    expect([...everHeld].filter((file) => file !== promptFile)).toEqual([]);
-    // and where it was caught, it was private
+    // Assert 2 — the invariant, true at every instant: the prompt may live at
+    // the intent-prompt path, or at the atomic-write TEMP SIBLING that path is
+    // renamed from, and nowhere else.
+    //
+    // The sibling is not a loophole, it is how the write is made atomic:
+    // `writePrivateFile` (config/paths.ts) creates the temp with mode 0600,
+    // chmods it to 0600, and only then renames it into place — so the content
+    // never exists at a readable path, but it does briefly exist under two
+    // NAMES. This pin used to forbid the second name outright, which made it a
+    // race: on an unloaded machine the 1 ms sampler almost never caught the
+    // temp, and under CPU contention it did and the test failed for a leak
+    // that had not happened. What matters is that every name it is ever caught
+    // under is private, which the mode loop below now checks for all of them.
+    const allowedPath = (file: string): boolean =>
+      file === promptFile || file.startsWith(`${promptFile}.tmp-`);
+    expect([...everHeld].filter((file) => !allowedPath(file))).toEqual([]);
+    // ...and every path it was caught at was private, temp sibling included.
     for (const mode of modesSeen) {
       expect(mode).toBe(0o600);
     }
