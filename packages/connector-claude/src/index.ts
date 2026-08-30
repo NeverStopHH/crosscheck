@@ -3,6 +3,11 @@ export { runHook, isHookName } from "./hooks/index.ts";
 // pin for the derive rungs): connector-core/test/derive-capability-registry
 // reads it against what this package actually ships.
 export { CLAUDE_CAPABILITY_MANIFEST } from "./capabilities.ts";
+// ...and the doctor section that RENDERS it, so the reference host has a
+// row on the surface that describes this machine (the other two connectors
+// each export their own).
+export { claudeDoctorChecks } from "./doctor.ts";
+export type { ClaudeCheck } from "./doctor.ts";
 export type { HookName, HookContext } from "./hooks/runner.ts";
 export { runStatusline } from "./statusline/statusline.ts";
 // The Tier-1 summarizer surface (Claude-specific by construction, DESIGN.md

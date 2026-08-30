@@ -105,6 +105,7 @@ import {
   isSummarizerSilentlyDead,
   isSummarizerUnreadable,
   probeSummarizerRunner,
+  claudeDoctorChecks,
   summarizeGhostCost,
   summarizeIntentCost,
   summarizeSummarizerCost,
@@ -1589,10 +1590,29 @@ export const runDoctor = async (
     await checkPrivacy(hubCtx),
     skewCheck,
     bunfigCheck,
+    ...checkClaudeDerive(),
     ...(await checkCursor(identity.root, env, config.home, key, liveStates)),
     ...(await checkAcp(config.home, env, liveStates)),
   ]);
 };
+
+/**
+ * The Claude Code section's rung lines, owned by connector-claude — the
+ * REFERENCE row of the parity table, and the one doctor used to omit.
+ *
+ * Static import rather than the dynamic one the other two sections use: this
+ * package already depends on connector-claude unconditionally (the hook
+ * runner, the summarizer worker and the probe all come from it), so there is
+ * no optional-package failure to contain here.
+ *
+ * The counts stay on the `summarizer cost` / `intent cost` / `ghost cost`
+ * lines above; these say what the HOST allows, which is the question the
+ * Cursor and ACP sections answer for their hosts.
+ */
+const checkClaudeDerive = (): readonly Check[] =>
+  claudeDoctorChecks().map((entry) =>
+    check(entry.level, entry.name, entry.detail),
+  );
 
 /**
  * The ACP section, owned by connector-acp: what crosscheck infers behind the
