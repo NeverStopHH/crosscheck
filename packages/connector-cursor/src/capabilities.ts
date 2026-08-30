@@ -60,7 +60,7 @@ export const CURSOR_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
     {
       name: "cloud and background agents",
       sentence:
-        "sessionStart and sessionEnd are documented unavailable in cloud agents, so a cloud run registers through the recovery path on its first connected file touch and its hub session ends by staleness",
+        "sessionStart and sessionEnd are documented unavailable in cloud agents, so a cloud run registers through the recovery path on its first connected file touch and its hub session ends by staleness; and a user-level install (~/.cursor/hooks.json) runs NO hooks in a cloud agent at all — Cursor loads only project and team hooks there, so a cloud agent needs `crosscheck init --cursor` in the repo",
     },
   ],
 };

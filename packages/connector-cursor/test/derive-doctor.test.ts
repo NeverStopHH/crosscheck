@@ -117,6 +117,48 @@ const cleanup = async (): Promise<void> => {
  * That machine is not hypothetical: it is Cursor-without-Claude-Code, the
  * exact install this parity work exists for.
  */
+/**
+ * THE REFUSAL THAT WAS TRUE FOR ONE INSTALL MODE AND FALSE FOR THE OTHER.
+ *
+ * crosscheck ships two Cursor installs — `init --cursor` writes the repo's
+ * `.cursor/hooks.json`, `init --global --cursor` writes `~/.cursor/hooks.json`
+ * — and Cursor treats them differently in a cloud agent. Verbatim from
+ * cursor.com/docs/hooks.md (recorded in this package's contract fixture):
+ * "User-level hooks (`~/.cursor/hooks.json`) are not available in cloud
+ * agents", while "Project hooks (`.cursor/hooks.json` in your repo): Loaded
+ * and run during cloud agent work."
+ *
+ * The refusal sentence described only the project case, so a globally
+ * installed developer read a PASS line promising a recovery-path
+ * registration that cannot happen — no hook loads at all — and would go
+ * debugging the hub or their key instead of running one command.
+ */
+describe("the cloud-agent refusal", () => {
+  test("names the user-level install, whose hooks do not load in a cloud agent", async () => {
+    // Arrange
+    const { repo, home } = await installed("cursor-doctor-cloud-refusal");
+
+    // Act
+    const checks = await cursorDoctorChecks({
+      repoRoot: repo,
+      env: {},
+      home,
+      repoKey: "k",
+    });
+    const line = checks.find(
+      (entry) => entry.name === "cloud and background agents (cursor)",
+    );
+
+    // Assert — a refusal is a decision working, never a fault
+    expect(line?.level).toBe("PASS");
+    // The half that was already there: no sessionStart/sessionEnd.
+    expect(line?.detail).toContain("recovery path");
+    // The half that was missing, and the remedy it implies.
+    expect(line?.detail).toContain("~/.cursor/hooks.json");
+    expect(line?.detail).toContain("crosscheck init --cursor");
+  });
+});
+
 describe("the derive backend line", () => {
   test("no claude and no override WARNs that nothing derives here", async () => {
     // Arrange — an install that is perfect in every other respect

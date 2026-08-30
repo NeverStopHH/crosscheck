@@ -54,6 +54,22 @@ Hooks that run in cloud agents include `beforeSubmitPrompt`, `postToolUse`,
 "Deferred while cloud agents can still start in a read-only environment" and
 "Cloud agents have no editor-lifetime session boundary" respectively.
 
+WHICH CONFIGURATION A CLOUD AGENT READS — a separate rule from the table
+above, and the one that decides whether ANY of those hooks load. Verbatim
+(re-fetched 2026-08-30, HTTP 200, 64,429 bytes):
+
+> **Project hooks** (`.cursor/hooks.json` in your repo): Loaded and run
+> during cloud agent work.
+
+> User-level hooks (`~/.cursor/hooks.json`) are not available in cloud
+> agents. Cloud agent VMs don't have access to your local home directory
+> configuration.
+
+This matters because crosscheck ships BOTH installs (`crosscheck init
+--cursor` writes the repo file, `crosscheck init --global --cursor` writes
+the user one), so the cloud-agent refusal sentence has to say which install
+it is talking about.
+
 ## Events this connector registers
 
 ### sessionStart
