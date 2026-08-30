@@ -2967,9 +2967,19 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "the promote echo blanks the claim it just promoted",
     file: `${CORE}/src/mcp/tools/review-draft.ts`,
     // The cap spelling moved to CLAIM_ECHO_MAX_CHARS when the wire cap rose —
-    // an echo is a receipt and stayed at its old width. The MUTATION is
-    // unchanged in meaning: swap the body-class call for the prose-class one
-    // and the promoted claim comes back as a redaction marker.
+    // an echo is a receipt and stayed at its old width while the wire went to
+    // MAX_CLAIM_BODY_LENGTH. Re-anchored, not rewritten.
+    //
+    // WHAT THIS MUTANT ACTUALLY DIES OF, which is not what it looks like:
+    // `sanitizeUntrusted` is NOT imported by review-draft.ts, so the mutated
+    // line throws a ReferenceError and the test goes red on that rather than
+    // on a redaction marker reaching the agent. It therefore proves the echo
+    // is EXERCISED by body-redaction.test.ts, not that the body class is what
+    // keeps it readable. Pre-existing — the mutation read this way before the
+    // cap moved — and left alone here because fixing it means adding an import
+    // to a source file to serve a test tool, which is a change worth making on
+    // its own terms rather than inside a body-cap raise. Recorded so the next
+    // reader is not misled by how convincing the pairing looks.
     from: "${quotedBody(body, CLAIM_ECHO_MAX_CHARS)}",
     to: "${`«${sanitizeUntrusted(body, CLAIM_ECHO_MAX_CHARS)}»`}",
     test: `${CORE}/test/body-redaction.test.ts`,
