@@ -247,7 +247,12 @@ const runSweep = async (resolved: Resolved): Promise<CliResult> => {
   const missing = swept.filter((entry) => entry.status === "missing").length;
   return {
     stdout: [
-      `pin sweep: ${String(reported.data.applied)} path(s) recorded — ${String(renamed)} renamed, ${String(missing)} missing, ${String(unknown)} unanswered by git`,
+      `pin sweep: ${String(reported.data.applied)} path(s) recorded — ${String(renamed)} renamed, ${String(missing)} missing, ${String(unknown)} not answered`,
+      ...(unknown === 0
+        ? []
+        : [
+            "not answered means nobody looked: git could not reply, or this sweep's call budget ran out before reaching the path. Neither is a verdict about the file.",
+          ]),
       ...(missing === 0
         ? []
         : ["a pin with missing paths watches less than it says — `crosscheck pin list` shows which"]),

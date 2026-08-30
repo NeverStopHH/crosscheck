@@ -31,8 +31,25 @@
  * NOTHING HERE IS A DECISION. The sweep REPORTS; the hub records. A path
  * marked missing today is marked present again by the next sweep that finds
  * it, so a transient wrong answer heals instead of retiring a pin for good.
+ *
+ * TWO BOUNDS, BECAUSE PATHS AND WORK ARE DIFFERENT NUMBERS.
+ * PIN_SWEEP_MAX_PATHS caps how many paths are considered;
+ * PIN_SWEEP_MAX_GIT_CALLS caps how many git processes the rename chase may
+ * spawn. A path git is TRACKING is free — one `ls-files` answers for the
+ * whole set — but a path git has LOST costs a `rev-list` of its own and up
+ * to PIN_SWEEP_MAX_HOPS follow-up calls, so without the second bound the
+ * cost of a sweep grew with the number of broken pins: precisely the
+ * registry somebody runs this on. Past the call budget a path is "unknown",
+ * which is the status this module already reserves for "nobody looked",
+ * and `crosscheck pin --sweep` prints it as unanswered rather than as a
+ * verdict about the file.
  */
-import { GIT_TIMEOUT_MS, PIN_SWEEP_MAX_HOPS, PIN_SWEEP_MAX_PATHS } from "../constants.ts";
+import {
+  GIT_TIMEOUT_MS,
+  PIN_SWEEP_MAX_GIT_CALLS,
+  PIN_SWEEP_MAX_HOPS,
+  PIN_SWEEP_MAX_PATHS,
+} from "../constants.ts";
 import { runGit } from "./git.ts";
 
 export type PinPathStatus =
@@ -158,14 +175,25 @@ export const sweepPinPaths = async (
   }
   const tracked = await trackedPaths(repoRoot, considered);
   const swept: PinPathOutcome[] = [];
+  // The call budget, spent only on paths git has lost. `rev-parse` and the
+  // one `ls-files` above are already paid; what remains is what the rename
+  // chase may spend.
+  let callsLeft = PIN_SWEEP_MAX_GIT_CALLS;
   for (const path of considered) {
     if (tracked.has(path)) {
       swept.push({ path, resolved: path, status: "present" });
       continue;
     }
+    if (callsLeft <= 0) {
+      // NOT "missing": nobody looked. Reporting a verdict here would retire
+      // pins on the strength of a budget rather than of a repository.
+      swept.push({ path, resolved: null, status: "unknown" });
+      continue;
+    }
     let current = path;
     let resolved: string | null = null;
-    for (let hop = 0; hop < PIN_SWEEP_MAX_HOPS; hop += 1) {
+    for (let hop = 0; hop < PIN_SWEEP_MAX_HOPS && callsLeft > 0; hop += 1) {
+      callsLeft -= 1;
       const next = await followOnce(repoRoot, current);
       if (next === null) {
         break;
@@ -173,6 +201,7 @@ export const sweepPinPaths = async (
       current = next;
       // A rename chain ends where git is tracking the file again; the loop
       // bound is what stops a pathological history costing unbounded calls.
+      callsLeft -= 1;
       const stillThere = await trackedPaths(repoRoot, [current]);
       if (stillThere.has(current)) {
         resolved = current;

@@ -1246,6 +1246,32 @@ export const PIN_SWEEP_MAX_PATHS = 200;
 export const PIN_SWEEP_MAX_HOPS = 3;
 
 /**
+ * How many git processes ONE sweep may spawn while chasing renames.
+ *
+ * PIN_SWEEP_MAX_PATHS above bounds how many paths are considered; this bounds
+ * the WORK, and the two are not the same number. A path git is tracking costs
+ * nothing extra — one `ls-files` answers for the whole set — but a path git
+ * has LOST costs its own `rev-list` to find the commit that removed it, plus
+ * up to PIN_SWEEP_MAX_HOPS more calls to follow the rename. So the cost grew
+ * with the number of broken pins, which is exactly the registry a person
+ * sweeps. Measured before the bound existed, in a repo with one commit: 10
+ * missing paths took 340 ms, 50 took 1487 ms, 200 took 5015 ms — past bun's
+ * own 5 s test timeout, on a command somebody is waiting for.
+ *
+ * HISTORICAL: those three figures were measured against the unbounded code,
+ * which is fixed, so nothing in this tree re-derives them. What IS re-derived
+ * is the bound itself, in test/pin-sweep.test.ts.
+ *
+ * 40 is chosen against the registry rather than the clock: a HEALTHY registry
+ * spends none of this budget, because every pinned path is tracked. It only
+ * bites on a registry with more than 40 paths git can no longer find, which
+ * is a registry somebody has to repair by hand anyway — and the paths past
+ * the budget come back "unknown", which `crosscheck pin --sweep` reports as
+ * unanswered rather than as a verdict.
+ */
+export const PIN_SWEEP_MAX_GIT_CALLS = 40;
+
+/**
  * The git evidence lane's deadline (regression-guard Stage 1). One `git diff
  * --name-only HEAD` inside the Stop hook's spare budget, at the same 250 ms
  * every other Stop-adjacent git call uses — well under one HTTP_TIMEOUT_MS,
