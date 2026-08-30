@@ -63,6 +63,8 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   summarizerRejectCount: 0,
   summarizerNoSliceCount: 0,
   summarizerLastNoSlice: null,
+  summarizerLastSliceShape: null,
+  summarizerSliceDroppedChars: 0,
   summarizerLastRejection: null,
   summarizerUnreadableCount: 0,
   summarizerLastUnreadable: null,
