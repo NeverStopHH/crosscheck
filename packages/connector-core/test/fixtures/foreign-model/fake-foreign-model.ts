@@ -92,10 +92,18 @@ const main = async (): Promise<void> => {
   const dump = flagValue(argv, "--dump") ?? process.env["CX_FAKE_FOREIGN_DUMP"];
   if (dump !== undefined && dump.length > 0) {
     // Written BEFORE any sleep, so the timeout case still leaves evidence
-    // that the spawn happened and what it carried.
+    // that the spawn happened, what it carried, and WHICH PROCESS to look
+    // for afterwards — the pid is how a test proves the kill escalation
+    // actually reaped this process rather than assuming it did.
     await Bun.write(
       dump,
-      JSON.stringify({ argv, stdin, cwd: process.cwd(), env: process.env }),
+      JSON.stringify({
+        argv,
+        stdin,
+        cwd: process.cwd(),
+        env: process.env,
+        pid: process.pid,
+      }),
     );
   }
 

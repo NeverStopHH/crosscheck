@@ -46,14 +46,17 @@ export {
 export type { ForeignShape } from "../../../connector-core/test/fixtures/foreign-model/corpus.ts";
 
 export const FOREIGN_SESSION_ID = "foreign-model-session-uuid";
-const REPO_ID = "github.com/acme/api";
+export const FOREIGN_REPO_ID = "github.com/acme/api";
 /**
  * Port 1 is unbindable and unreachable, so a hub URL built on it can only
  * ever be a KEY here. The summarizer path never calls a hub — it appends to
  * the spool and the next hook flushes it — and a fixture that pointed at a
- * listening port would hide a regression that started calling one.
+ * listening port would hide a regression that started calling one. The test
+ * that flushes to a REAL throwaway hub passes that hub's URL to the flush
+ * context and keeps this one as the spool key, which is what the core spool
+ * tests do too.
  */
-const HUB_URL = "http://127.0.0.1:1";
+export const FOREIGN_HUB_URL = "http://127.0.0.1:1";
 
 const transcriptLine = (type: string, blocks: unknown[]): string =>
   `${JSON.stringify({ type, message: { role: type, content: blocks } })}\n`;
@@ -93,9 +96,9 @@ export const foreignFixture = async (
     hostSessionKey: FOREIGN_SESSION_ID,
     crosscheckSessionId: `cc_${FOREIGN_SESSION_ID}`,
     workContextId: `wc_cc_${FOREIGN_SESSION_ID}`,
-    repoId: REPO_ID,
+    repoId: FOREIGN_REPO_ID,
     repoRoot: dir,
-    hubUrl: HUB_URL,
+    hubUrl: FOREIGN_HUB_URL,
     developerId: "dev_self",
     startedAt: new Date().toISOString(),
     ...stateOverrides,
@@ -104,7 +107,7 @@ export const foreignFixture = async (
     home,
     transcript,
     sliceEnd: Buffer.byteLength(content),
-    key: repoKey(HUB_URL, REPO_ID),
+    key: repoKey(FOREIGN_HUB_URL, FOREIGN_REPO_ID),
     cleanup: async () => {
       await rm(home, { recursive: true, force: true });
       await rm(dir, { recursive: true, force: true });

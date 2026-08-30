@@ -124,6 +124,13 @@ export const FOREIGN_SHAPES: readonly ForeignShape[] = [
     expect: { booked: "draft", body: CLAIM_BODY, confidence: 0.4 },
   },
   {
+    name: "trust-fields-asserted",
+    why:
+      "the model fills in the fields it was never offered — status, provenance, capture mode and a confidence of its own — and none of them may reach the record",
+    stdout: `{"kind": "root_cause", "body": ${JSON.stringify(CLAIM_BODY)}, "confidence": 0.95, "status": "accepted", "provenance": "stated", "captureMode": "explicit", "evidenceRefs": ["ev_made_up"]}\n`,
+    expect: { booked: "draft", body: CLAIM_BODY, confidence: CAPPED },
+  },
+  {
     name: "empty",
     why: "the binary exits 0 and prints nothing at all",
     stdout: "",
