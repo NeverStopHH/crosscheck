@@ -9,8 +9,15 @@
  * assertion here is about that seam, and the ones that can pass for the wrong
  * reason carry the contrast that rules it out.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -36,7 +43,7 @@ import {
   CONFERENCE_MAX_REPORTS_PER_SECOND,
   runConference,
 } from "../src/cli/conference.ts";
-import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+import { makeRepo } from "../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "conference-cli-admin";
 const REPO_ID = "github.com/acme/api";
@@ -62,7 +69,21 @@ const SENTENCE = "Both are looking at the same stale key id read on the refresh 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
 let hubUrl: string;
+/**
+ * A crosscheck home OF THIS TEST'S OWN, replaced before every test by the
+ * `beforeEach` below. See the note on `tempHome`: a home shared across tests
+ * is the one resource in this file that runs out.
+ */
 let home: string;
+/**
+ * The ONE home two tests deliberately share, passed explicitly by both.
+ * "a lost model call is booked as a failure" books a failure into it and
+ * "status and doctor read the counters off the file" reads that same counter
+ * back through the CLI, so the second test is meaningless without the first.
+ * That coupling used to be an accident of every test defaulting to one home;
+ * naming it is what lets the default become isolation.
+ */
+let bookedFailureHome: string;
 let repo: string;
 let bigRepo: string;
 let aliceKey: string;
@@ -71,10 +92,36 @@ let kenKey: string;
 let kenId: string;
 
 const temps: string[] = [];
+/** Every home a conference in this file wrote into — see the guard at the end. */
+const homes: string[] = [];
 
 const tempDir = async (label: string): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), `cx-conf-${label}-`));
   temps.push(dir);
+  return dir;
+};
+
+/**
+ * A crosscheck home that no other test writes a report into, and that the
+ * guard at the end of this file checks.
+ *
+ * WHY EVERY TEST GETS ONE. A report is named by the run's UTC SECOND and
+ * cli/conference.ts allows CONFERENCE_MAX_REPORTS_PER_SECOND of them per
+ * second per home+repo key; past that the run refuses rather than replacing a
+ * page a human may not have read. This file writes THIRTEEN pages under one
+ * repo key, and in a single shared home they landed inside one or two seconds
+ * — so on a fast host the eleventh of a second met a full one, exited
+ * non-zero, and whichever test happened to BE the eleventh went red for a
+ * property of its ten predecessors. Measured on linux/bun 1.4.0: the whole
+ * file red in 8 of 10 runs, that one test selected alone green 3 of 3. It had
+ * already been patched twice, one test at a time (see "two runs in the same
+ * minute" and "a second with no free name"), before the third occurrence
+ * reddened main. Isolation is the DEFAULT here now: sharing a home is
+ * something a test has to ask for, in writing.
+ */
+const tempHome = async (label: string): Promise<string> => {
+  const dir = await tempDir(`home-${label}`);
+  homes.push(dir);
   return dir;
 };
 
@@ -298,7 +345,7 @@ beforeAll(async () => {
     fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch,
   });
   hubUrl = `http://127.0.0.1:${String(server.port)}`;
-  home = await makeHome("conference-cli");
+  bookedFailureHome = await tempHome("booked-failure");
   repo = await makeRepo("conference-cli", {
     remote: "git@github.com:acme/api.git",
   });
@@ -418,10 +465,15 @@ beforeAll(async () => {
   ]);
 });
 
+// One home per test, so no test can spend another test's report names.
+beforeEach(async () => {
+  home = await tempHome("per-test");
+});
+
 afterAll(async () => {
   server.stop(true);
   await Promise.all(
-    [home, repo, bigRepo, ...temps].map((path) =>
+    [repo, bigRepo, ...temps].map((path) =>
       rm(path, { recursive: true, force: true }),
     ),
   );
@@ -687,12 +739,15 @@ describe("the conference command", () => {
   });
 
   test("a lost model call is booked as a failure and the page still lands", async () => {
-    // Arrange
+    // Arrange: the home this test SHARES with the one below, named rather than
+    // defaulted — the counter written here is the whole subject of that test.
     const model = await makeFakeModel({ output: "", exitCode: 9 });
 
     // Act
     const result = await runConferenceFor([], {
       CROSSCHECK_SUMMARIZER_CMD: model,
+      CROSSCHECK_HOME: bookedFailureHome,
+      HOME: bookedFailureHome,
     });
 
     // Assert
@@ -700,15 +755,33 @@ describe("the conference command", () => {
     expect(await reportOf(result.stdout)).toContain(
       "The model call did not answer:",
     );
-    const cost = await readConferenceCost(home, repoKey(hubUrl, REPO_ID));
+    const cost = await readConferenceCost(
+      bookedFailureHome,
+      repoKey(hubUrl, REPO_ID),
+    );
     expect(cost.fails).toBeGreaterThan(0);
     expect(cost.lastFailure).not.toBeNull();
   });
 
   test("status and doctor read the counters off the file, with no live session", async () => {
+    // Arrange: the failure these two surfaces report was booked by the test
+    // ABOVE, into the home both name. Asserted rather than assumed, because
+    // the coupling is invisible from here: if the two ever stop sharing a
+    // home, this line says so instead of the WARN assertion below failing as
+    // if doctor had gone quiet.
+    const env = envFor(aliceKey, {
+      CROSSCHECK_HOME: bookedFailureHome,
+      HOME: bookedFailureHome,
+    });
+    const booked = await readConferenceCost(
+      bookedFailureHome,
+      repoKey(hubUrl, REPO_ID),
+    );
+    expect(booked.fails).toBeGreaterThan(0);
+
     // Act
-    const status = await runCli(["status"], envFor(aliceKey), repo);
-    const doctor = await runCli(["doctor"], envFor(aliceKey), repo);
+    const status = await runCli(["status"], env, repo);
+    const doctor = await runCli(["doctor"], env, repo);
 
     // Assert
     expect(status.stdout).toContain("conference: ");
@@ -761,21 +834,16 @@ describe("the conference command", () => {
     // that reports are deliberately never reaped, which makes losing one to a
     // filename collision the odd exception.
     const model = await makeFakeModel({ output: "NONE" });
-    // Its OWN home. The shared one already holds a page per conference test in
-    // this file, and on a fast host more than CONFERENCE_MAX_REPORTS_PER_SECOND
-    // of them land on the SAME second under the SAME repo key. The suffix
-    // search then runs out and hands BOTH runs the base path, so the assertion
-    // below failed on a property of the neighbouring tests rather than of the
-    // two runs it is about. HISTORICAL, and not re-derivable from this tree
-    // because the isolation below is the fix: on linux/bun 1.4.0 the fallback
-    // fired three times inside one second during a full-suite run and this
-    // test went red, while the same file run alone was green 5 of 5.
-    const ownHome = await tempDir("two-runs");
-    const env = {
-      CROSSCHECK_SUMMARIZER_CMD: model,
-      CROSSCHECK_HOME: ownHome,
-      HOME: ownHome,
-    };
+    // The home is this test's own, which is now the file-wide default rather
+    // than something this test asks for. HISTORICAL, and not re-derivable from
+    // this tree because that default is the fix: this test used to run in a
+    // home shared with every other conference test, more than
+    // CONFERENCE_MAX_REPORTS_PER_SECOND of their pages landed on the SAME
+    // second under the SAME repo key, the suffix search ran out and handed
+    // BOTH runs below the base path. On linux/bun 1.4.0 the fallback fired
+    // three times inside one second during a full-suite run and this test went
+    // red, while the same file run alone was green 5 of 5.
+    const env = { CROSSCHECK_SUMMARIZER_CMD: model };
 
     // Act
     const first = await runConferenceFor([], env);
@@ -793,8 +861,11 @@ describe("the conference command", () => {
   });
 
   test("a second with no free name refuses, and replaces no page", async () => {
-    // Arrange: its OWN home (the shared one holds a page per conference test
-    // in this file), and every name this second can take already written.
+    // Arrange: a home of its own that is deliberately NOT registered with
+    // `tempHome`, because this test seeds a repo key right up to the bound and
+    // the guard at the end of this file would read those sentinels as the very
+    // pressure it exists to catch. Every name this second can take is already
+    // written.
     // paths.ts states reports are deliberately never reaped, so the run that
     // finds no free name has to SAY so — the alternative it used to take was
     // returning the FIRST name, whose write replaced a page a human may never
@@ -1640,4 +1711,75 @@ describe("a finding published on somebody else's tree", () => {
     // the FILING was refused.
     expect(await reportOf(result.stdout)).toContain("stale key id left behind");
   });
+});
+
+/**
+ * THE GUARD, and the reason this file stops patching one failure mode one test
+ * at a time.
+ *
+ * A report is named by the run's UTC SECOND, and cli/conference.ts hands out
+ * CONFERENCE_MAX_REPORTS_PER_SECOND names per second per home+repo before it
+ * refuses — correctly, because reports are never reaped and the alternative is
+ * replacing a page nobody has read. A home that finishes a run holding that
+ * many pages under ONE repo key is therefore one unlucky schedule away from
+ * red: whether the eleventh run met a full second or a fresh one is decided by
+ * where the second boundary happened to fall inside a 350ms describe block.
+ * That is why the same file was green on one machine and red on another with
+ * no code between them, and why the two tests above were each "fixed" alone
+ * while the pressure that caused them stayed exactly where it was.
+ *
+ * So this asserts the PRESSURE, not the timing. It is red on every host,
+ * including the slow ones where the flake never reproduces, and it names the
+ * home instead of reddening whichever test happened to be the eleventh in the
+ * queue. Against a shared home it counts thirteen pages under one repo key;
+ * with a home per test the busiest home+key holds two.
+ */
+test("no home this file used is one run away from the per-second name bound", async () => {
+  /** Absent is empty: a home no conference wrote into has no such directory. */
+  const entriesIn = async (path: string): Promise<readonly string[]> => {
+    try {
+      return await readdir(path);
+    } catch {
+      return [];
+    }
+  };
+  /** The pages under one home+repo key — the unit the name bound is spent in. */
+  const pagesIn = async (
+    dir: string,
+    key: string,
+  ): Promise<readonly string[]> =>
+    (await entriesIn(join(dir, "conferences", key))).filter(
+      (name) => name.startsWith("conference-") && name.endsWith(".md"),
+    );
+
+  // Act: every page every conference in this file wrote, counted the way the
+  // name bound spends them — per home, per repo key.
+  const counted: { readonly where: string; readonly pages: number }[] = [];
+  for (const dir of homes) {
+    for (const key of await entriesIn(join(dir, "conferences"))) {
+      counted.push({
+        where: `${dir} key ${key}`,
+        pages: (await pagesIn(dir, key)).length,
+      });
+    }
+  }
+  const crowded = counted.filter(
+    (entry) => entry.pages >= CONFERENCE_MAX_REPORTS_PER_SECOND,
+  );
+
+  // Assert: name the home, rather than leaving a stack trace in whichever
+  // test's subject has nothing to do with report names.
+  expect(
+    crowded.map((entry) => `${entry.where}: ${String(entry.pages)} pages`),
+    `${String(crowded.length)} home(s) hold CONFERENCE_MAX_REPORTS_PER_SECOND ` +
+      "or more pages under one repo key, so a run that lands on a busy second " +
+      "refuses and reddens an unrelated test. Give the new test its own home " +
+      "— it gets one by default, so do not pass CROSSCHECK_HOME — or point it " +
+      "at a repo of its own",
+  ).toEqual([]);
+
+  // THE CONTROL: the walk found pages at all. An empty `homes`, a renamed
+  // `conferences` directory or a changed page prefix would all leave the
+  // assertion above green while it checked nothing.
+  expect(counted.filter((entry) => entry.pages > 0).length).toBeGreaterThan(0);
 });
