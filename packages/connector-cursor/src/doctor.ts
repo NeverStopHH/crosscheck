@@ -27,6 +27,7 @@ import { readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { summarizeSummarizerCost } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
 import { bareSummarizerLine } from "@crosscheck/connector-core/model/runner.ts";
+import { CURSOR_HOST_KEY_PREFIX } from "@crosscheck/connector-core/state/host-session-key.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 
@@ -432,6 +433,22 @@ export const cursorDoctorChecks = async (
           )
         : check("PASS", "cursor hooks", CURSOR_HOOK_EVENTS.join(", "));
 
+  // THIS SECTION'S SESSIONS AND NOBODY ELSE'S. The caller hands every section
+  // ONE scan of the session directory, and that scan filters on hub + repo
+  // only (core state/session-state.ts readLiveSessionStates) — so on a machine
+  // running Claude Code and Cursor in the same repo, which is this product's
+  // own pitch, a Claude session's booked failure arrives here too. The ACP
+  // twin has always filtered (connector-acp/src/doctor.ts) and its header
+  // states the stake: a foreign session's failed fire lighting up this rung
+  // makes the line stop meaning anything, in both directions — it cannot
+  // answer "is MY Cursor rung failing" if it also counts someone else's.
+  //
+  // The prefix covers Cursor BACKGROUND agents too (host-session-key.ts: same
+  // `cur-` namespace), so nothing Cursor-owned is filtered away.
+  const cursorStates = (input.liveStates ?? []).filter((state) =>
+    state.hostSessionKey.startsWith(CURSOR_HOST_KEY_PREFIX),
+  );
+
   const firstOwned = owned[0];
   const launcher =
     firstOwned === undefined
@@ -450,8 +467,8 @@ export const cursorDoctorChecks = async (
     versionCheck(sync.cursorVersion),
     await driftCheck(input.home),
     await injectionCheck(input.home),
-    ...capabilityChecks(input.liveStates ?? []),
-    ...transcriptRefusalCheck(input.liveStates ?? []),
+    ...capabilityChecks(cursorStates),
+    ...transcriptRefusalCheck(cursorStates),
     ...refusalChecks(),
   ];
 };

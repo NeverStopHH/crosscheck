@@ -1979,6 +1979,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "with no surface saying so",
   },
   {
+    // Found by review: the ACP twin has always filtered its scan by host
+    // prefix and said why in its header; the Cursor section was handed the
+    // same unfiltered scan and never did.
+    label: "the Cursor rungs count every host's failures as Cursor's",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "    state.hostSessionKey.startsWith(CURSOR_HOST_KEY_PREFIX),",
+    to: '    state.hostSessionKey.startsWith(""),',
+    test: `${CURSOR}/test/derive-doctor.test.ts`,
+    because:
+      "a Claude or ACP session's booked model failure WARNs on a cursor " +
+      "rung that is working, with another host's model stdout quoted on " +
+      "the line, and Cursor's own failures become indistinguishable from " +
+      "a colleague's",
+  },
+  {
     // Rule 4 on this surface: three of the four derive failure paths are
     // booked in session state and doctor prints them; slice content the byte
     // cap refused is booked nowhere else, so the proxy log is its only home.
