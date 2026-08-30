@@ -73,7 +73,7 @@ import {
 } from "./gate.ts";
 import { declaredClaims, renderGhostInput, resolveGhostArgv } from "./prompt.ts";
 import type { DeclaredClaim } from "./prompt.ts";
-import { isNoneAnswer } from "../../model/parse.ts";
+import { readModelSentence } from "../../model/parse.ts";
 import {
   formatSummarizerFailure,
   resolveSummarizerTimeoutMs,
@@ -99,6 +99,7 @@ export const parseGhostWorkerArgs = (
 
 /** Booked drops, named so status/doctor can say why a fire landed nothing. */
 const DROPPED_EMPTY_ANSWER = "dropped: empty answer";
+const DROPPED_NOT_SENTENCE = "dropped: the answer was not a sentence";
 const DROPPED_INPUT_ECHO = "dropped: the sentence repeats a claim it was shown";
 const DROPPED_HINT_ECHO = "dropped: the sentence echoes a delivered hint";
 const DROPPED_SECRET = "dropped: secret-like text";
@@ -110,14 +111,6 @@ const bookFailure = (
   detail: string,
 ): Promise<boolean> =>
   updateSessionState(home, sessionId, (fresh) => withGhostFailure(fresh, detail));
-
-/** The first non-empty line of what the model said, whitespace-collapsed. */
-const firstSentence = (stdout: string): string =>
-  stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0)
-    ?.replace(/\s+/g, " ") ?? "";
 
 /**
  * The hub context, resolved through the SAME loader every reporting surface
@@ -244,14 +237,24 @@ const runGhostCheck = async (
     await bookFailure(home, args.claudeSessionId, formatSummarizerFailure(result));
     return;
   }
-  if (isNoneAnswer(result.stdout)) {
+  // Same contract as the intent task, and for the same reason: this answer
+  // becomes a `hypothesis` claim body published under this developer's name,
+  // so a wrapper answering the SUMMARIZER's instruction must be refused and
+  // booked rather than laundered into a draft.
+  const answer = readModelSentence(result.stdout);
+  if (answer.kind === "none") {
     await updateSessionState(home, args.claudeSessionId, withGhostNone);
     return;
   }
-  const sentence = cutWellFormed(
-    firstSentence(result.stdout),
-    GHOST_SENTENCE_MAX_CHARS,
-  );
+  if (answer.kind === "unreadable") {
+    await bookFailure(
+      home,
+      args.claudeSessionId,
+      answer.why === "empty" ? DROPPED_EMPTY_ANSWER : DROPPED_NOT_SENTENCE,
+    );
+    return;
+  }
+  const sentence = cutWellFormed(answer.text, GHOST_SENTENCE_MAX_CHARS);
   if (sentence.length === 0) {
     await bookFailure(home, args.claudeSessionId, DROPPED_EMPTY_ANSWER);
     return;
@@ -274,7 +277,7 @@ const runGhostCheck = async (
  * sends (ghost/prompt.ts DeclaredClaim says the same from the other side).
  *
  * AND IT IS CONTAINMENT RATHER THAN AN EQUALITY HASH, because by the time the
- * answer reaches here it has been reduced TWICE — `firstSentence` keeps only
+ * answer reaches here it has been reduced TWICE — `readModelSentence` keeps only
  * the first non-empty line, then `cutWellFormed` cuts it to
  * GHOST_SENTENCE_MAX_CHARS. A claim body may be longer than that bound and may
  * carry a line break (both are legal at GHOST_CLAIM_BODY_MAX_CHARS), so a hash

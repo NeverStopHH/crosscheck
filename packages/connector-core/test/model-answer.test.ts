@@ -20,6 +20,7 @@ import {
   isNoneAnswer,
   parseSummarizerOutput,
   readModelAnswer,
+  readModelSentence,
   stripModelWrapping,
 } from "../src/model/parse.ts";
 import { FOREIGN_SHAPES } from "./fixtures/foreign-model/corpus.ts";
@@ -193,5 +194,65 @@ describe("the contract itself is not negotiable", () => {
   test("stripping removes packaging and nothing else", () => {
     expect(stripModelWrapping("```json\n{\"a\":1}\n```")).toBe('{"a":1}');
     expect(stripModelWrapping("NONE\r\n")).toBe("NONE");
+  });
+});
+
+/**
+ * THE OTHER CONTRACT ON THE SAME STDOUT. Two of the four tasks behind
+ * `CROSSCHECK_SUMMARIZER_CMD` want a SENTENCE, not claim JSON — the session
+ * intent and the ghost check — and until this pass existed each took the
+ * first non-empty line of RAW stdout, whatever that line happened to be.
+ *
+ * Two shapes went straight through. A wrapper carrying the summarizer's
+ * instruction (which is exactly what the documented example wrapper does,
+ * because nothing on the argv says which task fired) published its claim JSON
+ * as the developer's intent; and a reasoning model published the literal
+ * `<think>` tag, because the strip that had protected the claim path since
+ * this file's first case was never applied here.
+ */
+describe("reading an answer that has to be a sentence", () => {
+  test("a claim document is not a sentence, and says which kind of unreadable", () => {
+    expect(
+      readModelSentence(
+        '{"kind":"root_cause","body":"the lease is renewed after it expires","confidence":0.9}',
+      ),
+    ).toEqual({ kind: "unreadable", why: "shape" });
+    expect(
+      readModelSentence('```json\n{"kind":"decision","body":"pool it"}\n```'),
+    ).toEqual({ kind: "unreadable", why: "shape" });
+    // A JSON ARRAY is not a sentence either, and is not claim-shaped, so the
+    // opener check is what catches it.
+    expect(readModelSentence('["a","b"]')).toEqual({
+      kind: "unreadable",
+      why: "shape",
+    });
+  });
+
+  test("a reasoning model's scratchpad is stripped, not published", () => {
+    expect(
+      readModelSentence("<think>\nweighing two options\n</think>\nRefresh 500s after key rotation"),
+    ).toEqual({ kind: "sentence", text: "Refresh 500s after key rotation" });
+    // The bound-cut, never-closed version leaves nothing at all.
+    expect(readModelSentence("<think>\nstill going when the cap hit")).toEqual({
+      kind: "unreadable",
+      why: "empty",
+    });
+  });
+
+  test("NONE is still NONE, preamble, fence and full stop included", () => {
+    expect(readModelSentence("NONE").kind).toBe("none");
+    expect(readModelSentence("Sure! Here is my analysis.\n\nNONE").kind).toBe("none");
+    expect(readModelSentence("```\nNONE\n```").kind).toBe("none");
+  });
+
+  test("an ordinary sentence is taken whole, collapsed, first line only", () => {
+    expect(
+      readModelSentence("  Find why  the refresh   call 500s \nsecond line ignored\n"),
+    ).toEqual({ kind: "sentence", text: "Find why the refresh call 500s" });
+  });
+
+  test("nothing at all is empty, not shape — the remedies differ", () => {
+    expect(readModelSentence("")).toEqual({ kind: "unreadable", why: "empty" });
+    expect(readModelSentence("  \n \n")).toEqual({ kind: "unreadable", why: "empty" });
   });
 });

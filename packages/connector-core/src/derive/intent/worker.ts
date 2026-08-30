@@ -50,7 +50,7 @@ import {
 import type { SessionState } from "../../state/session-state.ts";
 import { withIntentFailure, withIntentNone, withIntentSet } from "./gate.ts";
 import { resolveIntentArgv } from "./prompt.ts";
-import { isNoneAnswer } from "../../model/parse.ts";
+import { readModelSentence } from "../../model/parse.ts";
 import {
   formatSummarizerFailure,
   resolveSummarizerTimeoutMs,
@@ -79,18 +79,11 @@ export const parseIntentWorkerArgs = (
   return { claudeSessionId, promptFile };
 };
 
-/** The first non-empty line of what the model said, whitespace-collapsed. */
-const firstSentence = (stdout: string): string =>
-  stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0)
-    ?.replace(/\s+/g, " ") ?? "";
-
 /** Booked drops, named so status/doctor can say why a fire landed nothing. */
 const DROPPED_NO_TITLE = "dropped: session state predates intent support (no title)";
 const DROPPED_EMPTY_PROMPT = "dropped: empty prompt";
 const DROPPED_EMPTY_ANSWER = "dropped: empty answer";
+const DROPPED_NOT_SENTENCE = "dropped: the answer was not a sentence";
 const DROPPED_ECHO = "dropped: the sentence echoes a delivered hint";
 const DROPPED_SECRET = "dropped: secret-like text";
 const DROPPED_CONTRACT = "dropped: the record failed the wire contract";
@@ -133,11 +126,24 @@ const deriveIntent = async (args: IntentWorkerArgs, env: Env): Promise<void> => 
     await bookFailure(home, args.claudeSessionId, formatSummarizerFailure(result));
     return;
   }
-  if (isNoneAnswer(result.stdout)) {
+  // ONE read of stdout, and the shape is part of the contract: this task
+  // asked for a sentence, so claim JSON — what a wrapper carrying the
+  // SUMMARIZER's instruction answers, the argv being identical — is refused
+  // and booked, never published as this developer's intent.
+  const answer = readModelSentence(result.stdout);
+  if (answer.kind === "none") {
     await updateSessionState(home, args.claudeSessionId, withIntentNone);
     return;
   }
-  const sentence = cutWellFormed(firstSentence(result.stdout), MAX_INTENT_SUMMARY_CHARS);
+  if (answer.kind === "unreadable") {
+    await bookFailure(
+      home,
+      args.claudeSessionId,
+      answer.why === "empty" ? DROPPED_EMPTY_ANSWER : DROPPED_NOT_SENTENCE,
+    );
+    return;
+  }
+  const sentence = cutWellFormed(answer.text, MAX_INTENT_SUMMARY_CHARS);
   if (sentence.length === 0) {
     await bookFailure(home, args.claudeSessionId, DROPPED_EMPTY_ANSWER);
     return;

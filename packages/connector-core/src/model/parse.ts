@@ -275,3 +275,72 @@ export const parseSummarizerOutput = (stdout: string): DraftOutput | null => {
   const answer = readModelAnswer(stdout);
   return answer.kind === "claim" ? answer.draft : null;
 };
+
+/**
+ * Everything a SENTENCE-shaped answer can turn out to be.
+ *
+ * WHY THIS EXISTS SEPARATELY FROM `readModelAnswer`. Four tasks sit behind
+ * the single `CROSSCHECK_SUMMARIZER_CMD` override, and the argv a wrapper
+ * receives is exactly `[cmd]` — nothing on it says which task fired. Two of
+ * those tasks want claim JSON (the summarizer, the conference) and two want
+ * PROSE (the session intent, the ghost check). So a wrapper that hard-codes
+ * one instruction — which is precisely what a foreign-model wrapper must do,
+ * and what the documented example does — will answer the other two in the
+ * wrong shape, every time.
+ *
+ * Until this existed the prose pair took the first non-empty line of RAW
+ * stdout, whatever that line happened to be. A wrapper carrying the
+ * summarizer's instruction therefore published its claim JSON as the
+ * developer's session intent, and a reasoning model published the literal
+ * `<think>` tag — both booked as SUCCESS, because neither path had an
+ * unreadable outcome at all.
+ */
+export type ModelSentence =
+  | { readonly kind: "none" }
+  | { readonly kind: "sentence"; readonly text: string }
+  | { readonly kind: "unreadable"; readonly why: UnreadableReason };
+
+/**
+ * A stripped answer that opens like a DOCUMENT rather than like prose. This
+ * is deliberately cruder than the claim parse: `["a","b"]` is not
+ * claim-shaped and so is not a `claim`, but it is still emphatically not a
+ * sentence, and a reader that only asked "did this parse as a claim" would
+ * publish it. Fail CLOSED — a refused answer costs one fire and says why; a
+ * published one is a teammate reading JSON as a colleague's intent.
+ */
+const DOCUMENT_OPENER_PATTERN = /^[{[]/;
+
+/**
+ * The prose half of the same stdout, decided in ONE pass and in the same
+ * order as the claim half: strip the packaging, then empty, then NONE, then
+ * refuse anything document-shaped, and only then take the sentence.
+ *
+ * The sentence is the first non-empty line, whitespace-collapsed — a model
+ * that adds a second line of commentary loses the commentary, not the answer.
+ *
+ * VERIFY: bun -e 'const {readModelSentence: r} = await import("./packages/connector-core/src/model/parse.ts"); console.log(JSON.stringify([r("").why, r("<think>x</think>\nFind the 500").text, r("Sure!\nNONE").kind, r("{\"kind\":\"decision\",\"body\":\"b\"}").why, r("[\"a\"]").why]))'
+ * PRINTS: ["empty","Find the 500","none","shape","shape"]
+ */
+export const readModelSentence = (stdout: string): ModelSentence => {
+  const text = stripModelWrapping(stdout);
+  if (text.length === 0) {
+    return { kind: "unreadable", why: "empty" };
+  }
+  if (isNoneText(text)) {
+    return { kind: "none" };
+  }
+  if (
+    DOCUMENT_OPENER_PATTERN.test(text) ||
+    readModelAnswer(stdout).kind === "claim"
+  ) {
+    return { kind: "unreadable", why: "shape" };
+  }
+  const first = text
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (first === undefined) {
+    return { kind: "unreadable", why: "empty" };
+  }
+  return { kind: "sentence", text: first.replace(/\s+/g, " ") };
+};
