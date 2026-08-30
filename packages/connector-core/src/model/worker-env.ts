@@ -79,6 +79,13 @@ export const PARENT_SESSION_MARKER_PATTERN =
 /**
  * The worker's environment: everything the hook was invoked with except the
  * parent-session markers, plus the two values the worker must always see —
+ *
+ * NO LONGER THE ONLY PLACE THE DENYLIST IS APPLIED, and no longer the
+ * load-bearing one: runner.ts childEnv applies the same pattern at the spawn
+ * itself, because hygiene that holds only when the caller remembers it is not
+ * hygiene. This stays because a worker PROCESS is longer-lived than one
+ * spawn and should not carry the markers in its own environment either.
+ *
  * where the crosscheck home is, and the child marker that makes every
  * crosscheck hook entry inside the nested claude exit silently
  * (config/config.ts isSummarizerChild). Undefined values are dropped, so the

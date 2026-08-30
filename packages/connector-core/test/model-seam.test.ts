@@ -190,6 +190,42 @@ describe("env hygiene travels with the seam", () => {
       expect(result.stdout.trim()).toBe("key=absent child=1");
     }
   });
+
+  test("a caller that built the env by hand still cannot leak the session", async () => {
+    // Arrange: the parent Claude Code session's own binding markers, in an
+    // env the CALLER assembled — which is not a hypothetical. The detached
+    // derive workers go through deriveWorkerEnv and are clean; `crosscheck
+    // conference` (cli/src/cli/conference.ts) hands the runner the raw
+    // process.env of the terminal it was typed in, and a developer types it
+    // inside a Claude Code session more often than not.
+    //
+    // Measured before the fix, with all six set: 6 of 6 reached the model.
+    // The denylist was CALLER discipline, so the one caller that skipped it
+    // handed a nested `claude -p` the session it was summarizing.
+    const fake = await writeFake(
+      "session-report.sh",
+      'cat > /dev/null\necho "code=${CLAUDECODE:-absent} sid=${CLAUDE_CODE_SESSION_ID:-absent} port=${CLAUDE_CODE_SSE_PORT:-absent} dir=${CLAUDE_PROJECT_DIR:-absent} auth=${ANTHROPIC_API_KEY:-absent}"',
+    );
+
+    // Act
+    const result = await runSummarizer([fake], "slice", 10_000, {
+      CLAUDECODE: "1",
+      CLAUDE_CODE_SESSION_ID: "parent-session-abc",
+      CLAUDE_CODE_SSE_PORT: "51234",
+      CLAUDE_PROJECT_DIR: "/Users/dev/repo",
+      ANTHROPIC_API_KEY: "kept-because-it-is-how-the-child-logs-in",
+    });
+
+    // Assert: stripped at the spawn, whoever built the env — and the AUTH
+    // variable survives, because a denylist that swept CLAUDE_ or ANTHROPIC_
+    // wholesale would log the nested model out.
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.stdout.trim()).toBe(
+        "code=absent sid=absent port=absent dir=absent auth=kept-because-it-is-how-the-child-logs-in",
+      );
+    }
+  });
 });
 
 describe("the timeout and the bounds are the seam's, not the caller's", () => {

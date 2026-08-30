@@ -14,10 +14,11 @@
  * BEFORE GATE 1, and not in this file: the runner (runner.ts) resolves the
  * argv — CROSSCHECK_SUMMARIZER_CMD replaces the binary wholesale, otherwise
  * the lean `claude -p` — builds the child environment (the hub key dropped,
- * the CROSSCHECK_SUMMARIZER_CHILD marker set, the parent-session denylist
- * applied by worker-env.ts on the worker that got here), spawns, races the
- * deadline against the read, and cuts stdout at SUMMARIZER_OUTPUT_MAX_BYTES.
- * Everything below starts from that already-bounded string.
+ * the parent-session markers dropped, the CROSSCHECK_SUMMARIZER_CHILD marker
+ * set — all three at the spawn itself, so a caller that assembled the env by
+ * hand cannot skip any of them), spawns, races the deadline against the read,
+ * and cuts stdout at SUMMARIZER_OUTPUT_MAX_BYTES. Everything below starts
+ * from that already-bounded string.
  *
  * THE ORDER THIS FILE IMPLEMENTS, exactly:
  *

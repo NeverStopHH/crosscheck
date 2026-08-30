@@ -27,8 +27,12 @@
  * globally installed hooks from inside the summarizer (phantom sessions,
  * and a Stop hook that could fire the summarizer again). SUMMARIZER_LEAN_FLAGS
  * below strip all of that; the marker env (SUMMARIZER_CHILD_ENV) is the
- * guard that holds even where a flag does not. Both are BACKEND hygiene,
- * applied on every spawn from here, not knowledge any one connector holds.
+ * guard that holds even where a flag does not; and the parent-session
+ * denylist (childEnv, below) keeps the session's own binding variables out of
+ * the child. All three are BACKEND hygiene, applied on every spawn from here,
+ * not knowledge any one connector holds — the denylist joined them on
+ * 2026-08-30, after a caller that assembled the env by hand was measured
+ * handing a nested model 6 of 6 markers.
  */
 import { bareUntrusted } from "../briefing/sanitize.ts";
 import {
@@ -40,6 +44,7 @@ import {
   SUMMARIZER_TIMEOUT_MS,
 } from "../constants.ts";
 import type { Env } from "../config/paths.ts";
+import { PARENT_SESSION_MARKER_PATTERN } from "./worker-env.ts";
 
 /**
  * What the model is asked, verbatim. One assertion or NONE — the tolerant
@@ -303,19 +308,59 @@ const errorMessage = (error: unknown): string =>
 const HUB_KEY_ENV = "CROSSCHECK_API_KEY";
 
 /**
- * The child's environment: the caller's, undefined values and the hub key
- * dropped, plus the child marker — set HERE as well as by
- * model/worker-env.ts, so the nested claude carries it even when a
- * caller built the env by hand (the doctor probe, an operator's one-off).
+ * The child's environment: the caller's, minus undefined values, minus the
+ * hub key, minus the parent session's binding markers, plus the child marker.
+ *
+ * ALL FOUR ARE APPLIED HERE, ON EVERY SPAWN, and that is the point rather
+ * than an implementation detail. Two of them were already the runner's; the
+ * DENYLIST was not, and was caller discipline instead — model/worker-env.ts
+ * applies it when a trigger builds a detached worker's environment, which
+ * covers the three derive workers and doctor's probe and covered nothing
+ * else. `crosscheck conference` (cli/src/cli/conference.ts) hands this
+ * function the raw process.env of the terminal it was typed in, and a
+ * developer types it from inside a Claude Code session more often than not:
+ * measured 2026-08-30 with a fake binary reporting its own environment, 6 of
+ * 6 markers — CLAUDECODE, CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_SSE_PORT,
+ * CLAUDE_CODE_ENTRYPOINT, CLAUDE_PROJECT_DIR, CLAUDE_PLUGIN_ROOT — reached
+ * the model, so a nested `claude -p` was handed the session it was
+ * summarizing. Hygiene that only holds when the caller remembers it is not
+ * hygiene; it belongs at the one door every spawn goes through.
+ *
+ * The worker path still applies the same pattern one level up. That is now
+ * redundant rather than load-bearing, and deliberately kept: a worker
+ * process is a longer-lived thing than one spawn, and its own environment
+ * should not carry markers either.
+ *
+ * WHAT SURVIVES, unchanged and load-bearing: every auth name. ANTHROPIC_*,
+ * CLAUDE_CODE_OAUTH_TOKEN, the Bedrock/Vertex knobs, CLAUDE_CONFIG_DIR, the
+ * proxy and CA variables. A denylist that swept CLAUDE_ or ANTHROPIC_
+ * wholesale would log the nested model out — and ANTHROPIC_BASE_URL passing
+ * through is what makes the documented "point the default backend at another
+ * endpoint" lane work at all (docs/FOREIGN-MODELS.md).
+ *
+ * VERIFY: bun -e 'const {childEnvForTest: c} = await import("./packages/connector-core/src/model/runner.ts"); const e = c({CLAUDECODE:"1",CLAUDE_CODE_SESSION_ID:"s",CLAUDE_CODE_SSE_PORT:"1",CLAUDE_CODE_ENTRYPOINT:"cli",CLAUDE_PROJECT_DIR:"/r",CLAUDE_PLUGIN_ROOT:"/p",CROSSCHECK_API_KEY:"k",ANTHROPIC_BASE_URL:"https://x",ANTHROPIC_API_KEY:"a"}); console.log(Object.keys(e).sort().join(" "))'
+ * PRINTS: ANTHROPIC_API_KEY ANTHROPIC_BASE_URL CROSSCHECK_SUMMARIZER_CHILD
  */
 const childEnv = (env: Env): Record<string, string> => ({
   ...Object.fromEntries(
     Object.entries(env).flatMap(([name, value]) =>
-      value === undefined || name === HUB_KEY_ENV ? [] : [[name, value]],
+      value === undefined ||
+      name === HUB_KEY_ENV ||
+      PARENT_SESSION_MARKER_PATTERN.test(name)
+        ? []
+        : [[name, value]],
     ),
   ),
   [SUMMARIZER_CHILD_ENV]: SUMMARIZER_CHILD_ON,
 });
+
+/**
+ * The child environment builder, exposed for the VERIFY line above and for
+ * the seam test — the spawn itself is the real pin (a builder nobody spawns
+ * proves nothing), so this stays a named export rather than the thing the
+ * tests assert on.
+ */
+export const childEnvForTest = childEnv;
 
 /**
  * Runs the summarizer over one slice: slice on stdin, stdout captured and
