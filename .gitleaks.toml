@@ -19,6 +19,12 @@ paths = [
   '''packages/connector-core/test/delivered-store\.test\.ts''',
   '''packages/connector-core/test/review-draft\.test\.ts''',
   '''packages/connector-claude/test/summarizer-worker\.test\.ts''',
+  # Same class again, from the knowledge-layer surfaces: the derived-intent
+  # worker must DROP a secret-like sentence rather than redact it, and a
+  # detached-HEAD fallback title carrying one must lose the whole subject.
+  # Both tests have to plant a credential-shaped string to prove the refusal.
+  '''packages/connector-claude/test/intent-worker\.test\.ts''',
+  '''packages/connector-core/test/session-flows\.test\.ts''',
   # Pre-extraction homes of the three connector-core files above (moved in the
   # Block 1 core extraction). History still carries those blobs at these paths,
   # so a history scan needs the old locations allowlisted too.
