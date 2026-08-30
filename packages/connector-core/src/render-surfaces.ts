@@ -402,7 +402,10 @@ const diagnosisWith = (payload: string): Diagnosis => ({
   ],
   edges: [],
   externalClaims: [],
-  targets: [],
+  // The TARGET slots (Nick's gap 2): kind and value are both author-written
+  // and both now reach the reader, so the corpus has to plant in them.
+  targets: [{ kind: payload, value: payload }],
+  targetsReported: true,
   truncated: false,
   droppedRows: 0,
 });

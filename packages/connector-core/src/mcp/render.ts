@@ -26,7 +26,9 @@
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
 import {
+  HUB_MAX_DIAGNOSIS_TARGETS,
   MAX_DIAGNOSIS_CHARS,
+  MAX_DIAGNOSIS_TARGETS_SHOWN,
   MAX_HUB_MESSAGE_CHARS,
   MAX_SEARCH_CHARS,
   MAX_TITLE_CHARS,
@@ -50,6 +52,7 @@ import type {
   Diagnosis,
   DiagnosisClaim,
   DiagnosisEdge,
+  DiagnosisTarget,
   ExternalClaimRef,
   SearchResultEntry,
 } from "../http/hub.ts";
@@ -64,6 +67,15 @@ import type {
  * whole file is trying to avoid.
  */
 export const UNNAMED_AUTHOR = "an unnamed teammate";
+
+/**
+ * A captured target whose kind AND value both sanitize to nothing — a value
+ * built entirely from invisibles or from the characters this renderer owns.
+ *
+ * Same trade as UNNAMED_AUTHOR: the row is worth less than a real path and
+ * far more than a section whose header counts one more row than it shows.
+ */
+export const UNPRINTABLE_TARGET = "a target with nothing printable in it";
 
 /**
  * The ID class — `safeId`, the allowlist, and `SAFE_ID_PATTERN`, its positive
@@ -270,6 +282,34 @@ const edgeLine = (
 const externalLine = (ref: ExternalClaimRef): string =>
   `- ${safeId(ref.id)} · ${bare(ref.kind)} · in work context ${safeId(ref.workContextId)}`;
 
+/**
+ * One captured target — WHERE this investigation happened.
+ *
+ * BARE, NOT FRAMED, and at the width the tripwire already prints a file path
+ * (`bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS)`, hints/render.ts).
+ * A path is not prose: the reader's next move is to open it or grep for it,
+ * and guillemets around `src/auth/refresh.ts` would travel with every copy of
+ * it. `bare` is what makes printing it outside the frame safe — it strips the
+ * characters this renderer uses as structure, so a target cannot mint a
+ * second field or a second line, which is the only thing an unframed value
+ * could otherwise do here.
+ *
+ * NO SEPARATOR BETWEEN KIND AND VALUE, deliberately: ` · ` is the renderer's
+ * field separator on every other line of this document, and one more use of
+ * it on a line whose second half is a path is one more thing a path could
+ * imitate. A space reads the same and forges nothing.
+ */
+const targetLine = (target: DiagnosisTarget): string => {
+  const parts = [
+    bare(target.kind),
+    bare(target.value, MAX_WORK_CONTEXT_TITLE_CHARS),
+  ].filter((part) => part.length > 0);
+  // A row whose every field sanitized away still renders, for the same reason
+  // UNNAMED_AUTHOR does above: the alternative is a section that is quietly
+  // one row shorter than the count in its own header.
+  return `- ${parts.length === 0 ? UNPRINTABLE_TARGET : parts.join(" ")}`;
+};
+
 export interface Section {
   readonly header: string;
   readonly lines: readonly string[];
@@ -359,7 +399,38 @@ const completenessNotes = (diagnosis: Diagnosis): readonly string[] => [
         `Note: ${String(diagnosis.droppedRows)} rows the hub sent could not be read and were dropped.`,
       ]
     : []),
+  // The hub's own target LIMIT is silent — a full page looks exactly like a
+  // complete one on the wire — so a client that mirrors the constant is the
+  // only thing that can say it. A NOTE rather than a line of the section,
+  // because it is a statement about completeness and the notes are the one
+  // thing this document pays for before any row of any section.
+  ...(diagnosis.targets.length >= HUB_MAX_DIAGNOSIS_TARGETS
+    ? [
+        "Note: the hub returned as many targets as it will send, so more may exist.",
+      ]
+    : []),
 ];
+
+/**
+ * The three honest states of the targets block, as ONE line each for the two
+ * that have nothing to list.
+ *
+ * A hub that never answered and a work context nothing was captured on are
+ * different facts, and only one of them says anything about the code. Folding
+ * them into a shared "no files touched" would be the lie a reader cannot
+ * detect: they would conclude their edit overlaps nobody.
+ */
+const TARGETS_UNREPORTED =
+  "This hub does not report captured targets.";
+const TARGETS_EMPTY =
+  "No targets were captured for this work context.";
+
+const targetsStateLines = (diagnosis: Diagnosis): readonly string[] => {
+  if (!diagnosis.targetsReported) {
+    return [TARGETS_UNREPORTED];
+  }
+  return diagnosis.targets.length === 0 ? [TARGETS_EMPTY] : [];
+};
 
 /** Same-author revision edge; its TARGET is the retracted claim. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
@@ -578,10 +649,31 @@ export const renderDiagnosis = (
 
   const opening =
     diagnosis.claims.length === 0
-      ? [header, contextLine, ...intentLines, ...solvedLines, "Claims: no claims recorded yet."]
-      : [header, contextLine, ...intentLines, ...solvedLines];
+      ? [
+          header,
+          contextLine,
+          ...intentLines,
+          ...solvedLines,
+          ...targetsStateLines(diagnosis),
+          "Claims: no claims recorded yet.",
+        ]
+      : [header, contextLine, ...intentLines, ...solvedLines, ...targetsStateLines(diagnosis)];
 
   const sections: readonly Section[] = [
+    // WHERE, BEFORE WHAT. A reader who is about to edit the same file wants
+    // the overlap before the reasoning — Nick called the file list "the most
+    // direct connection" — and the section is small enough to afford the
+    // position: it shows at most MAX_DIAGNOSIS_TARGETS_SHOWN rows, and any
+    // claim line it displaces is counted by the claims section's own
+    // "(+N claims not shown)".
+    {
+      header: countHeader("Targets", diagnosis.targets.length),
+      lines: diagnosis.targets
+        .slice(0, MAX_DIAGNOSIS_TARGETS_SHOWN)
+        .map(targetLine),
+      total: diagnosis.targets.length,
+      noun: "target",
+    },
     {
       // The ordering is STATED, not implied: the ages alone cannot express
       // it once two findings share a day, and `claimsOldestFirst` is what

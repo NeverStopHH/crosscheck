@@ -96,7 +96,16 @@ const INTENT_LINE = /^Session intent(?: \(derived\))?: «[^«»]*»$/;
 const NO_CLAIMS_LINE = /^Claims: no claims recorded yet\.$/;
 /** The Claims header carries its ordering; the others carry only a count. */
 const SECTION_HEADER =
-  /^(Claims|Edges|Claims in other work contexts referenced here) \(\d+\)(, oldest first)?:$/;
+  /^(Targets|Claims|Edges|Claims in other work contexts referenced here) \(\d+\)(, oldest first)?:$/;
+/*
+ * A captured target — `- <kind> <value>`, both BARE, and the shape asserts
+ * exactly what BARE buys: no frame character and no field separator. `bare`
+ * strips « » and U+00B7 and the colon (briefing/sanitize.ts RENDERER_STRUCTURE
+ * plus STRUCTURAL_PATTERN), so a payload in either field cannot open a frame,
+ * mint a second field, or end the fact list and start a body — which is the
+ * whole reason a path may be printed outside the quotes at all.
+ */
+const TARGET_LINE = /^- [^«»·:]+$/;
 /** id · kind · status X · confidence N.NN · provenance P · author [· Nd ago][· evidence …][· seen N×]: «body» */
 const CLAIM_LINE =
   /^- [\w.:-]* · .* · status .* · confidence \d\.\d\d · .*: «[^«»]*»$/;
@@ -110,6 +119,7 @@ const DIAGNOSIS_LINE_SHAPES = [
   INTENT_LINE,
   NO_CLAIMS_LINE,
   SECTION_HEADER,
+  TARGET_LINE,
   CLAIM_LINE,
   EDGE_LINE,
   EXTERNAL_LINE,
@@ -142,12 +152,20 @@ const SEARCH_LINE_SHAPES = [
 
 /**
  * The fixture's shape, which the containment counts below depend on: two claims,
- * one edge, one foreign reference, and (since trial finding #16) the session
- * intent on its own line — ten lines, and no payload may change that number. A
- * payload that split its own bullet in two, or invented a section, moves it
- * whether or not it also smuggled a character through.
+ * one edge, one foreign reference, (since trial finding #16) the session intent
+ * on its own line, and (since the diagnosis names the files an investigation
+ * touched) one captured target under its own header — twelve lines, and no
+ * payload may change that number. A payload that split its own bullet in two,
+ * or invented a section, moves it whether or not it also smuggled a character
+ * through.
+ *
+ * THE TARGET ROW CANNOT VANISH THE WAY AN INTENT CAN. A target whose kind and
+ * value both sanitize to nothing still renders, as UNPRINTABLE_TARGET, so this
+ * count has no target-slot exemption — deliberately: a section one row shorter
+ * than the count in its own header is the silent shortening the whole file
+ * exists to catch.
  */
-const EXPECTED_DIAGNOSIS_LINES = 10;
+const EXPECTED_DIAGNOSIS_LINES = 12;
 
 /**
  * The intent line is the one line a payload can legitimately REMOVE: an

@@ -565,6 +565,16 @@ export interface Diagnosis {
    * and the diagnosis is the surface where degradation must be said.
    */
   readonly targets: readonly DiagnosisTarget[];
+  /**
+   * Whether the hub ANSWERED the targets question at all.
+   *
+   * `targets` alone cannot carry this: an empty array is what a hub sends for
+   * a context nothing was captured on AND what a hub too old to know about
+   * the field leaves behind. The renderer has to tell those apart, because
+   * "no files touched" is a claim a reader acts on — they conclude there is
+   * no overlap — and it is a claim nobody made.
+   */
+  readonly targetsReported: boolean;
   /** The hub hit its own 500/1000 bound — the tree returned is partial. */
   readonly truncated: boolean;
   /**
@@ -603,20 +613,24 @@ const DiagnosisEnvelopeSchema = z
     claims: z.array(z.unknown()).default([]),
     edges: z.array(z.unknown()).default([]),
     externalClaims: z.array(z.unknown()).default([]),
-    targets: z.array(z.unknown()).default([]),
+    // OPTIONAL, NOT `.default([])`, and the difference is the whole point:
+    // a default erases "the hub said nothing" into "the hub said none", and
+    // the renderer would then print an absence as a finding.
+    targets: z.array(z.unknown()).optional(),
     truncated: z.boolean().default(false),
   })
   .transform((value): Diagnosis => {
     const claims = parseRows(value.claims, DiagnosisClaimSchema);
     const edges = parseRows(value.edges, DiagnosisEdgeSchema);
     const external = parseRows(value.externalClaims, ExternalClaimRefSchema);
-    const targets = parseRows(value.targets, DiagnosisTargetSchema);
+    const targets = parseRows(value.targets ?? [], DiagnosisTargetSchema);
     return {
       workContext: value.workContext,
       claims: claims.rows,
       edges: edges.rows,
       externalClaims: external.rows,
       targets: targets.rows,
+      targetsReported: value.targets !== undefined,
       truncated: value.truncated,
       droppedRows:
         claims.dropped + edges.dropped + external.dropped + targets.dropped,

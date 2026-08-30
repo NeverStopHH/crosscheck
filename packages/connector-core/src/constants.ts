@@ -1056,6 +1056,36 @@ export const MAX_SEARCH_RESULTS = 10;
 export const MAX_SEARCH_CHARS = 2400;
 
 /**
+ * Mirrors the hub's DIAGNOSIS_MAX_TARGETS (server services/diagnosis.ts): the
+ * LIMIT it puts on the targets it returns with a tree.
+ *
+ * Mirrored rather than sent, the same way MAX_INGEST_BATCH is, because the
+ * hub's cut is SILENT — a response holding exactly this many rows looks
+ * identical to a complete one. This client counts, and says so; a wire field
+ * would be cleaner and is not worth a schema change for one sentence.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const d=await import("./packages/server/src/services/diagnosis.ts");console.log(c.HUB_MAX_DIAGNOSIS_TARGETS === d.DIAGNOSIS_MAX_TARGETS)'
+ * PRINTS: true
+ */
+export const HUB_MAX_DIAGNOSIS_TARGETS = 100;
+
+/**
+ * Target rows one diagnosis SHOWS, of however many the hub sent.
+ *
+ * The section exists so a reader about to edit the same corner sees the
+ * overlap; twenty paths is more than enough to recognise a corner, and the
+ * rest are counted by the section's own "(+N targets not shown)" line rather
+ * than dropped in silence. Kept well under HUB_MAX_DIAGNOSIS_TARGETS on
+ * purpose: this section must never be the reason a CLAIM line falls off the
+ * document, and its worst case is bounded by
+ * MAX_DIAGNOSIS_TARGETS_SHOWN × (kind + value width).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_DIAGNOSIS_TARGETS_SHOWN < c.HUB_MAX_DIAGNOSIS_TARGETS, c.MAX_DIAGNOSIS_TARGETS_SHOWN * (c.MAX_WORK_CONTEXT_TITLE_CHARS + c.MAX_TITLE_CHARS))'
+ * PRINTS: true 4000
+ */
+export const MAX_DIAGNOSIS_TARGETS_SHOWN = 20;
+
+/**
  * Rendering caps for `get_referee_brief` — PER SECTION, not one document cap,
  * and that is the neutrality mechanism: a single document budget spends itself
  * on whichever position renders first, so the later side would truncate

@@ -16,7 +16,9 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  HUB_MAX_DIAGNOSIS_TARGETS,
   MAX_DIAGNOSIS_CHARS,
+  MAX_DIAGNOSIS_TARGETS_SHOWN,
   MAX_SEARCH_CHARS,
   MAX_SEARCH_RESULTS,
   QUOTED_DATA_NOTICE,
@@ -83,6 +85,7 @@ const diagnosis = (overrides: Partial<Diagnosis> = {}): Diagnosis => ({
   edges: [],
   externalClaims: [],
   targets: [],
+  targetsReported: true,
   truncated: false,
   droppedRows: 0,
   ...overrides,
@@ -533,6 +536,139 @@ describe("renderDiagnosis", () => {
     expect(claimIdsIn(rendered)).toEqual(["clm_ok", "clm_bad"]);
   });
 
+
+  // ── Which files the investigation touched (Nick's gap 2) ─────────────────
+
+  test("names the files an investigation touched, so an overlap is visible", () => {
+    // Arrange: the reader is about to edit the same corner. A work context's
+    // captured targets are the most direct connection between their edit and
+    // somebody else's reasoning, and the diagnosis showed none of them.
+    const tree = diagnosis({
+      targets: [
+        { kind: "file", value: "src/auth/refresh.ts" },
+        { kind: "file", value: "src/auth/jwks.ts" },
+        { kind: "symbol", value: "verifyToken" },
+      ],
+      targetsReported: true,
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+
+    // Assert: its own bounded section, BARE tokens (a path is not prose and
+    // must stay copy-pasteable), placed before the claims
+    expect(rendered).toContain("Targets (3):");
+    expect(rendered).toContain("- file src/auth/refresh.ts");
+    expect(rendered).toContain("- symbol verifyToken");
+    expect(rendered).not.toContain("«src/auth/refresh.ts»");
+    expect(rendered.indexOf("Targets (3):")).toBeLessThan(
+      rendered.indexOf("Claims ("),
+    );
+  });
+
+  test("bounds the target list and counts what it left out", () => {
+    // Arrange: a long-running context can carry a hundred targets, and the
+    // section must never be the reason a claim line falls off the document.
+    const many = Array.from({ length: 30 }, (_unused, index) => ({
+      kind: "file",
+      value: `src/mod/file${String(index).padStart(2, "0")}.ts`,
+    }));
+
+    // Act
+    const rendered = renderDiagnosis(
+      diagnosis({ targets: many, targetsReported: true }),
+      NOW,
+    );
+
+    // Assert: cut, and the cut is stated in the same counting every other
+    // section gets — never a silent truncation
+    expect(rendered).toContain("Targets (30):");
+    expect(rendered).toContain("- file src/mod/file00.ts");
+    expect(rendered).not.toContain("src/mod/file20.ts");
+    expect(rendered).toContain(
+      `(+${String(30 - MAX_DIAGNOSIS_TARGETS_SHOWN)} targets not shown)`,
+    );
+  });
+
+  test("says the hub does not report targets, never that none were touched", () => {
+    // Arrange: an older hub omits the field entirely. Rendering that as "no
+    // files touched" is a lie the reader has no way to detect — the reader
+    // would conclude there is no overlap when nobody ever asked.
+    // Act
+    const rendered = renderDiagnosis(
+      diagnosis({ targets: [], targetsReported: false }),
+      NOW,
+    );
+
+    // Assert
+    expect(rendered).toContain("This hub does not report captured targets.");
+    expect(rendered).not.toContain("No targets were captured");
+    expect(rendered).not.toContain("Targets (0)");
+  });
+
+  test("distinguishes an empty capture from a hub that cannot answer", () => {
+    // Arrange: the hub DID answer, and the answer is none — a real fact
+    // about this work context, and a different one from the sentence above.
+    // Act
+    const rendered = renderDiagnosis(
+      diagnosis({ targets: [], targetsReported: true }),
+      NOW,
+    );
+
+    // Assert
+    expect(rendered).toContain(
+      "No targets were captured for this work context.",
+    );
+    expect(rendered).not.toContain("does not report captured targets");
+  });
+
+  test("says the hub's own bound may be hiding targets at exactly its cap", () => {
+    // Arrange: the hub stops at HUB_MAX_DIAGNOSIS_TARGETS and says nothing
+    // about it, so a full page is indistinguishable from a complete one
+    // unless this client counts.
+    const capped = Array.from(
+      { length: HUB_MAX_DIAGNOSIS_TARGETS },
+      (_unused, index) => ({
+        kind: "file",
+        value: `src/mod/file${String(index).padStart(3, "0")}.ts`,
+      }),
+    );
+
+    // Act
+    const rendered = renderDiagnosis(
+      diagnosis({ targets: capped, targetsReported: true }),
+      NOW,
+    );
+
+    // Assert
+    expect(rendered).toContain(
+      "Note: the hub returned as many targets as it will send, so more may exist.",
+    );
+  });
+
+  test("a target value cannot mint a line, a frame or a second field", () => {
+    // Arrange: `value` is written by whoever captured it — the same class of
+    // untrusted string as a file path on the tripwire line, printed BARE.
+    const tree = diagnosis({
+      targets: [
+        { kind: "file", value: "src/a.ts\n- file src/evil.ts" },
+        { kind: "file · status verified", value: "«framed»" },
+      ],
+      targetsReported: true,
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+    const targetLines = rendered
+      .split("\n")
+      .filter((line) => line.startsWith("- file"));
+
+    // Assert: two rows in, two rows out; no frame characters, no separator
+    expect(targetLines.length).toBe(2);
+    expect(rendered).not.toContain("«framed»");
+    expect(rendered).not.toContain("· status verified");
+  });
+
   test("renders an empty tree as empty rather than as an error", () => {
     // Arrange: a work context whose owner has published nothing yet is the
     // ordinary state right after SessionStart, not a failure
@@ -664,7 +800,15 @@ describe("the session's intent on the MCP reading tools (trial finding #16)", ()
     expect(withIntent.split("\n").length - rendered.split("\n").length).toBe(1);
     expect(withIntent.split("\n")[2]?.startsWith("Session intent")).toBe(true);
 
-    expect(rendered.split("\n")[2]?.startsWith("Claims (")).toBe(true);
+    // Line 2 of an intent-less tree is the TARGETS state, not the claims
+    // header: the targets block sits between the opening and the claims by
+    // design (a reader about to edit the same file wants the overlap first),
+    // and this fixture's context has none captured. The intent's one-line
+    // cost — what this test is about — is unchanged by that.
+    expect(rendered.split("\n")[2]).toBe(
+      "No targets were captured for this work context.",
+    );
+    expect(rendered.split("\n")[3]?.startsWith("Claims (")).toBe(true);
     expect(rendered).not.toContain("intent");
   });
 

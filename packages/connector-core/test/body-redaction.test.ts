@@ -93,6 +93,7 @@ const diagnosis = (overrides: Partial<Diagnosis> = {}): Diagnosis => ({
   edges: [],
   externalClaims: [],
   targets: [],
+  targetsReported: true,
   truncated: false,
   droppedRows: 0,
   ...overrides,
