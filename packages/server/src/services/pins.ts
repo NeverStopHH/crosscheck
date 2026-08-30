@@ -29,7 +29,14 @@ import {
 import { MAX_SPEAKING_PIN_FILES, isSpeakingPin } from "@crosscheck/schema";
 import type { Pin } from "@crosscheck/schema";
 
-import { developers, pinFiles, pins } from "../db/schema.ts";
+import {
+  agentSessions,
+  developers,
+  pinFiles,
+  pins,
+  workContextTargets,
+  workContexts,
+} from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -95,6 +102,49 @@ export type BreakPinOutcome = "broken" | "not_found";
 
 const iso = (value: Date | null): string | null =>
   value === null ? null : value.toISOString();
+
+/**
+ * Under the `touched_files` policy: which of these paths this developer has
+ * NO recorded touch on, anywhere in this repo's history the hub holds.
+ *
+ * NO TIME WINDOW, deliberately. The policy exists against "a pin on code the
+ * pinner has never opened", and a pin on a surface somebody verified two
+ * months ago is exactly the pin worth having. The query is still bounded —
+ * it is driven by the path list through work_context_targets' (kind, value)
+ * index and narrowed to one developer — so its cost follows the pin's file
+ * set, never the corpus.
+ *
+ * Returned as a LIST rather than a boolean because the refusal names the
+ * files: "you may not pin that" with no path is a refusal nobody can act on.
+ */
+export const untouchedByDeveloper = async (
+  deps: Deps,
+  developerId: string,
+  repo: string,
+  files: readonly string[],
+): Promise<readonly string[]> => {
+  if (files.length === 0) {
+    return [];
+  }
+  const rows = await deps.db
+    .selectDistinct({ value: workContextTargets.value })
+    .from(workContextTargets)
+    .innerJoin(
+      workContexts,
+      eq(workContextTargets.workContextId, workContexts.id),
+    )
+    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+    .where(
+      and(
+        eq(workContextTargets.kind, "file"),
+        inArray(workContextTargets.value, [...files]),
+        eq(agentSessions.repo, repo),
+        eq(agentSessions.developerId, developerId),
+      ),
+    );
+  const touched = new Set(rows.map((row) => row.value));
+  return files.filter((file) => !touched.has(file));
+};
 
 /**
  * INSERT the pin and its files in ONE transaction: a pin row with no file

@@ -30,7 +30,13 @@ import {
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
-import { createPin, listPins, markPinBroke } from "../services/pins.ts";
+import {
+  createPin,
+  listPins,
+  markPinBroke,
+  untouchedByDeveloper,
+} from "../services/pins.ts";
+import { readTeamSettings } from "../services/team-settings.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const RepoQuerySchema = z.object({ repo: z.string().min(1) });
@@ -57,6 +63,28 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const unstorable = unstorableTextPath(parsed.data);
     if (unstorable !== null) {
       return fail(c, 400, "validation_failed", describeUnstorableText(unstorable));
+    }
+    // WHO MAY PIN is a team setting with an open default (Nick's decision for
+    // the trial: anyone pins anything, with the author's name on every row in
+    // `status` as the abuse control). A team that has switched to
+    // `touched_files` gets the narrower rule, and the refusal names the files
+    // so it can be acted on rather than argued with.
+    const settings = await readTeamSettings(deps, parsed.data.repo);
+    if (settings.pinPolicy === "touched_files") {
+      const unseen = await untouchedByDeveloper(
+        deps,
+        c.get("developer").id,
+        parsed.data.repo,
+        parsed.data.files,
+      );
+      if (unseen.length > 0) {
+        return fail(
+          c,
+          403,
+          "pin_policy",
+          `this team pins only files you have worked in, and this hub has no recorded touch of yours on: ${unseen.join(", ")}`,
+        );
+      }
     }
     const outcome = await createPin(deps, c.get("developer").id, parsed.data);
     if (outcome.outcome === "duplicate") {

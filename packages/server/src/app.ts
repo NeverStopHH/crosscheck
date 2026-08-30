@@ -16,6 +16,7 @@ import { recordsRoutes } from "./routes/records.ts";
 import { searchRoutes } from "./routes/search.ts";
 import { sessionsRoutes } from "./routes/sessions.ts";
 import { settingsRoutes } from "./routes/settings.ts";
+import { teamSettingsRoutes } from "./routes/team-settings.ts";
 import { solvedMatchesRoutes } from "./routes/solved-matches.ts";
 import { suspectRoutes } from "./routes/suspect.ts";
 import { uiRoutes } from "./routes/ui.tsx";
@@ -57,6 +58,10 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // Cursor and ACP sessions alike.
   app.route("/api/suspect", suspectRoutes(deps));
   app.route("/api/settings", settingsRoutes(deps));
+  // The regression guard's two TEAM decisions — who may pin, and whether
+  // `suspect` names sessions. Read by any member (everybody affected has to
+  // be able to see what it is), written with the admin token.
+  app.route("/api/team-settings", teamSettingsRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.
   app.route("/ui", uiRoutes(deps));
