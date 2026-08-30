@@ -10,11 +10,15 @@ import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import {
   getAbsences,
+  getPins,
   getPresence,
   getPrivacySettings,
   getQuestions,
   getSolvedMatchCounts,
+  getTeamSettings,
 } from "@crosscheck/connector-core/http/hub.ts";
+import { resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
+import { pinStatusLines } from "./pin-observability.ts";
 import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
@@ -142,6 +146,26 @@ export const runStatus = async (
   const solvedLines = solvedCounts.ok
     ? [`solved-tree pointers: ${formatSolvedCounts(solvedCounts.data)}`]
     : [];
+  // The regression guard's coverage (Stage 1). THE DENOMINATOR IS THE LINE:
+  // a pin count without "nothing else is watched" beside it reads as
+  // protection of a repo nobody pinned. An unreachable hub prints UNKNOWN
+  // rather than nothing, because a missing line is the one reading this
+  // feature may never produce — silence that looks like safety.
+  const pins = await getPins(hubCtx, identity.repoId);
+  const teamSettings = await getTeamSettings(hubCtx, identity.repoId);
+  const pinLines = pins.ok
+    ? pinStatusLines(
+        pins.data,
+        // The EFFECTIVE list, defaults included — the shadowing question is
+        // about what actually suppresses capture, not about what this
+        // developer added to it.
+        resolveDenylist(config.denylist ?? undefined),
+        teamSettings.ok ? teamSettings.data : null,
+        now,
+      )
+    : [
+        "pins: coverage UNKNOWN — the hub did not answer, so nothing here says what is watched",
+      ];
   const privacy = await getPrivacySettings(hubCtx);
   const privacyLines = privacy.ok
     ? [
@@ -207,6 +231,7 @@ export const runStatus = async (
       ...foreignDropLines,
       ...questionLines,
       ...solvedLines,
+      ...pinLines,
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `intent: ${formatIntentCost(intentCost)}`,
       `ghost checks: ${formatGhostCost(ghostCost)}`,

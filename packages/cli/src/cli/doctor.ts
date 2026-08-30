@@ -66,6 +66,7 @@ import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency
 import {
   getAbsences,
   getGhostChecks,
+  getPins,
   getPrivacySettings,
   getQuestions,
   getSolvedMatchCounts,
@@ -79,6 +80,14 @@ import {
   formatSolvedCounts,
   solvedPrecisionWarning,
 } from "@crosscheck/connector-core/hints/precision.ts";
+import { resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
+import {
+  orphanSentence,
+  orphanedPins,
+  pinCoverageSentence,
+  shadowSentence,
+  shadowedPinPaths,
+} from "./pin-observability.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
@@ -1158,6 +1167,65 @@ const checkSolvedMatches = async (
 };
 
 /**
+ * The regression guard's two checks (Stage 1, part C). Both exist because
+ * their failure mode is SILENCE, which is the only failure a post-hoc guard
+ * can have: nothing crashes, nothing is slow, and the answer is simply wrong
+ * in the reassuring direction.
+ *
+ * NEVER PASS-ONLY (the finding-#14 lesson), and the two WARNs are different
+ * problems:
+ *
+ *   - "pins" WARNs when a rename orphaned a pin. `git mv` moves the file, the
+ *     pin keeps watching a path git cannot find, and the registry keeps
+ *     counting it — a pin that watches nothing while reporting that it does.
+ *     This repo renames weekly, so the remedy is named in the line.
+ *   - "pin denylist" WARNs when a hot-file pattern shadows a pinned path. A
+ *     denied path never becomes a target (flows/capture-targets.ts), so
+ *     `suspect` answers "no session touched this surface" about a file every
+ *     session touched. The config lives at ~/.crosscheck/config.json, outside
+ *     every repo root, where no hook and no reviewer sees it change — which
+ *     is why the SUPPRESSION IS PRINTED rather than prevented. Making the
+ *     config unwritable would be a block, and the ladder forbids blocks.
+ *
+ * A hub that predates the registry answers 404: "not measured" and a PASS,
+ * exactly as in checkQuestions and checkAbsences — an older hub says nothing
+ * about this install's health. A hub that could not be REACHED is different
+ * and is a WARN: coverage unknown is not coverage fine, and a green meaning
+ * "could not check" is worse than no check at all.
+ */
+const checkPins = async (
+  ctx: HubContext,
+  repoId: string,
+  patterns: readonly string[],
+  now: Date,
+): Promise<readonly Check[]> => {
+  const registry = await getPins(ctx, repoId);
+  if (!registry.ok) {
+    return registry.status === HTTP_NOT_FOUND
+      ? [check("PASS", "pins", "not measured (this hub has no pin registry)")]
+      : [
+          check(
+            "WARN",
+            "pins",
+            `coverage unknown — the hub did not answer (${registry.message}); this says nothing about what is watched`,
+          ),
+        ];
+  }
+  const coverage = pinCoverageSentence(registry.data, now);
+  const orphans = orphanSentence(orphanedPins(registry.data));
+  const shadows = shadowedPinPaths(registry.data, patterns);
+  const shadowLine = shadowSentence(shadows, patterns.length);
+  return [
+    orphans === null
+      ? check("PASS", "pins", coverage)
+      : check("WARN", "pins", `${coverage} — ${orphans}`),
+    shadows.length === 0
+      ? check("PASS", "pin denylist", shadowLine)
+      : check("WARN", "pin denylist", shadowLine),
+  ];
+};
+
+/**
  * The remedy a failed runner probe names, by what the binary said — each a
  * DIFFERENT fix, which is why the first output line is printed at all:
  * "Not logged in" is the developer's login, "unknown option" is the CLI's
@@ -1572,6 +1640,15 @@ export const runDoctor = async (
     await checkAbsences(hubCtx, identity.repoId),
     await checkQuestions(hubCtx, identity.repoId, now),
     await checkSolvedMatches(hubCtx, identity.repoId),
+    ...(await checkPins(
+      hubCtx,
+      identity.repoId,
+      // The EFFECTIVE list, defaults included: the shadowing question is
+      // about what actually suppresses capture, not about what this
+      // developer added on top of it.
+      resolveDenylist(config.denylist ?? undefined),
+      now,
+    )),
     await checkGhostOverlap(hubCtx, identity.repoId),
     await checkPrivacy(hubCtx),
     skewCheck,

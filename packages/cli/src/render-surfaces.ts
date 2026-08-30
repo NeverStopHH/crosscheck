@@ -16,6 +16,7 @@ import type {
 } from "@crosscheck/connector-core/http/hub.ts";
 
 import { renderPinList } from "./cli/pin-render.ts";
+import { pinStatusLines } from "./cli/pin-observability.ts";
 import { renderSuspect } from "./cli/suspect-render.ts";
 
 const NOW = new Date("2026-08-25T12:00:00.000Z");
@@ -37,6 +38,30 @@ const pinWith = (payload: string): PinEntry => ({
   brokeByName: payload,
   speaking: true,
   missingPaths: 1,
+});
+
+/**
+ * A LIVE pin, because the two lines that interpolate untrusted text at all —
+ * the denylist-shadow sentence and the orphan sentence — skip retracted pins
+ * by design. A corpus run over a retracted registry would render neither and
+ * report itself green over the exact spans it exists to attack.
+ */
+const livePinWith = (payload: string): PinEntry => ({
+  ...pinWith(payload),
+  brokeAt: null,
+  brokeByName: null,
+});
+
+const liveRegistryWith = (payload: string): PinRegistry => ({
+  pins: [livePinWith(payload)],
+  coverage: {
+    pins: 1,
+    files: 1,
+    speaking: 0,
+    broken: 0,
+    missingPaths: 1,
+    oldestVerifiedAt: ISO,
+  },
 });
 
 const registryWith = (payload: string): PinRegistry => ({
@@ -88,6 +113,30 @@ const suspectWith = (payload: string): SuspectView => ({
 });
 
 export const RENDER_SURFACES: readonly RenderSurface[] = [
+  {
+    kind: "corpus",
+    name: "cli-pin-observability",
+    module: "src/cli/pin-observability.ts",
+    // BARE, deliberately, and it is the reason this module exists apart from
+    // the listing: `status` and `doctor` print PATHS and GLOB PATTERNS, which
+    // are bare tokens, and never a pin's surface label or check recipe, which
+    // are another person's prose. So these lines carry no frame at all — and
+    // the corpus holds them to it, over the pinned path, the denylist pattern
+    // and both team-setting values at once.
+    framing: "bare",
+    render: (payload) =>
+      pinStatusLines(
+        liveRegistryWith(payload),
+        [payload],
+        {
+          repo: payload,
+          pinPolicy: payload,
+          suspectAttribution: payload,
+          updatedAt: ISO,
+        },
+        NOW,
+      ).join("\n"),
+  },
   {
     kind: "corpus",
     name: "cli-pin-list",

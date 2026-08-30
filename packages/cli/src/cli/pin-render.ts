@@ -34,7 +34,9 @@ import {
   MAX_PIN_PATH_CHARS,
   MAX_PIN_SURFACE_CHARS,
 } from "@crosscheck/schema";
-import type { PinCoverage, PinEntry, PinRegistry } from "@crosscheck/connector-core/http/hub.ts";
+import type { PinEntry, PinRegistry } from "@crosscheck/connector-core/http/hub.ts";
+
+import { pinCoverageSentence } from "./pin-observability.ts";
 
 /** How many paths one pin prints before the tail becomes a count. */
 const MAX_PRINTED_PATHS = 8;
@@ -42,34 +44,6 @@ const MAX_PRINTED_PATHS = 8;
 const ageOf = (iso: string, now: Date): string => {
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? "unknown" : `${formatAge(now.getTime() - ms)} ago`;
-};
-
-/**
- * THE DENOMINATOR, in one sentence, always — including the empty case. A
- * silent week must never be readable as protection of the thousands of files
- * nobody pinned, so the sentence states its own limit rather than leaving the
- * reader to infer it.
- */
-export const coverageLine = (coverage: PinCoverage, now: Date): string => {
-  if (coverage.pins === 0) {
-    return coverage.broken === 0
-      ? "pins: 0 — nothing in this repo is watched"
-      : `pins: 0 (${String(coverage.broken)} retracted) — nothing in this repo is watched`;
-  }
-  const oldest =
-    coverage.oldestVerifiedAt === null
-      ? ""
-      : `, oldest verified ${ageOf(coverage.oldestVerifiedAt, now)}`;
-  const broken =
-    coverage.broken === 0 ? "" : `, ${String(coverage.broken)} retracted`;
-  const missing =
-    coverage.missingPaths === 0
-      ? ""
-      : `, ${String(coverage.missingPaths)} path(s) missing`;
-  return (
-    `pins: ${String(coverage.pins)} (${String(coverage.files)} files${oldest}${broken}${missing})` +
-    " — nothing else is watched"
-  );
 };
 
 /**
@@ -139,9 +113,9 @@ export const renderPinList = (
   [
     `crosscheck pins for ${bareUntrusted(repoId)}.`,
     QUOTED_DATA_NOTICE,
-    coverageLine(registry.coverage, now),
+    pinCoverageSentence(registry, now),
     ...(registry.pins.length === 0
-      ? ["(no pins yet — `crosscheck pin \"<surface>\" --files … --check \"…\"` records one)"]
+      ? ['(no pins yet — crosscheck pin "a surface that works" --files … --check "…" records one)']
       : registry.pins.flatMap((pin) => pinLines(pin, now))),
     "",
   ].join("\n");
