@@ -15,6 +15,8 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import { MAX_REFEREE_POSITION_CHARS } from "../src/constants.ts";
 import {
@@ -184,9 +186,18 @@ describe("renderRefereeBrief", () => {
   });
 
   test("stays swap invariant even when both positions overflow their budgets", () => {
-    // Arrange: many long evidence bodies so the per-position budget truncates
-    const longBody = "x".repeat(380);
-    const heavyEvidence = Array.from({ length: 10 }, (_, index) =>
+    // Arrange: enough evidence at the WIRE cap to overflow a position budget.
+    //
+    // BOTH NUMBERS ARE DERIVED, and they were not: this fixture used ten
+    // bodies of a literal 380 characters, which overflowed a 4,000-char
+    // position and stopped overflowing the moment that budget moved — the
+    // truncation assertion below then passed on a document that never
+    // truncated, which is the quietest way for a test to stop testing.
+    // Rebuilt from the constants, it overflows at any pair of values.
+    const longBody = "x".repeat(MAX_CLAIM_BODY_LENGTH);
+    const overflowingCount =
+      Math.ceil(MAX_REFEREE_POSITION_CHARS / MAX_CLAIM_BODY_LENGTH) + 2;
+    const heavyEvidence = Array.from({ length: overflowingCount }, (_, index) =>
       claim({
         id: `clm_heavy_${String(index)}`,
         kind: "evidence",

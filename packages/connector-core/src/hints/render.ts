@@ -26,12 +26,14 @@
  * forbids and what prompt-injection defences trip on.
  */
 import {
-  MAX_CLAIM_BODY_LENGTH,
   MAX_HINT_TEXT_LENGTH,
   MAX_QUESTION_BODY_LENGTH,
 } from "@crosscheck/schema";
 
-import { MAX_WORK_CONTEXT_TITLE_CHARS } from "../constants.ts";
+import {
+  MAX_WORK_CONTEXT_TITLE_CHARS,
+  UNSOLICITED_CLAIM_BODY_MAX_CHARS,
+} from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
 import {
   QUOTED_DATA_NOTICE,
@@ -175,7 +177,7 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     `provenance ${bare(claim.provenance)}`,
     ageLabel(claim.createdAt, now),
   ];
-  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
+  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(claim.body, UNSOLICITED_CLAIM_BODY_MAX_CHARS)}`;
   const contextLine =
     `Recorded on work context ${safeId(context.id)} ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} — ` +
     "the full tree is readable with get_diagnosis.";
@@ -248,7 +250,7 @@ export const renderAnswerHint = (
     `provenance ${bare(answer.provenance)}`,
     ageLabel(answer.answeredAt, now),
   ];
-  const answerLine = `${facts.join(" · ")}: ${quotedBody(answer.claimBody, MAX_CLAIM_BODY_LENGTH)}`;
+  const answerLine = `${facts.join(" · ")}: ${quotedBody(answer.claimBody, UNSOLICITED_CLAIM_BODY_MAX_CHARS)}`;
   // The question on its own line, because both are framed values and every
   // line here carries at most one « » pair.
   const questionLine = `You asked ${safeId(answer.questionId)}: ${quotedBody(answer.questionBody, MAX_QUESTION_BODY_LENGTH)}`;

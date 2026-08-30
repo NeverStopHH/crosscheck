@@ -67,7 +67,11 @@ CREATE TABLE IF NOT EXISTS claims (
   author_session_id text NOT NULL REFERENCES agent_sessions(id),
   kind text NOT NULL,
   -- keep in sync with MAX_CLAIM_BODY_LENGTH in @crosscheck/schema
-  body text NOT NULL CONSTRAINT claims_body_length_check CHECK (char_length(body) <= 400),
+  -- (test/ddl-sync.test.ts reddens the build when this number and the constant
+  -- disagree). THIS LINE ONLY EVER REACHES A FRESH DATABASE — the CREATE TABLE
+  -- is IF NOT EXISTS, so a hub that already has a claims table keeps the bound
+  -- it was created with. The ALTER at the end of this file is what moves those.
+  body text NOT NULL CONSTRAINT claims_body_length_check CHECK (char_length(body) <= 10000),
   status text NOT NULL,
   confidence double precision NOT NULL,
   capture_mode text NOT NULL,
@@ -405,3 +409,21 @@ CREATE INDEX IF NOT EXISTS claims_work_context_created_idx
 -- Mirrored in db/schema.ts.
 CREATE INDEX IF NOT EXISTS hint_deliveries_session_delivered_idx
   ON hint_deliveries (session_id, delivered_at DESC);
+
+-- ── Room for a long finding (Nick's gap 3) ──────────────────────────────────
+
+-- The claims table is created with its body bound inline, and CREATE TABLE IF
+-- NOT EXISTS is a NO-OP on every hub that already has one — so raising the
+-- number up there reaches new databases only, and an existing hub would keep
+-- refusing the long bodies its connectors have already started sending. This
+-- ALTER is what moves them, and it runs on every hub start.
+--
+-- IT CANNOT FAIL ON DATA. The bound only ever widens, so no stored row can
+-- violate the new constraint; DROP ... IF EXISTS then ADD makes it idempotent
+-- rather than an error on the second start.
+--
+-- questions.body is deliberately NOT touched: a question is a sentence
+-- somebody has to answer, and MAX_QUESTION_BODY_LENGTH did not move.
+ALTER TABLE claims DROP CONSTRAINT IF EXISTS claims_body_length_check;
+ALTER TABLE claims ADD CONSTRAINT claims_body_length_check
+  CHECK (char_length(body) <= 10000);

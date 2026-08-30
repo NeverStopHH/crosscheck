@@ -338,6 +338,24 @@ const moreLine = (count: number, noun: string): string =>
  * shortfall. `section.total` is the upper bound on `hidden`, and `moreLine` is
  * monotonic in its count, so reserving for the total guarantees the real line
  * fits and costs at most one item that would otherwise have been shown.
+ *
+ * THE REDUCE IS QUADRATIC AND STAYS, ON A MEASUREMENT RATHER THAN A HUNCH.
+ * `joinedLength(candidate)` re-joins everything accumulated so far, once per
+ * line, so the cost grows with lines × document length — and raising the body
+ * cap to MAX_CLAIM_BODY_LENGTH made that term worth checking instead of
+ * assuming. MEASURED on the worst tree the wire can carry: 500 claims (the
+ * hub's own DIAGNOSIS_MAX_CLAIMS) each at the full body cap, through
+ * renderDiagnosis, five runs after a warm-up —
+ *
+ *     min 8.9  p50 9.2  max 10.4 ms   (macOS 26 arm64, 16 cores, load ~8.5)
+ *
+ * for a 40,817-character document. A reading from one host on one day, like
+ * every other timing in this repo; rebuild the tree and time renderDiagnosis
+ * around Bun.nanoseconds() to take your own. Single-digit milliseconds on the
+ * MCP path — MCP_TIMEOUT_MS is 10_000 and no hook renders a tree — does not
+ * buy a rewrite to a running length: the reserve argument above is the part
+ * that is hard to get right, and it reads correctly precisely because each
+ * candidate is measured whole.
  */
 export const appendSection = (
   accumulated: readonly string[],

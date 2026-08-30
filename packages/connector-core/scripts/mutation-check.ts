@@ -2966,8 +2966,12 @@ export const MUTATIONS: readonly Mutation[] = [
     // The other end of the same loop.
     label: "the promote echo blanks the claim it just promoted",
     file: `${CORE}/src/mcp/tools/review-draft.ts`,
-    from: "${quotedBody(body, MAX_CLAIM_BODY_LENGTH)}",
-    to: "${`«${sanitizeUntrusted(body, MAX_CLAIM_BODY_LENGTH)}»`}",
+    // The cap spelling moved to CLAIM_ECHO_MAX_CHARS when the wire cap rose —
+    // an echo is a receipt and stayed at its old width. The MUTATION is
+    // unchanged in meaning: swap the body-class call for the prose-class one
+    // and the promoted claim comes back as a redaction marker.
+    from: "${quotedBody(body, CLAIM_ECHO_MAX_CHARS)}",
+    to: "${`«${sanitizeUntrusted(body, CLAIM_ECHO_MAX_CHARS)}»`}",
     test: `${CORE}/test/body-redaction.test.ts`,
     because:
       "the agent asks which assertion it promoted and is answered with a " +

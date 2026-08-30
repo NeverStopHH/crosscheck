@@ -38,11 +38,27 @@ export const NORMALIZED_DOC_MAX_CLAIMS = 50;
 export const NORMALIZED_DOC_MAX_TARGETS = 100;
 
 /**
- * Hard cap on the stored doc so the tsv it generates stays bounded — twenty
- * full-length claim bodies of prose, far more than ranking needs:
+ * Hard cap on the stored doc so the tsv it generates stays bounded.
  *
- * VERIFY: bun -e 'const d=await import("./packages/server/src/services/normalized-doc.ts");const s=await import("./packages/schema/src/index.ts");console.log(d.NORMALIZED_DOC_MAX_CHARS, 20*s.MAX_CLAIM_BODY_LENGTH)'
- * PRINTS: 8000 8000
+ * IT USED TO BE EXACTLY TWENTY FULL-LENGTH CLAIM BODIES, and that is why this
+ * comment is rewritten rather than re-pinned: the wire cap moved and the
+ * arithmetic that justified this number stopped holding. The doc cap did NOT
+ * move with it — 8000 characters of prose is already far more than ranking
+ * needs, and sizing an FTS document off a body cap was the accident, not the
+ * design.
+ *
+ * VERIFY: bun -e 'const d=await import("./packages/server/src/services/normalized-doc.ts");const s=await import("./packages/schema/src/index.ts");console.log(d.NORMALIZED_DOC_MAX_CHARS, s.MAX_CLAIM_BODY_LENGTH, d.NORMALIZED_DOC_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH * d.NORMALIZED_DOC_MAX_CLAIMS)'
+ * PRINTS: 8000 10000 true
+ *
+ * THE CONSEQUENCE, STATED RATHER THAN FIXED HERE. `buildNormalizedDoc` slices
+ * from the END and claim summaries come last, so ONE maximum-length body can
+ * now fill the remaining budget by itself and push every later claim's terms
+ * out of the index — a context whose newest finding is long gets harder to
+ * find by its older ones. Nothing a READER sees is affected; this is the
+ * search index, not a rendered surface. The fix, if it is wanted, is a
+ * per-summary cut at fold time — presentation of the index, never mutation of
+ * the data — and that is a product decision about search behaviour rather
+ * than part of raising a body cap, so it is named here and left open.
  */
 export const NORMALIZED_DOC_MAX_CHARS = 8000;
 

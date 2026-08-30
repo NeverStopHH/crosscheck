@@ -8,7 +8,7 @@ import {
   ProvenanceSchema,
 } from "./enums.ts";
 
-export const MAX_CLAIM_BODY_LENGTH = 400;
+export const MAX_CLAIM_BODY_LENGTH = 10_000;
 
 /** Machine-derived claims may never assert more confidence than this (DESIGN.md §3). */
 export const DERIVED_CONFIDENCE_CAP = 0.5;

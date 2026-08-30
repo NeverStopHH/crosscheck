@@ -15,6 +15,8 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+
 import {
   HUB_MAX_DIAGNOSIS_TARGETS,
   MAX_DIAGNOSIS_CHARS,
@@ -405,15 +407,41 @@ describe("renderDiagnosis", () => {
     // Swept rather than sampled: whether a note fits used to depend on where
     // the last claim line happened to land against the cap, so ONE body length
     // proves nothing about the next. 500 claims is the hub's own bound
-    // (services/diagnosis.ts DIAGNOSIS_MAX_CLAIMS), and 1..400 is every legal
-    // body length (MAX_CLAIM_BODY_LENGTH).
+    // (services/diagnosis.ts DIAGNOSIS_MAX_CLAIMS).
+    //
+    // DENSE TO 400, THEN STRATA — and the honest word for the second half is
+    // WEAKER. Every legal body length used to be 1..400 and this sweep covered
+    // all of them; the cap is now MAX_CLAIM_BODY_LENGTH, and ten thousand
+    // renders of five hundred maximum-length claims is not a test, it is a
+    // build. So the dense leg stays exactly where it was and the new room is
+    // covered by its boundaries plus samples. What carries the gaps BETWEEN
+    // samples is an argument, not coverage, and it belongs here rather than in
+    // an implication of density: the reserve taken off the top before any
+    // section is laid out is `joinedLength(notes) + 1`, which does not depend
+    // on body length at all, and `moreLine` is monotonic in its count. A
+    // longer body can therefore only change WHICH claim line is the last one
+    // to fit — never whether the notes were paid for. The strata are here to
+    // catch that argument being wrong at a boundary, which is where it would
+    // break if it broke.
     const TRUNCATION_NOTE = "Note: the hub truncated this tree";
     const DROPPED_NOTE = "rows the hub sent could not be read";
     const CLAIM_COUNT = 500;
-    const MAX_BODY = 400;
+    const DENSE_MAX_BODY = 400;
+    const STRATA: readonly number[] = [
+      DENSE_MAX_BODY + 1,
+      512,
+      1000,
+      4000,
+      MAX_CLAIM_BODY_LENGTH - 1,
+      MAX_CLAIM_BODY_LENGTH,
+    ];
+    const lengths = [
+      ...Array.from({ length: DENSE_MAX_BODY }, (_unused, index) => index + 1),
+      ...STRATA,
+    ].filter((length) => length <= MAX_CLAIM_BODY_LENGTH);
     const failures: string[] = [];
 
-    for (let length = 1; length <= MAX_BODY; length += 1) {
+    for (const length of lengths) {
       const claims = Array.from({ length: CLAIM_COUNT }, (_unused, index) =>
         claim({
           id: `clm_${String(index).padStart(3, "0")}`,

@@ -86,6 +86,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "acp-briefing-block",
+    delivery: "unsolicited",
     module: "src/inject/blocks.ts",
     framing: "framed",
     render: (payload) =>
@@ -100,6 +101,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "acp-claim-hint-block",
+    delivery: "unsolicited",
     module: "src/inject/blocks.ts",
     framing: "framed",
     render: (payload) =>
@@ -113,6 +115,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "acp-pointer-hint-block",
+    delivery: "unsolicited",
     module: "src/inject/blocks.ts",
     framing: "framed",
     render: (payload) =>
