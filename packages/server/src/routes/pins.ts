@@ -1,0 +1,98 @@
+/**
+ * /api/pins — the pin registry's HTTP surface (regression-guard Stage 1):
+ *
+ *   POST /api/pins             register a surface as working (humans only)
+ *   GET  /api/pins?repo=…      the repo's registry + its coverage denominator
+ *   POST /api/pins/:id/broke   retract a pin: the check was run and failed
+ *
+ * A ROUTE OF ITS OWN rather than a record kind on `POST /api/records`, and
+ * the reason is the same one questions have: the spool is fire-and-forget, and
+ * a person who typed `crosscheck pin` needs the refusal — "an agent may not
+ * vouch for a human", "this pin needs a check recipe" — in their terminal,
+ * synchronously, not silently dropped into a ledger.
+ *
+ * THE HUMAN GATE IS THE SCHEMA. `PinSchema` demands the literal capture mode
+ * "human"; a body that omits it or sends "agent" fails validation here, before
+ * anything reaches the database. That is the whole of the fail-closed rule on
+ * this side of the wire — the CLI's side is that it only sends "human" when a
+ * person is demonstrably at a terminal (packages/cli/src/cli/pin.ts).
+ */
+import { Hono } from "hono";
+import { z } from "zod";
+import {
+  MAX_RECORD_ID_LENGTH,
+  PinSchema,
+  SAFE_ID_PATTERN,
+  describeUnstorableText,
+  unstorableTextPath,
+} from "@crosscheck/schema";
+
+import { fail, ok } from "../http/envelope.ts";
+import { formatIssues, readJsonBody } from "../http/request.ts";
+import { developerAuth } from "../middleware/auth.ts";
+import { createPin, listPins, markPinBroke } from "../services/pins.ts";
+import type { AppDeps, AppEnv } from "../types.ts";
+
+const RepoQuerySchema = z.object({ repo: z.string().min(1) });
+
+const PinIdSchema = z
+  .string()
+  .min(1)
+  .max(MAX_RECORD_ID_LENGTH)
+  .regex(SAFE_ID_PATTERN);
+
+export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
+  const router = new Hono<AppEnv>();
+  router.use("*", developerAuth(deps));
+
+  router.post("/", async (c) => {
+    const parsed = PinSchema.safeParse(await readJsonBody(c));
+    if (!parsed.success) {
+      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    // This route is its OWN boundary: a pin reaches the table straight from
+    // here and never through parseRecord, so the storability check that path
+    // applies has to be repeated on this one — or the same body is a 500 or a
+    // 400 depending only on how it arrived (schema/storable-text.ts).
+    const unstorable = unstorableTextPath(parsed.data);
+    if (unstorable !== null) {
+      return fail(c, 400, "validation_failed", describeUnstorableText(unstorable));
+    }
+    const outcome = await createPin(deps, c.get("developer").id, parsed.data);
+    if (outcome.outcome === "duplicate") {
+      return fail(
+        c,
+        409,
+        "pin_exists",
+        `a pin already exists under id ${parsed.data.id} — pin ids are minted by the caller, so this is a replay or a collision, never an overwrite`,
+      );
+    }
+    return ok(c, { id: outcome.id });
+  });
+
+  router.get("/", async (c) => {
+    const parsed = RepoQuerySchema.safeParse({ repo: c.req.query("repo") });
+    if (!parsed.success) {
+      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    // The registry AND its denominator in one response: a caller that had to
+    // ask twice would eventually print one without the other, and "4 pins"
+    // with no "nothing else is watched" beside it is the exact sentence this
+    // feature exists to stop.
+    return ok(c, await listPins(deps, parsed.data.repo));
+  });
+
+  router.post("/:id/broke", async (c) => {
+    const parsed = PinIdSchema.safeParse(c.req.param("id"));
+    if (!parsed.success) {
+      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    const outcome = await markPinBroke(deps, c.get("developer").id, parsed.data);
+    if (outcome === "not_found") {
+      return fail(c, 404, "not_found", "no pin with that id");
+    }
+    return ok(c, { id: parsed.data });
+  });
+
+  return router;
+};

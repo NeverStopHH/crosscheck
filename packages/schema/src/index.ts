@@ -50,10 +50,11 @@ export {
   MAX_PIN_PATH_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_SPEAKING_PIN_FILES,
+  PIN_FILE_STATUSES,
   PinSchema,
   isSpeakingPin,
 } from "./pin.ts";
-export type { Pin } from "./pin.ts";
+export type { Pin, PinFileStatus } from "./pin.ts";
 
 export {
   MAX_QUESTION_BODY_LENGTH,

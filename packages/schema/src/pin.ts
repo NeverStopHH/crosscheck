@@ -56,6 +56,18 @@ export const MAX_PIN_FILES = 30;
  */
 export const MAX_SPEAKING_PIN_FILES = 5;
 
+/**
+ * What the post-commit sweep found for one pinned path. "present" is a file
+ * git still has at HEAD; "missing" is one it does not, and whose rename the
+ * sweep could not follow unambiguously. There is deliberately no third value
+ * for "renamed": a rename the sweep CAN follow rewrites the path in place, so
+ * the pin keeps watching the same behaviour under its new name — a
+ * "renamed" state would be a permanent scar for a resolved event.
+ */
+export const PIN_FILE_STATUSES = ["present", "missing"] as const;
+
+export type PinFileStatus = (typeof PIN_FILE_STATUSES)[number];
+
 /** A repo-relative path is never long; the cap keeps one row renderable. */
 export const MAX_PIN_PATH_CHARS = 300;
 

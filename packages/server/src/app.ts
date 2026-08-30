@@ -9,6 +9,7 @@ import { draftsRoutes } from "./routes/drafts.ts";
 import { eventsRoutes } from "./routes/events.ts";
 import { ghostChecksRoutes } from "./routes/ghost-checks.ts";
 import { hintsRoutes } from "./routes/hints.ts";
+import { pinsRoutes } from "./routes/pins.ts";
 import { presenceRoutes } from "./routes/presence.ts";
 import { questionsRoutes } from "./routes/questions.ts";
 import { recordsRoutes } from "./routes/records.ts";
@@ -44,6 +45,11 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // misspelt one must come back naming the closest spellings.
   app.route("/api/questions", questionsRoutes(deps));
   app.route("/api/drafts", draftsRoutes(deps));
+  // The pin registry (regression-guard Stage 1). A route rather than a record
+  // kind: `crosscheck pin` is a person's command, and its refusals — an agent
+  // capture mode, a speaking pin with no check recipe — have to reach that
+  // person's terminal instead of a spool nobody reads.
+  app.route("/api/pins", pinsRoutes(deps));
   app.route("/api/settings", settingsRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.

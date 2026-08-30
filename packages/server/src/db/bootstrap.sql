@@ -405,3 +405,55 @@ CREATE INDEX IF NOT EXISTS claims_work_context_created_idx
 -- Mirrored in db/schema.ts.
 CREATE INDEX IF NOT EXISTS hint_deliveries_session_delivered_idx
   ON hint_deliveries (session_id, delivered_at DESC);
+
+-- ── The pin registry (regression-guard Stage 1) ─────────────────────────────
+
+-- A human's provenance-stamped statement that a named surface WORKS: the
+-- PASS_TO_PASS register for behaviour no test covers. Its OWN table pair
+-- rather than a claim kind, because claims are FK-bound to a live session and
+-- a work context — registering a pin from a terminal would have to mint a
+-- synthetic session, which then reads as a PHANTOM TEAMMATE in presence, in
+-- every briefing and in the tripwire. capture_mode is STORED, not only
+-- checked at the door: the trust label prints it, because provenance alone
+-- never distinguished "Nick verified this" from "an agent wrote that Nick
+-- verified this". Kept in sync with db/schema.ts; the length CHECKs mirror
+-- MAX_PIN_SURFACE_CHARS / MAX_PIN_CHECK_CHARS in @crosscheck/schema and are
+-- pinned by test/ddl-sync.test.ts.
+CREATE TABLE IF NOT EXISTS pins (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  surface text NOT NULL,
+  verified_by text NOT NULL REFERENCES developers(id),
+  verified_at_commit text NOT NULL,
+  verified_at timestamptz NOT NULL,
+  check_recipe text,
+  capture_mode text NOT NULL,
+  broke_at timestamptz,
+  broke_by text REFERENCES developers(id),
+  created_at timestamptz NOT NULL,
+  CONSTRAINT pins_surface_length_check CHECK (char_length(surface) <= 120),
+  CONSTRAINT pins_check_length_check
+    CHECK (check_recipe IS NULL OR char_length(check_recipe) <= 200)
+);
+
+-- "This repo's pins, newest first" — read by `crosscheck pin list`, by
+-- `status` and by `doctor`. Without it each of them scans every pin on the hub.
+CREATE INDEX IF NOT EXISTS pins_repo_created_idx
+  ON pins (repo, created_at DESC);
+
+-- One row per watched file. repo is DENORMALISED on purpose: the hot question
+-- is "which pins watch this path in this repo", asked with a path and no pin
+-- id, and reaching repo through a join to pins would read every pin row the
+-- path matches in ANY repo first. `status` is what the post-commit sweep
+-- writes — a followed rename rewrites `path` in place, anything else lands as
+-- 'missing', which doctor reports as "BROKEN — 2 of 3 paths missing".
+CREATE TABLE IF NOT EXISTS pin_files (
+  pin_id text NOT NULL REFERENCES pins(id),
+  repo text NOT NULL,
+  path text NOT NULL,
+  status text NOT NULL,
+  PRIMARY KEY (pin_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS pin_files_repo_path_idx
+  ON pin_files (repo, path);
