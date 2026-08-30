@@ -103,6 +103,59 @@ const cleanup = async (): Promise<void> => {
   paths.length = 0;
 };
 
+/**
+ * THE FACT EVERY RUNG DEPENDS ON, and the one this section used to leave out.
+ *
+ * All four Cursor rungs end in a spawned model. On a machine with no `claude`
+ * and no `CROSSCHECK_SUMMARIZER_CMD` that spawn cannot start, so nothing is
+ * ever derived — and yet every rung line printed PASS, because a rung only
+ * WARNs once this machine has BOOKED something, and a machine that never
+ * fires books nothing. Four green lines, nothing inferred, and the one
+ * blocking fact reported only by the Claude connector's probe, which called
+ * it skippable.
+ *
+ * That machine is not hypothetical: it is Cursor-without-Claude-Code, the
+ * exact install this parity work exists for.
+ */
+describe("the derive backend line", () => {
+  test("no claude and no override WARNs that nothing derives here", async () => {
+    // Arrange — an install that is perfect in every other respect
+    const { repo, home } = await installed("cursor-doctor-backend-absent");
+
+    // Act — a PATH with no model binary anywhere on it
+    const checks = await cursorDoctorChecks({
+      repoRoot: repo,
+      env: { PATH: "/nonexistent" },
+      home,
+      repoKey: "k",
+    });
+    const line = checks.find((entry) => entry.name === "derive backend (cursor)");
+
+    // Assert — named, visible, and it says the consequence in words
+    expect(line).toBeDefined();
+    expect(line?.level).toBe("WARN");
+    expect(line?.detail).toContain("nothing on this machine can derive");
+    // ...and it must not read as "crosscheck is broken": the deterministic
+    // half of the product is untouched by a missing model.
+    expect(line?.detail).toContain("deterministic capture is unaffected");
+  });
+
+  test("an override is a backend, and the line names the command", async () => {
+    const { repo, home } = await installed("cursor-doctor-backend-override");
+
+    const checks = await cursorDoctorChecks({
+      repoRoot: repo,
+      env: { PATH: "/nonexistent", CROSSCHECK_SUMMARIZER_CMD: "/opt/ox/alpha.sh" },
+      home,
+      repoKey: "k",
+    });
+    const line = checks.find((entry) => entry.name === "derive backend (cursor)");
+
+    expect(line?.level).toBe("PASS");
+    expect(line?.detail).toContain("/opt/ox/alpha.sh");
+  });
+});
+
 describe("the cursor doctor section says what is inferred and what is refused", () => {
   test("every declared rung and every refusal is printed, with its platform sentence", async () => {
     // Arrange

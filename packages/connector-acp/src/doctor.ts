@@ -31,6 +31,11 @@ import { ACP_HOST_KEY_PREFIX } from "@crosscheck/connector-core/state/host-sessi
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import { ACP_CAPABILITY_MANIFEST } from "./capabilities.ts";
+import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import {
+  deriveBackendSentence,
+  resolveDeriveBackend,
+} from "@crosscheck/connector-core/model/backend.ts";
 import { ACP_LOG_DIR_NAME } from "./constants.ts";
 
 /** Structurally the Claude doctor's Check — no cross-package type import. */
@@ -183,8 +188,31 @@ const refusalChecks = (): readonly AcpCheck[] =>
     check("PASS", `${refusal.name} (acp)`, refusal.sentence),
   );
 
+/**
+ * CAN THIS MACHINE RUN A MODEL AT ALL — the Cursor line's twin, and for the
+ * same reason: every ACP rung ends in the same spawned argv, so a machine
+ * with no `claude` and no override derives nothing here however healthy the
+ * proxy is. Only rendered once the proxy has actually run here, because a
+ * host nobody uses has nothing to derive and does not need the warning.
+ */
+const backendCheck = (env: Env | undefined): AcpCheck => {
+  const backend = resolveDeriveBackend(env ?? {});
+  return check(
+    backend.kind === "absent" ? "WARN" : "PASS",
+    "derive backend (acp)",
+    deriveBackendSentence(backend),
+  );
+};
+
 export interface AcpDoctorInput {
   readonly home: string;
+  /**
+   * The environment doctor itself runs in — the one whose PATH decides
+   * whether a spawned model can start at all. Optional so a caller that only
+   * wants the refusals need not have one; absent reads as "no PATH", which
+   * resolves to no backend, which is the honest answer for an empty env.
+   */
+  readonly env?: Env;
   /**
    * The doctor's ONE scan of the session directory, shared with every other
    * derive figure it prints. Filtered to ACP sessions here.
@@ -207,5 +235,9 @@ export const acpDoctorChecks = async (
       ),
     ];
   }
-  return [...capabilityChecks(acpStates), ...refusalChecks()];
+  return [
+    backendCheck(input.env),
+    ...capabilityChecks(acpStates),
+    ...refusalChecks(),
+  ];
 };

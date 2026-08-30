@@ -92,6 +92,67 @@ interface Line {
 const named = (checks: readonly Line[], name: string): Line | undefined =>
   checks.find((entry) => entry.name === name);
 
+/**
+ * THE SAME FACT ON THIS WIRE. The ACP rungs spawn the same resolved argv the
+ * Cursor and Claude ones do, so a machine with no model binary derives
+ * nothing here either — and, exactly as on Cursor, every rung printed PASS
+ * because nothing had been booked yet.
+ */
+describe("the ACP derive backend line", () => {
+  test("no claude and no override WARNs that nothing derives here", async () => {
+    // Arrange
+    const dir = await home("acp-doctor-backend-absent");
+    await withProxyLog(dir);
+
+    // Act
+    const checks = await acpDoctorChecks({
+      home: dir,
+      env: { PATH: "/nonexistent" },
+      liveStates: [],
+    });
+    const line = named(checks, "derive backend (acp)");
+
+    // Assert
+    expect(line).toBeDefined();
+    expect(line?.level).toBe("WARN");
+    expect(line?.detail).toContain("nothing on this machine can derive");
+    expect(line?.detail).toContain("deterministic capture is unaffected");
+  });
+
+  test("an override is a backend, and the line names the command", async () => {
+    const dir = await home("acp-doctor-backend-override");
+    await withProxyLog(dir);
+
+    const checks = await acpDoctorChecks({
+      home: dir,
+      env: { PATH: "/nonexistent", CROSSCHECK_SUMMARIZER_CMD: "/opt/ox/alpha.sh" },
+      liveStates: [],
+    });
+    const line = named(checks, "derive backend (acp)");
+
+    expect(line?.level).toBe("PASS");
+    expect(line?.detail).toContain("/opt/ox/alpha.sh");
+  });
+
+  /**
+   * A machine that never ran the proxy still gets its ONE line and no more —
+   * the backend fact is about DERIVING, and a host that is not in use here
+   * has nothing to derive.
+   */
+  test("a machine that never ran the proxy gets no backend line", async () => {
+    const dir = await home("acp-doctor-backend-unused");
+
+    const checks = await acpDoctorChecks({
+      home: dir,
+      env: { PATH: "/nonexistent" },
+      liveStates: [],
+    });
+
+    expect(checks).toHaveLength(1);
+    expect(named(checks, "derive backend (acp)")).toBeUndefined();
+  });
+});
+
 describe("the ACP derive section says every rung and every refusal", () => {
   test("a machine that never ran the proxy gets ONE line, and it is a PASS", async () => {
     // Arrange
@@ -148,10 +209,15 @@ describe("the ACP derive section says every rung and every refusal", () => {
       expect(line?.level).toBe("PASS");
       expect(line?.detail).toBe(refusal.sentence);
     }
+    // No unexplained extras: every declared rung, every declared refusal, and
+    // the one line that is not declared by the manifest because it is not
+    // about ACP at all — whether this machine can run a model (backendCheck).
     expect(checks).toHaveLength(
       ACP_CAPABILITY_MANIFEST.capabilities.length +
-        ACP_CAPABILITY_MANIFEST.refusals.length,
+        ACP_CAPABILITY_MANIFEST.refusals.length +
+        1,
     );
+    expect(named(checks, "derive backend (acp)")).toBeDefined();
   });
 
   test("the summarizer rung says what makes it reduced, and where to measure it", async () => {

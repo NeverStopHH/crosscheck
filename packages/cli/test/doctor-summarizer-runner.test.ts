@@ -281,7 +281,18 @@ describe("crosscheck doctor — summarizer runner probe", () => {
     const line = runnerLine(result.stdout);
     expect(line).toContain("PASS  summarizer runner");
     expect(line).toContain("skipped");
-    expect(line).toContain("no claude binary on PATH");
+    expect(line).toContain("no model binary");
+    // THE HALF THAT MATTERS ON A CURSOR- OR ACP-ONLY MACHINE. This sentence
+    // used to end "a Cursor- or ACP-only machine can ignore this", which was
+    // true only while Claude was the sole host that could derive. Those hosts
+    // now spawn this same argv, so the line must say the consequence reaches
+    // every host — and must not tell the one reader it most affects to look
+    // away.
+    expect(line).toContain("on any host");
+    expect(line).not.toContain("can ignore this");
+    // ...and it must not read as "crosscheck is dead": capture is a separate
+    // lane that never involves a model.
+    expect(line).toContain("deterministic capture is unaffected");
   });
 });
 

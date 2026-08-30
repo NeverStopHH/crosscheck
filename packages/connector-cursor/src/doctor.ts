@@ -39,6 +39,10 @@ import {
   MIN_CURSOR_HOOKS_MINOR,
 } from "./constants.ts";
 import { CURSOR_CAPABILITY_MANIFEST } from "./capabilities.ts";
+import {
+  deriveBackendSentence,
+  resolveDeriveBackend,
+} from "@crosscheck/connector-core/model/backend.ts";
 import { NO_SLICE_NO_TRANSCRIPT } from "./derive/transcript.ts";
 import { readContractDrift } from "./drift.ts";
 import { readInjectionLedger } from "./inject/ledger.ts";
@@ -361,6 +365,32 @@ const transcriptRefusalCheck = (
   ];
 };
 
+/**
+ * CAN THIS MACHINE RUN A MODEL AT ALL — printed before the rungs, because
+ * every one of them depends on it.
+ *
+ * A rung line answers "what does Cursor let crosscheck infer". THIS line
+ * answers "is there anything here to infer WITH", and the two are genuinely
+ * different questions: an install can be perfect, all four rungs full, and
+ * still derive nothing forever because no model binary exists on the PATH
+ * doctor runs with. Before this line that state was reported only by the
+ * Claude connector's runner probe, as a PASS that told a Cursor-only machine
+ * it could be ignored.
+ *
+ * WARN rather than PASS when it is absent, and the distinction is the point:
+ * this is not a platform limit nobody can act on (those are the refusals, and
+ * they stay PASS) — it is two concrete remedies, install a model backend or
+ * set the override, both named in the sentence.
+ */
+const backendCheck = (env: Env): CursorCheck => {
+  const backend = resolveDeriveBackend(env);
+  return check(
+    backend.kind === "absent" ? "WARN" : "PASS",
+    "derive backend (cursor)",
+    deriveBackendSentence(backend),
+  );
+};
+
 /** The refusals, always printed: a decision nobody can find is a bug. */
 const refusalChecks = (): readonly CursorCheck[] =>
   CURSOR_CAPABILITY_MANIFEST.refusals.map((refusal) =>
@@ -507,6 +537,7 @@ export const cursorDoctorChecks = async (
     versionCheck(sync.cursorVersion),
     await driftCheck(input.home),
     await injectionCheck(input.home),
+    backendCheck(input.env),
     ...capabilityChecks(cursorStates),
     ...transcriptRefusalCheck(cursorStates),
     ...refusalChecks(),

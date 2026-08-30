@@ -1590,7 +1590,7 @@ export const runDoctor = async (
     skewCheck,
     bunfigCheck,
     ...(await checkCursor(identity.root, env, config.home, key, liveStates)),
-    ...(await checkAcp(config.home, liveStates)),
+    ...(await checkAcp(config.home, env, liveStates)),
   ]);
 };
 
@@ -1604,6 +1604,7 @@ export const runDoctor = async (
  */
 const checkAcp = async (
   home: string,
+  env: Env,
   liveStates: readonly SessionState[],
 ): Promise<readonly Check[]> => {
   try {
@@ -1611,7 +1612,10 @@ const checkAcp = async (
     // The SAME session scan the model-cost lines above used; the ACP section
     // filters it to sessions whose host key carries the `acp-` prefix, so a
     // Claude session's booked failure can never light up an ACP rung.
-    const checks = await acpDoctorChecks({ home, liveStates });
+    // `env` rides along for ONE fact the section cannot get anywhere else:
+    // whether a model binary is resolvable on the PATH doctor runs with. Every
+    // ACP rung spawns one, so a machine without it derives nothing here.
+    const checks = await acpDoctorChecks({ home, env, liveStates });
     return checks.map((entry) => check(entry.level, entry.name, entry.detail));
   } catch {
     return [

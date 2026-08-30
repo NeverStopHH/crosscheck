@@ -162,9 +162,18 @@ export const probeSummarizerRunner = async (
     !hasOverride &&
     Bun.which(CLAUDE_BINARY, { PATH: env["PATH"] ?? "" }) === null
   ) {
+    // THIS SENTENCE USED TO SAY a Cursor- or ACP-only machine could ignore
+    // it. That was true while only the Claude connector could reach a model.
+    // It is false now: the Cursor and ACP derive rungs spawn this same
+    // resolved argv, so a machine without a backend derives nothing on ANY
+    // host — and this probe is the surface most likely to be read first.
+    //
+    // What it must NOT do is read as "crosscheck is broken": the
+    // deterministic half of the product never involves a model, so the
+    // sentence says which half is affected and which is not.
     return {
       kind: "skipped",
-      why: `no ${CLAUDE_BINARY} binary on PATH (Tier-1 capture needs Claude Code; a Cursor- or ACP-only machine can ignore this)`,
+      why: `no model binary: ${CLAUDE_BINARY} is not on the PATH doctor runs with and CROSSCHECK_SUMMARIZER_CMD is unset — nothing on this machine can derive anything, on any host (docs/FOREIGN-MODELS.md); deterministic capture is unaffected`,
     };
   }
   const argv = resolveSummarizerArgv(env);
