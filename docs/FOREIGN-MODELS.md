@@ -251,9 +251,18 @@ so, and the four want four different answers:
 | conference | its own report shape |
 
 A wrapper with the summarizer's instruction hard-coded — like the example —
-therefore gives the summarizer's instruction to all four. The other three will
-mostly answer something the parse discards, which is **booked as `unreadable`
-and visible**, not silent. But those fires are spent.
+therefore gives the summarizer's instruction to all four. The other three then
+answer in the wrong shape, and each **refuses it and books why** — nothing
+wrong-shaped is ever published:
+
+| task | what it books when the shape is wrong |
+|---|---|
+| summarizer | `unreadable` — *"the answer was neither claim JSON nor NONE"* |
+| session intent | `dropped: the answer was not a sentence`, on the intent rung |
+| ghost check | `dropped: the answer was not a sentence`, on the ghost rung |
+
+`crosscheck doctor` names the last one on the matching rung line, so this is
+visible rather than silent. But those fires are spent.
 
 If you rely on derived intents or the ghost check, the current honest options
 are: leave the default backend in place, or run the two lanes on different
