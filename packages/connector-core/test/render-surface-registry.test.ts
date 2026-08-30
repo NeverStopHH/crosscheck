@@ -53,13 +53,26 @@ import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
 
 const WORKSPACE_PACKAGES_ROOT = join(import.meta.dir, "..", "..");
 
+/** This package's root, so a RENDER_LAYER_MODULES path can be imported. */
+const CORE_ROOT = join(import.meta.dir, "..");
+
 /**
  * Import specifiers that ARE the render layer, however they are reached —
  * relative (`../briefing/sanitize.ts`) or cross-package
  * (`@crosscheck/connector-core/briefing/sanitize.ts`).
+ *
+ * DERIVED FROM `RENDER_LAYER_MODULES`, never written out again. It was a hand
+ * kept literal, and the two drifted exactly as a duplicated list does: the
+ * registry named `briefing/questions.ts` and `briefing/ghost.ts` as render
+ * layer while this pattern still listed three briefing modules, so a module
+ * reaching either of those was flagged by nothing and §4.4's "a new render
+ * file that skips registration is a RED BUILD" was not true of them.
  */
-const RENDER_LAYER_SPECIFIER =
-  /(briefing\/(?:sanitize|render)|hints\/render|mcp\/render(?:-referee)?)\.ts$/;
+const RENDER_LAYER_SPECIFIER = new RegExp(
+  `(?:${RENDER_LAYER_MODULES.map((module) =>
+    module.replace(/^src\//, "").replace(/\./g, "\\."),
+  ).join("|")})$`,
+);
 
 /**
  * The render layer's value exports. An import of any of these names flags
@@ -71,6 +84,11 @@ const RENDER_IDENTIFIERS: ReadonlySet<string> = new Set([
   "bareUntrusted",
   "safeId",
   "quoted",
+  "quotedBody",
+  "spanRedactedUntrusted",
+  "redactionNote",
+  "REDACTED_TITLE",
+  "REDACTED_SPAN",
   "quotingText",
   "renderBriefing",
   "renderClaimHint",
@@ -88,6 +106,16 @@ const RENDER_IDENTIFIERS: ReadonlySet<string> = new Set([
   "groupTeammates",
   "formatAge",
   "formatSolvedAge",
+  "formatIntentLabel",
+  "intentFragment",
+  "renderIntent",
+  "formatGhostLine",
+  "formatGhostAge",
+  "renderGhostNotice",
+  "ghostAttribution",
+  "ghostDraftBody",
+  "formatQuestionEntry",
+  "fitQuestionEntries",
 ]);
 
 /** import/export-from statements: clause + specifier. */
@@ -306,6 +334,70 @@ describe("§4.4: unregistered render surfaces are a red build", () => {
     expect(labels).toContain("connector-acp");
     expect(labels).toContain("connector-cursor");
     expect(labels).toContain("cli");
+  });
+
+  test("the specifier pattern matches EVERY module the registry calls render layer", () => {
+    // The meta-test can only flag an import it recognises, so this pattern IS
+    // the coverage of the rule above. It was written out by hand beside the
+    // list it mirrors, and drifted: briefing/questions.ts (R2) and
+    // briefing/ghost.ts (VISION §3) joined RENDER_LAYER_MODULES while the
+    // pattern still named three briefing modules, so a module rendering a
+    // question entry or a ghost line was flagged by nothing at all.
+    for (const module of RENDER_LAYER_MODULES) {
+      const path = module.replace(/^src\//, "");
+      expect(RENDER_LAYER_SPECIFIER.test(`../${path}`), module).toBe(true);
+      expect(
+        RENDER_LAYER_SPECIFIER.test(`@crosscheck/connector-core/${path}`),
+        module,
+      ).toBe(true);
+    }
+    // And still only those: a neighbouring module of the same shape is not
+    // render layer, or every importer in the workspace would need a row.
+    expect(RENDER_LAYER_SPECIFIER.test("../briefing/cut.ts")).toBe(false);
+  });
+
+  test("every render name a BARREL re-exports is one the meta-test flags", async () => {
+    // RENDER_IDENTIFIERS is the whole coverage of the barrel route. A module
+    // reaching the render layer through a relative or cross-package path is
+    // caught by RENDER_LAYER_SPECIFIER, but src/index.ts and src/kit.ts are
+    // themselves RENDER_BARREL_MODULES and therefore exempt from the specifier
+    // rule — so an import through them is caught by NAME or by nothing.
+    //
+    // Hand-kept, that set drifts the moment a barrel re-exports a new render
+    // value, exactly as RENDER_LAYER_SPECIFIER drifted from RENDER_LAYER_MODULES
+    // before it was derived. Derived here for the same reason: the barrels and
+    // the render layer are both read, and their intersection is the rule.
+    const layerValues = new Set<string>();
+    for (const module of RENDER_LAYER_MODULES) {
+      const loaded: Record<string, unknown> = await import(
+        join(CORE_ROOT, module)
+      );
+      for (const [name, value] of Object.entries(loaded)) {
+        if (typeof value === "function" || typeof value === "string") {
+          layerValues.add(name);
+        }
+      }
+    }
+    // A render layer with no value exports would make this test vacuous.
+    expect(layerValues.size).toBeGreaterThan(0);
+
+    const unflagged: string[] = [];
+    for (const barrel of RENDER_BARREL_MODULES) {
+      const loaded: Record<string, unknown> = await import(
+        join(CORE_ROOT, barrel)
+      );
+      for (const name of Object.keys(loaded)) {
+        if (layerValues.has(name) && !RENDER_IDENTIFIERS.has(name)) {
+          unflagged.push(`${barrel} re-exports ${name}`);
+        }
+      }
+    }
+
+    expect(
+      unflagged.sort(),
+      `render value(s) reachable through a barrel but absent from RENDER_IDENTIFIERS: ${unflagged.join(", ")} — ` +
+        "add the name, or the barrel route into the render layer is unguarded",
+    ).toEqual([]);
   });
 
   test("the ACP and Cursor injection surfaces stay registered by NAME — module cover is not surface cover", () => {

@@ -86,6 +86,7 @@ const freshState = (
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   briefingSolvedRefs: [],
+  probedFingerprints: [],
   foreignRepoDrops: 0,
   briefingPending: false,
   stopTurnCount: 0,
@@ -96,6 +97,25 @@ const freshState = (
   summarizerDraftCount: 0,
   summarizerFailCount: 0,
   summarizerLastFailure: null,
+  summarizerRejectCount: 0,
+  summarizerLastRejection: null,
+  workContextTitle: null,
+  workContextStatus: null,
+  intentFireCount: 0,
+  intentNoneCount: 0,
+  intentSetCount: 0,
+  intentFailCount: 0,
+  intentLastFailure: null,
+  workContextIntent: null,
+  ghostPending: false,
+  ghostNoticeCount: 0,
+  ghostFireCount: 0,
+  ghostNoOverlapCount: 0,
+  ghostNoHubAnswerCount: 0,
+  ghostNoneCount: 0,
+  ghostDraftCount: 0,
+  ghostFailCount: 0,
+  ghostLastFailure: null,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -106,7 +126,6 @@ const freshState = (
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
   summarizerUnparsedCount: 0,
-  intentFireCount: 0,
   ...overrides,
 });
 
@@ -129,7 +148,13 @@ const fixture = async (
     ctx: {
       hubUrl: hub.url,
       apiKey: "test-key",
-      timeoutMs: 2000,
+      // 20 s, not the product's 2 s: this deadline is the TEST's patience with a
+      // fake hub on localhost, never a bound the product ships (the real ones are
+      // measured in connector-claude's hook-budget tests). At 2 s the whole-suite
+      // run flaked — 225 files, many spawning processes — and a hint that never
+      // arrived read as a delivery defect: `an answer is delivered exactly once`
+      // failed on an empty string, once, under load.
+      timeoutMs: 20_000,
       home,
       repoKey: key,
       now: () => NOW,

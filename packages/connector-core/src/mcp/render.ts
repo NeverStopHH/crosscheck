@@ -27,10 +27,12 @@ import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
 import {
   MAX_DIAGNOSIS_CHARS,
+  MAX_HUB_MESSAGE_CHARS,
   MAX_SEARCH_CHARS,
   MAX_TITLE_CHARS,
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
+import { renderIntent } from "../briefing/intent.ts";
 import {
   QUOTED_DATA_NOTICE,
   formatAge,
@@ -40,6 +42,7 @@ import {
   bareUntrusted as bare,
   safeId,
   sanitizeUntrusted,
+  spanRedactedUntrusted,
 } from "../briefing/sanitize.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import type { SolvedFileDrift } from "../git/solved-staleness.ts";
@@ -84,6 +87,33 @@ export const quoted = (
   raw: string,
   maxChars: number = MAX_TITLE_CHARS,
 ): string => `«${sanitizeUntrusted(raw, maxChars)}»`;
+
+/**
+ * The same frame, for text whose BODY is the answer rather than a label — the
+ * class rule of audit row M14.
+ *
+ * `quoted` above blanks the whole value when the phrase filter matches, which
+ * is right for a LABEL (a title is a name for something, and a name that reads
+ * like an instruction is worth losing) and wrong wherever the value IS the
+ * answer: a hub refusal, whose payload is the reason and the next call; a
+ * recorded root cause; a question somebody has to answer. Four of the nine
+ * phrase branches are everyday English inside a real finding — `override`,
+ * `you must`, `disregard`, `act as` — so blanking handed the reader a
+ * redaction marker where the answer should have been, and the AUTHOR never
+ * learned it had happened (`redactionNote` in briefing/sanitize.ts is the
+ * other half of the row).
+ *
+ * Everything else is identical: the same clean, the same cap, the same « »,
+ * the same quoted-data notice around the document. Only the phrase branch is
+ * narrowed to the span it matched, so an attack string is still gone — by the
+ * span rather than by the sentence.
+ *
+ * EXPORTED because the other body surfaces frame too (hints/render.ts,
+ * briefing/questions.ts, conference/report.ts): a second `«${…}»` spelling
+ * would be a second thing to weaken, exactly as the header says of `quoted`.
+ */
+export const quotedBody = (raw: string, maxChars: number): string =>
+  `«${spanRedactedUntrusted(raw, maxChars)}»`;
 
 /**
  * A tool's answer that CONTAINS quoted data, as a document rather than a
@@ -159,7 +189,7 @@ const claimLine = (
     `provenance ${bare(claim.provenance)}`,
     authorLabel(index, claim.authorSessionId),
   ];
-  return `${facts.join(" · ")}${evidence}${seen}: ${quoted(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
+  return `${facts.join(" · ")}${evidence}${seen}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
 };
 
 const edgeLine = (
@@ -169,7 +199,7 @@ const edgeLine = (
   const note =
     edge.note === null || edge.note === undefined || edge.note.length === 0
       ? ""
-      : `: ${quoted(edge.note)}`;
+      : `: ${quotedBody(edge.note, MAX_TITLE_CHARS)}`;
   return `- ${safeId(edge.fromClaimId)} ${bare(edge.kind)} ${safeId(edge.toClaimId)} · by ${authorLabel(index, edge.authorSessionId)}${note}`;
 };
 
@@ -445,12 +475,16 @@ export const renderDiagnosis = (
   const context = diagnosis.workContext;
   const header = `crosscheck diagnosis for work context ${safeId(context.id)}. ${QUOTED_DATA_NOTICE}`;
   const contextLine = `Work context ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} · status ${bare(context.status)} · opened by ${authorLabel(index, context.sessionId)}`;
+  // The session's stated intent on its own line (trial finding #16): one
+  // framed value per line, the one fragment every surface spells.
+  const intentFragment = renderIntent(context.intent);
+  const intentLines = intentFragment === null ? [] : [`Session ${intentFragment}`];
   const solvedLines = solvedBlock(diagnosis, solvedPresentation);
 
   const opening =
     diagnosis.claims.length === 0
-      ? [header, contextLine, ...solvedLines, "Claims: no claims recorded yet."]
-      : [header, contextLine, ...solvedLines];
+      ? [header, contextLine, ...intentLines, ...solvedLines, "Claims: no claims recorded yet."]
+      : [header, contextLine, ...intentLines, ...solvedLines];
 
   const sections: readonly Section[] = [
     {
@@ -533,7 +567,11 @@ const searchLine = (hit: SearchHit): string => {
     `status ${bare(hit.entry.status)}`,
     ...solvedFact(hit),
   ];
-  return `${facts.join(" · ")}: ${quoted(hit.entry.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
+  const line = `${facts.join(" · ")}: ${quoted(hit.entry.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
+  // The intent on a second, indented line of the SAME section entry (one
+  // « » pair per line; appendSection keeps or drops the hit whole).
+  const intent = renderIntent(hit.entry.intent);
+  return intent === null ? line : `${line}\n  ${intent}`;
 };
 
 /**
@@ -573,15 +611,115 @@ const SEARCH_METHOD_SEMANTIC =
   "titles, statuses and claim summaries, plus a semantic similarity tier, this repo only, " +
   "recent work ranked higher.";
 
+/**
+ * WHICH FILTERS RAN, as the hub reported them (roadmap R1) — never as this
+ * client hopes, the same rule `semanticTier` follows one field above.
+ *
+ * `sinceAgeMs` is a DURATION, not the instant: the hub sends the resolved
+ * timestamp and the tool subtracts its own clock, so the window prints in the
+ * vocabulary the rest of the answer already uses — `14d` beside "3d ago" on
+ * the hits, and `14d` is also exactly what the caller types into `since`.
+ */
+export interface SearchFilterView {
+  readonly developerName?: string | undefined;
+  /**
+   * The address, present only when the hub says the display name is shared —
+   * see the fragment below for why an answer sometimes has to carry it.
+   */
+  readonly developerEmail?: string | undefined;
+  /** The filter names the READER — see the fragment below for why it shows. */
+  readonly isSelf?: boolean | undefined;
+  readonly sinceAgeMs?: number | undefined;
+}
+
 export interface SearchRenderOptions {
   /** The hub reported its vector tier ran for this search. */
   readonly semanticTier?: boolean;
+  readonly filters?: SearchFilterView | undefined;
 }
 
 const searchMethodLine = (options: SearchRenderOptions): string =>
   options.semanticTier === true
     ? SEARCH_METHOD_SEMANTIC
     : SEARCH_METHOD_LEXICAL;
+
+/**
+ * The developer a filter narrowed to, BARE — a display name, like every other
+ * author name on this surface, never a frame of its own.
+ *
+ * "(you)" is renderer-owned and load-bearing. Search does not exclude the
+ * caller (hiding your own tree would make `get_diagnosis` on it unreachable),
+ * so `developer: <myself>` is a legitimate call — and its results would
+ * otherwise be indistinguishable from a teammate's, which is a misattribution
+ * the reader has no way to notice.
+ */
+const developerFragment = (filters: SearchFilterView): string | null => {
+  const name =
+    filters.developerName === undefined ? "" : bare(filters.developerName);
+  if (name.length === 0) {
+    return null;
+  }
+  const labelled = filters.isSelf === true ? `${name} (you)` : name;
+  // THE ADDRESS, WHEN THE NAME IS NOT ENOUGH. The hub sends it exactly when
+  // two people share this display name — the same fact its ambiguity refusal
+  // is built on — so a caller who was refused, retyped the exact address and
+  // got an answer does not read a header that has thrown that away again.
+  // BARE like the name: an address is author-written text, not a frame.
+  const email =
+    filters.developerEmail === undefined ? "" : bare(filters.developerEmail);
+  return email.length === 0 ? labelled : `${labelled} · ${email}`;
+};
+
+const windowFragment = (filters: SearchFilterView): string | null =>
+  filters.sinceAgeMs === undefined
+    ? null
+    : `active in the last ${formatAge(filters.sinceAgeMs)}`;
+
+const filtersLine = (options: SearchRenderOptions): readonly string[] => {
+  const filters = options.filters;
+  if (filters === undefined) {
+    return [];
+  }
+  const parts = [developerFragment(filters), windowFragment(filters)].filter(
+    (part): part is string => part !== null,
+  );
+  return parts.length === 0 ? [] : [`Filters: ${parts.join(" · ")}`];
+};
+
+/**
+ * "Nothing matched" is a different sentence once a filter is in play, and the
+ * difference is the whole reason R1 needed care.
+ *
+ * Unfiltered, an empty result says these WORDS matched nothing. Filtered, it
+ * says these words matched nothing FROM THIS PERSON IN THIS WINDOW — and a
+ * reader who forgets the second half concludes "Ken has done nothing" and goes
+ * off to redo Ken's work. So the filters are repeated in the sentence and the
+ * sentence says out loud that they are part of the answer.
+ */
+const noMatchLine = (options: SearchRenderOptions): string => {
+  const filters = options.filters;
+  const name =
+    filters?.developerName === undefined ? "" : bare(filters.developerName);
+  // "you", not the reader's own display name — the same flag and the same
+  // reason as the filter line three functions up. Without it one answer
+  // carries two lines that disagree about who Nick is, and a model quoting
+  // only the sentence reports it as a fact about a teammate called Nick.
+  const from =
+    name.length === 0
+      ? ""
+      : filters?.isSelf === true
+        ? " from you"
+        : ` from ${name}`;
+  const window =
+    filters?.sinceAgeMs === undefined
+      ? ""
+      : ` in the last ${formatAge(filters.sinceAgeMs)}`;
+  const sentence = `No work context on this repo matched that query${from}${window}.`;
+  return from.length === 0 && window.length === 0
+    ? sentence
+    : `${sentence} Those filters are part of that answer: other words, a longer ` +
+        "window or another teammate may well match.";
+};
 
 /**
  * A query that could not be searched for at all, as distinct from one that was
@@ -611,6 +749,81 @@ export const renderUnusableQuery = (
 };
 
 /**
+ * A search that never ran because a FILTER did not resolve (roadmap R1).
+ *
+ * Kept apart from an empty result on purpose, and for the reason
+ * `renderUnusableQuery` exists one screen above: collapsing "I could not tell
+ * which person you meant" into "nothing matched" tells a model its question
+ * was asked and answered, so it concludes the teammate has done nothing. This
+ * says the opposite in its first sentence, and hands the hub's own reason
+ * over as quoted data — the hub chose those words, so they are framed and
+ * capped exactly like a teammate's claim body (mcp/tools/shared.ts states the
+ * threat model).
+ *
+ * NO METHOD LINE, like the unusable-query surface: nothing was searched, so
+ * there is no method to describe.
+ */
+export const renderSearchFilterRefusal = (
+  query: string,
+  hubMessage: string,
+): string =>
+  [
+    searchHeader(),
+    queryLine(quoted(query)),
+    "Nothing was searched: a filter did not resolve to what it names, so this is " +
+      "not a result about anyone's work.",
+    `The hub said: ${quotedBody(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,
+  ].join("\n");
+
+/**
+ * What each unapplied filter COSTS the answer, said in the answer's own terms.
+ *
+ * Naming the argument is not enough on its own: "the developer filter did not
+ * run" leaves the reader to work out what the rows beside it therefore are, and
+ * a reader who does not work that out is the whole failure mode here.
+ */
+const UNAPPLIED_FILTER_COST: Readonly<Record<string, string>> = {
+  developer: "the rows it sent are everyone's work, not one teammate's",
+  since: "the rows it sent reach back over all of history, not just the window",
+};
+
+/**
+ * A search whose FILTERS the hub never applied (roadmap R1).
+ *
+ * THIS IS THE ONE OMISSION THAT CHANGES THE QUESTION. Every other "an older hub
+ * sends no such field" case in http/hub.ts costs a DETAIL — a tier label, a
+ * solved marker, an intent — and the answer around it stays true. Here the
+ * omitted field is the only evidence that the caller's question was ever asked,
+ * and the rows beside it are a true answer to a DIFFERENT one: everybody's work
+ * over all of history. Rendered as an ordinary success they read as "here is
+ * Ken's work from the last two weeks", which is the misattribution the `(you)`
+ * label two screens up exists to prevent in its smaller form.
+ *
+ * So it is a refusal, on the grounds the two surfaces above it share: a question
+ * that was never asked must not come back looking answered. It is NOT framed as
+ * "the hub said" — no hub said anything, this client noticed the silence.
+ */
+export const renderUnappliedFilters = (
+  query: string,
+  unapplied: readonly string[],
+): string => {
+  const plural = unapplied.length === 1 ? "" : "s";
+  const costs = unapplied
+    .map((name) => UNAPPLIED_FILTER_COST[name])
+    .filter((cost): cost is string => cost !== undefined)
+    .join(", and ");
+  return [
+    searchHeader(),
+    queryLine(quoted(query)),
+    "Nothing was searched: this hub did not report applying the " +
+      `${unapplied.join(" and ")} filter${plural} this call sent, so ${costs}. ` +
+      "A hub older than a filter drops it without saying so, which is why this " +
+      `is a refusal rather than a list. Ask again without that filter${plural}, ` +
+      "or ask whoever runs the hub to update it.",
+  ].join("\n");
+};
+
+/**
  * Hub search results, in the hub's fused ranking order.
  */
 export const renderSearchResults = (
@@ -622,12 +835,11 @@ export const renderSearchResults = (
   const opening = [
     searchHeader(),
     queryLine(framedQuery),
+    ...filtersLine(options),
     searchMethodLine(options),
   ];
   if (hits.length === 0) {
-    return [...opening, "No work context on this repo matched that query."].join(
-      "\n",
-    );
+    return [...opening, noMatchLine(options)].join("\n");
   }
   const lines = appendSection(
     opening,

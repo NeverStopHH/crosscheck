@@ -23,6 +23,7 @@ import { MAX_SEARCH_QUERY_CHARS } from "../src/constants.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
 import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
+import { CLAIM_SECRET_REFUSAL } from "../src/mcp/tools/publish-claim.ts";
 import { writeSessionState } from "../src/state/session-state.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
@@ -213,11 +214,12 @@ afterAll(async () => {
 });
 
 describe("the tool registry", () => {
-  test("declares exactly the five tools, each with a usable schema", () => {
+  test("declares the tools, each with a usable schema", () => {
     // Arrange: `tools/list` is how a model learns what it may call, so a tool
     // with no description or no schema is a tool it will call wrongly
     const names = [
       "publish_claim",
+      "set_intent",
       "extend_diagnosis",
       "get_diagnosis",
       "get_referee_brief",
@@ -248,6 +250,29 @@ describe("the tool registry", () => {
 });
 
 describe("publish_claim", () => {
+  test("refuses a credential-shaped body, and nothing reaches the hub", async () => {
+    // Arrange: a synthetic AWS-shaped id, built rather than typed. A published
+    // claim is uploaded to a shared hub and can be injected into a teammate's
+    // prompt as substance, so this body is the same exposure the question
+    // channel's answer path was audited for.
+    const fake = `AKIA${"Q7RSTUVWXYZ234567".slice(0, 16)}`;
+
+    // Act
+    const result = await call(alice, "publish_claim", {
+      kind: "observation",
+      body: `The limiter still reads ${fake} from the env`,
+    });
+
+    // Assert: refused, the match never echoed, and the tree unchanged.
+    expect(result.isError).toBe(true);
+    expect(result.text).toBe(CLAIM_SECRET_REFUSAL);
+    expect(result.text).not.toContain(fake);
+    const read = await call(alice, "get_diagnosis", {
+      workContextId: alice.workContextId,
+    });
+    expect(read.text).not.toContain(fake);
+  });
+
   test("records a claim on the caller's own work context", async () => {
     // Act
     const result = await call(alice, "publish_claim", {
@@ -266,6 +291,33 @@ describe("publish_claim", () => {
     expect(read.text).toContain(
       "«The refresh path never reloads the rotated key»",
     );
+  });
+
+  test("a body with an instruction-shaped phrase is stored and the author is warned", async () => {
+    // Audit row M14, the author's half. The redaction happens at RENDER time
+    // on somebody ELSE's machine, so without this note the author never learns
+    // that their finding reaches a teammate with a hole in it.
+    const result = await call(alice, "publish_claim", {
+      kind: "observation",
+      body: "The per-repo override is read before the default, so the second flush wins",
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain("Heads up");
+    expect(result.text).toContain("[redacted]");
+    // The control: a note, not a refusal — the claim is on the tree, whole.
+    const read = await call(alice, "get_diagnosis", {
+      workContextId: alice.workContextId,
+    });
+    expect(read.text).toContain("so the second flush wins");
+  });
+
+  test("an ordinary body is acknowledged without a warning", async () => {
+    const result = await call(alice, "publish_claim", {
+      kind: "observation",
+      body: "The pool leaks one connection for every key rotation",
+    });
+    expect(result.text).not.toContain("Heads up");
   });
 
   test("reports a re-published claim as already recorded, not as new", async () => {

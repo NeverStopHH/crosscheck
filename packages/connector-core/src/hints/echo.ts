@@ -33,3 +33,34 @@ export const isEchoOfDeliveredHint = (
   body: string,
   deliveredHintHashes: readonly string[],
 ): boolean => deliveredHintHashes.includes(hintBodyHash(body));
+
+/**
+ * The same rule where the ORIGINAL TEXT is still in hand rather than only its
+ * hash — the ghost worker, which holds the very claim bodies it just showed
+ * the model (connector-claude ghost/worker.ts).
+ *
+ * IT IS CONTAINMENT, NOT EQUALITY, and that is the whole reason it exists. A
+ * hash matches one string; an answer reaches this guard REDUCED — the first
+ * non-empty line of what the model said, whitespace-collapsed, then cut to a
+ * sentence bound — so a hash of the whole body could never match a parrot of
+ * a body that was longer than that bound or carried a line break. Both are
+ * ordinary claim bodies, and a hostile teammate can write one on purpose so
+ * that its opening comes back republished under somebody else's name. The
+ * truncation is this codebase's own and its shape is known, so the honest
+ * test is "is what came back the BEGINNING of something we showed it".
+ *
+ * Same normalization as the hash above, so "the same words" still means the
+ * same thing on both sides, and honestly bounded in the same way: a verbatim
+ * or whitespace/case-mangled restatement is caught, a paraphrase is not.
+ * The empty sentence matches nothing — every string starts with "".
+ */
+export const isRestatementOf = (
+  sentence: string,
+  shown: readonly string[],
+): boolean => {
+  const normalized = normalizeHintBody(sentence);
+  if (normalized.length === 0) {
+    return false;
+  }
+  return shown.some((text) => normalizeHintBody(text).startsWith(normalized));
+};

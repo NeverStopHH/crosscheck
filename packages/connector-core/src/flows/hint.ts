@@ -34,24 +34,24 @@ import {
   MAX_SEARCH_QUERY_CHARS,
 } from "../constants.ts";
 import { containsSecret } from "../capture/secret-scan.ts";
-import { hintDeliveryRecord, UNKNOWN_DEVELOPER_ID } from "../capture/records.ts";
-import type { HintRefKind, Producer } from "../capture/records.ts";
+import type { HintRefKind } from "../capture/records.ts";
 import { resolveCommitDrift } from "../git/commit-drift.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import { getHintCandidates } from "../http/hub.ts";
-import type { HubContext } from "../http/hub.ts";
-import { recordDeliveredHintHash } from "../hints/delivered-store.ts";
+import type { AnsweredQuestion, HubContext } from "../http/hub.ts";
+import { rememberHintDelivery } from "../hints/delivery.ts";
 import { hintBodyHash } from "../hints/echo.ts";
-import { renderClaimHint, renderPointerHint } from "../hints/render.ts";
+import {
+  renderAnswerHint,
+  renderClaimHint,
+  renderPointerHint,
+} from "../hints/render.ts";
 import { selectHint } from "../hints/select.ts";
 import type { HintSelection } from "../hints/select.ts";
-import { appendRecords } from "../spool/append.ts";
 import {
   readSessionState,
   updateSessionState,
-  withDeliveredHint,
 } from "../state/session-state.ts";
-import type { SessionState } from "../state/session-state.ts";
 
 /** The same meaning floor the hub applies — zero HTTP for an empty question. */
 const hasSearchableWord = (prompt: string): boolean =>
@@ -122,62 +122,33 @@ const renderSelection = async (
   };
 };
 
-/** False when the seen-set could not be updated — then nothing may be emitted. */
-const recordDelivery = async (
-  input: SelectAndRenderHintInput,
-  state: SessionState,
-  delivery: Delivery,
-): Promise<boolean> => {
-  const producer: Producer = {
-    developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
-    agentKind: input.agentKind,
-    sessionId: state.crosscheckSessionId,
-  };
-  // A local append, microseconds; the next flush ships it, and a dead hub
-  // leaves it spooled like any other record (idempotent by delivery id).
-  await appendRecords(
-    input.home,
-    input.repoKey,
-    input.hostSessionKey,
-    [
-      hintDeliveryRecord(
-        state.crosscheckSessionId,
-        delivery.refKind,
-        delivery.refId,
-        producer,
-        input.now,
-      ),
-    ],
-    input.now,
-  );
-  // Freshest state, under the state lock — and FIRST WRITER WINS, decided on
-  // that fresh state: two hook processes can race ONE failure (the cursor
-  // dual-signal case fires postToolUse and postToolUseFailure concurrently),
-  // and both pass the lockless pre-checks in selectAndRenderHint before
-  // either records. The transform is therefore a check-AND-set, the
-  // tripwire's own shape: a ref already present, or a cap already reached by
-  // a racing sibling, DECLINES the write — and unremembered means unemitted,
-  // so the loser is silence, never a second copy of the same teammate
-  // finding in one turn (§10 risk 1). The loser's spool append above carries
-  // the winner's deterministic delivery id, so the hub absorbs it as a
-  // duplicate — never a second telemetry row.
-  const remembered = await updateSessionState(
-    input.home,
-    input.hostSessionKey,
-    (fresh) =>
-      fresh.deliveredHintRefs.includes(delivery.refId) ||
-      fresh.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION
-        ? null
-        : withDeliveredHint(fresh, delivery.refId, delivery.bodyHash),
-  );
-  // Substance hashes also persist per repo (hints/delivered-store.ts): the
-  // echo-loop exclusion carries no session qualifier, and session state dies
-  // at session end. Best-effort — the session-state copy above already covers
-  // this session, so a busy lock here must not cost the hint.
-  if (remembered && delivery.bodyHash !== null) {
-    await recordDeliveredHintHash(input.home, input.repoKey, delivery.bodyHash);
-  }
-  return remembered;
+/**
+ * An answer to a question THIS developer asked, if one is waiting and this
+ * session has not been handed it (roadmap R2).
+ *
+ * DELIVERED EXACTLY ONCE, and it is worth being precise about WHERE that is
+ * enforced. Across SESSIONS it is the hub: it excludes any answer some
+ * session of this developer already carries (`hint_deliveries`, the durable
+ * store). Within THIS session it is `rememberHintDelivery`'s check-and-set under
+ * the state lock — the same first-writer-wins claim every hint delivery
+ * makes, and unremembered means unemitted. The seen-set filter below is
+ * neither of those: it is a cheap PRE-CHECK that saves a pointless spool
+ * append on every later prompt of a session whose flush has not reached the
+ * hub yet. Removing it costs spool churn, not the guarantee — which is why
+ * the mutation that guards this path breaks the echo hash instead.
+ *
+ * SOLICITED SUBSTANCE OUTRANKS AN UNSOLICITED POINTER, and the ordering is
+ * the product decision, not an implementation detail: this developer asked a
+ * question and is waiting for it; a teammate pointer they never asked for can
+ * wait one prompt. Both spend the same hint slot, so an answer never widens
+ * the budget — it only wins the slot.
+ */
+const selectAnswer = (
+  answers: readonly AnsweredQuestion[],
+  seenRefIds: readonly string[],
+): AnsweredQuestion | undefined => {
+  const seen = new Set(seenRefIds);
+  return answers.find((answer) => !seen.has(answer.claimId));
 };
 
 /**
@@ -222,11 +193,30 @@ export const selectAndRenderHint = async (
   // "a match was possible but the selector chose silence". Only on a non-empty
   // result — the common no-match prompt writes nothing (a monotonic counter,
   // one bounded write inside the 800 ms budget).
-  if (result.data.length > 0) {
+  if (result.data.candidates.length > 0) {
     await updateSessionState(input.home, input.hostSessionKey, (fresh) => ({
       ...fresh,
-      hintCandidatesSeen: fresh.hintCandidatesSeen + result.data.length,
+      hintCandidatesSeen: fresh.hintCandidatesSeen + result.data.candidates.length,
     }));
+  }
+  // The solicited pass FIRST — see selectAnswer for why it outranks.
+  const answer = selectAnswer(result.data.answers, state.deliveredHintRefs);
+  if (answer !== undefined) {
+    const text = renderAnswerHint(answer, input.now);
+    if (text.length > 0) {
+      const delivery: Delivery = {
+        refKind: "claim",
+        refId: answer.claimId,
+        // Hashed like every other injected body: an answer that came back to
+        // this session must not be re-published as its own observation
+        // (hints/echo.ts, the echo-loop exclusion).
+        bodyHash: hintBodyHash(answer.claimBody),
+        text,
+      };
+      return (await rememberHintDelivery(input, state, delivery, true))
+        ? text
+        : "";
+    }
   }
   const selection = selectHint({
     // Briefing solved pointers join the seen-set — the same tree must not be
@@ -235,7 +225,7 @@ export const selectAndRenderHint = async (
     // solved tree's evidence-backed claims stay deliverable as substance
     // (the seen-set suppresses pointers to a seen context, never unseen
     // claims inside it — hints/select.ts).
-    candidates: result.data,
+    candidates: result.data.candidates,
     seenRefIds: [...state.deliveredHintRefs, ...state.briefingSolvedRefs],
     deliveredCount: state.deliveredHintRefs.length,
     selfDeveloperId: state.developerId,
@@ -246,7 +236,7 @@ export const selectAndRenderHint = async (
   }
   // Unremembered means unemitted — the honest direction: a state write that
   // fails (no file, busy lock) costs one hint slot, never a repeat delivery.
-  const remembered = await recordDelivery(input, state, delivery);
+  const remembered = await rememberHintDelivery(input, state, delivery);
   if (!remembered) {
     return "";
   }

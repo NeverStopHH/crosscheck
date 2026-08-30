@@ -38,14 +38,43 @@ import {
   MAX_SEARCH_QUERY_CHARS,
   MAX_SEARCH_RESULTS,
 } from "../../constants.ts";
-import { toolText } from "../protocol.ts";
+import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
-import { renderSearchResults, renderUnusableQuery } from "../render.ts";
-import type { SearchHit } from "../render.ts";
+import {
+  renderSearchFilterRefusal,
+  renderSearchResults,
+  renderUnappliedFilters,
+  renderUnusableQuery,
+} from "../render.ts";
+import type { SearchFilterView, SearchHit } from "../render.ts";
 import { searchWorkContexts } from "../../http/hub.ts";
-import type { SearchResultEntry } from "../../http/hub.ts";
+import type { SearchFilters, SearchResultEntry } from "../../http/hub.ts";
 import { hubFailure, parseArgs } from "./shared.ts";
+import type { HubFailure } from "./shared.ts";
+
+/**
+ * Bounds on the two R1 filters, mirroring the hub's own (its search route
+ * rejects longer ones with a 400). Refused here rather than truncated: a
+ * TRUNCATED name is a different person's name, and the hub would answer about
+ * them without anything saying so.
+ *
+ * TWO CONSTANTS RATHER THAN AN IMPORT, for the reason services/refusal.ts
+ * states about its own mirror of MAX_HUB_MESSAGE_CHARS: this package does not
+ * depend on the server package, and one hub serves connectors of several
+ * versions at once. A mirror nothing checks is a mirror that drifts — if the
+ * hub RAISES its bound, this client silently refuses references the hub would
+ * have accepted, and nothing anywhere reports it. So the pairing is a claim,
+ * checked across the package boundary by grep the way the hub checks the one
+ * it mirrors back:
+ *
+ * VERIFY: grep -c "MAX_DEVELOPER_REF_CHARS = 320" packages/server/src/services/developer-lookup.ts
+ * PRINTS: 1
+ * VERIFY: grep -c "MAX_SINCE_CHARS = 40" packages/server/src/routes/search.ts
+ * PRINTS: 1
+ */
+const MAX_DEVELOPER_FILTER_CHARS = 320;
+const MAX_SINCE_FILTER_CHARS = 40;
 
 export const ArgsSchema = z.object({
   query: z
@@ -55,6 +84,28 @@ export const ArgsSchema = z.object({
       "Words describing the problem: file paths, symbols, error fingerprints and " +
         "distinctive phrases all match. Leave empty to list the most recent work on " +
         "this repo.",
+    ),
+  developer: z
+    .string()
+    .min(1)
+    .max(MAX_DEVELOPER_FILTER_CHARS)
+    .optional()
+    .describe(
+      "Only work by this teammate: their full name as the hub spells it, or any email " +
+        "address they are known by. A name matching nobody, or more than one person, " +
+        "comes back as an error naming the candidates — never as an empty result, " +
+        "which would read as \"that person has done nothing\".",
+    ),
+  since: z
+    .string()
+    .min(1)
+    .max(MAX_SINCE_FILTER_CHARS)
+    .optional()
+    .describe(
+      "Only work last touched since then: a window like 14d or 72h, or an ISO date " +
+        "like 2026-08-01. \"Touched\" is when the work context itself last changed — " +
+        "the same age each result prints — so claims filed into an older context do " +
+        "not pull it into the window. At most 365 days back; omit it for all of history.",
     ),
   limit: z
     .number()
@@ -94,6 +145,87 @@ export const definition = {
  */
 const MIN_QUERY_TOKEN_CHARS = 3;
 
+/**
+ * The hub refusals that mean "your FILTER did not resolve", as opposed to
+ * "the hub is broken". They earn their own sentence: a model that reads
+ * "the hub refused the request (HTTP 400)" learns nothing it can act on,
+ * while these carry the candidate names or the window forms it should retry
+ * with. The codes are the hub's (server routes/search.ts).
+ */
+const FILTER_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  "ambiguous_developer",
+  "unknown_developer",
+  "invalid_developer",
+  "invalid_since",
+]);
+
+const HTTP_BAD_REQUEST = 400;
+
+const isFilterRefusal = (failure: HubFailure): boolean =>
+  failure.kind === "http" &&
+  failure.status === HTTP_BAD_REQUEST &&
+  FILTER_REFUSAL_CODES.has(failure.code);
+
+/**
+ * What the hub says it applied, as a duration this client can print.
+ *
+ * The window arrives as an INSTANT and is rendered as an age, so the answer
+ * speaks one vocabulary about time: `14d` in the filter line, `3d ago` on the
+ * hits, and `14d` is what the caller typed. An unparseable instant simply
+ * drops the window from the line rather than printing a wrong number.
+ */
+const filterView = (
+  filters: SearchFilters | null,
+  nowMs: number,
+): SearchFilterView | undefined => {
+  if (filters === null) {
+    return undefined;
+  }
+  const sinceMs = filters.since === null ? Number.NaN : Date.parse(filters.since);
+  return {
+    ...(filters.developer === null
+      ? {}
+      : {
+          developerName: filters.developer.name,
+          ...(filters.developer.email === null
+            ? {}
+            : { developerEmail: filters.developer.email }),
+          isSelf: filters.developer.isSelf,
+        }),
+    ...(Number.isNaN(sinceMs)
+      ? {}
+      : { sinceAgeMs: Math.max(0, nowMs - sinceMs) }),
+  };
+};
+
+/**
+ * The filters this call SENT that the hub did not report back.
+ *
+ * `filterView` above turns an absent block into "no filters were asked for",
+ * which is right for the RENDERER and wrong as an answer, because this client
+ * knows better: it put `developer=` and `since=` on the query string itself. A
+ * hub that predates R1 never reads those params and its response carries no
+ * `filters` block at all, so the two facts only meet here — and if they are not
+ * compared, unfiltered rows are rendered as the answer to the filtered
+ * question. Compared per FILTER rather than per response: a hub could grow one
+ * of them before the other, and the sentence should then name only the one that
+ * went missing.
+ */
+const unappliedFilters = (
+  asked: {
+    readonly developer?: string | undefined;
+    readonly since?: string | undefined;
+  },
+  applied: SearchFilters | null,
+): readonly string[] => [
+  ...(asked.developer !== undefined && (applied?.developer ?? null) === null
+    ? ["developer"]
+    : []),
+  ...(asked.since !== undefined && (applied?.since ?? null) === null
+    ? ["since"]
+    : []),
+];
+
 /** Lowercased words of the query, punctuation and grammar-length words dropped. */
 const tokenize = (query: string): readonly string[] =>
   query
@@ -130,14 +262,32 @@ export const run = async (
     return toolText(renderUnusableQuery(query, MIN_QUERY_TOKEN_CHARS));
   }
 
-  // Repo is a relevance filter, never a boundary (see the header).
+  // Repo is a relevance filter, never a boundary (see the header). The two
+  // R1 filters are resolved and applied HUB-side: one developer table, one
+  // clock, one place where "Ken" becomes a developer id.
   const searched = await searchWorkContexts(ctx.hub, {
     query,
     repo: ctx.identity.repoId,
     limit: parsed.value.limit,
+    ...(parsed.value.developer === undefined
+      ? {}
+      : { developer: parsed.value.developer }),
+    ...(parsed.value.since === undefined ? {} : { since: parsed.value.since }),
   });
   if (!searched.ok) {
-    return hubFailure(ctx, searched);
+    // A filter that did not resolve is not a hub failure and must not read as
+    // an empty search — it is a question that was never asked.
+    return isFilterRefusal(searched)
+      ? toolFailure(renderSearchFilterRefusal(query, searched.message))
+      : hubFailure(ctx, searched);
+  }
+
+  // A hub that ignored a filter answered a WIDER question than the one asked,
+  // and said nothing about it. Checked before anything is rendered: there is
+  // no honest way to show these rows under the caller's own question.
+  const unapplied = unappliedFilters(parsed.value, searched.data.filters);
+  if (unapplied.length > 0) {
+    return toolFailure(renderUnappliedFilters(query, unapplied));
   }
 
   const nowMs = ctx.now().getTime();
@@ -164,9 +314,11 @@ export const run = async (
       };
     });
 
+  const filters = filterView(searched.data.filters, nowMs);
   return toolText(
     renderSearchResults(hits, query, {
       semanticTier: searched.data.vectorTierActive,
+      ...(filters === undefined ? {} : { filters }),
     }),
   );
 };

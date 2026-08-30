@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import type { Claim, ClaimEdge, Target, WorkContext } from "@crosscheck/schema";
+import type { Claim, ClaimEdge, Intent, Target, WorkContext } from "@crosscheck/schema";
 
 import { EVENT_KINDS } from "../constants.ts";
 import {
@@ -12,6 +12,7 @@ import {
 import { appendEvent } from "./events.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
 import {
+  DECLARED_PROVENANCE,
   applyCrossSimilarity,
   embedClaimBody,
   findSimilarOwnClaim,
@@ -104,6 +105,35 @@ export const checkOwnedSession = async (
 
 type WorkContextRow = typeof workContexts.$inferSelect;
 
+/**
+ * The intent MERGE rule (trial finding #16). Title, status and description
+ * keep replace semantics — every registration re-sends them — but an intent
+ * is captured ONCE and a later work_context record usually carries none
+ * (SessionStart re-fire on `--resume`, the mid-session recovery, Cursor's
+ * late registration): `body.intent ?? null` wiped it on every such record.
+ * So: a record WITHOUT the field keeps the stored intent; a record WITH one
+ * replaces it — except that a DERIVED intent never overwrites a DECLARED one
+ * (a late-flushed derived spool record must not undo `set_intent`; declared
+ * over declared is the re-declare supersede). Hub-enforced, because spool
+ * replay order is nobody's promise.
+ */
+const mergeIntent = (
+  current: Record<string, unknown> | null,
+  next: Intent | undefined,
+): Record<string, unknown> | null => {
+  if (next === undefined) {
+    return current;
+  }
+  if (
+    current !== null &&
+    current["provenance"] === DECLARED_PROVENANCE &&
+    next.provenance !== DECLARED_PROVENANCE
+  ) {
+    return current;
+  }
+  return next;
+};
+
 const workContextChanges = (
   current: WorkContextRow,
   body: WorkContext,
@@ -111,7 +141,7 @@ const workContextChanges = (
   const next = {
     title: body.title,
     description: body.description ?? null,
-    intent: body.intent ?? null,
+    intent: mergeIntent(current.intent ?? null, body.intent),
     status: body.status,
   };
   // Accepted v0 limitation: JSON.stringify intent comparison is key-order
@@ -153,9 +183,14 @@ const updateExistingWorkContext = async (
     .set({ ...changes, updatedAt: deps.now() })
     .where(eq(workContexts.id, body.id));
   await refreshNormalizedDoc(deps.db, body.id);
+  // Outbox discipline: ids and metadata only — WHICH fields changed, never
+  // their text (the feed phrases "intent" from the list, no summary crosses).
   await appendEvent(deps, EVENT_KINDS.WORK_CONTEXT_UPDATED, {
     workContextId: body.id,
     developerId,
+    changed: Object.entries(changes)
+      .filter(([field, value]) => value !== row.workContext[field as keyof WorkContextRow])
+      .map(([field]) => field),
   });
   return accepted(body.id);
 };
@@ -341,141 +376,179 @@ const isDeterministicDuplicate = async (
   return (await findDedupMatch(db, developerId, body)) !== undefined;
 };
 
-export const ingestClaim = async (
+/**
+ * The vector a claim will be stored with, decided BEFORE any transaction: an
+ * external HTTP call must never hold a transaction open on single-connection
+ * PGlite. Null = keyless install, a failed embed, or a claim the
+ * deterministic gate will classify anyway — in every case the similarity gate
+ * silently stands down and the deterministic gate still runs (DESIGN.md §6
+ * degradation).
+ *
+ * Exported with `ingestClaimWithin` below because a question ANSWER is a
+ * claim written inside a WIDER transaction (services/questions.ts writes the
+ * claim and its `answers` edge atomically), and that caller has to do the two
+ * halves in the same order this one does.
+ */
+export const prepareClaimVector = async (
   deps: Deps,
   developerId: string,
   body: Claim,
-): Promise<HandlerOutcome> => {
-  // Embedded BEFORE the transaction: an external HTTP call must never hold a
-  // transaction open on single-connection PGlite. Null = keyless install, a
-  // failed embed, or a claim the deterministic gate will classify anyway —
-  // in every case the similarity gate silently stands down and the
-  // deterministic gate below still runs (DESIGN.md §6 degradation).
+): Promise<readonly number[] | null> => {
   const embedder = deps.embedder ?? null;
-  const claimVector =
+  if (
     embedder === null ||
     (await isDeterministicDuplicate(deps.db, developerId, body))
-      ? null
-      : await embedClaimBody(embedder, body.body);
-  // One transaction so dedup match, INSERT, and dedup_count bump are atomic —
-  // two concurrent flushes cannot both miss the match and double-insert.
-  // Context-doc embedding happens once per flush in ingestRecords.
-  return deps.db.transaction(async (tx) => {
-    const txDeps: ExecutorDeps = { db: tx, now: deps.now };
-    const authorIssue = await checkOwnedSession(
+  ) {
+    return null;
+  }
+  return embedClaimBody(embedder, body.body);
+};
+
+/**
+ * The claim ingest gate, INSIDE a caller-owned transaction: dedup match,
+ * INSERT, dedup_count bump, cross-similarity, doc refresh, outbox row.
+ *
+ * Split out of `ingestClaim` rather than copied, so an answer's claim passes
+ * the identical gate a published claim does — same dedup scope, same
+ * ownership check, same similarity rules. A second implementation would be a
+ * second place for the asymmetry to drift.
+ */
+export const ingestClaimWithin = async (
+  tx: DbExecutor,
+  deps: Deps,
+  developerId: string,
+  body: Claim,
+  claimVector: readonly number[] | null,
+): Promise<HandlerOutcome> => {
+  const embedder = deps.embedder ?? null;
+  const txDeps: ExecutorDeps = { db: tx, now: deps.now };
+  const authorIssue = await checkOwnedSession(
+    tx,
+    developerId,
+    body.authorSessionId,
+    "authorSessionId",
+  );
+  if (authorIssue !== null) {
+    return rejectedOutcome(authorIssue);
+  }
+  // The work context must exist but may belong to another developer:
+  // extending someone else's diagnosis tree is the product (DESIGN.md §3).
+  const contextRows = await tx
+    .select({ id: workContexts.id })
+    .from(workContexts)
+    .where(eq(workContexts.id, body.workContextId))
+    .limit(1);
+  if (contextRows[0] === undefined) {
+    return rejectedOutcome(
+      `workContextId: work context "${body.workContextId}" not found`,
+    );
+  }
+
+  const dedupMatch = await findDedupMatch(tx, developerId, body);
+  if (dedupMatch !== undefined) {
+    if (dedupMatch.id === body.id) {
+      // Exact spool replay: a retransmission, not a re-observation —
+      // dedup_count and last_seen_at stay untouched.
+      return duplicate(body.id);
+    }
+    await tx
+      .update(claims)
+      .set({
+        dedupCount: sql`${claims.dedupCount} + 1`,
+        lastSeenAt: deps.now(),
+      })
+      .where(eq(claims.id, dedupMatch.id));
+    return duplicate(dedupMatch.id);
+  }
+
+  // Similarity dedup (DESIGN.md §3): same scope as the deterministic gate —
+  // same developer, same context, same kind — with cosine > 0.93 standing in
+  // for body equality. 15 rewordings of one re-observed error become one
+  // weighted claim, not 15 rows.
+  if (claimVector !== null && embedder !== null) {
+    const similar = await findSimilarOwnClaim(
       tx,
       developerId,
-      body.authorSessionId,
-      "authorSessionId",
+      body,
+      claimVector,
+      embedder.model,
     );
-    if (authorIssue !== null) {
-      return rejectedOutcome(authorIssue);
-    }
-    // The work context must exist but may belong to another developer:
-    // extending someone else's diagnosis tree is the product (DESIGN.md §3).
-    const contextRows = await tx
-      .select({ id: workContexts.id })
-      .from(workContexts)
-      .where(eq(workContexts.id, body.workContextId))
-      .limit(1);
-    if (contextRows[0] === undefined) {
-      return rejectedOutcome(
-        `workContextId: work context "${body.workContextId}" not found`,
-      );
-    }
-
-    const dedupMatch = await findDedupMatch(tx, developerId, body);
-    if (dedupMatch !== undefined) {
-      if (dedupMatch.id === body.id) {
-        // Exact spool replay: a retransmission, not a re-observation —
-        // dedup_count and last_seen_at stay untouched.
-        return duplicate(body.id);
-      }
+    if (similar !== undefined) {
       await tx
         .update(claims)
         .set({
           dedupCount: sql`${claims.dedupCount} + 1`,
           lastSeenAt: deps.now(),
         })
-        .where(eq(claims.id, dedupMatch.id));
-      return duplicate(dedupMatch.id);
+        .where(eq(claims.id, similar.id));
+      return duplicate(similar.id);
     }
+  }
 
-    // Similarity dedup (DESIGN.md §3): same scope as the deterministic gate —
-    // same developer, same context, same kind — with cosine > 0.93 standing in
-    // for body equality. 15 rewordings of one re-observed error become one
-    // weighted claim, not 15 rows.
-    if (claimVector !== null && embedder !== null) {
-      const similar = await findSimilarOwnClaim(
-        tx,
-        developerId,
-        body,
-        claimVector,
-        embedder.model,
-      );
-      if (similar !== undefined) {
-        await tx
-          .update(claims)
-          .set({
-            dedupCount: sql`${claims.dedupCount} + 1`,
-            lastSeenAt: deps.now(),
-          })
-          .where(eq(claims.id, similar.id));
-        return duplicate(similar.id);
-      }
-    }
-
-    const createdAt = new Date(body.createdAt);
-    // evidenceRefs are persisted as-is; materializing supports-edges from them
-    // is a follow-up — referenced claims may arrive later in the same flush.
-    const inserted = await tx
-      .insert(claims)
-      .values({
-        id: body.id,
-        workContextId: body.workContextId,
-        authorSessionId: body.authorSessionId,
-        kind: body.kind,
-        body: body.body,
-        status: body.status,
-        confidence: body.confidence,
-        captureMode: body.captureMode,
-        provenance: body.provenance,
-        evidenceRefs: body.evidenceRefs,
-        embedding: claimVector === null ? null : [...claimVector],
-        embeddingModel:
-          claimVector === null || embedder === null ? null : embedder.model,
-        lastSeenAt: createdAt,
-        createdAt,
-      })
-      .onConflictDoNothing()
-      .returning({ id: claims.id });
-    if (inserted[0] === undefined) {
-      return classifyClaimIdConflict(tx, developerId, body.id);
-    }
-    // Cross-session similarity: relates_to edge or contradiction candidate
-    // (similarity-gate.ts). After the insert so both edge endpoints exist.
-    if (claimVector !== null && embedder !== null) {
-      await applyCrossSimilarity(
-        tx,
-        deps.now,
-        developerId,
-        body,
-        claimVector,
-        embedder.model,
-      );
-    }
-    await refreshNormalizedDoc(tx, body.workContextId);
-    // Outbox discipline: ids and metadata only — never the claim body text.
-    await appendEvent(txDeps, EVENT_KINDS.CLAIM_ADDED, {
-      claimId: body.id,
+  const createdAt = new Date(body.createdAt);
+  // evidenceRefs are persisted as-is; materializing supports-edges from them
+  // is a follow-up — referenced claims may arrive later in the same flush.
+  const inserted = await tx
+    .insert(claims)
+    .values({
+      id: body.id,
       workContextId: body.workContextId,
       authorSessionId: body.authorSessionId,
-      developerId,
       kind: body.kind,
+      body: body.body,
       status: body.status,
-    });
-    return accepted(body.id);
+      confidence: body.confidence,
+      captureMode: body.captureMode,
+      provenance: body.provenance,
+      evidenceRefs: body.evidenceRefs,
+      embedding: claimVector === null ? null : [...claimVector],
+      embeddingModel:
+        claimVector === null || embedder === null ? null : embedder.model,
+      lastSeenAt: createdAt,
+      createdAt,
+    })
+    .onConflictDoNothing()
+    .returning({ id: claims.id });
+  if (inserted[0] === undefined) {
+    return classifyClaimIdConflict(tx, developerId, body.id);
+  }
+  // Cross-session similarity: relates_to edge or contradiction candidate
+  // (similarity-gate.ts). After the insert so both edge endpoints exist.
+  if (claimVector !== null && embedder !== null) {
+    await applyCrossSimilarity(
+      tx,
+      deps.now,
+      developerId,
+      body,
+      claimVector,
+      embedder.model,
+    );
+  }
+  await refreshNormalizedDoc(tx, body.workContextId);
+  // Outbox discipline: ids and metadata only — never the claim body text.
+  await appendEvent(txDeps, EVENT_KINDS.CLAIM_ADDED, {
+    claimId: body.id,
+    workContextId: body.workContextId,
+    authorSessionId: body.authorSessionId,
+    developerId,
+    kind: body.kind,
+    status: body.status,
   });
+  return accepted(body.id);
+};
+
+export const ingestClaim = async (
+  deps: Deps,
+  developerId: string,
+  body: Claim,
+): Promise<HandlerOutcome> => {
+  const claimVector = await prepareClaimVector(deps, developerId, body);
+  // One transaction so dedup match, INSERT, and dedup_count bump are atomic —
+  // two concurrent flushes cannot both miss the match and double-insert.
+  // Context-doc embedding happens once per flush in ingestRecords.
+  return deps.db.transaction((tx) =>
+    ingestClaimWithin(tx, deps, developerId, body, claimVector),
+  );
 };
 
 const findEdgeIdByTriple = async (

@@ -8,9 +8,48 @@ export { runStatusline } from "./statusline/statusline.ts";
 export { runSummarizeWorker } from "./summarizer/worker.ts";
 export {
   formatSummarizerCost,
+  isSummarizerAlwaysRejected,
   isSummarizerSilentlyDead,
   readSummarizerCost,
 } from "./summarizer/cost.ts";
+export type { SummarizerCost } from "./summarizer/cost.ts";
+// The derived-intent surface (trial finding #16): the worker entry the
+// prompt hook spawns, and the cost read/format pair `status`/`doctor` print.
+export { runIntentWorker } from "./intent/worker.ts";
+export { formatIntentCost, isIntentSilentlyDead, readIntentCost } from "./intent/cost.ts";
+export type { IntentCost } from "./intent/cost.ts";
+// The gated ghost-check surface (VISION.md §3): the worker entry the prompt
+// hook spawns when a recorded intent still owes a comparison.
+export { runGhostWorker } from "./ghost/worker.ts";
+export {
+  formatGhostCost,
+  isGhostSilentlyDead,
+  readGhostCost,
+  summarizeGhostCost,
+} from "./ghost/cost.ts";
+export type { GhostCost } from "./ghost/cost.ts";
+// The agent conference's model half (VISION.md §2): what `crosscheck
+// conference` shows the model, how it labels the sessions so an answer can be
+// attributed deterministically, and how the answer is read back. No worker
+// entry — a conference is a command a human runs, never a detached spawn.
+export {
+  CONFERENCE_PROMPT,
+  estimateInputTokens,
+  fitSessions,
+  labelSessions,
+  parseConferenceAnswer,
+  renderConferenceInput,
+  resolveConferenceArgv,
+} from "./conference/prompt.ts";
+export type {
+  ConferenceAnswer,
+  LabelledSession,
+  ParsedFinding,
+} from "./conference/prompt.ts";
+// The shared model-cost scan's per-counter summarizers (state/session-state.ts
+// readLiveSessionStates reads the directory once for all three).
+export { summarizeSummarizerCost } from "./summarizer/cost.ts";
+export { summarizeIntentCost } from "./intent/cost.ts";
 // The runner's own surface for `doctor` (trial finding #14): the real argv,
 // the real worker env, the booked-failure formatter and the active probe.
 export {

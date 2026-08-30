@@ -80,6 +80,18 @@ const actorNamesFor = async (
   return new Map(rows.map((row) => [row.id, row.name]));
 };
 
+/**
+ * A work_context_updated event names WHICH fields changed (ids and metadata
+ * only — the outbox carries no bodies); the feed phrases the one a human
+ * cares about as a renderer-owned literal, never the field's text.
+ */
+const INTENT_FIELD = "intent";
+
+const changedLabel = (payload: Record<string, unknown>): string | null => {
+  const changed = payload["changed"];
+  return Array.isArray(changed) && changed.includes(INTENT_FIELD) ? INTENT_FIELD : null;
+};
+
 const toFeedEntry = (
   event: EventView,
   names: ReadonlyMap<string, string>,
@@ -93,7 +105,7 @@ const toFeedEntry = (
     workContextId: payloadString(event.payload, "workContextId"),
     repo: payloadString(event.payload, "repo"),
     branch: payloadString(event.payload, "branch"),
-    kindLabel: payloadString(event.payload, "kind"),
+    kindLabel: payloadString(event.payload, "kind") ?? changedLabel(event.payload),
     statusLabel: payloadString(event.payload, "status"),
     ageMs: Math.max(0, nowMs - Date.parse(event.createdAt)),
   };

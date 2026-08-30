@@ -300,7 +300,7 @@ describe("session-start solved-before integration", () => {
 
     // Assert
     const briefing = briefingOf(stdout);
-    expect(briefing).toContain("Previously solved on this repo");
+    expect(briefing).toContain("Previously solved (get_diagnosis reads the tree)");
     expect(briefing).toContain(`get_diagnosis ${SOLVED_CONTEXT_ID}`);
     expect(briefing).toContain("diagnosed 5mo ago");
   });

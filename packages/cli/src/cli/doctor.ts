@@ -80,7 +80,11 @@ import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
 import { runBoundedCommand } from "@crosscheck/connector-core/git/git.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
-import type { HubContext, HubFailureKind } from "@crosscheck/connector-core/http/client.ts";
+import type {
+  HubContext,
+  HubFailureKind,
+  HubResult,
+} from "@crosscheck/connector-core/http/client.ts";
 import {
   describeConnectionFailure,
   refineRefusedCause,
@@ -93,11 +97,23 @@ import {
 import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
 import {
   getAbsences,
+  getGhostChecks,
   getHintStats,
   getOpenSessions,
   getPrivacySettings,
+  getQuestions,
+  getSolvedMatchCounts,
   getWorkContexts,
 } from "@crosscheck/connector-core/http/hub.ts";
+import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
+import {
+  formatQuestionCounts,
+  questionWarning,
+} from "@crosscheck/connector-core/briefing/questions.ts";
+import {
+  formatSolvedCounts,
+  solvedPrecisionWarning,
+} from "@crosscheck/connector-core/hints/precision.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   countCursorIdentityMismatches,
@@ -107,6 +123,11 @@ import {
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
 import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
 import {
+  conferenceRemedies,
+  formatConferenceCost,
+  readConferenceCost,
+} from "@crosscheck/connector-core/state/conference-cost.ts";
+import {
   readHooksFired,
   readStatuslineRendered,
 } from "@crosscheck/connector-core/state/fired-markers.ts";
@@ -114,16 +135,31 @@ import {
   listSessionStateFiles,
   sessionSilentForMs,
 } from "@crosscheck/connector-core/state/session-scan.ts";
-import { SessionStateSchema } from "@crosscheck/connector-core/state/session-state.ts";
+import type { ConferenceCost } from "@crosscheck/connector-core/state/conference-cost.ts";
+import {
+  SessionStateSchema,
+  readLiveSessionStates,
+} from "@crosscheck/connector-core/state/session-state.ts";
+import type {
+  LiveSessionScan,
+  SessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher-check.ts";
 import {
+  formatGhostCost,
+  formatIntentCost,
   formatSummarizerCost,
   formatSummarizerFailure,
   isBelowSummarizerVersionFloor,
+  isGhostSilentlyDead,
+  isIntentSilentlyDead,
+  isSummarizerAlwaysRejected,
   isSummarizerSilentlyDead,
   probeSummarizerRunner,
-  readSummarizerCost,
+  summarizeGhostCost,
+  summarizeIntentCost,
+  summarizeSummarizerCost,
 } from "@crosscheck/connector-claude";
 import type {
   SummarizerFailure,
@@ -245,8 +281,10 @@ const settingsOnly = (checks: readonly Check[]): SettingsInspection => ({
  * Read from core (constants.ts REGISTERED_HOOK_EVENTS) rather than spelled a
  * second time here: this list, `buildSettingsPlan`'s and the contract
  * watcher's had drifted apart, and the watcher's copy — three events where
- * this one has six — is what left the PreToolUse tripwire's output contract
- * unwatched (trial finding M17).
+ * this one has seven — is what left the PreToolUse tripwire's output contract
+ * unwatched (trial finding M17). PostToolUseFailure is in that list too: the
+ * event failures actually arrive on, and an install missing it captures no
+ * error fingerprints at all while every other hook keeps working.
  */
 const REQUIRED_HOOK_EVENTS = REGISTERED_HOOK_EVENT_NAMES;
 
@@ -349,15 +387,23 @@ const checkSettings = async (
   const unexpected = ownedCommands.filter(
     (entry) => !(REQUIRED_HOOK_EVENTS as readonly string[]).includes(entry.event),
   );
+  // A SYMPTOM AND THE REMEDY, like its user-scope sibling and like the
+  // launcher line printed under it. This is not a rare message: adding an
+  // event to REQUIRED_HOOK_EVENTS makes it the default state of every
+  // already-installed project until somebody re-runs init, and a bare event
+  // id is a name the reader has never seen with nothing to do about it —
+  // which ends either in a hand-edited settings.json that drifts from what
+  // init writes, or in the FAIL being ignored while capture stays silent.
+  const missingHooksDetail = `missing: ${missing.join(", ")} — rerun crosscheck init to register them`;
   const hooksCheck =
     ownedCommands.length === 0
       ? // The statusLine-only shape (finding #13's second variant): the
         // project file exists but registers no crosscheck hooks at all, so
         // the question falls through to user scope exactly as if the file
         // were absent.
-        hooksViaScopes(global, `missing: ${missing.join(", ")}`)
+        hooksViaScopes(global, missingHooksDetail)
       : missing.length > 0
-        ? check("FAIL", "hooks registered", `missing: ${missing.join(", ")}`)
+        ? check("FAIL", "hooks registered", missingHooksDetail)
         : unexpected.length > 0
           ? check(
               "WARN",
@@ -1345,20 +1391,229 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
  * old counts sit right above a runner probe that PASSes — a line saying
  * "the runner is failing" there contradicted the check it pointed at.
  */
-const checkSummarizerCost = async (
-  home: string,
-  hubUrl: string,
-  repoId: string,
-): Promise<Check> => {
-  const cost = await readSummarizerCost(home, hubUrl, repoId);
+const checkSummarizerCost = (scan: LiveSessionScan): Check => {
+  const cost = summarizeSummarizerCost(scan);
   const line = formatSummarizerCost(cost);
-  return isSummarizerSilentlyDead(cost)
+  if (isSummarizerSilentlyDead(cost)) {
+    return check(
+      "WARN",
+      "summarizer cost",
+      `${line} — ${String(cost.fires)} runs fired, none answered — see the summarizer runner check (these counts are per live session and clear at SessionEnd)`,
+    );
+  }
+  // The model IS answering and nothing is being kept (audit rows M16 / A3-4).
+  // Its own WARN, and its own remedy: the runner probe would PASS here and
+  // send the reader looking in the wrong place.
+  if (isSummarizerAlwaysRejected(cost)) {
+    return check(
+      "WARN",
+      "summarizer cost",
+      `${line} — every answer was refused and no draft was kept; the reason above says which gate refused it (these counts are per live session and clear at SessionEnd)`,
+    );
+  }
+  return check("PASS", "summarizer cost", line);
+};
+
+/**
+ * Derived-intent capture (trial finding #16), the summarizer cost check's
+ * sibling with a tighter rule: an intent fires at most once per session
+ * state, so doctor WARNs on ANY booked failure (the worker names why — a
+ * runner loss, a dropped sentence, a pre-intent state file) and on
+ * DOCTOR_INTENT_SILENT_FIRES_WARN fires that landed neither a NONE nor an
+ * intent; never a PASS-only counter (the finding-#14 lesson). The runner is
+ * the summarizer's, so the remedy is one check down — no second probe.
+ */
+const checkIntentCost = (states: readonly SessionState[]): Check => {
+  const cost = summarizeIntentCost(states);
+  const line = formatIntentCost(cost);
+  return isIntentSilentlyDead(cost)
     ? check(
         "WARN",
-        "summarizer cost",
-        `${line} — ${String(cost.fires)} runs fired, none answered — see the summarizer runner check (these counts are per live session and clear at SessionEnd)`,
+        "intent capture",
+        `${line} — fires that landed neither a NONE nor an intent; see the summarizer runner check (counts are per live session and clear at SessionEnd)`,
       )
-    : check("PASS", "summarizer cost", line);
+    : check("PASS", "intent capture", line);
+};
+
+/**
+ * The GATED ghost check (VISION.md §3), the intent capture's sibling with the
+ * same rule and one extra fact on the line: how many checks were SKIPPED
+ * because the deterministic core found nobody. That number is the feature
+ * working, not failing, which is exactly why it has to be printed beside the
+ * fires rather than folded into them — a quiet team must never read as a dead
+ * runner. WARNs on any booked failure and on DOCTOR_GHOST_SILENT_FIRES_WARN
+ * fires that landed neither a NONE nor a draft; never PASS-only (the
+ * finding-#14 lesson). The runner is the summarizer's, so the remedy is one
+ * check down — no second probe.
+ */
+/**
+ * The agent conference (VISION.md §2), and the one model-cost line whose
+ * counters are a FILE rather than live session state — a conference is a
+ * command, often a scheduled one, and its history has to survive the session
+ * that is not there.
+ *
+ * NEVER RUN IS A PASS, loudly. This command is opt-in by design and a doctor
+ * that nags a team for not running a synthesis would be the autonomous
+ * background process the feature deliberately is not. What WARNs is a lost
+ * model call, and an answer this machine could not read — a drifted prompt or
+ * a changed binary, which no other surface would ever mention (the finding-#14
+ * lesson).
+ */
+const checkConferenceCost = (cost: ConferenceCost, now: Date): Check => {
+  const line = formatConferenceCost(cost, now);
+  // THE REMEDY COMES FROM THE COUNTER THAT FIRED. One string for both faults
+  // sent an operator whose model call was simply lost hunting an answer-format
+  // drift that never happened — the two are named apart in every other place
+  // this feature touches, so they are named apart here too.
+  const remedies = conferenceRemedies(cost);
+  return remedies.length === 0
+    ? check("PASS", "conference", line)
+    : check("WARN", "conference", `${line} — ${remedies.join("; ")}`);
+};
+
+const checkGhostCost = (states: readonly SessionState[]): Check => {
+  const cost = summarizeGhostCost(states);
+  const line = formatGhostCost(cost);
+  return isGhostSilentlyDead(cost)
+    ? check(
+        "WARN",
+        "ghost checks",
+        `${line} — checks that landed neither a NONE nor a draft; see the summarizer runner check (counts are per live session and clear at SessionEnd)`,
+      )
+    : check("PASS", "ghost checks", line);
+};
+
+/**
+ * Can the hub answer the OVERLAP query at all? The deterministic half is the
+ * part that runs on every SessionStart, so a hub too old for it — or an
+ * unreachable one — is why this feature would be silent, and that is a
+ * different sentence from "the model layer is broken". `not measured` is a
+ * PASS: an older hub is a deployment state, not a fault on this machine.
+ *
+ * FOUR OUTCOMES, NOT ONE, because "not ok" hides the only one worth acting on.
+ * A 404 means this hub predates the route. A network failure means the machine
+ * cannot reach any hub, and doctor's own connectivity checks own that. An
+ * answer that does not PARSE is a hub whose shape this connector does not
+ * know — the same tolerant posture every other reader here takes. All three
+ * are deployment states and all three PASS with the reason named rather than
+ * a bare "not measured".
+ *
+ * The fourth is the one worth a WARN: an ERROR STATUS other than 404 means
+ * the endpoint EXISTS and is FAILING — a query that throws on a missing index,
+ * a migration that did not run, a 401 — and nothing else on a doctor run would
+ * say so. The connector books those sessions as `noHubAnswer`, which is
+ * deliberately not a warning, so a silent PASS here would leave the operator
+ * with no line at all. Fail open must never mean silently dead
+ * (DESIGN.md §10 risk 5).
+ *
+ * THE COUNT IS OF PEOPLE, not of rows, and the two are not the same number:
+ * one teammate running three worktrees on this repo has three work contexts,
+ * and "3 teammates working where you are" about one person is a plain
+ * untruth. Today's hub already caps a developer at
+ * GHOST_MAX_FINDINGS_PER_DEVELOPER lines, but this line is also read against
+ * OLDER hubs, and a check that is only correct against the hub shipped beside
+ * it is a check that will be wrong the week the cap changes.
+ */
+export const planOverlapCheck = (
+  result: HubResult<readonly GhostCheckEntry[]>,
+): Check => {
+  if (!result.ok) {
+    if (result.kind === "http" && result.status !== HTTP_NOT_FOUND) {
+      return check(
+        "WARN",
+        "plan overlap",
+        `the hub answered ${String(result.status)} for /api/ghost-checks — ` +
+          "the overlap query is failing rather than absent, so this feature " +
+          "is silent on every session against this hub",
+      );
+    }
+    return check(
+      "PASS",
+      "plan overlap",
+      result.status === HTTP_NOT_FOUND
+        ? "not measured (this hub has no /api/ghost-checks yet)"
+        : result.kind === "network"
+          ? "not measured (the hub could not be reached)"
+          : "not measured (this hub's answer did not parse)",
+    );
+  }
+  const count = new Set(result.data.map((entry) => entry.developerId)).size;
+  return check(
+    "PASS",
+    "plan overlap",
+    count === 0
+      ? "no teammate is working where you are"
+      : `${String(count)} teammate${count === 1 ? "" : "s"} working where you are`,
+  );
+};
+
+const checkGhostOverlap = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<Check> => planOverlapCheck(await getGhostChecks(ctx, repoId));
+
+/**
+ * The question channel's backlog (roadmap R2), as a health check rather than
+ * a list — the lines belong to `crosscheck status` and to the briefing, the
+ * same split absence findings use.
+ *
+ * NEVER PASS-ONLY (the finding-#14 lesson). Two WARN paths, and they are
+ * different people's problems: a teammate has been waiting on YOU past half
+ * a question's life, and a question YOU asked expired with nobody told. Both
+ * are the failure this channel is most likely to have — an open thread that
+ * nothing retries and nobody acts on.
+ *
+ * "not measured" is a PASS, exactly as in checkAbsences: an older hub without
+ * the endpoint says nothing about this install's health.
+ */
+const checkQuestions = async (
+  ctx: HubContext,
+  repoId: string,
+  now: Date,
+): Promise<Check> => {
+  const result = await getQuestions(ctx, repoId);
+  if (!result.ok) {
+    return check("PASS", "questions", "not measured");
+  }
+  const line = formatQuestionCounts(result.data.counts, now);
+  const warning = questionWarning(result.data.counts, now);
+  return warning === null
+    ? check("PASS", "questions", line)
+    : check("WARN", "questions", `${line} — ${warning}`);
+};
+
+/**
+ * The solved-pointer precision loop (VISION.md §1): the briefing and the
+ * failure hook both assert that an old diagnosis is relevant to work
+ * happening now, unasked, and this is the one line that says whether anybody
+ * ever opened one.
+ *
+ * NEVER PASS-ONLY (the finding-#14 lesson). The WARN is not "few opens" — it
+ * is pointers shown repeatedly and opened NEVER, which is what this surface
+ * looks like when its matches are wrong. Below the evidence floor
+ * (hints/precision.ts) there is nothing to say, and saying it anyway would
+ * be the same over-claiming the warning exists to catch. The check is named
+ * for the ROWS it counts — every delivered pointer at a tree solved today,
+ * an ordinary teammate pointer included — rather than for this feature,
+ * whose name over a superset would blame the solved matcher for another
+ * surface's precision (hints/precision.ts states the rule and the fix).
+ *
+ * "not measured" is a PASS, exactly as in checkQuestions and checkAbsences:
+ * an older hub without the counters says nothing about this install.
+ */
+const checkSolvedMatches = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<Check> => {
+  const result = await getSolvedMatchCounts(ctx, repoId);
+  if (!result.ok) {
+    return check("PASS", "solved-tree pointers", "not measured");
+  }
+  const line = formatSolvedCounts(result.data);
+  const warning = solvedPrecisionWarning(result.data);
+  return warning === null
+    ? check("PASS", "solved-tree pointers", line)
+    : check("WARN", "solved-tree pointers", `${line} — ${warning}`);
 };
 
 /**
@@ -2409,6 +2664,17 @@ export const runDoctor = async (
     SESSION_STATE_SCAN_MAX_FILES,
   );
   const liveSessions = liveRepoSessions(captureHealth, now);
+  // ONE bounded scan of the session-state directory, shared by the three
+  // model-cost checks below (state/session-state.ts states why).
+  const liveStates = await readLiveSessionStates(
+    config.home,
+    config.hubUrl,
+    identity.repoId,
+  );
+  // Its own small file, not session state: a conference is a command — often a
+  // scheduled one — and its history has to survive on a machine where no
+  // session is live at all (state/conference-cost.ts says why).
+  const conferenceCost = await readConferenceCost(config.home, key);
   return summarize([
     configCheck,
     identityCheck,
@@ -2451,10 +2717,18 @@ export const runDoctor = async (
     ...captureChecks(captureHealth, now),
     await checkHints(hubCtx, identity.repoId, captureHealth),
     tripwireModeCheck(env),
-    await checkSummarizerCost(config.home, config.hubUrl, identity.repoId),
+    // ONE scan of the session-state directory for all three model-cost
+    // checks (state/session-state.ts readLiveSessionStates says why).
+    checkSummarizerCost(liveStates),
+    checkIntentCost(liveStates.states),
+    checkGhostCost(liveStates.states),
+    checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),
     await checkAbsences(hubCtx, identity.repoId),
+    await checkQuestions(hubCtx, identity.repoId, now),
+    await checkSolvedMatches(hubCtx, identity.repoId),
+    await checkGhostOverlap(hubCtx, identity.repoId),
     await checkPrivacy(hubCtx),
     skewCheck,
     bunfigCheck,

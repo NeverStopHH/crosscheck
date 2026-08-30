@@ -79,6 +79,17 @@ export const sessionSlug = (hostSessionKey: string): string =>
 export const sessionStatePathForSlug = (home: string, slug: string): string =>
   join(home, "sessions", `${slug}.json`);
 
+/**
+ * Where the UserPromptSubmit hook parks the FIRST substantive prompt for the
+ * detached derived-intent worker (connector-claude intent/worker.ts) — a 0600
+ * file beside the session state, never argv (visible in `ps`) and never
+ * stdin (the hook exits before a detached child could read it). The worker
+ * unlinks it in `finally`; `endSessionFlow` removes a leftover best-effort.
+ * Takes the derived slug like every other per-session path here.
+ */
+export const intentPromptPathForSlug = (home: string, slug: string): string =>
+  join(home, "sessions", `${slug}.intent-prompt`);
+
 export const sessionStatePath = (
   home: string,
   hostSessionKey: string,
@@ -198,6 +209,44 @@ export const deliveredHintsPath = (home: string, key: string): string =>
 export const presenceCachePath = (home: string, key: string): string =>
   join(home, "cache", `${key}-presence.json`);
 
+/**
+ * Where `crosscheck conference` leaves its reports (VISION.md §2). Under the
+ * crosscheck home rather than in the repo: a report quotes teammates' claims,
+ * so it is private-file material like every other state file here, and a
+ * document that appears in `git status` after a command that promised to
+ * change nothing is a surprise nobody asked for.
+ *
+ * Reports are NOT reaped. They are the artifact the command exists to
+ * produce, and deleting a page a human may not have read yet to save a few
+ * kilobytes is not a trade this project makes silently.
+ */
+export const conferenceDir = (home: string, key: string): string =>
+  join(home, "conferences", key);
+
+/**
+ * One report, named by the run's own UTC SECOND — stable and sortable, and
+ * with a `-2`, `-3` suffix from the caller when two runs land on the same one
+ * (cli/conference.ts freeReportPath). It was the MINUTE, which meant a
+ * scheduler retrying after a transient hub error silently replaced the page it
+ * had just written while printing both paths as if both existed.
+ *
+ * Past that caller's bound of suffixes there is no free name left, and the run
+ * REFUSES to write rather than take one back — the never-reaped guarantee
+ * above holds all the way to the edge of the second, or it is not a guarantee.
+ */
+export const conferenceReportPath = (
+  home: string,
+  key: string,
+  stamp: string,
+): string => join(conferenceDir(home, key), `conference-${stamp}.md`);
+
+/** The counters `crosscheck status` and `doctor` read for this repo+hub. */
+export const conferenceCostPath = (home: string, key: string): string =>
+  join(home, "state", `${key}-conference.json`);
+
+/** Its lock: two conferences at once must not lose a count between them. */
+export const conferenceCostLockPath = (home: string, key: string): string =>
+  `${conferenceCostPath(home, key)}.lock`;
 /**
  * Per-repo record of which HOOK EVENTS have actually fired, and when
  * (state/fired-markers.ts). Trial finding M2: every hook check in `doctor`

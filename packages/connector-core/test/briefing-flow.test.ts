@@ -39,11 +39,17 @@ interface CannedData {
   sessions: readonly unknown[];
   workContexts: readonly unknown[];
   matches: readonly unknown[];
+  ghostChecks: readonly unknown[];
 }
 
 /** Minimal canned hub for the six GETs — the hint-hub.ts philosophy. */
 const startBriefingHub = () => {
-  const data: CannedData = { sessions: [], workContexts: [], matches: [] };
+  const data: CannedData = {
+    sessions: [],
+    workContexts: [],
+    matches: [],
+    ghostChecks: [],
+  };
   const server = Bun.serve({
     port: 0,
     fetch: (request) => {
@@ -56,6 +62,9 @@ const startBriefingHub = () => {
       }
       if (pathname === "/api/solved-matches") {
         return Response.json({ ok: true, data: { matches: data.matches } });
+      }
+      if (pathname === "/api/ghost-checks") {
+        return Response.json({ ok: true, data: { ghostChecks: data.ghostChecks } });
       }
       if (pathname === "/api/absences") {
         return Response.json({ ok: true, data: { absences: [] } });
@@ -86,7 +95,13 @@ afterAll(() => {
 const hubContext = (home: string): HubContext => ({
   hubUrl: hub.url,
   apiKey: "test-key",
-  timeoutMs: 2000,
+  // 20 s, not the product's 2 s: this deadline is the TEST's patience with a
+  // fake hub on localhost, never a bound the product ships (the real ones are
+  // measured in connector-claude's hook-budget tests). At 2 s the whole-suite
+  // run flaked — 225 files, many spawning processes — and a hint that never
+  // arrived read as a delivery defect: `an answer is delivered exactly once`
+  // failed on an empty string, once, under load.
+  timeoutMs: 20_000,
   home,
   repoKey: repoKey(hub.url, REPO_ID),
   now: () => NOW,
@@ -119,6 +134,7 @@ describe("assembleBriefing (the extracted session-start recipe)", () => {
     hub.data.sessions = [presenceWith("Nick", "feat/rotation", "implementing")];
     hub.data.workContexts = [];
     hub.data.matches = [];
+    hub.data.ghostChecks = [];
 
     // Act
     const assembled = await assembleBriefing({
@@ -283,6 +299,7 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
       crosscheckSessionId,
       producer,
       shownSolvedIds: ["wc_solved_1", "wc_solved_2"],
+      shownGhostCount: 0,
       now: NOW,
     };
 
@@ -305,6 +322,83 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
     expect(state?.briefingSolvedRefs).toEqual(["wc_solved_1", "wc_solved_2"]);
   });
 
+  test("a ghost line the text really shows is counted, one not shown is not", async () => {
+    // Arrange — a hub that answers the overlap query, and a home to book in.
+    const home = await makeHome("bf-ghost");
+    const repo = await makeRepo("bf-ghost");
+    paths.push(home, repo);
+    const key = repoKey(hub.url, REPO_ID);
+    hub.data.sessions = [];
+    hub.data.workContexts = [];
+    hub.data.matches = [];
+    hub.data.ghostChecks = [
+      {
+        workContextId: "wc_theirs",
+        title: "Session store migration",
+        developerId: "dev_other",
+        developerName: "Ken",
+        lastActiveAt: ISO,
+        sharedTargets: [
+          { kind: "file", value: "src/auth/session.ts" },
+          { kind: "file", value: "src/auth/token.ts" },
+        ],
+        sharedTargetCount: 2,
+        intentTokenHits: 0,
+      },
+      // A row this renderer will not vouch for: no reason a reader can check.
+      {
+        workContextId: "wc_reasonless",
+        title: "Something else",
+        developerId: "dev_other",
+        developerName: "Ken",
+        lastActiveAt: ISO,
+        sharedTargets: [],
+        sharedTargetCount: 0,
+        intentTokenHits: 0,
+      },
+    ];
+    await writeSessionState(home, {
+      hostSessionKey: HOST_KEY,
+      crosscheckSessionId: `cc_${HOST_KEY}`,
+      workContextId: `wc_cc_${HOST_KEY}`,
+      repoId: REPO_ID,
+      repoRoot: repo,
+      hubUrl: hub.url,
+      developerId: SELF,
+      startedAt: ISO,
+    });
+
+    // Act
+    const assembled = await assembleBriefing({
+      hub: hubContext(home),
+      repoId: REPO_ID,
+      repoRoot: repo,
+      selfDeveloperId: SELF,
+      now: NOW,
+    });
+    await recordBriefingDeliveries({
+      home,
+      repoKey: key,
+      hostSessionKey: HOST_KEY,
+      crosscheckSessionId: `cc_${HOST_KEY}`,
+      producer: { developerId: SELF, agentKind: "acp:x", sessionId: `cc_${HOST_KEY}` },
+      shownSolvedIds: assembled.shownSolvedIds,
+      shownGhostCount: assembled.shownGhostCount,
+      now: NOW,
+    });
+
+    // Assert — ONE of the two rows rendered, and the counter says one.
+    expect(assembled.briefing).toContain("- Ken · titled «Session store migration»");
+    expect(assembled.briefing).not.toContain("wc_reasonless");
+    expect(assembled.shownGhostCount).toBe(1);
+    const state = await readSessionState(home, HOST_KEY);
+    expect(state?.ghostNoticeCount).toBe(1);
+    // The ghost line spends NO delivery row: it is not news that must not
+    // repeat, so nothing here may claim a delivery nobody will pull.
+    const spool = await readSessionSpool(home, key, sessionSlug(HOST_KEY));
+    expect(spool.lines).toHaveLength(0);
+  });
+
   test("zero shown pointers writes nothing at all", async () => {
     const home = await makeHome("bf-record-empty");
     paths.push(home);
@@ -317,6 +411,7 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
       crosscheckSessionId: `cc_${HOST_KEY}`,
       producer: { developerId: SELF, agentKind: "acp:x", sessionId: `cc_${HOST_KEY}` },
       shownSolvedIds: [],
+      shownGhostCount: 0,
       now: NOW,
     });
 

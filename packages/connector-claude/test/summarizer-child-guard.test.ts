@@ -120,6 +120,14 @@ const payloadFor = (fix: Fixture, name: HookName): string => {
       tool_input: { file_path: fix.file },
       tool_response: {},
     },
+    "post-tool-use-failure": {
+      ...base,
+      hook_event_name: "PostToolUseFailure",
+      tool_name: "Bash",
+      tool_input: { command: "bun test" },
+      error: "Exit code 1\nerror: expected 3 to be 4 in limiter.test.ts",
+      is_interrupt: false,
+    },
     stop: {
       ...base,
       hook_event_name: "Stop",

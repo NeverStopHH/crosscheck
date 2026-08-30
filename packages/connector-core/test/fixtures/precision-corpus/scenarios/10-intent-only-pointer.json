@@ -1,0 +1,61 @@
+{
+  "id": "intent-only-pointer",
+  "summary": "Trial finding #16 — same topic, different files: a teammate's context carries a derived intent and NO claims; its title is the detached-worktree shape and its one target is unrelated, so a prompt that shares words only with the INTENT earns a pointer (title + intent, never substance), an unrelated prompt stays silent, and the author's own prompt stays silent. The vocabulary (avatar, blurry, retina, halo, gradient, banding, crop, preview) appears in no other scenario, so the hub's OR-joined FTS can reach nothing but this intent.",
+  "sessions": [
+    {
+      "id": "s_robin_avatar",
+      "developer": "Robin",
+      "branch": "detached@91191463e",
+      "baseCommit": "c0ffee10",
+      "status": "implementing"
+    }
+  ],
+  "workContexts": [
+    {
+      "id": "wc_avatar",
+      "sessionId": "s_robin_avatar",
+      "title": "detached@91191463e @ api",
+      "intent": {
+        "summary": "Fix the blurry retina avatar halo and the gradient banding in the crop preview",
+        "provenance": "derived",
+        "confidence": 0.4,
+        "capturedAt": "2026-08-01T11:50:00.000Z"
+      },
+      "status": "implementing",
+      "createdAt": "2026-08-01T11:45:00.000Z",
+      "updatedAt": "2026-08-01T11:50:00.000Z"
+    }
+  ],
+  "targets": [
+    { "workContextId": "wc_avatar", "kind": "file", "value": "src/media/crop.ts" }
+  ],
+  "claims": [],
+  "edges": [],
+  "probes": [
+    {
+      "id": "pr_avatar_intent_pointer",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "the retina avatar preview is blurry with a halo and gradient banding",
+      "expect": "pointer",
+      "expectContextId": "wc_avatar",
+      "rationale": "No shared file (Riley is nowhere near src/media/crop.ts), no claims, a detached-worktree title that says nothing — only the derived INTENT shares words with the prompt. The FTS tier matches the intent because it is folded into normalized_doc like the title, the selector lets an intent-only context pointer (hints/select.ts hasIntent), and the pointer carries the intent labelled (derived). Substance is impossible: there is no claim to inject."
+    },
+    {
+      "id": "pr_avatar_unrelated",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "checkout cart totals drift when discount codes stack",
+      "expect": "silence",
+      "rationale": "Nothing lexical reaches the intent either — an intent widens recall only for prompts that share its words, never for an unrelated one (silence is empty results, not the tier floor)."
+    },
+    {
+      "id": "pr_avatar_self",
+      "kind": "prompt",
+      "reader": "Robin",
+      "prompt": "the retina avatar preview is blurry with a halo and gradient banding",
+      "expect": "silence",
+      "rationale": "Self-exclusion holds for intent matches exactly as for title matches: the author's own context is excluded inside the hub's search WHERE."
+    }
+  ]
+}

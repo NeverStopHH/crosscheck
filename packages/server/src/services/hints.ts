@@ -121,6 +121,12 @@ export interface HintContextCandidate {
     readonly id: string;
     readonly title: string;
     readonly status: string;
+    /**
+     * The session's intent (trial finding #16): what makes "same topic,
+     * different files" surface — the pointer hint shows it, and a context
+     * with an intent and no claims still earns a pointer (connector selector).
+     */
+    readonly intent: Record<string, unknown> | null;
     readonly tier: SearchTier;
     readonly developerId: string;
     readonly developerName: string;
@@ -223,7 +229,24 @@ const listClaimsForContext = async (
     evidenceRefCount: row.claim.evidenceRefs.length,
     authorDeveloperId: row.authorDeveloperId,
     authorDeveloperName: row.authorDeveloperName,
-    body: row.claim.body,
+    // WITHHELD unless somebody vouched for it (audit row V2-X4). A derived,
+    // unreviewed draft is nobody's answer — `hints/select.ts` has always
+    // refused to render one as substance, but a CLIENT that declines to print
+    // a body is a different guarantee from the body never crossing the wire,
+    // and only the second one holds against a modified connector, a shared
+    // machine, or the next surface somebody adds to this response. It matters
+    // more since ghost checks shipped: a ghost draft is text a THIRD party
+    // influenced through a model, and it rides this wire like any other claim
+    // body of its context (DESIGN.md §3).
+    //
+    // The ROW still travels: a pointer states how many claims it withholds,
+    // and dropping the row would make that count lie.
+    //
+    // Positive equality on the declared value, the same rule the selector
+    // applies, so the wire cannot drift into allowing what the renderer
+    // refuses: an unknown provenance is one nobody vouched for, and it fails
+    // closed.
+    body: row.claim.provenance === DECLARED_PROVENANCE ? row.claim.body : "",
     createdAt: row.claim.createdAt.toISOString(),
   }));
 };
@@ -353,6 +376,7 @@ export const listHintCandidates = async (
       id: row.id,
       title: row.title,
       status: row.status,
+      intent: row.intent,
       tier: row.tier,
       developerId: row.developerId,
       developerName: row.developerName,
@@ -376,6 +400,8 @@ export interface TargetSessionView {
   readonly lastHeartbeatAt: string;
   readonly workContextId: string;
   readonly workContextTitle: string;
+  /** The overlapping session's stated intent; the ask reason shows it. */
+  readonly workContextIntent: Record<string, unknown> | null;
 }
 
 /**
@@ -399,6 +425,7 @@ export const listTargetSessions = async (
       developerName: developers.name,
       workContextId: workContexts.id,
       workContextTitle: workContexts.title,
+      workContextIntent: workContexts.intent,
     })
     .from(workContextTargets)
     .innerJoin(
@@ -433,5 +460,6 @@ export const listTargetSessions = async (
     lastHeartbeatAt: row.session.lastHeartbeatAt.toISOString(),
     workContextId: row.workContextId,
     workContextTitle: row.workContextTitle,
+    workContextIntent: row.workContextIntent ?? null,
   }));
 };

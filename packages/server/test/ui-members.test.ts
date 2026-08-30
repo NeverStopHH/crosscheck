@@ -11,6 +11,9 @@ import { describe, expect, test } from "bun:test";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
+  postRecords,
+  recordEnvelope,
+  validWorkContextBody,
 } from "./helpers.ts";
 import {
   loginUi,
@@ -98,5 +101,37 @@ describe("ui member list", () => {
     const ownRow = memberRowFor(html, "Robin");
     expect(ownRow).toContain("active");
     expect(ownRow).toContain("presence hidden from teammates");
+  });
+});
+
+describe("intent on the member list (trial finding #16)", () => {
+  test("an active member's row names their session's intent, escaped", async () => {
+    // Arrange
+    const { harness, developer: nick } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      nick,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: {
+            summary: "Find why refresh 500s <b>after</b> rotation",
+            provenance: "derived",
+            confidence: 0.4,
+            capturedAt: "2026-07-24T09:02:00.000Z",
+          },
+        }),
+      ),
+    );
+    const cookie = await loginUi(harness, nick.apiKey);
+
+    // Act
+    const html = await (await uiGet(harness, "/ui/members", cookie)).text();
+
+    // Assert
+    const row = memberRowFor(html, "Nick");
+    expect(row).toContain("intent (derived)");
+    expect(row).toContain("Find why refresh 500s &lt;b&gt;after&lt;/b&gt; rotation");
+    expect(row).not.toContain("<b>after</b>");
   });
 });

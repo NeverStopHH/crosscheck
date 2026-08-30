@@ -1,10 +1,16 @@
 import { z } from "zod";
 
 import {
+  DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   MAX_BRIEFING_SOLVED_REFS,
   MAX_KNOWN_WORKTREE_ROOTS,
+  MAX_PROBED_FINGERPRINTS,
   MAX_SEEN_TARGETS,
   MAX_TRIPWIRE_ASKED_FILES,
+  MINUTES_PER_HOUR,
+  MS_PER_SECOND,
+  SECONDS_PER_MINUTE,
+  STATUS_MAX_SESSION_STATES,
 } from "../constants.ts";
 import {
   readJsonOrNull,
@@ -13,6 +19,18 @@ import {
   writePrivateFile,
 } from "../config/paths.ts";
 import { withLock } from "../spool/lock.ts";
+import {
+  listSessionStateFiles,
+  sessionSilentForMs,
+} from "./session-scan.ts";
+
+/**
+ * Past this much silence a state file is a CORPSE, not a live session: the
+ * same hour `doctor` calls a state file zombie, so the two surfaces cannot
+ * disagree about which sessions exist.
+ */
+const STALE_SESSION_STATE_MS =
+  DOCTOR_ZOMBIE_STATE_WARN_HOURS * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND;
 
 /**
  * The legacy spelling of `hostSessionKey`, accepted on READ forever.
@@ -81,6 +99,16 @@ const SessionStateObjectSchema = z.looseObject({
    * a briefing pointer is the briefing's budget, not the prompt path's.
    */
   briefingSolvedRefs: z.array(z.string().min(1)).default([]),
+  /**
+   * Error fingerprints the failure-time solved probe has already ASKED the
+   * hub about in this session (VISION.md §1). Separate from every list
+   * beside it because it records a QUESTION rather than a delivery: the
+   * others move only when something was shown, and the probe's cost is paid
+   * whether or not anything comes back — which is exactly the case a retry
+   * loop produces dozens of times a minute. Default keeps every existing
+   * state file parsing.
+   */
+  probedFingerprints: z.array(z.string().min(1)).default([]),
   /**
    * Touches of files in a DIFFERENT connected repo, dropped under the
    * first-wins rule (trial finding #9): one agent session is ONE crosscheck
@@ -201,6 +229,19 @@ const SessionStateObjectSchema = z.looseObject({
   summarizerFailCount: z.number().int().min(0).default(0),
   summarizerLastFailure: z.string().nullable().default(null),
   /**
+   * Rejection telemetry per fire (audit rows M16 / A3-4): how many answers
+   * came back well-formed and were still refused — role-play, an echo of the
+   * prompt or of a delivered teammate hint, a credential-shaped body, a claim
+   * the wire contract would not take — plus the most recent reason IN THE
+   * CONNECTOR'S OWN WORDS (summarizer/reject.ts never quotes the body). Every
+   * one of these used to be a silent `return` inside the worker, so a fire
+   * whose answer nobody kept was indistinguishable from a runner that never
+   * spoke. Bounded by the writer like the failure reason. Defaults keep every
+   * pre-rejection state file parsing.
+   */
+  summarizerRejectCount: z.number().int().min(0).default(0),
+  summarizerLastRejection: z.string().nullable().default(null),
+  /**
    * Runs that ANSWERED and whose answer was neither a claim nor NONE (trial
    * finding M5). Two of thirty-two live answers during the trial were the
    * model talking to the developer instead of the slice ("I've paused and I'm
@@ -213,13 +254,79 @@ const SessionStateObjectSchema = z.looseObject({
    */
   summarizerUnparsedCount: z.number().int().min(0).default(0),
   /**
-   * Intent captures this session has fired. ADDITIVE AND UNWRITTEN HERE on
-   * purpose: `feat/session-intent` owns the writer, and this default-0 field
-   * plus the cost line's "print it only when > 0" rule means that branch can
-   * start booking into it without a second edit to this schema or to the
-   * surfaces that read it.
+   * The work-context title and status this session registered with (trial
+   * finding #16): an intent UPDATE record must carry both (the wire schema
+   * requires them), so the derived-intent worker and `set_intent` read them
+   * here instead of re-deriving. Null on a pre-intent state file — the writers
+   * then book "no title in session state" rather than fabricate one.
+   */
+  workContextTitle: z.string().min(1).nullable().default(null),
+  workContextStatus: z.string().min(1).nullable().default(null),
+  /**
+   * Derived-intent telemetry (trial finding #16; the finding-#14 lesson — a
+   * fire that lands nothing must be a number somebody can explain): fires
+   * booked by the UserPromptSubmit hook under the lock BEFORE the worker
+   * spawns, and the worker's outcome — NONE, an intent set on the spool, or
+   * a failure with its reason (runner loss, or a drop: secret, echo, empty —
+   * bounded by the writer to SUMMARIZER_FAILURE_MAX_CHARS). Defaults keep
+   * every pre-intent state file parsing.
    */
   intentFireCount: z.number().int().min(0).default(0),
+  intentNoneCount: z.number().int().min(0).default(0),
+  intentSetCount: z.number().int().min(0).default(0),
+  intentFailCount: z.number().int().min(0).default(0),
+  intentLastFailure: z.string().nullable().default(null),
+  /**
+   * The intent sentence this session last put on the hub (VISION.md §3), and
+   * the reason it is stored rather than re-read: the ghost check compares
+   * MY plan with a teammate's, and the detached worker that runs it has no
+   * other way to know what this session said it was doing. Written by both
+   * writers — `set_intent` and the derived-intent worker — right after the
+   * record reaches the hub or the spool, so what is here is what a teammate
+   * would see.
+   */
+  workContextIntent: z.string().min(1).nullable().default(null),
+  /**
+   * A ghost check is OWED (VISION.md §3): an intent was recorded and nothing
+   * has compared it against the team's live plans yet. The DEBT shape, not a
+   * spawn: `set_intent` runs inside an MCP call in connector-core, which
+   * cannot reach a Claude-specific worker, so it books the debt and the next
+   * UserPromptSubmit pays it — exactly how `briefingPending` carries a
+   * briefing a late-registered session never got.
+   */
+  ghostPending: z.boolean().default(false),
+  /**
+   * Deterministic ghost notices this session actually SHOWED the reader (the
+   * briefing block plus the `set_intent` answer). The precision half of the
+   * counter pair: the model layer's outcomes say what the gated call bought,
+   * and this says how often the free half had something to say at all.
+   */
+  ghostNoticeCount: z.number().int().min(0).default(0),
+  /**
+   * The GATED half's telemetry (VISION.md §3), the derived-intent counters'
+   * shape and the same lesson behind it (finding #14): a fire that lands
+   * nothing must be a number somebody can explain. `noOverlap` is the outcome
+   * that costs no tokens at all — the deterministic core found nobody, so no
+   * model ran — and it is counted separately precisely so it never reads as a
+   * failure. Bounded by the writer (ghost/gate.ts), defaults keep every older
+   * state file parsing.
+   */
+  ghostFireCount: z.number().int().min(0).default(0),
+  ghostNoOverlapCount: z.number().int().min(0).default(0),
+  /**
+   * Checks that could not run because the HUB could not answer the overlap
+   * query — a hub too old for the route, or an unreachable one. Its own
+   * counter and not a failure, for the reason `noOverlap` has one: nothing on
+   * this machine is broken, so nothing on this machine may be booked as
+   * broken. Folded into `ghostFailCount` it made `doctor` WARN that the model
+   * layer was dead, one line above the `plan overlap` PASS describing the very
+   * same condition, and sent the reader to their local `claude` binary.
+   */
+  ghostNoHubAnswerCount: z.number().int().min(0).default(0),
+  ghostNoneCount: z.number().int().min(0).default(0),
+  ghostDraftCount: z.number().int().min(0).default(0),
+  ghostFailCount: z.number().int().min(0).default(0),
+  ghostLastFailure: z.string().nullable().default(null),
 });
 
 /**
@@ -487,6 +594,25 @@ export const withBriefingSolvedRefs = (
 };
 
 /**
+ * FIFO cap, same shape as withTripwireAsked: the hub is asked about one
+ * fingerprint once per session. Dedup on merge, because the caller's
+ * check-and-set may re-enter with the same value from a racing hook.
+ */
+export const withProbedFingerprint = (
+  state: SessionState,
+  fingerprint: string,
+): SessionState => {
+  const merged = [...new Set([...state.probedFingerprints, fingerprint])];
+  return {
+    ...state,
+    probedFingerprints:
+      merged.length <= MAX_PROBED_FINGERPRINTS
+        ? merged
+        : merged.slice(merged.length - MAX_PROBED_FINGERPRINTS),
+  };
+};
+
+/**
  * Remembers a resolved worktree root → repoId for the session (trial finding
  * #17), so the per-tool capture path never resolves the same root's identity
  * twice. Dedup by root (a cache, not a log — a re-resolution replaces the old
@@ -537,6 +663,127 @@ export const withTripwireAsked = (
   };
 };
 
+/**
+ * An intent reached the hub or the spool (VISION.md §3): remember the
+ * sentence and book the ghost-check debt in ONE transform, because they are
+ * one fact — a plan the team has not been compared against yet. Re-declaring
+ * an intent re-opens the debt on purpose; the new sentence is a new plan, and
+ * the per-session fire cap is what stops that from becoming a second model
+ * call (ghost/gate.ts owns the cap).
+ */
+export const withRecordedIntent = (
+  state: SessionState,
+  summary: string,
+): SessionState => ({
+  ...state,
+  workContextIntent: summary,
+  ghostPending: true,
+});
+
+/** A deterministic ghost notice was SHOWN — booked by whoever emitted it. */
+export const withGhostNotices = (
+  state: SessionState,
+  shown: number,
+): SessionState =>
+  shown <= 0
+    ? state
+    : { ...state, ghostNoticeCount: state.ghostNoticeCount + shown };
+
+/**
+ * The LIVE session states of one repo+hub, in one bounded scan (at most
+ * STATUS_MAX_SESSION_STATES files — more live sessions than that on one
+ * machine is not a cost question any more).
+ *
+ * ONE SCAN, not one per counter, and that is the whole reason this exists.
+ * `crosscheck status` and `doctor` each print three model-cost lines — the
+ * summarizer, the derived intent and the ghost check — and every one of them
+ * used to readdir and re-parse the same directory. Three passes over the same
+ * files on a surface a human runs by hand is the shape of the problem, not a
+ * constant to tune; each cost module now SUMS states it is handed, and this
+ * is the only place that reads them.
+ *
+ * NEWEST FIRST AND LIVE ONLY, which is the other half of "one place". The
+ * scan this replaced took `readdir` order — neither alphabetical nor
+ * chronological — sliced the first N and reduced: on the trial machine that
+ * read an arbitrary 50 of 100 files and printed `13 runs (1 NONE, 2 drafts) …
+ * across 50 live sessions` where the full set said 27/3/3, and 75 of those
+ * files belonged to sessions killed hours earlier. Sorting by mtime before the
+ * bound (state/session-scan.ts) and skipping files whose session stopped
+ * heartbeating fixes both, once, for all three cost surfaces — and the
+ * `filesSeen`/`filesRead`/`staleSkipped` counters let a line say "N of M"
+ * instead of implying it read everything.
+ *
+ * Fail open like every read on a status path: an unreadable directory is an
+ * empty scan, and a state file that does not parse is counted and skipped
+ * rather than costing the scan.
+ */
+export interface LiveSessionScan {
+  /** Live states of this repo+hub, newest-written first. */
+  readonly states: readonly SessionState[];
+  /** Session-state files that EXIST — the denominator of "N of M". */
+  readonly filesSeen: number;
+  /** Files this bounded scan actually opened. */
+  readonly filesRead: number;
+  /** Files skipped because their session stopped heartbeating. */
+  readonly staleSkipped: number;
+  /** Files that would not parse — counted, never silently dropped. */
+  readonly parseFailures: number;
+}
+
+const EMPTY_SCAN: LiveSessionScan = {
+  states: [],
+  filesSeen: 0,
+  filesRead: 0,
+  staleSkipped: 0,
+  parseFailures: 0,
+};
+
+export const readLiveSessionStates = async (
+  home: string,
+  hubUrl: string,
+  repoId: string,
+  now: Date = new Date(),
+): Promise<LiveSessionScan> => {
+  const listing = await listSessionStateFiles(home, STATUS_MAX_SESSION_STATES);
+  if (listing.filesSeen === 0) {
+    return EMPTY_SCAN;
+  }
+  const parsed = await Promise.all(
+    listing.files.map(async (file) => ({
+      // The mtime travels with the parse: a session's silence is measured off
+      // its own file's last write as well as its heartbeat (session-scan.ts).
+      mtimeMs: file.mtimeMs,
+      result: SessionStateSchema.safeParse(await readJsonOrNull(file.path)),
+    })),
+  );
+  const states: SessionState[] = [];
+  let staleSkipped = 0;
+  for (const entry of parsed) {
+    if (!entry.result.success) {
+      continue;
+    }
+    const state = entry.result.data;
+    if (state.hubUrl !== hubUrl || state.repoId !== repoId) {
+      continue;
+    }
+    const ageMs = sessionSilentForMs(state, entry.mtimeMs, now.getTime());
+    if (ageMs !== null && ageMs > STALE_SESSION_STATE_MS) {
+      // Counted, not dropped: "3 stale skipped" is the number that would
+      // have told the trial its cost lines were reading corpses.
+      staleSkipped += 1;
+      continue;
+    }
+    states.push(state);
+  }
+  return {
+    states,
+    filesSeen: listing.filesSeen,
+    filesRead: listing.files.length,
+    staleSkipped,
+    parseFailures: parsed.filter((entry) => !entry.result.success).length,
+  };
+};
+
 export interface DeriveSessionStateInput {
   readonly hostSessionKey: string;
   readonly repoId: string;
@@ -570,6 +817,7 @@ export const deriveSessionState = (
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
     briefingSolvedRefs: [],
+    probedFingerprints: [],
     foreignRepoDrops: 0,
     outsideRootDrops: 0,
     knownWorktreeRoots: [],
@@ -589,7 +837,25 @@ export const deriveSessionState = (
     summarizerDraftCount: 0,
     summarizerFailCount: 0,
     summarizerLastFailure: null,
+    summarizerRejectCount: 0,
+    summarizerLastRejection: null,
     summarizerUnparsedCount: 0,
+    workContextTitle: null,
+    workContextStatus: null,
     intentFireCount: 0,
+    intentNoneCount: 0,
+    intentSetCount: 0,
+    intentFailCount: 0,
+    intentLastFailure: null,
+    workContextIntent: null,
+    ghostPending: false,
+    ghostNoticeCount: 0,
+    ghostFireCount: 0,
+    ghostNoOverlapCount: 0,
+    ghostNoHubAnswerCount: 0,
+    ghostNoneCount: 0,
+    ghostDraftCount: 0,
+    ghostFailCount: 0,
+    ghostLastFailure: null,
   };
 };

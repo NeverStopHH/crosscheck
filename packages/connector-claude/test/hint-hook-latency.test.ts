@@ -17,17 +17,31 @@ import { runHook } from "../src/index.ts";
 import type { Env } from "../src/index.ts";
 import {
   HTTP_TIMEOUT_MS,
+  POST_TOOL_USE_FAILURE_BUDGET_RATIO,
   USER_PROMPT_SUBMIT_BUDGET_RATIO,
 } from "@crosscheck/connector-core/constants.ts";
-import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  readSessionState,
+  writeSessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
+import { repoKey, sessionSlug } from "@crosscheck/connector-core/config/paths.ts";
+import { readSessionSpool } from "@crosscheck/connector-core/spool/files.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
-import { startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
+import {
+  solvedFingerprintMatch,
+  startHintHub,
+} from "../../connector-core/test/fixtures/hint-hub.ts";
 import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
 const SESSION_ID = "latency-uuid";
 const PROMPT = "why does src/auth/refresh.ts still 500 after the key rotation";
 const BUDGET_MS = USER_PROMPT_SUBMIT_BUDGET_RATIO * HTTP_TIMEOUT_MS;
+/** The failure hook's own budget — same keystroke grade, own constant. */
+const FAILURE_BUDGET_MS = POST_TOOL_USE_FAILURE_BUDGET_RATIO * HTTP_TIMEOUT_MS;
+/** A failure text with enough signal that `fingerprint()` accepts it. */
+const FAILURE_TEXT =
+  "Exit code 1\nerror: expected 3 to be 4\n  at src/limiter.test.ts";
 /**
  * Scheduling slop over the budget race: the timer fires AT the deadline and
  * the event loop hands control back some milliseconds later. Generous enough
@@ -53,11 +67,17 @@ afterEach(async () => {
 const fixture = async (
   label: string,
   candidateLatencyMs: number,
-): Promise<{ repo: string; env: Env; hub: HintHub }> => {
+  solvedLatencyMs: number = 0,
+  stateOverrides: Record<string, unknown> = {},
+): Promise<{ repo: string; home: string; env: Env; hub: HintHub }> => {
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   const home = await makeHome(label);
   paths.push(repo, home);
-  const hub = startHintHub({ candidates: candidateLatencyMs, tripwire: 0 });
+  const hub = startHintHub({
+    candidates: candidateLatencyMs,
+    tripwire: 0,
+    solvedMatches: solvedLatencyMs,
+  });
   hubs.push(hub);
   await writeSessionState(home, {
     hostSessionKey: SESSION_ID,
@@ -73,9 +93,11 @@ const fixture = async (
     deliveredHintRefs: [],
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
+    ...stateOverrides,
   });
   return {
     repo,
+    home,
     hub,
     env: {
       CROSSCHECK_HOME: home,
@@ -132,5 +154,149 @@ describe("the 800 ms sync budget, measured through runHook", () => {
     );
     expect(stdout).toBe("");
     expect(elapsedMs).toBeLessThanOrEqual(BUDGET_MS + RACE_SLOP_MS);
+  });
+});
+
+/**
+ * The GHOST DEBT on the same hook, measured rather than assumed (VISION.md
+ * §3). The two tests above never exercise it — their fixture owes nothing —
+ * so without this the new branch would be a claim about a budget nobody
+ * checked. What run 0 pays here is one state read the hook was making anyway,
+ * one lock round to claim the flag, and one unref'd spawn; runs 1-4 pay the
+ * lockless pre-check alone, which is the shape that has to stay cheap because
+ * it runs on EVERY prompt for the rest of the session.
+ */
+describe("the ghost debt inside the same 800 ms budget", () => {
+  test("run 0 claims the debt and spawns, and every run stays inside", async () => {
+    // Arrange — a session that declared an intent and owes the comparison.
+    const { repo, home, env } = await fixture("ghost-debt", 0, 0, {
+      workContextTitle: "detached@0badc0f · fix: refresh 500s @ api",
+      workContextStatus: "analyzing",
+      workContextIntent: "Make verifyToken refetch the JWKS on an unknown kid",
+      ghostPending: true,
+    });
+    const elapsed: number[] = [];
+
+    // Act
+    for (let run = 0; run < HAPPY_RUNS; run += 1) {
+      const startedAt = performance.now();
+      await runHook("user-prompt-submit", payload(repo), env);
+      elapsed.push(Math.round(performance.now() - startedAt));
+    }
+
+    // Assert — the debt really was claimed on this path, exactly once...
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.ghostPending).toBe(false);
+    // ...and the measurement is of a hook that DID the work, not one that
+    // skipped it.
+    console.log(
+      `[ghost-debt] responsive hub, ms per run: ${elapsed.join(", ")} (budget ${String(BUDGET_MS)})`,
+    );
+    for (const ms of elapsed) {
+      expect(ms).toBeLessThan(BUDGET_MS);
+    }
+  });
+});
+
+const failurePayload = (repo: string): string =>
+  JSON.stringify({
+    session_id: SESSION_ID,
+    cwd: repo,
+    hook_event_name: "PostToolUseFailure",
+    tool_name: "Bash",
+    tool_input: { command: "bun test" },
+    error: FAILURE_TEXT,
+    is_interrupt: false,
+  });
+
+/**
+ * The SAME split for PostToolUseFailure, and it needs its own measurement
+ * rather than inheriting the prompt hook's: this one runs inside the agent's
+ * turn (nobody is typing, so nothing else paces it), it does MORE than the
+ * prompt path per fire — a spool append for the fingerprint, the probe, the
+ * delivery append, the state write, then a bounded flush — and it is the one
+ * hook whose budget constant is new, which is exactly the kind of number
+ * that is asserted and never measured.
+ */
+describe("the PostToolUseFailure budget, measured through runHook", () => {
+  test("a responsive hub captures and answers inside the budget on every run", async () => {
+    // Arrange
+    const { repo, env, hub } = await fixture("failure-happy", 0);
+    hub.setSolvedMatches([solvedFingerprintMatch()]);
+    const elapsed: number[] = [];
+
+    // Act — the same failing command five times, the retry-loop shape. Run 0
+    // delivers; the later runs are the SILENT path and still pay capture,
+    // flush and the state read, which is what these four measurements are
+    // about. Their silence is the probed-fingerprint set rather than the
+    // seen-set now: one fingerprint is asked about once per session, so
+    // runs 1-4 stop before the hub (flows/solved-hint.ts).
+    const stdout: string[] = [];
+    for (let run = 0; run < HAPPY_RUNS; run += 1) {
+      const startedAt = performance.now();
+      stdout.push(await runHook("post-tool-use-failure", failurePayload(repo), env));
+      elapsed.push(Math.round(performance.now() - startedAt));
+    }
+
+    // Assert — the WORK first, because a budget is only a measurement of a
+    // hook that did it: an unregistered event, a dropped handler or a probe
+    // nobody calls all finish in a millisecond and would pass every bound
+    // below. Run 0 must carry the solved answer, the later runs must be the
+    // seen-set's silence rather than a hook that never spoke.
+    expect(stdout[0]).toContain("get_diagnosis");
+    expect(stdout.slice(1)).toEqual(["", "", "", ""]);
+    // Asked ONCE across the five, not "at least once": the repeats are the
+    // whole point of a retry loop, and paying a round trip for each of them
+    // is the cost this hook has no way to bound afterwards.
+    expect(hub.calls.solvedMatches).toBe(1);
+
+    // …then measured, then bounded
+    console.log(
+      `[failure-latency] responsive hub, ms per run: ${elapsed.join(", ")} (budget ${String(FAILURE_BUDGET_MS)})`,
+    );
+    for (const ms of elapsed) {
+      expect(ms).toBeLessThan(FAILURE_BUDGET_MS);
+    }
+  });
+
+  test("a hub that never answers the probe is cut at the budget, in silence", async () => {
+    // Arrange
+    const { repo, home, env, hub } = await fixture(
+      "failure-hung",
+      0,
+      UNANSWERABLE_MS,
+    );
+    hub.setSolvedMatches([solvedFingerprintMatch()]);
+
+    // Act
+    const startedAt = performance.now();
+    const stdout = await runHook(
+      "post-tool-use-failure",
+      failurePayload(repo),
+      env,
+    );
+    const elapsedMs = Math.round(performance.now() - startedAt);
+
+    // Assert — fail-open AND on time. The CAPTURE is asserted first: the
+    // hook's whole ordering promise is that a slow hub costs the hint and
+    // never the fingerprint, and without this line an empty stdout after a
+    // millisecond would satisfy every bound here.
+    const spool = await readSessionSpool(
+      home,
+      repoKey(hub.url, REPO_ID),
+      sessionSlug(SESSION_ID),
+    );
+    const captured = spool.lines
+      .map((line) => JSON.parse(line) as { kind: string; body: Record<string, unknown> })
+      .filter(
+        (record) =>
+          record.kind === "target" && record.body["kind"] === "error_fingerprint",
+      );
+    expect(captured).toHaveLength(1);
+    console.log(
+      `[failure-latency] hung hub cut after ${String(elapsedMs)} ms (budget ${String(FAILURE_BUDGET_MS)} + slop ${String(RACE_SLOP_MS)})`,
+    );
+    expect(stdout).toBe("");
+    expect(elapsedMs).toBeLessThanOrEqual(FAILURE_BUDGET_MS + RACE_SLOP_MS);
   });
 });

@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 
 import { WORK_CONTEXT_LIST_MAX } from "../constants.ts";
 
@@ -239,6 +239,29 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
  */
 const contextActivityAt = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
 
+/**
+ * How fresh this row is WITHIN its own developer: 1 is that person's newest.
+ * Computed after the WHERE, so mutes and the caller's window narrow the set
+ * before anybody is ranked inside it.
+ *
+ * THE BOUND IS SPENT ON BREADTH BEFORE DEPTH, and that is not a preference.
+ * Cut flat by activity, the page is whoever is busiest: a teammate running
+ * many short sessions — the module's own premise, "three worktrees, or
+ * restarting their agent three times on the same branch" — filled the whole
+ * answer, and the colleague with one live investigation from this morning
+ * never reached the reader at all. Nothing downstream could report it either:
+ * the connector's "(+N more not shown)" is computed from the groups it
+ * RECEIVED, so a person who never arrived is not folded away, they are simply
+ * absent from a section that looks complete.
+ *
+ * Ordering by this first serves every teammate's freshest context before
+ * anyone's second, while the rows inside one developer stay in the
+ * newest-first order the reader groups by. Pinned by "one busy teammate
+ * cannot push another out of the answer entirely" in
+ * server/test/work-context-listing.test.ts.
+ */
+const contextRankPerDeveloper = sql`row_number() over (partition by ${agentSessions.developerId} order by ${contextActivityAt} desc)`;
+
 export const listWorkContextsByRepo = async (
   db: Db,
   viewerDeveloperId: string,
@@ -257,14 +280,22 @@ export const listWorkContextsByRepo = async (
       developerId: agentSessions.developerId,
       developerName: developers.name,
       baseCommit: agentSessions.baseCommit,
-      claimCount: count(claims.id),
-      // Correlated, so the claims leftJoin below cannot inflate it (#20).
-      targetCount: sql<number>`(select count(*) from ${workContextTargets} where ${workContextTargets.workContextId} = ${workContexts.id})`.mapWith(Number),
+      // Scalar subqueries rather than the LEFT JOIN + GROUP BY this query used
+      // to carry: the join multiplied every context by its claims (100,000
+      // rows aggregated to answer about 10,000) and could only ever count ONE
+      // thing, so a second count meant a second fan-out. Each subquery is one
+      // index lookup on the leading column of its own key —
+      // claims_work_context_created_idx and work_context_targets' primary key.
+      // ::int because count() is bigint, which arrives as a string.
+      claimCount: sql<number>`(select count(*)::int from ${claims} where ${claims.workContextId} = ${workContexts.id})`,
+      // Audit row M15-rest: a session that captured files but published no
+      // claim yet is real work, and the briefing prefers it over an empty
+      // shell when it picks which context speaks for a teammate.
+      targetCount: sql<number>`(select count(*)::int from ${workContextTargets} where ${workContextTargets.workContextId} = ${workContexts.id})`,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .innerJoin(developers, eq(agentSessions.developerId, developers.id))
-    .leftJoin(claims, eq(claims.workContextId, workContexts.id))
     // The viewer's mutes apply — this listing feeds the briefing's related-
     // work pointers (an unasked surface). Opt-out does NOT: these rows are
     // published knowledge, not live presence (services/visibility.ts). The
@@ -273,21 +304,29 @@ export const listWorkContextsByRepo = async (
       and(
         eq(agentSessions.repo, repo),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
+        // The caller's window, in the WHERE, and the reason is the RANK
+        // above rather than the LIMIT below. Under a flat freshest-first cut
+        // it bought only bytes: every out-of-window row sorts BELOW every
+        // in-window one on the same key, so the freshest N of all time hold
+        // exactly the in-window rows the reader keeps anyway — an earlier
+        // version of this comment claimed otherwise and was measurably wrong.
+        // Ranking per developer changes that, because the rank is computed
+        // over whatever this WHERE leaves: a teammate's abandoned contexts
+        // from three months ago take rank 2, 3, 4 … and spend the bound on
+        // rows the reader then throws away. Pinned by "the window is in the
+        // WHERE because the rank is computed after it" in
+        // server/test/work-context-listing.test.ts.
         ...(window.since === undefined
           ? []
           : [gte(contextActivityAt, window.since)]),
       ),
     )
-    .groupBy(
-      workContexts.id,
-      agentSessions.developerId,
-      developers.name,
-      agentSessions.baseCommit,
-    )
-    // Newest first, then the cap: a truncated page must keep the rows the
-    // reader would have used, and every consumer of this list wants recent
-    // work (the briefing filters to CONTEXT_MAX_AGE_DAYS client-side).
-    .orderBy(desc(contextActivityAt))
+    // Activity, not creation: it is the timestamp the rows are FILTERED by
+    // above and rendered by downstream, and the one `work_contexts_activity_idx`
+    // is built on — ordering by anything else would make the bound cut a
+    // different set from the one the window selected. Rank first, so every
+    // teammate's freshest context is served before anyone's second.
+    .orderBy(sql`${contextRankPerDeveloper} ASC`, desc(contextActivityAt))
     .limit(limit);
   return rows.map((row) => ({
     ...toWorkContextView(row.workContext, row.baseCommit),

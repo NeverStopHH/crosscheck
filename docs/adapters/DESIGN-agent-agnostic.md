@@ -294,8 +294,8 @@ Two write points, both sanctioned shapes:
    (array-of-EnvVariable shape per
    [session-setup](https://agentclientprotocol.com/protocol/v1/session-setup), verified
    2026-08-18). The agent connects to it like any team MCP server and gets the full
-   Tier-2 tool surface (`publish_claim`, `extend_diagnosis`, `search_related_work`,
-   `get_diagnosis`, `get_referee_brief`) with **zero client cooperation**, because
+   Tier-2 tool surface (`publish_claim`, `set_intent`, `extend_diagnosis`,
+   `search_related_work`, `get_diagnosis`, `get_referee_brief`) with **zero client cooperation**, because
    `mcp/session.ts` resolves the calling session from local state files — which the
    proxy wrote at `session/new` time, before any tool call can exist. Launcher path
    resolution reuses init.ts's rule: PATH-installed `crosscheck` preferred, the running

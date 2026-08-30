@@ -332,6 +332,7 @@ const ingestContexts = async (seed: ScenarioSeed): Promise<void> => {
         ...(context.description === undefined
           ? {}
           : { description: context.description }),
+        ...(context.intent === undefined ? {} : { intent: context.intent }),
         status: context.status,
         createdAt: context.createdAt,
         ...(context.updatedAt === undefined
@@ -472,6 +473,7 @@ const probeSessionState = (
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   briefingSolvedRefs: [],
+  probedFingerprints: [],
   foreignRepoDrops: 0,
   briefingPending: false,
   stopTurnCount: 0,
@@ -482,6 +484,25 @@ const probeSessionState = (
   summarizerDraftCount: 0,
   summarizerFailCount: 0,
   summarizerLastFailure: null,
+  summarizerRejectCount: 0,
+  summarizerLastRejection: null,
+  workContextTitle: null,
+  workContextStatus: null,
+  intentFireCount: 0,
+  intentNoneCount: 0,
+  intentSetCount: 0,
+  intentFailCount: 0,
+  intentLastFailure: null,
+  workContextIntent: null,
+  ghostPending: false,
+  ghostNoticeCount: 0,
+  ghostFireCount: 0,
+  ghostNoOverlapCount: 0,
+  ghostNoHubAnswerCount: 0,
+  ghostNoneCount: 0,
+  ghostDraftCount: 0,
+  ghostFailCount: 0,
+  ghostLastFailure: null,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -492,7 +513,6 @@ const probeSessionState = (
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
   summarizerUnparsedCount: 0,
-  intentFireCount: 0,
 });
 
 interface Observation {

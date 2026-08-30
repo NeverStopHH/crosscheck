@@ -7,6 +7,8 @@ import type {
   HintDelivery,
   KnownRecordKind,
   LandedEvidence,
+  Question,
+  QuestionAnswer,
   Target,
   WorkContext,
 } from "@crosscheck/schema";
@@ -17,6 +19,7 @@ import { ingestCommitEvidence } from "./commit-evidence.ts";
 import { ingestHintDelivery } from "./hint-deliveries.ts";
 import { ingestLandedEvidence } from "./landed.ts";
 import { embedContextDoc } from "./normalized-doc.ts";
+import { answerQuestion, askQuestionFromRecord } from "./questions.ts";
 import {
   ingestClaim,
   ingestClaimEdge,
@@ -102,6 +105,64 @@ const checkProducerSession = async (
 };
 
 /**
+ * The spool-replay path for a question (roadmap R2). The TOOL asks through
+ * `POST /api/questions`, which resolves a developer name and can refuse in
+ * sentences; this path carries an already-resolved question that a flush is
+ * re-sending, so its whole job is to reach the same service with the same
+ * rules. A budget refusal is a REJECTION here — a spool cannot retry into a
+ * budget that only frees up when somebody answers.
+ */
+/**
+ * WHY THIS KIND SHIPS WITH NO PRODUCER. No connector mints a `question`
+ * record today — `ask_teammate` posts to /api/questions, which resolves the
+ * developer TERM (a record body cannot say "Kim is the name of three
+ * developers here"). So this arm is reachable only by a hand-rolled or
+ * modified client, which is exactly the threat model the budgets are written
+ * for, and it was where the TTL and all three budgets could be lifted at once
+ * through an untrusted `createdAt` (services/questions.ts, askQuestionFromRecord).
+ *
+ * It is kept rather than deleted because the hole is closed at the mechanism —
+ * the hub owns `createdAt` here exactly as it owns `status` and `expiresAt` —
+ * and because this arm is now the ONLY path that exercises that gate: the
+ * route stamps its own clock and cannot. The tests that prove a caller cannot
+ * buy themselves a longer TTL or a bigger budget run through here.
+ */
+const ingestQuestion = async (
+  deps: Deps,
+  developerId: string,
+  body: Question,
+): Promise<HandlerOutcome> => {
+  const outcome = await askQuestionFromRecord(deps, developerId, body);
+  switch (outcome.outcome) {
+    case "asked":
+      return { status: "accepted", id: outcome.question.id };
+    case "duplicate":
+      return { status: "duplicate", id: outcome.questionId };
+    case "budget":
+      return rejectedOutcome(`question budget: ${outcome.reason}`);
+    case "invalid":
+      return rejectedOutcome(`question: ${outcome.reason}`);
+  }
+};
+
+/** The spool-replay path for an answer: claim + `answers` edge, one write. */
+const ingestQuestionAnswer = async (
+  deps: Deps,
+  developerId: string,
+  body: QuestionAnswer,
+): Promise<HandlerOutcome> => {
+  const outcome = await answerQuestion(deps, developerId, body);
+  switch (outcome.outcome) {
+    case "answered":
+      return { status: "accepted", id: outcome.claimId };
+    case "duplicate":
+      return { status: "duplicate", id: outcome.claimId };
+    case "refused":
+      return rejectedOutcome(`questionId: ${outcome.reason}`);
+  }
+};
+
+/**
  * A record IS a heartbeat (review finding B2-01).
  *
  * `last_heartbeat_at` had exactly two writers, `registerSession` and
@@ -156,6 +217,10 @@ const dispatchRecord = (
       return ingestLandedEvidence(deps, developerId, body as LandedEvidence);
     case "hint_delivery":
       return ingestHintDelivery(deps, developerId, body as HintDelivery);
+    case "question":
+      return ingestQuestion(deps, developerId, body as Question);
+    case "question_answer":
+      return ingestQuestionAnswer(deps, developerId, body as QuestionAnswer);
   }
 };
 
@@ -181,6 +246,15 @@ const touchedContextId = (
       return undefined;
     // Delivery telemetry references a context but changes nothing about it.
     case "hint_delivery":
+      return undefined;
+    // A question is addressed AT a context, never filed into it: nothing
+    // about the context's own searchable doc changes.
+    case "question":
+      return undefined;
+    // The answer's claim already refreshed its own context's doc inside the
+    // shared claim gate (ingestClaimWithin); re-embedding here would pay for
+    // the same doc twice per flush.
+    case "question_answer":
       return undefined;
   }
 };

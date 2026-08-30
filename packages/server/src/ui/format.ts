@@ -40,3 +40,31 @@ export const workContextHref = (workContextId: string): string =>
 /** href for a referee case-file page. */
 export const contradictionHref = (contradictionId: string): string =>
   `/ui/contradictions/${encodeURIComponent(contradictionId)}`;
+
+/** A work-context intent as the UI shows it: the sentence and its trust label. */
+export interface UiIntent {
+  readonly summary: string;
+  /** "(derived)" for anything not declared — fail closed, like every renderer. */
+  readonly label: string;
+}
+
+const DECLARED = "declared";
+
+/**
+ * The intent jsonb (services/diagnosis.ts, presence.ts) reduced to what a
+ * page prints: null when there is no usable summary. Provenance is labelled
+ * by positive equality on "declared"; an unknown or missing provenance reads
+ * as derived, never as vouched.
+ */
+export const uiIntentOf = (
+  intent: Record<string, unknown> | null | undefined,
+): UiIntent | null => {
+  const summary = intent?.["summary"];
+  if (typeof summary !== "string" || summary.length === 0) {
+    return null;
+  }
+  return {
+    summary,
+    label: intent?.["provenance"] === DECLARED ? "intent" : "intent (derived)",
+  };
+};

@@ -30,6 +30,7 @@ import * as records from "../src/capture/records.ts";
 import * as fingerprint from "../src/capture/fingerprint.ts";
 import * as failureText from "../src/capture/failure-text.ts";
 import * as registerFlow from "../src/flows/register-session.ts";
+import * as titleFlow from "../src/flows/work-context-title.ts";
 import * as captureFlows from "../src/flows/capture-targets.ts";
 import * as touchedFilesFlow from "../src/flows/capture-touched-files.ts";
 import * as bookkeeping from "../src/state/capture-bookkeeping.ts";
@@ -38,6 +39,7 @@ import * as heartbeatFlow from "../src/flows/heartbeat.ts";
 import * as endFlow from "../src/flows/end-session.ts";
 import * as briefingFlow from "../src/flows/briefing.ts";
 import * as hintFlow from "../src/flows/hint.ts";
+import * as solvedHintFlow from "../src/flows/solved-hint.ts";
 import * as launcher from "../src/config/launcher.ts";
 import * as hookBudgetModule from "../src/config/hook-budget.ts";
 import * as secretScan from "../src/capture/secret-scan.ts";
@@ -134,10 +136,13 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["getContradictions", hub.getContradictions],
   ["getDrafts", hub.getDrafts],
   ["getSolvedMatches", hub.getSolvedMatches],
+  ["getSolvedMatchesForFingerprint", hub.getSolvedMatchesForFingerprint],
   ["getTripwireSessions", hub.getTripwireSessions],
   // The session flows (§1.3, extracted in Block 4)
   ["registerSessionFlow", registerFlow.registerSessionFlow],
   ["fallbackWorkContextTitle", registerFlow.fallbackWorkContextTitle],
+  ["composeDetachedTitle", titleFlow.composeDetachedTitle],
+  ["resolveFallbackWorkContextTitle", titleFlow.resolveFallbackWorkContextTitle],
   ["captureFileTargets", captureFlows.captureFileTargets],
   ["captureFailure", captureFlows.captureFailure],
   ["captureTouchedFiles", touchedFilesFlow.captureTouchedFiles],
@@ -148,6 +153,7 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["assembleBriefing", briefingFlow.assembleBriefing],
   ["recordBriefingDeliveries", briefingFlow.recordBriefingDeliveries],
   ["selectAndRenderHint", hintFlow.selectAndRenderHint],
+  ["selectAndRenderSolvedHint", solvedHintFlow.selectAndRenderSolvedHint],
   // Capture
   ["buildEnvelope", records.buildEnvelope],
   ["workContextRecord", records.workContextRecord],
@@ -165,11 +171,14 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["collectCommitEvidence", commitEvidence.collectCommitEvidence],
   ["commitEvidenceRecord", commitEvidence.commitEvidenceRecord],
   ["toRepoRelative", targetPaths.toRepoRelative],
-  // Render discipline — the three classes and the finished renderers
+  // Render discipline — the four classes and the finished renderers
   ["sanitizeUntrusted", sanitize.sanitizeUntrusted],
+  ["spanRedactedUntrusted", sanitize.spanRedactedUntrusted],
+  ["redactionNote", sanitize.redactionNote],
   ["bareUntrusted", sanitize.bareUntrusted],
   ["safeId", sanitize.safeId],
   ["quoted", mcpRender.quoted],
+  ["quotedBody", mcpRender.quotedBody],
   ["QUOTED_DATA_NOTICE", briefingRender.QUOTED_DATA_NOTICE],
   ["renderBriefing", briefingRender.renderBriefing],
   ["groupTeammates", briefingRender.groupTeammates],

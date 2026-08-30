@@ -65,6 +65,17 @@ export const USER_PROMPT_SUBMIT_BUDGET_RATIO = 2;
 /** PreToolUse blocks a tool call — the same keystroke-grade bound applies. */
 export const PRE_TOOL_USE_BUDGET_RATIO = 2;
 /**
+ * PostToolUseFailure runs INSIDE the agent's turn and returns
+ * `additionalContext`, so it takes the keystroke-grade bound too — not
+ * PostToolUse's maintenance budget, which is four request timeouts because
+ * that hook is async and nobody waits on it. Same 800 ms, same reason: the
+ * developer is watching a build fail and must not also watch a hook.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.POST_TOOL_USE_FAILURE_BUDGET_RATIO * c.HTTP_TIMEOUT_MS, c.POST_TOOL_USE_FAILURE_BUDGET_RATIO === c.USER_PROMPT_SUBMIT_BUDGET_RATIO)'
+ * PRINTS: 800 true
+ */
+export const POST_TOOL_USE_FAILURE_BUDGET_RATIO = 2;
+/**
  * Noise budgets (DESIGN.md §10 risk 1): at most one hint per prompt and five
  * per session, then silence for the rest of the session. MAX_HINTS_PER_PROMPT
  * is enforced structurally — the selector returns ONE selection, never a list
@@ -85,6 +96,15 @@ export const HINT_MIN_EVIDENCE_REFS = 1;
 export const HINT_MIN_TOKEN_CHARS = 3;
 /** Tripwire asks once per file per session; FIFO cap on the remembered set. */
 export const MAX_TRIPWIRE_ASKED_FILES = 100;
+/**
+ * The failure-time solved probe asks the hub about a fingerprint ONCE per
+ * session; FIFO cap on the remembered set, the MAX_TRIPWIRE_ASKED_FILES
+ * shape. Sized for the distinct failures one session produces rather than
+ * for its total failures — the whole point is that a retry loop repeats ONE
+ * fingerprint, and a session that genuinely hits 100 different failures has
+ * spent its five hint slots long before this cap matters.
+ */
+export const MAX_PROBED_FINGERPRINTS = 100;
 /**
  * Echo-loop exclusion across sessions (DESIGN.md §3): delivered-hint body
  * hashes persist per repo so yesterday's hint cannot come back as today's
@@ -378,6 +398,176 @@ export const CONTEXT_MAX_AGE_DAYS = 14;
  */
 export const WORK_CONTEXT_LIST_LIMIT = 600;
 
+// ── Detached-HEAD work-context titles (trial finding #15) ────────────────────
+
+/**
+ * A worktree session runs on a detached HEAD, so its branch reads
+ * `detached@<sha>` and the honest fallback title `detached@<sha> @ repo` tells
+ * a teammate nothing: on the trial hub 70 of 80 work contexts carried one. At
+ * SESSION START ONLY — never in a per-tool hook — the title builder
+ * (flows/work-context-title.ts) asks git twice, each call bounded by this:
+ * which branch tip the commit sits on (preferred, a worktree made from a
+ * branch), else the HEAD commit's subject. Same class as the drift, landed
+ * and commit-evidence timeouts: a slow git loses the label, never the
+ * registration, and at the default timeouts both calls together stay inside
+ * the one hub round trip SessionStart already pays (worst case 2 × 250 ms on
+ * a detached session, nothing at all on a branch):
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.HEAD_LABEL_GIT_TIMEOUT_MS < c.HTTP_TIMEOUT_MS, 2 * c.HEAD_LABEL_GIT_TIMEOUT_MS <= c.SESSION_START_BUDGET_RATIO * c.HTTP_TIMEOUT_MS - c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true true
+ */
+export const HEAD_LABEL_GIT_TIMEOUT_MS = 250;
+/**
+ * Bound on the commit subject folded into a detached title. A subject is a
+ * developer's own commit message — untrusted cross-user text once uploaded —
+ * so it goes through the PROSE sanitizer at this width before the title is
+ * composed; half the title cap, so `detached@<sha> · <subject> @ <repo>`
+ * always fits inside MAX_WORK_CONTEXT_TITLE_CHARS with the repo label:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DETACHED_SUBJECT_MAX_CHARS * 2 === c.MAX_WORK_CONTEXT_TITLE_CHARS)'
+ * PRINTS: true
+ */
+export const DETACHED_SUBJECT_MAX_CHARS = 60;
+
+// ── Session intent (trial finding #16) ──────────────────────────────────────
+
+/**
+ * Render cap for an intent sentence on EVERY surface that shows one — the
+ * briefing's presence and context lines, the pointer/claim hints, the
+ * tripwire reason, the MCP diagnosis and search, `crosscheck status`. The hub
+ * stores up to MAX_INTENT_SUMMARY_CHARS (@crosscheck/schema); a longer
+ * declared sentence renders cut with an ellipsis. Equal to the title cap on
+ * purpose: an intent line costs the briefing what a title line costs, so
+ * the MAX_BRIEFING_CHARS arithmetic (and the saturating-briefing pin in
+ * test/injection-corpus.test.ts) keeps its shape:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.INTENT_MAX_CHARS === c.MAX_WORK_CONTEXT_TITLE_CHARS, c.INTENT_MAX_CHARS < s.MAX_INTENT_SUMMARY_CHARS)'
+ * PRINTS: true true
+ */
+export const INTENT_MAX_CHARS = 120;
+/**
+ * "Substantive" for the derived-intent fire (connector-claude intent/gate.ts):
+ * the FIRST user prompt of a session at least this long — below it sits
+ * "yes", "go on", "/clear", a pasted path — and not a slash command, not a
+ * bare yes/no, with at least one word of HINT_MIN_TOKEN_CHARS. One fire per
+ * session state, booked under the state lock BEFORE the worker spawns (the
+ * Stop hook's contract), so the one Haiku call this costs on the developer's
+ * quota is spent exactly once per SessionStart (a `--resume` re-creates the
+ * state and may fire again).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.INTENT_MIN_PROMPT_CHARS, c.INTENT_MIN_PROMPT_CHARS > c.HINT_MIN_TOKEN_CHARS)'
+ * PRINTS: 40 true
+ */
+export const INTENT_MIN_PROMPT_CHARS = 40;
+/**
+ * How much of the first prompt the worker hands the model — the token bill's
+ * bound for the intent call (≈ INTENT_PROMPT_MAX_CHARS / 4 tokens at the
+ * CHARS_PER_TOKEN_ESTIMATE rate). The prompt is written to a 0600 file under
+ * the crosscheck home and unlinked by the worker; it never leaves the machine
+ * — only the model's one sentence does.
+ */
+export const INTENT_PROMPT_MAX_CHARS = 4000;
+/**
+ * Confidence a DERIVED intent carries, fixed — never model-chosen — and under
+ * the derived cap the schema enforces on every derived intent and claim
+ * (DERIVED_CONFIDENCE_CAP, @crosscheck/schema): the label "(derived)" is what
+ * a reader sees; this number is what the wire contract checks.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.INTENT_DERIVED_CONFIDENCE < s.DERIVED_CONFIDENCE_CAP)'
+ * PRINTS: true
+ */
+export const INTENT_DERIVED_CONFIDENCE = 0.4;
+/**
+ * `crosscheck doctor` calls the derived-intent capture silently dead once
+ * this many fires have landed neither a NONE nor an intent — AND on any
+ * booked failure at all, whatever the count (cli/doctor.ts checkIntentCost).
+ * Lower than the summarizer's threshold (DOCTOR_SUMMARIZER_SILENT_FIRES_WARN)
+ * because an intent fires at most ONCE per session state: waiting for three
+ * silent fires would mean three sessions of silence before doctor spoke.
+ * Never a PASS-only counter (the finding-#14 lesson).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DOCTOR_INTENT_SILENT_FIRES_WARN, c.DOCTOR_INTENT_SILENT_FIRES_WARN < c.DOCTOR_SUMMARIZER_SILENT_FIRES_WARN)'
+ * PRINTS: 2 true
+ */
+export const DOCTOR_INTENT_SILENT_FIRES_WARN = 2;
+
+// ── Ghost commits: the gated model layer (VISION.md §3) ────────────────────
+
+/**
+ * Ghost checks one session may spend. ONE, and the reason is the same one
+ * VISION §3 gives for the whole feature being gated: the deterministic half
+ * costs nothing and runs on every SessionStart and every declaration, while
+ * this half is a model call on the developer's own quota that answers a
+ * question a session only asks once — "does anybody else's plan collide with
+ * mine". A second call would compare the same two plans again.
+ *
+ * Re-declaring an intent re-opens the DEBT (state/session-state.ts
+ * withRecordedIntent) but not the allowance: the debt is what makes the check
+ * run at all, and this is what stops it running twice.
+ */
+export const GHOST_MAX_FIRES_PER_SESSION = 1;
+
+/**
+ * Confidence a ghost sentence carries, fixed here and never model-chosen —
+ * the derived-intent rule applied to a second derived surface, and under the
+ * cap the shared wire contract enforces (DERIVED_CONFIDENCE_CAP,
+ * @crosscheck/schema). A collision the model INFERRED from two sentences is
+ * the weakest thing this product produces; it is a draft the author reviews,
+ * never a finding a teammate is shown.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.GHOST_DERIVED_CONFIDENCE < s.DERIVED_CONFIDENCE_CAP, c.GHOST_DERIVED_CONFIDENCE === c.INTENT_DERIVED_CONFIDENCE)'
+ * PRINTS: true true
+ */
+export const GHOST_DERIVED_CONFIDENCE = 0.4;
+
+/**
+ * Teammate claims the ghost input may carry. DECLARED ones only, and only
+ * from the ONE overlapping context — the model is being asked whether two
+ * plans collide, and a longer list buys context the question does not need
+ * while widening what a single call reads.
+ */
+export const GHOST_MAX_TEAMMATE_CLAIMS = 5;
+
+/**
+ * How much of one teammate claim body reaches the model. Long enough for a
+ * root cause, short enough that five of them plus two intents stay a small
+ * prompt — the same "bounded slice" rule the summarizer's tail applies.
+ */
+export const GHOST_CLAIM_BODY_MAX_CHARS = 300;
+
+/**
+ * The longest ghost sentence that becomes a draft. Bounded by THIS writer
+ * rather than by the schema, like every other model output here, and short
+ * enough that the sentence PLUS the attribution the worker appends — the
+ * teammate's name and their context id, both bounded by the sanitizers —
+ * still fits MAX_CLAIM_BODY_LENGTH.
+ *
+ * WHAT IT IS NOT is short enough to escape the briefing's draft line, which
+ * cuts a body at MAX_TITLE_CHARS = 80 and marks the cut. That is deliberate
+ * and is the shape every other draft on that block already has: the line is a
+ * POINTER and `review_draft` is the pull.
+ *
+ * The worst case is composed through the real function and checked where
+ * that function lives (briefing/ghost.ts ghostDraftBody); here is the half
+ * this constant owns.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.GHOST_SENTENCE_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH)'
+ * PRINTS: true
+ */
+export const GHOST_SENTENCE_MAX_CHARS = 200;
+
+/**
+ * `crosscheck doctor` calls the ghost layer silently dead once this many
+ * fires have landed neither a NONE nor a draft — AND on any booked failure at
+ * all. The intent capture's threshold and its reasoning verbatim: a ghost
+ * check fires at most once per session (GHOST_MAX_FIRES_PER_SESSION), so
+ * waiting for three would mean three sessions of silence before doctor spoke.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DOCTOR_GHOST_SILENT_FIRES_WARN === c.DOCTOR_INTENT_SILENT_FIRES_WARN)'
+ * PRINTS: true
+ */
+export const DOCTOR_GHOST_SILENT_FIRES_WARN = 2;
+
 // ── Absence detection ───────────────────────────────────────────────────────
 
 /** How far back the SessionStart commit-authorship scan looks. */
@@ -433,10 +623,23 @@ export const STALENESS_GIT_TIMEOUT_MS = 250;
 /** Most referenced files one staleness probe hands git as pathspecs. */
 export const STALENESS_MAX_PATHS = 20;
 /**
- * "Solved before" pointers one briefing may spend — pointer discipline like
- * MAX_CONTRADICTION_POINTERS: title + id + age, the tree is a pull.
+ * "Solved before" entries one briefing may spend — title + id + age, and for
+ * a fingerprint match one further line carrying the recorded cause.
  */
 export const MAX_SOLVED_POINTERS = 2;
+
+/**
+ * How much of a solved tree's recorded cause the briefing prints. The claim's
+ * own bound is MAX_CLAIM_BODY_LENGTH (400), so two full-length bodies would
+ * cost more of the 2200-character briefing than the whole "Questions for you"
+ * block gets — for a section that renders second to last. This bound keeps
+ * the pair below that block's, which is the ordering the budget already
+ * states: what somebody is waiting for outranks what somebody once found.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.SOLVED_ROOT_CAUSE_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH, c.MAX_SOLVED_POINTERS * c.SOLVED_ROOT_CAUSE_MAX_CHARS < c.MAX_BRIEFING_QUESTION_CHARS)'
+ * PRINTS: true true
+ */
+export const SOLVED_ROOT_CAUSE_MAX_CHARS = 200;
 /**
  * FIFO cap on the remembered briefing pointers (state/session-state.ts).
  * Defensive: one SessionStart fire appends at most MAX_SOLVED_POINTERS, and
@@ -448,6 +651,149 @@ export const MAX_BRIEFING_SOLVED_REFS = 20;
 /** Solved ages render as days up to here, months beyond ("diagnosed 5mo ago"). */
 export const SOLVED_AGE_MONTHS_THRESHOLD_DAYS = 60;
 export const DAYS_PER_MONTH_APPROX = 30;
+/**
+ * …and as YEARS beyond here ("diagnosed 5y 8mo ago"). Two years is where the
+ * month count stops reading at a glance and starts asking the reader to
+ * divide, which is the one thing the formatter exists to avoid. It is
+ * reachable: solved matches travel across repos, there is no maximum age,
+ * and this surface deliberately still shows an old answer — saying plainly
+ * how old it is, which "68mo" does not.
+ */
+export const SOLVED_AGE_YEARS_THRESHOLD_MONTHS = 24;
+export const MONTHS_PER_YEAR = 12;
+
+// ── The asynchronous question channel (roadmap R2) ────────────────────
+
+/**
+ * Ghost-check lines one SessionStart briefing shows (VISION.md §3). TWO, the
+ * solved pointers' ceiling and for the same budget reason — but the product
+ * reason is stronger here: a collision notice is something the reader is
+ * expected to ACT on, by opening a tree or messaging a person, and one or two
+ * names is a decision while three is a list to skim. The hub returns up to
+ * GHOST_MAX_FINDINGS so a row this renderer will not vouch for costs the
+ * section a line rather than its content:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.MAX_GHOST_POINTERS < s.GHOST_MAX_FINDINGS)'
+ * PRINTS: true
+ */
+export const MAX_GHOST_POINTERS = 2;
+
+/**
+ * The most CHARACTERS the ghost block may take out of the briefing. Bounded
+ * in items AND in characters for the reason the questions block already
+ * states: the item bound alone is not a bound.
+ *
+ * MEASURED through the real formatter rather than added up from literals,
+ * because a ghost line is a composition and its worst case is not the sum of
+ * its caps. Two MAXIMAL rows — a name and an intent at their render caps, a
+ * shared fingerprint, GHOST_MAX_SHARED_SHOWN paths at
+ * GHOST_SHARED_VALUE_MAX_CHARS each, a "+N more of yours" tail, the word
+ * count and a full-length id — compose 491 characters each, so the block
+ * measured 983 characters of lines under a 114-character header: 1098 of
+ * MAX_BRIEFING_CHARS, HALF the briefing, for two pointer lines. The five
+ * sections below it (teammate contexts, contradictions, solved-before,
+ * draft reminders, absences) give way whole to that, which is the ordering
+ * appendSection enforces and not one anybody chose.
+ *
+ * 800 is where the measurements put it. Two REALISTIC monorepo rows — long
+ * nested paths, a shared failure, a declared intent and a "+N more" tail —
+ * compose 705 characters, and BOTH must survive: two teammates in the
+ * reader's files is the case this feature exists for, and a bound that drops
+ * the second would be the fix causing the failure. Two maximal rows do not
+ * fit, and the second is reported by the section's own "+N more not shown".
+ *
+ * It is LARGER than the questions block's bound for one fewer item, and that
+ * is deliberate rather than an oversight: a ghost line carries up to
+ * GHOST_MAX_SHARED_SHOWN × GHOST_SHARED_VALUE_MAX_CHARS characters of the
+ * READER'S OWN paths, which no question line carries, and there is no
+ * `list_open_ghost_checks` to read a dropped row from — a question left out
+ * is deferred, a ghost row left out is only counted. The ordering the budget
+ * states is untouched by this number: appendSection fills the questions
+ * block FIRST, so this bounds a section, it does not rank one.
+ *
+ * The two bounded blocks together can never fill the briefing, which is what
+ * keeps the sections below reachable at all:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_BRIEFING_GHOST_CHARS + c.MAX_BRIEFING_QUESTION_CHARS < c.MAX_BRIEFING_CHARS)'
+ * PRINTS: true
+ */
+export const MAX_BRIEFING_GHOST_CHARS = 800;
+
+/**
+ * How much of a shared file path or symbol a ghost line prints. A path is a
+ * BARE field on a line that already carries a name, an age and a framed
+ * intent, and three of them share the line — the briefing budget, not the
+ * value, is what this bounds.
+ */
+export const GHOST_SHARED_VALUE_MAX_CHARS = 60;
+
+/**
+ * Most questions the SessionStart briefing shows at once (roadmap R2).
+ * Three, and the ceiling is not arbitrary: MAX_OPEN_QUESTIONS_PER_TARGET on
+ * the hub is also three, so one teammate can fill this block exactly once and
+ * a second teammate's question is what pushes theirs out — never one voice
+ * holding the whole block against everyone else.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.MAX_QUESTION_POINTERS === s.MAX_OPEN_QUESTIONS_PER_TARGET)'
+ * PRINTS: true
+ */
+export const MAX_QUESTION_POINTERS = 3;
+
+/**
+ * The most CHARACTERS the questions block may take out of the briefing —
+ * roughly a third of MAX_BRIEFING_CHARS. Bounded in items AND in characters,
+ * because the item bound alone is not a bound: a question body may be 400
+ * characters, and three of them plus their id lines ate the ENTIRE 2200-char
+ * briefing in the saturation measurement — presence and teammate contexts
+ * vanished completely.
+ *
+ * Entries are DROPPED, never truncated, and the block then says how many it
+ * is not showing. A cut question is unanswerable, which is the one thing this
+ * block exists to prevent; a question left for `list_open_questions` is not.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_BRIEFING_QUESTION_CHARS * 3 <= c.MAX_BRIEFING_CHARS)'
+ * PRINTS: true
+ */
+export const MAX_BRIEFING_QUESTION_CHARS = 700;
+
+/**
+ * When `doctor` starts calling an unanswered question a problem. A question
+ * expires after QUESTION_TTL_DAYS = 14 on the hub, so half the window is the
+ * point where "nobody has answered yet" stops being normal and starts being
+ * the failure this channel is most likely to have: an open thread nobody acts
+ * on, which is what every prior-art system warns about.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.DOCTOR_QUESTION_OPEN_WARN_DAYS * 2 === s.QUESTION_TTL_DAYS)'
+ * PRINTS: true
+ */
+export const DOCTOR_QUESTION_OPEN_WARN_DAYS = 7;
+
+/**
+ * How many solved pointers must have been SHOWN before `doctor` will call
+ * "none of them was ever opened" a problem (hints/precision.ts). One or two
+ * ignored pointers are a reader who was busy; at three the pattern is the
+ * surface, not the day. Deliberately below MAX_HINTS_PER_SESSION, so a
+ * single session that spent its whole allowance on solved pointers and
+ * opened none of them is already enough evidence to say so:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DOCTOR_SOLVED_SHOWN_WARN < c.MAX_HINTS_PER_SESSION)'
+ * PRINTS: true
+ */
+export const DOCTOR_SOLVED_SHOWN_WARN = 3;
+
+/**
+ * How long the hub keeps REPORTING a question of yours that expired
+ * unanswered. Equal to the TTL: reported for one further fortnight, then
+ * silent — nothing can clear an expired row (`withdrawn` is unreachable and
+ * `questions` has no reaper), so an unwindowed count would make `doctor` WARN
+ * and exit 1 for the rest of an install's life over one question nobody
+ * answered last spring. Named here only so the sentence can say the window
+ * out loud rather than reporting a number whose scope the reader must guess.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.QUESTION_EXPIRY_REPORT_DAYS === s.QUESTION_TTL_DAYS)'
+ * PRINTS: true
+ */
+export const QUESTION_EXPIRY_REPORT_DAYS = 14;
 
 // ── Tier-1 summarizer (DESIGN.md §3 Tier 1, §10 risks 4 + 7) ────────────────
 
@@ -525,6 +871,21 @@ export const SUMMARIZER_FAILURE_MAX_CHARS = 120;
  * trial and no surface said so.
  */
 export const DOCTOR_SUMMARIZER_SILENT_FIRES_WARN = 3;
+/**
+ * `crosscheck doctor` WARNs once this many well-formed answers have been
+ * REFUSED with no draft kept (audit rows M16 / A3-4, summarizer/cost.ts
+ * isSummarizerAlwaysRejected). The model is speaking and the developer's own
+ * quota is being spent, so this is a different remedy from a dead runner — a
+ * drifted prompt, a slice that lost its ask, a model that role-plays.
+ *
+ * 2 rather than the silence threshold's 3: one refusal is ordinary (a draft
+ * that echoed a delivered teammate hint is the echo guard doing its job), two
+ * with nothing kept is a pattern. Never a PASS-only counter.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DOCTOR_SUMMARIZER_REJECTED_WARN, c.DOCTOR_SUMMARIZER_REJECTED_WARN < c.DOCTOR_SUMMARIZER_SILENT_FIRES_WARN)'
+ * PRINTS: 2 true
+ */
+export const DOCTOR_SUMMARIZER_REJECTED_WARN = 2;
 /**
  * `crosscheck doctor` calls a live session's capture silently dead once this
  * many edit-tool PostToolUse fires have produced ZERO targets (trial findings
@@ -883,7 +1244,7 @@ export const TRIPWIRE_MODE_ASK = "ask";
 export const TRIPWIRE_MODE_NOTICE = "notice";
 
 /**
- * The six Claude Code hook events `crosscheck init` registers, mapped to the
+ * The seven Claude Code hook events `crosscheck init` registers, mapped to the
  * `crosscheck hook <name>` subcommand each one calls.
  *
  * ONE LIST, because three places used to keep their own and two of them
@@ -901,6 +1262,10 @@ export const TRIPWIRE_MODE_NOTICE = "notice";
 export const REGISTERED_HOOK_EVENTS = {
   SessionStart: "session-start",
   PostToolUse: "post-tool-use",
+  // The event failures actually arrive on. Missing, the install captures no
+  // error fingerprints at all — silently, because every other hook keeps
+  // working — which is the finding-#14 shape this list exists to prevent.
+  PostToolUseFailure: "post-tool-use-failure",
   SessionEnd: "session-end",
   UserPromptSubmit: "user-prompt-submit",
   PreToolUse: "pre-tool-use",
@@ -909,7 +1274,7 @@ export const REGISTERED_HOOK_EVENTS = {
 
 export type RegisteredHookEvent = keyof typeof REGISTERED_HOOK_EVENTS;
 
-/** The same six as a list, for the callers that only need the names. */
+/** The same seven as a list, for the callers that only need the names. */
 export const REGISTERED_HOOK_EVENT_NAMES = Object.keys(
   REGISTERED_HOOK_EVENTS,
 ) as readonly RegisteredHookEvent[];
@@ -1031,3 +1396,116 @@ export const MAX_ID_CHARS = 64;
  * refused record needs a paragraph.
  */
 export const MAX_HUB_MESSAGE_CHARS = 200;
+
+// ── Agent conferences (VISION.md §2) ────────────────────────────────────────
+
+/**
+ * Shared-cause findings ONE report may carry. Three, and the bound is about
+ * trust rather than space: a synthesis that names three things a human can
+ * check is a briefing, and one that names fifteen is a wall of text nobody
+ * reads to the end — which is how a warning system stops being read at all.
+ * The deterministic sections beside it are bounded by the hub.
+ */
+export const CONFERENCE_MAX_FINDINGS = 3;
+
+/**
+ * One finding's sentence. The ghost check's bound, because it is the same
+ * kind of sentence — one claim about where two pieces of work meet — and a
+ * published finding becomes a claim body the same way.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.CONFERENCE_SENTENCE_MAX_CHARS === c.GHOST_SENTENCE_MAX_CHARS, c.CONFERENCE_SENTENCE_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH)'
+ * PRINTS: true true
+ */
+export const CONFERENCE_SENTENCE_MAX_CHARS = 200;
+
+/**
+ * Claims quoted UNDER one finding, per context. Two: enough to show why the
+ * model said what it said — VISION §2's own requirement that a conference is
+ * formatted as a referee brief (evidence for each position) rather than as a
+ * verdict — without turning one finding into a page.
+ */
+export const CONFERENCE_MAX_EVIDENCE_PER_CONTEXT = 2;
+
+/**
+ * A quoted claim body in the report. The hub already cuts at its own
+ * CONFERENCE_CLAIM_BODY_MAX_CHARS, so this is the reader's second bound
+ * rather than the first — the posture every consumer of a tolerant wire field
+ * takes here.
+ */
+export const CONFERENCE_BODY_MAX_CHARS = 300;
+
+/**
+ * How long a whole `crosscheck conference` may take, model call included.
+ * A hard ceiling rather than a hint: the run prints its estimate first and
+ * this is the promise that goes with it, in the shape the LLM cost literature
+ * calls quote-as-ceiling — estimate, cap, absorb the overrun. Ninety seconds
+ * is one bounded hub read plus one lean local model call
+ * (SUMMARIZER_TIMEOUT_MS) with room for a slow machine, and it is short
+ * enough that a human waits for it rather than walking away.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.CONFERENCE_MAX_WALL_MS > c.SUMMARIZER_TIMEOUT_MS)'
+ * PRINTS: true
+ */
+export const CONFERENCE_MAX_WALL_MS = 90_000;
+
+/**
+ * The characters-per-token rule of thumb the pre-run estimate uses. It is an
+ * ESTIMATE and the line says so: no tokenizer runs on this machine, and a
+ * figure printed as if it were measured would be the kind of false precision
+ * this project keeps out of its telemetry.
+ */
+export const CONFERENCE_CHARS_PER_TOKEN = 4;
+
+/**
+ * The model input's own ceiling, applied after every per-context bound. The
+ * hub's caps already make the input small; this is what holds when a hub is
+ * modified or hostile, and it is what the printed estimate can never exceed.
+ */
+export const CONFERENCE_MAX_INPUT_CHARS = 12_000;
+
+/**
+ * A published conference finding is a Tier-1 DRAFT like every other model
+ * sentence in this product: derived, proposed, under the cap, pointer-only
+ * until a human promotes it with review_draft.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.CONFERENCE_DERIVED_CONFIDENCE === c.GHOST_DERIVED_CONFIDENCE, c.CONFERENCE_DERIVED_CONFIDENCE < s.DERIVED_CONFIDENCE_CAP)'
+ * PRINTS: true true
+ */
+export const CONFERENCE_DERIVED_CONFIDENCE = 0.4;
+
+/**
+ * Runs whose model answer this machine could not read at all before `doctor`
+ * WARNs. Not a count of NONEs — a NONE is a legitimate answer and the usual
+ * one — but of answers in a shape the parser does not know, which is what a
+ * drifted prompt or a changed binary looks like from here and is invisible
+ * otherwise (the finding-#14 lesson).
+ */
+export const DOCTOR_CONFERENCE_UNREADABLE_WARN = 1;
+
+/**
+ * The reader's OWN item bounds on the three deterministic report sections.
+ *
+ * They mirror the hub's caps (server/src/constants.ts) rather than trusting
+ * them, for the reason fitSessions exists one module over: the hub's caps are
+ * what holds when the hub is this version, and CONFERENCE_MAX_INPUT_CHARS is
+ * what holds when it is modified, older, newer or hostile. Without them a hub
+ * answering with five thousand questions turns "one page a human reads in a
+ * minute" into 1,375,379 bytes and 10,615 lines, measured — and nothing in
+ * the run notices or says so. The cut is always STATED on its own line, the
+ * way the coverage line already states a capped context count.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.CONFERENCE_MAX_QUESTIONS_SHOWN===s.CONFERENCE_MAX_QUESTIONS, c.CONFERENCE_MAX_CONTRADICTIONS_SHOWN===s.CONFERENCE_MAX_CONTRADICTIONS, c.CONFERENCE_MAX_OVERLAP_PAIRS_SHOWN===s.CONFERENCE_MAX_OVERLAP_PAIRS, c.CONFERENCE_ACTIVE_WINDOW_DAYS===s.CONFERENCE_ACTIVE_WINDOW_DAYS)'
+ * PRINTS: true true true true
+ */
+export const CONFERENCE_MAX_QUESTIONS_SHOWN = 10;
+export const CONFERENCE_MAX_CONTRADICTIONS_SHOWN = 5;
+export const CONFERENCE_MAX_OVERLAP_PAIRS_SHOWN = 5;
+
+/**
+ * The activity window this connector ASSUMES when a hub will not state its
+ * own. The wire field falls back to this rather than to zero: the coverage
+ * line prints it directly, and "active in the last 0 days" is a sentence that
+ * asserts a window nobody could have been active in — on the one line whose
+ * whole job is telling the reader what was NOT read.
+ */
+export const CONFERENCE_ACTIVE_WINDOW_DAYS = 14;

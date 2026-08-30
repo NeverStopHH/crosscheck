@@ -1,0 +1,107 @@
+{
+  "id": "generic-paths",
+  "summary": "The architectural-directory class the other ten scenarios structurally cannot express: every target path here carries its domain in the FILE NAME and a build-layer word (services, config, types, routes, handlers) in a DIRECTORY. Four probes type an ordinary sentence naming one of those layer words and nothing about the work; one control probe names the work and must still arrive.",
+  "sessions": [
+    {
+      "id": "s_morgan_restock",
+      "developer": "Morgan",
+      "branch": "fix/reorder-threshold",
+      "baseCommit": "c0ffee11",
+      "status": "analyzing"
+    }
+  ],
+  "workContexts": [
+    {
+      "id": "wc_restock",
+      "sessionId": "s_morgan_restock",
+      "title": "Warehouse restock never fires below the reorder threshold",
+      "description": "A warehouse whose stock sits under its reorder threshold is skipped by every restock sweep",
+      "status": "analyzing",
+      "createdAt": "2026-07-30T13:00:00.000Z",
+      "updatedAt": "2026-08-01T09:00:00.000Z"
+    }
+  ],
+  "targets": [
+    {
+      "workContextId": "wc_restock",
+      "kind": "file",
+      "value": "packages/inventory/src/services/restock.ts"
+    },
+    { "workContextId": "wc_restock", "kind": "file", "value": "src/config/warehouse.ts" },
+    { "workContextId": "wc_restock", "kind": "file", "value": "src/types/reorder.ts" },
+    { "workContextId": "wc_restock", "kind": "file", "value": "src/routes/stock.ts" },
+    { "workContextId": "wc_restock", "kind": "file", "value": "src/handlers/shipment.ts" }
+  ],
+  "claims": [
+    {
+      "id": "clm_restock_obs",
+      "workContextId": "wc_restock",
+      "authorSessionId": "s_morgan_restock",
+      "kind": "observation",
+      "body": "Three warehouses stayed under their reorder threshold for two days without a restock sweep firing",
+      "status": "proposed",
+      "confidence": 0.7,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": [],
+      "createdAt": "2026-07-30T13:05:00.000Z"
+    },
+    {
+      "id": "clm_restock_root",
+      "workContextId": "wc_restock",
+      "authorSessionId": "s_morgan_restock",
+      "kind": "root_cause",
+      "body": "The reorder threshold is compared before pending shipments are subtracted, so a warehouse awaiting delivery never counts as low",
+      "status": "likely_root_cause",
+      "confidence": 0.85,
+      "captureMode": "agent",
+      "provenance": "declared",
+      "evidenceRefs": ["clm_restock_obs"],
+      "createdAt": "2026-08-01T09:00:00.000Z"
+    }
+  ],
+  "probes": [
+    {
+      "id": "pr_generic_control",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "why does the warehouse restock skip the reorder threshold",
+      "expect": "substance",
+      "expectClaimId": "clm_restock_root",
+      "expectContextId": "wc_restock",
+      "rationale": "The control. The prompt names the work itself, so the evidence-backed root cause is injectable substance — this is the recall the four silence probes below must not be bought with."
+    },
+    {
+      "id": "pr_generic_routes",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "can you look at the routes",
+      "expect": "silence",
+      "rationale": "'routes' is where code lives, never what it is about. It reaches the FTS document only through a DIRECTORY segment of src/routes/stock.ts, and one shared FTS token is enough to qualify a context (see pr_limits_oneword_debatable), after which the evidence-backed root cause above is injected as substance. A prompt that names a program's layer names nobody's work — and 'look' is the probe's only other content word, deliberately absent from every seeded field in the corpus, so the layer word is the whole of what could match."
+    },
+    {
+      "id": "pr_generic_types",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "add a types file",
+      "expect": "silence",
+      "rationale": "Same class as pr_generic_routes through src/types/reorder.ts. Kept separate because each layer word is its own entry in the scaffolding list and a fix that drops one and keeps the rest would pass a single probe."
+    },
+    {
+      "id": "pr_generic_services",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "restart the services",
+      "expect": "silence",
+      "rationale": "Same class through packages/inventory/src/services/restock.ts — and the one that shows the depth does not matter: the layer word is four segments deep in a monorepo path and still qualified the context."
+    },
+    {
+      "id": "pr_generic_handlers",
+      "kind": "prompt",
+      "reader": "Riley",
+      "prompt": "who owns the handlers",
+      "expect": "silence",
+      "rationale": "Same class through src/handlers/shipment.ts. A question about ownership is the most ordinary sentence of the four and the least related to a restock bug."
+    }
+  ]
+}

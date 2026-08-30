@@ -587,3 +587,40 @@ describe("ranking constants, each pinned by a behavior it alone produces", () =>
     expect(result.results).toEqual([]);
   });
 });
+
+describe("intent in search (trial finding #16)", () => {
+  test("finds a context through a word that appears only in its intent, and returns the intent", async () => {
+    // Arrange: title and targets share nothing with the query; the intent does
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    await seedContext(harness, nick, { id: "wc_quota", title: "Tuesday cleanup" });
+    await postRecords(
+      harness,
+      nick,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          id: "wc_quota",
+          title: "Tuesday cleanup",
+          description: undefined,
+          intent: {
+            summary: "Refactor the tenant quota limiter so bursts stop tripping it",
+            provenance: "derived",
+            confidence: 0.4,
+            capturedAt: TEST_START_ISO,
+          },
+        }),
+      ),
+    );
+
+    // Act
+    const result = await search(harness, nick.apiKey, { query: "quota limiter", repo: API_REPO });
+
+    // Assert
+    expect(result.results.map((row) => row.id)).toEqual(["wc_quota"]);
+    expect(result.results[0]?.tier).toBe("fts");
+    const intent = (result.results[0] as unknown as { intent: { summary: string } | null }).intent;
+    expect(intent?.summary).toContain("tenant quota limiter");
+  });
+});

@@ -122,6 +122,7 @@ export {
   getHintCandidates,
   getPresence,
   getSolvedMatches,
+  getSolvedMatchesForFingerprint,
   getTripwireSessions,
   getWorkContexts,
   heartbeatSession,
@@ -144,6 +145,10 @@ export {
   fallbackWorkContextTitle,
   registerSessionFlow,
 } from "./flows/register-session.ts";
+export {
+  composeDetachedTitle,
+  resolveFallbackWorkContextTitle,
+} from "./flows/work-context-title.ts";
 export type {
   RegisterSessionFlowInput,
   RegisterSessionFlowResult,
@@ -196,6 +201,8 @@ export type {
 } from "./flows/briefing.ts";
 export { selectAndRenderHint } from "./flows/hint.ts";
 export type { SelectAndRenderHintInput } from "./flows/hint.ts";
+export { selectAndRenderSolvedHint } from "./flows/solved-hint.ts";
+export type { SelectAndRenderSolvedHintInput } from "./flows/solved-hint.ts";
 
 // ── Capture ─────────────────────────────────────────────────────────────────
 export {
@@ -225,10 +232,12 @@ export { toRepoRelative } from "./capture/target-paths.ts";
 // ── Render discipline: the three classes, then the finished renderers ───────
 export {
   bareUntrusted,
+  redactionNote,
   safeId,
   sanitizeUntrusted,
+  spanRedactedUntrusted,
 } from "./briefing/sanitize.ts";
-export { quoted } from "./mcp/render.ts";
+export { quoted, quotedBody } from "./mcp/render.ts";
 export {
   QUOTED_DATA_NOTICE,
   groupTeammates,

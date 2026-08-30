@@ -15,9 +15,9 @@
  * the page can show "presence hidden from teammates" to exactly the person
  * it concerns — DESIGN.md §2.1: their own view of themselves is unaffected.
  */
-import { and, asc, desc, gt, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull } from "drizzle-orm";
 
-import { agentSessions, developers } from "../db/schema.ts";
+import { agentSessions, developers, workContexts } from "../db/schema.ts";
 import { UI_MAX_MEMBERS, UI_MAX_PRESENCE_ROWS } from "../ui/constants.ts";
 import { presenceCutoff } from "./presence.ts";
 import { visiblePresenceCondition } from "./visibility.ts";
@@ -29,6 +29,8 @@ export interface MemberPresence {
   readonly repo: string;
   readonly branch: string;
   readonly lastHeartbeatAt: string;
+  /** The session's intent (trial finding #16), raw jsonb; null when none. */
+  readonly intent: Record<string, unknown> | null;
 }
 
 export interface MemberEntry {
@@ -65,8 +67,12 @@ export const listMembers = async (
       repo: agentSessions.repo,
       branch: agentSessions.branch,
       lastHeartbeatAt: agentSessions.lastHeartbeatAt,
+      intent: workContexts.intent,
     })
     .from(agentSessions)
+    // LEFT, like services/presence.ts: a session whose work context is still
+    // in the spool keeps its presence row.
+    .leftJoin(workContexts, eq(workContexts.sessionId, agentSessions.id))
     .where(
       and(
         isNull(agentSessions.endedAt),
@@ -86,6 +92,7 @@ export const listMembers = async (
         repo: row.repo,
         branch: row.branch,
         lastHeartbeatAt: row.lastHeartbeatAt.toISOString(),
+        intent: row.intent ?? null,
       });
     }
   }

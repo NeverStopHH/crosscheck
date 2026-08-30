@@ -293,3 +293,126 @@ CREATE TABLE IF NOT EXISTS developer_mutes (
   created_at timestamptz NOT NULL,
   PRIMARY KEY (reader_developer_id, muted_developer_id)
 );
+
+-- ── The session's intent on presence (trial finding #16) ────────────────────
+
+-- `work_contexts.session_id` is a foreign key with no index of its own, and
+-- services/presence.ts now reads the newest context of each live session to
+-- put its intent on the "active now" line. That read happens on every
+-- SessionStart briefing and every `crosscheck status`, so without this index
+-- it is a sequential scan of every work context on the hub, per live session.
+-- Leading with session_id and descending on created_at makes the subquery's
+-- `order by created_at desc limit 1` a single index lookup.
+CREATE INDEX IF NOT EXISTS work_contexts_session_created_idx
+  ON work_contexts (session_id, created_at DESC);
+
+-- ── WHO and WHEN in search (roadmap R1) ─────────────────────────────────────
+
+-- `GET /api/search?developer=…` filters INSIDE every tier query, which joins
+-- work_contexts to agent_sessions. `developer_id` is a foreign key, and
+-- Postgres does not index those on its own, so the filter was a scan of every
+-- session on the hub. Leading with developer_id and carrying repo lets one
+-- lookup serve "Ken, on this repo" — the only shape the search route asks
+-- for; repo ALONE keeps its own index above.
+CREATE INDEX IF NOT EXISTS agent_sessions_developer_repo_idx
+  ON agent_sessions (developer_id, repo);
+
+-- `?since=14d` filters on ACTIVITY — coalesce(updated_at, created_at), the
+-- timestamp every surface renders as the row's age and the one time-decay is
+-- computed from. The same expression is the recency tier's ORDER BY, so this
+-- index serves both the window filter and the "what is happening here"
+-- listing, which without it reads every work context on the hub and top-N
+-- sorts them to answer a LIMIT 30.
+CREATE INDEX IF NOT EXISTS work_contexts_activity_idx
+  ON work_contexts (coalesce(updated_at, created_at) DESC);
+
+-- The unknown-developer refusal reads a bounded, name-ordered page of
+-- developers to offer the closest spellings (services/developer-lookup.ts
+-- DEVELOPER_SUGGESTION_SCAN). Bounded listing, index behind the ORDER BY.
+CREATE INDEX IF NOT EXISTS developers_name_idx
+  ON developers (name, email);
+
+-- ── The asynchronous question channel (roadmap R2) ──────────────────────────
+
+-- A question addressed to a teammate: one row, targeted, expiring, answered
+-- by a claim. The addressee CHECK is what makes "never a broadcast" a
+-- database fact rather than a service promise, and the body CHECK mirrors
+-- MAX_QUESTION_BODY_LENGTH in @crosscheck/schema (pinned by ddl-sync.test.ts).
+CREATE TABLE IF NOT EXISTS questions (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  author_developer_id text NOT NULL REFERENCES developers(id),
+  author_session_id text NOT NULL REFERENCES agent_sessions(id),
+  target_developer_id text REFERENCES developers(id),
+  work_context_id text REFERENCES work_contexts(id),
+  body text NOT NULL,
+  status text NOT NULL,
+  created_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL,
+  CONSTRAINT questions_body_length_check CHECK (char_length(body) <= 400),
+  CONSTRAINT questions_addressee_check
+    CHECK (target_developer_id IS NOT NULL OR work_context_id IS NOT NULL)
+);
+
+-- The inbox read ("open questions for me in THIS repo, newest first") and the
+-- two backlog counters beside it are the same range; without this index all
+-- three scan every question on the hub on every SessionStart briefing.
+-- repo is the SECOND column, not a filter after the fact: one person can be
+-- the addressee of many questions across many repos, and a repo predicate
+-- applied after the index cond makes the scan fetch rows it then throws away.
+CREATE INDEX IF NOT EXISTS questions_target_repo_status_created_idx
+  ON questions (target_developer_id, repo, status, created_at DESC);
+
+-- The second addressee axis: questions asked ABOUT one work context. A plain
+-- foreign key, which Postgres does not index on its own.
+CREATE INDEX IF NOT EXISTS questions_work_context_idx
+  ON questions (work_context_id);
+
+-- The asker's own side: outbox counters, the per-author open budget and the
+-- per-day rate probe all read this one range.
+CREATE INDEX IF NOT EXISTS questions_author_created_idx
+  ON questions (author_developer_id, created_at DESC);
+
+-- The team-wide axis (VISION.md §2): "every open question of THIS repo,
+-- oldest first", which the conference report reads and which no index above
+-- can serve — both of those lead with a person. Without it a conference on a
+-- hub holding a thousand questions scans all of them. Mirrored in db/schema.ts.
+CREATE INDEX IF NOT EXISTS questions_repo_status_created_idx
+  ON questions (repo, status, created_at);
+
+-- The `answers` edge: one claim answering one question. Its own table rather
+-- than a claim_edges kind, because claim_edges.to_claim_id is a foreign key
+-- into claims and an answers edge would have to point it at a question id.
+CREATE TABLE IF NOT EXISTS question_answers (
+  question_id text NOT NULL REFERENCES questions(id),
+  claim_id text NOT NULL REFERENCES claims(id),
+  answerer_developer_id text NOT NULL REFERENCES developers(id),
+  created_at timestamptz NOT NULL,
+  PRIMARY KEY (question_id, claim_id)
+);
+
+-- "Which question does this claim answer" — asked per claim on the asker's
+-- delivery path; the primary key leads on question_id and cannot serve it.
+CREATE INDEX IF NOT EXISTS question_answers_claim_idx
+  ON question_answers (claim_id);
+
+-- "Delivered exactly once" for an answer is a cross-SESSION promise: the
+-- asker's per-session seen-set dies with the session, so the durable store is
+-- hint_deliveries, probed as "has any session of this developer already been
+-- handed this claim id". ref_id had no index at all, which made that probe a
+-- scan of every delivery row on the UserPromptSubmit hot path.
+CREATE INDEX IF NOT EXISTS hint_deliveries_ref_session_idx
+  ON hint_deliveries (ref_id, session_id);
+
+-- `work_context_id` is a foreign key, which Postgres does NOT index on its
+-- own, and three hot readers ask "the claims of THESE contexts, newest
+-- first": the solved probe, the solved root-cause body the briefing renders,
+-- and normalized-doc's per-ingest refresh. Mirrored in db/schema.ts.
+CREATE INDEX IF NOT EXISTS claims_work_context_created_idx
+  ON claims (work_context_id, created_at DESC);
+
+-- The precision counter (services/solved-counts.ts) reaches deliveries
+-- through session_id — a foreign key, and therefore unindexed by default.
+-- Mirrored in db/schema.ts.
+CREATE INDEX IF NOT EXISTS hint_deliveries_session_delivered_idx
+  ON hint_deliveries (session_id, delivered_at DESC);

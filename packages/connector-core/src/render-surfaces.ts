@@ -19,23 +19,39 @@
  */
 import type { CommitDrift } from "./git/commit-drift.ts";
 import { renderBriefing } from "./briefing/render.ts";
+import { renderConferenceReport } from "./conference/report.ts";
+import { ghostDraftBody } from "./briefing/ghost.ts";
 import {
+  renderAnswerHint,
   renderClaimHint,
   renderPointerHint,
+  renderSolvedHint,
   renderTripwireReason,
 } from "./hints/render.ts";
+import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
 import {
   renderDiagnosis,
+  renderSearchFilterRefusal,
   renderSearchResults,
+  renderUnappliedFilters,
   renderUnusableQuery,
 } from "./mcp/render.ts";
 import { renderRefereeBrief } from "./mcp/render-referee.ts";
+import { composeDetachedTitle } from "./flows/work-context-title.ts";
 import type {
+  AnsweredQuestion,
+  ConferenceContext,
+  ConferenceCorpus,
+  ContradictionEntry,
   Diagnosis,
+  GhostCheckEntry,
   HintClaimCandidate,
+  InboxQuestion,
+  IntentEntry,
   PresenceEntry,
   RefereeBrief,
   RefereeClaim,
+  SolvedMatchEntry,
   TripwireSession,
   WorkContextEntry,
 } from "./http/hub.ts";
@@ -91,6 +107,9 @@ export type RenderSurface = CorpusRenderSurface | CompositeRenderSurface;
  */
 export const RENDER_LAYER_MODULES: readonly string[] = [
   "src/briefing/sanitize.ts",
+  "src/briefing/ghost.ts",
+  "src/briefing/intent.ts",
+  "src/briefing/questions.ts",
   "src/briefing/render.ts",
   "src/hints/render.ts",
   "src/mcp/render.ts",
@@ -108,6 +127,18 @@ const NOW = new Date("2026-08-18T12:00:00.000Z");
 const ISO = "2026-08-18T11:55:00.000Z";
 const NO_DRIFT: CommitDrift | null = null;
 
+/**
+ * The payload in the INTENT slot too (trial finding #16): a derived intent is
+ * model text, a declared one a teammate's — both land on every surface below
+ * through briefing/intent.ts, so every adapter plants it.
+ */
+const intentWith = (payload: string): IntentEntry => ({
+  summary: payload,
+  provenance: "derived",
+  confidence: 0.4,
+  capturedAt: ISO,
+});
+
 const presenceWith = (payload: string): PresenceEntry => ({
   sessionId: "cc_11111111-2222-4333-8444-555555555555",
   developerId: "dev_other",
@@ -116,6 +147,7 @@ const presenceWith = (payload: string): PresenceEntry => ({
   status: payload,
   lastHeartbeatAt: ISO,
   isSelf: false,
+  intent: intentWith(payload),
 });
 
 const workContextWith = (payload: string): WorkContextEntry => ({
@@ -124,6 +156,7 @@ const workContextWith = (payload: string): WorkContextEntry => ({
   developerName: payload,
   title: payload,
   status: "implementing",
+  intent: intentWith(payload),
   createdAt: ISO,
 });
 
@@ -145,9 +178,188 @@ const hintContextWith = (payload: string) => ({
   id: "wc_cc_11111111-2222-4333-8444-555555555555",
   title: payload,
   status: "implementing",
+  intent: intentWith(payload),
   developerId: "dev_other",
   developerName: payload,
   createdAt: ISO,
+});
+
+/**
+ * The payload in EVERY untrusted slot of a ghost check (VISION.md §3): the
+ * teammate's display name, their work-context title, their intent sentence,
+ * and — the slot no other surface has — a SHARED TARGET VALUE. A file path is
+ * hub-sent text that lands OUTSIDE the « » frame beside the reader's own
+ * facts, so it is the newest way to try to mint a field on a briefing line.
+ */
+const ghostCheckWith = (payload: string): GhostCheckEntry => ({
+  workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+  title: payload,
+  developerId: "dev_other",
+  developerName: payload,
+  intent: intentWith(payload),
+  lastActiveAt: ISO,
+  sharedTargets: [
+    { kind: "error_fingerprint", value: payload },
+    { kind: "file", value: payload },
+  ],
+  sharedTargetCount: 4,
+  intentTokenHits: 3,
+});
+
+/**
+ * One conference context with the payload in each of its own untrusted slots
+ * — the owner's display name, the title, the intent sentence, and a DECLARED
+ * claim whose kind, status, provenance, author and BODY all carry it. The
+ * body is the slot that matters most: a conference report is the one surface
+ * that quotes a teammate's finding at length, because the reader asked for it.
+ */
+const conferenceContextWith = (
+  payload: string,
+  id: string,
+): ConferenceContext => ({
+  id,
+  title: payload,
+  developerId: "dev_other",
+  developerName: payload,
+  status: payload,
+  intent: intentWith(payload),
+  lastActiveAt: ISO,
+  claims: [
+    {
+      id: "cl_0001",
+      kind: payload,
+      status: payload,
+      confidence: 0.8,
+      provenance: payload,
+      body: payload,
+      authorDeveloperName: payload,
+      createdAt: ISO,
+    },
+  ],
+});
+
+const contradictionEntryWith = (payload: string): ContradictionEntry => ({
+  id: "cx_0001",
+  claimA: {
+    id: "cl_000a",
+    workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+    kind: payload,
+    status: payload,
+    authorDeveloperName: payload,
+  },
+  claimB: {
+    id: "cl_000b",
+    workContextId: "wc_cc_22222222-2222-4333-8444-555555555555",
+    kind: payload,
+    status: payload,
+    authorDeveloperName: payload,
+  },
+  reason: payload,
+  similarity: 0.94,
+});
+
+const CONFERENCE_CONTEXT_A = "wc_cc_11111111-2222-4333-8444-555555555555";
+const CONFERENCE_CONTEXT_B = "wc_cc_22222222-2222-4333-8444-555555555555";
+
+/**
+ * The whole conference corpus with the payload in every slot at once: two
+ * contexts, the SHARED TARGET VALUE between them (hub text printed BARE, the
+ * ghost line's newest field-minting surface), a question whose asker, target
+ * and context title all carry it — and no question BODY, because the hub
+ * sends none — and a contradiction pointer naming both sides.
+ */
+const conferenceCorpusWith = (payload: string): ConferenceCorpus => ({
+  contexts: [
+    conferenceContextWith(payload, CONFERENCE_CONTEXT_A),
+    conferenceContextWith(payload, CONFERENCE_CONTEXT_B),
+  ],
+  overlaps: [
+    {
+      workContextIdA: CONFERENCE_CONTEXT_A,
+      workContextIdB: CONFERENCE_CONTEXT_B,
+      sharedTargets: [
+        { kind: "error_fingerprint", value: payload },
+        { kind: "file", value: payload },
+      ],
+      sharedTargetCount: 4,
+    },
+  ],
+  questions: [
+    {
+      id: "qn_11111111-2222-4333-8444-555555555555",
+      authorDeveloperName: payload,
+      targetDeveloperName: payload,
+      workContextId: CONFERENCE_CONTEXT_A,
+      workContextTitle: payload,
+      createdAt: ISO,
+      isForReader: true,
+    },
+  ],
+  contradictions: [contradictionEntryWith(payload)],
+  contextsInWindow: 47,
+  contextsInWindowCapped: false,
+  windowDays: 14,
+});
+
+/**
+ * The payload in EVERY untrusted slot of a question (roadmap R2): the asker's
+ * display name, the question body, and the title of the work context it is
+ * about. The ids stay well-formed on purpose — an id the allowlist rejects
+ * drops the whole entry, and a surface that renders nothing cannot be
+ * attacked.
+ */
+const inboxQuestionWith = (payload: string): InboxQuestion => ({
+  id: "qn_11111111-2222-4333-8444-555555555555",
+  authorDeveloperId: "dev_other",
+  authorDeveloperName: payload,
+  body: payload,
+  workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+  workContextTitle: payload,
+  createdAt: ISO,
+  expiresAt: "2026-09-01T11:55:00.000Z",
+});
+
+/**
+ * An ANSWER carries TWO teammate-written bodies at once — the claim and the
+ * question it answers — plus the answerer's name, so the payload goes into
+ * all three.
+ */
+const answeredQuestionWith = (payload: string): AnsweredQuestion => ({
+  questionId: "qn_11111111-2222-4333-8444-555555555555",
+  questionBody: payload,
+  claimId: "clm_11111111-2222-4333-8444-555555555555",
+  claimBody: payload,
+  claimKind: payload,
+  claimStatus: payload,
+  confidence: 0.6,
+  provenance: payload,
+  answererDeveloperName: payload,
+  answeredAt: ISO,
+});
+
+/**
+ * The payload in every untrusted slot of a solved match (VISION.md §1): the
+ * solver's display name, the tree's title, the REPO the tree lives in (hub
+ * text printed BARE on a ·-separated line — the newest place a field could
+ * be minted), and the recorded ROOT CAUSE, which is the one teammate-written
+ * BODY this section asserts rather than points at. The repo deliberately
+ * differs from the briefing's own so the fragment actually renders, and the
+ * kind is the fingerprint because that is the only kind the cause renders
+ * under; equal repo or a weaker kind and the surface would render less than
+ * it exists to attack.
+ */
+const solvedMatchWith = (payload: string): SolvedMatchEntry => ({
+  workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+  title: payload,
+  developerName: payload,
+  repo: payload,
+  solvedAt: ISO,
+  landedAt: null,
+  matchedTargetKind: "error_fingerprint",
+  rootCause: payload,
+  // Required at render, so the corpus would stop covering the cause line
+  // without it — the body is only sanitized when it is printed.
+  rootCauseConfidence: 0.9,
 });
 
 const tripwireSessionWith = (payload: string): TripwireSession => ({
@@ -159,6 +371,7 @@ const tripwireSessionWith = (payload: string): TripwireSession => ({
   lastHeartbeatAt: ISO,
   workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
   workContextTitle: payload,
+  workContextIntent: intentWith(payload),
 });
 
 const diagnosisWith = (payload: string): Diagnosis => ({
@@ -167,6 +380,7 @@ const diagnosisWith = (payload: string): Diagnosis => ({
     sessionId: "cc_11111111-2222-4333-8444-555555555555",
     title: payload,
     status: "implementing",
+    intent: intentWith(payload),
     createdAt: ISO,
   },
   claims: [
@@ -256,6 +470,142 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     kind: "corpus",
+    name: "briefing-questions",
+    module: "src/briefing/questions.ts",
+    framing: "framed",
+    // The QUESTION slot of the briefing, which the "briefing" surface above
+    // cannot reach: it passes no questions, so the block never renders there.
+    // A question body is the one teammate-authored BODY this product injects
+    // proactively (DESIGN.md §4), which makes it the slot most worth attacking.
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        presence: [],
+        workContexts: [],
+        questions: [inboxQuestionWith(payload)],
+        now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "briefing-solved",
+    module: "src/briefing/render.ts",
+    framing: "framed",
+    // The SOLVED slot of the briefing, which the "briefing" surface above
+    // cannot reach: it passes no matches, so the section never renders there
+    // and its three untrusted fields — solver name, tree title, and the repo
+    // the tree lives in — were attacked by nothing.
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        presence: [],
+        workContexts: [],
+        solvedMatches: [solvedMatchWith(payload)],
+        now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "briefing-ghost",
+    module: "src/briefing/ghost.ts",
+    framing: "framed",
+    // The GHOST slot of the briefing, which neither surface above can reach:
+    // they pass no ghost checks, so the section never renders there and its
+    // four untrusted fields — teammate name, title, intent and the shared
+    // target VALUE — were attacked by nothing.
+    render: (payload) =>
+      renderBriefing({
+        repoId: "github.com/acme/api",
+        selfDeveloperId: "dev_self",
+        presence: [],
+        workContexts: [],
+        ghostChecks: [ghostCheckWith(payload)],
+        now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "briefing-ghost-draft-body",
+    module: "src/briefing/ghost.ts",
+    framing: "sanitized",
+    // The ghost DRAFT body, which is the one ghost string that is STORED
+    // rather than only printed: the gated half's sentence plus the teammate
+    // it collides with, on its way into a claim the hub keeps. Only the two
+    // hub-sent halves are attacked here — the name and the context id —
+    // because the sentence is this machine's own model output and travels
+    // like every other draft body (briefing/ghost.ts says why).
+    render: (payload) =>
+      ghostDraftBody(
+        "Both plans change what verifyToken returns for an unknown kid",
+        ghostCheckWith(payload),
+      ),
+  },
+  {
+    kind: "corpus",
+    name: "conference-report",
+    module: "src/conference/report.ts",
+    framing: "framed",
+    // The one surface that quotes teammate BODIES at length (VISION.md §2),
+    // written to a file a human — and often an agent, pasted in — reads
+    // later. Every slot at once: the repo label, two contexts with their
+    // names, titles, intents and claims, the shared VALUES between them, an
+    // open question's people, a contradiction's two sides, and the model's
+    // own sentence.
+    render: (payload) =>
+      renderConferenceReport({
+        repoId: payload,
+        corpus: conferenceCorpusWith(payload),
+        findings: [
+          {
+            sentence: payload,
+            contexts: [
+              conferenceContextWith(payload, CONFERENCE_CONTEXT_A),
+              conferenceContextWith(payload, CONFERENCE_CONTEXT_B),
+            ],
+          },
+        ],
+        modelOutcome: { kind: "answered" },
+        now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "conference-report-model-failure",
+    module: "src/conference/report.ts",
+    framing: "framed",
+    // The branch the entry above cannot reach: what the nested `claude` SAID
+    // when the run was lost, on its way onto the page. Model/CLI stdout is
+    // untrusted text and this is the only place the report prints any.
+    render: (payload) =>
+      renderConferenceReport({
+        repoId: "github.com/acme/api",
+        corpus: conferenceCorpusWith("rate limit fix"),
+        findings: [],
+        modelOutcome: { kind: "failed", reason: payload },
+        now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "open-questions-list",
+    module: "src/mcp/tools/list-open-questions.ts",
+    framing: "framed",
+    render: (payload) => renderOpenQuestions([inboxQuestionWith(payload)], NOW),
+  },
+  {
+    kind: "corpus",
+    name: "answer-hint",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    // The §4 solicited-substance surface: a claim body pushed at the reader
+    // BECAUSE they asked for it. Solicited does not mean trusted — it is
+    // still a teammate's text landing in a healthy session.
+    render: (payload) => renderAnswerHint(answeredQuestionWith(payload), NOW),
+  },
+  {
+    kind: "corpus",
     name: "claim-hint",
     module: "src/hints/render.ts",
     framing: "framed",
@@ -299,6 +649,17 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     kind: "corpus",
+    name: "solved-hint",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    // The failure-time surface (VISION.md §1): the same untrusted slots as
+    // the briefing's solved entry — solver name, tree title, repo, recorded
+    // cause — but arriving mid-turn under a header of their own.
+    render: (payload) =>
+      renderSolvedHint(solvedMatchWith(payload), "github.com/acme/api", NOW),
+  },
+  {
+    kind: "corpus",
     name: "tripwire-reason",
     module: "src/hints/render.ts",
     framing: "framed",
@@ -327,13 +688,68 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
               developerName: payload,
               title: payload,
               status: payload,
+              intent: intentWith(payload),
               createdAt: ISO,
             },
             ageMs: 60_000,
           },
         ],
         payload,
+        // The FILTER slot too (roadmap R1): the developer name on the filter
+        // line is the hub's word for a person, planted like every other
+        // author-written field so the BARE class is exercised there as well.
+        {
+          filters: {
+            developerName: payload,
+            developerEmail: payload,
+            sinceAgeMs: 14 * 24 * 3_600_000,
+          },
+        },
       ),
+  },
+  {
+    kind: "corpus",
+    name: "search-filter-refusal",
+    module: "src/mcp/render.ts",
+    framing: "framed",
+    // The hub's own sentence about why a filter did not resolve — hub-chosen
+    // text, therefore untrusted text, planted beside the caller's query.
+    render: (payload) => renderSearchFilterRefusal(payload, payload),
+  },
+  {
+    kind: "corpus",
+    name: "search-results-empty-filtered",
+    module: "src/mcp/render.ts",
+    framing: "framed",
+    // The EMPTY branch of the same renderer, which the entry above cannot
+    // reach: it always passes one hit, so `noMatchLine` — the one place a
+    // teammate's display name is printed bare INSIDE a sentence rather than
+    // after a field label — was never attacked by the corpus. It goes through
+    // `bare()` today; this is what keeps that true when somebody later edits
+    // the sentence around it.
+    //
+    // `isSelf` false ON PURPOSE: the self branch substitutes the renderer's
+    // own word "you" for the name, so it would render one fewer copy of the
+    // payload than this surface exists to attack.
+    render: (payload) =>
+      renderSearchResults([], payload, {
+        filters: {
+          developerName: payload,
+          developerEmail: payload,
+          isSelf: false,
+          sinceAgeMs: 14 * 24 * 3_600_000,
+        },
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "search-unapplied-filters",
+    module: "src/mcp/render.ts",
+    framing: "framed",
+    // A hub too old to apply the filters: the caller's own query is the only
+    // untrusted text on the surface, and the filter names beside it are this
+    // renderer's own literals.
+    render: (payload) => renderUnappliedFilters(payload, ["developer", "since"]),
   },
   {
     kind: "corpus",
@@ -350,6 +766,18 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     render: (payload) => renderRefereeBrief(refereeBriefWith(payload), NOW),
   },
   {
+    kind: "corpus",
+    name: "detached-work-context-title",
+    module: "src/flows/work-context-title.ts",
+    framing: "sanitized",
+    // A detached worktree's HEAD commit SUBJECT on its way into an uploaded
+    // work-context title (trial finding #15): the commit message is the
+    // developer's own text, sanitized here BEFORE it leaves the machine and
+    // framed later on every teammate surface.
+    render: (payload) =>
+      composeDetachedTitle("detached@0badc0ffe", payload, "github.com/acme/api"),
+  },
+  {
     kind: "composite",
     name: "briefing-flow",
     module: "src/flows/briefing.ts",
@@ -362,6 +790,13 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/flows/hint.ts",
     note: "emits renderClaimHint/renderPointerHint output verbatim (registered above)",
     corpusCoveredBy: ["test/hint-flow.test.ts"],
+  },
+  {
+    kind: "composite",
+    name: "solved-hint-flow",
+    module: "src/flows/solved-hint.ts",
+    note: "emits renderSolvedHint output verbatim (registered above); no string of its own",
+    corpusCoveredBy: ["test/solved-hint-flow.test.ts"],
   },
   {
     kind: "composite",
@@ -412,6 +847,13 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     kind: "composite",
+    name: "mcp-tool-set-intent",
+    module: "src/mcp/tools/set-intent.ts",
+    note: "ids through safeId; the echoed summary through quoted under quotingText; the ghost block through renderGhostNotice, whose every field is hub-sent (teammate name, title, intent, shared path)",
+    corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
+  },
+  {
+    kind: "composite",
     name: "mcp-tool-review-draft",
     module: "src/mcp/tools/review-draft.ts",
     note: "ids through safeId; promoted body through quoted under quotingText",
@@ -419,8 +861,22 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     kind: "composite",
+    name: "mcp-tool-ask-teammate",
+    module: "src/mcp/tools/ask-teammate.ts",
+    note: "ids through safeId; the echoed question through quoted under quotingText",
+    corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
+  },
+  {
+    kind: "composite",
+    name: "mcp-tool-answer-question",
+    module: "src/mcp/tools/answer-question.ts",
+    note: "ids through safeId; the echoed answer body through quoted under quotingText",
+    corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
+  },
+  {
+    kind: "composite",
     name: "mcp-tool-search-related-work",
     module: "src/mcp/tools/search-related-work.ts",
-    note: "renders through renderSearchResults/renderUnusableQuery (registered above)",
+    note: "renders through renderSearchResults/renderUnusableQuery/renderUnappliedFilters (registered above)",
   },
 ];

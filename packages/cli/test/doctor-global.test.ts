@@ -5,7 +5,14 @@
  * global at once), and the plain present/absent lines.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -252,6 +259,46 @@ describe("doctor scope-aware project checks (finding #13)", () => {
     expect(result.stdout).toContain("run crosscheck init");
     expect(result.stdout).toContain("FAIL  mcp tools registered");
     expect(result.stdout).not.toContain("via global install");
+  });
+
+  test("a project install missing the newest event is told how to fix it", async () => {
+    // Arrange: the UPGRADE shape, and it is the default state of every
+    // install that predates PostToolUseFailure joining the required list —
+    // `crosscheck init` writes it today, so this is what yesterday's
+    // settings.json looks like to today's doctor. Built by initialising and
+    // dropping the event again, so the rest of the file is exactly what init
+    // produces rather than something this test invented.
+    const home = await makeHome("doctor-upgrade");
+    const repo = await makeRepo("doctor-upgrade", {
+      remote: "git@github.com:acme/api.git",
+    });
+    paths.push(home, repo);
+    const env = doctorEnv(home);
+    expect(
+      (await runCli(["init", "--command-prefix", "crosscheck"], env, repo))
+        .exitCode,
+    ).toBe(0);
+    const settingsPath = join(repo, ".claude", "settings.json");
+    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      hooks: Record<string, unknown>;
+    };
+    delete settings.hooks["PostToolUseFailure"];
+    await writeFile(settingsPath, JSON.stringify(settings, null, 2), "utf8");
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert: read on the hooks LINE, because "rerun crosscheck init" also
+    // appears on the launcher line right under it — a substring match on the
+    // whole output would pass with no remedy on this line at all.
+    const hooksLine =
+      result.stdout
+        .split("\n")
+        .find((line) => /\b(?:PASS|WARN|FAIL) +hooks registered /.test(line)) ??
+      "";
+    expect(hooksLine).toContain("FAIL");
+    expect(hooksLine).toContain("missing: PostToolUseFailure");
+    expect(hooksLine).toContain("rerun crosscheck init");
   });
 
   test("double wiring keeps its WARN and hooks pass via the project scope", async () => {

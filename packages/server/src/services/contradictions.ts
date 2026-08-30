@@ -44,11 +44,12 @@
  */
 import { createHash } from "node:crypto";
 
-import { and, asc, desc, eq, inArray, ne, notExists, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, notExists, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import type { ClaimKind } from "@crosscheck/schema";
 
+import { GHOST_HOT_TARGET_MAX_CONTEXTS } from "../constants.ts";
 import {
   agentSessions,
   claimEdges,
@@ -177,6 +178,64 @@ const repoTouchCondition = (
       )`;
 
 /**
+ * The rarity rule for the derived join: the same GHOST_HOT_TARGET_MAX_CONTEXTS
+ * bar the ghost check and the conference's overlap tier apply.
+ *
+ * IT IS A CORRECTNESS RULE, NOT A SPEED ONE, and that distinction is measured
+ * rather than argued. Two theories are not about the same thing because both
+ * sessions edited bun.lock, and a "contradiction worth refereeing" found that
+ * way is the prediction theatre the ghost check's own exclusions exist to
+ * prevent. What it does NOT do is stop the work: the planner applies it as an
+ * anti-join ABOVE the (kind, value) fan-out, so every hot pair is still built
+ * and paid for before it is discarded.
+ *
+ * MEASURED on a seeded 10^4-context repo — one unique file per context, one
+ * value shared by five contexts, and in the "hot" arm one value per forty
+ * contexts — reading GET /api/contradictions' own call, median of three:
+ *
+ *   hot crowd absent    40,000 self-join pairs, all kept       53 ms
+ *   hot crowd present  430,000 self-join pairs,  40,000 kept  292 ms
+ *
+ * Identical answers, 5.5x the cost. So the only bound that removes the
+ * fan-out is the CALLER'S SLICE below (liveSideWorkContextIds), which takes
+ * that same read to 6 ms. routes/contradictions.ts passes no slice, so the
+ * route is still linear in the crowd — a known residual, not a claim of
+ * boundedness. Nothing here is a hook budget: connector-core's
+ * HTTP_TIMEOUT_MS cuts the briefing's fan-out at 400 ms and the section is
+ * dropped, which is why SessionStart stays inside 1000 ms while this read
+ * does not.
+ *
+ * VERIFY: grep -c liveSideWorkContextIds packages/server/src/routes/contradictions.ts
+ * PRINTS: 0
+ *
+ * ONLY WHEN A REPO IS NAMED, and that is a consistency requirement rather
+ * than an omission. Rarity is a property of ONE repo (ghost-overlap.ts
+ * listHotValues counts per repo), and findContradictionById re-lists hub-wide
+ * with no repo to resolve a cx_ id. A hub-wide count is never smaller than a
+ * per-repo one, so filtering the resolver by it could drop a pair the repo
+ * listing still shows and strand its id. The repo-less callers therefore keep
+ * the unfiltered join they have always had.
+ */
+const rareTargetCondition = (
+  repo: string | undefined,
+  side: { readonly kind: unknown; readonly value: unknown },
+) =>
+  repo === undefined
+    ? undefined
+    : sql`NOT EXISTS (
+        SELECT 1 FROM (
+          SELECT t.kind AS kind, t.value AS value
+          FROM work_context_targets t
+          JOIN work_contexts wc ON wc.id = t.work_context_id
+          JOIN agent_sessions s ON s.id = wc.session_id
+          WHERE s.repo = ${repo}
+          GROUP BY t.kind, t.value
+          HAVING count(*) > ${GHOST_HOT_TARGET_MAX_CONTEXTS}
+        ) hot
+        WHERE hot.kind = ${side.kind} AND hot.value = ${side.value}
+      )`;
+
+/**
  * The viewer's mute filter for one pair: a pointer names BOTH authors, so a
  * pair leaves the listing when either side's developer is muted. Undefined
  * (the brief resolver's path) filters nothing — mute is not a boundary.
@@ -199,6 +258,7 @@ const listStoredCandidates = async (
   limit: number,
   includeRetired: boolean,
   excludeMutedForDeveloperId: string | undefined,
+  liveSideWorkContextIds: readonly string[] | undefined,
 ): Promise<readonly ContradictionView[]> => {
   const claimsA = alias(claims, "stored_a");
   const claimsB = alias(claims, "stored_b");
@@ -238,6 +298,16 @@ const listStoredCandidates = async (
         eq(claimsA.provenance, DECLARED_PROVENANCE),
         eq(claimsB.provenance, DECLARED_PROVENANCE),
         repoTouchCondition(repo, claimsA, claimsB),
+        // A similarity pair has no open/rejected orientation — both sides are
+        // positions somebody holds — so EITHER side inside the slice keeps it.
+        ...(liveSideWorkContextIds === undefined
+          ? []
+          : [
+              or(
+                inArray(claimsA.workContextId, [...liveSideWorkContextIds]),
+                inArray(claimsB.workContextId, [...liveSideWorkContextIds]),
+              ),
+            ]),
         bothSidesUnmuted(
           excludeMutedForDeveloperId,
           sessionsA.developerId,
@@ -279,6 +349,7 @@ const listDerivedCandidates = async (
   limit: number,
   includeRetired: boolean,
   excludeMutedForDeveloperId: string | undefined,
+  liveSideWorkContextIds: readonly string[] | undefined,
 ): Promise<readonly ContradictionView[]> => {
   const openSide = alias(claims, "open_side");
   const rejectedSide = alias(claims, "rejected_side");
@@ -360,6 +431,12 @@ const listDerivedCandidates = async (
         // belongs to the derived join only.
         ne(sessionsOpen.developerId, sessionsRejected.developerId),
         repoTouchCondition(repo, openSide, rejectedSide),
+        rareTargetCondition(repo, targetsOpen),
+        // The caller's own slice, on the side that still HOLDS a position:
+        // see ListContradictionsInput.liveSideWorkContextIds.
+        ...(liveSideWorkContextIds === undefined
+          ? []
+          : [inArray(openSide.workContextId, [...liveSideWorkContextIds])]),
         bothSidesUnmuted(
           excludeMutedForDeveloperId,
           sessionsOpen.developerId,
@@ -418,6 +495,20 @@ export interface ListContradictionsInput {
    * deliberate pull by id, and mute is not a boundary.
    */
   readonly excludeMutedForDeveloperId?: string | undefined;
+  /**
+   * Only pairs whose still-held side sits in one of THESE work contexts.
+   *
+   * The conference passes the twelve contexts its report actually printed
+   * (services/conference.ts). Every other tier of that corpus is bounded by
+   * that slice, and this one has to be too for two reasons: a pair whose live
+   * side the report never printed has no context line a reader could check it
+   * against, and the unbounded (kind, value) self-join is what made one
+   * `crosscheck conference` hold this hub for 23.7 s on a 10^4-context repo.
+   *
+   * An EMPTY list means an empty slice, not "no filter": a report that read
+   * no context has no contradiction to show.
+   */
+  readonly liveSideWorkContextIds?: readonly string[] | undefined;
 }
 
 export const listContradictions = async (
@@ -426,6 +517,9 @@ export const listContradictions = async (
 ): Promise<readonly ContradictionView[]> => {
   const limit = Math.min(Math.max(1, input.limit), CONTRADICTIONS_MAX_LIMIT);
   const includeRetired = input.includeRetired === true;
+  if (input.liveSideWorkContextIds?.length === 0) {
+    return [];
+  }
   const [stored, derived] = await Promise.all([
     listStoredCandidates(
       db,
@@ -433,6 +527,7 @@ export const listContradictions = async (
       limit,
       includeRetired,
       input.excludeMutedForDeveloperId,
+      input.liveSideWorkContextIds,
     ),
     listDerivedCandidates(
       db,
@@ -440,6 +535,7 @@ export const listContradictions = async (
       limit,
       includeRetired,
       input.excludeMutedForDeveloperId,
+      input.liveSideWorkContextIds,
     ),
   ]);
   const seen = new Set<string>();

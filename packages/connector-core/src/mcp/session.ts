@@ -48,6 +48,15 @@ export interface OwnWorkContext {
    * is the only place that has one.
    */
   readonly developerId: string | null;
+  /**
+   * The title and status this session registered with (state/session-state.ts,
+   * trial finding #16): `set_intent` posts a work_context UPDATE, and the wire
+   * schema requires both. Null on a state file from before intent support —
+   * the tool then says so rather than fabricating a title.
+   */
+  readonly workContextTitle: string | null;
+  readonly workContextStatus: string | null;
+  readonly startedAt: string;
 }
 
 /**
@@ -112,5 +121,8 @@ export const resolveOwnWorkContext = async (
     crosscheckSessionId: chosen.crosscheckSessionId,
     workContextId: chosen.workContextId,
     developerId: chosen.developerId,
+    workContextTitle: chosen.workContextTitle,
+    workContextStatus: chosen.workContextStatus,
+    startedAt: chosen.startedAt,
   };
 };

@@ -254,8 +254,10 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     label: "the briefing stops framing quoted teammate text",
     file: `${CORE}/src/briefing/render.ts`,
-    from: "status ${status}: «${title}»",
-    to: "status ${status}: ${title}",
+    // Re-anchored when the section became one line per TEAMMATE (audit row
+    // M15-rest): the fold count now sits between the status and the frame.
+    from: "status ${status}${more}: «${shown.title}»",
+    to: "status ${status}${more}: ${shown.title}",
     test: `${CORE}/test/injection-corpus.test.ts`,
     because:
       "teammate-authored text arrives unquoted and unlabelled, which is the " +
@@ -454,6 +456,429 @@ export const MUTATIONS: readonly Mutation[] = [
       "every other search test green",
   },
   {
+    // The bound that keeps the shared-target join from being quadratic in
+    // one busy repo's traffic. Removing it puts every context that ever
+    // shared a value back into the join.
+    label: "a crowded hub hides the answer it is holding",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    // The line alone appears twice now — the pair join and the failure probe
+    // each carry it — so the anchor is the comment above THIS one.
+    from: `        // is a function of the hub's ANSWERS rather than of its traffic.
+        solvedCandidateCondition(workContextTargets.workContextId),
+`,
+    to: "",
+    test: `${SERVER}/test/solved-fanout.test.ts`,
+    because:
+      "400 unsolved contexts sharing one hot fingerprint fill the pair " +
+      "window ahead of the single solved tree that shares it, so the " +
+      "briefing says nothing on exactly the busy hub where the team memory " +
+      "is worth the most — measured at 1.2 s and zero matches",
+  },
+  {
+    // The live side's own bound: without it the "current work" half of the
+    // match is not current, not work, and not on this repo.
+    label: "any context anywhere counts as current work",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "        inArray(liveTargets.workContextId, liveIds),\n",
+    to: "",
+    test: `${SERVER}/test/solved-fanout.test.ts`,
+    because:
+      "a tree whose only partner is a context abandoned three months ago, " +
+      "or one in somebody else's checkout, is announced at SessionStart as " +
+      "matching work happening now",
+  },
+  {
+    // And the third window: the intent tier's candidate page. This puts every
+    // context that shares the words back into it, solved or not.
+    label: "a crowded topic hides the answer it is holding",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "        solvedCandidateCondition(workContexts.id),\n",
+    to: "",
+    test: `${SERVER}/test/solved-intent.test.ts`,
+    because:
+      "a team all working on webhooks fills the 20-row intent window with " +
+      "each other's ordinary contexts, so the tier that exists for a fresh " +
+      "SessionStart — no targets captured, no failures hit — goes silent on " +
+      "the repo where the team memory is worth the most",
+  },
+  {
+    // The same bound one path over. The failure-time probe reads a window of
+    // contexts carrying the fingerprint; this puts the traffic back into it.
+    label: "a crowded fingerprint hides the answer from the probe",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: `        solvedCandidateCondition(workContextTargets.workContextId),
+        notMutedCondition(viewerDeveloperId, agentSessions.developerId),`,
+    to: "        notMutedCondition(viewerDeveloperId, agentSessions.developerId),",
+    test: `${SERVER}/test/solved-probe.test.ts`,
+    because:
+      "200 ordinary contexts that merely hit the same failure fill the probe " +
+      "window ahead of the one tree that diagnosed it, so the failure-time " +
+      "hint goes permanently silent on the most common symptoms — and fails " +
+      "to SILENCE, which the precision counter reads as nothing shown",
+  },
+  {
+    // VISION.md §1 across repos: the fingerprint is the ONE identity that
+    // travels, and this puts the candidate side back inside the asking repo.
+    label: "a solved answer in another repo stops being found",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: `or(
+          eq(workContextTargets.kind, CROSS_REPO_TARGET_KIND),
+          eq(agentSessions.repo, repo),
+        ),`,
+    to: "eq(agentSessions.repo, repo),",
+    test: `${SERVER}/test/solved-cross-repo.test.ts`,
+    because:
+      "the hub holds the answer, has matched its fingerprint, and says " +
+      "nothing because the person who solved it was working in a different " +
+      "checkout — collective memory silently becomes per-repo memory",
+  },
+  {
+    // The other direction, and the more dangerous one: letting ANY target
+    // travel makes `src/index.ts` in two unrelated repos one file.
+    label: "a repo-relative path counts as identity between repos",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: `or(
+          eq(workContextTargets.kind, CROSS_REPO_TARGET_KIND),
+          eq(agentSessions.repo, repo),
+        ),`,
+    to: "sql`true`,",
+    test: `${SERVER}/test/solved-cross-repo.test.ts`,
+    because:
+      "every repo on the hub that happens to spell a path the same way " +
+      "becomes a \"you have solved this before\" line — the cry-wolf " +
+      "failure the whole matching rule exists to avoid",
+  },
+  {
+    // DESIGN.md §4: evidence makes a claim trustworthy, content identity
+    // makes it relevant, and asserting one unasked needs both. This drops
+    // the second half on the RENDER side, where a hostile hub reaches it.
+    label: "a solved match asserts its cause on a weak match",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: `    entry.matchedTargetKind !== SUBSTANCE_MATCH_KIND ||
+    entry.rootCause === null ||`,
+    to: "    entry.rootCause === null ||",
+    test: `${CORE}/test/briefing-solved.test.ts`,
+    because:
+      "a teammate's old answer is asserted at SessionStart on the evidence " +
+      "that somebody once touched the same file — the anchoring the whole " +
+      "pointer discipline exists to prevent, from a body the hub is not " +
+      "even supposed to have sent",
+  },
+  {
+    // The recorded cause is the sentence the whole surface exists to
+    // deliver; this puts it back on the whole-body blanker.
+    label: "one everyday word blanks the answer a solved tree holds",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: `  const body = spanRedactedUntrusted(
+    entry.rootCause,
+    SOLVED_ROOT_CAUSE_MAX_CHARS,
+  );`,
+    to: "  const body = sanitizeUntrusted(entry.rootCause, SOLVED_ROOT_CAUSE_MAX_CHARS);",
+    test: `${CORE}/test/briefing-solved.test.ts`,
+    because:
+      "a real cause containing `override` or `you must` renders as " +
+      "\u00ab[redacted: title looked like an instruction]\u00bb — a message " +
+      "about a title the reader never saw, in place of the one sentence the " +
+      "feature exists to hand them",
+  },
+  {
+    // DESIGN.md §4 again, the other half: an injected claim states its trust
+    // labels. This drops the confidence check, so an unlabelled body prints.
+    label: "a hedged root cause is injected as a settled answer",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: `    entry.rootCauseConfidence === null ||
+    entry.rootCauseConfidence === undefined
+`,
+    to: "    entry.rootCause === undefined\n",
+    test: `${CORE}/test/briefing-solved.test.ts`,
+    because:
+      "a teammate's 0.05 guess — legal, honest, and what publish_claim's own " +
+      "description invites — is pushed into another developer's briefing " +
+      "under a header saying the diagnosis was solved, with nothing on the " +
+      "line to tell the reader it was never confirmed",
+  },
+  {
+    // The same rule on the HUB side: what is not rendered is not sent.
+    label: "a solved body is sent for a match that will never print it",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: `      winners
+        .filter((winner) => winner.viaFingerprint)
+        .map((winner) => winner.id),`,
+    to: "      winners.map((winner) => winner.id),",
+    test: `${SERVER}/test/solved-cross-repo.test.ts`,
+    because:
+      "every file-matched tree's claim body leaves the hub for a line that " +
+      "renders only a pointer — the V2-X4 shape, one surface later",
+  },
+  {
+    // The body and the age beside it must describe ONE claim, which is what
+    // sharing the predicate buys. This gives the body reader its own rule.
+    label: "the solved body stops obeying the standing-claim rule",
+    file: `${SERVER}/src/services/solved.ts`,
+    from: `    .where(solvedClaimCondition(contextIds))
+    .orderBy(desc(claims.createdAt))`,
+    to: `    .where(inArray(claims.workContextId, [...contextIds]))
+    .orderBy(desc(claims.createdAt))`,
+    test: `${SERVER}/test/solved-cross-repo.test.ts`,
+    because:
+      "the briefing quotes a retracted theory — or the correction that " +
+      "retracted it — as the recorded cause, under the age of the claim " +
+      "that actually still stands",
+  },
+  {
+    // The intent tier's whole precision story is a COUNT of distinct matching
+    // words (server constants). One word is no floor at all.
+    label: "the intent tier stops counting how much of the intent matched",
+    file: `${SERVER}/src/constants.ts`,
+    from: "export const SOLVED_MATCH_INTENT_MIN_TOKEN_HITS = 3;",
+    to: "export const SOLVED_MATCH_INTENT_MIN_TOKEN_HITS = 1;",
+    test: `${SERVER}/test/solved-intent.test.ts`,
+    because:
+      "one workhorse word in common — \"fix\", \"test\", \"webhook\" — makes " +
+      "any old solved tree a \"you have seen this before\" line, which is " +
+      "the cry-wolf failure the prior art warns about",
+  },
+  {
+    // An intent is one developer's sentence about their own work. Reading
+    // the repo's intents instead puts a teammate's topic in my briefing.
+    label: "a teammate's intent is read as mine",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: `        eq(agentSessions.developerId, viewerDeveloperId),
+        gte(activity, cutoff),`,
+    to: "        gte(activity, cutoff),",
+    test: `${SERVER}/test/solved-intent.test.ts`,
+    because:
+      "solved trees are pulled into my SessionStart briefing because a " +
+      "teammate happens to be working on that topic — lines about somebody " +
+      "else's problem, asserted as relevant to mine",
+  },
+  {
+    // The kind is what the reader is asked to trust; a word match must not
+    // be able to present itself as an identical failure (and collect a body).
+    label: "a topic match reports itself as an identical failure",
+    file: `${SERVER}/src/services/solved-matches.ts`,
+    from: "  return strength.viaIntent ? \"session_intent\" : \"file\";",
+    to: "  return \"error_fingerprint\";",
+    test: `${SERVER}/test/solved-intent.test.ts`,
+    because:
+      "an overlap of three words arrives labelled as the same error " +
+      "fingerprint, which is the one label that lets a solved answer be " +
+      "asserted rather than pointed at",
+  },
+  {
+    // The failure-time hint fires inside an agent turn, where nobody is
+    // typing and nothing else rate-limits it. Its two guards are the session
+    // cap and the seen-set; this removes the cap check.
+    label: "the failure-time hint ignores the session hint budget",
+    file: `${CORE}/src/flows/solved-hint.ts`,
+    from: `  if (state.deliveredHintRefs.length >= MAX_HINTS_PER_SESSION) {
+    return "";
+  }
+`,
+    to: "",
+    test: `${CORE}/test/solved-hint-flow.test.ts`,
+    because:
+      "a session retrying one failing command pays a hub round trip on every " +
+      "attempt and can spend its whole hint allowance on one loop, which is " +
+      "the noise DESIGN.md \u00a710 risk 1 forbids",
+  },
+  {
+    // The third guard, and the only one that bounds the hub CALLS rather
+    // than the lines: one fingerprint is asked about once per session.
+    label: "one failure in a retry loop buys a hub call every time",
+    file: `${CORE}/src/flows/solved-hint.ts`,
+    from: `  const claimed = await updateSessionState(input.home, input.hostSessionKey, (fresh) =>
+    fresh.probedFingerprints.includes(input.fingerprint)
+      ? null
+      : withProbedFingerprint(fresh, input.fingerprint),
+  );
+  if (!claimed) {
+    return "";
+  }
+`,
+    to: "",
+    test: `${CORE}/test/solved-hint-flow.test.ts`,
+    because:
+      "the hint cap only moves when something was DELIVERED, so a hub that " +
+      "holds nothing — the common case — never reaches it, and every retry " +
+      "of one failing command pays another GET inside the agent's turn",
+  },
+  {
+    // And the other guard: the briefing's solved pointers are a SEPARATE
+    // list from the delivered refs, so consulting only the latter repeats a
+    // pointer the reader was already shown at SessionStart.
+    label: "the failure-time hint forgets what the briefing already showed",
+    file: `${CORE}/src/flows/solved-hint.ts`,
+    from: "    ...state.briefingSolvedRefs,\n",
+    to: "",
+    test: `${CORE}/test/solved-hint-flow.test.ts`,
+    because:
+      "the same solved tree is pointed at twice in one session — once at " +
+      "SessionStart and again mid-turn — which reads as two findings and is one",
+  },
+  {
+    // The failure hint's HEADER asserts content identity. This lets the flow
+    // hand it whatever row arrived first, which against a hub that predates
+    // `?fingerprint=` is a file- or intent-matched row.
+    label: "the failure hint trusts a hub that ignored the fingerprint",
+    file: `${CORE}/src/flows/solved-hint.ts`,
+    from: `    (entry) =>
+      entry.matchedTargetKind === SUBSTANCE_MATCH_KIND &&
+      !seen.has(entry.workContextId),`,
+    to: "    (entry) => !seen.has(entry.workContextId),",
+    test: `${CORE}/test/solved-hint-flow.test.ts`,
+    because:
+      "an older hub answers the ordinary shared-target listing on the same " +
+      "route, so a row matched on a shared FILE arrives above the " +
+      "fingerprint one and the flow goes silent holding the answer",
+  },
+  {
+    // The renderer's own half of the same rule: the header is printed by
+    // this function, so this function has to require the kind it names.
+    label: "the failure hint's header outruns the row under it",
+    file: `${CORE}/src/hints/render.ts`,
+    from: `  if (entry.matchedTargetKind !== SUBSTANCE_MATCH_KIND) {
+    return "";
+  }
+`,
+    to: "",
+    test: `${CORE}/test/hint-render.test.ts`,
+    because:
+      "\"the same error fingerprint as a diagnosis that was solved\" is " +
+      "printed above a line reading \"shared file with current work\" — two " +
+      "sentences contradicting each other inside one injected block",
+  },
+  {
+    // Precedence: content identity beats similarity. This stops the probe
+    // and lets the text search answer a failure the hub had already settled.
+    label: "a diagnosed failure gets a similarity guess instead",
+    file: `${CURSOR}/src/handlers/tool-failure.ts`,
+    from: `  const solvedText =
+    briefingText.length === 0 && fingerprint !== null
+      ? await attemptSolvedHint(ctx, fingerprint)
+      : "";`,
+    to: '  const solvedText = "";',
+    test: `${CURSOR}/test/injection.test.ts`,
+    because:
+      "the hub holds an evidenced, vouched answer for this exact failure and " +
+      "the developer is handed whatever text search thought looked similar",
+  },
+  {
+    // An abort is not a build failure. Fingerprinting cancellations teaches
+    // the team's memory that "the developer pressed escape" is a symptom.
+    label: "a cancelled tool is fingerprinted as a failure",
+    file: `${CONNECTOR}/src/hooks/post-tool-use-failure.ts`,
+    from: `  if (ctx.payload.is_interrupt === true) {
+    return "";
+  }`,
+    to: "",
+    test: `${CONNECTOR}/test/failure-hook.test.ts`,
+    because:
+      "every failure that reached Claude Code as an abort becomes an " +
+      "error_fingerprint target, so the hub's strongest match signal fills " +
+      "with noise nobody diagnosed — and the developer is handed a " +
+      "solved-before line for a command that never finished",
+  },
+  {
+    // The OTHER half of the abort story, and the half the reference says is
+    // the real one: cancelling a running tool fires no failure event, so the
+    // interruption arrives as a tool RESULT on the success event. This drops
+    // the marker that recognises it there.
+    label: "an abort is fingerprinted as a failure on PostToolUse",
+    file: `${CONNECTOR}/src/capture/tool-events.ts`,
+    from: `  if (record["interrupted"] === true) {
+    return false;
+  }
+`,
+    to: "",
+    test: `${CONNECTOR}/test/fingerprint.test.ts`,
+    because:
+      "an interruption message — text every session on the hub produces — " +
+      "becomes an error_fingerprint target, and a fingerprint is the one " +
+      "signal collective memory trusts as content identity ACROSS repos",
+  },
+  {
+    // The whole point of a fingerprint is that the failure TEXT stays on
+    // this machine. This puts the text on the wire instead.
+    label: "the failure probe sends the failure text",
+    file: `${CONNECTOR}/src/hooks/post-tool-use-failure.ts`,
+    from: "          fingerprint,\n          now,",
+    to: "          fingerprint: extractFailureText(ctx.payload.error),\n          now,",
+    test: `${CONNECTOR}/test/failure-hook.test.ts`,
+    because:
+      "a failing command's output — file paths, stack frames, whatever the " +
+      "tool printed — goes into a hub request URL and its access logs, on a " +
+      "path whose only wire value was supposed to be a hash",
+  },
+  {
+    // The FAIL every already-installed user meets after an event joins the
+    // required list. This takes the remedy back off it.
+    label: "the hooks FAIL names an event and no way to fix it",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: " \u2014 rerun crosscheck init to register them`;",
+    to: "`;",
+    test: `${CLI}/test/doctor-global.test.ts`,
+    because:
+      "`FAIL hooks registered  missing: PostToolUseFailure` names an " +
+      "internal event id and no next action, so the reader either " +
+      "hand-edits settings.json into a state init did not write or ignores " +
+      "it while the install captures nothing",
+  },
+  {
+    // init and doctor must agree about which events are wired: this drops the
+    // registration while doctor still requires it, which is the shape where
+    // capture goes silent and the report stays green.
+    label: "the failure event stops being registered",
+    file: `${CONNECTOR}/src/cli/settings-merge.ts`,
+    from: "      PostToolUseFailure: group(`${prefix} hook post-tool-use-failure`),\n",
+    to: "",
+    test: `${CLI}/test/doctor-global.test.ts`,
+    because:
+      "a fresh install captures no error fingerprints at all — every other " +
+      "hook keeps working, so nothing looks broken until somebody asks why " +
+      "collective memory never matches anything",
+  },
+  {
+    // The WARN's whole job is to be acted on. This takes the action back off
+    // it and leaves a sentence about crosscheck's own internals.
+    label: "the precision WARN diagnoses the tool and names no next step",
+    file: `${CORE}/src/hints/precision.ts`,
+    from: `; every solved line prints its " +
+    "id, and get_diagnosis <id> reads the tree"`,
+    to: '"',
+    test: `${CLI}/test/solved-cli.test.ts`,
+    because:
+      "the reader is told their tool may be wrong with nothing to do about " +
+      "it, so the warning trains them to skip it — and a counter nobody " +
+      "acts on is PASS-only again, the finding-#14 shape it exists to catch",
+  },
+  {
+    // The counter is about SOLVED pointers, not about every work-context
+    // hint. Dropping the solvedness resolution totals the whole ledger.
+    label: "the solved counter counts every pointer as a solved one",
+    file: `${SERVER}/src/services/solved-counts.ts`,
+    from: "  const delivered = rows.filter((row) => solved.has(row.refId));",
+    to: "  const delivered = rows;",
+    test: `${SERVER}/test/solved-counts.test.ts`,
+    because:
+      "every ordinary teammate pointer is reported as a solved match, so the " +
+      "one number that says whether collective memory is working describes a " +
+      "different surface entirely",
+  },
+  {
+    // No PASS-only telemetry (the finding-#14 lesson): this removes the one
+    // WARN path the solved surface has.
+    label: "solved pointers can be ignored for ever in silence",
+    file: `${CORE}/src/hints/precision.ts`,
+    from: "  if (counts.shown < DOCTOR_SOLVED_SHOWN_WARN || counts.pulled > 0) {",
+    to: "  if (true) {",
+    test: `${CLI}/test/solved-cli.test.ts`,
+    because:
+      "`doctor` goes green over a surface that has shown the reader match " +
+      "after match and had none of them opened — a wrong matcher with a " +
+      "clean bill of health, which is the shape finding #14 was",
+  },
+  {
     label: "the solved floor leaks into similarity guesses",
     file: `${SERVER}/src/services/search.ts`,
     from: "solvedIds.has(entry.row.id) && hasFactTier(entry.tiers)",
@@ -597,22 +1022,43 @@ export const MUTATIONS: readonly Mutation[] = [
       "unasked in the reader's context",
   },
   {
-    // The golden-fixture corpus's own guard (DESIGN.md §4 telemetry bullet).
-    // hint-select.test.ts pins this predicate at the unit level; the corpus
-    // entry exists so the END-TO-END harness itself cannot be hollowed out —
-    // a corpus that stayed green under this weakening would be measuring
-    // nothing. Like tripwire-hook.test.ts, this guard shells out to git
-    // (makeRepo) — the assertGuardIsGreen container caveat applies to it too.
-    label: "a summarizer draft reaches the corpus reader as substance",
+    // RE-POINTED, and the reason is a second defence rather than a weaker
+    // guard. This entry used to be checked by the END-TO-END corpus, and it
+    // stopped being caught there the moment audit row V2-X4 landed: the hub
+    // now withholds the BODY of every claim nobody vouched for
+    // (services/hints.ts), so a corpus draft arrives body-less and
+    // `hasBody` refuses it whatever this predicate says. The product is
+    // safer and the harness is blinder — exactly the trade worth writing
+    // down. `hint-select.test.ts` builds its candidates directly, so it can
+    // express the one hub this rule still defends against: one that ships a
+    // derived body under a declared-looking label.
+    label: "a summarizer draft reaches the reader as substance",
     file: `${CORE}/src/hints/select.ts`,
     from: '  claim.provenance === "declared";',
     to: "  claim.provenance.length > 0;",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "derived provenance counts as vouched, so a Tier-1 draft " +
+      "(likely_root_cause, evidence refs, confidence at the 0.5 cap) is " +
+      "injected under trust labels — the asymmetry §4 exists for",
+  },
+  {
+    // The END-TO-END harness's own guard, in its place: a corpus that stays
+    // green under a real ranking regression is measuring nothing. Recorded
+    // at build time on 2026-08-11 (the corpus README's harness-can-fail
+    // section) and made CONTINUOUS here, because the entry that used to hold
+    // that role now reddens a unit test instead. Like tripwire-hook.test.ts,
+    // this guard shells out to git (makeRepo) — the assertGuardIsGreen
+    // container caveat applies to it too.
+    label: "solved trees decay out of the reader's window again",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "export const SOLVED_DECAY_FLOOR = 0.7;",
+    to: "export const SOLVED_DECAY_FLOOR = 0;",
     test: `${CORE}/test/precision-corpus.test.ts`,
     because:
-      "derived provenance counts as vouched, so the corpus's Tier-1 draft " +
-      "(likely_root_cause, evidence refs, confidence at the 0.5 cap) is " +
-      "injected under trust labels — pr_thumbs_derived must red on pointer " +
-      "discipline, or the precision harness is decoration",
+      "a 70-day solved tree decays below three fresh noise contexts and " +
+      "falls out of HINT_MAX_CONTEXTS, so the answer somebody already found " +
+      "is never delivered — pr_idx_solved_recall must red",
   },
   {
     label: "the summarizer's per-session fire cap is quietly raised",
@@ -784,6 +1230,7 @@ export const MUTATIONS: readonly Mutation[] = [
       "            crosscheckSessionId: session.crosscheckSessionId,\n" +
       "            producer: producerFor(session),\n" +
       "            shownSolvedIds: assembled.shownSolvedIds,\n" +
+      "            shownGhostCount: assembled.shownGhostCount,\n" +
       "            now: now(),\n" +
       "          });\n",
     to: "",
@@ -881,8 +1328,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // cursor dual-signal case) both selected and both emitted. First writer
     // wins is decided INSIDE the locked transform; deleting the check-and-set
     // reverts to the blind append and the concurrent pin must notice.
+    // RE-ANCHORED, not weakened: the check-and-set moved to
+    // hints/delivery.ts when the failure-time solved hint became its second
+    // caller, so this now guards BOTH hint paths through one edit.
     label: "concurrent failure signals deliver the same hint twice",
-    file: `${CORE}/src/flows/hint.ts`,
+    file: `${CORE}/src/hints/delivery.ts`,
     from:
       "    (fresh) =>\n" +
       "      fresh.deliveredHintRefs.includes(delivery.refId) ||\n" +
@@ -1398,8 +1848,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // into the PASS the trial read for a week while every run was dying.
     label: "doctor calls a summarizer that never answers healthy",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: '    ? check(\n        "WARN",\n        "summarizer cost",',
-    to: '    ? check(\n        "PASS",\n        "summarizer cost",',
+    // Re-anchored when the check gained a second WARN (audit rows M16 /
+    // A3-4): the ternary became two branches, and this is the silent-runner
+    // one, which the mutation still turns into a PASS.
+    from: '      "WARN",\n      "summarizer cost",\n      `${line} — ${String(cost.fires)} runs fired',
+    to: '      "PASS",\n      "summarizer cost",\n      `${line} — ${String(cost.fires)} runs fired',
     test: `${CLI}/test/summarizer-cost.test.ts`,
     because:
       "\"PASS summarizer cost 17 runs (0 NONE, 0 drafts)\" — fail-open that " +
@@ -1421,6 +1874,1362 @@ export const MUTATIONS: readonly Mutation[] = [
       "a developer on a 2.0.24–2.1.100 CLI with cleanupPeriodDays above 30 " +
       "reads PASS while every summarizer fire can run the buggy cleanup and " +
       "delete their older conversation history",
+  },
+  // ── Trial findings #15/#16: session intent ───────────────────────────────
+  {
+    // The derived cap, on intents as on claims (DESIGN.md §3): a derived
+    // intent above DERIVED_CONFIDENCE_CAP must be refused by the shared
+    // schema the hub and the worker both run. This removes the check.
+    label: "a derived intent may assert full confidence again",
+    file: "packages/schema/src/session.ts",
+    from: '      intent.provenance === "derived" &&',
+    to: "      false &&",
+    test: "packages/schema/test/session.test.ts",
+    because:
+      "a machine-derived intent can claim confidence 1 and read like a " +
+      "person's statement on every surface — the label is all that is left " +
+      "of the trust ladder",
+  },
+  {
+    // The privacy line of the whole feature: the raw prompt never leaves the
+    // machine, only the model's one sentence. This ships the prompt instead.
+    label: "the intent worker ships the raw prompt",
+    file: `${CONNECTOR}/src/intent/worker.ts`,
+    from: "    summary: sentence,",
+    to: "    summary: cutWellFormed(prompt, MAX_INTENT_SUMMARY_CHARS),",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because:
+      "the developer's first prompt — pasted secrets, customer names, the " +
+      "bug in their own words — is uploaded to the hub as the intent and " +
+      "rendered into every teammate's briefing",
+  },
+  {
+    // The ONE sanitizer for every intent surface (briefing/intent.ts): the
+    // briefing, hints, tripwire, MCP and status all compose from it. This
+    // prints the summary raw.
+    label: "the briefing renders a teammate's intent unsanitized",
+    file: `${CORE}/src/briefing/intent.ts`,
+    from: "  const text = sanitizeUntrusted(intent.summary, INTENT_MAX_CHARS);",
+    to: "  const text = intent.summary;",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "an intent is teammate-declared or model-derived text on seven " +
+      "injection surfaces at once; raw, it can carry control characters, " +
+      "close the « » frame and open a second one — on every surface",
+  },
+  {
+    // The worker env contract (finding #14, applied to the intent worker):
+    // the parent session's markers stripped, the child marker added. This
+    // passes the hook's environment through untouched.
+    label: "the intent worker inherits the parent session's markers",
+    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
+    from: "      env: summarizerWorkerEnv(ctx.env, ctx.config.home),",
+    to: "      env: { ...ctx.env, CROSSCHECK_HOME: ctx.config.home } as Record<string, string>,",
+    test: `${CONNECTOR}/test/intent-hook.test.ts`,
+    because:
+      "the nested claude inherits CLAUDECODE and the session id of the " +
+      "session it is summarizing and can be mistaken for, or bind to, it — " +
+      "the phantom-session class trial finding #14 closed",
+  },
+  {
+    // The hub merge rule: declared over derived, enforced where spool replay
+    // order cannot undo it. This lets a late derived record overwrite.
+    label: "a late derived intent overwrites a declared one",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '    current["provenance"] === DECLARED_PROVENANCE &&',
+    to: "    false &&",
+    test: `${SERVER}/test/records.test.ts`,
+    because:
+      "set_intent is undone by the derived-intent worker's spool record " +
+      "landing afterwards — the agent's own statement loses to a model " +
+      "guess, silently",
+  },
+  {
+    // "Same topic, different files": an intent-only context (no claims) is a
+    // pointer. This narrows the pointer pass back to contexts with claims.
+    label: "an intent-only context stops earning a pointer",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "    if (isForeignIntentOnly(context, selfDeveloperId)) {\n      return { kind: \"pointer\", context, claimCount: 0 };\n    }\n",
+    to: "",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "a teammate whose session states exactly what it is doing, but has " +
+      "published no claim yet, is invisible to a prompt on the same topic — " +
+      "the gap trial finding #16 measured on 80 of 80 work contexts",
+  },
+  {
+    // Before intents, the pointer pass could only fire on a context with a
+    // FOREIGN claim, so a candidate list that leaked the reader's own context
+    // could not produce a pointer whatever the hub did. An intent-only
+    // context has no claim to carry that check.
+    label: "the intent-only pointer forgets whose context it is",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  return context.workContext.developerId !== selfDeveloperId;",
+    to: "  return true;",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "the reader's own work context is hinted back at them as a teammate's " +
+      "the moment the hub's own exclusion slips — self-noise, DESIGN.md §10 risk 1",
+  },
+  {
+    // Presence is one row per SESSION, and the schema does not make a session
+    // have one work context. Without the bound the intent read fans the
+    // presence row out per context the client filed.
+    label: "the presence intent read stops being single-valued",
+    file: `${SERVER}/src/services/presence.ts`,
+    from: "        order by ${workContexts.createdAt} desc\n        limit 1\n",
+    to: "        order by ${workContexts.createdAt} desc\n",
+    test: `${SERVER}/test/presence.test.ts`,
+    because:
+      "one teammate appears twice in every briefing and `crosscheck status`, " +
+      "and the presence response grows by one row per work context a client files",
+  },
+  {
+    // A declared intent is the one agent-written string this system PUSHES
+    // into every teammate's briefing unasked; the derived path already drops
+    // a secret-like sentence, so this gate is the declared path's half.
+    label: "a declared intent skips the secret scan",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "  if (containsSecret(parsed.value.summary)) {\n    return toolFailure(INTENT_SECRET_REFUSAL);\n  }\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because:
+      "credential-shaped text reaches every teammate's context through the " +
+      "one surface that is pushed rather than pulled (DESIGN.md §3: drop, never redact)",
+  },
+  {
+    // R2's permission gate. A question body is another developer's text, and
+    // the whole channel rests on "only the person it names, or the owner of
+    // the context it is about, may answer".
+    label: "an answer to a question reaches somebody who never asked it",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "    found.question.targetDeveloperId === developerId ||",
+    to: "    true ||",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "anybody holding a question id can answer it, so a teammate's private " +
+      "question is answerable — and probeable — by the whole hub",
+  },
+  {
+    // The one teammate-written BODY this product injects proactively. It is
+    // still untrusted PROSE from another developer.
+    label: "a question body reaches the briefing unsanitized",
+    file: `${CORE}/src/briefing/questions.ts`,
+    // Re-anchored when a question body became BODY class (audit row M14):
+    // the span redaction is the sanitizer here, and dropping it is the same
+    // defect the corpus catches.
+    from: "  const body = spanRedactedUntrusted(question.body, MAX_QUESTION_BODY_LENGTH);",
+    to: "  const body = question.body;",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "a question body carrying frame characters, bidi marks or control " +
+      "codes lands verbatim in the reader's SessionStart context",
+  },
+  {
+    // The per-target budget is what keeps the bounded briefing block from
+    // becoming one person's megaphone.
+    label: "the per-teammate question budget stops being enforced",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "  if (toTarget >= MAX_OPEN_QUESTIONS_PER_TARGET) {",
+    to: "  if (toTarget >= Number.MAX_SAFE_INTEGER) {",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "one author can fill a teammate's whole Questions-for-you block and " +
+      "keep every other teammate's question out of it",
+  },
+  {
+    // The TTL is applied in SQL on every read precisely so no cron is needed
+    // and the status column can never haunt a briefing.
+    label: "the question TTL stops being applied on read",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: '  and(eq(questions.status, "open"), gt(questions.expiresAt, now));',
+    to: '  eq(questions.status, "open");',
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "a question nobody answered a month ago is still in the briefing, " +
+      "because the status flip is opportunistic and this read trusted it",
+  },
+  {
+    // A question is PUSHED into a teammate's briefing unasked, like a
+    // declared intent — the one class of agent-written text that cannot wait
+    // for somebody to pull it.
+    label: "a question skips the secret scan",
+    file: `${CORE}/src/mcp/tools/ask-teammate.ts`,
+    from: "  if (containsSecret(question)) {\n    return toolFailure(QUESTION_SECRET_REFUSAL);\n  }\n",
+    to: "",
+    test: `${CORE}/test/question-tools.test.ts`,
+    because:
+      "credential-shaped text is uploaded and pushed into a teammate's " +
+      "context (DESIGN.md §3: drop, never redact)",
+  },
+  {
+    // An ANSWER is a teammate's claim body landing in this session. Without
+    // its echo hash the echo-loop exclusion cannot see it, and publish_claim
+    // will happily mint it as this session's own independent observation.
+    //
+    // NOT the seen-set filter one line above it, and the difference is the
+    // point: mutating THAT was caught by nothing, because `recordDelivery`'s
+    // check-and-set is the real within-session lock and the filter only
+    // saves a spool append. A mutation nobody's test can catch is a mutation
+    // aimed at code that is not load-bearing.
+    label: "an answer is not remembered as a delivered hint body",
+    file: `${CORE}/src/flows/hint.ts`,
+    from: "        bodyHash: hintBodyHash(answer.claimBody),",
+    to: "        bodyHash: null,",
+    test: `${CORE}/test/question-delivery.test.ts`,
+    because:
+      "a teammate's answer can be republished as this session's own " +
+      "observation — the provenance laundering the echo-loop exclusion exists to stop",
+  },
+  {
+    // The THIRD hub-owned field, and the one that was not. `expires_at` is
+    // derived from `created_at`, and the two open budgets, the day-rate probe
+    // and the dedup scan all read it — so a caller who owns it owns all four.
+    label: "a question's createdAt is taken from the caller",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "    createdAt: deps.now(),",
+    to: "    createdAt: new Date(body.createdAt),",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "a question dated 2099 never expires and sorts above every honest one, " +
+      "and 60 backdated inserts pass budgets that measure 20 a day",
+  },
+  {
+    // The backlog counters are the whole point of the channel's telemetry, and
+    // deriving them from the bounded page is how they go quietly stale.
+    label: "the open-question counter is capped by the listing bound",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: "    openToMe: totals[0]?.count ?? 0,",
+    to: "    openToMe: Math.min(totals[0]?.count ?? 0, MAX_QUESTIONS_LISTED),",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "`crosscheck status` under-counts the backlog and the doctor's " +
+      "\"a teammate has been waiting\" WARN can never fire again",
+  },
+  {
+    // DESIGN §2.1: opt-out hides LIVE PRESENCE, never addressed communication.
+    // The plausible regression is a later block extending visibility filtering
+    // here "for consistency with presence".
+    label: "presence opt-out starts filtering questions",
+    file: `${SERVER}/src/services/questions.ts`,
+    from:
+      "    eq(questions.targetDeveloperId, developerId),\n" +
+      "    eq(questions.repo, repo),",
+    to:
+      "    eq(questions.targetDeveloperId, developerId),\n" +
+      "    eq(questions.repo, repo),\n" +
+      "    sql`NOT EXISTS (SELECT 1 FROM developers hidden WHERE hidden.id = ${developerId} AND hidden.presence_opt_out)`,",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "an opted-out teammate silently stops receiving questions, and an " +
+      "asker who is refused has learned that they opted out",
+  },
+  {
+    // The §4 solicited exception meets the §3 Tier-1 rule here, and the hub is
+    // the only place that can hold the line: the answer path bypasses the
+    // client-side declared-only gate entirely.
+    label: "a derived draft may be delivered as an answer",
+    file: `${SERVER}/src/services/questions.ts`,
+    from: '    if (body.claim.provenance !== "declared") {',
+    to: '    if (body.claim.provenance === "no-such-provenance") {',
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "an unpromoted auto-draft is injected into a teammate's prompt as " +
+      "substance — the one thing DESIGN §3 says a Tier-1 draft never does",
+  },
+  {
+    // Answers are the ONE proactive substance path, and the exception rests on
+    // the reader already holding the frame the answer lands in.
+    label: "the answer path stops being scoped to the asker's repo",
+    file: `${SERVER}/src/services/questions.ts`,
+    from:
+      "        eq(questions.repo, repo),\n" +
+      "        gt(questions.createdAt, answerWindowStart),",
+    to: "        gt(questions.createdAt, answerWindowStart),",
+    test: `${SERVER}/test/questions.test.ts`,
+    because:
+      "a claim body answering a question asked in another codebase is " +
+      "injected into a session that never asked it",
+  },
+  {
+    // An answer is pushed HARDER than a question: it lands in the asker's next
+    // prompt as substance, with no relevance gate in front of it.
+    label: "an answer skips the secret scan",
+    file: `${CORE}/src/mcp/tools/answer-question.ts`,
+    from: "  if (containsSecret(parsed.value.body)) {\n    return toolFailure(ANSWER_SECRET_REFUSAL);\n  }\n",
+    to: "",
+    test: `${CORE}/test/question-tools.test.ts`,
+    because:
+      "a credential in an answer body is uploaded and injected into the " +
+      "asker's context (DESIGN.md §3: drop, never redact)",
+  },
+  {
+    // The same exposure on the tool beside it: a published claim is uploaded
+    // to a shared hub and can be injected into a teammate's prompt.
+    label: "a published claim skips the secret scan",
+    file: `${CORE}/src/mcp/tools/publish-claim.ts`,
+    from: "  if (containsSecret(parsed.value.body)) {\n    return toolFailure(CLAIM_SECRET_REFUSAL);\n  }\n",
+    to: "",
+    test: `${CORE}/test/mcp-tools.test.ts`,
+    because:
+      "a credential in a claim body reaches a second machine and a second " +
+      "model's context (DESIGN.md §3: drop, never redact)",
+  },
+  {
+    // R1's WHO. Every tier list is bounded at TIER_CANDIDATES, so dropping
+    // the filter from the shared scope condition does not merely widen the
+    // answer — the wanted row is GONE, because 30 rows the caller did not ask
+    // about filled the bound ahead of it.
+    label: "the search developer filter stops running inside the tiers",
+    file: `${SERVER}/src/services/search.ts`,
+    from: "      : eq(agentSessions.developerId, scope.developerId),",
+    to: "      : undefined,",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "`developer: Ken` answers with everyone's work, and the one row past " +
+      "the tier bound — the row the filter existed to reach — is missing",
+  },
+  {
+    // R1's WHEN, same bound, same consequence.
+    label: "the search since window stops running inside the tiers",
+    file: `${SERVER}/src/services/search.ts`,
+    from:
+      "      : sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt}) " +
+      ">= ${scope.since.toISOString()}::timestamptz`,",
+    to: "      : undefined,",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "`since: 14d` returns 60-day-old work as if it were this fortnight's, " +
+      "and the fresh row past the tier bound never appears",
+  },
+  {
+    // The composition rule: a filter naming the caller must INTERSECT with
+    // self-exclusion, never replace it. This is the plausible-looking edit —
+    // "they asked for themselves, so let them through" — that hands a reader
+    // their own contexts back as teammate hints.
+    label: "a developer filter naming the caller lifts self-exclusion",
+    file: `${SERVER}/src/services/search.ts`,
+    from:
+      "    scope.excludeDeveloperId === undefined\n      ? undefined\n      : ne(",
+    to:
+      "    scope.excludeDeveloperId === undefined || scope.developerId !== undefined\n" +
+      "      ? undefined\n      : ne(",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "the hints candidates query stops excluding the reader the moment a " +
+      "developer filter is present, and a developer is hinted their own work",
+  },
+  {
+    // The honesty rule R1 exists for: a name that resolved to nobody must be
+    // an ERROR. An empty result to a misspelt name reads as "Ken has done
+    // nothing", and a model acts on that by redoing Ken's work.
+    label: "an unknown developer comes back as an empty result",
+    file: `${SERVER}/src/routes/search.ts`,
+    from:
+      '        return fail(\n          c,\n          400,\n          "unknown_developer",\n' +
+      "          describeUnknownDeveloper(developerTerm, lookup.suggestions),\n        );",
+    to: "        return ok(c, { results: [], vectorTierActive: false, filters });",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "a typo in a teammate's name is answered with a silence that reads as " +
+      "a fact about that teammate's work",
+  },
+  {
+    // The reader-facing half of the same rule. Unfiltered, "nothing matched"
+    // is about WORDS; filtered, it is about words AND a person AND a window,
+    // and a reader who forgets the second half concludes the teammate has
+    // done nothing.
+    label: "a filtered empty result reads as a fact about the teammate",
+    file: `${CORE}/src/mcp/render.ts`,
+    from:
+      "  return from.length === 0 && window.length === 0\n    ? sentence\n" +
+      "    : `${sentence} Those filters are part of that answer: other words, a longer ` +\n" +
+      '        "window or another teammate may well match.";',
+    to: "  return sentence;",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "`developer: Ken` with no hits renders the same sentence an unfiltered " +
+      "search does, and the filters vanish from the answer they shaped",
+  },
+  {
+    // Search deliberately does NOT exclude the caller, so `developer: me` is
+    // a legitimate call — and without the label its results are
+    // indistinguishable from a teammate's.
+    label: "the filter line stops saying the developer is the reader",
+    file: `${CORE}/src/mcp/render.ts`,
+    from:
+      "  const labelled = filters.isSelf === true ? `${name} (you)` : name;",
+    to: "  const labelled = name;",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a reader's own work comes back labelled exactly like a teammate's, " +
+      "which is a misattribution nothing in the answer lets them notice",
+  },
+  {
+    // Two people called Ken differ by ADDRESS — the fact the whole ambiguity
+    // refusal is built on. Dropping the address from the filter line is the
+    // tidy-looking edit, and it undoes the disambiguation the caller was
+    // refused once to perform: the header goes back to saying "Ken".
+    label: "the filter line drops the address that tells two Kens apart",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  return email.length === 0 ? labelled : `${labelled} · ${email}`;",
+    to: "  return labelled;",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a caller who retyped an exact address reads an answer headed by the " +
+      "one thing that does not identify the person it is about",
+  },
+  {
+    // The same argument as the `(you)` label above, one sentence further down.
+    // Dropping it makes the two lines of one answer disagree about who the
+    // reader is, and the sentence is the half a model quotes.
+    label: "the empty filtered sentence calls the reader a teammate",
+    file: `${CORE}/src/mcp/render.ts`,
+    from:
+      "  const from =\n    name.length === 0\n      ? \"\"\n" +
+      "      : filters?.isSelf === true\n        ? \" from you\"\n" +
+      "        : ` from ${name}`;",
+    to: "  const from = name.length === 0 ? \"\" : ` from ${name}`;",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a reader's own empty result reads as a fact about a teammate who " +
+      "happens to share their name",
+  },
+  {
+    // A filter that did not resolve is not a broken hub. Rendered as one, the
+    // candidate names and the window forms are still in the text — but so is
+    // "the hub refused the request", and the model retries instead of asking
+    // again with a name that exists.
+    label: "a filter refusal is rendered as an ordinary hub failure",
+    file: `${CORE}/src/mcp/tools/search-related-work.ts`,
+    from:
+      "    return isFilterRefusal(searched)\n" +
+      "      ? toolFailure(renderSearchFilterRefusal(query, searched.message))\n" +
+      "      : hubFailure(ctx, searched);",
+    to: "    return hubFailure(ctx, searched);",
+    test: `${CORE}/test/search-who-when.test.ts`,
+    because:
+      "a misspelt teammate name is reported as an HTTP fault rather than as " +
+      "a question that was never asked",
+  },
+  {
+    // Two spellings of the same window must agree. Comparing a date-only term
+    // against the clock's INSTANT makes `2025-07-24` nine hours older than
+    // `365d` on the same afternoon, so a caller who asks for a year is told a
+    // year is more than the 365 days the sentence says are allowed.
+    label: "a date exactly one year back is refused as too old",
+    file: `${SERVER}/src/services/time-window.ts`,
+    from:
+      "  const capFrom = term.includes(\"T\")\n    ? now.getTime()\n" +
+      "    : Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());",
+    to: "  const capFrom = now.getTime();",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "the obvious way to write \"the last year\" is refused by a sentence " +
+      "naming a bound the caller did not exceed",
+  },
+  {
+    // The refusal that does not fit is the refusal that cannot be acted on.
+    // Deleting the shrink is the plausible edit — "the sentence reads better
+    // with the whole term in it" — and it costs the addresses and the closest
+    // spellings, which is the entire payload of both refusals.
+    label: "a refusal keeps its whole echo and loses its addresses",
+    file: `${SERVER}/src/services/refusal.ts`,
+    from: "  while (asRendered(sentence).length > MAX_REFUSAL_CHARS) {",
+    to: "  while (false) {",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "a long developer term pushes the candidate addresses past the 200 " +
+      "characters every connector quotes, so the reader is told to ask again " +
+      "with an exact address and never shown one",
+  },
+  {
+    // The phrase filter is all-or-nothing, and a refusal is all payload: the
+    // reason nothing was searched, the candidate spellings, the addresses to
+    // retype. A hub whose team holds a service account called `override-bot` —
+    // or a caller who typed `act as` into the developer argument — got the
+    // whole sentence replaced by a redaction marker and no next call at all.
+    label: "one filter word blanks a whole hub refusal again",
+    file: `${CORE}/src/mcp/render.ts`,
+    // Re-anchored when the span-redacting frame became the exported
+    // `quotedBody` (audit row M14): same call, one name for every body
+    // surface instead of one private spelling.
+    from: "`The hub said: ${quotedBody(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,",
+    to: "`The hub said: ${quoted(hubMessage, MAX_HUB_MESSAGE_CHARS)}`,",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a refusal naming a teammate whose display name contains one of the " +
+      "nine filter phrases arrives as `[redacted: title looked like an " +
+      "instruction]` — no reason, no spelling, no address",
+  },
+  {
+    // The bound was right and the UNIT was wrong. Every connector normalizes to
+    // NFKC before it counts, and NFKC never shrinks — so counting raw code
+    // units passes a sentence the reader receives cut. Plain ASCII reaches it:
+    // the ellipsis a cut echo inserts is one character here, three there.
+    label: "a refusal is budgeted before the reader normalizes it",
+    file: `${SERVER}/src/services/refusal.ts`,
+    from: "export const asRendered = (sentence: string): string =>\n  sentence.normalize(\"NFKC\");",
+    to: "export const asRendered = (sentence: string): string => sentence;",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "a 200-character refusal arrives as 202 and is cut by the connector " +
+      "that quotes it, and a display name of ligatures loses every address " +
+      "and the whole next step",
+  },
+  {
+    // A refusal may LIST fewer people than it COUNTS — the list is budgeted in
+    // characters, the count never is. Counting the array is the plausible edit,
+    // and it silently rewrites the number to the ambiguity probe's page size:
+    // a hub with twelve Kims tells the reader there are five, and the caller
+    // looking for the sixth is told by name that they do not exist.
+    label: "the ambiguity refusal counts only the rows it read",
+    file: `${SERVER}/src/services/developer-lookup.ts`,
+    from:
+      "    `${echo} is the name of ${String(totalCount)} developers here: ${list}. ` +",
+    to:
+      "    `${echo} is the name of ${String(candidates.length)} developers here: ${list}. ` +",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "the sentence reports the page size as the team, so a caller is told " +
+      "the teammate they are looking for is not on this hub",
+  },
+  {
+    // The rationale clause is what pays for the first address. Refusing to
+    // spend it is the plausible edit — the sentence reads better complete —
+    // and it costs the reader every address at any org whose addresses are
+    // longer than the list budget: "3 of them, none short enough to name
+    // here" beside "Ask again with the exact address".
+    label: "an ambiguity refusal keeps its rationale and names nobody",
+    file: `${SERVER}/src/services/developer-lookup.ts`,
+    from: "  const naming = fitRefusal(build(true), term);",
+    to: "  const naming = fitRefusal(build(false), term);",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "a team with 69-character addresses is told to ask again with an exact " +
+      "address by a sentence that shows none",
+  },
+  {
+    // The connector's own half of the same defect: cutting the echo BEFORE
+    // normalizing means `maxChars` characters of a caller's term can be
+    // eighteen times that on screen.
+    label: "the echoed term is cut before it is normalized",
+    file: `${SERVER}/src/services/refusal.ts`,
+    from: "  const trimmed = asRendered(term).trim();",
+    to: "  const trimmed = term.trim();",
+    test: `${SERVER}/test/search-filters.test.ts`,
+    because:
+      "80 code points of a caller's term become 1440 characters in the " +
+      "reader's context, so the refusal is cut before it names anybody",
+  },
+  {
+    // THE GATE this whole feature is sold on (VISION.md §3): the model runs
+    // only when the deterministic core found somebody. This makes a missing
+    // candidate into an empty one, so the check fires on a repo where nobody
+    // shares a file, a failure or a topic — a token spend on every session of
+    // every quiet team, and the outcome booked as a fire rather than as the
+    // free skip it is.
+    label: "a ghost check runs with nobody to compare against",
+    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    from: `  const candidate = overlaps.data[0];
+  if (candidate === undefined) {
+    // THE GATE, and the reason this feature costs a quiet repo nothing.
+    await updateSessionState(home, args.claudeSessionId, withGhostNoOverlap);
+    return;
+  }`,
+    to: `  const candidate = overlaps.data[0] ?? {
+    workContextId: "",
+    title: "",
+    developerId: "",
+    lastActiveAt: "",
+    sharedTargets: [],
+    sharedTargetCount: 0,
+    intentTokenHits: 0,
+  };`,
+    test: `${CONNECTOR}/test/ghost-worker.test.ts`,
+    because:
+      "the gated half fires on a repo with no overlap at all: a model call " +
+      "per session for every quiet team, and a 'fire' where the honest " +
+      "outcome is 'skipped, nobody to compare'",
+  },
+  {
+    // WHOSE plan the sentence collides with. The model is shown "SESSION B"
+    // and never a name, so the attribution is the worker's to attach — and
+    // without it `review_draft` shows a finding about a collision with
+    // nobody, with no tree to open and no person to ask.
+    label: "a ghost draft names nobody",
+    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    from: "    body: ghostDraftBody(sentence, candidate),",
+    to: "    body: sentence,",
+    test: `${CONNECTOR}/test/ghost-worker.test.ts`,
+    because:
+      "the one thing the gated half produces arrives unattributable: a " +
+      "sentence about two plans, on the reader's own context, naming " +
+      "neither the teammate nor the tree it came from",
+  },
+  {
+    // The echo-loop rule pointed at THIS call's own input. The guard stays,
+    // fed nothing — so a sentence that merely restates the teammate claim the
+    // model was just shown is spooled as this session's derived observation,
+    // under a fresh id and a fresh timestamp.
+    label: "a ghost sentence repeats the claim it was shown",
+    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    from:
+      "  const shownTexts = shownClaims.flatMap((claim) => [claim.body, claim.line]);",
+    to: "  const shownTexts: readonly string[] = [];",
+    test: `${CONNECTOR}/test/ghost-worker.test.ts`,
+    because:
+      "a teammate's declared finding comes back as the reader's own derived " +
+      "claim — provenance laundering by paraphrase, which is the exact " +
+      "failure the echo-loop exclusion exists to stop",
+  },
+  {
+    // The half of the echo key that a real parrot trips. The model is shown
+    // `kind (status): body` and asked for a finding, so what it repeats is
+    // the BODY — hashing only the labelled line guards a shape nobody sends.
+    label: "the echo key only knows the label, not the claim",
+    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    from:
+      "  const shownTexts = shownClaims.flatMap((claim) => [claim.body, claim.line]);",
+    to: "  const shownTexts = shownClaims.map((claim) => claim.line);",
+    test: `${CONNECTOR}/test/ghost-worker.test.ts`,
+    because:
+      "the guard still passes its own test while a verbatim repeat of the " +
+      "teammate's claim body is spooled as the reader's own derived finding",
+  },
+  {
+    // Self-exclusion in the WHERE, the tripwire's rule (DESIGN.md §4). A
+    // developer running parallel worktrees on one repo would collide with
+    // themselves on every file they touch twice.
+    label: "the plan overlap forgets whose plan it is",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: `        // Self-exclusion in the WHERE, never after the LIMIT: a developer
+        // with three worktrees on one repo must not fill their own window
+        // with themselves (DESIGN.md §4, the tripwire's rule).
+        ne(agentSessions.developerId, viewerDeveloperId),`,
+    to: `        // Self-exclusion in the WHERE, never after the LIMIT: a developer
+        // with three worktrees on one repo must not fill their own window
+        // with themselves (DESIGN.md §4, the tripwire's rule).`,
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "a second worktree of the reader's own becomes a teammate colliding " +
+      "with them, on every file the two share",
+  },
+  {
+    // The sweep rule as the DATABASE's, not a filter over what came back.
+    // With sweeps admitted, one renaming worktree of the reader's own holds
+    // more targets than the whole window their contexts share, and the window
+    // is spent in id order.
+    label: "one sweep of mine spends my other context's read window",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: `        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),
+        notASweepCondition(workContextTargets.workContextId),`,
+    to: "        inArray(workContextTargets.kind, [...OVERLAP_TARGET_KINDS]),",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "a mass rename in one of my worktrees takes the read budget and the " +
+      "context beside it, so the surface goes silent for me on the plan I " +
+      "am actually working on",
+  },
+  {
+    // ConE's rarely-concurrently-edited heuristic (TOSEM 2021), which is the
+    // half of that paper doing the precision work. Without it a lockfile
+    // everybody edits is evidence of a plan, and the pair window fills with
+    // the values that mean least.
+    label: "a lockfile everybody touches counts as a shared plan",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "    .filter((row) => row.contexts <= GHOST_HOT_TARGET_MAX_CONTEXTS)",
+    to: "    .filter(() => true)",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "every session that edits the lockfile collides with every other one: " +
+      "the notice fires on the values that carry the least information, and " +
+      "the crowd can fill the pair window ahead of the real overlap",
+  },
+  {
+    // The floor. One shared file is one file; two is a plan (and one shared
+    // FINGERPRINT is content identity, which is why that branch stays).
+    label: "one shared file is enough to call it a collision",
+    file: `${SERVER}/src/services/ghost-overlap.ts`,
+    from: "  candidate.shared.length >= GHOST_MIN_SHARED_TARGETS ||",
+    to: "  candidate.shared.length >= 1 ||",
+    test: `${SERVER}/test/ghost-overlap.test.ts`,
+    because:
+      "the notice fires on a single shared path, which on a busy repo is " +
+      "everybody — the prediction theatre this feature was built not to be",
+  },
+  {
+    // The BARE class on the one ghost field that is a person's name. It sits
+    // outside the « » frame beside the reader's own facts, on a line built
+    // from U+00B7 separators — so an unsanitized name is a field of its own.
+    label: "the ghost line prints a teammate's name unsanitized",
+    file: `${CORE}/src/briefing/ghost.ts`,
+    from: `  const name =
+    entry.developerName === undefined ? "" : bareUntrusted(entry.developerName);
+  return name.length === 0 ? UNKNOWN_TEAMMATE : name;`,
+    to: "  return entry.developerName ?? UNKNOWN_TEAMMATE;",
+    test: `${CORE}/test/mcp-hostile-hub.test.ts`,
+    because:
+      "a hub-chosen display name mints its own line in the answer set_intent " +
+      "hands back the moment a plan is declared",
+  },
+  {
+    // "hit the same failure" is a fact a tired human can act on; 39
+    // characters of sha256 on a briefing line is not.
+    label: "the ghost line prints the fingerprint hash at the reader",
+    file: `${CORE}/src/briefing/ghost.ts`,
+    from: "    .filter((target) => target.kind !== FINGERPRINT_KIND)",
+    to: "    .filter(() => true)",
+    test: `${CORE}/test/ghost-render.test.ts`,
+    because:
+      "a briefing line spends its width on a hash nobody can read, and the " +
+      "clause that says what actually happened is buried beside it",
+  },
+  {
+    // The block's SECOND bound. Two ghost lines at their caps compose 983
+    // characters under a 114-character header — half the briefing — and the
+    // item bound cannot see it, so every section below gives way whole.
+    label: "the ghost block is bounded in items but not in characters",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: `    lines: fitEntries(
+      rendered.slice(0, MAX_GHOST_POINTERS),
+      MAX_BRIEFING_GHOST_CHARS,
+    ),`,
+    to: "    lines: rendered.slice(0, MAX_GHOST_POINTERS),",
+    test: `${CORE}/test/ghost-render.test.ts`,
+    because:
+      "two pointer lines take half of MAX_BRIEFING_CHARS, and the teammate " +
+      "contexts, contradictions, solved-before pointers, draft reminders " +
+      "and absences below them are cut whole to pay for it",
+  },
+  {
+    // "No PASS-only telemetry" (the finding-#14 lesson). A ghost check fires
+    // at most once per session, so waiting for the silent-fires threshold
+    // means a booked failure can sit through a whole session unreported —
+    // which is why ANY failure warns, and this drops that branch.
+    label: "a booked ghost failure stops warning anybody",
+    file: `${CONNECTOR}/src/ghost/cost.ts`,
+    from: `export const isGhostSilentlyDead = (cost: GhostCost): boolean =>
+  cost.fails > 0 ||
+  (cost.fires >= DOCTOR_GHOST_SILENT_FIRES_WARN && cost.nones + cost.drafts === 0);`,
+    to: `export const isGhostSilentlyDead = (cost: GhostCost): boolean =>
+  cost.fires >= DOCTOR_GHOST_SILENT_FIRES_WARN && cost.nones + cost.drafts === 0;`,
+    test: `${CLI}/test/ghost-cost.test.ts`,
+    because:
+      "a dead runner, an unanswerable hub or a dropped sentence reads PASS " +
+      "on doctor until two whole sessions have fired and answered nothing",
+  },
+  {
+    // The declaration-time delivery (VISION.md §3): stating the plan is the
+    // first moment it can be compared, and this drops the answer.
+    label: "set_intent stops saying who else is in there",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: "  const ghost = await deliverGhostNotice(ctx, own);",
+    to: "  const ghost: readonly string[] = [];",
+    test: `${CORE}/test/ghost-declare.test.ts`,
+    because:
+      "declaring a plan that collides with a live teammate's answers as if " +
+      "nobody were there, and the reader learns it at the next SessionStart " +
+      "at the earliest",
+  },
+  {
+    // The agent conference (VISION.md §2). A teammate's Tier-1 draft is a
+    // machine guess nobody vouched for; feeding one to a model that produces
+    // another derived sentence launders a guess into a second guess with a
+    // fresh timestamp — the corpus refuses them in the SELECT, not in a
+    // renderer that could forget.
+    label: "the conference reads a teammate's machine drafts",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "        eq(claims.provenance, DECLARED_PROVENANCE),",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because:
+      "the one call in this product that reads the whole team's work at " +
+      "once is handed everybody's unconfirmed drafts, and every sentence it " +
+      "produces inherits their confidence without saying so",
+  },
+  {
+    // The label allowlist as WHAT WAS SENT rather than what the hub named.
+    // The input bound drops whole sessions from the end, and the hub's own
+    // caps reach it with ordinary data.
+    label: "a conference finding names a session nobody sent",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "  const sent = fitSessions(sessions);",
+    to: "  const sent = sessions;",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a sentence about a tree the model was never shown is accepted, " +
+      "printed as a finding and — behind --publish — filed on that tree, " +
+      "which is a synthesis of two things nobody compared",
+  },
+  {
+    // Which of the two trees a --publish draft lands on must not be decided
+    // by which letter the model happened to write first.
+    label: "the model chooses whose tree the conference draft lands on",
+    file: `${CLI}/src/cli/conference.ts`,
+    from:
+      "      return [{ sentence: finding.sentence, contexts: orderedPair(left, right, rank) }];",
+    to: "      return [{ sentence: finding.sentence, contexts: [left, right] }];",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "\"A+B\" and \"B+A\" are the same finding, so a coin toss inside the " +
+      "model decides whose diagnosis tree carries a machine-written draft " +
+      "and which side a reader meets first",
+  },
+  {
+    // The secret gate on the one model sentence this product writes to a FILE
+    // and, behind a flag, to the hub.
+    label: "a conference finding skips the secret scan",
+    file: `${CLI}/src/cli/conference.ts`,
+    from:
+      "      if (isRestatementOf(finding.sentence, shown) || containsSecret(finding.sentence)) {",
+    to: "      if (isRestatementOf(finding.sentence, shown)) {",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a model that read a teammate's claim about a leaked credential and " +
+      "repeated it writes the credential into a report on disk, and posts " +
+      "it to the hub whenever --publish is given",
+  },
+  {
+    // One session too big to send must cost the team that session, not the
+    // whole conference.
+    label: "one oversized session silences the whole conference",
+    file: `${CONNECTOR}/src/conference/prompt.ts`,
+    from: `    if (total + cost > CONFERENCE_MAX_INPUT_CHARS) {
+      continue;
+    }`,
+    to: `    if (total + cost > CONFERENCE_MAX_INPUT_CHARS) {
+      break;
+    }`,
+    test: `${CONNECTOR}/test/conference-prompt.test.ts`,
+    because:
+      "the sessions arrive freshest first, so one context carrying more " +
+      "claims than its own cap allows sits at the head and empties every " +
+      "teammate's conference input behind it",
+  },
+  {
+    // Tier 1, and nothing more. A conference sentence is a machine's guess
+    // across two trees nobody has confirmed (DESIGN.md §3).
+    label: "a conference finding is published as declared",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: `          captureMode: "auto",
+          provenance: "derived",`,
+    to: `          captureMode: "agent",
+          provenance: "declared",`,
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a model's cross-tree hypothesis enters the hub with the standing of " +
+      "something a person stated, so it ranks as evidence and never has to " +
+      "pass review_draft",
+  },
+  {
+    // ConE's rarity rule, INSIDE the (kind, value) self-join. Without it a
+    // lockfile every session touches pairs itself once per ordered pair of
+    // contexts.
+    label: "a lockfile pairs every context with every other",
+    file: `${SERVER}/src/services/contradictions.ts`,
+    from: "        rareTargetCondition(repo, targetsOpen),",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because:
+      "one ordinary lockfile row per context turns this join into 10^8 rows " +
+      "and held a seeded 10^4-context hub for 23.7 s in one query, while " +
+      "reporting pairs whose only evidence is that both sessions ran an " +
+      "install",
+  },
+  {
+    // Every other tier of the conference corpus is bounded by the slice the
+    // report prints; this one has to be too.
+    label: "the conference reads contradictions it never printed a side of",
+    file: `${SERVER}/src/services/conference.ts`,
+    from: "      liveSideWorkContextIds: ids,",
+    to: "",
+    test: `${SERVER}/test/conference.test.ts`,
+    because:
+      "a pair whose live side is not on the page is a pointer to nothing, " +
+      "and the unbounded join is the other half of the 23.7 s",
+  },
+  {
+    // U+2014 is the conference report's own field separator, so an untrusted
+    // BARE field that keeps it mints a second, followable pointer.
+    label: "a display name mints a conference pointer of its own",
+    file: `${CORE}/src/briefing/sanitize.ts`,
+    from: "const RENDERER_STRUCTURE = /[·:\\u2014]/g;",
+    to: "const RENDERER_STRUCTURE = /[·:]/g;",
+    test: `${CORE}/test/conference-report.test.ts`,
+    because:
+      "a teammate whose display name is `Ken — get_diagnosis wc_<attacker>` " +
+      "makes four line shapes of every conference report on the repo read as " +
+      "genuine crosscheck calls at a tree the attacker chose",
+  },
+  {
+    // The two-session floor counts what was SENT, not what the hub named.
+    label: "the conference model runs on one session or on none",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "  if (sent.length < 2) {",
+    to: "  if (sessions.length < 2) {",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a model shown one session cannot produce an A+B line at all, so the " +
+      "call is spent to be told nothing and the answer is then booked " +
+      "unreadable — a standing doctor WARN with nothing wrong with the model",
+  },
+  {
+    // The reader's own item bound on a deterministic section.
+    label: "a hub can print thousands of questions onto one page",
+    file: `${CORE}/src/conference/report.ts`,
+    from: "    .slice(0, CONFERENCE_MAX_QUESTIONS_SHOWN)\n",
+    to: "",
+    test: `${CORE}/test/conference-report.test.ts`,
+    because:
+      "5,000 questions and 5,000 contradictions rendered 10,615 lines and " +
+      "1,375,379 bytes, where the feature is defined as one page a human " +
+      "reads in a minute",
+  },
+  {
+    // The deliverable is the page, and a command whose only output is a file
+    // has to say something when the file cannot be written.
+    label: "the conference dies in silence when the page cannot land",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: `  try {
+    await writePrivateFile(path, report);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }`,
+    to: `  await writePrivateFile(path, report);
+  return null;`,
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a cron run whose home is read-only saw two pre-run lines, nothing on " +
+      "either stream and exit 64 — the code this CLI reserves for a mistyped " +
+      "command — while --publish kept filing drafts on the team's trees",
+  },
+  {
+    // One unreviewed conference draft per tree; review_draft makes room.
+    label: "nightly conferences pile paraphrases onto one tree",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: `  const filable = model.findings.filter(
+    (finding) => !(held ?? new Map()).has((finding.contexts[0] as ConferenceContext).id),
+  );`,
+    to: "  const filable = model.findings;",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "the hub dedups on the normalised body, which a real model defeats by " +
+      "paraphrasing, so a scheduler files ~30 near-identical hypotheses a " +
+      "month on a teammate's tree and evicts their own drafts from the " +
+      "briefing",
+  },
+  {
+    // The remedy comes from the counter that fired.
+    label: "the conference WARN blames the answer format for a lost call",
+    file: `${CORE}/src/state/conference-cost.ts`,
+    from: "  ...(cost.fails > 0\n    ? [\"the model call did not come back — see the summarizer runner check\"]\n    : []),",
+    to: "",
+    test: `${CORE}/test/conference-cost.test.ts`,
+    because:
+      "an operator whose claude binary went missing is sent hunting a " +
+      "prompt-format drift that never happened, on the one surface that is " +
+      "supposed to say what to do",
+  },
+  {
+    // A conference is the one caller that is not a hook.
+    label: "the conference hub read runs on a hook's request timeout",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "  const corpus = await getConference(reading, identity.repoId);",
+    to: "  const corpus = await getConference(hub, identity.repoId);",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "config.timeoutMs is 400 ms and sized for a keystroke, so the read " +
+      "aborts ~89x before CONFERENCE_MAX_WALL_MS and books noHubAnswer — a " +
+      "counter doctor reads as a deployment state",
+  },
+  {
+    // Reports are deliberately never reaped, so a filename collision may not
+    // cost one. This entry covers the SEARCH; the one below covers what
+    // happens when the search runs out.
+    label: "two conferences a minute apart overwrite one page",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "  const path = await freeReportPath(config.home, key, stamp);",
+    to: "  const path = conferenceReportPath(config.home, key, stamp);",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "a scheduler retrying after a transient hub error silently replaces " +
+      "the page it just wrote, and the path is printed both times so nothing " +
+      "looks wrong",
+  },
+  {
+    // The other half, one layer down. Running out of suffixes used to hand
+    // the FIRST name back, which is the entry above's defect with a bound in
+    // front of it — and conference-cli.test.ts records that fallback firing
+    // three times inside one second on a fast host, so it is not a rarity
+    // this file gets to define away.
+    //
+    // The loop's closing brace is part of the anchor: two guard clauses in
+    // this file return null at a deeper indent, and their text CONTAINS the
+    // bare line.
+    label: "an exhausted second takes the first page's name",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "  }\n  return null;\n};",
+    to: "  }\n  return first;\n};",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "the eleventh run of one second overwrites a page nobody has read and " +
+      "prints its path as if a new one had been written — the exact loss " +
+      "paths.ts states never happens to a report",
+  },
+  {
+    // Audit row V2-X4. The client-side declared-only gate stays either way;
+    // this is about the BYTES, which is the only half that holds against a
+    // connector nobody in this repo wrote.
+    label: "the hint wire ships an unpromoted draft's body",
+    file: `${SERVER}/src/services/hints.ts`,
+    from: 'body: row.claim.provenance === DECLARED_PROVENANCE ? row.claim.body : "",',
+    to: "body: row.claim.body,",
+    test: `${SERVER}/test/hints.test.ts`,
+    because:
+      "a machine guess nobody reviewed — including a ghost draft a THIRD " +
+      "party influenced through a model — lands on every teammate's machine " +
+      "in full, one client change away from being rendered as a finding",
+  },
+  {
+    // The other half of V2-X4, on the reader's side of the wire.
+    label: "a withheld claim body renders as empty substance",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "  hasBody(claim) &&",
+    to: "",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "a hub that withholds a body the selector still accepts produces a " +
+      "fully trust-labelled hint with «» where the finding should be, which " +
+      "reads as «Nick looked and found nothing»",
+  },
+  {
+    // Audit row M12-rest. The default text-search parser reads a branch name
+    // and a path as ONE `file` token, so without the derived word bag the
+    // document is unsearchable by the words inside either.
+    label: "the branch-token split is reverted",
+    file: `${SERVER}/src/services/normalized-doc.ts`,
+    from: "    derivedTokenLine([title, ...input.targetValues], input.repoLabel),",
+    to: '    "",',
+    test: `${SERVER}/test/search-tokens.test.ts`,
+    because:
+      "'chore/remove-agent-internal-auth-bypass' indexes as one token, so a " +
+      "teammate searching «auth bypass» finds nothing and files the second " +
+      "copy of the work",
+  },
+  {
+    // The precision half of M12-rest, and the one that was MEASURED rather
+    // than reasoned: without this filter the golden corpus goes red on two
+    // probes, because one shared FTS token qualifies a context and `src`/`ts`
+    // are in every path on every repo.
+    label: "build layout is indexed as a topic",
+    file: `${SERVER}/src/services/search-tokens.ts`,
+    from: "        !PATH_SCAFFOLDING.has(part.toLowerCase()),",
+    to: "        true,",
+    test: `${SERVER}/test/search-tokens.test.ts`,
+    because:
+      "every context on the hub becomes a lexical match for any prompt that " +
+      "names any file, so an evidence-backed claim from an unrelated tree is " +
+      "injected as substance — measured on auth-jwt/pr_auth_self and " +
+      "ws-proposed/pr_ws_pointer",
+  },
+  {
+    // The second half of the same filter, added after a review measured four
+    // ordinary sentences pulling a teammate's root cause out of a restock bug.
+    label: "a program's layer names are indexed as topics",
+    file: `${SERVER}/src/services/search-tokens.ts`,
+    from: '  "services",',
+    to: '  "servicesx",',
+    test: `${SERVER}/test/search-tokens.test.ts`,
+    because:
+      "«restart the services» qualifies every context whose paths cross a " +
+      "services directory — which is most of them — and one qualified " +
+      "context is all an evidence-backed claim needs to be injected",
+  },
+  {
+    // Audit row M13's path half. `titleForDoc` blanks a title that IS a
+    // default branch; nothing filtered the token bag, which is built from
+    // every target VALUE.
+    label: "main and the repo label return through the token bag",
+    file: `${SERVER}/src/services/search-tokens.ts`,
+    from: "      if (seen.has(part) || lowered === label || DEFAULT_BRANCH_LABELS.has(lowered)) {",
+    to: "      if (seen.has(part)) {",
+    test: `${SERVER}/test/search-tokens.test.ts`,
+    because:
+      "every Go, Rust and Java repo has a main.go, main.rs or Main.java, so " +
+      "«rebase onto main» — the sentence M13 exists to neutralize — matches " +
+      "again through the path instead of through the title",
+  },
+  {
+    // Audit row M13, the other half of the same document. The label is on
+    // every context of the repo, so it discriminates nothing while matching
+    // any query that merely names the repo.
+    label: "the repo label is back in the FTS doc",
+    file: `${SERVER}/src/services/search-tokens.ts`,
+    from: "  const suffix = repoLabel === null ? null : ` @ ${repoLabel}`;",
+    to: "  const suffix = null;",
+    test: `${SERVER}/test/search-tokens.test.ts`,
+    because:
+      "every work context on the repo carries ` @ <repo>`, so the repo's own " +
+      "name becomes a lexical match against all of them — and a lexical match " +
+      "is what this product turns into an unasked teammate hint",
+  },
+  {
+    // Audit row M14, the class rule. A question IS its text, and four of the
+    // nine phrase branches are ordinary English inside one.
+    label: "a question body is blanked whole by the phrase filter",
+    file: `${CORE}/src/briefing/questions.ts`,
+    from: "  const body = spanRedactedUntrusted(question.body, MAX_QUESTION_BODY_LENGTH);",
+    to: "  const body = sanitizeUntrusted(question.body, MAX_QUESTION_BODY_LENGTH);",
+    test: `${CORE}/test/body-redaction.test.ts`,
+    because:
+      "a teammate is handed a redaction marker in place of the question they " +
+      "are being asked to answer, and it expires unanswered because neither " +
+      "of them can see what was lost",
+  },
+  {
+    // Audit row M14 on the one body surface with no author to warn: the
+    // summarizer wrote this text on the reader's own machine, so a redaction
+    // here is visible to nobody at all.
+    label: "the reader's own draft reminder is blanked whole",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const body = spanRedactedUntrusted(entry.body, MAX_TITLE_CHARS);",
+    to: "  const body = sanitizeUntrusted(entry.body, MAX_TITLE_CHARS);",
+    test: `${CORE}/test/body-redaction.test.ts`,
+    because:
+      "the promotion loop asks the agent to confirm, edit or discard an " +
+      "assertion it cannot read, so a correct finding is unpromotable from " +
+      "the surface built to promote it — and no note tells anybody why",
+  },
+  {
+    // The other end of the same loop.
+    label: "the promote echo blanks the claim it just promoted",
+    file: `${CORE}/src/mcp/tools/review-draft.ts`,
+    from: "${quotedBody(body, MAX_CLAIM_BODY_LENGTH)}",
+    to: "${`«${sanitizeUntrusted(body, MAX_CLAIM_BODY_LENGTH)}»`}",
+    test: `${CORE}/test/body-redaction.test.ts`,
+    because:
+      "the agent asks which assertion it promoted and is answered with a " +
+      "redaction marker, so it cannot tell a successful promotion from a " +
+      "destroyed one",
+  },
+  {
+    // The BODY-class primitive itself. Every other M14 entry swaps spellings
+    // at a CALL SITE or drops the call; none of them neuters the one line
+    // that does the removing, so the widened path could have stopped
+    // redacting anything while all of them stayed green.
+    label: "the span redaction removes nothing at all",
+    file: `${CORE}/src/briefing/sanitize.ts`,
+    from: "  const redacted = cleaned.replace(INJECTION_SPAN_PATTERN, REDACTED_SPAN);",
+    to: "  const redacted = cleaned;",
+    test: `${CORE}/test/body-redaction.test.ts`,
+    because:
+      "claim bodies, recorded root causes, questions, answers, hub refusals " +
+      "and conference findings stop having instruction-shaped spans removed " +
+      "at all, on exactly the surfaces M14 opened to them",
+  },
+  {
+    // Audit row M14's class rule, at its single definition. The two classes
+    // are one character apart in the source and opposite in effect, and the
+    // author-facing echoes reached the wrong one for a release.
+    label: "the body class collapses back into the label class",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  `«${spanRedactedUntrusted(raw, maxChars)}»`;",
+    to: "  `«${sanitizeUntrusted(raw, maxChars)}»`;",
+    test: `${CORE}/test/question-tools.test.ts`,
+    because:
+      "the author's own tool tells them «[redacted: title looked like an " +
+      "instruction]» on the line above a note promising the rest of the " +
+      "sentence arrives, so a question the teammate received intact is withdrawn",
+  },
+  {
+    // Audit row M14, the author's half. The redaction happens on somebody
+    // ELSE's machine, so nothing else in the product can tell the author.
+    label: "the author is never told their words render redacted",
+    file: `${CORE}/src/mcp/tools/publish-claim.ts`,
+    from: "  const note = redactionNote(claim.body);",
+    to: "  const note = null;",
+    test: `${CORE}/test/mcp-tools.test.ts`,
+    because:
+      "the author reads their own sentence back from the tool and believes it " +
+      "arrived, while every teammate reads it with a hole in it",
+  },
+  {
+    // The severest outcome of the safety pass, and the one the phrase filter
+    // never sees: nothing survives the clean, so every surface skips the item.
+    label: "text that reaches nobody is reported as arriving",
+    file: `${CORE}/src/briefing/sanitize.ts`,
+    from: "  if (cleaned.length === 0) {\n    // The severest outcome",
+    to: "  if (false) {\n    // The severest outcome",
+    test: `${CORE}/test/body-redaction.test.ts`,
+    because:
+      "a body of punctuation and quote marks alone cleans to \"\", every " +
+      "renderer reads that as skip-this-item, and the author is told nothing " +
+      "at all while teammates get no line",
+  },
+  {
+    // Audit row M15-rest at the hub. Grouping per developer one layer up
+    // cannot recover a developer the hub's own bound never sent.
+    label: "the listing bound is spent on one developer",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    .orderBy(sql`${contextRankPerDeveloper} ASC`, desc(contextActivityAt))",
+    to: "    .orderBy(desc(contextActivityAt))",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "a teammate running many short sessions fills all 200 rows and the " +
+      "colleague with one live investigation is absent from a section that " +
+      "looks complete — nothing counts a person who never arrived",
+  },
+  {
+    // Audit row M15-rest. A work context is created per SESSION, so one
+    // teammate's three worktrees filled a five-line section on their own.
+    label: "the briefing lists one line per context again",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  const groups = groupContextsByDeveloper(eligible);",
+    to: "  const groups = eligible.map((entry) => ({ shown: entry, otherTitles: 0 }));",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "one busy teammate takes the whole section and the teammate working " +
+      "somewhere else never reaches the briefing at all",
+  },
+  {
+    // The preference that stops the emptiest context speaking for a person:
+    // starting a session is what creates one, so the freshest is often the
+    // one that has done nothing.
+    label: "an empty session speaks for the teammate again",
+    file: `${CORE}/src/briefing/context-group.ts`,
+    from: "  if (candidate.hasRecordedWork !== current.hasRecordedWork) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/briefing-contexts.test.ts`,
+    because:
+      "the reader is pointed at a session that recorded nothing while the " +
+      "investigation beside it, with claims in it, is the one they needed",
+  },
+  {
+    // Non-negotiable 5, on the hottest listing in the product: every
+    // SessionStart reads it inside a 1000 ms budget.
+    label: "the briefing's listing loses its row bound",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "    .limit(limit);",
+    to: "    .limit(1_000_000);",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "a repo with ten thousand work contexts answers SessionStart with ten " +
+      "thousand rows for a section that renders five lines",
+  },
+  {
+    // The window has to run in the WHERE: a bound applied to an unwindowed
+    // ORDER BY hands back the freshest rows of ALL TIME.
+    label: "the listing ignores the window the reader asked for",
+    file: `${SERVER}/src/services/diagnosis.ts`,
+    from: "          : [gte(contextActivityAt, window.since)]),",
+    to: "          : []),",
+    test: `${SERVER}/test/work-context-listing.test.ts`,
+    because:
+      "the hub sends work far outside the reader's own render window and the " +
+      "bound is spent on rows the briefing was always going to drop",
+  },
+  {
+    // Audit rows M16 / A3-4. Measured on the conclusion corpus: at 20 tool
+    // results of 2 KB, 7 of 7 gate-positive slices lost their ask.
+    label: "a long turn reaches the model without its ask",
+    file: `${CONNECTOR}/src/summarizer/transcript.ts`,
+    from: '  const head = ask === undefined ? "" : `${ask}\\n${OMITTED_MARKER}\\n`;',
+    to: '  const head = "";',
+    test: `${CONNECTOR}/test/stop-gate.test.ts`,
+    because:
+      "the model is asked what a turn concluded while holding only its last " +
+      "tool output, and answers about the last thing it can see",
+  },
+  {
+    // The BLOCK half of the predicate, which is the fail-closed one: inside
+    // an entry that really is a user prompt, a block whose type is not `text`
+    // still renders and must still never be the question.
+    label: "any rendered block of a prompt can be the ask",
+    file: `${CONNECTOR}/src/summarizer/transcript.ts`,
+    from: "                isAsk: entryIsAsk && block.type === \"text\",",
+    to: "                isAsk: entryIsAsk,",
+    test: `${CONNECTOR}/test/stop-gate.test.ts`,
+    because:
+      "a tool_use block sitting in front of the developer's sentence is " +
+      "prepended as the turn's question instead of it, and the wire format's " +
+      "next block type would arrive open rather than closed",
+  },
+  {
+    // The ENTRY half of the same predicate, and the half that was missing:
+    // the module defines `isRealUserPrompt` for this exact question, and a
+    // per-block test disagrees with it on one shape.
+    label: "the ask finder stops asking whether the ENTRY was a prompt",
+    file: `${CONNECTOR}/src/summarizer/transcript.ts`,
+    from: "      const entryIsAsk = isRealUserPrompt(entry);",
+    to: "      const entryIsAsk = isUser;",
+    test: `${CONNECTOR}/test/stop-gate.test.ts`,
+    because:
+      "a user entry carrying a tool_result AND a text block — a tool denial, " +
+      "an interrupt, a hook's additionalContext — has its text promoted to " +
+      "the turn's question, on the branch documented as tail-only",
+  },
+  {
+    // The shape a tail-degraded slice produces most: the conversation
+    // continuing, filed as somebody's finding.
+    label: "a role-played plan is filed as a teammate-visible draft",
+    file: `${CONNECTOR}/src/summarizer/worker.ts`,
+    from: "  if (isRolePlayAnswer(draft.body)) {",
+    to: "  if (false) {",
+    test: `${CONNECTOR}/test/summarizer-worker.test.ts`,
+    because:
+      "a plan nobody has carried out is published as a derived claim on the " +
+      "author's tree, where teammates meet it as a finding",
+  },
+  {
+    // Every one of these refusals used to be a silent return.
+    label: "a refused answer is dropped in silence again",
+    file: `${CONNECTOR}/src/summarizer/worker.ts`,
+    from: "      withSummarizerRejection(fresh, reason),",
+    to: "      fresh,",
+    test: `${CONNECTOR}/test/summarizer-worker.test.ts`,
+    because:
+      "a fire whose answer nobody kept is indistinguishable from a runner " +
+      "that never spoke, and the quota was spent either way",
+  },
+  {
+    // Two different remedies: a dead runner and a model whose every answer is
+    // refused. Folding them sends the reader to the wrong check.
+    label: "doctor stops warning when every answer is refused",
+    file: `${CONNECTOR}/src/summarizer/cost.ts`,
+    from: "  cost.rejects >= DOCTOR_SUMMARIZER_REJECTED_WARN && cost.drafts === 0;",
+    to: "  false;",
+    test: "packages/cli/test/summarizer-cost.test.ts",
+    because:
+      "the developer keeps paying for answers nothing keeps, and the only " +
+      "line that would have said so reads PASS",
+  },
+  {
+    // Audit row A2-6. Nothing on this hub is ever MARKED solved: solvedness
+    // is derived per read from the tree itself, so there is no flag, nobody
+    // who set it, and no way to unset it.
+    label: "the hint says a diagnosis was marked solved",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return ` · from a diagnosis whose root cause was recorded ${age} ago`;",
+    to: "  return ` · from a diagnosis marked solved ${age} ago`;",
+    test: `${CORE}/test/hint-render.test.ts`,
+    because:
+      "the reader weighs the body as somebody's settled decision, and looks " +
+      "for the marking and the person behind it — neither exists",
+  },
+  {
+    // A NUL reaches a text column below every guard the hub writes, so the
+    // driver raises 22021 and `ingestOne` never returns. This removes the
+    // storability check and the whole batch is a 500 again.
+    label: "one unstorable byte takes a whole batch down again",
+    file: "packages/schema/src/envelope.ts",
+    from: "  const unstorable = unstorableTextPath(envelope);",
+    to: "  const unstorable = null;",
+    test: "packages/server/test/unstorable-text.test.ts",
+    because:
+      "one poisoned record loses its clean neighbours, the author reads " +
+      "only HTTP 500, and the spool never advances past it again",
   },
   {
     // Trial finding H5, the tautology itself. `recordSync` stamps the CAPTURE
@@ -2203,15 +4012,18 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
+ * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
- * PRINTS: packages/cli/test/doctor-global.test.ts 1
+ * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 1
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 1
  * PRINTS: packages/cli/test/doctor.test.ts 1
- * PRINTS: packages/cli/test/summarizer-cost.test.ts 2
+ * PRINTS: packages/cli/test/ghost-cost.test.ts 1
+ * PRINTS: packages/cli/test/solved-cli.test.ts 2
+ * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
  * PRINTS: packages/connector-acp/test/injector.test.ts 4
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
@@ -2220,54 +4032,91 @@ interface Outcome {
  * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
+ * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
+ * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
+ * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
+ * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 4
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
+ * PRINTS: packages/connector-claude/test/intent-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 1
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
- * PRINTS: packages/connector-claude/test/stop-gate.test.ts 1
+ * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
  * PRINTS: packages/connector-claude/test/stop-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
  * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
+ * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 3
  * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
  * PRINTS: packages/connector-core/test/absence-render.test.ts 1
+ * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
+ * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
+ * PRINTS: packages/connector-core/test/briefing-solved.test.ts 3
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
+ * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
+ * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
+ * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
- * PRINTS: packages/connector-core/test/hint-render.test.ts 1
- * PRINTS: packages/connector-core/test/hint-select.test.ts 5
+ * PRINTS: packages/connector-core/test/hint-render.test.ts 3
+ * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/latency.test.ts 3
+ * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 4
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 2
- * PRINTS: packages/connector-core/test/mcp-render.test.ts 1
+ * PRINTS: packages/connector-core/test/mcp-render.test.ts 6
+ * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
+ * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
+ * PRINTS: packages/connector-core/test/question-tools.test.ts 3
+ * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 2
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
+ * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 1
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 1
+ * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 3
- * PRINTS: packages/connector-cursor/test/injection.test.ts 2
+ * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
+ * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 1
- * PRINTS: packages/server/test/hints.test.ts 2
+ * PRINTS: packages/server/test/ghost-overlap.test.ts 4
+ * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/presence.test.ts 1
+ * PRINTS: packages/server/test/questions.test.ts 8
+ * PRINTS: packages/server/test/records.test.ts 1
+ * PRINTS: packages/server/test/search-filters.test.ts 10
+ * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
+ * PRINTS: packages/server/test/solved-counts.test.ts 1
+ * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
+ * PRINTS: packages/server/test/solved-fanout.test.ts 2
+ * PRINTS: packages/server/test/solved-intent.test.ts 4
+ * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
+ * PRINTS: packages/server/test/unstorable-text.test.ts 1
+ * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */
 const greenGuards = new Map<string, boolean>();
 

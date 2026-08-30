@@ -6,7 +6,10 @@ import {
   createTestHarness,
   fetchPresence,
   jsonRequest,
+  postRecords,
+  recordEnvelope,
   registerTestSession,
+  validWorkContextBody,
   VALID_SESSION_BODY,
 } from "./helpers.ts";
 
@@ -119,5 +122,85 @@ describe("GET /api/presence", () => {
     );
 
     expect(response.status).toBe(400);
+  });
+});
+describe("presence carries the session's intent (trial finding #16)", () => {
+  test("a presence row names the work context's intent, null when none", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    const before = await fetchPresence(harness, nick.apiKey);
+    expect((before.sessions[0] as unknown as { intent: unknown }).intent).toBeNull();
+
+    // Act: the session's work context gains an intent
+    await postRecords(
+      harness,
+      nick,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: {
+            summary: "Find why the refresh call 500s after the key rotation",
+            provenance: "declared",
+            confidence: 1,
+            capturedAt: "2026-07-24T09:02:00.000Z",
+          },
+        }),
+      ),
+    );
+    const after = await fetchPresence(harness, nick.apiKey);
+
+    // Assert
+    const intent = (after.sessions[0] as unknown as { intent: { summary: string } | null }).intent;
+    expect(intent?.summary).toBe("Find why the refresh call 500s after the key rotation");
+  });
+
+  /**
+   * Presence is ONE ROW PER SESSION, and nothing in the schema enforces one
+   * work context per session — `work_contexts.session_id` is a plain foreign
+   * key, and `POST /api/records` accepts any `wc_*` id whose session the
+   * caller owns. So a client that files a second work context must not be
+   * able to appear twice in every teammate's briefing and `crosscheck
+   * status`, nor to grow the presence response a row at a time.
+   */
+  test("a second work context on one session cannot duplicate its presence row", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    await registerTestSession(harness, nick.apiKey);
+    const older = {
+      summary: "Find why the refresh call 500s after the key rotation",
+      provenance: "declared",
+      confidence: 1,
+      capturedAt: "2026-07-24T09:02:00.000Z",
+    };
+    const newer = { ...older, summary: "Make verifyToken refetch the JWKS on an unknown kid" };
+    await postRecords(
+      harness,
+      nick,
+      recordEnvelope("work_context", validWorkContextBody({ intent: older })),
+    );
+
+    // Act: a SECOND work context for the same session, filed later
+    await postRecords(
+      harness,
+      nick,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          id: "wc_second",
+          intent: newer,
+          createdAt: "2026-07-24T10:00:00.000Z",
+        }),
+      ),
+    );
+    const presence = await fetchPresence(harness, nick.apiKey);
+
+    // Assert: still one row, and it speaks for the NEWEST context
+    expect(presence.sessions).toHaveLength(1);
+    const intent = (presence.sessions[0] as unknown as { intent: { summary: string } | null })
+      .intent;
+    expect(intent?.summary).toBe("Make verifyToken refetch the JWKS on an unknown kid");
   });
 });

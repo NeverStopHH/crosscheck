@@ -33,11 +33,13 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  INTENT_MAX_CHARS,
   MAX_DIAGNOSIS_CHARS,
   MAX_SEARCH_CHARS,
   QUOTED_DATA_NOTICE,
   REDACTED_TITLE,
 } from "../src/index.ts";
+import { sanitizeUntrusted } from "../src/briefing/sanitize.ts";
 import { renderDiagnosis, renderSearchResults } from "../src/mcp/render.ts";
 import type { SearchHit } from "../src/mcp/render.ts";
 import {
@@ -86,6 +88,8 @@ const renderSearchWith = (slot: McpSearchSlot, payload: string): string => {
  */
 const DIAGNOSIS_HEADER = /^crosscheck diagnosis for work context [\w.:-]*\. /;
 const CONTEXT_LINE = /^Work context «[^«»]*» · status .* · opened by .+$/;
+/** The session intent (trial finding #16): the sentence, and only it, framed. */
+const INTENT_LINE = /^Session intent(?: \(derived\))?: «[^«»]*»$/;
 const NO_CLAIMS_LINE = /^Claims: no claims recorded yet\.$/;
 const SECTION_HEADER =
   /^(Claims|Edges|Claims in other work contexts referenced here) \(\d+\):$/;
@@ -99,6 +103,7 @@ const NOTE_LINE = /^Note: .+$/;
 
 const DIAGNOSIS_LINE_SHAPES = [
   CONTEXT_LINE,
+  INTENT_LINE,
   NO_CLAIMS_LINE,
   SECTION_HEADER,
   CLAIM_LINE,
@@ -115,6 +120,8 @@ const SEARCH_METHOD_LINE =
   /^Hybrid (lexical )?match — exact file\/symbol\/fingerprint targets ranked above full-text /;
 const SEARCH_COUNT_LINE = /^Work contexts \(\d+\):$/;
 const SEARCH_LINE = /^- [\w.:-]* · .+ · \d+[smhd] ago · status .*: «[^«»]*»$/;
+/** A hit's intent on its own indented line (trial finding #16). */
+const SEARCH_INTENT_LINE = /^  intent(?: \(derived\))?: «[^«»]*»$/;
 const SEARCH_EMPTY_LINE = /^No work context on this repo matched that query\.$/;
 const SEARCH_UNUSABLE_LINE = /^Nothing was searched for: /;
 
@@ -123,6 +130,7 @@ const SEARCH_LINE_SHAPES = [
   SEARCH_METHOD_LINE,
   SEARCH_COUNT_LINE,
   SEARCH_LINE,
+  SEARCH_INTENT_LINE,
   SEARCH_EMPTY_LINE,
   SEARCH_UNUSABLE_LINE,
   MORE_LINE,
@@ -130,18 +138,38 @@ const SEARCH_LINE_SHAPES = [
 
 /**
  * The fixture's shape, which the containment counts below depend on: two claims,
- * one edge, one foreign reference — nine lines, and no payload may change that
- * number. A payload that split its own bullet in two, or invented a section,
- * moves it whether or not it also smuggled a character through.
+ * one edge, one foreign reference, and (since trial finding #16) the session
+ * intent on its own line — ten lines, and no payload may change that number. A
+ * payload that split its own bullet in two, or invented a section, moves it
+ * whether or not it also smuggled a character through.
  */
-const EXPECTED_DIAGNOSIS_LINES = 9;
+const EXPECTED_DIAGNOSIS_LINES = 10;
+
+/**
+ * The intent line is the one line a payload can legitimately REMOVE: an
+ * intent that sanitizes to nothing (a lone frame character, a run of
+ * invisibles) renders no line rather than an empty frame — briefing/intent.ts
+ * returns null, every surface skips it. So the containment count for the
+ * intent slots is one less exactly then, and the assertion says so instead
+ * of pretending a silent line is a split one.
+ */
+const expectedLinesFor = (
+  base: number,
+  isIntentSlot: boolean,
+  payload: string,
+): number =>
+  isIntentSlot && sanitizeUntrusted(payload, INTENT_MAX_CHARS).length === 0
+    ? base - 1
+    : base;
 /**
  * header + query + method + count + two work contexts.
  *
  * Six rather than five because the query moved onto a line of its own — see the
- * comment on `searchHeader` in mcp/render.ts, which this corpus is what found.
+ * comment on `searchHeader` in mcp/render.ts, which this corpus is what found;
+ * seven since the payload-carrying hit renders its intent on a second line
+ * (trial finding #16).
  */
-const EXPECTED_SEARCH_LINES = 6;
+const EXPECTED_SEARCH_LINES = 7;
 
 const assertDocument = (
   output: string,
@@ -203,7 +231,7 @@ describe("diagnosis invariants over the injection corpus", () => {
 
         // Assert
         expect(lines.length, `${entry.id}/${slot}`).toBe(
-          EXPECTED_DIAGNOSIS_LINES,
+          expectedLinesFor(EXPECTED_DIAGNOSIS_LINES, slot === "workContextIntent", entry.payload),
         );
       }
     }
@@ -236,7 +264,9 @@ describe("search invariants over the injection corpus", () => {
         const lines = renderSearchWith(slot, entry.payload).split("\n");
 
         // Assert
-        expect(lines.length, `${entry.id}/${slot}`).toBe(EXPECTED_SEARCH_LINES);
+        expect(lines.length, `${entry.id}/${slot}`).toBe(
+          expectedLinesFor(EXPECTED_SEARCH_LINES, slot === "searchIntent", entry.payload),
+        );
       }
     }
   });

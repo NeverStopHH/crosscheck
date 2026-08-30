@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
 import type { HubContext, HubResult } from "./client.ts";
 
@@ -38,6 +39,32 @@ export type { HubContext, HubResult } from "./client.ts";
  * (the bracket keeps this directive from counting itself.)
  */
 
+/**
+ * A work context's intent as the hub serves it (trial finding #16): the
+ * sentence and its provenance, which the renderers turn into a "(derived)"
+ * label by positive equality on "declared" — confidence is never printed for
+ * an intent. Tolerant PER FIELD at every row that carries one: a malformed
+ * intent drops the INTENT (`catch(undefined)`), never the row — the same
+ * posture as `baseCommit`, and the opposite of the hub's own ingest schema,
+ * which is strict because nobody but this connector writes the field.
+ */
+export const IntentEntrySchema = z.looseObject({
+  // No maximum on purpose, and every CONSUMER therefore owes one: dropping a
+  // whole intent because a hub sent a long one would cost an ordinary row its
+  // plan clause. The renderers cut at INTENT_MAX_CHARS (briefing/intent.ts)
+  // and the ghost worker at MAX_INTENT_SUMMARY_CHARS before this sentence
+  // reaches a model's stdin (connector-claude ghost/worker.ts).
+  summary: z.string().min(1),
+  provenance: z.string().min(1),
+  confidence: z.number().min(0).max(1).optional(),
+  capturedAt: z.string().optional(),
+});
+
+export type IntentEntry = z.infer<typeof IntentEntrySchema>;
+
+/** Null from the hub means "none"; anything unparseable reads the same way. */
+const tolerantIntent = IntentEntrySchema.nullable().optional().catch(undefined);
+
 export const PresenceEntrySchema = z.looseObject({
   sessionId: z.string().min(1),
   developerId: z.string().min(1),
@@ -48,6 +75,8 @@ export const PresenceEntrySchema = z.looseObject({
   status: z.string().min(1),
   lastHeartbeatAt: z.string().min(1),
   isSelf: z.boolean(),
+  /** The session's work-context intent; older hubs send none. */
+  intent: tolerantIntent,
 });
 
 export type PresenceEntry = z.infer<typeof PresenceEntrySchema>;
@@ -59,19 +88,23 @@ export const WorkContextEntrySchema = z.looseObject({
   developerName: z.string().min(1).optional(),
   title: z.string().min(1),
   status: z.string().min(1),
+  intent: tolerantIntent,
   /** Optional: an older hub omits both, and landed detection simply skips. */
   baseCommit: z.string().min(1).optional(),
   landedAt: z.string().nullable().optional(),
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
   /**
-   * Cheap aggregates `doctor` reads (trial findings #20 + M1): how many claims
-   * and deterministic targets the tree carries. Optional because an older hub
-   * omits them — and the surfaces that read them must say the targets are
-   * unknown rather than print a fabricated zero.
+   * Cheap aggregates the briefing and `doctor` read (audit row M15-rest,
+   * trial findings #20 + M1): how many claims and deterministic targets the
+   * tree carries. Both OPTIONAL and both `.catch(undefined)` — an older hub
+   * sends neither and a hostile one may send anything, and every surface
+   * that reads them must say UNKNOWN rather than print a fabricated zero.
+   * That is also the direction in which an empty session never outranks a
+   * real investigation.
    */
-  claimCount: z.number().int().min(0).optional(),
-  targetCount: z.number().int().min(0).optional(),
+  claimCount: z.number().int().min(0).optional().catch(undefined),
+  targetCount: z.number().int().min(0).optional().catch(undefined),
 });
 
 export type WorkContextEntry = z.infer<typeof WorkContextEntrySchema>;
@@ -307,17 +340,46 @@ export const getAbsences = (
 
 /**
  * One "solved before" match (VISION.md §1): a solved tree sharing a strong
- * target with current work on this repo. A POINTER on the wire by
- * construction — title, author, ages and the id to pull, never a claim body.
+ * target with current work on this repo — or, through the content-identity
+ * kind, on ANY repo of this hub, which is why the row names its own. A
+ * pointer plus, for the strongest match only, the one sentence the tree
+ * settled on: title, author, repo, ages, the id to pull, and `rootCause`
+ * (DESIGN.md §4 — evidence makes a claim trustworthy, content identity makes
+ * it relevant, and asserting it unasked needs both).
  */
 export const SolvedMatchEntrySchema = z.looseObject({
   workContextId: z.string().min(1),
   title: z.string().min(1),
   developerName: z.string().min(1).optional(),
+  /**
+   * The repo the SOLVED tree lives in — sent on every row, this repo's rows
+   * included. OPTIONAL because a hub too old to serve it only ever matched
+   * inside the asking repo, which is exactly what "absent" then means; a
+   * newer hub's cross-repo row always carries it, and a row that claims a
+   * repo the renderer cannot print is dropped rather than shown as local.
+   */
+  repo: z.string().min(1).optional(),
   solvedAt: z.string().min(1),
   landedAt: z.string().nullable().optional(),
   /** Open string: an unknown kind renders nothing (briefing/render.ts). */
   matchedTargetKind: z.string().min(1),
+  /**
+   * What the tree says the cause WAS. The hub sends it only for a
+   * fingerprint match; the renderer requires the same kind again before it
+   * prints anything, so a hub that sent a body beside a weaker match — a
+   * newer one with different rules, or a hostile one — buys no substance
+   * (briefing/render.ts `solvedRootCauseLine`).
+   */
+  rootCause: z.string().min(1).nullable().optional(),
+  /**
+   * The confidence of the claim `rootCause` quotes. OPTIONAL on the wire and
+   * REQUIRED at render: a body without its labels is substance this renderer
+   * will not vouch for, so the cause line is dropped and the pointer stays
+   * (briefing/render.ts `solvedRootCauseLine`). Optional because the field
+   * is younger than the type and a hub is allowed to be older; required at
+   * render because DESIGN.md §4's rule is about what reaches the reader.
+   */
+  rootCauseConfidence: z.number().min(0).max(1).nullable().optional(),
 });
 
 export type SolvedMatchEntry = z.infer<typeof SolvedMatchEntrySchema>;
@@ -334,12 +396,142 @@ export const getSolvedMatches = (
   });
 
 /**
+ * The precision counters for solved pointers (VISION.md §1): how many this
+ * reader was shown on this repo inside the hub's window, and how many they
+ * then pulled. A hub too old to know the parameter answers the ordinary
+ * listing, whose `counts` block is absent — read as zeros, which the
+ * surfaces print as "not measured" rather than as a bad score.
+ */
+export const SolvedMatchCountsSchema = z.looseObject({
+  shown: z.number().int().min(0).default(0),
+  pulled: z.number().int().min(0).default(0),
+  windowDays: z.number().int().min(1).default(30),
+});
+
+export type SolvedMatchCounts = z.infer<typeof SolvedMatchCountsSchema>;
+
+const EMPTY_SOLVED_COUNTS: SolvedMatchCounts = {
+  shown: 0,
+  pulled: 0,
+  windowDays: 30,
+};
+
+const SolvedCountsResponseSchema = z
+  .looseObject({ counts: z.unknown().optional() })
+  .transform((value): SolvedMatchCounts => {
+    const counts = SolvedMatchCountsSchema.safeParse(value.counts);
+    // A counts block this client cannot read is treated as no counts at all:
+    // a number the reader cannot trust is worse than no number.
+    return counts.success ? counts.data : EMPTY_SOLVED_COUNTS;
+  });
+
+export const getSolvedMatchCounts = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<SolvedMatchCounts>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/solved-matches${encodeRepo(repo)}&counts=1`,
+    schema: SolvedCountsResponseSchema,
+  });
+
+/**
+ * The failure-time probe: solved trees carrying THIS exact fingerprint,
+ * asked once, the moment a tool fails. Same route and same row shape as the
+ * listing above — which is exactly why an OLDER HUB IS A CORRECTNESS
+ * PROBLEM here and not only a wasted round trip: a hub that predates the
+ * parameter ignores it and answers the ordinary shared-target listing, so
+ * this call returns file- and intent-matched rows under a caller whose
+ * header asserts content identity.
+ *
+ * The seen-set does NOT save that case, and an earlier version of this
+ * comment claimed it did. It holds this session's delivered refs plus the
+ * handful of pointers the briefing showed — empty on a fresh session — so
+ * on the common path it drops nothing. What makes an old hub safe is the
+ * caller REQUIRING `matchedTargetKind` to be the kind its sentence names,
+ * in `selectAndRenderSolvedHint` and again in `renderSolvedHint`; against
+ * such a hub the probe then costs one wasted round trip and stays silent.
+ */
+export const getSolvedMatchesForFingerprint = (
+  ctx: HubContext,
+  repo: string,
+  fingerprint: string,
+): Promise<HubResult<readonly SolvedMatchEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/solved-matches${encodeRepo(repo)}&fingerprint=${encodeURIComponent(fingerprint)}`,
+    schema: tolerantList("matches", SolvedMatchEntrySchema),
+  });
+
+/**
  * One of the developer's OWN unreviewed Tier-1 drafts (DESIGN.md §3 Tier 1
  * promotion loop). The hub only ever serves the CALLER's drafts here, so a
  * body is self-directed text — still sanitized at render like everything
  * machine-derived. `captureMode`/`dedupCount` optional: an older shape stays
  * parseable and the renderer does not use them.
  */
+/**
+ * One value the reader's own session and a teammate's both carry (VISION.md
+ * §3). `kind` is an OPEN string: a hub that learns a new target kind must not
+ * cost this connector the whole row, and the renderer maps kinds it knows and
+ * prints nothing for the rest.
+ */
+export const GhostSharedTargetSchema = z.looseObject({
+  kind: z.string().min(1),
+  value: z.string().min(1),
+});
+
+export type GhostSharedTarget = z.infer<typeof GhostSharedTargetSchema>;
+
+/**
+ * One teammate whose LIVE plan overlaps the reader's own — a POINTER, like
+ * every other proactive teammate surface: who, since when, what is shared,
+ * what they say they are doing, and the id that reads their tree. No claim
+ * body is on this wire at all (DESIGN.md §4).
+ *
+ * THE SAMPLE IS FINGERPRINT-FIRST, and the renderer depends on it: the hub
+ * sorts `sharedTargets` by kind ascending before bounding it, and
+ * "error_fingerprint" sorts first, so a shared FAILURE is always inside the
+ * sample when one exists (packages/server/src/services/ghost-overlap.ts). The
+ * renderer therefore reads "did we hit the same failure" off the sample
+ * rather than needing a second count on the wire. A hub that stopped sorting
+ * would cost the line its strongest clause, which is what the render test
+ * pins.
+ */
+export const GhostCheckEntrySchema = z.looseObject({
+  workContextId: z.string().min(1),
+  title: z.string().min(1),
+  developerId: z.string().min(1),
+  developerName: z.string().min(1).optional(),
+  intent: tolerantIntent,
+  lastActiveAt: z.string().min(1),
+  sharedTargets: z.array(GhostSharedTargetSchema).catch([]),
+  sharedTargetCount: z.number().int().min(0).catch(0),
+  /**
+   * Distinct words of the READER'S OWN intent this context matched. Any
+   * positive value is already above the hub's floor — the hub never reports a
+   * count below it — so the renderer needs no copy of that constant.
+   */
+  intentTokenHits: z.number().int().min(0).catch(0),
+});
+
+export type GhostCheckEntry = z.infer<typeof GhostCheckEntrySchema>;
+
+/**
+ * One more parallel GET inside the SessionStart fetch block, and the call
+ * `set_intent` repeats the moment a plan is declared. Fail open: a hub too
+ * old to serve it renders no section.
+ */
+export const getGhostChecks = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<readonly GhostCheckEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/ghost-checks${encodeRepo(repo)}`,
+    schema: tolerantList("ghostChecks", GhostCheckEntrySchema),
+  });
+
 export const DraftEntrySchema = z.looseObject({
   id: z.string().min(1),
   workContextId: z.string().min(1),
@@ -419,6 +611,7 @@ export const DiagnosisWorkContextSchema = z.looseObject({
   sessionId: z.string().min(1),
   title: z.string().min(1),
   description: z.string().nullable().optional(),
+  intent: tolerantIntent,
   status: z.string().min(1),
   /** Optional: an older hub omits both — drift and the landed line simply skip. */
   baseCommit: z.string().min(1).optional(),
@@ -546,6 +739,7 @@ export const SearchResultEntrySchema = z.looseObject({
   developerName: z.string().min(1).optional(),
   title: z.string().min(1),
   status: z.string().min(1),
+  intent: tolerantIntent,
   createdAt: z.string().min(1),
   updatedAt: z.string().nullable().optional(),
   tier: z.string().min(1).optional(),
@@ -557,32 +751,81 @@ export const SearchResultEntrySchema = z.looseObject({
 
 export type SearchResultEntry = z.infer<typeof SearchResultEntrySchema>;
 
+/**
+ * WHICH FILTERS THE HUB APPLIED (roadmap R1), reported rather than assumed.
+ *
+ * The renderer states the filters in the answer, so it must state what RAN:
+ * the developer term was a name or an address the hub resolved, and `isSelf`
+ * is a comparison only the hub can make, because it is the side that
+ * authenticated the caller. Exactly the `vectorTierActive` discipline.
+ */
+export interface SearchFilters {
+  readonly developer: {
+    readonly name: string;
+    /**
+     * The hub sends it only when the display name is shared; null otherwise,
+     * and null from any hub too old to send it at all.
+     */
+    readonly email: string | null;
+    readonly isSelf: boolean;
+  } | null;
+  /** ISO instant the window starts at; null when no window was asked for. */
+  readonly since: string | null;
+}
+
 export interface SearchOutcome {
   readonly results: readonly SearchResultEntry[];
   /** True only when the hub's vector tier ran for this search (DESIGN.md §6). */
   readonly vectorTierActive: boolean;
+  /** Null from a hub that predates the filters — then nothing is claimed. */
+  readonly filters: SearchFilters | null;
 }
+
+const SearchFiltersSchema = z.looseObject({
+  developer: z
+    .looseObject({
+      name: z.string().min(1),
+      // Absent from a hub that predates it, and absent from a current hub
+      // whenever the name identifies one person — both mean "the name is all
+      // there is to say", which is what the renderer then prints.
+      email: z.string().min(1).nullable().default(null),
+      isSelf: z.boolean().default(false),
+    })
+    .nullable()
+    .default(null),
+  since: z.string().min(1).nullable().default(null),
+});
 
 const SearchResponseSchema = z
   .looseObject({
     results: z.array(z.unknown()).default([]),
     vectorTierActive: z.boolean().default(false),
+    // Tolerant like every other optional block: an older hub sends nothing,
+    // and a malformed one is treated as nothing — a filter line the reader
+    // cannot trust is worse than no filter line at all.
+    filters: z.unknown().optional(),
   })
-  .transform(
-    (value): SearchOutcome => ({
+  .transform((value): SearchOutcome => {
+    const filters = SearchFiltersSchema.safeParse(value.filters);
+    return {
       // Tolerant rows, silent drop — a listing, like tolerantList above; the
       // diagnosis path counts its drops because a TREE must not silently
       // shrink, a search result list is advisory by nature.
       results: parseRows(value.results, SearchResultEntrySchema).rows,
       vectorTierActive: value.vectorTierActive,
-    }),
-  );
+      filters: filters.success ? filters.data : null,
+    };
+  });
 
 export interface SearchRequest {
   readonly query: string;
   /** Relevance filter, never a boundary (DESIGN.md §2.1). */
   readonly repo: string;
   readonly limit: number;
+  /** A teammate's name or any email they are known by; resolved hub-side. */
+  readonly developer?: string | undefined;
+  /** `14d`, `72h` or an ISO date; parsed and bounded hub-side. */
+  readonly since?: string | undefined;
 }
 
 export const searchWorkContexts = (
@@ -594,6 +837,14 @@ export const searchWorkContexts = (
     repo: request.repo,
     limit: String(request.limit),
   });
+  // Sent only when asked for: an empty `developer=` would be a filter naming
+  // nobody, and the hub is right to refuse one.
+  if (request.developer !== undefined) {
+    params.set("developer", request.developer);
+  }
+  if (request.since !== undefined) {
+    params.set("since", request.since);
+  }
   return hubRequest(ctx, {
     method: "GET",
     path: `/api/search?${params.toString()}`,
@@ -630,6 +881,11 @@ const HintContextSchema = z.looseObject({
   id: z.string().min(1),
   title: z.string().min(1),
   status: z.string().min(1),
+  /**
+   * The context's intent (trial finding #16) — the pointer hint shows it, and
+   * the selector lets an intent-only context (no claims) become a pointer.
+   */
+  intent: tolerantIntent,
   /** Optional: an older hub sends no tier, and no tier means no precision. */
   tier: z.string().min(1).optional(),
   developerId: z.string().min(1),
@@ -685,10 +941,64 @@ export interface HintCandidatesRequest {
 }
 
 /** The UserPromptSubmit fast path's ONE bounded hub call (DESIGN.md §4). */
+/**
+ * One ANSWER to a question the READER asked (roadmap R2) — the only wire
+ * shape in this file that carries a claim body on the PROACTIVE path.
+ *
+ * That is the §4 solicited exception, and it is legible here: the hub only
+ * ever puts a row in this list when the caller is the question's AUTHOR, so
+ * the substance was asked for. Everything else about it is unchanged —
+ * author, provenance, age and status all travel, because a solicited answer
+ * still gets the trust labels every injected claim gets.
+ */
+export const AnsweredQuestionSchema = z.looseObject({
+  questionId: z.string().min(1),
+  questionBody: z.string().min(1),
+  claimId: z.string().min(1),
+  /** The tree the claim sits in — the argument get_diagnosis takes. Optional
+   * so an older hub that omits it simply loses the clause that names it. */
+  workContextId: z.string().min(1).optional(),
+  claimBody: z.string(),
+  claimKind: z.string().min(1),
+  claimStatus: z.string().min(1),
+  // Bounded like every rendered confidence: a forged `1e+30` is a credential,
+  // not a number, and the row is dropped rather than rendered.
+  confidence: z.number().min(0).max(1),
+  provenance: z.string().min(1),
+  answererDeveloperName: z.string().min(1),
+  answeredAt: z.string().min(1),
+});
+
+export type AnsweredQuestion = z.infer<typeof AnsweredQuestionSchema>;
+
+/** What the ONE bounded prompt-time call brings back (DESIGN.md §4). */
+export interface HintCandidatesResult {
+  readonly candidates: readonly HintContextCandidate[];
+  /**
+   * Answers to the caller's OWN questions that no session of theirs has been
+   * handed yet. Empty from any hub too old to send the field — the hint path
+   * then behaves exactly as it did before R2.
+   */
+  readonly answers: readonly AnsweredQuestion[];
+}
+
+const HintCandidatesResponseSchema = z
+  .looseObject({
+    candidates: z.array(z.unknown()).default([]),
+    answers: z.array(z.unknown()).default([]),
+  })
+  .transform(
+    (value): HintCandidatesResult => ({
+      // Tolerant rows, silent drop — a candidate list is advisory by nature.
+      candidates: parseRows(value.candidates, HintContextCandidateSchema).rows,
+      answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
+    }),
+  );
+
 export const getHintCandidates = (
   ctx: HubContext,
   request: HintCandidatesRequest,
-): Promise<HubResult<readonly HintContextCandidate[]>> => {
+): Promise<HubResult<HintCandidatesResult>> => {
   const params = new URLSearchParams({
     query: request.query,
     repo: request.repo,
@@ -696,9 +1006,165 @@ export const getHintCandidates = (
   return hubRequest(ctx, {
     method: "GET",
     path: `/api/hints/candidates?${params.toString()}`,
-    schema: tolerantList("candidates", HintContextCandidateSchema),
+    schema: HintCandidatesResponseSchema,
   });
 };
+
+/**
+ * One question addressed TO the reader — the briefing's "Questions for you"
+ * block and `list_open_questions`.
+ *
+ * A POINTER-SHAPED ROW with one deliberate exception: it carries the question
+ * BODY. A question is not a finding — it asserts nothing, it has no evidence
+ * and it cannot be cited — and a pointer saying "Ken asked you something"
+ * without the question would be unanswerable, which is the whole failure mode
+ * the channel exists to avoid. It is still untrusted PROSE and is framed at
+ * every surface that shows it.
+ */
+export const InboxQuestionSchema = z.looseObject({
+  id: z.string().min(1),
+  authorDeveloperId: z.string().min(1),
+  authorDeveloperName: z.string().min(1),
+  body: z.string().min(1),
+  workContextId: z.string().nullable().optional(),
+  workContextTitle: z.string().nullable().optional(),
+  createdAt: z.string().min(1),
+  expiresAt: z.string().min(1),
+});
+
+export type InboxQuestion = z.infer<typeof InboxQuestionSchema>;
+
+/** The counters `crosscheck status` prints and `doctor` warns on. */
+export const QuestionCountsSchema = z.looseObject({
+  openToMe: z.number().int().min(0).default(0),
+  oldestToMeAt: z.string().nullable().default(null),
+  /**
+   * Who asked that oldest one — BARE untrusted text, framed like every other
+   * teammate name at the surfaces that print it. Null from any hub too old to
+   * send it, which is why the doctor keeps its nameless wording as a fallback.
+   */
+  oldestToMeFrom: z.string().nullable().default(null),
+  asked: z.number().int().min(0).default(0),
+  askedAnswered: z.number().int().min(0).default(0),
+  askedExpired: z.number().int().min(0).default(0),
+});
+
+export type QuestionCounts = z.infer<typeof QuestionCountsSchema>;
+
+export interface QuestionsView {
+  readonly inbox: readonly InboxQuestion[];
+  readonly answers: readonly AnsweredQuestion[];
+  readonly counts: QuestionCounts;
+}
+
+const EMPTY_COUNTS: QuestionCounts = {
+  openToMe: 0,
+  oldestToMeAt: null,
+  oldestToMeFrom: null,
+  asked: 0,
+  askedAnswered: 0,
+  askedExpired: 0,
+};
+
+const QuestionsResponseSchema = z
+  .looseObject({
+    inbox: z.array(z.unknown()).default([]),
+    answers: z.array(z.unknown()).default([]),
+    counts: z.unknown().optional(),
+  })
+  .transform((value): QuestionsView => {
+    const counts = QuestionCountsSchema.safeParse(value.counts);
+    return {
+      inbox: parseRows(value.inbox, InboxQuestionSchema).rows,
+      answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
+      // A counts block this client cannot read is treated as no counts at
+      // all: a number the reader cannot trust is worse than no number.
+      counts: counts.success ? counts.data : EMPTY_COUNTS,
+    };
+  });
+
+/**
+ * The reader's own question state. `answerable` asks for the PULL shape —
+ * the same inbox WITHOUT the reader's mute filter, which is what
+ * `list_open_questions` wants: a mute covers unasked surfaces, and a pull is
+ * not one (DESIGN.md §2.1). The briefing asks without it. An older hub
+ * ignores the parameter and answers the muted shape, which is the safe
+ * direction to be wrong in: it shows less, never more.
+ */
+export const getQuestions = (
+  ctx: HubContext,
+  repo: string,
+  options: { readonly answerable?: boolean } = {},
+): Promise<HubResult<QuestionsView>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/questions${encodeRepo(repo)}${options.answerable === true ? "&answerable=1" : ""}`,
+    schema: QuestionsResponseSchema,
+  });
+
+export interface AskQuestionRequest {
+  readonly id: string;
+  readonly repo: string;
+  readonly sessionId: string;
+  readonly body: string;
+  /** A teammate's name or any address they are known by; resolved hub-side. */
+  readonly developer?: string | undefined;
+  readonly workContextId?: string | undefined;
+}
+
+const AskQuestionResponseSchema = z.looseObject({
+  question: z.looseObject({ id: z.string().min(1) }).optional(),
+  questionId: z.string().min(1).optional(),
+  /** Who the hub resolved the question to — BARE untrusted at the surface. */
+  targetDeveloperName: z.string().min(1).optional(),
+  duplicate: z.boolean().default(false),
+});
+
+export type AskQuestionResponse = z.infer<typeof AskQuestionResponseSchema>;
+
+export const askQuestion = (
+  ctx: HubContext,
+  request: AskQuestionRequest,
+): Promise<HubResult<AskQuestionResponse>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/questions",
+    schema: AskQuestionResponseSchema,
+    body: {
+      id: request.id,
+      repo: request.repo,
+      sessionId: request.sessionId,
+      body: request.body,
+      ...(request.developer === undefined
+        ? {}
+        : { developer: request.developer }),
+      ...(request.workContextId === undefined
+        ? {}
+        : { workContextId: request.workContextId }),
+    },
+  });
+
+const AnswerQuestionResponseSchema = z.looseObject({
+  questionId: z.string().min(1).optional(),
+  claimId: z.string().min(1).optional(),
+  duplicate: z.boolean().default(false),
+});
+
+export type AnswerQuestionResponse = z.infer<
+  typeof AnswerQuestionResponseSchema
+>;
+
+export const answerQuestion = (
+  ctx: HubContext,
+  questionId: string,
+  claim: unknown,
+): Promise<HubResult<AnswerQuestionResponse>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: `/api/questions/${encodeURIComponent(questionId)}/answers`,
+    schema: AnswerQuestionResponseSchema,
+    body: { claim },
+  });
 
 /**
  * GET /api/hints/stats (trial findings #20 + M1): delivered/pulled hints for a
@@ -1014,6 +1480,8 @@ export const TripwireSessionSchema = z.looseObject({
   lastHeartbeatAt: z.string().min(1),
   workContextId: z.string().min(1),
   workContextTitle: z.string().min(1),
+  /** The overlapping session's intent; the ask reason shows it. */
+  workContextIntent: tolerantIntent,
 });
 
 export type TripwireSession = z.infer<typeof TripwireSessionSchema>;
@@ -1031,3 +1499,133 @@ export const getTripwireSessions = (
     schema: tolerantList("sessions", TripwireSessionSchema),
   });
 };
+
+/**
+ * One declared claim as a conference reads it (VISION.md §2) — the trust
+ * labels an injected claim always carries, because the report prints them
+ * beside every body it quotes.
+ *
+ * `provenance` is REQUIRED, like the referee brief's and for the same reason:
+ * it is a trust label, and a hub that will not state it does not get the claim
+ * rendered as substance.
+ */
+export const ConferenceClaimSchema = z.looseObject({
+  id: z.string().min(1),
+  kind: z.string().min(1),
+  status: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+  provenance: z.string().min(1),
+  body: z.string(),
+  authorDeveloperName: z.string().min(1).optional(),
+  createdAt: z.string().min(1),
+});
+
+export type ConferenceClaim = z.infer<typeof ConferenceClaimSchema>;
+
+export const ConferenceContextSchema = z.looseObject({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  developerId: z.string().min(1),
+  developerName: z.string().min(1).optional(),
+  status: z.string().min(1).optional(),
+  intent: tolerantIntent,
+  lastActiveAt: z.string().min(1),
+  claims: z.array(ConferenceClaimSchema).catch([]),
+});
+
+export type ConferenceContext = z.infer<typeof ConferenceContextSchema>;
+
+export const ConferenceOverlapSchema = z.looseObject({
+  workContextIdA: z.string().min(1),
+  workContextIdB: z.string().min(1),
+  sharedTargets: z.array(GhostSharedTargetSchema).catch([]),
+  sharedTargetCount: z.number().int().min(0).catch(0),
+});
+
+export type ConferenceOverlap = z.infer<typeof ConferenceOverlapSchema>;
+
+/**
+ * An open question, as the conference sees it: WHO asked, WHO is waiting and
+ * since when. There is no `body` field on this schema and the hub sends none —
+ * a question is addressed to one person, and a report about the team is not
+ * that person (packages/server/src/services/conference.ts states the rule).
+ */
+export const ConferenceQuestionSchema = z.looseObject({
+  id: z.string().min(1),
+  authorDeveloperName: z.string().min(1),
+  targetDeveloperName: z.string().nullable().optional(),
+  workContextId: z.string().nullable().optional(),
+  workContextTitle: z.string().nullable().optional(),
+  createdAt: z.string().min(1),
+  /** True only when this reader may answer — the report prints the call off it. */
+  isForReader: z.boolean().catch(false),
+});
+
+export type ConferenceQuestion = z.infer<typeof ConferenceQuestionSchema>;
+
+export interface ConferenceCorpus {
+  readonly contexts: readonly ConferenceContext[];
+  readonly overlaps: readonly ConferenceOverlap[];
+  readonly questions: readonly ConferenceQuestion[];
+  readonly contradictions: readonly ContradictionEntry[];
+  readonly contextsInWindow: number;
+  readonly contextsInWindowCapped: boolean;
+  readonly windowDays: number;
+}
+
+/**
+ * Tolerant per LIST, never per document: a hub that garbles one context must
+ * cost the report that context, not the whole run — the posture every other
+ * listing here takes. The counters fall back to what the rows themselves say,
+ * so a report can never claim to have read less than it prints.
+ */
+const ConferenceResponseSchema = z
+  .looseObject({
+    conference: z.looseObject({
+      contexts: z.array(z.unknown()).default([]),
+      overlaps: z.array(z.unknown()).default([]),
+      questions: z.array(z.unknown()).default([]),
+      contradictions: z.array(z.unknown()).default([]),
+      contextsInWindow: z.number().int().min(0).catch(0),
+      contextsInWindowCapped: z.boolean().catch(false),
+      // The window this connector ASSUMES, never zero: the coverage line
+      // prints this number directly, and the sibling schema 110 lines up
+      // (workContexts) already takes this posture with `.default(30)`. A hub
+      // that will not state its window is described by our assumption; a
+      // report that claims to have read "the last 0 days" is describing a
+      // window nobody could have been active in.
+      windowDays: z.number().int().min(1).catch(CONFERENCE_ACTIVE_WINDOW_DAYS),
+    }),
+  })
+  .transform((value): ConferenceCorpus => {
+    const contexts = parseRows(value.conference.contexts, ConferenceContextSchema).rows;
+    return {
+      contexts,
+      overlaps: parseRows(value.conference.overlaps, ConferenceOverlapSchema).rows,
+      questions: parseRows(value.conference.questions, ConferenceQuestionSchema).rows,
+      contradictions: parseRows(value.conference.contradictions, ContradictionEntrySchema)
+        .rows,
+      contextsInWindow: Math.max(
+        value.conference.contextsInWindow,
+        contexts.length,
+      ),
+      contextsInWindowCapped: value.conference.contextsInWindowCapped,
+      windowDays: value.conference.windowDays,
+    };
+  });
+
+/**
+ * The conference's ONE hub call (VISION.md §2) — never from a hook, only from
+ * `crosscheck conference`. Fail open like every other reader here: a hub too
+ * old for the route, or an unreachable one, is a run that says so and spends
+ * nothing.
+ */
+export const getConference = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<ConferenceCorpus>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/conference${encodeRepo(repo)}`,
+    schema: ConferenceResponseSchema,
+  });

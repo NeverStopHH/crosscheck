@@ -429,15 +429,18 @@ describe("the drift watcher itself", () => {
       "every heading promoted one level",
       (hooks: string): string =>
         hooks.replace(/^### /gm, "#### ").replace(/^## /gm, "### "),
-      // Widened twice before it settled here: M17 read EVENTS from the
+      // Widened three times before it settled here: M17 read EVENTS from the
       // registered-hook list instead of a hand-kept literal (three events →
-      // six), and the #17/#18/#20 round added sections of its own. Every
+      // six), the #17/#18/#20 round added sections of its own, and the merge
+      // of the two put PostToolUseFailure — this branch's event, and its
+      // fixture section — into that same registered list, making seven. Every
       // section probe rides on the `### ` heading level, so each addition
       // brought observations a heading promotion can flip. RE-DERIVED by
       // running extractContract over the merged fixture, never adjusted by
       // hand — 16 before M17, 26 after it, 20 on the other side of the merge,
-      // and neither of those two is the answer for the union of both.
-      27,
+      // 22 and 27 as the two sides pinned it, and none of those is the answer
+      // for the union of both.
+      33,
     ],
   ] as const)(
     "KNOWN LIMIT: a formatting-only rewrite reports drift (%s)",

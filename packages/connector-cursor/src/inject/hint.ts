@@ -27,6 +27,7 @@
  * in connector-claude/test/hook-budget.test.ts.
  */
 import { selectAndRenderHint } from "@crosscheck/connector-core/flows/hint.ts";
+import { selectAndRenderSolvedHint } from "@crosscheck/connector-core/flows/solved-hint.ts";
 import { CURSOR_BACKGROUND_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";
 
 import type { CursorHookContext } from "../runner.ts";
@@ -60,6 +61,49 @@ export const attemptFailureHint = async (
     agentKind: ctx.config.agentKind,
     // EPHEMERAL query — never stored, never logged (see the header).
     prompt: failureText,
+    now: ctx.now(),
+  });
+  await recordInjectionOutcome(ctx.config.home, {
+    kind: "hint",
+    outcome: text.length === 0 ? "suppressed" : "delivered",
+    event: ctx.event,
+    ...(text.length === 0 ? { reason: "silence" } : {}),
+  });
+  return text;
+};
+
+/**
+ * The SOLVED hint for a failure whose fingerprint a diagnosis on this hub
+ * already settled (VISION.md §1) — tried BEFORE `attemptFailureHint`, and
+ * the precedence is the product decision:
+ *
+ *   - it is the stronger evidence. The text hint asks "does any teammate's
+ *     work look like these words"; this one asks "has THIS failure, byte for
+ *     byte after normalization, been diagnosed" — content identity, not
+ *     similarity;
+ *   - and it is the answer rather than a neighbour. A solved tree carries an
+ *     evidenced, vouched root cause; a candidate carries whatever somebody
+ *     is currently thinking.
+ *
+ * They share ONE hint slot: whichever delivers spends it (the shared
+ * check-and-set in hints/delivery.ts), so a caller runs the second only when
+ * the first stayed silent, and one failure can never produce two lines.
+ */
+export const attemptSolvedHint = async (
+  ctx: CursorHookContext,
+  fingerprint: string,
+): Promise<string> => {
+  if (ctx.config.agentKind === CURSOR_BACKGROUND_AGENT_KIND) {
+    return "";
+  }
+  const text = await selectAndRenderSolvedHint({
+    home: ctx.config.home,
+    repoKey: ctx.repoKey,
+    hub: ctx.hub,
+    hostSessionKey: ctx.hostSessionKey,
+    repoId: ctx.identity.repoId,
+    agentKind: ctx.config.agentKind,
+    fingerprint,
     now: ctx.now(),
   });
   await recordInjectionOutcome(ctx.config.home, {

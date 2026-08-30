@@ -6,6 +6,7 @@ import { WorkContextsQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { getDiagnosis, listWorkContextsByRepo } from "../services/diagnosis.ts";
 import { markHintsPulled } from "../services/hint-deliveries.ts";
+import { parseSinceWindow } from "../services/time-window.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 /**
@@ -28,18 +29,29 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    // An unparseable `since` is IGNORED rather than rejected: this endpoint is
-    // on the SessionStart path, and a connector sending a malformed window
-    // should get the (capped) list rather than a 400 that costs the briefing.
-    const sinceMs =
-      parsed.data.since === undefined ? Number.NaN : Date.parse(parsed.data.since);
+    // `since` is OPTIONAL here, unlike on /api/search where it is a filter the
+    // caller chose and a bad one has to be refused loudly. Here it is the
+    // reader's own render window (CONTEXT_MAX_AGE_DAYS), sent so the hub can
+    // bound its answer — so an unparseable one is IGNORED rather than
+    // rejected: this endpoint is on the SessionStart path, and a connector
+    // sending a malformed window should get the (capped) list rather than a
+    // 400 that costs the briefing.
+    //
+    // ONE parser, the search route's, so the two spellings cannot drift — and
+    // it is the parser that reads BOTH spellings this repo sends: a relative
+    // `14d` and the ISO instant the briefing derives from CONTEXT_MAX_AGE_DAYS.
+    const sinceTerm = c.req.query("since");
+    const window =
+      sinceTerm === undefined || sinceTerm.trim().length === 0
+        ? null
+        : parseSinceWindow(sinceTerm, deps.now());
 
     const workContexts = await listWorkContextsByRepo(
       deps.db,
       c.get("developer").id,
       parsed.data.repo,
       {
-        ...(Number.isNaN(sinceMs) ? {} : { since: new Date(sinceMs) }),
+        ...(window !== null && window.ok ? { since: window.since } : {}),
         limit: parsed.data.limit,
       },
     );

@@ -28,7 +28,7 @@ import {
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
-import { resolveWorkContextTitle } from "./session-start.ts";
+import { resolveSessionWorkContextTitle } from "./session-start.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const IMPLEMENTING_STATUS = "implementing";
@@ -75,10 +75,16 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
   // here and paid by the NEXT UserPromptSubmit through the same core flow
   // SessionStart uses (flows/briefing.ts `deliverDeferredBriefing`) — a
   // parent-workspace session loses nothing but the timing.
+  // The detached-aware title builder runs ONCE per session here (recovery
+  // happens once), never on the per-tool path — and the title is kept in
+  // state for the intent writers (trial finding #16).
+  const title = await resolveSessionWorkContextTitle(undefined, ctx.identity);
   const recovered: SessionState = {
     ...derived,
     developerId,
     briefingPending: true,
+    workContextTitle: title,
+    workContextStatus: IMPLEMENTING_STATUS,
   };
   // BEFORE the first append, always: `reap` infers "no writer left" from the
   // absence of a session state file, so a hook that appends without publishing
@@ -105,11 +111,7 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
         {
           workContextId: derived.workContextId,
           sessionId: derived.crosscheckSessionId,
-          title: resolveWorkContextTitle(
-            undefined,
-            ctx.identity.branch,
-            ctx.identity.repoId,
-          ),
+          title,
           status: IMPLEMENTING_STATUS,
         },
         {

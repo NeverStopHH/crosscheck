@@ -724,3 +724,174 @@ describe("POST /api/records", () => {
     expect(data?.results[0]?.id).toBe("edge_01");
   });
 });
+
+/**
+ * The intent MERGE rule (trial finding #16). Every registration re-sends a
+ * work_context record WITHOUT an intent — SessionStart on `--resume`, the
+ * mid-session recovery, Cursor's late registration — and on main that
+ * record wiped the stored intent to null (`body.intent ?? null`).
+ */
+const DERIVED_INTENT = {
+  summary: "Stop the login 500s after the JWKS key rotation",
+  provenance: "derived",
+  confidence: 0.4,
+  capturedAt: TEST_START_ISO,
+} as const;
+
+const DECLARED_INTENT = {
+  summary: "Make verifyToken refetch the JWKS on an unknown kid",
+  provenance: "declared",
+  confidence: 1,
+  capturedAt: TEST_START_ISO,
+} as const;
+
+const readStoredIntent = async (
+  harness: TestHarness,
+  developer: TestDeveloper,
+): Promise<Record<string, unknown> | null> => {
+  const response = await harness.app.request(
+    `/api/work-contexts/${WORK_CONTEXT_ID}/diagnosis`,
+    jsonRequest("GET", developer.apiKey),
+  );
+  const body = (await response.json()) as {
+    data: { workContext: { intent: Record<string, unknown> | null } };
+  };
+  return body.data.workContext.intent;
+};
+
+describe("work_context intent merge", () => {
+  test("a later work_context record WITHOUT an intent keeps the stored one", async () => {
+    // Arrange: registration, then the derived intent lands
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, recordEnvelope("work_context", validWorkContextBody()));
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ intent: DERIVED_INTENT })),
+    );
+
+    // Act: a SessionStart re-fire / recovery re-sends title + status only
+    const replay = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ status: "implementing" })),
+    );
+
+    // Assert: status replaced, intent NOT wiped
+    expect(replay.data?.accepted).toBe(1);
+    expect(await readStoredIntent(harness, developer)).toEqual(DERIVED_INTENT);
+  });
+
+  test("a derived intent never overwrites a declared one — a late spool replay cannot undo set_intent", async () => {
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ intent: DECLARED_INTENT })),
+    );
+
+    const late = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ intent: DERIVED_INTENT })),
+    );
+
+    // The record carried nothing new once merged: a duplicate, not a rejection
+    expect(late.data?.results[0]?.status).toBe("duplicate");
+    expect(await readStoredIntent(harness, developer)).toEqual(DECLARED_INTENT);
+  });
+
+  test("a declared intent replaces a derived one, and a re-declaration supersedes", async () => {
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ intent: DERIVED_INTENT })),
+    );
+
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ intent: DECLARED_INTENT })),
+    );
+    expect(await readStoredIntent(harness, developer)).toEqual(DECLARED_INTENT);
+
+    const redeclared = { ...DECLARED_INTENT, summary: "Rotate the JWKS cache every minute" };
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ intent: redeclared })),
+    );
+    expect(await readStoredIntent(harness, developer)).toEqual(redeclared);
+
+    // The MERGE half: a replay without an intent must not undo any of it.
+    // Without this line the test is green against a handler that simply
+    // overwrites the column with `body.intent ?? null` on every record.
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ status: "testing" })),
+    );
+    expect(await readStoredIntent(harness, developer)).toEqual(redeclared);
+  });
+
+  test("a derived intent is replaced by a newer derived one (re-derivation)", async () => {
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ intent: DERIVED_INTENT })),
+    );
+    const newer = { ...DERIVED_INTENT, summary: "Find why verifyToken rejects rotated keys" };
+
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ intent: newer })),
+    );
+
+    expect(await readStoredIntent(harness, developer)).toEqual(newer);
+
+    // The MERGE half, as above: a later intent-less record keeps the newer
+    // derived intent rather than wiping the column back to null.
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ status: "testing" })),
+    );
+    expect(await readStoredIntent(harness, developer)).toEqual(newer);
+  });
+
+  test("a derived intent above the cap rejects the record at the hub too", async () => {
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, recordEnvelope("work_context", validWorkContextBody()));
+
+    const posted = await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({ intent: { ...DERIVED_INTENT, confidence: 0.9 } }),
+      ),
+    );
+
+    expect(posted.data?.results[0]?.status).toBe("rejected");
+    expect(await readStoredIntent(harness, developer)).toBeNull();
+  });
+
+  test("the update event names the changed field, never the intent's text", async () => {
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, recordEnvelope("work_context", validWorkContextBody()));
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ intent: DERIVED_INTENT })),
+    );
+
+    const events = await fetchEvents(harness, developer.apiKey);
+    const updated = events.find((event) => event.kind === "work_context_updated");
+
+    expect(updated?.payload["changed"]).toEqual(["intent"]);
+    expect(JSON.stringify(updated?.payload)).not.toContain(DERIVED_INTENT.summary);
+  });
+});

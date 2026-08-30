@@ -37,10 +37,23 @@ export type { Claim, ClaimEdge } from "./claim.ts";
 
 export {
   AgentSessionSchema,
+  IntentSchema,
+  MAX_INTENT_SUMMARY_CHARS,
   TargetSchema,
   WorkContextSchema,
 } from "./session.ts";
-export type { AgentSession, Target, WorkContext } from "./session.ts";
+export type { AgentSession, Intent, Target, WorkContext } from "./session.ts";
+
+export {
+  MAX_QUESTION_BODY_LENGTH,
+  MAX_RECORD_ID_LENGTH,
+  QUESTION_STATUSES,
+  SAFE_ID_PATTERN,
+  QuestionAnswerSchema,
+  QuestionSchema,
+  QuestionStatusSchema,
+} from "./question.ts";
+export type { Question, QuestionAnswer, QuestionStatus } from "./question.ts";
 
 export {
   HINT_REF_KINDS,
@@ -82,3 +95,8 @@ export type {
   ParseRecordResult,
   Producer,
 } from "./envelope.ts";
+
+export {
+  describeUnstorableText,
+  unstorableTextPath,
+} from "./storable-text.ts";

@@ -1,7 +1,11 @@
 import { SessionStatusSchema } from "@crosscheck/schema";
 import { z } from "zod";
 
-import { EVENTS_DEFAULT_LIMIT, WORK_CONTEXT_LIST_MAX } from "../constants.ts";
+import {
+  EVENTS_DEFAULT_LIMIT,
+  SOLVED_MATCH_MAX_FINGERPRINT_CHARS,
+  WORK_CONTEXT_LIST_MAX,
+} from "../constants.ts";
 
 export const CreateDeveloperBodySchema = z.object({
   name: z.string().min(1),
@@ -28,6 +32,26 @@ export const PresenceQuerySchema = z.object({
 
 /** Same shape as the presence query — every repo-scoped list uses it. */
 export const RepoQuerySchema = PresenceQuerySchema;
+
+/**
+ * GET /api/solved-matches: the repo, plus the optional exact-fingerprint
+ * probe. Bounded rather than free text — the value goes straight into an
+ * indexed equality lookup, and an unbounded string parameter on a hot path
+ * is a shape this hub does not accept anywhere else (SEARCH_MAX_QUERY_CHARS
+ * is the same rule one surface over). Refused with 400, never clamped: a
+ * silently truncated fingerprint matches the wrong failure, or nothing, and
+ * the caller is told neither.
+ */
+export const SolvedMatchQuerySchema = z.object({
+  repo: z.string().min(1),
+  fingerprint: z
+    .string()
+    .min(1)
+    .max(SOLVED_MATCH_MAX_FINGERPRINT_CHARS)
+    .optional(),
+  /** `1` asks for the precision counters instead of the listing. */
+  counts: z.literal("1").optional(),
+});
 
 /** Oversized limits are capped in the events service, not rejected here. */
 export const EventsQuerySchema = z.object({

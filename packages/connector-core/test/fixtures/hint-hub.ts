@@ -8,6 +8,8 @@
 export interface HintHubCalls {
   candidates: number;
   tripwire: number;
+  /** GET /api/solved-matches — the failure-time fingerprint probe. */
+  solvedMatches: number;
   records: number;
   other: number;
 }
@@ -19,6 +21,8 @@ export interface HintHubLatency {
   tripwire: number;
   /** POST /api/records — holds a PostToolUse flush open (state-race tests). */
   records?: number;
+  /** GET /api/solved-matches — the failure-time probe's own latency dial. */
+  solvedMatches?: number;
 }
 
 export interface HintHub {
@@ -26,7 +30,15 @@ export interface HintHub {
   readonly calls: HintHubCalls;
   readonly latency: HintHubLatency;
   readonly setCandidates: (candidates: readonly unknown[]) => void;
+  /** Answers to the CALLER's own questions, on the same bounded response. */
+  readonly setAnswers: (answers: readonly unknown[]) => void;
   readonly setTripwireSessions: (sessions: readonly unknown[]) => void;
+  /** Rows GET /api/solved-matches answers with. */
+  readonly setSolvedMatches: (matches: readonly unknown[]) => void;
+  /** The `?fingerprint=` of the last solved-match probe, or null. */
+  readonly lastSolvedFingerprint: () => string | null;
+  /** Every record body POSTed to /api/records, in order — the delivery pins. */
+  readonly postedRecords: readonly Record<string, unknown>[];
   readonly stop: () => void;
 }
 
@@ -86,6 +98,83 @@ export const proposedOnlyCandidate = (): Record<string, unknown> => {
   };
 };
 
+/** The stated intent the tripwire ask and the intent-only pointer show. */
+export const CANDIDATE_INTENT =
+  "Stop the refresh 500s by refetching the JWKS on an unknown kid";
+
+const derivedCandidateIntent = (): Record<string, unknown> => ({
+  summary: CANDIDATE_INTENT,
+  provenance: "derived",
+  confidence: 0.4,
+  capturedAt: "2026-08-10T08:05:00.000Z",
+});
+
+/**
+ * The same context carrying ONLY a derived intent — no claims at all: the
+ * "same topic, different files" shape (trial finding #16) that used to be
+ * invisible, and now earns a pointer.
+ */
+export const intentOnlyCandidate = (): Record<string, unknown> => {
+  const base = rejectedApproachCandidate();
+  return {
+    ...base,
+    workContext: {
+      ...(base["workContext"] as Record<string, unknown>),
+      intent: derivedCandidateIntent(),
+    },
+    claims: [],
+  };
+};
+
+export const ANSWER_QUESTION_ID = "qn_backoff";
+export const ANSWER_CLAIM_ID = "clm_answer";
+export const ANSWER_BODY =
+  "Both share one token bucket, so the uploader starves the importer";
+export const ASKED_BODY = "Is the uploader's backoff shared with the importer?";
+
+/**
+ * One answer to a question the READER asked (roadmap R2). Deliberately a
+ * BARE PROPOSED OBSERVATION with no evidence — the shape the anchoring
+ * asymmetry keeps out of the proactive path. It is delivered as substance
+ * only because it was solicited, which is what the §4 exception says and what
+ * question-delivery.test.ts pins against the unsolicited control.
+ */
+export const ANSWER_CONTEXT_ID = "wc_nick_answer";
+
+export const answeredQuestion = (): Record<string, unknown> => ({
+  questionId: ANSWER_QUESTION_ID,
+  questionBody: ASKED_BODY,
+  claimId: ANSWER_CLAIM_ID,
+  workContextId: ANSWER_CONTEXT_ID,
+  claimBody: ANSWER_BODY,
+  claimKind: "observation",
+  claimStatus: "proposed",
+  confidence: 0.6,
+  provenance: "declared",
+  answererDeveloperName: "Nick",
+  answeredAt: "2026-08-19T09:00:00.000Z",
+});
+
+/**
+ * One solved tree carrying the failure's own fingerprint — a FINGERPRINT
+ * match, so it is the shape allowed to quote its recorded cause.
+ */
+export const SOLVED_CONTEXT_ID = "wc_solved_before";
+export const SOLVED_ROOT_CAUSE =
+  "The ingestion mapping drops the key id on rotation";
+
+export const solvedFingerprintMatch = (): Record<string, unknown> => ({
+  workContextId: SOLVED_CONTEXT_ID,
+  title: "Refresh 500s after key rotation",
+  developerName: "Nick",
+  repo: "github.com/acme/web",
+  solvedAt: "2026-03-12T08:00:00.000Z",
+  landedAt: null,
+  matchedTargetKind: "error_fingerprint",
+  rootCause: SOLVED_ROOT_CAUSE,
+  rootCauseConfidence: 0.9,
+});
+
 /**
  * The #19 shape: the same exact-tier context with NO claims but a file target
  * the prompt named — the case that used to yield silence (foreignCount 0) and
@@ -115,6 +204,7 @@ export const activeTeammateSession = (): Record<string, unknown> => ({
   lastHeartbeatAt: new Date().toISOString(),
   workContextId: CANDIDATE_CONTEXT_ID,
   workContextTitle: "Refresh 500s after key rotation",
+  workContextIntent: derivedCandidateIntent(),
 });
 
 const sleep = (ms: number): Promise<void> =>
@@ -127,9 +217,19 @@ const sleep = (ms: number): Promise<void> =>
 export const startHintHub = (
   latency: HintHubLatency = { candidates: 0, tripwire: 0 },
 ): HintHub => {
-  const calls: HintHubCalls = { candidates: 0, tripwire: 0, records: 0, other: 0 };
+  const calls: HintHubCalls = {
+    candidates: 0,
+    tripwire: 0,
+    solvedMatches: 0,
+    records: 0,
+    other: 0,
+  };
   let candidates: readonly unknown[] = [rejectedApproachCandidate()];
+  let answers: readonly unknown[] = [];
   let tripwireSessions: readonly unknown[] = [];
+  let solvedMatches: readonly unknown[] = [];
+  let lastSolvedFingerprint: string | null = null;
+  const postedRecords: Record<string, unknown>[] = [];
   const server = Bun.serve({
     port: 0,
     fetch: async (request) => {
@@ -137,7 +237,15 @@ export const startHintHub = (
       if (pathname === "/api/hints/candidates") {
         calls.candidates += 1;
         await sleep(latency.candidates);
-        return Response.json({ ok: true, data: { candidates } });
+        return Response.json({ ok: true, data: { candidates, answers } });
+      }
+      if (pathname === "/api/solved-matches") {
+        calls.solvedMatches += 1;
+        await sleep(latency.solvedMatches ?? 0);
+        lastSolvedFingerprint = new URL(request.url).searchParams.get(
+          "fingerprint",
+        );
+        return Response.json({ ok: true, data: { matches: solvedMatches } });
       }
       if (pathname === "/api/hints/tripwire") {
         calls.tripwire += 1;
@@ -147,6 +255,7 @@ export const startHintHub = (
       if (pathname === "/api/records") {
         const body = (await request.json()) as { records: readonly unknown[] };
         calls.records += 1;
+        postedRecords.push(...(body.records as Record<string, unknown>[]));
         await sleep(latency.records ?? 0);
         return Response.json({
           ok: true,
@@ -169,12 +278,20 @@ export const startHintHub = (
     url: `http://127.0.0.1:${server.port}`,
     calls,
     latency,
+    postedRecords,
     setCandidates: (next) => {
       candidates = next;
+    },
+    setAnswers: (next) => {
+      answers = next;
     },
     setTripwireSessions: (next) => {
       tripwireSessions = next;
     },
+    setSolvedMatches: (next) => {
+      solvedMatches = next;
+    },
+    lastSolvedFingerprint: () => lastSolvedFingerprint,
     stop: () => {
       server.stop(true);
     },

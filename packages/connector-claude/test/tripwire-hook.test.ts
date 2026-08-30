@@ -14,7 +14,11 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
-import { activeTeammateSession, startHintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
+import {
+  CANDIDATE_INTENT,
+  activeTeammateSession,
+  startHintHub,
+} from "../../connector-core/test/fixtures/hint-hub.ts";
 import type { HintHub } from "../../connector-core/test/fixtures/hint-hub.ts";
 
 const REPO_ID = "github.com/acme/api";
@@ -49,6 +53,7 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   briefingSolvedRefs: [],
+  probedFingerprints: [],
   foreignRepoDrops: 0,
   briefingPending: false,
   stopTurnCount: 0,
@@ -59,6 +64,25 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   summarizerDraftCount: 0,
   summarizerFailCount: 0,
   summarizerLastFailure: null,
+  summarizerRejectCount: 0,
+  summarizerLastRejection: null,
+  workContextTitle: null,
+  workContextStatus: null,
+  intentFireCount: 0,
+  intentNoneCount: 0,
+  intentSetCount: 0,
+  intentFailCount: 0,
+  intentLastFailure: null,
+  workContextIntent: null,
+  ghostPending: false,
+  ghostNoticeCount: 0,
+  ghostFireCount: 0,
+  ghostNoOverlapCount: 0,
+  ghostNoHubAnswerCount: 0,
+  ghostNoneCount: 0,
+  ghostDraftCount: 0,
+  ghostFailCount: 0,
+  ghostLastFailure: null,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -69,7 +93,6 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
   summarizerUnparsedCount: 0,
-  intentFireCount: 0,
 });
 
 interface Fixture {
@@ -253,5 +276,24 @@ describe("the tripwire stays silent everywhere else", () => {
       { ...env, CROSSCHECK_HUB_URL: DEAD_HUB_URL },
     );
     expect(stdout).toBe("");
+  });
+});
+
+describe("the ask names the overlapping session's intent (trial finding #16)", () => {
+  test("the reason carries the teammate's intent, labelled (derived), framed", async () => {
+    // Arrange: the hint-hub's active teammate session carries a derived intent
+    const { repo, env } = await fixture("intent");
+
+    // Act
+    const stdout = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
+
+    // Assert
+    const reason = decisionOf(stdout)?.permissionDecisionReason ?? "";
+    expect(reason).toContain(`Their intent (derived): «${CANDIDATE_INTENT}»`);
+    // Still the ladder's ceiling, still one framed value per line
+    expect(decisionOf(stdout)?.permissionDecision).toBe("ask");
+    for (const line of reason.split("\n")) {
+      expect(line.split("«").length - 1).toBeLessThanOrEqual(1);
+    }
   });
 });

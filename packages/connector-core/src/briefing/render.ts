@@ -8,25 +8,44 @@ import {
   MAX_CONTEXTS,
   MAX_CONTRADICTION_POINTERS,
   MAX_DRAFT_POINTERS,
+  MAX_BRIEFING_GHOST_CHARS,
+  MAX_GHOST_POINTERS,
+  MAX_QUESTION_POINTERS,
   MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
   MAX_TITLE_CHARS,
   MINUTES_PER_HOUR,
+  MONTHS_PER_YEAR,
   MS_PER_DAY,
   MS_PER_SECOND,
   SECONDS_PER_MINUTE,
   SOLVED_AGE_MONTHS_THRESHOLD_DAYS,
+  SOLVED_AGE_YEARS_THRESHOLD_MONTHS,
+  SOLVED_ROOT_CAUSE_MAX_CHARS,
 } from "../constants.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import type {
   ContradictionEntry,
   ContradictionSide,
   DraftEntry,
+  GhostCheckEntry,
+  InboxQuestion,
   PresenceEntry,
   SolvedMatchEntry,
   WorkContextEntry,
 } from "../http/hub.ts";
-import { bareUntrusted, safeId, sanitizeUntrusted } from "./sanitize.ts";
+import { groupContextsByDeveloper } from "./context-group.ts";
+import { fitEntries } from "./fit.ts";
+import { formatGhostLine, GHOST_SECTION_HEADER } from "./ghost.ts";
+import { formatIntentLabel, intentFragment, renderIntent } from "./intent.ts";
+import { fitQuestionEntries, formatQuestionEntry } from "./questions.ts";
+import type { IntentLabel } from "./intent.ts";
+import {
+  bareUntrusted,
+  safeId,
+  sanitizeUntrusted,
+  spanRedactedUntrusted,
+} from "./sanitize.ts";
 
 /**
  * Exported because the MCP tools put the SAME untrusted text into the same
@@ -91,6 +110,10 @@ export interface BriefingInput {
   readonly solvedMatches?: readonly SolvedMatchEntry[] | undefined;
   /** The reader's OWN unreviewed drafts; omitted or empty renders no section. */
   readonly drafts?: readonly DraftEntry[] | undefined;
+  /** Open questions addressed to the reader; omitted or empty renders none. */
+  readonly questions?: readonly InboxQuestion[] | undefined;
+  /** Teammates whose live plan overlaps the reader's; empty renders none. */
+  readonly ghostChecks?: readonly GhostCheckEntry[] | undefined;
 }
 
 interface Section {
@@ -107,6 +130,11 @@ export interface TeammateGroup {
   readonly status: string;
   readonly ageMs: number;
   readonly baseCommit: string | null;
+  /**
+   * The freshest session's intent (trial finding #16), already sanitized and
+   * labelled by briefing/intent.ts; null when that session carries none.
+   */
+  readonly intent: IntentLabel | null;
 }
 
 const toGroup = (entry: PresenceEntry, now: Date): TeammateGroup | null => {
@@ -123,10 +151,11 @@ const toGroup = (entry: PresenceEntry, now: Date): TeammateGroup | null => {
     status: sanitizeUntrusted(entry.status),
     ageMs,
     baseCommit: entry.baseCommit ?? null,
+    intent: formatIntentLabel(entry.intent),
   };
 };
 
-/** The freshest session speaks for the developer's status and base commit. */
+/** The freshest session speaks for the developer's status, base commit and intent. */
 const mergeGroup = (
   existing: TeammateGroup,
   candidate: TeammateGroup,
@@ -177,6 +206,80 @@ const driftLabel = (drift: CommitDrift | undefined): string => {
     : ` · base ${drift.ahead} ahead of yours`;
 };
 
+/**
+ * "Questions for you" — rendered FIRST, before presence, and that ordering is
+ * the one product decision in this file worth arguing about.
+ *
+ * Every other section is AMBIENT: who is around, what is being worked on,
+ * what conflicts, what was solved before. A question is ADDRESSED — a named
+ * teammate is waiting on this reader specifically, and it expires. When the
+ * briefing is full, the thing somebody is waiting for must not be the thing
+ * that gives way, and the intent lines added in feat/session-intent made the
+ * later sections tighter, not looser (DESIGN.md §4 budget note).
+ *
+ * Bounded TWICE: at MAX_QUESTION_POINTERS items, which equals the hub's
+ * per-target open budget so one teammate can fill this block exactly once,
+ * and at MAX_BRIEFING_QUESTION_CHARS characters. The second bound is not
+ * belt-and-braces — a question body may be 400 characters, and three of them
+ * measured at 2200 chars on their own, erasing presence and teammate
+ * contexts from a saturated briefing entirely.
+ */
+const renderQuestionSection = (input: BriefingInput): Section => {
+  const rendered = (input.questions ?? []).flatMap((question) => {
+    const entry = formatQuestionEntry(question, input.now);
+    return entry === null ? [] : [entry];
+  });
+  return {
+    header:
+      "Questions for you (answer_question replies; unanswered ones expire):",
+    lines: fitQuestionEntries(rendered.slice(0, MAX_QUESTION_POINTERS)),
+    total: rendered.length,
+  };
+};
+
+/**
+ * "Teammates working where you are" (VISION.md §3), placed
+ * AFTER presence and BEFORE the teammate work contexts.
+ *
+ * That is one position and two arguments. Presence orients — who is around at
+ * all — and a ghost line is a REFINEMENT of it: of the people you just read,
+ * this one is in your files. The teammate-contexts block below is the AMBIENT
+ * version of the same information, every open context on the repo with no
+ * reason attached, so when the briefing is full the ambient list must give way
+ * before the specific collision and not the other way round.
+ *
+ * It stays below "Questions for you", which is the ordering that block already
+ * argues for: an addressed question expires, a collision does not.
+ *
+ * NOTHING HERE BLOCKS ANYTHING, and the header says so out loud. This is a
+ * briefing line, not a permission decision — the reader chooses whether to
+ * open a tree or say something, and nothing in the pipeline waits on either.
+ *
+ * Bounded TWICE, exactly as the questions block above is: at
+ * MAX_GHOST_POINTERS items and at MAX_BRIEFING_GHOST_CHARS characters. The
+ * second bound is not belt-and-braces — a ghost line composes a name, an
+ * intent, up to three of the reader's own paths and an id, and the two
+ * longest ones the formatter can produce measured 983 characters, half the
+ * briefing, which the item bound admits and every section below pays for.
+ * Rows are dropped WHOLE (briefing/fit.ts) and the count of them is reported
+ * by appendSection's own "+N more not shown", because a truncated ghost line
+ * loses the `get_diagnosis` id that is its entire next action.
+ */
+const renderGhostSection = (input: BriefingInput): Section => {
+  const rendered = (input.ghostChecks ?? []).flatMap((entry) => {
+    const line = formatGhostLine(entry, input.now);
+    return line === null ? [] : [line];
+  });
+  return {
+    header: GHOST_SECTION_HEADER,
+    lines: fitEntries(
+      rendered.slice(0, MAX_GHOST_POINTERS),
+      MAX_BRIEFING_GHOST_CHARS,
+    ),
+    total: rendered.length,
+  };
+};
+
 const renderPresenceSection = (input: BriefingInput): Section => {
   const teammates = groupTeammates(input.presence, input.now);
   const lines = teammates.slice(0, MAX_TEAMMATES).map((group) => {
@@ -189,7 +292,11 @@ const renderPresenceSection = (input: BriefingInput): Section => {
       `status ${group.status}`,
       `heartbeat ${formatAge(group.ageMs)} ago`,
     ];
-    return `${facts.join(" · ")}${driftLabel(drift)}`;
+    // The intent LAST, after drift: the one framed value on a line that is
+    // otherwise bare, so the line still opens the frame at most once.
+    const intent =
+      group.intent === null ? "" : ` · ${intentFragment(group.intent)}`;
+    return `${facts.join(" · ")}${driftLabel(drift)}${intent}`;
   });
   return {
     header: "Teammate sessions active now:",
@@ -223,33 +330,75 @@ const authorNameFor = (
 const contextTimestamp = (context: WorkContextEntry): string =>
   context.updatedAt ?? context.createdAt;
 
+/**
+ * A session that DID something: it recorded a claim, or tier-0 capture logged
+ * a file it touched. Both counts are optional on the wire — an older hub sends
+ * neither — and an absent count reads as "no evidence of work", which is the
+ * direction that never promotes an empty shell over a real investigation.
+ */
+const hasRecordedWork = (context: WorkContextEntry): boolean =>
+  (context.claimCount ?? 0) > 0 || (context.targetCount ?? 0) > 0;
+
+/**
+ * ONE LINE PER TEAMMATE, not per context (audit row M15-rest). The grouping
+ * rules and why they are in their own module: briefing/context-group.ts.
+ *
+ * `total` counts TEAMMATES, so appendSection's "(+N more not shown)" says how
+ * many people did not fit rather than how many rows were folded — the folded
+ * ones are stated on the line that folded them, and counting them twice would
+ * be the same context reported as missing in two different places.
+ */
 const renderContextSection = (input: BriefingInput): Section => {
   const maxAgeMs = CONTEXT_MAX_AGE_DAYS * MS_PER_DAY;
   const eligible = input.workContexts
     .filter((context) => context.developerId !== input.selfDeveloperId)
-    .map((context) => ({
-      context,
-      ageMs: ageMsFrom(contextTimestamp(context), input.now),
-    }))
-    .filter(
-      (entry): entry is { context: WorkContextEntry; ageMs: number } =>
-        entry.ageMs !== null && entry.ageMs <= maxAgeMs,
-    )
-    .sort((left, right) => left.ageMs - right.ageMs);
+    .flatMap((context) => {
+      const ageMs = ageMsFrom(contextTimestamp(context), input.now);
+      const title = sanitizeUntrusted(context.title);
+      if (ageMs === null || ageMs > maxAgeMs || title.length === 0) {
+        return [];
+      }
+      return [
+        {
+          context,
+          developerId: context.developerId,
+          title,
+          ageMs,
+          hasRecordedWork: hasRecordedWork(context),
+        },
+      ];
+    });
+  const groups = groupContextsByDeveloper(eligible);
 
-  const lines = eligible.slice(0, MAX_CONTEXTS).flatMap(({ context, ageMs }) => {
-    const title = sanitizeUntrusted(context.title);
-    if (title.length === 0) {
-      return [];
-    }
-    const author = authorNameFor(context, input.presence);
-    const status = sanitizeUntrusted(context.status);
-    return [`- ${author}, ${formatAge(ageMs)} ago, status ${status}: «${title}»`];
+  const lines = groups.slice(0, MAX_CONTEXTS).map(({ shown, otherTitles }) => {
+    const author = authorNameFor(shown.context, input.presence);
+    const status = sanitizeUntrusted(shown.context.status);
+    // The fold count sits with the facts, BEFORE the frame: every line in this
+    // section carries exactly one « » pair and the title closes it, so a count
+    // appended after the quotes would be the second untrusted-looking thing on
+    // the line and would break the shape the injection corpus pins.
+    // The noun names what the number counts: DISTINCT other titles, not rows.
+    // It read ", N more contexts" while counting titles, so a teammate with
+    // the same branch open in three worktrees and one other investigation was
+    // announced as having two sessions running when he had four — and this
+    // number is the only quantitative fact on the line a reader uses to decide
+    // whether to interrupt him.
+    const more =
+      otherTitles === 0
+        ? ""
+        : `, ${String(otherTitles)} other piece${otherTitles === 1 ? "" : "s"} of work`;
+    // The intent on ITS OWN line (one « » pair per line, the framed-surface
+    // invariant), indented under the context it belongs to — but inside the
+    // SAME entry string, so appendSection's "+N more" arithmetic still counts
+    // one teammate per entry and the two lines are kept or dropped together.
+    const intent = renderIntent(shown.context.intent);
+    const entry = `- ${author}, ${formatAge(shown.ageMs)} ago, status ${status}${more}: «${shown.title}»`;
+    return intent === null ? entry : `${entry}\n  ${intent}`;
   });
   return {
     header: "Teammate work contexts on this repo:",
     lines,
-    total: eligible.length,
+    total: groups.length,
   };
 };
 
@@ -320,15 +469,29 @@ const renderContradictionSection = (input: BriefingInput): Section => {
 
 /**
  * A solved diagnosis's age, stated plainly (honest presentation): days up to
- * SOLVED_AGE_MONTHS_THRESHOLD_DAYS, months beyond — "diagnosed 5mo ago"
- * reads at a glance where "152d" asks the reader to divide.
+ * SOLVED_AGE_MONTHS_THRESHOLD_DAYS, months beyond, YEARS beyond
+ * SOLVED_AGE_YEARS_THRESHOLD_MONTHS — "diagnosed 5mo ago" reads at a glance
+ * where "152d" asks the reader to divide, and "5y 7mo ago" reads where
+ * "67mo" asks the same question one unit up. The year step is not
+ * hypothetical here: matches travel across repos and this surface has no
+ * maximum age, so a diagnosis from before a rewrite can lead a briefing line
+ * and the reader has to be able to see that at a glance.
  */
 export const formatSolvedAge = (ageMs: number): string => {
   const days = Math.floor(Math.max(0, ageMs) / MS_PER_DAY);
-  if (days >= SOLVED_AGE_MONTHS_THRESHOLD_DAYS) {
-    return `${String(Math.floor(days / DAYS_PER_MONTH_APPROX))}mo`;
+  if (days < SOLVED_AGE_MONTHS_THRESHOLD_DAYS) {
+    return formatAge(ageMs);
   }
-  return formatAge(ageMs);
+  const months = Math.floor(days / DAYS_PER_MONTH_APPROX);
+  if (months < SOLVED_AGE_YEARS_THRESHOLD_MONTHS) {
+    return `${String(months)}mo`;
+  }
+  const years = Math.floor(months / MONTHS_PER_YEAR);
+  const rest = months % MONTHS_PER_YEAR;
+  // A whole number of years says so rather than trailing an empty "0mo".
+  return rest === 0
+    ? `${String(years)}y`
+    : `${String(years)}y ${String(rest)}mo`;
 };
 
 /**
@@ -341,25 +504,159 @@ export const formatSolvedAge = (ageMs: number): string => {
 const SOLVED_MATCH_KIND_LABELS: Readonly<Record<string, string>> = {
   error_fingerprint: "shared error fingerprint with current work",
   file: "shared file with current work",
+  // Not a target kind at all (the hub's own note on `matchedTargetKind`
+  // says so): the tree's searchable text overlaps the sentence THIS reader's
+  // session declared about its work. The label says "topic" and names whose
+  // sentence it was, because a reader who mistook it for identity would
+  // trust it the way they trust a fingerprint.
+  session_intent: "shared topic with your session intent",
 };
 
 /**
- * One solved-before pointer: author, plain age, what is shared, and the pull
- * call — NEVER a claim body (§4 pointer discipline; an old answer asserted
- * at SessionStart would anchor). Exported because the SessionStart hook must
- * know which pointers the emitted briefing actually shows, to record their
- * deliveries — two spellings of this line would drift.
+ * Where the solved tree lives, when that is NOT the repo being briefed
+ * (VISION.md §1 across repos): ` · in <repo>` — BARE class, like every other
+ * short ·-separated field, because a repo id is hub text and must not be
+ * able to mint a field of its own.
+ *
+ * Three cases, and the difference between them is the honesty of the line.
+ * Absent (an older hub, which only ever matched locally) and equal both mean
+ * HERE, and here needs no words. Present, different, and unprintable after
+ * the BARE strip is the fourth case, handled by the caller: a match the
+ * reader would read as local when it is not, so the line is dropped instead.
+ */
+const solvedRepoFragment = (
+  entry: SolvedMatchEntry,
+  repoId: string,
+): string | null => {
+  if (entry.repo === undefined || entry.repo === repoId) {
+    return "";
+  }
+  const label = bareUntrusted(entry.repo);
+  return label.length === 0 ? null : ` · in ${label}`;
+};
+
+/**
+ * THE ONE MATCH KIND THAT MAY CARRY SUBSTANCE, named here rather than
+ * inferred: a fingerprint is derived from the failure TEXT, so it says the
+ * old answer is about the NEW problem. A shared file says only that two
+ * people were near each other, and "solved before, here is the cause" on
+ * that evidence is the anchoring §4 forbids. Checked again on this side,
+ * although the hub already applies it, because a body arriving beside a
+ * weaker kind is exactly what a newer hub with different rules — or a
+ * hostile one — would send.
+ *
+ * EXPORTED because the failure-time hint needs the same constant for a
+ * second reason: its header ASSERTS this kind ("the same error fingerprint
+ * as a diagnosis that was solved"), so a row of any other kind makes the
+ * header a false sentence about the row printed under it — the same defect
+ * one level up from the body this constant was written for. One name, two
+ * checks (hints/render.ts, flows/solved-hint.ts); a second literal would be
+ * a second rule.
+ */
+export const SUBSTANCE_MATCH_KIND = "error_fingerprint";
+
+/**
+ * Decimals on a printed confidence — the same 2 the MCP renderer, the hint
+ * renderer and the two hub pages each state locally. A local constant per
+ * render module is this codebase's shape for it; importing it from
+ * mcp/render.ts would make that file and this one a cycle (it already
+ * imports from here), which is the same reason the id alphabet moved into
+ * briefing/sanitize.ts.
+ */
+const CONFIDENCE_DECIMALS = 2;
+
+/**
+ * The recorded cause as its OWN indented line, or "" — one « » pair per
+ * line is the rule, and the pointer line already spends its pair on the
+ * title. Same shape as the work-context intent line.
+ *
+ * IT CARRIES ITS TRUST LABELS, like every other substance this product
+ * injects (renderClaimHint, renderAnswerHint, DESIGN.md §4: an injected
+ * claim states author, kind, status, confidence, provenance and age). The
+ * author and the age are already on the pointer line above; what is left,
+ * and what VARIES, is the certainty. Nothing upstream is a floor on it — the
+ * solved predicate gates on status, provenance, evidence and disputes, and
+ * `publish_claim` takes the number from the model — so "It is probably X,
+ * but I never confirmed it" at 0.05 is a legal, honest `likely_root_cause`
+ * and makes its tree SOLVED on every surface. Unlabelled, this line would
+ * present that hedge to a reader who never asked as the settled answer, on
+ * the one surface where relevance is itself an inference.
+ *
+ * `provenance declared` is a constant rather than a variable — the solved
+ * predicate admits no other — and it is printed anyway, because the reader
+ * weighing this line should not have to know which labels were filtered out
+ * upstream to read the ones that are here.
+ *
+ * A cause arriving WITHOUT its confidence (a hub older than the field) keeps
+ * its pointer and loses its body: substance without labels is not something
+ * this renderer vouches for, and `get_diagnosis <id>` is one call away.
+ *
+ * SPAN REDACTION, NOT WHOLE-BODY BLANKING — the second surface to opt in,
+ * after the hub refusal, and for the identical reason stated there: this
+ * body IS the answer. `sanitizeUntrusted` returns REDACTED_TITLE as soon as
+ * one of nine phrase branches matches anywhere, and four of them are
+ * everyday English inside a real diagnosis — `override`, `you must`,
+ * `disregard`, `act as`. A cause reading "the per-repo override is applied
+ * before the default is read" then rendered as
+ * «[redacted: title looked like an instruction]», which is wrong twice: the
+ * redacted thing is a cause and not a title, and it did not look like an
+ * instruction, it contained one common word. Everything else is unchanged
+ * and still runs first — NFKC, separators, invisibles, the characters the
+ * renderer owns, the 200-character bound, the « » frame and the quoted-data
+ * notice — so this narrows ONE branch on ONE surface. Telling the AUTHOR
+ * their body would render redacted is the other half of audit row M14 and is
+ * not here.
+ */
+const solvedRootCauseLine = (entry: SolvedMatchEntry): string => {
+  if (
+    entry.matchedTargetKind !== SUBSTANCE_MATCH_KIND ||
+    entry.rootCause === null ||
+    entry.rootCause === undefined ||
+    entry.rootCauseConfidence === null ||
+    entry.rootCauseConfidence === undefined
+  ) {
+    return "";
+  }
+  const body = spanRedactedUntrusted(
+    entry.rootCause,
+    SOLVED_ROOT_CAUSE_MAX_CHARS,
+  );
+  if (body.length === 0) {
+    return "";
+  }
+  // U+00B7-separated facts then a colon then the framed body — the
+  // renderClaimHint shape, so one reader reads both the same way.
+  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · provenance declared`;
+  return `\n  root cause · ${labels}: «${body}»`;
+};
+
+/**
+ * One solved-before entry: author, plain age, WHERE it was solved, what is
+ * shared, and the pull call — NEVER a claim body (§4 pointer discipline; an
+ * old answer asserted at SessionStart would anchor). Exported because the
+ * SessionStart hook must know which pointers the emitted briefing actually
+ * shows, to record their deliveries — two spellings of this line would drift.
+ * `repoId` is the repo being briefed, and it is a parameter rather than a
+ * field because "elsewhere" is a fact about the READER, not about the row.
  * Null = a row this renderer will not vouch for.
  */
 export const formatSolvedLine = (
   entry: SolvedMatchEntry,
   now: Date,
+  repoId: string,
 ): string | null => {
   const id = safeId(entry.workContextId);
   const title = sanitizeUntrusted(entry.title);
   const ageMs = ageMsFrom(entry.solvedAt, now);
   const kindLabel = SOLVED_MATCH_KIND_LABELS[entry.matchedTargetKind];
-  if (id.length === 0 || title.length === 0 || ageMs === null || kindLabel === undefined) {
+  const repoFragment = solvedRepoFragment(entry, repoId);
+  if (
+    id.length === 0 ||
+    title.length === 0 ||
+    ageMs === null ||
+    kindLabel === undefined ||
+    repoFragment === null
+  ) {
     return null;
   }
   const name =
@@ -378,23 +675,34 @@ export const formatSolvedLine = (
   // U+00B7-separated like the absence and MCP lines — the structure the BARE
   // class strips from names, so an author cannot mint a field. A comma-shaped
   // line here would be structure no character class covers.
-  return `- ${author} · diagnosed ${formatSolvedAge(ageMs)} ago${landedFact} · ${kindLabel}: «${title}» · get_diagnosis ${id}`;
+  return (
+    `- ${author} · diagnosed ${formatSolvedAge(ageMs)} ago${landedFact}${repoFragment} · ${kindLabel}: «${title}» · get_diagnosis ${id}` +
+    solvedRootCauseLine(entry)
+  );
 };
 
 /**
  * Placed AFTER contradictions and BEFORE absences: an old confirmed answer
  * is a lead for the work at hand — worth more than ambient absence context,
  * less urgent than a live conflict between open theories. With the briefing
- * full, solved pointers give way before conflicts do, and absences give way
- * before solved pointers.
+ * full, solved entries give way before conflicts do, and absences give way
+ * before solved entries.
+ *
+ * An entry is ONE unit of one or two lines, and the fitter therefore drops
+ * it WHOLE: a pointer line whose cause was cut off half-way would quote a
+ * diagnosis it had truncated into a different sentence.
  */
 const renderSolvedSection = (input: BriefingInput): Section => {
   const rendered = (input.solvedMatches ?? []).flatMap((entry) => {
-    const line = formatSolvedLine(entry, input.now);
+    const line = formatSolvedLine(entry, input.now, input.repoId);
     return line === null ? [] : [line];
   });
   return {
-    header: "Previously solved on this repo (get_diagnosis reads the tree):",
+    // NOT "on this repo" any more: the hub matches fingerprints across every
+    // repo it holds, and a header that promised local rows while the lines
+    // pointed elsewhere would be the wrong half of the sentence to trust.
+    // Where a match lives is stated per line, and only when it is elsewhere.
+    header: "Previously solved (get_diagnosis reads the tree):",
     lines: rendered.slice(0, MAX_SOLVED_POINTERS),
     total: rendered.length,
   };
@@ -408,13 +716,23 @@ const renderSolvedSection = (input: BriefingInput): Section => {
  * confirm/edit/discard, which needs the assertion in front of the agent.
  * Still sanitized and capped: it is LLM-derived text, not trusted bytes.
  * Null = a row this renderer will not vouch for.
+ *
+ * BODY class, by the same rule the rest of M14 follows, and this surface is
+ * the one where the LABEL trade ("a name that reads like an instruction is
+ * worth losing") is most obviously wrong: the sentence IS the decision. It is
+ * also the only body surface with no author to warn — `redactionNote` is
+ * addressed to the person who typed the words, and nobody typed these; the
+ * Stop-hook summarizer wrote them on this machine. Blanked whole, the loop
+ * asked the agent to confirm, edit or discard a hole, and the same body then
+ * came back blanked a second time from review_draft's own confirmation while
+ * get_diagnosis showed it span-redacted — one text, three renderings.
  */
 export const formatDraftLine = (
   entry: DraftEntry,
   now: Date,
 ): string | null => {
   const id = safeId(entry.id);
-  const body = sanitizeUntrusted(entry.body, MAX_TITLE_CHARS);
+  const body = spanRedactedUntrusted(entry.body, MAX_TITLE_CHARS);
   const ageMs = ageMsFrom(entry.createdAt, now);
   if (id.length === 0 || body.length === 0 || ageMs === null) {
     return null;
@@ -581,7 +899,9 @@ const appendSection = (
  */
 export const renderBriefing = (input: BriefingInput): string => {
   const sections = [
+    renderQuestionSection(input),
     renderPresenceSection(input),
+    renderGhostSection(input),
     renderContextSection(input),
     renderContradictionSection(input),
     renderSolvedSection(input),

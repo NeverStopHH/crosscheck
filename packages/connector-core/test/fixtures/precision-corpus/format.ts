@@ -57,11 +57,23 @@ const SessionSchema = z.strictObject({
   ended: z.boolean().default(false),
 });
 
+/**
+ * The session intent (trial finding #16), as the real wire carries it; a
+ * scenario may plant one to probe the "same topic, different files" pointer.
+ */
+const IntentSchema = z.strictObject({
+  summary: nonEmpty,
+  provenance: z.enum(["declared", "derived"]),
+  confidence: z.number().min(0).max(1),
+  capturedAt: isoTime,
+});
+
 const WorkContextSchema = z.strictObject({
   id: nonEmpty,
   sessionId: nonEmpty,
   title: nonEmpty,
   description: z.string().optional(),
+  intent: IntentSchema.optional(),
   status: nonEmpty,
   createdAt: isoTime,
   updatedAt: isoTime.optional(),

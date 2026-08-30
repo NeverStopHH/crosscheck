@@ -167,6 +167,22 @@ describe("anchoring asymmetry (DESIGN.md §4, structural)", () => {
     expect(select([context({}, [unknownProvenance])]).kind).toBe("pointer");
   });
 
+  test("a claim whose body the hub withheld is a pointer, never «»", () => {
+    // The client half of audit row V2-X4. The hub now sends `body: ""` for
+    // every claim nobody vouched for, and a hub that withholds MORE than that
+    // is exactly the hub this connector must survive: without this rule the
+    // reader is handed a fully trust-labelled sentence with empty quotes
+    // where the finding should be, which reads as "Nick found nothing".
+    const withheld = claim({ id: "clm_withheld", body: "" });
+    expect(select([context({}, [withheld])]).kind).toBe("pointer");
+    // The control on the same arrangement: the identical claim WITH its body
+    // is substance, so this is a rule about the empty body and not about the
+    // fixture failing some other gate.
+    expect(select([context({}, [claim({ id: "clm_withheld" })])]).kind).toBe(
+      "claim",
+    );
+  });
+
   test("substance in a lower-ranked context beats a pointer in a higher one", () => {
     const weak = context(
       { id: "wc_weak" },
@@ -360,5 +376,85 @@ describe("solved trees compose with the anchoring rules (VISION.md §1)", () => 
       ]),
     ]);
     expect(selection.kind).toBe("pointer");
+  });
+});
+
+describe("intent-only contexts pointer (trial finding #16: same topic, different files)", () => {
+  const INTENT = {
+    summary: "Stop the refresh 500s by refetching the JWKS on an unknown kid",
+    provenance: "derived",
+    confidence: 0.4,
+    capturedAt: "2026-08-10T08:00:00.000Z",
+  } as const;
+
+  test("a context with an intent and NO claims is a pointer with claimCount 0", () => {
+    const selection = select([context({ intent: INTENT }, [])]);
+
+    expect(selection.kind).toBe("pointer");
+    if (selection.kind === "pointer") {
+      expect(selection.claimCount).toBe(0);
+      expect(selection.context.workContext.id).toBe("wc_1");
+    }
+    // Structural: no body can leak through an intent-only pointer either
+    expect("claim" in selection).toBe(false);
+  });
+
+  test("a context with neither claims nor intent stays silent — the intent is the difference", () => {
+    // The control FIRST: the identical claimless context becomes a pointer
+    // only because it carries an intent. Without this line the three
+    // silences below pass on any tree that never points at a claimless
+    // context at all, which is what the tree before this feature did.
+    expect(select([context({ intent: INTENT }, [])]).kind).toBe("pointer");
+
+    expect(select([context({}, [])]).kind).toBe("silence");
+    expect(select([context({ intent: null }, [])]).kind).toBe("silence");
+    expect(select([context({ intent: { ...INTENT, summary: "" } }, [])]).kind).toBe("silence");
+  });
+
+  test("an intent-only context already pointed at this session is not re-pointed", () => {
+    const candidates = [context({ intent: INTENT }, [])];
+
+    // Control: unseen, it IS a pointer — so the silence below is the
+    // seen-set doing its job, not the selector ignoring intents.
+    expect(select(candidates).kind).toBe("pointer");
+    expect(select(candidates, { seenRefIds: ["wc_1"] }).kind).toBe("silence");
+  });
+
+  test("substance in another context still beats an intent-only pointer", () => {
+    const intentOnly = context({ id: "wc_intent", intent: INTENT }, []);
+
+    // Control: alone, the intent-only context is a pointer
+    expect(select([intentOnly]).kind).toBe("pointer");
+
+    const selection = select([
+      intentOnly,
+      context({ id: "wc_claims" }, [claim({ workContextId: "wc_claims" })]),
+    ]);
+
+    expect(selection.kind).toBe("claim");
+  });
+
+  test("the tier floor applies to intent-only contexts as well", () => {
+    // Control: in the exact tier the same context is a pointer
+    expect(select([context({ tier: "exact", intent: INTENT }, [])]).kind).toBe("pointer");
+    expect(select([context({ tier: "recency", intent: INTENT }, [])]).kind).toBe("silence");
+  });
+
+  /**
+   * Self-exclusion, client side. Before intents, the pointer pass could only
+   * fire on a context with a FOREIGN claim, so a candidate list that leaked
+   * the reader's own context could not produce a pointer. `hasIntent` removed
+   * that accident, and the hub's own exclusion (services/hints.ts) became the
+   * single point of failure — so the selector states the rule itself.
+   */
+  test("my own intent-only context is never pointed back at me", () => {
+    const mine = context({ id: "wc_mine", developerId: SELF_DEVELOPER, intent: INTENT }, []);
+
+    expect(select([mine]).kind).toBe("silence");
+    // The same context owned by a teammate IS a pointer — the developer id
+    // is what decides, not the shape of the context.
+    expect(select([{ ...mine, workContext: { ...mine.workContext, developerId: TEAMMATE } }]).kind).toBe(
+      "pointer",
+    );
   });
 });

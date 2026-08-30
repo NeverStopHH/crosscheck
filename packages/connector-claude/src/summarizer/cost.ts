@@ -19,30 +19,11 @@
  */
 import {
   DOCTOR_SUMMARIZER_MOSTLY_DEAD_MIN_FIRES,
+  DOCTOR_SUMMARIZER_REJECTED_WARN,
   DOCTOR_SUMMARIZER_SILENT_FIRES_WARN,
-  DOCTOR_ZOMBIE_STATE_WARN_HOURS,
-  MINUTES_PER_HOUR,
-  MS_PER_SECOND,
-  SECONDS_PER_MINUTE,
-  STATUS_MAX_SESSION_STATES,
 } from "@crosscheck/connector-core/constants.ts";
-import { readJsonOrNull } from "@crosscheck/connector-core/config/paths.ts";
-import {
-  listSessionStateFiles,
-  sessionSilentForMs,
-} from "@crosscheck/connector-core/state/session-scan.ts";
-import { SessionStateSchema } from "@crosscheck/connector-core/state/session-state.ts";
-
-const MS_PER_HOUR = MS_PER_SECOND * SECONDS_PER_MINUTE * MINUTES_PER_HOUR;
-/**
- * A state file whose session has not said anything for this long is not a
- * live session (state/session-scan.ts says why the age is measured from the
- * heartbeat or the start). ONE HOUR, the same threshold `doctor`'s zombie
- * count uses, and the number that made the trial's histogram readable: of 100
- * state files, 25 were under an hour old and 75 were not, while the cost line
- * called all fifty it happened to read "live sessions".
- */
-const STALE_STATE_MS = DOCTOR_ZOMBIE_STATE_WARN_HOURS * MS_PER_HOUR;
+import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
+import type { LiveSessionScan } from "@crosscheck/connector-core/state/session-state.ts";
 
 export interface SummarizerCost {
   /** Live sessions of this repo+hub that were counted. */
@@ -61,12 +42,6 @@ export interface SummarizerCost {
    * into `fails` — that one is the runner's.
    */
   readonly unparsedAnswers: number;
-  /**
-   * Intent captures booked this session. Written by `feat/session-intent`,
-   * default 0 here, and printed only when > 0 — so that branch needs no edit
-   * on this side.
-   */
-  readonly intentFires: number;
   readonly fires: number;
   /** Fires the model answered NONE — the gate's noise, counted honestly. */
   readonly nones: number;
@@ -81,6 +56,17 @@ export interface SummarizerCost {
    */
   readonly fails: number;
   readonly lastFailure: string | null;
+  /**
+   * Answers the CONNECTOR refused (audit rows M16 / A3-4) — role-play, an
+   * echo of the prompt or of a delivered hint, a credential-shaped body, a
+   * claim the wire contract would not take — with one booked reason in the
+   * connector's own words (summarizer/reject.ts never quotes the body). The
+   * model SPOKE for each of these and the quota was spent, so they are not
+   * runner failures; before they were booked they were invisible, and a
+   * session whose every answer was refused read as a dead runner.
+   */
+  readonly rejects: number;
+  readonly lastRejection: string | null;
   /** Rough figure at ~4 chars/token — an estimate, never a bill. */
   readonly estimatedTokens: number;
 }
@@ -92,87 +78,67 @@ const NO_COST: SummarizerCost = {
   staleSkipped: 0,
   parseFailures: 0,
   unparsedAnswers: 0,
-  intentFires: 0,
   fires: 0,
   nones: 0,
   drafts: 0,
   fails: 0,
   lastFailure: null,
+  rejects: 0,
+  lastRejection: null,
   estimatedTokens: 0,
 };
 
 /**
- * Bounded scan of the session-state directory — NEWEST FIRST, and the bound
- * is now visible in the output.
+ * Sums a scan the CALLER has already taken. `crosscheck status` and `doctor`
+ * print three model-cost lines and used to walk the session directory three
+ * times over; the scan is `readLiveSessionStates` and lives in one place
+ * (state/session-state.ts states why).
  *
- * It used to be `readdir` → `.filter(.json)` → `.slice(0, 50)`, in bun's OS
- * order, which is neither alphabetical nor chronological. On the trial machine
- * that read an arbitrary 50 of 100 files and printed
+ * THE BOUND IS VISIBLE IN THE OUTPUT, and that is the other half of the same
+ * fix. The old scan was `readdir` → `.filter(.json)` → `.slice(0, 50)` in
+ * bun's OS order, which is neither alphabetical nor chronological: on the
+ * trial machine it read an arbitrary 50 of 100 files and printed
  * `13 runs (1 NONE, 2 drafts) … across 50 live sessions` while the full set
- * said 27 runs, 3 NONEs and 3 drafts — and the line said "50 live sessions"
- * rather than "50 of 100", so nothing in it suggested a subset had been read.
- * `isSummarizerSilentlyDead` then judged the same arbitrary subset, which is
- * how a WARN could fire or stay silent depending on where the scan landed.
- *
- * Three changes, in order: sort by mtime before the bound (state/session-scan.ts),
- * skip files whose session stopped heartbeating instead of calling them live,
- * and carry `filesSeen`/`filesRead`/`staleSkipped` so the line can say what it
- * looked at.
+ * said 27 runs, 3 NONEs and 3 drafts — and nothing in the line suggested a
+ * subset had been read. `isSummarizerSilentlyDead` then judged that same
+ * arbitrary subset, which is how a WARN could fire or stay silent depending
+ * on where the scan landed. The scan now sorts by mtime before the bound,
+ * skips files whose session stopped heartbeating, and hands back
+ * `filesSeen`/`filesRead`/`staleSkipped` so this line can say what it saw.
  */
+export const summarizeSummarizerCost = (
+  scan: LiveSessionScan,
+): SummarizerCost =>
+  scan.states.reduce<SummarizerCost>(
+    (total, state) => ({
+      ...total,
+      sessions: total.sessions + 1,
+      fires: total.fires + state.summarizerFireCount,
+      nones: total.nones + state.summarizerNoneCount,
+      drafts: total.drafts + state.summarizerDraftCount,
+      fails: total.fails + state.summarizerFailCount,
+      lastFailure: state.summarizerLastFailure ?? total.lastFailure,
+      rejects: total.rejects + state.summarizerRejectCount,
+      lastRejection: state.summarizerLastRejection ?? total.lastRejection,
+      unparsedAnswers: total.unparsedAnswers + state.summarizerUnparsedCount,
+      estimatedTokens: total.estimatedTokens + state.summarizerEstimatedTokens,
+    }),
+    {
+      ...NO_COST,
+      filesSeen: scan.filesSeen,
+      filesRead: scan.filesRead,
+      staleSkipped: scan.staleSkipped,
+      parseFailures: scan.parseFailures,
+    },
+  );
+
+/** Scan-and-sum, for a caller that wants only this one figure. */
 export const readSummarizerCost = async (
   home: string,
   hubUrl: string,
   repoId: string,
-  now: Date = new Date(),
-): Promise<SummarizerCost> => {
-  const listing = await listSessionStateFiles(home, STATUS_MAX_SESSION_STATES);
-  if (listing.filesSeen === 0) {
-    return NO_COST;
-  }
-  const parsed = await Promise.all(
-    listing.files.map(async (file) => ({
-      // The mtime travels with the parse: a session's silence is measured off
-      // its own file's last write as well as its heartbeat (session-scan.ts).
-      mtimeMs: file.mtimeMs,
-      result: SessionStateSchema.safeParse(await readJsonOrNull(file.path)),
-    })),
-  );
-  const base: SummarizerCost = {
-    ...NO_COST,
-    filesSeen: listing.filesSeen,
-    filesRead: listing.files.length,
-    parseFailures: parsed.filter((entry) => !entry.result.success).length,
-  };
-  return parsed
-    .flatMap((entry) =>
-      entry.result.success
-        ? [{ mtimeMs: entry.mtimeMs, state: entry.result.data }]
-        : [],
-    )
-    .filter(({ state }) => state.hubUrl === hubUrl && state.repoId === repoId)
-    .reduce<SummarizerCost>((total, { mtimeMs, state }) => {
-      const ageMs = sessionSilentForMs(state, mtimeMs, now.getTime());
-      if (ageMs !== null && ageMs > STALE_STATE_MS) {
-        // Counted, not dropped: "3 stale skipped" is the number that would
-        // have told the trial its cost line was reading corpses.
-        return { ...total, staleSkipped: total.staleSkipped + 1 };
-      }
-      return {
-        ...total,
-        sessions: total.sessions + 1,
-        fires: total.fires + state.summarizerFireCount,
-        nones: total.nones + state.summarizerNoneCount,
-        drafts: total.drafts + state.summarizerDraftCount,
-        fails: total.fails + state.summarizerFailCount,
-        unparsedAnswers:
-          total.unparsedAnswers + state.summarizerUnparsedCount,
-        intentFires: total.intentFires + state.intentFireCount,
-        lastFailure: state.summarizerLastFailure ?? total.lastFailure,
-        estimatedTokens:
-          total.estimatedTokens + state.summarizerEstimatedTokens,
-      };
-    }, base);
-};
+): Promise<SummarizerCost> =>
+  summarizeSummarizerCost(await readLiveSessionStates(home, hubUrl, repoId));
 
 /**
  * The one spelling of the cost fact both CLI surfaces print. The outcome
@@ -210,27 +176,33 @@ export const formatSummarizerCost = (cost: SummarizerCost): string => {
     cost.lastFailure === null ? "" : `: last "${cost.lastFailure}"`;
   const failsPart =
     cost.fails === 0 ? "" : `, ${String(cost.fails)} failed${lastPart}`;
+  // Rejections read AFTER the failures and say why, because "2 refused" with
+  // no reason is the number nobody can act on — and the reason is this
+  // connector's own sentence, never the model's body.
+  const rejectedReason =
+    cost.lastRejection === null ? "" : `: last "${cost.lastRejection}"`;
+  const rejectsPart =
+    cost.rejects === 0
+      ? ""
+      : `, ${String(cost.rejects)} refused${rejectedReason}`;
   const unparsedPart =
     cost.unparsedAnswers === 0
       ? ""
       : `, ${String(cost.unparsedAnswers)} unparsed`;
-  // Printed only when non-zero, so `feat/session-intent` can start writing
-  // the counter without this line changing for anyone who is not.
-  const intentPart =
-    cost.intentFires === 0
-      ? ""
-      : `, ${String(cost.intentFires)} intent captures`;
   return (
-    `${String(cost.fires)} runs (${String(cost.nones)} NONE, ${draftsPart}${failsPart}${unparsedPart}${intentPart}), ` +
+    `${String(cost.fires)} runs (${String(cost.nones)} NONE, ${draftsPart}${failsPart}${unparsedPart}${rejectsPart}), ` +
     `~${String(cost.estimatedTokens)} tokens (estimate) across ${scanPart(cost)}`
   );
 };
 
 /**
  * The finding-#14 signature: fires enough to mean it, and not ONE answered
- * — no NONE, no draft. Below DOCTOR_SUMMARIZER_SILENT_FIRES_WARN a lost
- * run is noise; from it on, fail-open has become silently dead and doctor
- * must say so (DESIGN.md §4: "fail-open must never mean silently dead").
+ * — no NONE, no draft, and (since audit row A3-4) no refused answer either.
+ * A refusal means the model SPOKE, so counting it as silence would send the
+ * reader to the runner probe for a problem that is in the answers. Below
+ * DOCTOR_SUMMARIZER_SILENT_FIRES_WARN a lost run is noise; from it on,
+ * fail-open has become silently dead and doctor must say so (DESIGN.md §4:
+ * "fail-open must never mean silently dead").
  */
 export const isSummarizerSilentlyDead = (cost: SummarizerCost): boolean => {
   if (cost.fires < DOCTOR_SUMMARIZER_SILENT_FIRES_WARN) {
@@ -258,3 +230,17 @@ export const isSummarizerSilentlyDead = (cost: SummarizerCost): boolean => {
     cost.nones + cost.drafts + cost.fails + cost.unparsedAnswers;
   return cost.fires - explained > cost.fires / 2;
 };
+
+/**
+ * The other half of the same honesty rule (audit rows M16 / A3-4): the model
+ * is answering, every answer is being refused, and nothing has landed. That
+ * is a different remedy from a broken runner — a drifted prompt, a slice that
+ * lost its ask, a model that role-plays — so it gets its own WARN with the
+ * booked reason rather than being folded into "none answered".
+ *
+ * One refusal is ordinary: a session whose only draft echoed a teammate hint
+ * is the echo guard working. From DOCTOR_SUMMARIZER_REJECTED_WARN on, with
+ * nothing kept, the developer is paying for answers nobody uses.
+ */
+export const isSummarizerAlwaysRejected = (cost: SummarizerCost): boolean =>
+  cost.rejects >= DOCTOR_SUMMARIZER_REJECTED_WARN && cost.drafts === 0;

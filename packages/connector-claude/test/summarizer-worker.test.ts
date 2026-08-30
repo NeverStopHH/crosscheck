@@ -16,7 +16,12 @@ import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 
 import { SUMMARIZER_DEFAULT_CONFIDENCE } from "@crosscheck/connector-core/constants.ts";
 import { parseSummarizerOutput } from "../src/summarizer/parse.ts";
-import { resolveSummarizerArgv, runSummarizer } from "../src/summarizer/runner.ts";
+import {
+  resolveSummarizerArgv,
+  runSummarizer,
+  SUMMARIZER_PROMPT,
+} from "../src/summarizer/runner.ts";
+import { isPromptEcho, isRolePlayAnswer } from "../src/summarizer/reject.ts";
 import { runSummarizeWorker } from "../src/summarizer/worker.ts";
 import { recordDeliveredHintHash } from "@crosscheck/connector-core/hints/delivered-store.ts";
 import { hintBodyHash } from "@crosscheck/connector-core/hints/echo.ts";
@@ -296,6 +301,159 @@ const spooledClaims = async (
   (await readSpoolLines(fixture.home, fixture.key))
     .map((line) => JSON.parse(line) as SpooledClaim)
     .filter((record) => record.kind === "claim");
+
+describe("role-play and prompt echoes are refused, and booked (M16 / A3-4)", () => {
+  test("a plan for the next step never becomes a teammate-visible draft", async () => {
+    // Arrange: the shape a tail-degraded slice produces most — shown only the
+    // last tool outputs and no question, the model continues the conversation.
+    const fixture = await workerFixture();
+    const fake = await makeFakeSummarizer({
+      output: draftJson({
+        body: "I'll add the retry cap and re-run the suite to confirm it holds",
+      }),
+    });
+
+    // Act
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+    });
+
+    // Assert: nothing spooled, and the refusal is COUNTED with its reason —
+    // the fire was paid for out of the developer's own quota either way.
+    expect(await spooledClaims(fixture)).toHaveLength(0);
+    const state = await readSessionState(fixture.home, SESSION_ID);
+    expect(state?.summarizerRejectCount).toBe(1);
+    expect(state?.summarizerLastRejection).toContain("role-play");
+    expect(state?.summarizerDraftCount).toBe(0);
+    // A refusal is not a runner failure: the model answered.
+    expect(state?.summarizerFailCount).toBe(0);
+    expect(state?.summarizerNoneCount).toBe(0);
+  });
+
+  test("the instructions handed back are refused as an echo", async () => {
+    const fixture = await workerFixture();
+    const fake = await makeFakeSummarizer({
+      output: draftJson({
+        body: "the conclusion as one sentence, max 400 characters",
+      }),
+    });
+
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+    });
+
+    expect(await spooledClaims(fixture)).toHaveLength(0);
+    const state = await readSessionState(fixture.home, SESSION_ID);
+    expect(state?.summarizerRejectCount).toBe(1);
+    expect(state?.summarizerLastRejection).toContain("echo");
+  });
+
+  test("a real conclusion is still spooled and booked as a draft", async () => {
+    // THE CONTROL for both tests above: the identical path with an ordinary
+    // finding must still land, so what refused them is the rule and not the
+    // booking.
+    const fixture = await workerFixture();
+    const fake = await makeFakeSummarizer({ output: draftJson() });
+
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+    });
+
+    expect(await spooledClaims(fixture)).toHaveLength(1);
+    const state = await readSessionState(fixture.home, SESSION_ID);
+    expect(state?.summarizerRejectCount).toBe(0);
+    expect(state?.summarizerDraftCount).toBe(1);
+  });
+
+  test("a past-tense finding in the first person is NOT role-play", async () => {
+    // The rule's own boundary: "I found …" is how a real conclusion is often
+    // written, and a wider opener list would silently cost real drafts.
+    const fixture = await workerFixture();
+    const fake = await makeFakeSummarizer({
+      output: draftJson({
+        body: "I found the uploader and the importer share one token bucket",
+      }),
+    });
+
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+    });
+
+    expect(await spooledClaims(fixture)).toHaveLength(1);
+  });
+
+  test("an echo of a delivered teammate hint is refused AND counted", async () => {
+    // It was always refused; it was never counted, so a session whose only
+    // answer was an echo read as a fire that produced nothing at all.
+    const borrowed = "The token bucket is shared and the uploader starves it";
+    const fixture = await workerFixture({
+      deliveredHintHashes: [hintBodyHash(borrowed)],
+    });
+    const fake = await makeFakeSummarizer({
+      output: draftJson({ body: borrowed }),
+    });
+
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+    });
+
+    expect(await spooledClaims(fixture)).toHaveLength(0);
+    const state = await readSessionState(fixture.home, SESSION_ID);
+    expect(state?.summarizerRejectCount).toBe(1);
+    expect(state?.summarizerLastRejection).toContain("teammate hint");
+  });
+
+  test("a credential-shaped answer is refused, and the reason keeps the secret", async () => {
+    const fixture = await workerFixture();
+    const credential = `sk-${"a".repeat(40)}`;
+    const fake = await makeFakeSummarizer({
+      output: draftJson({
+        body: `The importer still authenticates with ${credential} on the S3 leg`,
+      }),
+    });
+
+    await runSummarizeWorker(workerArgs(fixture), {
+      CROSSCHECK_HOME: fixture.home,
+      CROSSCHECK_SUMMARIZER_CMD: fake,
+    });
+
+    expect(await spooledClaims(fixture)).toHaveLength(0);
+    const state = await readSessionState(fixture.home, SESSION_ID);
+    expect(state?.summarizerRejectCount).toBe(1);
+    // The count says a drop happened; the reason says which class and NOT
+    // what was in it — the same rule every secret refusal here follows.
+    expect(state?.summarizerLastRejection).not.toContain(credential);
+    expect(state?.summarizerLastRejection).toContain("credential-shaped");
+  });
+
+  test("the predicates decide on the opening words alone", () => {
+    // Unit-level, so the boundary is readable without a worker around it.
+    expect(isRolePlayAnswer("I'll re-run the suite after the cap lands")).toBe(true);
+    expect(isRolePlayAnswer("Let me check the second flush")).toBe(true);
+    expect(isRolePlayAnswer("Sure! Here is the summary")).toBe(true);
+    expect(isRolePlayAnswer("Next, I'll rebase onto main")).toBe(true);
+    expect(isRolePlayAnswer("The second flush writes the stale value")).toBe(false);
+    expect(isRolePlayAnswer("I found the second flush writes the stale value")).toBe(
+      false,
+    );
+    expect(
+      isPromptEcho("the conclusion as one sentence, max 400 characters", SUMMARIZER_PROMPT),
+    ).toBe(true);
+    // A short coincidence is not an echo, and a real finding never is.
+    expect(isPromptEcho("a teammate", SUMMARIZER_PROMPT)).toBe(false);
+    expect(
+      isPromptEcho(
+        "The uploader and the importer share one token bucket, so the importer starves",
+        SUMMARIZER_PROMPT,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("runSummarizeWorker (end to end, faked binary)", () => {
   test("a valid draft is spooled with auto/derived/capped semantics", async () => {

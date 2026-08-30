@@ -4,11 +4,13 @@ import { ClaimEdgeSchema, ClaimSchema } from "./claim.ts";
 import { CommitEvidenceSchema } from "./commit-evidence.ts";
 import { HintDeliverySchema, HintSchema } from "./hint.ts";
 import { LandedEvidenceSchema } from "./landed-evidence.ts";
+import { QuestionAnswerSchema, QuestionSchema } from "./question.ts";
 import {
   AgentSessionSchema,
   TargetSchema,
   WorkContextSchema,
 } from "./session.ts";
+import { describeUnstorableText, unstorableTextPath } from "./storable-text.ts";
 
 export const PROTOCOL_VERSION = "0.1";
 
@@ -47,6 +49,8 @@ const RECORD_BODY_SCHEMAS = {
   target: TargetSchema,
   hint: HintSchema,
   hint_delivery: HintDeliverySchema,
+  question: QuestionSchema,
+  question_answer: QuestionAnswerSchema,
 } as const;
 
 export type KnownRecordKind = keyof typeof RECORD_BODY_SCHEMAS;
@@ -102,6 +106,17 @@ export const parseRecord = (input: unknown): ParseRecordResult => {
   const bodyResult = RECORD_BODY_SCHEMAS[envelope.kind].safeParse(envelope.body);
   if (!bodyResult.success) {
     return { ok: false, issues: formatIssues(bodyResult.error) };
+  }
+
+  // AFTER the kind check, never before: an UNKNOWN kind is stored by nobody
+  // (services/records.ts ignores it), and rejecting one here would turn the
+  // forward-compatibility rule — "unknown kinds are never an error" — into a
+  // version-skew outage the moment a newer producer sends a field we cannot
+  // read. A KNOWN kind is about to become an INSERT, so this is the last
+  // place its text can be refused instead of crashing the whole batch.
+  const unstorable = unstorableTextPath(envelope);
+  if (unstorable !== null) {
+    return { ok: false, issues: [describeUnstorableText(unstorable)] };
   }
 
   return { ok: true, envelope, body: bodyResult.data, unknownKind: false };

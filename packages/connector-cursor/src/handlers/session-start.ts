@@ -11,7 +11,7 @@
  * any maintenance, and every hub call the maintenance can make is held to
  * `spareMs` (the reserve is what carries the briefing out of the hook; the
  * measurements live on HOOK_RESERVE_RATIO). The briefing itself is
- * `assembleBriefing`: six parallel hub GETs each bounded by the per-request
+ * `assembleBriefing`: eight parallel hub GETs each bounded by the per-request
  * timeout, fail-open per section — a hung hub costs sections, never the
  * hook. budget.test.ts measures that degraded path; the per-request
  * timeouts carry those bounds, and the race backstop itself is pinned
@@ -33,10 +33,8 @@ import {
   assembleBriefing,
   recordBriefingDeliveries,
 } from "@crosscheck/connector-core/flows/briefing.ts";
-import {
-  fallbackWorkContextTitle,
-  registerSessionFlow,
-} from "@crosscheck/connector-core/flows/register-session.ts";
+import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
+import { resolveFallbackWorkContextTitle } from "@crosscheck/connector-core/flows/work-context-title.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
   hasSpendablePendingEnd,
@@ -106,8 +104,10 @@ export const handleCursorSessionStart = async (
     hubUrl: ctx.config.hubUrl,
     fallbackDeveloperId: ctx.config.developerId,
     // Cursor supplies no session title, and none is synthesized from
-    // conversation content (§2.4 privacy posture — same as ACP).
-    title: fallbackWorkContextTitle(ctx.identity.branch, ctx.identity.repoId),
+    // conversation content (§2.4 privacy posture — same as ACP). The core
+    // builder labels a detached worktree by its branch tip or commit
+    // subject (trial finding #15), two bounded git calls at most.
+    title: await resolveFallbackWorkContextTitle(ctx.identity),
     status: INITIAL_STATUS,
     now,
   });
@@ -194,6 +194,7 @@ const deliverBriefing = async (
     crosscheckSessionId,
     producer,
     shownSolvedIds: assembled.shownSolvedIds,
+    shownGhostCount: assembled.shownGhostCount,
     now,
   });
   await recordInjectionOutcome(ctx.config.home, {

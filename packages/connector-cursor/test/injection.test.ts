@@ -73,7 +73,10 @@ import type { CursorTestHub } from "./fixtures/hub.ts";
 import {
   CANDIDATE_BODY,
   CANDIDATE_CLAIM_ID,
+  SOLVED_CONTEXT_ID,
+  SOLVED_ROOT_CAUSE,
   rejectedApproachCandidate,
+  solvedFingerprintMatch,
 } from "../../connector-core/test/fixtures/hint-hub.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
@@ -106,13 +109,16 @@ afterEach(async () => {
  */
 interface CapturingHub {
   readonly url: string;
-  readonly calls: { candidates: number };
+  readonly calls: { candidates: number; solvedMatches: number };
   readonly postedRecords: unknown[];
+  /** Rows GET /api/solved-matches answers with; empty by default. */
+  readonly setSolvedMatches: (matches: readonly unknown[]) => void;
   readonly stop: () => void;
 }
 
 const startCapturingHub = (): CapturingHub => {
-  const calls = { candidates: 0 };
+  const calls = { candidates: 0, solvedMatches: 0 };
+  let solvedMatches: readonly unknown[] = [];
   const postedRecords: unknown[] = [];
   const server = Bun.serve({
     port: 0,
@@ -124,6 +130,10 @@ const startCapturingHub = (): CapturingHub => {
           ok: true,
           data: { candidates: [rejectedApproachCandidate()] },
         });
+      }
+      if (pathname === "/api/solved-matches") {
+        calls.solvedMatches += 1;
+        return Response.json({ ok: true, data: { matches: solvedMatches } });
       }
       if (pathname === "/api/records") {
         const body = (await request.json()) as { records: readonly unknown[] };
@@ -148,6 +158,9 @@ const startCapturingHub = (): CapturingHub => {
     url: `http://127.0.0.1:${server.port}`,
     calls,
     postedRecords,
+    setSolvedMatches: (next) => {
+      solvedMatches = next;
+    },
     stop: () => {
       server.stop(true);
     },
@@ -199,6 +212,7 @@ const seededState = (
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   briefingSolvedRefs: [],
+  probedFingerprints: [],
   foreignRepoDrops: 0,
   briefingPending: false,
   stopTurnCount: 0,
@@ -209,6 +223,25 @@ const seededState = (
   summarizerDraftCount: 0,
   summarizerFailCount: 0,
   summarizerLastFailure: null,
+  summarizerRejectCount: 0,
+  summarizerLastRejection: null,
+  workContextTitle: null,
+  workContextStatus: null,
+  intentFireCount: 0,
+  intentNoneCount: 0,
+  intentSetCount: 0,
+  intentFailCount: 0,
+  intentLastFailure: null,
+  workContextIntent: null,
+  ghostPending: false,
+  ghostNoticeCount: 0,
+  ghostFireCount: 0,
+  ghostNoOverlapCount: 0,
+  ghostNoHubAnswerCount: 0,
+  ghostNoneCount: 0,
+  ghostDraftCount: 0,
+  ghostFailCount: 0,
+  ghostLastFailure: null,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -219,7 +252,6 @@ const seededState = (
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
   summarizerUnparsedCount: 0,
-  intentFireCount: 0,
   ...overrides,
 });
 
@@ -547,6 +579,40 @@ describe("failure-matched hints (§3.3 + open-q4): every documented failure sign
       const summary = await readInjectionLedger(f.home);
       expect(summary.hints.delivered).toBe(1);
       expect(summary.hintEvents["postToolUseFailure"]).toBe(1);
+    } finally {
+      canned.stop();
+    }
+  });
+
+  test("a failure already diagnosed delivers that answer, not a similarity guess", async () => {
+    // Arrange: the hub holds BOTH — a solved tree carrying this failure's own
+    // fingerprint, and the usual text candidate the similarity search would
+    // return. Seeding both is what makes this a precedence test rather than
+    // an availability one.
+    const canned = startCapturingHub();
+    canned.setSolvedMatches([solvedFingerprintMatch()]);
+    try {
+      const f = await fixture("hint-solved", canned.url);
+      const conv = "conv-hint-solved";
+      await writeSessionState(f.home, seededState(f, canned.url, conv));
+
+      // Act
+      const out = await run(
+        "postToolUseFailure",
+        inRepo(POST_TOOL_USE_FAILURE_INPUT, f.repo, conv),
+        f.env,
+      );
+
+      // Assert: the settled answer, with its recorded cause…
+      const text = deliveredAdditionalContext(out);
+      expect(text).toContain(`get_diagnosis ${SOLVED_CONTEXT_ID}`);
+      expect(text).toContain(SOLVED_ROOT_CAUSE);
+      // …and NOT the similarity candidate, which never even got asked for:
+      // one failure, one line, one slot.
+      expect(text).not.toContain(CANDIDATE_BODY);
+      expect(canned.calls.candidates).toBe(0);
+      const state = await readSessionState(f.home, `cur-${conv}`);
+      expect(state?.deliveredHintRefs).toEqual([SOLVED_CONTEXT_ID]);
     } finally {
       canned.stop();
     }

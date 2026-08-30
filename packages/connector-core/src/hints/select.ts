@@ -108,9 +108,23 @@ const isSettled = (claim: HintClaimCandidate): boolean =>
 const isDeclared = (claim: HintClaimCandidate): boolean =>
   claim.provenance === "declared";
 
+/**
+ * A body the hub did not send is not substance to inject (audit row V2-X4).
+ * The hub withholds the body of every claim nobody vouched for
+ * (packages/server/src/services/hints.ts), so an empty body normally arrives
+ * beside a provenance the rule above already refuses — this check is about the
+ * OTHER hub: one that withholds more, or differently, or ships an empty body
+ * under a declared label. Without it the reader is handed a fully
+ * trust-labelled sentence with empty quotes where the finding should be, which
+ * reads as "Nick looked and found nothing".
+ */
+const hasBody = (claim: HintClaimCandidate): boolean =>
+  claim.body.trim().length > 0;
+
 /** The asymmetry, in one predicate: provenance and evidence first, then kind or status. */
 const isInjectable = (claim: HintClaimCandidate): boolean =>
   isDeclared(claim) &&
+  hasBody(claim) &&
   hasEvidence(claim) &&
   claim.status !== "superseded" &&
   (isNegativeKnowledge(claim) || isSettled(claim));
@@ -124,6 +138,31 @@ const isForeignClaim = (
   claim: HintClaimCandidate,
   selfDeveloperId: string,
 ): boolean => claim.authorDeveloperId !== selfDeveloperId;
+
+/**
+ * A context whose owner STATED what they are doing (trial finding #16): with
+ * an intent, a context with no claims yet is still worth a pointer — the
+ * "same topic, different files" case nothing else detects. The pointer
+ * carries title + intent + id, no body, so the asymmetry is untouched.
+ *
+ * FOREIGN is part of the rule, not an accident of the data. Before intents
+ * the pointer pass could only fire on a context with a foreign CLAIM
+ * (isForeignClaim), which meant a candidate list that leaked the reader's own
+ * context could not produce a pointer whatever the hub did. An intent-only
+ * context has no claim to carry that check, so it is stated here: the hub
+ * excludes the caller in the query (server/src/services/hints.ts) and this is
+ * the second lock, the shape self-exclusion has everywhere else in this file.
+ */
+const isForeignIntentOnly = (
+  context: HintContextCandidate,
+  selfDeveloperId: string,
+): boolean => {
+  const intent = context.workContext.intent;
+  if (intent === null || intent === undefined || intent.summary.length === 0) {
+    return false;
+  }
+  return context.workContext.developerId !== selfDeveloperId;
+};
 
 export const selectHint = (input: SelectHintInput): HintSelection => {
   if (input.deliveredCount >= MAX_HINTS_PER_SESSION) {
@@ -158,9 +197,11 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
     }
   }
 
-  // Pointer pass: the best-ranked unseen context. "Unseen" covers the context
-  // id AND its claims: once substance from a context was delivered,
-  // re-surfacing the same context as a pointer is noise, not news.
+  // Pointer pass: the best-ranked unseen context — one with foreign claims,
+  // one the prompt named a file of (#19), or one whose owner stated an intent
+  // (#16, the claimless "same topic, different files" case). "Unseen" covers
+  // the context id AND its claims: once substance from a context was
+  // delivered, re-surfacing the same context as a pointer is noise, not news.
   for (const context of eligible) {
     if (seen.has(context.workContext.id)) {
       continue;
@@ -201,6 +242,15 @@ export const selectHint = (input: SelectHintInput): HintSelection => {
           matchedTarget: { value: target.value, createdAt: target.createdAt ?? null },
         };
       }
+    }
+    // #16 intent-only pointer, AFTER #19: a context can carry both an intent
+    // and a file the prompt named, and the touched-file fact is the more
+    // precise of the two — so the targets tail wins the tail slot and the
+    // intent still rides along on its own line (hints/render.ts intentLines).
+    // This fires where main was silent: any tier, no file target, but an owner
+    // who said what they are doing.
+    if (isForeignIntentOnly(context, selfDeveloperId)) {
+      return { kind: "pointer", context, claimCount: 0 };
     }
   }
   return SILENCE;

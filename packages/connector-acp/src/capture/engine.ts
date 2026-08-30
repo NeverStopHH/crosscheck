@@ -65,10 +65,8 @@ import {
 import type { AssembledBriefing } from "@crosscheck/connector-core/flows/briefing.ts";
 import { endSessionFlow } from "@crosscheck/connector-core/flows/end-session.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
-import {
-  fallbackWorkContextTitle,
-  registerSessionFlow,
-} from "@crosscheck/connector-core/flows/register-session.ts";
+import { registerSessionFlow } from "@crosscheck/connector-core/flows/register-session.ts";
+import { resolveFallbackWorkContextTitle } from "@crosscheck/connector-core/flows/work-context-title.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { endSession } from "@crosscheck/connector-core/http/hub.ts";
@@ -402,7 +400,9 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       baseCommit: identity.baseCommit,
       hubUrl: config.hubUrl,
       fallbackDeveloperId: config.developerId,
-      title: fallbackWorkContextTitle(identity.branch, identity.repoId),
+      // Detached-aware (trial finding #15): a worktree session is labelled by
+      // its branch tip or commit subject — two bounded git calls at most, once.
+      title: await resolveFallbackWorkContextTitle(identity),
       status: INITIAL_STATUS,
       now: at,
     });
@@ -1123,6 +1123,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
             crosscheckSessionId: session.crosscheckSessionId,
             producer: producerFor(session),
             shownSolvedIds: assembled.shownSolvedIds,
+            shownGhostCount: assembled.shownGhostCount,
             now: now(),
           });
           return { kind: "text", text: assembled.briefing };

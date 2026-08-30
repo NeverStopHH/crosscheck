@@ -22,7 +22,9 @@ import {
   CLAIM_STATUSES,
   EDGE_KINDS,
   MAX_CLAIM_BODY_LENGTH,
+  MAX_QUESTION_BODY_LENGTH,
   PROVENANCES,
+  QUESTION_STATUSES,
   SESSION_STATUSES,
   TARGET_KINDS,
 } from "@crosscheck/schema";
@@ -55,7 +57,13 @@ export const developers = pgTable("developers", {
    */
   presenceOptOut: boolean("presence_opt_out").notNull().default(false),
   createdAt: timestamptz("created_at").notNull().defaultNow(),
-});
+}, (table) => [
+  // The unknown-developer refusal reads a bounded, name-ordered page of this
+  // table to offer the closest spellings (services/developer-lookup.ts):
+  // a bounded listing wants an index behind its ORDER BY like every other.
+  // Mirrored in db/bootstrap.sql.
+  index("developers_name_idx").on(table.name, table.email),
+]);
 
 /**
  * Every email a developer is known by — the primary they registered with plus
@@ -140,6 +148,13 @@ export const agentSessions = pgTable(
   (table) => [
     index("agent_sessions_repo_idx").on(table.repo),
     index("agent_sessions_heartbeat_idx").on(table.lastHeartbeatAt),
+    // `GET /api/search?developer=…` (roadmap R1) filters inside every tier
+    // query, and each of them joins work_contexts to this table. developer_id
+    // is a foreign key, which Postgres does not index on its own, so the
+    // filter was a scan of every session on the hub. Leading with developer_id
+    // and carrying repo lets ONE lookup serve "Ken, on this repo" — the only
+    // shape the search route asks for. Mirrored in db/bootstrap.sql.
+    index("agent_sessions_developer_repo_idx").on(table.developerId, table.repo),
   ],
 );
 
@@ -169,7 +184,28 @@ export const workContexts = pgTable("work_contexts", {
   landedAt: timestamptz("landed_at"),
   createdAt: timestamptz("created_at").notNull(),
   updatedAt: timestamptz("updated_at"),
-});
+}, (table) => [
+  // `session_id` is a foreign key, which Postgres does NOT index on its own.
+  // services/presence.ts reads the newest context of every live session to
+  // put its intent on the "active now" line, on every SessionStart briefing
+  // and every `crosscheck status`; leading with session_id and descending on
+  // created_at turns that into one index lookup instead of a scan of every
+  // work context on the hub. Mirrored in db/bootstrap.sql.
+  index("work_contexts_session_created_idx").on(
+    table.sessionId,
+    table.createdAt.desc(),
+  ),
+  // `?since=14d` (roadmap R1) filters on ACTIVITY — coalesce(updated_at,
+  // created_at), the timestamp every surface renders as the row's age and the
+  // one time-decay is computed from. That same expression is the recency
+  // tier's ORDER BY, so this index serves both the window filter and the
+  // "what is happening here" listing, which without it reads every work
+  // context on the hub and top-N sorts them for a LIMIT 30. Mirrored in
+  // db/bootstrap.sql.
+  index("work_contexts_activity_idx").on(
+    sql`coalesce(${table.updatedAt}, ${table.createdAt}) DESC`,
+  ),
+]);
 
 export const workContextTargets = pgTable(
   "work_context_targets",
@@ -233,6 +269,17 @@ export const claims = pgTable(
     check(
       "claims_body_length_check",
       sql`char_length(${table.body}) <= ${sql.raw(String(MAX_CLAIM_BODY_LENGTH))}`,
+    ),
+    // `work_context_id` is a foreign key, which Postgres does NOT index on
+    // its own, and three hot readers ask "the claims of THESE contexts,
+    // newest first": services/solved.ts (both the solved probe and the
+    // root-cause body the briefing now renders) and normalized-doc.ts, which
+    // re-reads a context's claims inside EVERY ingest transaction. Without
+    // it each of those is a scan of every claim on the hub. Mirrored in
+    // db/bootstrap.sql.
+    index("claims_work_context_created_idx").on(
+      table.workContextId,
+      table.createdAt.desc(),
     ),
     // ANN index for the ingest gate's nearest-neighbor probes — without it
     // every claim ingest seq-scans all embedded claims (similarity-gate.ts).
@@ -360,4 +407,135 @@ export const hintDeliveries = pgTable("hint_deliveries", {
   refId: text("ref_id").notNull(),
   deliveredAt: timestamptz("delivered_at").notNull(),
   pulledAt: timestamptz("pulled_at"),
-});
+}, (table) => [
+  // "Delivered exactly once" for a question ANSWER is a cross-SESSION promise
+  // (services/questions.ts): the asker's seen-set dies with their session, so
+  // the durable store is this table, asked as "has any session of this
+  // developer already been handed this claim id". `ref_id` had no index at
+  // all, which made that probe a scan of every delivery on the hub on the
+  // UserPromptSubmit path. Mirrored in db/bootstrap.sql.
+  index("hint_deliveries_ref_session_idx").on(table.refId, table.sessionId),
+  // The precision counter (services/solved-counts.ts) asks "this developer's
+  // recent deliveries on this repo", which reaches these rows through
+  // session_id — a foreign key, and therefore unindexed by default. Without
+  // it `crosscheck status` and `doctor` each scan every delivery on the hub.
+  // Mirrored in db/bootstrap.sql.
+  index("hint_deliveries_session_delivered_idx").on(
+    table.sessionId,
+    table.deliveredAt.desc(),
+  ),
+]);
+
+/**
+ * A QUESTION addressed to a teammate (roadmap R2). Not a message queue and
+ * not a chat: one row, targeted, expiring, answered by a claim.
+ *
+ * NEVER A BROADCAST — the addressee CHECK is a database fact, not a service
+ * promise, because "no broadcast" is the property that keeps this channel
+ * from becoming the notification spam every prior-art system warns about.
+ *
+ * `status` is what the hub believes; `expires_at` is what the hub enforces.
+ * Reads never trust the status alone — every listing also demands
+ * `expires_at > now()` — so a question whose lazy flip never ran still cannot
+ * haunt a briefing (services/questions.ts states the whole TTL rule).
+ */
+export const questions = pgTable(
+  "questions",
+  {
+    id: text("id").primaryKey(),
+    /** Where it was asked from — the same string agent_sessions.repo carries. */
+    repo: text("repo").notNull(),
+    authorDeveloperId: text("author_developer_id")
+      .notNull()
+      .references(() => developers.id),
+    authorSessionId: text("author_session_id")
+      .notNull()
+      .references(() => agentSessions.id),
+    targetDeveloperId: text("target_developer_id").references(
+      () => developers.id,
+    ),
+    workContextId: text("work_context_id").references(() => workContexts.id),
+    body: text("body").notNull(),
+    status: text("status", { enum: QUESTION_STATUSES }).notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+    expiresAt: timestamptz("expires_at").notNull(),
+  },
+  (table) => [
+    check(
+      "questions_body_length_check",
+      sql`char_length(${table.body}) <= ${sql.raw(String(MAX_QUESTION_BODY_LENGTH))}`,
+    ),
+    check(
+      "questions_addressee_check",
+      sql`${table.targetDeveloperId} IS NOT NULL OR ${table.workContextId} IS NOT NULL`,
+    ),
+    // The inbox read — "open questions for me IN THIS REPO, newest first" —
+    // and the two backlog counters beside it (count, oldest) are the same
+    // range, so one lookup serves all three. repo is the SECOND column rather
+    // than a filter after the index cond: one person can be the addressee of
+    // many questions across many repos, and a post-index filter makes the scan
+    // fetch rows it then discards (measured: 741 rows removed by filter on a
+    // hot target across 40 repos).
+    index("questions_target_repo_status_created_idx").on(
+      table.targetDeveloperId,
+      table.repo,
+      table.status,
+      table.createdAt.desc(),
+    ),
+    // Questions asked ABOUT one work context: the second addressee axis, and
+    // a plain foreign key Postgres does not index on its own.
+    index("questions_work_context_idx").on(table.workContextId),
+    // The asker's own side: the outbox counters, the per-author open budget,
+    // and the per-day rate probe all read this one range.
+    index("questions_author_created_idx").on(
+      table.authorDeveloperId,
+      table.createdAt.desc(),
+    ),
+    // The team-wide axis (VISION.md §2): "every open question of THIS repo,
+    // oldest first" — the conference report's question section. Neither index
+    // above can serve it; both lead with a person. Mirrored in
+    // db/bootstrap.sql.
+    index("questions_repo_status_created_idx").on(
+      table.repo,
+      table.status,
+      table.createdAt,
+    ),
+  ],
+);
+
+/**
+ * The `answers` EDGE: one claim answering one question.
+ *
+ * Its own table rather than a new `claim_edges.kind`, and the reason is
+ * referential integrity: `claim_edges.to_claim_id` is a foreign key into
+ * `claims`, so an "answers" edge stored there would have to point a claim
+ * column at a question id — a lie the database would either reject or, worse,
+ * accept once somebody dropped the constraint. The table IS the edge kind.
+ *
+ * MANY ANSWERS PER QUESTION by design (the first flips the question's status,
+ * later ones still attach) — GitHub Discussions marks one reply as THE answer
+ * without deleting the rest, and the later replies are often the correction.
+ */
+export const questionAnswers = pgTable(
+  "question_answers",
+  {
+    questionId: text("question_id")
+      .notNull()
+      .references(() => questions.id),
+    claimId: text("claim_id")
+      .notNull()
+      .references(() => claims.id),
+    answererDeveloperId: text("answerer_developer_id")
+      .notNull()
+      .references(() => developers.id),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    // One claim answers one question once; a spool replay is a duplicate, not
+    // a second answer.
+    primaryKey({ columns: [table.questionId, table.claimId] }),
+    // "Which question does this claim answer" — the asker's delivery path
+    // asks it per claim, and the PK leads on question_id and cannot serve it.
+    index("question_answers_claim_idx").on(table.claimId),
+  ],
+);

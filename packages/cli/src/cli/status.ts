@@ -10,13 +10,19 @@ import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
+import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
+import { formatQuestionCounts } from "@crosscheck/connector-core/briefing/questions.ts";
+import { formatSolvedCounts } from "@crosscheck/connector-core/hints/precision.ts";
 import { formatAbsenceLine, formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import {
   getAbsences,
   getHintStats,
   getPresence,
   getPrivacySettings,
+  getQuestions,
+  getSolvedMatchCounts,
 } from "@crosscheck/connector-core/http/hub.ts";
 import { readCaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import type { CaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
@@ -29,9 +35,18 @@ import {
 } from "@crosscheck/connector-core/state/foreign-drops.ts";
 import { spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
+import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
 import {
+  formatConferenceCost,
+  readConferenceCost,
+} from "@crosscheck/connector-core/state/conference-cost.ts";
+import {
+  formatGhostCost,
+  formatIntentCost,
   formatSummarizerCost,
-  readSummarizerCost,
+  summarizeGhostCost,
+  summarizeIntentCost,
+  summarizeSummarizerCost,
 } from "@crosscheck/connector-claude";
 import type { CliResult } from "./login.ts";
 
@@ -148,13 +163,29 @@ export const runStatus = async (
   const key = repoKey(config.hubUrl, identity.repoId);
   const sync = await readSyncState(config.home, key);
   const depth = await spoolDepth(config.home, key);
-  // Cost visibility (DESIGN.md §10 risk 7): a local fact, printed whether or
-  // not the hub answers; the figure is an estimate and the line says so.
-  const summarizerCost = await readSummarizerCost(
+  // Cost visibility (DESIGN.md §10 risk 7): local facts, printed whether or
+  // not the hub answers. THREE model-cost lines out of ONE scan of the
+  // session-state directory — the summarizer's estimate, the derived-intent
+  // fires and the ghost checks — because this is a surface a human runs by
+  // hand and three passes over the same files is a cost nobody asked for.
+  const liveStates = await readLiveSessionStates(
     config.home,
     config.hubUrl,
     identity.repoId,
   );
+  const summarizerCost = summarizeSummarizerCost(liveStates);
+  // The derived-intent fires and what came of them (trial finding #16):
+  // one Haiku call per session state, the outcome split so a fire that
+  // landed nothing is never an invisible number.
+  const intentCost = summarizeIntentCost(liveStates.states);
+  // The ghost checks (VISION.md §3): the free deterministic notices first,
+  // then the gated model half with the not-called count named, so a quiet
+  // team never reads as a broken runner.
+  const ghostCost = summarizeGhostCost(liveStates.states);
+  // The conference counters (VISION.md §2). A LOCAL file rather than session
+  // state: a conference is a command, often run from a scheduler at 03:00,
+  // and its numbers must survive on a machine with no live session at all.
+  const conferenceCost = await readConferenceCost(config.home, key);
   const drops = await readDropSummary(config.home, key);
   // A batch the ledger itself could not take is recorded as a marker, not a count,
   // so the summed total understates it. `doctor` says the same; both must agree.
@@ -201,6 +232,24 @@ export const runStatus = async (
   // Own privacy state (DESIGN.md §2.1) — so "why can't anyone see me" and
   // "why do I never see Robin" are answered here instead of chasing ghosts.
   // An older hub without the endpoint prints no lines, same fail-open.
+  // The question channel's backlog (roadmap R2), both directions. A hub too
+  // old to serve it, or an unreachable one, simply prints no line — the same
+  // fail-open every other hub-fed line here has.
+  const questions = await getQuestions(hubCtx, identity.repoId);
+  const questionLines = questions.ok
+    ? [`questions: ${formatQuestionCounts(questions.data.counts, now)}`]
+    : [];
+  // The solved-pointer precision loop (VISION.md §1): what this repo's
+  // "solved before" lines actually earned. A hub too old to answer, or an
+  // unreachable one, simply prints no line — the same fail-open every other
+  // hub-fed line here has. The noun is what the rows ARE — every delivered
+  // pointer at a tree that is solved today, including an ordinary teammate
+  // pointer — and not this feature's name, which would be a superset
+  // labelled as one surface (hints/precision.ts says why).
+  const solvedCounts = await getSolvedMatchCounts(hubCtx, identity.repoId);
+  const solvedLines = solvedCounts.ok
+    ? [`solved-tree pointers: ${formatSolvedCounts(solvedCounts.data)}`]
+    : [];
   const privacy = await getPrivacySettings(hubCtx);
   const privacyLines = privacy.ok
     ? [
@@ -230,10 +279,24 @@ export const runStatus = async (
       return line === null ? [] : [`  ${line}`];
     });
 
+  // Teammate lines through the render layer: name, branch and status are
+  // hub-served, teammate-written short fields printed BARE on a ·-separated
+  // line, so they take the BARE class (bareUntrusted — no minting a second
+  // field; the MCP claim lines' rule), and the session's intent — WHAT they
+  // are doing, trial finding #16 — is the one framed fragment every surface
+  // spells (briefing/intent.ts).
   const teammates = presence.ok
     ? presence.data
         .filter((entry) => entry.isSelf !== true)
-        .map((entry) => `  - ${entry.developerName} · ${entry.branch} · ${entry.status}`)
+        .map((entry) => {
+          const facts = [
+            `  - ${bareUntrusted(entry.developerName)}`,
+            bareUntrusted(entry.branch),
+            bareUntrusted(entry.status),
+          ];
+          const intent = renderIntent(entry.intent);
+          return [...facts, ...(intent === null ? [] : [intent])].join(" · ");
+        })
     : ["  (hub unreachable)"];
 
   return {
@@ -250,10 +313,15 @@ export const runStatus = async (
         : ["commit authors without a recent session:", ...absenceLines]),
       `spool: ${depth} pending, ${drops.records} dropped${unrecorded === null ? "" : " (lower bound — at least one batch its ledger could not take)"}`,
       ...foreignDropLines,
+      ...questionLines,
+      ...solvedLines,
       targetsLine(captureHealth, now),
       hintsLine(captureHealth, hintStats),
       tripwireLine(env),
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
+      `intent: ${formatIntentCost(intentCost)}`,
+      `ghost checks: ${formatGhostCost(ghostCost)}`,
+      `conference: ${formatConferenceCost(conferenceCost, now)}`,
       // The CAPTURE stamp, not `lastOkAt`: only register/heartbeat/records/end
       // move it, so this age is the hook path's and not this command's (H5).
       `last capture sync: ${ageOrNever(sync.lastCaptureOkAt, now)}`,

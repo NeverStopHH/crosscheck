@@ -15,6 +15,7 @@
 import type { RenderSurface } from "@crosscheck/connector-core/render-surfaces.ts";
 import type {
   HintClaimCandidate,
+  IntentEntry,
   PresenceEntry,
   WorkContextEntry,
 } from "@crosscheck/connector-core/http/hub.ts";
@@ -28,6 +29,14 @@ import {
 const NOW = new Date("2026-08-19T12:00:00.000Z");
 const ISO = "2026-08-19T11:55:00.000Z";
 
+/** The payload in the intent slot too — every surface below renders it. */
+const intentWith = (payload: string): IntentEntry => ({
+  summary: payload,
+  provenance: "derived",
+  confidence: 0.4,
+  capturedAt: ISO,
+});
+
 const presenceWith = (payload: string): PresenceEntry => ({
   sessionId: "cc_11111111-2222-4333-8444-555555555555",
   developerId: "dev_other",
@@ -36,6 +45,7 @@ const presenceWith = (payload: string): PresenceEntry => ({
   status: payload,
   lastHeartbeatAt: ISO,
   isSelf: false,
+  intent: intentWith(payload),
 });
 
 const workContextWith = (payload: string): WorkContextEntry => ({
@@ -44,6 +54,7 @@ const workContextWith = (payload: string): WorkContextEntry => ({
   developerName: payload,
   title: payload,
   status: "implementing",
+  intent: intentWith(payload),
   createdAt: ISO,
 });
 
@@ -65,6 +76,7 @@ const hintContextWith = (payload: string) => ({
   id: "wc_cc_11111111-2222-4333-8444-555555555555",
   title: payload,
   status: "implementing",
+  intent: intentWith(payload),
   developerId: "dev_other",
   developerName: payload,
   createdAt: ISO,

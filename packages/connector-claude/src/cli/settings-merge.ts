@@ -294,6 +294,12 @@ export const buildSettingsPlan = (
         POST_TOOL_USE_MATCHER,
         true,
       ),
+      // SYNC and unmatched: the failure event carries `additionalContext`
+      // (an async hook's response is ignored), and unlike PostToolUse it is
+      // not filtered by tool name — a failure is worth a fingerprint
+      // whatever produced it, and the payload carries no file path to
+      // capture, so the edit-tool matcher would only lose signal.
+      PostToolUseFailure: group(`${prefix} hook post-tool-use-failure`),
       /**
        * The one entry with an explicit timeout (trial finding M10).
        *

@@ -1,6 +1,6 @@
 /**
  * `assembleBriefing` (DESIGN-agent-agnostic.md §1.3) — the session-start
- * briefing recipe as an extracted function: six parallel hub GETs → drift for
+ * briefing recipe as an extracted function: eight parallel hub GETs → drift for
  * the teammates that will actually be shown → `renderBriefing` → the solved
  * pointers the EMITTED text really contains.
  *
@@ -24,11 +24,13 @@
  */
 import {
   CONTEXT_MAX_AGE_DAYS,
+  MAX_GHOST_POINTERS,
   MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
   MS_PER_DAY,
   WORK_CONTEXT_LIST_LIMIT,
 } from "../constants.ts";
+import { formatGhostLine } from "../briefing/ghost.ts";
 import {
   formatSolvedLine,
   groupTeammates,
@@ -41,11 +43,14 @@ import {
   getAbsences,
   getContradictions,
   getDrafts,
+  getGhostChecks,
   getPresence,
+  getQuestions,
   getSolvedMatches,
   getWorkContexts,
 } from "../http/hub.ts";
 import type {
+  GhostCheckEntry,
   HubContext,
   PresenceEntry,
   SolvedMatchEntry,
@@ -56,6 +61,7 @@ import {
   readSessionState,
   updateSessionState,
   withBriefingSolvedRefs,
+  withGhostNotices,
 } from "../state/session-state.ts";
 
 export interface AssembleBriefingInput {
@@ -93,6 +99,16 @@ export interface AssembledBriefing {
    */
   readonly presenceFetched: boolean;
   readonly workContexts: readonly WorkContextEntry[];
+  /**
+   * Ghost-check lines the emitted text really shows (VISION.md §3). A COUNT
+   * rather than ids, because a ghost line carries no delivery record: it is
+   * not news that must not repeat, it is a fact about right now that stops
+   * being true when the overlap does. What the count feeds is the precision
+   * half of the counter pair — how often the FREE half of this feature had
+   * something to say — so it has to mean "the reader saw this" rather than
+   * "the hub answered".
+   */
+  readonly shownGhostCount: number;
   /** The `collectLanded` rider's result; empty when no rider was passed. */
   readonly landedCommits: readonly string[];
 }
@@ -109,6 +125,8 @@ export const assembleBriefing = async (
     contradictionsResult,
     solvedMatchesResult,
     draftsResult,
+    questionsResult,
+    ghostChecksResult,
   ] = await Promise.all([
     getPresence(hub, repoId),
     // The window, passed EXPLICITLY (trial finding M8): the hub's default is
@@ -125,6 +143,14 @@ export const assembleBriefing = async (
     getContradictions(hub, repoId),
     getSolvedMatches(hub, repoId),
     getDrafts(hub, repoId),
+    // Roadmap R2. In the SAME parallel block, so the questions block costs no
+    // extra wall clock: the whole fetch is still one per-request hub timeout,
+    // and a hub too old to serve it simply renders no section (fail open).
+    getQuestions(hub, repoId),
+    // VISION §3. Also in the parallel block, and for the same reason plus one
+    // more: the SessionStart budget is 1000 ms and this GET must cost the
+    // hook nothing but its share of the one timeout the block already spends.
+    getGhostChecks(hub, repoId),
   ]);
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
@@ -134,6 +160,8 @@ export const assembleBriefing = async (
     : [];
   const solvedMatches = solvedMatchesResult.ok ? solvedMatchesResult.data : [];
   const drafts = draftsResult.ok ? draftsResult.data : [];
+  const questions = questionsResult.ok ? questionsResult.data.inbox : [];
+  const ghostChecks = ghostChecksResult.ok ? ghostChecksResult.data : [];
 
   // Only the teammates that will actually be shown cost a git process; the
   // optional rider shares the fan-out window, so both together still cost one
@@ -157,21 +185,35 @@ export const assembleBriefing = async (
     contradictions,
     solvedMatches,
     drafts,
+    questions,
+    ghostChecks,
   });
 
   const shownSolvedIds = solvedMatches
     .map((match: SolvedMatchEntry) => ({
       match,
-      line: formatSolvedLine(match, now),
+      line: formatSolvedLine(match, now, repoId),
     }))
     .filter((entry) => entry.line !== null)
     .slice(0, MAX_SOLVED_POINTERS)
     .filter((entry) => briefing.includes(entry.line ?? ""))
     .map((entry) => entry.match.workContextId);
 
+  // Derived the same way the solved ids are, and for the same reason:
+  // `formatGhostLine` is the one spelling of the line, so "the rendered text
+  // contains it" is the fact — the section may have been dropped whole by
+  // the character budget, and a counter that trusted the fetch would report
+  // notices nobody saw.
+  const shownGhostCount = ghostChecks
+    .map((entry: GhostCheckEntry) => formatGhostLine(entry, now))
+    .filter((line): line is string => line !== null)
+    .slice(0, MAX_GHOST_POINTERS)
+    .filter((line) => briefing.includes(line)).length;
+
   return {
     briefing,
     shownSolvedIds,
+    shownGhostCount,
     presence,
     presenceFetched: presenceResult.ok,
     workContexts,
@@ -186,6 +228,8 @@ export interface RecordBriefingDeliveriesInput {
   readonly crosscheckSessionId: string;
   readonly producer: Producer;
   readonly shownSolvedIds: readonly string[];
+  /** Ghost lines the emitted briefing really showed (`assembleBriefing`). */
+  readonly shownGhostCount: number;
   readonly now: Date;
 }
 
@@ -201,26 +245,36 @@ export interface RecordBriefingDeliveriesInput {
 export const recordBriefingDeliveries = async (
   input: RecordBriefingDeliveriesInput,
 ): Promise<void> => {
-  if (input.shownSolvedIds.length === 0) {
+  if (input.shownSolvedIds.length === 0 && input.shownGhostCount === 0) {
     return;
   }
-  await appendRecords(
-    input.home,
-    input.repoKey,
-    input.hostSessionKey,
-    input.shownSolvedIds.map((workContextId) =>
-      hintDeliveryRecord(
-        input.crosscheckSessionId,
-        "work_context",
-        workContextId,
-        input.producer,
-        input.now,
+  // Only the SOLVED pointers become delivery rows. A ghost line is not a hint
+  // — it repeats for as long as the overlap lasts, by design — so recording
+  // one would make `hint_deliveries` claim a delivery nothing will ever pull.
+  if (input.shownSolvedIds.length > 0) {
+    await appendRecords(
+      input.home,
+      input.repoKey,
+      input.hostSessionKey,
+      input.shownSolvedIds.map((workContextId) =>
+        hintDeliveryRecord(
+          input.crosscheckSessionId,
+          "work_context",
+          workContextId,
+          input.producer,
+          input.now,
+        ),
       ),
-    ),
-    input.now,
-  );
+      input.now,
+    );
+  }
+  // ONE state write for both counters: two would be two lock rounds on the
+  // SessionStart path for one fact — what this briefing actually showed.
   await updateSessionState(input.home, input.hostSessionKey, (fresh) =>
-    withBriefingSolvedRefs(fresh, input.shownSolvedIds),
+    withGhostNotices(
+      withBriefingSolvedRefs(fresh, input.shownSolvedIds),
+      input.shownGhostCount,
+    ),
   );
 };
 
@@ -304,6 +358,7 @@ export const deliverDeferredBriefing = async (
       sessionId: state.crosscheckSessionId,
     },
     shownSolvedIds: assembled.shownSolvedIds,
+    shownGhostCount: assembled.shownGhostCount,
     now: input.now,
   });
   return assembled.briefing;

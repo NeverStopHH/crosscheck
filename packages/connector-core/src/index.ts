@@ -19,7 +19,13 @@ export {
   resolveDriftByBaseCommit,
 } from "./git/commit-drift.ts";
 export type { CommitDrift } from "./git/commit-drift.ts";
-export { sanitizeUntrusted, REDACTED_TITLE } from "./briefing/sanitize.ts";
+export {
+  REDACTED_SPAN,
+  REDACTED_TITLE,
+  redactionNote,
+  sanitizeUntrusted,
+  spanRedactedUntrusted,
+} from "./briefing/sanitize.ts";
 export { containsSecret } from "./capture/secret-scan.ts";
 export {
   collectCommitEvidence,

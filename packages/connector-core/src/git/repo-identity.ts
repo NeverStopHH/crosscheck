@@ -227,6 +227,16 @@ const resolveLocalRepoId = async (
 
 const NO_COMMIT_SHA = "0000000";
 
+/**
+ * The branch label of a detached HEAD: this prefix plus git's own `--short`
+ * sha (git picks the unambiguous length — 9 in a large monorepo, 7 in a
+ * small one). ONE spelling, exported, so the session-start title builder
+ * (flows/work-context-title.ts) can recognize a detached session from the
+ * identity alone and never re-runs git in the per-hook path that computes
+ * this.
+ */
+export const DETACHED_BRANCH_PREFIX = "detached@";
+
 const resolveBranch = async (cwd: string): Promise<string> => {
   const branch = await runGit(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
   if (branch === null) {
@@ -236,7 +246,7 @@ const resolveBranch = async (cwd: string): Promise<string> => {
     return branch;
   }
   const shortSha = await runGit(["rev-parse", "--short", "HEAD"], cwd);
-  return shortSha === null ? "HEAD" : `detached@${shortSha}`;
+  return shortSha === null ? "HEAD" : `${DETACHED_BRANCH_PREFIX}${shortSha}`;
 };
 
 /**

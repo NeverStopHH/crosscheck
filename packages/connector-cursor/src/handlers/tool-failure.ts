@@ -37,7 +37,7 @@ import {
   deliverOwedBriefing,
   owedBriefingBefore,
 } from "../inject/deferred-briefing.ts";
-import { attemptFailureHint } from "../inject/hint.ts";
+import { attemptFailureHint, attemptSolvedHint } from "../inject/hint.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
 import { requireSessionState } from "./recover.ts";
 
@@ -66,7 +66,7 @@ export const handlePostToolUseFailure = async (
   const briefingText = owedBefore ? await deliverOwedBriefing(ctx) : "";
   // ONE extraction feeds both the fingerprint and the ephemeral query.
   const failureText = extractFailureText({ error: ctx.payload.error_message });
-  await captureFailure({
+  const fingerprint = await captureFailure({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
     hostSessionKey: ctx.hostSessionKey,
@@ -79,8 +79,18 @@ export const handlePostToolUseFailure = async (
     failureText,
     now: ctx.now(),
   });
+  // Collective memory first (VISION.md §1): if THIS fingerprint was already
+  // diagnosed, that answer beats any similarity guess — see attemptSolvedHint
+  // for the precedence. Null means `fingerprint()` refused the text (no
+  // signal, or a secret), and then there is nothing to probe with.
+  const solvedText =
+    briefingText.length === 0 && fingerprint !== null
+      ? await attemptSolvedHint(ctx, fingerprint)
+      : "";
   const hintText =
-    briefingText.length === 0 ? await attemptFailureHint(ctx, failureText) : "";
+    briefingText.length === 0 && solvedText.length === 0
+      ? await attemptFailureHint(ctx, failureText)
+      : "";
   // A failure moment is exactly when a teammate wants the fingerprint fresh:
   // drain on the spare budget (the split-event rule — file-edit.ts).
   await flushSpool(
@@ -88,6 +98,11 @@ export const handlePostToolUseFailure = async (
     { sessionId: state.crosscheckSessionId, developerId: state.developerId },
     budget.spareMs(),
   );
-  const text = briefingText.length === 0 ? hintText : briefingText;
+  const text =
+    briefingText.length > 0
+      ? briefingText
+      : solvedText.length > 0
+        ? solvedText
+        : hintText;
   return text.length === 0 ? "" : cursorInjectionOutput(text);
 };

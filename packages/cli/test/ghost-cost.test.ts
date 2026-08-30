@@ -1,0 +1,321 @@
+/**
+ * Ghost-check telemetry (VISION.md §3; the finding-#14 lesson): `crosscheck
+ * status` prints the free half and the paid half of this feature side by
+ * side, and `doctor` carries two checks — one for the model layer, one for
+ * the hub query it is gated on.
+ *
+ * The line under test is really one sentence: "the deterministic notices you
+ * were shown, and what the gated call did about them, INCLUDING how often it
+ * was skipped". That last number is what stops a quiet team reading as a dead
+ * runner, and it is the reason `noOverlap` is a counter of its own rather
+ * than a fire that landed nothing.
+ */
+import { afterEach, describe, expect, test } from "bun:test";
+import { rm } from "node:fs/promises";
+
+import { DOCTOR_GHOST_SILENT_FIRES_WARN } from "@crosscheck/connector-core/constants.ts";
+import {
+  formatGhostCost,
+  isGhostSilentlyDead,
+  readGhostCost,
+} from "@crosscheck/connector-claude";
+import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import type { HubResult } from "@crosscheck/connector-core/http/client.ts";
+import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
+import { planOverlapCheck } from "../src/cli/doctor.ts";
+import { runCli } from "../src/index.ts";
+import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+
+/** Unreachable on purpose: cost lines are local facts, no hub needed. */
+const HUB_URL = "http://127.0.0.1:9";
+const REPO_ID = "github.com/acme/api";
+
+const paths: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
+  paths.length = 0;
+});
+
+const env = (home: string): Record<string, string> => ({
+  CROSSCHECK_HOME: home,
+  HOME: home,
+  CROSSCHECK_HUB_URL: HUB_URL,
+  CROSSCHECK_API_KEY: "test-key",
+  CROSSCHECK_DOCTOR_NO_PROBE: "1",
+});
+
+const seedSession = async (
+  home: string,
+  repoRoot: string,
+  hostSessionKey: string,
+  overrides: Record<string, unknown> = {},
+): Promise<void> => {
+  await writeSessionState(home, {
+    hostSessionKey,
+    crosscheckSessionId: `cc_${hostSessionKey}`,
+    workContextId: `wc_cc_${hostSessionKey}`,
+    repoId: REPO_ID,
+    repoRoot,
+    hubUrl: HUB_URL,
+    developerId: "dev_self",
+    startedAt: new Date().toISOString(),
+    ...overrides,
+  });
+};
+
+const lineWith = (stdout: string, needle: string): string =>
+  stdout.split("\n").find((entry) => entry.includes(needle)) ?? "";
+
+const fixture = async (label: string): Promise<{ home: string; repo: string }> => {
+  const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
+  const home = await makeHome(label);
+  paths.push(repo, home);
+  return { home, repo };
+};
+
+describe("ghost telemetry surfaces", () => {
+  test("readGhostCost sums this repo's live sessions and nothing else", async () => {
+    const { home, repo } = await fixture("gcost");
+    await seedSession(home, repo, "gcost-a", {
+      ghostNoticeCount: 2,
+      ghostFireCount: 1,
+      ghostDraftCount: 1,
+    });
+    await seedSession(home, repo, "gcost-b", { ghostNoOverlapCount: 1 });
+    await seedSession(home, repo, "gcost-c", {
+      ghostFireCount: 1,
+      ghostFailCount: 1,
+      ghostLastFailure: "dropped: secret-like text",
+    });
+    // Another repo on the same machine must not enter this figure.
+    await seedSession(home, repo, "gcost-foreign", {
+      repoId: "github.com/acme/other",
+      ghostFireCount: 9,
+      ghostDraftCount: 9,
+    });
+
+    const cost = await readGhostCost(home, HUB_URL, REPO_ID);
+    expect(cost.sessions).toBe(3);
+    expect(cost.notices).toBe(2);
+    expect(cost.fires).toBe(2);
+    expect(cost.noOverlap).toBe(1);
+    expect(cost.drafts).toBe(1);
+    expect(cost.fails).toBe(1);
+    expect(cost.lastFailure).toBe("dropped: secret-like text");
+  });
+
+  test("the line names the checks it SKIPPED, and never as a failure", () => {
+    const quiet = formatGhostCost({
+      sessions: 1,
+      notices: 0,
+      fires: 0,
+      noOverlap: 1,
+      noHubAnswer: 0,
+      nones: 0,
+      drafts: 0,
+      fails: 0,
+      lastFailure: null,
+    });
+    expect(quiet).toContain("1 skipped, nobody to compare");
+    expect(quiet).not.toContain("failed");
+    // The control: a real failure DOES say so, and quotes the booked reason.
+    const broken = formatGhostCost({
+      sessions: 1,
+      notices: 1,
+      fires: 1,
+      noOverlap: 0,
+      noHubAnswer: 0,
+      nones: 0,
+      drafts: 0,
+      fails: 1,
+      lastFailure: "dropped: secret-like text",
+    });
+    expect(broken).toContain("1 failed");
+    expect(broken).toContain("dropped: secret-like text");
+  });
+
+  test("silently dead means fires that answered nothing, never a quiet team", () => {
+    const base = {
+      sessions: 1,
+      notices: 0,
+      noOverlap: 0,
+      noHubAnswer: 0,
+      nones: 0,
+      drafts: 0,
+      fails: 0,
+      lastFailure: null,
+    };
+    // A team with nobody to compare against is the feature working.
+    expect(
+      isGhostSilentlyDead({ ...base, fires: 0, noOverlap: 5, notices: 3 }),
+    ).toBe(false);
+    // One booked failure is enough, whatever the count.
+    expect(isGhostSilentlyDead({ ...base, fires: 1, fails: 1 })).toBe(true);
+    // Below the threshold a lost run is noise; at it, doctor speaks.
+    expect(
+      isGhostSilentlyDead({ ...base, fires: DOCTOR_GHOST_SILENT_FIRES_WARN - 1 }),
+    ).toBe(false);
+    expect(
+      isGhostSilentlyDead({ ...base, fires: DOCTOR_GHOST_SILENT_FIRES_WARN }),
+    ).toBe(true);
+    // And a fire that DID answer is not dead, however many there were.
+    expect(
+      isGhostSilentlyDead({
+        ...base,
+        fires: DOCTOR_GHOST_SILENT_FIRES_WARN,
+        drafts: 1,
+      }),
+    ).toBe(false);
+  });
+
+  test("status prints the notices and the outcome split", async () => {
+    const { home, repo } = await fixture("gstatus");
+    await seedSession(home, repo, "gstatus-a", {
+      ghostNoticeCount: 1,
+      ghostFireCount: 1,
+      ghostDraftCount: 1,
+    });
+    const result = await runCli(["status"], env(home), repo);
+    const line = lineWith(result.stdout, "ghost checks:");
+    expect(line).toContain("1 overlap notice shown");
+    expect(line).toContain("1 check");
+    expect(line).toContain("1 drafted");
+  });
+
+  test("doctor PASSes a quiet team and WARNs on a booked failure", async () => {
+    const quiet = await fixture("gdoctor-quiet");
+    await seedSession(quiet.home, quiet.repo, "gq", { ghostNoOverlapCount: 1 });
+    const quietRun = await runCli(["doctor"], env(quiet.home), quiet.repo);
+    const quietLine = lineWith(quietRun.stdout, "ghost checks");
+    expect(quietLine).toContain("PASS");
+    expect(quietLine).toContain("skipped, nobody to compare");
+
+    // A LOCAL loss: the model ran and its answer was dropped here. Anything
+    // the hub could not answer belongs on the `plan overlap` line instead,
+    // so this WARN never points at the runner for a deployment state.
+    const broken = await fixture("gdoctor-broken");
+    await seedSession(broken.home, broken.repo, "gb", {
+      ghostFireCount: 1,
+      ghostFailCount: 1,
+      ghostLastFailure: "dropped: secret-like text",
+    });
+    const brokenRun = await runCli(["doctor"], env(broken.home), broken.repo);
+    const brokenLine = lineWith(brokenRun.stdout, "ghost checks");
+    expect(brokenLine).toContain("WARN");
+    expect(brokenLine).toContain("secret-like text");
+  });
+
+  test("the overlap line counts teammates, never their worktrees", () => {
+    const row = (
+      workContextId: string,
+      developerId: string,
+      developerName: string,
+    ): GhostCheckEntry => ({
+      workContextId,
+      title: "Session store migration",
+      developerId,
+      developerName,
+      intent: null,
+      lastActiveAt: new Date().toISOString(),
+      sharedTargets: [],
+      sharedTargetCount: 2,
+      intentTokenHits: 0,
+    });
+    const ok = (
+      data: readonly GhostCheckEntry[],
+    ): { readonly ok: true; readonly data: readonly GhostCheckEntry[]; readonly dateHeader: string | null } => ({
+      ok: true,
+      data,
+      dateHeader: null,
+    });
+
+    // Ken, in three worktrees. One person is in my way, not three.
+    expect(
+      planOverlapCheck(
+        ok([
+          row("wc_k1", "dev_ken", "Ken"),
+          row("wc_k2", "dev_ken", "Ken"),
+          row("wc_k3", "dev_ken", "Ken"),
+        ]),
+      ).detail,
+    ).toBe("1 teammate working where you are");
+    // The control: two PEOPLE do read as two.
+    expect(
+      planOverlapCheck(
+        ok([row("wc_k1", "dev_ken", "Ken"), row("wc_m1", "dev_mike", "Mike")]),
+      ).detail,
+    ).toBe("2 teammates working where you are");
+    expect(planOverlapCheck(ok([])).detail).toBe(
+      "no teammate is working where you are",
+    );
+  });
+
+  test("an unanswerable hub is counted, and never as a model-layer loss", () => {
+    const base = {
+      sessions: 1,
+      notices: 0,
+      fires: 0,
+      noOverlap: 0,
+      noHubAnswer: 0,
+      nones: 0,
+      drafts: 0,
+      fails: 0,
+      lastFailure: null,
+    };
+    const line = formatGhostCost({ ...base, noHubAnswer: 2 });
+    expect(line).toContain("2 not measured (the hub could not answer)");
+    expect(line).not.toContain("failed");
+    // A connector rolled out ahead of its hub is a healthy machine. The one
+    // voice for that condition is `plan overlap`, not a WARN sending the
+    // reader to their own `claude` binary.
+    expect(isGhostSilentlyDead({ ...base, noHubAnswer: 5 })).toBe(false);
+    // The control: a REAL model-layer loss still warns.
+    expect(isGhostSilentlyDead({ ...base, fires: 1, fails: 1 })).toBe(true);
+  });
+
+  test("plan overlap tells an absent endpoint from a broken one", () => {
+    const failed = (
+      kind: "network" | "http" | "malformed",
+      status: number,
+    ): HubResult<readonly GhostCheckEntry[]> => ({
+      ok: false,
+      kind,
+      status,
+      code: "test",
+      message: "test",
+    });
+
+    // ABSENT: a hub that predates this feature. A deployment state.
+    const absent = planOverlapCheck(failed("http", 404));
+    expect(absent.level).toBe("PASS");
+    expect(absent.detail).toContain("no /api/ghost-checks");
+    // UNREACHABLE: nothing here is broken either, and doctor's connectivity
+    // checks own that condition.
+    const offline = planOverlapCheck(failed("network", 0));
+    expect(offline.level).toBe("PASS");
+    expect(offline.detail).toContain("could not be reached");
+    // UNPARSEABLE: a hub whose shape this connector does not know, which is
+    // the tolerant posture every other reader here takes.
+    const strange = planOverlapCheck(failed("malformed", 200));
+    expect(strange.level).toBe("PASS");
+    expect(strange.detail).toContain("did not parse");
+    // BROKEN: the endpoint exists and is failing — a missing migration, a
+    // schema drift. Nothing else on this run would say so.
+    const broken = planOverlapCheck(failed("http", 500));
+    expect(broken.level).toBe("WARN");
+    expect(broken.detail).toContain("500");
+  });
+
+  test("a hub that cannot answer the overlap is 'not measured', not a fault", async () => {
+    const { home, repo } = await fixture("goverlap");
+    await seedSession(home, repo, "go");
+    const result = await runCli(["doctor"], env(home), repo);
+    const line = lineWith(result.stdout, "plan overlap");
+    // The check EXISTS — an older or unreachable hub is a deployment state,
+    // not a fault on this machine, so it reads PASS with the honest words.
+    expect(line).toContain("plan overlap");
+    expect(line).toContain("PASS");
+    expect(line).toContain("not measured");
+  });
+});

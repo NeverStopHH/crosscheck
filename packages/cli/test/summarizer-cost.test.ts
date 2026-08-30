@@ -14,6 +14,7 @@ import {
   isSummarizerSilentlyDead,
   readSummarizerCost,
 } from "@crosscheck/connector-claude";
+import type { SummarizerCost } from "@crosscheck/connector-claude";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
@@ -108,6 +109,76 @@ describe("summarizer cost surfaces", () => {
     expect(result.stdout).toContain("summarizer: 3 runs");
     expect(result.stdout).toContain("(2 NONE, 1 draft)");
     expect(result.stdout).toContain("~1200 tokens (estimate)");
+  });
+
+  test("status names the refused answers and why (M16 / A3-4)", async () => {
+    // A refusal is not a NONE and not a failure: the model answered and the
+    // quota was spent, and before it was booked the line said nothing at all.
+    const repo = await makeRepo("cost-refused", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-refused");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-refused-a", {
+      summarizerFireCount: 3,
+      summarizerEstimatedTokens: 1200,
+      summarizerNoneCount: 1,
+      summarizerRejectCount: 2,
+      summarizerLastRejection:
+        "role-play: the answer narrated the next step instead of a conclusion",
+    });
+
+    const result = await runCli(["status"], env(home), repo);
+
+    expect(result.stdout).toContain("2 refused");
+    expect(result.stdout).toContain("role-play");
+  });
+
+  test("doctor WARNs when every answer is refused and nothing lands", async () => {
+    // The remedy differs from a dead runner's, so the WARN is its own: the
+    // runner probe would PASS here and send the reader to the wrong check.
+    const repo = await makeRepo("cost-refused-doctor", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-refused-doctor");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-refused-doctor-a", {
+      summarizerFireCount: 2,
+      summarizerEstimatedTokens: 900,
+      summarizerRejectCount: 2,
+      summarizerLastRejection:
+        "echo: the answer repeated the instructions it was given",
+    });
+
+    const result = await runCli(["doctor"], env(home), repo);
+
+    expect(result.stdout).toContain("WARN  summarizer cost");
+    expect(result.stdout).toContain("every answer was refused");
+    // And it does NOT claim the runner never spoke — that is the other WARN.
+    expect(result.stdout).not.toContain("runs fired, none answered");
+  });
+
+  test("one refusal beside a kept draft stays a PASS", async () => {
+    // The control on the threshold: an echoed draft refused once, with a real
+    // draft kept, is the guards working — nagging there is how a WARN stops
+    // being read.
+    const repo = await makeRepo("cost-refused-ok", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-refused-ok");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-refused-ok-a", {
+      summarizerFireCount: 2,
+      summarizerEstimatedTokens: 900,
+      summarizerDraftCount: 1,
+      summarizerRejectCount: 1,
+      summarizerLastRejection:
+        "echo: the answer was a teammate hint this repo had already delivered",
+    });
+
+    const result = await runCli(["doctor"], env(home), repo);
+
+    expect(result.stdout).toContain("PASS  summarizer cost");
   });
 
   test("doctor carries a summarizer cost check, PASS and marked estimate", async () => {
@@ -344,19 +415,20 @@ describe("summarizer cost reads the newest sessions, and says how many", () => {
 
   test("mostly-dead: more than half the fires unexplained, above the sample floor", () => {
     // Arrange: the trial's own shape — 27 fires, 6 explained, 21 vanished
-    const trial = {
+    const trial: SummarizerCost = {
       sessions: 1,
       filesSeen: 100,
       filesRead: 50,
       staleSkipped: 0,
       parseFailures: 0,
       unparsedAnswers: 0,
-      intentFires: 0,
       fires: 27,
       nones: 3,
       drafts: 3,
       fails: 0,
       lastFailure: null,
+      rejects: 0,
+      lastRejection: null,
       estimatedTokens: 0,
     };
 
@@ -369,8 +441,15 @@ describe("summarizer cost reads the newest sessions, and says how many", () => {
     ).toBe(false);
   });
 
-  test("an intent counter is silent at zero and printed above it", async () => {
-    // Arrange: the additive field feat/session-intent will write
+  test("the summarizer line does not speak for the intent surface", async () => {
+    // Arrange: this counter was a PLACEHOLDER on the summarizer line — the
+    // additive field `feat/session-intent` was expected to write, printed
+    // there only so that branch would need no edit on this side. That branch
+    // has landed, with `readIntentCost`/`formatIntentCost` and a doctor check
+    // of its own, so the fact now has an owner: printing it here as well put
+    // "2 intent captures" inside the summarizer's own run accounting
+    // (`0 runs (0 NONE, 0 drafts, 2 intent captures)`) and gave `doctor` two
+    // lines carrying one number.
     const repo = await makeRepo("cost-intent", {
       remote: "git@github.com:acme/api.git",
     });
@@ -380,15 +459,14 @@ describe("summarizer cost reads the newest sessions, and says how many", () => {
       lastHeartbeatAt: new Date().toISOString(),
       summarizerFireCount: 1,
       summarizerNoneCount: 1,
+      intentFireCount: 4,
     });
 
     // Act
-    const quiet = await readSummarizerCost(home, HUB_URL, REPO_ID);
+    const cost = await readSummarizerCost(home, HUB_URL, REPO_ID);
 
-    // Assert
-    expect(formatSummarizerCost(quiet)).not.toContain("intent");
-    expect(
-      formatSummarizerCost({ ...quiet, intentFires: 4 }),
-    ).toContain("4 intent captures");
+    // Assert: four intent fires on disk, and this line says nothing about them
+    expect(formatSummarizerCost(cost)).not.toContain("intent");
+    expect(formatSummarizerCost(cost)).toContain("1 runs");
   });
 });

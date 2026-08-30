@@ -1,5 +1,5 @@
 import { PROTOCOL_VERSION } from "@crosscheck/schema";
-import type { Envelope } from "@crosscheck/schema";
+import type { Envelope, Intent } from "@crosscheck/schema";
 
 export interface Producer {
   readonly developerId: string;
@@ -32,6 +32,12 @@ export interface WorkContextRecordInput {
   readonly sessionId: string;
   readonly title: string;
   readonly status: string;
+  /**
+   * Present only on an intent UPDATE (the derived-intent worker, `set_intent`):
+   * omitted, the record says nothing about the intent and the hub keeps what it
+   * has — so a registration or recovery re-send can never wipe one.
+   */
+  readonly intent?: Intent | undefined;
 }
 
 export const workContextRecord = (
@@ -46,6 +52,7 @@ export const workContextRecord = (
       sessionId: input.sessionId,
       title: input.title,
       status: input.status,
+      ...(input.intent === undefined ? {} : { intent: input.intent }),
       createdAt: now.toISOString(),
     },
     producer,

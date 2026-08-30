@@ -75,8 +75,8 @@
  *
  *    THE CAP IS THE ONE INVARIANT THE CORPUS CANNOT EXERCISE, and saying so is
  *    the point. One payload in one slot is three lines of briefing: the longest
- *    all 56 payloads across all 8 slots can produce is 550 characters against
- *    the 2200 cap, 1650 short of ever reaching the assertion. So until the
+ *    all 57 payloads across all 10 slots can produce is 684 characters against
+ *    the 2200 cap, 1516 short of ever reaching the assertion. So until the
  *    `saturating briefings` block below existed, the per-line budget in
  *    render.ts's appendSection could be deleted with the whole suite green —
  *    measured, identically on macOS 26 arm64 and in oven/bun:1 under --cpus=2.
@@ -84,11 +84,25 @@
  *    every field at its cap, a shape production reaches, and lands 225
  *    characters under the cap while dropping lines it reports. It also records
  *    which of appendSection's three cap comparisons can be pinned at all — one
- *    of them provably cannot. Re-derive the 550 with:
+ *    of them provably cannot. Re-derive the 684 with:
  *
  *      bun test packages/connector-core/test/injection-corpus.test.ts
  *
  *    whose `the corpus alone cannot reach MAX_BRIEFING_CHARS` test asserts it.
+ *
+ *    Those four numbers rotted once — the sentence still said 56/8/550/1650
+ *    after the corpus and the slot list had both grown — so all three that a
+ *    command can reach are now pinned rather than counted by hand. The fourth,
+ *    1516, is 2200 - 684 and follows from the two below it.
+ *
+ * VERIFY: bun -e 'const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");console.log(INJECTION_CORPUS.length)'
+ * PRINTS: 57
+ *
+ * VERIFY: sed -n '/^const SLOTS: readonly Slot\[\] = \[/,/^\];/p' packages/connector-core/test/injection-corpus.test.ts | grep -c '^  "'
+ * PRINTS: 10
+ *
+ * VERIFY: grep -c '^const LONGEST_CORPUS_BRIEFING = 684;$' packages/connector-core/test/injection-corpus.test.ts
+ * PRINTS: 1
  *
  * 2. KNOWN-NOT-CAUGHT. The phrase filter is documented in briefing/sanitize.ts
  *    as opportunistic defence-in-depth, not a guarantee, and the cases below
@@ -150,9 +164,15 @@ const MORE_LINE = /^\(\+\d+ more not shown\)$/;
  * "no unbalanced « »" rule alone is satisfied by having no « » at all.
  */
 const PRESENCE_LINE =
-  /^- .+ · branch(?:es)? .+ · status .* · heartbeat \d+[smhd] ago(?: · base .+)?$/;
+  /^- .+ · branch(?:es)? .+ · status .* · heartbeat \d+[smhd] ago(?: · base .+)?(?: · intent(?: \(derived\))?: «[^«»]*»)?$/;
 /** A work-context line: the title, and only the title, inside « ». */
 const CONTEXT_LINE = /^- .*, \d+[smhd] ago, status .*: «[^«»]*»$/;
+/**
+ * A context's intent line (trial finding #16): indented under its context,
+ * the label a renderer literal, the sentence — and only the sentence —
+ * inside « ». The one OTHER framed line the contexts section may emit.
+ */
+const CONTEXT_INTENT_LINE = /^  intent(?: \(derived\))?: «[^«»]*»$/;
 
 /**
  * THE CHARACTER CLASSES MOVED, and what they assert is unchanged.
@@ -261,7 +281,9 @@ const SPACED_SEPARATORS: readonly (readonly [string, number])[] = [
  */
 type Slot =
   | "workContextTitle"
+  | "workContextIntent"
   | "presenceName"
+  | "presenceIntent"
   | "branch"
   | "presenceStatus"
   | "contextAuthor"
@@ -271,7 +293,9 @@ type Slot =
 
 const SLOTS: readonly Slot[] = [
   "workContextTitle",
+  "workContextIntent",
   "presenceName",
+  "presenceIntent",
   "branch",
   "presenceStatus",
   "contextAuthor",
@@ -281,8 +305,23 @@ const SLOTS: readonly Slot[] = [
 ];
 
 /**
- * The slots the renderer prints WITHOUT the « » frame. `workContextTitle` is
- * the only framed one, and `repoId` goes in the header rather than a bullet.
+ * Every attacker row carries an intent (trial finding #16) — the payload in
+ * the intent slot under attack, a clean sentence otherwise — so the intent
+ * lines are ALWAYS present and the walker below holds them to their shape.
+ */
+const CLEAN_INTENT = "Stop the rate limiter dropping burst traffic";
+
+const intentWith = (slot: Slot, wanted: Slot, payload: string) => ({
+  summary: slot === wanted ? payload : CLEAN_INTENT,
+  provenance: "derived",
+  confidence: 0.4,
+  capturedAt: RECENT,
+});
+
+/**
+ * The slots the renderer prints WITHOUT the « » frame. `workContextTitle` and
+ * the two intent slots are the framed ones, and `repoId` goes in the header
+ * rather than a bullet.
  * A semantic forgery needs no special character, so it is reachable from every
  * slot in this list — which is why the known-not-caught tests loop over it
  * rather than naming a single field.
@@ -323,6 +362,7 @@ const attackerPresence = (slot: Slot, payload: string): PresenceEntry => ({
   status: slot === "presenceStatus" ? payload : "analyzing",
   lastHeartbeatAt: RECENT,
   isSelf: false,
+  intent: intentWith(slot, "presenceIntent", payload),
 });
 
 /** `contextAuthorFallback` OMITS developerName — that is what opens the path. */
@@ -339,6 +379,7 @@ const attackerContext = (slot: Slot, payload: string): WorkContextEntry => ({
   developerName: contextAuthorFor(slot, payload),
   title: slot === "workContextTitle" ? payload : "Rate limiter drops burst traffic",
   status: slot === "contextStatus" ? payload : "implementing",
+  intent: intentWith(slot, "workContextIntent", payload),
   createdAt: RECENT,
   updatedAt: null,
 });
@@ -385,11 +426,18 @@ const assertInvariants = (output: string, label: string): void => {
       return;
     }
     // Anything else is a bullet, and a bullet outside a section is already a
-    // broken frame: no untrusted value may produce a line of its own.
+    // broken frame: no untrusted value may produce a line of its own. The
+    // contexts section may emit exactly two shapes — the context line and the
+    // indented intent line under it.
     expect(section, where).not.toBeNull();
-    expect(line, where).toMatch(
-      section === "presence" ? PRESENCE_LINE : CONTEXT_LINE,
-    );
+    if (section === "presence") {
+      expect(line, where).toMatch(PRESENCE_LINE);
+    } else {
+      expect(
+        CONTEXT_LINE.test(line) || CONTEXT_INTENT_LINE.test(line),
+        where,
+      ).toBe(true);
+    }
   });
 };
 
@@ -410,7 +458,7 @@ const CORPUS_SHAPE: Readonly<Record<InjectionCategory, number>> = {
   homoglyph: 3,
   oversize: 2,
   structure: 4,
-  "self-mimicry": 6,
+  "self-mimicry": 7,
 };
 const CORPUS_SIZE = Object.values(CORPUS_SHAPE).reduce(
   (total, count) => total + count,
@@ -740,6 +788,8 @@ describe("the phrase filter's branches are each load-bearing", () => {
  */
 const FIELD_PAD = 60;
 const TITLE_PAD = 63;
+/** The widest briefing the corpus can produce, in characters — asserted below. */
+const LONGEST_CORPUS_BRIEFING = 684;
 
 const saturatingBriefing = (): string =>
   renderBriefing({
@@ -753,6 +803,13 @@ const saturatingBriefing = (): string =>
       status: `implementing ${"s".repeat(FIELD_PAD)}`,
       lastHeartbeatAt: RECENT,
       isSelf: false,
+      // Short on the presence lines, long on the contexts: presence renders
+      // FIRST and five max-width intents there would crowd the contexts
+      // section out whole (its header no longer fits — appendSection drops a
+      // section it cannot open), which is the budget consequence DESIGN.md §4
+      // states; this fixture keeps the contexts section in play so the
+      // per-line budget and its "+N more" line stay the thing under test.
+      intent: intentWith("repoId", "repoId", `Intent ${String(index)}`),
     })),
     workContexts: Array.from({ length: MAX_CONTEXTS }, (_unused, index) => ({
       id: `wc_${String(index)}`,
@@ -760,6 +817,7 @@ const saturatingBriefing = (): string =>
       developerName: `Teammate ${String(index)} ${"n".repeat(FIELD_PAD)}`,
       title: `Rate limiter ${String(index)} ${"t".repeat(TITLE_PAD)}`,
       status: `implementing ${"s".repeat(FIELD_PAD)}`,
+      intent: intentWith("repoId", "repoId", `Intent ${String(index)} ${"i".repeat(FIELD_PAD)}`),
       createdAt: RECENT,
       updatedAt: null,
     })),
@@ -785,7 +843,9 @@ describe("saturating briefings", () => {
     // Assert: this is the number the header quotes. It is asserted rather than
     // written down so it cannot age quietly, and it is what says the cap
     // assertion in assertInvariants is carried by the block below, not here.
-    expect(longest, where).toBe(550);
+    // (Grew from 550 when every attacker row gained an intent line — trial
+    // finding #16 — still a quarter of the cap.)
+    expect(longest, where).toBe(LONGEST_CORPUS_BRIEFING);
     expect(longest).toBeLessThan(MAX_BRIEFING_CHARS);
   });
 

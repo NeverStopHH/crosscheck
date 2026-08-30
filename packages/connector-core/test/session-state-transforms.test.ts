@@ -11,10 +11,12 @@ import { describe, expect, test } from "bun:test";
 import {
   MAX_BRIEFING_SOLVED_REFS,
   MAX_KNOWN_WORKTREE_ROOTS,
+  MAX_PROBED_FINGERPRINTS,
 } from "../src/constants.ts";
 import {
   withBriefingSolvedRefs,
   withKnownWorktreeRoot,
+  withProbedFingerprint,
 } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
 
@@ -33,6 +35,7 @@ const baseState = (): SessionState => ({
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
   briefingSolvedRefs: [],
+  probedFingerprints: [],
   foreignRepoDrops: 0,
   briefingPending: false,
   stopTurnCount: 0,
@@ -43,6 +46,25 @@ const baseState = (): SessionState => ({
   summarizerDraftCount: 0,
   summarizerFailCount: 0,
   summarizerLastFailure: null,
+  summarizerRejectCount: 0,
+  summarizerLastRejection: null,
+  workContextTitle: null,
+  workContextStatus: null,
+  intentFireCount: 0,
+  intentNoneCount: 0,
+  intentSetCount: 0,
+  intentFailCount: 0,
+  intentLastFailure: null,
+  workContextIntent: null,
+  ghostPending: false,
+  ghostNoticeCount: 0,
+  ghostFireCount: 0,
+  ghostNoOverlapCount: 0,
+  ghostNoHubAnswerCount: 0,
+  ghostNoneCount: 0,
+  ghostDraftCount: 0,
+  ghostFailCount: 0,
+  ghostLastFailure: null,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,
@@ -53,7 +75,6 @@ const baseState = (): SessionState => ({
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
   summarizerUnparsedCount: 0,
-  intentFireCount: 0,
 });
 
 describe("withBriefingSolvedRefs", () => {
@@ -99,6 +120,40 @@ describe("withBriefingSolvedRefs", () => {
     expect(original.briefingSolvedRefs).toEqual([]);
   });
 });
+
+describe("withProbedFingerprint", () => {
+  test("asking about one fingerprint twice records it once", () => {
+    // Arrange / Act: the shape a racing hook produces — two processes past
+    // the lockless read, both re-entering the transform with one value.
+    const once = withProbedFingerprint(baseState(), "sha256:aaaa");
+    const twice = withProbedFingerprint(once, "sha256:aaaa");
+
+    // Assert
+    expect(twice.probedFingerprints).toEqual(["sha256:aaaa"]);
+  });
+
+  test("the list is FIFO-capped like its sibling state lists", () => {
+    // Arrange
+    const values = Array.from(
+      { length: MAX_PROBED_FINGERPRINTS + 1 },
+      (_, i) => `sha256:${String(i)}`,
+    );
+
+    // Act
+    const state = values.reduce(
+      (accumulated, value) => withProbedFingerprint(accumulated, value),
+      baseState(),
+    );
+
+    // Assert: the oldest question fell out, the newest survives.
+    expect(state.probedFingerprints).toHaveLength(MAX_PROBED_FINGERPRINTS);
+    expect(state.probedFingerprints[0]).toBe("sha256:1");
+    expect(state.probedFingerprints.at(-1)).toBe(
+      `sha256:${String(values.length - 1)}`,
+    );
+  });
+});
+
 
 describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {
   test("remembers a root's repoId, positive and negative", () => {

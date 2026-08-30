@@ -6,6 +6,8 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+
 import { MAX_SOLVED_POINTERS } from "../src/constants.ts";
 import { renderBriefing } from "../src/briefing/render.ts";
 import type { BriefingInput } from "../src/briefing/render.ts";
@@ -24,6 +26,9 @@ const solvedMatch = (
   solvedAt: new Date(NOW.getTime() - 150 * DAY_MS).toISOString(),
   landedAt: null,
   matchedTargetKind: "error_fingerprint",
+  // The label the cause line is required to carry; overrides may drop it,
+  // and one test below does exactly that.
+  rootCauseConfidence: 0.9,
   ...overrides,
 });
 
@@ -44,7 +49,7 @@ describe("briefing solved-before section", () => {
     const briefing = renderBriefing(baseInput([solvedMatch()]));
 
     // Assert: months for an old diagnosis, the shared-target fact, the id.
-    expect(briefing).toContain("Previously solved on this repo");
+    expect(briefing).toContain("Previously solved (get_diagnosis reads the tree)");
     expect(briefing).toContain("get_diagnosis wc_solved");
     expect(briefing).toContain("diagnosed 5mo ago");
     expect(briefing).toContain("shared error fingerprint");
@@ -91,6 +96,138 @@ describe("briefing solved-before section", () => {
 
     // Assert
     expect(briefing).toContain("diagnosed 45d ago");
+  });
+
+  test("an intent match says topic, not identity, and quotes nothing", async () => {
+    // Arrange: the same tree, matched two ways, with a body attached to
+    // both. Together they pin what the reader is being asked to trust — an
+    // overlap of words is not the same fact as an identical failure, and
+    // only the second one may put the old answer in front of the agent.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          workContextId: "wc_topic",
+          matchedTargetKind: "session_intent",
+          rootCause: "The ingestion mapping drops the key id on rotation",
+        }),
+        solvedMatch({
+          workContextId: "wc_same_failure",
+          matchedTargetKind: "error_fingerprint",
+          rootCause: "The ingestion mapping drops the key id on rotation",
+        }),
+      ]),
+    );
+
+    // Assert
+    const lines = briefing.split("\n");
+    const topicAt = lines.findIndex((line) => line.includes("get_diagnosis wc_topic"));
+    expect(lines[topicAt]).toContain("shared topic with your session intent");
+    expect(lines[topicAt + 1] ?? "").not.toContain("root cause");
+    expect(briefing).toContain("shared error fingerprint with current work");
+    expect(briefing).toContain(
+      "  root cause · confidence 0.90 · provenance declared: «",
+    );
+  });
+
+  test("an injected cause says how sure its author was", async () => {
+    // Arrange: a hedge, published honestly and legally — `publish_claim`
+    // takes the confidence straight from the model and the solved predicate
+    // has no floor, so a 0.05 guess makes a tree SOLVED on every surface.
+    // Every other substance this product injects prints its trust labels
+    // (renderClaimHint, renderAnswerHint, DESIGN.md §4); this is the one
+    // surface that pushes a body at a reader who did not ask for it.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          rootCause:
+            "It is probably the rotation dropping the key id, but I never confirmed it",
+          rootCauseConfidence: 0.05,
+        }),
+      ]),
+    );
+
+    // Assert
+    const causeLine = briefing
+      .split("\n")
+      .find((line) => line.startsWith("  root cause"));
+    expect(causeLine).toContain("confidence 0.05");
+    expect(causeLine).toContain("provenance declared");
+    expect(causeLine).toContain("«It is probably the rotation");
+  });
+
+  test("a cause arriving without its confidence is not injected", async () => {
+    // Arrange: substance without its labels is not something this renderer
+    // vouches for, so the ENTRY keeps its pointer and loses the body — the
+    // reader can still pull the tree with get_diagnosis.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          rootCause: "The ingestion mapping drops the key id on rotation",
+          rootCauseConfidence: undefined,
+        }),
+      ]),
+    );
+
+    // Assert
+    expect(briefing).toContain("get_diagnosis wc_solved");
+    expect(briefing).not.toContain("root cause");
+  });
+
+  test("a cause containing an everyday word still reaches the reader", async () => {
+    // Arrange: "override" and "you must" are two of the sanitizer's nine
+    // phrase branches, and `sanitizeUntrusted` blanks the WHOLE body as soon
+    // as one matches. That is the right trade for a TITLE — a label that
+    // reads like an instruction is worth losing — and the wrong one here,
+    // where the body IS the answer the whole feature exists to deliver.
+    for (const cause of [
+      "the per-repo override is applied before the default is read, so the rotated key id never lands",
+      "you must not reuse the cached client after a rotation; it holds the old key id",
+    ]) {
+      const briefing = renderBriefing(baseInput([solvedMatch({ rootCause: cause })]));
+
+      // Assert: the matched SPAN goes, the sentence stays, and nothing tells
+      // the reader about a "title" they never saw.
+      const causeLine = briefing
+        .split("\n")
+        .find((line) => line.startsWith("  root cause"));
+      expect(causeLine, cause).not.toContain("looked like an instruction");
+      expect(causeLine, cause).toContain("[redacted]");
+      expect(causeLine, cause).toContain("key id");
+    }
+  });
+
+  test("an answer older than two years reads in years, not in months", async () => {
+    // Arrange: this block removed every reason an old row would not surface
+    // — matches now travel across repos and there is no maximum age — so a
+    // five-year-old diagnosis leading a briefing line is a real shape. The
+    // formatter exists so the reader does not have to divide; "68mo" is the
+    // same arithmetic one unit up.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          solvedAt: new Date(NOW.getTime() - 2027 * DAY_MS).toISOString(),
+        }),
+      ]),
+    );
+
+    // Assert
+    expect(briefing).toContain("diagnosed 5y 7mo ago");
+    expect(briefing).not.toContain("67mo");
+  });
+
+  test("just under the year threshold still reads in months", async () => {
+    // The CONTROL for the case above: without it, a formatter that said
+    // "y" for everything would pass it.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          solvedAt: new Date(NOW.getTime() - 690 * DAY_MS).toISOString(),
+        }),
+      ]),
+    );
+
+    // Assert
+    expect(briefing).toContain("diagnosed 23mo ago");
   });
 
   test("an unknown match kind drops the line rather than inventing a sentence", async () => {
@@ -198,6 +335,98 @@ describe("briefing solved-before section", () => {
       .split("\n")
       .find((line) => line.includes("get_diagnosis wc_x"));
     expect(pointerLine?.split("·")).toHaveLength(4);
+  });
+
+  test("a match from another repo names it; one from here, or from an older hub, names none", async () => {
+    // Arrange: the SAME match three times, differing only in what the hub
+    // says about its repo — elsewhere, here, and a hub too old to say.
+    // Asserting all three together is what makes this discriminating: a
+    // renderer that simply ignored `repo` would satisfy the last two alone.
+    // Two calls because MAX_SOLVED_POINTERS caps a section at two lines.
+    const both = renderBriefing(
+      baseInput([
+        solvedMatch({ workContextId: "wc_far", repo: "github.com/acme/web" }),
+        solvedMatch({ workContextId: "wc_near", repo: "github.com/acme/api" }),
+      ]),
+    );
+    const older = renderBriefing(baseInput([solvedMatch({ workContextId: "wc_old" })]));
+
+    // Assert
+    const lineFor = (briefing: string, id: string): string =>
+      briefing.split("\n").find((line) => line.includes(`get_diagnosis ${id}`)) ??
+      "";
+    expect(lineFor(both, "wc_far")).toContain("· in github.com/acme/web ·");
+    expect(lineFor(both, "wc_near")).toContain("get_diagnosis wc_near");
+    expect(lineFor(both, "wc_near")).not.toContain(" · in ");
+    expect(lineFor(older, "wc_old")).toContain("get_diagnosis wc_old");
+    expect(lineFor(older, "wc_old")).not.toContain(" · in ");
+  });
+
+  test("a fingerprint match quotes its cause; a file match only points", async () => {
+    // Arrange: the SAME recorded cause on both entries, differing only in
+    // how the hub says the match was reached. Asserting both together is
+    // what makes this discriminating — a renderer that printed every body it
+    // was handed would satisfy the first half on its own.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          workContextId: "wc_fp",
+          matchedTargetKind: "error_fingerprint",
+          rootCause: "The ingestion mapping drops the key id on rotation",
+        }),
+        solvedMatch({
+          workContextId: "wc_file",
+          matchedTargetKind: "file",
+          rootCause: "The ingestion mapping drops the key id on rotation",
+        }),
+      ]),
+    );
+
+    // Assert: the cause is its own indented line under the fingerprint
+    // entry, and the file entry's pointer line is the last thing about it.
+    const lines = briefing.split("\n");
+    const fingerprintAt = lines.findIndex((line) =>
+      line.includes("get_diagnosis wc_fp"),
+    );
+    const fileAt = lines.findIndex((line) => line.includes("get_diagnosis wc_file"));
+    expect(lines[fingerprintAt + 1]).toBe(
+      "  root cause · confidence 0.90 · provenance declared: " +
+        "«The ingestion mapping drops the key id on rotation»",
+    );
+    expect(lines[fileAt + 1] ?? "").not.toContain("root cause");
+    // One « » pair per line stays true with two framed values in one entry.
+    for (const line of lines) {
+      expect((line.match(/«/g) ?? []).length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test("a cause longer than the bound is cut, and the entry stays one unit", async () => {
+    // Arrange: a body at the claim's own maximum, well past what a briefing
+    // line may spend.
+    const long = "z".repeat(MAX_CLAIM_BODY_LENGTH);
+    const briefing = renderBriefing(
+      baseInput([solvedMatch({ rootCause: long })]),
+    );
+
+    // Assert
+    const causeLine = briefing
+      .split("\n")
+      .find((line) => line.startsWith("  root cause"));
+    expect(causeLine).toBeDefined();
+    expect(causeLine?.length).toBeLessThan(long.length);
+    expect(causeLine).toContain("«");
+  });
+
+  test("a foreign repo the renderer cannot print drops the line", async () => {
+    // Arrange: a repo id that is nothing but frame characters survives the
+    // BARE strip as an empty string. Showing the line anyway would read as
+    // "solved here", which is the one thing it is not — so it is dropped.
+    const briefing = renderBriefing(
+      baseInput([solvedMatch({ repo: "«»«»" })]),
+    );
+
+    // Assert
+    expect(briefing).toBe("");
   });
 
   test("an id reduced to nothing drops the pointer — it cannot be followed", async () => {

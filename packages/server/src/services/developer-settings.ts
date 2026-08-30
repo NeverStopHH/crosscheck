@@ -82,13 +82,62 @@ export const setPresenceOptOut = async (
     .where(eq(developers.id, developerId));
 };
 
+/**
+ * A same-named developer as an ambiguity refusal has to name them. The EMAIL
+ * is what makes such a refusal actionable: two people called Ken differ only
+ * by address, so a refusal listing names alone leaves the caller with no next
+ * call to make (services/developer-lookup.ts writes the sentence).
+ */
+export interface DeveloperCandidate {
+  readonly id: string;
+  readonly name: string;
+  readonly email: string;
+}
+
 export type ResolveDeveloperResult =
   | { readonly outcome: "resolved"; readonly developer: MuteEntryView }
   | { readonly outcome: "not_found" }
-  | { readonly outcome: "ambiguous" };
+  | {
+      readonly outcome: "ambiguous";
+      /** A PAGE of them — at most AMBIGUITY_PROBE_LIMIT, see below. */
+      readonly candidates: readonly DeveloperCandidate[];
+      /**
+       * How many there really are. Separate from the page on purpose: a
+       * refusal may list fewer people than it counts, and the number is the
+       * one thing in the sentence that must never be the page size — see
+       * `describeAmbiguousDeveloper`.
+       */
+      readonly totalCount: number;
+    };
 
-/** How many same-name rows are read to detect ambiguity — two is enough. */
-const AMBIGUITY_PROBE_LIMIT = 2;
+/**
+ * How many same-name rows are read. Two is enough to DETECT ambiguity, which
+ * is all the mute surfaces ever needed; the search and question filters have
+ * to NAME the candidates, so the probe reads a few more and the refusal lists
+ * what it found. Bounded either way — a page of Kens is not a useful sentence.
+ *
+ * BOUNDING THE PAGE IS NOT BOUNDING THE COUNT, and conflating the two is how
+ * a hub with twelve Kims came to say it had five. The page decides how many
+ * people a refusal can NAME; `countByName` below decides what it may CLAIM.
+ */
+const AMBIGUITY_PROBE_LIMIT = 5;
+
+/**
+ * How many developers this hub spells that way — all of them, not a page.
+ *
+ * Runs only on the ambiguity path, which is already a refusal rather than an
+ * answer, and only after the page came back with more than one row: the hot
+ * case (a reference that resolves) is still the two indexed point lookups and
+ * nothing else. One team's worth of rows, over the same predicate the page
+ * used, so the two numbers can never be about different sets.
+ */
+const countByName = async (db: Db, loweredName: string): Promise<number> => {
+  const counted = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(developers)
+    .where(eq(sql`lower(${developers.name})`, loweredName));
+  return counted[0]?.total ?? 0;
+};
 
 /**
  * Resolves a CLI-supplied reference to one developer: exact id first, then
@@ -96,6 +145,13 @@ const AMBIGUITY_PROBE_LIMIT = 2;
  * primary does and the table's PK keeps the answer unique (trial finding #7)
  * — then case-insensitive display name, where two matches is an error rather
  * than a guess.
+ *
+ * MATCHING IS STRICT, and that is the design rather than a limitation: no
+ * prefix, no substring, no fuzz. A matcher that picked "Ken Weber" out of
+ * "ken" would answer a question nobody asked, and nothing in the result would
+ * say it had. Approximate spellings appear only as SUGGESTIONS on the miss
+ * path (services/developer-lookup.ts), where being roughly right decides no
+ * query.
  */
 export const resolveDeveloperRef = async (
   db: Db,
@@ -123,18 +179,68 @@ export const resolveDeveloperRef = async (
     return { outcome: "resolved", developer: byEmail[0] };
   }
   const byName = await db
-    .select({ id: developers.id, name: developers.name })
+    .select({
+      id: developers.id,
+      name: developers.name,
+      email: developers.email,
+    })
     .from(developers)
     .where(eq(sql`lower(${developers.name})`, trimmed.toLowerCase()))
+    .orderBy(asc(developers.email))
     .limit(AMBIGUITY_PROBE_LIMIT);
   if (byName.length > 1) {
-    return { outcome: "ambiguous" };
+    return {
+      outcome: "ambiguous",
+      candidates: byName,
+      totalCount: await countByName(db, trimmed.toLowerCase()),
+    };
   }
   const match = byName[0];
   if (match !== undefined) {
-    return { outcome: "resolved", developer: match };
+    // Projected, not passed through. This branch selects an EMAIL as well,
+    // because an ambiguity refusal has to name addresses — and every caller of
+    // this function that resolves a single developer serializes what it gets.
+    // Handing the query row back made one endpoint answer with a teammate's
+    // address, and only when the reference happened to be spelled as a name.
+    return {
+      outcome: "resolved",
+      developer: { id: match.id, name: match.name },
+    };
   }
   return { outcome: "not_found" };
+};
+
+/**
+ * The developer's address, but ONLY when their display name is shared.
+ *
+ * The same fact the ambiguity refusal is built on, asked on the success path:
+ * two people called Ken differ by ADDRESS, so an answer that names the filter
+ * "Ken" re-collapses exactly the distinction a caller paid a refusal to make.
+ * Null when the name identifies one person, because an address nobody needs is
+ * a teammate's address published for nothing (DESIGN.md §10).
+ *
+ * One point lookup plus the same `countByName` the ambiguity path uses — two
+ * small queries rather than one correlated subquery, which is the version that
+ * reads right and is wrong: aliasing the table inside the subquery makes the
+ * outer reference resolve to the alias, so the predicate compares a row to
+ * itself and every name looks shared. On the developer-filter path only, and a
+ * filtered search already did more work than this.
+ */
+export const sharedNameEmail = async (
+  db: Db,
+  developerId: string,
+): Promise<string | null> => {
+  const rows = await db
+    .select({ name: developers.name, email: developers.email })
+    .from(developers)
+    .where(eq(developers.id, developerId))
+    .limit(1);
+  const row = rows[0];
+  if (row === undefined) {
+    return null;
+  }
+  const sharing = await countByName(db, row.name.toLowerCase());
+  return sharing > 1 ? row.email : null;
 };
 
 export type AddMuteResult =
@@ -154,8 +260,15 @@ export const addMute = async (
   ref: string,
 ): Promise<AddMuteResult> => {
   const resolved = await resolveDeveloperRef(deps.db, ref);
+  if (resolved.outcome === "ambiguous") {
+    // The OUTCOME, never the candidates. This surface's refusal names nobody
+    // (see developer-lookup.ts's header, which owns the plan to fix that);
+    // until it does, forwarding the resolver's result would ship a list of
+    // teammate addresses through a response typed as carrying none.
+    return { outcome: "ambiguous" };
+  }
   if (resolved.outcome !== "resolved") {
-    return resolved;
+    return { outcome: "not_found" };
   }
   if (resolved.developer.id === readerDeveloperId) {
     return { outcome: "self" };
@@ -198,8 +311,11 @@ export const removeMute = async (
   ref: string,
 ): Promise<RemoveMuteResult> => {
   const resolved = await resolveDeveloperRef(db, ref);
+  if (resolved.outcome === "ambiguous") {
+    return { outcome: "ambiguous" };
+  }
   if (resolved.outcome !== "resolved") {
-    return resolved;
+    return { outcome: "not_found" };
   }
   const deleted = await db
     .delete(developerMutes)

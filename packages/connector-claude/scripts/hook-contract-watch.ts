@@ -24,7 +24,7 @@
  *   bun test packages/connector-claude/test/hook-contract.test.ts
  *
  *   field names published in bold rather than in backticks   4 observations flip
- *   every heading promoted one level (`###` → `####`)       27 observations flip
+ *   every heading promoted one level (`###` → `####`)       33 observations flip
  *
  * That direction is a false alarm, not a missed change, so it fails safe: the
  * job goes red, somebody reads the reference and re-records with --write. The
@@ -187,6 +187,37 @@ export const HOOK_PROBES: readonly FieldProbe[] = [
     key: "PostToolUse.input.file_path",
     section: "PostToolUse",
     field: "file_path",
+  },
+  // PostToolUseFailure is where a FAILING tool arrives — PostToolUse fires
+  // only on success. The connector reads `error` (the failure text it
+  // fingerprints) and `is_interrupt` (an abort is not a build failure), and
+  // WRITES `additionalContext` back, which is why the output side is probed
+  // here and not for PostToolUse: that hook is registered async, so its
+  // response is discarded by construction.
+  {
+    key: "PostToolUseFailure.input.error",
+    section: "PostToolUseFailure",
+    field: "error",
+  },
+  {
+    key: "PostToolUseFailure.input.is_interrupt",
+    section: "PostToolUseFailure",
+    field: "is_interrupt",
+  },
+  {
+    key: "PostToolUseFailure.output.hookSpecificOutput",
+    section: "PostToolUseFailure",
+    field: "hookSpecificOutput",
+  },
+  {
+    key: "PostToolUseFailure.output.hookEventName",
+    section: "PostToolUseFailure",
+    field: "hookEventName",
+  },
+  {
+    key: "PostToolUseFailure.output.additionalContext",
+    section: "PostToolUseFailure",
+    field: "additionalContext",
   },
   { key: "SessionEnd.input.reason", section: "SessionEnd", field: "reason" },
   /**
