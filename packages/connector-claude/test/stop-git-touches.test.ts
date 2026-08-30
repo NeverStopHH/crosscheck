@@ -147,8 +147,12 @@ describe("the Stop hook's git evidence lane", () => {
     // Act
     await runHook("stop", stopPayload(fix), fix.env);
 
-    // Assert
+    // Assert: nothing recorded — and the COUNTER says so, which is the whole
+    // difference between a lane that ran and found nothing and a lane that
+    // never ran. An empty spool alone is what a missing feature looks like.
     expect(await spooledTargets(fix)).toHaveLength(0);
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.gitTouchCount).toBe(0);
   });
 
   test("returns well inside the Stop budget with the lane running", async () => {
@@ -162,7 +166,11 @@ describe("the Stop hook's git evidence lane", () => {
     await runHook("stop", stopPayload(fix), fix.env);
     const elapsedMs = Date.now() - started;
 
-    // Assert
+    // Assert: the elapsed time is only a budget measurement if the lane
+    // actually ran inside it, so the count is asserted FIRST. A ceiling
+    // measured over a lane that never spawned git measures nothing.
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.gitTouchCount).toBe(1);
     console.log(`[stop-git-lane] Stop returned in ${String(elapsedMs)} ms (ceiling ${String(STOP_RETURN_CEILING_MS)})`);
     expect(elapsedMs).toBeLessThan(STOP_RETURN_CEILING_MS);
   });
