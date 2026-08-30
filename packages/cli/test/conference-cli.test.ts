@@ -10,9 +10,9 @@
  * reason carry the contrast that rules it out.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
@@ -21,14 +21,21 @@ import {
   CONFERENCE_MAX_INPUT_CHARS,
   EXIT_FAIL,
   EXIT_USAGE,
+  MS_PER_SECOND,
 } from "@crosscheck/connector-core/constants.ts";
 import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 import { readConferenceCost } from "@crosscheck/connector-core/state/conference-cost.ts";
-import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
+import {
+  conferenceReportPath,
+  repoKey,
+} from "@crosscheck/connector-core/config/paths.ts";
 import { formatDraftLine } from "@crosscheck/connector-core/briefing/render.ts";
 
 import { runCli } from "../src/index.ts";
-import { runConference } from "../src/cli/conference.ts";
+import {
+  CONFERENCE_MAX_REPORTS_PER_SECOND,
+  runConference,
+} from "../src/cli/conference.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const ADMIN_TOKEN = "conference-cli-admin";
@@ -785,6 +792,65 @@ describe("the conference command", () => {
     expect(await Bun.file(pathOf(second.stdout)).exists()).toBe(true);
   });
 
+  test("a second with no free name refuses, and replaces no page", async () => {
+    // Arrange: its OWN home (the shared one holds a page per conference test
+    // in this file), and every name this second can take already written.
+    // paths.ts states reports are deliberately never reaped, so the run that
+    // finds no free name has to SAY so — the alternative it used to take was
+    // returning the FIRST name, whose write replaced a page a human may never
+    // have read while the path was printed as if a new page had been written.
+    const model = await makeFakeModel({ output: "NONE" });
+    const ownHome = await tempDir("second-full");
+    const env = {
+      CROSSCHECK_SUMMARIZER_CMD: model,
+      CROSSCHECK_HOME: ownHome,
+      HOME: ownHome,
+    };
+    const key = repoKey(hubUrl, REPO_ID);
+    const SENTINEL = "a page nobody has read yet";
+    // runConference stamps `now` on ENTRY, so seeding this second and the two
+    // that could follow makes the collision certain without a fake clock.
+    // If the stamp format ever drifts, nothing collides and the run below
+    // SUCCEEDS — which reddens this test rather than passing it for free.
+    const seeded: string[] = [];
+    const startedAt = Date.now();
+    for (let ahead = 0; ahead <= 2; ahead += 1) {
+      const stamp = new Date(startedAt + ahead * MS_PER_SECOND)
+        .toISOString()
+        .slice(0, 19)
+        .replace(/[:T]/g, "-");
+      for (let nth = 1; nth <= CONFERENCE_MAX_REPORTS_PER_SECOND; nth += 1) {
+        const path = conferenceReportPath(
+          ownHome,
+          key,
+          nth === 1 ? stamp : `${stamp}-${String(nth)}`,
+        );
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, SENTINEL);
+        seeded.push(path);
+      }
+    }
+
+    // Act
+    const result = await runConferenceFor([], env);
+
+    // Assert: loud — a non-zero exit and a line that names the bound, the
+    // stamp that is full and the two things a human can do about it.
+    expect(result.exitCode).toBe(EXIT_FAIL);
+    expect(result.stdout).toContain("could not write the report to");
+    expect(result.stdout).toContain(
+      `all ${String(CONFERENCE_MAX_REPORTS_PER_SECOND)} names for this second are taken`,
+    );
+    expect(result.stdout).toContain("move those pages aside");
+    // And the page is still delivered rather than lost with the write.
+    expect(result.stdout).toContain("The page is printed below");
+    expect(result.stdout).toContain("conference:");
+    // Nothing printed a path as if it had been written.
+    expect(result.stdout).not.toContain("report: ");
+    // Every seeded page still says exactly what it said.
+    const bodies = await Promise.all(seeded.map((path) => Bun.file(path).text()));
+    expect(bodies.every((body) => body === SENTINEL)).toBe(true);
+  });
   test("an unknown flag is a usage error, not a silent full run", async () => {
     // Act
     const result = await runConferenceFor(["--publish-everything"], {});

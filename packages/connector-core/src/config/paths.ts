@@ -229,6 +229,10 @@ export const conferenceDir = (home: string, key: string): string =>
  * (cli/conference.ts freeReportPath). It was the MINUTE, which meant a
  * scheduler retrying after a transient hub error silently replaced the page it
  * had just written while printing both paths as if both existed.
+ *
+ * Past that caller's bound of suffixes there is no free name left, and the run
+ * REFUSES to write rather than take one back — the never-reaped guarantee
+ * above holds all the way to the edge of the second, or it is not a guarantee.
  */
 export const conferenceReportPath = (
   home: string,

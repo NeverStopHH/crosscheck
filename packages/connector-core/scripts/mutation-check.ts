@@ -2845,17 +2845,38 @@ export const MUTATIONS: readonly Mutation[] = [
       "counter doctor reads as a deployment state",
   },
   {
-    // Reports are deliberately never reaped; losing one to a filename
-    // collision is the odd exception.
+    // Reports are deliberately never reaped, so a filename collision may not
+    // cost one. This entry covers the SEARCH; the one below covers what
+    // happens when the search runs out.
     label: "two conferences a minute apart overwrite one page",
     file: `${CLI}/src/cli/conference.ts`,
-    from: "  const path = await freeReportPath(config.home, key, reportStamp(now));",
-    to: "  const path = conferenceReportPath(config.home, key, reportStamp(now));",
+    from: "  const path = await freeReportPath(config.home, key, stamp);",
+    to: "  const path = conferenceReportPath(config.home, key, stamp);",
     test: `${CLI}/test/conference-cli.test.ts`,
     because:
       "a scheduler retrying after a transient hub error silently replaces " +
       "the page it just wrote, and the path is printed both times so nothing " +
       "looks wrong",
+  },
+  {
+    // The other half, one layer down. Running out of suffixes used to hand
+    // the FIRST name back, which is the entry above's defect with a bound in
+    // front of it — and conference-cli.test.ts records that fallback firing
+    // three times inside one second on a fast host, so it is not a rarity
+    // this file gets to define away.
+    //
+    // The loop's closing brace is part of the anchor: two guard clauses in
+    // this file return null at a deeper indent, and their text CONTAINS the
+    // bare line.
+    label: "an exhausted second takes the first page's name",
+    file: `${CLI}/src/cli/conference.ts`,
+    from: "  }\n  return null;\n};",
+    to: "  }\n  return first;\n};",
+    test: `${CLI}/test/conference-cli.test.ts`,
+    because:
+      "the eleventh run of one second overwrites a page nobody has read and " +
+      "prints its path as if a new one had been written — the exact loss " +
+      "paths.ts states never happens to a report",
   },
   {
     // Audit row V2-X4. The client-side declared-only gate stays either way;
