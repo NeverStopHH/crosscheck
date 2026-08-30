@@ -14,6 +14,7 @@ import {
   isSummarizerSilentlyDead,
   readSummarizerCost,
 } from "@crosscheck/connector-claude";
+import type { SummarizerCost } from "@crosscheck/connector-claude";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
@@ -414,14 +415,13 @@ describe("summarizer cost reads the newest sessions, and says how many", () => {
 
   test("mostly-dead: more than half the fires unexplained, above the sample floor", () => {
     // Arrange: the trial's own shape — 27 fires, 6 explained, 21 vanished
-    const trial = {
+    const trial: SummarizerCost = {
       sessions: 1,
       filesSeen: 100,
       filesRead: 50,
       staleSkipped: 0,
       parseFailures: 0,
       unparsedAnswers: 0,
-      intentFires: 0,
       fires: 27,
       nones: 3,
       drafts: 3,
