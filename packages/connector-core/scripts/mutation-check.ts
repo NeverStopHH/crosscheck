@@ -1987,27 +1987,24 @@ export const MUTATIONS: readonly Mutation[] = [
       "injection surfaces at once; raw, it can carry control characters, " +
       "close the « » frame and open a second one — on every surface",
   },
-  {
-    // The worker env contract (finding #14, applied to the intent worker):
-    // the parent session's markers stripped, the child marker added. This
-    // passes the hook's environment through untouched.
-    label: "the intent worker inherits the parent session's markers",
-    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: `  spawnDeriveWorker({
-    env: ctx.env,
-    home: ctx.config.home,
-    agentKind: ctx.config.agentKind,
-    cmd,
-  });`,
-    to: `  try {
-    Bun.spawn({ cmd: [...cmd], stdin: "ignore", stdout: "ignore", stderr: "ignore", env: { ...ctx.env, CROSSCHECK_HOME: ctx.config.home } as Record<string, string> }).unref();
-  } catch { /* fail open */ }`,
-    test: `${CONNECTOR}/test/intent-hook.test.ts`,
-    because:
-      "the nested claude inherits CLAUDECODE and the session id of the " +
-      "session it is summarizing and can be mistaken for, or bind to, it — " +
-      "the phantom-session class trial finding #14 closed",
-  },
+  // SUPERSEDED AND REMOVED, 2026-08-30 — "the intent worker inherits the
+  // parent session's markers". It mutated the prompt hook's spawn to pass
+  // `ctx.env` through untouched, and until this branch that reached the model
+  // and the test caught it (verified: the same mutation on 77eea1c fails
+  // intent-hook.test.ts, 6 pass / 1 fail).
+  //
+  // It cannot any more, and the reason is a STRONGER guard rather than a
+  // weaker one: `childEnv` in model/runner.ts now applies the parent-marker
+  // and hub-key denylist on EVERY model spawn, so a worker handed a dirty
+  // environment still spawns a clean model. Its allowlist is narrower than
+  // anything summarizerWorkerEnv strips, which makes the hook-level bypass
+  // unobservable at the model by construction — not merely untested.
+  //
+  // The protection it named is still pinned, one layer down and closer to the
+  // spawn: "a nested model is handed the session it is summarizing" mutates
+  // that denylist directly and IS caught. Keeping a mutation no test can fail
+  // would have made this script claim a guard it does not have, which is the
+  // one thing it exists to prevent.
   {
     // ESCALATION LADDER RUNG 1, on the one Cursor event that can enforce a
     // block: beforeSubmitPrompt's documented output is {continue,
@@ -3514,7 +3511,6 @@ interface Outcome {
  * PRINTS: injection-corpus.test.ts 6
  * PRINTS: injection.test.ts 3
  * PRINTS: injector.test.ts 4
- * PRINTS: intent-hook.test.ts 1
  * PRINTS: intent-worker.test.ts 2
  * PRINTS: latency.test.ts 3
  * PRINTS: mcp-hostile-hub.test.ts 1
