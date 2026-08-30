@@ -312,6 +312,31 @@ export const withSummarizerNoSlice = (
 });
 
 /**
+ * WHICH DECODER READ THIS TURN'S SLICE — written by a host whose transcript
+ * format is undocumented, and by no other.
+ *
+ * It is not an outcome and it never WARNs: both decoders working is the
+ * normal state, and a fallback that matched is a real slice, not a fault. It
+ * is a DRIFT TRIPWIRE. The Cursor reader's structured decoder is a hypothesis
+ * about a format nobody publishes; if it stops matching, the prose decoder
+ * takes over, the gate is handed a strictly weaker slice, and every existing
+ * counter stays at zero — a slice was produced, so no noSlice, and no model
+ * ran, so no failure. Without this field that flip is invisible on every
+ * surface the product has.
+ *
+ * Bounded like every other string this file writes, though the callers pass a
+ * short literal from their own union: a transcript's own bytes never reach a
+ * state file through here.
+ */
+export const withSummarizerSliceShape = (
+  state: SessionState,
+  shape: string,
+): SessionState => ({
+  ...state,
+  summarizerLastSliceShape: cutWellFormed(shape, SUMMARIZER_FAILURE_MAX_CHARS),
+});
+
+/**
  * The two sentences an UNREADABLE answer is booked with, in crosscheck's own
  * words. They are the writer's, never the model's: a booked reason is printed
  * by `crosscheck status` and `doctor` into a terminal and frequently into an

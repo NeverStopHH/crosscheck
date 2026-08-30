@@ -172,6 +172,22 @@ const SessionStateObjectSchema = z.looseObject({
    */
   summarizerNoSliceCount: z.number().int().min(0).default(0),
   summarizerLastNoSlice: z.string().nullable().default(null),
+  /**
+   * WHICH DECODER READ THE LAST SLICE, on a host whose transcript format is
+   * undocumented. Written only by the Cursor connector, whose reader tries a
+   * line-delimited-JSON decoder and falls back to reading the tail as prose
+   * (connector-cursor derive/transcript.ts) — the jsonl half is a HYPOTHESIS,
+   * so the day it stops matching, the fallback takes over and the gate is
+   * handed a strictly weaker slice with nothing booked anywhere: a slice WAS
+   * produced, so it is not a noSlice, and no model failed, so it is not a
+   * failure. This field is the only place that flip can become visible, and
+   * the Cursor capability line prints it.
+   *
+   * Null on every other host and on a state file written before a turn was
+   * decoded. A short enum-shaped token from the connector's own type, never
+   * host text — nothing read off a transcript reaches here.
+   */
+  summarizerLastSliceShape: z.string().nullable().default(null),
   summarizerLastRejection: z.string().nullable().default(null),
   /**
    * Answers the model GAVE and this contract could not read: stdout that is
@@ -612,6 +628,7 @@ export const deriveSessionState = (
     summarizerRejectCount: 0,
     summarizerNoSliceCount: 0,
     summarizerLastNoSlice: null,
+    summarizerLastSliceShape: null,
     summarizerLastRejection: null,
     summarizerUnreadableCount: 0,
     summarizerLastUnreadable: null,

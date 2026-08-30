@@ -1979,6 +1979,33 @@ export const MUTATIONS: readonly Mutation[] = [
       "with no surface saying so",
   },
   {
+    // Found by review: the header promised the fallback took only "printable
+    // characters" and the code took anything non-blank, which made the named
+    // outcome below unreachable for every real transcript.
+    label: "the Cursor tail decoder accepts a binary store as prose",
+    file: `${CURSOR}/src/derive/transcript.ts`,
+    from: "  if (!isProse(prose)) {",
+    to: "  if (prose.length === 0) {",
+    test: `${CURSOR}/test/derive-transcript.test.ts`,
+    because:
+      "a transcript this reader does not understand is handed to the gate " +
+      "as a slice instead of being booked as unrecognised, so Tier-1 on " +
+      "Cursor degrades with every surface still printing PASS",
+  },
+  {
+    // The other half of the same tripwire: which decoder matched was computed
+    // and thrown away, so a format flip moved no counter anywhere.
+    label: "the Cursor slice shape is computed and discarded again",
+    file: `${CURSOR}/src/derive/triggers.ts`,
+    from: "        : withSummarizerSliceShape(counted, look.shape);",
+    to: "        : counted;",
+    test: `${CURSOR}/test/derive-transcript.test.ts`,
+    because:
+      "the structured decoder is a hypothesis about an undocumented format " +
+      "and its silent replacement by the prose fallback becomes invisible " +
+      "again — no counter moves, and doctor keeps saying the rung is fine",
+  },
+  {
     // Found by review: the ACP twin has always filtered its scan by host
     // prefix and said why in its header; the Cursor section was handed the
     // same unfiltered scan and never did.

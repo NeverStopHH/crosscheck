@@ -55,6 +55,7 @@ import {
   withStopTurn,
   withSummarizerFire,
   withSummarizerNoSlice,
+  withSummarizerSliceShape,
 } from "@crosscheck/connector-core/derive/summarizer/gate.ts";
 import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
 import {
@@ -70,7 +71,7 @@ import {
   NO_SLICE_UNRECOGNISED,
   readCursorTurnSlice,
 } from "./transcript.ts";
-import type { CursorTurnSlice } from "./transcript.ts";
+import type { CursorSliceShape, CursorTurnSlice } from "./transcript.ts";
 
 /** The three worker entries, INSIDE this package (the Stop hook's rule). */
 const INTENT_WORKER_ENTRY_PATH = resolve(
@@ -234,6 +235,14 @@ interface TurnLook {
   readonly transcriptPath: string | null;
   /** Null when a slice was produced; one of transcript.ts's reasons else. */
   readonly noSliceReason: string | null;
+  /**
+   * Which decoder read this turn, or null when none did. Carried out of here
+   * rather than dropped at the call site: the structured decoder is a
+   * hypothesis about an undocumented format, and a silent flip to the prose
+   * fallback moves no counter anywhere — a slice was produced, so it is not a
+   * noSlice, and no model ran, so it is not a failure.
+   */
+  readonly shape: CursorSliceShape | null;
 }
 
 const lookAtTurn = async (
@@ -241,7 +250,12 @@ const lookAtTurn = async (
   couldFire: boolean,
 ): Promise<TurnLook> => {
   const transcriptPath = transcriptPathOf(ctx);
-  const nothing = { slice: null, sliceText: "", transcriptPath } as const;
+  const nothing = {
+    slice: null,
+    sliceText: "",
+    transcriptPath,
+    shape: null,
+  } as const;
   if (!couldFire) {
     // Already at the cap or inside the debounce window: no file work, and no
     // no-slice booking either — a turn the gate was never going to look at
@@ -264,6 +278,7 @@ const lookAtTurn = async (
     sliceText: extracted.text,
     transcriptPath,
     noSliceReason: null,
+    shape: extracted.shape,
   };
 };
 
@@ -295,11 +310,18 @@ export const runCursorSummarizerGate = async (
     if (look.noSliceReason !== null) {
       return withSummarizerNoSlice(counted, look.noSliceReason);
     }
-    if (!wantsFire || !summarizerFireAllowed(counted)) {
-      return counted;
+    // The decoder that matched is recorded whether or not the turn fires: a
+    // format drift shows up on quiet turns first, and waiting for a fire
+    // would hide it behind the debounce and the per-session cap.
+    const decoded =
+      look.shape === null
+        ? counted
+        : withSummarizerSliceShape(counted, look.shape);
+    if (!wantsFire || !summarizerFireAllowed(decoded)) {
+      return decoded;
     }
     fired = true;
-    return withSummarizerFire(counted, estimateFireTokens(look.sliceText));
+    return withSummarizerFire(decoded, estimateFireTokens(look.sliceText));
   });
 
   if (fired && look.slice !== null && look.transcriptPath !== null) {

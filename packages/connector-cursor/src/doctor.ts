@@ -219,8 +219,15 @@ export const cursorCapabilityDetail = (input: {
   readonly sentence: string;
   readonly failures: number;
   readonly lastFailure: string | null;
+  /**
+   * One extra fact this machine knows about the rung, already in crosscheck's
+   * own words — printed whether or not anything failed, because the facts
+   * that ride here are the ones that move NO counter (see the slice shape).
+   */
+  readonly note?: string | null;
 }): string => {
-  const head = `${input.rung} — ${input.sentence}`;
+  const note = input.note === undefined || input.note === null ? "" : `; ${input.note}`;
+  const head = `${input.rung} — ${input.sentence}${note}`;
   if (input.failures === 0) {
     return head;
   }
@@ -231,6 +238,38 @@ export const cursorCapabilityDetail = (input: {
     (said.length === 0 ? "" : `, last "${said}"`) +
     " — see the summarizer runner check (counts are per live session and clear at SessionEnd)"
   );
+};
+
+/**
+ * WHICH DECODER LAST READ A TURN — the Cursor rung's drift tripwire, and the
+ * only surface it has.
+ *
+ * `derive/transcript.ts` tries a line-delimited-JSON decoder and falls back to
+ * reading the tail as prose. The first is a HYPOTHESIS about a format Cursor
+ * documents nowhere. If it stops matching, the fallback takes over, the gate
+ * is handed a strictly weaker slice, and every counter stays where it was — a
+ * slice WAS produced (so no noSlice) and no model ran (so no failure). Printed
+ * as a PASS-level fact and never a WARN: prose is a documented, deliberate
+ * fallback, and a machine whose Cursor never wrote JSONL would otherwise WARN
+ * forever with nothing to fix.
+ *
+ * The token is the connector's own union member, mapped to words here — the
+ * state file is a file, and a doctor line never prints what it merely found
+ * in one.
+ */
+const sliceShapeNote = (
+  liveStates: readonly SessionState[],
+): string | null => {
+  const shape = liveStates.reduce<string | null>(
+    (last, state) => state.summarizerLastSliceShape ?? last,
+    null,
+  );
+  if (shape === "jsonl") {
+    return "last tail decoded as structured entries";
+  }
+  return shape === "text"
+    ? "last tail decoded as prose, not as structured entries"
+    : null;
 };
 
 /**
@@ -282,6 +321,7 @@ const capabilityChecks = (
       sentence: capability.sentence,
       failures: outcome.count,
       lastFailure: outcome.last,
+      note: capability.name === "summarizer" ? sliceShapeNote(liveStates) : null,
     });
     return check(
       outcome.count === 0 ? "PASS" : "WARN",

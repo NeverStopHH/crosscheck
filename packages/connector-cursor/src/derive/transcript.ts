@@ -26,13 +26,26 @@
  *             taken as prose. Weaker (no role labels, no tool boundaries) and
  *             deliberately still useful, because the gate's anchors are
  *             command shapes and error output, which survive being read as
- *             prose.
+ *             prose. "PRINTABLE" IS ENFORCED (isProse below) and not merely
+ *             described: for one review cycle this branch it was a sentence
+ *             in this header and nothing else, so the fallback returned any
+ *             non-blank tail — a SQLite page, a stream of decode failures —
+ *             as a slice, and the null below was reachable only for a tail
+ *             that is entirely whitespace. That made the named outcome three
+ *             lines down unreachable in practice and the tripwire decorative.
  *
  * Neither decoder guessing right is a NAMED outcome, never a silence: the
  * caller books `withSummarizerNoSlice` with one of the reasons below and the
  * Cursor doctor section prints it as a sentence. That is the whole difference
  * between "capture degrades until someone runs doctor" and "capture degrades
  * and nobody ever finds out".
+ *
+ * WHICH ONE MATCHED IS REPORTED, likewise for real: the caller carries `shape`
+ * into session state (core gate.ts withSummarizerSliceShape) and the Cursor
+ * doctor rung prints it. The jsonl decoder is a hypothesis about a format
+ * nobody publishes; when it stops matching, prose takes over, the gate is
+ * handed a weaker slice, and no counter anywhere moves — a slice WAS produced
+ * and no model failed. The printed shape is the only surface that flip has.
  *
  * PRIVACY: the path is read, never stored — it does not enter session state,
  * the spool, the drift ledger or any doctor line (doctor says WHETHER a
@@ -210,6 +223,59 @@ const roleOf = (entry: Record<string, unknown>): string => {
 };
 
 /**
+ * Letters and digits in any script — what "words" means for a reader that has
+ * to work on a German stack trace and a Japanese comment alike.
+ */
+const WORD_CHAR = /[\p{L}\p{N}]/gu;
+
+/**
+ * Characters no transcript writes and every failed decode produces: C0 and C1
+ * control codes minus the three that are ordinary text (tab, LF, CR), plus
+ * U+FFFD, which is exactly what `Buffer.toString()` leaves behind for a byte
+ * sequence that is not UTF-8.
+ */
+const UNREADABLE_CHAR =
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\uFFFD]/gu;
+
+/**
+ * A tail with fewer letters or digits than this carries no anchor the gate
+ * could match anyway — `isCaptureMoment` looks for command shapes and error
+ * output — so accepting one would spend a capped fire on nothing. The bound
+ * is deliberately tiny against a 128 KiB tail of a whole conversation: it is
+ * a floor for "is this text at all", not a judgement about content.
+ */
+const PROSE_MIN_WORD_CHARS = 20;
+
+/**
+ * One character in ten being a control code or a decode failure is not prose
+ * in any language. A legitimate tail carries none at all: the reader drops
+ * the partial first line whenever it started mid-file (readTailBytes), which
+ * is the only place a split multibyte character could appear, and it always
+ * reads through to EOF, so the far end cannot be split either.
+ */
+const PROSE_MAX_UNREADABLE_RATIO = 0.1;
+
+/**
+ * Whether the fallback may offer this tail as prose. The rule the header has
+ * always described and the code did not apply — refusing here is what makes
+ * NO_SLICE_UNRECOGNISED a reachable outcome, and therefore what makes a
+ * transcript format this reader does not understand a booked, printed fact
+ * rather than a permanent quiet PASS.
+ *
+ * VERIFY: bun -e 'const {extractCursorSliceText:x}=await import("./packages/connector-cursor/src/derive/transcript.ts");const bin=Buffer.concat([Buffer.from("SQLite format 3"),Buffer.from([0,16,1,1,0,64,32,32,10])]).toString();console.log(x(bin), x("### --- >>>"), x("user: ran bun test src/auth and 3 tests failed").shape)'
+ * PRINTS: null null text
+ */
+const isProse = (text: string): boolean => {
+  if ((text.match(WORD_CHAR) ?? []).length < PROSE_MIN_WORD_CHARS) {
+    return false;
+  }
+  return (
+    (text.match(UNREADABLE_CHAR) ?? []).length <=
+    text.length * PROSE_MAX_UNREADABLE_RATIO
+  );
+};
+
+/**
  * The tail as text the gate and the model can read, plus WHICH decoder
  * produced it. Null when neither did — the caller books that.
  *
@@ -241,7 +307,7 @@ export const extractCursorSliceText = (
     return { text: joined.slice(-SUMMARIZER_SLICE_MAX_CHARS), shape: "jsonl" };
   }
   const prose = lines.join("\n").trim();
-  if (prose.length === 0) {
+  if (!isProse(prose)) {
     return null;
   }
   return { text: prose.slice(-SUMMARIZER_SLICE_MAX_CHARS), shape: "text" };
