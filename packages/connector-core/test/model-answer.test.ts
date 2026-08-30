@@ -228,6 +228,21 @@ describe("reading an answer that has to be a sentence", () => {
     });
   });
 
+  /**
+   * The wrapper case with MANNERS on it. A chatty model does not open with
+   * the brace — it says "Here is the finding:" first — so the opener check
+   * alone would let the claim document through as a "sentence" whose first
+   * line is the preamble. The claim parse is asked as well, on the same
+   * stdout, for exactly that shape.
+   */
+  test("a claim document behind a preamble is still not a sentence", () => {
+    expect(
+      readModelSentence(
+        'Here is the finding:\n{"kind":"root_cause","body":"the lease is renewed after it expires","confidence":0.9}',
+      ),
+    ).toEqual({ kind: "unreadable", why: "shape" });
+  });
+
   test("a reasoning model's scratchpad is stripped, not published", () => {
     expect(
       readModelSentence("<think>\nweighing two options\n</think>\nRefresh 500s after key rotation"),

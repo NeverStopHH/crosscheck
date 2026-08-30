@@ -49,6 +49,92 @@ interface Mutation {
 /** Exported so the guard-count claim below can be re-derived from the data. */
 export const MUTATIONS: readonly Mutation[] = [
   {
+    // Found by review: two of the four tasks behind one override want PROSE,
+    // and both took the first non-empty line of raw stdout whatever it was.
+    label: "a document answered to a sentence task is read as a sentence",
+    file: `${CORE}/src/model/parse.ts`,
+    from: "    DOCUMENT_OPENER_PATTERN.test(text) ||",
+    to: "    false ||",
+    test: `${CORE}/test/model-answer.test.ts`,
+    because:
+      "a JSON array or object answered by a wrapper carrying the " +
+      "summarizer's instruction becomes a sentence again, and the session " +
+      "intent every teammate reads is a model's JSON about someone else's turn",
+  },
+  {
+    // The same refusal for the polite version of that answer.
+    label: "a claim document behind a preamble passes the sentence gate",
+    file: `${CORE}/src/model/parse.ts`,
+    from: '    readModelAnswer(stdout).kind === "claim"',
+    to: "    false",
+    test: `${CORE}/test/model-answer.test.ts`,
+    because:
+      "a model that says \"Here is the finding:\" before its claim JSON " +
+      "opens with prose, so the opener check alone lets the document " +
+      "through and publishes its first line as the developer's intent",
+  },
+  {
+    label: "a wrong-shaped intent answer is booked as merely empty",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from:
+      '      answer.why === "empty" ? DROPPED_EMPTY_ANSWER : DROPPED_NOT_SENTENCE,',
+    to: "      DROPPED_EMPTY_ANSWER,",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because:
+      "the two remedies differ — \"your wrapper printed nothing\" sends a " +
+      "reader to auth and plumbing, \"your wrapper answered the wrong task\" " +
+      "sends them to docs/FOREIGN-MODELS.md — and doctor would name the wrong one",
+  },
+  {
+    label: "a wrong-shaped ghost answer is booked as merely empty",
+    file: `${CORE}/src/derive/ghost/worker.ts`,
+    from:
+      '      answer.why === "empty" ? DROPPED_EMPTY_ANSWER : DROPPED_NOT_SENTENCE,',
+    to: "      DROPPED_EMPTY_ANSWER,",
+    test: `${CONNECTOR}/test/ghost-worker.test.ts`,
+    because:
+      "the ghost half of the same split: a claim body published under this " +
+      "developer's name is refused, but the line that says WHY names the " +
+      "wrong cause",
+  },
+  {
+    // Found by review: four rung lines printed PASS on a machine that can
+    // run no model at all, and the one blocking fact called itself skippable.
+    label: "the Cursor backend line goes quiet when there is no model",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: '    backend.kind === "absent" ? "WARN" : "PASS",',
+    to: '    "PASS",',
+    test: `${CURSOR}/test/derive-doctor.test.ts`,
+    because:
+      "a Cursor-only machine with no claude and no override reads four " +
+      "green rungs and a green backend line while nothing is ever derived " +
+      "for it — the exact install this parity work exists for",
+  },
+  {
+    label: "the ACP backend line goes quiet when there is no model",
+    file: `${ACP}/src/doctor.ts`,
+    from: '    backend.kind === "absent" ? "WARN" : "PASS",',
+    to: '    "PASS",',
+    test: `${ACP}/test/derive-doctor.test.ts`,
+    because:
+      "the same silence on the other new host: every ACP rung spawns the " +
+      "same resolved argv, so a machine without one derives nothing and " +
+      "says so nowhere",
+  },
+  {
+    // Found by review: the reference manifest was declared, exported and
+    // pinned by the registry meta-test, and rendered by nothing.
+    label: "the reference host's rung lines lose their host name",
+    file: `${CONNECTOR}/src/doctor.ts`,
+    from: "      `${capability.name} (claude-code)`,",
+    to: "      capability.name,",
+    test: `${CONNECTOR}/test/derive-doctor.test.ts`,
+    because:
+      "the Claude rows stop being attributable to a host, so a doctor run " +
+      "on a machine with two connectors installed prints `intent` beside " +
+      "`intent (cursor)` and the parity table loses its reference row",
+  },
+  {
     // The ACP proxy's prime directive (adapters design verdict 2): no
     // observer failure may reach the forward path. This strips the
     // catch-all off the observer call, so the first hostile-observer throw
@@ -3398,8 +3484,10 @@ interface Outcome {
  * PRINTS: conference.test.ts 3
  * PRINTS: config-parse.test.ts 1
  * PRINTS: connected-repo.test.ts 2
+ * PRINTS: derive-doctor.test.ts 4
  * PRINTS: derive-gap.test.ts 1
- * PRINTS: derive.test.ts 7
+ * PRINTS: derive-transcript.test.ts 2
+ * PRINTS: derive.test.ts 8
  * PRINTS: developer-emails.test.ts 1
  * PRINTS: doctor-global.test.ts 3
  * PRINTS: doctor-latency.test.ts 1
@@ -3412,7 +3500,7 @@ interface Outcome {
  * PRINTS: ghost-declare.test.ts 1
  * PRINTS: ghost-overlap.test.ts 4
  * PRINTS: ghost-render.test.ts 2
- * PRINTS: ghost-worker.test.ts 4
+ * PRINTS: ghost-worker.test.ts 5
  * PRINTS: global-wiring-silence.test.ts 2
  * PRINTS: handlers.test.ts 4
  * PRINTS: hint-budget.test.ts 2
@@ -3427,13 +3515,14 @@ interface Outcome {
  * PRINTS: injection.test.ts 3
  * PRINTS: injector.test.ts 4
  * PRINTS: intent-hook.test.ts 1
- * PRINTS: intent-worker.test.ts 1
+ * PRINTS: intent-worker.test.ts 2
  * PRINTS: latency.test.ts 3
  * PRINTS: mcp-hostile-hub.test.ts 1
  * PRINTS: mcp-injection.test.ts 4
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 6
  * PRINTS: mcp-tools.test.ts 2
+ * PRINTS: model-answer.test.ts 2
  * PRINTS: model-seam.test.ts 2
  * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1

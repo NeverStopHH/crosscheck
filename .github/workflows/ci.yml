@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 215
+    # PRINTS: 226
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -127,8 +127,9 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 9
     # PRINTS: packages/cli/src/cli/doctor.ts 7
-    # PRINTS: packages/connector-acp/src/capture/engine.ts 7
+    # PRINTS: packages/connector-acp/src/capture/engine.ts 8
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
+    # PRINTS: packages/connector-acp/src/doctor.ts 1
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
     # PRINTS: packages/connector-acp/src/inject/injector.ts 3
     # PRINTS: packages/connector-acp/src/proxy.ts 1
@@ -137,6 +138,7 @@ jobs:
     # PRINTS: packages/connector-acp/src/wire/v1.ts 1
     # PRINTS: capture/tool-events.ts 1
     # PRINTS: cli/settings-merge.ts 2
+    # PRINTS: doctor.ts 1
     # PRINTS: hooks/post-tool-use-failure.ts 2
     # PRINTS: hooks/post-tool-use.ts 2
     # PRINTS: hooks/pre-tool-use.ts 1
@@ -158,9 +160,9 @@ jobs:
     # PRINTS: constants.ts 6
     # PRINTS: derive/conference/prompt.ts 1
     # PRINTS: derive/ghost/cost.ts 1
-    # PRINTS: derive/ghost/worker.ts 4
+    # PRINTS: derive/ghost/worker.ts 5
     # PRINTS: derive/intent/prompt.ts 1
-    # PRINTS: derive/intent/worker.ts 1
+    # PRINTS: derive/intent/worker.ts 2
     # PRINTS: derive/spawn.ts 2
     # PRINTS: derive/summarizer/cost.ts 1
     # PRINTS: derive/summarizer/derive.ts 1
@@ -184,11 +186,14 @@ jobs:
     # PRINTS: mcp/tools/search-related-work.ts 1
     # PRINTS: mcp/tools/set-intent.ts 2
     # PRINTS: model/gates.ts 1
+    # PRINTS: model/parse.ts 2
     # PRINTS: model/runner.ts 2
     # PRINTS: model/worker-env.ts 1
     # PRINTS: spool/reap.ts 1
     # PRINTS: state/conference-cost.ts 1
-    # PRINTS: packages/connector-cursor/src/derive/triggers.ts 1
+    # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
+    # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
+    # PRINTS: packages/connector-cursor/src/doctor.ts 2
     # PRINTS: packages/connector-cursor/src/handlers/before-submit-prompt.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 1
@@ -238,8 +243,8 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 1
     # PRINTS: diagnosis.ts 2
-    # PRINTS: doctor.ts 7
-    # PRINTS: engine.ts 7
+    # PRINTS: doctor.ts 11
+    # PRINTS: engine.ts 8
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 1
     # PRINTS: gate.ts 6
@@ -255,6 +260,7 @@ jobs:
     # PRINTS: latency.ts 1
     # PRINTS: normalized-doc.ts 1
     # PRINTS: output.ts 1
+    # PRINTS: parse.ts 2
     # PRINTS: post-tool-use-failure.ts 2
     # PRINTS: post-tool-use.ts 2
     # PRINTS: pre-tool-use.ts 1
@@ -295,12 +301,12 @@ jobs:
     # PRINTS: time-window.ts 1
     # PRINTS: tool-events.ts 1
     # PRINTS: tool-failure.ts 3
-    # PRINTS: transcript.ts 2
-    # PRINTS: triggers.ts 1
+    # PRINTS: transcript.ts 3
+    # PRINTS: triggers.ts 2
     # PRINTS: user-prompt-submit.ts 1
     # PRINTS: v1.ts 1
     # PRINTS: worker-env.ts 1
-    # PRINTS: worker.ts 5
+    # PRINTS: worker.ts 7
     name: Mutation proof
     runs-on: ubuntu-latest
     steps:
