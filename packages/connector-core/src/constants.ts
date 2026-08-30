@@ -1244,3 +1244,22 @@ export const PIN_SWEEP_MAX_PATHS = 200;
  * human re-pinning the surface is the honest end of that chain.
  */
 export const PIN_SWEEP_MAX_HOPS = 3;
+
+/**
+ * The git evidence lane's deadline (regression-guard Stage 1). One `git diff
+ * --name-only HEAD` inside the Stop hook's spare budget, at the same 250 ms
+ * every other Stop-adjacent git call uses — well under one HTTP_TIMEOUT_MS,
+ * so the lane can never be the reason a hook runs long.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.GIT_TOUCHES_TIMEOUT_MS < c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true
+ */
+export const GIT_TOUCHES_TIMEOUT_MS = 250;
+
+/**
+ * How many changed paths the git lane will even consider. Bounded BEFORE the
+ * per-file mtime stat, because a rebase or a vendored drop can leave hundreds
+ * of files dirty and the lane runs inside a hook budget. The tool lane's
+ * per-invocation cap (MAX_TARGETS_PER_INVOCATION) still applies afterwards.
+ */
+export const MAX_GIT_TOUCH_CANDIDATES = 60;

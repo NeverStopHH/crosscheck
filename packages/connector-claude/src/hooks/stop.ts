@@ -16,11 +16,18 @@
  */
 import { resolve } from "node:path";
 
-import { CHARS_PER_TOKEN_ESTIMATE } from "@crosscheck/connector-core/constants.ts";
+import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
+
+import {
+  CHARS_PER_TOKEN_ESTIMATE,
+  GIT_TOUCHES_TIMEOUT_MS,
+} from "@crosscheck/connector-core/constants.ts";
+import { captureGitTouches } from "@crosscheck/connector-core/flows/capture-git-touches.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
   readSessionState,
   updateSessionState,
+  withGitTouches,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import {
   isCaptureMoment,
@@ -138,6 +145,43 @@ export const handleStop = async (
 
   if (fired && slice !== null && transcriptPath !== undefined) {
     spawnSummarizeWorker(ctx, transcriptPath, slice);
+  }
+
+  // THE SECOND EVIDENCE LANE (regression-guard Stage 1). Stop is where it
+  // belongs: the turn is over, so the working tree holds what the turn did,
+  // including everything `sed -i`, a codemod or a generator changed without
+  // ever raising an Edit event. Without it `crosscheck suspect` names the
+  // session that used Edit with full confidence while the codemod session
+  // leaves no trace at all.
+  //
+  // ON THE SPARE BUDGET, and skipped rather than shortened when it is gone:
+  // one bounded `git diff --name-only HEAD` at GIT_TOUCHES_TIMEOUT_MS, run
+  // only while the hook's reserve still covers it. A skipped turn is COUNTED
+  // (state gitLaneSkipped) so a lane that never runs is a number in `status`
+  // rather than a quiet absence of evidence.
+  const laneAffordable = budget.spareMs() >= GIT_TOUCHES_TIMEOUT_MS;
+  const captured = laneAffordable
+    ? await captureGitTouches({
+        home: ctx.config.home,
+        repoKey: ctx.repoKey,
+        hostSessionKey: ctx.payload.session_id,
+        repoRoot: ctx.identity.root,
+        workContextId: state.workContextId,
+        producer: {
+          developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
+          agentKind: ctx.config.agentKind,
+          sessionId: state.crosscheckSessionId,
+        },
+        seenTargets: state.seenTargets,
+        denylist: ctx.config.denylist,
+        since: new Date(state.startedAt),
+        now: ctx.now(),
+      })
+    : [];
+  if (captured.length > 0 || !laneAffordable) {
+    await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
+      withGitTouches(fresh, { captured, skipped: !laneAffordable }),
+    );
   }
 
   // Maintenance on the spare budget, like every hook: earlier drafts and

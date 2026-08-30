@@ -204,6 +204,17 @@ const SessionStateObjectSchema = z.looseObject({
    */
   ghostPending: z.boolean().default(false),
   /**
+   * The SECOND evidence lane's telemetry (regression-guard Stage 1): how many
+   * files the Stop-time `git diff --name-only` recorded that no Edit tool
+   * reported, and how many Stop turns skipped the lane because the hook's
+   * spare budget was gone. Both are counted for the finding-#14 reason — a
+   * lane that records nothing must be a number somebody can explain, not a
+   * silence that reads like health — and `status` prints the pair. Defaults
+   * keep every older state file parsing.
+   */
+  gitTouchCount: z.number().int().min(0).default(0),
+  gitLaneSkipped: z.number().int().min(0).default(0),
+  /**
    * Deterministic ghost notices this session actually SHOWED the reader (the
    * briefing block plus the `set_intent` answer). The precision half of the
    * counter pair: the model layer's outcomes say what the gated call bought,
@@ -388,6 +399,21 @@ export const withSeenTargets = (
         : merged.slice(merged.length - MAX_SEEN_TARGETS),
   };
 };
+
+/**
+ * The git lane's outcome for one Stop turn: the captured paths folded into
+ * the seen-set (so the next turn does not re-record the same file) and the
+ * counter moved. `skipped` books the turns the lane never ran, which is the
+ * half a PASS-only counter would hide.
+ */
+export const withGitTouches = (
+  state: SessionState,
+  outcome: { readonly captured: readonly string[]; readonly skipped: boolean },
+): SessionState => ({
+  ...withSeenTargets(state, outcome.captured),
+  gitTouchCount: state.gitTouchCount + outcome.captured.length,
+  gitLaneSkipped: state.gitLaneSkipped + (outcome.skipped ? 1 : 0),
+});
 
 /**
  * One delivered hint, remembered forever within the session: the ref for the
@@ -590,6 +616,8 @@ export const deriveSessionState = (
     intentLastFailure: null,
     workContextIntent: null,
     ghostPending: false,
+    gitTouchCount: 0,
+    gitLaneSkipped: 0,
     ghostNoticeCount: 0,
     ghostFireCount: 0,
     ghostNoOverlapCount: 0,

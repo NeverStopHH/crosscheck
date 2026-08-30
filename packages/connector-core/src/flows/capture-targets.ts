@@ -24,7 +24,7 @@ import { isDenied, resolveDenylist } from "../capture/denylist.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import { fingerprint } from "../capture/fingerprint.ts";
 import { targetRecord } from "../capture/records.ts";
-import type { Producer } from "../capture/records.ts";
+import type { Producer, TargetSource } from "../capture/records.ts";
 import { containsSecret } from "../capture/secret-scan.ts";
 import { toRepoRelative } from "../capture/target-paths.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -41,6 +41,12 @@ export interface CaptureFileTargetsInput {
   readonly seenTargets: readonly string[];
   readonly workContextId: string;
   readonly producer: Producer;
+  /**
+   * WHICH lane saw these paths (regression-guard Stage 1). Defaults to the
+   * tool lane, because that is what every caller of this flow was before the
+   * git lane existed; `captureGitTouches` passes "git_diff".
+   */
+  readonly source?: TargetSource;
   readonly now: Date;
 }
 
@@ -74,7 +80,14 @@ export const captureFileTargets = async (
       input.repoKey,
       input.hostSessionKey,
       collected.map((value) =>
-        targetRecord(input.workContextId, "file", value, input.producer, input.now),
+        targetRecord(
+          input.workContextId,
+          "file",
+          value,
+          input.producer,
+          input.now,
+          input.source ?? "tool_edit",
+        ),
       ),
       input.now,
     );
