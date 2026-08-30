@@ -45,6 +45,17 @@ export {
 export type { AgentSession, Intent, Target, WorkContext } from "./session.ts";
 
 export {
+  MAX_PIN_CHECK_CHARS,
+  MAX_PIN_FILES,
+  MAX_PIN_PATH_CHARS,
+  MAX_PIN_SURFACE_CHARS,
+  MAX_SPEAKING_PIN_FILES,
+  PinSchema,
+  isSpeakingPin,
+} from "./pin.ts";
+export type { Pin } from "./pin.ts";
+
+export {
   MAX_QUESTION_BODY_LENGTH,
   MAX_RECORD_ID_LENGTH,
   QUESTION_STATUSES,
