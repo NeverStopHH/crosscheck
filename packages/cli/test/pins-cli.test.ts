@@ -22,6 +22,7 @@ import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
 import { runCli } from "../src/index.ts";
+import { renderPinList } from "../src/cli/pin-render.ts";
 import {
   git,
   makeHome,
@@ -309,6 +310,50 @@ describe("crosscheck suspect", () => {
     // Assert
     expect(result.stdout).toContain("hub unreachable");
     expect(result.stdout).toContain("UNKNOWN");
+  });
+});
+
+describe("crosscheck pin list at scale", () => {
+  test("says the listing was truncated, so 200 rows never read as all of them", () => {
+    // Arrange: a registry bigger than one page. The hub caps the LIST at
+    // MAX_PINS_LISTED while the coverage counts every pin, which is right —
+    // but a reader who sees 200 rows under a denominator of 250 and is told
+    // nothing has been shown a subset labelled as the whole.
+    const registry = {
+      pins: [
+        {
+          id: "pin_11111111-2222-4333-8444-555555555555",
+          repo: REPO_ID,
+          surface: "Play button plays/pauses",
+          files: [{ path: PINNED, status: "present" }],
+          check: "open /workbench, press Play",
+          captureMode: "human",
+          verifiedById: "dev_nick",
+          verifiedByName: "Nick",
+          verifiedAtCommit: "a1b2c3d4",
+          verifiedAt: new Date().toISOString(),
+          brokeAt: null,
+          brokeByName: null,
+          speaking: true,
+          missingPaths: 0,
+        },
+      ],
+      coverage: {
+        pins: 250,
+        files: 700,
+        speaking: 250,
+        broken: 0,
+        missingPaths: 0,
+        oldestVerifiedAt: new Date().toISOString(),
+      },
+    };
+
+    // Act
+    const rendered = renderPinList(REPO_ID, registry, new Date());
+
+    // Assert
+    expect(rendered).toContain("pins: 250");
+    expect(rendered).toContain("showing 1 of 250");
   });
 });
 

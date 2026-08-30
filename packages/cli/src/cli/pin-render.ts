@@ -109,13 +109,28 @@ export const renderPinList = (
   repoId: string,
   registry: PinRegistry,
   now: Date,
-): string =>
-  [
+): string => {
+  // THE LISTING IS A PAGE, THE DENOMINATOR IS THE WHOLE. The hub caps the
+  // rows at MAX_PINS_LISTED while counting every pin for the coverage line,
+  // which is the right split — but a reader shown 200 rows under a
+  // denominator of 250, and told nothing, has been handed a subset labelled
+  // as the registry. This is the same failure as the coverage sentence
+  // itself, one level down, and it only appears on a repo big enough that
+  // nobody would notice by counting.
+  const shown = registry.pins.length;
+  const truncated = shown < registry.coverage.pins;
+  return [
     `crosscheck pins for ${bareUntrusted(repoId)}.`,
     QUOTED_DATA_NOTICE,
     pinCoverageSentence(registry, now),
+    ...(truncated
+      ? [
+          `showing ${String(shown)} of ${String(registry.coverage.pins)} — newest first; the rest are counted above but not listed`,
+        ]
+      : []),
     ...(registry.pins.length === 0
       ? ['(no pins yet — crosscheck pin "a surface that works" --files … --check "…" records one)']
       : registry.pins.flatMap((pin) => pinLines(pin, now))),
     "",
   ].join("\n");
+};
