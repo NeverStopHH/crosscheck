@@ -156,11 +156,22 @@ export const handleStop = async (
   //
   // ON THE SPARE BUDGET, and skipped rather than shortened when it is gone:
   // one bounded `git diff --name-only HEAD` at GIT_TOUCHES_TIMEOUT_MS, run
-  // only while the hook's reserve still covers it. A skipped turn is COUNTED
-  // (state gitLaneSkipped) so a lane that never runs is a number in `status`
-  // rather than a quiet absence of evidence.
+  // only while the hook's reserve still covers it.
+  //
+  // TWO WAYS THE LANE PRODUCES NOTHING, and BOTH are counted (state
+  // gitLaneSkipped): the budget was gone before it started, or git did not
+  // answer inside its own deadline. Neither is the same as a clean worktree,
+  // and a lane that silently produces nothing on every turn would otherwise
+  // read in `status` and `doctor` exactly like a lane watching a quiet tree —
+  // the fail-silent-dead this feature exists to refuse. The skip is not
+  // hypothetical: driven 12 times against a machine held busy by eight
+  // spinning processes, 11 turns recorded and 1 skipped — and the 1 was a
+  // number in the session state rather than a silence. (HISTORICAL: that
+  // split belongs to the machine it was measured on and nothing here
+  // re-derives it; test/stop-git-touches.test.ts asserts the invariant that
+  // holds at any load.)
   const laneAffordable = budget.spareMs() >= GIT_TOUCHES_TIMEOUT_MS;
-  const captured = laneAffordable
+  const outcome = laneAffordable
     ? await captureGitTouches({
         home: ctx.config.home,
         repoKey: ctx.repoKey,
@@ -177,10 +188,12 @@ export const handleStop = async (
         since: new Date(state.startedAt),
         now: ctx.now(),
       })
-    : [];
-  if (captured.length > 0 || !laneAffordable) {
+    : { paths: [], unavailable: true };
+  const captured = outcome.paths;
+  const skipped = outcome.unavailable;
+  if (captured.length > 0 || skipped) {
     await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
-      withGitTouches(fresh, { captured, skipped: !laneAffordable }),
+      withGitTouches(fresh, { captured, skipped }),
     );
   }
 

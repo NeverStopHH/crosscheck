@@ -8,6 +8,28 @@
  * cost is a budget question — the Stop hook's whole envelope is
  * STOP_BUDGET_RATIO x HTTP_TIMEOUT_MS — so the wall clock is asserted here
  * rather than reasoned about: hook budgets are measured, never claimed.
+ *
+ * TWO OUTCOMES ARE CORRECT, and the tests are split along that line, because
+ * the first draft of this file was FLAKY for a real reason. On a saturated
+ * machine the hook can reach the lane with less than GIT_TOUCHES_TIMEOUT_MS
+ * of its envelope left, and it then skips — correctly, and with the skip
+ * counted. A test that demands the lane always runs is therefore asserting
+ * something the design does not promise: driven 12 times against a machine
+ * held busy by eight spinning processes, 11 turns recorded and 1 skipped.
+ * (HISTORICAL: that split is a property of the machine it was measured on,
+ * so nothing in this tree re-derives it. What IS re-derived, on every run and
+ * at any load, is the invariant the budget test below asserts.) So:
+ *
+ *   - the BEHAVIOUR tests raise CROSSCHECK_TIMEOUT_MS, which widens the Stop
+ *     envelope past any plausible starvation, and then assert the lane's
+ *     output exactly — including gitLaneSkipped === 0, so a test that passed
+ *     only because the lane never ran cannot go green;
+ *   - the BUDGET test keeps the DEFAULT envelope, because that is the number
+ *     it exists to measure, and asserts the invariant that holds under any
+ *     load: the lane either recorded or was COUNTED as skipped, never
+ *     silently nothing. That is non-negotiable 4 written as an assertion, and
+ *     it is exactly what a git deadline used to violate (a failing
+ *     `git diff` returned the same empty list a clean tree does).
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
@@ -54,7 +76,7 @@ interface SpooledRecord {
   readonly body: { readonly value?: string; readonly source?: string };
 }
 
-const fixture = async (label: string): Promise<Fixture> => {
+const fixture = async (label: string, wide = true): Promise<Fixture> => {
   const repo = await makeRepo(label, { remote: "git@github.com:acme/api.git" });
   const home = await makeHome(label);
   const dir = await mkdtemp(join(tmpdir(), "cx-stop-git-"));
@@ -93,6 +115,13 @@ const fixture = async (label: string): Promise<Fixture> => {
       CROSSCHECK_HUB_URL: DEAD_HUB_URL,
       CROSSCHECK_API_KEY: "test-key",
       PATH: process.env["PATH"],
+      // The DEFAULT Stop envelope is STOP_BUDGET_RATIO(2) x
+      // HTTP_TIMEOUT_MS(400) = 800 ms, and the lane needs
+      // GIT_TOUCHES_TIMEOUT_MS(250) of it still unspent. `wide` buys enough
+      // room that a loaded machine cannot turn a behavioural assertion into
+      // a budget measurement; the budget test below deliberately does not
+      // pass it.
+      ...(wide ? { CROSSCHECK_TIMEOUT_MS: "8000" } : {}),
     },
   };
 };
@@ -134,6 +163,7 @@ describe("the Stop hook's git evidence lane", () => {
     // Counted, because a lane that records nothing must be a number somebody
     // can explain rather than a silence (the finding-#14 lesson).
     expect(state?.gitTouchCount).toBe(1);
+    expect(state?.gitLaneSkipped).toBe(0);
   });
 
   test("records nothing for a worktree that was already dirty before the session", async () => {
@@ -153,12 +183,18 @@ describe("the Stop hook's git evidence lane", () => {
     expect(await spooledTargets(fix)).toHaveLength(0);
     const state = await readSessionState(fix.home, SESSION_ID);
     expect(state?.gitTouchCount).toBe(0);
+    // The lane RAN and chose to record nothing. Without this the test would
+    // also pass on a turn where the lane never ran at all — which is what a
+    // missing feature looks like.
+    expect(state?.gitLaneSkipped).toBe(0);
   });
 
-  test("returns well inside the Stop budget with the lane running", async () => {
-    // Arrange: budgets are MEASURED. A lane that quietly waited on git would
-    // pass every other test in this file and stall the developer's session.
-    const fix = await fixture("stop-git-budget");
+  test("stays inside the Stop budget, and is never silently nothing", async () => {
+    // Arrange: the DEFAULT envelope — 800 ms — because that is the number
+    // this test exists to measure. Budgets are MEASURED: a lane that quietly
+    // waited on git would pass every other test here and stall the
+    // developer's session.
+    const fix = await fixture("stop-git-budget", false);
     await writeRepoFile(fix.repo, "src/workbench/usePlayback.ts", "export const a = 4;\n");
 
     // Act
@@ -166,11 +202,16 @@ describe("the Stop hook's git evidence lane", () => {
     await runHook("stop", stopPayload(fix), fix.env);
     const elapsedMs = Date.now() - started;
 
-    // Assert: the elapsed time is only a budget measurement if the lane
-    // actually ran inside it, so the count is asserted FIRST. A ceiling
-    // measured over a lane that never spawned git measures nothing.
+    // Assert: the invariant that holds under ANY load. Exactly one of the two
+    // honest outcomes happened — the lane recorded the file, or the turn is
+    // counted as a skip — and the third possibility, silently nothing, is
+    // what a timed-out `git diff` used to produce and what doctor would then
+    // have reported as health.
     const state = await readSessionState(fix.home, SESSION_ID);
-    expect(state?.gitTouchCount).toBe(1);
+    const recorded = state?.gitTouchCount ?? 0;
+    const skipped = state?.gitLaneSkipped ?? 0;
+    console.log(`[stop-git-lane] recorded=${String(recorded)} skipped=${String(skipped)}`);
+    expect(recorded + skipped).toBe(1);
     console.log(`[stop-git-lane] Stop returned in ${String(elapsedMs)} ms (ceiling ${String(STOP_RETURN_CEILING_MS)})`);
     expect(elapsedMs).toBeLessThan(STOP_RETURN_CEILING_MS);
   });

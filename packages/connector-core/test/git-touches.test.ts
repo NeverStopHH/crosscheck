@@ -23,6 +23,7 @@ import { rm, utimes } from "node:fs/promises";
 import { join } from "node:path";
 
 import { captureGitTouches } from "../src/flows/capture-git-touches.ts";
+import type { GitTouchesOutcome } from "../src/flows/capture-git-touches.ts";
 import { readSpoolLines } from "../src/spool/files.ts";
 import { git, makeHome, makeRepo, writeRepoFile } from "./helpers.ts";
 
@@ -53,7 +54,7 @@ const capture = (
   repo: string,
   home: string,
   overrides: Record<string, unknown> = {},
-): Promise<readonly string[]> =>
+): Promise<GitTouchesOutcome> =>
   captureGitTouches({
     home,
     repoKey: REPO_KEY,
@@ -88,10 +89,10 @@ describe("captureGitTouches", () => {
     await writeRepoFile(repo, "src/workbench/usePlayback.ts", "export const a = 2;\n");
 
     // Act
-    const captured = await capture(repo, home);
+    const outcome = await capture(repo, home);
 
     // Assert
-    expect(captured).toEqual(["src/workbench/usePlayback.ts"]);
+    expect(outcome.paths).toEqual(["src/workbench/usePlayback.ts"]);
     const targets = await spooledTargets(home);
     expect(targets).toHaveLength(1);
     expect(targets[0]?.body.value).toBe("src/workbench/usePlayback.ts");
@@ -107,10 +108,10 @@ describe("captureGitTouches", () => {
     await utimes(stale, BEFORE_SESSION, BEFORE_SESSION);
 
     // Act
-    const captured = await capture(repo, home);
+    const outcome = await capture(repo, home);
 
     // Assert: attributing it to this session would be a false accusation.
-    expect(captured).toEqual([]);
+    expect(outcome.paths).toEqual([]);
     expect(await spooledTargets(home)).toHaveLength(0);
   });
 
@@ -120,12 +121,12 @@ describe("captureGitTouches", () => {
     await writeRepoFile(repo, "src/workbench/usePlayback.ts", "export const a = 3;\n");
 
     // Act
-    const captured = await capture(repo, home, {
+    const outcome = await capture(repo, home, {
       seenTargets: ["src/workbench/usePlayback.ts"],
     });
 
     // Assert
-    expect(captured).toEqual([]);
+    expect(outcome.paths).toEqual([]);
   });
 
   test("applies the hot-file denylist, exactly as the tool lane does", async () => {
@@ -138,10 +139,10 @@ describe("captureGitTouches", () => {
     await writeRepoFile(repo, "bun.lock", "{ }\n");
 
     // Act
-    const captured = await capture(repo, home);
+    const outcome = await capture(repo, home);
 
     // Assert
-    expect(captured).toEqual([]);
+    expect(outcome.paths).toEqual([]);
   });
 
   test("returns nothing, and spools nothing, outside a git repository", async () => {
@@ -151,9 +152,38 @@ describe("captureGitTouches", () => {
     paths.push(home);
 
     // Act
-    const captured = await capture("/nonexistent-repo-root", home);
+    const outcome = await capture("/nonexistent-repo-root", home);
 
     // Assert
-    expect(captured).toEqual([]);
+    expect(outcome.paths).toEqual([]);
+  });
+
+  test("says git DID NOT ANSWER, so a deadline is not read as a clean tree", async () => {
+    // Arrange: no repository, so `git diff` cannot answer at all — the same
+    // shape a GIT_TOUCHES_TIMEOUT_MS deadline produces on a loaded machine.
+    const home = await makeHome("git-touch-unavailable");
+    paths.push(home);
+
+    // Act
+    const outcome = await capture("/nonexistent-repo-root", home);
+
+    // Assert: an empty result and an UNANSWERED result are different facts.
+    // Collapsing them makes a lane that times out every turn look exactly
+    // like a lane watching a clean worktree — fail-silent-dead, which the
+    // Stop hook then reports as health (hooks/stop.ts counts this as a skip).
+    expect(outcome.unavailable).toBe(true);
+  });
+
+  test("says git ANSWERED when the tree is merely clean", async () => {
+    // Arrange: a real repository with nothing uncommitted.
+    const { repo, home } = await fixture("git-touch-clean");
+
+    // Act
+    const outcome = await capture(repo, home);
+
+    // Assert: the other half of the distinction. Without this the flag could
+    // be hard-coded true and the test above would still pass.
+    expect(outcome.paths).toEqual([]);
+    expect(outcome.unavailable).toBe(false);
   });
 });

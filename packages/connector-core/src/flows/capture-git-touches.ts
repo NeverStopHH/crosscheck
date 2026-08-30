@@ -24,6 +24,14 @@
  * `doctor` prints the same sentence, because a lane whose blind spots are
  * undocumented reads as coverage it does not have.
  *
+ * "NOTHING" AND "NO ANSWER" ARE DIFFERENT FACTS, which is why this returns an
+ * outcome and not a bare list. `git diff` failing — a GIT_TOUCHES_TIMEOUT_MS
+ * deadline on a loaded machine, no repository, no git binary — produces the
+ * same empty list a clean worktree does, and the caller that cannot tell them
+ * apart reports a lane that never answers as a lane watching a quiet tree.
+ * That is the fail-silent-dead this whole feature exists to refuse, so the
+ * unanswered case is flagged and the Stop hook counts it as a skip.
+ *
  * NO FILE CONTENT, EVER. `--name-only` is the whole point: Tier-0 privacy
  * holds, git answers "which files", and nothing about their contents enters
  * crosscheck's address space.
@@ -32,7 +40,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { GIT_TOUCHES_TIMEOUT_MS, MAX_GIT_TOUCH_CANDIDATES } from "../constants.ts";
-import { runGit } from "../git/git.ts";
+import { runGitOutcome } from "../git/git.ts";
 import { captureFileTargets } from "./capture-targets.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import type { Producer } from "../capture/records.ts";
@@ -69,26 +77,39 @@ const changedSince = async (
   }
 };
 
+export interface GitTouchesOutcome {
+  /** Recorded paths. Empty when git answered and nothing was fresh. */
+  readonly paths: readonly string[];
+  /**
+   * True when git DID NOT ANSWER — a deadline, no repository, no binary.
+   * The caller counts it, so an always-timing-out lane is a number rather
+   * than a silence that reads as health.
+   */
+  readonly unavailable: boolean;
+}
+
+const UNAVAILABLE: GitTouchesOutcome = { paths: [], unavailable: true };
+const NOTHING_FRESH: GitTouchesOutcome = { paths: [], unavailable: false };
+
 /**
  * Spools the git-lane touches and returns them, exactly like
- * `captureFileTargets` — the caller folds them into its session state.
- * Returns empty for every failure: no repository, no git, a deadline, a
- * clean tree.
+ * `captureFileTargets` — the caller folds them into its session state — plus
+ * the one bit that says whether git answered at all.
  */
 export const captureGitTouches = async (
   input: CaptureGitTouchesInput,
-): Promise<readonly string[]> => {
-  const output = await runGit(
+): Promise<GitTouchesOutcome> => {
+  const outcome = await runGitOutcome(
     // HEAD, so staged and unstaged changes both count: an agent that ran
     // `git add` mid-turn has not made its work invisible.
     ["diff", "--name-only", "HEAD"],
     input.repoRoot,
     GIT_TOUCHES_TIMEOUT_MS,
   );
-  if (output === null) {
-    return [];
+  if (!outcome.ok) {
+    return UNAVAILABLE;
   }
-  const candidates = output
+  const candidates = outcome.stdout
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
@@ -102,12 +123,12 @@ export const captureGitTouches = async (
     }
   }
   if (fresh.length === 0) {
-    return [];
+    return NOTHING_FRESH;
   }
   // Through the SAME filter chain as the tool lane — repo-relative, denylist,
   // seen-set, secret scan — because a second lane that skipped the hot-file
   // denylist would be a way around it (capture/denylist.ts).
-  return captureFileTargets({
+  const paths = await captureFileTargets({
     home: input.home,
     repoKey: input.repoKey,
     hostSessionKey: input.hostSessionKey,
@@ -124,4 +145,5 @@ export const captureGitTouches = async (
     source: "git_diff",
     now: input.now,
   });
+  return { paths, unavailable: false };
 };
