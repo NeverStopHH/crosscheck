@@ -719,8 +719,11 @@ export const CONFERENCE_MAX_REPORTS_PER_SECOND = 10;
  * printed its path as if a new page had been written. That is not a rarity
  * this file gets to define away: conference-cli.test.ts records the fallback
  * firing three times inside one second on a fast host. Reports are never
- * reaped, so nothing here may quietly replace one; `null` is the honest
- * answer and the caller is required by its type to say so out loud.
+ * reaped, so nothing here may quietly replace one: `null` is the honest
+ * answer, and the caller turns it into a refusal that is printed and exits
+ * non-zero. The narrowing that answer forces is not the guarantee — the early
+ * return at the call site is, which is why the mutation entry for this
+ * function points at the line below rather than at a type.
  */
 const freeReportPath = async (
   home: string,
