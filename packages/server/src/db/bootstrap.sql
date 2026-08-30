@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   ended_at timestamptz
 );
 
+-- Reap bookkeeping (review finding B2-01): tells a hub-inferred end from a
+-- connector-reported one, so the inferred one can be revoked when a record
+-- from that session proves it wrong. ALTER so one statement covers fresh
+-- databases and ones created before the column.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS reaped_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS agent_sessions_repo_idx
   ON agent_sessions (repo);
 CREATE INDEX IF NOT EXISTS agent_sessions_heartbeat_idx
@@ -54,6 +60,11 @@ CREATE TABLE IF NOT EXISTS work_context_targets (
   value text NOT NULL,
   PRIMARY KEY (work_context_id, kind, value)
 );
+
+-- The age a targets-only prompt pointer states (trial finding #19). Nullable
+-- and set by ingestTarget, so a row that predates this column reads null and
+-- the pointer says "age unknown" rather than a fabricated now() age.
+ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS created_at timestamptz;
 
 -- The derived-contradictions join matches targets on (kind, value) with the
 -- PK's leading column unconstrained (services/contradictions.ts) — without

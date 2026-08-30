@@ -1292,8 +1292,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // it), so the replay test now reads the persisted state directly.
     label: "the cursor file-edit forgets its seen-set between hooks",
     file: `${CURSOR}/src/handlers/file-edit.ts`,
-    from: "    ...withSeenTargets(fresh, files),\n",
-    to: "    ...fresh,\n",
+    // Re-pointed when the #17 port folded the capture counters into the same
+    // write: the seen-set merge is now the inner call of that fold, so the
+    // anchor moved while the defect it re-creates did not.
+    from: "withSeenTargets(fresh, files)",
+    to: "fresh",
     test: `${CURSOR}/test/handlers.test.ts`,
     because:
       "every afterFileEdit re-captures and re-appends every seen target — " +
@@ -1429,17 +1432,30 @@ export const MUTATIONS: readonly Mutation[] = [
     // First-wins (trial finding #9): one crosscheck session is bound to ONE
     // repo. Stripping the guard lets a multi-repo workspace's foreign
     // touches walk on into capture/heartbeat/flush under the wrong repo's
-    // session — and the drop counter that keeps the silence honest never
-    // ticks.
+    // session.
+    //
+    // THE GUARD'S REMAINING UNIQUE EFFECT MOVED with trial finding #17, and so
+    // did this entry's test. The #17 resolver counts a foreign file's drop on
+    // its own, so with the guard stripped `foreignRepoDrops` still ticks and
+    // nothing is captured — parent-workspace.e2e.test.ts asserted exactly
+    // those two, went GREEN under the mutation, and stopped being a guard
+    // (MEASURED: that run reported this entry NOT CAUGHT). What the guard
+    // alone still governs is the EARLY RETURN: a touch whose cwd is a wholly
+    // foreign repo never reaches capture, flush, heartbeat or the #18
+    // diagnosis fields, so `lastEditedPath` / `lastEditedPathResolvedAgainst`
+    // keep naming the last edit that really belonged to THIS session's repo.
+    // Strip it and the foreign path overwrites them, resolving to null — what
+    // the test below pins.
     label: "the post-tool-use foreign-repo drop guard is disconnected",
     file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
     from: "  if (state.repoId !== ctx.identity.repoId) {",
     to: "  if (false) {",
-    test: `${CONNECTOR}/test/e2e/parent-workspace.e2e.test.ts`,
+    test: `${CONNECTOR}/test/worktree-capture.test.ts`,
     because:
-      "a second connected repo's edits stop being dropped-and-counted; the " +
-      "session flaps across repos and the count that keeps the drop honest " +
-      "stays zero",
+      "a foreign-repo touch stops returning early: it walks into capture, " +
+      "flush and heartbeat under the wrong repo's session and overwrites the " +
+      "#18 diagnosis fields, so the last edited path a doctor paste reports " +
+      "is the foreign drop instead of this repo's last real edit",
   },
   {
     // The recovery-race serialization: a loser that behaves as if it had
@@ -1493,8 +1509,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // dev machine, and that noise is how doctors get ignored.
     label: "the agent-restart check convicts on name and age alone",
     file: `${CLI}/src/cli/doctor.ts`,
-    from: "      if (cwd !== null && (await isInsideRepo(repoRoot, cwd))) {",
-    to: "      if (cwd !== null) {",
+    // The cwd map replaced the per-pid probe with M6's batched lsof, so the
+    // gate now reads `cwds.get(pid)`; the defect it re-introduces is the same
+    // one — convicting on name and age without asking WHERE the agent runs.
+    from: "      if (cwd !== undefined && (await isInsideRepo(repoRoot, cwd))) {",
+    to: "      if (cwd !== undefined) {",
     test: `${CLI}/test/agent-restart.test.ts`,
     because:
       "an agent running in a DIFFERENT repo is flagged as predating this " +
@@ -1930,8 +1949,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // pointer. This narrows the pointer pass back to contexts with claims.
     label: "an intent-only context stops earning a pointer",
     file: `${CORE}/src/hints/select.ts`,
-    from: "      (foreignCount > 0 || isForeignIntentOnly(context, selfDeveloperId)) &&",
-    to: "      foreignCount > 0 &&",
+    from: "    if (isForeignIntentOnly(context, selfDeveloperId)) {\n      return { kind: \"pointer\", context, claimCount: 0 };\n    }\n",
+    to: "",
     test: `${CORE}/test/hint-select.test.ts`,
     because:
       "a teammate whose session states exactly what it is doing, but has " +
@@ -3033,8 +3052,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // cannot recover a developer the hub's own bound never sent.
     label: "the listing bound is spent on one developer",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "    .orderBy(sql`${contextRankPerDeveloper} ASC`, sql`${contextActivity} DESC`)",
-    to: "    .orderBy(sql`${contextActivity} DESC`)",
+    from: "    .orderBy(sql`${contextRankPerDeveloper} ASC`, desc(contextActivityAt))",
+    to: "    .orderBy(desc(contextActivityAt))",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "a teammate running many short sessions fills all 200 rows and the " +
@@ -3071,7 +3090,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // SessionStart reads it inside a 1000 ms budget.
     label: "the briefing's listing loses its row bound",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "    .limit(WORK_CONTEXT_LIST_LIMIT);",
+    from: "    .limit(limit);",
     to: "    .limit(1_000_000);",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
@@ -3083,8 +3102,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // ORDER BY hands back the freshest rows of ALL TIME.
     label: "the listing ignores the window the reader asked for",
     file: `${SERVER}/src/services/diagnosis.ts`,
-    from: "          : sql`${contextActivity} >= ${since.toISOString()}::timestamptz`,",
-    to: "          : undefined,",
+    from: "          : [gte(contextActivityAt, window.since)]),",
+    to: "          : []),",
     test: `${SERVER}/test/work-context-listing.test.ts`,
     because:
       "the hub sends work far outside the reader's own render window and the " +
@@ -3191,6 +3210,741 @@ export const MUTATIONS: readonly Mutation[] = [
       "one poisoned record loses its clean neighbours, the author reads " +
       "only HTTP 500, and the spool never advances past it again",
   },
+  {
+    // Trial finding H5, the tautology itself. `recordSync` stamps the CAPTURE
+    // record only for the four hook-path calls; making every request capture
+    // -marked restores exactly the shipped defect, where doctor's own probe
+    // wrote the fact doctor then read back three lines later.
+    label: "every hub read re-stamps the capture record (the last-sync tautology)",
+    file: `${CORE}/src/http/client.ts`,
+    from: "          ...(isCaptureOk(request, result.data) ? { lastCaptureOkAt: nowIso } : {}),",
+    to: "          lastCaptureOkAt: nowIso,",
+    test: `${CLI}/test/doctor-last-sync.test.ts`,
+    because:
+      "doctor prints PASS last capture sync 0s ago beside hooks that have " +
+      "not fired in hours — finding #14's shape, where the surface reports " +
+      "its own request back as the connector's health",
+  },
+  {
+    // Review finding B2-07. `postRecords` marks itself with a PREDICATE over
+    // the ingest summary, not a flag: ingest answers HTTP 200 with
+    // `accepted:0` for a session it refuses, and that envelope is `ok`.
+    label: "a rejected ingest batch still stamps the capture clock",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    capture: (summary) => summary.accepted + summary.duplicates > 0,",
+    to: "    capture: true,",
+    test: `${CORE}/test/spool-durability.test.ts`,
+    because:
+      "doctor, status and the statusline all print a fresh capture age " +
+      "through a session whose every record the hub is discarding",
+  },
+  {
+    // Review finding B2-01/B2-L2. Four doctor WARNs gate on "is a session
+    // live"; answering that from a bare directory listing let week-old
+    // corpses satisfy all of them.
+    label: "doctor counts a dead session state file as a live session",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const sessions = health.sessions.filter((session) => !session.isStale);",
+    to: "  const sessions = health.sessions;",
+    test: `${CLI}/test/doctor-hooks-firing.test.ts`,
+    because:
+      "one run prints `1 of 1 session state file stale >1h` beside `a " +
+      "session is live` and `the session is running` — three lines, two " +
+      "contradictory claims about the same file",
+  },
+  {
+    // Review finding B2-01. The reaper closes sessions on silence alone, and
+    // silence is a weak signal (heartbeats are Edit/Bash-gated). A record
+    // from a session it closed is the disproof, and it has to be honoured.
+    label: "a reaped session keeps rejecting the records that disprove the reap",
+    file: `${SERVER}/src/services/records.ts`,
+    from: "    if (session.reapedAt === null) {",
+    to: "    if (true) {",
+    test: `${SERVER}/test/session-reap-liveness.test.ts`,
+    because:
+      "a session the hub gave up on has every later record answered 200 / " +
+      "accepted:0 while the spool cursor advances past it — the whole " +
+      "afternoon lost with no drop counter and no WARN",
+  },
+  {
+    // Trial finding M2. Without the post-race marker write, nothing on the
+    // machine records that a hook ever ran, and every hook check in doctor
+    // falls back to reading configuration — which is what let eleven of its
+    // twenty-six lines PASS while the thing they name was dead.
+    label: "no hook records that it fired",
+    file: `${CONNECTOR}/src/hooks/runner.ts`,
+    from: "    if (resolved.value !== null) {",
+    to: "    if ((resolved.value as unknown) === undefined) {",
+    test: `${CONNECTOR}/test/hooks-fired-marker.test.ts`,
+    because:
+      "an agent that predates the wiring, a launcher lost to `nvm use` and a " +
+      "CROSSCHECK_DISABLED all read PASS again, because configuration is the " +
+      "only thing left to read",
+  },
+  {
+    // Trial finding M6. The reaper's whole safety AND its whole point live in
+    // this predicate; dropping the staleness half would close live sessions,
+    // so the mutation drops the OTHER half — the cutoff — which is the
+    // "104 of 127 sessions never ended" state restored.
+    label: "the hub reaper never finds a stale session",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from:
+      "        lt(agentSessions.lastHeartbeatAt, cutoff)," + "\n" +
+      "        ...(options.developerId === undefined",
+    to:
+      "        lt(agentSessions.lastHeartbeatAt, new Date(0))," + "\n" +
+      "        ...(options.developerId === undefined",
+    test: `${SERVER}/test/session-reaper.test.ts`,
+    because:
+      "sessions that stopped heartbeating stay open forever — presence, every " +
+      "listing and /api/events all keep reporting work nobody is doing, which " +
+      "is the state the trial hub was in",
+  },
+  {
+    // Review finding B2-03. `?open=1` answers rows that are open AND silent.
+    // Dropping the second half puts the caller's own running session in the
+    // count, which is what made doctor's line WARN for as long as anybody
+    // was working.
+    label: "the open-sessions listing counts sessions that are running",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from:
+      "        lt(agentSessions.lastHeartbeatAt, cutoff)," + "\n" +
+      "        ...(options.mine === true",
+    to: "        ...(options.mine === true",
+    test: `${SERVER}/test/session-reaper.test.ts`,
+    because:
+      "doctor's `unclosed sessions` line WARNs from a developer's first " +
+      "session onward, so its PASS state is unreachable while they work and " +
+      "the check never exits 0 again",
+  },
+  {
+    // Trial finding M1. The capture line's ONLY reachable alarm is the
+    // fires-without-targets case; downgrading it to PASS restores the silence
+    // in which a session whose every edit was discarded looked healthy.
+    // RE-POINTED at the surviving check when the two capture implementations
+    // were merged: the pure `captureCheck` this used to mutate is gone with
+    // the second surface it belonged to, and `captureChecks` is the one line
+    // left. Same defect, same guard file.
+    label: "capture reports edits that became nothing as healthy",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    return isCaptureSilentlyDead(session)" + "\n" + "      ? check(" + "\n" + '          "WARN",',
+    to: "    return isCaptureSilentlyDead(session)" + "\n" + "      ? check(" + "\n" + '          "PASS",',
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "a session editing files in a different worktree captures nothing, and " +
+      "doctor prints 24 PASS lines with no sentence about the thing that " +
+      "stopped working",
+  },
+  {
+    // Review finding B2-04, ported onto this side's predicate when the two
+    // capture checks were merged. Dropping the liveness term makes a CORPSE's
+    // counters raise the live-capture alarm again — a state file lives until
+    // SessionEnd and most sessions never end, so on a real home this WARNs
+    // about yesterday, every run, with a remedy nobody can trigger.
+    label: "a corpse's counters raise the live-capture alarm again",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "  !session.isStale &&\n  session.editToolFires >= DOCTOR_CAPTURE_SILENT_FIRES_WARN",
+    to: "  session.editToolFires >= DOCTOR_CAPTURE_SILENT_FIRES_WARN",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "every home is mostly corpses (the trial found 104 of 127 sessions " +
+      "never closed), so the check that exists to name a capture failing NOW " +
+      "cries wolf about dead ones and stops being read",
+  },
+  {
+    // The cut line says the read was TRUNCATED; the sentence under it must not
+    // then assert something about the whole machine. The one shape where that
+    // is wrong is the one that matters — a home with more state files than the
+    // cap whose only session of this repo is not among the newest of them.
+    label: "a truncated capture read still speaks for the whole machine",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    const where = cut.length === 0",
+    to: "    const where = true",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "`no open session of this repo on this machine` is printed under a line " +
+      "saying the reader looked at 200 of 240 state files",
+  },
+  {
+    // The absent-versus-zero distinction on the capture line. The schema
+    // defaults the counters to 0 so a pre-#17 state file parses; printing that
+    // zero fabricates a measurement for a session that may have been editing
+    // all morning under a connector that did not write them.
+    label: "the capture line prints a defaulted zero as a measurement",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  const counters = session.countersMeasured",
+    to: "  const counters = true",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "a developer who upgraded mid-session reads `0 edit-tool fires → 0 " +
+      "targets` as a healthy measured zero rather than as a session whose " +
+      "counters did not exist when it started",
+  },
+  {
+    // Review finding M3 in miniature: a line that blames the hub for a local
+    // credential problem. Collapsing the two failures makes the hints line
+    // assert a network fault under `FAIL hub reachable invalid api key`.
+    label: "the hints line calls a rejected key an unreachable hub",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from:
+      '      contexts.kind === "network"' +
+      "\n" +
+      '        ? "not measured (hub unreachable)"' +
+      "\n" +
+      '        : "not measured",',
+    to: '      "not measured (hub unreachable)",',
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "a developer whose key was rotated reads three lines about one hub, one " +
+      "of them asserting a network failure that did not happen",
+  },
+  {
+    // Review finding B2-L2, the other half: the four gates must read the SAME
+    // scan, not merely the same predicate. Dropping the argument puts doctor
+    // back on the narrow default cap for its capture and hints lines while the
+    // rest of the report is derived from the same read — which is how one run
+    // printed `no open session of this repo on this machine` beside `the
+    // session is running`.
+    label: "doctor answers 'is a session live' from two different scans",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    now,\n    SESSION_STATE_SCAN_MAX_FILES,\n  );",
+    to: "    now,\n  );",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "on a home with more than fifty state files the capture and hints lines " +
+      "are computed over a different set than the four liveness gates, and " +
+      "the report contradicts itself about whether a session is running",
+  },
+  {
+    // The mtime half of `sessionSilentForMs`. `lastHeartbeatAt` has exactly two
+    // writers in the tree, and PostToolUse returns BEFORE its heartbeat on the
+    // foreign-repo path (#9's first-wins rule), so a session whose every edit
+    // lands in another checkout books fires and drops forever without one.
+    // Measuring silence from the stamp alone makes that session read as a
+    // corpse a day in — the one shape the capture WARN exists to name.
+    label: "liveness ignores that the session just wrote its own state file",
+    file: `${CORE}/src/state/capture-health.ts`,
+    from: "sessionSilentForMs(state, file.mtimeMs, nowMs)",
+    to: "sessionSilentForMs(state, null, nowMs)",
+    test: `${CLI}/test/doctor-capture.test.ts`,
+    because:
+      "24 hours in, doctor PASSes a session that is dropping every edit right " +
+      "now while status on the same machine tells the reader to run doctor",
+  },
+  {
+    // Trial finding H6, the SMALLER half. The desktop app is one process on
+    // the author's Mac — `ps -axo comm= | awk -F/ 'tolower($NF)=="claude"'
+    // | grep -c "\.app/Contents/"` prints 1, because the framework helpers are
+    // named `Claude Helper` and never basename to `claude` at all. So this
+    // exclusion is not what un-hid anything; it keeps the "N agents checked"
+    // count honest, which is what the guard asserts (review finding B2-L4).
+    label: "agent-restart counts desktop-app helpers as coding agents",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      (candidate) => !APP_BUNDLE_PATTERN.test(candidate.command),",
+    to: "      () => true,",
+    test: `${CLI}/test/agent-restart.test.ts`,
+    because:
+      "the desktop app is counted as a coding agent, so the line reports an " +
+      "examined agent that loads no hooks and whose cwd is `/`",
+  },
+  {
+    // Trial finding H6, the LOAD-BEARING half: ps order is arbitrary, so a
+    // truncation that happens in it drops candidates at random.
+    label: "agent-restart truncates its candidates in arbitrary ps order",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      .sort((left, right) => right.startedAtMs - left.startedAtMs)" + "\n" + "      .slice(0, DOCTOR_AGENT_MAX_CWD_PROBES);",
+    to: "      .slice(0, 8);",
+    test: `${CLI}/test/agent-restart.test.ts`,
+    because:
+      "a real agent that ps happens to list past the cap reads PASS no " +
+      "running agent predates the hooks — on the author's Mac 16 processes " +
+      "basename to `claude`, so a cap of eight left half of them unexamined",
+  },
+  {
+    label: "the summarizer cost line reads an arbitrary half of the sessions",
+    file: `${CORE}/src/state/session-scan.ts`,
+    from: "    .sort((left, right) => right.mtimeMs - left.mtimeMs)",
+    to: "    .sort((left, right) => left.name.localeCompare(right.name))",
+    test: `${CLI}/test/summarizer-cost.test.ts`,
+    because:
+      "the cost and the silently-dead WARN are computed from whichever files " +
+      "the slice happened to land on, so the same machine reports different " +
+      "spend depending on filesystem order",
+  },
+  // ── The #17 connector parity round: worktree resolution, drop counters and
+  // capture health on EVERY host, not only Claude Code. Six of the eight
+  // guards below shell out to git (makeRepo + `git worktree add`), so the
+  // container caveat recorded on assertGuardIsGreen applies to them.
+  {
+    // The join between the resolver and the capture flow lives in ONE place
+    // now, precisely so a connector cannot forget it. Dropping the spread
+    // restores the pre-#17 single-root behaviour for EVERY host at once: an
+    // edit in a linked worktree resolves to null against the session's
+    // checkout and is dropped, and only the outside-root counter ticks.
+    label: "the shared capture flow forgets the file's own worktree root",
+    file: `${CORE}/src/flows/capture-touched-files.ts`,
+    from:
+      "    ...(resolution === null\n" +
+      "      ? {}\n" +
+      "      : {\n" +
+      "          resolveRoot: (path: string): string | null =>\n" +
+      "            resolution.rootByPath.get(path) ?? null,\n" +
+      "        }),\n",
+    to: "",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "every connector is back to the H1 defect at once — a session at " +
+      "checkout A captures nothing from worktree B of the same repo, on the " +
+      "one seam that exists so no host can get this wrong on its own",
+  },
+  {
+    // The per-session root cache, on the Cursor side. A wall clock cannot see
+    // this (the B1 reviewers proved it: the budget test stayed green with the
+    // cache read removed, at 2.6x the warm cost), so the guard asserts the
+    // recorded attempt COUNT of an unresolvable root instead.
+    label: "the cursor hook stops feeding its worktree-root cache",
+    file: `${CURSOR}/src/handlers/file-edit.ts`,
+    from: "    knownWorktreeRoots: state.knownWorktreeRoots,",
+    to: "    knownWorktreeRoots: [],",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "every afterFileEdit pays resolveRepoIdentity again for a root this " +
+      "conversation already judged, and a root that never resolves is " +
+      "retried forever instead of standing after its attempt budget",
+  },
+  {
+    // The same cache on the ACP side, where it is an IN-MEMORY twin of the
+    // persisted list — and where it matters more, because the ACP session
+    // identity is the session cwd's identity, so the free cwd-in-worktree
+    // candidate never applies and every out-of-checkout path walks.
+    label: "the acp engine stops feeding its worktree-root cache",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "      knownWorktreeRoots: session.knownWorktreeRoots,",
+    to: "      knownWorktreeRoots: [],",
+    test: `${ACP}/test/worktree-capture.test.ts`,
+    because:
+      "the capture chain pays resolveRepoIdentity again for every touch of a " +
+      "root it already judged, which is queue pressure on a serialized chain " +
+      "whose overflow silently DROPS capture lines",
+  },
+  {
+    // The drop split is what doctor turns into a cause. An unresolvable root
+    // reported as foreign makes doctor say "your second connected repo" about
+    // a worktree whose identity simply did not resolve — and the counters are
+    // folded for all three connectors by this one transform.
+    label: "the capture drop counters are swapped for every connector",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from:
+      "    foreignRepoDrops: next.foreignRepoDrops + (evidence?.foreignDrops ?? 0),",
+    to:
+      "    foreignRepoDrops: next.foreignRepoDrops + (evidence?.outsideDrops ?? 0),",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "a touch of a DIFFERENT connected repo and a file under no root at all " +
+      "trade places on every host, so the one line doctor prints to explain " +
+      "the drop names the wrong cause",
+  },
+  {
+    // THE ACP TRAP, re-created verbatim. The bookkeeping write used to sit
+    // behind `if (captured.length === 0) return` — exactly the case the
+    // counters exist for. From behind it, editToolFires always equals
+    // targetsCapturedCount, isCaptureSilentlyDead is structurally unreachable
+    // and the doctor WARN can never fire for an ACP session: PASS-only
+    // telemetry, which is the failure this whole round exists to end.
+    label: "the acp counter write hides behind the capture again",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "    rememberWorktreeRoots(session, resolution?.newlyResolved ?? []);",
+    to:
+      "    if (captured.length === 0) {\n      return;\n    }\n" +
+      "    rememberWorktreeRoots(session, resolution?.newlyResolved ?? []);",
+    test: `${CLI}/test/connector-capture-health.test.ts`,
+    because:
+      "an ACP session whose every edit lands outside this repo prints " +
+      "`0 edit-tool fires -> 0 targets` and PASSes — the silence the " +
+      "counters were added to break, back on the surface a remote reader " +
+      "is asked to paste",
+  },
+  {
+    // The Cursor half of the same invariant: afterFileEdit IS the edit event,
+    // so it must count as a fire whether or not anything was captured.
+    label: "a cursor edit is not counted as an edit-tool fire",
+    file: `${CURSOR}/src/handlers/file-edit.ts`,
+    from: "      editFired: true,\n",
+    to: "      editFired: false,\n",
+    test: `${CLI}/test/connector-capture-health.test.ts`,
+    because:
+      "a Cursor conversation editing into a second repo all day reports " +
+      "`0 edit-tool fires -> 0 targets` and PASSes, so the doctor check that " +
+      "exists to name that shape can never reach it",
+  },
+  {
+    // The foreign-repo guard's own fire, the Claude twin of post-tool-use.ts
+    // counting BEFORE its early return. Without it a conversation whose
+    // workspace resolves to a foreign repo drops silently.
+    label: "a cursor foreign-repo drop hides the edit that caused it",
+    file: `${CURSOR}/src/handlers/recover.ts`,
+    from:
+      "  editToolFires: fresh.editToolFires + (options.editFired === true ? 1 : 0),\n",
+    to: "",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "the drop is counted but the edit that caused it is not, so `N fires " +
+      "-> 0 targets` reads as a session that never edited anything rather " +
+      "than one whose every edit went to the wrong repo",
+  },
+  {
+    // wire/v1.ts folds `tool_call` and `tool_call_update` into one shape, and
+    // agents commonly repeat the whole update — kind included — on each status
+    // change. Counting per row reports three fires for one edit.
+    label: "an acp tool_call_update ticks the fire counter again",
+    file: `${ACP}/src/wire/v1.ts`,
+    from: "      isNewToolCall: parsed.update.sessionUpdate === NEW_TOOL_CALL,",
+    to: "      isNewToolCall: true,",
+    test: `${ACP}/test/worktree-capture.test.ts`,
+    because:
+      "one edit arriving pending, in_progress and completed books three " +
+      "edit-tool fires, so the `N fires -> M targets` ratio the WARN is " +
+      "measured on is wrong by a factor nobody can see",
+  },
+  // ── Review round A/B on the parity port: the four holes the round's own
+  // fixes closed. Each of these shipped GREEN once, which is why they are
+  // catalogued rather than trusted.
+  {
+    // Review finding A1/P2. `editToolFires` counts edits, so the numerator and
+    // the denominator of the ratio must be measured on the same event set.
+    // ACP is the only host where a NON-edit row carries file paths, and there
+    // both halves were dishonest at once.
+    label: "a non-edit touch counts as evidence about edit capture",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from: "  const evidence = input.editFired ? input.resolution : null;",
+    to: "  const evidence = input.resolution;",
+    // The CLI WARN suite cannot see this half: it never emits a NON-edit touch
+    // that drops. "a READ of another repo raises no drop counter at all" does.
+    test: `${ACP}/test/worktree-capture.test.ts`,
+    because:
+      "one in-repo read makes the silently-dead WARN unreachable for the rest " +
+      "of the session, and one read of a second connected repo raises the " +
+      "machine-wide foreign-drop WARN for a session that edited nothing",
+  },
+  {
+    // The same finding's other half: a read's captured targets still SPOOL —
+    // they are real work context — but they are not evidence that edit
+    // capture is alive, which is the only question the ratio asks.
+    label: "a non-edit touch inflates the captured-target count",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from:
+      "      next.targetsCapturedCount + (input.editFired ? input.capturedCount : 0),",
+    to: "      next.targetsCapturedCount + input.capturedCount,",
+    test: `${ACP}/test/worktree-capture.test.ts`,
+    because:
+      "three reads before 200 dropped worktree edits render as `200 edit-tool " +
+      "fires -> 3 targets` and PASS, which is exactly the H1 silence this " +
+      "round exists to end",
+  },
+  {
+    // Review finding A2. `kind` is OPTIONAL on the announce row, so the fire
+    // has to be keyed on the tool CALL, not on "is this the announce".
+    label: "an acp edit revealed after its announce books no fire",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "    if (session.firedToolCalls.has(id)) {\n      return false;\n    }",
+    to: "    if (!toolCall.isNewToolCall) {\n      return false;\n    }",
+    test: `${ACP}/test/worktree-capture.test.ts`,
+    because:
+      "an agent that announces `tool_call {status: \"pending\"}` and reveals " +
+      "`kind: \"edit\"` on the revision books zero fires while its drops are " +
+      "counted, so the WARN is structurally unreachable for that agent",
+  },
+  {
+    // Review finding A3/P5. The counters alone made doctor contradict itself
+    // on the one surface a developer is asked to paste.
+    label: "a cursor foreign-repo drop names no tool",
+    file: `${CURSOR}/src/handlers/recover.ts`,
+    from: "  lastPostToolUseTool: options.toolLabel ?? fresh.lastPostToolUseTool,\n",
+    to: "",
+    test: `${CLI}/test/connector-capture-health.test.ts`,
+    because:
+      "doctor prints `3 edit-tool fires -> 0 targets ... last tool none yet` " +
+      "in one line, so the reader cannot tell which conversation or which " +
+      "tool to look at",
+  },
+  {
+    // Review finding A5. The same string would be REFUSED as a capture target
+    // by this very screen; storing it in the state file doctor prints was the
+    // one way round it.
+    label: "a secret-shaped path is stored in the state file and printed",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from: "  value === null || value === undefined || containsSecret(value)",
+    to: "  value === null || value === undefined",
+    test: `${CORE}/test/capture-bookkeeping.test.ts`,
+    because:
+      "a path containing a credential is written to the session state and " +
+      "then printed by `crosscheck doctor`, past the one sanitizer every " +
+      "captured target has to clear",
+  },
+  {
+    // The same finding's length half: on ACP both strings come off the
+    // untrusted wire with only the 1 MiB per-line parse cap above them.
+    label: "an agent-chosen path is stored at whatever length it likes",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from: "    : boundedLabel(value, DOCTOR_PATH_MAX_CHARS);",
+    to: "    : value;",
+    test: `${CORE}/test/capture-bookkeeping.test.ts`,
+    because:
+      "one session/update with a megabyte-scale path writes a state file that " +
+      "every later capture, `crosscheck status` and `crosscheck doctor` then " +
+      "re-parse and re-write under the state lock",
+  },
+  {
+    // Review finding P4. The kit is the documented surface a NEW connector
+    // programs against, and it offered only the pre-#17 `captureFileTargets`.
+    label: "the kit hides the worktree-aware capture entry point",
+    file: `${CORE}/src/kit.ts`,
+    from: 'export { captureTouchedFiles } from "./flows/capture-touched-files.ts";\n',
+    to: "",
+    test: `${CORE}/test/kit.test.ts`,
+    because:
+      "a fifth connector written against the facade and the package README " +
+      "calls the raw flow, gets pre-#17 single-root behaviour, and loses " +
+      "every linked-worktree edit with no counter and no guard firing",
+  },
+  {
+    // Review finding P3. `??` folds undefined and null but NOT "", and Cursor
+    // demonstrably sends `cwd: ""`. The guard test only sees this with a
+    // RELATIVE file_path — `resolve("", "/abs")` is `/abs`, so the absolute
+    // version of that test stayed green with this line deleted.
+    label: "an empty cursor cwd resolves against the hook's own directory",
+    file: `${CURSOR}/src/payload.ts`,
+    from: "  return parsed.success ? withoutEmptyCwd(parsed.data) : null;",
+    to: "  return parsed.success ? parsed.data : null;",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "a Cursor build sending `cwd: \"\"` with a relative file_path resolves " +
+      "the edit against the hook process's working directory, so the touch " +
+      "drops as outside-root and the edit is lost silently",
+  },
+  {
+    // Review finding A4. The cache key is only a DIRECTORY PATH, and the
+    // fixed-path worktree convention reuses it. Guard shells out to git.
+    label: "a reused worktree path keeps the old checkout's repo id",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "    if (cached !== undefined && !replaced && !isRetryableUnknown(cached)) {",
+    to: "    if (cached !== undefined && !isRetryableUnknown(cached)) {",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because:
+      "a worktree torn down and stood up again from a DIFFERENT repo captures " +
+      "that repo's files into this one's work context under repo-relative " +
+      "paths, with both drop counters reading 0",
+  },
+  {
+    // Finding A5 had two more writers than the fold: each host's foreign-repo
+    // guard fills the same #18 field BEFORE any capture runs, from the path
+    // the MODEL chose. Skipping the screen there is a way round the sanitizer
+    // every captured target has to clear, into the state file and onto the
+    // doctor line.
+    label: "a claude foreign-repo drop stores the model's path unscreened",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "    const droppedPath = diagnosisPath(extractFilePaths(ctx.payload.tool_input)[0]);",
+    to: "    const droppedPath = extractFilePaths(ctx.payload.tool_input)[0] ?? null;",
+    test: `${CONNECTOR}/test/worktree-capture.test.ts`,
+    because:
+      "a credential-shaped path the model asked to edit in a foreign repo is " +
+      "stored in the session state and printed by `crosscheck doctor`",
+  },
+  {
+    label: "a cursor foreign-repo drop stores the model's path unscreened",
+    file: `${CURSOR}/src/handlers/recover.ts`,
+    from: "  const touched = diagnosisPath(options.touchedPath);",
+    to: "  const touched = options.touchedPath ?? null;",
+    test: `${CURSOR}/test/worktree-capture.test.ts`,
+    because: "the same leak on the host whose guard books the drop for the whole session",
+  },
+  {
+    // A label that cleans to nothing must keep the previous one, not blank it:
+    // doctor renders null as `none yet` and an empty string as `last tool `.
+    label: "an all-control-character label blanks the doctor line",
+    file: `${CORE}/src/state/capture-bookkeeping.ts`,
+    from: "  if (clean.length === 0) {\n    return null;\n  }",
+    to: "  if (clean.length === 0 && max < 0) {\n    return null;\n  }",
+    test: `${CORE}/test/capture-bookkeeping.test.ts`,
+    because:
+      "an agent whose tool `kind` is control characters only erases the tool " +
+      "name on the one line a developer is asked to paste",
+  },
+  // ── Trial findings #17/#19/#20/#25: capture signal ───────────────────────
+  {
+    // #17: an edit in a linked git worktree of the SAME repo resolved to null
+    // against the session's checkout and was dropped silently — 371 worktree
+    // edits → 0 targets across the trial. This makes every candidate root
+    // unresolvable again, so the path falls back to the session root only.
+    // Guard shells out to git (makeRepo + worktree add) — the container
+    // caveat on assertGuardIsGreen applies.
+    label: "worktree edits resolve against the session root again",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "    if (candidate === null) {",
+    to: "    if (candidate !== undefined) {",
+    test: `${CONNECTOR}/test/worktree-capture.test.ts`,
+    because:
+      "a session registered at checkout A editing a file in worktree B of " +
+      "the same repo captures nothing, and only the new outside-root counter " +
+      "ticks — the silent shape that produced 0 targets for whole sessions",
+  },
+  {
+    // #17: the free D2 candidate is the CWD's root, not the FILE's. Taking it
+    // for every path — the shape this branch shipped first — drops a same-repo
+    // edit in a third worktree and books a second repo's file as outside-root.
+    // Pure seams: no git, so the container caveat does not apply.
+    label: "the cwd's root is assumed to govern every touched path",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "      ? await toRepoRelative(input.identityRoot, input.cwd, path)",
+    to: "      ? input.identityRoot",
+    test: `${CORE}/test/touched-root.test.ts`,
+    because:
+      "a hook whose cwd sits in worktree B silently drops an edit in worktree " +
+      "C of the SAME repo, and reports a DIFFERENT repo's file as an " +
+      "outside-root drop — doctor then names the wrong cause",
+  },
+  {
+    // #17: a null repoId is an UNKNOWN (git deadline, git missing), not a
+    // second repo. Booking it as foreign makes doctor say "your second
+    // connected repo" about a worktree whose identity simply did not resolve.
+    label: "an unresolvable root is booked as a foreign repo",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "    if (repoId === null) {",
+    to: "    if (false) {",
+    test: `${CORE}/test/touched-root.test.ts`,
+    because:
+      "one missed git deadline turns an edit in the developer's own worktree " +
+      "into a `foreign-repo drops` line, the counter doctor explains as a " +
+      "multi-repo workspace's touches of its second repo",
+  },
+  {
+    // #17's budget, asserted as a COUNT rather than a clock: the cache HIT
+    // path is why the per-tool hook does not spawn git again for a root it
+    // already judged. A wall-clock budget test cannot see this — it stayed
+    // green with the read removed, at 2.6x the warm cost.
+    label: "the worktree-root cache is never read",
+    file: `${CORE}/src/capture/touched-root.ts`,
+    from: "    const cached = cache.get(candidateReal);",
+    to: "    const cached = undefined;",
+    test: `${CORE}/test/touched-root.test.ts`,
+    because:
+      "every PostToolUse and PreToolUse pays resolveRepoIdentity again for a " +
+      "root already resolved this session, and the first symptom is a hook " +
+      "that loses its capture to its own budget on a loaded machine",
+  },
+  {
+    // #17/#20: the state-file cap must be spent on the NEWEST states. In
+    // readdir order (OS hash order over UUID names) the cut is arbitrary, and
+    // the live session of this repo can miss the window entirely. The sort
+    // moved into the shared listing when capture health stopped keeping a
+    // second copy of readdir+stat+sort+bound; every reader of session state
+    // now rides on this one line.
+    label: "the state-file cap is spent in readdir order again",
+    file: `${CORE}/src/state/session-scan.ts`,
+    from: "    .sort((left, right) => right.mtimeMs - left.mtimeMs)",
+    to: "    .sort(() => 0)",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because:
+      "on a home with more state files than the cap, `status` and `doctor` " +
+      "report an arbitrary subset — a session in the WARN shape can be " +
+      "invisible on the machine the counters were built for",
+  },
+  {
+    // #18/#20: SessionStart re-fires inside a live session (compact/resume/
+    // clear). Re-creating the state file with fresh defaults erases the very
+    // counters the diagnosis line exists to print.
+    label: "a SessionStart re-fire zeroes the capture counters",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  previous === null ||",
+    to: "  true ||",
+    test: `${CONNECTOR}/test/session-refire.test.ts`,
+    because:
+      "a session that fired 40 edit tools into nothing and then auto-compacted " +
+      "prints `0 edit-tool fires → 0 targets` and PASSes — the WARN erased by " +
+      "the compaction, on the line a remote reader is asked to paste",
+  },
+  {
+    // #19 + §4: the targets-only pointer has no claim to derive self-exclusion
+    // from, and an exact path match is exactly how the reader's OWN earlier
+    // session surfaces. The hub excludes the caller; this is the second line.
+    label: "the targets-only pointer points at the reader's own work",
+    file: `${CORE}/src/hints/select.ts`,
+    from: "      context.workContext.developerId !== selfDeveloperId",
+    to: "      true",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "a hub that fails to exclude the caller makes the reader's own earlier " +
+      "session a hint, spending one of the five a session gets on self-noise",
+  },
+  {
+    // #17's budget guard: the per-session root→repoId cache is what keeps
+    // the per-tool hook from paying resolveRepoIdentity (4-6 git spawns)
+    // twice for one root. Dropping the cap lets it grow per distinct root.
+    label: "the known-worktree-root cache grows without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      merged.length <= MAX_KNOWN_WORKTREE_ROOTS",
+    to: "      true",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because:
+      "a session touching many worktree roots carries an ever-growing list " +
+      "in its state file, read and rewritten under the lock on every edit",
+  },
+  {
+    // #19: the exact tier (the prompt NAMED a file this context targeted)
+    // may point with zero claims. Restoring the claim requirement brings
+    // back the structural death: a hub with 0 claims never hints at all.
+    label: "the targets-only pointer is disabled",
+    file: `${CORE}/src/hints/select.ts`,
+    from: '      context.workContext.tier === "exact" &&',
+    to: "      false &&",
+    test: `${CORE}/test/hint-select.test.ts`,
+    because:
+      "a teammate's context that targeted the very file the prompt names " +
+      "yields silence until somebody publishes a claim — three trial days " +
+      "of zero hints on a hub with zero claims, again",
+  },
+  {
+    // #20: doctor's capture WARN is the #17/#18 signature made visible —
+    // "N edit-tool fires → 0 targets". Raising the threshold out of reach
+    // turns every such session back into a PASS line.
+    label: "doctor's capture WARN is downgraded out of reach",
+    file: `${CORE}/src/constants.ts`,
+    from: "export const DOCTOR_CAPTURE_SILENT_FIRES_WARN = 3;",
+    to: "export const DOCTOR_CAPTURE_SILENT_FIRES_WARN = 1000000;",
+    test: `${CLI}/test/capture-health.test.ts`,
+    because:
+      "a session whose every edit lands nowhere reads PASS capture — the " +
+      "exact silence Ken's zero targets sat in for a whole trial",
+  },
+  {
+    // Q2: `notice` mode exists so headless orchestration/CI sessions are
+    // briefed via additionalContext and never one-shot-denied. Forcing the
+    // decision branch re-introduces the deny in the sessions that opted out.
+    // Guard shells out to git (makeRepo) — assertGuardIsGreen caveat.
+    label: "notice mode still emits the ask",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "    mode === TRIPWIRE_MODE_NOTICE",
+    to: "    false",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "CROSSCHECK_TRIPWIRE=notice still emits permissionDecision ask, which " +
+      "a headless claude -p turns into a denied Edit — the one behaviour the " +
+      "knob exists to switch off",
+  },
+  {
+    // #25: additionalContext is the ONLY field that reaches the MODEL on an
+    // ask (the reason reaches the human alone). Dropping it from the ask
+    // branch leaves the model unbriefed again.
+    // Guard shells out to git (makeRepo) — assertGuardIsGreen caveat.
+    label: "the tripwire briefs the human only again",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "          permissionDecisionReason: reason,\n          additionalContext: reason,\n",
+    to: "          permissionDecisionReason: reason,\n",
+    test: `${CONNECTOR}/test/tripwire-hook.test.ts`,
+    because:
+      "the ask fires, the human reads the reason, and the model learns " +
+      "nothing — not the teammate, not the file, not the get_diagnosis id",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -3228,100 +3982,120 @@ interface Outcome {
  * comment said "the same file backs 5 mutations", which is the count grouped by
  * the MUTATED SOURCE file: a real number about a different column of the same
  * table, and not the one this map performs. The directive below therefore
- * groups by test, and the one in .github/workflows/ci.yml groups by file; two
- * columns, two commands, neither transcribed from the other.
+ * groups by test PATH — by basename until the #17 parity round, when three
+ * different `worktree-capture.test.ts` files started collapsing into one
+ * number that named no file — and the one in .github/workflows/ci.yml groups
+ * by mutated file; two columns, two commands, neither transcribed from the
+ * other.
  *
- * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test.split("/").pop(),(m.get(x.test.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
- * PRINTS: absence-render.test.ts 1
- * PRINTS: agent-restart.test.ts 1
- * PRINTS: body-redaction.test.ts 5
- * PRINTS: briefing-contexts.test.ts 2
- * PRINTS: briefing-parity.test.ts 2
- * PRINTS: briefing-solved.test.ts 3
- * PRINTS: budget.test.ts 1
- * PRINTS: capture-hardening.test.ts 2
- * PRINTS: conclusion-corpus.test.ts 6
- * PRINTS: conference-cli.test.ts 9
- * PRINTS: conference-cost.test.ts 1
- * PRINTS: conference-prompt.test.ts 1
- * PRINTS: conference-report.test.ts 2
- * PRINTS: conference.test.ts 3
- * PRINTS: config-parse.test.ts 1
- * PRINTS: connected-repo.test.ts 2
- * PRINTS: developer-emails.test.ts 1
- * PRINTS: doctor-global.test.ts 3
- * PRINTS: doctor-latency.test.ts 1
- * PRINTS: doctor-summarizer-runner.test.ts 1
- * PRINTS: doctor.test.ts 1
- * PRINTS: double-wiring.test.ts 1
- * PRINTS: failure-hook.test.ts 2
- * PRINTS: fingerprint.test.ts 1
- * PRINTS: ghost-cost.test.ts 1
- * PRINTS: ghost-declare.test.ts 1
- * PRINTS: ghost-overlap.test.ts 4
- * PRINTS: ghost-render.test.ts 2
- * PRINTS: ghost-worker.test.ts 4
- * PRINTS: global-wiring-silence.test.ts 2
- * PRINTS: handlers.test.ts 3
- * PRINTS: hint-budget.test.ts 2
- * PRINTS: hint-flow.test.ts 2
- * PRINTS: hint-hook.test.ts 1
- * PRINTS: hint-render.test.ts 3
- * PRINTS: hint-select.test.ts 7
- * PRINTS: hints.test.ts 3
- * PRINTS: hook-budget.test.ts 2
- * PRINTS: hook-reserve.test.ts 1
- * PRINTS: injection-corpus.test.ts 6
- * PRINTS: injection.test.ts 3
- * PRINTS: injector.test.ts 4
- * PRINTS: intent-hook.test.ts 1
- * PRINTS: intent-worker.test.ts 1
- * PRINTS: latency.test.ts 3
- * PRINTS: mcp-hostile-hub.test.ts 1
- * PRINTS: mcp-injection.test.ts 4
- * PRINTS: mcp-referee-render.test.ts 2
- * PRINTS: mcp-render.test.ts 6
- * PRINTS: mcp-tools.test.ts 2
- * PRINTS: parent-workspace.e2e.test.ts 1
- * PRINTS: pool-starvation.test.ts 1
- * PRINTS: precision-corpus.test.ts 1
- * PRINTS: presence.test.ts 1
- * PRINTS: proxy-e2e.test.ts 1
- * PRINTS: question-delivery.test.ts 1
- * PRINTS: question-tools.test.ts 3
- * PRINTS: questions.test.ts 8
- * PRINTS: records.test.ts 1
- * PRINTS: recovery-race.test.ts 1
- * PRINTS: render-surface-registry.test.ts 2
- * PRINTS: repo-ssh-determinism.test.ts 2
- * PRINTS: search-filters.test.ts 10
- * PRINTS: search-tokens.test.ts 5
- * PRINTS: search-who-when.test.ts 1
- * PRINTS: search.test.ts 3
- * PRINTS: session.test.ts 1
- * PRINTS: sessions.test.ts 1
- * PRINTS: set-intent.test.ts 1
- * PRINTS: settings-merge-removal.test.ts 1
- * PRINTS: solved-cli.test.ts 2
- * PRINTS: solved-counts.test.ts 1
- * PRINTS: solved-cross-repo.test.ts 4
- * PRINTS: solved-fanout.test.ts 2
- * PRINTS: solved-hint-flow.test.ts 4
- * PRINTS: solved-intent.test.ts 4
- * PRINTS: solved-probe.test.ts 1
- * PRINTS: solved-ranking.test.ts 2
- * PRINTS: stop-gate.test.ts 4
- * PRINTS: stop-hook.test.ts 1
- * PRINTS: stop-latency.test.ts 1
- * PRINTS: summarizer-argv.test.ts 1
- * PRINTS: summarizer-child-guard.test.ts 1
- * PRINTS: summarizer-cost.test.ts 2
- * PRINTS: summarizer-worker-env.test.ts 1
- * PRINTS: summarizer-worker.test.ts 2
- * PRINTS: transparency.test.ts 1
- * PRINTS: tripwire-hook.test.ts 1
- * PRINTS: unstorable-text.test.ts 1
- * PRINTS: work-context-listing.test.ts 3
+ * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
+ * PRINTS: packages/cli/test/agent-restart.test.ts 3
+ * PRINTS: packages/cli/test/capture-health.test.ts 2
+ * PRINTS: packages/cli/test/conference-cli.test.ts 9
+ * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
+ * PRINTS: packages/cli/test/doctor-capture.test.ts 7
+ * PRINTS: packages/cli/test/doctor-global.test.ts 3
+ * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
+ * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
+ * PRINTS: packages/cli/test/doctor-latency.test.ts 1
+ * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 1
+ * PRINTS: packages/cli/test/doctor.test.ts 1
+ * PRINTS: packages/cli/test/ghost-cost.test.ts 1
+ * PRINTS: packages/cli/test/solved-cli.test.ts 2
+ * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
+ * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
+ * PRINTS: packages/connector-acp/test/injector.test.ts 4
+ * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
+ * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
+ * PRINTS: packages/connector-acp/test/transparency.test.ts 1
+ * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
+ * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
+ * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
+ * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
+ * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
+ * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
+ * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
+ * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 4
+ * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
+ * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
+ * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
+ * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
+ * PRINTS: packages/connector-claude/test/intent-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 1
+ * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
+ * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
+ * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
+ * PRINTS: packages/connector-claude/test/stop-gate.test.ts 4
+ * PRINTS: packages/connector-claude/test/stop-hook.test.ts 1
+ * PRINTS: packages/connector-claude/test/stop-latency.test.ts 1
+ * PRINTS: packages/connector-claude/test/summarizer-argv.test.ts 1
+ * PRINTS: packages/connector-claude/test/summarizer-child-guard.test.ts 1
+ * PRINTS: packages/connector-claude/test/summarizer-worker-env.test.ts 1
+ * PRINTS: packages/connector-claude/test/summarizer-worker.test.ts 2
+ * PRINTS: packages/connector-claude/test/tripwire-hook.test.ts 3
+ * PRINTS: packages/connector-claude/test/worktree-capture.test.ts 3
+ * PRINTS: packages/connector-core/test/absence-render.test.ts 1
+ * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
+ * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
+ * PRINTS: packages/connector-core/test/briefing-solved.test.ts 3
+ * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
+ * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
+ * PRINTS: packages/connector-core/test/conference-report.test.ts 2
+ * PRINTS: packages/connector-core/test/config-parse.test.ts 1
+ * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
+ * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
+ * PRINTS: packages/connector-core/test/hint-render.test.ts 3
+ * PRINTS: packages/connector-core/test/hint-select.test.ts 9
+ * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
+ * PRINTS: packages/connector-core/test/kit.test.ts 1
+ * PRINTS: packages/connector-core/test/latency.test.ts 3
+ * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
+ * PRINTS: packages/connector-core/test/mcp-injection.test.ts 4
+ * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 2
+ * PRINTS: packages/connector-core/test/mcp-render.test.ts 6
+ * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
+ * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
+ * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
+ * PRINTS: packages/connector-core/test/question-tools.test.ts 3
+ * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 2
+ * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
+ * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
+ * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 1
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 1
+ * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
+ * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
+ * PRINTS: packages/connector-core/test/touched-root.test.ts 3
+ * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
+ * PRINTS: packages/connector-cursor/test/budget.test.ts 1
+ * PRINTS: packages/connector-cursor/test/handlers.test.ts 3
+ * PRINTS: packages/connector-cursor/test/injection.test.ts 3
+ * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
+ * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/server/test/conference.test.ts 3
+ * PRINTS: packages/server/test/developer-emails.test.ts 1
+ * PRINTS: packages/server/test/ghost-overlap.test.ts 4
+ * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/presence.test.ts 1
+ * PRINTS: packages/server/test/questions.test.ts 8
+ * PRINTS: packages/server/test/records.test.ts 1
+ * PRINTS: packages/server/test/search-filters.test.ts 10
+ * PRINTS: packages/server/test/search-tokens.test.ts 5
+ * PRINTS: packages/server/test/search.test.ts 3
+ * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
+ * PRINTS: packages/server/test/session-reaper.test.ts 2
+ * PRINTS: packages/server/test/sessions.test.ts 1
+ * PRINTS: packages/server/test/solved-counts.test.ts 1
+ * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
+ * PRINTS: packages/server/test/solved-fanout.test.ts 2
+ * PRINTS: packages/server/test/solved-intent.test.ts 4
+ * PRINTS: packages/server/test/solved-probe.test.ts 1
+ * PRINTS: packages/server/test/solved-ranking.test.ts 2
+ * PRINTS: packages/server/test/unstorable-text.test.ts 1
+ * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */
 const greenGuards = new Map<string, boolean>();
 

@@ -57,7 +57,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     kind: "composite",
     name: "claude-tripwire-ask",
     module: "src/hooks/pre-tool-use.ts",
-    note: "emits renderTripwireReason output verbatim (registered core surface); covered in test/tripwire-hook.test.ts",
+    note: "emits renderTripwireReason output verbatim as both permissionDecisionReason and additionalContext (the same rendered string, #25); registered core surface, covered in test/tripwire-hook.test.ts",
   },
   {
     kind: "composite",

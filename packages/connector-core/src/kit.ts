@@ -161,6 +161,28 @@ export type {
   CaptureFailureInput,
   CaptureFileTargetsInput,
 } from "./flows/capture-targets.ts";
+/**
+ * THE CAPTURE ENTRY POINT FOR A NEW CONNECTOR is `captureTouchedFiles`, not
+ * the `captureFileTargets` above it. The raw call's `resolveRoot` hook is
+ * OPTIONAL, and an ABSENT one means "resolve every touch against the session
+ * checkout" — the pre-#17 behaviour that lost every edit made in a linked
+ * worktree with nothing to show for it (finding H1: 371 worktree edits → 0
+ * targets). `captureTouchedFiles` is the resolver pre-pass and the capture as
+ * ONE pair, and it is the only place in the repo that builds the raw call;
+ * all three shipped connectors go through it. `withCaptureBookkeeping` is the
+ * matching counter fold — the caller still owns `updateSessionState`, because
+ * the three hosts genuinely batch their state writes differently.
+ */
+export { captureTouchedFiles } from "./flows/capture-touched-files.ts";
+export type { CaptureTouchedFilesInput } from "./flows/capture-touched-files.ts";
+export { withCaptureBookkeeping } from "./state/capture-bookkeeping.ts";
+export type { CaptureBookkeepingInput } from "./state/capture-bookkeeping.ts";
+export { resolveTouchedRoots } from "./capture/touched-root.ts";
+export type {
+  KnownWorktreeRoot,
+  ResolveTouchedRootsInput,
+  TouchedRootsResolution,
+} from "./capture/touched-root.ts";
 export { heartbeatMaybe } from "./flows/heartbeat.ts";
 export type { HeartbeatMaybeInput } from "./flows/heartbeat.ts";
 export { endSessionFlow } from "./flows/end-session.ts";

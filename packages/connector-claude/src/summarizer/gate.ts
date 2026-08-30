@@ -288,6 +288,22 @@ export const withSummarizerRejection = (
 });
 
 /**
+ * A run that ANSWERED, and whose answer was neither a claim nor NONE (trial
+ * finding M5).
+ *
+ * These used to be booked nowhere. Two of thirty-two live answers were the
+ * model addressing the developer rather than the slice — both on `rejection`
+ * slices — and they disappeared into the fires-minus-outcomes remainder,
+ * where they were indistinguishable from a runner that could not start. The
+ * two want opposite fixes (a prompt change versus a machine change), so they
+ * get separate counters and the cost line prints both.
+ */
+export const withSummarizerUnparsed = (state: SessionState): SessionState => ({
+  ...state,
+  summarizerUnparsedCount: state.summarizerUnparsedCount + 1,
+});
+
+/**
  * A run the RUNNER lost (trial finding #14) — binary missing, non-zero
  * exit, deadline — booked by the worker with the reason as
  * runner.ts formatSummarizerFailure renders it. The bound lives HERE, on

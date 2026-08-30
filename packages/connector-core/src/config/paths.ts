@@ -243,6 +243,27 @@ export const conferenceCostPath = (home: string, key: string): string =>
 /** Its lock: two conferences at once must not lose a count between them. */
 export const conferenceCostLockPath = (home: string, key: string): string =>
   `${conferenceCostPath(home, key)}.lock`;
+/**
+ * Per-repo record of which HOOK EVENTS have actually fired, and when
+ * (state/fired-markers.ts). Trial finding M2: every hook check in `doctor`
+ * was textual — it read the settings file and reported what it SAID, so a
+ * PATH that no longer resolves, a `CROSSCHECK_DISABLED`, or an agent started
+ * before the wiring all read PASS. Nothing on this machine recorded a hook
+ * having run. The `-hooks` suffix cannot collide with `syncStatePath` — repo
+ * keys are bare hex.
+ */
+export const hooksFiredPath = (home: string, key: string): string =>
+  join(home, "state", `${key}-hooks.json`);
+
+/**
+ * Per-repo record of the last time the STATUSLINE actually rendered (trial
+ * finding H7). `statusline registered` is a textual check too, and the
+ * statusline is a terminal-TUI feature: in headless and VS Code–extension
+ * sessions Claude Code never calls it, so "registered" and "rendered" are
+ * different facts and only one of them was ever printed.
+ */
+export const statuslineFiredPath = (home: string, key: string): string =>
+  join(home, "state", `${key}-statusline.json`);
 
 export const ensureDir = async (path: string): Promise<void> => {
   await mkdir(path, { recursive: true, mode: HOME_DIR_MODE });

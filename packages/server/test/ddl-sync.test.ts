@@ -36,4 +36,16 @@ describe("bootstrap.sql DDL sync", () => {
     expect(match).not.toBeNull();
     expect(Number(match?.[1])).toBe(MAX_QUESTION_BODY_LENGTH);
   });
+
+  test("work_context_targets.created_at is added for the #19 pointer age", async () => {
+    // Arrange: the drizzle column is nullable, so bootstrap must add it with
+    // the same ADD COLUMN IF NOT EXISTS evolution idiom or a fresh DB and an
+    // upgraded one disagree on the schema.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    expect(bootstrapSql).toContain(
+      "ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS created_at timestamptz;",
+    );
+  });
 });

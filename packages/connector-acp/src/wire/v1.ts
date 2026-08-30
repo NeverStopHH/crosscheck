@@ -208,7 +208,9 @@ const DiffContentSchema = z.looseObject({
   path: z.string().min(1).optional(),
 });
 
-const TOOL_CALL_UPDATES = new Set(["tool_call", "tool_call_update"]);
+/** The row that ANNOUNCES a tool call; the other one revises it. */
+const NEW_TOOL_CALL = "tool_call";
+const TOOL_CALL_UPDATES = new Set([NEW_TOOL_CALL, "tool_call_update"]);
 const DIFF_CONTENT_TYPE = "diff";
 
 /**
@@ -221,6 +223,7 @@ const SessionUpdateParamsSchema = z.looseObject({
   sessionId: z.string().min(1),
   update: z.looseObject({
     sessionUpdate: z.string().min(1),
+    toolCallId: z.string().min(1).optional().catch(undefined),
     kind: z.string().min(1).optional().catch(undefined),
     status: z.string().min(1).optional().catch(undefined),
     locations: z.array(z.unknown()).optional().catch(undefined),
@@ -232,9 +235,44 @@ const SessionUpdateParamsSchema = z.looseObject({
 export interface ToolCallUpdate {
   /** Location paths + diff-content paths, in wire order. PATHS ONLY. */
   readonly paths: readonly string[];
+  /**
+   * The agent's own id for this tool CALL, carried by both the announce row
+   * and every later revision of it — the identity the edit-tool fire is
+   * counted on (capture/engine.ts). Null only for a row that omits it, which
+   * the ACP schema does not permit but a tolerant parser must survive; the
+   * `isNewToolCall` fallback below is what such a row falls back to.
+   */
+  readonly toolCallId: string | null;
   readonly toolKind: string | null;
   readonly status: string | null;
   readonly rawOutput: unknown;
+  /**
+   * True for `sessionUpdate: "tool_call"` — the row that ANNOUNCES a tool
+   * call — and false for every later `tool_call_update` on the same call.
+   *
+   * The two are folded into one shape above (TOOL_CALL_UPDATES) because the
+   * capture mapping treats their payloads identically, and that is still
+   * right for paths and failures. It is NOT right for counting: agents
+   * commonly repeat the whole update — `kind` included — on each status
+   * change, so a fire counted per row would report three edit-tool fires for
+   * one edit and corrupt the `N fires -> M targets` ratio the doctor WARN is
+   * measured on. One fire per tool call is also exactly what the Claude
+   * reference counts.
+   *
+   * It is the FALLBACK discriminator, not the primary one. Counting on this
+   * alone booked ZERO fires for an agent that announces
+   * `tool_call {status: "pending"}` and only reveals `kind: "edit"` on the
+   * following revision — `kind` is optional on the announce row (the schema
+   * above, and the ACP schema's own `"other"` default), so that agent is
+   * conformant and its WARN was structurally unreachable. `toolCallId` is the
+   * identity the fire is counted on now; this stands in for a row that
+   * carries no id at all.
+   *
+   * Both are ADDITIVE fields on a version-pinned module: nothing that existed
+   * changed shape, and no new wire FACT is parsed — both discriminators were
+   * already on the wire and simply thrown away.
+   */
+  readonly isNewToolCall: boolean;
 }
 
 export interface SessionUpdate {
@@ -268,9 +306,11 @@ export const parseSessionUpdateParams = (
     sessionId,
     toolCall: {
       paths: [...locationPaths, ...diffPaths],
+      toolCallId: parsed.update.toolCallId ?? null,
       toolKind: parsed.update.kind ?? null,
       status: parsed.update.status ?? null,
       rawOutput: parsed.update.rawOutput,
+      isNewToolCall: parsed.update.sessionUpdate === NEW_TOOL_CALL,
     },
   };
 };

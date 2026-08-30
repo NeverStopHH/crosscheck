@@ -83,6 +83,16 @@ const sessionState = (repo: string, hubUrl: string): SessionState => ({
   ghostDraftCount: 0,
   ghostFailCount: 0,
   ghostLastFailure: null,
+  outsideRootDrops: 0,
+  knownWorktreeRoots: [],
+  editToolFires: 0,
+  targetsCapturedCount: 0,
+  lastTargetAt: null,
+  lastPostToolUseTool: null,
+  lastEditedPath: null,
+  lastEditedPathResolvedAgainst: null,
+  hintCandidatesSeen: 0,
+  summarizerUnparsedCount: 0,
 });
 
 interface Fixture {
@@ -127,6 +137,7 @@ interface PreToolUseOutput {
     readonly hookEventName?: string;
     readonly permissionDecision?: string;
     readonly permissionDecisionReason?: string;
+    readonly additionalContext?: string;
   };
 }
 
@@ -155,6 +166,38 @@ describe("the tripwire asks — once — on live teammate overlap", () => {
     // The ask is remembered so the same file never asks twice
     const state = await readSessionState(home, SESSION_ID);
     expect(state?.tripwireAskedFiles).toContain(OVERLAP_FILE);
+  });
+
+  test("additionalContext carries the same facts to the model (#25)", async () => {
+    // Arrange
+    const { repo, env } = await fixture("addctx");
+
+    // Act
+    const stdout = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), env);
+
+    // Assert: the model-facing field carries the reason AND the get_diagnosis id
+    const decision = decisionOf(stdout);
+    expect(decision?.permissionDecision).toBe("ask");
+    expect(decision?.additionalContext).toBe(decision?.permissionDecisionReason);
+    expect(decision?.additionalContext).toContain("get_diagnosis");
+    expect(decision?.additionalContext).toContain("Nick");
+  });
+
+  test("notice mode briefs the model but emits no decision (Q2 headless)", async () => {
+    // Arrange: an orchestration/CI session opting out of the one-shot deny
+    const { repo, env } = await fixture("notice");
+
+    // Act
+    const stdout = await runHook("pre-tool-use", editPayload(repo, OVERLAP_FILE), {
+      ...env,
+      CROSSCHECK_TRIPWIRE: "notice",
+    });
+
+    // Assert: additionalContext only — the tool is briefed, never blocked
+    const decision = decisionOf(stdout);
+    expect(decision?.additionalContext).toContain("get_diagnosis");
+    expect(decision?.permissionDecision).toBeUndefined();
+    expect(decision?.permissionDecisionReason).toBeUndefined();
   });
 
   test("the same file never asks twice in one session", async () => {
