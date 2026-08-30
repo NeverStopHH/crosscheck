@@ -152,6 +152,41 @@ describe("crosscheck doctor — summarizer runner probe", () => {
     expect(line).toContain("not NONE");
   });
 
+  test("a fenced or reasoning answer is quoted as the ANSWER, not as its wrapper", async () => {
+    // A model that fences every answer, or thinks out loud before it, is the
+    // ordinary case behind CROSSCHECK_SUMMARIZER_CMD — and the probe's own
+    // NONE test is already tolerant of exactly this packaging. What it
+    // PRINTED was not: the quoted line was the first physical line of stdout,
+    // so a perfectly good claim was shown to the reader as `"json"` and a
+    // reasoning model as `"<think>"`. A developer checking whether their
+    // wrapper works would read that as a broken model.
+    const { repo, home } = await fixture();
+    const fenced = await makeFakeSummarizer({
+      output:
+        '```json\n{"kind":"observation","body":"the suite is green","confidence":0.2}\n```\n',
+    });
+    const reasoning = await makeFakeSummarizer({
+      output: "<think>\nweighing the turn\n</think>\nthe suite is green\n",
+    });
+
+    const fencedLine = runnerLine(
+      (await runCli(["doctor"], doctorEnv(home, { CROSSCHECK_SUMMARIZER_CMD: fenced }), repo))
+        .stdout,
+    );
+    const reasoningLine = runnerLine(
+      (await runCli(["doctor"], doctorEnv(home, { CROSSCHECK_SUMMARIZER_CMD: reasoning }), repo))
+        .stdout,
+    );
+
+    // Assert: still PASS either way — the runner works, and precision is the
+    // model's — but what it quotes is the answer.
+    expect(fencedLine).toContain("PASS  summarizer runner");
+    expect(fencedLine).toContain("the suite is green");
+    expect(fencedLine).not.toContain('"json"');
+    expect(reasoningLine).toContain("the suite is green");
+    expect(reasoningLine).not.toContain("think");
+  });
+
   test('"Not logged in" on stdout with exit 1 is FAIL, names it, and points at the login', async () => {
     const { repo, home } = await fixture();
     const fake = await makeFakeSummarizer({

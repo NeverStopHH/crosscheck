@@ -25,7 +25,10 @@ import {
   SUMMARIZER_CLAUDE_MIN_VERSION,
 } from "@crosscheck/connector-core/constants.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { isNoneAnswer } from "@crosscheck/connector-core/model/parse.ts";
+import {
+  isNoneAnswer,
+  stripModelWrapping,
+} from "@crosscheck/connector-core/model/parse.ts";
 import {
   bareSummarizerLine,
   resolveSummarizerArgv,
@@ -184,10 +187,25 @@ export const probeSummarizerRunner = async (
   if (line.length === 0) {
     return { kind: "empty", elapsedMs: result.elapsedMs, version };
   }
+  // QUOTE THE ANSWER, NOT ITS PACKAGING. `none` has always been decided by
+  // the tolerant parse, so a fenced or reasoned NONE already read as a NONE;
+  // the quoted line was the first PHYSICAL line of stdout, which for a model
+  // that fences every answer is the fence's language tag. A developer
+  // checking a CROSSCHECK_SUMMARIZER_CMD wrapper read `answered ... not
+  // NONE: "json"` for a perfectly good claim, and `"<think>"` for a
+  // reasoning model — both of which look like a broken model and are not.
+  //
+  // The emptiness decision above stays on the RAW stdout on purpose: its
+  // remedy says "exit 0 with empty stdout", and that sentence has to remain
+  // literally true. When stripping leaves nothing (an unclosed scratchpad,
+  // which is what the byte bound leaves of a run-on model) the raw line is
+  // shown instead, so the reader always sees what the binary actually put on
+  // the pipe rather than an empty quotation.
+  const answer = stripModelWrapping(result.stdout);
   return {
     kind: "answered",
     none: isNoneAnswer(result.stdout),
-    firstLine: bareSummarizerLine(result.stdout),
+    firstLine: bareSummarizerLine(answer.length === 0 ? result.stdout : answer),
     elapsedMs: result.elapsedMs,
     version,
   };
