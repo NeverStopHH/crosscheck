@@ -904,9 +904,15 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           counters.turns += 1;
           const ctx = deriveContextFor(session);
           if (ctx !== null) {
+            const turnSlice = slices.for(session.acpSessionId);
             const fired = await runAcpSummarizerGate(
               ctx,
-              slices.for(session.acpSessionId).text(),
+              turnSlice.text(),
+              // What THIS turn's accumulator refused (the store hands out a
+              // fresh one on every session/prompt request), booked in the
+              // gate's own locked write so it reaches doctor instead of
+              // ending its life in this proxy's log file.
+              turnSlice.dropped(),
             );
             if (fired) {
               counters.summarizerFires += 1;

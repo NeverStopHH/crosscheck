@@ -33,6 +33,7 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 
 import { ACP_TURN_SLICE_MAX_CHARS } from "../src/constants.ts";
+import { acpDoctorChecks } from "../src/doctor.ts";
 import {
   SHUTDOWN_BUDGET_MS,
   bootCaptureHub,
@@ -525,6 +526,104 @@ describe("nothing the rungs lose is lost silently", () => {
     // the counted text itself never appears
     expect(line).not.toContain("yyy");
     expect(line).not.toContain("zzz");
+  }, 40_000);
+});
+
+describe("a truncated slice is booked where the other outcomes are", () => {
+  test("the characters the cap refused reach session state, not only a log", async () => {
+    // Arrange — the reviewers' point: `sliceDropped` lived in the proxy's own
+    // per-pid log file and nowhere else, so `crosscheck status` and `doctor`
+    // both said the ACP summarizer rung was fine while a turn's conclusion
+    // had arrived past the cap and been thrown away.
+    const h = await registered("acp-drop-state", await makeFakeModel("NONE"));
+    const chunkChars = ACP_TURN_SLICE_MAX_CHARS;
+
+    // Act — one turn whose text is twice the cap
+    h.capture.offer("c2a", promptLine(60));
+    h.capture.offer("a2c", chunk("y".repeat(chunkChars)));
+    h.capture.offer("a2c", chunk("z".repeat(chunkChars)));
+    h.capture.offer("a2c", promptAnswer(60));
+    await h.capture.settle();
+
+    // Assert — the same number the log prints, in the place doctor reads
+    const state = await readSessionState(h.home, HOST_KEY);
+    expect(state?.summarizerSliceDroppedChars).toBe(
+      h.capture.counters().sliceDropped,
+    );
+    expect(state?.summarizerSliceDroppedChars).toBeGreaterThan(0);
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+  }, 40_000);
+
+  test("a turn inside the cap books nothing — the number stays actionable", async () => {
+    const h = await registered("acp-drop-none", await makeFakeModel("NONE"));
+
+    h.capture.offer("c2a", promptLine(61));
+    h.capture.offer("a2c", chunk("a short, ordinary turn"));
+    h.capture.offer("a2c", promptAnswer(61));
+    await h.capture.settle();
+
+    expect(
+      (await readSessionState(h.home, HOST_KEY))?.summarizerSliceDroppedChars,
+    ).toBe(0);
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+  }, 40_000);
+
+  test("the ACP summarizer rung says a conclusion may have arrived past the cap", async () => {
+    // Arrange
+    const h = await registered("acp-drop-doctor", await makeFakeModel("NONE"));
+    h.capture.offer("c2a", promptLine(62));
+    h.capture.offer("a2c", chunk("q".repeat(ACP_TURN_SLICE_MAX_CHARS)));
+    h.capture.offer("a2c", chunk("q".repeat(ACP_TURN_SLICE_MAX_CHARS)));
+    h.capture.offer("a2c", promptAnswer(62));
+    await h.capture.settle();
+    const state = await readSessionState(h.home, HOST_KEY);
+    if (state === null) {
+      throw new Error("no session state");
+    }
+
+    // Act
+    const checks = await acpDoctorChecks({
+      home: h.home,
+      liveStates: [state],
+    });
+
+    // Assert — on the rung, in words, with the count
+    const line = checks.find((entry) => entry.name === "summarizer (acp)");
+    expect(line?.detail).toContain("refused by the turn slice cap");
+    expect(line?.detail).toContain(
+      String(state.summarizerSliceDroppedChars),
+    );
+    // and never the refused TEXT itself
+    expect(line?.detail).not.toContain("qqq");
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+  }, 40_000);
+
+  test("another host's session can never book a drop onto the ACP rung", async () => {
+    // The filter the ACP section has always had, held to on the new field.
+    const h = await registered("acp-drop-filter", await makeFakeModel("NONE"));
+    const state = await readSessionState(h.home, HOST_KEY);
+    if (state === null) {
+      throw new Error("no session state");
+    }
+
+    const checks = await acpDoctorChecks({
+      home: h.home,
+      liveStates: [
+        // this proxy's own session, which dropped nothing …
+        state,
+        // … beside a Claude Code session that did
+        {
+          ...state,
+          hostSessionKey: "11111111-2222-4333-8444-555555555555",
+          summarizerSliceDroppedChars: 9000,
+        },
+      ],
+    });
+
+    expect(
+      checks.find((entry) => entry.name === "summarizer (acp)")?.detail,
+    ).not.toContain("refused by the turn slice cap");
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
   }, 40_000);
 });
 

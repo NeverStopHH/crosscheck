@@ -188,6 +188,22 @@ const SessionStateObjectSchema = z.looseObject({
    * host text — nothing read off a transcript reaches here.
    */
   summarizerLastSliceShape: z.string().nullable().default(null),
+  /**
+   * SLICE CHARACTERS A HOST'S OWN CAP REFUSED, summed over this session's
+   * turns. Written only by the ACP proxy, whose slice is accumulated in
+   * memory from the wire and bounded by ACP_TURN_SLICE_MAX_CHARS.
+   *
+   * It is not a failure and not a noSlice: a slice WAS produced, a model DID
+   * run on it, and the outcome it booked is real. What the number says is
+   * that the gate judged a TRUNCATED turn, so a conclusion may have arrived
+   * past the cap and been thrown away — the one derive outcome on that host
+   * that no counter here could reach, which left it visible only in a
+   * per-pid proxy log file swept after ACP_LOG_MAX_AGE_DAYS.
+   *
+   * A COUNT, never the refused text: the characters themselves are the
+   * agent's own prose and never enter a state file.
+   */
+  summarizerSliceDroppedChars: z.number().int().min(0).default(0),
   summarizerLastRejection: z.string().nullable().default(null),
   /**
    * Answers the model GAVE and this contract could not read: stdout that is
@@ -629,6 +645,7 @@ export const deriveSessionState = (
     summarizerNoSliceCount: 0,
     summarizerLastNoSlice: null,
     summarizerLastSliceShape: null,
+    summarizerSliceDroppedChars: 0,
     summarizerLastRejection: null,
     summarizerUnreadableCount: 0,
     summarizerLastUnreadable: null,

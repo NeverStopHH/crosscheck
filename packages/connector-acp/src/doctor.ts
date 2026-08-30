@@ -91,8 +91,16 @@ export const acpCapabilityDetail = (input: {
   readonly sentence: string;
   readonly failures: number;
   readonly lastFailure: string | null;
+  /**
+   * One extra fact this machine knows about the rung, already in crosscheck's
+   * own words and printed whether or not anything failed — for the outcomes
+   * that are a LOSS rather than a fault and so move no failure counter.
+   */
+  readonly note?: string | null;
 }): string => {
-  const head = `${input.rung} — ${input.sentence}`;
+  const note =
+    input.note === undefined || input.note === null ? "" : `; ${input.note}`;
+  const head = `${input.rung} — ${input.sentence}${note}`;
   if (input.failures === 0) {
     return head;
   }
@@ -103,6 +111,27 @@ export const acpCapabilityDetail = (input: {
     (said.length === 0 ? "" : `, last "${said}"`) +
     " — see the summarizer runner check (counts are per live session and clear when the session ends)"
   );
+};
+
+/**
+ * WHAT THE TURN SLICE CAP REFUSED, in words — the fourth derive outcome, and
+ * the one that used to reach only the proxy's own per-pid log file.
+ *
+ * A PASS-level fact and never a WARN: the model ran, the outcome it booked is
+ * real, and a chatty turn is not a fault anybody can fix. What the sentence
+ * has to carry is the CONSEQUENCE — the gate judged a truncated turn — so a
+ * reader who sees NONEs on turns that plainly concluded has somewhere to
+ * look. Counts only; the refused characters are the agent's own prose and
+ * never enter a state file, let alone a terminal.
+ */
+const sliceCapNote = (acpStates: readonly SessionState[]): string | null => {
+  const dropped = acpStates.reduce(
+    (total, state) => total + state.summarizerSliceDroppedChars,
+    0,
+  );
+  return dropped === 0
+    ? null
+    : `${String(dropped)} characters of this session's turns were refused by the turn slice cap, so a conclusion may have arrived past it and the gate judged a truncated turn`;
 };
 
 const capabilityChecks = (
@@ -141,6 +170,8 @@ const capabilityChecks = (
         sentence: capability.sentence,
         failures: outcome.count,
         lastFailure: outcome.last,
+        note:
+          capability.name === "summarizer" ? sliceCapNote(acpStates) : null,
       }),
     );
   });

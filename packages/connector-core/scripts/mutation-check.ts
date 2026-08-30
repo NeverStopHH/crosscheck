@@ -2021,6 +2021,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "a colleague's",
   },
   {
+    // The other half of that rule, and the fix for it: the count now rides
+    // the gate's own locked write into session state, where doctor reads it.
+    label: "the refused ACP slice characters never reach session state",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "              turnSlice.dropped(),",
+    to: "              0,",
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "a truncated turn is judged on its head, the model books a NONE about " +
+      "a turn that did conclude, and status and doctor both report health — " +
+      "the only trace is a line in a per-pid log file that is swept",
+  },
+  {
     // Rule 4 on this surface: three of the four derive failure paths are
     // booked in session state and doctor prints them; slice content the byte
     // cap refused is booked nowhere else, so the proxy log is its only home.

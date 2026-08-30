@@ -337,6 +337,32 @@ export const withSummarizerSliceShape = (
 });
 
 /**
+ * SLICE CHARACTERS THE HOST'S OWN CAP REFUSED THIS TURN, accumulated.
+ *
+ * The fourth derive outcome, and the only one that was not booked anywhere a
+ * reader could reach: the ACP proxy counted it into a per-pid log file at
+ * shutdown and nothing else. Rule 4 (fail-open must never mean silently
+ * dead) does not distinguish between a failure and a LOSS — a turn whose
+ * conclusion arrived past the cap is judged on its truncated head, the model
+ * answers NONE about a turn that did conclude, and every surface reports
+ * health.
+ *
+ * Summed rather than replaced, because the question a reader has is "how much
+ * of this session did the gate never see", not "how much did the last turn
+ * lose". Zero is the ordinary state and prints nothing.
+ */
+export const withSummarizerSliceDropped = (
+  state: SessionState,
+  chars: number,
+): SessionState =>
+  chars <= 0
+    ? state
+    : {
+        ...state,
+        summarizerSliceDroppedChars: state.summarizerSliceDroppedChars + chars,
+      };
+
+/**
  * The two sentences an UNREADABLE answer is booked with, in crosscheck's own
  * words. They are the writer's, never the model's: a booked reason is printed
  * by `crosscheck status` and `doctor` into a terminal and frequently into an

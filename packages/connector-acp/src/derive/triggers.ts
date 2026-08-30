@@ -56,6 +56,7 @@ import {
   summarizerFireAllowed,
   withStopTurn,
   withSummarizerFire,
+  withSummarizerSliceDropped,
 } from "@crosscheck/connector-core/derive/summarizer/gate.ts";
 import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
 import {
@@ -238,16 +239,30 @@ const estimateFireTokens = (sliceText: string): number =>
  * not. Here the slice is whatever the wire carried: an empty one means the
  * agent said nothing this turn, which is a quiet turn, not a missing input.
  * Booking that would put a number in front of a reader with nothing to fix.
+ *
+ * WHAT THE CAP REFUSED IS BOOKED HERE, in the same locked write as the turn.
+ * It is this host's own loss and nobody else's: the slice is accumulated in
+ * proxy memory and bounded, so a chatty turn's conclusion can arrive after
+ * the cap and be thrown away — the gate then judges a truncated head, spends
+ * a capped fire, and books an honest NONE about a turn that did conclude.
+ * Until this write existed that number reached ONLY the proxy's own per-pid
+ * log line at shutdown, which is the PASS-only telemetry rule 4 forbids.
+ * Aggregated per TURN rather than per append, because the turn boundary is
+ * where this function already takes the lock.
  */
 export const runAcpSummarizerGate = async (
   ctx: AcpDeriveContext,
   sliceText: string,
+  droppedChars = 0,
 ): Promise<boolean> => {
   try {
     const wantsFire = sliceText.length > 0 && isCaptureMoment(sliceText);
     let fired = false;
     await updateSessionState(ctx.home, ctx.hostSessionKey, (fresh) => {
-      const counted = withStopTurn(fresh);
+      const counted = withSummarizerSliceDropped(
+        withStopTurn(fresh),
+        droppedChars,
+      );
       if (!wantsFire || !summarizerFireAllowed(counted)) {
         return counted;
       }
