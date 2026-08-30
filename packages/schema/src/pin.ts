@@ -136,3 +136,29 @@ export const isSpeakingPin = (pin: {
   pin.files.length <= MAX_SPEAKING_PIN_FILES &&
   pin.check !== undefined &&
   pin.check.length > 0;
+
+/**
+ * WHO MAY PIN — a TEAM setting, not baked-in behaviour. "anyone" is the
+ * shipped default: at n=3 social visibility beats permission machinery, and
+ * every pin carries its author's name in `status`. At n=30 that default rots
+ * — pins on code the pinner has never opened, with no findable owner — so
+ * "touched_files" restricts pinning to files your own sessions have actually
+ * touched inside the suspect window, which the hub can check from data it
+ * already holds. Neither value blocks anything else a person does.
+ */
+export const TEAM_PIN_POLICIES = ["anyone", "touched_files"] as const;
+
+export type TeamPinPolicy = (typeof TEAM_PIN_POLICIES)[number];
+
+/**
+ * WHETHER `crosscheck suspect` NAMES SESSIONS — a TEAM setting for the same
+ * reason. "sessions" is the shipped default and is what makes the answer
+ * useful. It is switchable because in Germany tooling from which individual
+ * performance or behaviour data can be derived is mitbestimmungspflichtig
+ * (works council) and engages the GDPR; a team under that regime should be
+ * able to turn attribution off without uninstalling the product.
+ * "counts_only" answers with the counts and no rows.
+ */
+export const TEAM_SUSPECT_ATTRIBUTIONS = ["sessions", "counts_only"] as const;
+
+export type TeamSuspectAttribution = (typeof TEAM_SUSPECT_ATTRIBUTIONS)[number];

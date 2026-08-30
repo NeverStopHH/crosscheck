@@ -17,6 +17,7 @@ import { searchRoutes } from "./routes/search.ts";
 import { sessionsRoutes } from "./routes/sessions.ts";
 import { settingsRoutes } from "./routes/settings.ts";
 import { solvedMatchesRoutes } from "./routes/solved-matches.ts";
+import { suspectRoutes } from "./routes/suspect.ts";
 import { uiRoutes } from "./routes/ui.tsx";
 import { workContextsRoutes } from "./routes/work-contexts.ts";
 import type { AppDeps, AppEnv } from "./types.ts";
@@ -50,6 +51,11 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // capture mode, a speaking pin with no check recipe — have to reach that
   // person's terminal instead of a spool nobody reads.
   app.route("/api/pins", pinsRoutes(deps));
+  // "Who was in there, and what did they say they were doing" — post-hoc,
+  // pulled by a person, and gated hub-side on a check that was run and
+  // failed. It needs no hook, so it answers identically for Claude Code,
+  // Cursor and ACP sessions alike.
+  app.route("/api/suspect", suspectRoutes(deps));
   app.route("/api/settings", settingsRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.

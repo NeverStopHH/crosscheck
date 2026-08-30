@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+
 import {
   bigserial,
   boolean,
@@ -29,6 +30,9 @@ import {
   PROVENANCES,
   QUESTION_STATUSES,
   SESSION_STATUSES,
+  STORED_TARGET_SOURCES,
+  TEAM_PIN_POLICIES,
+  TEAM_SUSPECT_ATTRIBUTIONS,
   TARGET_KINDS,
 } from "@crosscheck/schema";
 
@@ -209,6 +213,19 @@ export const workContextTargets = pgTable(
       .references(() => workContexts.id),
     kind: text("kind", { enum: TARGET_KINDS }).notNull(),
     value: text("value").notNull(),
+    /**
+     * WHICH lane saw this file (regression-guard Stage 1): the host's own
+     * Edit/Write report, the Stop-time `git diff --name-only`, or "both". The
+     * default is what every pre-Stage-1 connector meant — those targets ARE
+     * tool-reported edits — so an old spool replays as itself rather than as
+     * an unlabelled unknown. `suspect` prints the label beside every row,
+     * because a session that only ever used `sed -i` leaves NO tool-lane
+     * trace, and a ranking that hid that difference would name the wrong
+     * session with full confidence.
+     */
+    source: text("source", { enum: STORED_TARGET_SOURCES })
+      .notNull()
+      .default("tool_edit"),
   },
   (table) => [
     primaryKey({ columns: [table.workContextId, table.kind, table.value] }),
@@ -615,3 +632,24 @@ export const pinFiles = pgTable(
     index("pin_files_repo_path_idx").on(table.repo, table.path),
   ],
 );
+
+/**
+ * TEAM-level settings for the regression guard, one row per repo. ABSENT
+ * MEANS DEFAULTS (services/team-settings.ts holds both and says why each is a
+ * setting rather than behaviour), so nothing bootstraps rows here and a hub
+ * that was never configured behaves like one configured with the defaults.
+ *
+ * Keyed by `repo` — the same normalised remote identity every session
+ * reports — because these are decisions a TEAM takes about a codebase, not
+ * preferences a person holds (those live on `developers` and
+ * `developer_mutes`).
+ */
+export const teamSettings = pgTable("team_settings", {
+  repo: text("repo").primaryKey(),
+  pinPolicy: text("pin_policy", { enum: TEAM_PIN_POLICIES }).notNull(),
+  suspectAttribution: text("suspect_attribution", {
+    enum: TEAM_SUSPECT_ATTRIBUTIONS,
+  }).notNull(),
+  updatedAt: timestamptz("updated_at").notNull(),
+  updatedBy: text("updated_by").references(() => developers.id),
+});

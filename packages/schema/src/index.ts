@@ -13,8 +13,11 @@ export {
   ProvenanceSchema,
   SESSION_STATUSES,
   SessionStatusSchema,
+  STORED_TARGET_SOURCES,
   TARGET_KINDS,
+  TARGET_SOURCES,
   TargetKindSchema,
+  TargetSourceSchema,
 } from "./enums.ts";
 export type {
   ArtifactSensitivity,
@@ -24,7 +27,9 @@ export type {
   EdgeKind,
   Provenance,
   SessionStatus,
+  StoredTargetSource,
   TargetKind,
+  TargetSource,
 } from "./enums.ts";
 
 export {
@@ -52,9 +57,16 @@ export {
   MAX_SPEAKING_PIN_FILES,
   PIN_FILE_STATUSES,
   PinSchema,
+  TEAM_PIN_POLICIES,
+  TEAM_SUSPECT_ATTRIBUTIONS,
   isSpeakingPin,
 } from "./pin.ts";
-export type { Pin, PinFileStatus } from "./pin.ts";
+export type {
+  Pin,
+  PinFileStatus,
+  TeamPinPolicy,
+  TeamSuspectAttribution,
+} from "./pin.ts";
 
 export {
   MAX_QUESTION_BODY_LENGTH,

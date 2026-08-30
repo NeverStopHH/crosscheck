@@ -456,3 +456,41 @@ export const CONFERENCE_MAX_OVERLAP_PAIRS = 5;
  * contexts — past this the line says "500+" and means it.
  */
 export const CONFERENCE_MAX_COUNTED_CONTEXTS = 500;
+
+// ── Suspect attribution (regression-guard Stage 1) ──────────────────────────
+
+/**
+ * How far back `crosscheck suspect` reads. The same 14 days the briefing's
+ * related-work window and the solved matcher use — a bound on the QUESTION,
+ * not on the corpus: work older than this is history, and a "suspect" from
+ * five weeks ago is a research project, not an answer to "who broke this".
+ */
+export const SUSPECT_WINDOW_DAYS = 14;
+
+/**
+ * Upper bound on the paths one lookup may intersect. A pin is capped at
+ * MAX_PIN_FILES (30) by the schema; this bounds the OTHER caller — a reader
+ * naming files by hand — so the `IN (…)` list can never grow with a repo.
+ */
+export const SUSPECT_MAX_PATHS = 30;
+
+/**
+ * Read bound on candidate (context, session) rows. The query is already
+ * bounded by the path list through the (kind, value) index; this is the
+ * belt-and-braces bound for a pinned file that a whole team swept.
+ */
+export const SUSPECT_MAX_CANDIDATES = 50;
+
+/** How many candidates are printed. Three, with their scores, always. */
+export const SUSPECT_TOP_CANDIDATES = 3;
+
+/**
+ * How much clear air the top score needs before the answer is "this one"
+ * rather than "these are the three". Below it the outcome is
+ * `no_separation` — the rows still print WITH their scores, because the
+ * honesty belongs in the label rather than in hiding the data. 1.5 is a
+ * DELIBERATE non-tuning: it is "half again as concentrated", the coarsest
+ * threshold that still separates a focused session from a sweep, and no
+ * dataset here could justify a second decimal.
+ */
+export const SUSPECT_SEPARATION_RATIO = 1.5;

@@ -259,16 +259,35 @@ export const ingestTarget = async (
       "workContextId: work context belongs to another developer",
     );
   }
+  const source = body.source;
   const inserted = await deps.db
     .insert(workContextTargets)
     .values({
       workContextId: body.workContextId,
       kind: body.kind,
       value: body.value,
+      source,
     })
     .onConflictDoNothing()
     .returning({ workContextId: workContextTargets.workContextId });
   if (inserted[0] === undefined) {
+    // The row exists. If the OTHER lane saw this file too, the label is
+    // upgraded to "both" — the primary key collapses the two observations
+    // into one row, and without this the lane that arrived first would
+    // silently own the label and `suspect` would report a second source as
+    // dead. Still a DUPLICATE record either way: nothing new was learned
+    // about the file, only about who saw it.
+    await deps.db
+      .update(workContextTargets)
+      .set({ source: "both" })
+      .where(
+        and(
+          eq(workContextTargets.workContextId, body.workContextId),
+          eq(workContextTargets.kind, body.kind),
+          eq(workContextTargets.value, body.value),
+          sql`${workContextTargets.source} NOT IN (${source}, 'both')`,
+        ),
+      );
     return duplicate();
   }
   // The doc regenerates so the new target value is searchable. Not wrapped in

@@ -457,3 +457,28 @@ CREATE TABLE IF NOT EXISTS pin_files (
 
 CREATE INDEX IF NOT EXISTS pin_files_repo_path_idx
   ON pin_files (repo, path);
+
+-- WHICH lane saw a file target (regression-guard Stage 1): the host's own
+-- Edit/Write report ('tool_edit'), the Stop-time `git diff --name-only`
+-- ('git_diff'), or 'both'. ALTER with a DEFAULT so one statement covers a
+-- fresh database and one created before the column existed — and the default
+-- is what every pre-Stage-1 row actually was, since the tool lane was the
+-- only lane. `suspect` prints the label beside every candidate: a session
+-- that only ran `sed -i` leaves no tool-lane trace at all, and a ranking that
+-- hid that would name the wrong session with full confidence.
+ALTER TABLE work_context_targets
+  ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'tool_edit';
+
+-- TEAM-level settings for the regression guard, one row per repo. ABSENT
+-- MEANS DEFAULTS ("anyone" may pin; `suspect` names sessions) — nothing
+-- bootstraps rows here, so a hub that was never configured behaves exactly
+-- like one configured with the defaults, and `status` prints the effective
+-- values either way. Keyed by repo because these are decisions a TEAM takes
+-- about a codebase; per-person preferences live on developers/developer_mutes.
+CREATE TABLE IF NOT EXISTS team_settings (
+  repo text PRIMARY KEY,
+  pin_policy text NOT NULL,
+  suspect_attribution text NOT NULL,
+  updated_at timestamptz NOT NULL,
+  updated_by text REFERENCES developers(id)
+);
