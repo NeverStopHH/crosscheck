@@ -31,6 +31,9 @@ import {
   runPresence,
   runUnmute,
 } from "./privacy.ts";
+import { PIN_FLAG_BROKE, PIN_FLAG_CHECK, PIN_FLAG_FILES, PIN_FLAG_SWEEP, PIN_USAGE, runPin } from "./pin.ts";
+import type { InteractiveProbe } from "./pin.ts";
+import { SUSPECT_USAGE, runSuspect } from "./suspect.ts";
 import { runStatus } from "./status.ts";
 import { resolveVersion } from "./version.ts";
 
@@ -50,6 +53,13 @@ const USAGE = [
   "  doctor                    diagnose the local install",
   "  conference [--publish]    read this repo's open work, run ONE bounded",
   "                            local model pass over it and write a report",
+  '  pin "<surface>" --files <path…> [--check "<recipe>"]',
+  "                            record that a surface WORKS right now (humans only)",
+  "  pin list | pin --broke <id> | pin --sweep",
+  "                            the registry and its coverage · retract a pin ·",
+  "                            re-resolve pinned paths against git after renames",
+  "  suspect <pin-id|path…>    which sessions touched a broken surface, and what",
+  "                            they said they were doing",
   "  presence [off|on]         hide/show your live presence to teammates",
   "  mute <developer>          stop seeing hints/pointers about them (mute list to review)",
   "  unmute <developer>        see their hints/pointers again",
@@ -104,16 +114,33 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
     usage: CONFERENCE_USAGE,
     booleanFlags: [CONFERENCE_FLAG_PUBLISH],
   },
+  pin: {
+    usage: PIN_USAGE,
+    valueFlags: [PIN_FLAG_CHECK, PIN_FLAG_BROKE, PIN_FLAG_FILES],
+    booleanFlags: [PIN_FLAG_SWEEP],
+  },
+  suspect: { usage: SUSPECT_USAGE },
   presence: { usage: PRESENCE_USAGE },
   mute: { usage: MUTE_USAGE },
   unmute: { usage: MUTE_USAGE },
 };
+
+export interface CliOptions {
+  /**
+   * "Is a person at a terminal?" — the pin command's human gate. A PARAMETER
+   * rather than an env var, and that is the point: an env var would be a
+   * bypass any agent could set, and the gate exists precisely because an
+   * agent must not be able to vouch for a human (cli/pin.ts).
+   */
+  readonly isInteractive?: InteractiveProbe;
+}
 
 export const runCli = async (
   argv: readonly string[],
   env: Env,
   cwd: string,
   readSecret: SecretReader = readSecretFromStdin,
+  options: CliOptions = {},
 ): Promise<CliResult> => {
   const [command, ...rest] = argv;
   const helpSpec = command === undefined ? undefined : SUBCOMMAND_HELP[command];
@@ -174,6 +201,15 @@ export const runCli = async (
     // this product that is not spawned by a session event.
     case "conference":
       return runConference(rest, env, cwd);
+    // The regression guard's two human commands (Stage 1). Both are pulls: a
+    // person types them, nothing is injected, and no hook is involved — which
+    // is why they behave identically on every connector.
+    case "pin":
+      return options.isInteractive === undefined
+        ? runPin(rest, env, cwd)
+        : runPin(rest, env, cwd, options.isInteractive);
+    case "suspect":
+      return runSuspect(rest, env, cwd);
     case "presence":
       return runPresence(rest, env, cwd);
     case "mute":
