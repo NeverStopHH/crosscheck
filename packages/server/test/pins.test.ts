@@ -43,6 +43,7 @@ interface PinView {
   readonly brokeAt: string | null;
   readonly brokeByName: string | null;
   readonly speaking: boolean;
+  readonly missingPaths: number;
 }
 
 interface CoverageView {
@@ -309,5 +310,129 @@ describe("POST /api/pins/:id/broke", () => {
 
     // Assert
     expect(response.status).toBe(404);
+  });
+});
+
+describe("POST /api/pins/sweep", () => {
+  test("migrates a followed rename in place, so the pin keeps watching", async () => {
+    // Arrange: the sweep runs on a developer's machine — the hub has no
+    // checkout — and reports what git said. This is the recording half.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-sweep@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+
+    // Act
+    const response = await harness.app.request(
+      "/api/pins/sweep",
+      jsonRequest("POST", nick.apiKey, {
+        repo: REPO,
+        updates: [
+          {
+            pinId: body["id"],
+            path: "src/workbench/usePlayback.ts",
+            newPath: "src/workbench/usePlaybackState.ts",
+          },
+        ],
+      }),
+    );
+
+    // Assert
+    expect(response.status).toBe(200);
+    const pin = (await listPins(harness, nick.apiKey)).pins[0] as PinView;
+    expect(pin.files.map((file) => file.path).sort()).toEqual([
+      "src/workbench/PlaybackControls.tsx",
+      "src/workbench/usePlaybackState.ts",
+    ]);
+    expect(pin.files.every((file) => file.status === "present")).toBe(true);
+    expect(pin.missingPaths).toBe(0);
+  });
+
+  test("marks an unfollowable path missing, and the coverage says so", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-miss@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+
+    // Act
+    const response = await harness.app.request(
+      "/api/pins/sweep",
+      jsonRequest("POST", nick.apiKey, {
+        repo: REPO,
+        updates: [
+          {
+            pinId: body["id"],
+            path: "src/workbench/usePlayback.ts",
+            newPath: null,
+          },
+        ],
+      }),
+    );
+
+    // Assert
+    expect(response.status).toBe(200);
+    const listed = await listPins(harness, nick.apiKey);
+    const pin = listed.pins[0] as PinView;
+    expect(pin.missingPaths).toBe(1);
+    // The pin is still LIVE — it watches one of two files, and doctor says
+    // exactly that rather than retiring somebody's claim behind their back.
+    expect(pin.brokeAt).toBeNull();
+    expect(listed.coverage.missingPaths).toBe(1);
+  });
+
+  test("heals: a path that came back is present again", async () => {
+    // Arrange: a branch checkout can make a file vanish and return. A sweep
+    // that could only ever mark things missing would leave permanent scars.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-heal@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+    const sweep = async (newPath: string | null): Promise<Response> =>
+      harness.app.request(
+        "/api/pins/sweep",
+        jsonRequest("POST", nick.apiKey, {
+          repo: REPO,
+          updates: [
+            { pinId: body["id"], path: "src/workbench/usePlayback.ts", newPath },
+          ],
+        }),
+      );
+    await sweep(null);
+
+    // Act
+    await sweep("src/workbench/usePlayback.ts");
+
+    // Assert
+    const pin = (await listPins(harness, nick.apiKey)).pins[0] as PinView;
+    expect(pin.missingPaths).toBe(0);
+  });
+
+  test("ignores an update for a pin of another repo", async () => {
+    // Arrange: the sweep reports from ONE checkout, and a body naming a pin
+    // outside that repo is either a bug or somebody reaching across repos.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-xrepo@example.com");
+    const body = pinBody({ repo: OTHER_REPO });
+    await createPin(harness, nick.apiKey, body);
+
+    // Act
+    const response = await harness.app.request(
+      "/api/pins/sweep",
+      jsonRequest("POST", nick.apiKey, {
+        repo: REPO,
+        updates: [
+          { pinId: body["id"], path: "src/workbench/usePlayback.ts", newPath: null },
+        ],
+      }),
+    );
+
+    // Assert
+    expect(response.status).toBe(200);
+    const body2 = (await response.json()) as { data: { applied: number; ignored: number } };
+    expect(body2.data.applied).toBe(0);
+    expect(body2.data.ignored).toBe(1);
+    const pin = (await listPins(harness, nick.apiKey, OTHER_REPO)).pins[0] as PinView;
+    expect(pin.missingPaths).toBe(0);
   });
 });

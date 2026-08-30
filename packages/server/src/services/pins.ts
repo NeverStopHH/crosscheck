@@ -433,3 +433,89 @@ export const readPin = async (
     breaker[0]?.name ?? null,
   );
 };
+
+export interface PinPathUpdate {
+  readonly pinId: string;
+  readonly path: string;
+  /** Where git says the file is now — the same path, a new one, or null. */
+  readonly newPath: string | null;
+}
+
+export interface SweepOutcome {
+  readonly applied: number;
+  readonly ignored: number;
+}
+
+/**
+ * Records what the machine-side sweep found (git/pin-sweep.ts computes it;
+ * the hub has no checkout and cannot).
+ *
+ * THREE MOVES, and the third is the one that keeps the register honest:
+ *
+ *   - a FOLLOWED RENAME rewrites the path in place, so the pin goes on
+ *     watching the same behaviour under its new name;
+ *   - an UNFOLLOWABLE path becomes `missing`, which doctor prints as
+ *     "BROKEN — 2 of 3 paths missing" instead of counting it as watched;
+ *   - a path that CAME BACK becomes present again. Branch checkouts make
+ *     files vanish and return, and a sweep that could only ever mark things
+ *     missing would leave permanent scars from ordinary git.
+ *
+ * An update naming a pin outside this repo is IGNORED and counted: the sweep
+ * speaks for one checkout, and a body reaching across repos is either a bug
+ * or somebody editing another team's registry from their own machine.
+ */
+export const applyPinSweep = async (
+  deps: Deps,
+  repo: string,
+  updates: readonly PinPathUpdate[],
+): Promise<SweepOutcome> => {
+  let applied = 0;
+  let ignored = 0;
+  for (const update of updates) {
+    const owner = await deps.db
+      .select({ repo: pins.repo })
+      .from(pins)
+      .where(eq(pins.id, update.pinId))
+      .limit(1);
+    if (owner[0]?.repo !== repo) {
+      ignored += 1;
+      continue;
+    }
+    if (update.newPath === null) {
+      const marked = await deps.db
+        .update(pinFiles)
+        .set({ status: "missing" })
+        .where(
+          and(eq(pinFiles.pinId, update.pinId), eq(pinFiles.path, update.path)),
+        )
+        .returning({ path: pinFiles.path });
+      applied += marked.length;
+      continue;
+    }
+    // INSERT-then-DELETE rather than UPDATE: the primary key is
+    // (pin_id, path), so renaming onto a path the pin already watches would
+    // otherwise be a constraint violation instead of a merge.
+    const inserted = await deps.db
+      .insert(pinFiles)
+      .values({
+        pinId: update.pinId,
+        repo,
+        path: update.newPath,
+        status: "present",
+      })
+      .onConflictDoUpdate({
+        target: [pinFiles.pinId, pinFiles.path],
+        set: { status: "present" },
+      })
+      .returning({ path: pinFiles.path });
+    if (update.newPath !== update.path) {
+      await deps.db
+        .delete(pinFiles)
+        .where(
+          and(eq(pinFiles.pinId, update.pinId), eq(pinFiles.path, update.path)),
+        );
+    }
+    applied += inserted.length;
+  }
+  return { applied, ignored };
+};

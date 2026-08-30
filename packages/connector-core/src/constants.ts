@@ -1227,3 +1227,20 @@ export const CONFERENCE_MAX_OVERLAP_PAIRS_SHOWN = 5;
  * whole job is telling the reader what was NOT read.
  */
 export const CONFERENCE_ACTIVE_WINDOW_DAYS = 14;
+
+// ── The pin sweep (regression-guard Stage 1) ────────────────────────────────
+
+/**
+ * Upper bound on paths one sweep resolves against git. The sweep runs from
+ * human-run commands (`crosscheck pin list`, `doctor`), so the bound is about
+ * process spawns rather than a hook budget: past it, paths come back
+ * "unknown" — never "present", which would vouch for files nobody looked at.
+ */
+export const PIN_SWEEP_MAX_PATHS = 200;
+
+/**
+ * How many renames of ONE file the sweep will chase. Two moves in a week is
+ * ordinary in this repo; a fourth means the file is being reorganised, and a
+ * human re-pinning the surface is the honest end of that chain.
+ */
+export const PIN_SWEEP_MAX_HOPS = 3;

@@ -494,3 +494,12 @@ export const SUSPECT_TOP_CANDIDATES = 3;
  * dataset here could justify a second decimal.
  */
 export const SUSPECT_SEPARATION_RATIO = 1.5;
+
+/**
+ * Upper bound on path updates one sweep request may carry. The sweep is
+ * driven by the registry — at most MAX_PINS_LISTED pins of at most
+ * MAX_PIN_FILES paths — so this is a bound on ONE request, not on the
+ * registry: a larger registry sweeps in more requests rather than in one
+ * unbounded write.
+ */
+export const MAX_PIN_SWEEP_UPDATES = 200;

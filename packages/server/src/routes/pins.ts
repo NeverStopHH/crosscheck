@@ -20,6 +20,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  MAX_PIN_PATH_CHARS,
   MAX_RECORD_ID_LENGTH,
   PinSchema,
   SAFE_ID_PATTERN,
@@ -27,10 +28,13 @@ import {
   unstorableTextPath,
 } from "@crosscheck/schema";
 
+import { MAX_PIN_SWEEP_UPDATES } from "../constants.ts";
+
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import {
+  applyPinSweep,
   createPin,
   listPins,
   markPinBroke,
@@ -40,6 +44,34 @@ import { readTeamSettings } from "../services/team-settings.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const RepoQuerySchema = z.object({ repo: z.string().min(1) });
+
+/** The one path shape a target can have — mirrored from PinSchema's rule. */
+const PinPathSchema = z
+  .string()
+  .min(1)
+  .max(MAX_PIN_PATH_CHARS)
+  .refine(
+    (path) => !path.startsWith("/") && !path.includes("..") && !path.includes("\\"),
+    { message: "path is not repo-relative POSIX" },
+  );
+
+/**
+ * The sweep body. Every path is validated with the SAME repo-relative rule
+ * `PinSchema` applies, because a sweep that could write an absolute path
+ * would let one bad checkout store a pin nothing can ever match again.
+ */
+const SweepBodySchema = z.object({
+  repo: z.string().min(1),
+  updates: z
+    .array(
+      z.object({
+        pinId: z.string().min(1).max(MAX_RECORD_ID_LENGTH).regex(SAFE_ID_PATTERN),
+        path: PinPathSchema,
+        newPath: PinPathSchema.nullable(),
+      }),
+    )
+    .max(MAX_PIN_SWEEP_UPDATES),
+});
 
 const PinIdSchema = z
   .string()
@@ -108,6 +140,21 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // with no "nothing else is watched" beside it is the exact sentence this
     // feature exists to stop.
     return ok(c, await listPins(deps, parsed.data.repo));
+  });
+
+  // The sweep's RECORDING half. The computing half runs on a developer's
+  // machine (connector-core git/pin-sweep.ts), because the hub has no
+  // checkout and cannot ask git anything at all. Only path NAMES cross the
+  // wire — no file content, ever.
+  router.post("/sweep", async (c) => {
+    const parsed = SweepBodySchema.safeParse(await readJsonBody(c));
+    if (!parsed.success) {
+      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    return ok(
+      c,
+      await applyPinSweep(deps, parsed.data.repo, parsed.data.updates),
+    );
   });
 
   router.post("/:id/broke", async (c) => {
