@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  CONFERENCE_ACTIVE_WINDOW_DAYS,
-  CONTEXT_MAX_AGE_DAYS,
-} from "../constants.ts";
+import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
 import type { HubContext, HubResult } from "./client.ts";
 
