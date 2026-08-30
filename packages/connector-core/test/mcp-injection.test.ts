@@ -64,10 +64,13 @@ import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
 
 const AGE_MS = 60_000;
 
+/** Frozen reader clock: the corpus asserts shapes, never wall-clock ages. */
+const CORPUS_NOW = new Date("2026-07-24T09:01:00.000Z");
+
 const renderDiagnosisWith = (
   slot: McpDiagnosisSlot,
   payload: string,
-): string => renderDiagnosis(mcpDiagnosisWith(slot, payload));
+): string => renderDiagnosis(mcpDiagnosisWith(slot, payload), CORPUS_NOW);
 
 const renderSearchWith = (slot: McpSearchSlot, payload: string): string => {
   const fixture = mcpSearchWith(slot, payload);
@@ -91,9 +94,10 @@ const CONTEXT_LINE = /^Work context «[^«»]*» · status .* · opened by .+$/;
 /** The session intent (trial finding #16): the sentence, and only it, framed. */
 const INTENT_LINE = /^Session intent(?: \(derived\))?: «[^«»]*»$/;
 const NO_CLAIMS_LINE = /^Claims: no claims recorded yet\.$/;
+/** The Claims header carries its ordering; the others carry only a count. */
 const SECTION_HEADER =
-  /^(Claims|Edges|Claims in other work contexts referenced here) \(\d+\):$/;
-/** id · kind · status X · confidence N.NN · provenance P · author [· evidence …][· seen N×]: «body» */
+  /^(Claims|Edges|Claims in other work contexts referenced here) \(\d+\)(, oldest first)?:$/;
+/** id · kind · status X · confidence N.NN · provenance P · author [· Nd ago][· evidence …][· seen N×]: «body» */
 const CLAIM_LINE =
   /^- [\w.:-]* · .* · status .* · confidence \d\.\d\d · .*: «[^«»]*»$/;
 const EDGE_LINE = /^- [\w.:-]* .* [\w.:-]* · by .+?(: «[^«»]*»)?$/;

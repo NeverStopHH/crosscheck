@@ -227,7 +227,8 @@ describe("renderDiagnosis solved presentation", () => {
     // Act
     const text = renderDiagnosis(
       diagnosis([rootCauseClaim()], [], "2026-04-01T00:00:00.000Z"),
-      { now: NOW, drift: { ahead: 0, behind: 14 }, fileDrift: "changed" },
+      NOW,
+      { drift: { ahead: 0, behind: 14 }, fileDrift: "changed" },
     );
 
     // Assert — every sentence factual, none imperative.
@@ -243,8 +244,7 @@ describe("renderDiagnosis solved presentation", () => {
 
   test("an unknown staleness says unknown rather than guessing", () => {
     // Act
-    const text = renderDiagnosis(diagnosis([rootCauseClaim()]), {
-      now: NOW,
+    const text = renderDiagnosis(diagnosis([rootCauseClaim()]), NOW, {
       drift: null,
       fileDrift: "unknown",
     });
@@ -269,7 +269,8 @@ describe("renderDiagnosis solved presentation", () => {
           evidenceRefs: [],
         }),
       ]),
-      { now: NOW, drift: { ahead: 0, behind: 14 }, fileDrift: "changed" },
+      NOW,
+      { drift: { ahead: 0, behind: 14 }, fileDrift: "changed" },
     );
 
     // Assert
@@ -281,7 +282,8 @@ describe("renderDiagnosis solved presentation", () => {
     // Act
     const text = renderDiagnosis(
       diagnosis([rootCauseClaim()], [supersedesEdge()]),
-      { now: NOW, drift: null, fileDrift: "changed" },
+      NOW,
+      { drift: null, fileDrift: "changed" },
     );
 
     // Assert

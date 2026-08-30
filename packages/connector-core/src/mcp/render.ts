@@ -169,15 +169,78 @@ const authorLabel = (
   return sanitized.length === 0 ? UNNAMED_AUTHOR : sanitized;
 };
 
+/**
+ * When a claim was recorded, parsed once — `null` when the hub's string is
+ * not a date this runtime understands.
+ *
+ * `createdAt` is hub-supplied and only shape-checked (DiagnosisClaimSchema
+ * demands a non-empty string, nothing more), so an older or hostile hub can
+ * send anything. Null flows through as NO age fragment and as LAST in the
+ * order: a guessed age would be a fact this renderer cannot support, and
+ * dropping the claim would be the same silent shortening the whole file
+ * exists to avoid.
+ */
+const claimTimeMs = (claim: DiagnosisClaim): number | null => {
+  const ms = Date.parse(claim.createdAt);
+  return Number.isNaN(ms) ? null : ms;
+};
+
+/**
+ * OLDEST FIRST, ENFORCED HERE rather than assumed of the hub.
+ *
+ * The ages on the claim lines are only worth printing if the sequence they
+ * describe is the one on the page, and two findings from the same day both
+ * read "21d ago" — so what separates them is their POSITION, and the header
+ * says which direction that runs. A hub that returned rows in another order
+ * (or a hostile one that shuffled them deliberately) would otherwise make
+ * the stated ordering a lie the reader cannot detect.
+ *
+ * Total, so the output is deterministic: parsed instant, then id. Ties on
+ * the instant are real — a batch publish stamps several claims the same
+ * millisecond — and leaving those to Array#sort's stability would hand the
+ * decision back to hub order.
+ */
+const claimsOldestFirst = (
+  claims: readonly DiagnosisClaim[],
+): readonly DiagnosisClaim[] =>
+  [...claims].sort((left, right) => {
+    const leftMs = claimTimeMs(left);
+    const rightMs = claimTimeMs(right);
+    if (leftMs === null || rightMs === null) {
+      // Undatable rows sort last, together, and among themselves by id.
+      if (leftMs !== null) {
+        return -1;
+      }
+      if (rightMs !== null) {
+        return 1;
+      }
+      return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+    }
+    if (leftMs !== rightMs) {
+      return leftMs - rightMs;
+    }
+    return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+  });
+
 const claimLine = (
   claim: DiagnosisClaim,
   index: ReadonlyMap<string, string>,
+  now: Date,
 ): string => {
   const evidence =
     claim.evidenceRefs.length === 0
       ? ""
       : ` · evidence ${claim.evidenceRefs.map(safeId).join(", ")}`;
   const seen = claim.dedupCount > 1 ? ` · seen ${String(claim.dedupCount)}×` : "";
+  // WHEN THIS FINDING WAS RECORDED, in the vocabulary every other surface
+  // already uses (`formatAge`, as searchLine and the hints print it). A
+  // second time vocabulary on the one document that shows a whole tree would
+  // make two lines about the same instant read as two different facts.
+  const createdMs = claimTimeMs(claim);
+  const age =
+    createdMs === null
+      ? []
+      : [`${formatAge(Math.max(0, now.getTime() - createdMs))} ago`];
   const facts = [
     `- ${safeId(claim.id)}`,
     bare(claim.kind),
@@ -188,6 +251,7 @@ const claimLine = (
     // tell one from a human-vouched declared claim.
     `provenance ${bare(claim.provenance)}`,
     authorLabel(index, claim.authorSessionId),
+    ...age,
   ];
   return `${facts.join(" · ")}${evidence}${seen}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
 };
@@ -261,8 +325,21 @@ export const appendSection = (
     : [...fitted, moreLine(hidden, section.noun)];
 };
 
-export const countHeader = (label: string, total: number): string =>
-  `${label} (${String(total)}):`;
+/**
+ * A section header carrying its own count, and — where the order of the rows
+ * is part of what they say — the order.
+ *
+ * The qualifier is a renderer-owned literal by construction: the only caller
+ * that passes one passes "oldest first", beside the sort that makes it true.
+ */
+export const countHeader = (
+  label: string,
+  total: number,
+  ordering?: string,
+): string =>
+  ordering === undefined
+    ? `${label} (${String(total)}):`
+    : `${label} (${String(total)}), ${ordering}:`;
 
 /**
  * Notes about the completeness of what was just rendered.
@@ -375,9 +452,13 @@ export const solvedAtFromTree = (
  * What the pull-time git checks learned about a solved tree — computed by
  * the TOOL (only it has a repo to ask) and rendered here. Every field is
  * fail-open: null drift and "unknown" fileDrift render honest absence.
+ *
+ * IT CARRIES NO CLOCK. It used to hold its own `now`, which was a second
+ * clock in a document that now dates every claim line from `renderDiagnosis`'s
+ * — two instants that could disagree about the same render. The renderer
+ * takes ONE `now` and spends it on both.
  */
 export interface SolvedPresentation {
-  readonly now: Date;
   readonly drift: CommitDrift | null;
   readonly fileDrift: SolvedFileDrift;
 }
@@ -410,6 +491,7 @@ const FILE_DRIFT_SENTENCES: Readonly<Record<SolvedFileDrift, string>> = {
  */
 const solvedBlock = (
   diagnosis: Diagnosis,
+  now: Date,
   presentation: SolvedPresentation | undefined,
 ): readonly string[] => {
   if (presentation === undefined) {
@@ -419,9 +501,7 @@ const solvedBlock = (
   if (solvedAtMs === null) {
     return [];
   }
-  const age = formatSolvedAge(
-    Math.max(0, presentation.now.getTime() - solvedAtMs),
-  );
+  const age = formatSolvedAge(Math.max(0, now.getTime() - solvedAtMs));
   const landed =
     diagnosis.workContext.landedAt === null ||
     diagnosis.workContext.landedAt === undefined
@@ -466,9 +546,23 @@ const solvedBlock = (
  * Weakening an invariant shared by two surfaces to strengthen one field of one
  * of them is the wrong trade, and the residual is bounded: a display name is
  * sanitized, phrase-filtered, capped at MAX_TITLE_CHARS and structurally inert.
+ *
+ * WHEN, AS WELL AS WHAT. Every claim line carries the age of the claim and the
+ * section is sorted oldest first, because the ORDER of discovery is half of
+ * what an old tree is worth — "which of these did they find first" is not
+ * answerable from a single age for the whole context. `now` is the ONE clock
+ * the whole document is read against, so the per-claim ages and the solved
+ * block cannot disagree inside one render.
+ *
+ * THE FITTER STILL DROPS FROM THE TAIL, which under this order means the
+ * NEWEST claims — the same direction the hub's own truncation keeps (oldest
+ * rows kept, services/diagnosis.ts), so a full tree and a truncated one agree
+ * about which end is missing. Whichever end goes, "(+N claims not shown)"
+ * counts it.
  */
 export const renderDiagnosis = (
   diagnosis: Diagnosis,
+  now: Date,
   solvedPresentation?: SolvedPresentation,
 ): string => {
   const index = authorIndex(diagnosis.claims);
@@ -479,7 +573,8 @@ export const renderDiagnosis = (
   // framed value per line, the one fragment every surface spells.
   const intentFragment = renderIntent(context.intent);
   const intentLines = intentFragment === null ? [] : [`Session ${intentFragment}`];
-  const solvedLines = solvedBlock(diagnosis, solvedPresentation);
+  const solvedLines = solvedBlock(diagnosis, now, solvedPresentation);
+  const claims = claimsOldestFirst(diagnosis.claims);
 
   const opening =
     diagnosis.claims.length === 0
@@ -488,8 +583,11 @@ export const renderDiagnosis = (
 
   const sections: readonly Section[] = [
     {
-      header: countHeader("Claims", diagnosis.claims.length),
-      lines: diagnosis.claims.map((claim) => claimLine(claim, index)),
+      // The ordering is STATED, not implied: the ages alone cannot express
+      // it once two findings share a day, and `claimsOldestFirst` is what
+      // makes the sentence true against a hub that sent any other order.
+      header: countHeader("Claims", diagnosis.claims.length, "oldest first"),
+      lines: claims.map((claim) => claimLine(claim, index, now)),
       total: diagnosis.claims.length,
       noun: "claim",
     },

@@ -106,6 +106,19 @@ const hit = (entry: WorkContextEntry, ageMs: number): SearchHit => ({
   ageMs,
 });
 
+/** The reader's clock: 21 days after CREATED, so a full-tree age is "21d". */
+const NOW = new Date("2026-08-14T09:00:00.000Z");
+
+const claimLineOf = (rendered: string, id: string): string =>
+  rendered.split("\n").find((line) => line.startsWith(`- ${id} `)) ?? "";
+
+/** Claim ids in the order the document lays them out. */
+const claimIdsIn = (rendered: string): readonly string[] =>
+  rendered
+    .split("\n")
+    .filter((line) => line.startsWith("- clm_"))
+    .map((line) => line.slice(2).split(" ")[0] ?? "");
+
 describe("safeId", () => {
   test("keeps the id alphabet and drops everything else", () => {
     // Arrange: ids are chosen by whoever writes the record, so they are
@@ -138,7 +151,7 @@ describe("safeId", () => {
 describe("renderDiagnosis", () => {
   test("labels the whole document as quoted data, not instruction", () => {
     // Act
-    const rendered = renderDiagnosis(diagnosis());
+    const rendered = renderDiagnosis(diagnosis(), NOW);
 
     // Assert: the same sentence the briefing uses, from the same constant —
     // two copies would be two things to weaken
@@ -148,7 +161,7 @@ describe("renderDiagnosis", () => {
 
   test("quotes every author-written string and nothing else", () => {
     // Act
-    const rendered = renderDiagnosis(diagnosis());
+    const rendered = renderDiagnosis(diagnosis(), NOW);
 
     // Assert: title and claim body are framed; ids, kinds and numbers are not
     expect(rendered).toContain("«Login 500s on staging»");
@@ -175,7 +188,7 @@ describe("renderDiagnosis", () => {
     });
 
     // Act
-    const rendered = renderDiagnosis(tree);
+    const rendered = renderDiagnosis(tree, NOW);
 
     // Assert: both labels present, bare like kind and status
     expect(rendered).toContain("provenance declared");
@@ -201,7 +214,7 @@ describe("renderDiagnosis", () => {
     });
 
     // Act
-    const rendered = renderDiagnosis(tree);
+    const rendered = renderDiagnosis(tree, NOW);
 
     // Assert
     expect(rendered).toContain("Nick");
@@ -218,7 +231,7 @@ describe("renderDiagnosis", () => {
     });
 
     // Act
-    const rendered = renderDiagnosis(tree);
+    const rendered = renderDiagnosis(tree, NOW);
 
     // Assert
     expect(rendered).toContain("an unnamed teammate");
@@ -233,7 +246,7 @@ describe("renderDiagnosis", () => {
     });
 
     // Act
-    const rendered = renderDiagnosis(tree);
+    const rendered = renderDiagnosis(tree, NOW);
 
     // Assert
     expect(rendered).toContain("clm_02 deeper_cause_of clm_01");
@@ -250,7 +263,7 @@ describe("renderDiagnosis", () => {
     });
 
     // Act
-    const rendered = renderDiagnosis(tree);
+    const rendered = renderDiagnosis(tree, NOW);
 
     // Assert: BODY class since audit row M14 — a note explains why one claim
     // sits under another, so it is an answer rather than a name for one. The
@@ -264,7 +277,7 @@ describe("renderDiagnosis", () => {
 
   test("says the hub truncated the tree rather than looking complete", () => {
     // Act
-    const rendered = renderDiagnosis(diagnosis({ truncated: true }));
+    const rendered = renderDiagnosis(diagnosis({ truncated: true }), NOW);
 
     // Assert
     expect(rendered).toContain("truncated");
@@ -274,7 +287,7 @@ describe("renderDiagnosis", () => {
     // Arrange: tolerant per-row parsing must not mean a silently shorter tree —
     // this is the diagnosis the reader reasons FROM
     // Act
-    const rendered = renderDiagnosis(diagnosis({ droppedRows: 3 }));
+    const rendered = renderDiagnosis(diagnosis({ droppedRows: 3 }), NOW);
 
     // Assert
     expect(rendered).toContain("3");
@@ -290,7 +303,7 @@ describe("renderDiagnosis", () => {
     });
 
     // Act
-    const rendered = renderDiagnosis(tree);
+    const rendered = renderDiagnosis(tree, NOW);
 
     // Assert
     expect(rendered).toContain("clm_99");
@@ -312,7 +325,7 @@ describe("renderDiagnosis", () => {
     });
 
     // Act
-    const rendered = renderDiagnosis(tree);
+    const rendered = renderDiagnosis(tree, NOW);
     const claimLine =
       rendered.split("\n").find((line) => line.startsWith("- clm_01")) ?? "";
 
@@ -335,7 +348,7 @@ describe("renderDiagnosis", () => {
     });
 
     // Act
-    const rendered = renderDiagnosis(tree);
+    const rendered = renderDiagnosis(tree, NOW);
     const contextLine =
       rendered.split("\n").find((line) => line.startsWith("Work context ")) ?? "";
     const edgeLine =
@@ -372,7 +385,7 @@ describe("renderDiagnosis", () => {
     );
 
     // Act
-    const rendered = renderDiagnosis(diagnosis({ claims: many }));
+    const rendered = renderDiagnosis(diagnosis({ claims: many }), NOW);
 
     // Assert
     expect(rendered.length).toBeLessThanOrEqual(MAX_DIAGNOSIS_CHARS);
@@ -408,6 +421,7 @@ describe("renderDiagnosis", () => {
       // Act
       const rendered = renderDiagnosis(
         diagnosis({ claims, truncated: true, droppedRows: 7 }),
+        NOW,
       );
 
       // Assert
@@ -424,11 +438,106 @@ describe("renderDiagnosis", () => {
     expect(failures.join(",")).toBe("");
   });
 
+
+  // ── When each finding was recorded (Nick's gap 1) ─────────────────────────
+
+  test("dates every claim, so the order of discovery reads off the page", () => {
+    // Arrange: two claims eighteen days apart. Before this the whole tree
+    // carried one age and the individual findings carried none, so a reader
+    // asking "what did Ken do three weeks ago" could read the reasoning and
+    // still not tell which part of it came first.
+    const tree = diagnosis({
+      claims: [
+        claim({ id: "clm_01", createdAt: "2026-07-24T09:00:00.000Z" }),
+        claim({
+          id: "clm_02",
+          createdAt: "2026-08-11T09:00:00.000Z",
+          body: "Cache warms too early",
+        }),
+      ],
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+
+    // Assert: the SAME vocabulary formatAge prints on every other surface —
+    // a second time vocabulary would make two lines mean two different things
+    expect(claimLineOf(rendered, "clm_01")).toContain("21d ago");
+    expect(claimLineOf(rendered, "clm_02")).toContain("3d ago");
+  });
+
+  test("orders claims oldest first and says so, whatever order the hub sent", () => {
+    // Arrange: the hub is not trusted to have sorted, and the point of the
+    // ages is ORDER — so the ordering is enforced here and stated in the
+    // header, rather than left as a property of whatever arrived. The last
+    // two share a day: the tie breaks on the parsed instant, not on the id,
+    // which is what keeps two "13d ago" neighbours readable as a sequence.
+    const tree = diagnosis({
+      claims: [
+        claim({ id: "clm_new", createdAt: "2026-08-13T09:00:00.000Z" }),
+        claim({ id: "clm_old", createdAt: "2026-07-24T09:00:00.000Z" }),
+        claim({ id: "clm_zsameday", createdAt: "2026-08-01T08:00:00.000Z" }),
+        claim({ id: "clm_asameday", createdAt: "2026-08-01T17:00:00.000Z" }),
+      ],
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+
+    // Assert
+    expect(rendered).toContain("Claims (4), oldest first:");
+    expect(claimIdsIn(rendered)).toEqual([
+      "clm_old",
+      "clm_zsameday",
+      "clm_asameday",
+      "clm_new",
+    ]);
+  });
+
+  test("breaks a genuine timestamp tie on the id, so the order is total", () => {
+    // Arrange: two claims recorded in the same millisecond. Array#sort is
+    // stable in every engine this ships on, so hub order would decide — and
+    // hub order is exactly what this section stopped trusting.
+    const tree = diagnosis({
+      claims: [
+        claim({ id: "clm_b", createdAt: "2026-08-01T09:00:00.000Z" }),
+        claim({ id: "clm_a", createdAt: "2026-08-01T09:00:00.000Z" }),
+      ],
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+
+    // Assert
+    expect(claimIdsIn(rendered)).toEqual(["clm_a", "clm_b"]);
+  });
+
+  test("renders no age for a timestamp it cannot parse, and sorts it last", () => {
+    // Arrange: createdAt is a hub-supplied string (DiagnosisClaimSchema only
+    // demands non-empty), so an older or hostile hub can send anything. A
+    // guessed age would be a fact this renderer cannot support.
+    const tree = diagnosis({
+      claims: [
+        claim({ id: "clm_bad", createdAt: "whenever" }),
+        claim({ id: "clm_ok", createdAt: "2026-07-24T09:00:00.000Z" }),
+      ],
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+
+    // Assert: the claim still renders — dropping it would be the worse lie —
+    // it just carries no age, and it sorts behind everything datable
+    expect(claimLineOf(rendered, "clm_bad")).toContain("«The refresh path");
+    expect(claimLineOf(rendered, "clm_bad")).not.toMatch(/\d+[smhd] ago/);
+    expect(claimIdsIn(rendered)).toEqual(["clm_ok", "clm_bad"]);
+  });
+
   test("renders an empty tree as empty rather than as an error", () => {
     // Arrange: a work context whose owner has published nothing yet is the
     // ordinary state right after SessionStart, not a failure
     // Act
-    const rendered = renderDiagnosis(diagnosis({ claims: [] }));
+    const rendered = renderDiagnosis(diagnosis({ claims: [] }), NOW);
 
     // Assert
     expect(rendered).toContain("«Login 500s on staging»");
@@ -523,6 +632,7 @@ describe("the session's intent on the MCP reading tools (trial finding #16)", ()
           updatedAt: null,
         },
       }),
+      NOW,
     );
 
     const lines = rendered.split("\n");
@@ -546,8 +656,9 @@ describe("the session's intent on the MCP reading tools (trial finding #16)", ()
           updatedAt: null,
         },
       }),
+      NOW,
     );
-    const rendered = renderDiagnosis(diagnosis());
+    const rendered = renderDiagnosis(diagnosis(), NOW);
 
     // The control: the intent costs exactly one line, and it is line 2
     expect(withIntent.split("\n").length - rendered.split("\n").length).toBe(1);

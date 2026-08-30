@@ -654,7 +654,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "diagnosis",
     module: "src/mcp/render.ts",
     framing: "framed",
-    render: (payload) => renderDiagnosis(diagnosisWith(payload)),
+    render: (payload) => renderDiagnosis(diagnosisWith(payload), NOW),
   },
   {
     kind: "corpus",
