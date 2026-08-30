@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 212
+    # PRINTS: 215
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -143,6 +143,7 @@ jobs:
     # PRINTS: hooks/runner.ts 1
     # PRINTS: hooks/stop.ts 1
     # PRINTS: hooks/user-prompt-submit.ts 1
+    # PRINTS: summarizer/probe.ts 1
     # PRINTS: summarizer/transcript.ts 2
     # PRINTS: briefing/context-group.ts 1
     # PRINTS: briefing/ghost.ts 2
@@ -158,6 +159,7 @@ jobs:
     # PRINTS: derive/conference/prompt.ts 1
     # PRINTS: derive/ghost/cost.ts 1
     # PRINTS: derive/ghost/worker.ts 4
+    # PRINTS: derive/intent/prompt.ts 1
     # PRINTS: derive/intent/worker.ts 1
     # PRINTS: derive/spawn.ts 2
     # PRINTS: derive/summarizer/cost.ts 1
@@ -182,7 +184,7 @@ jobs:
     # PRINTS: mcp/tools/search-related-work.ts 1
     # PRINTS: mcp/tools/set-intent.ts 2
     # PRINTS: model/gates.ts 1
-    # PRINTS: model/runner.ts 1
+    # PRINTS: model/runner.ts 2
     # PRINTS: model/worker-env.ts 1
     # PRINTS: spool/reap.ts 1
     # PRINTS: state/conference-cost.ts 1
@@ -258,7 +260,8 @@ jobs:
     # PRINTS: pre-tool-use.ts 1
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
-    # PRINTS: prompt.ts 1
+    # PRINTS: probe.ts 1
+    # PRINTS: prompt.ts 2
     # PRINTS: proxy.ts 1
     # PRINTS: publish-claim.ts 2
     # PRINTS: pump.ts 1
@@ -270,7 +273,7 @@ jobs:
     # PRINTS: render-referee.ts 2
     # PRINTS: render.ts 18
     # PRINTS: report.ts 2
-    # PRINTS: runner.ts 2
+    # PRINTS: runner.ts 3
     # PRINTS: sanitize.ts 9
     # PRINTS: search-related-work.ts 1
     # PRINTS: search-tokens.ts 2

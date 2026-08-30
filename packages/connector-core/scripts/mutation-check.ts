@@ -3196,6 +3196,45 @@ export const MUTATIONS: readonly Mutation[] = [
       "teammates can pull",
   },
   {
+    // Hygiene that only holds when the caller remembers it is not hygiene:
+    // `crosscheck conference` hands the runner the raw process.env of the
+    // terminal it was typed in, which is a Claude Code session more often
+    // than not.
+    label: "a nested model is handed the session it is summarizing",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "      PARENT_SESSION_MARKER_PATTERN.test(name)",
+    to: "      false",
+    test: `${CORE}/test/model-seam.test.ts`,
+    because:
+      "the parent agent session's binding markers - its id, messaging " +
+      "socket, SSE port and plugin roots - ride into a third-party binary, " +
+      "which can then be mistaken for or bind to the session it is reading",
+  },
+  {
+    // A foreign model that fences every answer is the ordinary case behind
+    // CROSSCHECK_SUMMARIZER_CMD, and doctor is where an operator checks it.
+    label: "doctor quotes a fenced answer's fence rather than its answer",
+    file: `${CONNECTOR}/src/summarizer/probe.ts`,
+    from: "  const answer = stripModelWrapping(result.stdout);",
+    to: "  const answer = result.stdout;",
+    test: `${CLI}/test/doctor-summarizer-runner.test.ts`,
+    because:
+      "the operator checking a wrapper reads `not NONE: \"json\"` for a " +
+      "perfectly good claim and concludes their model is broken",
+  },
+  {
+    // Four tasks, four instructions, one variable that carries none of them.
+    label: "an override is quietly told which task fired",
+    file: `${CORE}/src/derive/intent/prompt.ts`,
+    from: "    return [override];",
+    to: '    return [override, "intent", INTENT_PROMPT];',
+    test: `${CORE}/test/model-seam.test.ts`,
+    because:
+      "docs/FOREIGN-MODELS.md tells operators their wrapper cannot tell the " +
+      "four tasks apart, and that warning must go red the day it stops " +
+      "being true rather than quietly misinform them",
+  },
+  {
     // The shape a tail-degraded slice produces most: the conversation
     // continuing, filed as somebody's finding.
     label: "a role-played plan is filed as a teammate-visible draft",
@@ -3309,7 +3348,7 @@ interface Outcome {
  * PRINTS: developer-emails.test.ts 1
  * PRINTS: doctor-global.test.ts 3
  * PRINTS: doctor-latency.test.ts 1
- * PRINTS: doctor-summarizer-runner.test.ts 1
+ * PRINTS: doctor-summarizer-runner.test.ts 2
  * PRINTS: doctor.test.ts 1
  * PRINTS: double-wiring.test.ts 1
  * PRINTS: failure-hook.test.ts 2
@@ -3340,6 +3379,7 @@ interface Outcome {
  * PRINTS: mcp-referee-render.test.ts 2
  * PRINTS: mcp-render.test.ts 6
  * PRINTS: mcp-tools.test.ts 2
+ * PRINTS: model-seam.test.ts 2
  * PRINTS: parent-workspace.e2e.test.ts 1
  * PRINTS: pool-starvation.test.ts 1
  * PRINTS: precision-corpus.test.ts 1

@@ -529,6 +529,112 @@ describe("a foreign model that fails, fails SAFELY and VISIBLY", () => {
   });
 });
 
+/**
+ * The wrapper docs/FOREIGN-MODELS.md tells an operator to write, run through
+ * the SAME real worker as everything above, against a local stand-in for a
+ * provider's endpoint on 7632.
+ *
+ * WHAT THIS PROVES: that the documented lane works — an argument-free shell
+ * script that reads stdin, calls an HTTP endpoint, and prints one answer is
+ * enough to make crosscheck derive from a foreign model, and the packaging a
+ * chat model puts around that answer survives the trip.
+ *
+ * WHAT IT DOES NOT PROVE: anything about a provider. The stub answers a
+ * response SHAPE, not a vendor's implementation, and its "model" never reads
+ * the slice. No request leaves this machine.
+ *
+ * Skipped, loudly, where `jq` is absent — the wrapper needs it to encode a
+ * slice safely, and a doc example that hand-rolled JSON escaping in shell
+ * would corrupt the first turn containing a quotation mark.
+ */
+const HAS_JQ = Bun.which("jq") !== null;
+
+describe("the wrapper the docs tell an operator to write actually works", () => {
+  test.skipIf(!HAS_JQ)(
+    "an argv-free shell script over HTTP derives a capped, derived draft",
+    async () => {
+      // Arrange: a local stand-in for an OpenAI-compatible endpoint that
+      // answers the way a chat model does — a pleasantry, a fence, and a
+      // closing offer with a brace in it, all three at once.
+      interface ChatRequest {
+        readonly model: string;
+        readonly messages: readonly { readonly role: string; readonly content: string }[];
+      }
+      const seen: { auth: string | null; request: ChatRequest }[] = [];
+      const server = Bun.serve({
+        port: 7632,
+        fetch: async (request) => {
+          const parsed = (await request.json()) as ChatRequest;
+          seen.push({ auth: request.headers.get("authorization"), request: parsed });
+          return Response.json({
+            choices: [
+              {
+                message: {
+                  role: "assistant",
+                  content: `Sure! Here is the JSON:\n\`\`\`json\n${foreignShape("fenced-json").stdout.split("\n")[1] ?? ""}\n\`\`\`\nWant the {full} breakdown?`,
+                },
+              },
+            ],
+          });
+        },
+      });
+      cleanups.push(async () => {
+        await server.stop(true);
+      });
+      const fixture = await foreignFixture();
+      cleanups.push(fixture.cleanup);
+
+      // Act: the checked-in example, spawned exactly as an operator's
+      // CROSSCHECK_SUMMARIZER_CMD would be.
+      await runSummarizeWorker(foreignWorkerArgs(fixture), {
+        CROSSCHECK_HOME: fixture.home,
+        CROSSCHECK_SUMMARIZER_CMD: join(
+          import.meta.dir,
+          "../../../docs/examples/foreign-model-wrapper.sh",
+        ),
+        CX_MODEL_URL: `http://127.0.0.1:${String(server.port)}/v1/chat/completions`,
+        CX_MODEL_KEY: "test-key-that-is-not-a-real-one",
+        CX_MODEL_NAME: "example-model-id",
+        PATH: process.env["PATH"] ?? "",
+      });
+
+      // Assert 1: the wrapper sent what the doc says it sends — the key, the
+      // model id, the summarizer's instruction, and the slice unmangled.
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.auth).toBe("Bearer test-key-that-is-not-a-real-one");
+      expect(seen[0]?.request.model).toBe("example-model-id");
+      const system = seen[0]?.request.messages.find((m) => m.role === "system");
+      const user = seen[0]?.request.messages.find((m) => m.role === "user");
+      expect(system?.content).toContain("passive capture assistant");
+      expect(user?.content).toContain("why does bun test fail");
+
+      // Assert 2: and what came back is a derived draft at the cap — through
+      // the same three tolerances the corpus covers, in one answer.
+      const claims = await spooledClaims(fixture);
+      expect(claims).toHaveLength(1);
+      expect(claims[0]?.body.body).toBe(bodyOf("fenced-json"));
+      expect(claims[0]?.body.confidence).toBe(DERIVED_CONFIDENCE_CAP);
+      expect(claims[0]?.body.provenance).toBe("derived");
+      expect(claims[0]?.body.captureMode).toBe("auto");
+    },
+  );
+
+  test("the example takes no arguments, so the contract cannot rot in it", async () => {
+    // The doc's whole claim is that a wrapper is spawned argument-free. An
+    // example that quietly started reading $1 would teach the opposite, and
+    // would keep working locally for whoever wrote it.
+    const source = await Bun.file(
+      join(import.meta.dir, "../../../docs/examples/foreign-model-wrapper.sh"),
+    ).text();
+    expect(source).not.toMatch(/\$\{?[1-9]/);
+    expect(source).not.toContain('"$@"');
+    // It reads the slice from stdin and says so.
+    expect(source).toContain("$(cat)");
+    // And it carries the instruction, because an override is given none.
+    expect(source).toContain("passive capture assistant");
+  });
+});
+
 describe("the fake model is a real executable with a contract of its own", () => {
   test("its own argv is documented, and crosscheck uses none of it", async () => {
     // Arrange: --shape/--dump/--help are a WORKING foreign argv contract that

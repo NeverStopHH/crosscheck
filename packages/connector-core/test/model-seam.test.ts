@@ -29,7 +29,11 @@ import { isNoneAnswer, parseSummarizerOutput } from "../src/model/parse.ts";
 import {
   resolveSummarizerArgv,
   runSummarizer,
+  SUMMARIZER_PROMPT,
 } from "../src/model/runner.ts";
+import { resolveConferenceArgv } from "../src/derive/conference/prompt.ts";
+import { GHOST_PROMPT, resolveGhostArgv } from "../src/derive/ghost/prompt.ts";
+import { INTENT_PROMPT, resolveIntentArgv } from "../src/derive/intent/prompt.ts";
 import {
   PARENT_SESSION_MARKER_PATTERN,
   summarizerWorkerEnv,
@@ -139,6 +143,52 @@ describe("argv resolution: the override replaces the binary WHOLESALE", () => {
 
     // Assert: an operator or a test owns the whole contract.
     expect(argv).toEqual(["/tmp/fake-model"]);
+  });
+
+  test("all four tasks hand one override the same argv, and it says nothing", async () => {
+    // FOUR TASKS, FOUR DIFFERENT INSTRUCTIONS, ONE VARIABLE. The summarizer
+    // wants claim JSON or NONE; intent wants one third-person sentence;
+    // ghost wants one conflict sentence; conference wants its own report
+    // shape. Each resolver honours CROSSCHECK_SUMMARIZER_CMD and each hands
+    // the wrapper an argv of exactly [cmd] — so a wrapper cannot tell which
+    // of the four fired, and a single hard-coded instruction inside it is
+    // wrong for three of them.
+    //
+    // That is the headline limitation of today's override, and it is pinned
+    // here so docs/FOREIGN-MODELS.md's warning cannot quietly go stale: the
+    // day an argv-carrying lane lands, this test is what goes red.
+    const cmd = "/opt/ox-wrapper";
+    const env = { CROSSCHECK_SUMMARIZER_CMD: cmd };
+    const argvs = {
+      summarizer: resolveSummarizerArgv(env),
+      intent: resolveIntentArgv(env),
+      ghost: resolveGhostArgv(env),
+      conference: resolveConferenceArgv(env),
+    };
+
+    // Assert: identical, argument-free, and carrying none of the four
+    // instructions the default backend would have put on argv.
+    for (const [task, argv] of Object.entries(argvs)) {
+      expect(argv, task).toEqual([cmd]);
+    }
+    const conferencePrompt = resolveConferenceArgv({})[2] ?? "";
+    for (const prompt of [
+      SUMMARIZER_PROMPT,
+      INTENT_PROMPT,
+      GHOST_PROMPT,
+      conferencePrompt,
+    ]) {
+      expect(prompt.length).toBeGreaterThan(80);
+      for (const [task, argv] of Object.entries(argvs)) {
+        expect(argv.join(" "), task).not.toContain(prompt);
+      }
+    }
+    // And the four instructions really are four, not one reused — otherwise
+    // the limitation above would not exist and this test would be theatre.
+    expect(
+      new Set([SUMMARIZER_PROMPT, INTENT_PROMPT, GHOST_PROMPT, conferencePrompt])
+        .size,
+    ).toBe(4);
   });
 });
 
