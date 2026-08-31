@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 293
+    # PRINTS: 295
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -167,7 +167,7 @@ jobs:
     # PRINTS: derive/spawn.ts 2
     # PRINTS: derive/summarizer/cost.ts 1
     # PRINTS: derive/summarizer/derive.ts 1
-    # PRINTS: derive/summarizer/gate.ts 6
+    # PRINTS: derive/summarizer/gate.ts 7
     # PRINTS: flows/briefing.ts 1
     # PRINTS: flows/capture-targets.ts 1
     # PRINTS: flows/capture-touched-files.ts 1
@@ -192,7 +192,7 @@ jobs:
     # PRINTS: mcp/tools/set-intent.ts 2
     # PRINTS: model/gates.ts 1
     # PRINTS: model/parse.ts 2
-    # PRINTS: model/runner.ts 2
+    # PRINTS: model/runner.ts 3
     # PRINTS: model/worker-env.ts 1
     # PRINTS: spool/reap.ts 1
     # PRINTS: state/capture-bookkeeping.ts 6
@@ -264,7 +264,7 @@ jobs:
     # PRINTS: envelope.ts 1
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 3
-    # PRINTS: gate.ts 6
+    # PRINTS: gate.ts 7
     # PRINTS: gates.ts 1
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
@@ -300,7 +300,7 @@ jobs:
     # PRINTS: render.ts 26
     # PRINTS: report.ts 2
     # PRINTS: review-draft.ts 1
-    # PRINTS: runner.ts 4
+    # PRINTS: runner.ts 5
     # PRINTS: sanitize.ts 10
     # PRINTS: search-related-work.ts 1
     # PRINTS: search-tokens.ts 4
