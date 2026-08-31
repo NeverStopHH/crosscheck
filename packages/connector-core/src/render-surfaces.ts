@@ -67,9 +67,37 @@ import type {
  */
 export type RenderSurfaceFraming = "framed" | "sanitized" | "bare" | "id";
 
+/**
+ * HOW the surface's output reaches a reader — DESIGN.md §4's anchoring
+ * asymmetry, as a field rather than as a habit.
+ *
+ *   pulled       — the reader asked for this exact thing and is waiting for
+ *                  the answer: an MCP tool response, a command's stdout.
+ *                  SUBSTANCE BELONGS HERE, at whatever length the author
+ *                  wrote it.
+ *   unsolicited  — it arrives without being asked for: a briefing at
+ *                  SessionStart, a hint mid-prompt, a statusline, a report
+ *                  written for later. Substance here anchors a session on
+ *                  somebody else's theory and spends a budget every other
+ *                  teammate shares, so these stay TIGHT.
+ *   outbound     — it is not shown to this reader at all; it is text on its
+ *                  way to the hub. Bounded by the schema it will be stored
+ *                  under, and held to the unsolicited rule here because a
+ *                  stored body is what some future briefing will show.
+ *
+ * WHY IT IS DATA AND WHY IT IS REQUIRED. The separation between a pulled cap
+ * and an unsolicited one is enforced by test/anchoring-separation.test.ts,
+ * which walks THIS FIELD across every package. A hand-kept list of "the tight
+ * surfaces" would be a copy of the registry that drifts from it; a required
+ * field means a surface added without a classification is a type error, and a
+ * surface that later starts leaking is a red test rather than a review catch.
+ */
+export type RenderSurfaceDelivery = "pulled" | "unsolicited" | "outbound";
+
 export interface CorpusRenderSurface {
   readonly kind: "corpus";
   readonly name: string;
+  readonly delivery: RenderSurfaceDelivery;
   /** Package-relative module the surface lives in, e.g. "src/mcp/render.ts". */
   readonly module: string;
   readonly framing: RenderSurfaceFraming;
@@ -92,6 +120,7 @@ export interface CorpusRenderSurface {
 export interface CompositeRenderSurface {
   readonly kind: "composite";
   readonly name: string;
+  readonly delivery: RenderSurfaceDelivery;
   readonly module: string;
   readonly note: string;
   /** Package-relative test files that attack this module's composition. */
@@ -402,7 +431,11 @@ const diagnosisWith = (payload: string): Diagnosis => ({
   ],
   edges: [],
   externalClaims: [],
-  targets: [],
+  // The TARGET slots (Nick's gap 2): kind and value are both author-written
+  // and both now reach the reader, so the corpus has to plant in them.
+  targets: [{ kind: payload, value: payload }],
+  targetsReported: true,
+  droppedTargets: 0,
   truncated: false,
   droppedRows: 0,
 });
@@ -457,6 +490,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "briefing",
+    delivery: "unsolicited",
     module: "src/briefing/render.ts",
     framing: "framed",
     render: (payload) =>
@@ -471,6 +505,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "briefing-questions",
+    delivery: "unsolicited",
     module: "src/briefing/questions.ts",
     framing: "framed",
     // The QUESTION slot of the briefing, which the "briefing" surface above
@@ -490,6 +525,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "briefing-solved",
+    delivery: "unsolicited",
     module: "src/briefing/render.ts",
     framing: "framed",
     // The SOLVED slot of the briefing, which the "briefing" surface above
@@ -509,6 +545,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "briefing-ghost",
+    delivery: "unsolicited",
     module: "src/briefing/ghost.ts",
     framing: "framed",
     // The GHOST slot of the briefing, which neither surface above can reach:
@@ -528,6 +565,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "briefing-ghost-draft-body",
+    delivery: "outbound",
     module: "src/briefing/ghost.ts",
     framing: "sanitized",
     // The ghost DRAFT body, which is the one ghost string that is STORED
@@ -545,6 +583,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "conference-report",
+    delivery: "unsolicited",
     module: "src/conference/report.ts",
     framing: "framed",
     // The one surface that quotes teammate BODIES at length (VISION.md §2),
@@ -573,6 +612,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "conference-report-model-failure",
+    delivery: "unsolicited",
     module: "src/conference/report.ts",
     framing: "framed",
     // The branch the entry above cannot reach: what the nested `claude` SAID
@@ -590,6 +630,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "open-questions-list",
+    delivery: "pulled",
     module: "src/mcp/tools/list-open-questions.ts",
     framing: "framed",
     render: (payload) => renderOpenQuestions([inboxQuestionWith(payload)], NOW),
@@ -597,6 +638,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "answer-hint",
+    delivery: "unsolicited",
     module: "src/hints/render.ts",
     framing: "framed",
     // The §4 solicited-substance surface: a claim body pushed at the reader
@@ -607,6 +649,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "claim-hint",
+    delivery: "unsolicited",
     module: "src/hints/render.ts",
     framing: "framed",
     render: (payload) =>
@@ -620,6 +663,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "pointer-hint",
+    delivery: "unsolicited",
     module: "src/hints/render.ts",
     framing: "framed",
     render: (payload) =>
@@ -636,6 +680,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // and author so bare() + the title cap are exercised on it too.
     kind: "corpus",
     name: "targets-pointer-hint",
+    // UNSOLICITED, like every other pointer: it arrives on UserPromptSubmit
+    // without being asked for. It carries no claim body at all — the touched
+    // path rides through bare() at MAX_WORK_CONTEXT_TITLE_CHARS — so the
+    // separation test's identity assertion is satisfied by construction
+    // rather than by a cap chosen here.
+    delivery: "unsolicited",
     module: "src/hints/render.ts",
     framing: "framed",
     render: (payload) =>
@@ -650,6 +700,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "solved-hint",
+    delivery: "unsolicited",
     module: "src/hints/render.ts",
     framing: "framed",
     // The failure-time surface (VISION.md §1): the same untrusted slots as
@@ -661,6 +712,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "tripwire-reason",
+    delivery: "unsolicited",
     module: "src/hints/render.ts",
     framing: "framed",
     render: (payload) =>
@@ -669,13 +721,15 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "diagnosis",
+    delivery: "pulled",
     module: "src/mcp/render.ts",
     framing: "framed",
-    render: (payload) => renderDiagnosis(diagnosisWith(payload)),
+    render: (payload) => renderDiagnosis(diagnosisWith(payload), NOW),
   },
   {
     kind: "corpus",
     name: "search-results",
+    delivery: "pulled",
     module: "src/mcp/render.ts",
     framing: "framed",
     render: (payload) =>
@@ -710,6 +764,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "search-filter-refusal",
+    delivery: "pulled",
     module: "src/mcp/render.ts",
     framing: "framed",
     // The hub's own sentence about why a filter did not resolve — hub-chosen
@@ -719,6 +774,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "search-results-empty-filtered",
+    delivery: "pulled",
     module: "src/mcp/render.ts",
     framing: "framed",
     // The EMPTY branch of the same renderer, which the entry above cannot
@@ -744,6 +800,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "search-unapplied-filters",
+    delivery: "pulled",
     module: "src/mcp/render.ts",
     framing: "framed",
     // A hub too old to apply the filters: the caller's own query is the only
@@ -754,6 +811,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "unusable-query",
+    delivery: "pulled",
     module: "src/mcp/render.ts",
     framing: "framed",
     render: (payload) => renderUnusableQuery(payload, 3),
@@ -761,6 +819,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "referee-brief",
+    delivery: "pulled",
     module: "src/mcp/render-referee.ts",
     framing: "framed",
     render: (payload) => renderRefereeBrief(refereeBriefWith(payload), NOW),
@@ -768,6 +827,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "detached-work-context-title",
+    delivery: "outbound",
     module: "src/flows/work-context-title.ts",
     framing: "sanitized",
     // A detached worktree's HEAD commit SUBJECT on its way into an uploaded
@@ -780,6 +840,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "briefing-flow",
+    delivery: "unsolicited",
     module: "src/flows/briefing.ts",
     note: "emits renderBriefing output verbatim (registered above); formatSolvedLine only re-derives lines the rendered text already contains",
     corpusCoveredBy: ["test/briefing-flow.test.ts"],
@@ -787,6 +848,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "hint-flow",
+    delivery: "unsolicited",
     module: "src/flows/hint.ts",
     note: "emits renderClaimHint/renderPointerHint output verbatim (registered above)",
     corpusCoveredBy: ["test/hint-flow.test.ts"],
@@ -794,6 +856,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "solved-hint-flow",
+    delivery: "unsolicited",
     module: "src/flows/solved-hint.ts",
     note: "emits renderSolvedHint output verbatim (registered above); no string of its own",
     corpusCoveredBy: ["test/solved-hint-flow.test.ts"],
@@ -801,6 +864,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "mcp-violations",
+    delivery: "pulled",
     module: "src/mcp/violations.ts",
     note: "hub-sent issue strings through quoted()",
     corpusCoveredBy: ["test/mcp-violations.test.ts", "test/mcp-hostile-hub.test.ts"],
@@ -808,6 +872,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "mcp-tools-shared",
+    delivery: "pulled",
     module: "src/mcp/tools/shared.ts",
     note: "hub failure codes through safeId, messages through quoted",
     corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
@@ -815,12 +880,14 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "mcp-tools-dispatch",
+    delivery: "pulled",
     module: "src/mcp/tools/index.ts",
     note: "caller's unknown tool name echoed through quoted under quotingText",
   },
   {
     kind: "composite",
     name: "mcp-tool-get-diagnosis",
+    delivery: "pulled",
     module: "src/mcp/tools/get-diagnosis.ts",
     note: "renders through renderDiagnosis (registered above); not-found echo through quoted",
     corpusCoveredBy: ["test/mcp-injection.test.ts", "test/mcp-hostile-hub.test.ts"],
@@ -828,6 +895,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "mcp-tool-extend-diagnosis",
+    delivery: "pulled",
     module: "src/mcp/tools/extend-diagnosis.ts",
     note: "ids through safeId, caller echo through quoted",
     corpusCoveredBy: ["test/mcp-injection.test.ts", "test/mcp-hostile-hub.test.ts"],
@@ -835,12 +903,14 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "mcp-tool-get-referee-brief",
+    delivery: "pulled",
     module: "src/mcp/tools/get-referee-brief.ts",
     note: "renders through renderRefereeBrief (registered above); not-found echo through quoted",
   },
   {
     kind: "composite",
     name: "mcp-tool-publish-claim",
+    delivery: "pulled",
     module: "src/mcp/tools/publish-claim.ts",
     note: "ids through safeId under quotingText",
     corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
@@ -848,6 +918,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "mcp-tool-set-intent",
+    delivery: "pulled",
     module: "src/mcp/tools/set-intent.ts",
     note: "ids through safeId; the echoed summary through quoted under quotingText; the ghost block through renderGhostNotice, whose every field is hub-sent (teammate name, title, intent, shared path)",
     corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
@@ -855,6 +926,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "mcp-tool-review-draft",
+    delivery: "pulled",
     module: "src/mcp/tools/review-draft.ts",
     note: "ids through safeId; promoted body through quoted under quotingText",
     corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
@@ -862,6 +934,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "mcp-tool-ask-teammate",
+    delivery: "pulled",
     module: "src/mcp/tools/ask-teammate.ts",
     note: "ids through safeId; the echoed question through quoted under quotingText",
     corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
@@ -869,6 +942,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "mcp-tool-answer-question",
+    delivery: "pulled",
     module: "src/mcp/tools/answer-question.ts",
     note: "ids through safeId; the echoed answer body through quoted under quotingText",
     corpusCoveredBy: ["test/mcp-hostile-hub.test.ts"],
@@ -876,6 +950,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "mcp-tool-search-related-work",
+    delivery: "pulled",
     module: "src/mcp/tools/search-related-work.ts",
     note: "renders through renderSearchResults/renderUnusableQuery/renderUnappliedFilters (registered above)",
   },

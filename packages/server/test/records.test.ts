@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -274,7 +276,15 @@ describe("POST /api/records", () => {
     expect(data?.results[0]?.issues?.length).toBeGreaterThan(0);
   });
 
-  test("rejects a claim body over 400 chars via schema issues", async () => {
+  test("stores a body at the cap and rejects the character after it", async () => {
+    // Arrange: the bound is READ from the constant, never typed as a literal.
+    // It was `401` here, which is how this test came to assert a bound the
+    // product had moved away from — and a stale number in a length test looks
+    // exactly like a passing one until the day it does not.
+    //
+    // BOTH SIDES OF THE BOUND, because only the accepting half proves the
+    // raise reached the STORE: a long finding has to survive the ingest schema
+    // AND the claims_body_length_check constraint under it.
     const { harness, developer } = await createHarnessWithSession();
     await postRecords(
       harness,
@@ -282,14 +292,31 @@ describe("POST /api/records", () => {
       recordEnvelope("work_context", validWorkContextBody()),
     );
 
-    const { data } = await postRecords(
+    // Act
+    const accepted = await postRecords(
       harness,
       developer,
-      recordEnvelope("claim", validClaimBody({ body: "x".repeat(401) })),
+      recordEnvelope(
+        "claim",
+        validClaimBody({ body: "x".repeat(MAX_CLAIM_BODY_LENGTH) }),
+      ),
+    );
+    const rejected = await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          id: "clm_overlong",
+          body: "x".repeat(MAX_CLAIM_BODY_LENGTH + 1),
+        }),
+      ),
     );
 
-    expect(data?.results[0]?.status).toBe("rejected");
-    expect(data?.results[0]?.issues?.join(" ")).toContain("body");
+    // Assert
+    expect(accepted.data?.results[0]?.status).toBe("accepted");
+    expect(rejected.data?.results[0]?.status).toBe("rejected");
+    expect(rejected.data?.results[0]?.issues?.join(" ")).toContain("body");
   });
 
   test("rejects likely_root_cause without evidence refs", async () => {

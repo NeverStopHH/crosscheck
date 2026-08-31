@@ -329,12 +329,14 @@ export const MUTATIONS: readonly Mutation[] = [
     // content on both sides must render identical blocks.
     label: "referee position B renders under a smaller budget than position A",
     file: `${CORE}/src/mcp/render-referee.ts`,
-    from:
-      '    { header, lines, total: lines.length, noun: "line" },\n' +
-      "    MAX_REFEREE_POSITION_CHARS,",
-    to:
-      '    { header, lines, total: lines.length, noun: "line" },\n' +
-      '    label === "A" ? MAX_REFEREE_POSITION_CHARS : MAX_REFEREE_SHARED_CHARS,',
+    // Re-anchored: this branch's own thunking fix turned the one-line section
+    // literal into a multi-line one carrying `rows: lines.map(...)`, so the old
+    // anchor matched nothing and the whole run aborted rather than reporting a
+    // false catch. The anchor now holds only the closing brace and the budget
+    // argument — the part this mutation is actually about, and the part a
+    // reflow cannot move.
+    from: "    },\n    MAX_REFEREE_POSITION_CHARS,",
+    to: '    },\n    label === "A" ? MAX_REFEREE_POSITION_CHARS : MAX_REFEREE_SHARED_CHARS,',
     test: `${CORE}/test/mcp-referee-render.test.ts`,
     because:
       "one side's case renders fuller than the other's on every brief while " +
@@ -3006,8 +3008,22 @@ export const MUTATIONS: readonly Mutation[] = [
     // The other end of the same loop.
     label: "the promote echo blanks the claim it just promoted",
     file: `${CORE}/src/mcp/tools/review-draft.ts`,
-    from: "${quotedBody(body, MAX_CLAIM_BODY_LENGTH)}",
-    to: "${`«${sanitizeUntrusted(body, MAX_CLAIM_BODY_LENGTH)}»`}",
+    // The cap spelling moved to CLAIM_ECHO_MAX_CHARS when the wire cap rose —
+    // an echo is a receipt and stayed at its old width while the wire went to
+    // MAX_CLAIM_BODY_LENGTH. Re-anchored, not rewritten.
+    //
+    // WHAT THIS MUTANT ACTUALLY DIES OF, which is not what it looks like:
+    // `sanitizeUntrusted` is NOT imported by review-draft.ts, so the mutated
+    // line throws a ReferenceError and the test goes red on that rather than
+    // on a redaction marker reaching the agent. It therefore proves the echo
+    // is EXERCISED by body-redaction.test.ts, not that the body class is what
+    // keeps it readable. Pre-existing — the mutation read this way before the
+    // cap moved — and left alone here because fixing it means adding an import
+    // to a source file to serve a test tool, which is a change worth making on
+    // its own terms rather than inside a body-cap raise. Recorded so the next
+    // reader is not misled by how convincing the pairing looks.
+    from: "${quotedBody(body, CLAIM_ECHO_MAX_CHARS)}",
+    to: "${`«${sanitizeUntrusted(body, CLAIM_ECHO_MAX_CHARS)}»`}",
     test: `${CORE}/test/body-redaction.test.ts`,
     because:
       "the agent asks which assertion it promoted and is answered with a " +
@@ -3966,6 +3982,120 @@ export const MUTATIONS: readonly Mutation[] = [
       "the ask fires, the human reads the reason, and the model learns " +
       "nothing — not the teammate, not the file, not the get_diagnosis id",
   },
+  // ── Diagnosis depth: the guards this round added ───────────────────────────
+  {
+    // The fitter SKIPPED a row it could not afford and kept trying the
+    // shorter ones after it. Invisible at a uniform 400-char body; at
+    // MAX_CLAIM_BODY_LENGTH it deletes a long finding out of the MIDDLE of a
+    // sequence the header calls oldest-first.
+    label: "the fitter drops a long finding from the middle of the order",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "    if (joinedLength(candidate) > lineCap) {\n      break;\n    }",
+    to: "    if (joinedLength(candidate) > lineCap) {\n      continue;\n    }",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "the page shows an unbroken prefix of the discovery order while a " +
+      "substantive finding is gone from the middle, and nothing on it marks " +
+      "the hole — the ids are opaque and the count sits at the bottom",
+  },
+  {
+    // A section that cannot afford its header used to vanish whole.
+    label: "a whole diagnosis section vanishes with no header and no count",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "    const withMore = [...accumulated, more];\n    return joinedLength(withMore) > cap ? accumulated : withMore;",
+    to: "    return accumulated;",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "the external-references block goes byte-indistinguishable from a tree " +
+      "that links to no other work context, which is the cross-context link " +
+      "the product exists to surface",
+  },
+  {
+    // A path is a BODY-class value, not a LABEL: blanking it whole loses the
+    // one fact the targets section exists to give.
+    label: "an ordinary file target is blanked whole by the phrase filter",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  bare(\n    spanRedactedUntrusted(raw, MAX_WORK_CONTEXT_TITLE_CHARS),\n    MAX_WORK_CONTEXT_TITLE_CHARS,\n  );",
+    to: "  bare(raw, MAX_WORK_CONTEXT_TITLE_CHARS);",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "src/theme/overrides.ts renders as a redaction marker about a title, " +
+      "in a list captured automatically so no author is ever warned, and the " +
+      "reader concludes their edit overlaps nobody",
+  },
+  {
+    // The bare strip removes the colon, so a fingerprint stops being the
+    // token the hub holds.
+    label: "a mangled target token is printed as if it were the value",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  const note = value === target.value ? \"\" : TARGET_VALUE_REDUCED;",
+    to: "  const note = \"\";",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "sha256:<hex> prints as sha256<hex>, so the reader greps for a token " +
+      "that matches nothing and reads the absence as absence of overlap",
+  },
+  {
+    // The referee brief is PULLED and was widened to hold one full body.
+    label: "the referee brief blanks a position body whole",
+    file: `${CORE}/src/mcp/render-referee.ts`,
+    from: "`${authorOf(claim)}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`",
+    to: "`${authorOf(claim)}: ${quoted(claim.body, MAX_CLAIM_BODY_LENGTH)}`",
+    test: `${CORE}/test/mcp-referee-render.test.ts`,
+    because:
+      "one side of a neutral comparison is replaced by a redaction marker on " +
+      "everyday English, and the swap-invariance test cannot see it because " +
+      "both sides get the same mechanism",
+  },
+  {
+    // A guessed age is a fact this renderer cannot support.
+    label: "a future timestamp renders a confident zero-second age",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  ms === null || ms > now.getTime()",
+    to: "  ms === null",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a skewed or hostile publisher's claim reads as recorded seconds ago " +
+      "while sorting last, so a reader scanning for the newest finding acts " +
+      "on the one row whose age is fabricated",
+  },
+  {
+    // targetsReported told an old hub from an empty capture; the parse
+    // failure was the hole one layer down.
+    label: "unreadable target rows render as no targets captured",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  return diagnosis.droppedTargets > 0\n    ? [targetsUnreadable(diagnosis.droppedTargets)]\n    : [TARGETS_EMPTY];",
+    to: "  return [TARGETS_EMPTY];",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a hub one field ahead of this connector makes the page state that " +
+      "nobody touched these files, which is the undetectable lie the whole " +
+      "targetsReported design was added to prevent",
+  },
+  {
+    // The index, not the store: one long body used to evict every other.
+    label: "one long finding evicts every other from the search index",
+    file: `${SERVER}/src/services/normalized-doc.ts`,
+    from: "    ...input.claimSummaries.map((summary) =>\n      summary.slice(0, NORMALIZED_DOC_CLAIM_SUMMARY_MAX_CHARS),\n    ),",
+    to: "    ...input.claimSummaries,",
+    test: `${SERVER}/test/normalized-doc.test.ts`,
+    because:
+      "the context stops surfacing for the terms of every older finding, and " +
+      "search is what feeds both search_related_work and the prompt hints, " +
+      "so the richer a context gets the less findable it becomes",
+  },
+  {
+    // Cost, not correctness — but the cost lands on a keystroke path.
+    label: "the secret scan goes quadratic on a near-miss body",
+    file: `${CORE}/src/capture/secret-scan.ts`,
+    from: "  /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{5,}/,",
+    to: "  /eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{5,}/,",
+    test: `${CORE}/test/secret-scan.test.ts`,
+    because:
+      "a 10,000-character body of eyJ fragments costs 17 ms instead of 0.3, " +
+      "and flows/hint.ts runs this scan over the whole user prompt on " +
+      "UserPromptSubmit, which has no length bound at all",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -4076,8 +4206,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 4
- * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 2
- * PRINTS: packages/connector-core/test/mcp-render.test.ts 6
+ * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
+ * PRINTS: packages/connector-core/test/mcp-render.test.ts 12
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
@@ -4085,6 +4215,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 2
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
+ * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 1
  * PRINTS: packages/connector-core/test/set-intent.test.ts 1
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
@@ -4100,6 +4231,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-emails.test.ts 1
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 1

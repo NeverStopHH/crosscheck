@@ -19,7 +19,8 @@
  *             not worth keeping, and a discard must not look like knowledge.
  */
 import { z } from "zod";
-import { DERIVED_CONFIDENCE_CAP, MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
+import { CLAIM_ECHO_MAX_CHARS } from "../../constants.ts";
 
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
@@ -184,7 +185,7 @@ export const successText = (
   // whole answers a different question than the one it was asked.
   return quotingText(
     `${verb} draft ${safeId(draftId)} as your declared claim ${claimId} ` +
-      `(a supersedes edge marks the draft reviewed): ${quotedBody(body, MAX_CLAIM_BODY_LENGTH)}. ` +
+      `(a supersedes edge marks the draft reviewed): ${quotedBody(body, CLAIM_ECHO_MAX_CHARS)}. ` +
       "Pass this id as an evidenceRefs entry when you publish what supports it.",
   );
 };

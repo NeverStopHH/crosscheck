@@ -15,6 +15,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "claude-summarizer-failure-line",
+    delivery: "pulled",
     module: "src/summarizer/runner.ts",
     framing: "bare",
     // What the nested claude SAID when a run was lost (trial finding #14) —
@@ -35,6 +36,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "claude-work-context-title",
+    delivery: "outbound",
     module: "src/hooks/session-start.ts",
     framing: "sanitized",
     // The one untrusted path this package OWNS: Claude's session_title on its
@@ -50,18 +52,21 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "claude-ghost-draft",
+    delivery: "outbound",
     module: "src/ghost/worker.ts",
     note: "the draft body is composed by ghostDraftBody, the registered core surface briefing-ghost-draft-body, which is where the hostile corpus attacks the teammate name and context id; the sentence beside them is this machine's own model output, bounded, echo-checked and secret-scanned here, and framed by formatDraftLine when it is shown",
   },
   {
     kind: "composite",
     name: "claude-tripwire-ask",
+    delivery: "unsolicited",
     module: "src/hooks/pre-tool-use.ts",
     note: "emits renderTripwireReason output verbatim as both permissionDecisionReason and additionalContext (the same rendered string, #25); registered core surface, covered in test/tripwire-hook.test.ts",
   },
   {
     kind: "composite",
     name: "claude-statusline",
+    delivery: "unsolicited",
     module: "src/statusline/statusline.ts",
     note: "teammate names via groupTeammates (sanitize inside toGroup); a terminal line, capped and joined from sanitized fields",
   },

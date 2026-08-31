@@ -15,7 +15,10 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
+import { REDACTED_SPAN, REDACTED_TITLE } from "../src/briefing/sanitize.ts";
 import { MAX_REFEREE_POSITION_CHARS } from "../src/constants.ts";
 import {
   MAX_REFEREE_BRIEF_CHARS,
@@ -141,6 +144,43 @@ describe("renderRefereeBrief", () => {
     expect(output).toContain("«Login 500s on staging»");
   });
 
+  test("redacts the span, never the whole position, on everyday English", () => {
+    // Arrange: this surface is PULLED and its budget was widened so one
+    // maximum-length body still fits — and it then destroyed the body it made
+    // room for. It used the LABEL class, which blanks the WHOLE value when the
+    // phrase filter matches, where get_diagnosis uses the BODY class. Four of
+    // the nine branches are ordinary English inside a real finding, so a
+    // careful root cause came back as a bare redaction marker.
+    //
+    // The failure is worse here than anywhere else: a referee brief exists to
+    // put two arguments side by side, so blanking one of them makes the page
+    // asymmetric in content while still looking even-handed. The A/B swap
+    // test cannot see it — both sides get the same mechanism.
+    const reasoned =
+      "The rotation job overruns its window. To reproduce it you must run " +
+      "the worker with the rotation job disabled, then watch the store.";
+    const brief = baseBrief();
+    const withProse: RefereeBrief = {
+      ...brief,
+      positionA: {
+        ...brief.positionA,
+        claim: claim({ id: "clm_a", body: reasoned }),
+      },
+    };
+
+    // Act
+    const rendered = renderRefereeBrief(withProse, NOW);
+    const line =
+      rendered.split("\n").find((entry) => entry.startsWith("- clm_a ")) ?? "";
+
+    // Assert: the sentences around the branch survive, the branch itself does
+    // not, and no whole-value marker appears anywhere on the page.
+    expect(line).toContain("The rotation job overruns its window");
+    expect(line).toContain("then watch the store");
+    expect(line).toContain(REDACTED_SPAN);
+    expect(rendered).not.toContain(REDACTED_TITLE);
+  });
+
   test("claim lines carry the provenance trust label, declared and derived alike", () => {
     // Arrange: a case file whose position B claim is a machine draft — the
     // reader must see that nobody vouched for it (DESIGN.md §4 trust labels)
@@ -184,9 +224,18 @@ describe("renderRefereeBrief", () => {
   });
 
   test("stays swap invariant even when both positions overflow their budgets", () => {
-    // Arrange: many long evidence bodies so the per-position budget truncates
-    const longBody = "x".repeat(380);
-    const heavyEvidence = Array.from({ length: 10 }, (_, index) =>
+    // Arrange: enough evidence at the WIRE cap to overflow a position budget.
+    //
+    // BOTH NUMBERS ARE DERIVED, and they were not: this fixture used ten
+    // bodies of a literal 380 characters, which overflowed a 4,000-char
+    // position and stopped overflowing the moment that budget moved — the
+    // truncation assertion below then passed on a document that never
+    // truncated, which is the quietest way for a test to stop testing.
+    // Rebuilt from the constants, it overflows at any pair of values.
+    const longBody = "x".repeat(MAX_CLAIM_BODY_LENGTH);
+    const overflowingCount =
+      Math.ceil(MAX_REFEREE_POSITION_CHARS / MAX_CLAIM_BODY_LENGTH) + 2;
+    const heavyEvidence = Array.from({ length: overflowingCount }, (_, index) =>
       claim({
         id: `clm_heavy_${String(index)}`,
         kind: "evidence",

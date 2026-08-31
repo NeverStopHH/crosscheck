@@ -581,6 +581,17 @@ export const DiagnosisClaimSchema = z.looseObject({
   dedupCount: z.number().int().min(0),
   evidenceRefs: z.array(z.string()).default([]),
   createdAt: z.string().min(1),
+  /**
+   * When this claim was last RE-OBSERVED, as distinct from when it was first
+   * recorded. The hub has always shipped it (services/diagnosis.ts) and this
+   * schema simply never declared it, so it arrived through the looseObject and
+   * was thrown away — which is how a claim re-observed an hour ago came to
+   * print one unlabelled age that was three months old, next to "seen 4×".
+   *
+   * Optional and nullable: a claim seen once has no second instant, and an
+   * older hub does not send the field at all.
+   */
+  lastSeenAt: z.string().nullable().optional(),
 });
 
 export type DiagnosisClaim = z.infer<typeof DiagnosisClaimSchema>;
@@ -641,6 +652,34 @@ export interface Diagnosis {
    * and the diagnosis is the surface where degradation must be said.
    */
   readonly targets: readonly DiagnosisTarget[];
+  /**
+   * Whether the hub ANSWERED the targets question at all.
+   *
+   * `targets` alone cannot carry this: an empty array is what a hub sends for
+   * a context nothing was captured on AND what a hub too old to know about
+   * the field leaves behind. The renderer has to tell those apart, because
+   * "no files touched" is a claim a reader acts on — they conclude there is
+   * no overlap — and it is a claim nobody made.
+   */
+  readonly targetsReported: boolean;
+  /**
+   * Target rows the hub sent that this client could not parse, kept SEPARATE
+   * from the aggregate `droppedRows` below.
+   *
+   * The aggregate is not enough, and the gap it left was the same
+   * undetectable lie `targetsReported` exists to prevent, one layer down. A
+   * hub a field ahead of this connector returns target rows this client
+   * rejects; `targetsReported` stays true and `targets` comes back empty, so
+   * the renderer said "No targets were captured for this work context." — a
+   * positive claim about the code that nobody made — with only a generic
+   * dropped-rows note that never names the section that lost them.
+   *
+   * It is also what the hub's own target bound has to be measured against:
+   * comparing the POST-drop count meant a full page with one bad row fell
+   * under the bound and the "more may exist" note disappeared exactly when
+   * the tree was fullest.
+   */
+  readonly droppedTargets: number;
   /** The hub hit its own 500/1000 bound — the tree returned is partial. */
   readonly truncated: boolean;
   /**
@@ -679,20 +718,25 @@ const DiagnosisEnvelopeSchema = z
     claims: z.array(z.unknown()).default([]),
     edges: z.array(z.unknown()).default([]),
     externalClaims: z.array(z.unknown()).default([]),
-    targets: z.array(z.unknown()).default([]),
+    // OPTIONAL, NOT `.default([])`, and the difference is the whole point:
+    // a default erases "the hub said nothing" into "the hub said none", and
+    // the renderer would then print an absence as a finding.
+    targets: z.array(z.unknown()).optional(),
     truncated: z.boolean().default(false),
   })
   .transform((value): Diagnosis => {
     const claims = parseRows(value.claims, DiagnosisClaimSchema);
     const edges = parseRows(value.edges, DiagnosisEdgeSchema);
     const external = parseRows(value.externalClaims, ExternalClaimRefSchema);
-    const targets = parseRows(value.targets, DiagnosisTargetSchema);
+    const targets = parseRows(value.targets ?? [], DiagnosisTargetSchema);
     return {
       workContext: value.workContext,
       claims: claims.rows,
       edges: edges.rows,
       externalClaims: external.rows,
       targets: targets.rows,
+      targetsReported: value.targets !== undefined,
+      droppedTargets: targets.dropped,
       truncated: value.truncated,
       droppedRows:
         claims.dropped + edges.dropped + external.dropped + targets.dropped,

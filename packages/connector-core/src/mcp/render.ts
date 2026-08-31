@@ -26,7 +26,9 @@
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
 import {
+  HUB_MAX_DIAGNOSIS_TARGETS,
   MAX_DIAGNOSIS_CHARS,
+  MAX_DIAGNOSIS_TARGETS_SHOWN,
   MAX_HUB_MESSAGE_CHARS,
   MAX_SEARCH_CHARS,
   MAX_TITLE_CHARS,
@@ -50,6 +52,7 @@ import type {
   Diagnosis,
   DiagnosisClaim,
   DiagnosisEdge,
+  DiagnosisTarget,
   ExternalClaimRef,
   SearchResultEntry,
 } from "../http/hub.ts";
@@ -64,6 +67,15 @@ import type {
  * whole file is trying to avoid.
  */
 export const UNNAMED_AUTHOR = "an unnamed teammate";
+
+/**
+ * A captured target whose kind AND value both sanitize to nothing — a value
+ * built entirely from invisibles or from the characters this renderer owns.
+ *
+ * Same trade as UNNAMED_AUTHOR: the row is worth less than a real path and
+ * far more than a section whose header counts one more row than it shows.
+ */
+export const UNPRINTABLE_TARGET = "a target with nothing printable in it";
 
 /**
  * The ID class — `safeId`, the allowlist, and `SAFE_ID_PATTERN`, its positive
@@ -169,15 +181,133 @@ const authorLabel = (
   return sanitized.length === 0 ? UNNAMED_AUTHOR : sanitized;
 };
 
+/**
+ * When a claim was recorded, parsed once — `null` when the hub's string is
+ * not a date this runtime understands.
+ *
+ * `createdAt` is hub-supplied and only shape-checked (DiagnosisClaimSchema
+ * demands a non-empty string, nothing more), so an older or hostile hub can
+ * send anything. Null flows through as NO age fragment and as LAST in the
+ * order: a guessed age would be a fact this renderer cannot support, and
+ * dropping the claim would be the same silent shortening the whole file
+ * exists to avoid.
+ */
+const parsedMs = (iso: string | null | undefined): number | null => {
+  if (iso === null || iso === undefined) {
+    return null;
+  }
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? null : ms;
+};
+
+const claimTimeMs = (claim: DiagnosisClaim): number | null =>
+  parsedMs(claim.createdAt);
+
+/**
+ * An age fragment, or nothing at all — never a guess.
+ *
+ * A FUTURE INSTANT IS TREATED EXACTLY AS AN UNPARSEABLE ONE. The old form
+ * clamped the difference at zero, which turned any timestamp ahead of the
+ * reader's clock into a confident "0s ago". That breaks the rule stated on
+ * `claimTimeMs`: a guessed age is a fact this renderer cannot support, which
+ * is why an unparseable string prints no age. Clamping gave honest silence to
+ * the string nobody can read and a confident lie to the one that is merely
+ * impossible — and the impossible one is what a skewed clock or a hostile
+ * publisher actually produces, since createdAt is client-supplied and
+ * unrange-checked. The claim still renders and still sorts; only the age goes.
+ */
+const ageFragment = (
+  ms: number | null,
+  now: Date,
+  label: string,
+): readonly string[] =>
+  ms === null || ms > now.getTime()
+    ? []
+    : [`${label} ${formatAge(now.getTime() - ms)} ago`];
+
+/**
+ * OLDEST FIRST, ENFORCED HERE rather than assumed of the hub.
+ *
+ * The ages on the claim lines are only worth printing if the sequence they
+ * describe is the one on the page, and two findings from the same day both
+ * read "21d ago" — so what separates them is their POSITION, and the header
+ * says which direction that runs. A hub that returned rows in another order
+ * (or a hostile one that shuffled them deliberately) would otherwise make
+ * the stated ordering a lie the reader cannot detect.
+ *
+ * Total, so the output is deterministic: parsed instant, then id. Ties on
+ * the instant are real — a batch publish stamps several claims the same
+ * millisecond — and leaving those to Array#sort's stability would hand the
+ * decision back to hub order.
+ */
+/**
+ * The order, stated as far as the data supports and no further.
+ *
+ * It used to read "oldest first" flat, which is a claim about WHEN THINGS
+ * HAPPENED. `createdAt` cannot carry that: ClaimSchema validates the format
+ * and nothing else, the hub stores it verbatim, and the claims table has no
+ * server-assigned receive column to fall back on. So the instant is whatever
+ * each publishing machine's clock said. A teammate 45 minutes fast lands
+ * above a colleague who really did find it first, both lines read "1h ago",
+ * and nothing on the page reveals the inversion — a reader answering "who
+ * found this first" gets the wrong answer with full confidence.
+ *
+ * The SORT is worth keeping regardless: it is deterministic and better than
+ * hub order. Only the sentence had to come down to what it can vouch for.
+ * Stamping a received-at instant hub-side and sorting on that is the stronger
+ * fix, and it is a wire change rather than a renderer literal.
+ */
+const CLAIM_ORDER_QUALIFIER = "oldest first by each author's own clock";
+
+const claimsOldestFirst = (
+  claims: readonly DiagnosisClaim[],
+): readonly DiagnosisClaim[] =>
+  [...claims].sort((left, right) => {
+    const leftMs = claimTimeMs(left);
+    const rightMs = claimTimeMs(right);
+    if (leftMs === null || rightMs === null) {
+      // Undatable rows sort last, together, and among themselves by id.
+      if (leftMs !== null) {
+        return -1;
+      }
+      if (rightMs !== null) {
+        return 1;
+      }
+      return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+    }
+    if (leftMs !== rightMs) {
+      return leftMs - rightMs;
+    }
+    return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+  });
+
 const claimLine = (
   claim: DiagnosisClaim,
   index: ReadonlyMap<string, string>,
+  now: Date,
 ): string => {
   const evidence =
     claim.evidenceRefs.length === 0
       ? ""
       : ` · evidence ${claim.evidenceRefs.map(safeId).join(", ")}`;
   const seen = claim.dedupCount > 1 ? ` · seen ${String(claim.dedupCount)}×` : "";
+  // WHEN THIS FINDING WAS RECORDED, in the vocabulary every other surface
+  // already uses (`formatAge`, as searchLine and the hints print it). A
+  // second time vocabulary on the one document that shows a whole tree would
+  // make two lines about the same instant read as two different facts.
+  //
+  // "FIRST SEEN", NOT A BARE AGE. On a dedupe hit the hub bumps dedup_count
+  // and lastSeenAt and leaves created_at alone, so an unlabelled age sitting
+  // beside "seen 4×" reads as latest activity and is the opposite: a finding
+  // re-observed an hour ago printed as three months old, at the top of a
+  // section headed oldest first.
+  const age = ageFragment(claimTimeMs(claim), now, "first seen");
+  // The second instant, only when there IS one — a claim seen once has no
+  // re-observation, and an older hub sends no field at all.
+  const lastSeen =
+    claim.dedupCount > 1
+      ? ageFragment(parsedMs(claim.lastSeenAt), now, "last seen")
+      : [];
   const facts = [
     `- ${safeId(claim.id)}`,
     bare(claim.kind),
@@ -188,6 +318,8 @@ const claimLine = (
     // tell one from a human-vouched declared claim.
     `provenance ${bare(claim.provenance)}`,
     authorLabel(index, claim.authorSessionId),
+    ...age,
+    ...lastSeen,
   ];
   return `${facts.join(" · ")}${evidence}${seen}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
 };
@@ -206,9 +338,86 @@ const edgeLine = (
 const externalLine = (ref: ExternalClaimRef): string =>
   `- ${safeId(ref.id)} · ${bare(ref.kind)} · in work context ${safeId(ref.workContextId)}`;
 
+/**
+ * One captured target — WHERE this investigation happened.
+ *
+ * BARE, NOT FRAMED, and at the width the tripwire already prints a file path
+ * (`bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS)`, hints/render.ts).
+ * A path is not prose: the reader's next move is to open it or grep for it,
+ * and guillemets around `src/auth/refresh.ts` would travel with every copy of
+ * it. `bare` is what makes printing it outside the frame safe — it strips the
+ * characters this renderer uses as structure, so a target cannot mint a
+ * second field or a second line, which is the only thing an unframed value
+ * could otherwise do here.
+ *
+ * NO SEPARATOR BETWEEN KIND AND VALUE, deliberately: ` · ` is the renderer's
+ * field separator on every other line of this document, and one more use of
+ * it on a line whose second half is a path is one more thing a path could
+ * imitate. A space reads the same and forges nothing.
+ */
+
+
+/**
+ * Said out loud when the token on the page is not the token the hub holds.
+ *
+ * The reader's next move with a target is to grep for it or paste it into
+ * `search_related_work`. A value this renderer quietly altered fails that and
+ * looks like an absence of overlap — `sha256:9f2b…` printed as `sha2569f2b…`
+ * matches nothing, and nothing on the line explains why. `formatSolvedLine`
+ * already set the precedent for a row this renderer will not vouch for; this
+ * is the cheaper half of it, keeping the row and naming the reduction.
+ */
+export const TARGET_VALUE_REDUCED = " (value reduced for display)";
+
+/**
+ * A target's value, reduced as little as printing it safely allows.
+ *
+ * SPAN-REDACTED FIRST, THEN STRIPPED BARE, and the order is the fix. `bare`
+ * alone runs `sanitizeUntrusted`, which is the LABEL class: one phrase match
+ * anywhere blanks the WHOLE value. INJECTION_BRANCHES carries bare substrings
+ * with no word boundaries, so `src/theme/overrides.ts` — an ordinary file, in
+ * a list captured automatically, with no author to warn — rendered as
+ * "[redacted: title looked like an instruction]" and the reader lost the one
+ * fact the section exists to give them. Span-redacting first replaces the
+ * offending run and leaves the directory and the extension, and it also means
+ * no phrase survives for the `bare` pass to blank on.
+ *
+ * The bare strip still runs, because it is what stops a value minting a
+ * second field or a second line; what it removes is now visible, via
+ * TARGET_VALUE_REDUCED.
+ */
+const targetValue = (raw: string): string =>
+  bare(
+    spanRedactedUntrusted(raw, MAX_WORK_CONTEXT_TITLE_CHARS),
+    MAX_WORK_CONTEXT_TITLE_CHARS,
+  );
+const targetLine = (target: DiagnosisTarget): string => {
+  const value = targetValue(target.value);
+  const parts = [bare(target.kind), value].filter((part) => part.length > 0);
+  // A row whose every field sanitized away still renders, for the same reason
+  // UNNAMED_AUTHOR does above: the alternative is a section that is quietly
+  // one row shorter than the count in its own header.
+  const body = parts.length === 0 ? UNPRINTABLE_TARGET : parts.join(" ");
+  const note = value === target.value ? "" : TARGET_VALUE_REDUCED;
+  return `- ${body}${note}`;
+};
+
 export interface Section {
   readonly header: string;
-  readonly lines: readonly string[];
+  /**
+   * The rows, AS THUNKS rather than as strings.
+   *
+   * Building a row is not free — a claim row sanitises a whole body, and at
+   * MAX_CLAIM_BODY_LENGTH that is the dominant cost of rendering the document
+   * (measured on `appendSection` below). A materialised array pays for every
+   * row the hub sent; a thunk array pays only for the rows the fitter
+   * actually tries, which on a saturated tree is a handful rather than five
+   * hundred.
+   *
+   * It is also what makes the fitter's stop-at-the-first-miss rule cheap: the
+   * rows past the cut are never built at all.
+   */
+  readonly rows: readonly (() => string)[];
   /** What the section WOULD have shown, so a drop can be counted honestly. */
   readonly total: number;
   /** Noun for the "(+N … not shown)" line: "claim", "edge", … */
@@ -220,6 +429,14 @@ const joinedLength = (lines: readonly string[]): number =>
 
 const moreLine = (count: number, noun: string): string =>
   `(+${String(count)} ${noun}${count === 1 ? "" : "s"} not shown)`;
+
+/**
+ * What a section needs held back so it can at least SAY what it hid — the
+ * "(+N not shown)" line plus the newline it arrives on. Zero for a section
+ * with no rows, which prints nothing and admits nothing.
+ */
+const sectionReserve = (section: Section): number =>
+  section.rows.length === 0 ? 0 : moreLine(section.total, section.noun).length + 1;
 
 /**
  * Appends a section only as far as the budget allows, then says what it left
@@ -234,35 +451,102 @@ const moreLine = (count: number, noun: string): string =>
  * shortfall. `section.total` is the upper bound on `hidden`, and `moreLine` is
  * monotonic in its count, so reserving for the total guarantees the real line
  * fits and costs at most one item that would otherwise have been shown.
+ *
+ * IT STOPS AT THE FIRST ROW THAT DOES NOT FIT, and that is a correctness rule
+ * before it is a performance one. The old form SKIPPED a row it could not
+ * afford and kept trying the ones after it. While every body was 400
+ * characters that was invisible, because all the rows were about the same
+ * width and a shortfall really was a tail drop. Raising the cap to
+ * MAX_CLAIM_BODY_LENGTH made the rows differ by 25x, and skipping then means
+ * a LONG finding — therefore probably the substantive one — vanishes out of
+ * the MIDDLE while every shorter, newer one after it is kept. Nothing on the
+ * page marks that: the header promises "oldest first", the ids are opaque,
+ * and the "(+N not shown)" line sits at the bottom, so a hole in the
+ * discovery sequence reads as a complete prefix. Stopping makes what the
+ * reader sees an unbroken PREFIX of the order the header names, which is the
+ * only shape the "(+N not shown)" line can honestly describe.
+ * `test/mcp-render.test.ts` holds it: "drops the claims AFTER the one that
+ * does not fit, never the one itself".
+ *
+ * A SECTION THAT CANNOT AFFORD ITS HEADER STILL SAYS WHAT IT HID. Returning
+ * `accumulated` untouched made a whole section vanish with no header and no
+ * count — byte-indistinguishable from a tree that has no such rows at all,
+ * which for the external-references section means the reader concludes this
+ * investigation links to no other work context. The reserve for that line was
+ * already computed one branch above, so the honest form spends the budget the
+ * code had set aside rather than new budget.
+ *
+ * WHAT THE ROWS COST, RE-MEASURED AT THE NEW CAP. An earlier note here quoted
+ * "min 8.9 p50 9.2 max 10.4 ms" for 500 claims at the full body cap and
+ * blamed `joinedLength`'s quadratic re-join. Both halves were wrong: that
+ * timing was the 400-char reading, and the quadratic re-join is a couple of
+ * percent of the work. The cost was one `spanRedactedUntrusted` per claim,
+ * paid eagerly by materialising every row so the fitter could print four of
+ * them. `Section.rows` is thunks for that reason, and the numbers below are
+ * this file's own, taken through renderDiagnosis with 500 claims (the hub's
+ * DIAGNOSIS_MAX_CLAIMS) each at MAX_CLAIM_BODY_LENGTH.
+ *
+ * VERIFY: bun run packages/connector-core/scripts/measure-diagnosis-render.ts --check
+ * PRINTS: eager-vs-lazy speedup >= 2x: true
+ * PRINTS: lazy p50 under 25 ms: true
+ *
+ * A reading from one host on one day, like every other timing in this repo;
+ * the script prints the raw milliseconds without --check. The ratio threshold
+ * is 2 and not the 28.8x this machine measures, because the first version
+ * pinned 5 and a shared CI runner printed false: at a 0.2 ms denominator the
+ * ratio measures the runner's scheduler, not this file. Two still fails hard
+ * on the defect it guards — materialising every row scores about 1x.
  */
 export const appendSection = (
   accumulated: readonly string[],
   section: Section,
   cap: number,
 ): readonly string[] => {
-  if (section.lines.length === 0) {
+  if (section.rows.length === 0) {
     return accumulated;
   }
   const withHeader = [...accumulated, section.header];
   // +1 for the newline the line would arrive on.
-  const reserve = moreLine(section.total, section.noun).length + 1;
+  const more = moreLine(section.total, section.noun);
+  const reserve = more.length + 1;
   if (joinedLength(withHeader) + reserve > cap) {
-    return accumulated;
+    // No room for the header. Say the rows exist anyway, if even that fits —
+    // a silent section is the one outcome this function may not produce.
+    const withMore = [...accumulated, more];
+    return joinedLength(withMore) > cap ? accumulated : withMore;
   }
   const lineCap = cap - reserve;
-  const fitted = section.lines.reduce<readonly string[]>((lines, line) => {
-    const candidate = [...lines, line];
-    return joinedLength(candidate) > lineCap ? lines : candidate;
-  }, withHeader);
+  // Reassignment of a local binding to a NEW array each step, never mutation
+  // of one — the loop exists only so the first miss can stop the walk, which
+  // a reduce cannot do and which is what keeps the unbuilt rows unbuilt.
+  let fitted: readonly string[] = withHeader;
+  for (const row of section.rows) {
+    const candidate = [...fitted, row()];
+    if (joinedLength(candidate) > lineCap) {
+      break;
+    }
+    fitted = candidate;
+  }
   const shown = fitted.length - withHeader.length;
   const hidden = section.total - shown;
-  return hidden <= 0
-    ? fitted
-    : [...fitted, moreLine(hidden, section.noun)];
+  return hidden <= 0 ? fitted : [...fitted, moreLine(hidden, section.noun)];
 };
 
-export const countHeader = (label: string, total: number): string =>
-  `${label} (${String(total)}):`;
+/**
+ * A section header carrying its own count, and — where the order of the rows
+ * is part of what they say — the order.
+ *
+ * The qualifier is a renderer-owned literal by construction: the only caller
+ * that passes one passes "oldest first", beside the sort that makes it true.
+ */
+export const countHeader = (
+  label: string,
+  total: number,
+  ordering?: string,
+): string =>
+  ordering === undefined
+    ? `${label} (${String(total)}):`
+    : `${label} (${String(total)}), ${ordering}:`;
 
 /**
  * Notes about the completeness of what was just rendered.
@@ -282,7 +566,72 @@ const completenessNotes = (diagnosis: Diagnosis): readonly string[] => [
         `Note: ${String(diagnosis.droppedRows)} rows the hub sent could not be read and were dropped.`,
       ]
     : []),
+  // The hub's own target LIMIT is silent — a full page looks exactly like a
+  // complete one on the wire — so a client that mirrors the constant is the
+  // only thing that can say it. A NOTE rather than a line of the section,
+  // because it is a statement about completeness and the notes are the one
+  // thing this document pays for before any row of any section.
+  // Measured against what the hub SENT, not against what survived parsing: a
+  // full page with one unreadable row is still a full page, and dropping the
+  // note there loses it exactly when the tree is fullest.
+  ...(diagnosis.targets.length + diagnosis.droppedTargets >=
+  HUB_MAX_DIAGNOSIS_TARGETS
+    ? [
+        "Note: the hub returned as many targets as it will send, so more may exist.",
+      ]
+    : []),
 ];
+
+/**
+ * The three honest states of the targets block, as ONE line each for the two
+ * that have nothing to list.
+ *
+ * A hub that never answered and a work context nothing was captured on are
+ * different facts, and only one of them says anything about the code. Folding
+ * them into a shared "no files touched" would be the lie a reader cannot
+ * detect: they would conclude their edit overlaps nobody.
+ */
+/** The as-of the targets section can honestly carry; see its call site. */
+const TARGETS_AS_OF = "as captured during this work";
+
+/**
+ * Past this many characters the document restates its quoted-data frame at
+ * the foot; see `renderDiagnosis`.
+ *
+ * Set at the OLD document cap, which is the length the single opening notice
+ * was actually sized against — so nothing that fitted before gains a second
+ * line, and everything the raise made newly possible gets one.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const r=await import("./packages/connector-core/src/mcp/render.ts");console.log(r.DIAGNOSIS_RESTATE_NOTICE_OVER < c.MAX_DIAGNOSIS_CHARS)'
+ * PRINTS: true
+ */
+export const DIAGNOSIS_RESTATE_NOTICE_OVER = 12_000;
+
+const TARGETS_UNREPORTED =
+  "This hub does not report captured targets.";
+const TARGETS_EMPTY =
+  "No targets were captured for this work context.";
+
+/**
+ * The FOURTH state: the hub answered, and this client could not read what it
+ * said. Distinct from both silences above, because it is the only one of the
+ * three that is this client's fault — and the only one where a reader who
+ * acted on "no overlap" would be acting on a parse failure.
+ */
+const targetsUnreadable = (dropped: number): string =>
+  `The hub sent ${String(dropped)} target row${dropped === 1 ? "" : "s"} this client could not read.`;
+
+const targetsStateLines = (diagnosis: Diagnosis): readonly string[] => {
+  if (!diagnosis.targetsReported) {
+    return [TARGETS_UNREPORTED];
+  }
+  if (diagnosis.targets.length > 0) {
+    return [];
+  }
+  return diagnosis.droppedTargets > 0
+    ? [targetsUnreadable(diagnosis.droppedTargets)]
+    : [TARGETS_EMPTY];
+};
 
 /** Same-author revision edge; its TARGET is the retracted claim. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
@@ -375,9 +724,13 @@ export const solvedAtFromTree = (
  * What the pull-time git checks learned about a solved tree — computed by
  * the TOOL (only it has a repo to ask) and rendered here. Every field is
  * fail-open: null drift and "unknown" fileDrift render honest absence.
+ *
+ * IT CARRIES NO CLOCK. It used to hold its own `now`, which was a second
+ * clock in a document that now dates every claim line from `renderDiagnosis`'s
+ * — two instants that could disagree about the same render. The renderer
+ * takes ONE `now` and spends it on both.
  */
 export interface SolvedPresentation {
-  readonly now: Date;
   readonly drift: CommitDrift | null;
   readonly fileDrift: SolvedFileDrift;
 }
@@ -410,6 +763,7 @@ const FILE_DRIFT_SENTENCES: Readonly<Record<SolvedFileDrift, string>> = {
  */
 const solvedBlock = (
   diagnosis: Diagnosis,
+  now: Date,
   presentation: SolvedPresentation | undefined,
 ): readonly string[] => {
   if (presentation === undefined) {
@@ -419,9 +773,7 @@ const solvedBlock = (
   if (solvedAtMs === null) {
     return [];
   }
-  const age = formatSolvedAge(
-    Math.max(0, presentation.now.getTime() - solvedAtMs),
-  );
+  const age = formatSolvedAge(Math.max(0, now.getTime() - solvedAtMs));
   const landed =
     diagnosis.workContext.landedAt === null ||
     diagnosis.workContext.landedAt === undefined
@@ -466,9 +818,23 @@ const solvedBlock = (
  * Weakening an invariant shared by two surfaces to strengthen one field of one
  * of them is the wrong trade, and the residual is bounded: a display name is
  * sanitized, phrase-filtered, capped at MAX_TITLE_CHARS and structurally inert.
+ *
+ * WHEN, AS WELL AS WHAT. Every claim line carries the age of the claim and the
+ * section is sorted oldest first, because the ORDER of discovery is half of
+ * what an old tree is worth — "which of these did they find first" is not
+ * answerable from a single age for the whole context. `now` is the ONE clock
+ * the whole document is read against, so the per-claim ages and the solved
+ * block cannot disagree inside one render.
+ *
+ * THE FITTER STILL DROPS FROM THE TAIL, which under this order means the
+ * NEWEST claims — the same direction the hub's own truncation keeps (oldest
+ * rows kept, services/diagnosis.ts), so a full tree and a truncated one agree
+ * about which end is missing. Whichever end goes, "(+N claims not shown)"
+ * counts it.
  */
 export const renderDiagnosis = (
   diagnosis: Diagnosis,
+  now: Date,
   solvedPresentation?: SolvedPresentation,
 ): string => {
   const index = authorIndex(diagnosis.claims);
@@ -479,23 +845,64 @@ export const renderDiagnosis = (
   // framed value per line, the one fragment every surface spells.
   const intentFragment = renderIntent(context.intent);
   const intentLines = intentFragment === null ? [] : [`Session ${intentFragment}`];
-  const solvedLines = solvedBlock(diagnosis, solvedPresentation);
+  const solvedLines = solvedBlock(diagnosis, now, solvedPresentation);
+  const claims = claimsOldestFirst(diagnosis.claims);
 
   const opening =
     diagnosis.claims.length === 0
-      ? [header, contextLine, ...intentLines, ...solvedLines, "Claims: no claims recorded yet."]
-      : [header, contextLine, ...intentLines, ...solvedLines];
+      ? [
+          header,
+          contextLine,
+          ...intentLines,
+          ...solvedLines,
+          ...targetsStateLines(diagnosis),
+          "Claims: no claims recorded yet.",
+        ]
+      : [header, contextLine, ...intentLines, ...solvedLines, ...targetsStateLines(diagnosis)];
 
   const sections: readonly Section[] = [
+    // WHERE, BEFORE WHAT. A reader who is about to edit the same file wants
+    // the overlap before the reasoning — Nick called the file list "the most
+    // direct connection" — and the section is small enough to afford the
+    // position: it shows at most MAX_DIAGNOSIS_TARGETS_SHOWN rows, and any
+    // claim line it displaces is counted by the claims section's own
+    // "(+N claims not shown)".
     {
-      header: countHeader("Claims", diagnosis.claims.length),
-      lines: diagnosis.claims.map((claim) => claimLine(claim, index)),
+      // AS CAPTURED, NOT AS TRUE NOW. work_context_targets has no timestamp
+      // column, so a path here is undated by construction — and the claim
+      // lines below it now carry ages, which makes an unqualified list read
+      // as current by contrast. A path renamed a fortnight ago sends the
+      // reader to a file that is gone, or to a different file at the same
+      // name, and they conclude there is no overlap. The qualifier is a
+      // renderer-owned literal and costs no wire change; marking actual
+      // drift would mean running checkSolvedFileDrift for open trees too.
+      header: countHeader(
+        "Targets",
+        diagnosis.targets.length,
+        TARGETS_AS_OF,
+      ),
+      rows: diagnosis.targets
+        .slice(0, MAX_DIAGNOSIS_TARGETS_SHOWN)
+        .map((target) => () => targetLine(target)),
+      total: diagnosis.targets.length,
+      noun: "target",
+    },
+    {
+      // The ordering is STATED, not implied: the ages alone cannot express
+      // it once two findings share a day, and `claimsOldestFirst` is what
+      // makes the sentence true against a hub that sent any other order.
+      header: countHeader(
+        "Claims",
+        diagnosis.claims.length,
+        CLAIM_ORDER_QUALIFIER,
+      ),
+      rows: claims.map((claim) => () => claimLine(claim, index, now)),
       total: diagnosis.claims.length,
       noun: "claim",
     },
     {
       header: countHeader("Edges", diagnosis.edges.length),
-      lines: diagnosis.edges.map((edge) => edgeLine(edge, index)),
+      rows: diagnosis.edges.map((edge) => () => edgeLine(edge, index)),
       total: diagnosis.edges.length,
       noun: "edge",
     },
@@ -504,7 +911,7 @@ export const renderDiagnosis = (
         "Claims in other work contexts referenced here",
         diagnosis.externalClaims.length,
       ),
-      lines: diagnosis.externalClaims.map(externalLine),
+      rows: diagnosis.externalClaims.map((ref) => () => externalLine(ref)),
       total: diagnosis.externalClaims.length,
       noun: "reference",
     },
@@ -526,13 +933,46 @@ export const renderDiagnosis = (
   // So their budget comes off the top, and what gives way instead is a claim
   // line — which is honest, because the "(+N not shown)" line then counts it.
   const notes = completenessNotes(diagnosis);
-  const notesReserve = notes.length === 0 ? 0 : joinedLength(notes) + 1;
-  const body = sections.reduce<readonly string[]>(
-    (lines, section) =>
-      appendSection(lines, section, MAX_DIAGNOSIS_CHARS - notesReserve),
-    opening,
-  );
-  return [...body, ...notes].join("\n");
+  // The closing restatement is paid for with the notes, for the same reason:
+  // it is a statement ABOUT the document, and a frame that got dropped for
+  // length is exactly the failure it exists to prevent.
+  const notesReserve =
+    joinedLength([...notes, QUOTED_DATA_NOTICE]) + (notes.length === 0 ? 1 : 2);
+  // AND EVERY LATER SECTION'S COUNT LINE IS PAID FOR TOO, by the same
+  // argument one paragraph up. `appendSection` can keep a section from
+  // vanishing in silence only if there is budget left when it is reached, and
+  // an earlier section will happily spend the last byte — a busy tree of
+  // edges swallowed the external-references section whole, header, count and
+  // all. Holding back each remaining section's "(+N not shown)" line costs at
+  // most one row of an earlier section, which that section's own count line
+  // then reports.
+  const body = sections.reduce<readonly string[]>((lines, section, index) => {
+    const laterReserve = sections
+      .slice(index + 1)
+      .reduce((total, later) => total + sectionReserve(later), 0);
+    return appendSection(
+      lines,
+      section,
+      MAX_DIAGNOSIS_CHARS - notesReserve - laterReserve,
+    );
+  }, opening);
+  const document = [...body, ...notes].join("\n");
+  // THE FRAME IS RESTATED WHEN THE PAGE IS LONG. The notice is one line at
+  // the very top, and MAX_DIAGNOSIS_CHARS moved 12,000 -> 48,000 to make room
+  // for long findings — so the standing sentence that framed text is DATA now
+  // has to hold across four times the span of other people's prose, tens of
+  // thousands of characters from where it was said. The sanitizer is not the
+  // weak point; the DISTANCE is. A hostile teammate writing a patient
+  // instruction block into the tail of a 10,000-character finding needs none
+  // of the nine literal phrases, and it lands with the framing far out of
+  // sight.
+  //
+  // A renderer-owned literal, reusing the same constant rather than a second
+  // spelling of it, and only past a length where the top line has genuinely
+  // scrolled away — a reminder on every document would stop being a signal.
+  return document.length <= DIAGNOSIS_RESTATE_NOTICE_OVER
+    ? document
+    : `${document}\n${QUOTED_DATA_NOTICE}`;
 };
 
 /** One work context the hub search matched, with its ages at query time. */
@@ -845,7 +1285,7 @@ export const renderSearchResults = (
     opening,
     {
       header: countHeader("Work contexts", hits.length),
-      lines: hits.map(searchLine),
+      rows: hits.map((entry) => () => searchLine(entry)),
       total: hits.length,
       noun: "work context",
     },

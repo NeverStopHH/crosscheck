@@ -13,18 +13,21 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "cli-doctor",
+    delivery: "pulled",
     module: "src/cli/doctor.ts",
     note: "formatAge only — renderer-built ages, no untrusted interpolation; the capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text",
   },
   {
     kind: "composite",
     name: "cli-conference",
+    delivery: "pulled",
     module: "src/cli/conference.ts",
     note: "the command's own stdout, not the page: the tree owner's display name through bareUntrusted before it is printed or composed into a draft body, and formatAge on a renderer-built age. The report itself is rendered by connector-core's registered conference-report surface, and the model's sentence reaches both already bounded, echo-checked and secret-scanned",
   },
   {
     kind: "composite",
     name: "cli-status",
+    delivery: "pulled",
     module: "src/cli/status.ts",
     note: "formatAbsenceLine + formatAge from the core render layer; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment). NO QUOTED_DATA_NOTICE, deliberately: the notice tells a MODEL that « » is data rather than instruction, and this command's stdout reaches a human terminal only — no hook and no MCP tool reads it (VERIFY below). The frame, the sanitizing and the bounds still apply, because they protect the reader's terminal rather than a context window",
   },

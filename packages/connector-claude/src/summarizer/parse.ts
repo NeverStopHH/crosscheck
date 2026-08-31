@@ -6,13 +6,12 @@
  * for the outermost braces instead of demanding a clean document.
  */
 import { z } from "zod";
-import {
-  ClaimKindSchema,
-  DERIVED_CONFIDENCE_CAP,
-  MAX_CLAIM_BODY_LENGTH,
-} from "@crosscheck/schema";
+import { ClaimKindSchema, DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 
-import { SUMMARIZER_DEFAULT_CONFIDENCE } from "@crosscheck/connector-core/constants.ts";
+import {
+  SUMMARIZER_DEFAULT_CONFIDENCE,
+  SUMMARIZER_DRAFT_BODY_MAX_CHARS,
+} from "@crosscheck/connector-core/constants.ts";
 
 /** `NONE`, tolerantly: spacing, case, and a stray full stop are all still NONE. */
 const NONE_PATTERN = /^none[.!]?$/i;
@@ -33,7 +32,7 @@ export const isNoneAnswer = (stdout: string): boolean =>
  */
 const DraftOutputSchema = z.looseObject({
   kind: ClaimKindSchema,
-  body: z.string().min(1).max(MAX_CLAIM_BODY_LENGTH),
+  body: z.string().min(1).max(SUMMARIZER_DRAFT_BODY_MAX_CHARS),
   confidence: z.number().min(0).max(1).optional(),
 });
 

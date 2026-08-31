@@ -291,6 +291,23 @@ export const MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS = 2;
  * line count would mean reading the whole file on every append. Size is also
  * what actually bounds the disk. A file may exceed the cap by at most the one
  * batch that was in flight when it crossed.
+ *
+ * WHAT IT HOLDS CHANGED WITHOUT THIS NUMBER CHANGING, and that is worth saying
+ * plainly rather than leaving to be rediscovered. A claim envelope carrying a
+ * MAX_CLAIM_BODY_LENGTH body is about 10.4 KB against about 0.8 KB at the old
+ * 400-character width, so the same two megabytes hold roughly 190 of them
+ * where they once held roughly 2,400:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");const mk=(n)=>JSON.stringify({cx:"0.1",id:"env_00000000-0000-4000-8000-000000000000",ts:"2026-08-30T12:00:00.000Z",producer:{developerId:"dev_self",agentKind:"claude-code",sessionId:"cc_00000000-0000-4000-8000-000000000000"},kind:"claim",body:{workContextId:"wc_cc_00000000-0000-4000-8000-000000000000",kind:"hypothesis",body:"b".repeat(n),status:"proposed",confidence:0.5,captureMode:"agent",provenance:"declared",evidenceRefs:[]}}).length+1;console.log(Math.floor(c.MAX_SPOOL_BYTES/mk(400)), Math.floor(c.MAX_SPOOL_BYTES/mk(s.MAX_CLAIM_BODY_LENGTH)))'
+ * PRINTS: 2418 191
+ *
+ * THE CAP STAYS ANYWAY. A refused append is COUNTED and surfaced — doctor
+ * reports spool depth and drops — so the degraded state is visible rather than
+ * silent, which is the property that made this a cap instead of a compaction
+ * in the first place. Raising it would trade a visible bound for more disk
+ * held by a machine whose hub is unreachable. Nothing here is free of the
+ * change, though: the flush cost per hook is measured at the new body length
+ * by scripts/measure-body-length-budgets.ts (connector-claude), not assumed.
  */
 export const MAX_SPOOL_BYTES = 2_000_000;
 /**
@@ -630,9 +647,11 @@ export const MAX_SOLVED_POINTERS = 2;
 
 /**
  * How much of a solved tree's recorded cause the briefing prints. The claim's
- * own bound is MAX_CLAIM_BODY_LENGTH (400), so two full-length bodies would
- * cost more of the 2200-character briefing than the whole "Questions for you"
- * block gets — for a section that renders second to last. This bound keeps
+ * own bound is MAX_CLAIM_BODY_LENGTH, which is now WIDER THAN THE WHOLE
+ * BRIEFING — one full-length body would not merely outweigh the "Questions
+ * for you" block, it would not fit on the page at all. That is the anchoring
+ * asymmetry from the other side: a briefing is unsolicited, so it prints a
+ * lead and names the tool that reads the rest. This bound keeps
  * the pair below that block's, which is the ordering the budget already
  * states: what somebody is waiting for outranks what somebody once found.
  *
@@ -949,6 +968,26 @@ export const SUMMARIZER_CLAUDE_MIN_VERSION = "2.1.101";
 export const DOCTOR_NO_PROBE_ENV = "CROSSCHECK_DOCTOR_NO_PROBE";
 /** Ceiling on captured summarizer stdout — a claim is one sentence, not a log. */
 export const SUMMARIZER_OUTPUT_MAX_BYTES = 16_384;
+/**
+ * The longest body a DERIVED draft may claim (DESIGN.md §3).
+ *
+ * DERIVED STAYS DERIVED. A draft is a machine's guess at what a turn was
+ * about, capped at DERIVED_CONFIDENCE_CAP because nobody vouched for it; the
+ * wire cap rose so that a HUMAN can write a long, careful root cause, and a
+ * summarizer inheriting that would let the least trustworthy producer in the
+ * system emit the longest records. It parsed against MAX_CLAIM_BODY_LENGTH
+ * before this constant existed, so the inheritance was one edit away in a file
+ * that has no reason to think about wire caps at all.
+ *
+ * IT ALSO KEEPS THE OUTPUT ARITHMETIC TRUE: stdout is captured up to
+ * SUMMARIZER_OUTPUT_MAX_BYTES, and a body allowed to approach that leaves no
+ * room for the JSON around it, so a long draft would be cut into unparseable
+ * garbage and discarded — a silent failure dressed as a shrug.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.SUMMARIZER_DRAFT_BODY_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH, 4 * c.SUMMARIZER_DRAFT_BODY_MAX_CHARS < c.SUMMARIZER_OUTPUT_MAX_BYTES)'
+ * PRINTS: true true
+ */
+export const SUMMARIZER_DRAFT_BODY_MAX_CHARS = 400;
 /**
  * Confidence a draft gets when the summarizer omits one. Well under the
  * DERIVED_CONFIDENCE_CAP (0.5, @crosscheck/schema), which the worker ALSO
@@ -1328,14 +1367,103 @@ export const MCP_TIMEOUT_MS = 10_000;
  * sized for unsolicited injection at every SessionStart, whereas a tree is
  * pulled once, deliberately, in answer to a question the agent asked.
  *
- * A claim body is capped at 400 characters by the wire contract
- * (MAX_CLAIM_BODY_LENGTH in @crosscheck/schema), so MAX_DIAGNOSIS_CHARS is
- * roughly thirty full-length claims — past which the tool says what it dropped
- * instead of truncating in silence.
+ * WHAT IT HOLDS, at the wire cap the schema now allows: about four
+ * maximum-length findings, or about a hundred and twenty of the 400-character
+ * width every claim was written to before the raise — past which the tool says
+ * what it dropped instead of truncating in silence.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(Math.floor(c.MAX_DIAGNOSIS_CHARS/s.MAX_CLAIM_BODY_LENGTH), Math.floor(c.MAX_DIAGNOSIS_CHARS/c.UNSOLICITED_CLAIM_BODY_MAX_CHARS))'
+ * PRINTS: 4 120
+ *
+ * WHY NOT LARGER, WHICH IS THE HONEST LIMIT ON NICK'S "ALL FINDINGS VISIBLE".
+ * The binding ceiling is not ours: an MCP client truncates a tool result on
+ * its own side, outside every honesty mechanism in this file — a harness-side
+ * cut lands mid-line and can sever a « » frame, and the reader is told nothing.
+ * Our "(+N claims not shown)" line has to remain the only truncation anybody
+ * ever sees, so this stays under the default output limit of the client this
+ * product is built against rather than growing to fit ten long findings. A
+ * tree of ten maximum-length findings therefore shows four and counts six.
+ * Raising this further requires knowing the harness limit it will run under;
+ * that limit is user-configurable and is not ours to assume.
  */
-export const MAX_DIAGNOSIS_CHARS = 12_000;
+export const MAX_DIAGNOSIS_CHARS = 48_000;
+
+/**
+ * A claim body's room on an UNSOLICITED surface — a briefing, a hint, a
+ * report, a statusline — whatever the wire allows.
+ *
+ * THIS IS THE ANCHORING ASYMMETRY AS A NUMBER (DESIGN.md §4). What a reader
+ * did not ask for arrives as a POINTER; substance appears on a deliberate
+ * pull. Body room may therefore be generous on `get_diagnosis` and must not
+ * follow it here: one maximum-length finding pushed into a SessionStart
+ * briefing would eat the whole budget and push every other teammate out of
+ * it, which is precisely backwards — the reader wanted the OTHERS, and the
+ * long one is a click away.
+ *
+ * IT IS A SEPARATE CONSTANT RATHER THAN A REUSE OF THE SCHEMA'S, and that is
+ * the entire point. hints/render.ts passed MAX_CLAIM_BODY_LENGTH to
+ * `quotedBody` on both hint surfaces, so the tight cap was not a decision but
+ * a coincidence of the wire cap being small — and the moment the wire cap
+ * moved, two unsolicited surfaces would have inherited it silently. Nothing
+ * about a hint changed when this constant appeared except that its width is
+ * now stated where a reader can see it.
+ *
+ * 400 IS THE OLD WIRE CAP, kept deliberately: every unsolicited surface was
+ * built and measured against exactly this width, so pinning it here changes
+ * no rendering that exists today.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.UNSOLICITED_CLAIM_BODY_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH, c.UNSOLICITED_CLAIM_BODY_MAX_CHARS < s.MAX_HINT_TEXT_LENGTH)'
+ * PRINTS: true true
+ */
+export const UNSOLICITED_CLAIM_BODY_MAX_CHARS = 400;
+
+/**
+ * A body quoted back to the AUTHOR who just wrote it — the receipt on
+ * `review_draft` and `answer_question`.
+ *
+ * AN ECHO IS A RECEIPT, NOT THE ANSWER. It exists so the writer can see WHICH
+ * text was accepted, and the first line of it settles that; the writer already
+ * holds the rest, having typed it. Echoing ten thousand characters back into
+ * the context of the session that just sent them spends the reader's window on
+ * something they own, so this stays where it was rather than following the
+ * wire cap up.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.CLAIM_ECHO_MAX_CHARS === c.UNSOLICITED_CLAIM_BODY_MAX_CHARS, c.CLAIM_ECHO_MAX_CHARS <= s.MAX_CLAIM_BODY_LENGTH)'
+ * PRINTS: true true
+ */
+export const CLAIM_ECHO_MAX_CHARS = 400;
 export const MAX_SEARCH_RESULTS = 10;
 export const MAX_SEARCH_CHARS = 2400;
+
+/**
+ * Mirrors the hub's DIAGNOSIS_MAX_TARGETS (server services/diagnosis.ts): the
+ * LIMIT it puts on the targets it returns with a tree.
+ *
+ * Mirrored rather than sent, the same way MAX_INGEST_BATCH is, because the
+ * hub's cut is SILENT — a response holding exactly this many rows looks
+ * identical to a complete one. This client counts, and says so; a wire field
+ * would be cleaner and is not worth a schema change for one sentence.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const d=await import("./packages/server/src/services/diagnosis.ts");console.log(c.HUB_MAX_DIAGNOSIS_TARGETS === d.DIAGNOSIS_MAX_TARGETS)'
+ * PRINTS: true
+ */
+export const HUB_MAX_DIAGNOSIS_TARGETS = 100;
+
+/**
+ * Target rows one diagnosis SHOWS, of however many the hub sent.
+ *
+ * The section exists so a reader about to edit the same corner sees the
+ * overlap; twenty paths is more than enough to recognise a corner, and the
+ * rest are counted by the section's own "(+N targets not shown)" line rather
+ * than dropped in silence. Kept well under HUB_MAX_DIAGNOSIS_TARGETS on
+ * purpose: this section must never be the reason a CLAIM line falls off the
+ * document, and its worst case is bounded by
+ * MAX_DIAGNOSIS_TARGETS_SHOWN × (kind + value width).
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_DIAGNOSIS_TARGETS_SHOWN < c.HUB_MAX_DIAGNOSIS_TARGETS, c.MAX_DIAGNOSIS_TARGETS_SHOWN * (c.MAX_WORK_CONTEXT_TITLE_CHARS + c.MAX_TITLE_CHARS))'
+ * PRINTS: true 4000
+ */
+export const MAX_DIAGNOSIS_TARGETS_SHOWN = 20;
 
 /**
  * Rendering caps for `get_referee_brief` — PER SECTION, not one document cap,
@@ -1345,10 +1473,20 @@ export const MAX_SEARCH_CHARS = 2400;
  * keep the A/B swap invariance (test/mcp-referee-render.test.ts) true even
  * under truncation. A position is one claim line plus up to ten evidence and
  * ten ruled-out lines (hub caps, server referee.ts), each line bounded by the
- * 400-char claim-body cap — the budget covers the common case and the "(+N
- * lines not shown)" line says when it did not.
+ * claim-body cap — the budget covers the common case and the "(+N lines not
+ * shown)" line says when it did not.
+ *
+ * SIZED SO ONE MAXIMUM-LENGTH BODY STILL FITS. The claim line is paid first
+ * inside a position's budget, so a position holding one full-length root cause
+ * would otherwise spend its entire allowance on that line and drop every
+ * evidence line under it — on the one surface whose whole purpose is showing
+ * two cases side by side. Equal-per-position is untouched, which is what keeps
+ * the swap invariance byte-exact; both sides simply got the same larger room.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.MAX_REFEREE_POSITION_CHARS > s.MAX_CLAIM_BODY_LENGTH, 2*c.MAX_REFEREE_POSITION_CHARS + c.MAX_REFEREE_SHARED_CHARS + c.MAX_REFEREE_TIMELINE_CHARS)'
+ * PRINTS: true 26400
  */
-export const MAX_REFEREE_POSITION_CHARS = 4000;
+export const MAX_REFEREE_POSITION_CHARS = 12_000;
 export const MAX_REFEREE_SHARED_CHARS = 800;
 export const MAX_REFEREE_TIMELINE_CHARS = 1600;
 

@@ -107,6 +107,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "cursor-briefing-context",
+    delivery: "unsolicited",
     module: "src/inject/output.ts",
     framing: "framed",
     render: (payload) =>
@@ -121,6 +122,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "cursor-claim-hint-context",
+    delivery: "unsolicited",
     module: "src/inject/output.ts",
     framing: "framed",
     render: (payload) =>
@@ -134,6 +136,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "cursor-solved-hint-context",
+    delivery: "unsolicited",
     module: "src/inject/output.ts",
     framing: "framed",
     // The failure-time surface (VISION.md §1). It is the only Cursor
@@ -150,6 +153,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "cursor-pointer-hint-context",
+    delivery: "unsolicited",
     module: "src/inject/output.ts",
     framing: "framed",
     render: (payload) =>
