@@ -430,11 +430,33 @@ CREATE INDEX IF NOT EXISTS hint_deliveries_session_delivered_idx
 -- ALTER is what moves them, and it runs on every hub start.
 --
 -- IT CANNOT FAIL ON DATA. The bound only ever widens, so no stored row can
--- violate the new constraint; DROP ... IF EXISTS then ADD makes it idempotent
--- rather than an error on the second start.
+-- violate the new constraint.
+--
+-- GUARDED, BECAUSE THIS FILE RUNS ON EVERY START. An unconditional DROP then
+-- ADD is idempotent in the sense that it does not error, and that is not the
+-- same as harmless: ADD CONSTRAINT takes ACCESS EXCLUSIVE and revalidates
+-- every row, so a hub with a large claims table paid a full-table exclusive
+-- lock on every restart to re-prove a bound that already held — a stall that
+-- grows with the data. Worse, between the DROP and the ADD there is a window,
+-- widening with the table, in which a concurrent writer faces NO body bound.
+--
+-- So the pair only runs when the stored bound is not already the wanted one.
+-- test/ddl-sync.test.ts pins it by oid: a re-added constraint gets a new one.
 --
 -- questions.body is deliberately NOT touched: a question is a sentence
 -- somebody has to answer, and MAX_QUESTION_BODY_LENGTH did not move.
-ALTER TABLE claims DROP CONSTRAINT IF EXISTS claims_body_length_check;
-ALTER TABLE claims ADD CONSTRAINT claims_body_length_check
-  CHECK (char_length(body) <= 10000);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'claims_body_length_check'
+      AND conrelid = 'claims'::regclass
+      AND pg_get_constraintdef(oid) = 'CHECK ((char_length(body) <= 10000))'
+  ) THEN
+    ALTER TABLE claims DROP CONSTRAINT IF EXISTS claims_body_length_check;
+    ALTER TABLE claims ADD CONSTRAINT claims_body_length_check
+      CHECK (char_length(body) <= 10000);
+  END IF;
+END
+$$;
