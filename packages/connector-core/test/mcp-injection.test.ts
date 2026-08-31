@@ -94,9 +94,16 @@ const CONTEXT_LINE = /^Work context «[^«»]*» · status .* · opened by .+$/;
 /** The session intent (trial finding #16): the sentence, and only it, framed. */
 const INTENT_LINE = /^Session intent(?: \(derived\))?: «[^«»]*»$/;
 const NO_CLAIMS_LINE = /^Claims: no claims recorded yet\.$/;
-/** The Claims header carries its ordering; the others carry only a count. */
+/**
+ * The Claims header carries its ordering; the others carry only a count.
+ *
+ * The ordering qualifier names WHOSE clock it is, because createdAt is
+ * client-supplied and this renderer cannot vouch for it across machines. It
+ * is still a renderer-owned literal — this allowlist is what makes that a
+ * fact rather than a claim, so it is spelled here in full.
+ */
 const SECTION_HEADER =
-  /^(Targets|Claims|Edges|Claims in other work contexts referenced here) \(\d+\)(, oldest first)?:$/;
+  /^(Targets|Claims|Edges|Claims in other work contexts referenced here) \(\d+\)(, oldest first by each author's own clock)?:$/;
 /*
  * A captured target — `- <kind> <value>`, both BARE, and the shape asserts
  * exactly what BARE buys: no frame character and no field separator. `bare`

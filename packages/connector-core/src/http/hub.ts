@@ -581,6 +581,17 @@ export const DiagnosisClaimSchema = z.looseObject({
   dedupCount: z.number().int().min(0),
   evidenceRefs: z.array(z.string()).default([]),
   createdAt: z.string().min(1),
+  /**
+   * When this claim was last RE-OBSERVED, as distinct from when it was first
+   * recorded. The hub has always shipped it (services/diagnosis.ts) and this
+   * schema simply never declared it, so it arrived through the looseObject and
+   * was thrown away — which is how a claim re-observed an hour ago came to
+   * print one unlabelled age that was three months old, next to "seen 4×".
+   *
+   * Optional and nullable: a claim seen once has no second instant, and an
+   * older hub does not send the field at all.
+   */
+  lastSeenAt: z.string().nullable().optional(),
 });
 
 export type DiagnosisClaim = z.infer<typeof DiagnosisClaimSchema>;

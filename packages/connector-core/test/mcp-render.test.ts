@@ -608,7 +608,9 @@ describe("renderDiagnosis", () => {
     const rendered = renderDiagnosis(tree, NOW);
 
     // Assert
-    expect(rendered).toContain("Claims (4), oldest first:");
+    expect(rendered).toContain(
+      "Claims (4), oldest first by each author's own clock:",
+    );
     expect(claimIdsIn(rendered)).toEqual([
       "clm_old",
       "clm_zsameday",
@@ -633,6 +635,69 @@ describe("renderDiagnosis", () => {
 
     // Assert
     expect(claimIdsIn(rendered)).toEqual(["clm_a", "clm_b"]);
+  });
+
+  test("renders no age for a timestamp in the future, as for one it cannot parse", () => {
+    // Arrange: createdAt is CLIENT-supplied and unrange-checked — ClaimSchema
+    // validates the format and nothing else, and the hub stores it verbatim.
+    // A clamp to zero turned any future stamp into a confident "0s ago", so an
+    // unparseable string got honest silence and an impossible one got a lie,
+    // and the impossible one is what a skewed or hostile publisher produces.
+    // It also sorts LAST, so it was simultaneously the newest thing on the
+    // page and zero seconds old.
+    const tree = diagnosis({
+      claims: [
+        claim({ id: "clm_real", createdAt: "2026-08-09T09:00:00.000Z" }),
+        claim({ id: "clm_future", createdAt: "2027-05-01T09:00:00.000Z" }),
+      ],
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+
+    // Assert: the claim still renders and still sorts, it just carries no age
+    expect(claimLineOf(rendered, "clm_future")).toContain("«The refresh path");
+    expect(claimLineOf(rendered, "clm_future")).not.toMatch(/\d+[smhd] ago/);
+    expect(claimLineOf(rendered, "clm_real")).toMatch(/\d+d ago/);
+  });
+
+  test("says WHICH instant a claim's age is, and shows the re-observation", () => {
+    // Arrange: on a dedupe hit the hub bumps dedup_count and lastSeenAt and
+    // leaves created_at alone. The line printed an unlabelled age beside
+    // "seen 4×", so a reader took the age for latest activity when it was the
+    // first observation — a finding re-observed an hour ago read as three
+    // months stale, at the top of a section headed "oldest first".
+    const tree = diagnosis({
+      claims: [
+        claim({
+          id: "clm_dedup",
+          createdAt: "2026-06-01T09:00:00.000Z",
+          dedupCount: 4,
+          lastSeenAt: "2026-08-14T08:00:00.000Z",
+        }),
+      ],
+    });
+
+    // Act
+    const line = claimLineOf(renderDiagnosis(tree, NOW), "clm_dedup");
+
+    // Assert: both instants, each named
+    expect(line).toContain("first seen 74d ago");
+    expect(line).toContain("seen 4×");
+    expect(line).toContain("last seen 1h ago");
+  });
+
+  test("qualifies the claim order as each author's own clock, not a fact", () => {
+    // Arrange: the sort is deterministic and worth keeping, but createdAt is
+    // whatever the publishing machine's clock said. Stating "oldest first" as
+    // a property of the page is a claim this renderer cannot vouch for across
+    // machines, and it is the statement — not the sort — that turns a
+    // rendering artifact into a fact a reader acts on.
+    // Act
+    const rendered = renderDiagnosis(diagnosis(), NOW);
+
+    // Assert
+    expect(rendered).toContain("oldest first by each author's own clock");
   });
 
   test("renders no age for a timestamp it cannot parse, and sorts it last", () => {

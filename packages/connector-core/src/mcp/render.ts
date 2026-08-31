@@ -192,10 +192,38 @@ const authorLabel = (
  * dropping the claim would be the same silent shortening the whole file
  * exists to avoid.
  */
-const claimTimeMs = (claim: DiagnosisClaim): number | null => {
-  const ms = Date.parse(claim.createdAt);
+const parsedMs = (iso: string | null | undefined): number | null => {
+  if (iso === null || iso === undefined) {
+    return null;
+  }
+  const ms = Date.parse(iso);
   return Number.isNaN(ms) ? null : ms;
 };
+
+const claimTimeMs = (claim: DiagnosisClaim): number | null =>
+  parsedMs(claim.createdAt);
+
+/**
+ * An age fragment, or nothing at all — never a guess.
+ *
+ * A FUTURE INSTANT IS TREATED EXACTLY AS AN UNPARSEABLE ONE. The old form
+ * clamped the difference at zero, which turned any timestamp ahead of the
+ * reader's clock into a confident "0s ago". That breaks the rule stated on
+ * `claimTimeMs`: a guessed age is a fact this renderer cannot support, which
+ * is why an unparseable string prints no age. Clamping gave honest silence to
+ * the string nobody can read and a confident lie to the one that is merely
+ * impossible — and the impossible one is what a skewed clock or a hostile
+ * publisher actually produces, since createdAt is client-supplied and
+ * unrange-checked. The claim still renders and still sorts; only the age goes.
+ */
+const ageFragment = (
+  ms: number | null,
+  now: Date,
+  label: string,
+): readonly string[] =>
+  ms === null || ms > now.getTime()
+    ? []
+    : [`${label} ${formatAge(now.getTime() - ms)} ago`];
 
 /**
  * OLDEST FIRST, ENFORCED HERE rather than assumed of the hub.
@@ -212,6 +240,25 @@ const claimTimeMs = (claim: DiagnosisClaim): number | null => {
  * millisecond — and leaving those to Array#sort's stability would hand the
  * decision back to hub order.
  */
+/**
+ * The order, stated as far as the data supports and no further.
+ *
+ * It used to read "oldest first" flat, which is a claim about WHEN THINGS
+ * HAPPENED. `createdAt` cannot carry that: ClaimSchema validates the format
+ * and nothing else, the hub stores it verbatim, and the claims table has no
+ * server-assigned receive column to fall back on. So the instant is whatever
+ * each publishing machine's clock said. A teammate 45 minutes fast lands
+ * above a colleague who really did find it first, both lines read "1h ago",
+ * and nothing on the page reveals the inversion — a reader answering "who
+ * found this first" gets the wrong answer with full confidence.
+ *
+ * The SORT is worth keeping regardless: it is deterministic and better than
+ * hub order. Only the sentence had to come down to what it can vouch for.
+ * Stamping a received-at instant hub-side and sorting on that is the stronger
+ * fix, and it is a wire change rather than a renderer literal.
+ */
+const CLAIM_ORDER_QUALIFIER = "oldest first by each author's own clock";
+
 const claimsOldestFirst = (
   claims: readonly DiagnosisClaim[],
 ): readonly DiagnosisClaim[] =>
@@ -248,11 +295,19 @@ const claimLine = (
   // already uses (`formatAge`, as searchLine and the hints print it). A
   // second time vocabulary on the one document that shows a whole tree would
   // make two lines about the same instant read as two different facts.
-  const createdMs = claimTimeMs(claim);
-  const age =
-    createdMs === null
-      ? []
-      : [`${formatAge(Math.max(0, now.getTime() - createdMs))} ago`];
+  //
+  // "FIRST SEEN", NOT A BARE AGE. On a dedupe hit the hub bumps dedup_count
+  // and lastSeenAt and leaves created_at alone, so an unlabelled age sitting
+  // beside "seen 4×" reads as latest activity and is the opposite: a finding
+  // re-observed an hour ago printed as three months old, at the top of a
+  // section headed oldest first.
+  const age = ageFragment(claimTimeMs(claim), now, "first seen");
+  // The second instant, only when there IS one — a claim seen once has no
+  // re-observation, and an older hub sends no field at all.
+  const lastSeen =
+    claim.dedupCount > 1
+      ? ageFragment(parsedMs(claim.lastSeenAt), now, "last seen")
+      : [];
   const facts = [
     `- ${safeId(claim.id)}`,
     bare(claim.kind),
@@ -264,6 +319,7 @@ const claimLine = (
     `provenance ${bare(claim.provenance)}`,
     authorLabel(index, claim.authorSessionId),
     ...age,
+    ...lastSeen,
   ];
   return `${facts.join(" · ")}${evidence}${seen}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
 };
@@ -373,6 +429,14 @@ const joinedLength = (lines: readonly string[]): number =>
 
 const moreLine = (count: number, noun: string): string =>
   `(+${String(count)} ${noun}${count === 1 ? "" : "s"} not shown)`;
+
+/**
+ * What a section needs held back so it can at least SAY what it hid — the
+ * "(+N not shown)" line plus the newline it arrives on. Zero for a section
+ * with no rows, which prints nothing and admits nothing.
+ */
+const sectionReserve = (section: Section): number =>
+  section.rows.length === 0 ? 0 : moreLine(section.total, section.noun).length + 1;
 
 /**
  * Appends a section only as far as the budget allows, then says what it left
@@ -777,7 +841,11 @@ export const renderDiagnosis = (
       // The ordering is STATED, not implied: the ages alone cannot express
       // it once two findings share a day, and `claimsOldestFirst` is what
       // makes the sentence true against a hub that sent any other order.
-      header: countHeader("Claims", diagnosis.claims.length, "oldest first"),
+      header: countHeader(
+        "Claims",
+        diagnosis.claims.length,
+        CLAIM_ORDER_QUALIFIER,
+      ),
       rows: claims.map((claim) => () => claimLine(claim, index, now)),
       total: diagnosis.claims.length,
       noun: "claim",
@@ -816,11 +884,24 @@ export const renderDiagnosis = (
   // line — which is honest, because the "(+N not shown)" line then counts it.
   const notes = completenessNotes(diagnosis);
   const notesReserve = notes.length === 0 ? 0 : joinedLength(notes) + 1;
-  const body = sections.reduce<readonly string[]>(
-    (lines, section) =>
-      appendSection(lines, section, MAX_DIAGNOSIS_CHARS - notesReserve),
-    opening,
-  );
+  // AND EVERY LATER SECTION'S COUNT LINE IS PAID FOR TOO, by the same
+  // argument one paragraph up. `appendSection` can keep a section from
+  // vanishing in silence only if there is budget left when it is reached, and
+  // an earlier section will happily spend the last byte — a busy tree of
+  // edges swallowed the external-references section whole, header, count and
+  // all. Holding back each remaining section's "(+N not shown)" line costs at
+  // most one row of an earlier section, which that section's own count line
+  // then reports.
+  const body = sections.reduce<readonly string[]>((lines, section, index) => {
+    const laterReserve = sections
+      .slice(index + 1)
+      .reduce((total, later) => total + sectionReserve(later), 0);
+    return appendSection(
+      lines,
+      section,
+      MAX_DIAGNOSIS_CHARS - notesReserve - laterReserve,
+    );
+  }, opening);
   return [...body, ...notes].join("\n");
 };
 

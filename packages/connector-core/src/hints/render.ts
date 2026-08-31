@@ -123,11 +123,21 @@ const solvedLabel = (context: HintContext, now: Date): string => {
   return ` · from a diagnosis whose root cause was recorded ${age} ago`;
 };
 
+/**
+ * An age, or "an unknown time" — and a FUTURE instant counts as unknown.
+ *
+ * The clamp at zero printed a confident "0s ago" for any timestamp ahead of
+ * the reader's clock, which is a guess dressed as a measurement. These
+ * instants are client-supplied and unrange-checked, so a skewed machine — or
+ * a publisher that wants its row to look like the freshest thing on the page
+ * — produces exactly that. Moved in step with mcp/render.ts's `ageFragment`
+ * so the two surfaces cannot disagree about the same instant.
+ */
 const ageLabel = (iso: string, now: Date): string => {
   const ms = Date.parse(iso);
-  return Number.isNaN(ms)
+  return Number.isNaN(ms) || ms > now.getTime()
     ? "an unknown time"
-    : `${formatAge(Math.max(0, now.getTime() - ms))} ago`;
+    : `${formatAge(now.getTime() - ms)} ago`;
 };
 
 /**
