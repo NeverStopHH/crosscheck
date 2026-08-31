@@ -50,17 +50,37 @@ export const NORMALIZED_DOC_MAX_TARGETS = 100;
  * VERIFY: bun -e 'const d=await import("./packages/server/src/services/normalized-doc.ts");const s=await import("./packages/schema/src/index.ts");console.log(d.NORMALIZED_DOC_MAX_CHARS, s.MAX_CLAIM_BODY_LENGTH, d.NORMALIZED_DOC_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH * d.NORMALIZED_DOC_MAX_CLAIMS)'
  * PRINTS: 8000 10000 true
  *
- * THE CONSEQUENCE, STATED RATHER THAN FIXED HERE. `buildNormalizedDoc` slices
- * from the END and claim summaries come last, so ONE maximum-length body can
- * now fill the remaining budget by itself and push every later claim's terms
- * out of the index — a context whose newest finding is long gets harder to
- * find by its older ones. Nothing a READER sees is affected; this is the
- * search index, not a rendered surface. The fix, if it is wanted, is a
- * per-summary cut at fold time — presentation of the index, never mutation of
- * the data — and that is a product decision about search behaviour rather
- * than part of raising a body cap, so it is named here and left open.
+ * THE CONSEQUENCE, NOW FIXED RATHER THAN NAMED. `buildNormalizedDoc` slices
+ * from the END and claim summaries come last, so ONE maximum-length body
+ * filled the remaining budget by itself and pushed every later claim's terms
+ * out of the index. An earlier note here called that invisible — "the search
+ * index, not a rendered surface" — and that understated it: normalized_doc is
+ * what the FTS tier RANKS on, and search feeds both search_related_work and
+ * the UserPromptSubmit hint candidates. What a reader sees is the context
+ * quietly ceasing to surface, and the richer it gets the less findable it
+ * becomes, which is the opposite of the point. It shows in no status or
+ * doctor line either.
+ *
+ * The cut is NORMALIZED_DOC_CLAIM_SUMMARY_MAX_CHARS below.
  */
 export const NORMALIZED_DOC_MAX_CHARS = 8000;
+
+/**
+ * How much of one claim body reaches the index.
+ *
+ * PRESENTATION OF THE INDEX, NEVER MUTATION OF THE DATA: the stored claim is
+ * untouched and every reading surface still shows the whole body. This is
+ * only how much of it FTS ranks on, and ranking wants the distinctive terms
+ * of MANY findings far more than the whole of one.
+ *
+ * Sized so a full page of claims fits the doc rather than one claim filling
+ * it: at NORMALIZED_DOC_MAX_CLAIMS summaries this leaves room for every one
+ * of them alongside the title, the targets and the intent.
+ *
+ * VERIFY: bun -e 'const d=await import("./packages/server/src/services/normalized-doc.ts");const s=await import("./packages/schema/src/index.ts");console.log(d.NORMALIZED_DOC_CLAIM_SUMMARY_MAX_CHARS < s.MAX_CLAIM_BODY_LENGTH, d.NORMALIZED_DOC_CLAIM_SUMMARY_MAX_CHARS * d.NORMALIZED_DOC_MAX_CLAIMS <= d.NORMALIZED_DOC_MAX_CHARS)'
+ * PRINTS: true true
+ */
+export const NORMALIZED_DOC_CLAIM_SUMMARY_MAX_CHARS = 160;
 
 export interface NormalizedDocInput {
   readonly title: string;
@@ -117,7 +137,14 @@ export const buildNormalizedDoc = (input: NormalizedDocInput): string => {
     input.description ?? "",
     derivedTokenLine([title, ...input.targetValues], input.repoLabel),
     ...input.targetValues,
-    ...input.claimSummaries,
+    // CUT PER SUMMARY, HERE rather than at the call site, because this is the
+    // one place every doc is built: the whole-doc slice below cuts from the
+    // END, and claim summaries come last, so without a per-summary bound one
+    // maximum-length body fills the remaining budget alone and every older
+    // finding's terms fall out of the index. The stored claim is untouched.
+    ...input.claimSummaries.map((summary) =>
+      summary.slice(0, NORMALIZED_DOC_CLAIM_SUMMARY_MAX_CHARS),
+    ),
   ]
     .filter((part) => part.length > 0)
     .join("\n")
