@@ -18,6 +18,7 @@ import { describe, expect, test } from "bun:test";
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
+import { REDACTED_SPAN, REDACTED_TITLE } from "../src/briefing/sanitize.ts";
 import { MAX_REFEREE_POSITION_CHARS } from "../src/constants.ts";
 import {
   MAX_REFEREE_BRIEF_CHARS,
@@ -141,6 +142,43 @@ describe("renderRefereeBrief", () => {
       "«The rotation job overruns its window and drops the key»",
     );
     expect(output).toContain("«Login 500s on staging»");
+  });
+
+  test("redacts the span, never the whole position, on everyday English", () => {
+    // Arrange: this surface is PULLED and its budget was widened so one
+    // maximum-length body still fits — and it then destroyed the body it made
+    // room for. It used the LABEL class, which blanks the WHOLE value when the
+    // phrase filter matches, where get_diagnosis uses the BODY class. Four of
+    // the nine branches are ordinary English inside a real finding, so a
+    // careful root cause came back as a bare redaction marker.
+    //
+    // The failure is worse here than anywhere else: a referee brief exists to
+    // put two arguments side by side, so blanking one of them makes the page
+    // asymmetric in content while still looking even-handed. The A/B swap
+    // test cannot see it — both sides get the same mechanism.
+    const reasoned =
+      "The rotation job overruns its window. To reproduce it you must run " +
+      "the worker with the rotation job disabled, then watch the store.";
+    const brief = baseBrief();
+    const withProse: RefereeBrief = {
+      ...brief,
+      positionA: {
+        ...brief.positionA,
+        claim: claim({ id: "clm_a", body: reasoned }),
+      },
+    };
+
+    // Act
+    const rendered = renderRefereeBrief(withProse, NOW);
+    const line =
+      rendered.split("\n").find((entry) => entry.startsWith("- clm_a ")) ?? "";
+
+    // Assert: the sentences around the branch survive, the branch itself does
+    // not, and no whole-value marker appears anywhere on the page.
+    expect(line).toContain("The rotation job overruns its window");
+    expect(line).toContain("then watch the store");
+    expect(line).toContain(REDACTED_SPAN);
+    expect(rendered).not.toContain(REDACTED_TITLE);
   });
 
   test("claim lines carry the provenance trust label, declared and derived alike", () => {
