@@ -399,6 +399,97 @@ describe("renderDiagnosis", () => {
     expect(rendered).toContain(QUOTED_DATA_NOTICE);
   });
 
+  test("drops the claims AFTER the one that does not fit, never the one itself", () => {
+    // Arrange: the header promises "oldest first" and the "(+N not shown)"
+    // line sits at the bottom, so a hole in the MIDDLE of the sequence reads
+    // as a complete prefix — the reader cannot see it, and no id on the page
+    // marks it.
+    //
+    // This could not happen while every body was 400 characters, because all
+    // the lines were roughly equal and a shortfall really was a tail drop.
+    // Raising the cap to MAX_CLAIM_BODY_LENGTH made the lines differ by 25x,
+    // and a fitter that SKIPS a line it cannot afford and keeps trying the
+    // shorter ones after it turns that into an invisible gap.
+    //
+    // Five long findings then five one-liners, oldest first, each body
+    // prefixed so the survivors can be named.
+    const mixed = [
+      ...Array.from({ length: 5 }, (_unused, index) =>
+        claim({
+          id: `clm_${String(index + 1).padStart(2, "0")}`,
+          body: `FINDING-${String(index + 1).padStart(2, "0")} ${"b".repeat(MAX_CLAIM_BODY_LENGTH - 20)}`,
+          createdAt: new Date(Date.parse(CREATED) + index * 1000).toISOString(),
+        }),
+      ),
+      ...Array.from({ length: 5 }, (_unused, index) =>
+        claim({
+          id: `clm_${String(index + 6).padStart(2, "0")}`,
+          body: `FINDING-${String(index + 6).padStart(2, "0")} short`,
+          createdAt: new Date(
+            Date.parse(CREATED) + (index + 5) * 1000,
+          ).toISOString(),
+        }),
+      ),
+    ];
+
+    // Act
+    const rendered = renderDiagnosis(diagnosis({ claims: mixed }), NOW);
+    const shown = claimIdsIn(rendered);
+
+    // Assert: whatever fits is an unbroken PREFIX of the discovery order. The
+    // sequence the reader sees is the sequence that happened, with the missing
+    // rows all at the end, where the "(+N not shown)" line already points.
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.length).toBeLessThan(mixed.length);
+    expect(shown).toEqual(mixed.slice(0, shown.length).map((entry) => entry.id));
+    // And the count is honest about how many are missing.
+    expect(rendered).toContain(
+      `(+${String(mixed.length - shown.length)} claims not shown)`,
+    );
+  });
+
+  test("a section that cannot afford its header still says what it hid", () => {
+    // Arrange: when a section's header does not fit, the whole section used to
+    // vanish — no header, no "(+N not shown)" line, byte-indistinguishable
+    // from a tree that has none of that kind of row at all. The reader then
+    // concludes this investigation references no claims in other work
+    // contexts, which is the cross-context link the product exists to surface.
+    //
+    // Sections ahead of it fill the document: five findings at the body cap
+    // plus enough edges that nothing is left by the time the external
+    // references are reached.
+    const long = Array.from({ length: 5 }, (_unused, index) =>
+      claim({
+        id: `clm_${String(index).padStart(2, "0")}`,
+        body: "b".repeat(MAX_CLAIM_BODY_LENGTH),
+      }),
+    );
+    const edges = Array.from({ length: 400 }, (_unused, index) =>
+      edge({ id: `edge_${String(index).padStart(3, "0")}` }),
+    );
+    const external = [
+      { id: "clm_ext_1", kind: "hypothesis", workContextId: "wc_02" },
+      { id: "clm_ext_2", kind: "root_cause", workContextId: "wc_03" },
+    ];
+
+    // Act
+    const rendered = renderDiagnosis(
+      diagnosis({ claims: long, edges, externalClaims: external }),
+      NOW,
+    );
+
+    // Assert: the section did not fit — but its absence is STATED. The
+    // reserve for this line was already computed before the header was
+    // rejected, so the honest form costs the budget the code had set aside.
+    expect(rendered).not.toContain(
+      "Claims in other work contexts referenced here",
+    );
+    expect(rendered).toContain(
+      `(+${String(external.length)} references not shown)`,
+    );
+    expect(rendered.length).toBeLessThanOrEqual(MAX_DIAGNOSIS_CHARS);
+  });
+
   test("keeps every completeness note at EVERY body length, not a convenient one", () => {
     // Arrange: the notes say the tree is partial. They are the one thing that
     // must not be dropped for length, because a note about incompleteness that

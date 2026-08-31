@@ -312,7 +312,20 @@ const targetLine = (target: DiagnosisTarget): string => {
 
 export interface Section {
   readonly header: string;
-  readonly lines: readonly string[];
+  /**
+   * The rows, AS THUNKS rather than as strings.
+   *
+   * Building a row is not free — a claim row sanitises a whole body, and at
+   * MAX_CLAIM_BODY_LENGTH that is the dominant cost of rendering the document
+   * (measured on `appendSection` below). A materialised array pays for every
+   * row the hub sent; a thunk array pays only for the rows the fitter
+   * actually tries, which on a saturated tree is a handful rather than five
+   * hundred.
+   *
+   * It is also what makes the fitter's stop-at-the-first-miss rule cheap: the
+   * rows past the cut are never built at all.
+   */
+  readonly rows: readonly (() => string)[];
   /** What the section WOULD have shown, so a drop can be counted honestly. */
   readonly total: number;
   /** Noun for the "(+N … not shown)" line: "claim", "edge", … */
@@ -339,48 +352,80 @@ const moreLine = (count: number, noun: string): string =>
  * monotonic in its count, so reserving for the total guarantees the real line
  * fits and costs at most one item that would otherwise have been shown.
  *
- * THE REDUCE IS QUADRATIC AND STAYS, ON A MEASUREMENT RATHER THAN A HUNCH.
- * `joinedLength(candidate)` re-joins everything accumulated so far, once per
- * line, so the cost grows with lines × document length — and raising the body
- * cap to MAX_CLAIM_BODY_LENGTH made that term worth checking instead of
- * assuming. MEASURED on the worst tree the wire can carry: 500 claims (the
- * hub's own DIAGNOSIS_MAX_CLAIMS) each at the full body cap, through
- * renderDiagnosis, five runs after a warm-up —
+ * IT STOPS AT THE FIRST ROW THAT DOES NOT FIT, and that is a correctness rule
+ * before it is a performance one. The old form SKIPPED a row it could not
+ * afford and kept trying the ones after it. While every body was 400
+ * characters that was invisible, because all the rows were about the same
+ * width and a shortfall really was a tail drop. Raising the cap to
+ * MAX_CLAIM_BODY_LENGTH made the rows differ by 25x, and skipping then means
+ * a LONG finding — therefore probably the substantive one — vanishes out of
+ * the MIDDLE while every shorter, newer one after it is kept. Nothing on the
+ * page marks that: the header promises "oldest first", the ids are opaque,
+ * and the "(+N not shown)" line sits at the bottom, so a hole in the
+ * discovery sequence reads as a complete prefix. Stopping makes what the
+ * reader sees an unbroken PREFIX of the order the header names, which is the
+ * only shape the "(+N not shown)" line can honestly describe.
+ * `test/mcp-render.test.ts` holds it: "drops the claims AFTER the one that
+ * does not fit, never the one itself".
  *
- *     min 8.9  p50 9.2  max 10.4 ms   (macOS 26 arm64, 16 cores, load ~8.5)
+ * A SECTION THAT CANNOT AFFORD ITS HEADER STILL SAYS WHAT IT HID. Returning
+ * `accumulated` untouched made a whole section vanish with no header and no
+ * count — byte-indistinguishable from a tree that has no such rows at all,
+ * which for the external-references section means the reader concludes this
+ * investigation links to no other work context. The reserve for that line was
+ * already computed one branch above, so the honest form spends the budget the
+ * code had set aside rather than new budget.
  *
- * for a 40,817-character document. A reading from one host on one day, like
- * every other timing in this repo; rebuild the tree and time renderDiagnosis
- * around Bun.nanoseconds() to take your own. Single-digit milliseconds on the
- * MCP path — MCP_TIMEOUT_MS is 10_000 and no hook renders a tree — does not
- * buy a rewrite to a running length: the reserve argument above is the part
- * that is hard to get right, and it reads correctly precisely because each
- * candidate is measured whole.
+ * WHAT THE ROWS COST, RE-MEASURED AT THE NEW CAP. An earlier note here quoted
+ * "min 8.9 p50 9.2 max 10.4 ms" for 500 claims at the full body cap and
+ * blamed `joinedLength`'s quadratic re-join. Both halves were wrong: that
+ * timing was the 400-char reading, and the quadratic re-join is a couple of
+ * percent of the work. The cost was one `spanRedactedUntrusted` per claim,
+ * paid eagerly by materialising every row so the fitter could print four of
+ * them. `Section.rows` is thunks for that reason, and the numbers below are
+ * this file's own, taken through renderDiagnosis with 500 claims (the hub's
+ * DIAGNOSIS_MAX_CLAIMS) each at MAX_CLAIM_BODY_LENGTH.
+ *
+ * VERIFY: bun run packages/connector-core/scripts/measure-diagnosis-render.ts --check
+ * PRINTS: eager-vs-lazy speedup >= 5x: true
+ * PRINTS: lazy p50 under 25 ms: true
+ *
+ * A reading from one host on one day, like every other timing in this repo;
+ * the script prints the raw milliseconds without --check.
  */
 export const appendSection = (
   accumulated: readonly string[],
   section: Section,
   cap: number,
 ): readonly string[] => {
-  if (section.lines.length === 0) {
+  if (section.rows.length === 0) {
     return accumulated;
   }
   const withHeader = [...accumulated, section.header];
   // +1 for the newline the line would arrive on.
-  const reserve = moreLine(section.total, section.noun).length + 1;
+  const more = moreLine(section.total, section.noun);
+  const reserve = more.length + 1;
   if (joinedLength(withHeader) + reserve > cap) {
-    return accumulated;
+    // No room for the header. Say the rows exist anyway, if even that fits —
+    // a silent section is the one outcome this function may not produce.
+    const withMore = [...accumulated, more];
+    return joinedLength(withMore) > cap ? accumulated : withMore;
   }
   const lineCap = cap - reserve;
-  const fitted = section.lines.reduce<readonly string[]>((lines, line) => {
-    const candidate = [...lines, line];
-    return joinedLength(candidate) > lineCap ? lines : candidate;
-  }, withHeader);
+  // Reassignment of a local binding to a NEW array each step, never mutation
+  // of one — the loop exists only so the first miss can stop the walk, which
+  // a reduce cannot do and which is what keeps the unbuilt rows unbuilt.
+  let fitted: readonly string[] = withHeader;
+  for (const row of section.rows) {
+    const candidate = [...fitted, row()];
+    if (joinedLength(candidate) > lineCap) {
+      break;
+    }
+    fitted = candidate;
+  }
   const shown = fitted.length - withHeader.length;
   const hidden = section.total - shown;
-  return hidden <= 0
-    ? fitted
-    : [...fitted, moreLine(hidden, section.noun)];
+  return hidden <= 0 ? fitted : [...fitted, moreLine(hidden, section.noun)];
 };
 
 /**
@@ -686,9 +731,9 @@ export const renderDiagnosis = (
     // "(+N claims not shown)".
     {
       header: countHeader("Targets", diagnosis.targets.length),
-      lines: diagnosis.targets
+      rows: diagnosis.targets
         .slice(0, MAX_DIAGNOSIS_TARGETS_SHOWN)
-        .map(targetLine),
+        .map((target) => () => targetLine(target)),
       total: diagnosis.targets.length,
       noun: "target",
     },
@@ -697,13 +742,13 @@ export const renderDiagnosis = (
       // it once two findings share a day, and `claimsOldestFirst` is what
       // makes the sentence true against a hub that sent any other order.
       header: countHeader("Claims", diagnosis.claims.length, "oldest first"),
-      lines: claims.map((claim) => claimLine(claim, index, now)),
+      rows: claims.map((claim) => () => claimLine(claim, index, now)),
       total: diagnosis.claims.length,
       noun: "claim",
     },
     {
       header: countHeader("Edges", diagnosis.edges.length),
-      lines: diagnosis.edges.map((edge) => edgeLine(edge, index)),
+      rows: diagnosis.edges.map((edge) => () => edgeLine(edge, index)),
       total: diagnosis.edges.length,
       noun: "edge",
     },
@@ -712,7 +757,7 @@ export const renderDiagnosis = (
         "Claims in other work contexts referenced here",
         diagnosis.externalClaims.length,
       ),
-      lines: diagnosis.externalClaims.map(externalLine),
+      rows: diagnosis.externalClaims.map((ref) => () => externalLine(ref)),
       total: diagnosis.externalClaims.length,
       noun: "reference",
     },
@@ -1053,7 +1098,7 @@ export const renderSearchResults = (
     opening,
     {
       header: countHeader("Work contexts", hits.length),
-      lines: hits.map(searchLine),
+      rows: hits.map((entry) => () => searchLine(entry)),
       total: hits.length,
       noun: "work context",
     },
