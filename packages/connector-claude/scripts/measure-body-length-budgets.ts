@@ -17,7 +17,24 @@
  * SAME script measures the before and the after: it reads the constant out of
  * the tree it runs in rather than hard-coding a length.
  *
+ * AT THE HUB'S OWN MAXIMA, derived rather than chosen. The page sizes come
+ * from the server constants themselves — MAX_DRAFTS_LISTED, HINT_MAX_CONTEXTS
+ * x HINT_MAX_CLAIMS_PER_CONTEXT, MAX_QUESTION_ANSWERS_LISTED,
+ * SOLVED_MATCH_MAX_FINDINGS, TRIPWIRE_MAX_SESSIONS — so the harness is
+ * maximal by construction and stays maximal when a bound moves. It used to
+ * serve one hint candidate with one claim where the hub sends three contexts
+ * of thirty, and answered the tripwire route with an empty list, so the
+ * recorded `pre-tool-use out=0` row never exercised that render at all. A
+ * harness that never sends what the hub can send will pass the change that
+ * really does blow a budget, which is the one thing it exists to prevent.
+ *
  *   bun run packages/connector-claude/scripts/measure-body-length-budgets.ts
+ *   bun run packages/connector-claude/scripts/measure-body-length-budgets.ts --cursor
+ *
+ * `--cursor` adds the SECOND hook binary: `crosscheck cursor-hook` carries the
+ * same wire payloads under the same BUDGET_RATIOS and was not measured at all,
+ * so half the hook surface of a body-cap raise went unmeasured. Behind a flag
+ * because it doubles the runtime.
  *
  * The hub binds a THROWAWAY port (7750 by default, `--port` to move it) and the
  * home and repo are temp directories removed on exit; nothing here touches a
@@ -45,6 +62,20 @@ import { appendRecords, repoKey } from "../src/index.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
+// THE PAGE SIZES ARE DERIVED FROM THE HUB'S OWN BOUNDS, not chosen here, so
+// the harness is maximal by construction and stays maximal when a bound
+// moves. Reached by relative path because the server package exports only its
+// root — the same crossing this file already makes for the test helpers above.
+import {
+  MAX_DRAFTS_LISTED,
+  MAX_QUESTION_ANSWERS_LISTED,
+  SOLVED_MATCH_MAX_FINDINGS,
+} from "../../server/src/constants.ts";
+import {
+  HINT_MAX_CLAIMS_PER_CONTEXT,
+  HINT_MAX_CONTEXTS,
+  TRIPWIRE_MAX_SESSIONS,
+} from "../../server/src/services/hints.ts";
 
 const BIN_PATH = resolve(
   import.meta.dir,
@@ -70,6 +101,8 @@ const argOf = (flag: string): string | undefined => {
 };
 
 const PORT = Number(argOf("--port") ?? DEFAULT_PORT);
+/** `--cursor` adds the second hook binary's seven events; see CURSOR_CASES. */
+const WITH_CURSOR = process.argv.includes("--cursor");
 
 /**
  * A body at exactly the cap, in ordinary words.
@@ -111,9 +144,19 @@ const solvedRow = (): Record<string, unknown> => ({
   rootCauseConfidence: 0.9,
 });
 
-const candidateRow = (): Record<string, unknown> => ({
+/**
+ * One hint candidate carrying the FULL page of claims the hub will send.
+ *
+ * The hub's own bounds are HINT_MAX_CONTEXTS contexts x
+ * HINT_MAX_CLAIMS_PER_CONTEXT claims (services/hints.ts), and this harness
+ * used to serve one context with one claim — about 10 KB measured against
+ * roughly 900 KB reachable, on the hook that runs inside a keystroke. A
+ * harness that never sends what the hub can send will pass a change that
+ * really does blow a budget, which is the one thing it exists to prevent.
+ */
+const candidateRow = (index: number): Record<string, unknown> => ({
   workContext: {
-    id: "wc_nick",
+    id: `wc_nick_${String(index)}`,
     title: "Refresh 500s after key rotation",
     status: "analyzing",
     tier: "exact",
@@ -123,10 +166,11 @@ const candidateRow = (): Record<string, unknown> => ({
     createdAt: "2026-08-10T08:00:00.000Z",
     updatedAt: null,
   },
-  claims: [
-    {
-      id: "clm_candidate",
-      workContextId: "wc_nick",
+  claims: Array.from(
+    { length: HINT_MAX_CLAIMS_PER_CONTEXT },
+    (_unused, claimIndex) => ({
+      id: `clm_candidate_${String(index)}_${String(claimIndex)}`,
+      workContextId: `wc_nick_${String(index)}`,
       kind: "rejected_approach",
       status: "rejected",
       confidence: 0.8,
@@ -135,10 +179,34 @@ const candidateRow = (): Record<string, unknown> => ({
       evidenceRefCount: 1,
       authorDeveloperId: "dev_nick",
       authorDeveloperName: "Nick",
-      body: maxBody("candidate"),
+      body: maxBody(`candidate ${String(index)} ${String(claimIndex)}`),
       createdAt: "2026-08-10T08:00:00.000Z",
-    },
-  ],
+    }),
+  ),
+});
+
+/**
+ * A tripwire session, at the hub's TRIPWIRE_MAX_SESSIONS page size.
+ *
+ * The harness answered this route with an empty list, so the recorded
+ * `pre-tool-use out=0` row never exercised the tripwire render at all — the
+ * hook was measured doing nothing.
+ */
+const tripwireRow = (index: number): Record<string, unknown> => ({
+  sessionId: `cc_other_${String(index)}`,
+  developerId: `dev_other_${String(index)}`,
+  developerName: "Robin",
+  branch: `feat/rotation-${String(index)}`,
+  status: "active",
+  lastHeartbeatAt: iso(),
+  workContextId: `wc_other_${String(index)}`,
+  workContextTitle: "Refresh 500s after key rotation",
+  workContextIntent: {
+    summary: "tracing the refresh 500s back to the rotated signing key",
+    provenance: "derived",
+    confidence: 0.4,
+    capturedAt: iso(),
+  },
 });
 
 const answerRow = (): Record<string, unknown> => ({
@@ -188,23 +256,46 @@ const startHub = (port: number): { readonly stop: () => void; readonly url: stri
         return Response.json({
           ok: true,
           data: {
-            drafts: Array.from({ length: 10 }, (_unused, index) =>
+            drafts: Array.from({ length: MAX_DRAFTS_LISTED }, (_unused, index) =>
               draftRow(index),
             ),
           },
         });
       }
       if (pathname === "/api/solved-matches") {
-        return Response.json({ ok: true, data: { matches: [solvedRow()] } });
+        return Response.json({
+          ok: true,
+          data: {
+            matches: Array.from({ length: SOLVED_MATCH_MAX_FINDINGS }, () =>
+              solvedRow(),
+            ),
+          },
+        });
       }
       if (pathname === "/api/hints/candidates") {
         return Response.json({
           ok: true,
-          data: { candidates: [candidateRow()], answers: [answerRow()] },
+          data: {
+            candidates: Array.from(
+              { length: HINT_MAX_CONTEXTS },
+              (_unused, index) => candidateRow(index),
+            ),
+            answers: Array.from({ length: MAX_QUESTION_ANSWERS_LISTED }, () =>
+              answerRow(),
+            ),
+          },
         });
       }
       if (pathname === "/api/hints/tripwire") {
-        return Response.json({ ok: true, data: { sessions: [] } });
+        return Response.json({
+          ok: true,
+          data: {
+            sessions: Array.from(
+              { length: TRIPWIRE_MAX_SESSIONS },
+              (_unused, index) => tripwireRow(index),
+            ),
+          },
+        });
       }
       if (pathname === "/api/presence") {
         return Response.json({ ok: true, data: { sessions: [] } });
@@ -343,6 +434,88 @@ const CASES: readonly HookCase[] = [
 ];
 
 /**
+ * The SECOND hook binary, measured behind `--cursor`.
+ *
+ * `crosscheck cursor-hook` carries the same wire payloads under the same
+ * BUDGET_RATIOS (connector-cursor/src/runner.ts) and was not measured at all,
+ * so half the hook surface of a body-cap raise went unmeasured. Behind a flag
+ * because it doubles the runtime and the Claude lane is the one CI cares
+ * about first.
+ *
+ * `conversation_id` is the field every event maps (payload.ts MAPPED_FIELDS);
+ * an event missing it degrades to contract drift rather than doing the work,
+ * which would measure the wrong thing.
+ */
+const CURSOR_CASES: readonly HookCase[] = [
+  {
+    name: "sessionStart",
+    budgetMs: SESSION_START_BUDGET_RATIO * HTTP_TIMEOUT_MS,
+    payload: (repo) => ({
+      conversation_id: SESSION_ID,
+      hook_event_name: "sessionStart",
+      workspace_roots: [repo],
+    }),
+  },
+  {
+    name: "afterFileEdit",
+    budgetMs: POST_TOOL_USE_BUDGET_RATIO * HTTP_TIMEOUT_MS,
+    payload: (repo) => ({
+      conversation_id: SESSION_ID,
+      hook_event_name: "afterFileEdit",
+      workspace_roots: [repo],
+      file_path: `${repo}/src/auth/refresh.ts`,
+    }),
+  },
+  {
+    name: "afterShellExecution",
+    budgetMs: POST_TOOL_USE_BUDGET_RATIO * HTTP_TIMEOUT_MS,
+    payload: (repo) => ({
+      conversation_id: SESSION_ID,
+      hook_event_name: "afterShellExecution",
+      workspace_roots: [repo],
+    }),
+  },
+  {
+    name: "postToolUse",
+    budgetMs: POST_TOOL_USE_BUDGET_RATIO * HTTP_TIMEOUT_MS,
+    payload: (repo) => ({
+      conversation_id: SESSION_ID,
+      hook_event_name: "postToolUse",
+      workspace_roots: [repo],
+      file_path: `${repo}/src/auth/refresh.ts`,
+    }),
+  },
+  {
+    name: "postToolUseFailure",
+    budgetMs: POST_TOOL_USE_FAILURE_BUDGET_RATIO * HTTP_TIMEOUT_MS,
+    payload: (repo) => ({
+      conversation_id: SESSION_ID,
+      hook_event_name: "postToolUseFailure",
+      workspace_roots: [repo],
+      error_message: "Exit code 1\nerror: expected 3 to be 4",
+    }),
+  },
+  {
+    name: "stop",
+    budgetMs: STOP_BUDGET_RATIO * HTTP_TIMEOUT_MS,
+    payload: (repo) => ({
+      conversation_id: SESSION_ID,
+      hook_event_name: "stop",
+      workspace_roots: [repo],
+    }),
+  },
+  {
+    name: "sessionEnd",
+    budgetMs: SESSION_END_BUDGET_RATIO * HTTP_TIMEOUT_MS,
+    payload: (repo) => ({
+      conversation_id: SESSION_ID,
+      hook_event_name: "sessionEnd",
+      workspace_roots: [repo],
+    }),
+  },
+];
+
+/**
  * One run: its wall time, and HOW MANY BYTES IT PUT INTO THE SESSION.
  *
  * The byte count is not decoration. A hook that silently stopped delivering —
@@ -357,13 +530,14 @@ interface Run {
 }
 
 const runOnce = async (
+  subcommand: string,
   hookName: string,
   payload: Record<string, unknown>,
   env: Record<string, string>,
 ): Promise<Run> => {
   const startedAt = Bun.nanoseconds();
   const proc = Bun.spawn({
-    cmd: [process.execPath, BIN_PATH, "hook", hookName],
+    cmd: [process.execPath, BIN_PATH, subcommand, hookName],
     env: { ...process.env, ...env },
     stdin: new TextEncoder().encode(JSON.stringify(payload)),
     stdout: "pipe",
@@ -394,7 +568,17 @@ const main = async (): Promise<void> => {
     console.log(
       "hook                   budget    min    p50    max  (ms)     out",
     );
-    for (const hookCase of CASES) {
+    const lanes: readonly (readonly [string, readonly HookCase[]])[] = WITH_CURSOR
+      ? [
+          ["hook", CASES],
+          ["cursor-hook", CURSOR_CASES],
+        ]
+      : [["hook", CASES]];
+    for (const [subcommand, cases] of lanes) {
+      if (subcommand !== "hook") {
+        console.log(`-- crosscheck ${subcommand} --`);
+      }
+      for (const hookCase of cases) {
       // A FRESH SESSION AND A FRESH SPOOL PER HOOK: a previous hook's flush
       // would otherwise pay this one's bill and the row would read low.
       await rm(home, { recursive: true, force: true });
@@ -427,7 +611,9 @@ const main = async (): Promise<void> => {
       };
       const runs: Run[] = [];
       for (let run = 0; run < RUNS; run += 1) {
-        runs.push(await runOnce(hookCase.name, hookCase.payload(repo), env));
+        runs.push(
+          await runOnce(subcommand, hookCase.name, hookCase.payload(repo), env),
+        );
       }
       const sorted = runs
         .map((run) => run.elapsedMs)
@@ -436,6 +622,7 @@ const main = async (): Promise<void> => {
       console.log(
         `${hookCase.name.padEnd(21)} ${String(hookCase.budgetMs).padStart(6)} ${String(sorted[0] ?? 0).padStart(6)} ${String(percentile(sorted, 0.5)).padStart(6)} ${String(sorted[sorted.length - 1] ?? 0).padStart(6)}  ${String(outBytes).padStart(6)}`,
       );
+      }
     }
   } finally {
     hub.stop();
