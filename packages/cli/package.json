@@ -24,8 +24,8 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "bun-types": "^1.2.0",
-    "drizzle-orm": "^0.44.0",
+    "bun-types": "^1.4.0",
+    "drizzle-orm": "^0.45.2",
     "typescript": "^7.0.2"
   }
 }
