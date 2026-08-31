@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 259
+    # PRINTS: 268
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -157,6 +157,7 @@ jobs:
     # PRINTS: briefing/questions.ts 2
     # PRINTS: briefing/render.ts 8
     # PRINTS: briefing/sanitize.ts 10
+    # PRINTS: capture/secret-scan.ts 1
     # PRINTS: capture/touched-root.ts 5
     # PRINTS: conference/report.ts 1
     # PRINTS: config/config.ts 3
@@ -177,8 +178,8 @@ jobs:
     # PRINTS: http/hub.ts 2
     # PRINTS: http/latency.ts 1
     # PRINTS: kit.ts 1
-    # PRINTS: mcp/render-referee.ts 2
-    # PRINTS: mcp/render.ts 9
+    # PRINTS: mcp/render-referee.ts 3
+    # PRINTS: mcp/render.ts 15
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/publish-claim.ts 2
@@ -208,7 +209,7 @@ jobs:
     # PRINTS: packages/server/src/services/diagnosis.ts 3
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hints.ts 2
-    # PRINTS: packages/server/src/services/normalized-doc.ts 1
+    # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
     # PRINTS: packages/server/src/services/record-handlers.ts 1
@@ -259,7 +260,7 @@ jobs:
     # PRINTS: intent.ts 1
     # PRINTS: kit.ts 1
     # PRINTS: latency.ts 1
-    # PRINTS: normalized-doc.ts 1
+    # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
     # PRINTS: payload.ts 1
     # PRINTS: post-tool-use-failure.ts 2
@@ -277,8 +278,8 @@ jobs:
     # PRINTS: records.ts 1
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
-    # PRINTS: render-referee.ts 2
-    # PRINTS: render.ts 20
+    # PRINTS: render-referee.ts 3
+    # PRINTS: render.ts 26
     # PRINTS: report.ts 1
     # PRINTS: review-draft.ts 1
     # PRINTS: runner.ts 3
@@ -286,6 +287,7 @@ jobs:
     # PRINTS: search-related-work.ts 1
     # PRINTS: search-tokens.ts 4
     # PRINTS: search.ts 11
+    # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 9
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 2
