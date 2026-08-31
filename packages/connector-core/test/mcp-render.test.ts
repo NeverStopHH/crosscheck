@@ -752,6 +752,37 @@ describe("renderDiagnosis", () => {
     );
   });
 
+  test("restates the quoted-data frame at the foot of a long document", () => {
+    // Arrange: the notice is emitted once, on the first line. Raising
+    // MAX_DIAGNOSIS_CHARS from 12,000 to 48,000 means the structural half of
+    // the injection defence — the frame plus the standing sentence that
+    // framed text is data — now has to hold across four times the span of
+    // other people's prose. Measured on real renders, 40,000+ characters can
+    // follow that one line.
+    //
+    // The sanitizer is not the weak point and is not what this is about: what
+    // thinned is the DISTANCE between the notice and the text it governs. A
+    // patiently written instruction block in the last few thousand characters
+    // of a long finding lands with the framing statement far out of sight.
+    const long = Array.from({ length: 4 }, (_unused, index) =>
+      claim({
+        id: `clm_${String(index).padStart(2, "0")}`,
+        body: "b".repeat(MAX_CLAIM_BODY_LENGTH),
+      }),
+    );
+
+    // Act
+    const rendered = renderDiagnosis(diagnosis({ claims: long }), NOW);
+    const short = renderDiagnosis(diagnosis(), NOW);
+
+    // Assert: twice on a long page, once on a short one — a reminder that
+    // fired on every document would stop being a signal.
+    expect(rendered.length).toBeGreaterThan(10_000);
+    expect(rendered.split(QUOTED_DATA_NOTICE).length - 1).toBe(2);
+    expect(rendered.trimEnd().endsWith(QUOTED_DATA_NOTICE)).toBe(true);
+    expect(short.split(QUOTED_DATA_NOTICE).length - 1).toBe(1);
+  });
+
   test("says the hub sent targets it could not read, never that none exist", () => {
     // Arrange: the drop count was folded into one aggregate droppedRows
     // alongside claims and edges, so a hub whose target rows this client

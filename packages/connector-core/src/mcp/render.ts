@@ -590,6 +590,19 @@ const completenessNotes = (diagnosis: Diagnosis): readonly string[] => [
 /** The as-of the targets section can honestly carry; see its call site. */
 const TARGETS_AS_OF = "as captured during this work";
 
+/**
+ * Past this many characters the document restates its quoted-data frame at
+ * the foot; see `renderDiagnosis`.
+ *
+ * Set at the OLD document cap, which is the length the single opening notice
+ * was actually sized against — so nothing that fitted before gains a second
+ * line, and everything the raise made newly possible gets one.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const r=await import("./packages/connector-core/src/mcp/render.ts");console.log(r.DIAGNOSIS_RESTATE_NOTICE_OVER < c.MAX_DIAGNOSIS_CHARS)'
+ * PRINTS: true
+ */
+export const DIAGNOSIS_RESTATE_NOTICE_OVER = 12_000;
+
 const TARGETS_UNREPORTED =
   "This hub does not report captured targets.";
 const TARGETS_EMPTY =
@@ -916,7 +929,11 @@ export const renderDiagnosis = (
   // So their budget comes off the top, and what gives way instead is a claim
   // line — which is honest, because the "(+N not shown)" line then counts it.
   const notes = completenessNotes(diagnosis);
-  const notesReserve = notes.length === 0 ? 0 : joinedLength(notes) + 1;
+  // The closing restatement is paid for with the notes, for the same reason:
+  // it is a statement ABOUT the document, and a frame that got dropped for
+  // length is exactly the failure it exists to prevent.
+  const notesReserve =
+    joinedLength([...notes, QUOTED_DATA_NOTICE]) + (notes.length === 0 ? 1 : 2);
   // AND EVERY LATER SECTION'S COUNT LINE IS PAID FOR TOO, by the same
   // argument one paragraph up. `appendSection` can keep a section from
   // vanishing in silence only if there is budget left when it is reached, and
@@ -935,7 +952,23 @@ export const renderDiagnosis = (
       MAX_DIAGNOSIS_CHARS - notesReserve - laterReserve,
     );
   }, opening);
-  return [...body, ...notes].join("\n");
+  const document = [...body, ...notes].join("\n");
+  // THE FRAME IS RESTATED WHEN THE PAGE IS LONG. The notice is one line at
+  // the very top, and MAX_DIAGNOSIS_CHARS moved 12,000 -> 48,000 to make room
+  // for long findings — so the standing sentence that framed text is DATA now
+  // has to hold across four times the span of other people's prose, tens of
+  // thousands of characters from where it was said. The sanitizer is not the
+  // weak point; the DISTANCE is. A hostile teammate writing a patient
+  // instruction block into the tail of a 10,000-character finding needs none
+  // of the nine literal phrases, and it lands with the framing far out of
+  // sight.
+  //
+  // A renderer-owned literal, reusing the same constant rather than a second
+  // spelling of it, and only past a length where the top line has genuinely
+  // scrolled away — a reminder on every document would stop being a signal.
+  return document.length <= DIAGNOSIS_RESTATE_NOTICE_OVER
+    ? document
+    : `${document}\n${QUOTED_DATA_NOTICE}`;
 };
 
 /** One work context the hub search matched, with its ages at query time. */
