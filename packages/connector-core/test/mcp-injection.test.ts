@@ -103,7 +103,7 @@ const NO_CLAIMS_LINE = /^Claims: no claims recorded yet\.$/;
  * fact rather than a claim, so it is spelled here in full.
  */
 const SECTION_HEADER =
-  /^(Targets|Claims|Edges|Claims in other work contexts referenced here) \(\d+\)(, oldest first by each author's own clock)?:$/;
+  /^(Targets|Claims|Edges|Claims in other work contexts referenced here) \(\d+\)(, oldest first by each author's own clock|, as captured during this work)?:$/;
 /*
  * A captured target — `- <kind> <value>`, both BARE, and the shape asserts
  * exactly what BARE buys: no frame character and no field separator. `bare`

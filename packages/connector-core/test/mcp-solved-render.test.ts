@@ -92,6 +92,7 @@ const diagnosis = (
   externalClaims: [],
   targets: [{ kind: "file", value: "src/auth/refresh.ts" }],
   targetsReported: true,
+  droppedTargets: 0,
   truncated: false,
   droppedRows: 0,
 });

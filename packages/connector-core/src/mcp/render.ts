@@ -567,7 +567,11 @@ const completenessNotes = (diagnosis: Diagnosis): readonly string[] => [
   // only thing that can say it. A NOTE rather than a line of the section,
   // because it is a statement about completeness and the notes are the one
   // thing this document pays for before any row of any section.
-  ...(diagnosis.targets.length >= HUB_MAX_DIAGNOSIS_TARGETS
+  // Measured against what the hub SENT, not against what survived parsing: a
+  // full page with one unreadable row is still a full page, and dropping the
+  // note there loses it exactly when the tree is fullest.
+  ...(diagnosis.targets.length + diagnosis.droppedTargets >=
+  HUB_MAX_DIAGNOSIS_TARGETS
     ? [
         "Note: the hub returned as many targets as it will send, so more may exist.",
       ]
@@ -583,16 +587,33 @@ const completenessNotes = (diagnosis: Diagnosis): readonly string[] => [
  * them into a shared "no files touched" would be the lie a reader cannot
  * detect: they would conclude their edit overlaps nobody.
  */
+/** The as-of the targets section can honestly carry; see its call site. */
+const TARGETS_AS_OF = "as captured during this work";
+
 const TARGETS_UNREPORTED =
   "This hub does not report captured targets.";
 const TARGETS_EMPTY =
   "No targets were captured for this work context.";
 
+/**
+ * The FOURTH state: the hub answered, and this client could not read what it
+ * said. Distinct from both silences above, because it is the only one of the
+ * three that is this client's fault — and the only one where a reader who
+ * acted on "no overlap" would be acting on a parse failure.
+ */
+const targetsUnreadable = (dropped: number): string =>
+  `The hub sent ${String(dropped)} target row${dropped === 1 ? "" : "s"} this client could not read.`;
+
 const targetsStateLines = (diagnosis: Diagnosis): readonly string[] => {
   if (!diagnosis.targetsReported) {
     return [TARGETS_UNREPORTED];
   }
-  return diagnosis.targets.length === 0 ? [TARGETS_EMPTY] : [];
+  if (diagnosis.targets.length > 0) {
+    return [];
+  }
+  return diagnosis.droppedTargets > 0
+    ? [targetsUnreadable(diagnosis.droppedTargets)]
+    : [TARGETS_EMPTY];
 };
 
 /** Same-author revision edge; its TARGET is the retracted claim. */
@@ -830,7 +851,19 @@ export const renderDiagnosis = (
     // claim line it displaces is counted by the claims section's own
     // "(+N claims not shown)".
     {
-      header: countHeader("Targets", diagnosis.targets.length),
+      // AS CAPTURED, NOT AS TRUE NOW. work_context_targets has no timestamp
+      // column, so a path here is undated by construction — and the claim
+      // lines below it now carry ages, which makes an unqualified list read
+      // as current by contrast. A path renamed a fortnight ago sends the
+      // reader to a file that is gone, or to a different file at the same
+      // name, and they conclude there is no overlap. The qualifier is a
+      // renderer-owned literal and costs no wire change; marking actual
+      // drift would mean running checkSolvedFileDrift for open trees too.
+      header: countHeader(
+        "Targets",
+        diagnosis.targets.length,
+        TARGETS_AS_OF,
+      ),
       rows: diagnosis.targets
         .slice(0, MAX_DIAGNOSIS_TARGETS_SHOWN)
         .map((target) => () => targetLine(target)),

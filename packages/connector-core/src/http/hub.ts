@@ -662,6 +662,24 @@ export interface Diagnosis {
    * no overlap — and it is a claim nobody made.
    */
   readonly targetsReported: boolean;
+  /**
+   * Target rows the hub sent that this client could not parse, kept SEPARATE
+   * from the aggregate `droppedRows` below.
+   *
+   * The aggregate is not enough, and the gap it left was the same
+   * undetectable lie `targetsReported` exists to prevent, one layer down. A
+   * hub a field ahead of this connector returns target rows this client
+   * rejects; `targetsReported` stays true and `targets` comes back empty, so
+   * the renderer said "No targets were captured for this work context." — a
+   * positive claim about the code that nobody made — with only a generic
+   * dropped-rows note that never names the section that lost them.
+   *
+   * It is also what the hub's own target bound has to be measured against:
+   * comparing the POST-drop count meant a full page with one bad row fell
+   * under the bound and the "more may exist" note disappeared exactly when
+   * the tree was fullest.
+   */
+  readonly droppedTargets: number;
   /** The hub hit its own 500/1000 bound — the tree returned is partial. */
   readonly truncated: boolean;
   /**
@@ -718,6 +736,7 @@ const DiagnosisEnvelopeSchema = z
       externalClaims: external.rows,
       targets: targets.rows,
       targetsReported: value.targets !== undefined,
+      droppedTargets: targets.dropped,
       truncated: value.truncated,
       droppedRows:
         claims.dropped + edges.dropped + external.dropped + targets.dropped,

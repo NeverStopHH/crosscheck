@@ -89,6 +89,7 @@ const diagnosis = (overrides: Partial<Diagnosis> = {}): Diagnosis => ({
   externalClaims: [],
   targets: [],
   targetsReported: true,
+  droppedTargets: 0,
   truncated: false,
   droppedRows: 0,
   ...overrides,
@@ -742,13 +743,79 @@ describe("renderDiagnosis", () => {
 
     // Assert: its own bounded section, BARE tokens (a path is not prose and
     // must stay copy-pasteable), placed before the claims
-    expect(rendered).toContain("Targets (3):");
+    expect(rendered).toContain("Targets (3), as captured during this work:");
     expect(rendered).toContain("- file src/auth/refresh.ts");
     expect(rendered).toContain("- symbol verifyToken");
     expect(rendered).not.toContain("«src/auth/refresh.ts»");
-    expect(rendered.indexOf("Targets (3):")).toBeLessThan(
+    expect(rendered.indexOf("Targets (3), as captured during this work:")).toBeLessThan(
       rendered.indexOf("Claims ("),
     );
+  });
+
+  test("says the hub sent targets it could not read, never that none exist", () => {
+    // Arrange: the drop count was folded into one aggregate droppedRows
+    // alongside claims and edges, so a hub whose target rows this client
+    // cannot parse rendered TARGETS_EMPTY — "No targets were captured" — plus
+    // a generic note that never says WHICH section lost rows. That is the
+    // same undetectable lie targetsReported was added to prevent, one layer
+    // down: the reader concludes there is no overlap and edits over somebody.
+    // Act
+    const rendered = renderDiagnosis(
+      diagnosis({ targets: [], targetsReported: true, droppedTargets: 3 }),
+      NOW,
+    );
+
+    // Assert: a fourth honest state, distinct from "the hub does not report
+    // targets" and from "nothing was captured"
+    expect(rendered).not.toContain("No targets were captured");
+    expect(rendered).toContain("The hub sent 3 target rows this client could not read.");
+  });
+
+  test("counts the rows it could not read toward the hub's own target bound", () => {
+    // Arrange: the bound note compared the POST-drop count, so a full page of
+    // HUB_MAX_DIAGNOSIS_TARGETS with one bad row fell one under the bound and
+    // the "more may exist" note vanished — exactly when the tree was fullest.
+    const nearlyFull = Array.from(
+      { length: HUB_MAX_DIAGNOSIS_TARGETS - 1 },
+      (_unused, index) => ({
+        kind: "file",
+        value: `src/mod/file${String(index).padStart(3, "0")}.ts`,
+      }),
+    );
+
+    // Act
+    const rendered = renderDiagnosis(
+      diagnosis({
+        targets: nearlyFull,
+        targetsReported: true,
+        droppedTargets: 1,
+      }),
+      NOW,
+    );
+
+    // Assert
+    expect(rendered).toContain(
+      "Note: the hub returned as many targets as it will send, so more may exist.",
+    );
+  });
+
+  test("qualifies the file list as captured then, not as true now", () => {
+    // Arrange: work_context_targets has no timestamp column, so a captured
+    // path is undated by construction — and the claim lines beside it now
+    // carry ages, which makes an unqualified list read as current by
+    // contrast. A path renamed a fortnight ago sends the reader to a file
+    // that is no longer there, or to a different file at the same path.
+    // Act
+    const rendered = renderDiagnosis(
+      diagnosis({
+        targets: [{ kind: "file", value: "src/auth/refresh.ts" }],
+        targetsReported: true,
+      }),
+      NOW,
+    );
+
+    // Assert
+    expect(rendered).toContain("Targets (1), as captured during this work:");
   });
 
   test("keeps an ordinary path readable when a word trips the phrase filter", () => {
@@ -824,7 +891,7 @@ describe("renderDiagnosis", () => {
 
     // Assert: cut, and the cut is stated in the same counting every other
     // section gets — never a silent truncation
-    expect(rendered).toContain("Targets (30):");
+    expect(rendered).toContain("Targets (30), as captured during this work:");
     expect(rendered).toContain("- file src/mod/file00.ts");
     expect(rendered).not.toContain("src/mod/file20.ts");
     expect(rendered).toContain(

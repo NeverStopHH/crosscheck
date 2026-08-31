@@ -435,6 +435,7 @@ const diagnosisWith = (payload: string): Diagnosis => ({
   // and both now reach the reader, so the corpus has to plant in them.
   targets: [{ kind: payload, value: payload }],
   targetsReported: true,
+  droppedTargets: 0,
   truncated: false,
   droppedRows: 0,
 });
