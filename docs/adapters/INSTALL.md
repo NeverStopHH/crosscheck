@@ -260,9 +260,12 @@ to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
   (fires / NONE / set / failed) and `doctor` has an `intent capture` check
   that WARNs on any booked failure or on two fires that landed nothing.
   The `set_intent` MCP tool states the intent outright (declared,
-  confidence 1) and replaces a derived one. Cursor and ACP sessions have no
-  derived intent — no `claude -p` there — but `set_intent` works for any
-  MCP-connected agent.
+  confidence 1) and replaces a derived one. Cursor and ACP sessions derive an
+  intent too since the model runner moved into `connector-core`: Cursor on
+  `beforeSubmitPrompt`, ACP on the `session/prompt` request. Both need a
+  model backend on the machine — `doctor` prints a `derive backend` line per
+  connector saying whether one resolved — and `set_intent` works for any
+  MCP-connected agent either way.
 
 ## Cursor IDE (≥ 1.7)
 
