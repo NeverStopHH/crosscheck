@@ -487,11 +487,15 @@ const sectionReserve = (section: Section): number =>
  * DIAGNOSIS_MAX_CLAIMS) each at MAX_CLAIM_BODY_LENGTH.
  *
  * VERIFY: bun run packages/connector-core/scripts/measure-diagnosis-render.ts --check
- * PRINTS: eager-vs-lazy speedup >= 5x: true
+ * PRINTS: eager-vs-lazy speedup >= 2x: true
  * PRINTS: lazy p50 under 25 ms: true
  *
  * A reading from one host on one day, like every other timing in this repo;
- * the script prints the raw milliseconds without --check.
+ * the script prints the raw milliseconds without --check. The ratio threshold
+ * is 2 and not the 28.8x this machine measures, because the first version
+ * pinned 5 and a shared CI runner printed false: at a 0.2 ms denominator the
+ * ratio measures the runner's scheduler, not this file. Two still fails hard
+ * on the defect it guards — materialising every row scores about 1x.
  */
 export const appendSection = (
   accumulated: readonly string[],

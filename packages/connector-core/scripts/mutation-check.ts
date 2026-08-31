@@ -329,12 +329,14 @@ export const MUTATIONS: readonly Mutation[] = [
     // content on both sides must render identical blocks.
     label: "referee position B renders under a smaller budget than position A",
     file: `${CORE}/src/mcp/render-referee.ts`,
-    from:
-      '    { header, lines, total: lines.length, noun: "line" },\n' +
-      "    MAX_REFEREE_POSITION_CHARS,",
-    to:
-      '    { header, lines, total: lines.length, noun: "line" },\n' +
-      '    label === "A" ? MAX_REFEREE_POSITION_CHARS : MAX_REFEREE_SHARED_CHARS,',
+    // Re-anchored: this branch's own thunking fix turned the one-line section
+    // literal into a multi-line one carrying `rows: lines.map(...)`, so the old
+    // anchor matched nothing and the whole run aborted rather than reporting a
+    // false catch. The anchor now holds only the closing brace and the budget
+    // argument — the part this mutation is actually about, and the part a
+    // reflow cannot move.
+    from: "    },\n    MAX_REFEREE_POSITION_CHARS,",
+    to: '    },\n    label === "A" ? MAX_REFEREE_POSITION_CHARS : MAX_REFEREE_SHARED_CHARS,',
     test: `${CORE}/test/mcp-referee-render.test.ts`,
     because:
       "one side's case renders fuller than the other's on every brief while " +
