@@ -32,6 +32,9 @@ import * as failureText from "../src/capture/failure-text.ts";
 import * as registerFlow from "../src/flows/register-session.ts";
 import * as titleFlow from "../src/flows/work-context-title.ts";
 import * as captureFlows from "../src/flows/capture-targets.ts";
+import * as touchedFilesFlow from "../src/flows/capture-touched-files.ts";
+import * as bookkeeping from "../src/state/capture-bookkeeping.ts";
+import * as touchedRoot from "../src/capture/touched-root.ts";
 import * as heartbeatFlow from "../src/flows/heartbeat.ts";
 import * as endFlow from "../src/flows/end-session.ts";
 import * as briefingFlow from "../src/flows/briefing.ts";
@@ -142,6 +145,9 @@ const FACADE_ROWS: readonly (readonly [string, unknown])[] = [
   ["resolveFallbackWorkContextTitle", titleFlow.resolveFallbackWorkContextTitle],
   ["captureFileTargets", captureFlows.captureFileTargets],
   ["captureFailure", captureFlows.captureFailure],
+  ["captureTouchedFiles", touchedFilesFlow.captureTouchedFiles],
+  ["withCaptureBookkeeping", bookkeeping.withCaptureBookkeeping],
+  ["resolveTouchedRoots", touchedRoot.resolveTouchedRoots],
   ["heartbeatMaybe", heartbeatFlow.heartbeatMaybe],
   ["endSessionFlow", endFlow.endSessionFlow],
   ["assembleBriefing", briefingFlow.assembleBriefing],
@@ -206,6 +212,22 @@ describe("the connector kit facade", () => {
     expect(exported.filter((name) => !pinned.includes(name)).sort()).toEqual([]);
     expect(pinned.filter((name) => !exported.includes(name)).sort()).toEqual([]);
     expect(new Set(pinned).size).toBe(pinned.length);
+  });
+
+  test("the worktree-aware capture seam is on the documented surface", () => {
+    // Review finding P4. The kit is what a NEW connector programs against,
+    // and it offered only `captureFileTargets` — the PRE-#17 call, whose
+    // `resolveRoot` hook is optional and whose absence means "resolve every
+    // touch against the session checkout". A fifth connector written against
+    // the facade would therefore lose every edit made in a linked worktree,
+    // with no counter, no verify-claims line and no mutation firing, because
+    // the two directives that keep the seam honest only glob packages/*/src.
+    //
+    // The three shipped connectors all go through `captureTouchedFiles` +
+    // `withCaptureBookkeeping`; the facade must offer the same pair.
+    expect(kit.captureTouchedFiles).toBe(touchedFilesFlow.captureTouchedFiles);
+    expect(kit.withCaptureBookkeeping).toBe(bookkeeping.withCaptureBookkeeping);
+    expect(kit.resolveTouchedRoots).toBe(touchedRoot.resolveTouchedRoots);
   });
 
   test("the kit never exports the legacy identity spelling", () => {

@@ -60,8 +60,13 @@ export interface DeveloperContextGroup<T extends GroupableContext> {
    * How many DISTINCT OTHER titles this teammate has in the window. Distinct,
    * because the same branch open in two worktrees is one piece of work seen
    * twice and counting it twice would overstate what the reader is not seeing.
+   *
+   * NAMED FOR WHAT IT COUNTS, after `collapsed` invited the renderer to print
+   * it as ", N more contexts" — a noun for rows, on a number of titles. Four
+   * contexts under two titles read as two open sessions when there were four,
+   * and the number is the only quantitative fact on that line.
    */
-  readonly collapsed: number;
+  readonly otherTitles: number;
 }
 
 interface Accumulator<T extends GroupableContext> {
@@ -113,7 +118,7 @@ export const groupContextsByDeveloper = <T extends GroupableContext>(
   return [...groups.values()]
     .map((group) => ({
       shown: group.shown,
-      collapsed: group.titles.size - 1,
+      otherTitles: group.titles.size - 1,
     }))
     .sort(
       (left, right) =>

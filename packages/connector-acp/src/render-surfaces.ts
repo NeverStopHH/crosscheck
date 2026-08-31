@@ -94,6 +94,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "acp-briefing-block",
+    delivery: "unsolicited",
     module: "src/inject/blocks.ts",
     framing: "framed",
     render: (payload) =>
@@ -108,6 +109,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "acp-claim-hint-block",
+    delivery: "unsolicited",
     module: "src/inject/blocks.ts",
     framing: "framed",
     render: (payload) =>
@@ -121,6 +123,9 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "acp-derive-capability-line",
+    // `crosscheck doctor` stdout, like cli-doctor itself: the reader ran the
+    // command and is waiting for this answer.
+    delivery: "pulled",
     module: "src/doctor.ts",
     framing: "bare",
     render: (payload) =>
@@ -134,6 +139,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "acp-pointer-hint-block",
+    delivery: "unsolicited",
     module: "src/inject/blocks.ts",
     framing: "framed",
     render: (payload) =>

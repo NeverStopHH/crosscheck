@@ -25,7 +25,7 @@ import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts
 import { MCP_SERVER_KEY } from "@crosscheck/connector-core/constants.ts";
 import { readTextOrNull } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { summarizeSummarizerCost } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
+import { summarizeStateCosts } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
 import { bareSummarizerLine } from "@crosscheck/connector-core/model/runner.ts";
 import { CURSOR_HOST_KEY_PREFIX } from "@crosscheck/connector-core/state/host-session-key.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -293,7 +293,7 @@ const sliceShapeNote = (
 const capabilityChecks = (
   liveStates: readonly SessionState[],
 ): readonly CursorCheck[] => {
-  const summarizer = summarizeSummarizerCost(liveStates);
+  const summarizer = summarizeStateCosts(liveStates);
   const intentFails = liveStates.reduce(
     (total, state) => total + state.intentFailCount,
     0,

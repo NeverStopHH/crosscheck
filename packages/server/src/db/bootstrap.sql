@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   ended_at timestamptz
 );
 
+-- Reap bookkeeping (review finding B2-01): tells a hub-inferred end from a
+-- connector-reported one, so the inferred one can be revoked when a record
+-- from that session proves it wrong. ALTER so one statement covers fresh
+-- databases and ones created before the column.
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS reaped_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS agent_sessions_repo_idx
   ON agent_sessions (repo);
 CREATE INDEX IF NOT EXISTS agent_sessions_heartbeat_idx
@@ -55,6 +61,11 @@ CREATE TABLE IF NOT EXISTS work_context_targets (
   PRIMARY KEY (work_context_id, kind, value)
 );
 
+-- The age a targets-only prompt pointer states (trial finding #19). Nullable
+-- and set by ingestTarget, so a row that predates this column reads null and
+-- the pointer says "age unknown" rather than a fabricated now() age.
+ALTER TABLE work_context_targets ADD COLUMN IF NOT EXISTS created_at timestamptz;
+
 -- The derived-contradictions join matches targets on (kind, value) with the
 -- PK's leading column unconstrained (services/contradictions.ts) — without
 -- this, every read of GET /api/contradictions scans the whole targets table.
@@ -67,7 +78,11 @@ CREATE TABLE IF NOT EXISTS claims (
   author_session_id text NOT NULL REFERENCES agent_sessions(id),
   kind text NOT NULL,
   -- keep in sync with MAX_CLAIM_BODY_LENGTH in @crosscheck/schema
-  body text NOT NULL CONSTRAINT claims_body_length_check CHECK (char_length(body) <= 400),
+  -- (test/ddl-sync.test.ts reddens the build when this number and the constant
+  -- disagree). THIS LINE ONLY EVER REACHES A FRESH DATABASE — the CREATE TABLE
+  -- is IF NOT EXISTS, so a hub that already has a claims table keeps the bound
+  -- it was created with. The ALTER at the end of this file is what moves those.
+  body text NOT NULL CONSTRAINT claims_body_length_check CHECK (char_length(body) <= 10000),
   status text NOT NULL,
   confidence double precision NOT NULL,
   capture_mode text NOT NULL,
@@ -405,3 +420,43 @@ CREATE INDEX IF NOT EXISTS claims_work_context_created_idx
 -- Mirrored in db/schema.ts.
 CREATE INDEX IF NOT EXISTS hint_deliveries_session_delivered_idx
   ON hint_deliveries (session_id, delivered_at DESC);
+
+-- ── Room for a long finding (Nick's gap 3) ──────────────────────────────────
+
+-- The claims table is created with its body bound inline, and CREATE TABLE IF
+-- NOT EXISTS is a NO-OP on every hub that already has one — so raising the
+-- number up there reaches new databases only, and an existing hub would keep
+-- refusing the long bodies its connectors have already started sending. This
+-- ALTER is what moves them, and it runs on every hub start.
+--
+-- IT CANNOT FAIL ON DATA. The bound only ever widens, so no stored row can
+-- violate the new constraint.
+--
+-- GUARDED, BECAUSE THIS FILE RUNS ON EVERY START. An unconditional DROP then
+-- ADD is idempotent in the sense that it does not error, and that is not the
+-- same as harmless: ADD CONSTRAINT takes ACCESS EXCLUSIVE and revalidates
+-- every row, so a hub with a large claims table paid a full-table exclusive
+-- lock on every restart to re-prove a bound that already held — a stall that
+-- grows with the data. Worse, between the DROP and the ADD there is a window,
+-- widening with the table, in which a concurrent writer faces NO body bound.
+--
+-- So the pair only runs when the stored bound is not already the wanted one.
+-- test/ddl-sync.test.ts pins it by oid: a re-added constraint gets a new one.
+--
+-- questions.body is deliberately NOT touched: a question is a sentence
+-- somebody has to answer, and MAX_QUESTION_BODY_LENGTH did not move.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'claims_body_length_check'
+      AND conrelid = 'claims'::regclass
+      AND pg_get_constraintdef(oid) = 'CHECK ((char_length(body) <= 10000))'
+  ) THEN
+    ALTER TABLE claims DROP CONSTRAINT IF EXISTS claims_body_length_check;
+    ALTER TABLE claims ADD CONSTRAINT claims_body_length_check
+      CHECK (char_length(body) <= 10000);
+  END IF;
+END
+$$;

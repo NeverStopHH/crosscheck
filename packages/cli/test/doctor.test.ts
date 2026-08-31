@@ -12,6 +12,8 @@ import {
 } from "../src/index.ts";
 import {
   ensureDir,
+  spoolCursorPath,
+  spoolDataPath,
   spoolDir,
   spoolDropsPath,
   spoolFlushLockPath,
@@ -35,11 +37,45 @@ const doctorEnv = (home: string) => ({
 });
 
 const paths: string[] = [];
+const stops: (() => void)[] = [];
 
 afterEach(async () => {
+  for (const stop of stops) {
+    stop();
+  }
+  stops.length = 0;
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
   paths.length = 0;
 });
+
+/** A hub whose `?open=1` answers with `count` silent-but-open sessions. */
+const startOpenSessionsHub = (
+  count: number,
+): { readonly url: string; readonly stop: () => void } => {
+  const sessions = Array.from({ length: count }, (_unused, index) => ({
+    id: `ses_${String(index)}`,
+    repo: REPO_ID,
+    branch: "main",
+    status: "done",
+    lastHeartbeatAt: new Date(Date.now() - MS_PER_DAY).toISOString(),
+  }));
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request) => {
+      const { pathname } = new URL(request.url);
+      if (pathname === "/api/sessions") {
+        return Promise.resolve(Response.json({ ok: true, data: { sessions } }));
+      }
+      return Promise.resolve(Response.json({ ok: true, data: {} }));
+    },
+  });
+  return {
+    url: `http://127.0.0.1:${String(server.port)}`,
+    stop: () => {
+      server.stop(true);
+    },
+  };
+};
 
 const fixture = async (): Promise<{
   readonly repo: string;
@@ -227,6 +263,54 @@ describe("crosscheck doctor foreign-repo drops check (trial finding #9)", () => 
   });
 });
 
+/**
+ * Anhang A, A4-10: `readCursorOffset` refuses any cursor that fails
+ * `isSameFile`, and half of that identity is the inode — so a `~/.crosscheck`
+ * that was copied or restored gets new inodes and every ALREADY-DELIVERED
+ * line reads as pending. 315 phantom records were observed on one such home,
+ * and `spool depth` reported them in the voice it uses for real backlog.
+ * Replay is safe (the hub dedups); the line just has to say which kind of
+ * pending it is looking at.
+ */
+describe("crosscheck doctor spool depth wording", () => {
+  test("a cursor from a different file explains the pending count", async () => {
+    // Arrange: one delivered record, plus a cursor whose stored identity
+    // belongs to a file that no longer exists at that path.
+    const { repo, home } = await fixture();
+    const key = repoKey(HUB_URL, REPO_ID);
+    await ensureDir(spoolDir(home, key));
+    await writeFile(
+      spoolDataPath(home, key, "restored-session"),
+      `${JSON.stringify({ id: "env_1", kind: "work_context" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      spoolCursorPath(home, key, "restored-session"),
+      `${JSON.stringify({ ino: 999_999, firstLine: "0".repeat(32), offset: 0 })}\n`,
+      "utf8",
+    );
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("cursor identity changed for 1 session file");
+    expect(result.stdout).toContain("the hub deduplicates them");
+  });
+
+  test("an ordinary spool says nothing extra", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+
+    // Act
+    const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  spool depth  0 pending records");
+    expect(result.stdout).not.toContain("cursor identity changed");
+  });
+});
+
 describe("crosscheck doctor spool drops check", () => {
   test("says the drop total is a lower bound when a ledger append failed", async () => {
     // Arrange: a directory where the ledger file belongs, so its append fails
@@ -392,6 +476,47 @@ describe("crosscheck doctor unclosed sessions check", () => {
 
     // Act
     const result = await runCli(["doctor"], doctorEnv(home), repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  unclosed sessions  none");
+  });
+
+  test("the hub's number is named as sessions that STOPPED reporting", async () => {
+    // Arrange: a hub answering ?open=1 with two rows. The endpoint returns
+    // only sessions that are open AND silent past the reaper's window
+    // (services/sessions.ts listOpenSessions), so the sentence has to say so —
+    // "holds 1 of your sessions open" read as a defect on every machine with
+    // somebody working on it (review finding B2-03).
+    const { repo, home } = await fixture();
+    const hub = startOpenSessionsHub(2);
+    stops.push(hub.stop);
+
+    // Act
+    const result = await runCli(
+      ["doctor"],
+      { ...doctorEnv(home), CROSSCHECK_HUB_URL: hub.url },
+      repo,
+    );
+
+    // Assert
+    expect(result.stdout).toContain("WARN  unclosed sessions");
+    expect(result.stdout).toContain(
+      "hub still holds 2 of your sessions open with no heartbeat",
+    );
+  });
+
+  test("a hub with no silent sessions leaves the line at PASS", async () => {
+    // Arrange
+    const { repo, home } = await fixture();
+    const hub = startOpenSessionsHub(0);
+    stops.push(hub.stop);
+
+    // Act
+    const result = await runCli(
+      ["doctor"],
+      { ...doctorEnv(home), CROSSCHECK_HUB_URL: hub.url },
+      repo,
+    );
 
     // Assert
     expect(result.stdout).toContain("PASS  unclosed sessions  none");

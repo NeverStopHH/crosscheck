@@ -24,7 +24,7 @@
  * with this note rather than half-built. The lexical fast path (exact targets +
  * FTS) is the one the design names normative for the sync budget.
  */
-import { and, desc, eq, gt, inArray, isNull, ne, notExists, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, ne, notExists, or, sql } from "drizzle-orm";
 
 import {
   agentSessions,
@@ -35,7 +35,11 @@ import {
   workContextTargets,
 } from "../db/schema.ts";
 import { presenceCutoff } from "./presence.ts";
-import { searchWorkContexts } from "./search.ts";
+import {
+  exactTargetTokenConditions,
+  exactTokens,
+  searchWorkContexts,
+} from "./search.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
 import type { SearchResultKind, SearchTier } from "./search.ts";
@@ -69,6 +73,14 @@ export const HINT_MAX_CONTEXTS = 3;
 export const HINT_MAX_CLAIMS_PER_CONTEXT = 30;
 
 /**
+ * Most matched targets one candidate carries for the #19 pointer. The pointer
+ * names ONE ("touched <path> <age> ago"), so this is generous headroom that
+ * keeps the query bounded like every other query on the hub, not a working
+ * limit.
+ */
+export const HINT_MAX_MATCHED_TARGETS_PER_CONTEXT = 5;
+
+/**
  * How many search rows are fetched before the tier floor runs. The CALLER's
  * own contexts are excluded inside the search itself (excludeDeveloperId) —
  * filtered after this bound, a busy reader's own fresh contexts would fill
@@ -97,6 +109,13 @@ export interface HintClaimCandidate {
   readonly createdAt: string;
 }
 
+export interface MatchedTargetView {
+  readonly kind: string;
+  readonly value: string;
+  /** First-seen ingest time, or null for a row that predates the column (#19). */
+  readonly createdAt: string | null;
+}
+
 export interface HintContextCandidate {
   readonly workContext: {
     readonly id: string;
@@ -123,6 +142,14 @@ export interface HintContextCandidate {
     readonly updatedAt: string | null;
   };
   readonly claims: readonly HintClaimCandidate[];
+  /**
+   * The targets this context carries that the PROMPT lexically named (trial
+   * finding #19): the exact-tier predicate's own matches, so a targets-only
+   * pointer says "touched <path> <age> ago" for a file the reader's prompt
+   * actually mentioned — no body, the same anchoring asymmetry. Empty when the
+   * context matched on FTS alone.
+   */
+  readonly matchedTargets: readonly MatchedTargetView[];
 }
 
 /**
@@ -260,6 +287,52 @@ const listBaseCommits = async (
   return new Map(rows.map((row) => [row.id, row.baseCommit]));
 };
 
+/**
+ * The targets each candidate carries that the query's exact tokens matched
+ * (trial finding #19) — ONE bounded query over `work_context_targets` for all
+ * candidate ids, using the SAME predicate the exact tier ranked them on
+ * (search.ts `exactTargetTokenConditions`). Grouped by context and capped per
+ * context so a target-heavy tree cannot unbound the response.
+ */
+const listMatchedTargets = async (
+  db: Db,
+  workContextIds: readonly string[],
+  tokens: readonly string[],
+): Promise<ReadonlyMap<string, readonly MatchedTargetView[]>> => {
+  if (workContextIds.length === 0 || tokens.length === 0) {
+    return new Map();
+  }
+  const rows = await db
+    .select({
+      workContextId: workContextTargets.workContextId,
+      kind: workContextTargets.kind,
+      value: workContextTargets.value,
+      createdAt: workContextTargets.createdAt,
+    })
+    .from(workContextTargets)
+    .where(
+      and(
+        inArray(workContextTargets.workContextId, workContextIds),
+        or(...exactTargetTokenConditions(tokens)),
+      ),
+    )
+    .limit(workContextIds.length * HINT_MAX_MATCHED_TARGETS_PER_CONTEXT);
+  const byContext = new Map<string, MatchedTargetView[]>();
+  for (const row of rows) {
+    const list = byContext.get(row.workContextId) ?? [];
+    if (list.length >= HINT_MAX_MATCHED_TARGETS_PER_CONTEXT) {
+      continue;
+    }
+    list.push({
+      kind: row.kind,
+      value: row.value,
+      createdAt: row.createdAt === null ? null : row.createdAt.toISOString(),
+    });
+    byContext.set(row.workContextId, list);
+  }
+  return byContext;
+};
+
 export interface HintCandidatesQuery {
   readonly query: string;
   readonly repo: string;
@@ -293,9 +366,10 @@ export const listHintCandidates = async (
     .filter((row) => row.developerId !== callerDeveloperId)
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = eligible.map((row) => row.id);
-  const [claimsByContext, baseCommits] = await Promise.all([
+  const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
     listContextClaims(deps.db, callerDeveloperId, ids),
     listBaseCommits(deps.db, ids),
+    listMatchedTargets(deps.db, ids, exactTokens(input.query)),
   ]);
   return eligible.map((row) => ({
     workContext: {
@@ -313,6 +387,7 @@ export const listHintCandidates = async (
       updatedAt: row.updatedAt,
     },
     claims: claimsByContext.get(row.id) ?? [],
+    matchedTargets: matchedTargets.get(row.id) ?? [],
   }));
 };
 

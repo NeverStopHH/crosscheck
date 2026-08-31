@@ -395,3 +395,59 @@ describe("cross-developer read access (DESIGN.md §2.1: one hub = one trust spac
     expect(body.data.edges).toHaveLength(1);
   });
 });
+
+describe("GET /api/work-contexts carries targetCount (trial finding #20)", () => {
+  test("a row's targetCount is its own targets and claimCount stays exact", async () => {
+    // Arrange: one tree with TWO claims and TWO targets. A naive second
+    // leftJoin would cross-multiply (2 × 2 = 4 claims); the row must say 2/2.
+    const setup = await createHarnessWithSession();
+    await seedDiagnosisTree(setup);
+    await postRecords(setup.harness, setup.developer, {
+      records: [
+        recordEnvelope("target", {
+          workContextId: WORK_CONTEXT_ID,
+          kind: "file",
+          value: "src/auth/refresh.ts",
+        }),
+        recordEnvelope("target", {
+          workContextId: WORK_CONTEXT_ID,
+          kind: "symbol",
+          value: "verifyToken",
+        }),
+      ],
+    });
+
+    // Act
+    const response = await setup.harness.app.request(
+      REPO_QUERY,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+
+    // Assert
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      data: { workContexts: (WorkContextListEntry & { targetCount: number })[] };
+    };
+    const row = body.data.workContexts.find((entry) => entry.id === WORK_CONTEXT_ID);
+    expect(row?.claimCount).toBe(2);
+    expect(row?.targetCount).toBe(2);
+  });
+
+  test("a tree with no targets reports targetCount 0", async () => {
+    // Arrange
+    const setup = await createHarnessWithSession();
+    await seedDiagnosisTree(setup);
+
+    // Act
+    const response = await setup.harness.app.request(
+      REPO_QUERY,
+      jsonRequest("GET", setup.developer.apiKey),
+    );
+
+    // Assert
+    const body = (await response.json()) as {
+      data: { workContexts: { id: string; targetCount: number }[] };
+    };
+    expect(body.data.workContexts[0]?.targetCount).toBe(0);
+  });
+});

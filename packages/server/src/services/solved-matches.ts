@@ -143,22 +143,37 @@ interface PairRow {
  * query and was learned the hard way. A join of the target table against
  * itself makes a row per PAIR, so N contexts sharing one value — a lockfile,
  * or the error every session hits — cost N², and the LIMIT can only apply
- * after the ORDER BY has materialized all of them. Measured on a seeded hub
- * of 10^4 contexts: 1.2 s with 2000 contexts sharing one fingerprint, on the
- * SessionStart path whose whole hook budget is 1000 ms. Worse than the time,
- * the ANSWER fell out: 400 unsolved contexts sharing a hot fingerprint fill
- * the pair window ahead of the one solved tree that shares it, so the busiest
- * hub is the one where collective memory silently says nothing
+ * after the ORDER BY has materialized all of them. Worse than the time, the
+ * ANSWER falls out: unsolved contexts sharing a hot fingerprint fill the pair
+ * window ahead of the one solved tree that shares it, so the busiest hub is
+ * the one where collective memory silently says nothing
  * (test/solved-fanout.test.ts). Hence two bounds:
  *
  *   - the CANDIDATE side must already hold a claim that could make it solved
  *     (solvedCandidateCondition — necessary, never sufficient, with the
- *     authoritative rule still applied by listSolvedInfo below). Unsolved
- *     crowds never enter the join at all, which is what makes both the cost
- *     and the window a function of ANSWERS rather than of traffic;
+ *     authoritative rule still applied by listSolvedInfo below);
  *   - the LIVE side is the repo's most recently active contexts, capped at
  *     SOLVED_MATCH_MAX_LIVE_CONTEXTS. "Current work" is a small set by
  *     definition, and capping it caps the multiplier that is left.
+ *
+ * WHAT THE CANDIDATE BOUND BUYS, MEASURED rather than asserted. A seeded
+ * 10^4-context repo where every context shares ONE fingerprint (10^8 ordered
+ * pairs) and exactly one of them is a solved tree, median of three:
+ *
+ *   candidate bound removed   5,910 ms   0 matches — the one answer is lost
+ *   candidate bound applied   4,664 ms   1 match  — the answer survives
+ *
+ * So it is a CORRECTNESS bound, and only incidentally a cheaper one: it saves
+ * 21 % of the time and rescues the whole answer. Do NOT read it as making the
+ * cost a function of answers — holding the answer count at one and growing the
+ * unsolved crowd 100x in pairs took the same read from 437 ms to 4,664 ms.
+ * This read is linear in traffic and is a known residual; SessionStart stays
+ * inside its 1000 ms because connector-core's HTTP_TIMEOUT_MS cuts the
+ * briefing fan-out at 400 ms and drops the section, not because this query is
+ * bounded.
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");console.log(s.SOLVED_MATCH_MAX_PAIR_ROWS, s.SOLVED_MATCH_MAX_LIVE_CONTEXTS)'
+ * PRINTS: 200 200
  *
  * Both sides may still be unsolved after all that — solvedness is resolved
  * once, in one bounded lookup, because the full solved rule is a claims-side

@@ -25,7 +25,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { summarizeSummarizerCost } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
+import { summarizeStateCosts } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
 import { bareSummarizerLine } from "@crosscheck/connector-core/model/runner.ts";
 import { ACP_HOST_KEY_PREFIX } from "@crosscheck/connector-core/state/host-session-key.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -142,7 +142,7 @@ const sliceCapNote = (acpStates: readonly SessionState[]): string | null => {
 const capabilityChecks = (
   acpStates: readonly SessionState[],
 ): readonly AcpCheck[] => {
-  const summarizer = summarizeSummarizerCost(acpStates);
+  const summarizer = summarizeStateCosts(acpStates);
   const sum = (pick: (state: SessionState) => number): number =>
     acpStates.reduce((total, state) => total + pick(state), 0);
   const last = (pick: (state: SessionState) => string | null): string | null =>

@@ -23,9 +23,12 @@
  * detection simply omits it.
  */
 import {
+  CONTEXT_MAX_AGE_DAYS,
   MAX_GHOST_POINTERS,
   MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
+  MS_PER_DAY,
+  WORK_CONTEXT_LIST_LIMIT,
 } from "../constants.ts";
 import { formatGhostLine } from "../briefing/ghost.ts";
 import {
@@ -126,7 +129,16 @@ export const assembleBriefing = async (
     ghostChecksResult,
   ] = await Promise.all([
     getPresence(hub, repoId),
-    getWorkContexts(hub, repoId),
+    // The window, passed EXPLICITLY (trial finding M8): the hub's default is
+    // still "everything, capped", so an older connector loses nothing, and
+    // this one asks for exactly the 14 days the renderer already filters to
+    // (briefing/render.ts) instead of pulling three months over a tailnet.
+    getWorkContexts(hub, repoId, {
+      since: new Date(
+        now.getTime() - CONTEXT_MAX_AGE_DAYS * MS_PER_DAY,
+      ).toISOString(),
+      limit: WORK_CONTEXT_LIST_LIMIT,
+    }),
     getAbsences(hub, repoId),
     getContradictions(hub, repoId),
     getSolvedMatches(hub, repoId),

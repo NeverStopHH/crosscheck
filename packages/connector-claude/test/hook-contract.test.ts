@@ -46,6 +46,7 @@ import {
   EXIT_DRIFT,
   EXIT_IN_SYNC,
   EXIT_UNREADABLE,
+  HOOK_PROBES,
   diffContract,
   extractContract,
   main as runContractWatch,
@@ -56,6 +57,7 @@ import type { MockHub } from "./fixtures/slow-hub.ts";
 import {
   POST_TOOL_USE_INPUT,
   POST_TOOL_USE_INPUT_FAILURE,
+  PRE_TOOL_USE_OUTPUT,
   SESSION_END_INPUT,
   SESSION_START_INPUT,
   SESSION_START_INPUT_WITH_TITLE,
@@ -320,6 +322,46 @@ describe("the drift watcher itself", () => {
     expect(report.lines.join("\n")).toContain("in sync");
   });
 
+  /**
+   * `sectionBody` resolves a section to its FIRST `### ` match, so a SECOND
+   * block under the same heading is unreachable and every probe aimed at it
+   * silently reads the first one instead. Merging two branches that had each
+   * grown their own PreToolUse section produced exactly that: 35 fixture lines,
+   * the only `#### PreToolUse input` block among them, that no observation could
+   * reach — gutting the whole second block flipped 0 of 29 observations, while
+   * gutting the first flipped `PreToolUse.output.additionalContext`. The two are
+   * folded into one section now; this is what keeps them that way.
+   */
+  test("no `###` section is written twice, so no probe reads a dead block", async () => {
+    // Arrange
+    const hooks = await Bun.file(HOOKS_EXCERPT).text();
+
+    // Act
+    const headings = hooks
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("### "));
+
+    // Assert
+    expect(headings.length).toBeGreaterThan(0);
+    expect([...new Set(headings)]).toEqual(headings);
+  });
+
+  /**
+   * `extractContract` builds the view with `Object.fromEntries`, which keeps the
+   * LAST entry for a repeated key and says nothing about the one it dropped —
+   * so two copies of a probe can drift apart in silence, and no pinned count can
+   * show it, because every count is taken after the dedupe. Merging two branches
+   * that had each grown a PreToolUse block left 23 entries under 21 keys.
+   */
+  test("every probe key is written once, so no copy can drift unseen", () => {
+    // Act
+    const keys = HOOK_PROBES.map((probe) => probe.key);
+
+    // Assert
+    expect([...new Set(keys)]).toEqual(keys);
+  });
+
   test("fails loudly and names the observation when the snapshot disagrees", async () => {
     // Arrange: a snapshot claiming a field we depend on was never documented
     const dir = await mkdtemp(join(tmpdir(), "cx-contract-"));
@@ -387,7 +429,18 @@ describe("the drift watcher itself", () => {
       "every heading promoted one level",
       (hooks: string): string =>
         hooks.replace(/^### /gm, "#### ").replace(/^## /gm, "### "),
-      22,
+      // Widened three times before it settled here: M17 read EVENTS from the
+      // registered-hook list instead of a hand-kept literal (three events →
+      // six), the #17/#18/#20 round added sections of its own, and the merge
+      // of the two put PostToolUseFailure — this branch's event, and its
+      // fixture section — into that same registered list, making seven. Every
+      // section probe rides on the `### ` heading level, so each addition
+      // brought observations a heading promotion can flip. RE-DERIVED by
+      // running extractContract over the merged fixture, never adjusted by
+      // hand — 16 before M17, 26 after it, 20 on the other side of the merge,
+      // 22 and 27 as the two sides pinned it, and none of those is the answer
+      // for the union of both.
+      33,
     ],
   ] as const)(
     "KNOWN LIMIT: a formatting-only rewrite reports drift (%s)",
@@ -418,6 +471,63 @@ describe("the drift watcher itself", () => {
       expect(diffContract(before, after).length).toBe(expectedFlips);
     },
   );
+
+  /**
+   * Trial finding M17: the watcher's `EVENTS` list said three where the
+   * installer registers six, and its comment claimed to name "the events we
+   * register". The list is now read from the same constant both the installer
+   * and the doctor read, which kills that drift by construction — and these
+   * are the ten observations that appeared the moment it was.
+   */
+  test("the six registered events and the tripwire contract are all watched", async () => {
+    // Arrange
+    const hooks = await Bun.file(HOOKS_EXCERPT).text();
+    const statusline = await Bun.file(STATUSLINE_EXCERPT).text();
+
+    // Act
+    const view = extractContract({ hooks, statusline });
+
+    // Assert: the three events that were invisible
+    expect(view["event.PreToolUse"]).toBe(true);
+    expect(view["event.UserPromptSubmit"]).toBe(true);
+    expect(view["event.Stop"]).toBe(true);
+    // The tripwire's decision contract, `ask` included — it is a documented
+    // VALUE rather than a field name, and the quote-delimited rule finds it.
+    expect(view["PreToolUse.output.permissionDecision"]).toBe(true);
+    expect(view["PreToolUse.output.permissionDecisionReason"]).toBe(true);
+    expect(view["PreToolUse.output.ask"]).toBe(true);
+    // The prompt path and the summarizer gate's two inputs
+    expect(view["UserPromptSubmit.input.prompt"]).toBe(true);
+    expect(view["UserPromptSubmit.output.additionalContext"]).toBe(true);
+    expect(view["Stop.input.transcript_path"]).toBe(true);
+    expect(view["Stop.input.stop_hook_active"]).toBe(true);
+  });
+
+  test("the tripwire's own OUTPUT shape is pinned, not just its input", async () => {
+    // Arrange: only SessionStart's output was pinned before M17, so a rename
+    // on the decision-control side would have been caught by nothing.
+    const hooks = await Bun.file(HOOKS_EXCERPT).text();
+    const decision = PRE_TOOL_USE_OUTPUT.hookSpecificOutput;
+
+    // Act
+    const withoutDecision = hooks
+      .split("\n")
+      .filter((line) => !line.includes("permissionDecision"))
+      .join("\n");
+    const after = extractContract({
+      hooks: withoutDecision,
+      statusline: await Bun.file(STATUSLINE_EXCERPT).text(),
+    });
+
+    // Assert: the emitted shape is what the docs must keep documenting
+    expect(decision.hookEventName).toBe("PreToolUse");
+    expect(decision.permissionDecision).toBe("ask");
+    expect(typeof decision.permissionDecisionReason).toBe("string");
+    // …and removing it from the reference is seen, so the `true` above means
+    // something rather than the probe never looking.
+    expect(after["PreToolUse.output.permissionDecision"]).toBe(false);
+    expect(after["PreToolUse.output.permissionDecisionReason"]).toBe(false);
+  });
 
   test("sees a field that is gone, so a recorded true means something", async () => {
     // Arrange: the same excerpt with one documented field removed. Without

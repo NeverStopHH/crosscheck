@@ -293,9 +293,12 @@ export const ftsTokens = (query: string): readonly string[] =>
 
 /**
  * Whitespace words for the exact tier — a file path or fingerprint hash is
- * one "word" to a human but many to the letter/digit splitter.
+ * one "word" to a human but many to the letter/digit splitter. Exported so the
+ * hints service can gather the SAME targets the exact tier matched on
+ * (services/hints.ts, the #19 targets-only pointer), without a second copy of
+ * the tokenizer drifting from this one.
  */
-const exactTokens = (query: string): readonly string[] =>
+export const exactTokens = (query: string): readonly string[] =>
   boundTokens(
     query
       .toLowerCase()
@@ -306,6 +309,19 @@ const exactTokens = (query: string): readonly string[] =>
 /** LIKE treats % _ \ as syntax; a query word must arrive as literal text. */
 const escapeLike = (token: string): string =>
   token.replace(/[\\%_]/g, (char) => `\\${char}`);
+
+/**
+ * The exact-tier match predicate over `work_context_targets.value`: a token
+ * matches a target verbatim OR as the basename of a path-shaped one
+ * ("refresh.ts" finds "src/auth/refresh.ts"). Exported and shared with the
+ * hints service so the pointer surfaces EXACTLY the targets the exact tier
+ * ranked the context on — one spelling of the predicate, not two.
+ */
+export const exactTargetTokenConditions = (tokens: readonly string[]) =>
+  tokens.flatMap((token) => [
+    eq(sql`lower(${workContextTargets.value})`, token),
+    sql`lower(${workContextTargets.value}) LIKE ${`%/${escapeLike(token)}`} ESCAPE '\\'`,
+  ]);
 
 interface TierRow {
   readonly id: string;
@@ -367,12 +383,10 @@ const listExactTier = async (
   if (tokens.length === 0) {
     return [];
   }
-  const tokenConditions = tokens.flatMap((token) => [
-    eq(sql`lower(${workContextTargets.value})`, token),
-    // Basename match for path-shaped targets: "refresh.ts" finds the context
-    // that owns "src/auth/refresh.ts".
-    sql`lower(${workContextTargets.value}) LIKE ${`%/${escapeLike(token)}`} ESCAPE '\\'`,
-  ]);
+  // Basename match for path-shaped targets: "refresh.ts" finds the context
+  // that owns "src/auth/refresh.ts". Shared with the hints service's
+  // targets-only pointer (#19) so both match on exactly the same predicate.
+  const tokenConditions = exactTargetTokenConditions(tokens);
   return db
     .select({
       id: workContexts.id,

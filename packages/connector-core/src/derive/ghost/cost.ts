@@ -92,7 +92,7 @@ export const readGhostCost = async (
   hubUrl: string,
   repoId: string,
 ): Promise<GhostCost> =>
-  summarizeGhostCost(await readLiveSessionStates(home, hubUrl, repoId));
+  summarizeGhostCost((await readLiveSessionStates(home, hubUrl, repoId)).states);
 
 /** The one spelling of the ghost fact both CLI surfaces print. */
 export const formatGhostCost = (cost: GhostCost): string => {

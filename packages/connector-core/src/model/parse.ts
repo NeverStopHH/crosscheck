@@ -34,20 +34,22 @@
  *   as nothing. The scan is now brace-BALANCED and string-aware, and it tries
  *   each top-level object in turn (bounded by MAX_JSON_CANDIDATES).
  *
- * WHAT IS DELIBERATELY NOT TOLERATED: the claim CONTRACT itself. Kind, body
- * length and the derived-confidence cap are the schema's, unchanged, and an
- * answer that contradicts itself — a claim followed by a bare `NONE` line —
- * resolves to NONE, because dropping a draft is the cheap direction and
- * keeping one the model disowned is not.
+ * WHAT IS DELIBERATELY NOT TOLERATED: the claim CONTRACT itself. Kind and the
+ * derived-confidence cap are the schema's, unchanged; the BODY length is
+ * deliberately NOT the schema's — a derived draft is capped at
+ * SUMMARIZER_DRAFT_BODY_MAX_CHARS so the least trustworthy producer in the
+ * system cannot emit the longest records just because the human-facing wire
+ * cap rose. An answer that contradicts itself — a claim followed by a bare
+ * `NONE` line — resolves to NONE, because dropping a draft is the cheap
+ * direction and keeping one the model disowned is not.
  */
 import { z } from "zod";
-import {
-  ClaimKindSchema,
-  DERIVED_CONFIDENCE_CAP,
-  MAX_CLAIM_BODY_LENGTH,
-} from "@crosscheck/schema";
+import { ClaimKindSchema, DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 
-import { SUMMARIZER_DEFAULT_CONFIDENCE } from "../constants.ts";
+import {
+  SUMMARIZER_DEFAULT_CONFIDENCE,
+  SUMMARIZER_DRAFT_BODY_MAX_CHARS,
+} from "../constants.ts";
 
 /** `NONE`, tolerantly: spacing, case, and a stray full stop are all still NONE. */
 const NONE_PATTERN = /^none[.!]?$/i;
@@ -184,7 +186,7 @@ const jsonObjectCandidates = (text: string): readonly string[] => {
  */
 const DraftOutputSchema = z.looseObject({
   kind: ClaimKindSchema,
-  body: z.string().min(1).max(MAX_CLAIM_BODY_LENGTH),
+  body: z.string().min(1).max(SUMMARIZER_DRAFT_BODY_MAX_CHARS),
   confidence: z.number().min(0).max(1).optional(),
 });
 

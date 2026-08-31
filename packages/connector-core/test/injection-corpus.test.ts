@@ -75,8 +75,8 @@
  *
  *    THE CAP IS THE ONE INVARIANT THE CORPUS CANNOT EXERCISE, and saying so is
  *    the point. One payload in one slot is three lines of briefing: the longest
- *    all 56 payloads across all 8 slots can produce is 550 characters against
- *    the 2200 cap, 1650 short of ever reaching the assertion. So until the
+ *    all 57 payloads across all 10 slots can produce is 684 characters against
+ *    the 2200 cap, 1516 short of ever reaching the assertion. So until the
  *    `saturating briefings` block below existed, the per-line budget in
  *    render.ts's appendSection could be deleted with the whole suite green —
  *    measured, identically on macOS 26 arm64 and in oven/bun:1 under --cpus=2.
@@ -84,11 +84,25 @@
  *    every field at its cap, a shape production reaches, and lands 225
  *    characters under the cap while dropping lines it reports. It also records
  *    which of appendSection's three cap comparisons can be pinned at all — one
- *    of them provably cannot. Re-derive the 550 with:
+ *    of them provably cannot. Re-derive the 684 with:
  *
  *      bun test packages/connector-core/test/injection-corpus.test.ts
  *
  *    whose `the corpus alone cannot reach MAX_BRIEFING_CHARS` test asserts it.
+ *
+ *    Those four numbers rotted once — the sentence still said 56/8/550/1650
+ *    after the corpus and the slot list had both grown — so all three that a
+ *    command can reach are now pinned rather than counted by hand. The fourth,
+ *    1516, is 2200 - 684 and follows from the two below it.
+ *
+ * VERIFY: bun -e 'const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");console.log(INJECTION_CORPUS.length)'
+ * PRINTS: 61
+ *
+ * VERIFY: sed -n '/^const SLOTS: readonly Slot\[\] = \[/,/^\];/p' packages/connector-core/test/injection-corpus.test.ts | grep -c '^  "'
+ * PRINTS: 10
+ *
+ * VERIFY: grep -c '^const LONGEST_CORPUS_BRIEFING = 684;$' packages/connector-core/test/injection-corpus.test.ts
+ * PRINTS: 1
  *
  * 2. KNOWN-NOT-CAUGHT. The phrase filter is documented in briefing/sanitize.ts
  *    as opportunistic defence-in-depth, not a guarantee, and the cases below
@@ -442,7 +456,11 @@ const CORPUS_SHAPE: Readonly<Record<InjectionCategory, number>> = {
   "boundary-forgery": 4,
   invisible: 21,
   homoglyph: 3,
-  oversize: 2,
+  // 2 → 6 when the wire cap rose: four cases attack at the new maximum body
+  // length (a phrase buried deep, a frame escape at the tail, astral pairs
+  // across the cut, and the exact boundary), because room a corpus never
+  // entered is room nothing defends.
+  oversize: 6,
   structure: 4,
   "self-mimicry": 7,
 };
@@ -559,15 +577,17 @@ const payloadOf = (id: string): string => {
  * exception, and was wrong about the row directly above that carve-out. Seven of
  * the nine branches do have exactly one dependent payload. Two do not:
  * `system-reminder` has two, which the COMBINED_ATTACKS note below already
- * explains, and `ignore (all |the )?(previous|above)` has NINE, because most of
+ * explains, and `ignore (all |the )?(previous|above)` has TEN, because most of
  * the invisible-character payloads are built by splitting the words "ignore
  * previous" with a zero-width character — that phrase is the corpus's standard
  * carrier for a rejoining attack, so the branch that catches it carries them
- * all. Counted per branch, against the real branch list and the real cleaning
+ * all. It gained its tenth when the oversize cases grew to the raised body cap
+ * and one of them buries that same phrase deep inside a maximum-length body.
+ * Counted per branch, against the real branch list and the real cleaning
  * pipeline rather than a re-typed copy of either:
  *
  * VERIFY: bun -e 'const S=await import("./packages/connector-core/src/briefing/sanitize.ts");const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");const B=S.INJECTION_BRANCHES;const f=new RegExp("("+B.join("|")+")","i");for(const b of B){const w=new RegExp("("+B.filter(x=>x!==b).join("|")+")","i");console.log(INJECTION_CORPUS.filter(e=>{const c=S.cleanUntrusted(e.payload);return f.test(c)&&!w.test(c)}).length,b)}'
- * PRINTS: 9 ignore (all |the )?(previous|above)
+ * PRINTS: 10 ignore (all |the )?(previous|above)
  * PRINTS: 1 disregard
  * PRINTS: 1 system prompt
  * PRINTS: 2 system-reminder
@@ -577,9 +597,13 @@ const payloadOf = (id: string): string => {
  * PRINTS: 1 override
  * PRINTS: 1 do not tell
  *
- * What that means when the `ignore` branch goes: `bun test` reports 308 pass /
- * 11 fail, measured this round on macOS 26 arm64 and in oven/bun:1 under
- * --cpus=2. ELEVEN tests across three files — eight here, two in
+ * What that means when the `ignore` branch goes: ELEVEN tests go red, across
+ * three files. (An earlier version of this sentence also gave a pass TOTAL —
+ * "308 pass / 11 fail" — from a round when the suite was that size. It is
+ * HISTORICAL and is not re-derived here: a whole-suite pass count moves with
+ * every test anyone adds anywhere, so it says nothing about this branch. What
+ * identifies the branch is WHICH tests go red, and that list is below.)
+ * ELEVEN tests across three files — eight here, two in
  * sanitize.test.ts, and `renderBriefing > redacts a teammate title that reads as
  * an instruction` in render.test.ts. Of the eight here, seven name a payload
  * individually and the eighth is `the table pins every branch the
@@ -587,10 +611,19 @@ const payloadOf = (id: string): string => {
  * branch gone, this table has a row for a branch the implementation no longer
  * carries.
  *
- * Nine corpus payloads depend on the branch but only seven tests name one
- * individually; the other two (`fullwidth-homoglyph`,
- * `oversize-payload-past-the-cap`) are carried by the corpus-wide loops, which
- * stay green because redaction is not what they assert.
+ * Ten corpus payloads depend on the branch but only seven tests name one
+ * individually; the other three (`fullwidth-homoglyph`,
+ * `oversize-payload-past-the-cap`, `oversize-instruction-buried-deep`) are
+ * carried by the corpus-wide loops, which stay green because redaction is not
+ * what they assert. That is why growing the corpus to the raised body cap did
+ * not move the eleven above: the new oversize cases are loop-carried, and the
+ * count of individually-named pins is what decides it.
+ *
+ * Dependent payloads, and how many of them this file names individually — the
+ * second number is the one that decides the eleven:
+ *
+ * VERIFY: bun -e 'const S=await import("./packages/connector-core/src/briefing/sanitize.ts");const {INJECTION_CORPUS}=await import("./packages/connector-core/test/fixtures/injection-corpus.ts");const B=S.INJECTION_BRANCHES;const b="ignore (all |the )?(previous|above)";const f=new RegExp("("+B.join("|")+")","i");const w=new RegExp("("+B.filter(x=>x!==b).join("|")+")","i");const dep=INJECTION_CORPUS.filter(e=>{const c=S.cleanUntrusted(e.payload);return f.test(c)&&!w.test(c)});const t=await Bun.file("packages/connector-core/test/injection-corpus.test.ts").text();console.log(dep.length, dep.filter(e=>t.includes(JSON.stringify(e.id))).length)'
+ * PRINTS: 10 7
  *
  * Two ids — `disregard-bare` and `system-prompt-bare` — had to be ADDED to the
  * corpus to reach one-apiece on their rows, because the payload already named

@@ -331,13 +331,23 @@ const PendingEndSchema = z.looseObject({
 });
 
 /**
- * Ends the session a marker names. Returning false leaves the marker in place —
- * a hub that did not answer, or a hook with no budget left, must not be able to
- * make a deferred end disappear.
+ * Ends the session a marker names.
+ *
+ * THREE outcomes, not two (trial finding M6). `"retry"` leaves the marker
+ * where it is — a hub that did not answer, or a hook with no budget left,
+ * must not be able to make a deferred end disappear. `"gone"` is the case
+ * that used to be missing: the hub answers 404, meaning the session it names
+ * was never registered there (the failed-first-register shape), so there is
+ * nothing to end and never will be. That marker used to be retried on every
+ * SessionStart until MAX_SPOOL_AGE_DAYS retired it — the trial machine had one
+ * 48 hours old — costing a hub call and a lookup each time for an end that
+ * could not exist.
  */
+export type DeferredEndOutcome = "ended" | "retry" | "gone";
+
 export type DeferredEnder = (
   crosscheckSessionId: string,
-) => Promise<boolean>;
+) => Promise<DeferredEndOutcome>;
 
 const pendingEndSlugs = async (
   home: string,
@@ -449,9 +459,13 @@ const endDeferredSession = async (
   if (spool.lines.length > 0) {
     return;
   }
-  if (!(await ender(parsed.data.crosscheckSessionId))) {
+  const outcome = await ender(parsed.data.crosscheckSessionId);
+  if (outcome === "retry") {
     return;
   }
+  // "ended" and "gone" both spend the marker, and for the same reason: the
+  // hub will never hear about this session again from this marker. The
+  // difference is only whether there was something to end.
   await removeFile(path);
 };
 

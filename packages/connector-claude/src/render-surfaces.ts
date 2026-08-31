@@ -18,6 +18,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "claude-work-context-title",
+    delivery: "outbound",
     module: "src/hooks/session-start.ts",
     framing: "sanitized",
     // The one untrusted path this package OWNS: Claude's session_title on its
@@ -38,6 +39,9 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "claude-summarizer-probe-line",
+    // `crosscheck doctor` stdout: the reader ran the command and is waiting
+    // for exactly this answer.
+    delivery: "pulled",
     module: "src/summarizer/probe.ts",
     note: "the two model-derived fields doctor prints from a probe — the answer's first line and the version token — are produced ONLY by bareSummarizerLine, the BARE-class door core registers as model-failure-line and attacks with the whole injection corpus there; this module composes nothing else from the model's output",
     corpusCoveredBy: ["../connector-core/test/render-surface-registry.test.ts"],
@@ -45,12 +49,14 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "composite",
     name: "claude-tripwire-ask",
+    delivery: "unsolicited",
     module: "src/hooks/pre-tool-use.ts",
-    note: "emits renderTripwireReason output verbatim (registered core surface); covered in test/tripwire-hook.test.ts",
+    note: "emits renderTripwireReason output verbatim as both permissionDecisionReason and additionalContext (the same rendered string, #25); registered core surface, covered in test/tripwire-hook.test.ts",
   },
   {
     kind: "composite",
     name: "claude-statusline",
+    delivery: "unsolicited",
     module: "src/statusline/statusline.ts",
     note: "teammate names via groupTeammates (sanitize inside toGroup); a terminal line, capped and joined from sanitized fields",
   },

@@ -22,6 +22,7 @@ export {
   isSummarizerUnreadable,
   readSummarizerCost,
 } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
+export type { SummarizerCost } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
 // The derived-intent surface (trial finding #16): the worker entry the
 // prompt hook spawns, and the cost read/format pair `status`/`doctor` print.
 export { runIntentWorker } from "@crosscheck/connector-core/derive/intent/worker.ts";

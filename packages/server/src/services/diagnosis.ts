@@ -1,4 +1,6 @@
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+
+import { WORK_CONTEXT_LIST_MAX } from "../constants.ts";
 
 import {
   agentSessions,
@@ -66,8 +68,33 @@ export interface WorkContextListEntry extends WorkContextView {
    * instead of being looked up in the 90 s presence list by the reader. */
   readonly developerName: string;
   readonly claimCount: number;
-  /** Captured files and symbols — work recorded before any claim was made. */
+  /**
+   * How many deterministic targets this context captured (trial findings
+   * #20 + M1).
+   *
+   * The cheap aggregate `crosscheck doctor` reads to tell "this repo has 0
+   * claims AND 0 targets — nothing for a hint to match on" apart from
+   * "targets exist, a prompt naming one would point"; and the number that
+   * answers "is capture working at all", since a context with claims and zero
+   * targets is a session that reported its existence and nothing it touched —
+   * the H1 cross-worktree drop's signature, invisible on every surface before.
+   *
+   * A correlated subquery, NOT a second leftJoin: joining targets beside
+   * claims would cross-multiply claimCount.
+   */
   readonly targetCount: number;
+}
+
+export interface WorkContextListWindow {
+  /**
+   * Oldest ACTIVITY to include — `coalesce(updated_at, created_at)`, the same
+   * expression the hub and the renderer age a row by; omitted = no window (see
+   * §M8). Naming `created_at` here was the pre-B2-06 defect written down: a
+   * context created three weeks ago and updated an hour ago is inside this
+   * window, and a reader who trusts the field doc concludes it has aged out.
+   */
+  readonly since?: Date;
+  readonly limit?: number;
 }
 
 export interface ClaimView {
@@ -196,33 +223,57 @@ const toClaimEdgeView = (row: ClaimEdgeRow): ClaimEdgeView => ({
 });
 
 /**
- * Upper bound on the briefing's related-work listing.
+ * How OLD a context is, in the one expression every consumer already uses.
  *
- * IT USED TO HAVE NONE, and this is the hottest listing on the product: every
- * SessionStart reads it inside a 1000 ms budget. On a seeded hub of 10^4 work
- * contexts and 10^5 claims it answered with all ten thousand rows in ~150 ms
- * of database time plus the JSON of every one of them, for a section that
- * renders five lines — the shape non-negotiable 5 exists to forbid (no
- * unbounded listing, an index behind every bound).
+ * The window and the ordering both read this rather than `created_at`. The
+ * connector's renderer ages a context by `updatedAt ?? createdAt`
+ * (briefing/render.ts), and so do `deriveLastSeen` and the statusline's
+ * last-seen suffix — so a window on `created_at` dropped rows those surfaces
+ * would have rendered: a context created three weeks ago and touched an hour
+ * ago is inside the client's 14 days and was outside the server's (review
+ * finding B2-06). The same expression orders the page, because a newest-first
+ * cap has to keep the rows a reader would have used.
  *
- * 200 rather than the five the section shows, because the connector groups
- * per developer and counts what it folded: the rows beyond the first five
- * teammates are what makes "3 more contexts" a fact rather than a guess. On a
- * repo with more than 200 contexts active inside the window the fold counts
- * are of the freshest 200 — an undercount, which is the direction that never
- * invents work nobody is doing.
+ * It looked harmless on the trial hub only because 125 of 127 rows had
+ * `updated_at` null, which is exactly why it would have landed unnoticed.
  */
-export const WORK_CONTEXT_LIST_LIMIT = 200;
+const contextActivityAt = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
 
-/** The timestamp every surface renders as a row's age, and the one the index is on. */
-const contextActivity = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
+/**
+ * How fresh this row is WITHIN its own developer: 1 is that person's newest.
+ * Computed after the WHERE, so mutes and the caller's window narrow the set
+ * before anybody is ranked inside it.
+ *
+ * THE BOUND IS SPENT ON BREADTH BEFORE DEPTH, and that is not a preference.
+ * Cut flat by activity, the page is whoever is busiest: a teammate running
+ * many short sessions — the module's own premise, "three worktrees, or
+ * restarting their agent three times on the same branch" — filled the whole
+ * answer, and the colleague with one live investigation from this morning
+ * never reached the reader at all. Nothing downstream could report it either:
+ * the connector's "(+N more not shown)" is computed from the groups it
+ * RECEIVED, so a person who never arrived is not folded away, they are simply
+ * absent from a section that looks complete.
+ *
+ * Ordering by this first serves every teammate's freshest context before
+ * anyone's second, while the rows inside one developer stay in the
+ * newest-first order the reader groups by. Pinned by "one busy teammate
+ * cannot push another out of the answer entirely" in
+ * server/test/work-context-listing.test.ts.
+ */
+const contextRankPerDeveloper = sql`row_number() over (partition by ${agentSessions.developerId} order by ${contextActivityAt} desc)`;
 
 export const listWorkContextsByRepo = async (
   db: Db,
   viewerDeveloperId: string,
   repo: string,
-  since?: Date,
+  window: WorkContextListWindow = {},
 ): Promise<readonly WorkContextListEntry[]> => {
+  // Capped HERE rather than rejected at the route, the EventsQuerySchema
+  // discipline: a caller asking for 10 000 rows gets the cap, not a 400.
+  const limit = Math.min(
+    window.limit ?? WORK_CONTEXT_LIST_MAX,
+    WORK_CONTEXT_LIST_MAX,
+  );
   const rows = await db
     .select({
       workContext: workContexts,
@@ -253,21 +304,30 @@ export const listWorkContextsByRepo = async (
       and(
         eq(agentSessions.repo, repo),
         notMutedCondition(viewerDeveloperId, agentSessions.developerId),
-        // The caller's window, in the WHERE and not after the bound: without
-        // it the LIMIT would hand back the freshest 200 rows of ALL TIME and
-        // the reader's own filter would then drop most of them, which is a
-        // bound that narrows the answer instead of bounding the work.
-        since === undefined
-          ? undefined
-          : sql`${contextActivity} >= ${since.toISOString()}::timestamptz`,
+        // The caller's window, in the WHERE, and the reason is the RANK
+        // above rather than the LIMIT below. Under a flat freshest-first cut
+        // it bought only bytes: every out-of-window row sorts BELOW every
+        // in-window one on the same key, so the freshest N of all time hold
+        // exactly the in-window rows the reader keeps anyway — an earlier
+        // version of this comment claimed otherwise and was measurably wrong.
+        // Ranking per developer changes that, because the rank is computed
+        // over whatever this WHERE leaves: a teammate's abandoned contexts
+        // from three months ago take rank 2, 3, 4 … and spend the bound on
+        // rows the reader then throws away. Pinned by "the window is in the
+        // WHERE because the rank is computed after it" in
+        // server/test/work-context-listing.test.ts.
+        ...(window.since === undefined
+          ? []
+          : [gte(contextActivityAt, window.since)]),
       ),
     )
     // Activity, not creation: it is the timestamp the rows are FILTERED by
     // above and rendered by downstream, and the one `work_contexts_activity_idx`
     // is built on — ordering by anything else would make the bound cut a
-    // different set from the one the window selected.
-    .orderBy(sql`${contextActivity} DESC`)
-    .limit(WORK_CONTEXT_LIST_LIMIT);
+    // different set from the one the window selected. Rank first, so every
+    // teammate's freshest context is served before anyone's second.
+    .orderBy(sql`${contextRankPerDeveloper} ASC`, desc(contextActivityAt))
+    .limit(limit);
   return rows.map((row) => ({
     ...toWorkContextView(row.workContext, row.baseCommit),
     developerId: row.developerId,

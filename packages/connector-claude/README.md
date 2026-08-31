@@ -133,6 +133,7 @@ Precedence: environment > repo `.crosscheck.json` (hub URL only) > `~/.crosschec
 | `CROSSCHECK_TIMEOUT_MS` | Per-request budget (default 400 ms). Hook budgets scale with it. |
 | `CROSSCHECK_AGENT_KIND` | Reported agent kind (default `claude-code`). |
 | `CROSSCHECK_DISABLED=1` | Every hook prints nothing and exits 0. |
+| `CROSSCHECK_TRIPWIRE=notice` | PreToolUse tripwire emits `additionalContext` only — no `ask`. For headless `claude -p` / orchestration sessions, where Claude Code turns a hook ask into a one-shot deny of the tool call (the reason still reaches the model). Default `ask`; `status`/`doctor` print the mode. |
 
 `developerId` and `developerName` are never asked for — they are learned from the hub on first successful registration and written back.
 
@@ -215,9 +216,10 @@ The answer to "is this thing still alive?" — fail-open means a broken install 
 2. **repo identity** — resolvable, and which id was derived.
 3. **hub reachable** — a presence probe; FAIL on network error or `invalid api key`.
 4. **hooks registered** — `.claude/settings.json` contains crosscheck `SessionStart` / `PostToolUse` / `SessionEnd` entries.
-5. **statusline registered** — missing → WARN, foreign → WARN naming the owner.
+5. **statusline registered** — missing → WARN, foreign → WARN naming the owner. Registration is a TEXTUAL fact; **statusline last rendered** is the execution one beside it, because the statusline is a terminal-TUI feature and headless / VS Code-extension sessions never call it.
 6. **spool depth / age / drops** — >200 pending → WARN, >1500 → FAIL; oldest record >24 h → WARN; any dropped record → WARN, counted from the `.drops` ledgers plus `archive.dropsummary` and reported as `N records in M batches` (plus unreadable ledger entries, if any ever occur). A drop stays counted even after its ledger ages out, because nothing records that a human has read the number.
-7. **last sync** — stale beyond 10 minutes while a session is live → WARN; never synced → WARN.
+7. **last capture sync** — when a HOOK last reached the hub, not when anything did: stale beyond 10 minutes while a session is live → WARN. The old `last sync` read a record that doctor's own probe had just written, so it printed `0s ago` beside dead hooks.
+8. **hooks firing** — the age of each registered event's last real fire, from the marker the hook runner writes; a live session with a watched event silent for an hour → WARN.
 8. **clock skew** — >120 s against the hub's `Date` header → FAIL, because presence TTL is 90 s.
 9. **bun request logging** — a discoverable `bunfig.toml` with a `debug`/`verbose` `logLevel` → WARN naming the file, because Bun then prints the api key to hook stderr (rotate it).
 

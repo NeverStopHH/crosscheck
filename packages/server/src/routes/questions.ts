@@ -22,9 +22,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import {
   ClaimSchema,
+  describeUnstorableText,
   MAX_QUESTION_BODY_LENGTH,
   MAX_RECORD_ID_LENGTH,
   SAFE_ID_PATTERN,
+  unstorableTextPath,
 } from "@crosscheck/schema";
 
 import { fail, ok } from "../http/envelope.ts";
@@ -78,6 +80,15 @@ export const questionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const parsed = AskBodySchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    // This route is its OWN boundary: an asked question reaches the questions
+    // table straight from here, never through parseRecord, so the storability
+    // check parseRecord applies to the spool-replay path has to be repeated
+    // on the live one or the same body is a 500 depending only on which way
+    // it arrived (schema/storable-text.ts states the whole rule).
+    const askUnstorable = unstorableTextPath(parsed.data);
+    if (askUnstorable !== null) {
+      return fail(c, 400, "validation_failed", describeUnstorableText(askUnstorable));
     }
     const input = parsed.data;
     let targetDeveloperId: string | undefined;
@@ -176,6 +187,15 @@ export const questionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     const parsed = AnswerBodySchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+    }
+    const answerUnstorable = unstorableTextPath(parsed.data);
+    if (answerUnstorable !== null) {
+      return fail(
+        c,
+        400,
+        "validation_failed",
+        describeUnstorableText(answerUnstorable),
+      );
     }
     const questionId = c.req.param("id");
     if (

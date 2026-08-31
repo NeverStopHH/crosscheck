@@ -95,3 +95,8 @@ export type {
   ParseRecordResult,
   Producer,
 } from "./envelope.ts";
+
+export {
+  describeUnstorableText,
+  unstorableTextPath,
+} from "./storable-text.ts";

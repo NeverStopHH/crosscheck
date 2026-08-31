@@ -145,10 +145,16 @@ const check = (level: Check["level"], name: string, detail: string): Check => ({
  * The doctor lines. `projectWired` is whether crosscheck hooks are
  * registered project-scoped where doctor runs (null = there is no repo
  * here at all — the parent-workspace shape).
+ *
+ * `projectSettingsIgnored` is the M11 fact, passed IN as data so this stays a
+ * pure function: `true` = this repo's `.claude/settings.json` is gitignored,
+ * `false` = it is not, `null` = git could not say (git/check-ignore.ts). Only
+ * `true` changes anything — see the double-wiring branch.
  */
 export const globalInstallChecks = (
   wiring: GlobalWiring,
   projectWired: boolean | null,
+  projectSettingsIgnored: boolean | null = null,
 ): readonly Check[] => {
   const name = "global install";
   if (wiring.unreadable) {
@@ -161,11 +167,21 @@ export const globalInstallChecks = (
     ];
   }
   if (wiring.hooksInstalled && projectWired === true) {
+    // The remedy has to know which side actually reaches a teammate (trial
+    // finding M11). Where the project settings file is GITIGNORED — the
+    // monorepo shape — `crosscheck init --global --remove` is the exactly
+    // wrong instruction: it deletes the only wiring that covers worktrees and
+    // parent workspaces, and leaves a project install nobody else will ever
+    // receive. So that branch never names it.
+    const remedy =
+      projectSettingsIgnored === true
+        ? "keep the global install and delete the gitignored project copy instead — .claude/settings.json is ignored in this repo, so it never reaches teammates and only the user-level install covers your worktrees"
+        : "remove one side: `crosscheck init --global --remove`, or strip the repo's .claude/settings.json entries";
     return [
       check(
         "WARN",
         name,
-        `double wiring: this repo registers project hooks AND ${wiring.settingsPath} registers user-level ones — identical commands run once (Claude Code dedups them), differing spellings run twice with capture kept exactly-once; remove one side: \`crosscheck init --global --remove\`, or strip the repo's .claude/settings.json entries`,
+        `double wiring: this repo registers project hooks AND ${wiring.settingsPath} registers user-level ones — identical commands run once (Claude Code dedups them), differing spellings run twice with capture kept exactly-once; ${remedy}`,
       ),
     ];
   }

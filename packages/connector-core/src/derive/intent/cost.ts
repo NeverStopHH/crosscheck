@@ -62,7 +62,7 @@ export const readIntentCost = async (
   hubUrl: string,
   repoId: string,
 ): Promise<IntentCost> =>
-  summarizeIntentCost(await readLiveSessionStates(home, hubUrl, repoId));
+  summarizeIntentCost((await readLiveSessionStates(home, hubUrl, repoId)).states);
 
 /** The one spelling of the intent fact both CLI surfaces print. */
 export const formatIntentCost = (cost: IntentCost): string => {

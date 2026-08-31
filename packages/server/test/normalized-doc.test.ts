@@ -15,7 +15,10 @@ import { describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 
 import { workContexts } from "../src/db/schema.ts";
+import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+
 import {
+  NORMALIZED_DOC_MAX_CHARS,
   NORMALIZED_DOC_MAX_TARGETS,
   buildNormalizedDoc,
 } from "../src/services/normalized-doc.ts";
@@ -174,6 +177,46 @@ describe("normalized_doc generation on ingest", () => {
     expect(includedCount).toBe(NORMALIZED_DOC_MAX_TARGETS);
     expect(doc).toContain(valueAt(0));
     expect(doc).not.toContain(valueAt(targetCount - 1));
+  });
+});
+
+describe("one long finding does not evict the others from the index", () => {
+  test("cuts each claim summary so a maximum-length body cannot fill the doc", () => {
+    // Arrange: refreshNormalizedDoc orders claims newest first and
+    // buildNormalizedDoc slices from the END, so at MAX_CLAIM_BODY_LENGTH one
+    // newest body exceeds the whole 8,000-char budget on its own and no later
+    // claim's terms reach the index at all.
+    //
+    // This is not invisible the way the old comment claimed. normalized_doc is
+    // what the FTS tier ranks on, and search feeds both search_related_work
+    // and the UserPromptSubmit hint candidates — so what a reader sees is the
+    // context quietly ceasing to surface, and the richer it gets the less
+    // findable it becomes.
+    const newestLong = `root_cause: ${"b".repeat(MAX_CLAIM_BODY_LENGTH)}`;
+    const older = [
+      "evidence: the LEADERBOARD query never rebuilt",
+      "hypothesis: the SEAL landed before the rollup",
+      "rejected_approach: the TRIPWIRE was not the cause",
+    ];
+
+    // Act
+    const doc = buildNormalizedDoc({
+      title: "Login 500s on staging",
+      status: "analyzing",
+      repoLabel: "acme/api",
+      intentSummary: null,
+      description: null,
+      targetValues: [],
+      claimSummaries: [newestLong, ...older],
+    });
+
+    // Assert: every older finding's distinctive term is still indexed, and
+    // the newest one is present but cut rather than dominant.
+    expect(doc).toContain("LEADERBOARD");
+    expect(doc).toContain("SEAL");
+    expect(doc).toContain("TRIPWIRE");
+    expect(doc.length).toBeLessThanOrEqual(NORMALIZED_DOC_MAX_CHARS);
+    expect(doc).toContain("root_cause: ");
   });
 });
 

@@ -81,7 +81,7 @@ const seed = async (
 };
 
 const states = async (dir: string): Promise<readonly SessionState[]> =>
-  readLiveSessionStates(dir, HUB_URL, REPO_ID);
+  (await readLiveSessionStates(dir, HUB_URL, REPO_ID)).states;
 
 interface Line {
   readonly name: string;

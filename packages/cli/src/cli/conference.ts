@@ -699,27 +699,41 @@ const reportStamp = (now: Date): string =>
   now.toISOString().slice(0, 19).replace(/[:T]/g, "-");
 
 /**
- * Runs that could still land on the same second before one gives up and
- * overwrites. Ten, because a page is written once per `crosscheck conference`
- * and nobody runs eleven of them inside one second; the bound exists so this
- * loop is arithmetic rather than unbounded filesystem probing.
+ * Runs that can still land on the same second before this command REFUSES to
+ * write a page at all. Ten, because a page is written once per `crosscheck
+ * conference` and nobody runs eleven of them inside one second; the bound
+ * exists so the search below is arithmetic rather than unbounded filesystem
+ * probing.
  */
-const CONFERENCE_MAX_REPORTS_PER_SECOND = 10;
+export const CONFERENCE_MAX_REPORTS_PER_SECOND = 10;
 
 /**
- * A path no earlier run has already taken.
+ * A path no earlier run has already taken, or `null` when this second has
+ * none left.
  *
  * The stamp used to be the UTC MINUTE, so a scheduler retrying after a
  * transient hub error — or a human re-running with --publish straight after a
  * dry run — silently replaced the first page, and the path was printed both
  * times so nothing looked wrong. paths.ts argues that reports are deliberately
  * never reaped; losing one to a filename collision was the odd exception.
+ *
+ * IT WAS STILL THE EXCEPTION past the bound. Running out of suffixes handed
+ * the FIRST name back, so the eleventh run of a second did exactly what the
+ * minute stamp used to do — overwrote a page a human may never have read, and
+ * printed its path as if a new page had been written. That is not a rarity
+ * this file gets to define away: conference-cli.test.ts records the fallback
+ * firing three times inside one second on a fast host. Reports are never
+ * reaped, so nothing here may quietly replace one: `null` is the honest
+ * answer, and the caller turns it into a refusal that is printed and exits
+ * non-zero. The narrowing that answer forces is not the guarantee — the early
+ * return at the call site is, which is why the mutation entry for this
+ * function points at the line below rather than at a type.
  */
 const freeReportPath = async (
   home: string,
   key: string,
   stamp: string,
-): Promise<string> => {
+): Promise<string | null> => {
   const first = conferenceReportPath(home, key, stamp);
   if (!(await Bun.file(first).exists())) {
     return first;
@@ -730,8 +744,20 @@ const freeReportPath = async (
       return candidate;
     }
   }
-  return first;
+  return null;
 };
+
+/**
+ * Why no page was written, phrased as the thing a human can do about it. It
+ * travels through the SAME channel as a failed write, so the page is still
+ * printed and the exit code is still non-zero — a full second is a refusal to
+ * destroy work, not a reason to lose the run's own output.
+ */
+const exhaustedSecondFailure = (stamp: string): string =>
+  `all ${String(CONFERENCE_MAX_REPORTS_PER_SECOND)} names for this second are taken ` +
+  `(conference-${stamp}.md through ` +
+  `conference-${stamp}-${String(CONFERENCE_MAX_REPORTS_PER_SECOND)}.md) and a report is ` +
+  "never replaced — re-run once the second has turned, or move those pages aside";
 
 export const runConference = async (
   argv: readonly string[],
@@ -847,8 +873,9 @@ export const runConference = async (
     },
     now,
   );
-  const path = await freeReportPath(config.home, key, reportStamp(now));
-  const writeFailure = await writeReport(path, report);
+  const stamp = reportStamp(now);
+  const path = await freeReportPath(config.home, key, stamp);
+  const reportDir = dirname(conferenceReportPath(config.home, key, stamp));
   const findingsLine =
     model.findings.length === 0
       ? "no shared-cause finding"
@@ -861,22 +888,31 @@ export const runConference = async (
     `${plural(corpus.data.overlaps.length, "duplicated-work pair")}, ` +
     `${plural(corpus.data.contradictions.length, "contradiction")}, ` +
     `${plural(corpus.data.questions.length, "open question")}`;
+  // THE PAGE IS THE DELIVERABLE and it is already in memory, so it is printed
+  // rather than lost. Everything that DID happen is stated in the same breath,
+  // because a nightly --publish has already filed drafts on teammates' trees
+  // by the time either caller below is reached.
+  const noPageWritten = (reason: string): CliResult => ({
+    stdout: [
+      summary,
+      ...publishLine,
+      `could not write the report to ${reportDir}: ${reason}.`,
+      "The page is printed below; anything published above is already on the hub.",
+      "",
+      report,
+    ].join("\n"),
+    exitCode: EXIT_FAIL,
+  });
+  // BEFORE the write, and by returning rather than falling through: a second
+  // with no free name is the one case where the page that would be replaced
+  // is somebody else's, and the success line below cannot name a path that
+  // does not exist.
+  if (path === null) {
+    return noPageWritten(exhaustedSecondFailure(stamp));
+  }
+  const writeFailure = await writeReport(path, report);
   if (writeFailure !== null) {
-    // THE PAGE IS THE DELIVERABLE and it is already in memory, so it is
-    // printed rather than lost. Everything that DID happen is stated in the
-    // same breath, because a nightly --publish has already filed drafts on
-    // teammates' trees by the time this line is reached.
-    return {
-      stdout: [
-        summary,
-        ...publishLine,
-        `could not write the report to ${dirname(path)}: ${writeFailure}.`,
-        "The page is printed below; anything published above is already on the hub.",
-        "",
-        report,
-      ].join("\n"),
-      exitCode: EXIT_FAIL,
-    };
+    return noPageWritten(writeFailure);
   }
   return {
     stdout: [

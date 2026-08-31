@@ -36,7 +36,7 @@
  * Type-only imports are exempt: a type cannot render.
  */
 import { describe, expect, test } from "bun:test";
-import { readdir, stat } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
@@ -49,9 +49,16 @@ import type {
   RenderSurface,
 } from "../src/render-surfaces.ts";
 import { INJECTION_CORPUS } from "./fixtures/injection-corpus.ts";
+import {
+  ALL_REGISTERED_SURFACES,
+  REGISTERED_PACKAGES,
+} from "./fixtures/registry-packages.ts";
 import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
 
 const WORKSPACE_PACKAGES_ROOT = join(import.meta.dir, "..", "..");
+
+/** This package's root, so a RENDER_LAYER_MODULES path can be imported. */
+const CORE_ROOT = join(import.meta.dir, "..");
 
 /**
  * Import specifiers that ARE the render layer, however they are reached —
@@ -81,6 +88,11 @@ const RENDER_IDENTIFIERS: ReadonlySet<string> = new Set([
   "bareUntrusted",
   "safeId",
   "quoted",
+  "quotedBody",
+  "spanRedactedUntrusted",
+  "redactionNote",
+  "REDACTED_TITLE",
+  "REDACTED_SPAN",
   "quotingText",
   "renderBriefing",
   "renderClaimHint",
@@ -221,48 +233,19 @@ const KNOWN_EXEMPT: Readonly<Record<string, readonly string[]>> = {
 };
 const DEFAULT_EXEMPT: readonly string[] = ["src/render-surfaces.ts"];
 
-const isDirectory = async (path: string): Promise<boolean> => {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch {
-    return false;
-  }
-};
-
-/** Every packages/* directory with a src tree, off the filesystem. */
-const discoverPackages = async (): Promise<readonly PackageRegistration[]> => {
-  const entries = await readdir(WORKSPACE_PACKAGES_ROOT, { withFileTypes: true });
-  const labels = entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-  const registrations: PackageRegistration[] = [];
-  for (const label of labels) {
-    const root = join(WORKSPACE_PACKAGES_ROOT, label);
-    if (!(await isDirectory(join(root, "src")))) {
-      continue;
-    }
-    const registryPath = join(root, "src", "render-surfaces.ts");
-    const surfaces = (await Bun.file(registryPath).exists())
-      ? (((await import(registryPath)) as {
-          RENDER_SURFACES?: readonly RenderSurface[];
-        }).RENDER_SURFACES ?? [])
-      : [];
-    registrations.push({
-      label,
-      root,
-      surfaces,
-      exempt: KNOWN_EXEMPT[label] ?? DEFAULT_EXEMPT,
-    });
-  }
-  return registrations;
-};
-
-const PACKAGES: readonly PackageRegistration[] = await discoverPackages();
-
-const ALL_SURFACES: readonly RenderSurface[] = PACKAGES.flatMap(
-  (pkg) => pkg.surfaces,
+/**
+ * The package walk itself moved to fixtures/registry-packages.ts when the
+ * anchoring-separation test needed the same one; what stays here is the part
+ * that is this file's own — which modules are exempt from registration.
+ */
+const PACKAGES: readonly PackageRegistration[] = REGISTERED_PACKAGES.map(
+  (pkg) => ({
+    ...pkg,
+    exempt: KNOWN_EXEMPT[pkg.label] ?? DEFAULT_EXEMPT,
+  }),
 );
+
+const ALL_SURFACES: readonly RenderSurface[] = ALL_REGISTERED_SURFACES;
 
 const CORPUS_SURFACES: readonly CorpusRenderSurface[] = ALL_SURFACES.filter(
   (surface): surface is CorpusRenderSurface => surface.kind === "corpus",
@@ -352,6 +335,50 @@ describe("§4.4: unregistered render surfaces are a red build", () => {
     // And still only those: a neighbouring module of the same shape is not
     // render layer, or every importer in the workspace would need a row.
     expect(RENDER_LAYER_SPECIFIER.test("../briefing/cut.ts")).toBe(false);
+  });
+
+  test("every render name a BARREL re-exports is one the meta-test flags", async () => {
+    // RENDER_IDENTIFIERS is the whole coverage of the barrel route. A module
+    // reaching the render layer through a relative or cross-package path is
+    // caught by RENDER_LAYER_SPECIFIER, but src/index.ts and src/kit.ts are
+    // themselves RENDER_BARREL_MODULES and therefore exempt from the specifier
+    // rule — so an import through them is caught by NAME or by nothing.
+    //
+    // Hand-kept, that set drifts the moment a barrel re-exports a new render
+    // value, exactly as RENDER_LAYER_SPECIFIER drifted from RENDER_LAYER_MODULES
+    // before it was derived. Derived here for the same reason: the barrels and
+    // the render layer are both read, and their intersection is the rule.
+    const layerValues = new Set<string>();
+    for (const module of RENDER_LAYER_MODULES) {
+      const loaded: Record<string, unknown> = await import(
+        join(CORE_ROOT, module)
+      );
+      for (const [name, value] of Object.entries(loaded)) {
+        if (typeof value === "function" || typeof value === "string") {
+          layerValues.add(name);
+        }
+      }
+    }
+    // A render layer with no value exports would make this test vacuous.
+    expect(layerValues.size).toBeGreaterThan(0);
+
+    const unflagged: string[] = [];
+    for (const barrel of RENDER_BARREL_MODULES) {
+      const loaded: Record<string, unknown> = await import(
+        join(CORE_ROOT, barrel)
+      );
+      for (const name of Object.keys(loaded)) {
+        if (layerValues.has(name) && !RENDER_IDENTIFIERS.has(name)) {
+          unflagged.push(`${barrel} re-exports ${name}`);
+        }
+      }
+    }
+
+    expect(
+      unflagged.sort(),
+      `render value(s) reachable through a barrel but absent from RENDER_IDENTIFIERS: ${unflagged.join(", ")} — ` +
+        "add the name, or the barrel route into the render layer is unguarded",
+    ).toEqual([]);
   });
 
   test("the ACP and Cursor injection surfaces stay registered by NAME — module cover is not surface cover", () => {

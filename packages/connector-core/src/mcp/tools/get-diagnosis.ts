@@ -142,7 +142,7 @@ const solvedPresentationFor = async (
       ? Promise.resolve(null)
       : resolveCommitDrift(root, diagnosis.workContext.baseCommit),
   ]);
-  return { now: ctx.now(), drift, fileDrift };
+  return { drift, fileDrift };
 };
 
 export const run = async (
@@ -166,5 +166,8 @@ export const run = async (
     solvedAtMs === null
       ? undefined
       : await solvedPresentationFor(ctx, result.data, solvedAtMs);
-  return toolText(renderDiagnosis(result.data, presentation));
+  // ONE clock for the whole document: the per-claim ages and the solved
+  // block are read against the same instant, so two lines of one render can
+  // never disagree about how old the tree is.
+  return toolText(renderDiagnosis(result.data, ctx.now(), presentation));
 };

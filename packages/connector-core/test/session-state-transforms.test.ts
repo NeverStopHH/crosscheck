@@ -10,10 +10,12 @@ import { describe, expect, test } from "bun:test";
 
 import {
   MAX_BRIEFING_SOLVED_REFS,
+  MAX_KNOWN_WORKTREE_ROOTS,
   MAX_PROBED_FINGERPRINTS,
 } from "../src/constants.ts";
 import {
   withBriefingSolvedRefs,
+  withKnownWorktreeRoot,
   withProbedFingerprint,
 } from "../src/state/session-state.ts";
 import type { SessionState } from "../src/state/session-state.ts";
@@ -69,6 +71,16 @@ const baseState = (): SessionState => ({
   ghostDraftCount: 0,
   ghostFailCount: 0,
   ghostLastFailure: null,
+  outsideRootDrops: 0,
+  knownWorktreeRoots: [],
+  editToolFires: 0,
+  targetsCapturedCount: 0,
+  lastTargetAt: null,
+  lastPostToolUseTool: null,
+  lastEditedPath: null,
+  lastEditedPathResolvedAgainst: null,
+  hintCandidatesSeen: 0,
+  summarizerUnparsedCount: 0,
 });
 
 describe("withBriefingSolvedRefs", () => {
@@ -145,5 +157,68 @@ describe("withProbedFingerprint", () => {
     expect(state.probedFingerprints.at(-1)).toBe(
       `sha256:${String(values.length - 1)}`,
     );
+  });
+});
+
+
+describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {
+  test("remembers a root's repoId, positive and negative", () => {
+    // Arrange + Act: one same-repo worktree, one foreign/unresolvable root
+    const state = withKnownWorktreeRoot(
+      withKnownWorktreeRoot(baseState(), "/wt/a", "github.com/acme/api"),
+      "/wt/foreign",
+      null,
+    );
+
+    // Assert: both cached, the negative answer kept as null
+    expect(state.knownWorktreeRoots).toEqual([
+      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null },
+      { root: "/wt/foreign", repoId: null, attempts: 1, stamp: null },
+    ]);
+  });
+
+  test("a re-resolution replaces the root, never duplicates it", () => {
+    // Arrange: the same root cached negative, then resolved positive later
+    const first = withKnownWorktreeRoot(baseState(), "/wt/a", null);
+
+    // Act
+    const second = withKnownWorktreeRoot(first, "/wt/a", "github.com/acme/api");
+
+    // Assert: one entry, the newest answer
+    expect(second.knownWorktreeRoots).toEqual([
+      { root: "/wt/a", repoId: "github.com/acme/api", attempts: 1, stamp: null },
+    ]);
+  });
+
+  test("the cache is FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS", () => {
+    // Arrange: one more distinct root than the cap admits
+    const roots = Array.from(
+      { length: MAX_KNOWN_WORKTREE_ROOTS + 1 },
+      (_, i) => `/wt/${String(i)}`,
+    );
+
+    // Act
+    const state = roots.reduce(
+      (accumulated, root) => withKnownWorktreeRoot(accumulated, root, "repo"),
+      baseState(),
+    );
+
+    // Assert: the oldest root fell out, the newest survives, size bounded
+    expect(state.knownWorktreeRoots).toHaveLength(MAX_KNOWN_WORKTREE_ROOTS);
+    expect(state.knownWorktreeRoots[0]?.root).toBe("/wt/1");
+    expect(state.knownWorktreeRoots.at(-1)?.root).toBe(
+      `/wt/${String(roots.length - 1)}`,
+    );
+  });
+
+  test("does not mutate the state it was given", () => {
+    // Arrange
+    const original = baseState();
+
+    // Act
+    withKnownWorktreeRoot(original, "/wt/a", "repo");
+
+    // Assert
+    expect(original.knownWorktreeRoots).toEqual([]);
   });
 });

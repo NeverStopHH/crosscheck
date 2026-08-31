@@ -248,9 +248,17 @@ const blockText = (block: ContentBlock): string | null => {
  *   would be steering a surface this product treats as untrusted everywhere
  *   else.
  *
- * `isAsk` is therefore positive equality on what the block WAS: a user entry
- * carrying a text block. A tool result cannot satisfy it whatever it contains,
- * and an unknown future block type fails closed to "not an ask".
+ * `isAsk` is therefore positive equality on TWO things, and the first of them
+ * is about the ENTRY rather than the block: `isRealUserPrompt(entry)` — a user
+ * entry with a text block and NO tool_result — and then `block.type ===
+ * "text"` inside it. The entry half was missing for a release, and the gap it
+ * left is the one shape where a per-block test and `isRealUserPrompt` can
+ * disagree: a user entry carrying a tool_result AND a text block, which Claude
+ * Code emits for tool denials, interrupts and hook-supplied
+ * `additionalContext`. There the block half is genuinely true, so the borrowed
+ * or injected text was promoted to the turn's question by the very check
+ * written to stop it. An unknown future block type still fails closed to "not
+ * an ask".
  */
 interface RenderedEntry {
   /** The role-labelled text, exactly as it goes to the model. */
@@ -319,6 +327,14 @@ export const extractSliceText = (raw: string): string => {
       }
       const isUser = entry.type === "user";
       const role = isUser ? "user" : "assistant";
+      // The ENTRY decides whether anything in it can be the ask, using the
+      // predicate this module already defines for exactly that question.
+      // Deciding it per BLOCK made the two disagree: `isRealUserPrompt`
+      // refuses a user entry that carries a tool_result, while a per-block
+      // test saw only the text block beside it and called that the turn's
+      // question. Claude Code emits that mixed shape for tool denials,
+      // interrupts and hook-supplied additionalContext.
+      const entryIsAsk = isRealUserPrompt(entry);
       return contentBlocks(entry).flatMap((block) => {
         const text = blockText(block);
         return text === null || text.length === 0
@@ -326,7 +342,7 @@ export const extractSliceText = (raw: string): string => {
           : [
               {
                 line: `${role}: ${text}`,
-                isAsk: isUser && block.type === "text",
+                isAsk: entryIsAsk && block.type === "text",
               },
             ];
       });

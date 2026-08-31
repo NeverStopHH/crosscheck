@@ -19,12 +19,13 @@
  *             not worth keeping, and a discard must not look like knowledge.
  */
 import { z } from "zod";
-import { DERIVED_CONFIDENCE_CAP, MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
+import { CLAIM_ECHO_MAX_CHARS } from "../../constants.ts";
 
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
-import { quoted, quotingText, safeId } from "../render.ts";
+import { quotedBody, quotingText, safeId } from "../render.ts";
 import { checkClaim, explainRejection } from "../violations.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
@@ -156,7 +157,13 @@ const editBodyRefusal = async (
   return null;
 };
 
-const successText = (
+/**
+ * Exported for the M14 class test, which drives it directly: the body class
+ * of this echo has to be pinned beside the briefing line that prompts it, and
+ * an end-to-end promote through a hub would prove the wiring rather than the
+ * class.
+ */
+export const successText = (
   action: (typeof ACTIONS)[number],
   claimId: string,
   draftId: string,
@@ -170,12 +177,15 @@ const successText = (
   }
   const verb = action === "edit" ? "Promoted (edited)" : "Promoted";
   // The body is untrusted twice over — a derived draft's body came FROM the
-  // hub, and an edit body is agent text — so it goes through `quoted`
-  // (sanitize + frame), and the sentence that contains a frame travels under
-  // the notice that names it (quotingText), like every framed tool answer.
+  // hub, and an edit body is agent text — so it is framed and the sentence
+  // that contains a frame travels under the notice that names it
+  // (quotingText), like every framed tool answer. BODY class (`quotedBody`),
+  // matching the briefing line this call answers: the agent is being told
+  // WHICH assertion it just promoted, and an echo that blanks the assertion
+  // whole answers a different question than the one it was asked.
   return quotingText(
     `${verb} draft ${safeId(draftId)} as your declared claim ${claimId} ` +
-      `(a supersedes edge marks the draft reviewed): ${quoted(body, MAX_CLAIM_BODY_LENGTH)}. ` +
+      `(a supersedes edge marks the draft reviewed): ${quotedBody(body, CLAIM_ECHO_MAX_CHARS)}. ` +
       "Pass this id as an evidenceRefs entry when you publish what supports it.",
   );
 };

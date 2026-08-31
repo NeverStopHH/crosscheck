@@ -101,11 +101,35 @@ export const CursorPayloadSchema = z.looseObject({
   error_message: z.string().optional().catch(undefined),
   failure_type: z.string().optional().catch(undefined),
   is_interrupt: z.boolean().optional().catch(undefined),
-  /** Tool events carry their own cwd; relative paths resolve against it. */
+  /**
+   * Tool events carry their own cwd; relative paths resolve against it. An
+   * EMPTY one is folded to absent at the parse boundary — see
+   * `withoutEmptyCwd` below for the payload that made that necessary.
+   */
   cwd: z.string().optional().catch(undefined),
 });
 
 export type CursorPayload = z.infer<typeof CursorPayloadSchema>;
+
+/**
+ * An EMPTY cwd is an ABSENT cwd, folded once here at the boundary instead of
+ * at each use. A live Cursor 3.13.25 `preToolUse` capture carries `cwd: ""`
+ * twice in one payload (top level and inside `tool_input`), and `??` folds
+ * `undefined` and `null` but NOT `""` — so an empty one flows straight
+ * through to `resolve("", filePath)`, i.e. the HOOK PROCESS's own working
+ * directory. That was harmless while `cwd` merely backed one `resolve()`; it
+ * became load-bearing with the #17 worktree resolution, where the same value
+ * feeds `findConnectedRepoRootForFile` and both `toRepoRelative` calls inside
+ * the resolver. The key is removed rather than blanked, so every reader's
+ * `?? fallback` behaves exactly as it does for a payload that never had one.
+ */
+const withoutEmptyCwd = (payload: CursorPayload): CursorPayload => {
+  if (payload.cwd !== "") {
+    return payload;
+  }
+  const { cwd: _empty, ...rest } = payload;
+  return rest;
+};
 
 export const parseCursorPayload = (stdin: string): CursorPayload | null => {
   let raw: unknown;
@@ -115,7 +139,7 @@ export const parseCursorPayload = (stdin: string): CursorPayload | null => {
     return null;
   }
   const parsed = CursorPayloadSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? withoutEmptyCwd(parsed.data) : null;
 };
 
 /**

@@ -110,6 +110,39 @@ describe("the FTS document splits identifiers into words (M12-rest)", () => {
     }
   });
 
+  test("a program's layers are not topics either", () => {
+    // The same rule as the test above, one class further out. `src` and `ts`
+    // say where a file sits in a BUILD; `services`, `config`, `types`,
+    // `routes` and `handlers` say where it sits in a PROGRAM — and every
+    // program has all of them, so indexing them makes "can you look at the
+    // routes" a lexical match against a restock bug. Measured in the golden
+    // corpus, scenario 11-generic-paths: four ordinary sentences, four
+    // teammate root causes delivered as substance.
+    const words = wordsOf(
+      docFor("Warehouse restock never fires @ inventory", "inventory", [
+        "packages/inventory/src/services/restock.ts",
+        "src/config/warehouse.ts",
+        "src/types/reorder.ts",
+        "src/routes/stock.ts",
+        "src/handlers/shipment.ts",
+      ]),
+    );
+    for (const layer of [
+      "services",
+      "config",
+      "types",
+      "routes",
+      "handlers",
+    ]) {
+      expect(words, layer).not.toContain(layer);
+    }
+    // The control on the same document: what the work is ABOUT survived, so
+    // this is a filter and not a switched-off tokenizer.
+    for (const topic of ["restock", "warehouse", "reorder", "stock", "shipment"]) {
+      expect(words, topic).toContain(topic);
+    }
+  });
+
   test("camelCase and snake_case identifiers split into their parts", () => {
     const words = wordsOf(
       docFor("Login 500s on staging", "api", [
@@ -182,6 +215,42 @@ describe("the FTS document keeps the repo label and the default branch out (M13)
     expect(wordsOf(doc)).toContain("main");
   });
 
+  test("main inside a path or a branch name is not a topic either", () => {
+    // The rule above is applied to the whole TITLE, which leaves the token bag
+    // untouched — and the bag is built from the branch name and every target
+    // value. `cmd/main.go`, `src/main.rs` and `app/src/main/java/…` are the
+    // ordinary shapes of three languages, so on those repos M13's own sentence
+    // ("rebase onto main", typed several times a day) matched again through
+    // the path instead of through the title.
+    const words = wordsOf(
+      docFor("chore/rebase-main @ api", "api", [
+        "cmd/main.go",
+        "src/main.rs",
+        "app/src/main/java/com/acme/Main.java",
+      ]),
+    );
+    expect(words).not.toContain("main");
+    expect(words).not.toContain("Main");
+    // The control: everything else in those paths is still indexed. (`cmd`
+    // is not among them — it is build layout, dropped by PATH_SCAFFOLDING.)
+    for (const part of ["acme", "rebase", "chore"]) {
+      expect(words, part).toContain(part);
+    }
+  });
+
+  test("the repo label is not a topic when a directory happens to share it", () => {
+    // The suffix strip is an exact match on ` @ <repo>`, so a repo whose name
+    // is also a directory in its own tree — `api`, `server`, `web` — put the
+    // label straight back into the bag from any path that crosses it.
+    const words = wordsOf(
+      docFor("feat/importer-retry @ api", "api", ["services/api/shipment.ts"]),
+    );
+    expect(words).not.toContain("api");
+    for (const part of ["importer", "retry", "shipment"]) {
+      expect(words, part).toContain(part);
+    }
+  });
+
   test("a local: repo has no label to strip and keeps its whole title", () => {
     const doc = docFor("feat/auth-refresh", null);
     expect(doc).toContain("feat/auth-refresh");
@@ -209,6 +278,36 @@ describe("through the real generated tsvector", () => {
 
     // Assert
     expect(await matches(harness, "auth bypass")).toBe(true);
+    expect(await matches(harness, "api")).toBe(false);
+  });
+
+  test("a Go session's cmd/main.go is not the answer to «rebase onto main»", async () => {
+    // The title half of M13 was guarded; this is the path half. `cmd/main.go`
+    // is the ordinary entry point of a Go program, so before the token bag
+    // consulted DEFAULT_BRANCH_LABELS every Go repo on the hub answered the
+    // sentence M13 exists to neutralize.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            title: "feat/importer-retry @ api",
+            description: undefined,
+          }),
+        ),
+        recordEnvelope("target", {
+          workContextId: validWorkContextBody({}).id,
+          kind: "file",
+          value: "cmd/main.go",
+        }),
+      ],
+    });
+    // The control: the row exists and is findable by what its author named it.
+    expect(await matches(harness, "importer retry")).toBe(true);
+    expect(await matches(harness, "rebase onto main")).toBe(false);
+    expect(await matches(harness, "main")).toBe(false);
+    // …and the repo label is still not a way in, now via the path.
     expect(await matches(harness, "api")).toBe(false);
   });
 

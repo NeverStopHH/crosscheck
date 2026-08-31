@@ -26,12 +26,14 @@
  * forbids and what prompt-injection defences trip on.
  */
 import {
-  MAX_CLAIM_BODY_LENGTH,
   MAX_HINT_TEXT_LENGTH,
   MAX_QUESTION_BODY_LENGTH,
 } from "@crosscheck/schema";
 
-import { MAX_WORK_CONTEXT_TITLE_CHARS } from "../constants.ts";
+import {
+  MAX_WORK_CONTEXT_TITLE_CHARS,
+  UNSOLICITED_CLAIM_BODY_MAX_CHARS,
+} from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
 import {
   QUOTED_DATA_NOTICE,
@@ -121,11 +123,21 @@ const solvedLabel = (context: HintContext, now: Date): string => {
   return ` · from a diagnosis whose root cause was recorded ${age} ago`;
 };
 
+/**
+ * An age, or "an unknown time" — and a FUTURE instant counts as unknown.
+ *
+ * The clamp at zero printed a confident "0s ago" for any timestamp ahead of
+ * the reader's clock, which is a guess dressed as a measurement. These
+ * instants are client-supplied and unrange-checked, so a skewed machine — or
+ * a publisher that wants its row to look like the freshest thing on the page
+ * — produces exactly that. Moved in step with mcp/render.ts's `ageFragment`
+ * so the two surfaces cannot disagree about the same instant.
+ */
 const ageLabel = (iso: string, now: Date): string => {
   const ms = Date.parse(iso);
-  return Number.isNaN(ms)
+  return Number.isNaN(ms) || ms > now.getTime()
     ? "an unknown time"
-    : `${formatAge(Math.max(0, now.getTime() - ms))} ago`;
+    : `${formatAge(now.getTime() - ms)} ago`;
 };
 
 /**
@@ -175,7 +187,7 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     `provenance ${bare(claim.provenance)}`,
     ageLabel(claim.createdAt, now),
   ];
-  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
+  const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(claim.body, UNSOLICITED_CLAIM_BODY_MAX_CHARS)}`;
   const contextLine =
     `Recorded on work context ${safeId(context.id)} ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)} — ` +
     "the full tree is readable with get_diagnosis.";
@@ -186,19 +198,57 @@ export interface PointerHintInput {
   readonly context: HintContext;
   /** What the pointer withholds — a count; this input carries no body. */
   readonly claimCount: number;
+  /**
+   * Trial finding #19: a file the prompt named that the context touched. When
+   * present the pointer is TARGETS-ONLY (claimCount 0) and its tail states the
+   * touched-file fact instead of a claim count. `value` is teammate-controlled
+   * (a path they edited), so it goes through `bare()` + the title cap — no new
+   * untrusted path opens. `createdAt` null renders "age unknown", never a
+   * fabricated age.
+   */
+  readonly matchedTarget?: {
+    readonly value: string;
+    readonly createdAt: string | null;
+  };
   readonly drift: CommitDrift | null;
   readonly now: Date;
 }
 
 /**
- * A pointer: id + title (+ the stated intent) only (§4 anchoring asymmetry —
- * unconfirmed substance is pulled deliberately, never pushed). The input type
- * has no body field, so no wording change here can leak one. An intent-only
- * context — the "same topic, different files" case, no claims yet — gets the
- * same pointer with a tail that says so (trial finding #16).
+ * The targets-only tail (#19): the touched-file fact, no body. `bare()` + the
+ * title cap because the path is teammate-controlled; the age is "recorded
+ * <age> ago" only when the target carries a timestamp, else the honest
+ * "age unknown".
+ */
+const targetsPointerTail = (
+  context: HintContext,
+  matchedTarget: NonNullable<PointerHintInput["matchedTarget"]>,
+  now: Date,
+): string => {
+  const age =
+    matchedTarget.createdAt === null
+      ? "age unknown"
+      : `recorded ${ageLabel(matchedTarget.createdAt, now)}`;
+  return (
+    `It touched ${bare(matchedTarget.value, MAX_WORK_CONTEXT_TITLE_CHARS)} ` +
+    `(${age}) and carries no claims crosscheck injects unasked; the tree is ` +
+    `readable with get_diagnosis ${safeId(context.id)}.`
+  );
+};
+
+/**
+ * A pointer: id + title only (§4 anchoring asymmetry — unconfirmed substance
+ * is pulled deliberately, never pushed). The input type has no body field, so
+ * no wording change here can leak one — a targets-only pointer (#19) adds a
+ * touched-file fact, still no body.
+ *
+ * The stated intent rides on its own line whenever the context carries one,
+ * and an intent-only context — the "same topic, different files" case, no
+ * claims and no named file — earns the same pointer with a tail that says so
+ * (trial finding #16).
  */
 export const renderPointerHint = (input: PointerHintInput): string => {
-  const { context, claimCount, drift, now } = input;
+  const { context, claimCount, matchedTarget, drift, now } = input;
   const facts = [
     `- ${authorLabel(context.developerName)}`,
     `work context ${safeId(context.id)}`,
@@ -207,12 +257,14 @@ export const renderPointerHint = (input: PointerHintInput): string => {
   ];
   const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quoted(context.title, MAX_WORK_CONTEXT_TITLE_CHARS)}`;
   const tailLine =
-    claimCount === 0
-      ? "It carries no claims yet (substance is pushed only for evidence-backed findings); " +
-        `the tree is readable with get_diagnosis ${safeId(context.id)}.`
-      : `It carries ${String(claimCount)} claim${claimCount === 1 ? "" : "s"} crosscheck does not ` +
-        "inject unasked (substance is pushed only for evidence-backed findings); the tree is " +
-        `readable with get_diagnosis ${safeId(context.id)}.`;
+    matchedTarget !== undefined
+      ? targetsPointerTail(context, matchedTarget, now)
+      : claimCount === 0
+        ? "It carries no claims yet (substance is pushed only for evidence-backed findings); " +
+          `the tree is readable with get_diagnosis ${safeId(context.id)}.`
+        : `It carries ${String(claimCount)} claim${claimCount === 1 ? "" : "s"} crosscheck does not ` +
+          "inject unasked (substance is pushed only for evidence-backed findings); the tree is " +
+          `readable with get_diagnosis ${safeId(context.id)}.`;
   // The intent BEFORE the tail: fitHint drops from the end, and of the two
   // the tail is the droppable one — the intent is what says WHAT they do.
   return fitHint([POINTER_HEADER, factsLine, ...intentLines(context.intent), tailLine]);
@@ -248,7 +300,7 @@ export const renderAnswerHint = (
     `provenance ${bare(answer.provenance)}`,
     ageLabel(answer.answeredAt, now),
   ];
-  const answerLine = `${facts.join(" · ")}: ${quotedBody(answer.claimBody, MAX_CLAIM_BODY_LENGTH)}`;
+  const answerLine = `${facts.join(" · ")}: ${quotedBody(answer.claimBody, UNSOLICITED_CLAIM_BODY_MAX_CHARS)}`;
   // The question on its own line, because both are framed values and every
   // line here carries at most one « » pair.
   const questionLine = `You asked ${safeId(answer.questionId)}: ${quotedBody(answer.questionBody, MAX_QUESTION_BODY_LENGTH)}`;

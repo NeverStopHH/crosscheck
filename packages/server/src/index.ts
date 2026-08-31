@@ -2,9 +2,10 @@ import type { Hono } from "hono";
 
 import { createApp } from "./app.ts";
 import { generateApiKey } from "./auth/keys.ts";
-import { DEFAULT_PORT } from "./constants.ts";
+import { DEFAULT_PORT, SESSION_REAP_INTERVAL_MS } from "./constants.ts";
 import { createDb } from "./db/client.ts";
 import { createEmbedderFromEnv } from "./services/embedder.ts";
+import { reapStaleSessions } from "./services/sessions.ts";
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
 import type { AppEnv, Clock } from "./types.ts";
@@ -158,6 +159,19 @@ export const startServer = async (): Promise<void> => {
     ...(uiSessionSecret === undefined ? {} : { uiSessionSecret }),
   });
   Bun.serve({ port, fetch: app.fetch });
+  // The hub's own reaper (trial finding M6). HERE and not in `createApp`:
+  // every test that builds an app would otherwise leak a timer, and the
+  // registration path already reaps the registering developer's own sessions
+  // — this pass is for the developers who have stopped starting sessions at
+  // all, which is exactly the 104 the trial hub never closed. `.unref()` so
+  // it never holds the process open by itself.
+  setInterval(() => {
+    void reapStaleSessions({ db, now: () => new Date() }).catch(
+      (error: unknown) => {
+        console.error("[crosscheck] session reaper pass failed", error);
+      },
+    );
+  }, SESSION_REAP_INTERVAL_MS).unref();
   const searchMode =
     embedder === null ? "exact+fts (keyless)" : `exact+fts+vector (${embedder.model})`;
   console.log(`crosscheck server listening on :${port} · search: ${searchMode}`);

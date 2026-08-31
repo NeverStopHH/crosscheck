@@ -10,13 +10,38 @@ import { developerAuth } from "../middleware/auth.ts";
 import {
   endSession,
   heartbeatSession,
+  listOpenSessions,
   registerSession,
+  reapStaleSessions,
 } from "../services/sessions.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 export const sessionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();
   router.use("*", developerAuth(deps));
+
+  /**
+   * GET /api/sessions?open=1&mine=1 — rows the hub still holds open that have
+   * STOPPED reporting (trial finding M6, narrowed by review finding B2-03).
+   * `doctor`'s `unclosed sessions` line prefers this count and falls back to
+   * its local markers when a hub does not have it. `open` deliberately does
+   * not mean "running": a caller's own live session is open, and answering it
+   * here made that line WARN for as long as anybody was working.
+   */
+  router.get("/", async (c) => {
+    if (c.req.query("open") !== "1") {
+      return fail(
+        c,
+        400,
+        "validation_failed",
+        "GET /api/sessions currently serves open=1 only",
+      );
+    }
+    const sessions = await listOpenSessions(deps, c.get("developer").id, {
+      mine: c.req.query("mine") === "1",
+    });
+    return ok(c, { sessions });
+  });
 
   router.post("/", async (c) => {
     const parsed = RegisterSessionBodySchema.safeParse(await readJsonBody(c));
@@ -25,6 +50,15 @@ export const sessionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     }
 
     const developer = c.get("developer");
+    // The developer's OWN stale sessions, closed on the way in (M6). Bounded
+    // by developerId so one person's backlog can never cost another's
+    // SessionStart, and non-fatal: a reap that fails must not refuse a
+    // registration, which is the one thing this route exists to do.
+    try {
+      await reapStaleSessions(deps, { developerId: developer.id });
+    } catch (error) {
+      console.error("[crosscheck] reaping stale sessions failed", error);
+    }
     const result = await registerSession(deps, developer.id, parsed.data);
     if (result.outcome === "foreign_session") {
       return fail(c, 409, "conflict", "session id belongs to another developer");

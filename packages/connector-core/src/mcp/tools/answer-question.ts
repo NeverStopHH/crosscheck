@@ -20,12 +20,13 @@
  * by probing ids, and a question body is another developer's text.
  */
 import { z } from "zod";
-import { ClaimKindSchema, MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+import { ClaimKindSchema } from "@crosscheck/schema";
+import { CLAIM_ECHO_MAX_CHARS } from "../../constants.ts";
 
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
-import { quoted, quotingText, safeId } from "../render.ts";
+import { quotedBody, quotingText, safeId } from "../render.ts";
 import { checkClaim } from "../violations.ts";
 import { redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
@@ -89,7 +90,7 @@ export const ANSWER_ECHO_REFUSAL =
 
 /**
  * The secret gate, and an answer needs it MORE than a question does. A
- * question lands in a teammate's briefing as quoted title-class text; an
+ * question lands in a teammate's briefing as quoted body-class text; an
  * answer lands in the asker's next PROMPT as substance, with no relevance
  * gate in front of it (DESIGN.md §4, the solicited exception) — so a
  * credential in an answer body reaches a second developer's machine and a
@@ -159,7 +160,10 @@ export const run = async (
   // record, never a refusal — the text is legal and only its rendering changes.
   const note = redactionNote(parsed.value.body);
   const notes = note === null ? [] : [note];
-  const framed = quoted(parsed.value.body, MAX_CLAIM_BODY_LENGTH);
+  // BODY class, for the reason spelled out in ask-teammate.ts: the echo must
+  // show the author the shape the note beside it promises, which is also the
+  // shape the asker receives (hints/render.ts renderAnswerHint).
+  const framed = quotedBody(parsed.value.body, CLAIM_ECHO_MAX_CHARS);
   if (posted.data.duplicate) {
     return toolText(
       quotingText(
