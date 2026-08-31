@@ -131,7 +131,6 @@ const freshState = (
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
-  summarizerUnparsedCount: 0,
   ...overrides,
 });
 

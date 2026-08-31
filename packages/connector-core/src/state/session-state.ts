@@ -304,18 +304,6 @@ const SessionStateObjectSchema = z.looseObject({
   summarizerUnreadableCount: z.number().int().min(0).default(0),
   summarizerLastUnreadable: z.string().nullable().default(null),
   /**
-   * Runs that ANSWERED and whose answer was neither a claim nor NONE (trial
-   * finding M5). Two of thirty-two live answers during the trial were the
-   * model talking to the developer instead of the slice ("I've paused and I'm
-   * waiting for your direction…", both on `rejection` slices): parse.ts
-   * returns null for them, `isNoneAnswer` is false, and nothing was booked at
-   * all — so they hid inside the fires-minus-outcomes remainder alongside
-   * runner failures, which have a completely different fix. A run the model
-   * answered badly is a PROMPT problem; a run the runner lost is a machine
-   * problem. Default 0 keeps every pre-M5 state file parsing.
-   */
-  summarizerUnparsedCount: z.number().int().min(0).default(0),
-  /**
    * The work-context title and status this session registered with (trial
    * finding #16): an intent UPDATE record must carry both (the wire schema
    * requires them), so the derived-intent worker and `set_intent` read them
@@ -907,7 +895,6 @@ export const deriveSessionState = (
     summarizerLastRejection: null,
     summarizerUnreadableCount: 0,
     summarizerLastUnreadable: null,
-    summarizerUnparsedCount: 0,
     workContextTitle: null,
     workContextStatus: null,
     intentFireCount: 0,

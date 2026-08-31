@@ -40,12 +40,6 @@ export interface SummarizerCost {
   readonly staleSkipped: number;
   /** Files that would not parse — counted, never silently dropped. */
   readonly parseFailures: number;
-  /**
-   * Runs the model answered with neither a claim nor NONE (gate.ts
-   * `withSummarizerUnparsed`). A PROMPT defect, which is why it is not folded
-   * into `fails` — that one is the runner's.
-   */
-  readonly unparsedAnswers: number;
   readonly fires: number;
   /** Fires the model answered NONE — the gate's noise, counted honestly. */
   readonly nones: number;
@@ -100,7 +94,6 @@ const NO_COST: SummarizerCost = {
   filesRead: 0,
   staleSkipped: 0,
   parseFailures: 0,
-  unparsedAnswers: 0,
   fires: 0,
   nones: 0,
   drafts: 0,
@@ -170,7 +163,6 @@ export const summarizeStateCosts = (
       lastNoSlice: state.summarizerLastNoSlice ?? total.lastNoSlice,
       unreadable: total.unreadable + state.summarizerUnreadableCount,
       lastUnreadable: state.summarizerLastUnreadable ?? total.lastUnreadable,
-      unparsedAnswers: total.unparsedAnswers + state.summarizerUnparsedCount,
       estimatedTokens: total.estimatedTokens + state.summarizerEstimatedTokens,
     }),
     NO_COST,
@@ -229,10 +221,6 @@ export const formatSummarizerCost = (cost: SummarizerCost): string => {
     cost.rejects === 0
       ? ""
       : `, ${String(cost.rejects)} refused${rejectedReason}`;
-  const unparsedPart =
-    cost.unparsedAnswers === 0
-      ? ""
-      : `, ${String(cost.unparsedAnswers)} unparsed`;
   // Unreadable answers read INSIDE the run parentheses beside the refusals:
   // the model spoke and the quota was spent for both. What separates them is
   // that a refusal was well-formed and this was not, which is why the reason
@@ -252,7 +240,7 @@ export const formatSummarizerCost = (cost: SummarizerCost): string => {
       ? ""
       : `, ${String(cost.noSlice)} turn${cost.noSlice === 1 ? "" : "s"} with no slice${noSliceReason}`;
   return (
-    `${String(cost.fires)} runs (${String(cost.nones)} NONE, ${draftsPart}${failsPart}${unparsedPart}${rejectsPart}${unreadablePart})${noSlicePart}, ` +
+    `${String(cost.fires)} runs (${String(cost.nones)} NONE, ${draftsPart}${failsPart}${rejectsPart}${unreadablePart})${noSlicePart}, ` +
     `~${String(cost.estimatedTokens)} tokens (estimate) across ${scanPart(cost)}`
   );
 };
@@ -283,9 +271,9 @@ export const isSummarizerSilentlyDead = (cost: SummarizerCost): boolean => {
   // every single answer to be missing, so a run where a handful answered and
   // the rest vanished read PASS — and "the rest" is the interesting half:
   // 21 of 27 fires on the trial machine were unexplained, booked as neither
-  // NONE, draft, runner failure nor unparsed answer. When more than half the
-  // fires end in that remainder, fail-open has become mostly-dead, which is
-  // the state DESIGN.md §4 says must never be silent.
+  // NONE, draft, runner failure, refusal nor unreadable answer. When more
+  // than half the fires end in that remainder, fail-open has become
+  // mostly-dead, which is the state DESIGN.md §4 says must never be silent.
   //
   // Its own, higher floor (DOCTOR_SUMMARIZER_MOSTLY_DEAD_MIN_FIRES): a draft
   // dropped by the echo, secret or contract gates books nothing and is a
@@ -302,8 +290,7 @@ export const isSummarizerSilentlyDead = (cost: SummarizerCost): boolean => {
     cost.drafts +
     cost.fails +
     cost.rejects +
-    cost.unreadable +
-    cost.unparsedAnswers;
+    cost.unreadable;
   return cost.fires - explained > cost.fires / 2;
 };
 

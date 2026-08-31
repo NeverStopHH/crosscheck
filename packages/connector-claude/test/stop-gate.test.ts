@@ -94,7 +94,6 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
-  summarizerUnparsedCount: 0,
   ...overrides,
 });
 

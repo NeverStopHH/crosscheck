@@ -4503,31 +4503,36 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 1
- * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 1
+ * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
+ * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
+ * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 1
+ * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
+ * PRINTS: packages/connector-acp/test/derive.test.ts 5
  * PRINTS: packages/connector-acp/test/injector.test.ts 4
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
+ * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
+ * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
- * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 4
+ * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-hook.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-worker.test.ts 1
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
@@ -4563,6 +4568,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 12
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
+ * PRINTS: packages/connector-core/test/model-answer.test.ts 2
+ * PRINTS: packages/connector-core/test/model-seam.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
@@ -4577,7 +4584,10 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
- * PRINTS: packages/connector-cursor/test/handlers.test.ts 3
+ * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
+ * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 2
+ * PRINTS: packages/connector-cursor/test/derive.test.ts 3
+ * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1

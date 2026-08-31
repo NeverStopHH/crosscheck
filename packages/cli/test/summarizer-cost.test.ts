@@ -471,27 +471,31 @@ describe("summarizer cost reads the newest sessions, and says how many", () => {
     expect(line).not.toContain("3 live sessions");
   });
 
-  test("unparsed answers are their own number, not part of the failure count", async () => {
+  // Was "unparsed answers are their own number" against `unparsedAnswers`.
+  // That counter and `unreadable` booked the SAME outcome — an answer the
+  // contract could not read — from two branches; the writer behind this one
+  // is the one every host reaches, so the assertion moved rather than went.
+  test("unreadable answers are their own number, not part of the failure count", async () => {
     // Arrange
-    const repo = await makeRepo("cost-unparsed", {
+    const repo = await makeRepo("cost-unreadable", {
       remote: "git@github.com:acme/api.git",
     });
-    const home = await makeHome("cost-unparsed");
+    const home = await makeHome("cost-unreadable");
     paths.push(repo, home);
-    await seedSession(home, repo, "unparsed-a", {
+    await seedSession(home, repo, "unreadable-a", {
       lastHeartbeatAt: new Date().toISOString(),
       summarizerFireCount: 3,
       summarizerNoneCount: 1,
-      summarizerUnparsedCount: 2,
+      summarizerUnreadableCount: 2,
     });
 
     // Act
     const cost = await readSummarizerCost(home, HUB_URL, REPO_ID);
 
     // Assert
-    expect(cost.unparsedAnswers).toBe(2);
+    expect(cost.unreadable).toBe(2);
     expect(cost.fails).toBe(0);
-    expect(formatSummarizerCost(cost)).toContain("2 unparsed");
+    expect(formatSummarizerCost(cost)).toContain("2 unreadable");
   });
 
   test("mostly-dead: more than half the fires unexplained, above the sample floor", () => {
@@ -502,7 +506,6 @@ describe("summarizer cost reads the newest sessions, and says how many", () => {
       filesRead: 50,
       staleSkipped: 0,
       parseFailures: 0,
-      unparsedAnswers: 0,
       fires: 27,
       nones: 3,
       drafts: 3,

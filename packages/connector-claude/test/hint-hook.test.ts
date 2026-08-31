@@ -114,7 +114,6 @@ const sessionState = (
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
-  summarizerUnparsedCount: 0,
   ...overrides,
 });
 

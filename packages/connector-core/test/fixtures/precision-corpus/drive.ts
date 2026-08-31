@@ -518,7 +518,6 @@ const probeSessionState = (
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
-  summarizerUnparsedCount: 0,
 });
 
 interface Observation {
