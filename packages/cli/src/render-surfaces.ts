@@ -15,7 +15,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "cli-doctor",
     delivery: "pulled",
     module: "src/cli/doctor.ts",
-    note: "formatAge only — renderer-built ages, no untrusted interpolation",
+    note: "formatAge only — renderer-built ages, no untrusted interpolation; the capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text",
   },
   {
     kind: "composite",
@@ -38,6 +38,14 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
  * hook and no MCP tool imports it. If one ever does, its output becomes model
  * context and the quoted-data notice stops being optional.
  *
- * VERIFY: grep -rl "cli/status" packages/connector-claude/src packages/connector-core/src | wc -l | tr -d ' '
+ * AN IMPORT, not a mention. This grepped for the bare string until
+ * state/capture-health.ts named both CLI surfaces in a comment about who does
+ * the formatting — a true sentence that the check read as a layering
+ * violation. A directive that goes red for prose is one somebody eventually
+ * silences, so it now matches the two ways a module can actually reach the
+ * surface (`from "…cli/status…"` and `import("…cli/status…")`), verified
+ * against both spellings and against a comment that must NOT match.
+ *
+ * VERIFY: grep -rlE '(from|import\()[^"]*"[^"]*cli/status' packages/connector-claude/src packages/connector-core/src | wc -l | tr -d ' '
  * PRINTS: 0
  */

@@ -11,7 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 
-import { WORK_CONTEXT_LIST_LIMIT } from "../src/services/diagnosis.ts";
+import { WORK_CONTEXT_LIST_MAX } from "../src/constants.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -166,7 +166,7 @@ describe("GET /api/work-contexts is bounded", () => {
   });
 
   test("more contexts than the bound are answered freshest first, and bounded", async () => {
-    // Arrange: WORK_CONTEXT_LIST_LIMIT + 5 contexts, each one minute older
+    // Arrange: WORK_CONTEXT_LIST_MAX + 5 contexts, each one minute older
     // than the last, all inside the window.
     const setup = await createHarnessWithSession();
     await postRecords(
@@ -174,7 +174,7 @@ describe("GET /api/work-contexts is bounded", () => {
       setup.developer,
       recordEnvelope("work_context", validWorkContextBody()),
     );
-    const extra = WORK_CONTEXT_LIST_LIMIT + 5;
+    const extra = WORK_CONTEXT_LIST_MAX + 5;
     await setup.harness.db.execute(sql`
       INSERT INTO work_contexts (id, session_id, title, status, created_at, updated_at)
       SELECT 'wc_bulk_' || lpad(g::text, 4, '0'),
@@ -191,7 +191,7 @@ describe("GET /api/work-contexts is bounded", () => {
 
     // Assert: bounded, and the rows kept are the FRESHEST ones — a bound that
     // kept the oldest would hide exactly the work the section exists to show.
-    expect(rows).toHaveLength(WORK_CONTEXT_LIST_LIMIT);
+    expect(rows).toHaveLength(WORK_CONTEXT_LIST_MAX);
     expect(rows[0]?.id).toBe(WORK_CONTEXT_ID);
     expect(rows[1]?.id).toBe("wc_bulk_0001");
     expect(rows.map((row) => row.id)).not.toContain(
@@ -245,8 +245,8 @@ describe("GET /api/work-contexts is bounded", () => {
              updated_at = now() - make_interval(hours => 10)
        WHERE id = 'wc_mike_only'
     `);
-    // Nick: WORK_CONTEXT_LIST_LIMIT + 5 contexts, every one fresher than that.
-    const extra = WORK_CONTEXT_LIST_LIMIT + 5;
+    // Nick: WORK_CONTEXT_LIST_MAX + 5 contexts, every one fresher than that.
+    const extra = WORK_CONTEXT_LIST_MAX + 5;
     await setup.harness.db.execute(sql`
       INSERT INTO work_contexts (id, session_id, title, status, created_at, updated_at)
       SELECT 'wc_busy_' || lpad(g::text, 4, '0'),
@@ -262,7 +262,7 @@ describe("GET /api/work-contexts is bounded", () => {
     const rows = await list(setup, `${REPO_QUERY}&since=14d`);
 
     // Assert: still bounded, and both people are in the answer.
-    expect(rows).toHaveLength(WORK_CONTEXT_LIST_LIMIT);
+    expect(rows).toHaveLength(WORK_CONTEXT_LIST_MAX);
     expect(rows.map((row) => row.id)).toContain("wc_mike_only");
     expect(new Set(rows.map((row) => row.developerId)).size).toBe(2);
     // …and breadth comes first: the freshest context of each person leads the
@@ -305,7 +305,9 @@ describe("GET /api/work-contexts is bounded", () => {
                                updated_at = now() - make_interval(mins => 2)
        WHERE id = 'wc_ken_live'
     `);
-    // Ken's 300 abandoned contexts, all far outside the 14-day window.
+    // Ken's abandoned contexts, all far outside the 14-day window: one full
+    // cap of them, so the rank alone can hand him half the answer.
+    const abandoned = WORK_CONTEXT_LIST_MAX;
     await setup.harness.db.execute(sql`
       INSERT INTO work_contexts (id, session_id, title, status, created_at, updated_at)
       SELECT 'wc_ken_old_' || lpad(g::text, 4, '0'),
@@ -313,9 +315,10 @@ describe("GET /api/work-contexts is bounded", () => {
              'Abandoned ' || g, 'analyzing',
              now() - make_interval(days => 100 + g),
              now() - make_interval(days => 100 + g)
-      FROM generate_series(1, 300) g
+      FROM generate_series(1, ${abandoned}) g
     `);
-    // Nick's 250 live ones, all inside it.
+    // Nick's live ones, all inside it, and more than the cap on their own —
+    // so a windowed answer can saturate the bound with in-window rows.
     await postRecords(
       setup.harness,
       setup.developer,
@@ -328,7 +331,7 @@ describe("GET /api/work-contexts is bounded", () => {
              'Live ' || g, 'analyzing',
              now() - make_interval(mins => 10 + g),
              now() - make_interval(mins => 10 + g)
-      FROM generate_series(1, 250) g
+      FROM generate_series(1, ${WORK_CONTEXT_LIST_MAX + 100}) g
     `);
 
     // Act: the reader's own filter, applied to both answers.
@@ -342,15 +345,13 @@ describe("GET /api/work-contexts is bounded", () => {
 
     // Assert: both answers are the same SIZE, and one of them is mostly rows
     // the reader discards.
-    expect(windowed).toHaveLength(WORK_CONTEXT_LIST_LIMIT);
-    expect(unwindowed).toHaveLength(WORK_CONTEXT_LIST_LIMIT);
-    expect(inWindow(windowed)).toBe(WORK_CONTEXT_LIST_LIMIT);
-    // Measured on this fixture: 101 of the 200 unwindowed rows survive the
-    // reader's filter, so 99 slots went to work nobody is doing. The floor is
-    // 50 rather than the observed figure so the shape, not the arithmetic of
-    // one seed, is what fails.
+    expect(windowed).toHaveLength(WORK_CONTEXT_LIST_MAX);
+    expect(unwindowed).toHaveLength(WORK_CONTEXT_LIST_MAX);
+    expect(inWindow(windowed)).toBe(WORK_CONTEXT_LIST_MAX);
+    // The floor is a fraction of the cap rather than the observed figure, so
+    // the shape — not the arithmetic of one seed — is what fails.
     expect(
-      WORK_CONTEXT_LIST_LIMIT - inWindow(unwindowed),
-    ).toBeGreaterThanOrEqual(50);
+      WORK_CONTEXT_LIST_MAX - inWindow(unwindowed),
+    ).toBeGreaterThanOrEqual(WORK_CONTEXT_LIST_MAX / 4);
   });
 });

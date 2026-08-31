@@ -144,3 +144,20 @@ export const SESSION_START_OUTPUT = {
     additionalContext: "Current branch: feat/auth-refactor",
   },
 } as const;
+
+/**
+ * Source: https://code.claude.com/docs/en/hooks.md — "PreToolUse decision
+ * control". This is the shape WE emit from the tripwire (hooks/pre-tool-use.ts)
+ * and it was unwatched until M17: the contract watcher's event list named three
+ * events where the installer registers six, so `permissionDecision`,
+ * `permissionDecisionReason` and the literal `ask` were outside the watched
+ * surface for as long as the tripwire has existed. A rename there would have
+ * shown up only as tripwires that quietly stopped asking. Recorded 2026-08-25.
+ */
+export const PRE_TOOL_USE_OUTPUT = {
+  hookSpecificOutput: {
+    hookEventName: "PreToolUse",
+    permissionDecision: "ask",
+    permissionDecisionReason: "Robin is editing this file right now",
+  },
+} as const;

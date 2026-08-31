@@ -236,6 +236,53 @@ export const MAX_TARGETS_PER_INVOCATION = 20;
 export const MAX_SEEN_TARGETS = 500;
 
 /**
+ * Per-session cache of worktree-root → repoId, so the PostToolUse/PreToolUse
+ * capture path never pays `resolveRepoIdentity` (4-6 bounded git spawns) twice
+ * for the same touched-file root (trial finding #17). FIFO-capped like
+ * MAX_SEEN_TARGETS: a session touching more than this many distinct worktree
+ * roots is not the common case, and the oldest entry falls out. Negative
+ * answers are cached too — a foreign root under ITS OWN repoId, an
+ * unresolvable root as null — so a repeated foreign touch also costs no git
+ * after the first.
+ */
+export const MAX_KNOWN_WORKTREE_ROOTS = 8;
+
+/**
+ * Tool-call ids an ACP session remembers as ALREADY having booked their
+ * edit-tool fire (capture/engine.ts). One fire belongs to one tool CALL, not
+ * to one wire row: an agent may announce a call with no `kind`, reveal
+ * `kind: "edit"` on a revision, and keep revising it as it runs. FIFO-capped
+ * like MAX_SEEN_TARGETS and for the same reason — a week-long proxy session
+ * must cost bounded memory. Evicting the oldest can only ever cost a DOUBLE
+ * count on a call still being revised after this many others have started,
+ * which is the same direction the cap has always traded in.
+ */
+export const MAX_FIRED_TOOL_CALLS = 256;
+
+/**
+ * How many identity resolutions ONE unresolvable worktree root may cost a
+ * session before its null is taken as final (trial finding #17).
+ *
+ * A null answer is an UNKNOWN — a git deadline missed under load, git absent
+ * from the hook's PATH — not "this root belongs to no repo". Caching it
+ * forever exiles a healthy worktree for the rest of the session on one slow
+ * spawn; not caching it at all lets a genuinely broken root (a linked
+ * worktree whose admin dir was pruned) spend a git deadline on EVERY tool
+ * call for the session's whole life. Retrying and then standing bounds both:
+ * an unresolvable root costs a session at most this many bounded resolutions,
+ * spread across separate hook invocations — the per-root worst case in git
+ * deadline is
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS * c.GIT_TIMEOUT_MS)'
+ * PRINTS: 3000
+ *
+ * and each hook's own withBudget cuts its share long before that. A KNOWN id
+ * (this repo's or a foreign one) is final on the first answer and never
+ * retried.
+ */
+export const MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS = 2;
+
+/**
  * The spool's only cap, and the reason compaction no longer exists: an append
  * that would push a session's data file past this is REFUSED and counted,
  * rather than making room by rewriting a file other processes append to.
@@ -347,6 +394,26 @@ export const MAX_DRIFT_LOOKUPS = 5;
 export const DRIFT_GIT_TIMEOUT_MS = 250;
 export const MAX_WORK_CONTEXT_TITLE_CHARS = 120;
 export const CONTEXT_MAX_AGE_DAYS = 14;
+/**
+ * Rows one `GET /api/work-contexts` asks for (trial finding M8). The hub caps
+ * at its own WORK_CONTEXT_LIST_MAX regardless; asking for the same number
+ * keeps the two honest about each other, and asking at all is what makes the
+ * window opt-IN rather than a server default that would truncate every
+ * connector too old to know about it.
+ *
+ * It has to cover CONTEXT_MAX_AGE_DAYS at the rate the repo actually produces
+ * rows, or this number — not the window beside it — is what decides what a
+ * SessionStart sees. At the trial hub's measured ~40 rows a day, fourteen days
+ * is roughly 560 rows; 200 would have been about five (review finding B2-09).
+ *
+ * The two halves of that sentence are the ones that rotted last time, so both
+ * are directives rather than prose: the ask covers the window at the observed
+ * rate, and it matches the hub's own cap so neither surprises the other.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/server/src/constants.ts");console.log(c.WORK_CONTEXT_LIST_LIMIT >= c.CONTEXT_MAX_AGE_DAYS * 40, c.WORK_CONTEXT_LIST_LIMIT === s.WORK_CONTEXT_LIST_MAX)'
+ * PRINTS: true true
+ */
+export const WORK_CONTEXT_LIST_LIMIT = 600;
 
 // ── Detached-HEAD work-context titles (trial finding #15) ────────────────────
 
@@ -839,6 +906,36 @@ export const DOCTOR_SUMMARIZER_SILENT_FIRES_WARN = 3;
  */
 export const DOCTOR_SUMMARIZER_REJECTED_WARN = 2;
 /**
+ * `crosscheck doctor` calls a live session's capture silently dead once this
+ * many edit-tool PostToolUse fires have produced ZERO targets (trial findings
+ * #17/#18/#20, cli/doctor.ts `capture` check): below it, one or two edits that
+ * landed nowhere are a denylisted lockfile or a loose file — noise; at it,
+ * the remainder is the worktree signature — 371 edits, 0 targets, and no
+ * surface said so. Same threshold shape as the summarizer's.
+ */
+export const DOCTOR_CAPTURE_SILENT_FIRES_WARN = 3;
+/** Most per-session capture lines doctor prints; the rest is a count. */
+export const DOCTOR_CAPTURE_MAX_SESSION_LINES = 5;
+/**
+ * Display caps for the developer's OWN local facts on the doctor capture line
+ * (a repo root, an edited path, a host tool name) — not teammate text, but
+ * bounded so one 4 KB path cannot drown the report.
+ */
+export const DOCTOR_PATH_MAX_CHARS = 120;
+export const DOCTOR_TOOL_NAME_MAX_CHARS = 40;
+/**
+ * The second silent-death signature (trial finding M5) needs a bigger sample
+ * than the first, so it has its own floor.
+ *
+ * "Not one answer in three fires" is unambiguous at three. "More than half of
+ * the fires ended unexplained" is not: a draft dropped by the echo, secret or
+ * contract gates is a NORMAL outcome that books nothing, and at three fires
+ * two such drops would fire the WARN on a perfectly healthy machine. Ten is
+ * where the ratio starts meaning something — and the state it exists for was
+ * far past it: 27 fires on the trial machine with 21 unexplained.
+ */
+export const DOCTOR_SUMMARIZER_MOSTLY_DEAD_MIN_FIRES = 10;
+/**
  * The slice the doctor's runner probe hands the REAL argv: a progress
  * report the prompt names out explicitly, so a working runner answers NONE
  * and a non-NONE answer is a precision note, not a failure.
@@ -915,11 +1012,40 @@ export const SUMMARIZER_MODEL = "haiku";
 export const STOP_BUDGET_RATIO = 2;
 /** Draft pointers one briefing may spend — pointer discipline like solved. */
 export const MAX_DRAFT_POINTERS = 2;
-/** Most session state files one cost scan reads (status/doctor, bounded). */
+/**
+ * Most session state files one scan reads (status/doctor, bounded).
+ *
+ * The cap is spent NEWEST FIRST — the readers stat and sort by mtime before
+ * slicing, and report "read K of M" when the cut bites. Taken in readdir order
+ * the cut is effectively random (UUID file names, OS hash order), which on a
+ * home with more state files than this silently hid the very session the
+ * surface was asked about: sessions never end on their own, so the tail is
+ * long (the trial measured 100 state files, 75 idle over an hour).
+ */
 export const STATUS_MAX_SESSION_STATES = 50;
+
+/**
+ * When a session state file stops counting as ACTIVE on the capture surfaces.
+ *
+ * A state file is deleted at SessionEnd, so its presence means "this session
+ * never ended" — which is not the same as "running": the trial found 104 of
+ * 127 hub sessions never closed (killed orchestration agents, closed
+ * terminals), and there is no reaper. Their counters are real and stay in the
+ * totals; what must not be claimed is that they are live. PostToolUse
+ * heartbeats every HEARTBEAT_MIN_INTERVAL_MS while tools fire, so a full day
+ * of silence is well past any plausible think-time.
+ */
+export const STATUS_SESSION_IDLE_HOURS = 24;
 
 export const PRESENCE_CACHE_TTL_MS = 10_000;
 export const STATUSLINE_MAX_CHARS = 90;
+/**
+ * Teammates the `cx 0` branch may name as last-seen (Anhang A, A4-09). Three,
+ * because the whole line is STATUSLINE_MAX_CHARS wide and `capLine` truncates
+ * whatever does not fit — the point is to tell "offline" from "never
+ * onboarded", which the first name already does.
+ */
+export const STATUSLINE_MAX_LAST_SEEN = 3;
 export const STATUSLINE_MAX_NAMES = 3;
 export const STATUSLINE_NAME_CHARS = 12;
 
@@ -963,6 +1089,61 @@ export const DOCTOR_SPOOL_DEPTH_FAIL = 1500;
 export const DOCTOR_SPOOL_AGE_WARN_HOURS = 24;
 export const DOCTOR_LAST_SYNC_WARN_MINUTES = 10;
 /**
+ * How long a registered hook event may go without firing, while a session is
+ * live, before `doctor` says so (trial finding M2).
+ *
+ * SIXTY MINUTES, not ten. PostToolUse fires per edit, so the quiet stretches
+ * this must survive are lunch, a meeting, a long read — a ten-minute threshold
+ * would WARN through every one of them, and a doctor that cries wolf daily is
+ * a doctor nobody reads. An hour still catches the failure this exists for:
+ * hooks that stopped at the last agent restart, at an `nvm use`, or at a
+ * `CROSSCHECK_DISABLED` and never resumed.
+ *
+ * Applied only to the events that fire REPEATEDLY on their own (PostToolUse,
+ * UserPromptSubmit, Stop). PreToolUse and SessionEnd render an age and never
+ * WARN: the tripwire only fires on a write to a file a teammate holds, and
+ * SessionEnd may legitimately never have fired on a machine whose sessions are
+ * still open. SESSION START IS OFF THE LIST TOO, and an earlier version of
+ * this comment argued for excluding it and then listed it anyway: it fires
+ * ONCE per session and its marker is per-repo last-writer-wins, so its age is
+ * "time since the last session started here". Three hours into one session it
+ * WARNed on a line whose own numbers read `PostToolUse 8s · Stop 30s` (review
+ * finding B2-05).
+ *
+ * The threshold also gates the NEVER-FIRED case against the session's own age
+ * (cli doctor.ts hooksFiringCheck): an event that has never fired is silence
+ * only once a session has been running long enough to have produced it.
+ */
+export const DOCTOR_HOOK_SILENT_WARN_MINUTES = 60;
+/**
+ * How long the statusline may go unrendered, while a session is live, before
+ * `doctor` says so (trial finding H7).
+ *
+ * Same hour, and for once the WARN is EXPECTED on a healthy machine: the
+ * statusline is a terminal-TUI feature, and every session of the trial ran
+ * `--output-format stream-json` under the VS Code extension, where Claude Code
+ * never calls it at all. That is why the wording leads with the explanation
+ * and names where presence actually reaches such a session (the SessionStart
+ * briefing) instead of offering a fix for something that is not broken.
+ */
+export const DOCTOR_STATUSLINE_SILENT_WARN_MINUTES = 60;
+/**
+ * A session-state file whose heartbeat is older than this is not a live
+ * session (trial finding M2/M6): 75 of 100 state files on the trial machine
+ * were past it while `unclosed sessions` read "none", because that line
+ * counted only aged-out `.pending-end` markers. The hub's own presence TTL is
+ * 90 seconds (server PRESENCE_TTL_SECONDS); an hour is 40× that, so nothing
+ * merely slow is ever counted here.
+ */
+export const DOCTOR_ZOMBIE_STATE_WARN_HOURS = 1;
+/**
+ * Bound on the `crosscheck mcp` handshake `doctor` spawns (trial finding M3).
+ * Mirrors the identity probe's 3 s in config/launcher.ts: a human is watching,
+ * and a server that cannot answer `initialize` + `tools/list` in three seconds
+ * has already failed the thing being asked.
+ */
+export const DOCTOR_MCP_PROBE_TIMEOUT_MS = 3_000;
+/**
  * How long a flush lock may be held by a RUNNING process before `doctor` calls
  * it wedged.
  *
@@ -1002,8 +1183,26 @@ export const DOCTOR_FLUSH_LOCK_WARN_MS = 60_000;
 export const DOCTOR_AGENT_PS_TIMEOUT_MS = 1500;
 /** Bound on ONE cwd resolution (lsof can be slow; doctor is human-run). */
 export const DOCTOR_AGENT_CWD_TIMEOUT_MS = 1000;
-/** Most candidate processes whose cwd is probed — one spawn each on macOS. */
-export const DOCTOR_AGENT_MAX_CWD_PROBES = 8;
+/**
+ * Most candidate processes whose cwd is parsed.
+ *
+ * It used to be 8 and it used to buy something: every cwd cost its own `lsof`
+ * spawn on macOS, so the cap was a spawn budget. It is now ONE batched
+ * `lsof -a -p <csv> -d cwd -Fn` for the whole list (cli/doctor.ts), so the cap
+ * bounds a parse and nothing else — and at 8 it was actively harmful.
+ * Re-derived on the author's Mac: `ps -axo comm= | awk -F/
+ * 'tolower($NF)=="claude"' | wc -l` prints 16, of which the VS Code extension
+ * accounts for fifteen. Eight slots taken in arbitrary ps order therefore left
+ * half the machine unexamined, and an offender that happened to sort late read
+ * `PASS no running agent predates the hooks` with the agent running.
+ *
+ * WHAT FIXED IT is the newest-started-first sort before the cap, not the
+ * desktop-app exclusion beside it: exactly one process on that machine matches
+ * `.app/Contents/`, because the framework helpers are named `Claude Helper`
+ * and never basename to `claude` at all (review finding B2-L4). 64 covers a
+ * very busy day with room.
+ */
+export const DOCTOR_AGENT_MAX_CWD_PROBES = 64;
 /** Parse bound on ps output — a runaway process table stays a bounded read. */
 export const DOCTOR_AGENT_PS_MAX_LINES = 4096;
 
@@ -1016,6 +1215,24 @@ export const DOCTOR_AGENT_PS_MAX_LINES = 4096;
 export const FOREIGN_DROPS_SCAN_MAX_FILES = 200;
 /** Most repo ids the drop summary NAMES — the sentence stays readable. */
 export const FOREIGN_DROPS_MAX_NAMED_REPOS = 3;
+
+/**
+ * Bound on the session-state files `doctor`'s stale-state count and the
+ * SessionStart zombie reap walk (state/session-scan.ts). Larger than the cost
+ * scan's 50 because these two are COUNTING and DELETING rather than summing:
+ * the number worth printing is how many stale files there are, and a home
+ * that accumulated a hundred zombies is exactly the machine that needs them
+ * gone.
+ */
+export const SESSION_STATE_SCAN_MAX_FILES = 200;
+/**
+ * Most zombie state files ONE SessionStart deletes. A home with a hundred of
+ * them drains over four sessions instead of costing one session a hundred-file
+ * unlink storm on the hook whose latency the developer feels most.
+ */
+export const SESSION_STATE_REAP_MAX_PER_RUN = 25;
+/** A deferred end whose session the hub has never heard of (trial finding M6). */
+export const HTTP_NOT_FOUND = 404;
 
 export const EXIT_OK = 0;
 export const EXIT_WARN = 1;
@@ -1037,6 +1254,71 @@ export const POST_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash";
 export const PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
 
 /**
+ * The PreToolUse tripwire mode (trial finding #25 + Q2). DESIGN §4 makes `ask`
+ * normative and it stays the default. But a headless `claude -p` /
+ * Agent-SDK subagent — most of Nick's live sessions — cannot show a permission
+ * prompt, so Claude Code turns a hook `ask` into a ONE-SHOT DENY of that tool
+ * call, with the reason delivered to the model. Measured on real `claude -p`
+ * runs against a throwaway hub across 15 variants; the ask half and the
+ * notice half are summarized in the batch's PR body.
+ *
+ * There is no TRUSTWORTHY per-hook signal for headless, which is NOT the same
+ * as no signal — stated measured so nobody "fixes" this into an auto-detector:
+ * a `claude -p` whose caller left CLAUDE_CODE_ENTRYPOINT unset hands the hook
+ * `sdk-cli`, but a caller-supplied value survives verbatim (the same headless
+ * run reported `sdk-cli` and `claude-vscode` depending only on the spawn env),
+ * and orchestration subagents are spawned FROM a Claude Code session, so the
+ * parent's interactive value leaks into exactly the shape a detector exists
+ * for. stdin is a pipe in interactive sessions too, and the payload carries no
+ * flag. So this is an explicit knob instead.
+ *   ask     (default) — emit `ask` AND `additionalContext` (§4, DESIGN.md:97).
+ *   notice            — emit `additionalContext` ONLY, no decision: the model
+ *                       is briefed, the tool is never blocked. For
+ *                       orchestration/CI sessions that must not one-shot-deny.
+ * `additionalContext` is emitted in BOTH modes (#25): the tripwire reason,
+ * carrying the get_diagnosis id, reached the human alone before.
+ */
+export const TRIPWIRE_MODE_ENV = "CROSSCHECK_TRIPWIRE";
+export const TRIPWIRE_MODE_ASK = "ask";
+export const TRIPWIRE_MODE_NOTICE = "notice";
+
+/**
+ * The seven Claude Code hook events `crosscheck init` registers, mapped to the
+ * `crosscheck hook <name>` subcommand each one calls.
+ *
+ * ONE LIST, because three places used to keep their own and two of them
+ * drifted (trial finding M17): `settings-merge.ts buildSettingsPlan` writes
+ * six, `doctor.ts REQUIRED_HOOK_EVENTS` required six, and
+ * `scripts/hook-contract-watch.ts` watched THREE while its comment claimed to
+ * watch "the events we register" — so the PreToolUse tripwire's whole output
+ * contract (permissionDecision, permissionDecisionReason, the literal `ask`)
+ * went unwatched for as long as it existed. Every consumer now reads this,
+ * which kills that class of drift by construction rather than by review.
+ *
+ * The insertion order is the order doctor prints them in, and it is the
+ * lifecycle order a reader expects, not alphabetical.
+ */
+export const REGISTERED_HOOK_EVENTS = {
+  SessionStart: "session-start",
+  PostToolUse: "post-tool-use",
+  // The event failures actually arrive on. Missing, the install captures no
+  // error fingerprints at all — silently, because every other hook keeps
+  // working — which is the finding-#14 shape this list exists to prevent.
+  PostToolUseFailure: "post-tool-use-failure",
+  SessionEnd: "session-end",
+  UserPromptSubmit: "user-prompt-submit",
+  PreToolUse: "pre-tool-use",
+  Stop: "stop",
+} as const;
+
+export type RegisteredHookEvent = keyof typeof REGISTERED_HOOK_EVENTS;
+
+/** The same seven as a list, for the callers that only need the names. */
+export const REGISTERED_HOOK_EVENT_NAMES = Object.keys(
+  REGISTERED_HOOK_EVENTS,
+) as readonly RegisteredHookEvent[];
+
+/**
  * Project-scoped MCP registration, committed alongside `.claude/settings.json`
  * so a teammate gets the tools on `git pull` (DESIGN.md §2).
  */
@@ -1052,7 +1334,7 @@ export const MCP_SERVER_NAME = "crosscheck";
  * VERIFY: bun -e 'const p=await Bun.file("packages/connector-claude/package.json").json(); const c=await import("./packages/connector-core/src/constants.ts"); console.log(p.version === c.MCP_SERVER_VERSION)'
  * PRINTS: true
  */
-export const MCP_SERVER_VERSION = "0.7.2";
+export const MCP_SERVER_VERSION = "0.8.0";
 
 /**
  * MCP revisions this server can speak, newest first. `initialize` echoes the

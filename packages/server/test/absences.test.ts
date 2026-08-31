@@ -8,6 +8,7 @@ import {
   jsonRequest,
   postRecords,
   recordEnvelope,
+  registerTestSession,
 } from "./helpers.ts";
 import type { HarnessWithSession } from "./helpers.ts";
 
@@ -163,22 +164,43 @@ describe("GET /api/absences", () => {
   });
 
   test("a member whose newest commit postdates their last session by days fires", async () => {
-    // Arrange: session registered at T0; commits continue until T0+3d with no
-    // further reported session.
+    // Arrange: Nick's session is registered at T0 and never speaks again; his
+    // commits continue until T0+3d, and it is a TEAMMATE's SessionStart three
+    // days later that collects the repo's commit evidence. The evidence has to
+    // arrive on somebody else's session, because a flush is itself a sign of
+    // life for the session that sends it (services/records.ts
+    // touchProducerHeartbeats) — an absence "reported" by the very session it
+    // indicts is not a shape this endpoint can ever see.
     const setup = await createHarnessWithSession();
-    setup.harness.clock.advanceSeconds(3 * 24 * 3600);
-    await ingestEvidence(
-      setup,
-      [
-        {
-          name: "Nick",
-          email: "nick@example.com",
-          latestCommitAt: isoAt(3 * MS_PER_DAY),
-          commitCount: 9,
-        },
-      ],
-      isoAt(3 * MS_PER_DAY),
+    const ken = await createTestDeveloper(
+      setup.harness,
+      "Ken",
+      "ken@example.com",
     );
+    setup.harness.clock.advanceSeconds(3 * 24 * 3600);
+    await registerTestSession(setup.harness, ken.apiKey, { id: "ses_ken" });
+    const response = await postRecords(setup.harness, ken, {
+      records: [
+        recordEnvelope(
+          "commit_evidence",
+          {
+            repo: REPO,
+            collectedAt: isoAt(3 * MS_PER_DAY),
+            windowDays: 14,
+            authors: [
+              {
+                name: "Nick",
+                email: "nick@example.com",
+                latestCommitAt: isoAt(3 * MS_PER_DAY),
+                commitCount: 9,
+              },
+            ],
+          },
+          { sessionId: "ses_ken" },
+        ),
+      ],
+    });
+    expect(response.data?.accepted).toBe(1);
 
     // Act
     const { absences } = await fetchAbsences(setup);

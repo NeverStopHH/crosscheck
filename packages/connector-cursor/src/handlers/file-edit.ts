@@ -5,17 +5,47 @@
  * them, nothing here can store them (Tier-0 discipline; the privacy suite
  * plants sentinels and greps every disk artifact).
  *
+ * THE #17 WORKTREE RESOLUTION, on this host. Until this landed, capture bound
+ * `state.repoRoot` (the checkout the conversation registered at) and derived
+ * every later edit's id against it, so an edit inside a LINKED WORKTREE of the
+ * same repo resolved to null and was dropped — silently and uncounted, the
+ * shape that produced 371 worktree edits → 0 targets on Claude Code and was
+ * measured identically here. The shared flow
+ * (connector-core/flows/capture-touched-files.ts) now runs ONE pre-pass per
+ * event, so the git cost is paid at most once per NEW worktree root per
+ * conversation (`knownWorktreeRoots`, carried across re-registrations by
+ * `withCarriedCapture`) and never per edit.
+ *
+ * THIS IS THE ONLY CAPTURE ROW ON THIS HOST, deliberately. Cursor's
+ * `postToolUse` also carries `tool_input` and its matcher vocabulary includes
+ * `Write`, so it COULD capture paths — and must not: one edit would then tick
+ * `editToolFires` twice and corrupt the very ratio the doctor WARN is measured
+ * on. `postToolUse` stays a failure/injection row.
+ *
+ * NO BEFORE-EDIT TRIPWIRE IS POSSIBLE ON THIS HOST TODAY. Cursor documents no
+ * `beforeFileEdit`/`beforeWrite` (cursor.com/docs/hooks, read 2026-08-26).
+ * `preToolUse` does fire before a `Write`, but its outputs are
+ * `permission: "allow" | "deny"`, two messages the docs describe as shown
+ * "when the action is denied", and `updated_input` — verbatim, "Modified tool
+ * input to use instead", which REWRITES the edit rather than briefing the
+ * model, so it is past the same ceiling as a deny. `"ask"` is, verbatim,
+ * "accepted by the schema but not enforced for `preToolUse` today", and the
+ * event has no `additional_context`. So the only way to put text in front of
+ * the model before an edit is to DENY it — past the structural ceiling (the
+ * Claude tripwire holds exactly one decision literal, `ASK_DECISION`, and
+ * three mutation entries keep deny impossible). It is not wired, and the
+ * README / docs/adapters/INSTALL.md parity tables say so in those words.
+ *
  * Heartbeat rides here (throttled in core), status → implementing — the
  * Claude edit-tool heuristic: an edit is the moment a session provably
  * builds.
  */
-import {
-  captureFileTargets,
-} from "@crosscheck/connector-core/flows/capture-targets.ts";
+import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
+import { withCaptureBookkeeping } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
 import {
   updateSessionState,
   withSeenTargets,
@@ -25,11 +55,31 @@ import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.t
 import type { CursorHookContext } from "../runner.ts";
 import { IMPLEMENTING_STATUS, requireSessionState } from "./recover.ts";
 
+/**
+ * What `lastPostToolUseTool` holds for this host. The field name is
+ * Claude-flavoured and stays that way — renaming it would stop old state
+ * files parsing — so the honest per-host value is documented instead: this
+ * event carries no `tool_name` at all, and the event name is what a doctor
+ * line can truthfully print.
+ */
+const AFTER_FILE_EDIT_TOOL = "afterFileEdit";
+
 export const handleAfterFileEdit = async (
   ctx: CursorHookContext,
   budget: HookBudget,
 ): Promise<string> => {
-  const state = await requireSessionState(ctx);
+  // An edit event IS an edit-tool fire: booked whether or not anything is
+  // captured, including on the foreign-repo path inside requireSessionState,
+  // so "N fires → 0 targets" stays honest instead of reading as silence.
+  const state = await requireSessionState(ctx, {
+    editFired: true,
+    toolLabel: AFTER_FILE_EDIT_TOOL,
+    // Named on the drop path too, or the WARN that drop raises says `last
+    // tool none yet` about a conversation that has just fired N edits.
+    ...(ctx.payload.file_path === undefined
+      ? {}
+      : { touchedPath: ctx.payload.file_path }),
+  });
   if (state === null) {
     return "";
   }
@@ -40,20 +90,28 @@ export const handleAfterFileEdit = async (
     sessionId: state.crosscheckSessionId,
   };
   const filePath = ctx.payload.file_path;
-  const files = await captureFileTargets({
+  const paths = filePath === undefined ? [] : [filePath];
+  const { captured: files, resolution } = await captureTouchedFiles({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
     hostSessionKey: ctx.hostSessionKey,
     repoRoot: state.repoRoot,
-    // afterFileEdit documents file_path as absolute; a relative one resolves
-    // against the event's own cwd when present, the workspace root else.
+    // afterFileEdit documents file_path as absolute and carries no cwd of its
+    // own; a relative one resolves against the event's cwd when present, the
+    // workspace root else. An EMPTY cwd is treated as absent at the schema
+    // boundary (payload.ts) — Cursor demonstrably sends `cwd: ""`, and `??`
+    // does not fold it.
     cwd: ctx.payload.cwd ?? ctx.identity.root,
-    paths: filePath === undefined ? [] : [filePath],
+    paths,
     denylist: ctx.config.denylist ?? null,
     seenTargets: state.seenTargets,
     workContextId: state.workContextId,
     producer,
     now,
+    sessionRepoId: state.repoId,
+    identityRoot: ctx.identity.root,
+    identityRepoId: ctx.identity.repoId,
+    knownWorktreeRoots: state.knownWorktreeRoots,
   });
   // Claude's PostToolUse hosts capture + drain + heartbeat in one event;
   // Cursor splits the event, each split keeps the drain — `spareMs`, not the
@@ -72,9 +130,17 @@ export const handleAfterFileEdit = async (
     status: IMPLEMENTING_STATUS,
   });
   // Freshest state under the lock — never the snapshot read above (the
-  // Claude state-race lesson: sibling hooks overlap).
+  // Claude state-race lesson: sibling hooks overlap). The #17 root cache and
+  // the #18/#20 capture counters fold in here too: ONE write per event.
   await updateSessionState(ctx.config.home, ctx.hostSessionKey, (fresh) => ({
-    ...withSeenTargets(fresh, files),
+    ...withCaptureBookkeeping(withSeenTargets(fresh, files), {
+      resolution,
+      capturedCount: files.length,
+      editFired: true,
+      toolLabel: AFTER_FILE_EDIT_TOOL,
+      firstPath: paths[0] ?? null,
+      now,
+    }),
     ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
   }));
   return "";

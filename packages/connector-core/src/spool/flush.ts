@@ -99,11 +99,19 @@ const flushOneBatch = async (
     .filter((record): record is Record<string, unknown> => record !== null)
     .map((record) => withProducer(record, input.developerId, input.sessionId));
 
+  let refused = 0;
   if (records.length > 0) {
     const result = await postRecords(ctx, records);
     if (!result.ok) {
       return null;
     }
+    // A 2xx is not a delivery. Ingest reports per-record outcomes, and a
+    // record the hub REFUSED is discarded by the cursor write below exactly
+    // like a torn line — so it is counted exactly like one. Nothing in the
+    // connector read `rejected` before, which is how a session the hub had
+    // closed could lose a whole afternoon while `spool drops` printed "none"
+    // (review finding B2-01/B2-07).
+    refused = result.data.rejected;
   }
   // Counted BEFORE the cursor moves past them, so a line that is not JSON —
   // the only thing a torn write can produce — becomes a visible drop instead
@@ -118,6 +126,16 @@ const flushOneBatch = async (
     "unparsable",
     ctx.now(),
   );
+  if (refused > 0) {
+    await recordDrop(
+      ctx.home,
+      ctx.repoKey,
+      spool.slug,
+      refused,
+      "rejected",
+      ctx.now(),
+    );
+  }
   // The spool as READ is the identity: the cursor may only move for the file
   // this batch came from. A spool reaped and recreated mid-flush is a different
   // file — same name, and on ext4 the same inode number too — and its records

@@ -7,15 +7,26 @@ import {
   CLAUDE_SETTINGS_DIR,
   CLAUDE_SETTINGS_FILE,
   DOCTOR_AGENT_CWD_TIMEOUT_MS,
+  DOCTOR_CAPTURE_MAX_SESSION_LINES,
+  DOCTOR_PATH_MAX_CHARS,
+  DOCTOR_TOOL_NAME_MAX_CHARS,
   DOCTOR_AGENT_MAX_CWD_PROBES,
   DOCTOR_AGENT_PS_MAX_LINES,
   DOCTOR_AGENT_PS_TIMEOUT_MS,
   DOCTOR_FLUSH_LOCK_WARN_MS,
+  DOCTOR_HOOK_SILENT_WARN_MINUTES,
+  DOCTOR_MCP_PROBE_TIMEOUT_MS,
+  DOCTOR_NO_PROBE_ENV,
   DOCTOR_LAST_SYNC_WARN_MINUTES,
   DOCTOR_SPOOL_AGE_WARN_HOURS,
   DOCTOR_SPOOL_DEPTH_FAIL,
   DOCTOR_SPOOL_DEPTH_WARN,
+  DOCTOR_STATUSLINE_SILENT_WARN_MINUTES,
+  DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   EXIT_FAIL,
+  GIT_TIMEOUT_MS,
+  HEARTBEAT_MIN_INTERVAL_MS,
+  HTTP_NOT_FOUND,
   EXIT_OK,
   EXIT_WARN,
   LATENCY_PROBE_TIMEOUT_MS,
@@ -27,15 +38,31 @@ import {
   MS_PER_SECOND,
   PRIVATE_FILE_MODE,
   PROBE_REPO,
+  REGISTERED_HOOK_EVENTS,
+  REPO_CONFIG_FILE,
+  REGISTERED_HOOK_EVENT_NAMES,
   SECONDS_PER_MINUTE,
+  SESSION_STATE_SCAN_MAX_FILES,
   SUMMARIZER_CLAUDE_MIN_VERSION,
+  TRIPWIRE_MODE_ENV,
+  TRIPWIRE_MODE_NOTICE,
 } from "@crosscheck/connector-core/constants.ts";
+import { resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
+import {
+  isCaptureSilentlyDead,
+  readCaptureHealth,
+} from "@crosscheck/connector-core/state/capture-health.ts";
+import type {
+  CaptureHealth,
+  SessionCaptureHealth,
+} from "@crosscheck/connector-core/state/capture-health.ts";
 import { loadConfig } from "@crosscheck/connector-core/config/config.ts";
 import { timeoutOwner } from "@crosscheck/connector-core/config/timeout-policy.ts";
 import type { TimeoutOwner } from "@crosscheck/connector-core/config/timeout-policy.ts";
 import {
   configPath,
   crosscheckHome,
+  readJsonOrNull,
   readTextOrNull,
   repoKey,
   spoolFlushLockPath,
@@ -49,10 +76,15 @@ import {
   formatForeignDropLine,
   readForeignRepoDrops,
 } from "@crosscheck/connector-core/state/foreign-drops.ts";
+import { isPathIgnored } from "@crosscheck/connector-core/git/check-ignore.ts";
 import { runBoundedCommand } from "@crosscheck/connector-core/git/git.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import { hubRequest } from "@crosscheck/connector-core/http/client.ts";
-import type { HubContext, HubResult } from "@crosscheck/connector-core/http/client.ts";
+import type {
+  HubContext,
+  HubFailureKind,
+  HubResult,
+} from "@crosscheck/connector-core/http/client.ts";
 import {
   describeConnectionFailure,
   refineRefusedCause,
@@ -66,9 +98,12 @@ import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency
 import {
   getAbsences,
   getGhostChecks,
+  getHintStats,
+  getOpenSessions,
   getPrivacySettings,
   getQuestions,
   getSolvedMatchCounts,
+  getWorkContexts,
 } from "@crosscheck/connector-core/http/hub.ts";
 import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
 import {
@@ -80,7 +115,11 @@ import {
   solvedPrecisionWarning,
 } from "@crosscheck/connector-core/hints/precision.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
-import { oldestSpoolLineMs, spoolDepth } from "@crosscheck/connector-core/spool/files.ts";
+import {
+  countCursorIdentityMismatches,
+  oldestSpoolLineMs,
+  spoolDepth,
+} from "@crosscheck/connector-core/spool/files.ts";
 import { readLockHolder } from "@crosscheck/connector-core/spool/lock.ts";
 import { readUnclosedSummary } from "@crosscheck/connector-core/spool/unclosed.ts";
 import {
@@ -88,9 +127,23 @@ import {
   formatConferenceCost,
   readConferenceCost,
 } from "@crosscheck/connector-core/state/conference-cost.ts";
+import {
+  readHooksFired,
+  readStatuslineRendered,
+} from "@crosscheck/connector-core/state/fired-markers.ts";
+import {
+  listSessionStateFiles,
+  sessionSilentForMs,
+} from "@crosscheck/connector-core/state/session-scan.ts";
 import type { ConferenceCost } from "@crosscheck/connector-core/state/conference-cost.ts";
-import { readLiveSessionStates } from "@crosscheck/connector-core/state/session-state.ts";
-import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  SessionStateSchema,
+  readLiveSessionStates,
+} from "@crosscheck/connector-core/state/session-state.ts";
+import type {
+  LiveSessionScan,
+  SessionState,
+} from "@crosscheck/connector-core/state/session-state.ts";
 import { readSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher-check.ts";
 import {
@@ -113,7 +166,8 @@ import type {
   SummarizerProbe,
 } from "@crosscheck/connector-claude";
 import { isOwnedMcpEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
-import { isOwnedCommand } from "@crosscheck/connector-claude";
+import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
+import { claudeUserMcpPath, isOwnedCommand } from "@crosscheck/connector-claude";
 import {
   globalInstallChecks,
   ownedHookEntries,
@@ -140,8 +194,6 @@ const check = (level: CheckLevel, name: string, detail: string): Check => ({
 const MS_PER_MINUTE = MS_PER_SECOND * SECONDS_PER_MINUTE;
 const MS_PER_HOUR = MS_PER_MINUTE * MINUTES_PER_HOUR;
 const HTTP_UNAUTHORIZED = 401;
-/** A hub that predates a route answers 404 — a deployment state, not a fault. */
-const HTTP_NOT_FOUND = 404;
 
 const checkConfig = async (home: string): Promise<Check> => {
   const path = configPath(home);
@@ -223,19 +275,18 @@ const settingsOnly = (checks: readonly Check[]): SettingsInspection => ({
   launcherCommand: null,
 });
 
-/** Hook events a healthy install registers — project and user scope alike. */
-const REQUIRED_HOOK_EVENTS = [
-  "SessionStart",
-  "PostToolUse",
-  // The event failures actually arrive on. Missing, the install captures no
-  // error fingerprints at all — silently, because every other hook keeps
-  // working — which is the finding-#14 shape this list exists to prevent.
-  "PostToolUseFailure",
-  "SessionEnd",
-  "UserPromptSubmit",
-  "PreToolUse",
-  "Stop",
-] as const;
+/**
+ * Hook events a healthy install registers — project and user scope alike.
+ *
+ * Read from core (constants.ts REGISTERED_HOOK_EVENTS) rather than spelled a
+ * second time here: this list, `buildSettingsPlan`'s and the contract
+ * watcher's had drifted apart, and the watcher's copy — three events where
+ * this one has seven — is what left the PreToolUse tripwire's output contract
+ * unwatched (trial finding M17). PostToolUseFailure is in that list too: the
+ * event failures actually arrive on, and an install missing it captures no
+ * error fingerprints at all while every other hook keeps working.
+ */
+const REQUIRED_HOOK_EVENTS = REGISTERED_HOOK_EVENT_NAMES;
 
 /**
  * Whether the user-scope install registers every hook the project check
@@ -484,8 +535,19 @@ const workspaceRootChecks = async (cwd: string): Promise<readonly Check[]> => {
 export interface AgentProcessProbe {
   /** Raw `ps -axo pid=,etime=,comm=` output, or null = not measurable. */
   readonly listProcesses: () => Promise<string | null>;
-  /** The process's working directory, or null when it cannot be known. */
-  readonly resolveCwd: (pid: number) => Promise<string | null>;
+  /**
+   * Working directories for a whole batch of pids at once — a pid missing
+   * from the map is one whose cwd could not be known.
+   *
+   * It used to be one pid per call, and on macOS one call was one `lsof`
+   * spawn, which is why the candidate list was capped at eight. That cap was
+   * then spent on desktop-app helpers (below) before a real agent was ever
+   * reached. `lsof` takes a comma-separated pid list, so the whole batch is
+   * ONE spawn regardless of size and the cap now bounds only the parse.
+   */
+  readonly resolveCwds: (
+    pids: readonly number[],
+  ) => Promise<ReadonlyMap<number, string>>;
 }
 
 /** Process names that are coding agents whose hooks load at start. */
@@ -518,8 +580,42 @@ export const parsePsEtime = (etime: string): number | null => {
 interface AgentCandidate {
   readonly pid: number;
   readonly name: string;
+  /** Full `ps comm` path — what the desktop-helper exclusion reads. */
+  readonly command: string;
   readonly startedAtMs: number;
 }
+
+/**
+ * A macOS application BUNDLE's internal executables.
+ *
+ * WHAT THIS ACTUALLY REMOVES, re-derived on the author's Mac today rather than
+ * remembered:
+ *
+ *   ps -axo comm= | awk -F/ 'tolower($NF)=="claude"' | wc -l          -> 16
+ *   ps -axo comm= | awk -F/ 'tolower($NF)=="claude"' \
+ *     | grep -c "\.app/Contents/"                                     -> 1
+ *   ps -axo comm= | grep "^/Applications/Claude\.app/" \
+ *     | awk -F/ '{print $NF}' | sort -u
+ *       -> Claude / Claude Helper / Claude Helper (Renderer)
+ *          / chrome_crashpad_handler
+ *
+ * ONE process, not twelve. `parsePsLine` keeps only names that basename to
+ * `claude` or `cursor`, and the framework helpers are called `Claude Helper`
+ * and `chrome_crashpad_handler` — they were never candidates and never cost a
+ * slot. An earlier version of this comment credited them with consuming the
+ * old cap of eight and hiding an offender at position 25; that is not what
+ * happened (review finding B2-L4). The SORT below is what fixes that finding:
+ * survivors are ordered newest-started-first before the cap, so a truncation
+ * can no longer drop the candidates closest to the settings write. This
+ * pattern is cheap defence in depth — it keeps the desktop app out of the
+ * count and off the `N agents checked` line — and it is not load-bearing for
+ * H6. `test/agent-restart.test.ts` tests the two separately, so removing
+ * either one fails its own case.
+ *
+ * The desktop app is excluded on the merits regardless: it is not a coding
+ * agent, it does not load our hooks, and its cwd is `/`.
+ */
+const APP_BUNDLE_PATTERN = /\.app\/Contents\//;
 
 /** One ps line — "<pid> <etime> <comm…>" — or null for anything unparseable. */
 const parsePsLine = (line: string, nowMs: number): AgentCandidate | null => {
@@ -533,11 +629,17 @@ const parsePsLine = (line: string, nowMs: number): AgentCandidate | null => {
   if (!Number.isSafeInteger(pid) || pid <= 0 || elapsedSeconds === null) {
     return null;
   }
-  const name = basename(commTokens.join(" ")).toLowerCase();
+  const command = commTokens.join(" ");
+  const name = basename(command).toLowerCase();
   if (!AGENT_PROCESS_NAMES.has(name)) {
     return null;
   }
-  return { pid, name, startedAtMs: nowMs - elapsedSeconds * MS_PER_SECOND };
+  return {
+    pid,
+    name,
+    command,
+    startedAtMs: nowMs - elapsedSeconds * MS_PER_SECOND,
+  };
 };
 
 const isInsideRepo = async (repoRoot: string, cwd: string): Promise<boolean> => {
@@ -547,46 +649,97 @@ const isInsideRepo = async (repoRoot: string, cwd: string): Promise<boolean> => 
   return rel === "" || (!rel.startsWith("..") && !rel.startsWith("/"));
 };
 
+/**
+ * The NEWEST settings file that carries hooks, and its name.
+ *
+ * It used to be exactly one path — this repo's `.claude/settings.json` — and
+ * that was wrong in both directions (trial finding H6). In a fresh worktree
+ * the file does not exist, so the whole check read `PASS not measured (no
+ * settings file)` while a global install's `~/.claude/settings.json` carried
+ * all six hooks and had been rewritten ten minutes ago. And in a repo that
+ * DOES have one, an 88-byte statusLine-only stub from days earlier was what
+ * got measured, while the file that actually holds the hooks — the user-scope
+ * one — was newer and never stat'ed. Whichever file was written LAST is the
+ * one an already-running agent can be older than, so that is the one measured,
+ * and its path goes in the sentence so the reader knows which file is meant.
+ */
+const newestSettingsFile = async (
+  paths: readonly string[],
+): Promise<{ readonly path: string; readonly mtimeMs: number } | null> => {
+  const stats = await Promise.all(
+    paths.map(async (path) =>
+      stat(path).then(
+        (info) => ({ path, mtimeMs: info.mtimeMs }),
+        () => null,
+      ),
+    ),
+  );
+  return stats
+    .filter((entry): entry is { path: string; mtimeMs: number } => entry !== null)
+    .reduce<{ path: string; mtimeMs: number } | null>(
+      (newest, entry) =>
+        newest === null || entry.mtimeMs > newest.mtimeMs ? entry : newest,
+      null,
+    );
+};
+
 export const checkAgentRestart = async (
   repoRoot: string,
-  settingsPath: string,
+  settingsPaths: readonly string[],
   probe: AgentProcessProbe,
   nowMs: number,
 ): Promise<Check> => {
   const name = "agent restart";
   try {
-    const settingsMtimeMs = await stat(settingsPath).then(
-      (info) => info.mtimeMs,
-      () => null,
-    );
-    if (settingsMtimeMs === null) {
+    const settings = await newestSettingsFile(settingsPaths);
+    if (settings === null) {
       return check("PASS", name, "not measured (no settings file)");
     }
     const raw = await probe.listProcesses();
     if (raw === null) {
       return check("PASS", name, "not measured");
     }
-    // Age first, cwd second: the pre-filter keeps the per-pid probes (a
-    // spawn each on macOS) to the handful that could matter at all.
-    const candidates = raw
+    const matched = raw
       .split("\n")
       .slice(0, DOCTOR_AGENT_PS_MAX_LINES)
       .flatMap((line) => {
         const parsed = parsePsLine(line, nowMs);
-        return parsed === null || parsed.startedAtMs >= settingsMtimeMs
+        return parsed === null || parsed.startedAtMs >= settings.mtimeMs
           ? []
           : [parsed];
-      })
+      });
+    // Desktop-app helpers out, then NEWEST-STARTED FIRST, then the cap. The
+    // order is the whole point: ps order is arbitrary, so a truncation that
+    // happens in it drops candidates at random, and the ones worth keeping
+    // are the ones that started closest to the settings write.
+    const eligible = matched.filter(
+      (candidate) => !APP_BUNDLE_PATTERN.test(candidate.command),
+    );
+    const candidates = [...eligible]
+      .sort((left, right) => right.startedAtMs - left.startedAtMs)
       .slice(0, DOCTOR_AGENT_MAX_CWD_PROBES);
+    const skipped = matched.length - candidates.length;
+    // ONE call for every pid: on macOS that is a single `lsof`, so the number
+    // of candidates no longer costs spawns.
+    const cwds = await probe
+      .resolveCwds(candidates.map((candidate) => candidate.pid))
+      .catch(() => new Map<number, string>());
     const offenders: AgentCandidate[] = [];
     for (const candidate of candidates) {
-      const cwd = await probe.resolveCwd(candidate.pid).catch(() => null);
-      if (cwd !== null && (await isInsideRepo(repoRoot, cwd))) {
+      const cwd = cwds.get(candidate.pid);
+      if (cwd !== undefined && (await isInsideRepo(repoRoot, cwd))) {
         offenders.push(candidate);
       }
     }
+    // Both branches carry the counts: a PASS whose reader cannot tell whether
+    // anything was examined is the shape this whole finding is about.
+    const counts = `${String(candidates.length)} agent${candidates.length === 1 ? "" : "s"} checked, ${String(skipped)} skipped`;
     if (offenders.length === 0) {
-      return check("PASS", name, "no running agent predates the hooks");
+      return check(
+        "PASS",
+        name,
+        `no running agent predates ${settings.path} — ${counts}`,
+      );
     }
     const listed = offenders
       .map((entry) => `pid ${String(entry.pid)} (${entry.name})`)
@@ -594,7 +747,7 @@ export const checkAgentRestart = async (
     return check(
       "WARN",
       name,
-      `a running agent predates your hooks — restart it: ${listed} in this repo started before ${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE} was written, and hooks load only at process start`,
+      `a running agent predates your hooks — restart it: ${listed} in this repo started before ${settings.path} was written, and hooks load only at process start — ${counts}`,
     );
   } catch {
     // Never crashes doctor: any surprise is a "not measured", not a report.
@@ -602,7 +755,32 @@ export const checkAgentRestart = async (
   }
 };
 
-/** The real probe: ps once, then /proc (Linux) or bounded lsof (macOS). */
+/**
+ * `lsof -Fn` field output for a batch of pids, as a map.
+ *
+ * The format repeats `p<pid>` / `f<fd>` / `n<path>`, so a `n` line belongs to
+ * whichever `p` line most recently preceded it — which is why the parser
+ * carries the current pid forward instead of reading pairs. Only the `cwd`
+ * descriptor is requested (`-d cwd`), so the first `n` per pid is the one
+ * wanted; a later duplicate never overwrites it.
+ */
+export const parseLsofCwds = (output: string): ReadonlyMap<number, string> => {
+  const cwds = new Map<number, string>();
+  let pid: number | null = null;
+  for (const line of output.split("\n")) {
+    if (line.startsWith("p")) {
+      const parsed = Number.parseInt(line.slice(1), 10);
+      pid = Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+      continue;
+    }
+    if (line.startsWith("n") && pid !== null && !cwds.has(pid)) {
+      cwds.set(pid, line.slice(1));
+    }
+  }
+  return cwds;
+};
+
+/** The real probe: ps once, then /proc (Linux) or ONE batched lsof (macOS). */
 const defaultAgentProbe = (cwd: string): AgentProcessProbe => ({
   listProcesses: async () =>
     process.platform === "linux" || process.platform === "darwin"
@@ -612,26 +790,35 @@ const defaultAgentProbe = (cwd: string): AgentProcessProbe => ({
           DOCTOR_AGENT_PS_TIMEOUT_MS,
         )
       : null,
-  resolveCwd: async (pid) => {
+  resolveCwds: async (pids) => {
+    if (pids.length === 0) {
+      return new Map<number, string>();
+    }
     if (process.platform === "linux") {
-      try {
-        return await readlink(`/proc/${String(pid)}/cwd`);
-      } catch {
-        return null;
-      }
+      // No spawn at all here: /proc is a readlink each, which is why Linux
+      // never needed the batching macOS does.
+      const entries = await Promise.all(
+        pids.map(async (pid): Promise<readonly [number, string] | null> => {
+          try {
+            return [pid, await readlink(`/proc/${String(pid)}/cwd`)] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      return new Map(
+        entries.filter((entry): entry is readonly [number, string] => entry !== null),
+      );
     }
     if (process.platform === "darwin") {
       const output = await runBoundedCommand(
-        ["lsof", "-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+        ["lsof", "-a", "-p", pids.join(","), "-d", "cwd", "-Fn"],
         cwd,
         DOCTOR_AGENT_CWD_TIMEOUT_MS,
       );
-      const nameLine = output
-        ?.split("\n")
-        .find((line) => line.startsWith("n"));
-      return nameLine === undefined ? null : nameLine.slice(1);
+      return output === null ? new Map<number, string>() : parseLsofCwds(output);
     }
-    return null;
+    return new Map<number, string>();
   },
 });
 
@@ -651,9 +838,20 @@ const defaultAgentProbe = (cwd: string): AgentProcessProbe => ({
  * `crosscheck login`. A single line saying "the tools do not work" would send
  * half the readers to the wrong command.
  */
+/**
+ * The sentence that turns a committed-file recommendation into a lie when the
+ * file is gitignored (trial finding M11). Empty when git says it is not
+ * ignored, and empty when git could not say — old text over wrong text.
+ */
+const ignoredSuffix = (ignored: boolean | null, path: string): string =>
+  ignored === true
+    ? ` — WARNING: ${path} is gitignored in this repo, so committing it is impossible and teammates never receive it; they need \`crosscheck init --global\` on their own machines`
+    : "";
+
 const checkMcpRegistration = async (
   repoRoot: string,
   userScopeRegistered: boolean,
+  mcpIgnored: boolean | null,
 ): Promise<Check> => {
   const path = join(repoRoot, MCP_CONFIG_FILE);
   const raw = await readTextOrNull(path);
@@ -663,16 +861,22 @@ const checkMcpRegistration = async (
     // machine, so the committed-file advice survives as a note instead of
     // being lost with the FAIL.
     if (userScopeRegistered) {
-      return check(
-        "PASS",
-        "mcp tools registered",
-        `via global install (user scope, this machine only) — teammates get the tools from a committed ${path}: run crosscheck init, then commit the file`,
-      );
+      return mcpIgnored === true
+        ? check(
+            "WARN",
+            "mcp tools registered",
+            `via global install (user scope, this machine only) — ${path} is gitignored here, so the committed-file route does not exist in this repo and teammates need \`crosscheck init --global\` on their own machines`,
+          )
+        : check(
+            "PASS",
+            "mcp tools registered",
+            `via global install (user scope, this machine only) — teammates get the tools from a committed ${path}: run crosscheck init, then commit the file`,
+          );
     }
     return check(
       "FAIL",
       "mcp tools registered",
-      `${path} not found — run crosscheck init, then commit the file so teammates get the tools too`,
+      `${path} not found — run crosscheck init, then commit the file so teammates get the tools too${ignoredSuffix(mcpIgnored, path)}`,
     );
   }
   let parsed: unknown;
@@ -703,37 +907,267 @@ const checkMcpRegistration = async (
   }
   // The KEY being present is not enough: a hand-written entry under this name
   // pointing somewhere else would otherwise be reported as a healthy install.
-  return isOwnedMcpEntry(entry)
-    ? check("PASS", "mcp tools registered", path)
-    : check(
-        "FAIL",
-        "mcp tools registered",
-        `${path} has a "${MCP_SERVER_KEY}" server, but not the one crosscheck init writes — rerun crosscheck init`,
-      );
+  if (isOwnedMcpEntry(entry)) {
+    return mcpIgnored === true
+      ? check(
+          "WARN",
+          "mcp tools registered",
+          `${path}${ignoredSuffix(mcpIgnored, path)}`,
+        )
+      : check("PASS", "mcp tools registered", path);
+  }
+  return check(
+    "FAIL",
+    "mcp tools registered",
+    `${path} has a "${MCP_SERVER_KEY}" server, but not the one crosscheck init writes — rerun crosscheck init`,
+  );
 };
 
-/** Whether the registered tools have credentials to reach the hub with. */
-const mcpUsableCheck = (hasConfig: boolean, hubUrl: string | null): Check =>
-  hasConfig
-    ? check("PASS", "mcp tools usable", `they will call ${hubUrl ?? "the hub"}`)
-    : check(
+/**
+ * ── "mcp tools usable" (trial finding M3) ──────────────────────────────────
+ *
+ * This line used to be `mcpUsableCheck(hasConfig, hubUrl)`, called as
+ * `mcpUsableCheck(true, config.hubUrl)` — a literal constant in the branch
+ * where a config exists, so it printed `PASS mcp tools usable  they will call
+ * <url>` unconditionally, and during the trial it printed exactly that
+ * directly beneath `FAIL hub reachable  invalid api key`. "Usable" is a claim
+ * about credentials and a claim about the server starting, and it made
+ * neither.
+ *
+ * The KEY verdict comes from the HUB PROBE, which doctor has already run.
+ * The spawn below proves something different and narrower, and the comment on
+ * `probeMcpServer` says exactly what.
+ */
+export type McpProbeOutcome =
+  | { readonly kind: "not-probed"; readonly why: string }
+  | { readonly kind: "answered"; readonly tools: number }
+  | { readonly kind: "failed"; readonly detail: string };
+
+export interface McpUsableFacts {
+  /** A hub url and api key exist at all. */
+  readonly configured: boolean;
+  readonly hubUrl: string | null;
+  /** Doctor's own reachability probe — null in the unconfigured branch. */
+  readonly hub: { readonly ok: boolean; readonly status: number; readonly kind: HubFailureKind } | null;
+  /** Registered in EITHER scope: an unregistered tool is never called. */
+  readonly registered: boolean;
+  readonly probe: McpProbeOutcome;
+}
+
+/** PURE, so every branch's wording is pinned without spawning anything. */
+export const mcpUsableCheck = (facts: McpUsableFacts): Check => {
+  const name = "mcp tools usable";
+  if (!facts.configured) {
+    return check(
+      "FAIL",
+      name,
+      "no hub url or api key, so every tool call answers with an error — run `crosscheck login <hubUrl>`",
+    );
+  }
+  const hubUrl = facts.hubUrl ?? "the hub";
+  if (facts.hub !== null && !facts.hub.ok) {
+    // The credential verdict, taken from the call that actually presented the
+    // credential. A 401 is an ANSWER — the hub is there and the key is not
+    // welcome — and it has its own command, which is why it is not folded in
+    // with the outage below.
+    if (facts.hub.status === HTTP_UNAUTHORIZED) {
+      return check(
         "FAIL",
-        "mcp tools usable",
-        "no hub url or api key, so every tool call answers with an error — run `crosscheck login <hubUrl>`",
+        name,
+        `api key rejected — every tool call will answer with an error: run \`crosscheck login ${hubUrl}\``,
       );
+    }
+    return check(
+      "WARN",
+      name,
+      `${hubUrl} is unreachable from here, so the tools will error on every call — see the hub reachable line above for what to fix`,
+    );
+  }
+  if (!facts.registered) {
+    return check(
+      "FAIL",
+      name,
+      "no mcp server is registered in either scope, so no agent can call the tools — run `crosscheck init` (or `crosscheck init --global`)",
+    );
+  }
+  switch (facts.probe.kind) {
+    case "failed":
+      return check(
+        "FAIL",
+        name,
+        `the registered mcp server did not answer: ${facts.probe.detail} — the launcher in the registration cannot start crosscheck`,
+      );
+    case "answered":
+      return check(
+        "PASS",
+        name,
+        `${String(facts.probe.tools)} tools, and they will call ${hubUrl}`,
+      );
+    case "not-probed":
+      return check("PASS", name, `not probed (${facts.probe.why}) — they will call ${hubUrl}`);
+  }
+};
+
+/** JSON-RPC ids used by the handshake; only the second one is read back. */
+const MCP_PROBE_INIT_ID = 1;
+const MCP_PROBE_LIST_ID = 2;
+
+const McpToolsResultSchema = z.looseObject({
+  id: z.number(),
+  result: z.looseObject({ tools: z.array(z.unknown()) }),
+});
+
+/**
+ * Spawns the REGISTERED mcp entry and speaks two frames to it.
+ *
+ * WHAT THIS PROVES, precisely: that the command in `.mcp.json` (or the user
+ * scope) STARTS and speaks the protocol. That is a real failure mode — a
+ * launcher whose path no longer resolves, an import that crashes, a wrapper
+ * script that exits — and nothing else on the machine reports it, because an
+ * agent that cannot start the server simply has no tools and says nothing.
+ *
+ * WHAT IT DOES NOT PROVE: credentials. `tools/list` is answered from a static
+ * table (mcp/server.ts `listToolsResult`), so it succeeds with no api key, a
+ * rotated one, or a dead hub. The key verdict is the hub probe's, above, and
+ * the branch order in `mcpUsableCheck` reflects that.
+ *
+ * stdin is `"pipe"` and CLOSED after the two frames: the server's stdio loop
+ * ends when stdin ends, so the child cannot outlive the probe. `timeout` is a
+ * second guard for a child that ignores both.
+ */
+const probeMcpServer = async (
+  entry: McpServerEntry,
+  cwd: string,
+): Promise<McpProbeOutcome> => {
+  try {
+    const child = Bun.spawn({
+      cmd: [entry.command, ...entry.args],
+      cwd,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: DOCTOR_MCP_PROBE_TIMEOUT_MS,
+    });
+    const frames =
+      `${JSON.stringify({ jsonrpc: "2.0", id: MCP_PROBE_INIT_ID, method: "initialize", params: {} })}\n` +
+      `${JSON.stringify({ jsonrpc: "2.0", id: MCP_PROBE_LIST_ID, method: "tools/list", params: {} })}\n`;
+    child.stdin.write(frames);
+    await child.stdin.end();
+    const stdout = await new Response(child.stdout).text();
+    await child.exited;
+    for (const line of stdout.split("\n")) {
+      if (line.trim().length === 0) {
+        continue;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line) as unknown;
+      } catch {
+        continue;
+      }
+      const listed = McpToolsResultSchema.safeParse(parsed);
+      if (listed.success && listed.data.id === MCP_PROBE_LIST_ID) {
+        return { kind: "answered", tools: listed.data.result.tools.length };
+      }
+    }
+    return {
+      kind: "failed",
+      detail: `no tools/list answer within ${String(DOCTOR_MCP_PROBE_TIMEOUT_MS)} ms`,
+    };
+  } catch (error) {
+    return {
+      kind: "failed",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+const McpServerEntrySchema = z.looseObject({
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+});
+
+/** The entry an agent would actually launch: project scope first, then user. */
+const readRegisteredMcpEntry = async (
+  repoRoot: string,
+  env: Env,
+): Promise<McpServerEntry | null> => {
+  for (const path of [join(repoRoot, MCP_CONFIG_FILE), claudeUserMcpPath(env)]) {
+    const servers = z
+      .looseObject({ mcpServers: z.record(z.string(), z.unknown()).optional() })
+      .safeParse(await readJsonOrNull(path));
+    const raw = servers.success
+      ? servers.data.mcpServers?.[MCP_SERVER_KEY]
+      : undefined;
+    if (!isOwnedMcpEntry(raw)) {
+      continue;
+    }
+    const parsed = McpServerEntrySchema.safeParse(raw);
+    if (parsed.success) {
+      return { type: "stdio", command: parsed.data.command, args: parsed.data.args };
+    }
+  }
+  return null;
+};
+
+/**
+ * Gathers the facts. The spawn is skipped under the same env var the
+ * summarizer probe honours — doctor is human-run, but a script that loops it
+ * must not spawn a server per iteration (§R7).
+ */
+const checkMcpUsable = async (
+  repoRoot: string,
+  env: Env,
+  facts: Omit<McpUsableFacts, "probe">,
+): Promise<Check> => {
+  if (!facts.configured || (facts.hub !== null && !facts.hub.ok) || !facts.registered) {
+    // Every one of these decides the line on its own, and the spawn would be
+    // a process spent on an answer nobody reads.
+    return mcpUsableCheck({
+      ...facts,
+      probe: { kind: "not-probed", why: "the verdict is already decided" },
+    });
+  }
+  if (env[DOCTOR_NO_PROBE_ENV] === "1") {
+    return mcpUsableCheck({
+      ...facts,
+      probe: { kind: "not-probed", why: `${DOCTOR_NO_PROBE_ENV}=1` },
+    });
+  }
+  const entry = await readRegisteredMcpEntry(repoRoot, env);
+  return mcpUsableCheck({
+    ...facts,
+    probe:
+      entry === null
+        ? { kind: "not-probed", why: "no launchable entry found" }
+        : await probeMcpServer(entry, repoRoot),
+  });
+};
 
 const checkSpool = async (
   home: string,
   key: string,
   now: Date,
+  openOnHub: number | null,
 ): Promise<readonly Check[]> => {
   const depth = await spoolDepth(home, key);
+  // WHY those records are pending, when the answer is "this home was copied"
+  // (Anhang A, A4-10). The level is still whatever the thresholds decide —
+  // this is wording, not a new alarm — but a restored `~/.crosscheck` reports
+  // every delivered line as pending (315 phantoms observed on one), and
+  // without the sentence that reads exactly like stuck data.
+  const mismatches = await countCursorIdentityMismatches(home, key);
+  const depthDetail =
+    `${depth} pending records` +
+    (mismatches === 0
+      ? ""
+      : ` — cursor identity changed for ${String(mismatches)} session file${mismatches === 1 ? "" : "s"} (this home was copied or restored); those records replay and the hub deduplicates them`);
   const depthCheck =
     depth > DOCTOR_SPOOL_DEPTH_FAIL
-      ? check("FAIL", "spool depth", `${depth} pending records`)
+      ? check("FAIL", "spool depth", depthDetail)
       : depth > DOCTOR_SPOOL_DEPTH_WARN
-        ? check("WARN", "spool depth", `${depth} pending records`)
-        : check("PASS", "spool depth", `${depth} pending records`);
+        ? check("WARN", "spool depth", depthDetail)
+        : check("PASS", "spool depth", depthDetail);
 
   const oldestMs = await oldestSpoolLineMs(home, key);
   const ageHours =
@@ -775,16 +1209,41 @@ const checkSpool = async (
   const unclosed = await readUnclosedSummary(home, key);
   const oldestUnclosedMs =
     unclosed.oldestAt === null ? Number.NaN : Date.parse(unclosed.oldestAt);
-  const unclosedCheck =
+  // The second number (trial finding M2): state files whose session stopped
+  // heartbeating. Machine-wide, like the foreign-drop scan, because a zombie
+  // state file pins its spool against reap whichever repo it belongs to.
+  const zombies = await countStaleSessionStates(home, now);
+  const expiredPart =
     unclosed.sessions > 0
-      ? check(
-          "WARN",
-          "unclosed sessions",
-          `${unclosed.sessions} session end${unclosed.sessions === 1 ? "" : "s"} expired undelivered` +
-            (Number.isNaN(oldestUnclosedMs)
-              ? ""
-              : `, oldest ${formatAge(now.getTime() - oldestUnclosedMs)} ago`),
-        )
+      ? `${unclosed.sessions} session end${unclosed.sessions === 1 ? "" : "s"} expired undelivered` +
+        (Number.isNaN(oldestUnclosedMs)
+          ? ""
+          : `, oldest ${formatAge(now.getTime() - oldestUnclosedMs)} ago`)
+      : "no expired ends";
+  const zombiePart =
+    zombies.stale > 0
+      ? `, ${zombies.stale} of ${zombies.total} session state file${zombies.total === 1 ? "" : "s"} stale >${String(DOCTOR_ZOMBIE_STATE_WARN_HOURS)}h (each one pins its spool file against reap)`
+      : "";
+  // The HUB's own count when it has the endpoint (M6). A session killed on
+  // this machine can leave no local trace while its row stays open on the
+  // hub — 104 of the trial hub's 127 were exactly that — so the local marker
+  // count is a floor and the hub's number is the fact. An older hub sends
+  // null and the line reads as it always did.
+  //
+  // "WITH NO HEARTBEAT" is load-bearing, not decoration. The endpoint answers
+  // only rows that are open AND silent past the reaper's own window
+  // (server services/sessions.ts listOpenSessions); an earlier version
+  // answered every open row, which includes the session the reader is running
+  // right now, so this line WARNed from a developer's first session onward and
+  // could never reach PASS while anybody worked (review finding B2-03). The
+  // sentence has to say which of the two it means.
+  const hubPart =
+    openOnHub === null || openOnHub === 0
+      ? ""
+      : `, hub still holds ${String(openOnHub)} of your sessions open with no heartbeat`;
+  const unclosedCheck =
+    unclosed.sessions > 0 || zombies.stale > 0 || (openOnHub ?? 0) > 0
+      ? check("WARN", "unclosed sessions", `${expiredPart}${zombiePart}${hubPart}`)
       : check("PASS", "unclosed sessions", "none");
   return [
     depthCheck,
@@ -932,8 +1391,8 @@ const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
  * old counts sit right above a runner probe that PASSes — a line saying
  * "the runner is failing" there contradicted the check it pointed at.
  */
-const checkSummarizerCost = (states: readonly SessionState[]): Check => {
-  const cost = summarizeSummarizerCost(states);
+const checkSummarizerCost = (scan: LiveSessionScan): Check => {
+  const cost = summarizeSummarizerCost(scan);
   const line = formatSummarizerCost(cost);
   if (isSummarizerSilentlyDead(cost)) {
     return check(
@@ -1341,6 +1800,254 @@ const latencyCheck = (
   );
 };
 
+const plural = (count: number, noun: string): string =>
+  `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+
+const ageOf = (iso: string, now: Date): string => {
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? "unknown age" : `${formatAge(now.getTime() - ms)} ago`;
+};
+
+/**
+ * A local fact of the developer's own (a path, a host tool name) on the
+ * doctor line: control characters stripped, length capped — keeping the TAIL
+ * of a path, which is the part that tells worktrees apart.
+ */
+const boundedLocal = (value: string, max: number): string => {
+  const clean = value.replace(/[\p{Cc}\p{Cf}]/gu, "");
+  return clean.length <= max ? clean : `…${clean.slice(clean.length - (max - 1))}`;
+};
+
+/**
+ * The #18 diagnosis line, one per open session: fires → targets, the root the
+ * session is bound to, how long since it last spoke, the last edit-tool name,
+ * and whether the last edited path resolved (against which root) or dropped —
+ * NAMING the path in the drop branch, because "something did not resolve" is
+ * not a cause a remote reader can act on, and the path is the one fact that
+ * tells a worktree, a second repo and a loose file apart.
+ *
+ * The heartbeat age is what separates an open session from a running one: a
+ * state file survives until SessionEnd deletes it, and the trial found most
+ * sessions never end (104 of 127).
+ */
+/**
+ * ` (state written 12s ago)` when this session has been writing its state file
+ * WITHOUT heartbeating, and nothing when the two stamps agree.
+ *
+ * They diverge for one reason worth a clause: PostToolUse returns BEFORE its
+ * heartbeat whenever the touch resolved to a different connected repo (trial
+ * finding #9's first-wins rule), so a session whose every edit lands in a
+ * foreign checkout books fires and drops and never beats. Without this the
+ * WARN below reads as a report about a corpse — `heartbeat 30h ago` beside a
+ * remedy the reader has no reason to believe — when the session is running
+ * right now and its next edit really will update the line.
+ *
+ * The threshold is HEARTBEAT_MIN_INTERVAL_MS because that is exactly the
+ * claim: a state write more than one heartbeat interval newer than the
+ * heartbeat is a write that had the opportunity to beat and did not.
+ */
+const wroteSinceHeartbeat = (
+  session: SessionCaptureHealth,
+  now: Date,
+): string => {
+  const heardMs = Date.parse(session.lastHeartbeatAt ?? session.startedAt);
+  if (session.silentForMs === null || Number.isNaN(heardMs)) {
+    return "";
+  }
+  const heardAgeMs = now.getTime() - heardMs;
+  return heardAgeMs - session.silentForMs > HEARTBEAT_MIN_INTERVAL_MS
+    ? ` (state written ${formatAge(session.silentForMs)} ago)`
+    : "";
+};
+
+const captureSessionLine = (session: SessionCaptureHealth, now: Date): string => {
+  const last = session.lastTargetAt === null ? "" : ` (last ${ageOf(session.lastTargetAt, now)})`;
+  const heard = session.lastHeartbeatAt ?? session.startedAt;
+  const heartbeat = `${ageOf(heard, now)}${wroteSinceHeartbeat(session, now)}${session.isIdle ? ", idle" : ""}`;
+  const tool =
+    session.lastPostToolUseTool === null
+      ? "none yet"
+      : boundedLocal(session.lastPostToolUseTool, DOCTOR_TOOL_NAME_MAX_CHARS);
+  const resolved =
+    session.lastEditedPath === null
+      ? "no edit yet"
+      : session.lastEditedPathResolvedAgainst === null
+        ? `no — ${boundedLocal(session.lastEditedPath, DOCTOR_PATH_MAX_CHARS)} (${plural(session.foreignRepoDrops, "foreign-repo")}, ${plural(session.outsideRootDrops, "outside-root drop")})`
+        : `yes (against ${boundedLocal(session.lastEditedPathResolvedAgainst, DOCTOR_PATH_MAX_CHARS)})`;
+  // An absent counter is not a zero. A state file written before the counters
+  // existed parses with `editToolFires: 0` because the schema defaults it, and
+  // printing that reads as a measured, healthy nothing for a session that may
+  // have been editing all morning — the same absent-versus-zero distinction the
+  // hub's `claims` field gets on the hints line.
+  const counters = session.countersMeasured
+    ? `${plural(session.editToolFires, "edit-tool fire")} → ${plural(session.targetsCapturedCount, "target")}${last}`
+    : "counters not measured (this session started before they existed)";
+  return (
+    `${session.hostSessionKey.slice(0, 8)}: ${counters} · repoRoot ${boundedLocal(session.repoRoot, DOCTOR_PATH_MAX_CHARS)} · ` +
+    `heartbeat ${heartbeat} · last tool ${tool} · last edited path resolved: ${resolved}`
+  );
+};
+
+/**
+ * Capture health (trial findings #17/#18/#20): per open session of this repo,
+ * "N edit-tool fires → M targets" with the diagnosis facts, WARN when N
+ * reaches DOCTOR_CAPTURE_SILENT_FIRES_WARN and M is 0 — the worktree silence
+ * (371 edits → 0 targets) and Ken's "0 targets" shape, made a line. ALWAYS
+ * printed: a repo with no open session says so (PASS), never nothing.
+ *
+ * A read that was CUT gets its own line first. Without it a truncated scan and
+ * a dead capture print the same thing, which is the failure this check exists
+ * to end.
+ */
+export const captureChecks = (health: CaptureHealth, now: Date): readonly Check[] => {
+  const cut =
+    health.statesRead >= health.statesTotal
+      ? []
+      : [
+          check(
+            "WARN",
+            "capture",
+            `read the ${String(health.statesRead)} most recently written of ${String(health.statesTotal)} session state files (cap ${String(health.statesCap)}) — every count below is of those; older sessions of this repo are not in them. State files are deleted at SessionEnd, so a large number of them means sessions that never ended`,
+          ),
+        ];
+  if (health.sessions.length === 0) {
+    // "on this machine" is a claim a TRUNCATED read cannot support, and the
+    // one shape where it would be wrong is the one that matters: a home with
+    // more state files than the cap, whose only session of this repo is not
+    // among the newest of them. The cut line above says the read was cut; this
+    // one stops asserting past it.
+    const where = cut.length === 0
+      ? "on this machine"
+      : `among the ${String(health.statesRead)} state files read`;
+    return [
+      ...cut,
+      check(
+        "PASS",
+        "capture",
+        `no open session of this repo ${where} (counts are per session and clear at SessionEnd)`,
+      ),
+    ];
+  }
+  const shown = health.sessions.slice(0, DOCTOR_CAPTURE_MAX_SESSION_LINES);
+  const lines = shown.map((session) => {
+    const line = captureSessionLine(session, now);
+    return isCaptureSilentlyDead(session)
+      ? check(
+          "WARN",
+          "capture",
+          `${line} — edits fire but nothing is captured: the edited paths never resolved against a root of this repo (a worktree of a different repo, files outside every checkout) or were all denylisted; the next edit updates this line`,
+        )
+      : check("PASS", "capture", line);
+  });
+  const rest = health.sessions.length - shown.length;
+  return rest === 0
+    ? [...cut, ...lines]
+    : [
+        ...cut,
+        ...lines,
+        check(
+          "PASS",
+          "capture",
+          `… and ${plural(rest, "more open session")} (first ${String(DOCTOR_CAPTURE_MAX_SESSION_LINES)} shown)`,
+        ),
+      ];
+};
+
+/**
+ * Hint health (#19/#20/M1): WARN when the hub holds 0 claims for this repo AND
+ * no targets-only pointer was possible (0 targets, or no prompt of a live
+ * session here ever matched one) — saying what WOULD make a hint possible,
+ * since 3 trial days of silence had no line to explain them. The hub's own
+ * delivered/pulled window is appended when it answers; an older hub without
+ * /api/hints/stats is named as such (it predates targets-only pointers too).
+ *
+ * The WARN needs a session that is actually OPEN here, the same gate `last
+ * capture sync` and `hooks firing` use. A team that has published nothing YET
+ * is not broken: without the gate a fresh `crosscheck login` WARNs on its very
+ * first doctor run, and a warning that greets every new install is one nobody
+ * reads. With a session running, zero claims is the answer to "why do I never
+ * get a hint" — so the facts are printed either way and only the level moves.
+ */
+const checkHints = async (
+  ctx: HubContext,
+  repoId: string,
+  health: CaptureHealth,
+): Promise<Check> => {
+  const contexts = await getWorkContexts(ctx, repoId);
+  if (!contexts.ok) {
+    // WHY the ask failed decides which half of this sentence is honest. A
+    // rejected key fails this listing before the 404 discrimination below is
+    // ever reached, and calling that "hub unreachable" asserted a network
+    // fault that did not happen — under `FAIL hub reachable invalid api key`
+    // and `FAIL mcp tools usable api key rejected`, giving the reader two
+    // competing explanations of one symptom. The credential verdict belongs to
+    // `hub reachable`; this line only says it never got to ask.
+    return check(
+      "PASS",
+      "hints",
+      contexts.kind === "network"
+        ? "not measured (hub unreachable)"
+        : "not measured",
+    );
+  }
+  const stats = await getHintStats(ctx, repoId);
+  const hasOpenSession = health.sessions.some((session) => !session.isStale);
+  // The hub's own repo-wide count when it sends one (M1), else the sum over
+  // the contexts page. The endpoint's number is the better one — the page is
+  // capped at the hub's list maximum, so a big repo's older contexts are not
+  // in it — and an older hub omits the field entirely rather than sending a
+  // zero, which is why this is `??` and not a defaulted read.
+  const pageClaims = contexts.data.reduce((sum, row) => sum + (row.claimCount ?? 0), 0);
+  const claims = (stats.ok ? stats.data.claims : undefined) ?? pageClaims;
+  const targetsKnown = contexts.data.every((row) => typeof row.targetCount === "number");
+  const targets = contexts.data.reduce((sum, row) => sum + (row.targetCount ?? 0), 0);
+  const targetsPart = targetsKnown ? plural(targets, "target") : "targets unknown (older hub)";
+  const local = `live sessions here: ${plural(health.hintsDelivered, "hint")} delivered, ${plural(health.hintCandidatesSeen, "candidate")} seen`;
+  const hubPart = stats.ok
+    ? `hub ${String(stats.data.windowDays)}d: ${String(stats.data.delivered)} delivered, ${String(stats.data.pulled)} pulled`
+    : stats.status === HTTP_NOT_FOUND
+      ? "hub predates /api/hints/stats (upgrade it for targets-only pointers and these counts)"
+      : "hub stats not measured";
+  const nothingToMatch = !targetsKnown || targets === 0 || health.hintCandidatesSeen === 0;
+  if (hasOpenSession && claims === 0 && nothingToMatch) {
+    const why =
+      targetsKnown && targets > 0
+        ? `no prompt of a live session here matched one of its ${plural(targets, "target")}`
+        : targetsPart;
+    return check(
+      "WARN",
+      "hints",
+      `hints cannot fire yet: the hub holds 0 claims for this repo and ${why} — a teammate's claim, or a prompt naming a file a teammate's context touched, would make one possible; ${local}; ${hubPart}`,
+    );
+  }
+  return check(
+    "PASS",
+    "hints",
+    `hub holds ${plural(claims, "claim")}, ${targetsPart} for this repo; ${local}; ${hubPart}`,
+  );
+};
+
+/**
+ * The Q2 knob, visible (trial finding #25): which PreToolUse decision the
+ * hooks on this machine emit. Both are deliberate choices — PASS either way —
+ * but a headless orchestration session under the default gets a one-shot
+ * deny with the reason, and this is where that is named.
+ */
+const tripwireModeCheck = (env: Env): Check => {
+  const mode = resolveTripwireMode(env);
+  return mode === TRIPWIRE_MODE_NOTICE
+    ? check(
+        "PASS",
+        "tripwire mode",
+        `${mode} (${TRIPWIRE_MODE_ENV}=${mode}: the model is briefed via additionalContext only, the edit is never asked or denied)`,
+      )
+    : check(
+        "PASS",
+        "tripwire mode",
+        `${mode} (default, DESIGN §4; a headless claude -p session cannot prompt, so Claude Code turns the ask into a one-shot deny carrying the reason — export ${TRIPWIRE_MODE_ENV}=${TRIPWIRE_MODE_NOTICE} for orchestration/CI sessions)`,
+      );
+};
+
 /**
  * Foreign-repo drops (trial finding #9, the counter's READER): first-wins
  * silently drops a multi-repo workspace's touches of its second connected
@@ -1358,29 +2065,398 @@ const foreignDropChecks = async (home: string): Promise<readonly Check[]> => {
   return [check("WARN", "foreign-repo drops", formatForeignDropLine(summary))];
 };
 
-/** A live session file plus a stale sync is exactly the silent-death signature. */
-const hasLiveSessionState = async (home: string): Promise<boolean> => {
-  try {
-    return (await readdir(join(home, "sessions"))).length > 0;
-  } catch {
-    return false;
+/**
+ * ── Execution checks (trial findings M2 and H7) ────────────────────────────
+ *
+ * Eleven of doctor's twenty-six lines could PASS while the thing they name
+ * was dead, and they shared one mechanism: they read CONFIGURATION. `hooks
+ * registered` parses `.claude/settings.json` and reports what it says;
+ * `statusline registered` does the same. Neither can see a launcher that
+ * stopped resolving after `nvm use`, a `CROSSCHECK_DISABLED` in the agent's
+ * environment, an agent process older than the wiring, or a host that never
+ * calls the statusline because the session is headless.
+ *
+ * The two checks below read the only evidence that settles it: markers the
+ * hook runner and the statusline write for themselves
+ * (connector-core/state/fired-markers.ts). Configuration and execution stay
+ * SEPARATE lines on purpose — they have different fixes, and merging them
+ * would send half the readers to the wrong command.
+ */
+
+/**
+ * Events whose silence is evidence. PreToolUse fires only on a write to a
+ * file a teammate is holding and SessionEnd only when a session closes
+ * cleanly, so both are legitimately rare — they render an age and never WARN,
+ * because a warning nobody can act on is how doctors get ignored.
+ *
+ * SessionStart is off this list for the same reason, arrived at the other way
+ * round: it fires ONCE per session and the marker is per-repo last-writer-
+ * wins, so its age is "time since the last session started here", not a health
+ * signal. Three hours into one session it read three hours old and the line
+ * WARNed — while naming PostToolUse 8s and Stop 30s on the same row, refuting
+ * all three causes the sentence offers (review finding B2-05). It still
+ * renders an age, and the gate below is a live SESSION STATE, which SessionStart
+ * is what writes — so a SessionStart that never fired leaves nothing for these
+ * lines to warn about in the first place.
+ */
+const HOOK_SILENCE_WARN_EVENTS: readonly string[] = [
+  "PostToolUse",
+  "UserPromptSubmit",
+  "Stop",
+];
+
+export interface HookFireFacts {
+  /** Hook subcommand name (`post-tool-use`) → ISO stamp of its last fire. */
+  readonly firedAt: Readonly<Record<string, string>>;
+  /**
+   * How long the oldest live session on this repo has been running, or null
+   * when none is (`liveRepoSessions`, derived from the one scan below).
+   *
+   * An AGE rather than a boolean, because the never-fired case needs it. A
+   * stale marker is only news while something is supposed to be running — and
+   * a marker that has never fired at all is only news once a session has been
+   * running long enough to have produced it.
+   */
+  readonly liveSessionAgeMs: number | null;
+  readonly nowMs: number;
+}
+
+const fireAge = (
+  facts: HookFireFacts,
+  event: string,
+): { readonly label: string; readonly ageMs: number | null } => {
+  const iso = facts.firedAt[REGISTERED_HOOK_EVENTS[event as keyof typeof REGISTERED_HOOK_EVENTS]];
+  if (iso === undefined) {
+    return { label: "never", ageMs: null };
   }
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) {
+    return { label: "never", ageMs: null };
+  }
+  return { label: formatAge(facts.nowMs - ms), ageMs: facts.nowMs - ms };
 };
 
+/**
+ * PURE, so the wording is pinned without a hook process: the async half below
+ * only reads the marker file and asks whether a session state exists.
+ */
+export const hooksFiringCheck = (facts: HookFireFacts): Check => {
+  const name = "hooks firing";
+  const rendered = REQUIRED_HOOK_EVENTS.map(
+    (event) => `${event} ${fireAge(facts, event).label}`,
+  ).join(" · ");
+  const hasLiveSession = facts.liveSessionAgeMs !== null;
+  if (Object.keys(facts.firedAt).length === 0 && !hasLiveSession) {
+    // A machine that has never run a session here: nothing has failed, and
+    // "SessionStart never · PostToolUse never · …" would only read as alarm.
+    return check("PASS", name, "not measured (no hook has fired here yet)");
+  }
+  const silenceMs = DOCTOR_HOOK_SILENT_WARN_MINUTES * MS_PER_MINUTE;
+  const silent = HOOK_SILENCE_WARN_EVENTS.filter((event) => {
+    const { ageMs } = fireAge(facts, event);
+    if (ageMs !== null) {
+      return ageMs > silenceMs;
+    }
+    // NEVER FIRED is not the same claim as "has not fired in 60 min", and
+    // folding the two made a session WARN from its first second: PostToolUse,
+    // UserPromptSubmit and Stop have had no opportunity yet, and the sentence
+    // blamed three causes the session's own age refutes (review finding
+    // B2-L3). It becomes silence once the session has outlived the threshold.
+    //
+    // The residual, stated rather than implied: a session that only ever READS
+    // — no Edit, no Write, no Bash — never fires PostToolUse at all, and an
+    // hour in this will name it. UserPromptSubmit and Stop fire in such a
+    // session, so the sentence names one event rather than three, and the
+    // causes it offers are still the ones worth checking.
+    return (facts.liveSessionAgeMs ?? 0) > silenceMs;
+  });
+  return hasLiveSession && silent.length > 0
+    ? check(
+        "WARN",
+        name,
+        `${rendered} — a session is live and ${silent.join(", ")} ${silent.length === 1 ? "has" : "have"} not fired in ${String(DOCTOR_HOOK_SILENT_WARN_MINUTES)} min: the agent may predate the wiring, the launcher may no longer resolve, or CROSSCHECK_DISABLED may be set in its environment`,
+      )
+    : check("PASS", name, rendered);
+};
+
+const checkHooksFiring = async (
+  home: string,
+  key: string,
+  now: Date,
+  live: LiveRepoSessions,
+): Promise<Check> =>
+  hooksFiringCheck({
+    firedAt: await readHooksFired(home, key),
+    liveSessionAgeMs: live.oldestAgeMs,
+    nowMs: now.getTime(),
+  });
+
+/**
+ * PURE, like its sibling. The WARN here is EXPECTED on a healthy headless
+ * machine, which is why it leads with the explanation instead of a fix: every
+ * session of the trial ran `--output-format stream-json` under the VS Code
+ * extension, where Claude Code renders no statusline at all, and the developer
+ * reading this needs to know where presence DOES reach them.
+ */
+export const statuslineRenderedCheck = (
+  lastRenderedAt: string | null,
+  hasLiveSession: boolean,
+  nowMs: number,
+): Check => {
+  const name = "statusline last rendered";
+  const headless =
+    "headless and VS Code-extension sessions have no statusline; presence reaches you through the SessionStart briefing instead";
+  const ms = lastRenderedAt === null ? Number.NaN : Date.parse(lastRenderedAt);
+  if (Number.isNaN(ms)) {
+    return hasLiveSession
+      ? check("WARN", name, `never — ${headless}`)
+      : check("PASS", name, "never");
+  }
+  const ageMs = nowMs - ms;
+  return hasLiveSession &&
+    ageMs > DOCTOR_STATUSLINE_SILENT_WARN_MINUTES * MS_PER_MINUTE
+    ? check("WARN", name, `${formatAge(ageMs)} ago — ${headless}`)
+    : check("PASS", name, `${formatAge(ageMs)} ago`);
+};
+
+const checkStatuslineRendered = async (
+  home: string,
+  key: string,
+  now: Date,
+  live: LiveRepoSessions,
+): Promise<Check> =>
+  statuslineRenderedCheck(
+    await readStatuslineRendered(home, key),
+    live.oldestAgeMs !== null,
+    now.getTime(),
+  );
+
+/**
+ * Session-state files whose session stopped saying anything.
+ *
+ * The SECOND number on the `unclosed sessions` line (trial finding M2). That
+ * line counted `.pending-end` markers that aged out — a real fact, and a
+ * narrow one: on the trial machine it read "none" while 75 of 100 state files
+ * had not heartbeated in over an hour, each one pinning its spool file against
+ * reap (`spool/reap.ts isSessionLive`). Two numbers, not one merged number:
+ * an expired end and a zombie state file have different causes and different
+ * consequences.
+ */
+const countStaleSessionStates = async (
+  home: string,
+  now: Date,
+): Promise<{ readonly stale: number; readonly total: number }> => {
+  const listing = await listSessionStateFiles(home, SESSION_STATE_SCAN_MAX_FILES);
+  const maxAgeMs = DOCTOR_ZOMBIE_STATE_WARN_HOURS * MS_PER_HOUR;
+  const ages = await Promise.all(
+    listing.files.map(async (file) => {
+      const parsed = SessionStateSchema.safeParse(
+        await readJsonOrNull(file.path),
+      );
+      if (!parsed.success) {
+        return false;
+      }
+      const ageMs = sessionSilentForMs(parsed.data, file.mtimeMs, now.getTime());
+      return ageMs !== null && ageMs > maxAgeMs;
+    }),
+  );
+  return {
+    stale: ages.filter(Boolean).length,
+    total: listing.filesSeen,
+  };
+};
+
+/**
+ * Whether `.crosscheck.json` will reach a teammate (Anhang A, A4-07).
+ *
+ * `runDoctor` reads the file only as a boolean — `isConnectedHere`, which
+ * decides whether the parent-workspace scan runs — and never says a word about
+ * it. That matters because the file is the ONLY thing that makes a repo
+ * reportable (DESIGN.md §2.1): a checkout that lacks it is silent for
+ * everybody who works in it, and one that has it UNTRACKED is silent for
+ * everybody except the person who ran `init`. On a fresh clone of a repo whose
+ * main branch carries the file, both states are fine — which is why this is a
+ * LOW finding — but a branch that predates the commit shows `??` and nothing
+ * on any surface explains why teammates see nothing there.
+ *
+ * PURE: the tracked verdict comes in as data, because `git ls-files` is the
+ * caller's spawn to make.
+ */
+export const repoConnectedCheck = (
+  present: boolean,
+  tracked: boolean | null,
+): Check => {
+  const name = "repo connected";
+  if (!present) {
+    return check(
+      "WARN",
+      name,
+      `no ${REPO_CONFIG_FILE} here — sessions starting in this repo report nothing; run crosscheck init`,
+    );
+  }
+  if (tracked === false) {
+    // A DELIBERATE DEVIATION from the row this line was built for, and it is
+    // recorded here because it was not recorded anywhere else: the blueprint
+    // for A4-07 prescribes WARN for `present but untracked`, and this returns
+    // PASS (review finding B2-08/B2-L6, which found the implementer's report
+    // still describing the WARN its own e2e captures show as PASS).
+    //
+    // PASS, not WARN, and the difference is what a reader can act on RIGHT
+    // NOW. `crosscheck init` writes this file and cannot commit it, so every
+    // correct install is untracked for the minutes before the commit — a WARN
+    // there greets every new developer with a defect they have not caused.
+    // The sentence still says the thing that matters. ABSENT stays a WARN,
+    // which is the state the finding is actually about: a branch that predates
+    // the commit, where every session in the repo is silent and nothing else
+    // says why.
+    return check(
+      "PASS",
+      name,
+      `${REPO_CONFIG_FILE} present but untracked — commit it, or teammates' sessions stay silent in this repo`,
+    );
+  }
+  return tracked === null
+    ? check(
+        "PASS",
+        name,
+        `${REPO_CONFIG_FILE} present (git could not say whether it is tracked)`,
+      )
+    : check("PASS", name, `${REPO_CONFIG_FILE} present and tracked`);
+};
+
+/**
+ * `git ls-files --error-unmatch` exits non-zero for an untracked path, which
+ * `runBoundedCommand` reports as null — the same null a missing git gives. So
+ * the tracked answer is taken from the STDOUT of the plain listing instead:
+ * the path echoed back means tracked, silence means either untracked or no
+ * git, and the second `rev-parse` tells those apart (the check-ignore shape).
+ */
+const isRepoConfigTracked = async (
+  repoRoot: string,
+): Promise<boolean | null> => {
+  const listed = await runBoundedCommand(
+    ["git", "ls-files", "--", REPO_CONFIG_FILE],
+    repoRoot,
+    GIT_TIMEOUT_MS,
+  );
+  if (listed !== null) {
+    return true;
+  }
+  const inWorkTree = await runBoundedCommand(
+    ["git", "rev-parse", "--is-inside-work-tree"],
+    repoRoot,
+    GIT_TIMEOUT_MS,
+  );
+  return inWorkTree === "true" ? false : null;
+};
+
+const checkRepoConnected = async (
+  repoRoot: string,
+  present: boolean,
+): Promise<Check> =>
+  repoConnectedCheck(
+    present,
+    present ? await isRepoConfigTracked(repoRoot) : null,
+  );
+
+/**
+ * ── One scan, every liveness gate (review findings B2-01/B2-02/B2-L2) ──────
+ *
+ * Four doctor WARNs gate on "is anybody running anything here", and they used
+ * to answer it from `readdir(<home>/sessions).length > 0` — no age test and no
+ * repo test — so on the trial machine's 100 files, 75 of them corpses, all
+ * four were permanently satisfied by dead sessions: one line printed `1 of 1
+ * session state file stale >1h` while three others said `a session is live`
+ * and `the session is running`.
+ *
+ * There is now ONE reader for all of it — `readCaptureHealth`, which doctor
+ * calls at SESSION_STATE_SCAN_MAX_FILES — because a second scan is a second
+ * answer. The merged tree briefly had two: a 200-file/1h scan feeding `last
+ * capture sync`, `hooks firing` and `statusline last rendered`, and a
+ * 50-file/24h one feeding `capture` and the `hints` WARN gate. On a home with
+ * more than fifty state files they diverged, and the divergence reached the
+ * report: `PASS capture no open session of this repo on this machine` beside
+ * `WARN last capture sync … the session is running`, computed over different
+ * sets of files.
+ *
+ * The predicate is `isStale` — `sessionSilentForMs` inside
+ * DOCTOR_ZOMBIE_STATE_WARN_HOURS, the same silence `countStaleSessionStates`
+ * and the summarizer cost line read — so "stale" and "live" cannot contradict
+ * each other in the same run. And it is scoped to this repo's hubUrl/repoId,
+ * because a teammate's session in another checkout is not evidence about THIS
+ * repo's hooks.
+ */
+export interface LiveRepoSessions {
+  /** Sessions of THIS repo that are still saying something, newest first. */
+  readonly sessions: readonly SessionCaptureHealth[];
+  /**
+   * How long the OLDEST of them has been running, or null when none is live.
+   *
+   * The oldest, not the newest: a never-fired hook is evidence once SOME
+   * session has been running long enough to have produced it, and taking the
+   * youngest would let one fresh session mask a machine whose hooks stopped
+   * hours ago. Null is the "no live session here" signal every gate reads.
+   */
+  readonly oldestAgeMs: number | null;
+}
+
+const liveRepoSessions = (
+  health: CaptureHealth,
+  now: Date,
+): LiveRepoSessions => {
+  const sessions = health.sessions.filter((session) => !session.isStale);
+  const startedAges = sessions
+    .map((session) => now.getTime() - Date.parse(session.startedAt))
+    .filter((ageMs) => !Number.isNaN(ageMs));
+  return {
+    sessions,
+    oldestAgeMs: startedAges.length === 0 ? null : Math.max(...startedAges),
+  };
+};
+
+/**
+ * When a HOOK last reached the hub — trial finding H5, and the line's name
+ * changed with its meaning.
+ *
+ * It used to read `lastOkAt`, which `recordSync` stamps after EVERY successful
+ * request with a non-empty repo key — including the reachability probe six
+ * lines up in `runDoctor`. The check was therefore reading what doctor had
+ * just written: a machine whose hooks had not fired in three hours printed
+ * `PASS last sync 0s ago`, and with a rejected key it printed `PASS last sync
+ * 2h ago` directly under `FAIL hub reachable invalid api key`. The record is
+ * now split (state/sync-state.ts): `lastOkAt` still means "the hub answered
+ * this machine", and `lastCaptureOkAt` — written only by register, heartbeat,
+ * records and end (http/hub.ts) — means "a hook got through". Reachability is
+ * the `hub reachable` line's job; this line is the capture path's.
+ *
+ * The live-session gate stays: an age alone is not a defect (a developer who
+ * has not started a session today is not broken), so the WARN needs a session
+ * state file beside the stale stamp — the silent-death signature.
+ */
 const checkLastSync = async (
   home: string,
   key: string,
   now: Date,
+  live: LiveRepoSessions,
 ): Promise<Check> => {
+  const name = "last capture sync";
+  const hasLiveSession = live.oldestAgeMs !== null;
   const sync = await readSyncState(home, key);
-  if (sync.lastOkAt === null) {
-    return check("WARN", "last sync", "never synced");
+  if (sync.lastCaptureOkAt === null) {
+    return hasLiveSession
+      ? check(
+          "WARN",
+          name,
+          "no hook has reached the hub yet, with a live session — the session is running and nothing it captured has landed",
+        )
+      : // A machine with no session on this repo yet: nothing has failed.
+        check("PASS", name, "never — no session has reported from this repo");
   }
-  const ageMs = now.getTime() - Date.parse(sync.lastOkAt);
+  const ageMs = now.getTime() - Date.parse(sync.lastCaptureOkAt);
   const isStale = ageMs > DOCTOR_LAST_SYNC_WARN_MINUTES * MS_PER_MINUTE;
-  return isStale && (await hasLiveSessionState(home))
-    ? check("WARN", "last sync", `${formatAge(ageMs)} ago with a live session`)
-    : check("PASS", "last sync", `${formatAge(ageMs)} ago`);
+  return isStale && hasLiveSession
+    ? check("WARN", name, `${formatAge(ageMs)} ago with a live session`)
+    : check("PASS", name, `${formatAge(ageMs)} ago`);
 };
 
 const summarize = (checks: readonly Check[]): CliResult => {
@@ -1453,9 +2529,21 @@ export const runDoctor = async (
             await checkMcpRegistration(
               identity.root,
               globalWiring.mcpRegistered,
+              await isPathIgnored(identity.root, MCP_CONFIG_FILE),
             ),
           ]),
-      mcpUsableCheck(config !== null, config?.hubUrl ?? null),
+      mcpUsableCheck({
+        configured: config !== null,
+        hubUrl: config?.hubUrl ?? null,
+        // No probe ran in this branch: there is no hub to ask, so the line
+        // rests on `configured` alone exactly as it always did here.
+        hub: null,
+        registered:
+          globalWiring.mcpRegistered ||
+          (identity !== null &&
+            (await readRegisteredMcpEntry(identity.root, env)) !== null),
+        probe: { kind: "not-probed", why: "no hub configured" },
+      }),
       bunfigCheck,
     ]);
   }
@@ -1469,11 +2557,18 @@ export const runDoctor = async (
     repoKey: key,
     now: () => now,
   };
-  const probe = await hubRequest(hubCtx, {
-    method: "GET",
-    path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
-    schema: z.unknown(),
-  });
+  // repoKey "" keeps the probe out of the sync record, exactly like
+  // `defaultMeasureLatency` above and `login`'s probe: with the real key it
+  // stamped `lastSyncAt`/`lastOkAt` moments before `checkLastSync` read them,
+  // which is half of what made `last sync` a tautology (H5).
+  const probe = await hubRequest(
+    { ...hubCtx, repoKey: "" },
+    {
+      method: "GET",
+      path: `/api/presence?repo=${encodeURIComponent(PROBE_REPO)}`,
+      schema: z.unknown(),
+    },
+  );
   // A connection-level failure names what actually happened and the remedy
   // that moves it (http/connection-error.ts) — "unreachable" hid a plain
   // timeout for an hour of a real onboarding. The bounded DNS refinement is
@@ -1525,6 +2620,50 @@ export const runDoctor = async (
   // whichever scope satisfies the hooks requirement (finding #13).
   const launcherCommand =
     settingsInspection.launcherCommand ?? globalWiring.launcherCommand;
+  // Every settings file that could carry THIS repo's hooks: the project one
+  // when the project scope is wired, the user one when it is, both under
+  // double wiring (H6). When neither is wired the project path is still
+  // offered, so a half-written install keeps today's reading rather than
+  // going quiet.
+  // Fetched once, before the summarize array, so the spool section can read
+  // it: an older hub 404s and the count degrades to null (§R6).
+  const openSessions = await getOpenSessions(hubCtx);
+  const openOnHub = openSessions.ok ? openSessions.data.length : null;
+  // Whether the two PROJECT files this repo's advice keeps recommending can
+  // actually reach a teammate (trial finding M11). Resolved once, passed as
+  // data, so `globalInstallChecks` stays pure and testable.
+  const ignoreVerdicts = {
+    mcp: await isPathIgnored(identity.root, MCP_CONFIG_FILE),
+    projectSettings: await isPathIgnored(
+      identity.root,
+      `${CLAUDE_SETTINGS_DIR}/${CLAUDE_SETTINGS_FILE}`,
+    ),
+  };
+  const agentSettingsPaths = ((): readonly string[] => {
+    const projectPath = join(
+      identity.root,
+      CLAUDE_SETTINGS_DIR,
+      CLAUDE_SETTINGS_FILE,
+    );
+    const wired = [
+      ...(settingsInspection.launcherCommand === null ? [] : [projectPath]),
+      ...(globalWiring.hooksInstalled ? [globalWiring.settingsPath] : []),
+    ];
+    return wired.length > 0 ? wired : [projectPath];
+  })();
+  // The session-state scan, ONCE, for every line of this report: the capture
+  // counters (#17/#18/#20), the hints WARN gate, and the four lines that gate
+  // on "is anybody running anything here". At the WIDER of the two caps,
+  // because doctor's answer must not depend on which fifty files a busy home
+  // wrote most recently.
+  const captureHealth = await readCaptureHealth(
+    config.home,
+    config.hubUrl,
+    identity.repoId,
+    now,
+    SESSION_STATE_SCAN_MAX_FILES,
+  );
+  const liveSessions = liveRepoSessions(captureHealth, now);
   // ONE bounded scan of the session-state directory, shared by the three
   // model-cost checks below (state/session-state.ts states why).
   const liveStates = await readLiveSessionStates(
@@ -1543,6 +2682,7 @@ export const runDoctor = async (
     ...globalInstallChecks(
       globalWiring,
       settingsInspection.launcherCommand !== null,
+      ignoreVerdicts.projectSettings,
     ),
     hubCheck,
     timeoutCheck(config.timeoutMs, owner),
@@ -1553,22 +2693,38 @@ export const runDoctor = async (
       : [await checkLauncher(launcherCommand, env)]),
     await checkAgentRestart(
       identity.root,
-      join(identity.root, CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE),
+      agentSettingsPaths,
       agentProbe ?? defaultAgentProbe(cwd),
       now.getTime(),
     ),
-    await checkMcpRegistration(identity.root, globalWiring.mcpRegistered),
-    mcpUsableCheck(true, config.hubUrl),
-    ...(await checkSpool(config.home, key, now)),
+    await checkMcpRegistration(
+      identity.root,
+      globalWiring.mcpRegistered,
+      ignoreVerdicts.mcp,
+    ),
+    await checkMcpUsable(identity.root, env, {
+      configured: true,
+      hubUrl: config.hubUrl,
+      hub: probe.ok
+        ? { ok: true, status: 200, kind: "http" }
+        : { ok: false, status: probe.status, kind: probe.kind },
+      registered:
+        globalWiring.mcpRegistered ||
+        (await readRegisteredMcpEntry(identity.root, env)) !== null,
+    }),
+    ...(await checkSpool(config.home, key, now, openOnHub)),
     ...(await foreignDropChecks(config.home)),
+    ...captureChecks(captureHealth, now),
+    await checkHints(hubCtx, identity.repoId, captureHealth),
+    tripwireModeCheck(env),
     // ONE scan of the session-state directory for all three model-cost
     // checks (state/session-state.ts readLiveSessionStates says why).
     checkSummarizerCost(liveStates),
-    checkIntentCost(liveStates),
-    checkGhostCost(liveStates),
+    checkIntentCost(liveStates.states),
+    checkGhostCost(liveStates.states),
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
-    await checkLastSync(config.home, key, now),
+    await checkLastSync(config.home, key, now, liveSessions),
     await checkAbsences(hubCtx, identity.repoId),
     await checkQuestions(hubCtx, identity.repoId, now),
     await checkSolvedMatches(hubCtx, identity.repoId),
@@ -1577,6 +2733,12 @@ export const runDoctor = async (
     skewCheck,
     bunfigCheck,
     ...(await checkCursor(identity.root, env, config.home, key)),
+    // Appended at the END so a sibling branch's rebase stays mechanical, and
+    // because these read execution rather than configuration: the reader has
+    // just been told what is WIRED, and these say what has actually RUN.
+    await checkHooksFiring(config.home, key, now, liveSessions),
+    await checkStatuslineRendered(config.home, key, now, liveSessions),
+    await checkRepoConnected(identity.root, isConnectedHere),
   ]);
 };
 

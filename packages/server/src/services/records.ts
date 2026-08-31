@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { parseRecord } from "@crosscheck/schema";
 import type {
   Claim,
@@ -14,6 +14,7 @@ import type {
 } from "@crosscheck/schema";
 
 import { agentSessions } from "../db/schema.ts";
+import { reviveReapedSession } from "./sessions.ts";
 import { ingestCommitEvidence } from "./commit-evidence.ts";
 import { ingestHintDelivery } from "./hint-deliveries.ts";
 import { ingestLandedEvidence } from "./landed.ts";
@@ -66,16 +67,23 @@ const NOT_INGESTABLE_NOTES: Readonly<Partial<Record<KnownRecordKind, string>>> =
 // Liveness gate for the PRODUCER session only: author sessions referenced in
 // record bodies MAY already be ended — a spool flush arriving via a successor
 // session is legitimate. Only the session doing the flushing must be live.
+//
+// A REAPED end is not an end (review finding B2-01). The hub closes sessions
+// that stopped heartbeating (services/sessions.ts reapStaleSessions), and the
+// heartbeat it reads only moves on an Edit or a Bash PostToolUse (ledger M7),
+// so an afternoon of reading and planning looks like a killed terminal. A
+// record arriving from such a session is the disproof, and it arrives HERE —
+// so this gate revokes the reap instead of rejecting the record. Rejecting it
+// would be worse than silence: the connector's flush advances its cursor on
+// any 2xx (spool/flush.ts), so a rejected batch is a DELIVERED batch as far as
+// the spool is concerned, and the work is gone.
 const checkProducerSession = async (
-  db: Db,
+  deps: Deps,
   developerId: string,
   sessionId: string,
 ): Promise<string | null> => {
-  const rows = await db
-    .select({
-      developerId: agentSessions.developerId,
-      endedAt: agentSessions.endedAt,
-    })
+  const rows = await deps.db
+    .select()
     .from(agentSessions)
     .where(eq(agentSessions.id, sessionId))
     .limit(1);
@@ -87,7 +95,11 @@ const checkProducerSession = async (
     return "producer.sessionId: session belongs to another developer";
   }
   if (session.endedAt !== null) {
-    return "producer.sessionId: session has already ended — late writes are rejected";
+    if (session.reapedAt === null) {
+      // A SessionEnd the session itself reported. Final, as it always was.
+      return "producer.sessionId: session has already ended — late writes are rejected";
+    }
+    await reviveReapedSession(deps, session);
   }
   return null;
 };
@@ -148,6 +160,39 @@ const ingestQuestionAnswer = async (
     case "refused":
       return rejectedOutcome(`questionId: ${outcome.reason}`);
   }
+};
+
+/**
+ * A record IS a heartbeat (review finding B2-01).
+ *
+ * `last_heartbeat_at` had exactly two writers, `registerSession` and
+ * `heartbeatSession`, and the connector calls the second one only from
+ * PostToolUse on an Edit or a Bash. So the column meant "last edit", not "last
+ * sign of life", and the reaper built on it closed sessions that were captur-
+ * ing work the whole time. One bounded UPDATE per flush — not per record —
+ * makes the column mean what its readers assume, and moves the fix upstream of
+ * the revive above: a session that keeps spooling never becomes a candidate.
+ *
+ * `ended_at IS NULL` in the predicate: this must never resurrect a session by
+ * accident, only keep a living one living. The revive above is the one place
+ * allowed to reopen a row, and it says so out loud.
+ */
+const touchProducerHeartbeats = async (
+  deps: Deps,
+  sessionIds: ReadonlySet<string>,
+): Promise<void> => {
+  if (sessionIds.size === 0) {
+    return;
+  }
+  await deps.db
+    .update(agentSessions)
+    .set({ lastHeartbeatAt: deps.now() })
+    .where(
+      and(
+        inArray(agentSessions.id, [...sessionIds]),
+        isNull(agentSessions.endedAt),
+      ),
+    );
 };
 
 const dispatchRecord = (
@@ -218,6 +263,8 @@ interface IngestOneResult {
   readonly outcome: HandlerOutcome;
   /** Set only when the record was accepted and regenerated a context's doc. */
   readonly touched?: string;
+  /** Set once the producer gate passed — the session is provably running. */
+  readonly liveProducer?: string;
 }
 
 const ingestOne = async (
@@ -245,10 +292,11 @@ const ingestOne = async (
       ),
     };
   }
+  const liveProducer = parsed.envelope.producer.sessionId;
   const gateIssue = await checkProducerSession(
-    deps.db,
+    deps,
     developerId,
-    parsed.envelope.producer.sessionId,
+    liveProducer,
   );
   if (gateIssue !== null) {
     return { outcome: rejectedOutcome(gateIssue) };
@@ -261,10 +309,12 @@ const ingestOne = async (
     parsed.body,
   );
   if (outcome.status !== "accepted") {
-    return { outcome };
+    return { outcome, liveProducer };
   }
   const touched = touchedContextId(ingestableKind, parsed.body);
-  return touched === undefined ? { outcome } : { outcome, touched };
+  return touched === undefined
+    ? { outcome, liveProducer }
+    : { outcome, touched, liveProducer };
 };
 
 const countByStatus = (
@@ -290,8 +340,9 @@ export const ingestRecords = async (
 ): Promise<IngestSummary> => {
   const results: RecordResult[] = [];
   const touchedContexts = new Set<string>();
+  const liveProducers = new Set<string>();
   for (let index = 0; index < inputs.length; index += 1) {
-    const { outcome, touched } = await ingestOne(
+    const { outcome, touched, liveProducer } = await ingestOne(
       deps,
       developerId,
       inputs[index],
@@ -300,7 +351,11 @@ export const ingestRecords = async (
     if (touched !== undefined) {
       touchedContexts.add(touched);
     }
+    if (liveProducer !== undefined) {
+      liveProducers.add(liveProducer);
+    }
   }
+  await touchProducerHeartbeats(deps, liveProducers);
   const embedder = deps.embedder ?? null;
   if (embedder !== null) {
     for (const workContextId of touchedContexts) {

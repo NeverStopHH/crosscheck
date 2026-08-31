@@ -674,6 +674,29 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       }),
   },
   {
+    // The #19 targets-only pointer: the touched-file `value` is teammate-
+    // controlled text (a path they edited), planted here alongside the title
+    // and author so bare() + the title cap are exercised on it too.
+    kind: "corpus",
+    name: "targets-pointer-hint",
+    // UNSOLICITED, like every other pointer: it arrives on UserPromptSubmit
+    // without being asked for. It carries no claim body at all — the touched
+    // path rides through bare() at MAX_WORK_CONTEXT_TITLE_CHARS — so the
+    // separation test's identity assertion is satisfied by construction
+    // rather than by a cap chosen here.
+    delivery: "unsolicited",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderPointerHint({
+        context: hintContextWith(payload),
+        claimCount: 0,
+        matchedTarget: { value: payload, createdAt: ISO },
+        drift: NO_DRIFT,
+        now: NOW,
+      }),
+  },
+  {
     kind: "corpus",
     name: "solved-hint",
     delivery: "unsolicited",

@@ -32,6 +32,7 @@ import {
   withSummarizerFailure,
   withSummarizerNone,
   withSummarizerRejection,
+  withSummarizerUnparsed,
 } from "./gate.ts";
 import { isNoneAnswer, parseSummarizerOutput } from "./parse.ts";
 import {
@@ -128,12 +129,17 @@ const summarizeTurn = async (args: WorkerArgs, env: Env): Promise<void> => {
   const stdout = result.stdout;
   const draft = parseSummarizerOutput(stdout);
   if (draft === null) {
-    // Outcome telemetry (trial finding #12's measuring stick): only an
-    // EXPLICIT NONE is booked — unparseable garbage is a runner problem,
-    // and stays visible as the fires-minus-outcomes remainder instead.
-    if (isNoneAnswer(stdout)) {
-      await updateSessionState(home, args.claudeSessionId, withSummarizerNone);
-    }
+    // Outcome telemetry (trial finding #12's measuring stick, corrected by
+    // M5): an EXPLICIT NONE is the gate's judged-empty turn; ANY OTHER
+    // unparseable answer is the model ignoring the contract, which is a
+    // prompt defect and not the same thing as the runner failing. Both are
+    // booked now — leaving the second unbooked put it in the same remainder
+    // as a missing binary.
+    await updateSessionState(
+      home,
+      args.claudeSessionId,
+      isNoneAnswer(stdout) ? withSummarizerNone : withSummarizerUnparsed,
+    );
     return;
   }
 

@@ -12,6 +12,7 @@ export {
   isSummarizerSilentlyDead,
   readSummarizerCost,
 } from "./summarizer/cost.ts";
+export type { SummarizerCost } from "./summarizer/cost.ts";
 // The derived-intent surface (trial finding #16): the worker entry the
 // prompt hook spawns, and the cost read/format pair `status`/`doctor` print.
 export { runIntentWorker } from "./intent/worker.ts";

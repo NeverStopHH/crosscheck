@@ -42,6 +42,12 @@ export interface HookEntry {
   readonly type: string;
   readonly command: string;
   readonly async?: boolean;
+  /**
+   * Per-hook timeout in SECONDS, as Claude Code's settings schema spells it
+   * (trial finding M10). Optional because only one entry needs it — see
+   * `buildSettingsPlan`'s SessionEnd note.
+   */
+  readonly timeout?: number;
 }
 
 export interface MatcherGroup {
@@ -268,6 +274,7 @@ export const buildSettingsPlan = (
     command: string,
     matcher?: string,
     isAsync?: boolean,
+    timeoutSeconds?: number,
   ): MatcherGroup => ({
     ...(matcher === undefined ? {} : { matcher }),
     hooks: [
@@ -275,6 +282,7 @@ export const buildSettingsPlan = (
         type: "command",
         command,
         ...(isAsync === true ? { async: true } : {}),
+        ...(timeoutSeconds === undefined ? {} : { timeout: timeoutSeconds }),
       },
     ],
   });
@@ -292,7 +300,31 @@ export const buildSettingsPlan = (
       // whatever produced it, and the payload carries no file path to
       // capture, so the edit-tool matcher would only lose signal.
       PostToolUseFailure: group(`${prefix} hook post-tool-use-failure`),
-      SessionEnd: group(`${prefix} hook session-end`),
+      /**
+       * The one entry with an explicit timeout (trial finding M10).
+       *
+       * Claude Code's documented default gives SessionEnd hooks a 1.5-second
+       * SHARE — and this connector's own internal budget there is
+       * SESSION_END_BUDGET_RATIO x the request timeout, which is 4000 ms on a
+       * machine whose `crosscheck login` measured 2000 ms (the teammate over
+       * tailscale). The flush that ships a session's last records runs inside
+       * that budget: 152 records measured at 1031-1083 ms, and roughly 500
+       * would cross 1.5 s, at which point the host kills the hook and the
+       * records wait for the next SessionStart's drain.
+       *
+       * The documented lever is this key: "if your settings set a longer
+       * per-hook timeout, Claude Code raises the budget to match, up to 60
+       * seconds". Sixty is a CEILING, not a target — the internal budget still
+       * ends the hook in milliseconds; this only stops the host ending it
+       * first.
+       *
+       * The internal budget is deliberately NOT shortened in the same change.
+       * The two have opposite failure modes — a shorter internal budget drops
+       * records to protect the session, a longer host timeout keeps them at the
+       * risk of a slower exit — and mixing them would make an incident
+       * impossible to attribute.
+       */
+      SessionEnd: group(`${prefix} hook session-end`, undefined, false, 60),
       // The injection pipeline (DESIGN.md §4): both SYNC, deliberately — one
       // returns additionalContext, the other a permission decision, and an
       // async hook can deliver neither.
