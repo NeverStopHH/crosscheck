@@ -2125,6 +2125,32 @@ export const MUTATIONS: readonly Mutation[] = [
       "a colleague's",
   },
   {
+    // The model-facing door. The worker door one level up strips the same
+    // names, so ONLY the hub-key clause can be lost here without the other
+    // catching it — which is exactly why it gets its own entry.
+    label: "the hub key rides into the spawned model on every host",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "      name === HUB_KEY_ENV ||",
+    to: "",
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "a secret the developer exported for the hooks is handed to a " +
+      "third-party binary that has no use for it and no reason to be " +
+      "trusted with it",
+  },
+  {
+    // A counter the schema declares, the cost reader sums and the cost line
+    // renders, that no production path can move off 0.
+    label: "a summarizer outcome writer nothing in src ever calls",
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
+    from: "export const withSummarizerNoSlice = (",
+    to: "export const withSummarizerNeverCalled = (",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because:
+      "an outcome counter with no caller prints a confident 0 forever, so " +
+      "the outcome it names looks like it never happens on any host",
+  },
+  {
     // The other half of that rule, and the fix for it: the count now rides
     // the gate's own locked write into session state, where doctor reads it.
     label: "the refused ACP slice characters never reach session state",

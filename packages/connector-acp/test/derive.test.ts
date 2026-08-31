@@ -682,3 +682,108 @@ describe("privacy: what the two new texts are allowed to touch", () => {
     await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
   }, 40_000);
 });
+
+/**
+ * THE NESTING TRAP, ON THIS HOST.
+ *
+ * A model CLI spawned from inside a session must not run its own hooks and
+ * mint a phantom session. Claude proves it in
+ * connector-claude/test/summarizer-child-guard.test.ts and Cursor in
+ * connector-cursor/test/child-guard.test.ts; ACP had no equivalent, and
+ * "it goes through the same core helper" is an argument about the code
+ * rather than a proof about this host — the ACP trigger builds its child
+ * environment through `spawnDeriveWorker`, and nothing pinned that it still
+ * does.
+ *
+ * The fake model DUMPS ITS OWN ENVIRONMENT, so this reads what the spawned
+ * binary actually received rather than what a helper returns in isolation:
+ * the child marker set, the hub key gone, and every parent-session marker
+ * stripped — while the auth variables a real `claude` needs survive.
+ *
+ * WHICH MUTATION REDDENS WHICH ASSERTION, measured on this file rather than
+ * assumed, because the hygiene is applied at TWO doors and a test that only
+ * one of them can break would overstate itself:
+ *
+ *   - the HUB KEY line dies on the runner door alone. Dropping
+ *     `name === HUB_KEY_ENV` from model/runner.ts `childEnv` put
+ *     `CROSSCHECK_API_KEY` in the model's environment and this test went red.
+ *   - the PARENT-SESSION MARKER line needs BOTH doors dropped, and that is
+ *     the design rather than a weakness: model/worker-env.ts strips them for
+ *     the detached worker and `childEnv` strips them again for the spawn
+ *     (runner.ts calls its own copy "redundant rather than load-bearing, and
+ *     deliberately kept"). With the pattern removed from both, all six
+ *     markers seeded below — CLAUDECODE, CLAUDE_CODE_SESSION_ID,
+ *     CLAUDE_CODE_SSE_PORT, CLAUDE_CODE_ENTRYPOINT, CLAUDE_PROJECT_DIR,
+ *     CLAUDE_PID — reached the model and this test went red.
+ */
+describe("a model spawned from an ACP session cannot re-enter crosscheck", () => {
+  test("the child marker is set, the hub key is gone, session markers are stripped", async () => {
+    // Arrange: a model that writes its whole environment where we can read it
+    const dir = await mkdtemp(join(tmpdir(), "cx-acp-nesting-"));
+    cleanups.push(dir);
+    const dump = join(dir, "env.json");
+    const script = join(dir, "fake.ts");
+    await writeFile(
+      script,
+      `await Bun.stdin.text();\n` +
+        `await Bun.write(${JSON.stringify(dump)}, JSON.stringify(process.env));\n` +
+        `process.stdout.write("NONE");\n`,
+      "utf8",
+    );
+    const wrapper = join(dir, "fake.sh");
+    await writeFile(
+      wrapper,
+      `#!/bin/sh\nexec "${process.execPath}" "${script}"\n`,
+      "utf8",
+    );
+    await chmod(wrapper, 0o755);
+
+    // A trigger environment carrying the markers a real nested run would
+    // inherit, plus the hub key and an auth variable that must survive.
+    const h = await createHarness(hub, cleanups, "acp-nesting", {
+      env: {
+        CROSSCHECK_SUMMARIZER_CMD: wrapper,
+        CROSSCHECK_API_KEY: "cx_live_MUST_NOT_REACH_THE_MODEL",
+        CLAUDECODE: "1",
+        CLAUDE_CODE_SESSION_ID: "11111111-2222-4333-8444-555555555555",
+        CLAUDE_CODE_SSE_PORT: "4242",
+        CLAUDE_CODE_ENTRYPOINT: "cli",
+        CLAUDE_PROJECT_DIR: "/somewhere/else",
+        CLAUDE_PID: "999999",
+        ANTHROPIC_API_KEY: "sk-ant-auth-must-survive",
+      },
+    });
+    handshake(h, SESSION, h.repo);
+    await h.capture.settle();
+
+    // Act: one prompt is enough — the intent rung fires on it.
+    h.capture.offer("c2a", promptLine(1));
+    h.capture.offer("a2c", promptAnswer(1));
+    await h.capture.settle();
+    // The worker is DETACHED: poll until the model it spawned has written
+    // its environment out, like every other spawn assertion in this file.
+    const dumped = await waitFor(async () =>
+      (await fileExists(dump)) ? await Bun.file(dump).text() : null,
+    );
+    await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+
+    // Assert
+    expect(dumped).not.toBeNull();
+    const seen = JSON.parse(dumped ?? "{}") as Record<string, string>;
+    expect(seen["CROSSCHECK_SUMMARIZER_CHILD"]).toBe("1");
+    expect(seen["CROSSCHECK_API_KEY"]).toBeUndefined();
+    const leaked = [
+      "CLAUDECODE",
+      "CLAUDE_CODE_SESSION_ID",
+      "CLAUDE_CODE_SSE_PORT",
+      "CLAUDE_CODE_ENTRYPOINT",
+      "CLAUDE_PROJECT_DIR",
+      "CLAUDE_PID",
+    ].filter((name) => seen[name] !== undefined);
+    expect(leaked).toEqual([]);
+    // Auth must survive, or a real nested model cannot log in at all.
+    expect(seen["ANTHROPIC_API_KEY"]).toBe("sk-ant-auth-must-survive");
+    // And it is stamped as THIS host, not as Claude Code.
+    expect(seen["CROSSCHECK_AGENT_KIND"]).toBe("acp:fake-agent");
+  }, 40_000);
+});
