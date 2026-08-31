@@ -28,6 +28,7 @@ import {
   REDACTED_TITLE,
 } from "../src/index.ts";
 import {
+  TARGET_VALUE_REDUCED,
   renderDiagnosis,
   renderSearchFilterRefusal,
   renderSearchResults,
@@ -683,6 +684,63 @@ describe("renderDiagnosis", () => {
     expect(rendered.indexOf("Targets (3):")).toBeLessThan(
       rendered.indexOf("Claims ("),
     );
+  });
+
+  test("keeps an ordinary path readable when a word trips the phrase filter", () => {
+    // Arrange: INJECTION_BRANCHES carries bare substrings with no word
+    // boundaries — "override", "disregard", "system-reminder" — and a value
+    // sent through the LABEL class is blanked WHOLE on a match. Ordinary
+    // repository paths contain those substrings, and targets are captured
+    // automatically, so the author is never told either. A reader looking for
+    // overlap would see an accusation about a "title" where a filename was.
+    const tree = diagnosis({
+      targets: [
+        { kind: "file", value: "src/theme/overrides.ts" },
+        { kind: "file", value: "packages/ui/src/styles/tailwind-overrides.css" },
+        { kind: "file", value: "src/db/migrations/0042_disregard_legacy.sql" },
+      ],
+      targetsReported: true,
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+
+    // Assert: the span goes, the path stays. The reader still has the
+    // directory and the extension, which is what makes the row greppable.
+    expect(rendered).not.toContain(REDACTED_TITLE);
+    expect(rendered).toContain("src/theme/");
+    expect(rendered).toContain(".ts");
+    expect(rendered).toContain("packages/ui/src/styles/");
+    expect(rendered).toContain(".css");
+    expect(rendered).toContain("src/db/migrations/");
+    expect(rendered).toContain(".sql");
+  });
+
+  test("never prints a target token it altered without saying it altered it", () => {
+    // Arrange: error fingerprints are stored as `sha256:<hex>` and the bare
+    // strip removes the colon, so the row printed a token that is not the
+    // value the hub holds. A reader copies it into search_related_work or
+    // greps for it and gets nothing, with nothing on the page to explain why.
+    // Same for any file target carrying a `:line` suffix.
+    const tree = diagnosis({
+      targets: [
+        { kind: "error_fingerprint", value: "sha256:9f2b7c1d4e5a6b8c" },
+        { kind: "file", value: "src/a.ts:42" },
+        { kind: "file", value: "src/auth/refresh.ts" },
+      ],
+      targetsReported: true,
+    });
+
+    // Act
+    const rendered = renderDiagnosis(tree, NOW);
+    const rowFor = (needle: string): string =>
+      rendered.split("\n").find((line) => line.includes(needle)) ?? "";
+
+    // Assert: the two reduced rows say so; the untouched one stays clean, so
+    // the marker means something rather than decorating every row.
+    expect(rowFor("sha2569f2b7c1d4e5a6b8c")).toContain(TARGET_VALUE_REDUCED);
+    expect(rowFor("src/a.ts42")).toContain(TARGET_VALUE_REDUCED);
+    expect(rowFor("src/auth/refresh.ts")).toBe("- file src/auth/refresh.ts");
   });
 
   test("bounds the target list and counts what it left out", () => {

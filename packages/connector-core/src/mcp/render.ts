@@ -299,15 +299,51 @@ const externalLine = (ref: ExternalClaimRef): string =>
  * it on a line whose second half is a path is one more thing a path could
  * imitate. A space reads the same and forges nothing.
  */
+
+
+/**
+ * Said out loud when the token on the page is not the token the hub holds.
+ *
+ * The reader's next move with a target is to grep for it or paste it into
+ * `search_related_work`. A value this renderer quietly altered fails that and
+ * looks like an absence of overlap — `sha256:9f2b…` printed as `sha2569f2b…`
+ * matches nothing, and nothing on the line explains why. `formatSolvedLine`
+ * already set the precedent for a row this renderer will not vouch for; this
+ * is the cheaper half of it, keeping the row and naming the reduction.
+ */
+export const TARGET_VALUE_REDUCED = " (value reduced for display)";
+
+/**
+ * A target's value, reduced as little as printing it safely allows.
+ *
+ * SPAN-REDACTED FIRST, THEN STRIPPED BARE, and the order is the fix. `bare`
+ * alone runs `sanitizeUntrusted`, which is the LABEL class: one phrase match
+ * anywhere blanks the WHOLE value. INJECTION_BRANCHES carries bare substrings
+ * with no word boundaries, so `src/theme/overrides.ts` — an ordinary file, in
+ * a list captured automatically, with no author to warn — rendered as
+ * "[redacted: title looked like an instruction]" and the reader lost the one
+ * fact the section exists to give them. Span-redacting first replaces the
+ * offending run and leaves the directory and the extension, and it also means
+ * no phrase survives for the `bare` pass to blank on.
+ *
+ * The bare strip still runs, because it is what stops a value minting a
+ * second field or a second line; what it removes is now visible, via
+ * TARGET_VALUE_REDUCED.
+ */
+const targetValue = (raw: string): string =>
+  bare(
+    spanRedactedUntrusted(raw, MAX_WORK_CONTEXT_TITLE_CHARS),
+    MAX_WORK_CONTEXT_TITLE_CHARS,
+  );
 const targetLine = (target: DiagnosisTarget): string => {
-  const parts = [
-    bare(target.kind),
-    bare(target.value, MAX_WORK_CONTEXT_TITLE_CHARS),
-  ].filter((part) => part.length > 0);
+  const value = targetValue(target.value);
+  const parts = [bare(target.kind), value].filter((part) => part.length > 0);
   // A row whose every field sanitized away still renders, for the same reason
   // UNNAMED_AUTHOR does above: the alternative is a section that is quietly
   // one row shorter than the count in its own header.
-  return `- ${parts.length === 0 ? UNPRINTABLE_TARGET : parts.join(" ")}`;
+  const body = parts.length === 0 ? UNPRINTABLE_TARGET : parts.join(" ");
+  const note = value === target.value ? "" : TARGET_VALUE_REDUCED;
+  return `- ${body}${note}`;
 };
 
 export interface Section {
