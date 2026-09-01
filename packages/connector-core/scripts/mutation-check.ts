@@ -32,6 +32,7 @@ const CONNECTOR = "packages/connector-claude";
 const CORE = "packages/connector-core";
 const CLI = "packages/cli";
 const SERVER = "packages/server";
+const SCHEMA = "packages/schema";
 const ACP = "packages/connector-acp";
 const CURSOR = "packages/connector-cursor";
 
@@ -4524,6 +4525,71 @@ export const MUTATIONS: readonly Mutation[] = [
       "and flows/hint.ts runs this scan over the whole user prompt on " +
       "UserPromptSubmit, which has no length bound at all",
   },
+  {
+    // THE trust guarantee of the whole pin registry, and it rests on one
+    // literal. review_draft is a tool an agent can point at its OWN draft and
+    // its header says "the agent now vouches" — so nothing but the wire type
+    // stands between that and a machine writing "Nick checked this works".
+    label: "an agent can sign a pin as a human's word",
+    file: `${SCHEMA}/src/pin.ts`,
+    from: '  captureMode: z.literal("human"),',
+    to: "  captureMode: z.string(),",
+    test: `${SERVER}/test/pins.test.ts`,
+    because:
+      "the one provenance a person is supposed to own becomes writable by " +
+      "the agent whose work it is meant to judge, and every later reader is " +
+      'told a human "verified this works" when none did',
+  },
+  {
+    // Raw overlap is a popularity contest: whoever touches the most files is
+    // in the most pins, so suspect would name the busiest teammate for every
+    // breakage in the repo.
+    label: "suspect ranks by raw overlap instead of lift",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "        lift: row.overlap / authorTouches,",
+    to: "        lift: row.overlap,",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because:
+      "the hardest-working person becomes the standing suspect, which is " +
+      "both wrong and the fastest way to make a team switch the feature off",
+  },
+  {
+    // "No clear suspect" has to be a real answer, not a slot that always
+    // fills. A top-three printed regardless of separation reads as evidence.
+    label: "a tie prints three names instead of no clear suspect",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "  return top.lift >= runnerUp.lift * SUSPECT_SEPARATION_RATIO;",
+    to: "  return true;",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because:
+      "indistinguishable candidates are rendered as a ranking, so a reader " +
+      "acts on an order the data does not support",
+  },
+  {
+    // Silence has two causes and they must not look alike: a tidy repo, and a
+    // lane that never got to run.
+    label: "a git lane that mostly skips reads as a quiet repo",
+    file: `${CORE}/src/state/git-lane-cost.ts`,
+    from: "  cost.skipped >= MIN_SKIPS_TO_WARN && cost.skipped > cost.recorded",
+    to: "  false",
+    test: `${CLI}/test/pin-observability.test.ts`,
+    because:
+      "suspect goes blind to codemods and `sed -i` while doctor reports " +
+      "nothing wrong, so the under-reporting is invisible to the one person " +
+      "who could raise the hook timeout",
+  },
+  {
+    // A verdict reached because the budget ran out is a verdict about this
+    // process, not about the repository.
+    label: "an unfinished rename sweep retires pins it never looked at",
+    file: `${CORE}/src/git/pin-sweep.ts`,
+    from: '      swept.push({ path, resolved: null, status: "unknown" });',
+    to: '      swept.push({ path, resolved: null, status: "missing" });',
+    test: `${CORE}/test/pin-sweep.test.ts`,
+    because:
+      "pins are reported broken on the strength of a call budget, so a large " +
+      "repo retires working references and doctor prints the loss as a fact",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -4580,6 +4646,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
+ * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
@@ -4645,6 +4712,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
+ * PRINTS: packages/connector-core/test/pin-sweep.test.ts 1
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
@@ -4671,6 +4739,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
+ * PRINTS: packages/server/test/pins.test.ts 1
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 1
@@ -4686,6 +4755,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
+ * PRINTS: packages/server/test/suspect.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */

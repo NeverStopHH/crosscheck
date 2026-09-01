@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 298
+    # PRINTS: 303
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -173,6 +173,7 @@ jobs:
     # PRINTS: flows/capture-touched-files.ts 1
     # PRINTS: flows/hint.ts 2
     # PRINTS: flows/solved-hint.ts 4
+    # PRINTS: git/pin-sweep.ts 1
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/delivery.ts 1
     # PRINTS: hints/precision.ts 2
@@ -198,6 +199,7 @@ jobs:
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
+    # PRINTS: state/git-lane-cost.ts 1
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 2
     # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
@@ -212,6 +214,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/connector-cursor/src/payload.ts 1
     # PRINTS: packages/schema/src/envelope.ts 1
+    # PRINTS: packages/schema/src/pin.ts 1
     # PRINTS: packages/schema/src/session.ts 1
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/routes/search.ts 1
@@ -234,6 +237,7 @@ jobs:
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
     # PRINTS: packages/server/src/services/solved.ts 1
+    # PRINTS: packages/server/src/services/suspect.ts 2
     # PRINTS: packages/server/src/services/time-window.ts 1
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
@@ -268,6 +272,7 @@ jobs:
     # PRINTS: gates.ts 1
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
+    # PRINTS: git-lane-cost.ts 1
     # PRINTS: hint.ts 2
     # PRINTS: hints.ts 2
     # PRINTS: hook-budget.ts 1
@@ -280,6 +285,8 @@ jobs:
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
     # PRINTS: payload.ts 1
+    # PRINTS: pin-sweep.ts 1
+    # PRINTS: pin.ts 1
     # PRINTS: post-tool-use-failure.ts 2
     # PRINTS: post-tool-use.ts 3
     # PRINTS: pre-tool-use.ts 3
@@ -322,6 +329,7 @@ jobs:
     # PRINTS: spawn.ts 2
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: stop.ts 2
+    # PRINTS: suspect.ts 2
     # PRINTS: time-window.ts 1
     # PRINTS: tool-events.ts 1
     # PRINTS: tool-failure.ts 3
