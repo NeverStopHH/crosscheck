@@ -1,7 +1,7 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 
 import { generateApiKey, hashApiKey } from "../auth/keys.ts";
-import { EVENT_KINDS } from "../constants.ts";
+import { DEVELOPERS_MAX_LISTED, EVENT_KINDS } from "../constants.ts";
 import { developerEmails, developers } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import { normalizeEmail } from "./commit-evidence.ts";
@@ -129,6 +129,89 @@ export const listDeveloperEmails = async (
     )
     .limit(MAX_EMAILS_PER_DEVELOPER);
   return rows;
+};
+
+export interface ListedDeveloperView {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: string;
+  readonly emails: readonly DeveloperEmailView[];
+}
+
+export interface DeveloperListing {
+  readonly developers: readonly ListedDeveloperView[];
+  /** True when the hub holds more developers than this page could carry. */
+  readonly truncated: boolean;
+}
+
+/**
+ * The admin's way back to an id. `createDeveloper` hands one out exactly once
+ * and every other admin route takes it as a path parameter, so without this a
+ * lost id meant a developer whose git aliases could never be linked again —
+ * and absence matching then keeps attributing their commits to nobody.
+ *
+ * Two queries, never one per developer: the second reads every email of the
+ * page at once, so cost is bounded by DEVELOPERS_MAX_LISTED rather than by
+ * team size. The api key hash is not selected here and must never be — the key
+ * is shown once, at creation, and this listing is not a second chance at it.
+ */
+export const listDevelopers = async (db: Db): Promise<DeveloperListing> => {
+  const rows = await db
+    .select({
+      id: developers.id,
+      name: developers.name,
+      createdAt: developers.createdAt,
+    })
+    .from(developers)
+    .orderBy(asc(developers.createdAt), asc(developers.id))
+    .limit(DEVELOPERS_MAX_LISTED + 1);
+
+  const truncated = rows.length > DEVELOPERS_MAX_LISTED;
+  const page = truncated ? rows.slice(0, DEVELOPERS_MAX_LISTED) : rows;
+  if (page.length === 0) {
+    return { developers: [], truncated: false };
+  }
+
+  const emailRows = await db
+    .select({
+      developerId: developerEmails.developerId,
+      email: developerEmails.email,
+      isPrimary: developerEmails.isPrimary,
+    })
+    .from(developerEmails)
+    .where(
+      inArray(
+        developerEmails.developerId,
+        page.map((row) => row.id),
+      ),
+    )
+    .orderBy(
+      desc(developerEmails.isPrimary),
+      asc(developerEmails.createdAt),
+      asc(developerEmails.email),
+    )
+    .limit(DEVELOPERS_MAX_LISTED * MAX_EMAILS_PER_DEVELOPER);
+
+  const byDeveloper = new Map<string, DeveloperEmailView[]>();
+  for (const row of emailRows) {
+    const existing = byDeveloper.get(row.developerId);
+    const view = { email: row.email, isPrimary: row.isPrimary };
+    if (existing === undefined) {
+      byDeveloper.set(row.developerId, [view]);
+    } else if (existing.length < MAX_EMAILS_PER_DEVELOPER) {
+      existing.push(view);
+    }
+  }
+
+  return {
+    developers: page.map((row) => ({
+      id: row.id,
+      name: row.name,
+      createdAt: row.createdAt.toISOString(),
+      emails: byDeveloper.get(row.id) ?? [],
+    })),
+    truncated,
+  };
 };
 
 const developerExists = async (db: Db, developerId: string): Promise<boolean> => {
