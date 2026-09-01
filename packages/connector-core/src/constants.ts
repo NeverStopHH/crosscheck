@@ -1353,7 +1353,7 @@ export const MCP_SERVER_NAME = "crosscheck";
  * VERIFY: bun -e 'const p=await Bun.file("packages/connector-claude/package.json").json(); const c=await import("./packages/connector-core/src/constants.ts"); console.log(p.version === c.MCP_SERVER_VERSION)'
  * PRINTS: true
  */
-export const MCP_SERVER_VERSION = "0.8.0";
+export const MCP_SERVER_VERSION = "0.9.0";
 
 /**
  * MCP revisions this server can speak, newest first. `initialize` echoes the
