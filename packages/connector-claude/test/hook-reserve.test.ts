@@ -44,11 +44,14 @@
  *
  * — and `spareMs` is in turn the sole accessor on HookBudget, taken as a whole
  * deadline by the drain in each of the five hooks that host one (SessionStart,
- * SessionEnd, PostToolUse, PostToolUseFailure, Stop) and read once more by
- * SessionStart's deferred end:
+ * SessionEnd, PostToolUse, PostToolUseFailure, Stop), read once more by
+ * SessionStart's deferred end, and once more by Stop, which asks whether the
+ * remaining time affords a `git diff --name-only` BEFORE spawning one — the
+ * regression guard's second evidence lane pays for itself out of the same
+ * envelope or does not run:
  *
  * VERIFY: grep -rn 'budget\.spareMs()' packages/connector-claude/src | wc -l | tr -d ' '
- * PRINTS: 6
+ * PRINTS: 7
  */
 import { describe, expect, test } from "bun:test";
 

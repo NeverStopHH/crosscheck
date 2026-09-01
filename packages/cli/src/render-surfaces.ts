@@ -8,8 +8,161 @@
  * connector-claude's registry when Block 8 extracted `packages/cli`.
  */
 import type { RenderSurface } from "@crosscheck/connector-core/render-surfaces.ts";
+import type {
+  PinEntry,
+  PinRegistry,
+  SuspectCandidate,
+  SuspectView,
+} from "@crosscheck/connector-core/http/hub.ts";
+
+import { renderPinList } from "./cli/pin-render.ts";
+import { pinStatusLines } from "./cli/pin-observability.ts";
+import { renderSuspect } from "./cli/suspect-render.ts";
+
+const NOW = new Date("2026-08-25T12:00:00.000Z");
+const ISO = "2026-08-25T11:00:00.000Z";
+
+/** The payload in every untrusted slot at once — the corpus adapter rule. */
+const pinWith = (payload: string): PinEntry => ({
+  id: "pin_11111111-2222-4333-8444-555555555555",
+  repo: payload,
+  surface: payload,
+  files: [{ path: payload, status: "missing" }],
+  check: payload,
+  captureMode: payload,
+  verifiedById: "dev_other",
+  verifiedByName: payload,
+  verifiedAtCommit: payload,
+  verifiedAt: ISO,
+  brokeAt: ISO,
+  brokeByName: payload,
+  speaking: true,
+  missingPaths: 1,
+});
+
+/**
+ * A LIVE pin, because the two lines that interpolate untrusted text at all —
+ * the denylist-shadow sentence and the orphan sentence — skip retracted pins
+ * by design. A corpus run over a retracted registry would render neither and
+ * report itself green over the exact spans it exists to attack.
+ */
+const livePinWith = (payload: string): PinEntry => ({
+  ...pinWith(payload),
+  brokeAt: null,
+  brokeByName: null,
+});
+
+const liveRegistryWith = (payload: string): PinRegistry => ({
+  pins: [livePinWith(payload)],
+  coverage: {
+    pins: 1,
+    files: 1,
+    speaking: 0,
+    broken: 0,
+    missingPaths: 1,
+    oldestVerifiedAt: ISO,
+  },
+});
+
+const registryWith = (payload: string): PinRegistry => ({
+  pins: [pinWith(payload)],
+  coverage: {
+    pins: 1,
+    files: 1,
+    speaking: 1,
+    broken: 1,
+    missingPaths: 1,
+    oldestVerifiedAt: ISO,
+  },
+});
+
+const candidateWith = (payload: string): SuspectCandidate => ({
+  sessionId: "cc_11111111-2222-4333-8444-555555555555",
+  agentKind: payload,
+  branch: payload,
+  workContextId: "wc_cc_11111111-2222-4333-8444-555555555555",
+  workContextTitle: payload,
+  intent: {
+    summary: payload,
+    provenance: "derived",
+    confidence: 0.4,
+    capturedAt: ISO,
+  },
+  lastActiveAt: ISO,
+  overlap: 2,
+  authorTouches: 3,
+  lift: 0.67,
+  sources: [payload],
+  readerMuted: true,
+  isSelf: false,
+});
+
+const suspectWith = (payload: string): SuspectView => ({
+  outcome: "ranked",
+  falsifier: { kind: "recorded_break", at: ISO, check: payload },
+  scope: {
+    kind: "pin",
+    pinId: "pin_11111111-2222-4333-8444-555555555555",
+    surface: payload,
+    files: [payload],
+    filesTruncated: false,
+  },
+  totals: { sessionsTouching: 1, windowDays: 14 },
+  attribution: "sessions",
+  candidates: [candidateWith(payload)],
+});
 
 export const RENDER_SURFACES: readonly RenderSurface[] = [
+  {
+    kind: "corpus",
+    name: "cli-pin-observability",
+    delivery: "pulled",
+    module: "src/cli/pin-observability.ts",
+    // BARE, deliberately, and it is the reason this module exists apart from
+    // the listing: `status` and `doctor` print PATHS and GLOB PATTERNS, which
+    // are bare tokens, and never a pin's surface label or check recipe, which
+    // are another person's prose. So these lines carry no frame at all — and
+    // the corpus holds them to it, over the pinned path, the denylist pattern
+    // and both team-setting values at once.
+    framing: "bare",
+    render: (payload) =>
+      pinStatusLines(
+        liveRegistryWith(payload),
+        [payload],
+        {
+          repo: payload,
+          pinPolicy: payload,
+          suspectAttribution: payload,
+          updatedAt: ISO,
+        },
+        NOW,
+      ).join("\n"),
+  },
+  {
+    kind: "corpus",
+    name: "cli-pin-list",
+    delivery: "pulled",
+    module: "src/cli/pin-render.ts",
+    framing: "framed",
+    // `crosscheck pin list` quotes OTHER PEOPLE'S PROSE — a surface label and
+    // a check recipe somebody typed — and an agent asked "what is watched
+    // here" runs exactly this command through Bash. So unlike `status` it
+    // carries the quoted-data notice, and the corpus holds it to the framed
+    // class on every payload.
+    render: (payload) => renderPinList(payload, registryWith(payload), NOW),
+  },
+  {
+    kind: "corpus",
+    name: "cli-suspect",
+    delivery: "pulled",
+    module: "src/cli/suspect-render.ts",
+    framing: "framed",
+    // The one surface in Stage 1 that renders a teammate's declared INTENT
+    // beside an attribution. Every untrusted slot at once: the surface label,
+    // the check recipe, the file names, the work-context title, the intent,
+    // the agent kind, the branch and the evidence-source labels.
+    render: (payload) => renderSuspect(suspectWith(payload), NOW),
+  },
   {
     kind: "composite",
     name: "cli-doctor",

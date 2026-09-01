@@ -100,6 +100,7 @@ import {
   getGhostChecks,
   getHintStats,
   getOpenSessions,
+  getPins,
   getPrivacySettings,
   getQuestions,
   getSolvedMatchCounts,
@@ -114,6 +115,19 @@ import {
   formatSolvedCounts,
   solvedPrecisionWarning,
 } from "@crosscheck/connector-core/hints/precision.ts";
+import { resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
+import {
+  formatGitLaneCost,
+  gitLaneWarning,
+  summarizeGitLaneCost,
+} from "@crosscheck/connector-core/state/git-lane-cost.ts";
+import {
+  orphanSentence,
+  orphanedPins,
+  pinCoverageSentence,
+  shadowSentence,
+  shadowedPinPaths,
+} from "./pin-observability.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
   countCursorIdentityMismatches,
@@ -1631,6 +1645,87 @@ const checkSolvedMatches = async (
 };
 
 /**
+ * The regression guard's SECOND EVIDENCE LANE, as health rather than as a
+ * count. `status` prints the pair unconditionally; this is where the pair
+ * becomes a verdict.
+ *
+ * NEVER PASS-ONLY (the finding-#14 lesson): the WARN is not "the lane was
+ * skipped" — one starved turn is the budget working as designed — but the
+ * lane being skipped MORE OFTEN THAN IT RECORDS. At that point `crosscheck
+ * suspect` is largely blind to `sed -i` and codemods while every individual
+ * Stop hook behaved correctly, so nothing else in this product would ever
+ * mention it, and suspect's "no session touched this surface" would be an
+ * artefact of a starved machine rather than a fact about the repository.
+ */
+const checkGitLane = (states: readonly SessionState[]): Check => {
+  const cost = summarizeGitLaneCost(states);
+  const line = formatGitLaneCost(cost);
+  const warning = gitLaneWarning(cost);
+  return warning === null
+    ? check("PASS", "git evidence lane", line)
+    : check("WARN", "git evidence lane", `${line} — ${warning}`);
+};
+
+/**
+ * The regression guard's two checks (Stage 1, part C). Both exist because
+ * their failure mode is SILENCE, which is the only failure a post-hoc guard
+ * can have: nothing crashes, nothing is slow, and the answer is simply wrong
+ * in the reassuring direction.
+ *
+ * NEVER PASS-ONLY (the finding-#14 lesson), and the two WARNs are different
+ * problems:
+ *
+ *   - "pins" WARNs when a rename orphaned a pin. `git mv` moves the file, the
+ *     pin keeps watching a path git cannot find, and the registry keeps
+ *     counting it — a pin that watches nothing while reporting that it does.
+ *     This repo renames weekly, so the remedy is named in the line.
+ *   - "pin denylist" WARNs when a hot-file pattern shadows a pinned path. A
+ *     denied path never becomes a target (flows/capture-targets.ts), so
+ *     `suspect` answers "no session touched this surface" about a file every
+ *     session touched. The config lives at ~/.crosscheck/config.json, outside
+ *     every repo root, where no hook and no reviewer sees it change — which
+ *     is why the SUPPRESSION IS PRINTED rather than prevented. Making the
+ *     config unwritable would be a block, and the ladder forbids blocks.
+ *
+ * A hub that predates the registry answers 404: "not measured" and a PASS,
+ * exactly as in checkQuestions and checkAbsences — an older hub says nothing
+ * about this install's health. A hub that could not be REACHED is different
+ * and is a WARN: coverage unknown is not coverage fine, and a green meaning
+ * "could not check" is worse than no check at all.
+ */
+const checkPins = async (
+  ctx: HubContext,
+  repoId: string,
+  patterns: readonly string[],
+  now: Date,
+): Promise<readonly Check[]> => {
+  const registry = await getPins(ctx, repoId);
+  if (!registry.ok) {
+    return registry.status === HTTP_NOT_FOUND
+      ? [check("PASS", "pins", "not measured (this hub has no pin registry)")]
+      : [
+          check(
+            "WARN",
+            "pins",
+            `coverage unknown — the hub did not answer (${registry.message}); this says nothing about what is watched`,
+          ),
+        ];
+  }
+  const coverage = pinCoverageSentence(registry.data, now);
+  const orphans = orphanSentence(orphanedPins(registry.data));
+  const shadows = shadowedPinPaths(registry.data, patterns);
+  const shadowLine = shadowSentence(shadows, patterns.length);
+  return [
+    orphans === null
+      ? check("PASS", "pins", coverage)
+      : check("WARN", "pins", `${coverage} — ${orphans}`),
+    shadows.length === 0
+      ? check("PASS", "pin denylist", shadowLine)
+      : check("WARN", "pin denylist", shadowLine),
+  ];
+};
+
+/**
  * The remedy a failed runner probe names, by what the binary said — each a
  * DIFFERENT fix, which is why the first output line is printed at all:
  * "Not logged in" is the developer's login, "unknown option" is the CLI's
@@ -2736,12 +2831,22 @@ export const runDoctor = async (
     checkSummarizerCost(liveStates),
     checkIntentCost(liveStates.states),
     checkGhostCost(liveStates.states),
+    checkGitLane(liveStates.states),
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),
     await checkAbsences(hubCtx, identity.repoId),
     await checkQuestions(hubCtx, identity.repoId, now),
     await checkSolvedMatches(hubCtx, identity.repoId),
+    ...(await checkPins(
+      hubCtx,
+      identity.repoId,
+      // The EFFECTIVE list, defaults included: the shadowing question is
+      // about what actually suppresses capture, not about what this
+      // developer added on top of it.
+      resolveDenylist(config.denylist ?? undefined),
+      now,
+    )),
     await checkGhostOverlap(hubCtx, identity.repoId),
     await checkPrivacy(hubCtx),
     skewCheck,

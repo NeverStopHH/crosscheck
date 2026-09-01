@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+
 import {
   bigserial,
   boolean,
@@ -22,10 +23,16 @@ import {
   CLAIM_STATUSES,
   EDGE_KINDS,
   MAX_CLAIM_BODY_LENGTH,
+  MAX_PIN_CHECK_CHARS,
+  MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
+  PIN_FILE_STATUSES,
   PROVENANCES,
   QUESTION_STATUSES,
   SESSION_STATUSES,
+  STORED_TARGET_SOURCES,
+  TEAM_PIN_POLICIES,
+  TEAM_SUSPECT_ATTRIBUTIONS,
   TARGET_KINDS,
 } from "@crosscheck/schema";
 
@@ -215,6 +222,19 @@ export const workContextTargets = pgTable(
       .references(() => workContexts.id),
     kind: text("kind", { enum: TARGET_KINDS }).notNull(),
     value: text("value").notNull(),
+    /**
+     * WHICH lane saw this file (regression-guard Stage 1): the host's own
+     * Edit/Write report, the Stop-time `git diff --name-only`, or "both". The
+     * default is what every pre-Stage-1 connector meant — those targets ARE
+     * tool-reported edits — so an old spool replays as itself rather than as
+     * an unlabelled unknown. `suspect` prints the label beside every row,
+     * because a session that only ever used `sed -i` leaves NO tool-lane
+     * trace, and a ranking that hid that difference would name the wrong
+     * session with full confidence.
+     */
+    source: text("source", { enum: STORED_TARGET_SOURCES })
+      .notNull()
+      .default("tool_edit"),
     /**
      * When this target was first ingested (trial finding #19): the age a
      * targets-only prompt pointer states ("touched <path> <age> ago"). NULLABLE
@@ -539,3 +559,115 @@ export const questionAnswers = pgTable(
     index("question_answers_claim_idx").on(table.claimId),
   ],
 );
+/**
+ * A PIN: a human's provenance-stamped statement that a named surface WORKS
+ * (regression-guard Stage 1). ITS OWN TABLE PAIR, and the reason is
+ * structural rather than tidiness: a pin carried as a `claim` would need an
+ * `author_session_id` FK into `agent_sessions` and a `work_context_id` FK
+ * into `work_contexts`, so registering one from a terminal would have to mint
+ * a synthetic session — which then surfaces as a PHANTOM TEAMMATE in
+ * presence, in every briefing and in the tripwire itself. Claims are also
+ * capped at 400 body chars with `evidence_refs` constrained to claim ids,
+ * neither of which fits a file set.
+ *
+ * REPO-SCOPED, never worktree-scoped: `repo` is the normalised remote
+ * identity every session already reports, so a pin made in one worktree is
+ * visible from all of a developer's others for free.
+ *
+ * `capture_mode` is STORED, not merely checked at the door: the trust label
+ * prints it, because `HintTrust` exposes provenance and provenance alone
+ * never distinguished "Nick verified this" from "an agent wrote that Nick
+ * verified this". @crosscheck/schema's PinSchema is the gate (literal
+ * "human"); the column is the evidence that survives the request.
+ */
+export const pins = pgTable(
+  "pins",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    surface: text("surface").notNull(),
+    verifiedBy: text("verified_by")
+      .notNull()
+      .references(() => developers.id),
+    /** Drift renders against this: "verified at abc1234; your base is def5678". */
+    verifiedAtCommit: text("verified_at_commit").notNull(),
+    verifiedAt: timestamptz("verified_at").notNull(),
+    /**
+     * The 30-second falsifier ("open /workbench, press Play"). NULL only on a
+     * briefing-only pin (over MAX_SPEAKING_PIN_FILES files) — the schema
+     * refuses a speaking-sized pin without one, and `crosscheck suspect`
+     * prints no session until a pin with a recipe has been recorded broken.
+     */
+    checkRecipe: text("check_recipe"),
+    captureMode: text("capture_mode", { enum: CAPTURE_MODES }).notNull(),
+    /** The retraction, and the falsifier timestamp suspect gates on. */
+    brokeAt: timestamptz("broke_at"),
+    brokeBy: text("broke_by").references(() => developers.id),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    check(
+      "pins_surface_length_check",
+      sql`char_length(${table.surface}) <= ${sql.raw(String(MAX_PIN_SURFACE_CHARS))}`,
+    ),
+    check(
+      "pins_check_length_check",
+      sql`${table.checkRecipe} IS NULL OR char_length(${table.checkRecipe}) <= ${sql.raw(String(MAX_PIN_CHECK_CHARS))}`,
+    ),
+    // The registry listing — "this repo's pins, newest first" — is what
+    // `crosscheck pin list`, `status` and `doctor` all read. Without it every
+    // one of them scans every pin on the hub. Mirrored in db/bootstrap.sql.
+    index("pins_repo_created_idx").on(table.repo, table.createdAt.desc()),
+  ],
+);
+
+/**
+ * One row per file a pin watches. `repo` is DENORMALISED onto it on purpose:
+ * the hot question is "which pins watch this path in this repo", asked with a
+ * path in hand and no pin id, and answering it through a join to `pins` would
+ * read every pin row the path matches in any repo first.
+ *
+ * `status` is what the post-commit sweep writes: a rename it could follow
+ * unambiguously rewrites `path` in place, and anything else lands as
+ * `missing`, which `doctor` reports as "BROKEN — 2 of 3 paths missing". A
+ * rename that silently emptied a pin while `status` still called it
+ * registered is precisely the fail-silent-dead shape the ladder forbids.
+ */
+export const pinFiles = pgTable(
+  "pin_files",
+  {
+    pinId: text("pin_id")
+      .notNull()
+      .references(() => pins.id),
+    repo: text("repo").notNull(),
+    path: text("path").notNull(),
+    status: text("status", { enum: PIN_FILE_STATUSES }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.pinId, table.path] }),
+    // The (repo, path) lookup the suspect intersection and the denylist-shadow
+    // check both run. Mirrored in db/bootstrap.sql.
+    index("pin_files_repo_path_idx").on(table.repo, table.path),
+  ],
+);
+
+/**
+ * TEAM-level settings for the regression guard, one row per repo. ABSENT
+ * MEANS DEFAULTS (services/team-settings.ts holds both and says why each is a
+ * setting rather than behaviour), so nothing bootstraps rows here and a hub
+ * that was never configured behaves like one configured with the defaults.
+ *
+ * Keyed by `repo` — the same normalised remote identity every session
+ * reports — because these are decisions a TEAM takes about a codebase, not
+ * preferences a person holds (those live on `developers` and
+ * `developer_mutes`).
+ */
+export const teamSettings = pgTable("team_settings", {
+  repo: text("repo").primaryKey(),
+  pinPolicy: text("pin_policy", { enum: TEAM_PIN_POLICIES }).notNull(),
+  suspectAttribution: text("suspect_attribution", {
+    enum: TEAM_SUSPECT_ATTRIBUTIONS,
+  }).notNull(),
+  updatedAt: timestamptz("updated_at").notNull(),
+  updatedBy: text("updated_by").references(() => developers.id),
+});

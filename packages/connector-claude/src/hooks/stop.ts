@@ -16,11 +16,18 @@
  */
 import { resolve } from "node:path";
 
-import { CHARS_PER_TOKEN_ESTIMATE } from "@crosscheck/connector-core/constants.ts";
+import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
+
+import {
+  CHARS_PER_TOKEN_ESTIMATE,
+  GIT_TOUCHES_TIMEOUT_MS,
+} from "@crosscheck/connector-core/constants.ts";
+import { captureGitTouches } from "@crosscheck/connector-core/flows/capture-git-touches.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
   readSessionState,
   updateSessionState,
+  withGitTouches,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import {
   isCaptureMoment,
@@ -135,6 +142,56 @@ export const handleStop = async (
 
   if (fired && slice !== null && transcriptPath !== undefined) {
     spawnSummarizeWorker(ctx, transcriptPath, slice);
+  }
+
+  // THE SECOND EVIDENCE LANE (regression-guard Stage 1). Stop is where it
+  // belongs: the turn is over, so the working tree holds what the turn did,
+  // including everything `sed -i`, a codemod or a generator changed without
+  // ever raising an Edit event. Without it `crosscheck suspect` names the
+  // session that used Edit with full confidence while the codemod session
+  // leaves no trace at all.
+  //
+  // ON THE SPARE BUDGET, and skipped rather than shortened when it is gone:
+  // one bounded `git diff --name-only HEAD` at GIT_TOUCHES_TIMEOUT_MS, run
+  // only while the hook's reserve still covers it.
+  //
+  // TWO WAYS THE LANE PRODUCES NOTHING, and BOTH are counted (state
+  // gitLaneSkipped): the budget was gone before it started, or git did not
+  // answer inside its own deadline. Neither is the same as a clean worktree,
+  // and a lane that silently produces nothing on every turn would otherwise
+  // read in `status` and `doctor` exactly like a lane watching a quiet tree —
+  // the fail-silent-dead this feature exists to refuse. The skip is not
+  // hypothetical: driven 12 times against a machine held busy by eight
+  // spinning processes, 11 turns recorded and 1 skipped — and the 1 was a
+  // number in the session state rather than a silence. (HISTORICAL: that
+  // split belongs to the machine it was measured on and nothing here
+  // re-derives it; test/stop-git-touches.test.ts asserts the invariant that
+  // holds at any load.)
+  const laneAffordable = budget.spareMs() >= GIT_TOUCHES_TIMEOUT_MS;
+  const outcome = laneAffordable
+    ? await captureGitTouches({
+        home: ctx.config.home,
+        repoKey: ctx.repoKey,
+        hostSessionKey: ctx.payload.session_id,
+        repoRoot: ctx.identity.root,
+        workContextId: state.workContextId,
+        producer: {
+          developerId: state.developerId ?? UNKNOWN_DEVELOPER_ID,
+          agentKind: ctx.config.agentKind,
+          sessionId: state.crosscheckSessionId,
+        },
+        seenTargets: state.seenTargets,
+        denylist: ctx.config.denylist,
+        since: new Date(state.startedAt),
+        now: ctx.now(),
+      })
+    : { paths: [], unavailable: true };
+  const captured = outcome.paths;
+  const skipped = outcome.unavailable;
+  if (captured.length > 0 || skipped) {
+    await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
+      withGitTouches(fresh, { captured, skipped }),
+    );
   }
 
   // Maintenance on the spare budget, like every hook: earlier drafts and

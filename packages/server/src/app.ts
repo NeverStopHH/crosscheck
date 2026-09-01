@@ -9,13 +9,16 @@ import { draftsRoutes } from "./routes/drafts.ts";
 import { eventsRoutes } from "./routes/events.ts";
 import { ghostChecksRoutes } from "./routes/ghost-checks.ts";
 import { hintsRoutes } from "./routes/hints.ts";
+import { pinsRoutes } from "./routes/pins.ts";
 import { presenceRoutes } from "./routes/presence.ts";
 import { questionsRoutes } from "./routes/questions.ts";
 import { recordsRoutes } from "./routes/records.ts";
 import { searchRoutes } from "./routes/search.ts";
 import { sessionsRoutes } from "./routes/sessions.ts";
 import { settingsRoutes } from "./routes/settings.ts";
+import { teamSettingsRoutes } from "./routes/team-settings.ts";
 import { solvedMatchesRoutes } from "./routes/solved-matches.ts";
+import { suspectRoutes } from "./routes/suspect.ts";
 import { uiRoutes } from "./routes/ui.tsx";
 import { workContextsRoutes } from "./routes/work-contexts.ts";
 import type { AppDeps, AppEnv } from "./types.ts";
@@ -44,7 +47,21 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // misspelt one must come back naming the closest spellings.
   app.route("/api/questions", questionsRoutes(deps));
   app.route("/api/drafts", draftsRoutes(deps));
+  // The pin registry (regression-guard Stage 1). A route rather than a record
+  // kind: `crosscheck pin` is a person's command, and its refusals — an agent
+  // capture mode, a speaking pin with no check recipe — have to reach that
+  // person's terminal instead of a spool nobody reads.
+  app.route("/api/pins", pinsRoutes(deps));
+  // "Who was in there, and what did they say they were doing" — post-hoc,
+  // pulled by a person, and gated hub-side on a check that was run and
+  // failed. It needs no hook, so it answers identically for Claude Code,
+  // Cursor and ACP sessions alike.
+  app.route("/api/suspect", suspectRoutes(deps));
   app.route("/api/settings", settingsRoutes(deps));
+  // The regression guard's two TEAM decisions — who may pin, and whether
+  // `suspect` names sessions. Read by any member (everybody affected has to
+  // be able to see what it is), written with the admin token.
+  app.route("/api/team-settings", teamSettingsRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.
   app.route("/ui", uiRoutes(deps));

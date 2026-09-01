@@ -121,6 +121,75 @@ Teammate-written text is untrusted input. It is quoted inside a frame the header
 
 Everything fails open: if the hub is down, hooks print nothing, exit 0, and spool their records to `~/.crosscheck/` until the next successful flush. Only relative file paths, hashed error fingerprints, a work-context title and the one-sentence session intent (declared by the agent, or the model's one-sentence summary of the first prompt — never the prompt) are uploaded — never transcripts, diffs, raw prompts, or raw command output.
 
+### Working things must keep working
+
+A **pin** is a person's record that a named surface works right now: the files
+behind it, the commit they verified at, and a check anybody can run in thirty
+seconds.
+
+```bash
+crosscheck pin "Play button plays/pauses" \
+  --files src/workbench/PlaybackControls.tsx src/workbench/usePlayback.ts \
+  --check "open /workbench, press Play"
+```
+
+Only a person can create one. The command refuses when the process has no
+controlling terminal, so an agent calling it through Bash cannot vouch for
+you, and `crosscheck pin list` prints the capture mode beside the name —
+"verified by Nick (a human, at a terminal)" — because provenance on its own
+never distinguished "Nick verified this" from "an agent wrote that Nick
+verified this". A pin of at most 5 files may be shown to other sessions later
+and must carry a check recipe; up to 30 files are allowed for briefing-only
+pins. `crosscheck pin --broke <id>` retracts one, and `crosscheck pin --sweep`
+asks git where the pinned paths went after a rename.
+
+When the surface stops working, `crosscheck suspect <pin-id>` intersects the
+pin's files with every recorded touch across every person and connector in the
+last 14 days and prints the sessions that were in there. Ranking is by how
+concentrated a session's author's work was on those files, not by how much
+they commit, so the busiest person is not the default suspect. Nothing is
+named until somebody has run the pin's check and recorded it failing. It reads
+two labelled evidence lanes — the edits the host tool reported, and a bounded
+`git diff --name-only` at Stop, because `sed -i` and codemods produce no edit
+event at all. Three outcomes exist rather than two: a ranked answer, "no
+separated suspect" when the top scores are too close to call, and "no session
+touched these files". A session whose author you have muted is labelled as
+suppressed by your own mute, never as unanswered.
+
+Nothing here speaks during anybody's work. Both commands run when a person
+types them; there is no hook, no injection and no interruption, which is also
+why they behave identically for Claude Code, Cursor and ACP sessions.
+
+`crosscheck status` and `crosscheck doctor` print the denominator — "pins: 4
+(12 files, oldest verified 9d ago) — nothing else is watched" — plus any pin
+whose files a rename left behind, and a warning when your hot-file denylist
+matches a pinned path. That last one matters because a denied path is never
+captured at all, so `suspect` would otherwise answer "no session touched this
+surface" about a file everybody touched.
+
+#### What this makes visible about people
+
+`crosscheck suspect` prints session identifiers, the agent that ran each
+session, its branch, its work-context title and its declared intent, together
+with a score and the two file counts the score was computed from. It does not
+print a developer's name or id; opening the work context it names is a
+separate step, and that page shows whose it is. The data it reads is the
+file-touch and work-context record the connectors already upload — the same
+record that feeds the briefing and the statusline — scoped to one repository
+and a 14-day window. Any developer holding an API key for that hub can run it,
+including against sessions that are not their own. Because a session belongs to
+a person, the output identifies a person one step removed, and it can be read
+as information about who changed which files and when. In some jurisdictions
+that is a formal matter: in Germany, technical systems from which individual
+performance or behaviour data can be derived fall under works-council
+co-determination (§ 87(1) no. 6 BetrVG), and the processing engages the GDPR.
+Whether sessions are named at all is therefore a per-repository setting.
+`suspectAttribution` is `sessions` by default; `counts_only` prints the counts
+and no rows. The second setting, `pinPolicy`, is `anyone` by default, meaning
+any member may pin any surface. `crosscheck status` prints both effective
+values, so everyone on the repository can see which are in force without being
+told.
+
 ### Asking a teammate something they never wrote down
 
 Reading what Ken's agent recorded is the easy half. The hard half is the

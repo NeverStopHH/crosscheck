@@ -218,6 +218,8 @@ const aliceFixture = async (
     workContextStatus: "analyzing",
     workContextIntent: MY_INTENT,
     ghostPending: false,
+  gitTouchCount: 0,
+  gitLaneSkipped: 0,
     ...stateOverrides,
   });
   return {

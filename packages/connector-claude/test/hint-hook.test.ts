@@ -97,6 +97,8 @@ const sessionState = (
   intentLastFailure: null,
   workContextIntent: null,
   ghostPending: false,
+  gitTouchCount: 0,
+  gitLaneSkipped: 0,
   ghostNoticeCount: 0,
   ghostFireCount: 0,
   ghostNoOverlapCount: 0,
