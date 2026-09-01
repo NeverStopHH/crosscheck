@@ -137,6 +137,15 @@ export const captureGitTouches = async (
     // repo root keeps `toRepoRelative` a no-op instead of a re-derivation
     // against whatever directory the hook happened to run in.
     cwd: input.repoRoot,
+    // THE #17 RESOLUTION, STATED RATHER THAN OMITTED. capture-touched-files.ts
+    // is the flow that resolves a HOST-REPORTED path against the root that
+    // governs the file, because a host names a path in whatever directory its
+    // event fired in. This lane has no host event: `git diff` ran IN
+    // `repoRoot` and git cannot name a file outside the worktree it ran in, so
+    // every candidate is already governed by that root. Passing it explicitly
+    // is the same value the absent hook resolves to — and it keeps the caller
+    // audit in capture-touched-files.ts able to see this call site.
+    resolveRoot: () => input.repoRoot,
     paths: fresh,
     denylist: input.denylist,
     seenTargets: input.seenTargets,

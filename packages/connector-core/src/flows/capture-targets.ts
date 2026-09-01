@@ -54,12 +54,14 @@ export interface CaptureFileTargetsInput {
    * repo instead of the session's checkout — or null to DROP the path (a
    * foreign or outside-root touch the caller has already counted). Omitting it
    * keeps the pre-#17 single-root behaviour: every path resolves against
-   * `repoRoot`. NO CONNECTOR OMITS IT ANY MORE — `flows/capture-touched-files.ts`
-   * is the one place that builds this call, and it precomputes the map once per
-   * event (capture/touched-root.ts) so the git cost is paid at most once per NEW
-   * worktree root per session, never per tool call. The option survives because
-   * it is the seam the unit tests drive, and because an ABSENT hook and one
-   * returning null must stay different answers.
+   * `repoRoot`. NO CALLER OMITS IT ANY MORE — `flows/capture-touched-files.ts`
+   * builds this call for every host-reported edit and precomputes the map once
+   * per event (capture/touched-root.ts), so the git cost is paid at most once
+   * per NEW worktree root per session and never per tool call;
+   * `flows/capture-git-touches.ts` builds the only other one and passes the
+   * single root git answered in. The option survives because it is the seam
+   * the unit tests drive, and because an ABSENT hook and one returning null
+   * must stay different answers.
    */
   readonly resolveRoot?: (path: string) => string | null;
 }
