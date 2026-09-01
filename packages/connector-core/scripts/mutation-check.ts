@@ -77,8 +77,10 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "a wrong-shaped intent answer is booked as merely empty",
     file: `${CORE}/src/derive/intent/worker.ts`,
     from:
-      '      answer.why === "empty" ? DROPPED_EMPTY_ANSWER : DROPPED_NOT_SENTENCE,',
-    to: "      DROPPED_EMPTY_ANSWER,",
+      '        : answer.why === "empty"\n' +
+      "          ? DROPPED_EMPTY_ANSWER\n" +
+      "          : DROPPED_NOT_SENTENCE,",
+    to: "        : DROPPED_EMPTY_ANSWER,",
     test: `${CONNECTOR}/test/intent-worker.test.ts`,
     because:
       "the two remedies differ — \"your wrapper printed nothing\" sends a " +
@@ -89,8 +91,10 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "a wrong-shaped ghost answer is booked as merely empty",
     file: `${CORE}/src/derive/ghost/worker.ts`,
     from:
-      '      answer.why === "empty" ? DROPPED_EMPTY_ANSWER : DROPPED_NOT_SENTENCE,',
-    to: "      DROPPED_EMPTY_ANSWER,",
+      '        : answer.why === "empty"\n' +
+      "          ? DROPPED_EMPTY_ANSWER\n" +
+      "          : DROPPED_NOT_SENTENCE,",
+    to: "        : DROPPED_EMPTY_ANSWER,",
     test: `${CONNECTOR}/test/ghost-worker.test.ts`,
     because:
       "the ghost half of the same split: a claim body published under this " +
