@@ -49,6 +49,96 @@ interface Mutation {
 /** Exported so the guard-count claim below can be re-derived from the data. */
 export const MUTATIONS: readonly Mutation[] = [
   {
+    // Found by review: two of the four tasks behind one override want PROSE,
+    // and both took the first non-empty line of raw stdout whatever it was.
+    label: "a document answered to a sentence task is read as a sentence",
+    file: `${CORE}/src/model/parse.ts`,
+    from: "    DOCUMENT_OPENER_PATTERN.test(text) ||",
+    to: "    false ||",
+    test: `${CORE}/test/model-answer.test.ts`,
+    because:
+      "a JSON array or object answered by a wrapper carrying the " +
+      "summarizer's instruction becomes a sentence again, and the session " +
+      "intent every teammate reads is a model's JSON about someone else's turn",
+  },
+  {
+    // The same refusal for the polite version of that answer.
+    label: "a claim document behind a preamble passes the sentence gate",
+    file: `${CORE}/src/model/parse.ts`,
+    from: '    readModelAnswer(stdout).kind === "claim"',
+    to: "    false",
+    test: `${CORE}/test/model-answer.test.ts`,
+    because:
+      "a model that says \"Here is the finding:\" before its claim JSON " +
+      "opens with prose, so the opener check alone lets the document " +
+      "through and publishes its first line as the developer's intent",
+  },
+  {
+    label: "a wrong-shaped intent answer is booked as merely empty",
+    file: `${CORE}/src/derive/intent/worker.ts`,
+    from:
+      '        : answer.why === "empty"\n' +
+      "          ? DROPPED_EMPTY_ANSWER\n" +
+      "          : DROPPED_NOT_SENTENCE,",
+    to: "        : DROPPED_EMPTY_ANSWER,",
+    test: `${CONNECTOR}/test/intent-worker.test.ts`,
+    because:
+      "the two remedies differ — \"your wrapper printed nothing\" sends a " +
+      "reader to auth and plumbing, \"your wrapper answered the wrong task\" " +
+      "sends them to docs/FOREIGN-MODELS.md — and doctor would name the wrong one",
+  },
+  {
+    label: "a wrong-shaped ghost answer is booked as merely empty",
+    file: `${CORE}/src/derive/ghost/worker.ts`,
+    from:
+      '        : answer.why === "empty"\n' +
+      "          ? DROPPED_EMPTY_ANSWER\n" +
+      "          : DROPPED_NOT_SENTENCE,",
+    to: "        : DROPPED_EMPTY_ANSWER,",
+    test: `${CONNECTOR}/test/ghost-worker.test.ts`,
+    because:
+      "the ghost half of the same split: a claim body published under this " +
+      "developer's name is refused, but the line that says WHY names the " +
+      "wrong cause",
+  },
+  {
+    // Found by review: four rung lines printed PASS on a machine that can
+    // run no model at all, and the one blocking fact called itself skippable.
+    label: "the Cursor backend line goes quiet when there is no model",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: '    backend.kind === "absent" ? "WARN" : "PASS",',
+    to: '    "PASS",',
+    test: `${CURSOR}/test/derive-doctor.test.ts`,
+    because:
+      "a Cursor-only machine with no claude and no override reads four " +
+      "green rungs and a green backend line while nothing is ever derived " +
+      "for it — the exact install this parity work exists for",
+  },
+  {
+    label: "the ACP backend line goes quiet when there is no model",
+    file: `${ACP}/src/doctor.ts`,
+    from: '    backend.kind === "absent" ? "WARN" : "PASS",',
+    to: '    "PASS",',
+    test: `${ACP}/test/derive-doctor.test.ts`,
+    because:
+      "the same silence on the other new host: every ACP rung spawns the " +
+      "same resolved argv, so a machine without one derives nothing and " +
+      "says so nowhere",
+  },
+  {
+    // Found by review: the reference manifest was declared, exported and
+    // pinned by the registry meta-test, and rendered by nothing.
+    label: "the reference host's rung lines lose their host name",
+    file: `${CONNECTOR}/src/doctor.ts`,
+    from: "      `${capability.name} (claude-code)`,",
+    to: "      capability.name,",
+    test: `${CONNECTOR}/test/derive-doctor.test.ts`,
+    because:
+      "the Claude rows stop being attributable to a host, so a doctor run " +
+      "on a machine with two connectors installed prints `intent` beside " +
+      "`intent (cursor)` and the parity table loses its reference row",
+  },
+  {
     // The ACP proxy's prime directive (adapters design verdict 2): no
     // observer failure may reach the forward path. This strips the
     // catch-all off the observer call, so the first hostile-observer throw
@@ -1146,7 +1236,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // Like tripwire-hook.test.ts, this guard shells out to git (makeRepo) —
     // the assertGuardIsGreen container caveat applies to it too.
     label: "the Stop hook waits for the summarizer worker",
-    file: `${CONNECTOR}/src/hooks/stop.ts`,
+    // The spawn shape moved to core/derive/spawn.ts when Cursor needed the
+    // identical door; the Claude Stop hook still reaches it, so the same
+    // guard still sees the same blocking.
+    file: `${CORE}/src/derive/spawn.ts`,
     from: "    const proc = Bun.spawn({",
     to: "    const proc = Bun.spawnSync({",
     test: `${CONNECTOR}/test/stop-latency.test.ts`,
@@ -1613,7 +1706,7 @@ export const MUTATIONS: readonly Mutation[] = [
   // gate — the exact un-widening that WAS finding #12.
   {
     label: "the gate stops hearing declared verdicts",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from:
       "  (hasVerdictLanguage(sliceText) ||\n" +
       "    hasRejectionLanguage(sliceText) ||\n",
@@ -1626,7 +1719,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "the gate stops hearing ruled-out approaches",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from:
       "    hasRejectionLanguage(sliceText) ||\n    hasSuiteFlip(sliceText) ||\n",
     to: "    hasSuiteFlip(sliceText) ||\n",
@@ -1638,7 +1731,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "a suite flipping red to green stops being a conclusion",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from:
       "    hasSuiteFlip(sliceText) ||\n    hasReviewFindingSignal(sliceText)) &&\n",
     to: "    hasReviewFindingSignal(sliceText)) &&\n",
@@ -1650,7 +1743,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "a verdict-free findings list stops being a conclusion",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from: "    hasReviewFindingSignal(sliceText)) &&\n",
     to: "    false) &&\n",
     test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
@@ -1663,7 +1756,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "review findings stop anchoring the conclusion gate",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from: "    hasReviewFindingShape(sliceText) ||\n",
     to: "",
     test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
@@ -1676,7 +1769,7 @@ export const MUTATIONS: readonly Mutation[] = [
   },
   {
     label: "commit and merge boundaries stop anchoring the conclusion gate",
-    file: `${CONNECTOR}/src/summarizer/gate.ts`,
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
     from: "    hasCommitBoundary(sliceText));",
     to: "    false);",
     test: `${CONNECTOR}/test/conclusion-corpus.test.ts`,
@@ -1806,7 +1899,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // widens the parent-marker denylist to swallow it — the allowlist's
     // defect, re-created one name at a time.
     label: "the summarizer worker's env drops USER again",
-    file: `${CONNECTOR}/src/summarizer/worker-env.ts`,
+    file: `${CORE}/src/model/worker-env.ts`,
     from: "  /^CLAUDECODE$|^CLAUDE_PID$|^CLAUDE_CODE_(SESSION_|CHILD_SESSION$|ENTRYPOINT$|MESSAGING_|TASK_LIST_ID$|SSE_PORT$|REMOTE|RESUME_FROM_SESSION$|BRIDGE_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;",
     to: "  /^USER$|^CLAUDECODE$|^CLAUDE_PID$|^CLAUDE_CODE_(SESSION_|CHILD_SESSION$|ENTRYPOINT$|MESSAGING_|TASK_LIST_ID$|SSE_PORT$|REMOTE|RESUME_FROM_SESSION$|BRIDGE_)|^CLAUDE_PLUGIN_|^CLAUDE_PROJECT_DIR$|^CLAUDE_AGENT_SDK_/;",
     test: `${CONNECTOR}/test/summarizer-worker-env.test.ts`,
@@ -1835,7 +1928,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // nested claude loads the developer's whole settings stack (~10 MCP
     // servers, plugins, hooks) — 35–116 s measured against a 30 s deadline.
     label: "the nested claude loads the whole settings stack again",
-    file: `${CONNECTOR}/src/summarizer/runner.ts`,
+    file: `${CORE}/src/model/runner.ts`,
     from: '  "--setting-sources",\n  "",\n',
     to: "",
     test: `${CONNECTOR}/test/summarizer-argv.test.ts`,
@@ -1896,7 +1989,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // The privacy line of the whole feature: the raw prompt never leaves the
     // machine, only the model's one sentence. This ships the prompt instead.
     label: "the intent worker ships the raw prompt",
-    file: `${CONNECTOR}/src/intent/worker.ts`,
+    file: `${CORE}/src/derive/intent/worker.ts`,
     from: "    summary: sentence,",
     to: "    summary: cutWellFormed(prompt, MAX_INTENT_SUMMARY_CHARS),",
     test: `${CONNECTOR}/test/intent-worker.test.ts`,
@@ -1919,19 +2012,312 @@ export const MUTATIONS: readonly Mutation[] = [
       "injection surfaces at once; raw, it can carry control characters, " +
       "close the « » frame and open a second one — on every surface",
   },
+  // SUPERSEDED AND REMOVED, 2026-08-30 — "the intent worker inherits the
+  // parent session's markers". It mutated the prompt hook's spawn to pass
+  // `ctx.env` through untouched, and until this branch that reached the model
+  // and the test caught it (verified: the same mutation on 77eea1c fails
+  // intent-hook.test.ts, 6 pass / 1 fail).
+  //
+  // It cannot any more, and the reason is a STRONGER guard rather than a
+  // weaker one: `childEnv` in model/runner.ts now applies the parent-marker
+  // and hub-key denylist on EVERY model spawn, so a worker handed a dirty
+  // environment still spawns a clean model. Its allowlist is narrower than
+  // anything summarizerWorkerEnv strips, which makes the hook-level bypass
+  // unobservable at the model by construction — not merely untested.
+  //
+  // The protection it named is still pinned, one layer down and closer to the
+  // spawn: "a nested model is handed the session it is summarizing" mutates
+  // that denylist directly and IS caught. Keeping a mutation no test can fail
+  // would have made this script claim a guard it does not have, which is the
+  // one thing it exists to prevent.
   {
-    // The worker env contract (finding #14, applied to the intent worker):
-    // the parent session's markers stripped, the child marker added. This
-    // passes the hook's environment through untouched.
-    label: "the intent worker inherits the parent session's markers",
-    file: `${CONNECTOR}/src/hooks/user-prompt-submit.ts`,
-    from: "      env: summarizerWorkerEnv(ctx.env, ctx.config.home),",
-    to: "      env: { ...ctx.env, CROSSCHECK_HOME: ctx.config.home } as Record<string, string>,",
-    test: `${CONNECTOR}/test/intent-hook.test.ts`,
+    // ESCALATION LADDER RUNG 1, on the one Cursor event that can enforce a
+    // block: beforeSubmitPrompt's documented output is {continue,
+    // user_message} and crosscheck never hard-blocks. This makes the
+    // handler emit the block.
+    label: "the Cursor prompt hook blocks the user's prompt",
+    file: `${CURSOR}/src/handlers/before-submit-prompt.ts`,
+    from: '  if (state === null) {\n    return "";\n  }',
+    to: '  if (state === null) {\n    return JSON.stringify({ continue: false, user_message: "blocked" });\n  }',
+    test: `${CURSOR}/test/handlers.test.ts`,
     because:
-      "the nested claude inherits CLAUDECODE and the session id of the " +
-      "session it is summarizing and can be mistaken for, or bind to, it — " +
-      "the phantom-session class trial finding #14 closed",
+      "a prompt the developer typed is refused by a background telemetry " +
+      "tool, which is the one thing this product promises never to do — and " +
+      "on a fail-open channel nobody would look at first",
+  },
+  {
+    // THE AGENT-KIND TRAP (the derive rungs' own incident, 2026-08-28): the
+    // workers stamp a record's producer from the environment and default to
+    // claude-code, and nothing but the trigger knows better. This drops the
+    // stamp, which is exactly what the code did before derive/spawn.ts.
+    label: "a Cursor-spawned draft is filed under Claude Code",
+    file: `${CORE}/src/derive/spawn.ts`,
+    from: "  CROSSCHECK_AGENT_KIND: agentKind,",
+    to: "",
+    test: `${CURSOR}/test/derive.test.ts`,
+    because:
+      "every derived intent and draft a Cursor session produces arrives on " +
+      "the hub attributed to a Claude Code session, and nothing on either " +
+      "side ever says otherwise",
+  },
+  {
+    // Rule 4 on the Tier-1 rung Cursor can only have REDUCED: a turn the
+    // gate could not read must be booked, not shrugged off.
+    label: "a Cursor turn with no transcript is shrugged off, not booked",
+    file: `${CURSOR}/src/derive/triggers.ts`,
+    from: "    if (look.noSliceReason !== null) {",
+    to: "    if (false) {",
+    test: `${CURSOR}/test/derive.test.ts`,
+    because:
+      "a build with transcripts disabled derives nothing and says nothing " +
+      "about it, so doctor cannot tell it apart from a broken runner and " +
+      "sends the reader to a binary that works",
+  },
+  {
+    // The debt this step exists to pay: set_intent set the flag inside
+    // Cursor and NOTHING claimed it. This restores that state.
+    label: "the Cursor ghost debt rots in the state file again",
+    file: `${CURSOR}/src/handlers/stop.ts`,
+    from: "  await maybeSpawnCursorGhostWorker(ctx);",
+    to: "",
+    test: `${CURSOR}/test/derive.test.ts`,
+    because:
+      "a declared plan that overlaps a teammate's is never compared in " +
+      "Cursor, and ghostPending stays true for the session's whole life " +
+      "with no surface saying so",
+  },
+  {
+    // Found by review: the header promised the fallback took only "printable
+    // characters" and the code took anything non-blank, which made the named
+    // outcome below unreachable for every real transcript.
+    label: "the Cursor tail decoder accepts a binary store as prose",
+    file: `${CURSOR}/src/derive/transcript.ts`,
+    from: "  if (!isProse(prose)) {",
+    to: "  if (prose.length === 0) {",
+    test: `${CURSOR}/test/derive-transcript.test.ts`,
+    because:
+      "a transcript this reader does not understand is handed to the gate " +
+      "as a slice instead of being booked as unrecognised, so Tier-1 on " +
+      "Cursor degrades with every surface still printing PASS",
+  },
+  {
+    // The other half of the same tripwire: which decoder matched was computed
+    // and thrown away, so a format flip moved no counter anywhere.
+    label: "the Cursor slice shape is computed and discarded again",
+    file: `${CURSOR}/src/derive/triggers.ts`,
+    from: "        : withSummarizerSliceShape(counted, look.shape);",
+    to: "        : counted;",
+    test: `${CURSOR}/test/derive-transcript.test.ts`,
+    because:
+      "the structured decoder is a hypothesis about an undocumented format " +
+      "and its silent replacement by the prose fallback becomes invisible " +
+      "again — no counter moves, and doctor keeps saying the rung is fine",
+  },
+  {
+    // Found by review: the ACP twin has always filtered its scan by host
+    // prefix and said why in its header; the Cursor section was handed the
+    // same unfiltered scan and never did.
+    label: "the Cursor rungs count every host's failures as Cursor's",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "    state.hostSessionKey.startsWith(CURSOR_HOST_KEY_PREFIX),",
+    to: '    state.hostSessionKey.startsWith(""),',
+    test: `${CURSOR}/test/derive-doctor.test.ts`,
+    because:
+      "a Claude or ACP session's booked model failure WARNs on a cursor " +
+      "rung that is working, with another host's model stdout quoted on " +
+      "the line, and Cursor's own failures become indistinguishable from " +
+      "a colleague's",
+  },
+  {
+    // The model-facing door. The worker door one level up strips the same
+    // names, so ONLY the hub-key clause can be lost here without the other
+    // catching it — which is exactly why it gets its own entry.
+    label: "the hub key rides into the spawned model on every host",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "      name === HUB_KEY_ENV ||",
+    to: "",
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "a secret the developer exported for the hooks is handed to a " +
+      "third-party binary that has no use for it and no reason to be " +
+      "trusted with it",
+  },
+  {
+    // Shipped, and red on Linux CI while macOS stayed green. The bounded read
+    // cancels the pipe at the cap, which BREAKS it: the child's next write
+    // gets EPIPE, SIGPIPE ends it, and the seam then read its own kill (141)
+    // as the model's failure. Measured in oven/bun:1: a flood-only probe was
+    // ok=false 5 of 5, all reason "exit", exitCode 141.
+    label: "a model cut at the byte cap is booked as a failed call",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "    if (outcome.exitCode !== 0 && !outcome.cutByCap) {",
+    to: "    if (outcome.exitCode !== 0) {",
+    test: `${CORE}/test/model-seam.test.ts`,
+    because:
+      "every model that produces more output than the cap is booked as a " +
+      "broken binary — which for a reasoning model that thinks out loud " +
+      "before answering is EVERY fire, the normal case and not a corner one",
+  },
+  {
+    // The other half, and deliberately its own entry: the run can be booked
+    // ok and the caller still be unable to tell a cut answer from a whole
+    // one. That is the state this branch is FOR — a foreign model whose
+    // answer was cut looks exactly like one that chose to stop there.
+    label: "a cut run is indistinguishable from a complete one",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "      truncated: outcome.truncated,",
+    to: "      truncated: false,",
+    test: `${CORE}/test/model-seam.test.ts`,
+    because:
+      "the one fact that explains a truncated answer never reaches the " +
+      "caller, so the cut is booked as the model's bad output shape and " +
+      "the reader is sent to the model instead of to the cap",
+  },
+  {
+    // Rule 4 at the booking line: fail open must never mean silently dead,
+    // and a reason that names the wrong cause is the same thing one step on.
+    label: "a cut answer is booked as a bad output shape",
+    file: `${CORE}/src/derive/summarizer/derive.ts`,
+    from: "    const reason = result.truncated",
+    to: "    const reason = false",
+    test: `${CONNECTOR}/test/foreign-model.test.ts`,
+    because:
+      "status and doctor say the answer was neither claim JSON nor NONE " +
+      "when it was simply cut at the output cap, sending the reader to the " +
+      "model's formatting for a bound this seam imposed",
+  },
+  {
+    // A counter the schema declares, the cost reader sums and the cost line
+    // renders, that no production path can move off 0.
+    label: "a summarizer outcome writer nothing in src ever calls",
+    file: `${CORE}/src/derive/summarizer/gate.ts`,
+    from: "export const withSummarizerNoSlice = (",
+    to: "export const withSummarizerNeverCalled = (",
+    test: `${CORE}/test/session-state-transforms.test.ts`,
+    because:
+      "an outcome counter with no caller prints a confident 0 forever, so " +
+      "the outcome it names looks like it never happens on any host",
+  },
+  {
+    // The other half of that rule, and the fix for it: the count now rides
+    // the gate's own locked write into session state, where doctor reads it.
+    label: "the refused ACP slice characters never reach session state",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "              turnSlice.dropped(),",
+    to: "              0,",
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "a truncated turn is judged on its head, the model books a NONE about " +
+      "a turn that did conclude, and status and doctor both report health — " +
+      "the only trace is a line in a per-pid log file that is swept",
+  },
+  {
+    // Rule 4 on this surface: three of the four derive failure paths are
+    // booked in session state and doctor prints them; slice content the byte
+    // cap refused is booked nowhere else, so the proxy log is its only home.
+    label: "an ACP slice the cap refused is dropped invisibly",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          `slice-dropped=${counters.sliceDropped}`,",
+    to: "          `slice-dropped=0`,",
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "a turn whose conclusion arrived past the cap is a miss no surface " +
+      "can report — the gate only ever saw the part that fit, and nothing " +
+      "anywhere says a slice was truncated",
+  },
+  {
+    // Found by review, measured before it was fixed: text() joins the parts
+    // with a newline and the budget counted only the pieces, so a
+    // one-character-per-chunk agent filled 47,999 chars against a 24,000 cap.
+    label: "a chatty ACP agent doubles the turn slice past its cap",
+    file: `${ACP}/src/derive/slice.ts`,
+    from: "      const separator = parts.length === 0 ? 0 : 1;",
+    to: "      const separator = 0;",
+    test: `${ACP}/test/turn-slice.test.ts`,
+    because:
+      "the byte cap stops bounding the string the gate and the worker " +
+      "actually receive, so a hostile or merely chatty agent's message " +
+      "chunks grow proxy memory instead of being dropped and counted",
+  },
+  {
+    // Also found by review: reset() evicted unconditionally, so once the map
+    // was full every prompt threw away the OLDEST OTHER session's turn.
+    label: "an ACP turn boundary evicts a neighbour session's slice",
+    file: `${ACP}/src/derive/slice.ts`,
+    from: "    if (!slices.has(sessionId)) {",
+    to: "    if (true) {",
+    test: `${ACP}/test/turn-slice.test.ts`,
+    because:
+      "on a proxy with many live sessions, every prompt on any session " +
+      "silently discards another session's accumulated evidence — capture " +
+      "accuracy lost with nothing counted anywhere",
+  },
+  {
+    // THE SLICE IS A TURN, and that is the ACP rung's whole advantage over
+    // Cursor's (whose slice is a conversation tail because no documented
+    // marker separates turns). Dropping the reset silently turns this host
+    // into that one.
+    label: "the ACP turn slice quietly becomes a conversation tail",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        slices.reset(session.acpSessionId);",
+    to: "",
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "last turn's conclusion fires this turn's gate, so a capped fire is " +
+      "spent re-deriving a moment that already passed and the draft " +
+      "describes work the developer has moved on from",
+  },
+  {
+    // THE AGENT-KIND TRAP, ACP's half. The workers default to claude-code and
+    // only the trigger knows better; this restores the default.
+    label: "a Gemini session's draft is filed under Claude Code",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "          agentKind: session.config.agentKind,",
+    to: '          agentKind: "claude-code",',
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "every derived intent and draft any ACP agent produces arrives on the " +
+      "hub attributed to Claude Code, and no surface on either side ever " +
+      "says otherwise",
+  },
+  {
+    // The debt this step exists to pay on this host: set_intent set the flag
+    // behind the proxy and NOTHING claimed it.
+    label: "the ACP ghost debt rots in the state file again",
+    file: `${ACP}/src/capture/engine.ts`,
+    from: "        if (await maybeSpawnAcpGhostWorker(ctx)) {",
+    to: "        if (false) {",
+    test: `${ACP}/test/derive-gap.test.ts`,
+    because:
+      "a declared plan that overlaps a teammate's is never compared behind " +
+      "the proxy, and ghostPending stays true for the session's whole life " +
+      "with no surface saying so",
+  },
+  {
+    // The agent's reasoning is the most sensitive prose on this wire and is
+    // deliberately not slice material. This feeds it to the model.
+    label: "the agent's private reasoning is fed to the model",
+    file: `${ACP}/src/wire/v1.ts`,
+    from: "      parsed.update.sessionUpdate === AGENT_MESSAGE_CHUNK",
+    to: "      parsed.update.sessionUpdate.endsWith(\"_chunk\")",
+    test: `${ACP}/test/derive.test.ts`,
+    because:
+      "agent_thought_chunk text joins the Tier-1 slice, so the model is " +
+      "shown the agent talking to itself and a draft can quote reasoning " +
+      "the developer never saw",
+  },
+  {
+    // The pre-existing crash this step found: a message chunk's content is a
+    // ContentBlock OBJECT, not an array of rows.
+    label: "acp-report crashes on any agent that says anything",
+    file: `${ACP}/src/report.ts`,
+    from: "          Array.isArray(content) &&",
+    to: "          true &&",
+    test: `${ACP}/test/acp-report.test.ts`,
+    because:
+      "the analyzer throws on every recording containing an " +
+      "agent_message_chunk, which is essentially all of them, so the one " +
+      "command that measures per-agent capture quality cannot be run",
   },
   {
     // The hub merge rule: declared over derived, enforced where spool replay
@@ -2432,7 +2818,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // every quiet team, and the outcome booked as a fire rather than as the
     // free skip it is.
     label: "a ghost check runs with nobody to compare against",
-    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    file: `${CORE}/src/derive/ghost/worker.ts`,
     from: `  const candidate = overlaps.data[0];
   if (candidate === undefined) {
     // THE GATE, and the reason this feature costs a quiet repo nothing.
@@ -2460,7 +2846,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // without it `review_draft` shows a finding about a collision with
     // nobody, with no tree to open and no person to ask.
     label: "a ghost draft names nobody",
-    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    file: `${CORE}/src/derive/ghost/worker.ts`,
     from: "    body: ghostDraftBody(sentence, candidate),",
     to: "    body: sentence,",
     test: `${CONNECTOR}/test/ghost-worker.test.ts`,
@@ -2475,7 +2861,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // model was just shown is spooled as this session's derived observation,
     // under a fresh id and a fresh timestamp.
     label: "a ghost sentence repeats the claim it was shown",
-    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    file: `${CORE}/src/derive/ghost/worker.ts`,
     from:
       "  const shownTexts = shownClaims.flatMap((claim) => [claim.body, claim.line]);",
     to: "  const shownTexts: readonly string[] = [];",
@@ -2490,7 +2876,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // `kind (status): body` and asked for a finding, so what it repeats is
     // the BODY — hashing only the labelled line guards a shape nobody sends.
     label: "the echo key only knows the label, not the claim",
-    file: `${CONNECTOR}/src/ghost/worker.ts`,
+    file: `${CORE}/src/derive/ghost/worker.ts`,
     from:
       "  const shownTexts = shownClaims.flatMap((claim) => [claim.body, claim.line]);",
     to: "  const shownTexts = shownClaims.map((claim) => claim.line);",
@@ -2610,7 +2996,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // means a booked failure can sit through a whole session unreported —
     // which is why ANY failure warns, and this drops that branch.
     label: "a booked ghost failure stops warning anybody",
-    file: `${CONNECTOR}/src/ghost/cost.ts`,
+    file: `${CORE}/src/derive/ghost/cost.ts`,
     from: `export const isGhostSilentlyDead = (cost: GhostCost): boolean =>
   cost.fails > 0 ||
   (cost.fires >= DOCTOR_GHOST_SILENT_FIRES_WARN && cost.nones + cost.drafts === 0);`,
@@ -2696,7 +3082,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // One session too big to send must cost the team that session, not the
     // whole conference.
     label: "one oversized session silences the whole conference",
-    file: `${CONNECTOR}/src/conference/prompt.ts`,
+    file: `${CORE}/src/derive/conference/prompt.ts`,
     from: `    if (total + cost > CONFERENCE_MAX_INPUT_CHARS) {
       continue;
     }`,
@@ -3187,10 +3573,49 @@ export const MUTATIONS: readonly Mutation[] = [
       "the turn's question, on the branch documented as tail-only",
   },
   {
+    // Hygiene that only holds when the caller remembers it is not hygiene:
+    // `crosscheck conference` hands the runner the raw process.env of the
+    // terminal it was typed in, which is a Claude Code session more often
+    // than not.
+    label: "a nested model is handed the session it is summarizing",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "      PARENT_SESSION_MARKER_PATTERN.test(name)",
+    to: "      false",
+    test: `${CORE}/test/model-seam.test.ts`,
+    because:
+      "the parent agent session's binding markers - its id, messaging " +
+      "socket, SSE port and plugin roots - ride into a third-party binary, " +
+      "which can then be mistaken for or bind to the session it is reading",
+  },
+  {
+    // A foreign model that fences every answer is the ordinary case behind
+    // CROSSCHECK_SUMMARIZER_CMD, and doctor is where an operator checks it.
+    label: "doctor quotes a fenced answer's fence rather than its answer",
+    file: `${CONNECTOR}/src/summarizer/probe.ts`,
+    from: "  const answer = stripModelWrapping(result.stdout);",
+    to: "  const answer = result.stdout;",
+    test: `${CLI}/test/doctor-summarizer-runner.test.ts`,
+    because:
+      "the operator checking a wrapper reads `not NONE: \"json\"` for a " +
+      "perfectly good claim and concludes their model is broken",
+  },
+  {
+    // Four tasks, four instructions, one variable that carries none of them.
+    label: "an override is quietly told which task fired",
+    file: `${CORE}/src/derive/intent/prompt.ts`,
+    from: "    return [override];",
+    to: '    return [override, "intent", INTENT_PROMPT];',
+    test: `${CORE}/test/model-seam.test.ts`,
+    because:
+      "docs/FOREIGN-MODELS.md tells operators their wrapper cannot tell the " +
+      "four tasks apart, and that warning must go red the day it stops " +
+      "being true rather than quietly misinform them",
+  },
+  {
     // The shape a tail-degraded slice produces most: the conversation
     // continuing, filed as somebody's finding.
     label: "a role-played plan is filed as a teammate-visible draft",
-    file: `${CONNECTOR}/src/summarizer/worker.ts`,
+    file: `${CORE}/src/model/gates.ts`,
     from: "  if (isRolePlayAnswer(draft.body)) {",
     to: "  if (false) {",
     test: `${CONNECTOR}/test/summarizer-worker.test.ts`,
@@ -3201,7 +3626,10 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // Every one of these refusals used to be a silent return.
     label: "a refused answer is dropped in silence again",
-    file: `${CONNECTOR}/src/summarizer/worker.ts`,
+    // The gate-to-spool half of the worker moved to core when Cursor needed
+    // it; the Claude worker still reaches it, so the same guard still sees
+    // the same silence.
+    file: `${CORE}/src/derive/summarizer/derive.ts`,
     from: "      withSummarizerRejection(fresh, reason),",
     to: "      fresh,",
     test: `${CONNECTOR}/test/summarizer-worker.test.ts`,
@@ -3213,7 +3641,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // Two different remedies: a dead runner and a model whose every answer is
     // refused. Folding them sends the reader to the wrong check.
     label: "doctor stops warning when every answer is refused",
-    file: `${CONNECTOR}/src/summarizer/cost.ts`,
+    file: `${CORE}/src/derive/summarizer/cost.ts`,
     from: "  cost.rejects >= DOCTOR_SUMMARIZER_REJECTED_WARN && cost.drafts === 0;",
     to: "  false;",
     test: "packages/cli/test/summarizer-cost.test.ts",
@@ -4149,31 +4577,37 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 1
- * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 1
+ * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
+ * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
+ * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 1
+ * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
+ * PRINTS: packages/connector-acp/test/derive.test.ts 6
  * PRINTS: packages/connector-acp/test/injector.test.ts 4
  * PRINTS: packages/connector-acp/test/pool-starvation.test.ts 1
  * PRINTS: packages/connector-acp/test/proxy-e2e.test.ts 1
  * PRINTS: packages/connector-acp/test/transparency.test.ts 1
+ * PRINTS: packages/connector-acp/test/turn-slice.test.ts 2
  * PRINTS: packages/connector-acp/test/worktree-capture.test.ts 5
  * PRINTS: packages/connector-claude/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-claude/test/conclusion-corpus.test.ts 6
  * PRINTS: packages/connector-claude/test/conference-prompt.test.ts 1
+ * PRINTS: packages/connector-claude/test/derive-doctor.test.ts 1
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
- * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 4
+ * PRINTS: packages/connector-claude/test/foreign-model.test.ts 1
+ * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-hook.test.ts 1
- * PRINTS: packages/connector-claude/test/intent-worker.test.ts 1
+ * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
  * PRINTS: packages/connector-claude/test/session-refire.test.ts 1
  * PRINTS: packages/connector-claude/test/settings-merge-removal.test.ts 1
@@ -4209,6 +4643,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 12
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
+ * PRINTS: packages/connector-core/test/model-answer.test.ts 2
+ * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
@@ -4216,14 +4652,17 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
- * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 1
+ * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 1
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
- * PRINTS: packages/connector-cursor/test/handlers.test.ts 3
+ * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
+ * PRINTS: packages/connector-cursor/test/derive-transcript.test.ts 2
+ * PRINTS: packages/connector-cursor/test/derive.test.ts 3
+ * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1

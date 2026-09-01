@@ -31,8 +31,8 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome } from "../../connector-core/test/helpers.ts";
 import { INTENT_MAX_CHARS } from "@crosscheck/connector-core/constants.ts";
-import { resolveIntentArgv } from "../src/intent/prompt.ts";
-import { parseIntentWorkerArgs, runIntentWorker } from "../src/intent/worker.ts";
+import { resolveIntentArgv } from "@crosscheck/connector-core/derive/intent/prompt.ts";
+import { parseIntentWorkerArgs, runIntentWorker } from "@crosscheck/connector-core/derive/intent/worker.ts";
 
 const SESSION_ID = "intent-worker-uuid";
 const REPO_ID = "github.com/acme/api";
@@ -247,6 +247,90 @@ describe("runIntentWorker (end to end, faked binary)", () => {
     expect(state?.intentNoneCount).toBe(1);
     expect(state?.intentFailCount).toBe(0);
     expect(await fileExists(fix.promptFile)).toBe(false);
+  });
+
+  /**
+   * THE FOREIGN-WRAPPER CASE, and the one docs/FOREIGN-MODELS.md sends people
+   * into on purpose: `CROSSCHECK_SUMMARIZER_CMD` is honoured by four callers
+   * and gives each of them an argv of exactly `[cmd]`, so a wrapper cannot
+   * tell which task fired. The documented example wrapper hard-codes the
+   * SUMMARIZER's instruction, which means this worker gets claim JSON back.
+   *
+   * That used to be published: `firstSentence` took the first non-empty line
+   * whatever it was, so `work_context.intent.summary` became a model's JSON
+   * about somebody else's turn, presented to every teammate reading a
+   * briefing as what this developer is doing — with `intentSet` booked, i.e.
+   * success, and no unreadable count anywhere.
+   */
+  test("a wrapper answering the summarizer's task never becomes this session's intent", async () => {
+    // Arrange
+    const fix = await fixture();
+    const fake = await makeFakeModel({
+      output: JSON.stringify({
+        kind: "root_cause",
+        body: "The lease is renewed after it expires, so every worker loses its claim.",
+        confidence: 0.9,
+      }),
+    });
+
+    // Act
+    await run(fix, fake);
+
+    // Assert — nothing published, and the fire booked with a reason
+    expect(await spooledIntents(fix)).toHaveLength(0);
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.intentSetCount).toBe(0);
+    expect(state?.intentFailCount).toBe(1);
+    expect(state?.intentLastFailure).toContain("not a sentence");
+  });
+
+  test("a fenced claim document is refused too — the fence is not the answer", async () => {
+    const fix = await fixture();
+    const fake = await makeFakeModel({
+      output: '```json\n{"kind":"decision","body":"switch to the pooled client"}\n```',
+    });
+
+    await run(fix, fake);
+
+    expect(await spooledIntents(fix)).toHaveLength(0);
+    expect((await readSessionState(fix.home, SESSION_ID))?.intentLastFailure).toContain(
+      "not a sentence",
+    );
+  });
+
+  /**
+   * The reasoning model's other habit, on the SENTENCE path. `parse.ts` has
+   * stripped `<think>` blocks since the claim path was hardened, but this
+   * worker read the RAW stdout, so the first non-empty line of a model that
+   * thinks out loud was the literal tag — published as the developer's
+   * intent.
+   */
+  test("a reasoning model's scratchpad is stripped, and the real sentence survives", async () => {
+    const fix = await fixture();
+    const fake = await makeFakeModel({
+      output: `<think>\nthe user is chasing a 500 after key rotation\n</think>\n${SENTENCE}\n`,
+    });
+
+    await run(fix, fake);
+
+    const intents = await spooledIntents(fix);
+    expect(intents).toHaveLength(1);
+    expect(intents[0]?.body.intent?.summary).toBe(SENTENCE);
+    expect((await readSessionState(fix.home, SESSION_ID))?.intentSetCount).toBe(1);
+  });
+
+  test("a scratchpad the byte bound cut open leaves nothing, and is booked as empty", async () => {
+    const fix = await fixture();
+    const fake = await makeFakeModel({
+      output: "<think>\nstill reasoning when the output bound hit",
+    });
+
+    await run(fix, fake);
+
+    expect(await spooledIntents(fix)).toHaveLength(0);
+    const state = await readSessionState(fix.home, SESSION_ID);
+    expect(state?.intentFailCount).toBe(1);
+    expect(state?.intentLastFailure).toContain("empty answer");
   });
 
   test("a secret-like sentence is dropped, never redacted, and booked with its reason", async () => {

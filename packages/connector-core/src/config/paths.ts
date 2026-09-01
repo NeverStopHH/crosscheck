@@ -81,7 +81,7 @@ export const sessionStatePathForSlug = (home: string, slug: string): string =>
 
 /**
  * Where the UserPromptSubmit hook parks the FIRST substantive prompt for the
- * detached derived-intent worker (connector-claude intent/worker.ts) — a 0600
+ * detached derived-intent worker (core derive/intent/worker.ts) — a 0600
  * file beside the session state, never argv (visible in `ps`) and never
  * stdin (the hook exits before a detached child could read it). The worker
  * unlinks it in `finally`; `endSessionFlow` removes a leftover best-effort.

@@ -39,7 +39,7 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
-import { intentSummaryOf, runGhostWorker } from "../src/ghost/worker.ts";
+import { intentSummaryOf, runGhostWorker } from "@crosscheck/connector-core/derive/ghost/worker.ts";
 
 const ADMIN_TOKEN = "ghost-worker-admin";
 const REPO_ID = "github.com/acme/api";
@@ -450,6 +450,51 @@ describe("the gated ghost check", () => {
     expect(claim?.confidence).toBeLessThanOrEqual(DERIVED_CONFIDENCE_CAP);
     expect((await stateOf(fix)).ghostDraftCount).toBe(1);
   });
+
+  /**
+   * The ghost check's half of the same defect. Its answer is a SENTENCE too,
+   * and it took the first non-empty line of raw stdout whatever that line
+   * was — so a wrapper carrying the summarizer's instruction (the documented
+   * foreign-model example does exactly that) turned claim JSON into a
+   * `hypothesis` claim body, published to the team under this developer's
+   * name with `ghostDraft` booked as a success.
+   */
+  test("a wrapper answering the summarizer's task never becomes a ghost draft", async () => {
+    // Arrange
+    const model = await makeFakeModel({
+      output: JSON.stringify({
+        kind: "root_cause",
+        body: "The lease is renewed after it expires, so every worker loses its claim.",
+        confidence: 0.9,
+      }),
+    });
+    const fix = await aliceFixture("not-a-sentence", model);
+
+    // Act
+    await runGhostWorker(["--session", fix.hostSessionKey], fix.env);
+
+    // Assert
+    expect(await spooledClaims(fix)).toEqual([]);
+    const state = await stateOf(fix);
+    expect(state.ghostDraftCount).toBe(0);
+    expect(state.ghostFailCount).toBe(1);
+    expect(state.ghostLastFailure).toContain("not a sentence");
+  });
+
+  test("a reasoning model's scratchpad is stripped before the sentence is taken", async () => {
+    const model = await makeFakeModel({
+      output: `<think>\ncomparing the two plans line by line\n</think>\n${COLLISION}\n`,
+    });
+    const fix = await aliceFixture("ghost-reasoning", model);
+
+    await runGhostWorker(["--session", fix.hostSessionKey], fix.env);
+
+    const claims = await spooledClaims(fix);
+    expect(claims.length).toBe(1);
+    expect(claims[0]?.body.body).toBe(
+      `Ken's live plan collides: ${COLLISION} — get_diagnosis ${ken.workContextId}`,
+    );
+  }, 20_000);
 
   // Six worker runs, each spawning a fake model process, in one test. Bun's
   // 5 s default is not enough for that on an idle laptop, and a timeout here

@@ -11,6 +11,13 @@
  * each adapter plants the payload in every untrusted slot of the delivered
  * composition (core renderer through the src/inject/blocks.ts wrapper) and
  * the corpus holds them to the framed-class invariants.
+ *
+ * The derive rungs added a FOURTH, and a BARE one: doctor's capability line.
+ * Its head is renderer-owned literal, but its tail carries whatever a model
+ * binary printed when a fire was lost — read back out of a session-state file
+ * and printed into a terminal, and through a Bash `crosscheck doctor` into an
+ * agent's context. Bare class, so the corpus holds it to the character
+ * invariants and to carrying no frame characters at all.
  */
 import type { RenderSurface } from "@crosscheck/connector-core/render-surfaces.ts";
 import type {
@@ -25,6 +32,7 @@ import {
   acpClaimHintBlock,
   acpPointerHintBlock,
 } from "./inject/blocks.ts";
+import { acpCapabilityDetail } from "./doctor.ts";
 
 const NOW = new Date("2026-08-19T12:00:00.000Z");
 const ISO = "2026-08-19T11:55:00.000Z";
@@ -110,6 +118,22 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         context: hintContextWith(payload),
         drift: null,
         now: NOW,
+      }),
+  },
+  {
+    kind: "corpus",
+    name: "acp-derive-capability-line",
+    // `crosscheck doctor` stdout, like cli-doctor itself: the reader ran the
+    // command and is waiting for this answer.
+    delivery: "pulled",
+    module: "src/doctor.ts",
+    framing: "bare",
+    render: (payload) =>
+      acpCapabilityDetail({
+        rung: "reduced",
+        sentence: "the turn slice is only what the wire happens to carry",
+        failures: 2,
+        lastFailure: payload,
       }),
   },
   {

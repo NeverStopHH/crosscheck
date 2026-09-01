@@ -18,11 +18,32 @@
  *     flood against a slow hub drops CAPTURE lines, counted, and touches
  *     forwarding not at all.
  *
- * PRIVACY: prompt text is never parsed (wire/v1.ts models only sessionId on
- * the prompt path), so it cannot reach the spool, the state files, or the
- * log. Same for diff texts, fs write content and terminal command text.
- * Local logging carries ids, slugs and counts — paths and content never.
+ * THE DERIVE RUNGS RIDE THIS SAME COPY. Three triggers hang off the §2.4
+ * dispatch — an intent fire and a ghost-debt payment on the session/prompt
+ * REQUEST, the Tier-1 gate on its RESPONSE (the `turns` tick this file's own
+ * comment already called "the future Tier-1 gate's tick"). They are here
+ * rather than in the injector on purpose: the injector is the only thing
+ * that writes to the wire, and no derive capability may ever need it to.
+ * Everything below works with `--no-inject`, and none of it can touch a
+ * forwarded byte (derive/triggers.ts states the whole rule).
  *
+ * PRIVACY, AND THE TWO TEXTS THIS FILE NOW HANDLES. Diff texts, fs write
+ * content and terminal COMMAND text are still parsed by nothing, so they
+ * cannot reach anything. Two texts now are, and each has exactly one
+ * destination:
+ *
+ *   - the PROMPT reaches one 0600 file the intent worker removes as its
+ *     first act, and nothing else — never the spool, a state file, a record
+ *     or a log line;
+ *   - the TURN SLICE (derive/slice.ts) lives in memory, byte-capped, and
+ *     leaves only down a spawned worker's stdin — it touches no disk at all
+ *     on this host.
+ *
+ * Both are pinned: the prompt by capture-engine.test.ts's prompt-privacy
+ * case, NARROWED to the statement above rather than deleted (it used to say
+ * "no persisted byte", which the intent file makes false in one bounded
+ * way), and both by derive.test.ts's two privacy cases. Local logging still
+ * carries ids, slugs and counts — paths and content never.
  * CAPTURE-ONLY: NO BEFORE-EDIT TRIPWIRE IS POSSIBLE ON THIS HOST TODAY, and
  * that is a limitation this file documents rather than a gap it forgot. The
  * signals genuinely exist on the wire — `session/request_permission` carries
@@ -84,6 +105,13 @@ import {
 } from "@crosscheck/connector-core/state/session-state.ts";
 
 import {
+  maybeSpawnAcpGhostWorker,
+  maybeSpawnAcpIntentWorker,
+  runAcpSummarizerGate,
+} from "../derive/triggers.ts";
+import type { AcpDeriveContext } from "../derive/triggers.ts";
+import { createTurnSliceStore } from "../derive/slice.ts";
+import {
   ACP_CAPTURE_EXIT_BUDGET_MS,
   ACP_CAPTURE_FLUSH_BUDGET_MS,
   ACP_CAPTURE_MAX_PENDING_BYTES,
@@ -105,6 +133,7 @@ import {
   parseSessionLoadParams,
   parseSessionNewParams,
   parseSessionNewResult,
+  parseSessionPromptParams,
   parseSessionPromptResult,
   parseSessionUpdateParams,
   parseTerminalCreateResult,
@@ -181,8 +210,20 @@ export interface AcpCaptureCounters {
   readonly targets: number;
   readonly fingerprints: number;
   readonly heartbeats: number;
-  /** session/prompt responses seen — the future Tier-1 gate's tick. */
+  /** session/prompt responses seen — the Tier-1 gate's tick. */
   readonly turns: number;
+  /** Derived-intent fires booked by this proxy (once per session at most). */
+  readonly intentFires: number;
+  /** Ghost debts claimed and handed to a worker. */
+  readonly ghostPayments: number;
+  /** Tier-1 fires booked at a turn boundary. */
+  readonly summarizerFires: number;
+  /**
+   * Slice characters the byte cap refused. NOT decorative: the gate reads
+   * the slice it was given, so a turn whose conclusion arrived past the cap
+   * is a miss, and this is what makes that explainable rather than silent.
+   */
+  readonly sliceDropped: number;
 }
 
 export interface AcpCapture {
@@ -259,6 +300,8 @@ interface TrackedTerminal {
   tail: string;
   /** One fingerprint per terminal, however many exit signals arrive. */
   fired: boolean;
+  /** One slice contribution per terminal, for the same reason. */
+  sliced: boolean;
 }
 
 interface MutableCounters {
@@ -272,6 +315,10 @@ interface MutableCounters {
   fingerprints: number;
   heartbeats: number;
   turns: number;
+  intentFires: number;
+  ghostPayments: number;
+  summarizerFires: number;
+  sliceDropped: number;
 }
 
 const describeError = (error: unknown): string =>
@@ -294,6 +341,10 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     fingerprints: 0,
     heartbeats: 0,
     turns: 0,
+    intentFires: 0,
+    ghostPayments: 0,
+    summarizerFires: 0,
+    sliceDropped: 0,
   };
 
   /** Requests awaiting a response, per originating direction. */
@@ -301,6 +352,8 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
   const pendingAgent = createPendingMap(); // a2c requests → c2a responses
   const sessions = new Map<string, CaptureSession>();
   const terminals = new Map<string, TrackedTerminal>();
+  // The Tier-1 slice, per session, in memory only (derive/slice.ts).
+  const slices = createTurnSliceStore();
 
   let agentName: string | null = null;
   let negotiatedVersion: number | null = null;
@@ -479,6 +532,38 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     return session !== undefined && session.enabled && !session.ended
       ? session
       : null;
+  };
+
+  /**
+   * Everything a derive trigger needs, and nothing else of the engine —
+   * `PromptInjectionView`'s discipline one layer down. Null for a session
+   * with no resolved config, which is the same silent skip every other row
+   * makes: a disabled session infers nothing, exactly as it captures
+   * nothing.
+   *
+   * `config.agentKind` is the value `producerFor` already stamps on every
+   * record (`acp:<agent>`), so a derived draft and a captured target agree
+   * about which host produced them — which is the whole point of passing it
+   * rather than letting the worker default to `claude-code`.
+   */
+  const deriveContextFor = (
+    session: CaptureSession,
+  ): AcpDeriveContext | null =>
+    session.config === null
+      ? null
+      : {
+          env: options.env,
+          home: session.config.home,
+          hostSessionKey: session.hostSessionKey,
+          agentKind: session.config.agentKind,
+        };
+
+  /** Add one source's text to this session's turn slice, counting drops. */
+  const addToSlice = (session: CaptureSession, text: string): void => {
+    const slice = slices.for(session.acpSessionId);
+    const before = slice.dropped();
+    slice.add(text);
+    counters.sliceDropped += slice.dropped() - before;
   };
 
   // ── the capture actions (§2.4 rows) ───────────────────────────────────────
@@ -679,6 +764,11 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     session: CaptureSession,
     flushBudgetMs: number,
   ): Promise<void> => {
+    // Release the turn slice FIRST, and before the guard below: a session
+    // that ends disabled, or ends twice, must still not leave its text
+    // sitting in this process's memory. Nothing reads a slice after the
+    // session that produced it is over.
+    slices.forget(session.acpSessionId);
     if (!session.enabled || session.ended || session.hub === null || session.config === null) {
       return;
     }
@@ -748,7 +838,11 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     if (toolCall.status === FAILED_STATUS) {
       // The §2.4 failure row: string fields joined, tail-sliced — the
       // IDENTICAL extractor + normalizer as the Claude hook path.
-      await captureFailureText(session, extractFailureText(toolCall.rawOutput));
+      const failureText = extractFailureText(toolCall.rawOutput);
+      await captureFailureText(session, failureText);
+      // Slice source 2. The SAME extracted text the fingerprint uses, so a
+      // slice and a fingerprint can never disagree about what failed.
+      addToSlice(session, failureText);
     }
     if (toolCall.toolKind === EDIT_TOOL_KIND) {
       // Same heuristic as the Claude connector's edit-tool heartbeat.
@@ -775,6 +869,33 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     await captureFailureText(session, terminal.tail);
   };
 
+  /**
+   * Slice source 3: what actually ran. Harvested ONCE per terminal, the
+   * moment an exit code exists — whatever that code is, because a green
+   * suite is half of the gate's red→green flip and a failure-only harvest
+   * would make that conclusion structurally unreachable here. The tail is
+   * already bounded to FINGERPRINT_SOURCE_CHARS, and the terminal's COMMAND
+   * text is not parsed at all, so what lands in the slice is output only.
+   */
+  const harvestTerminalOutput = (
+    terminalId: string,
+    exitCode: number | null,
+  ): void => {
+    if (exitCode === null) {
+      return;
+    }
+    const terminal = terminals.get(terminalId);
+    if (terminal === undefined || terminal.sliced) {
+      return;
+    }
+    terminal.sliced = true;
+    const session = liveSession(terminal.acpSessionId);
+    if (session === null || terminal.tail.length === 0) {
+      return;
+    }
+    addToSlice(session, terminal.tail);
+  };
+
   const trackTerminal = (terminalId: string, acpSessionId: string): void => {
     if (terminals.size >= ACP_MAX_TRACKED_TERMINALS) {
       const oldest = terminals.keys().next();
@@ -782,7 +903,12 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         terminals.delete(oldest.value);
       }
     }
-    terminals.set(terminalId, { acpSessionId, tail: "", fired: false });
+    terminals.set(terminalId, {
+      acpSessionId,
+      tail: "",
+      fired: false,
+      sliced: false,
+    });
   };
 
   // ── dispatch: one parsed line through the mapping ─────────────────────────
@@ -814,12 +940,34 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         return;
       }
       if (message.method === WIRE_METHODS.sessionPrompt) {
-        // Heartbeat only. The prompt CONTENT is never parsed — Block 5 uses
-        // it as an ephemeral hint query; Block 4 has no use for it at all.
-        const params = parseSessionIdParams(message.params);
+        // THE TURN STARTS HERE: the heartbeat this row always sent, then the
+        // two prompt-time rungs. The prompt's TEXT is decoded now — the one
+        // thing this file did not do before — and wire/v1.ts's header states
+        // where it may go: one 0600 file the intent worker removes as its
+        // first act, and nowhere else. It is not logged, not spooled, not
+        // written to state, and not read again by anything here.
+        const params = parseSessionPromptParams(message.params);
         const session = params === null ? null : liveSession(params.sessionId);
-        if (session !== null) {
-          await heartbeat(session, undefined);
+        if (params === null || session === null) {
+          return;
+        }
+        await heartbeat(session, undefined);
+        // A new turn: last turn's text is not this turn's evidence. Resetting
+        // on the REQUEST rather than after the gate is what keeps the slice a
+        // TURN when a turn is cancelled and its response never arrives.
+        slices.reset(session.acpSessionId);
+        const ctx = deriveContextFor(session);
+        if (ctx === null) {
+          return;
+        }
+        if (await maybeSpawnAcpIntentWorker(ctx, params.text)) {
+          counters.intentFires += 1;
+        }
+        // ACP gives this proxy a guaranteed next-prompt event, so the ghost
+        // debt is paid exactly where Claude pays it — unlike Cursor, where it
+        // had to be claimed by whichever of two handlers fired first.
+        if (await maybeSpawnAcpGhostWorker(ctx)) {
+          counters.ghostPayments += 1;
         }
         return;
       }
@@ -862,6 +1010,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           }
         }
         if (params !== null) {
+          harvestTerminalOutput(params.terminalId, output.exitCode);
           await fireTerminalFailure(params.terminalId, output.exitCode);
         }
         return;
@@ -870,6 +1019,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         const params = parseTerminalIdParams(request.params);
         if (params !== null) {
           const exit = parseTerminalExitResult(message.result);
+          harvestTerminalOutput(params.terminalId, exit.exitCode);
           await fireTerminalFailure(params.terminalId, exit.exitCode);
         }
         return;
@@ -918,11 +1068,29 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         const params = parseSessionIdParams(request.params);
         const session = params === null ? null : liveSession(params.sessionId);
         if (session !== null) {
-          // Turn tick (future Tier-1 gate); cancelled/refusal capture nothing
-          // in v1 — and neither does anything else on this row.
+          // THE TURN BOUNDARY, and now the Tier-1 gate's tick in fact and not
+          // only in a comment. The stop reason is still parsed and discarded:
+          // a cancelled turn is a turn, and the gate judges the slice it got
+          // rather than the reason the turn ended.
           void parseSessionPromptResult(message.result);
           session.turns += 1;
           counters.turns += 1;
+          const ctx = deriveContextFor(session);
+          if (ctx !== null) {
+            const turnSlice = slices.for(session.acpSessionId);
+            const fired = await runAcpSummarizerGate(
+              ctx,
+              turnSlice.text(),
+              // What THIS turn's accumulator refused (the store hands out a
+              // fresh one on every session/prompt request), booked in the
+              // gate's own locked write so it reaches doctor instead of
+              // ending its life in this proxy's log file.
+              turnSlice.dropped(),
+            );
+            if (fired) {
+              counters.summarizerFires += 1;
+            }
+          }
         }
         return;
       }
@@ -948,11 +1116,19 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     // a2c notifications: session/update is THE capture-rich row.
     if (message.method === WIRE_METHODS.sessionUpdate) {
       const update = parseSessionUpdateParams(message.params);
-      if (update === null || update.toolCall === null) {
+      if (update === null) {
         return;
       }
       const session = liveSession(update.sessionId);
-      if (session !== null) {
+      if (session === null) {
+        return;
+      }
+      // Slice source 1: what the agent SAID this turn. `agent_thought_chunk`
+      // is deliberately not here — wire/v1.ts's `agentText` says why.
+      if (update.agentText !== null) {
+        addToSlice(session, update.agentText);
+      }
+      if (update.toolCall !== null) {
         await handleToolCall(session, update.toolCall);
       }
     }
@@ -1069,6 +1245,19 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           `fingerprints=${counters.fingerprints} heartbeats=${counters.heartbeats} ` +
           `turns=${counters.turns} ignored=${counters.ignored} dropped=${counters.dropped} ` +
           `errors=${counters.errors} pending-evictions=${pendingClient.evictions() + pendingAgent.evictions()}`,
+      );
+      // THE DERIVE RUNGS GET THEIR OWN LINE, and `slice-dropped` is the
+      // reason it exists rather than a decoration. The other three failure
+      // paths are booked in session state and doctor prints them per rung;
+      // slice content refused by the byte cap is booked NOWHERE else, and it
+      // is the one that silently costs a conclusion — a turn whose verdict
+      // arrived past the cap is a miss the gate cannot report, because the
+      // gate only ever saw the part that fit.
+      logger.line(
+        `derive intent-fires=${counters.intentFires} ` +
+          `ghost-payments=${counters.ghostPayments} ` +
+          `summarizer-fires=${counters.summarizerFires} ` +
+          `slice-dropped=${counters.sliceDropped}`,
       );
     },
     counters() {

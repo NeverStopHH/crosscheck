@@ -37,7 +37,7 @@ afterEach(async () => {
 });
 
 describe("mergeCursorHooks", () => {
-  test("a fresh file gets all seven events, the documented version, an explicit timeout — and never failClosed", () => {
+  test("a fresh file gets all eight events, the documented version, an explicit timeout — and never failClosed", () => {
     // Act
     const merged = mergeCursorHooks({}, buildCursorHooksPlan("crosscheck"));
 

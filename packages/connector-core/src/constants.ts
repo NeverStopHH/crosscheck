@@ -463,7 +463,7 @@ export const DETACHED_SUBJECT_MAX_CHARS = 60;
  */
 export const INTENT_MAX_CHARS = 120;
 /**
- * "Substantive" for the derived-intent fire (connector-claude intent/gate.ts):
+ * "Substantive" for the derived-intent fire (core derive/intent/gate.ts):
  * the FIRST user prompt of a session at least this long — below it sits
  * "yes", "go on", "/clear", a pasted path — and not a slash command, not a
  * bare yes/no, with at least one word of HINT_MIN_TOKEN_CHARS. One fire per
@@ -850,7 +850,7 @@ export const SUMMARIZER_BLOCK_MAX_CHARS = 2_000;
  * loaded the developer's whole settings stack took 35–116 s to answer a
  * trivial slice (measured four runs on 2026-08-21), so the 30 s deadline
  * killed every fire before the model spoke. The lean argv
- * (summarizer/runner.ts) brings a run to ~9 s; the doubled deadline is the
+ * (model/runner.ts) brings a run to ~9 s; the doubled deadline is the
  * margin for a cold Haiku or a slower laptop — the worker is detached, so
  * a longer deadline costs nothing on the keyboard.
  *
@@ -860,7 +860,7 @@ export const SUMMARIZER_BLOCK_MAX_CHARS = 2_000;
 export const SUMMARIZER_TIMEOUT_MS = 60_000;
 /**
  * The env marker the summarizer's nested `claude -p` carries
- * (summarizer/worker-env.ts sets it on the worker, summarizer/runner.ts on
+ * (model/worker-env.ts sets it on the worker, model/runner.ts on
  * the model process): EVERY crosscheck hook entry exits silently when it is
  * set (hooks/runner.ts, connector-cursor/src/runner.ts). Trial finding #14:
  * the nested claude ran crosscheck's own globally installed hooks, minting
@@ -905,6 +905,25 @@ export const DOCTOR_SUMMARIZER_SILENT_FIRES_WARN = 3;
  * PRINTS: 2 true
  */
 export const DOCTOR_SUMMARIZER_REJECTED_WARN = 2;
+/**
+ * `crosscheck doctor` WARNs once this many answers have come back in a shape
+ * the Tier-1 contract cannot read (derive/summarizer/cost.ts
+ * isSummarizerUnreadable) with no draft kept. The binary ran and exited 0, so
+ * the runner probe would PASS and send the reader to the wrong place; the
+ * remedy is the MODEL behind CROSSCHECK_SUMMARIZER_CMD, or the wrapper in
+ * front of it.
+ *
+ * The same 2 as the refusal threshold and for the same reason: one
+ * off-format answer is a model having a bad moment, two with nothing kept is
+ * a contract that is not being met. Its own constant rather than a shared
+ * one because the two are independent policies — the refusal threshold is
+ * about gates this product owns, this one is about a foreign binary's
+ * output.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.DOCTOR_SUMMARIZER_UNREADABLE_WARN, c.DOCTOR_SUMMARIZER_UNREADABLE_WARN < c.DOCTOR_SUMMARIZER_SILENT_FIRES_WARN)'
+ * PRINTS: 2 true
+ */
+export const DOCTOR_SUMMARIZER_UNREADABLE_WARN = 2;
 /**
  * `crosscheck doctor` calls a live session's capture silently dead once this
  * many edit-tool PostToolUse fires have produced ZERO targets (trial findings

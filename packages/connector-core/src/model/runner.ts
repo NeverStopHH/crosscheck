@@ -1,0 +1,610 @@
+/**
+ * The injectable model runner (DESIGN.md §3 Tier 1) — CORE's, not a
+ * connector's. It moved here from connector-claude unchanged
+ * (DESIGN-agent-agnostic.md §1.1, move first, generalize after), because
+ * every connector could already READ and ASK and only Claude could have
+ * anything DERIVED: the machinery, not the platform, was the reason.
+ *
+ * HOST-AGNOSTIC, BACKEND-OPINIONATED. Nothing below knows which agent is
+ * running — the contract is slice on stdin, one answer on stdout. What it
+ * does have is a DEFAULT BACKEND: headless `claude -p` on a Haiku-class
+ * model, the developer's existing Claude Code auth and no new API key (§2
+ * "summarizer auth"). That is a backend choice, and
+ * CROSSCHECK_SUMMARIZER_CMD replaces the whole binary with an executable
+ * path — which is how every test fakes it (no test depends on a real claude
+ * binary or the network) and the reason a foreign model is already possible
+ * in principle.
+ *
+ * THIS NEVER RUNS INSIDE A HOOK BUDGET. Its caller is a DETACHED worker that
+ * the connector's trigger spawns and never waits for — today the Claude
+ * connector's Stop, UserPromptSubmit and ghost paths — so the hard timeout
+ * here is what keeps a hung binary from accumulating: a kill, not a wait.
+ *
+ * THE NESTED CLAUDE IS A MODEL CALL, NOT A SESSION (trial finding #14). A
+ * plain `claude -p` loads the developer's whole settings stack — ~10 MCP
+ * servers, plugins, hooks — which took 35–116 s on a trivial slice (four
+ * runs, 2026-08-21) against the then-30 s deadline, and ran crosscheck's own
+ * globally installed hooks from inside the summarizer (phantom sessions,
+ * and a Stop hook that could fire the summarizer again). SUMMARIZER_LEAN_FLAGS
+ * below strip all of that; the marker env (SUMMARIZER_CHILD_ENV) is the
+ * guard that holds even where a flag does not; and the parent-session
+ * denylist (childEnv, below) keeps the session's own binding variables out of
+ * the child. All three are BACKEND hygiene, applied on every spawn from here,
+ * not knowledge any one connector holds — the denylist joined them on
+ * 2026-08-30, after a caller that assembled the env by hand was measured
+ * handing a nested model 6 of 6 markers.
+ */
+import { bareUntrusted } from "../briefing/sanitize.ts";
+import {
+  SUMMARIZER_CHILD_ENV,
+  SUMMARIZER_CHILD_ON,
+  SUMMARIZER_FAILURE_MAX_CHARS,
+  SUMMARIZER_MODEL,
+  SUMMARIZER_OUTPUT_MAX_BYTES,
+  SUMMARIZER_TIMEOUT_MS,
+} from "../constants.ts";
+import type { Env } from "../config/paths.ts";
+import { PARENT_SESSION_MARKER_PATTERN } from "./worker-env.ts";
+
+/**
+ * What the model is asked, verbatim. One assertion or NONE — the tolerant
+ * parse (parse.ts) discards everything else, so the prompt and the parser
+ * agree on the contract.
+ *
+ * WIDENED for conclusion moments (trial finding #12): the prompt asks for
+ * any conclusion a TEAMMATE in the same area would act on — diagnosis,
+ * decision, ruled-out approach, review finding — with the same strictness
+ * as before. Progress narration, plans and praise are named out explicitly,
+ * and NONE stays the right answer for chatter. The precision instrument for
+ * this wording is the conclusion corpus
+ * (test/fixtures/conclusion-corpus/format.ts): its distillations define
+ * what a correct answer looks like per slice shape, and
+ * test/conclusion-corpus.test.ts pins the defining words of this contract.
+ */
+export const SUMMARIZER_PROMPT =
+  "You are a passive capture assistant for a team knowledge tool. Below is a " +
+  "slice of one coding-session turn. If it contains ONE concrete conclusion " +
+  "a teammate working in the same area would act on — a diagnostic finding " +
+  "about a bug or failure, a decision reached and its reason, an approach " +
+  "ruled out and why, or what a review found — answer with ONLY a JSON " +
+  "object of the form " +
+  '{"kind": "<observation|hypothesis|evidence|root_cause|decision|rejected_approach>", ' +
+  '"body": "<the conclusion as one sentence, max 400 characters>", ' +
+  '"confidence": <a number between 0 and 0.5>} and nothing else. ' +
+  "The body must state the conclusion itself — what was decided, found or " +
+  "ruled out, and why — and never narrate the session. Progress reports " +
+  '("tests pass now", "implemented X"), plans, and praise are not ' +
+  "conclusions. If there is no such conclusion, answer with exactly NONE.";
+
+/**
+ * The flags that make the nested `claude -p` a bare model call (trial
+ * finding #14), each measured on Claude Code 2.1.237 from a connected repo
+ * cwd with USER forwarded — plain run 72 s and 3 phantom session files;
+ * with every flag below 9 s, 0 session files, 0 transcripts:
+ *
+ *   --setting-sources ""         load NO user/project/local settings: no
+ *                                hooks, no plugins, no MCP servers from
+ *                                ~/.claude.json (the whole cold start)
+ *   --strict-mcp-config          only MCP servers from --mcp-config …
+ *   --mcp-config {"mcpServers":{}}  … of which there are none
+ *   --no-session-persistence     no ~/.claude/projects transcript per fire
+ *   --tools ""                   no tools: the model can only answer
+ *   --max-turns 1                one answer, never an agentic loop
+ *
+ * `--bare` was REJECTED: it skips keychain/OAuth auth (Claude Code's own
+ * help: requires ANTHROPIC_API_KEY or an apiKeyHelper), so every developer
+ * logged in through `claude /login` would read "Not logged in". Every flag
+ * here is ACCEPTED by 2.1.237; all but --max-turns are listed by
+ * `claude --help` (--max-turns is a print-mode flag the help omits — the
+ * zero-cost check is `claude --max-turns 1 --bogus -p x`, which names only
+ * --bogus as unknown, and `--version` proves nothing: it short-circuits
+ * option validation). The changelog shows --setting-sources in use by
+ * 2.0.24, --tools by 2.1.0, --strict-mcp-config by 2.1.143 and --max-turns
+ * by 2.1.205 (first MENTIONS, not introductions); an older CLI rejects an
+ * unknown option loudly (exit 1, "error: unknown option"), which
+ * `crosscheck doctor`'s runner probe prints verbatim. The FLOOR is a
+ * different matter from the flags: below Claude Code 2.1.101 (core
+ * SUMMARIZER_CLAUDE_MIN_VERSION) `--setting-sources ""` — no `user` source
+ * — let the CLI's background cleanup ignore cleanupPeriodDays and delete
+ * transcripts older than 30 days; the argv is the same on every version,
+ * and doctor WARNs on a CLI below the floor. CROSSCHECK_SUMMARIZER_CMD
+ * still replaces the binary WHOLESALE — no flag reaches an override (tests).
+ *
+ * VERIFY: bun -e 'const {SUMMARIZER_LEAN_FLAGS: f} = await import("./packages/connector-core/src/model/runner.ts"); console.log(f.filter((x) => x.startsWith("--")).join(" "))'
+ * PRINTS: --setting-sources --strict-mcp-config --mcp-config --no-session-persistence --tools --max-turns
+ */
+export const SUMMARIZER_LEAN_FLAGS: readonly string[] = [
+  "--setting-sources",
+  "",
+  "--strict-mcp-config",
+  "--mcp-config",
+  '{"mcpServers":{}}',
+  "--no-session-persistence",
+  "--tools",
+  "",
+  "--max-turns",
+  "1",
+];
+
+/**
+ * SIGKILL follow-up after the polite kill — the same escalation PATTERN as
+ * git/git.ts abandonProcess (the figure is its own: 1000 ms here vs
+ * GIT_KILL_GRACE_MS 500, because a model process gets more shutdown grace
+ * than a local git).
+ *
+ * VERIFY: grep -c "GIT_KILL_GRACE_MS = 500" packages/connector-core/src/constants.ts
+ * PRINTS: 1
+ */
+const KILL_GRACE_MS = 1000;
+
+/** Race winner when the deadline beats the summarizer. */
+const TIMED_OUT = Symbol("crosscheck.summarizer.timed-out");
+
+const MS_PER_SECOND = 1000;
+
+/**
+ * The argv to spawn: the override executable alone, or headless claude with
+ * the lean flags. The override replaces the binary WHOLESALE (no argument
+ * splicing — an operator or test owns the whole contract: slice on stdin,
+ * output on stdout). `-p <PROMPT>` stays first so a reader of `ps` sees
+ * what the process is for before the flag tail.
+ */
+export const resolveSummarizerArgv = (env: Env): readonly string[] => {
+  const override = env["CROSSCHECK_SUMMARIZER_CMD"];
+  if (override !== undefined && override.length > 0) {
+    return [override];
+  }
+  return [
+    "claude",
+    "-p",
+    SUMMARIZER_PROMPT,
+    "--model",
+    SUMMARIZER_MODEL,
+    ...SUMMARIZER_LEAN_FLAGS,
+  ];
+};
+
+const parsePositiveInt = (raw: string | undefined): number | null => {
+  if (raw === undefined) {
+    return null;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+/** Hard timeout, env-overridable (tests, slow machines) but never unbounded. */
+export const resolveSummarizerTimeoutMs = (env: Env): number =>
+  parsePositiveInt(env["CROSSCHECK_SUMMARIZER_TIMEOUT_MS"]) ??
+  SUMMARIZER_TIMEOUT_MS;
+
+/**
+ * What a bounded read produced, and WHY it stopped. The second half is not
+ * telemetry: it is the only honest way to read the child's exit status
+ * afterwards, and runSummarizer below depends on it.
+ *
+ * `truncated` means THE CAP STOPPED US — the reader still had appetite and
+ * the stream still had data. `false` means the stream ended on its own.
+ */
+interface BoundedRead {
+  readonly text: string;
+  readonly truncated: boolean;
+}
+
+/**
+ * Bounded stdout read: past the cap the stream is cancelled, not buffered.
+ *
+ * THE CANCEL IS A KILL, and that is the whole subtlety. Closing the read end
+ * of a pipe a child is still writing to breaks that pipe: the child's next
+ * write gets EPIPE, the default SIGPIPE disposition ends it, and it is
+ * reaped with status 141 (128 + 13). So this function does not merely stop
+ * reading — it frequently ENDS the process, and the corpse then looks
+ * exactly like a model that crashed. Reporting which of the two loop exits
+ * happened is what lets the caller tell its own handiwork from a real
+ * failure.
+ *
+ * A read that stops EXACTLY on the cap is reported truncated even in the one
+ * case where nothing was actually lost (a child whose output is the cap to
+ * the byte and which then closed). Distinguishing that would cost one more
+ * read — which can return another chunk, breaking the bound this function
+ * exists to hold, or block until the deadline on a child that has not closed
+ * stdout. The bound is load-bearing and the over-report is not: it can only
+ * ever turn one exact-cap failure into a success, which is the direction
+ * this product already fails in (rule 4, fail open).
+ */
+const readBounded = async (
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): Promise<BoundedRead> => {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let ended = false;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) {
+        ended = true;
+        break;
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return {
+    text: Buffer.concat(chunks).toString().slice(0, maxBytes),
+    truncated: !ended,
+  };
+};
+
+/** A piped stdio stream read bounded; an ignored one ("ignore", a number) reads as "". */
+const readPipe = (stream: unknown): Promise<BoundedRead> =>
+  stream instanceof ReadableStream
+    ? readBounded(stream as ReadableStream<Uint8Array>, SUMMARIZER_OUTPUT_MAX_BYTES)
+    : Promise.resolve({ text: "", truncated: false });
+
+interface SummarizerOutcome {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+  /** The ANSWER hit the cap and was cut (stdout, not stderr). */
+  readonly truncated: boolean;
+  /** EITHER pipe was cut, so the seam's own cancel may have ended the child. */
+  readonly cutByCap: boolean;
+}
+
+export interface SummarizerSuccess {
+  readonly ok: true;
+  readonly stdout: string;
+  /** Empty unless `captureStderr` was asked for — the worker never asks. */
+  readonly stderr: string;
+  /**
+   * The model produced more than SUMMARIZER_OUTPUT_MAX_BYTES and `stdout` is
+   * the first cap bytes of it, not the whole answer.
+   *
+   * A FACT THE CALLER NEEDS, not a diagnostic. A cut answer usually does not
+   * parse, and a caller that cannot see the cut books that as "the model
+   * printed something unreadable" — pointing the reader at the model's
+   * output shape when the real cause is a bound this seam imposed. That
+   * matters most for the models this parity work exists to admit: a
+   * reasoning model emits a long scratchpad before its answer, so exceeding
+   * the cap is its NORMAL case, not a corner one.
+   */
+  readonly truncated: boolean;
+  readonly elapsedMs: number;
+}
+
+/**
+ * Why a run produced no answer, for the worker to BOOK (trial finding #14:
+ * 17 of 17 fires lost and no surface knew why) and for doctor to print.
+ * `detail` is what the binary said — RAW and untrusted; only
+ * formatSummarizerFailure below renders it, through bareUntrusted.
+ */
+export type SummarizerFailure =
+  | {
+      readonly ok: false;
+      readonly reason: "spawn";
+      /** The spawn error's message — a missing binary, a bad cwd. */
+      readonly detail: string;
+      readonly elapsedMs: number;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: "exit";
+      readonly exitCode: number;
+      /** First non-empty STDOUT line, else the first stderr line IF captured. */
+      readonly detail: string;
+      readonly elapsedMs: number;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: "timeout";
+      readonly timeoutMs: number;
+      readonly elapsedMs: number;
+    };
+
+export type SummarizerResult = SummarizerSuccess | SummarizerFailure;
+
+export interface RunSummarizerOptions {
+  /**
+   * Working directory of the spawned binary. The worker passes the neutral
+   * summarizerCwdPath(home) so no repo CLAUDE.md rides into the fire;
+   * omitted, the child inherits the caller's cwd.
+   */
+  readonly cwd?: string | undefined;
+  /**
+   * Capture stderr into the result. DEFAULT OFF, deliberately: the worker
+   * never reads stderr, so nothing from it can be stored or shipped (the
+   * privacy stance of the booked failure text). Doctor's probe turns it on
+   * because a human is reading, and "error: unknown option '--tools'" goes
+   * to stderr.
+   */
+  readonly captureStderr?: boolean;
+}
+
+/**
+ * Signal a timed-out summarizer without waiting on it: SIGTERM now, SIGKILL
+ * after KILL_GRACE_MS for a binary that ignores the first. The escalation
+ * timer is unref'd so nothing is held open by it, and both kills are no-ops
+ * on a process already gone — git/git.ts abandonProcess, same shape.
+ */
+const abandonProcess = (proc: ReturnType<typeof Bun.spawn>): void => {
+  try {
+    proc.kill();
+  } catch {
+    // Already exited.
+  }
+  const escalation = setTimeout(() => {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      // Already exited.
+    }
+  }, KILL_GRACE_MS);
+  escalation.unref();
+};
+
+const firstLine = (text: string): string =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? "";
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+/**
+ * The hub key's env name (core config/config.ts reads it). The nested binary
+ * never talks to the hub — its whole contract is slice on stdin, answer on
+ * stdout — so a secret the developer exported for the hooks stops HERE and
+ * does not ride into a third-party process that has no use for it.
+ */
+const HUB_KEY_ENV = "CROSSCHECK_API_KEY";
+
+/**
+ * The child's environment: the caller's, minus undefined values, minus the
+ * hub key, minus the parent session's binding markers, plus the child marker.
+ *
+ * ALL FOUR ARE APPLIED HERE, ON EVERY SPAWN, and that is the point rather
+ * than an implementation detail. Two of them were already the runner's; the
+ * DENYLIST was not, and was caller discipline instead — model/worker-env.ts
+ * applies it when a trigger builds a detached worker's environment, which
+ * covers the three derive workers and doctor's probe and covered nothing
+ * else. `crosscheck conference` (cli/src/cli/conference.ts) hands this
+ * function the raw process.env of the terminal it was typed in, and a
+ * developer types it from inside a Claude Code session more often than not:
+ * measured 2026-08-30 with a fake binary reporting its own environment, 6 of
+ * 6 markers — CLAUDECODE, CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_SSE_PORT,
+ * CLAUDE_CODE_ENTRYPOINT, CLAUDE_PROJECT_DIR, CLAUDE_PLUGIN_ROOT — reached
+ * the model, so a nested `claude -p` was handed the session it was
+ * summarizing. Hygiene that only holds when the caller remembers it is not
+ * hygiene; it belongs at the one door every spawn goes through.
+ *
+ * The worker path still applies the same pattern one level up. That is now
+ * redundant rather than load-bearing, and deliberately kept: a worker
+ * process is a longer-lived thing than one spawn, and its own environment
+ * should not carry markers either.
+ *
+ * WHAT SURVIVES, unchanged and load-bearing: every auth name. ANTHROPIC_*,
+ * CLAUDE_CODE_OAUTH_TOKEN, the Bedrock/Vertex knobs, CLAUDE_CONFIG_DIR, the
+ * proxy and CA variables. A denylist that swept CLAUDE_ or ANTHROPIC_
+ * wholesale would log the nested model out — and ANTHROPIC_BASE_URL passing
+ * through is what makes the documented "point the default backend at another
+ * endpoint" lane work at all (docs/FOREIGN-MODELS.md).
+ *
+ * VERIFY: bun -e 'const {childEnvForTest: c} = await import("./packages/connector-core/src/model/runner.ts"); const e = c({CLAUDECODE:"1",CLAUDE_CODE_SESSION_ID:"s",CLAUDE_CODE_SSE_PORT:"1",CLAUDE_CODE_ENTRYPOINT:"cli",CLAUDE_PROJECT_DIR:"/r",CLAUDE_PLUGIN_ROOT:"/p",CROSSCHECK_API_KEY:"k",ANTHROPIC_BASE_URL:"https://x",ANTHROPIC_API_KEY:"a"}); console.log(Object.keys(e).sort().join(" "))'
+ * PRINTS: ANTHROPIC_API_KEY ANTHROPIC_BASE_URL CROSSCHECK_SUMMARIZER_CHILD
+ */
+const childEnv = (env: Env): Record<string, string> => ({
+  ...Object.fromEntries(
+    Object.entries(env).flatMap(([name, value]) =>
+      value === undefined ||
+      name === HUB_KEY_ENV ||
+      PARENT_SESSION_MARKER_PATTERN.test(name)
+        ? []
+        : [[name, value]],
+    ),
+  ),
+  [SUMMARIZER_CHILD_ENV]: SUMMARIZER_CHILD_ON,
+});
+
+/**
+ * The child environment builder, exposed for the VERIFY line above and for
+ * the seam test — the spawn itself is the real pin (a builder nobody spawns
+ * proves nothing), so this stays a named export rather than the thing the
+ * tests assert on.
+ */
+export const childEnvForTest = childEnv;
+
+/**
+ * Runs the summarizer over one slice: slice on stdin, stdout captured and
+ * bounded, the whole CALL bounded by `timeoutMs`. Never throws: a missing
+ * binary, a non-zero exit and the deadline each come back as a typed
+ * failure, because a lost draft costs nothing and a loud one costs trust
+ * (fail open, like every capture path) — but the REASON is returned, so the
+ * worker can book it and doctor can say it (trial finding #14).
+ *
+ * THE DEADLINE BOUNDS THE CALL, NOT THE CHILD — the runGit lesson
+ * (git/git.ts), relearned here after this runner shipped without it. A
+ * `claude` that is a wrapper or tee can leave a DESCENDANT holding the
+ * inherited stdout pipe after the direct child exits; a read awaited past
+ * the kill then pends for that descendant's whole lifetime — one stranded
+ * worker process per fire, invisible to doctor. So the deadline races the
+ * read: when it fires the caller gets the timeout failure immediately, the
+ * child is signalled without being waited on, and the abandoned read
+ * settles quietly whenever the pipe finally closes. Pinned by the
+ * descendant test in test/summarizer-worker.test.ts.
+ */
+export const runSummarizer = async (
+  argv: readonly string[],
+  slice: string,
+  timeoutMs: number,
+  env: Env,
+  options: RunSummarizerOptions = {},
+): Promise<SummarizerResult> => {
+  const startedAt = Date.now();
+  const elapsedMs = (): number => Date.now() - startedAt;
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn({
+      cmd: [...argv],
+      stdin: Buffer.from(slice),
+      stdout: "pipe",
+      stderr: options.captureStderr === true ? "pipe" : "ignore",
+      env: childEnv(env),
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "spawn",
+      detail: errorMessage(error),
+      elapsedMs: elapsedMs(),
+    };
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof TIMED_OUT>((resolveDeadline) => {
+    timer = setTimeout(() => {
+      resolveDeadline(TIMED_OUT);
+    }, timeoutMs);
+  });
+  const readAll: Promise<SummarizerOutcome> = (async () => {
+    // Both pipes drained CONCURRENTLY: a captured stderr that nobody reads
+    // fills its pipe and wedges a chatty binary before stdout ever closes.
+    const [stdout, stderr] = await Promise.all([
+      readPipe(proc.stdout),
+      readPipe(proc.stderr),
+    ]);
+    const exitCode = await proc.exited;
+    return {
+      stdout: stdout.text,
+      stderr: stderr.text,
+      exitCode,
+      truncated: stdout.truncated,
+      // EITHER cancel can have broken the child's pipe, so either one makes
+      // the exit status ours rather than the model's. stderr counts even
+      // though only doctor captures it: a binary chatty enough to flood
+      // stderr is exactly the one whose death would otherwise be misread.
+      cutByCap: stdout.truncated || stderr.truncated,
+    };
+  })();
+  // An abandoned read that later rejects must not surface as an unhandled
+  // rejection; the race path below still sees the original settlement.
+  readAll.catch(() => undefined);
+  try {
+    const outcome = await Promise.race([readAll, deadline]);
+    if (outcome === TIMED_OUT) {
+      abandonProcess(proc);
+      return { ok: false, reason: "timeout", timeoutMs, elapsedMs: elapsedMs() };
+    }
+    // A CUT WE CHOSE IS NOT A FAILURE THE MODEL HAD. Once readBounded has
+    // stopped reading because the cap was reached, it has closed a pipe the
+    // child was still writing to, and the child dies of that broken pipe
+    // (SIGPIPE, status 141) through no fault of its own. Booking that as a
+    // failed model call was measured red in oven/bun:1: a flood-only probe
+    // came back ok=false 5 of 5, every one of them reason "exit" with
+    // exitCode 141, and the seam's own test flickered fail/fail/pass only
+    // because a small enough flood could sometimes finish first. macOS hid
+    // it entirely. Every reasoning model that thinks out loud before
+    // answering would have been booked as a broken binary.
+    //
+    // THE DISCRIMINATOR IS OUR OWN DECISION, not the exit code and not the
+    // signal number. `cutByCap` is set by the read loop at the moment it
+    // chose to stop, strictly BEFORE the child could react to it, so it
+    // cannot be confused by anything the child does afterwards. Reading 141
+    // instead would be guessing: a model is perfectly entitled to die of a
+    // broken pipe of its own making, or to exit 141 for its own reasons.
+    //
+    // AND IT IS NARROW. It does not forgive a non-zero exit that merely
+    // FOLLOWED some output — a model that prints a line and then crashes
+    // never reached the cap, so nothing here applies to it and it stays the
+    // failure it is (pinned next door by the crash-after-output test).
+    if (outcome.exitCode !== 0 && !outcome.cutByCap) {
+      const said = firstLine(outcome.stdout);
+      return {
+        ok: false,
+        reason: "exit",
+        exitCode: outcome.exitCode,
+        detail: said.length > 0 ? said : firstLine(outcome.stderr),
+        elapsedMs: elapsedMs(),
+      };
+    }
+    return {
+      ok: true,
+      stdout: outcome.stdout,
+      stderr: outcome.stderr,
+      truncated: outcome.truncated,
+      elapsedMs: elapsedMs(),
+    };
+  } catch (error) {
+    // A rejection AFTER a successful spawn — the pipe read or the exit wait
+    // — lands here and is booked under the "spawn" label too ("could not
+    // start: …"), which is a misnomer for that case. Not reproduced (no
+    // cheap way to make a Bun subprocess pipe reject) and bounded: the
+    // worker still books it and exits 0. A fourth reason ("read") waits for
+    // a reproduction that can show it red first.
+    return {
+      ok: false,
+      reason: "spawn",
+      detail: errorMessage(error),
+      elapsedMs: elapsedMs(),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
+ * One line of what the binary said, fit for a human surface: the first
+ * non-empty line through bareUntrusted — model/CLI output is untrusted and
+ * must not mint renderer structure or carry control characters — bounded
+ * to `maxChars`. The ONE door in this package from runner output to the
+ * render layer; render-surfaces.ts registers this module for it, and the
+ * probe (probe.ts) comes through here rather than importing the layer.
+ */
+export const bareSummarizerLine = (
+  raw: string,
+  maxChars: number = SUMMARIZER_FAILURE_MAX_CHARS,
+): string => bareUntrusted(firstLine(raw), maxChars);
+
+const LABEL_SEPARATOR = ": ";
+
+/**
+ * One line for a failure, fit to be BOOKED in session state and printed by
+ * status/doctor: the reason first, then what the binary said (through
+ * bareSummarizerLine), the binary's share of the line being whatever
+ * SUMMARIZER_FAILURE_MAX_CHARS leaves after the label — so the whole line
+ * is bounded by construction and never cut again after the label is added.
+ * The one cut it does take, inside bareUntrusted, is the sanitizer's
+ * surrogate-safe one (core briefing/cut.ts): a non-BMP character across the
+ * bound is dropped whole, never left as a lone high surrogate.
+ *
+ * ACCEPTED TRADE-OFF: bareUntrusted is the BARE class as core defines it,
+ * phrase filter included, so a CLI line that happens to read like an
+ * instruction ("You must run /login first", "unknown option
+ * '--override-settings'") is booked as `exit 1: [redacted title looked like
+ * an instruction]` — the exit code survives, the text does not. A class
+ * without the filter just for this line would be a fourth class for one
+ * surface that an agent CAN read (a Bash `crosscheck doctor`), and the two
+ * lines actually seen on 2.1.237 ("Not logged in · Please run /login",
+ * "error: unknown option '--tools'") pass untouched; doctor's remedy tests
+ * the RAW detail, so its advice is unaffected by the redaction.
+ *
+ * VERIFY: bun -e 'const {formatSummarizerFailure: f} = await import("./packages/connector-core/src/model/runner.ts"); console.log(f({ok:false,reason:"exit",exitCode:1,detail:"Not logged in · Please run /login",elapsedMs:1}), "|", f({ok:false,reason:"timeout",timeoutMs:60000,elapsedMs:60000}), "|", f({ok:false,reason:"spawn",detail:"Executable not found in $PATH: \"claude\"",elapsedMs:1}), "|", f({ok:false,reason:"exit",exitCode:2,detail:"z".repeat(500),elapsedMs:1}).length)'
+ * PRINTS: exit 1: Not logged in Please run /login | timed out after 60 s | could not start: Executable not found in $PATH "claude" | 120
+ */
+export const formatSummarizerFailure = (failure: SummarizerFailure): string => {
+  if (failure.reason === "timeout") {
+    return `timed out after ${String(Math.round(failure.timeoutMs / MS_PER_SECOND))} s`;
+  }
+  const label =
+    failure.reason === "spawn"
+      ? "could not start"
+      : `exit ${String(failure.exitCode)}`;
+  const said = bareSummarizerLine(
+    failure.detail,
+    SUMMARIZER_FAILURE_MAX_CHARS - label.length - LABEL_SEPARATOR.length,
+  );
+  return said.length === 0 ? label : `${label}${LABEL_SEPARATOR}${said}`;
+};

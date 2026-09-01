@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 268
+    # PRINTS: 298
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -127,30 +127,25 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
     # PRINTS: packages/cli/src/cli/doctor.ts 15
-    # PRINTS: packages/connector-acp/src/capture/engine.ts 6
+    # PRINTS: packages/connector-acp/src/capture/engine.ts 11
+    # PRINTS: packages/connector-acp/src/derive/slice.ts 2
+    # PRINTS: packages/connector-acp/src/doctor.ts 1
     # PRINTS: packages/connector-acp/src/fd-io.ts 1
     # PRINTS: packages/connector-acp/src/inject/injector.ts 3
     # PRINTS: packages/connector-acp/src/proxy.ts 1
     # PRINTS: packages/connector-acp/src/pump.ts 1
-    # PRINTS: packages/connector-acp/src/wire/v1.ts 1
+    # PRINTS: packages/connector-acp/src/report.ts 1
+    # PRINTS: packages/connector-acp/src/wire/v1.ts 2
     # PRINTS: capture/tool-events.ts 1
     # PRINTS: cli/settings-merge.ts 2
-    # PRINTS: conference/prompt.ts 1
-    # PRINTS: ghost/cost.ts 1
-    # PRINTS: ghost/worker.ts 4
+    # PRINTS: doctor.ts 1
     # PRINTS: hooks/post-tool-use-failure.ts 2
     # PRINTS: hooks/post-tool-use.ts 3
     # PRINTS: hooks/pre-tool-use.ts 3
     # PRINTS: hooks/runner.ts 2
-    # PRINTS: hooks/stop.ts 2
-    # PRINTS: hooks/user-prompt-submit.ts 1
-    # PRINTS: intent/worker.ts 1
-    # PRINTS: summarizer/cost.ts 1
-    # PRINTS: summarizer/gate.ts 6
-    # PRINTS: summarizer/runner.ts 1
+    # PRINTS: hooks/stop.ts 1
+    # PRINTS: summarizer/probe.ts 1
     # PRINTS: summarizer/transcript.ts 3
-    # PRINTS: summarizer/worker-env.ts 1
-    # PRINTS: summarizer/worker.ts 2
     # PRINTS: briefing/context-group.ts 1
     # PRINTS: briefing/ghost.ts 2
     # PRINTS: briefing/intent.ts 1
@@ -164,6 +159,15 @@ jobs:
     # PRINTS: config/connected-repo.ts 2
     # PRINTS: config/hook-budget.ts 1
     # PRINTS: constants.ts 7
+    # PRINTS: derive/conference/prompt.ts 1
+    # PRINTS: derive/ghost/cost.ts 1
+    # PRINTS: derive/ghost/worker.ts 5
+    # PRINTS: derive/intent/prompt.ts 1
+    # PRINTS: derive/intent/worker.ts 2
+    # PRINTS: derive/spawn.ts 2
+    # PRINTS: derive/summarizer/cost.ts 1
+    # PRINTS: derive/summarizer/derive.ts 2
+    # PRINTS: derive/summarizer/gate.ts 7
     # PRINTS: flows/briefing.ts 1
     # PRINTS: flows/capture-targets.ts 1
     # PRINTS: flows/capture-touched-files.ts 1
@@ -186,15 +190,24 @@ jobs:
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
     # PRINTS: mcp/tools/set-intent.ts 2
+    # PRINTS: model/gates.ts 1
+    # PRINTS: model/parse.ts 2
+    # PRINTS: model/runner.ts 5
+    # PRINTS: model/worker-env.ts 1
     # PRINTS: spool/reap.ts 1
     # PRINTS: state/capture-bookkeeping.ts 6
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 2
+    # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
+    # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
+    # PRINTS: packages/connector-cursor/src/doctor.ts 2
+    # PRINTS: packages/connector-cursor/src/handlers/before-submit-prompt.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/file-edit.ts 3
     # PRINTS: packages/connector-cursor/src/handlers/recover.ts 4
     # PRINTS: packages/connector-cursor/src/handlers/session-start.ts 2
+    # PRINTS: packages/connector-cursor/src/handlers/stop.ts 1
     # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 3
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/connector-cursor/src/payload.ts 1
@@ -226,6 +239,7 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
     # PRINTS: answer-question.ts 1
     # PRINTS: ask-teammate.ts 1
+    # PRINTS: before-submit-prompt.ts 1
     # PRINTS: briefing.ts 1
     # PRINTS: capture-bookkeeping.ts 6
     # PRINTS: capture-health.ts 2
@@ -241,15 +255,17 @@ jobs:
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 2
     # PRINTS: delivery.ts 1
+    # PRINTS: derive.ts 2
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 1
     # PRINTS: diagnosis.ts 3
-    # PRINTS: doctor.ts 15
-    # PRINTS: engine.ts 6
+    # PRINTS: doctor.ts 19
+    # PRINTS: engine.ts 11
     # PRINTS: envelope.ts 1
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 3
-    # PRINTS: gate.ts 6
+    # PRINTS: gate.ts 7
+    # PRINTS: gates.ts 1
     # PRINTS: ghost-overlap.ts 4
     # PRINTS: ghost.ts 2
     # PRINTS: hint.ts 2
@@ -262,13 +278,15 @@ jobs:
     # PRINTS: latency.ts 1
     # PRINTS: normalized-doc.ts 2
     # PRINTS: output.ts 1
+    # PRINTS: parse.ts 2
     # PRINTS: payload.ts 1
     # PRINTS: post-tool-use-failure.ts 2
     # PRINTS: post-tool-use.ts 3
     # PRINTS: pre-tool-use.ts 3
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
-    # PRINTS: prompt.ts 1
+    # PRINTS: probe.ts 1
+    # PRINTS: prompt.ts 2
     # PRINTS: proxy.ts 1
     # PRINTS: publish-claim.ts 2
     # PRINTS: pump.ts 1
@@ -280,9 +298,9 @@ jobs:
     # PRINTS: refusal.ts 3
     # PRINTS: render-referee.ts 3
     # PRINTS: render.ts 26
-    # PRINTS: report.ts 1
+    # PRINTS: report.ts 2
     # PRINTS: review-draft.ts 1
-    # PRINTS: runner.ts 3
+    # PRINTS: runner.ts 7
     # PRINTS: sanitize.ts 10
     # PRINTS: search-related-work.ts 1
     # PRINTS: search-tokens.ts 4
@@ -296,19 +314,21 @@ jobs:
     # PRINTS: sessions.ts 3
     # PRINTS: set-intent.ts 2
     # PRINTS: settings-merge.ts 2
+    # PRINTS: slice.ts 2
     # PRINTS: solved-counts.ts 1
     # PRINTS: solved-hint.ts 4
     # PRINTS: solved-matches.ts 9
     # PRINTS: solved.ts 1
+    # PRINTS: spawn.ts 2
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: stop.ts 2
     # PRINTS: time-window.ts 1
     # PRINTS: tool-events.ts 1
     # PRINTS: tool-failure.ts 3
     # PRINTS: touched-root.ts 5
-    # PRINTS: transcript.ts 3
-    # PRINTS: user-prompt-submit.ts 1
-    # PRINTS: v1.ts 1
+    # PRINTS: transcript.ts 4
+    # PRINTS: triggers.ts 2
+    # PRINTS: v1.ts 2
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7
     name: Mutation proof

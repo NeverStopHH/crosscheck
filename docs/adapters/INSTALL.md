@@ -109,8 +109,11 @@ crosscheck login https://hub.example.com   # key read from stdin
 
 `crosscheck doctor` is the answer to "is it working" on every host: it checks
 launcher health, hook registration (Claude + Cursor sections), hub liveness,
-spool depth, contract drift, injection counts — and the user-level install
-state (present, absent, double-wired).
+spool depth, contract drift, injection counts, the user-level install state
+(present, absent, double-wired) — and, per connector, one line for each thing
+crosscheck can INFER on that host and one for each thing it deliberately
+cannot. The ACP section is quiet until the proxy has actually run on this
+machine, because there is nothing to install and so nothing true to say.
 
 ## The user-level ("global") install — once per machine
 
@@ -185,20 +188,32 @@ Two operational notes:
   path); briefing and presence are missing until then. `crosscheck doctor`
   in the parent folder names whichever of the two states you are in.
 
-### The Tier-1 draft summarizer (Claude Code only) — what it needs
+### The Tier-1 draft summarizer — what it needs
 
-The Stop hook's summarizer is a nested `claude -p` on a Haiku-class model,
-run by a detached worker on the developer's own Claude auth. After trial
+Claude Code and Cursor both run it now (Cursor since 2026-08-28: its `stop`
+hook is the trigger and its own `transcript_path` is the slice), and both go
+through the same detached worker, so everything below applies to either host.
+
+The summarizer is a nested `claude -p` on a Haiku-class model, run by a
+detached worker on the developer's own Claude auth. After trial
 finding #14 (a whole trial in which it never answered) these are the facts
 to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
 …)`:
 
+- **Cursor: "no slice" is not a failure.** If `crosscheck doctor` shows
+  `summarizer transcript (cursor)` saying *this Cursor build provides no
+  transcript*, nothing on this machine is broken: the build sent
+  `transcript_path: null` (documented as "null if transcripts disabled") and
+  no model ran. Tier-0 capture, hints and the briefing are unaffected. The
+  same line counts turns where the transcript was there but its tail could
+  not be decoded — that one IS worth reporting, because it means Cursor's
+  transcript format moved.
 - **Login environment.** The worker inherits the hook's whole environment
   minus the parent session's own markers (`CLAUDECODE`, `CLAUDE_PID`, the
   `CLAUDE_CODE_SESSION_*`/child-session/messaging/task-list/SSE-port/
   remote/bridge/resume names, plugin and project-dir variables — the list
   is `PARENT_SESSION_MARKER_PATTERN` in
-  `packages/connector-claude/src/summarizer/worker-env.ts`); the nested
+  `packages/connector-core/src/model/worker-env.ts`); the nested
   `claude` additionally never sees `CROSSCHECK_API_KEY`. `USER` must be in it (the macOS
   keychain lookup keys on it — `Not logged in · Please run /login` is what
   its absence looks like); API-key (`ANTHROPIC_API_KEY`), Bedrock/Vertex
@@ -245,9 +260,12 @@ to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
   (fires / NONE / set / failed) and `doctor` has an `intent capture` check
   that WARNs on any booked failure or on two fires that landed nothing.
   The `set_intent` MCP tool states the intent outright (declared,
-  confidence 1) and replaces a derived one. Cursor and ACP sessions have no
-  derived intent — no `claude -p` there — but `set_intent` works for any
-  MCP-connected agent.
+  confidence 1) and replaces a derived one. Cursor and ACP sessions derive an
+  intent too since the model runner moved into `connector-core`: Cursor on
+  `beforeSubmitPrompt`, ACP on the `session/prompt` request. Both need a
+  model backend on the machine — `doctor` prints a `derive backend` line per
+  connector saying whether one resolved — and `set_intent` works for any
+  MCP-connected agent either way.
 
 ## Cursor IDE (≥ 1.7)
 
@@ -314,9 +332,20 @@ command in a terminal first; the proxy's pre-spawn refusals are loud
 In a crosscheck-connected repo the wrapped session reports presence, touched
 files and failure fingerprints, gets the team briefing appended to its first
 ready prompt, and gets crosscheck's MCP tools appended to its session setup.
-Everywhere else the wrapper is a pure byte pipe — that is the prime
-directive, and it is enforced structurally
+Since 2026-08-28 it also DERIVES: the first substantive prompt becomes a
+session intent, a ghost debt is paid on the next prompt, and each turn ends
+with the same Tier-1 gate Claude Code runs — all of it off a parsed copy of
+the wire, none of it on the forward path. Everywhere else the wrapper is a
+pure byte pipe — that is the prime directive, and it is enforced structurally
 ([`packages/connector-acp/README.md`](../../packages/connector-acp/README.md)).
+
+**ACP: a prose-only agent captures less, and says so.** The Tier-1 slice is
+whatever the wire carried, so an agent that runs its tools outside ACP's
+`terminal/*` methods gives the gate prose with no executed shape beside it.
+That is a documented reduction, not a fault. To see it for your own agent:
+`crosscheck acp --record /tmp/wire.ndjson -- <agent cmd…>`, work for a while,
+then `crosscheck acp-report /tmp/wire.ndjson` and read the
+`tier-1 slice sources` section.
 
 ## JetBrains IDEs (AI Assistant)
 

@@ -120,6 +120,12 @@ const RENDER_IDENTIFIERS: ReadonlySet<string> = new Set([
   "ghostDraftBody",
   "formatQuestionEntry",
   "fitQuestionEntries",
+  // The model layer's one door onto the render layer (model/runner.ts wraps
+  // bareUntrusted). It is here because a module that prints what a model
+  // BINARY said is a render surface whoever imports it: the cursor doctor's
+  // capability line and the Claude probe's answer line both do, and before
+  // this name was listed the meta-test could see neither.
+  "bareSummarizerLine",
 ]);
 
 /** import/export-from statements: clause + specifier. */

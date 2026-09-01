@@ -18,7 +18,7 @@ import {
   PARENT_SESSION_MARKER_PATTERN,
   ensureSummarizerCwd,
   summarizerWorkerEnv,
-} from "../src/summarizer/worker-env.ts";
+} from "@crosscheck/connector-core/model/worker-env.ts";
 import { makeHome } from "../../connector-core/test/helpers.ts";
 
 const HOME = "/tmp/cx-home-worker-env-fixture";

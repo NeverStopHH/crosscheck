@@ -156,7 +156,9 @@ import {
   isIntentSilentlyDead,
   isSummarizerAlwaysRejected,
   isSummarizerSilentlyDead,
+  isSummarizerUnreadable,
   probeSummarizerRunner,
+  claudeDoctorChecks,
   summarizeGhostCost,
   summarizeIntentCost,
   summarizeSummarizerCost,
@@ -1399,6 +1401,18 @@ const checkSummarizerCost = (scan: LiveSessionScan): Check => {
       "WARN",
       "summarizer cost",
       `${line} — ${String(cost.fires)} runs fired, none answered — see the summarizer runner check (these counts are per live session and clear at SessionEnd)`,
+    );
+  }
+  // The model is SPEAKING and this contract cannot read a word of it. Its own
+  // WARN and its own remedy, and the one a machine running a model other than
+  // Claude reaches first: the runner probe PASSes (the binary ran and exited
+  // 0), so "see the summarizer runner check" would send the reader to a
+  // healthy binary and away from the real problem, which is output shape.
+  if (isSummarizerUnreadable(cost)) {
+    return check(
+      "WARN",
+      "summarizer cost",
+      `${line} — the model answered and nothing it said fitted the output contract; if CROSSCHECK_SUMMARIZER_CMD points at another model see docs/FOREIGN-MODELS.md (these counts are per live session and clear at SessionEnd)`,
     );
   }
   // The model IS answering and nothing is being kept (audit rows M16 / A3-4).
@@ -2732,7 +2746,15 @@ export const runDoctor = async (
     await checkPrivacy(hubCtx),
     skewCheck,
     bunfigCheck,
-    ...(await checkCursor(identity.root, env, config.home, key)),
+    ...checkClaudeDerive(),
+    ...(await checkCursor(
+      identity.root,
+      env,
+      config.home,
+      key,
+      liveStates.states,
+    )),
+    ...(await checkAcp(config.home, env, liveStates.states)),
     // Appended at the END so a sibling branch's rebase stays mechanical, and
     // because these read execution rather than configuration: the reader has
     // just been told what is WIRED, and these say what has actually RUN.
@@ -2743,9 +2765,58 @@ export const runDoctor = async (
 };
 
 /**
+ * The Claude Code section's rung lines, owned by connector-claude — the
+ * REFERENCE row of the parity table, and the one doctor used to omit.
+ *
+ * Static import rather than the dynamic one the other two sections use: this
+ * package already depends on connector-claude unconditionally (the hook
+ * runner, the summarizer worker and the probe all come from it), so there is
+ * no optional-package failure to contain here.
+ *
+ * The counts stay on the `summarizer cost` / `intent cost` / `ghost cost`
+ * lines above; these say what the HOST allows, which is the question the
+ * Cursor and ACP sections answer for their hosts.
+ */
+const checkClaudeDerive = (): readonly Check[] =>
+  claudeDoctorChecks().map((entry) =>
+    check(entry.level, entry.name, entry.detail),
+  );
+
+/**
+ * The ACP section, owned by connector-acp: what crosscheck infers behind the
+ * transparent proxy and every refusal, one sentence each — or, on a machine
+ * that has never run the proxy, ONE line saying so. DYNAMIC import like the
+ * bin's `acp` branch and like the Cursor section beside it, and its failure is
+ * contained the same way: a broken acp package must cost its section, never
+ * the doctor.
+ */
+const checkAcp = async (
+  home: string,
+  env: Env,
+  liveStates: readonly SessionState[],
+): Promise<readonly Check[]> => {
+  try {
+    const { acpDoctorChecks } = await import("@crosscheck/connector-acp");
+    // The SAME session scan the model-cost lines above used; the ACP section
+    // filters it to sessions whose host key carries the `acp-` prefix, so a
+    // Claude session's booked failure can never light up an ACP rung.
+    // `env` rides along for ONE fact the section cannot get anywhere else:
+    // whether a model binary is resolvable on the PATH doctor runs with. Every
+    // ACP rung spawns one, so a machine without it derives nothing here.
+    const checks = await acpDoctorChecks({ home, env, liveStates });
+    return checks.map((entry) => check(entry.level, entry.name, entry.detail));
+  } catch {
+    return [
+      check("WARN", "acp proxy", "acp section unavailable (connector-acp failed to load)"),
+    ];
+  }
+};
+
+/**
  * The Cursor section (design §3.4), owned by connector-cursor: hooks file +
  * entries + launcher + mcp entry + observed version + contract-drift
- * counters. DYNAMIC import like the bin's cursor-hook branch, and its
+ * counters, and — since the derive rungs — what crosscheck infers inside
+ * Cursor plus every refusal, one sentence each. DYNAMIC import like the bin's cursor-hook branch, and its
  * failure is contained — a broken cursor package must cost its section,
  * never the doctor.
  */
@@ -2754,12 +2825,23 @@ const checkCursor = async (
   env: Env,
   home: string,
   key: string,
+  liveStates: readonly SessionState[],
 ): Promise<readonly Check[]> => {
   try {
     const { cursorDoctorChecks } = await import(
       "@crosscheck/connector-cursor"
     );
-    const checks = await cursorDoctorChecks({ repoRoot, env, home, repoKey: key });
+    const checks = await cursorDoctorChecks({
+      repoRoot,
+      env,
+      home,
+      repoKey: key,
+      // The SAME scan the model-cost lines above used (one read of the
+      // session directory for every derive figure doctor prints); the cursor
+      // section spends it on the one fact only it can explain — whether this
+      // Cursor build has been sending a transcript at all.
+      liveStates,
+    });
     return checks.map((entry) => check(entry.level, entry.name, entry.detail));
   } catch {
     return [

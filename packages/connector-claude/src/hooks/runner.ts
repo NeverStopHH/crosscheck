@@ -50,7 +50,7 @@ export interface HookContext {
    * The environment the hook was invoked with — NOT process.env, which in
    * tests belongs to the test runner. The one consumer is the Stop hook,
    * which forwards it — minus the parent session's own markers — into the
-   * detached summarizer worker it spawns (summarizer/worker-env.ts: the
+   * detached summarizer worker it spawns (core model/worker-env.ts: the
    * nested claude needs the developer's whole login environment, USER
    * included).
    */

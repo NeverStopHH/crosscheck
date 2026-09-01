@@ -42,9 +42,9 @@ import {
   isCaptureMoment,
   isConclusionMoment,
   isDiagnosisMoment,
-} from "../src/summarizer/gate.ts";
-import { parseSummarizerOutput } from "../src/summarizer/parse.ts";
-import { SUMMARIZER_PROMPT } from "../src/summarizer/runner.ts";
+} from "@crosscheck/connector-core/derive/summarizer/gate.ts";
+import { parseSummarizerOutput } from "@crosscheck/connector-core/model/parse.ts";
+import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
 import { extractSliceText, readTurnSlice } from "../src/summarizer/transcript.ts";
 import { runSummarizeWorker } from "../src/summarizer/worker.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";

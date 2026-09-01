@@ -283,8 +283,8 @@ export const OMITTED_MARKER = "[... middle of this turn omitted for length ...]"
  * file read — that window closed above the user's own question, so the model
  * was asked what this turn concluded while holding only its final tool
  * output, and a summarizer that cannot see the ask answers about the last
- * thing it can see: the narration and role-play `summarizer/reject.ts` now has
- * to refuse.
+ * thing it can see: the narration and role-play core `model/reject.ts` now
+ * has to refuse.
  *
  * HOW OFTEN, IN TWO FIGURES OF DIFFERENT STANDING. The trial measured 60 % of
  * gate-positive slices arriving that way — HISTORICAL, taken on a live install

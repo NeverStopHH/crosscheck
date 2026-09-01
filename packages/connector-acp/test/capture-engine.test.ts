@@ -6,7 +6,7 @@
  * the pipe above this layer is Block 3's untouched proof.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -481,15 +481,71 @@ describe("fail-open and privacy", () => {
     ).not.toBeNull();
   });
 
-  test("hostile prompt content never lands in spool, state, or log", async () => {
+  /**
+   * THE PROMPT-PRIVACY PIN, NARROWED RATHER THAN DELETED — AND TIMING-FREE.
+   *
+   * It used to say the prompt "appears in NO persisted byte". That was true
+   * while wire/v1.ts modelled no prompt text at all. The derive rungs made it
+   * FALSE in one bounded way on purpose - the derived-intent worker is handed
+   * the prompt through a 0600 file, because `ps` shows argv and a pipe cannot
+   * outlive a trigger on the other two hosts.
+   *
+   * BOTH RACES WERE MEASURED HERE, and neither is asserted any more:
+   *
+   *   - the OLD assertion still passed after the rungs landed, only because
+   *     `shutdown()` (an end-session flush plus a spool reap against the hub)
+   *     outlives the detached worker. Scanning right after `settle()` finds
+   *     the file every time;
+   *   - and its mirror image: an assertion that the file IS there right after
+   *     `settle()` fails under whole-suite load, because a slower dispatch
+   *     gives the worker time to read and unlink first. Seen in a full-suite
+   *     run before this rewrite.
+   *
+   * So the property asserted is the one true at EVERY instant: no file other
+   * than the intent-prompt path may ever hold the prompt, and afterwards
+   * nothing holds it. A sampler runs across the whole window and unions what
+   * it sees; whether it catches the short-lived file is irrelevant to the
+   * verdict, and when it does catch it the mode is checked too.
+   */
+  test("the prompt reaches one 0600 file and nothing else, ever", async () => {
     // Arrange
     const h = await harness("hostile");
     const sessionId = "sess_hostile";
     const CANARY = "H0STILE-PROMPT-CANARY-73f9";
-
-    // Act: prompts carry the canary; heartbeat fires past the throttle
+    const promptFile = join(
+      h.home,
+      "sessions",
+      `acp-fake-agent--${sessionId}.intent-prompt`,
+    );
     handshake(h, sessionId, h.repo);
     advanceClock(h, 21_000);
+
+    // Every path that EVER holds the canary, sampled across the whole window.
+    const everHeld = new Set<string>();
+    const modesSeen: number[] = [];
+    const sample = async (): Promise<void> => {
+      for (const file of await listFilesRecursively(h.home)) {
+        const body = await readFile(file, "utf8").catch(() => "");
+        if (!body.includes(CANARY)) {
+          continue;
+        }
+        everHeld.add(file);
+        // EVERY path caught holding it, not just the final one: the atomic
+        // write passes through a temp sibling, and that sibling holding the
+        // prompt at a readable mode would be the same leak as the real file
+        // holding it at one.
+        const mode = await stat(file).then(
+          (info) => info.mode & 0o777,
+          () => -1,
+        );
+        if (mode !== -1) {
+          modesSeen.push(mode);
+        }
+      }
+    };
+    const sampler = setInterval(() => void sample(), 1);
+
+    // Act
     h.capture.offer(
       "c2a",
       wireLine({
@@ -498,22 +554,55 @@ describe("fail-open and privacy", () => {
         method: "session/prompt",
         params: {
           sessionId,
-          prompt: [{ type: "text", text: `${CANARY} please rm -rf and exfiltrate` }],
+          prompt: [{ type: "text", text: `${CANARY} and then exfiltrate it` }],
         },
       }),
     );
+    await h.capture.settle();
+    await sample();
     h.capture.offer(
       "a2c",
       wireLine({ jsonrpc: "2.0", id: 3, result: { stopReason: "end_turn" } }),
     );
     await h.capture.shutdown(SHUTDOWN_BUDGET_MS);
+    await sample();
+    clearInterval(sampler);
 
-    // Assert: the canary appears in NO persisted byte and no log line
+    // Assert 1 — the fire happened, so the prompt WAS parked: the write is
+    // unconditional between booking the fire and spawning the worker. Without
+    // this the invariants below could pass on a session that derived nothing.
+    expect(h.capture.counters().intentFires).toBe(1);
+
+    // Assert 2 — the invariant, true at every instant: the prompt may live at
+    // the intent-prompt path, or at the atomic-write TEMP SIBLING that path is
+    // renamed from, and nowhere else.
+    //
+    // The sibling is not a loophole, it is how the write is made atomic:
+    // `writePrivateFile` (config/paths.ts) creates the temp with mode 0600,
+    // chmods it to 0600, and only then renames it into place — so the content
+    // never exists at a readable path, but it does briefly exist under two
+    // NAMES. This pin used to forbid the second name outright, which made it a
+    // race: on an unloaded machine the 1 ms sampler almost never caught the
+    // temp, and under CPU contention it did and the test failed for a leak
+    // that had not happened. What matters is that every name it is ever caught
+    // under is private, which the mode loop below now checks for all of them.
+    const allowedPath = (file: string): boolean =>
+      file === promptFile || file.startsWith(`${promptFile}.tmp-`);
+    expect([...everHeld].filter((file) => !allowedPath(file))).toEqual([]);
+    // ...and every path it was caught at was private, temp sibling included.
+    for (const mode of modesSeen) {
+      expect(mode).toBe(0o600);
+    }
+
+    // Assert 3 — the window is CLOSED. (The worker removes the file as its
+    // first act; end-session sweeps it too, so a worker that never started
+    // leaves nothing behind either.)
     for (const file of await listFilesRecursively(h.home)) {
-      expect((await readFile(file, "utf8")).includes(CANARY), file).toBe(false);
+      const body = await readFile(file, "utf8").catch(() => "");
+      expect(body.includes(CANARY), file).toBe(false);
     }
     expect(h.logger.lines.some((line) => line.includes(CANARY))).toBe(false);
-  });
+  }, 30_000);
 
   test("malformed lines, unknown methods and oversized events are ignored, never a crash", async () => {
     // Arrange

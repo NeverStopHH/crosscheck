@@ -224,7 +224,13 @@ const seededState = (
   summarizerFailCount: 0,
   summarizerLastFailure: null,
   summarizerRejectCount: 0,
+  summarizerNoSliceCount: 0,
+  summarizerLastNoSlice: null,
+  summarizerLastSliceShape: null,
+  summarizerSliceDroppedChars: 0,
   summarizerLastRejection: null,
+  summarizerUnreadableCount: 0,
+  summarizerLastUnreadable: null,
   workContextTitle: null,
   workContextStatus: null,
   intentFireCount: 0,
@@ -251,7 +257,6 @@ const seededState = (
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
-  summarizerUnparsedCount: 0,
   ...overrides,
 });
 

@@ -27,11 +27,11 @@ import {
   summarizerFireAllowed,
   withStopTurn,
   withSummarizerFire,
-} from "../summarizer/gate.ts";
-import { SUMMARIZER_PROMPT } from "../summarizer/runner.ts";
+} from "@crosscheck/connector-core/derive/summarizer/gate.ts";
+import { SUMMARIZER_PROMPT } from "@crosscheck/connector-core/model/runner.ts";
 import { extractSliceText, readTurnSlice } from "../summarizer/transcript.ts";
 import type { TurnSlice } from "../summarizer/transcript.ts";
-import { summarizerWorkerEnv } from "../summarizer/worker-env.ts";
+import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 /**
@@ -49,42 +49,39 @@ const WORKER_ENTRY_PATH = resolve(
 );
 
 /**
- * Fire-and-forget: the child is unref'd, its stdio ignored, and a spawn
- * failure is swallowed — the hook has already recorded the fire, and losing
- * one draft is the cheap outcome (fail open).
+ * Fire-and-forget, through the SHARED door (core derive/spawn.ts): the child
+ * is unref'd, its stdio ignored, and a spawn failure swallowed — the hook has
+ * already recorded the fire, and losing one draft is the cheap outcome (fail
+ * open).
  *
  * The env is the hook's own minus the parent-session markers, plus the
- * crosscheck home and the child marker (summarizer/worker-env.ts says why
- * an allowlist here lost every fire of the trial — finding #14).
+ * crosscheck home, the child marker (core model/worker-env.ts says why an
+ * allowlist here lost every fire of the trial — finding #14) and this
+ * connector's agent kind, which the shared door REQUIRES so a worker can
+ * never stamp the wrong host on the draft it writes.
  */
 const spawnSummarizeWorker = (
   ctx: HookContext,
   transcriptPath: string,
   slice: TurnSlice,
 ): void => {
-  try {
-    const proc = Bun.spawn({
-      cmd: [
-        process.execPath,
-        WORKER_ENTRY_PATH,
-        "--transcript",
-        transcriptPath,
-        "--session",
-        ctx.payload.session_id,
-        "--slice-start",
-        String(slice.start),
-        "--slice-end",
-        String(slice.end),
-      ],
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-      env: summarizerWorkerEnv(ctx.env, ctx.config.home),
-    });
-    proc.unref();
-  } catch {
-    // Fail open — the fire slot is spent, the draft is lost, nothing breaks.
-  }
+  spawnDeriveWorker({
+    env: ctx.env,
+    home: ctx.config.home,
+    agentKind: ctx.config.agentKind,
+    cmd: [
+      process.execPath,
+      WORKER_ENTRY_PATH,
+      "--transcript",
+      transcriptPath,
+      "--session",
+      ctx.payload.session_id,
+      "--slice-start",
+      String(slice.start),
+      "--slice-end",
+      String(slice.end),
+    ],
+  });
 };
 
 /**

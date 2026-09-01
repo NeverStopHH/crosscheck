@@ -224,7 +224,13 @@ describe("fail-open within budget", () => {
         summarizerFailCount: 0,
         summarizerLastFailure: null,
         summarizerRejectCount: 0,
+        summarizerNoSliceCount: 0,
+        summarizerLastNoSlice: null,
+        summarizerLastSliceShape: null,
+        summarizerSliceDroppedChars: 0,
         summarizerLastRejection: null,
+        summarizerUnreadableCount: 0,
+        summarizerLastUnreadable: null,
         workContextTitle: null,
         workContextStatus: null,
         intentFireCount: 0,
@@ -251,7 +257,6 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
-        summarizerUnparsedCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -348,7 +353,13 @@ describe("fail-open within budget", () => {
         summarizerFailCount: 0,
         summarizerLastFailure: null,
         summarizerRejectCount: 0,
+        summarizerNoSliceCount: 0,
+        summarizerLastNoSlice: null,
+        summarizerLastSliceShape: null,
+        summarizerSliceDroppedChars: 0,
         summarizerLastRejection: null,
+        summarizerUnreadableCount: 0,
+        summarizerLastUnreadable: null,
         workContextTitle: null,
         workContextStatus: null,
         intentFireCount: 0,
@@ -375,7 +386,6 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
-        summarizerUnparsedCount: 0,
       } satisfies SessionState);
       const ctx = await prepareCursorHook(
         "postToolUse",
@@ -529,7 +539,13 @@ describe("fail-open within budget", () => {
         summarizerFailCount: 0,
         summarizerLastFailure: null,
         summarizerRejectCount: 0,
+        summarizerNoSliceCount: 0,
+        summarizerLastNoSlice: null,
+        summarizerLastSliceShape: null,
+        summarizerSliceDroppedChars: 0,
         summarizerLastRejection: null,
+        summarizerUnreadableCount: 0,
+        summarizerLastUnreadable: null,
         workContextTitle: null,
         workContextStatus: null,
         intentFireCount: 0,
@@ -556,7 +572,6 @@ describe("fail-open within budget", () => {
         lastEditedPath: null,
         lastEditedPathResolvedAgainst: null,
         hintCandidatesSeen: 0,
-        summarizerUnparsedCount: 0,
       } satisfies SessionState);
 
       // Act

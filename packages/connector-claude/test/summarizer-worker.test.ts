@@ -15,13 +15,13 @@ import { join } from "node:path";
 import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 
 import { SUMMARIZER_DEFAULT_CONFIDENCE } from "@crosscheck/connector-core/constants.ts";
-import { parseSummarizerOutput } from "../src/summarizer/parse.ts";
+import { parseSummarizerOutput } from "@crosscheck/connector-core/model/parse.ts";
 import {
   resolveSummarizerArgv,
   runSummarizer,
   SUMMARIZER_PROMPT,
-} from "../src/summarizer/runner.ts";
-import { isPromptEcho, isRolePlayAnswer } from "../src/summarizer/reject.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
+import { isPromptEcho, isRolePlayAnswer } from "@crosscheck/connector-core/model/reject.ts";
 import { runSummarizeWorker } from "../src/summarizer/worker.ts";
 import { recordDeliveredHintHash } from "@crosscheck/connector-core/hints/delivered-store.ts";
 import { hintBodyHash } from "@crosscheck/connector-core/hints/echo.ts";

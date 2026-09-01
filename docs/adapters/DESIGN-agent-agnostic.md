@@ -85,9 +85,29 @@ Stays in `packages/connector-claude` (now honest about its name):
   `HookPayloadSchema` and the Edit/Write/Bash tool-name mapping move here too: they
   parse *Claude Code's* payloads) and the `hookSpecificOutput` response shapes.
 - `statusline/` — a Claude Code surface.
-- `summarizer/*` — Tier-1 rides headless `claude -p` on the developer's existing Claude
-  auth (DESIGN.md §2). It is Claude-specific by construction. `summarizer/gate.ts` and
-  `parse.ts` are generalizable later; not now (YAGNI — no second summarizer exists).
+- `summarizer/*` — the HOST half only: `transcript.ts` (Claude's JSONL slice),
+  `probe.ts`, `worker.ts` and `worker-entry.ts`. `gate.ts` and `cost.ts` followed the
+  runner into `connector-core/src/derive/summarizer/` on 2026-08-28: the gate's
+  vocabulary is about what a TURN says, not about who hosted it, and Cursor's `stop`
+  now runs the identical predicates over its own slice.
+  **Status (2026-08-28): the deferral below was overturned, on the evidence it asked
+  for.** This row used to read "Tier-1 rides headless `claude -p` … Claude-specific by
+  construction; `gate.ts` and `parse.ts` are generalizable later; not now (YAGNI — no
+  second summarizer exists)." Two more connectors exist now, and the measured gap was
+  that every agent could READ and ASK while only Claude had anything DERIVED — the
+  machinery's location, not the platform. `runner.ts`, `parse.ts`, `reject.ts` and
+  `worker-env.ts` moved verbatim to `connector-core/src/model/`, joined by
+  `model/gates.ts`, which owns the order an answer is judged in. What stayed
+  Claude-specific is what actually is: the trigger and the slice. The `claude -p`
+  default is a BACKEND choice inside the moved runner (`CROSSCHECK_SUMMARIZER_CMD`
+  already replaced it wholesale), not a host coupling.
+  **Second step (2026-08-28): the machinery that USES the seam followed it.**
+  `intent/`, `ghost/`, the summarizer's `gate.ts`/`cost.ts` and `conference/prompt.ts`
+  are `connector-core/src/derive/` now, each connector keeps a thin `worker-entry.ts`
+  beside its own trigger, and the gate-to-spool half of the summarizer worker is
+  `derive/summarizer/derive.ts` so a host only has to produce a slice. `packages/cli`
+  imports the conference from core rather than through this package's barrel — a
+  Cursor-only install no longer needs the Claude package for a command a human runs.
 - `cli/init.ts`, `settings-merge.ts` — the `.claude/settings.json` + `.mcp.json`
   installer. The non-destructive-merge *pattern* is shared knowledge; the file shapes are
   host-specific. `cli/mcp-config.ts`'s `mergeMcpConfig` moves to core: Cursor's
@@ -104,7 +124,8 @@ extracted in Block 8 when the third connector proves the shape (one npm artifact
 `bin`, three connectors + server behind it).
 **Status (2026-08-19, Block 8): the debt is DISCHARGED.** `packages/cli` owns the bin
 and the host-agnostic commands (login/init/status/doctor/privacy/version);
-`connector-claude` keeps hooks, statusline, summarizer and the `.claude` settings
+`connector-claude` keeps hooks, statusline, the summarizer's host half and the
+`.claude` settings
 plan+merge (`buildSettingsPlan` moved INTO settings-merge.ts beside the merge it
 feeds), and its Stop hook spawns an in-package `summarizer/worker-entry.ts` instead of
 the moved bin. The mechanical bar was proven the Block-1 way: a 20-command bin matrix
@@ -262,18 +283,35 @@ per-session capture state.
 | `initialize` response → `agentInfo.name/version` | `agent_kind = acp:<name>` for every session on this connection (stabilized field, 2025-10-24). `--agent-kind` overrides. |
 | `session/new` request (`cwd`, `mcpServers`) + response (`sessionId`) | Resolve repo identity from `cwd` → `registerSessionFlow` with `hostSessionKey = acpHostSessionKey(agentSlug, sessionId)` (the `acp--<agentSlug>--<sessionId>` double-dash shape from §1.3 — call the helper, never invent the string); work-context title from branch @ repo (ACP has no session title; we do not synthesize one from prompt text — same privacy posture as the Claude connector's fallback). State file written before first append, preserving reap's invariant. Kick off async briefing prefetch (§2.5). |
 | `session/load` / `session/resume` request + response | Re-register (idempotent — deterministic ids, hub answers duplicate). A session already live in the SAME proxy skips the re-register outright (no counter inflation, no re-appended work context, no seen-set reset); the cold path — a load/resume this proxy never saw born — registers at request time and is both pinned and mutation-checked. History replays as `session/update` notifications: **capture during replay is safe by construction** because every Tier-0 record dedups on a natural key server-side (`target` on (work_context, kind, value); `work_context` on id) and the injection point (`session/prompt`, client→agent) never fires during replay. Pinned by a test, not assumed (§4.2). |
-| `session/prompt` request | Heartbeat; hint fast path (§2.5). Prompt text is used as an ephemeral search query against the hub — exact parity with the Claude connector's UserPromptSubmit; never stored, never uploaded as content. |
+| `session/prompt` request | Heartbeat; hint fast path (§2.5); **and, since 2026-08-28, the turn boundary and both prompt-time derive rungs (§3.7)**. Prompt text is used as an ephemeral search query against the hub — exact parity with the Claude connector's UserPromptSubmit — and is additionally parked in ONE 0600 file for the derived-intent worker, which removes it as its first act. It is still never spooled, never written to state, never logged, and never uploaded as content. |
+| `session/update`: `agent_message_chunk` text | Tier-1 slice source 1 (§3.7), in memory only, byte-capped, never written down. `agent_thought_chunk` is deliberately NOT read. |
 | `session/update`: `tool_call` / `tool_call_update` with `locations[].path`, `content` diff paths | File targets through `captureFileTargets` (repo-relative, denylist, seen-set, secret-scan). `kind: edit` additionally drives status → `implementing` (same heuristic as the Claude connector's edit-tool heartbeat). Caveat honestly: tool-call reporting is a SHOULD; agents doing internal file I/O without reporting locations capture nothing here — `fs/write_text_file` and terminals below are the backstop. |
 | `tool_call_update` with `status: failed` → `rawOutput` | Failure text extraction (string fields joined, tail-sliced) → `fingerprint()` → `error_fingerprint` target. Identical normalizer as Claude Code = cross-agent fingerprint matching, which is the product. |
 | `terminal/create` request (`command`) correlated with `terminal/wait_for_exit` response (`exitCode ≠ 0`) + `terminal/output` | Failure fingerprint from output; command text itself is NOT uploaded (parity: the Claude connector uploads no command text either). |
 | `fs/write_text_file` request (`path`) | File target. |
-| `session/prompt` response `stopReason` | Turn counter tick (future Tier-1 gate); `cancelled`/`refusal` capture nothing in v1. |
+| `session/prompt` response `stopReason` | Turn counter tick — and, since 2026-08-28, the Tier-1 gate itself runs here over the turn's in-memory slice (§3.7). `cancelled`/`refusal` still capture nothing in v1: the gate judges the SLICE, not the reason the turn ended. |
 | `session/close` request, connection EOF, child exit | `endSessionFlow` (end + budgeted flush + reap). |
 | JSON-RPC error responses on captured methods | Counted locally; no record (a client-side error is not a build failure). |
 
-Not captured, deliberately: prompt/response content, `rawInput` bodies, diff `oldText`/
-`newText` contents (paths only), permission outcomes. Tier-0 stays metadata + hashes,
-exactly like the Claude connector.
+Not captured, deliberately: `rawInput` bodies, diff `oldText`/`newText` contents (paths
+only), terminal COMMAND text, permission outcomes, and the agent's `agent_thought_chunk`
+reasoning. Tier-0 stays metadata + hashes, exactly like the Claude connector.
+
+TWO TEXTS ARE NOW READ, and only for the derive rungs (§3.7) — this line used to say
+"prompt/response content" was among the never-parsed, and the rungs made that false in
+two bounded ways rather than one vague one:
+
+- the **prompt**, at `session/prompt`, reaching exactly one 0600 file the intent worker
+  removes as its first act (and `end-session` sweeps if the worker never started);
+- the **turn slice** — agent message chunks, a failed tool call's extracted failure text,
+  terminal output TAILS — held in memory, byte-capped, handed to a spawned worker on
+  STDIN and written to no disk at all on this host.
+
+Neither may reach a spool record, a state file or a log line. Pinned by
+`connector-acp/test/capture-engine.test.ts`'s prompt-privacy case (narrowed from "no
+persisted byte" to the true statement, and made deterministic — the old assertion passed
+only because `shutdown()` outlived the detached worker) and by `test/derive.test.ts`'s
+two privacy cases.
 
 Hostile-identifier discipline (fixer round): every identifier on this wire is
 agent-controlled, so session ids are shaped at the wire-parse boundary
@@ -394,17 +432,17 @@ Registered in `.cursor/hooks.json` (`version: 1`), each with an explicit `timeou
 
 | Cursor event | Handler behavior |
 |---|---|
+| `beforeSubmitPrompt` | CAPTURE ONLY (§3.5): the derived-intent fire on the first substantive prompt. Answers no directives on any path — the documented output is `{continue, user_message}`, which can only BLOCK, and crosscheck never blocks. |
 | `sessionStart` | `registerSessionFlow` with `hostSessionKey = cur-<conversation_id>`; repo identity from `workspace_roots[0]` (fallback `CURSOR_PROJECT_DIR`); `agent_kind = cursor-ide`. Returns `additional_context` = briefing (§3.3). Records `cursor_version` into local sync-state for `doctor`. `is_background_agent: true` → register with agent_kind `cursor-background`, no injection output. |
 | `afterFileEdit` | `file_path` → `captureFileTargets`. The `edits[]` old/new strings are **never uploaded** — path only, Tier-0 discipline. Heartbeat (throttled), status → `implementing`. |
 | `afterShellExecution` | Failure detection from exit/output fields → `captureFailure` → `error_fingerprint`. Command text not uploaded. |
 | `postToolUseFailure` | Same fingerprint path for non-shell tool failures. |
-| `postToolUse` | Heartbeat; spool flush on spare budget; hint delivery via `additional_context` (§3.3). Pays a late-registered conversation's deferred briefing first — the briefing outranks the hint for that one response (§3.3). |
-| `stop` | Turn counter (future Tier-1 gate); spool flush. Never emits `followup_message` — auto-continuing the user's session is not ours to do. |
+| `postToolUse` | Heartbeat; spool flush on spare budget; hint delivery via `additional_context` (§3.3). Pays a late-registered conversation's deferred briefing first — the briefing outranks the hint for that one response (§3.3). Also pays the ghost debt, if `stop` has not (§3.5). |
+| `stop` | The Tier-1 gate (turn count, transcript tail, fire) AND the ghost debt (§3.5); spool flush. Never emits `followup_message` — auto-continuing the user's session is not ours to do. |
 | `sessionEnd` | `endSessionFlow`. |
 
 Deliberately **not** registered: `beforeReadFile` (payload carries full file content —
-a privacy surface Tier-0 has no use for), `beforeSubmitPrompt` (it can block but has no
-context-injection output; we never block), `beforeTabFileRead`/`afterTabFileEdit`
+a privacy surface Tier-0 has no use for), `beforeTabFileRead`/`afterTabFileEdit`
 (autocomplete-grade noise; Tab is not agent work), `subagentStart/Stop` (v1.5 candidate
 once flat capture is proven), `preCompact`.
 
@@ -457,7 +495,8 @@ silent — the same "unconnected directory talks to nobody" rule, no special-cas
   trusted workspace for project hooks and hot-reloads both configs — no restart step.
 - `crosscheck doctor` gains a Cursor section: hooks.json present + entries owned +
   launcher not in an ephemeral cache, mcp.json entry owned, last-seen `cursor_version`
-  ≥ 1.7, hub liveness.
+  ≥ 1.7, hub liveness — and, since 2026-08-28, one line per derive rung and one per
+  refusal (§3.6).
 
 ### 3.5 Uncovered, said out loud
 
@@ -475,11 +514,136 @@ silent — the same "unconnected directory talks to nobody" rule, no special-cas
   ([forum](https://forum.cursor.com/t/cursor-cli-doesnt-send-all-events-defined-in-hooks/148316)) —
   the adapter targets the IDE; Cursor CLI users get the ACP proxy instead, which is the
   better seam anyway.
-- **Tier-1 summarizer deferred**: `transcript_path` exists and is the sanctioned read
-  channel, but the summarizer is `claude -p`-shaped today; generalizing it is post-v1
-  and consent-gated.
+- **Tier-1 summarizer: LANDED, reduced** (2026-08-28; this bullet used to say
+  "deferred"). The trigger is `stop` and the reader is
+  `connector-cursor/src/derive/transcript.ts`. What makes the rung REDUCED rather than
+  full is a documentation fact, not a design choice: Cursor documents the transcript
+  POINTER twice (`transcript_path`, "string | null … null if transcripts disabled";
+  `CURSOR_TRANSCRIPT_PATH`, "If transcripts enabled") and the transcript's CONTENT
+  nowhere — no schema, no example, no extension for the main file. So the reader tries
+  two decoders over the bounded tail (JSONL entries, then the tail as prose) and
+  REPORTS which one matched; a tail neither decoder can use is booked as
+  `summarizerNoSlice` with a named reason and printed by doctor. A missing transcript
+  is never folded into runner failures, because no model ran.
+  There is a SECOND reduction, invisible in the output and therefore stated here and
+  in the reader's own header: the slice is the tail of the CONVERSATION, not of the
+  turn. The Claude reader can start at the last real user prompt because Claude Code
+  documents an entry type that means one; Cursor documents no schema, so there is no
+  marker to find and a guessed turn boundary would be a guess printed as a fact. The
+  direction of the error is the safe one — a slice with more context makes the gate's
+  conjunction slightly easier to satisfy, which spends a capped fire on a weaker
+  moment and never invents a conclusion.
 - **state.vscdb is never read.** Undocumented schema, version drift, full-transcript
-  privacy blast radius; hooks provide everything Tier-0 needs.
+  privacy blast radius; the documented `transcript_path` is the sanctioned channel and
+  the Tier-1 rung above uses it.
+
+
+### 3.6 What Cursor infers (2026-08-28)
+
+Cursor gained the four derive capabilities on the rungs its platform actually
+allows, and DECLARES them: `connector-cursor/src/capabilities.ts` is a static
+manifest doctor prints one line each from, with one platform sentence per rung
+and one per REFUSAL. `connector-core/test/derive-capability-registry.test.ts`
+reads the manifest against what the package ships, in both directions — an
+undeclared trigger and an undelivered declaration are both a red build.
+
+| Capability | Rung | Why |
+|---|---|---|
+| intent | full | `beforeSubmitPrompt` carries the prompt; first substantive prompt fires the shared worker. |
+| ghost | full | the debt a recorded intent opens is claimed on `stop` or `postToolUse`, whichever fires first. |
+| summarizer | reduced | the transcript POINTER is documented, the transcript FORMAT is not (see the §3.4 bullet). |
+| conference | full | a command a human runs; after the relocation it needs nothing from the host. |
+
+REFUSALS, each printed by doctor as a PASS line with its platform reason —
+because a decision nobody can find is indistinguishable from a bug nobody fixed:
+
+- **pre-edit ask**: not possible. Cursor's `preToolUse` accepts `ask` in its
+  schema but enforces only a hard deny, and crosscheck never hard-blocks
+  (escalation ladder rung 1). Not simulated, not silently skipped.
+- **prompt-time injection**: `beforeSubmitPrompt` is registered capture-only.
+  Its documented output adds no context and can only block.
+- **response-text capture**: `afterAgentResponse` stays unregistered. It carries
+  agent prose with no work anchor, and the gate's conjunction demands an executed
+  shape; accumulating a turn across Cursor's separate hook processes would need a
+  standing content buffer on disk, which the privacy rule forbids.
+- **cloud and background agents**: `sessionStart`/`sessionEnd` are documented
+  unavailable there, so a cloud run registers through the recovery path and its
+  hub session ends by staleness. No pretend implementation.
+- **no transcript** (conditional, inside the summarizer rung): its own booked
+  outcome and its own doctor sentence — "this Cursor build provides no
+  transcript — Tier-1 capture off; deterministic capture unaffected" — never a
+  runner WARN, because no model ran.
+
+PRIVACY PINS NARROWED, NOT DELETED. Two fields left the connector's
+banned-token list because the rungs genuinely read them, and each was replaced
+by a narrower TRUE statement with its own test: the prompt reaches exactly one
+0600 file the worker unlinks in `finally` (named and proven absent afterwards),
+and `transcript_path` may be mentioned in exactly three modules and nowhere
+else.
+
+### 3.7 What an ACP agent infers (2026-08-28)
+
+Every agent behind the proxy gained the four derive capabilities, and the connector
+DECLARES them: `connector-acp/src/capabilities.ts` is a static manifest doctor prints one
+line each from. ONE manifest covers every agent the proxy can wrap, because the rungs are
+properties of the PROTOCOL; the agent only decides how much of the wire it fills, which is
+what makes the summarizer rung reduced and what `crosscheck acp-report` measures.
+
+EVERY RUNG RIDES THE PARSE COPY. Nothing here is on the forward path, nothing parses and
+re-emits agent bytes, and none of it needs `--inject` — `test/transparency.test.ts` stays
+the authority and is untouched (12 pass / 0 fail on this change and on the base commit).
+
+| Capability | Rung | Why |
+|---|---|---|
+| intent | full | `session/prompt` carries the prompt as text ContentBlocks; the first substantive one fires the shared worker. |
+| ghost | full | ACP guarantees a next-prompt event, so the debt is paid exactly where Claude pays it — no two-handler race as on Cursor. |
+| summarizer | reduced | the turn slice is only what the wire happens to carry (see below). |
+| conference | full | a command a human runs; after the relocation it needs nothing from the proxy or the agent. |
+
+WHAT MAKES THE SUMMARIZER RUNG REDUCED, precisely. The slice is built from three wire
+sources — `agent_message_chunk` text, a failed tool call's extracted failure text, and
+terminal output tails — accumulated per TURN in memory (reset on the prompt REQUEST, so a
+cancelled turn cannot leak into the next one) and handed to the worker on stdin. Terminal
+COMMAND text, diff bodies and fs write content are modelled by no schema here, so they
+cannot enter a slice even by accident. The visible consequence, stated rather than
+discovered: the gate's `hasCommitBoundary` anchor looks for `git commit` as a COMMAND and
+on this host can only match if the agent SAYS it in prose. An agent doing its tool I/O
+outside ACP's `terminal/*` methods yields a prose-only slice — `crosscheck acp-report`'s
+`tier-1 slice sources` section prints exactly which of the three a recorded agent emits,
+and a verdict naming what the degrade costs.
+
+The slice is STRONGER than both siblings in one way and weaker in another. Stronger: the
+proxy is a long-lived parent, so the slice travels down a pipe and no slice artifact is
+ever created on disk — Claude re-reads a JSONL transcript and Cursor re-reads a file whose
+format is documented nowhere. Weaker: their transcripts contain the whole turn, and this
+contains what the wire carried.
+
+REFUSALS, each printed by doctor as a PASS line with its protocol reason:
+
+- **forward-path capture**: refused outright. Every rung rides a bounded copy of each
+  line; the two §2.5 write points (the MCP server entry at session setup and the appended
+  prompt block) remain the only wire touches. A parity feature that cost byte transparency
+  would not be parity.
+- **pre-edit ask**: `session/request_permission` originates agent-side (§2.5 already said
+  it is never touched, never answered), so intercepting one would mean answering on the
+  agent's behalf ON the forward path. Forwarded untouched; no tool call is ever blocked.
+- **agent reasoning capture**: `agent_thought_chunk` is not slice material. Reasoning is
+  the model talking to itself, it is the most sensitive prose on this wire, and the gate
+  wants what the agent SAID beside what actually RAN.
+- **command and content capture**: terminal command text, diff bodies and fs write content
+  stay unmodelled — which is also the honest reason the commit-boundary anchor is
+  unreachable except through prose.
+
+"NOT USED HERE" IS ONE PASS LINE. The proxy has no install artifact — it is a command a
+developer wraps their agent in — so doctor prints the rungs only once this home has seen
+one (an `acp-<pid>.log` under the home, or a live `acp-`-prefixed session). Before that it
+says exactly that, once. Eight capability lines for a connector nobody on this machine
+runs is how doctor gets ignored (the absence-check lesson, applied to a connector with
+nothing to install).
+
+PRIVACY PIN NARROWED, NOT DELETED — see the §2.4 note under the capture table. The pin
+that said the prompt reaches "no persisted byte" now says what is true and is checked
+where the window actually is; it had been passing on a race.
 
 ---
 
@@ -625,7 +789,9 @@ documented `additional_context` output via the shared `assembleBriefing` flow
 (no landed rider — that stays the Claude connector's), background agents get no
 injection output; the failure-matched hint runs the shared `selectAndRenderHint`
 flow with the FAILURE TEXT as the ephemeral query (Cursor documents no
-injectable prompt-time event — `beforeSubmitPrompt` has no context output — so
+injectable prompt-time event — `beforeSubmitPrompt`'s documented output is
+`{continue, user_message}`, which can only block; that is still true, and it is
+why the 2026-08-28 registration of that event is capture-only — so
 the failure is the prompt-adjacent moment, which is also §3.3's better-anchoring
 case), delivered on `postToolUse`'s documented `additional_context` AND
 tolerantly on `postToolUseFailure` (see the q4 note below). One composition

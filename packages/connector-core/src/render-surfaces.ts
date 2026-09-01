@@ -20,6 +20,7 @@
 import type { CommitDrift } from "./git/commit-drift.ts";
 import { renderBriefing } from "./briefing/render.ts";
 import { renderConferenceReport } from "./conference/report.ts";
+import { formatSummarizerFailure } from "./model/runner.ts";
 import { ghostDraftBody } from "./briefing/ghost.ts";
 import {
   renderAnswerHint,
@@ -626,6 +627,46 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
         modelOutcome: { kind: "failed", reason: payload },
         now: NOW,
       }),
+  },
+  {
+    kind: "corpus",
+    name: "model-failure-line",
+    // Carried across the move: connector-claude classified this exact line
+    // `pulled` when it was `claude-summarizer-failure-line` — it reaches a
+    // reader as `crosscheck status`/`doctor` stdout.
+    delivery: "pulled",
+    module: "src/model/runner.ts",
+    framing: "bare",
+    // What the MODEL BINARY said when a run was lost (trial finding #14) —
+    // CLI/model stdout, untrusted — on its way into session state
+    // (summarizerLastFailure) and from there onto the status and doctor
+    // lines: its first line through bareUntrusted, the whole line bounded
+    // to SUMMARIZER_FAILURE_MAX_CHARS. The probe's first-line and version
+    // fields come through the same function (bareSummarizerLine).
+    //
+    // REGISTERED HERE SINCE THE SEAM MOVED: the runner was
+    // connector-claude's (its registry named it
+    // `claude-summarizer-failure-line`) until every connector needed to be
+    // able to spawn a model. One door, one registration, one corpus run —
+    // wherever the failure line is eventually printed.
+    render: (payload) =>
+      formatSummarizerFailure({
+        ok: false,
+        reason: "exit",
+        exitCode: 1,
+        detail: payload,
+        elapsedMs: 0,
+      }),
+  },
+  {
+    kind: "composite",
+    name: "derive-ghost-draft",
+    // Carried across the move: connector-claude classified this exact draft
+    // `outbound` when it was `claude-ghost-draft` — it is text on its way to
+    // the hub, not shown to the developer who produced it.
+    delivery: "outbound",
+    module: "src/derive/ghost/worker.ts",
+    note: "the draft body is composed by ghostDraftBody, the registered core surface briefing-ghost-draft-body, which is where the hostile corpus attacks the teammate name and context id; the sentence beside them is this machine's own model output, bounded, echo-checked and secret-scanned here, and framed by formatDraftLine when it is shown",
   },
   {
     kind: "corpus",

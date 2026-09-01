@@ -232,27 +232,77 @@ const SessionStateObjectSchema = z.looseObject({
    * Rejection telemetry per fire (audit rows M16 / A3-4): how many answers
    * came back well-formed and were still refused — role-play, an echo of the
    * prompt or of a delivered teammate hint, a credential-shaped body, a claim
-   * the wire contract would not take — plus the most recent reason IN THE
-   * CONNECTOR'S OWN WORDS (summarizer/reject.ts never quotes the body). Every
+   * the wire contract would not take — plus the most recent reason IN
+   * CROSSCHECK'S OWN WORDS (core model/reject.ts never quotes the body). Every
    * one of these used to be a silent `return` inside the worker, so a fire
    * whose answer nobody kept was indistinguishable from a runner that never
    * spoke. Bounded by the writer like the failure reason. Defaults keep every
    * pre-rejection state file parsing.
    */
   summarizerRejectCount: z.number().int().min(0).default(0),
+  /**
+   * Turns where the gate wanted to look and there was NOTHING TO LOOK AT:
+   * the host sent no transcript, the file could not be read, or its tail
+   * decoded to nothing. No model ran, so this is not a fire and not a
+   * failure — `ghostNoOverlapCount`'s lesson, applied one tier down. Folded
+   * into `summarizerFailCount` it would send a Cursor user whose build
+   * simply has transcripts disabled to their local `claude` binary, which is
+   * working perfectly. The reason is one of the connector's own constants,
+   * bounded by the writer.
+   */
+  summarizerNoSliceCount: z.number().int().min(0).default(0),
+  summarizerLastNoSlice: z.string().nullable().default(null),
+  /**
+   * WHICH DECODER READ THE LAST SLICE, on a host whose transcript format is
+   * undocumented. Written only by the Cursor connector, whose reader tries a
+   * line-delimited-JSON decoder and falls back to reading the tail as prose
+   * (connector-cursor derive/transcript.ts) — the jsonl half is a HYPOTHESIS,
+   * so the day it stops matching, the fallback takes over and the gate is
+   * handed a strictly weaker slice with nothing booked anywhere: a slice WAS
+   * produced, so it is not a noSlice, and no model failed, so it is not a
+   * failure. This field is the only place that flip can become visible, and
+   * the Cursor capability line prints it.
+   *
+   * Null on every other host and on a state file written before a turn was
+   * decoded. A short enum-shaped token from the connector's own type, never
+   * host text — nothing read off a transcript reaches here.
+   */
+  summarizerLastSliceShape: z.string().nullable().default(null),
+  /**
+   * SLICE CHARACTERS A HOST'S OWN CAP REFUSED, summed over this session's
+   * turns. Written only by the ACP proxy, whose slice is accumulated in
+   * memory from the wire and bounded by ACP_TURN_SLICE_MAX_CHARS.
+   *
+   * It is not a failure and not a noSlice: a slice WAS produced, a model DID
+   * run on it, and the outcome it booked is real. What the number says is
+   * that the gate judged a TRUNCATED turn, so a conclusion may have arrived
+   * past the cap and been thrown away — the one derive outcome on that host
+   * that no counter here could reach, which left it visible only in a
+   * per-pid proxy log file swept after ACP_LOG_MAX_AGE_DAYS.
+   *
+   * A COUNT, never the refused text: the characters themselves are the
+   * agent's own prose and never enter a state file.
+   */
+  summarizerSliceDroppedChars: z.number().int().min(0).default(0),
   summarizerLastRejection: z.string().nullable().default(null),
   /**
-   * Runs that ANSWERED and whose answer was neither a claim nor NONE (trial
-   * finding M5). Two of thirty-two live answers during the trial were the
-   * model talking to the developer instead of the slice ("I've paused and I'm
-   * waiting for your direction…", both on `rejection` slices): parse.ts
-   * returns null for them, `isNoneAnswer` is false, and nothing was booked at
-   * all — so they hid inside the fires-minus-outcomes remainder alongside
-   * runner failures, which have a completely different fix. A run the model
-   * answered badly is a PROMPT problem; a run the runner lost is a machine
-   * problem. Default 0 keeps every pre-M5 state file parsing.
+   * Answers the model GAVE and this contract could not read: stdout that is
+   * neither claim JSON nor NONE, or nothing at all. These used to be booked
+   * NOWHERE - the only trace was the fires-minus-outcomes remainder, an
+   * arithmetic gap with no reason attached - which was survivable while the
+   * binary was always a Claude whose output shape the prompts were tuned on,
+   * and stops being survivable the moment CROSSCHECK_SUMMARIZER_CMD points
+   * at a model with output habits of its own. It is NOT a runner failure
+   * (the binary ran and exited 0) and NOT a NONE (the model did not judge
+   * the turn empty), so it gets its own counter and its own doctor remedy:
+   * folded into either one, the reader is sent to the wrong place.
+   *
+   * The reason is one of gate.ts's two own sentences - never the model's
+   * text, which is printed into a terminal and often into an agent's
+   * context. Bounded by the writer like every other reason here.
    */
-  summarizerUnparsedCount: z.number().int().min(0).default(0),
+  summarizerUnreadableCount: z.number().int().min(0).default(0),
+  summarizerLastUnreadable: z.string().nullable().default(null),
   /**
    * The work-context title and status this session registered with (trial
    * finding #16): an intent UPDATE record must carry both (the wire schema
@@ -838,8 +888,13 @@ export const deriveSessionState = (
     summarizerFailCount: 0,
     summarizerLastFailure: null,
     summarizerRejectCount: 0,
+    summarizerNoSliceCount: 0,
+    summarizerLastNoSlice: null,
+    summarizerLastSliceShape: null,
+    summarizerSliceDroppedChars: 0,
     summarizerLastRejection: null,
-    summarizerUnparsedCount: 0,
+    summarizerUnreadableCount: 0,
+    summarizerLastUnreadable: null,
     workContextTitle: null,
     workContextStatus: null,
     intentFireCount: 0,

@@ -7,6 +7,7 @@
  * bounds (the withSeenTargets shape).
  */
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
 import {
   MAX_BRIEFING_SOLVED_REFS,
@@ -47,7 +48,13 @@ const baseState = (): SessionState => ({
   summarizerFailCount: 0,
   summarizerLastFailure: null,
   summarizerRejectCount: 0,
+  summarizerNoSliceCount: 0,
+  summarizerLastNoSlice: null,
+  summarizerLastSliceShape: null,
+  summarizerSliceDroppedChars: 0,
   summarizerLastRejection: null,
+  summarizerUnreadableCount: 0,
+  summarizerLastUnreadable: null,
   workContextTitle: null,
   workContextStatus: null,
   intentFireCount: 0,
@@ -74,7 +81,6 @@ const baseState = (): SessionState => ({
   lastEditedPath: null,
   lastEditedPathResolvedAgainst: null,
   hintCandidatesSeen: 0,
-  summarizerUnparsedCount: 0,
 });
 
 describe("withBriefingSolvedRefs", () => {
@@ -214,5 +220,59 @@ describe("withKnownWorktreeRoot (the #17 per-session root cache)", () => {
 
     // Assert
     expect(original.knownWorktreeRoots).toEqual([]);
+  });
+});
+
+/**
+ * EVERY OUTCOME WRITER HAS A CALLER.
+ *
+ * A gate transform that nothing in `src` calls is a counter that can never
+ * move: the schema declares it, `summarizeSummarizerCost` sums it, the cost
+ * line renders it, and it prints a confident 0 forever — so the outcome it
+ * names looks like it never happens on any host.
+ *
+ * This bit the tree once already. Two branches booked the SAME
+ * unreadable-answer outcome under two names (`withSummarizerUnparsed` and
+ * `withSummarizerUnreadable`); both sides auto-merged, and the loser was
+ * left exported, summed and rendered while no host could reach it. Neither
+ * `tsc` nor any behavioural test can see that — the dead writer still
+ * compiles and still increments when a TEST calls it directly.
+ *
+ * So the assertion is about PRODUCTION reachability: every exported
+ * `withSummarizer*` transform must be named by at least one file under a
+ * package's `src/`, and tests do not count.
+ */
+describe("the summarizer outcome writers", () => {
+  test("every exported gate transform is called from production code", async () => {
+    // Arrange
+    const gate = await import("../src/derive/summarizer/gate.ts");
+    const writers = Object.keys(gate).filter((name) =>
+      name.startsWith("withSummarizer"),
+    );
+    const srcRoots = await Array.fromAsync(
+      new Bun.Glob("packages/*/src/**/*.ts").scan({
+        cwd: join(import.meta.dir, "..", "..", ".."),
+        absolute: true,
+      }),
+    );
+    const gatePath = join(import.meta.dir, "..", "src", "derive", "summarizer", "gate.ts");
+    const callers = srcRoots.filter((path) => path !== gatePath);
+    // Comments are STRIPPED before the search: a module that merely explains
+    // a writer in prose does not call it, and the dead writer this test
+    // exists for was named in exactly such a comment.
+    const stripComments = (source: string): string =>
+      source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+    const bodies = await Promise.all(
+      callers.map(async (path) => stripComments(await Bun.file(path).text())),
+    );
+    const haystack = bodies.join("\n");
+
+    // Act
+    const unreachable = writers.filter((name) => !haystack.includes(name));
+
+    // Assert
+    expect(writers.length).toBeGreaterThan(0);
+    expect(callers.length).toBeGreaterThan(0);
+    expect(unreachable).toEqual([]);
   });
 });

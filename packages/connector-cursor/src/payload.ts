@@ -10,15 +10,36 @@
  * NAMED contract-drift count (src/drift.ts) instead of a parse failure that
  * dies silently (§10 risk 5).
  *
- * PRIVACY (design §3.2, Tier-0): the content-bearing fields — the edit
- * strings, the prompt, the transcript, the user's email — have no schema
- * entry at all. What is never parsed cannot be stored, spooled, or logged;
- * the privacy suite pins the field names out of this package's source.
+ * PRIVACY, NARROWED (design §3.2). The rule was "the content-bearing fields
+ * have no schema entry at all", and for the edit strings, the terminal
+ * output's siblings, the submitted file list and the user's email it still
+ * is: what
+ * is never parsed cannot be stored, spooled, or logged, and the privacy
+ * suite greps this package's whole source for those names.
+ *
+ * TWO FIELDS LEFT THAT RULE when the derive rungs landed, deliberately and
+ * with narrower pins in their place, because "Ken gets nothing derived" was
+ * the price of the wider one:
+ *
+ *   `prompt` (beforeSubmitPrompt) — read to decide ONE thing (is this
+ *     prompt substantive enough to be worth a model call) and then written
+ *     to a single 0600 file the detached intent worker unlinks in `finally`.
+ *     It reaches no spool record, no session state, no log line and no hub
+ *     request; test/privacy.test.ts proves it lands in exactly one file,
+ *     names that file, and proves it is gone once the worker has run.
+ *   `transcript_path` (common input, documented `string | null`) — a PATH,
+ *     not content, and read only by the summarizer slice reader
+ *     (derive/transcript.ts). The path itself is never stored or printed —
+ *     doctor says whether a transcript was available, never where it is.
+ *
+ * Neither field is mapped, and neither is required: a build that stops
+ * sending them degrades to a booked, named outcome, never to a crash.
  */
 import { z } from "zod";
 
 export const CURSOR_HOOK_EVENTS = [
   "sessionStart",
+  "beforeSubmitPrompt",
   "afterFileEdit",
   "afterShellExecution",
   "postToolUse",
@@ -43,6 +64,21 @@ export const CursorPayloadSchema = z.looseObject({
   is_background_agent: z.boolean().optional().catch(undefined),
   /** afterFileEdit: the ONE thing Tier-0 takes from an edit — the path. */
   file_path: z.string().optional().catch(undefined),
+  /**
+   * beforeSubmitPrompt: the user's prompt text (docs: input is `prompt` plus
+   * the file list beside it; fetched 2026-08-28). The header states the whole
+   * privacy argument for parsing this one. The file list has no entry here
+   * and its field name stays on the privacy suite's banned list — which is
+   * why this comment does not spell it either.
+   */
+  prompt: z.string().optional().catch(undefined),
+  /**
+   * Common input, documented `string | null` ("Path to the main conversation
+   * transcript file (null if transcripts disabled)"). Nullable in the schema
+   * because the docs say null, not merely absent — and `.catch(undefined)`
+   * folds both into the same one branch the summarizer rung refuses on.
+   */
+  transcript_path: z.string().nullable().optional().catch(undefined),
   /**
    * afterShellExecution: full terminal output — read ONLY on an explicit
    * failure marker, only into `fingerprint()` (a hash leaves this process,
@@ -124,6 +160,7 @@ export const parseCursorPayload = (stdin: string): CursorPayload | null => {
  */
 const MAPPED_FIELDS: Readonly<Record<CursorHookEvent, readonly string[]>> = {
   sessionStart: ["conversation_id"],
+  beforeSubmitPrompt: ["conversation_id"],
   afterFileEdit: ["conversation_id", "file_path"],
   afterShellExecution: ["conversation_id"],
   postToolUse: ["conversation_id"],
@@ -132,12 +169,39 @@ const MAPPED_FIELDS: Readonly<Record<CursorHookEvent, readonly string[]>> = {
   sessionEnd: ["conversation_id"],
 };
 
+/**
+ * Fields whose ABSENCE is contract news but whose EMPTINESS is ordinary use.
+ *
+ * `prompt` is the only one, and it needs its own rule because the two
+ * conditions mean opposite things here. A submit carrying files and no
+ * words sends `"prompt": ""` — a real thing a user does, and the intent gate
+ * would decline it anyway — while a Cursor build that RENAMED the field sends
+ * no `prompt` key at all, and that is the one event the derived-intent rung
+ * cannot survive silently. Folding them (the `MAPPED_FIELDS` rule, which
+ * treats "" as missing) would put a drift line in the ledger every time
+ * somebody dragged a file into the composer, and a tripwire that cries on
+ * ordinary use is a tripwire people learn to ignore — this repo's own
+ * absence-check lesson.
+ */
+const PRESENCE_ONLY_FIELDS: Readonly<
+  Partial<Record<CursorHookEvent, readonly string[]>>
+> = {
+  beforeSubmitPrompt: ["prompt"],
+};
+
 /** Names of the mapped fields this payload is missing (empty = healthy). */
 export const missingMappedFields = (
   event: CursorHookEvent,
   payload: CursorPayload,
-): readonly string[] =>
-  MAPPED_FIELDS[event].filter((field) => {
-    const value = (payload as Record<string, unknown>)[field];
-    return value === undefined || value === null || value === "";
-  });
+): readonly string[] => {
+  const record = payload as Record<string, unknown>;
+  return [
+    ...MAPPED_FIELDS[event].filter((field) => {
+      const value = record[field];
+      return value === undefined || value === null || value === "";
+    }),
+    ...(PRESENCE_ONLY_FIELDS[event] ?? []).filter(
+      (field) => record[field] === undefined,
+    ),
+  ];
+};

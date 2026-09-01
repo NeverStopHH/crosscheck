@@ -25,7 +25,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -262,7 +262,13 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
     summarizerFailCount: 0,
     summarizerLastFailure: null,
     summarizerRejectCount: 0,
+    summarizerNoSliceCount: 0,
+    summarizerLastNoSlice: null,
+    summarizerLastSliceShape: null,
+    summarizerSliceDroppedChars: 0,
     summarizerLastRejection: null,
+    summarizerUnreadableCount: 0,
+    summarizerLastUnreadable: null,
     workContextTitle: null,
     workContextStatus: null,
     intentFireCount: 0,
@@ -289,7 +295,6 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
     lastEditedPath: null,
     lastEditedPathResolvedAgainst: null,
     hintCandidatesSeen: 0,
-    summarizerUnparsedCount: 0,
   });
 
   test("a failing tool output carrying a credential produces NO request containing it — and no candidates query at all", async () => {
@@ -354,11 +359,18 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
 
 describe("structural pin: the source never names the content fields", () => {
   /**
-   * Field accessors this package must never contain. `edits`, `old_string`,
-   * `new_string` are file content; `user_email` is host-asserted identity
-   * (the api key is identity — design §3.2); `transcript_path` is the
-   * Tier-1 surface this connector defers; `prompt`/`attachments` belong to
-   * beforeSubmitPrompt, which is not even registered.
+   * Field accessors this package must never contain, ANYWHERE. `edits`,
+   * `old_string`, `new_string` are file content; `user_email` is
+   * host-asserted identity (the api key is identity — design §3.2);
+   * `attachments` is beforeSubmitPrompt's file list, and the derive rungs
+   * gave this connector a reason to read that event's `prompt` but never a
+   * reason to read what was dragged into it.
+   *
+   * `transcript_path` LEFT THIS LIST when the Tier-1 rung landed, and it did
+   * not leave silently: it moved to SCOPED_TOKENS below, which is a narrower
+   * statement, not a weaker one — the name may appear in the three modules
+   * that need it and nowhere else, and the behavioural sweep above still
+   * proves nothing it points at reaches disk.
    */
   const BANNED_TOKENS = [
     "old_string",
@@ -366,9 +378,26 @@ describe("structural pin: the source never names the content fields", () => {
     '"edits"',
     ".edits",
     "user_email",
-    "transcript_path",
     "attachments",
   ] as const;
+
+  /**
+   * Names that may appear in NAMED modules and nowhere else. A field the
+   * connector genuinely reads cannot be banned outright, and deleting the pin
+   * would have replaced a true statement with no statement — so the pin is
+   * rewritten as the true one: this is the whole list of places the Cursor
+   * transcript pointer is allowed to be mentioned, and a fourth module
+   * reaching for it is a red build exactly as a banned token would be.
+   */
+  const SCOPED_TOKENS: Readonly<Record<string, readonly string[]>> = {
+    // The schema entry, the reader that resolves it, and the trigger that
+    // hands the reader the path. Nothing prints it, nothing stores it.
+    transcript_path: [
+      "src/payload.ts",
+      "src/derive/transcript.ts",
+      "src/derive/triggers.ts",
+    ],
+  };
 
   test("no src module references a banned content-field accessor", async () => {
     // Arrange
@@ -385,6 +414,35 @@ describe("structural pin: the source never names the content fields", () => {
           `${file} references ${token} — content fields must stay unparsed`,
         ).toBe(false);
       }
+    }
+  });
+
+  test("the transcript pointer is named only in the three modules that resolve it", async () => {
+    // Arrange
+    const srcRoot = join(import.meta.dir, "..", "src");
+    const files = await listFilesRecursively(srcRoot);
+
+    // Act
+    const namers = new Map<string, string[]>();
+    for (const file of files) {
+      const source = await readFile(file, "utf8");
+      for (const token of Object.keys(SCOPED_TOKENS)) {
+        if (source.includes(token)) {
+          namers.set(token, [
+            ...(namers.get(token) ?? []),
+            relative(srcRoot, file),
+          ]);
+        }
+      }
+    }
+
+    // Assert: exactly the allowed modules, no more and no fewer — a module
+    // that stops needing it must leave the list too, or the list decays into
+    // a permission slip nobody re-reads.
+    for (const [token, allowed] of Object.entries(SCOPED_TOKENS)) {
+      expect((namers.get(token) ?? []).sort()).toEqual(
+        [...allowed].map((path) => path.replace(/^src\//, "")).sort(),
+      );
     }
   });
 });
