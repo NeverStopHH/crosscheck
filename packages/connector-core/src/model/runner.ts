@@ -177,18 +177,53 @@ export const resolveSummarizerTimeoutMs = (env: Env): number =>
   parsePositiveInt(env["CROSSCHECK_SUMMARIZER_TIMEOUT_MS"]) ??
   SUMMARIZER_TIMEOUT_MS;
 
-/** Bounded stdout read: past the cap the stream is cancelled, not buffered. */
+/**
+ * What a bounded read produced, and WHY it stopped. The second half is not
+ * telemetry: it is the only honest way to read the child's exit status
+ * afterwards, and runSummarizer below depends on it.
+ *
+ * `truncated` means THE CAP STOPPED US — the reader still had appetite and
+ * the stream still had data. `false` means the stream ended on its own.
+ */
+interface BoundedRead {
+  readonly text: string;
+  readonly truncated: boolean;
+}
+
+/**
+ * Bounded stdout read: past the cap the stream is cancelled, not buffered.
+ *
+ * THE CANCEL IS A KILL, and that is the whole subtlety. Closing the read end
+ * of a pipe a child is still writing to breaks that pipe: the child's next
+ * write gets EPIPE, the default SIGPIPE disposition ends it, and it is
+ * reaped with status 141 (128 + 13). So this function does not merely stop
+ * reading — it frequently ENDS the process, and the corpse then looks
+ * exactly like a model that crashed. Reporting which of the two loop exits
+ * happened is what lets the caller tell its own handiwork from a real
+ * failure.
+ *
+ * A read that stops EXACTLY on the cap is reported truncated even in the one
+ * case where nothing was actually lost (a child whose output is the cap to
+ * the byte and which then closed). Distinguishing that would cost one more
+ * read — which can return another chunk, breaking the bound this function
+ * exists to hold, or block until the deadline on a child that has not closed
+ * stdout. The bound is load-bearing and the over-report is not: it can only
+ * ever turn one exact-cap failure into a success, which is the direction
+ * this product already fails in (rule 4, fail open).
+ */
 const readBounded = async (
   stream: ReadableStream<Uint8Array>,
   maxBytes: number,
-): Promise<string> => {
+): Promise<BoundedRead> => {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  let ended = false;
   try {
     while (total < maxBytes) {
       const { done, value } = await reader.read();
       if (done) {
+        ended = true;
         break;
       }
       chunks.push(value);
@@ -197,19 +232,26 @@ const readBounded = async (
   } finally {
     await reader.cancel().catch(() => undefined);
   }
-  return Buffer.concat(chunks).toString().slice(0, maxBytes);
+  return {
+    text: Buffer.concat(chunks).toString().slice(0, maxBytes),
+    truncated: !ended,
+  };
 };
 
 /** A piped stdio stream read bounded; an ignored one ("ignore", a number) reads as "". */
-const readPipe = (stream: unknown): Promise<string> =>
+const readPipe = (stream: unknown): Promise<BoundedRead> =>
   stream instanceof ReadableStream
     ? readBounded(stream as ReadableStream<Uint8Array>, SUMMARIZER_OUTPUT_MAX_BYTES)
-    : Promise.resolve("");
+    : Promise.resolve({ text: "", truncated: false });
 
 interface SummarizerOutcome {
   readonly stdout: string;
   readonly stderr: string;
   readonly exitCode: number;
+  /** The ANSWER hit the cap and was cut (stdout, not stderr). */
+  readonly truncated: boolean;
+  /** EITHER pipe was cut, so the seam's own cancel may have ended the child. */
+  readonly cutByCap: boolean;
 }
 
 export interface SummarizerSuccess {
@@ -217,6 +259,19 @@ export interface SummarizerSuccess {
   readonly stdout: string;
   /** Empty unless `captureStderr` was asked for — the worker never asks. */
   readonly stderr: string;
+  /**
+   * The model produced more than SUMMARIZER_OUTPUT_MAX_BYTES and `stdout` is
+   * the first cap bytes of it, not the whole answer.
+   *
+   * A FACT THE CALLER NEEDS, not a diagnostic. A cut answer usually does not
+   * parse, and a caller that cannot see the cut books that as "the model
+   * printed something unreadable" — pointing the reader at the model's
+   * output shape when the real cause is a bound this seam imposed. That
+   * matters most for the models this parity work exists to admit: a
+   * reasoning model emits a long scratchpad before its answer, so exceeding
+   * the cap is its NORMAL case, not a corner one.
+   */
+  readonly truncated: boolean;
   readonly elapsedMs: number;
 }
 
@@ -422,7 +477,17 @@ export const runSummarizer = async (
       readPipe(proc.stderr),
     ]);
     const exitCode = await proc.exited;
-    return { stdout, stderr, exitCode };
+    return {
+      stdout: stdout.text,
+      stderr: stderr.text,
+      exitCode,
+      truncated: stdout.truncated,
+      // EITHER cancel can have broken the child's pipe, so either one makes
+      // the exit status ours rather than the model's. stderr counts even
+      // though only doctor captures it: a binary chatty enough to flood
+      // stderr is exactly the one whose death would otherwise be misread.
+      cutByCap: stdout.truncated || stderr.truncated,
+    };
   })();
   // An abandoned read that later rejects must not surface as an unhandled
   // rejection; the race path below still sees the original settlement.
@@ -433,7 +498,29 @@ export const runSummarizer = async (
       abandonProcess(proc);
       return { ok: false, reason: "timeout", timeoutMs, elapsedMs: elapsedMs() };
     }
-    if (outcome.exitCode !== 0) {
+    // A CUT WE CHOSE IS NOT A FAILURE THE MODEL HAD. Once readBounded has
+    // stopped reading because the cap was reached, it has closed a pipe the
+    // child was still writing to, and the child dies of that broken pipe
+    // (SIGPIPE, status 141) through no fault of its own. Booking that as a
+    // failed model call was measured red in oven/bun:1: a flood-only probe
+    // came back ok=false 5 of 5, every one of them reason "exit" with
+    // exitCode 141, and the seam's own test flickered fail/fail/pass only
+    // because a small enough flood could sometimes finish first. macOS hid
+    // it entirely. Every reasoning model that thinks out loud before
+    // answering would have been booked as a broken binary.
+    //
+    // THE DISCRIMINATOR IS OUR OWN DECISION, not the exit code and not the
+    // signal number. `cutByCap` is set by the read loop at the moment it
+    // chose to stop, strictly BEFORE the child could react to it, so it
+    // cannot be confused by anything the child does afterwards. Reading 141
+    // instead would be guessing: a model is perfectly entitled to die of a
+    // broken pipe of its own making, or to exit 141 for its own reasons.
+    //
+    // AND IT IS NARROW. It does not forgive a non-zero exit that merely
+    // FOLLOWED some output — a model that prints a line and then crashes
+    // never reached the cap, so nothing here applies to it and it stays the
+    // failure it is (pinned next door by the crash-after-output test).
+    if (outcome.exitCode !== 0 && !outcome.cutByCap) {
       const said = firstLine(outcome.stdout);
       return {
         ok: false,
@@ -447,6 +534,7 @@ export const runSummarizer = async (
       ok: true,
       stdout: outcome.stdout,
       stderr: outcome.stderr,
+      truncated: outcome.truncated,
       elapsedMs: elapsedMs(),
     };
   } catch (error) {

@@ -297,19 +297,86 @@ describe("the timeout and the bounds are the seam's, not the caller's", () => {
   });
 
   test("a flooding model is cut at the byte cap, never buffered whole", async () => {
-    // Arrange: far more than the cap, printed as fast as the shell can.
+    // Arrange: 4 MB, which is not "a lot" but a DETERMINISM argument.
+    //
+    // This fake used to print 40 000 bytes, and the assertion below was
+    // then a coin flip on Linux: 40 000 fits inside a 64 KiB pipe buffer,
+    // so awk could finish every write and exit 0 BEFORE the reader reached
+    // the cap, and whether it did was down to scheduling. Measured in
+    // oven/bun:1 (bun 1.4.0) on the code before this commit: the whole file
+    // failed, failed, passed over three runs, and a flood-only probe came
+    // back ok=false 5 of 5 with reason "exit" and exitCode 141 — 128 + 13,
+    // SIGPIPE, the runner's own cancel killing its own child.
+    //
+    // 4 MB removes the race instead of re-rolling it. The child cannot
+    // write 4 MB into a pipe nobody is draining: at most cap + one pipe
+    // buffer (16 KiB + 64 KiB = 80 KiB) can be in flight, so when the
+    // reader stops at the cap the child is GUARANTEED to still be blocked
+    // in write(). The cut therefore always lands on a live child, on every
+    // platform and every scheduling order, which is what makes this a guard
+    // rather than a probabilistic one.
+    //
+    // VERIFY: bun -e 'console.log(4_000_000 > 16_384 + 65_536)'
+    // PRINTS: true
     const fake = await writeFake(
       "flood.sh",
-      `cat > /dev/null\nawk 'BEGIN{for(i=0;i<4000;i++) printf "%s", "0123456789"}'`,
+      `cat > /dev/null\nawk 'BEGIN{for(i=0;i<400000;i++) printf "%s", "0123456789"}'`,
     );
 
     // Act
     const result = await runSummarizer([fake], "slice", 20_000, {});
 
-    // Assert
+    // Assert: a cut the SEAM chose is a success, not a failed model call.
+    // The child dies of the broken pipe every time, and that death is a
+    // consequence of our own cancel, so it is not evidence about the model.
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.stdout.length).toBe(SUMMARIZER_OUTPUT_MAX_BYTES);
+      // And the caller can TELL: a run that was cut is not the same fact as
+      // a run that fit, and a caller that cannot distinguish them will judge
+      // a truncated answer as if the model had chosen to stop there.
+      expect(result.truncated).toBe(true);
+    }
+  });
+
+  test("a model that prints a little and then crashes is still a failure", async () => {
+    // Arrange: well under the cap, then a non-zero exit of its OWN. This is
+    // the other half of the discrimination and the reason the fix cannot be
+    // "ignore a non-zero exit whenever there was output": that rule would
+    // book this run — a model that spoke a line and then died — as a good
+    // answer, and the caller would parse the fragment as if it were whole.
+    const fake = await writeFake(
+      "crash-after-output.sh",
+      'cat > /dev/null\necho "half an answer"\nexit 3',
+    );
+
+    // Act
+    const result = await runSummarizer([fake], "slice", 20_000, {});
+
+    // Assert: the cap was never reached, so nothing the seam did can explain
+    // the exit — it stays the model's own failure, with its own code.
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.reason === "exit") {
+      expect(result.exitCode).toBe(3);
+      expect(result.detail).toBe("half an answer");
+    } else {
+      throw new Error(`expected an exit failure, got ${JSON.stringify(result)}`);
+    }
+  });
+
+  test("an uncut run says so, so `truncated` is a fact and not a constant", async () => {
+    // Arrange: a short, well-behaved answer — the ordinary case.
+    const fake = await writeFake("brief.sh", 'cat > /dev/null\necho "NONE"');
+
+    // Act
+    const result = await runSummarizer([fake], "slice", 20_000, {});
+
+    // Assert: this is what stops the flag above from being satisfied by a
+    // hard-coded `true`.
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.truncated).toBe(false);
+      expect(result.stdout.trim()).toBe("NONE");
     }
   });
 });
