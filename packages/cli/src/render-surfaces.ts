@@ -116,6 +116,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "cli-pin-observability",
+    delivery: "pulled",
     module: "src/cli/pin-observability.ts",
     // BARE, deliberately, and it is the reason this module exists apart from
     // the listing: `status` and `doctor` print PATHS and GLOB PATTERNS, which
@@ -140,6 +141,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "cli-pin-list",
+    delivery: "pulled",
     module: "src/cli/pin-render.ts",
     framing: "framed",
     // `crosscheck pin list` quotes OTHER PEOPLE'S PROSE — a surface label and
@@ -152,6 +154,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "cli-suspect",
+    delivery: "pulled",
     module: "src/cli/suspect-render.ts",
     framing: "framed",
     // The one surface in Stage 1 that renders a teammate's declared INTENT
