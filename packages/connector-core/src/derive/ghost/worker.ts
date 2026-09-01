@@ -100,6 +100,9 @@ export const parseGhostWorkerArgs = (
 /** Booked drops, named so status/doctor can say why a fire landed nothing. */
 const DROPPED_EMPTY_ANSWER = "dropped: empty answer";
 const DROPPED_NOT_SENTENCE = "dropped: the answer was not a sentence";
+// A cut answer is not a malformed one. See gate.ts UNREADABLE_TRUNCATED:
+// the reader has to be sent to the output cap, not to the model.
+const DROPPED_TRUNCATED = "dropped: the answer hit the output cap and was cut";
 const DROPPED_INPUT_ECHO = "dropped: the sentence repeats a claim it was shown";
 const DROPPED_HINT_ECHO = "dropped: the sentence echoes a delivered hint";
 const DROPPED_SECRET = "dropped: secret-like text";
@@ -250,7 +253,11 @@ const runGhostCheck = async (
     await bookFailure(
       home,
       args.claudeSessionId,
-      answer.why === "empty" ? DROPPED_EMPTY_ANSWER : DROPPED_NOT_SENTENCE,
+      result.truncated
+        ? DROPPED_TRUNCATED
+        : answer.why === "empty"
+          ? DROPPED_EMPTY_ANSWER
+          : DROPPED_NOT_SENTENCE,
     );
     return;
   }

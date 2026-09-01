@@ -378,6 +378,17 @@ export const UNREADABLE_EMPTY =
   "no answer: the binary exited 0 and printed nothing";
 export const UNREADABLE_SHAPE =
   "unreadable: the answer was neither claim JSON nor NONE";
+/**
+ * THREE now, and the third is here for the reason the second one is: the
+ * remedy differs again. An answer the seam CUT at SUMMARIZER_OUTPUT_MAX_BYTES
+ * is not a model with a bad output shape — it is a model that said more than
+ * this seam will read, and the reader has to be sent to the cap rather than
+ * to the model's formatting. Without it, a reasoning model that thinks out
+ * loud before answering reads as "printed something unreadable" on every
+ * single fire, which is the wrong diagnosis pointing at the wrong fix.
+ */
+export const UNREADABLE_TRUNCATED =
+  "cut: the answer hit the output cap before it was complete";
 
 /**
  * An answer the model GAVE that this contract could not read (parse.ts

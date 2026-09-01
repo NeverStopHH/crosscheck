@@ -53,6 +53,7 @@ import { ensureSummarizerCwd } from "../../model/worker-env.ts";
 import {
   UNREADABLE_EMPTY,
   UNREADABLE_SHAPE,
+  UNREADABLE_TRUNCATED,
   withSummarizerDraft,
   withSummarizerFailure,
   withSummarizerNone,
@@ -141,7 +142,15 @@ export const deriveFromSlice = async (
   // remedy (gate.ts withSummarizerUnreadable says why it is neither a runner
   // failure nor a NONE).
   if (outcome.kind === "unparseable") {
-    const reason = outcome.why === "empty" ? UNREADABLE_EMPTY : UNREADABLE_SHAPE;
+    // The CUT outranks the shape. A truncated answer is unparseable almost by
+    // construction, so asking "was it JSON?" of a fragment we chose to stop
+    // reading answers a question nobody asked and hides the one fact that
+    // explains the outcome (runner.ts SummarizerSuccess.truncated).
+    const reason = result.truncated
+      ? UNREADABLE_TRUNCATED
+      : outcome.why === "empty"
+        ? UNREADABLE_EMPTY
+        : UNREADABLE_SHAPE;
     await updateSessionState(home, hostSessionKey, (fresh) =>
       withSummarizerUnreadable(fresh, reason),
     );
