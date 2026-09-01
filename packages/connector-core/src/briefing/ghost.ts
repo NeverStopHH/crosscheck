@@ -182,7 +182,7 @@ export const formatGhostLine = (
 /**
  * WHOSE plan the row is about, as a clause a stored sentence can carry.
  *
- * The gated half's answer (connector-claude ghost/worker.ts) becomes a DRAFT
+ * The gated half's answer (core derive/ghost/worker.ts) becomes a DRAFT
  * on the reader's own context, and the model is never told who the other
  * session belongs to — it is shown "SESSION B" precisely so it cannot invent
  * anything about a named person. So the name is attached HERE, deterministically,

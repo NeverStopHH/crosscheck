@@ -51,6 +51,8 @@ import {
 } from "@crosscheck/connector-core/config/mcp-config.ts";
 import type { McpServerEntry } from "@crosscheck/connector-core/config/mcp-config.ts";
 import {
+  isVersionManagerPath,
+  realpathOrSelf,
   resolveCommandPrefix,
   resolveMcpLauncher,
 } from "@crosscheck/connector-core/config/launcher.ts";
@@ -61,7 +63,11 @@ import {
   mergeClaudeSettings,
   removeClaudeSettings,
 } from "@crosscheck/connector-claude";
-import { resolveLauncher, RESTART_HINT_LINE } from "./init.ts";
+import {
+  INIT_COMMAND_PREFIX_FLAG,
+  resolveLauncher,
+  RESTART_HINT_LINE,
+} from "./init.ts";
 import {
   readJsonConfig,
   refusalMessage,
@@ -181,6 +187,17 @@ export const runInitGlobal = async (
       : [
           "statusline not installed (existing statusline preserved) — rerun with --force-statusline to replace",
         ]),
+    // Trial finding M9: the bare `crosscheck` on PATH belongs to ONE runtime
+    // version here, so `nvm use` (or a node upgrade) takes the name with it
+    // and every hook fires exit 127 until somebody reruns init. Said at write
+    // time because that is when the choice is being made; doctor's `hook
+    // launcher` line repeats it for installs that already exist.
+    ...(launcher.kind === "bare" &&
+    isVersionManagerPath(await realpathOrSelf(launcher.path))
+      ? [
+          `note: ${launcher.path} resolves through a node version manager — the hooks' bare \`crosscheck\` disappears on \`nvm use\` or a runtime upgrade; pin it with ${INIT_COMMAND_PREFIX_FLAG} "<bun> <entry>" if you switch versions`,
+        ]
+      : []),
     ...(launcher.kind === "entry"
       ? [
           "launcher is an absolute path on this machine — reinstalling crosscheck elsewhere means rerunning crosscheck init --global",

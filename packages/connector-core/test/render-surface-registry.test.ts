@@ -36,7 +36,7 @@
  * Type-only imports are exempt: a type cannot render.
  */
 import { describe, expect, test } from "bun:test";
-import { readdir, stat } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
@@ -49,6 +49,10 @@ import type {
   RenderSurface,
 } from "../src/render-surfaces.ts";
 import { INJECTION_CORPUS } from "./fixtures/injection-corpus.ts";
+import {
+  ALL_REGISTERED_SURFACES,
+  REGISTERED_PACKAGES,
+} from "./fixtures/registry-packages.ts";
 import { assertUntrustedCharacters } from "./fixtures/untrusted-invariants.ts";
 
 const WORKSPACE_PACKAGES_ROOT = join(import.meta.dir, "..", "..");
@@ -116,6 +120,12 @@ const RENDER_IDENTIFIERS: ReadonlySet<string> = new Set([
   "ghostDraftBody",
   "formatQuestionEntry",
   "fitQuestionEntries",
+  // The model layer's one door onto the render layer (model/runner.ts wraps
+  // bareUntrusted). It is here because a module that prints what a model
+  // BINARY said is a render surface whoever imports it: the cursor doctor's
+  // capability line and the Claude probe's answer line both do, and before
+  // this name was listed the meta-test could see neither.
+  "bareSummarizerLine",
 ]);
 
 /** import/export-from statements: clause + specifier. */
@@ -223,48 +233,19 @@ const KNOWN_EXEMPT: Readonly<Record<string, readonly string[]>> = {
 };
 const DEFAULT_EXEMPT: readonly string[] = ["src/render-surfaces.ts"];
 
-const isDirectory = async (path: string): Promise<boolean> => {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch {
-    return false;
-  }
-};
-
-/** Every packages/* directory with a src tree, off the filesystem. */
-const discoverPackages = async (): Promise<readonly PackageRegistration[]> => {
-  const entries = await readdir(WORKSPACE_PACKAGES_ROOT, { withFileTypes: true });
-  const labels = entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-  const registrations: PackageRegistration[] = [];
-  for (const label of labels) {
-    const root = join(WORKSPACE_PACKAGES_ROOT, label);
-    if (!(await isDirectory(join(root, "src")))) {
-      continue;
-    }
-    const registryPath = join(root, "src", "render-surfaces.ts");
-    const surfaces = (await Bun.file(registryPath).exists())
-      ? (((await import(registryPath)) as {
-          RENDER_SURFACES?: readonly RenderSurface[];
-        }).RENDER_SURFACES ?? [])
-      : [];
-    registrations.push({
-      label,
-      root,
-      surfaces,
-      exempt: KNOWN_EXEMPT[label] ?? DEFAULT_EXEMPT,
-    });
-  }
-  return registrations;
-};
-
-const PACKAGES: readonly PackageRegistration[] = await discoverPackages();
-
-const ALL_SURFACES: readonly RenderSurface[] = PACKAGES.flatMap(
-  (pkg) => pkg.surfaces,
+/**
+ * The package walk itself moved to fixtures/registry-packages.ts when the
+ * anchoring-separation test needed the same one; what stays here is the part
+ * that is this file's own — which modules are exempt from registration.
+ */
+const PACKAGES: readonly PackageRegistration[] = REGISTERED_PACKAGES.map(
+  (pkg) => ({
+    ...pkg,
+    exempt: KNOWN_EXEMPT[pkg.label] ?? DEFAULT_EXEMPT,
+  }),
 );
+
+const ALL_SURFACES: readonly RenderSurface[] = ALL_REGISTERED_SURFACES;
 
 const CORPUS_SURFACES: readonly CorpusRenderSurface[] = ALL_SURFACES.filter(
   (surface): surface is CorpusRenderSurface => surface.kind === "corpus",

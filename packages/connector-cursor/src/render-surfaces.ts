@@ -26,6 +26,7 @@ import type {
   WorkContextEntry,
 } from "@crosscheck/connector-core/http/hub.ts";
 
+import { cursorCapabilityDetail } from "./doctor.ts";
 import {
   cursorBriefingContext,
   cursorClaimHintContext,
@@ -107,6 +108,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "cursor-briefing-context",
+    delivery: "unsolicited",
     module: "src/inject/output.ts",
     framing: "framed",
     render: (payload) =>
@@ -121,6 +123,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "cursor-claim-hint-context",
+    delivery: "unsolicited",
     module: "src/inject/output.ts",
     framing: "framed",
     render: (payload) =>
@@ -134,6 +137,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
     name: "cursor-solved-hint-context",
+    delivery: "unsolicited",
     module: "src/inject/output.ts",
     framing: "framed",
     // The failure-time surface (VISION.md §1). It is the only Cursor
@@ -149,7 +153,31 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
   },
   {
     kind: "corpus",
+    name: "cursor-derive-capability-line",
+    // `crosscheck doctor` stdout, like cli-doctor itself: the reader ran the
+    // command and is waiting for this answer.
+    delivery: "pulled",
+    module: "src/doctor.ts",
+    framing: "bare",
+    // The derive rungs' own doctor line. Its head is renderer-owned literal
+    // (the rung and the manifest's platform sentence, capabilities.ts), and
+    // its tail is NOT: `lastFailure` is whatever the model binary printed
+    // when a fire was lost, read back out of a session-state file and
+    // printed into a terminal — and, through a Bash `crosscheck doctor`,
+    // into an agent's context. BARE class, so the corpus holds it to the
+    // character invariants and to carrying no frame characters at all.
+    render: (payload) =>
+      cursorCapabilityDetail({
+        rung: "reduced",
+        sentence: "the stop payload carries a transcript pointer",
+        failures: 2,
+        lastFailure: payload,
+      }),
+  },
+  {
+    kind: "corpus",
     name: "cursor-pointer-hint-context",
+    delivery: "unsolicited",
     module: "src/inject/output.ts",
     framing: "framed",
     render: (payload) =>

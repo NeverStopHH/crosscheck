@@ -58,9 +58,9 @@ import {
   readSessionState,
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
-import { hasGhostAllowance, withGhostClaimed } from "../ghost/gate.ts";
-import { isSubstantivePrompt, withIntentFire } from "../intent/gate.ts";
-import { summarizerWorkerEnv } from "../summarizer/worker-env.ts";
+import { hasGhostAllowance, withGhostClaimed } from "@crosscheck/connector-core/derive/ghost/gate.ts";
+import { isSubstantivePrompt, withIntentFire } from "@crosscheck/connector-core/derive/intent/gate.ts";
+import { spawnDeriveWorker } from "@crosscheck/connector-core/derive/spawn.ts";
 import type { HookContext } from "./runner.ts";
 
 /** The intent worker's own entry, INSIDE this package (intent/worker-entry.ts). */
@@ -88,26 +88,21 @@ const envelope = (text: string): string =>
   });
 
 /**
- * Fire-and-forget, the Stop hook's shape: the child is unref'd, its stdio
- * ignored, a spawn failure swallowed — the work is already booked and losing
- * one worker is the cheap outcome (fail open). ONE helper for both detached
- * workers this hook can start, so the worker env, the ignored stdio and the
- * unref are decided once: the pair drifting apart is how a child ends up
- * inheriting the parent session's markers (trial finding #14).
+ * Fire-and-forget, through the SHARED door (core derive/spawn.ts): the child
+ * is unref'd, its stdio ignored, a spawn failure swallowed — the work is
+ * already booked and losing one worker is the cheap outcome (fail open). The
+ * helper was this file's own until Cursor needed the identical shape; it took
+ * the worker env, the ignored stdio and the unref with it, plus the agent
+ * kind, which is REQUIRED there because a worker that is not told stamps
+ * `claude-code` by default and would file a Cursor draft as a Claude one.
  */
 const spawnDetached = (ctx: HookContext, cmd: readonly string[]): void => {
-  try {
-    const proc = Bun.spawn({
-      cmd: [...cmd],
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-      env: summarizerWorkerEnv(ctx.env, ctx.config.home),
-    });
-    proc.unref();
-  } catch {
-    // Fail open — the fire slot is spent, the work is lost, nothing breaks.
-  }
+  spawnDeriveWorker({
+    env: ctx.env,
+    home: ctx.config.home,
+    agentKind: ctx.config.agentKind,
+    cmd,
+  });
 };
 
 /**

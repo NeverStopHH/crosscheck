@@ -25,7 +25,7 @@ import {
   withSummarizerDraft,
   withSummarizerFire,
   withSummarizerNone,
-} from "../src/summarizer/gate.ts";
+} from "@crosscheck/connector-core/derive/summarizer/gate.ts";
 import {
   extractSliceText,
   OMITTED_MARKER,
@@ -61,7 +61,13 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   summarizerFailCount: 0,
   summarizerLastFailure: null,
   summarizerRejectCount: 0,
+  summarizerNoSliceCount: 0,
+  summarizerLastNoSlice: null,
+  summarizerLastSliceShape: null,
+  summarizerSliceDroppedChars: 0,
   summarizerLastRejection: null,
+  summarizerUnreadableCount: 0,
+  summarizerLastUnreadable: null,
   workContextTitle: null,
   workContextStatus: null,
   intentFireCount: 0,
@@ -81,6 +87,15 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   ghostDraftCount: 0,
   ghostFailCount: 0,
   ghostLastFailure: null,
+  outsideRootDrops: 0,
+  knownWorktreeRoots: [],
+  editToolFires: 0,
+  targetsCapturedCount: 0,
+  lastTargetAt: null,
+  lastPostToolUseTool: null,
+  lastEditedPath: null,
+  lastEditedPathResolvedAgainst: null,
+  hintCandidatesSeen: 0,
   ...overrides,
 });
 

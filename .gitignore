@@ -5,3 +5,8 @@ coverage/
 .DS_Store
 .env
 .env.*
+# Gate evidence: red/green logs, e2e captures and throwaway-hub artefacts. It
+# is deliberately WORKING-TREE ONLY — a reviewer reads it beside the branch,
+# never inside it, and a `git add -A` that swept it in once already cost a
+# history rewrite.
+.gate/

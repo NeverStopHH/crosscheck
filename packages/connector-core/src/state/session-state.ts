@@ -1,13 +1,15 @@
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
-
 import { z } from "zod";
 
 import {
+  DOCTOR_ZOMBIE_STATE_WARN_HOURS,
   MAX_BRIEFING_SOLVED_REFS,
+  MAX_KNOWN_WORKTREE_ROOTS,
   MAX_PROBED_FINGERPRINTS,
   MAX_SEEN_TARGETS,
   MAX_TRIPWIRE_ASKED_FILES,
+  MINUTES_PER_HOUR,
+  MS_PER_SECOND,
+  SECONDS_PER_MINUTE,
   STATUS_MAX_SESSION_STATES,
 } from "../constants.ts";
 import {
@@ -17,6 +19,18 @@ import {
   writePrivateFile,
 } from "../config/paths.ts";
 import { withLock } from "../spool/lock.ts";
+import {
+  listSessionStateFiles,
+  sessionSilentForMs,
+} from "./session-scan.ts";
+
+/**
+ * Past this much silence a state file is a CORPSE, not a live session: the
+ * same hour `doctor` calls a state file zombie, so the two surfaces cannot
+ * disagree about which sessions exist.
+ */
+const STALE_SESSION_STATE_MS =
+  DOCTOR_ZOMBIE_STATE_WARN_HOURS * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND;
 
 /**
  * The legacy spelling of `hostSessionKey`, accepted on READ forever.
@@ -105,6 +119,72 @@ const SessionStateObjectSchema = z.looseObject({
    */
   foreignRepoDrops: z.number().int().min(0).default(0),
   /**
+   * Touches whose repo-relative path could not be resolved against ANY root
+   * of this session's repo (trial finding #17): the edited file sits outside
+   * the session's checkout AND outside every connected worktree of the same
+   * repo — a loose file next to the repo, or one whose worktree carries no
+   * committed config. Distinct from `foreignRepoDrops` (a DIFFERENT repo,
+   * counted): this is "same session, path unattributable". Before #17 this
+   * class was silently dropped and never counted. Default 0 keeps every
+   * existing state file parsing.
+   */
+  outsideRootDrops: z.number().int().min(0).default(0),
+  /**
+   * Per-session cache of worktree roots this session has already resolved
+   * (trial finding #17): `root` is the realpath'd worktree root of a touched
+   * file, `repoId` its resolved repo id — a FOREIGN root sits here under its
+   * own id, an unresolvable one as null — both cached so a repeated touch
+   * costs no git either. `attempts` counts the identity resolutions the root
+   * has already cost: a null is an UNKNOWN, not an answer, so capture/touched-
+   * root.ts re-resolves it until MAX_WORKTREE_ROOT_RESOLVE_ATTEMPTS are spent
+   * (a git deadline missed once must not exile a healthy worktree for the
+   * session). FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS by
+   * `withKnownWorktreeRoot`.
+   * Defaults keep every pre-#17 state file parsing — an entry written before
+   * `attempts` existed reads as one attempt spent, and one written before
+   * `stamp` existed reads as UNSTAMPED (capture/touched-root.ts: accepted
+   * once, then bound to whatever checkout is at that path now).
+   */
+  knownWorktreeRoots: z
+    .array(
+      z.object({
+        root: z.string().min(1),
+        repoId: z.string().min(1).nullable(),
+        attempts: z.number().int().min(1).default(1),
+        stamp: z.string().min(1).nullable().default(null),
+      }),
+    )
+    .default([]),
+  /**
+   * Capture observability (trial finding #17/#18/#20 — the counters `status`
+   * and `doctor` read so "N edit-tool fires → 0 targets" stops being silent):
+   *   - `editToolFires`  every edit-tool PostToolUse this session reached the
+   *     hook with, counted BEFORE the foreign/outside drops so N − M is
+   *     explainable;
+   *   - `targetsCapturedCount`  targets actually spooled (monotonic; the
+   *     seenTargets list is FIFO-capped and cannot be summed);
+   *   - `lastTargetAt`  when the last target landed;
+   *   - `lastPostToolUseTool`  the last edit-tool name the hook saw
+   *     (host-supplied, a fixed Claude Code vocabulary — bounded on display);
+   *   - `lastEditedPath` / `lastEditedPathResolvedAgainst`  the last edited
+   *     path and the root it resolved against (null = it did not resolve),
+   *     the #18 diagnosis line that closes Ken's "0 targets" cause.
+   * Defaults keep every pre-#17 state file parsing.
+   */
+  editToolFires: z.number().int().min(0).default(0),
+  targetsCapturedCount: z.number().int().min(0).default(0),
+  lastTargetAt: z.string().nullable().default(null),
+  lastPostToolUseTool: z.string().nullable().default(null),
+  lastEditedPath: z.string().nullable().default(null),
+  lastEditedPathResolvedAgainst: z.string().nullable().default(null),
+  /**
+   * How many hint candidates the prompt path has seen from the hub this
+   * session (trial finding #19/#20): the `doctor` hints check reads it to say
+   * whether a targets-only pointer was ever even POSSIBLE for this repo.
+   * Booked in flows/hint.ts. Default 0 keeps every pre-#19 state file parsing.
+   */
+  hintCandidatesSeen: z.number().int().min(0).default(0),
+  /**
    * True when registration happened OUTSIDE SessionStart — PostToolUse's
    * state-less recovery, the parent-workspace/finding-#9 shape — so this
    * session has never seen its briefing. The next UserPromptSubmit pays the
@@ -152,15 +232,77 @@ const SessionStateObjectSchema = z.looseObject({
    * Rejection telemetry per fire (audit rows M16 / A3-4): how many answers
    * came back well-formed and were still refused — role-play, an echo of the
    * prompt or of a delivered teammate hint, a credential-shaped body, a claim
-   * the wire contract would not take — plus the most recent reason IN THE
-   * CONNECTOR'S OWN WORDS (summarizer/reject.ts never quotes the body). Every
+   * the wire contract would not take — plus the most recent reason IN
+   * CROSSCHECK'S OWN WORDS (core model/reject.ts never quotes the body). Every
    * one of these used to be a silent `return` inside the worker, so a fire
    * whose answer nobody kept was indistinguishable from a runner that never
    * spoke. Bounded by the writer like the failure reason. Defaults keep every
    * pre-rejection state file parsing.
    */
   summarizerRejectCount: z.number().int().min(0).default(0),
+  /**
+   * Turns where the gate wanted to look and there was NOTHING TO LOOK AT:
+   * the host sent no transcript, the file could not be read, or its tail
+   * decoded to nothing. No model ran, so this is not a fire and not a
+   * failure — `ghostNoOverlapCount`'s lesson, applied one tier down. Folded
+   * into `summarizerFailCount` it would send a Cursor user whose build
+   * simply has transcripts disabled to their local `claude` binary, which is
+   * working perfectly. The reason is one of the connector's own constants,
+   * bounded by the writer.
+   */
+  summarizerNoSliceCount: z.number().int().min(0).default(0),
+  summarizerLastNoSlice: z.string().nullable().default(null),
+  /**
+   * WHICH DECODER READ THE LAST SLICE, on a host whose transcript format is
+   * undocumented. Written only by the Cursor connector, whose reader tries a
+   * line-delimited-JSON decoder and falls back to reading the tail as prose
+   * (connector-cursor derive/transcript.ts) — the jsonl half is a HYPOTHESIS,
+   * so the day it stops matching, the fallback takes over and the gate is
+   * handed a strictly weaker slice with nothing booked anywhere: a slice WAS
+   * produced, so it is not a noSlice, and no model failed, so it is not a
+   * failure. This field is the only place that flip can become visible, and
+   * the Cursor capability line prints it.
+   *
+   * Null on every other host and on a state file written before a turn was
+   * decoded. A short enum-shaped token from the connector's own type, never
+   * host text — nothing read off a transcript reaches here.
+   */
+  summarizerLastSliceShape: z.string().nullable().default(null),
+  /**
+   * SLICE CHARACTERS A HOST'S OWN CAP REFUSED, summed over this session's
+   * turns. Written only by the ACP proxy, whose slice is accumulated in
+   * memory from the wire and bounded by ACP_TURN_SLICE_MAX_CHARS.
+   *
+   * It is not a failure and not a noSlice: a slice WAS produced, a model DID
+   * run on it, and the outcome it booked is real. What the number says is
+   * that the gate judged a TRUNCATED turn, so a conclusion may have arrived
+   * past the cap and been thrown away — the one derive outcome on that host
+   * that no counter here could reach, which left it visible only in a
+   * per-pid proxy log file swept after ACP_LOG_MAX_AGE_DAYS.
+   *
+   * A COUNT, never the refused text: the characters themselves are the
+   * agent's own prose and never enter a state file.
+   */
+  summarizerSliceDroppedChars: z.number().int().min(0).default(0),
   summarizerLastRejection: z.string().nullable().default(null),
+  /**
+   * Answers the model GAVE and this contract could not read: stdout that is
+   * neither claim JSON nor NONE, or nothing at all. These used to be booked
+   * NOWHERE - the only trace was the fires-minus-outcomes remainder, an
+   * arithmetic gap with no reason attached - which was survivable while the
+   * binary was always a Claude whose output shape the prompts were tuned on,
+   * and stops being survivable the moment CROSSCHECK_SUMMARIZER_CMD points
+   * at a model with output habits of its own. It is NOT a runner failure
+   * (the binary ran and exited 0) and NOT a NONE (the model did not judge
+   * the turn empty), so it gets its own counter and its own doctor remedy:
+   * folded into either one, the reader is sent to the wrong place.
+   *
+   * The reason is one of gate.ts's two own sentences - never the model's
+   * text, which is printed into a terminal and often into an agent's
+   * context. Bounded by the writer like every other reason here.
+   */
+  summarizerUnreadableCount: z.number().int().min(0).default(0),
+  summarizerLastUnreadable: z.string().nullable().default(null),
   /**
    * The work-context title and status this session registered with (trial
    * finding #16): an intent UPDATE record must carry both (the wire schema
@@ -346,6 +488,75 @@ export const updateSessionState = async (
     return true;
   });
 
+/**
+ * The facts a SessionStart RE-FIRE must not erase (trial findings #17/#18/#20).
+ *
+ * Claude Code fires SessionStart again inside a LIVE session on compact,
+ * resume and clear, and that fire re-creates the state file. Re-creating it is
+ * deliberate for the per-fire lists (withBriefingSolvedRefs' header): a new
+ * briefing gets a new budget. It is wrong for the CAPTURE counters, which
+ * describe the session's work, not one fire's: a session that fired 40 edit
+ * tools into nothing and then auto-compacted printed
+ * `0 edit-tool fires → 0 targets` and PASSed — erasing exactly the WARN the
+ * counters exist to raise, on the line Ken is asked to paste.
+ *
+ * Carried only when the re-fire is the SAME binding (repo and hub): a state
+ * file bound elsewhere is another session's, and the first-wins rule above
+ * decides those, not this.
+ */
+export const withCarriedCapture = (
+  state: SessionStateInput,
+  previous: SessionState | null,
+): SessionStateInput =>
+  previous === null ||
+  previous.repoId !== state.repoId ||
+  previous.hubUrl !== state.hubUrl
+    ? state
+    : {
+        ...state,
+        editToolFires: previous.editToolFires,
+        targetsCapturedCount: previous.targetsCapturedCount,
+        lastTargetAt: previous.lastTargetAt,
+        lastPostToolUseTool: previous.lastPostToolUseTool,
+        lastEditedPath: previous.lastEditedPath,
+        lastEditedPathResolvedAgainst: previous.lastEditedPathResolvedAgainst,
+        foreignRepoDrops: previous.foreignRepoDrops,
+        outsideRootDrops: previous.outsideRootDrops,
+        hintCandidatesSeen: previous.hintCandidatesSeen,
+        // The #17 root cache is the session's, not the fire's: dropping it
+        // makes the next tool call pay git again for a root already judged.
+        knownWorktreeRoots: previous.knownWorktreeRoots,
+      };
+
+/**
+ * SessionStart's publication: create the state file, or replace one of the
+ * SAME session while carrying its capture counters (withCarriedCapture).
+ *
+ * Under the state file's own lock, because a re-fire lands INSIDE a live
+ * session: a PostToolUse can be updating state in the same window, and a
+ * read-then-write outside the lock would drop whatever it recorded. A lock
+ * that stays busy falls back to the plain create — publishing state is not
+ * optional (spool reap infers "no writer left" from its absence), so the
+ * counters lose rather than the file.
+ */
+export const publishSessionState = async (
+  home: string,
+  state: SessionStateInput,
+): Promise<void> => {
+  const published = await withLock(
+    sessionStateLockPath(home, state.hostSessionKey),
+    false,
+    async () => {
+      const previous = await readSessionState(home, state.hostSessionKey);
+      await writeSessionState(home, withCarriedCapture(state, previous));
+      return true;
+    },
+  );
+  if (!published) {
+    await writeSessionState(home, state);
+  }
+};
+
 export interface SessionStateClaim {
   /** True when THIS caller published the state; false when it adopted one. */
   readonly claimed: boolean;
@@ -479,6 +690,42 @@ export const withProbedFingerprint = (
   };
 };
 
+/**
+ * Remembers a resolved worktree root → repoId for the session (trial finding
+ * #17), so the per-tool capture path never resolves the same root's identity
+ * twice. Dedup by root (a cache, not a log — a re-resolution replaces the old
+ * answer) and FIFO-capped at MAX_KNOWN_WORKTREE_ROOTS, the withSeenTargets
+ * shape. A foreign root is remembered under its own repoId, so a repeated
+ * foreign touch is free after the first. An UNRESOLVABLE root is remembered
+ * as null WITH the attempts spent on it, which is what lets the resolver
+ * retry it a bounded number of times instead of treating one missed git
+ * deadline as a permanent verdict.
+ */
+export const withKnownWorktreeRoot = (
+  state: SessionState,
+  root: string,
+  repoId: string | null,
+  attempts = 1,
+  /**
+   * The checkout this answer was read from (capture/touched-root.ts). Null
+   * means "unknowable here", which is what an unstamped entry from an older
+   * state file and a root whose `.git` could not be stat'd both look like.
+   */
+  stamp: string | null = null,
+): SessionState => {
+  const withoutRoot = state.knownWorktreeRoots.filter(
+    (entry) => entry.root !== root,
+  );
+  const merged = [...withoutRoot, { root, repoId, attempts, stamp }];
+  return {
+    ...state,
+    knownWorktreeRoots:
+      merged.length <= MAX_KNOWN_WORKTREE_ROOTS
+        ? merged
+        : merged.slice(merged.length - MAX_KNOWN_WORKTREE_ROOTS),
+  };
+};
+
 /** FIFO cap, same shape as withSeenTargets: asks are once per file. */
 export const withTripwireAsked = (
   state: SessionState,
@@ -533,34 +780,86 @@ export const withGhostNotices = (
  * constant to tune; each cost module now SUMS states it is handed, and this
  * is the only place that reads them.
  *
+ * NEWEST FIRST AND LIVE ONLY, which is the other half of "one place". The
+ * scan this replaced took `readdir` order — neither alphabetical nor
+ * chronological — sliced the first N and reduced: on the trial machine that
+ * read an arbitrary 50 of 100 files and printed `13 runs (1 NONE, 2 drafts) …
+ * across 50 live sessions` where the full set said 27/3/3, and 75 of those
+ * files belonged to sessions killed hours earlier. Sorting by mtime before the
+ * bound (state/session-scan.ts) and skipping files whose session stopped
+ * heartbeating fixes both, once, for all three cost surfaces — and the
+ * `filesSeen`/`filesRead`/`staleSkipped` counters let a line say "N of M"
+ * instead of implying it read everything.
+ *
  * Fail open like every read on a status path: an unreadable directory is an
- * empty list, and a state file that does not parse is skipped rather than
- * costing the scan.
+ * empty scan, and a state file that does not parse is counted and skipped
+ * rather than costing the scan.
  */
+export interface LiveSessionScan {
+  /** Live states of this repo+hub, newest-written first. */
+  readonly states: readonly SessionState[];
+  /** Session-state files that EXIST — the denominator of "N of M". */
+  readonly filesSeen: number;
+  /** Files this bounded scan actually opened. */
+  readonly filesRead: number;
+  /** Files skipped because their session stopped heartbeating. */
+  readonly staleSkipped: number;
+  /** Files that would not parse — counted, never silently dropped. */
+  readonly parseFailures: number;
+}
+
+const EMPTY_SCAN: LiveSessionScan = {
+  states: [],
+  filesSeen: 0,
+  filesRead: 0,
+  staleSkipped: 0,
+  parseFailures: 0,
+};
+
 export const readLiveSessionStates = async (
   home: string,
   hubUrl: string,
   repoId: string,
-): Promise<readonly SessionState[]> => {
-  let names: readonly string[];
-  try {
-    names = await readdir(join(home, "sessions"));
-  } catch {
-    return [];
+  now: Date = new Date(),
+): Promise<LiveSessionScan> => {
+  const listing = await listSessionStateFiles(home, STATUS_MAX_SESSION_STATES);
+  if (listing.filesSeen === 0) {
+    return EMPTY_SCAN;
   }
   const parsed = await Promise.all(
-    names
-      .filter((name) => name.endsWith(".json"))
-      .slice(0, STATUS_MAX_SESSION_STATES)
-      .map(async (name) =>
-        SessionStateSchema.safeParse(
-          await readJsonOrNull(join(home, "sessions", name)),
-        ),
-      ),
+    listing.files.map(async (file) => ({
+      // The mtime travels with the parse: a session's silence is measured off
+      // its own file's last write as well as its heartbeat (session-scan.ts).
+      mtimeMs: file.mtimeMs,
+      result: SessionStateSchema.safeParse(await readJsonOrNull(file.path)),
+    })),
   );
-  return parsed
-    .flatMap((entry) => (entry.success ? [entry.data] : []))
-    .filter((state) => state.hubUrl === hubUrl && state.repoId === repoId);
+  const states: SessionState[] = [];
+  let staleSkipped = 0;
+  for (const entry of parsed) {
+    if (!entry.result.success) {
+      continue;
+    }
+    const state = entry.result.data;
+    if (state.hubUrl !== hubUrl || state.repoId !== repoId) {
+      continue;
+    }
+    const ageMs = sessionSilentForMs(state, entry.mtimeMs, now.getTime());
+    if (ageMs !== null && ageMs > STALE_SESSION_STATE_MS) {
+      // Counted, not dropped: "3 stale skipped" is the number that would
+      // have told the trial its cost lines were reading corpses.
+      staleSkipped += 1;
+      continue;
+    }
+    states.push(state);
+  }
+  return {
+    states,
+    filesSeen: listing.filesSeen,
+    filesRead: listing.files.length,
+    staleSkipped,
+    parseFailures: parsed.filter((entry) => !entry.result.success).length,
+  };
 };
 
 export interface DeriveSessionStateInput {
@@ -598,6 +897,15 @@ export const deriveSessionState = (
     briefingSolvedRefs: [],
     probedFingerprints: [],
     foreignRepoDrops: 0,
+    outsideRootDrops: 0,
+    knownWorktreeRoots: [],
+    editToolFires: 0,
+    targetsCapturedCount: 0,
+    lastTargetAt: null,
+    lastPostToolUseTool: null,
+    lastEditedPath: null,
+    lastEditedPathResolvedAgainst: null,
+    hintCandidatesSeen: 0,
     briefingPending: false,
     stopTurnCount: 0,
     summarizerFireCount: 0,
@@ -608,7 +916,13 @@ export const deriveSessionState = (
     summarizerFailCount: 0,
     summarizerLastFailure: null,
     summarizerRejectCount: 0,
+    summarizerNoSliceCount: 0,
+    summarizerLastNoSlice: null,
+    summarizerLastSliceShape: null,
+    summarizerSliceDroppedChars: 0,
     summarizerLastRejection: null,
+    summarizerUnreadableCount: 0,
+    summarizerLastUnreadable: null,
     workContextTitle: null,
     workContextStatus: null,
     intentFireCount: 0,

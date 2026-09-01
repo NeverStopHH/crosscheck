@@ -25,15 +25,18 @@ import {
   SUMMARIZER_CLAUDE_MIN_VERSION,
 } from "@crosscheck/connector-core/constants.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import { isNoneAnswer } from "./parse.ts";
+import {
+  isNoneAnswer,
+  stripModelWrapping,
+} from "@crosscheck/connector-core/model/parse.ts";
 import {
   bareSummarizerLine,
   resolveSummarizerArgv,
   resolveSummarizerTimeoutMs,
   runSummarizer,
-} from "./runner.ts";
-import type { SummarizerFailure } from "./runner.ts";
-import { ensureSummarizerCwd, summarizerWorkerEnv } from "./worker-env.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
+import type { SummarizerFailure } from "@crosscheck/connector-core/model/runner.ts";
+import { ensureSummarizerCwd, summarizerWorkerEnv } from "@crosscheck/connector-core/model/worker-env.ts";
 
 /** The binary the default argv names — what the PATH check looks for. */
 const CLAUDE_BINARY = "claude";
@@ -159,9 +162,18 @@ export const probeSummarizerRunner = async (
     !hasOverride &&
     Bun.which(CLAUDE_BINARY, { PATH: env["PATH"] ?? "" }) === null
   ) {
+    // THIS SENTENCE USED TO SAY a Cursor- or ACP-only machine could ignore
+    // it. That was true while only the Claude connector could reach a model.
+    // It is false now: the Cursor and ACP derive rungs spawn this same
+    // resolved argv, so a machine without a backend derives nothing on ANY
+    // host — and this probe is the surface most likely to be read first.
+    //
+    // What it must NOT do is read as "crosscheck is broken": the
+    // deterministic half of the product never involves a model, so the
+    // sentence says which half is affected and which is not.
     return {
       kind: "skipped",
-      why: `no ${CLAUDE_BINARY} binary on PATH (Tier-1 capture needs Claude Code; a Cursor- or ACP-only machine can ignore this)`,
+      why: `no model binary: ${CLAUDE_BINARY} is not on the PATH doctor runs with and CROSSCHECK_SUMMARIZER_CMD is unset — nothing on this machine can derive anything, on any host (docs/FOREIGN-MODELS.md); deterministic capture is unaffected`,
     };
   }
   const argv = resolveSummarizerArgv(env);
@@ -184,10 +196,25 @@ export const probeSummarizerRunner = async (
   if (line.length === 0) {
     return { kind: "empty", elapsedMs: result.elapsedMs, version };
   }
+  // QUOTE THE ANSWER, NOT ITS PACKAGING. `none` has always been decided by
+  // the tolerant parse, so a fenced or reasoned NONE already read as a NONE;
+  // the quoted line was the first PHYSICAL line of stdout, which for a model
+  // that fences every answer is the fence's language tag. A developer
+  // checking a CROSSCHECK_SUMMARIZER_CMD wrapper read `answered ... not
+  // NONE: "json"` for a perfectly good claim, and `"<think>"` for a
+  // reasoning model — both of which look like a broken model and are not.
+  //
+  // The emptiness decision above stays on the RAW stdout on purpose: its
+  // remedy says "exit 0 with empty stdout", and that sentence has to remain
+  // literally true. When stripping leaves nothing (an unclosed scratchpad,
+  // which is what the byte bound leaves of a run-on model) the raw line is
+  // shown instead, so the reader always sees what the binary actually put on
+  // the pipe rather than an empty quotation.
+  const answer = stripModelWrapping(result.stdout);
   return {
     kind: "answered",
     none: isNoneAnswer(result.stdout),
-    firstLine: bareSummarizerLine(result.stdout),
+    firstLine: bareSummarizerLine(answer.length === 0 ? result.stdout : answer),
     elapsedMs: result.elapsedMs,
     version,
   };

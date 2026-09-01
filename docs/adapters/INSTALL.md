@@ -10,6 +10,93 @@ behind it:
 | Cursor IDE | `connector-cursor` | `crosscheck init --global --cursor` (`~/.cursor/hooks.json` + `~/.cursor/mcp.json`, local sessions) or `crosscheck init --cursor` (repo-committed `.cursor/hooks.json` + `.cursor/mcp.json`) |
 | Any ACP client × any ACP agent (Zed, JetBrains, Neovim, Emacs × Gemini CLI, cursor-agent, Goose, …) | `connector-acp` | wrap the agent command: `crosscheck acp -- <agent cmd…>` (per-user editor config) |
 
+## Per-connector parity — what each host actually supports
+
+Capture is only worth what the *weakest* host does, so this table is the
+promise, per connector, and it is kept honest by tests rather than by intent:
+`packages/connector-{claude,cursor,acp}/test/worktree-capture.test.ts` pin rows
+1-4 per host in that host's session state, and
+`packages/cli/test/connector-capture-health.test.ts` pins how row 4 READS on
+`crosscheck status` / `doctor` for both non-Claude hosts, in a PASS **and** in a
+WARN state (row 5 is a limitation, not a behaviour: it is pinned on Claude by
+`connector-claude/test/tripwire-hook.test.ts` and documented, with its vendor
+source, in the two module headers named below). And
+`packages/connector-core/src/capture/touched-root.ts` carries a `verify-claims`
+directive that names the connectors going through the shared resolution — a
+fourth one that forgets it fails CI rather than losing edits quietly.
+
+| | Claude Code | Cursor IDE | ACP agents (Zed, JetBrains, Neovim, Emacs × Gemini CLI, cursor-agent, Goose, …) |
+|---|---|---|---|
+| **Capture** — what a target comes from | `PostToolUse` for `Edit`/`Write`/`MultiEdit`/`NotebookEdit` | `afterFileEdit`, the single capture row on this host | `session/update` `tool_call` locations and diff paths, plus the `fs/write_text_file` request |
+| **Worktree resolution** — an edit in a linked worktree of the same repo | yes | yes | yes |
+| **Drop counters** — a touch that could not be captured | `foreign-repo` and `outside-root`, split and counted | same | same |
+| **Capture health** in `crosscheck status` / `doctor` | `N edit-tool fires → M targets`, last tool, last edited path + the root it resolved against, WARN at 3 fires with 0 targets on a session still being heard from | same, with the event name `afterFileEdit` as the tool | same, with the ACP tool-call `kind` (or `fs/write_text_file`) as the tool. One edit an agent signals BOTH ways reads `2 fires → 1 target`: both are honest edit signals, dropping either would leave some real agent permanently at `0 → 0` and unable to WARN, and the doubling can never cause a FALSE warn because the first signal captures the target (pinned in `connector-acp/test/worktree-capture.test.ts`) |
+| **Before-edit tripwire** — telling the model about an overlap *before* it edits | yes — `PreToolUse`, `permissionDecision: "ask"` plus the facts as `additionalContext` | **not possible on this host today** | **not possible on this host today** |
+
+The last row is a limitation we document rather than a gap we forgot, and each
+of those two connectors' module headers carries the same sentences with its
+source and fetch date (`connector-cursor/src/handlers/file-edit.ts`,
+`connector-acp/src/capture/engine.ts`):
+
+- **Cursor** — there is no `beforeFileEdit`/`beforeWrite` event
+  (cursor.com/docs/hooks, read 2026-08-26). `preToolUse` does fire before a
+  `Write`, but its outputs are `permission: "allow" | "deny"`, two messages the
+  docs describe as shown *"when the action is denied"*, and `updated_input` —
+  *"Modified tool input to use instead"*, which rewrites the edit rather than
+  briefing the model, so it is past the same ceiling as a deny; of `"ask"` the
+  same page says, verbatim, that it *"is accepted by the schema but not enforced
+  for `preToolUse` today"*, and the event has no `additional_context`. So the only
+  way to put words in front of the model before an edit is to **block** it —
+  past the ceiling this ladder is built to respect. It is not wired.
+  And it is not a docs caution that might quietly start working: on
+  `beforeShellExecution`, an event whose documented output *does* include
+  `"ask"`, users report it being ignored in the field — the command runs in
+  the same turn (forum.cursor.com/t/beforeshellexecution-returns-permission-ask-but-sandboxed-agent-shell-still-runs-the-command-sandbox-true/155438
+  and .../beforeshellexecution-hook-permissions-allow-ask-ignored-allow-list-takes-precedence/144244,
+  both read 2026-08-26).
+- **ACP** — the before-edit signals genuinely are on the wire
+  (`session/request_permission` carries the whole `ToolCallUpdate` with its
+  `locations`; a `tool_call` may arrive with `status: "pending"`,
+  agentclientprotocol.com/protocol/schema, read 2026-08-26). None is usable
+  without breaking the proxy's prime directive: the pump **forwards first and
+  observes a copy**, the agent→client direction has no line-decision seam at
+  all, the only client→agent message that follows a permission request is the
+  human's own answer, and `_meta` is explicitly not a channel a client may be
+  assumed to surface. Giving that direction a seam means parsing and re-emitting
+  agent bytes on the forward path — exactly what
+  `packages/connector-acp/test/transparency.test.ts` exists to forbid.
+
+Both hosts *can* be told about an overlap **one beat late** — Cursor through
+`postToolUse` `additional_context`, ACP through the existing `session/prompt`
+injection point and the crosscheck MCP server the launcher already advertises.
+That is a notice after the edit, not a tripwire before it, and it is deliberately
+not shipped under the tripwire's name.
+
+Measured cost of the new resolution, as the RANGE over five runs on one
+machine (macOS arm64, Bun 1.3.13, warm APFS). Ranges rather than single figures
+because that is what the commands actually print: the top of each is the first
+run after a cold process, and every one of them is a fraction of its budget.
+Reproduce with the commands; do not read the numbers as constants.
+
+| Host | cold (first touch of a new worktree root) | warm (same root again) | budget · command |
+|---|---|---|---|
+| Claude Code | 94-302 ms (`PostToolUse`) · 91-132 ms (`PreToolUse`) | 42-109 ms · 40-60 ms | 1600 / 800 ms · `bun test packages/connector-claude/test/capture-latency.test.ts` |
+| Cursor | 92-116 ms | 41-50 ms | 1600 ms · `bun test packages/connector-cursor/test/capture-latency.test.ts` |
+| ACP | 61-69 ms | 6 ms | off the forward path — 200 worktree tool calls flooded through the real pump with the real engine attached forwarded byte-identically in 183-363 ms and dropped 0 capture lines · `bun test packages/connector-acp/test/capture-latency.test.ts` |
+
+Inside CI's container (`oven/bun:1`, Bun 1.4.0) the same three commands print
+6-8 / 5-7 ms and 6-7 / 3 ms for Claude, 7-8 / 4 ms for Cursor, and 9-11 / 6-9 ms
+for ACP with the 200-call flood in 207-231 ms, 0 dropped — an order of magnitude
+under the same budgets. That lane needs `apt-get install -y git` first: the
+image ships without it, and these suites shell out to `git worktree add`.
+
+The cache is what those warm numbers are: one `resolveRepoIdentity` per NEW
+worktree root per session, never per edit, remembered in session state
+(`knownWorktreeRoots`) across re-registrations. An unresolvable root is an
+UNKNOWN rather than an answer and is retried a bounded number of times before it
+stands, so one missed `git` deadline cannot exile a healthy worktree for the
+session's life.
+
 Everything below assumes a reachable hub and a login:
 
 ```sh
@@ -22,8 +109,11 @@ crosscheck login https://hub.example.com   # key read from stdin
 
 `crosscheck doctor` is the answer to "is it working" on every host: it checks
 launcher health, hook registration (Claude + Cursor sections), hub liveness,
-spool depth, contract drift, injection counts — and the user-level install
-state (present, absent, double-wired).
+spool depth, contract drift, injection counts, the user-level install state
+(present, absent, double-wired) — and, per connector, one line for each thing
+crosscheck can INFER on that host and one for each thing it deliberately
+cannot. The ACP section is quiet until the proxy has actually run on this
+machine, because there is nothing to install and so nothing true to say.
 
 ## The user-level ("global") install — once per machine
 
@@ -98,20 +188,32 @@ Two operational notes:
   path); briefing and presence are missing until then. `crosscheck doctor`
   in the parent folder names whichever of the two states you are in.
 
-### The Tier-1 draft summarizer (Claude Code only) — what it needs
+### The Tier-1 draft summarizer — what it needs
 
-The Stop hook's summarizer is a nested `claude -p` on a Haiku-class model,
-run by a detached worker on the developer's own Claude auth. After trial
+Claude Code and Cursor both run it now (Cursor since 2026-08-28: its `stop`
+hook is the trigger and its own `transcript_path` is the slice), and both go
+through the same detached worker, so everything below applies to either host.
+
+The summarizer is a nested `claude -p` on a Haiku-class model, run by a
+detached worker on the developer's own Claude auth. After trial
 finding #14 (a whole trial in which it never answered) these are the facts
 to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
 …)`:
 
+- **Cursor: "no slice" is not a failure.** If `crosscheck doctor` shows
+  `summarizer transcript (cursor)` saying *this Cursor build provides no
+  transcript*, nothing on this machine is broken: the build sent
+  `transcript_path: null` (documented as "null if transcripts disabled") and
+  no model ran. Tier-0 capture, hints and the briefing are unaffected. The
+  same line counts turns where the transcript was there but its tail could
+  not be decoded — that one IS worth reporting, because it means Cursor's
+  transcript format moved.
 - **Login environment.** The worker inherits the hook's whole environment
   minus the parent session's own markers (`CLAUDECODE`, `CLAUDE_PID`, the
   `CLAUDE_CODE_SESSION_*`/child-session/messaging/task-list/SSE-port/
   remote/bridge/resume names, plugin and project-dir variables — the list
   is `PARENT_SESSION_MARKER_PATTERN` in
-  `packages/connector-claude/src/summarizer/worker-env.ts`); the nested
+  `packages/connector-core/src/model/worker-env.ts`); the nested
   `claude` additionally never sees `CROSSCHECK_API_KEY`. `USER` must be in it (the macOS
   keychain lookup keys on it — `Not logged in · Please run /login` is what
   its absence looks like); API-key (`ANTHROPIC_API_KEY`), Bedrock/Vertex
@@ -158,9 +260,12 @@ to check when `crosscheck status` shows `N runs (0 NONE, 0 drafts, N failed
   (fires / NONE / set / failed) and `doctor` has an `intent capture` check
   that WARNs on any booked failure or on two fires that landed nothing.
   The `set_intent` MCP tool states the intent outright (declared,
-  confidence 1) and replaces a derived one. Cursor and ACP sessions have no
-  derived intent — no `claude -p` there — but `set_intent` works for any
-  MCP-connected agent.
+  confidence 1) and replaces a derived one. Cursor and ACP sessions derive an
+  intent too since the model runner moved into `connector-core`: Cursor on
+  `beforeSubmitPrompt`, ACP on the `session/prompt` request. Both need a
+  model backend on the machine — `doctor` prints a `derive backend` line per
+  connector saying whether one resolved — and `set_intent` works for any
+  MCP-connected agent either way.
 
 ## Cursor IDE (≥ 1.7)
 
@@ -227,9 +332,20 @@ command in a terminal first; the proxy's pre-spawn refusals are loud
 In a crosscheck-connected repo the wrapped session reports presence, touched
 files and failure fingerprints, gets the team briefing appended to its first
 ready prompt, and gets crosscheck's MCP tools appended to its session setup.
-Everywhere else the wrapper is a pure byte pipe — that is the prime
-directive, and it is enforced structurally
+Since 2026-08-28 it also DERIVES: the first substantive prompt becomes a
+session intent, a ghost debt is paid on the next prompt, and each turn ends
+with the same Tier-1 gate Claude Code runs — all of it off a parsed copy of
+the wire, none of it on the forward path. Everywhere else the wrapper is a
+pure byte pipe — that is the prime directive, and it is enforced structurally
 ([`packages/connector-acp/README.md`](../../packages/connector-acp/README.md)).
+
+**ACP: a prose-only agent captures less, and says so.** The Tier-1 slice is
+whatever the wire carried, so an agent that runs its tools outside ACP's
+`terminal/*` methods gives the gate prose with no executed shape beside it.
+That is a documented reduction, not a fault. To see it for your own agent:
+`crosscheck acp --record /tmp/wire.ndjson -- <agent cmd…>`, work for a while,
+then `crosscheck acp-report /tmp/wire.ndjson` and read the
+`tier-1 slice sources` section.
 
 ## JetBrains IDEs (AI Assistant)
 

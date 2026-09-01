@@ -48,6 +48,20 @@ export interface CaptureFileTargetsInput {
    */
   readonly source?: TargetSource;
   readonly now: Date;
+  /**
+   * Per-path root override (trial finding #17): resolves the root a touched
+   * file's repo-relative id is derived against — a linked worktree of the same
+   * repo instead of the session's checkout — or null to DROP the path (a
+   * foreign or outside-root touch the caller has already counted). Omitting it
+   * keeps the pre-#17 single-root behaviour: every path resolves against
+   * `repoRoot`. NO CONNECTOR OMITS IT ANY MORE — `flows/capture-touched-files.ts`
+   * is the one place that builds this call, and it precomputes the map once per
+   * event (capture/touched-root.ts) so the git cost is paid at most once per NEW
+   * worktree root per session, never per tool call. The option survives because
+   * it is the seam the unit tests drive, and because an ABSENT hook and one
+   * returning null must stay different answers.
+   */
+  readonly resolveRoot?: (path: string) => string | null;
 }
 
 /**
@@ -64,7 +78,18 @@ export const captureFileTargets = async (
     if (collected.length >= MAX_TARGETS_PER_INVOCATION) {
       break;
     }
-    const relativePath = await toRepoRelative(input.repoRoot, input.cwd, path);
+    // The root the file's id is derived against: the caller's per-path
+    // override (#17: the file's own worktree) when present, else the session
+    // checkout. A null override means the caller already dropped and counted
+    // this path (foreign or outside-root), so it is skipped here.
+    const root =
+      input.resolveRoot === undefined
+        ? input.repoRoot
+        : input.resolveRoot(path);
+    if (root === null) {
+      continue;
+    }
+    const relativePath = await toRepoRelative(root, input.cwd, path);
     if (relativePath === null || isDenied(relativePath, patterns)) {
       continue;
     }

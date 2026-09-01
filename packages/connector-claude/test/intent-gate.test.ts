@@ -17,7 +17,7 @@ import {
   withIntentFire,
   withIntentNone,
   withIntentSet,
-} from "../src/intent/gate.ts";
+} from "@crosscheck/connector-core/derive/intent/gate.ts";
 
 const baseState = (): SessionState =>
   deriveSessionState({

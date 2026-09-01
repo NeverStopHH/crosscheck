@@ -47,6 +47,23 @@ export interface HubRequest<T> {
   readonly path: string;
   readonly schema: z.ZodType<T>;
   readonly body?: unknown;
+  /**
+   * Set on the four calls the CAPTURE path makes — register, heartbeat,
+   * records, end (http/hub.ts marks them and nothing else). Only those stamp
+   * `lastCaptureOkAt`, which is what stops "last capture sync" being a report
+   * of the reader's own request: doctor's reachability probe and the
+   * statusline's presence poll are reads, so they leave the capture stamp
+   * exactly where the last hook left it.
+   *
+   * A PREDICATE rather than a flag where the transport succeeding is not the
+   * same as the capture succeeding. `POST /api/records` answers HTTP 200 with
+   * `accepted:0, rejected:N` when the hub refuses the producer session, which
+   * `parseEnvelope` reports as `ok` — so `true` here stamped the capture clock
+   * on a call that captured nothing, and three surfaces then agreed the path
+   * was healthy while none of it landed (review finding B2-07). The predicate
+   * reads the OUTCOME instead.
+   */
+  readonly capture?: boolean | ((data: T) => boolean);
 }
 
 const failure = <T>(
@@ -97,9 +114,16 @@ const parseEnvelope = <T>(
   };
 };
 
-const recordSync = async (
+/** Did this ok result actually CAPTURE something (HubRequest.capture)? */
+const isCaptureOk = <T>(request: HubRequest<T>, data: T): boolean => {
+  const { capture } = request;
+  return typeof capture === "function" ? capture(data) : capture === true;
+};
+
+const recordSync = async <T>(
   ctx: HubContext,
-  result: HubResult<unknown>,
+  request: HubRequest<T>,
+  result: HubResult<T>,
 ): Promise<void> => {
   if (ctx.repoKey.length === 0) {
     return;
@@ -108,8 +132,19 @@ const recordSync = async (
   await updateSyncState(ctx.home, ctx.repoKey, {
     lastSyncAt: nowIso,
     ...(result.ok
-      ? { lastOkAt: nowIso, lastError: null }
-      : { lastError: `${result.code}: ${result.message}` }),
+      ? {
+          lastOkAt: nowIso,
+          lastError: null,
+          lastErrorStatus: null,
+          // ONLY the capture calls move this one (HubRequest.capture): a read
+          // that re-stamped it would make every reader's own request the
+          // freshest "capture", which is the tautology H5 names.
+          ...(isCaptureOk(request, result.data) ? { lastCaptureOkAt: nowIso } : {}),
+        }
+      : {
+          lastError: `${result.code}: ${result.message}`,
+          lastErrorStatus: result.status,
+        }),
   });
 };
 
@@ -123,7 +158,7 @@ export const hubRequest = async <T>(
 ): Promise<HubResult<T>> => {
   const result = await performRequest(ctx, request);
   try {
-    await recordSync(ctx, result);
+    await recordSync(ctx, request, result);
   } catch {
     // A read-only home must not break the hook.
   }

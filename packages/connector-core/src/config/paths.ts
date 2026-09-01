@@ -81,7 +81,7 @@ export const sessionStatePathForSlug = (home: string, slug: string): string =>
 
 /**
  * Where the UserPromptSubmit hook parks the FIRST substantive prompt for the
- * detached derived-intent worker (connector-claude intent/worker.ts) — a 0600
+ * detached derived-intent worker (core derive/intent/worker.ts) — a 0600
  * file beside the session state, never argv (visible in `ps`) and never
  * stdin (the hook exits before a detached child could read it). The worker
  * unlinks it in `finally`; `endSessionFlow` removes a leftover best-effort.
@@ -229,6 +229,10 @@ export const conferenceDir = (home: string, key: string): string =>
  * (cli/conference.ts freeReportPath). It was the MINUTE, which meant a
  * scheduler retrying after a transient hub error silently replaced the page it
  * had just written while printing both paths as if both existed.
+ *
+ * Past that caller's bound of suffixes there is no free name left, and the run
+ * REFUSES to write rather than take one back — the never-reaped guarantee
+ * above holds all the way to the edge of the second, or it is not a guarantee.
  */
 export const conferenceReportPath = (
   home: string,
@@ -243,6 +247,27 @@ export const conferenceCostPath = (home: string, key: string): string =>
 /** Its lock: two conferences at once must not lose a count between them. */
 export const conferenceCostLockPath = (home: string, key: string): string =>
   `${conferenceCostPath(home, key)}.lock`;
+/**
+ * Per-repo record of which HOOK EVENTS have actually fired, and when
+ * (state/fired-markers.ts). Trial finding M2: every hook check in `doctor`
+ * was textual — it read the settings file and reported what it SAID, so a
+ * PATH that no longer resolves, a `CROSSCHECK_DISABLED`, or an agent started
+ * before the wiring all read PASS. Nothing on this machine recorded a hook
+ * having run. The `-hooks` suffix cannot collide with `syncStatePath` — repo
+ * keys are bare hex.
+ */
+export const hooksFiredPath = (home: string, key: string): string =>
+  join(home, "state", `${key}-hooks.json`);
+
+/**
+ * Per-repo record of the last time the STATUSLINE actually rendered (trial
+ * finding H7). `statusline registered` is a textual check too, and the
+ * statusline is a terminal-TUI feature: in headless and VS Code–extension
+ * sessions Claude Code never calls it, so "registered" and "rendered" are
+ * different facts and only one of them was ever printed.
+ */
+export const statuslineFiredPath = (home: string, key: string): string =>
+  join(home, "state", `${key}-statusline.json`);
 
 export const ensureDir = async (path: string): Promise<void> => {
   await mkdir(path, { recursive: true, mode: HOME_DIR_MODE });

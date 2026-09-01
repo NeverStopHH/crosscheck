@@ -267,6 +267,9 @@ export const ingestTarget = async (
       kind: body.kind,
       value: body.value,
       source,
+      // First-seen age for the targets-only pointer (#19). onConflictDoNothing
+      // below means a duplicate touch never bumps it — the honest age.
+      createdAt: deps.now(),
     })
     .onConflictDoNothing()
     .returning({ workContextId: workContextTargets.workContextId });

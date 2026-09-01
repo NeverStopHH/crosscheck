@@ -20,7 +20,8 @@
  * by probing ids, and a question body is another developer's text.
  */
 import { z } from "zod";
-import { ClaimKindSchema, MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+import { ClaimKindSchema } from "@crosscheck/schema";
+import { CLAIM_ECHO_MAX_CHARS } from "../../constants.ts";
 
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
@@ -162,7 +163,7 @@ export const run = async (
   // BODY class, for the reason spelled out in ask-teammate.ts: the echo must
   // show the author the shape the note beside it promises, which is also the
   // shape the asker receives (hints/render.ts renderAnswerHint).
-  const framed = quotedBody(parsed.value.body, MAX_CLAIM_BODY_LENGTH);
+  const framed = quotedBody(parsed.value.body, CLAIM_ECHO_MAX_CHARS);
   if (posted.data.duplicate) {
     return toolText(
       quotingText(

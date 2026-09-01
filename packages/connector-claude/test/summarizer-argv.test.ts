@@ -21,7 +21,7 @@ import {
   SUMMARIZER_PROMPT,
   resolveSummarizerArgv,
   resolveSummarizerTimeoutMs,
-} from "../src/summarizer/runner.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
 
 const LEAN_FLAGS = [
   "--setting-sources",

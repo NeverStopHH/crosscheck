@@ -18,13 +18,55 @@
  *     flood against a slow hub drops CAPTURE lines, counted, and touches
  *     forwarding not at all.
  *
- * PRIVACY: prompt text is never parsed (wire/v1.ts models only sessionId on
- * the prompt path), so it cannot reach the spool, the state files, or the
- * log. Same for diff texts, fs write content and terminal command text.
- * Local logging carries ids, slugs and counts — paths and content never.
+ * THE DERIVE RUNGS RIDE THIS SAME COPY. Three triggers hang off the §2.4
+ * dispatch — an intent fire and a ghost-debt payment on the session/prompt
+ * REQUEST, the Tier-1 gate on its RESPONSE (the `turns` tick this file's own
+ * comment already called "the future Tier-1 gate's tick"). They are here
+ * rather than in the injector on purpose: the injector is the only thing
+ * that writes to the wire, and no derive capability may ever need it to.
+ * Everything below works with `--no-inject`, and none of it can touch a
+ * forwarded byte (derive/triggers.ts states the whole rule).
+ *
+ * PRIVACY, AND THE TWO TEXTS THIS FILE NOW HANDLES. Diff texts, fs write
+ * content and terminal COMMAND text are still parsed by nothing, so they
+ * cannot reach anything. Two texts now are, and each has exactly one
+ * destination:
+ *
+ *   - the PROMPT reaches one 0600 file the intent worker removes as its
+ *     first act, and nothing else — never the spool, a state file, a record
+ *     or a log line;
+ *   - the TURN SLICE (derive/slice.ts) lives in memory, byte-capped, and
+ *     leaves only down a spawned worker's stdin — it touches no disk at all
+ *     on this host.
+ *
+ * Both are pinned: the prompt by capture-engine.test.ts's prompt-privacy
+ * case, NARROWED to the statement above rather than deleted (it used to say
+ * "no persisted byte", which the intent file makes false in one bounded
+ * way), and both by derive.test.ts's two privacy cases. Local logging still
+ * carries ids, slugs and counts — paths and content never.
+ * CAPTURE-ONLY: NO BEFORE-EDIT TRIPWIRE IS POSSIBLE ON THIS HOST TODAY, and
+ * that is a limitation this file documents rather than a gap it forgot. The
+ * signals genuinely exist on the wire — `session/request_permission` carries
+ * the whole `ToolCallUpdate` with its `locations`, and a `tool_call` may
+ * arrive with `status: "pending"` (agentclientprotocol.com/protocol/schema,
+ * read 2026-08-26). None of them is usable without breaking prime directive
+ * 1: the pump forwards first and hands this engine a COPY, so by the time a
+ * pending edit is seen the client already has it; the agent->client direction
+ * is a pure byte pump with no line-decision seam at all (injection exists
+ * only on c2a); the only client->agent message following a permission request
+ * is the human's own answer, which may never be forged; and `_meta` is
+ * explicitly not a channel a client may be assumed to surface. Giving a2c a
+ * seam means parsing and re-emitting agent bytes on the forward path —
+ * exactly what test/transparency.test.ts exists to forbid. An overlap can
+ * still be mentioned ONE BEAT LATE through the existing `session/prompt`
+ * injection point; that is a notice after the edit, not a tripwire, and the
+ * README / docs/adapters/INSTALL.md parity tables say so in those words.
  */
 import {
   FINGERPRINT_SOURCE_CHARS,
+  HTTP_NOT_FOUND,
+  MAX_FIRED_TOOL_CALLS,
+  MAX_KNOWN_WORKTREE_ROOTS,
   MAX_SEEN_TARGETS,
 } from "@crosscheck/connector-core/constants.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
@@ -34,10 +76,9 @@ import { isDisabled, loadReportableConfig } from "@crosscheck/connector-core/con
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
-import {
-  captureFailure,
-  captureFileTargets,
-} from "@crosscheck/connector-core/flows/capture-targets.ts";
+import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
+import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
+import type { KnownWorktreeRoot } from "@crosscheck/connector-core/capture/touched-root.ts";
 import {
   assembleBriefing,
   recordBriefingDeliveries,
@@ -57,11 +98,19 @@ import {
   acpAgentKind,
   acpHostSessionKey,
 } from "@crosscheck/connector-core/state/host-session-key.ts";
+import { withCaptureBookkeeping } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
 import {
   updateSessionState,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
 
+import {
+  maybeSpawnAcpGhostWorker,
+  maybeSpawnAcpIntentWorker,
+  runAcpSummarizerGate,
+} from "../derive/triggers.ts";
+import type { AcpDeriveContext } from "../derive/triggers.ts";
+import { createTurnSliceStore } from "../derive/slice.ts";
 import {
   ACP_CAPTURE_EXIT_BUDGET_MS,
   ACP_CAPTURE_FLUSH_BUDGET_MS,
@@ -84,6 +133,7 @@ import {
   parseSessionLoadParams,
   parseSessionNewParams,
   parseSessionNewResult,
+  parseSessionPromptParams,
   parseSessionPromptResult,
   parseSessionUpdateParams,
   parseTerminalCreateResult,
@@ -160,8 +210,20 @@ export interface AcpCaptureCounters {
   readonly targets: number;
   readonly fingerprints: number;
   readonly heartbeats: number;
-  /** session/prompt responses seen — the future Tier-1 gate's tick. */
+  /** session/prompt responses seen — the Tier-1 gate's tick. */
   readonly turns: number;
+  /** Derived-intent fires booked by this proxy (once per session at most). */
+  readonly intentFires: number;
+  /** Ghost debts claimed and handed to a worker. */
+  readonly ghostPayments: number;
+  /** Tier-1 fires booked at a turn boundary. */
+  readonly summarizerFires: number;
+  /**
+   * Slice characters the byte cap refused. NOT decorative: the gate reads
+   * the slice it was given, so a turn whose conclusion arrived past the cap
+   * is a miss, and this is what makes that explainable rather than silent.
+   */
+  readonly sliceDropped: number;
 }
 
 export interface AcpCapture {
@@ -206,6 +268,26 @@ interface CaptureSession {
   developerId: string | null;
   lastHeartbeatAt: string | null;
   readonly seenTargets: Set<string>;
+  /**
+   * The #17 per-session worktree-root cache, in memory beside `seenTargets`
+   * and for the same reason: the engine deliberately never reads its state
+   * file back. Newly resolved roots are ALSO persisted through the one
+   * `updateSessionState` below, so `crosscheck doctor` can see them and a
+   * Claude or Cursor hook on the same home is not affected — but a resumed
+   * session (`session/load`) starts this twin empty and pays git once more
+   * per root. That is the stated trade, not an oversight.
+   */
+  knownWorktreeRoots: readonly KnownWorktreeRoot[];
+  /**
+   * Tool CALL ids whose edit-tool fire is already booked. The fire belongs to
+   * the call, not to the row that happened to reveal its kind: `kind` is
+   * optional on the announce row, so an agent that says
+   * `tool_call {status: "pending"}` and only then reveals `kind: "edit"` used
+   * to book no fire at all — every one of its edits dropped, counted, and the
+   * doctor WARN unreachable for the session's whole life. FIFO-capped
+   * (MAX_FIRED_TOOL_CALLS) beside `seenTargets`.
+   */
+  readonly firedToolCalls: Set<string>;
   turns: number;
   ended: boolean;
   /** Null when injection is off for this proxy or the session is disabled. */
@@ -218,6 +300,8 @@ interface TrackedTerminal {
   tail: string;
   /** One fingerprint per terminal, however many exit signals arrive. */
   fired: boolean;
+  /** One slice contribution per terminal, for the same reason. */
+  sliced: boolean;
 }
 
 interface MutableCounters {
@@ -231,6 +315,10 @@ interface MutableCounters {
   fingerprints: number;
   heartbeats: number;
   turns: number;
+  intentFires: number;
+  ghostPayments: number;
+  summarizerFires: number;
+  sliceDropped: number;
 }
 
 const describeError = (error: unknown): string =>
@@ -253,6 +341,10 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     fingerprints: 0,
     heartbeats: 0,
     turns: 0,
+    intentFires: 0,
+    ghostPayments: 0,
+    summarizerFires: 0,
+    sliceDropped: 0,
   };
 
   /** Requests awaiting a response, per originating direction. */
@@ -260,6 +352,8 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
   const pendingAgent = createPendingMap(); // a2c requests → c2a responses
   const sessions = new Map<string, CaptureSession>();
   const terminals = new Map<string, TrackedTerminal>();
+  // The Tier-1 slice, per session, in memory only (derive/slice.ts).
+  const slices = createTurnSliceStore();
 
   let agentName: string | null = null;
   let negotiatedVersion: number | null = null;
@@ -300,6 +394,8 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     developerId: null,
     lastHeartbeatAt: null,
     seenTargets: new Set(),
+    knownWorktreeRoots: [],
+    firedToolCalls: new Set(),
     turns: 0,
     ended: true,
     briefing: null,
@@ -377,6 +473,8 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       developerId: registered.developerId,
       lastHeartbeatAt: at.toISOString(),
       seenTargets: new Set(),
+      knownWorktreeRoots: [],
+      firedToolCalls: new Set(),
       turns: 0,
       ended: false,
       briefing: null,
@@ -436,31 +534,132 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       : null;
   };
 
+  /**
+   * Everything a derive trigger needs, and nothing else of the engine —
+   * `PromptInjectionView`'s discipline one layer down. Null for a session
+   * with no resolved config, which is the same silent skip every other row
+   * makes: a disabled session infers nothing, exactly as it captures
+   * nothing.
+   *
+   * `config.agentKind` is the value `producerFor` already stamps on every
+   * record (`acp:<agent>`), so a derived draft and a captured target agree
+   * about which host produced them — which is the whole point of passing it
+   * rather than letting the worker default to `claude-code`.
+   */
+  const deriveContextFor = (
+    session: CaptureSession,
+  ): AcpDeriveContext | null =>
+    session.config === null
+      ? null
+      : {
+          env: options.env,
+          home: session.config.home,
+          hostSessionKey: session.hostSessionKey,
+          agentKind: session.config.agentKind,
+        };
+
+  /** Add one source's text to this session's turn slice, counting drops. */
+  const addToSlice = (session: CaptureSession, text: string): void => {
+    const slice = slices.for(session.acpSessionId);
+    const before = slice.dropped();
+    slice.add(text);
+    counters.sliceDropped += slice.dropped() - before;
+  };
+
   // ── the capture actions (§2.4 rows) ───────────────────────────────────────
 
+  /**
+   * What the observed event was, for the capture health this session owes
+   * `crosscheck status` and the doctor `capture` check.
+   */
+  interface CaptureEvent {
+    /**
+     * Whether this event is an EDIT. Two ACP rows qualify: a `tool_call` row
+     * whose kind is `edit`, and an `fs/write_text_file` request (the client
+     * performs that write, so on an agent that only ever writes this way it
+     * is the sole edit signal there is — not counting it would leave such a
+     * session permanently at `0 fires -> 0 targets`, unable to WARN). An
+     * agent that emits BOTH for one edit therefore books two fires against
+     * ONE target — a `2 fires -> 1 target` ratio that is measured rather than
+     * assumed (test/worktree-capture.test.ts drives both signals for one edit
+     * and pins it, and the parity tables say it in words). It cannot produce
+     * a false WARN, since the first of the two captures the target. What must
+     * never happen is one tool call ticking once per STATUS change, which
+     * `booksEditFire` prevents by counting on the tool CALL's own id.
+     */
+    readonly editFired: boolean;
+    /** `lastPostToolUseTool` for this host: the ToolCallUpdate kind, or the method. */
+    readonly toolLabel: string | null;
+  }
+
+  /** The in-memory root cache, dedup-by-root and FIFO-capped like seenTargets. */
+  const rememberWorktreeRoots = (
+    session: CaptureSession,
+    resolved: readonly KnownWorktreeRoot[],
+  ): void => {
+    if (resolved.length === 0) {
+      return;
+    }
+    const roots = resolved.map((entry) => entry.root);
+    const merged = [
+      ...session.knownWorktreeRoots.filter((entry) => !roots.includes(entry.root)),
+      ...resolved,
+    ];
+    session.knownWorktreeRoots =
+      merged.length <= MAX_KNOWN_WORKTREE_ROOTS
+        ? merged
+        : merged.slice(merged.length - MAX_KNOWN_WORKTREE_ROOTS);
+  };
+
+  /**
+   * The §2.4 target row, with the #17 worktree resolution and the #18/#20
+   * capture health.
+   *
+   * THE BOOKKEEPING WRITE IS NOT BEHIND THE CAPTURE. It used to be: this
+   * function returned early when `captured.length === 0`, which is EXACTLY
+   * the case the counters exist for. Booked from behind that return,
+   * `editToolFires` would always equal `targetsCapturedCount`,
+   * `isCaptureSilentlyDead` would be structurally unreachable and the doctor
+   * WARN could never fire for an ACP session — PASS-only telemetry. The write
+   * is still skipped when NOTHING happened (no fire, no drop, no capture, no
+   * newly resolved root), so a read-only tool call still costs no state write.
+   */
   const captureTargets = async (
     session: CaptureSession,
     paths: readonly string[],
+    event: CaptureEvent,
   ): Promise<void> => {
-    if (paths.length === 0 || session.hub === null || session.config === null) {
+    // `identity === null` is a DISABLED session (those never reach here), and
+    // it is guarded rather than papered over with `?? session.cwd`: the
+    // resolver needs a real repo id to tell a foreign touch from an own one.
+    if (session.hub === null || session.config === null || session.identity === null) {
       return;
     }
-    const captured = await captureFileTargets({
+    if (paths.length === 0 && !event.editFired) {
+      return;
+    }
+    const at = now();
+    // On ACP the session identity IS the session cwd's identity, so the free
+    // "cwd sits in a sibling worktree" candidate can never apply here and
+    // every out-of-checkout path takes the bounded fs walk. The per-session
+    // cache above is what keeps that once per root rather than once per edit.
+    const { captured, resolution } = await captureTouchedFiles({
       home: session.config.home,
       repoKey: session.repoKey ?? "",
       hostSessionKey: session.hostSessionKey,
-      repoRoot: session.identity?.root ?? session.cwd,
+      repoRoot: session.identity.root,
       cwd: session.cwd,
       paths,
       denylist: session.config.denylist ?? null,
       seenTargets: [...session.seenTargets],
       workContextId: session.workContextId,
       producer: producerFor(session),
-      now: now(),
+      now: at,
+      sessionRepoId: session.identity.repoId,
+      identityRoot: session.identity.root,
+      identityRepoId: session.identity.repoId,
+      knownWorktreeRoots: session.knownWorktreeRoots,
     });
-    if (captured.length === 0) {
-      return;
-    }
     for (const path of captured) {
       session.seenTargets.add(path);
     }
@@ -476,12 +675,30 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       }
       session.seenTargets.delete(oldest.value);
     }
+    rememberWorktreeRoots(session, resolution?.newlyResolved ?? []);
     counters.targets += captured.length;
-    await updateSessionState(
-      session.config.home,
-      session.hostSessionKey,
-      (fresh) => withSeenTargets(fresh, captured),
-    );
+    const booksSomething =
+      captured.length > 0 ||
+      event.editFired ||
+      (resolution !== null &&
+        (resolution.foreignDrops > 0 ||
+          resolution.outsideDrops > 0 ||
+          resolution.newlyResolved.length > 0));
+    if (booksSomething) {
+      await updateSessionState(session.config.home, session.hostSessionKey, (fresh) =>
+        withCaptureBookkeeping(withSeenTargets(fresh, captured), {
+          resolution,
+          capturedCount: captured.length,
+          editFired: event.editFired,
+          toolLabel: event.toolLabel,
+          firstPath: paths[0] ?? null,
+          now: at,
+        }),
+      );
+    }
+    if (captured.length === 0) {
+      return;
+    }
     await flushSpool(
       session.hub,
       { sessionId: session.crosscheckSessionId, developerId: session.developerId },
@@ -547,6 +764,11 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     session: CaptureSession,
     flushBudgetMs: number,
   ): Promise<void> => {
+    // Release the turn slice FIRST, and before the guard below: a session
+    // that ends disabled, or ends twice, must still not leave its text
+    // sitting in this process's memory. Nothing reads a slice after the
+    // session that produced it is over.
+    slices.forget(session.acpSessionId);
     if (!session.enabled || session.ended || session.hub === null || session.config === null) {
       return;
     }
@@ -566,15 +788,61 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     );
   };
 
+  /**
+   * ONE fire per tool CALL, never per wire row: an edit arriving pending,
+   * then in_progress, then completed is one edit, and agents repeat the whole
+   * update — `kind` included — on every status change.
+   *
+   * The identity is `toolCallId`, not "is this the announce row". `kind` is
+   * OPTIONAL on the announce (wire/v1.ts, and the ACP schema's own `"other"`
+   * default), so an agent that announces `tool_call {status: "pending"}` and
+   * reveals `kind: "edit"` on the revision booked ZERO fires under the
+   * row-based rule while its drops were counted — `0 edit-tool fires ->
+   * 0 targets`, a PASS, for a session losing every edit. A row with NO id at
+   * all is not conformant but must still answer, and falls back to the
+   * announce-row rule.
+   */
+  const booksEditFire = (
+    session: CaptureSession,
+    toolCall: ToolCallUpdate,
+  ): boolean => {
+    if (toolCall.toolKind !== EDIT_TOOL_KIND) {
+      return false;
+    }
+    const id = toolCall.toolCallId;
+    if (id === null) {
+      return toolCall.isNewToolCall;
+    }
+    if (session.firedToolCalls.has(id)) {
+      return false;
+    }
+    session.firedToolCalls.add(id);
+    while (session.firedToolCalls.size > MAX_FIRED_TOOL_CALLS) {
+      const oldest = session.firedToolCalls.values().next();
+      if (oldest.done) {
+        break;
+      }
+      session.firedToolCalls.delete(oldest.value);
+    }
+    return true;
+  };
+
   const handleToolCall = async (
     session: CaptureSession,
     toolCall: ToolCallUpdate,
   ): Promise<void> => {
-    await captureTargets(session, toolCall.paths);
+    await captureTargets(session, toolCall.paths, {
+      editFired: booksEditFire(session, toolCall),
+      toolLabel: toolCall.toolKind,
+    });
     if (toolCall.status === FAILED_STATUS) {
       // The §2.4 failure row: string fields joined, tail-sliced — the
       // IDENTICAL extractor + normalizer as the Claude hook path.
-      await captureFailureText(session, extractFailureText(toolCall.rawOutput));
+      const failureText = extractFailureText(toolCall.rawOutput);
+      await captureFailureText(session, failureText);
+      // Slice source 2. The SAME extracted text the fingerprint uses, so a
+      // slice and a fingerprint can never disagree about what failed.
+      addToSlice(session, failureText);
     }
     if (toolCall.toolKind === EDIT_TOOL_KIND) {
       // Same heuristic as the Claude connector's edit-tool heartbeat.
@@ -601,6 +869,33 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     await captureFailureText(session, terminal.tail);
   };
 
+  /**
+   * Slice source 3: what actually ran. Harvested ONCE per terminal, the
+   * moment an exit code exists — whatever that code is, because a green
+   * suite is half of the gate's red→green flip and a failure-only harvest
+   * would make that conclusion structurally unreachable here. The tail is
+   * already bounded to FINGERPRINT_SOURCE_CHARS, and the terminal's COMMAND
+   * text is not parsed at all, so what lands in the slice is output only.
+   */
+  const harvestTerminalOutput = (
+    terminalId: string,
+    exitCode: number | null,
+  ): void => {
+    if (exitCode === null) {
+      return;
+    }
+    const terminal = terminals.get(terminalId);
+    if (terminal === undefined || terminal.sliced) {
+      return;
+    }
+    terminal.sliced = true;
+    const session = liveSession(terminal.acpSessionId);
+    if (session === null || terminal.tail.length === 0) {
+      return;
+    }
+    addToSlice(session, terminal.tail);
+  };
+
   const trackTerminal = (terminalId: string, acpSessionId: string): void => {
     if (terminals.size >= ACP_MAX_TRACKED_TERMINALS) {
       const oldest = terminals.keys().next();
@@ -608,7 +903,12 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         terminals.delete(oldest.value);
       }
     }
-    terminals.set(terminalId, { acpSessionId, tail: "", fired: false });
+    terminals.set(terminalId, {
+      acpSessionId,
+      tail: "",
+      fired: false,
+      sliced: false,
+    });
   };
 
   // ── dispatch: one parsed line through the mapping ─────────────────────────
@@ -640,12 +940,34 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         return;
       }
       if (message.method === WIRE_METHODS.sessionPrompt) {
-        // Heartbeat only. The prompt CONTENT is never parsed — Block 5 uses
-        // it as an ephemeral hint query; Block 4 has no use for it at all.
-        const params = parseSessionIdParams(message.params);
+        // THE TURN STARTS HERE: the heartbeat this row always sent, then the
+        // two prompt-time rungs. The prompt's TEXT is decoded now — the one
+        // thing this file did not do before — and wire/v1.ts's header states
+        // where it may go: one 0600 file the intent worker removes as its
+        // first act, and nowhere else. It is not logged, not spooled, not
+        // written to state, and not read again by anything here.
+        const params = parseSessionPromptParams(message.params);
         const session = params === null ? null : liveSession(params.sessionId);
-        if (session !== null) {
-          await heartbeat(session, undefined);
+        if (params === null || session === null) {
+          return;
+        }
+        await heartbeat(session, undefined);
+        // A new turn: last turn's text is not this turn's evidence. Resetting
+        // on the REQUEST rather than after the gate is what keeps the slice a
+        // TURN when a turn is cancelled and its response never arrives.
+        slices.reset(session.acpSessionId);
+        const ctx = deriveContextFor(session);
+        if (ctx === null) {
+          return;
+        }
+        if (await maybeSpawnAcpIntentWorker(ctx, params.text)) {
+          counters.intentFires += 1;
+        }
+        // ACP gives this proxy a guaranteed next-prompt event, so the ghost
+        // debt is paid exactly where Claude pays it — unlike Cursor, where it
+        // had to be claimed by whichever of two handlers fired first.
+        if (await maybeSpawnAcpGhostWorker(ctx)) {
+          counters.ghostPayments += 1;
         }
         return;
       }
@@ -688,6 +1010,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           }
         }
         if (params !== null) {
+          harvestTerminalOutput(params.terminalId, output.exitCode);
           await fireTerminalFailure(params.terminalId, output.exitCode);
         }
         return;
@@ -696,6 +1019,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         const params = parseTerminalIdParams(request.params);
         if (params !== null) {
           const exit = parseTerminalExitResult(message.result);
+          harvestTerminalOutput(params.terminalId, exit.exitCode);
           await fireTerminalFailure(params.terminalId, exit.exitCode);
         }
         return;
@@ -744,11 +1068,29 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         const params = parseSessionIdParams(request.params);
         const session = params === null ? null : liveSession(params.sessionId);
         if (session !== null) {
-          // Turn tick (future Tier-1 gate); cancelled/refusal capture nothing
-          // in v1 — and neither does anything else on this row.
+          // THE TURN BOUNDARY, and now the Tier-1 gate's tick in fact and not
+          // only in a comment. The stop reason is still parsed and discarded:
+          // a cancelled turn is a turn, and the gate judges the slice it got
+          // rather than the reason the turn ended.
           void parseSessionPromptResult(message.result);
           session.turns += 1;
           counters.turns += 1;
+          const ctx = deriveContextFor(session);
+          if (ctx !== null) {
+            const turnSlice = slices.for(session.acpSessionId);
+            const fired = await runAcpSummarizerGate(
+              ctx,
+              turnSlice.text(),
+              // What THIS turn's accumulator refused (the store hands out a
+              // fresh one on every session/prompt request), booked in the
+              // gate's own locked write so it reaches doctor instead of
+              // ending its life in this proxy's log file.
+              turnSlice.dropped(),
+            );
+            if (fired) {
+              counters.summarizerFires += 1;
+            }
+          }
         }
         return;
       }
@@ -763,7 +1105,10 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
         const params = parseFsWriteParams(message.params);
         const session = params === null ? null : liveSession(params.sessionId);
         if (session !== null && params !== null) {
-          await captureTargets(session, [params.path]);
+          await captureTargets(session, [params.path], {
+            editFired: true,
+            toolLabel: WIRE_METHODS.fsWriteTextFile,
+          });
         }
       }
       return;
@@ -771,11 +1116,19 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     // a2c notifications: session/update is THE capture-rich row.
     if (message.method === WIRE_METHODS.sessionUpdate) {
       const update = parseSessionUpdateParams(message.params);
-      if (update === null || update.toolCall === null) {
+      if (update === null) {
         return;
       }
       const session = liveSession(update.sessionId);
-      if (session !== null) {
+      if (session === null) {
+        return;
+      }
+      // Slice source 1: what the agent SAID this turn. `agent_thought_chunk`
+      // is deliberately not here — wire/v1.ts's `agentText` says why.
+      if (update.agentText !== null) {
+        addToSlice(session, update.agentText);
+      }
+      if (update.toolCall !== null) {
         await handleToolCall(session, update.toolCall);
       }
     }
@@ -866,13 +1219,20 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
             async (crosscheckSessionId) => {
               const roomMs = remaining();
               if (roomMs <= 0) {
-                return false;
+                return "retry";
               }
               const result = await endSession(
                 { ...hub, timeoutMs: Math.min(hub.timeoutMs, roomMs) },
                 crosscheckSessionId,
               );
-              return result.ok;
+              if (result.ok) {
+                return "ended";
+              }
+              // Terminal on 404, like the Claude and Cursor connectors (trial
+              // finding M6): a hub that has never heard of this session will
+              // never hear of it, so retrying the marker until it ages out
+              // buys one wasted call per proxy exit and nothing else.
+              return result.status === HTTP_NOT_FOUND ? "gone" : "retry";
             },
           );
         }
@@ -885,6 +1245,19 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
           `fingerprints=${counters.fingerprints} heartbeats=${counters.heartbeats} ` +
           `turns=${counters.turns} ignored=${counters.ignored} dropped=${counters.dropped} ` +
           `errors=${counters.errors} pending-evictions=${pendingClient.evictions() + pendingAgent.evictions()}`,
+      );
+      // THE DERIVE RUNGS GET THEIR OWN LINE, and `slice-dropped` is the
+      // reason it exists rather than a decoration. The other three failure
+      // paths are booked in session state and doctor prints them per rung;
+      // slice content refused by the byte cap is booked NOWHERE else, and it
+      // is the one that silently costs a conclusion — a turn whose verdict
+      // arrived past the cap is a miss the gate cannot report, because the
+      // gate only ever saw the part that fit.
+      logger.line(
+        `derive intent-fires=${counters.intentFires} ` +
+          `ghost-payments=${counters.ghostPayments} ` +
+          `summarizer-fires=${counters.summarizerFires} ` +
+          `slice-dropped=${counters.sliceDropped}`,
       );
     },
     counters() {

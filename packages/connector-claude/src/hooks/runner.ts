@@ -25,6 +25,7 @@ import { crosscheckHome, repoKey } from "@crosscheck/connector-core/config/paths
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { RepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
+import { recordHookFired } from "@crosscheck/connector-core/state/fired-markers.ts";
 import { readSessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { extractFilePaths, parseHookPayload } from "../capture/tool-events.ts";
 import type { HookPayload } from "../capture/tool-events.ts";
@@ -49,7 +50,7 @@ export interface HookContext {
    * The environment the hook was invoked with — NOT process.env, which in
    * tests belongs to the test runner. The one consumer is the Stop hook,
    * which forwards it — minus the parent session's own markers — into the
-   * detached summarizer worker it spawns (summarizer/worker-env.ts: the
+   * detached summarizer worker it spawns (core model/worker-env.ts: the
    * nested claude needs the developer's whole login environment, USER
    * included).
    */
@@ -218,14 +219,27 @@ export const prepareHook = async (
   };
 };
 
+/**
+ * `onResolved` exists so the caller can learn WHICH repo this hook resolved
+ * to without re-running `prepareHook` (which re-reads config and re-resolves
+ * git identity). It fires only when the hook is actually going to do
+ * something: a disabled connector, an unparseable payload or an unreportable
+ * repo return null above it and record nothing, which is right — a hook that
+ * stayed silent by design did not "fire" in any sense a doctor cares about.
+ */
 const prepareAndRun = async (
   handler: HookHandler,
   stdin: string,
   env: Env,
   budget: HookBudget,
+  onResolved: (ctx: HookContext) => void,
 ): Promise<string> => {
   const ctx = await prepareHook(stdin, env);
-  return ctx === null ? "" : handler(ctx, budget);
+  if (ctx === null) {
+    return "";
+  }
+  onResolved(ctx);
+  return handler(ctx, budget);
 };
 
 /**
@@ -262,10 +276,40 @@ export const runHookWith = async (
     // The handler's deadline is taken a fraction BEFORE the race timer starts,
     // so what the handler believes it has left is never more than the truth.
     const deadlineMs = Date.now() + budgetMs;
-    return await withBudget(
-      prepareAndRun(handler, stdin, env, hookBudget(deadlineMs, timeoutMs)),
+    // A holder rather than a plain `let`, so the assignment inside the
+    // callback is visible to the narrowing below.
+    const resolved: { value: { home: string; key: string } | null } = {
+      value: null,
+    };
+    const output = await withBudget(
+      prepareAndRun(
+        handler,
+        stdin,
+        env,
+        hookBudget(deadlineMs, timeoutMs),
+        (ctx) => {
+          resolved.value = { home: ctx.config.home, key: ctx.repoKey };
+        },
+      ),
       budgetMs,
     );
+    // AFTER the race, on purpose (trial finding M2, and the one budget risk
+    // this row carries). Inside the raced promise this write would compete
+    // with the handler for the deadline and could cost a SessionStart its
+    // briefing; worse, the race resolving underneath it would abandon it
+    // half-done. Out here it is one atomic `writePrivateFile` of an object
+    // with at most six keys — no readdir, no scan — on a hook that has
+    // already produced its answer, and `recordHookFired` swallows every
+    // error of its own, so a read-only home costs the marker and nothing else.
+    if (resolved.value !== null) {
+      await recordHookFired(
+        resolved.value.home,
+        resolved.value.key,
+        name,
+        new Date(),
+      );
+    }
+    return output;
   } catch {
     return "";
   }

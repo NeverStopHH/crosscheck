@@ -10,6 +10,7 @@
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 
 import { handleAfterFileEdit } from "./handlers/file-edit.ts";
+import { handleBeforeSubmitPrompt } from "./handlers/before-submit-prompt.ts";
 import { handleAfterShellExecution } from "./handlers/shell.ts";
 import { handleCursorPostToolUse } from "./handlers/post-tool-use.ts";
 import { handleCursorSessionEnd } from "./handlers/session-end.ts";
@@ -22,6 +23,7 @@ import type { CursorHookEvent } from "./payload.ts";
 
 const HANDLERS: Readonly<Record<CursorHookEvent, CursorHookHandler>> = {
   sessionStart: handleCursorSessionStart,
+  beforeSubmitPrompt: handleBeforeSubmitPrompt,
   afterFileEdit: handleAfterFileEdit,
   afterShellExecution: handleAfterShellExecution,
   postToolUse: handleCursorPostToolUse,
@@ -73,7 +75,8 @@ export type {
 } from "./init/hooks-merge.ts";
 export { prepareCursorInit } from "./init/init.ts";
 export type { CursorInitPlan } from "./init/init.ts";
-export { cursorDoctorChecks } from "./doctor.ts";
+export { CURSOR_CAPABILITY_MANIFEST } from "./capabilities.ts";
+export { cursorDoctorChecks, cursorCapabilityDetail } from "./doctor.ts";
 export type { CursorCheck } from "./doctor.ts";
 export {
   cursorInjectionOutput,

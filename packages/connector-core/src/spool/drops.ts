@@ -49,7 +49,18 @@ export type DropReason =
   /** A complete line on disk that is not JSON — the torn-fragment case. */
   | "unparsable"
   /** Undelivered records of a dead session past MAX_SPOOL_AGE_DAYS. */
-  | "expired";
+  | "expired"
+  /**
+   * The hub answered 200 and refused the record — `accepted:0, rejected:N`.
+   *
+   * The cursor still advances (a rejected record is not going to become
+   * acceptable on a retry, and refusing to advance would wedge the spool
+   * behind it), so these lines are gone. Counting them is what keeps that from
+   * being SILENT: `rejected` was read nowhere in the connector, so a session
+   * the hub had closed lost everything it captured while `spool drops` printed
+   * "none" (review finding B2-01/B2-07).
+   */
+  | "rejected";
 
 const DropSchema = z.looseObject({
   at: z.string().min(1),

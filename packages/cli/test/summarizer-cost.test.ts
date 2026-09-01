@@ -5,11 +5,21 @@
  * an estimate wherever it is printed.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rm, utimes } from "node:fs/promises";
+import { join } from "node:path";
 
 import { runCli } from "../src/index.ts";
-import { readSummarizerCost } from "@crosscheck/connector-claude";
+import {
+  formatSummarizerCost,
+  isSummarizerSilentlyDead,
+  readSummarizerCost,
+} from "@crosscheck/connector-claude";
+import type { SummarizerCost } from "@crosscheck/connector-claude";
 import { writeSessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import {
+  UNREADABLE_EMPTY,
+  UNREADABLE_SHAPE,
+} from "@crosscheck/connector-core/derive/summarizer/gate.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 /** Unreachable on purpose: cost lines are local facts, no hub needed. */
@@ -118,6 +128,8 @@ describe("summarizer cost surfaces", () => {
       summarizerEstimatedTokens: 1200,
       summarizerNoneCount: 1,
       summarizerRejectCount: 2,
+      summarizerNoSliceCount: 0,
+      summarizerLastNoSlice: null,
       summarizerLastRejection:
         "role-play: the answer narrated the next step instead of a conclusion",
     });
@@ -140,6 +152,8 @@ describe("summarizer cost surfaces", () => {
       summarizerFireCount: 2,
       summarizerEstimatedTokens: 900,
       summarizerRejectCount: 2,
+      summarizerNoSliceCount: 0,
+      summarizerLastNoSlice: null,
       summarizerLastRejection:
         "echo: the answer repeated the instructions it was given",
     });
@@ -150,6 +164,77 @@ describe("summarizer cost surfaces", () => {
     expect(result.stdout).toContain("every answer was refused");
     // And it does NOT claim the runner never spoke — that is the other WARN.
     expect(result.stdout).not.toContain("runs fired, none answered");
+  });
+
+  test("status names the unreadable answers and why", async () => {
+    // The outcome a machine running a model other than Claude reaches first,
+    // and the one this product booked NOWHERE until the foreign-model
+    // contract test went looking: the model answered, the quota was spent,
+    // and the only trace was the fires-minus-outcomes remainder.
+    const repo = await makeRepo("cost-unreadable", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-unreadable");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-unreadable-a", {
+      summarizerFireCount: 3,
+      summarizerEstimatedTokens: 1200,
+      summarizerNoneCount: 1,
+      summarizerUnreadableCount: 2,
+      summarizerLastUnreadable: UNREADABLE_SHAPE,
+    });
+
+    const result = await runCli(["status"], env(home), repo);
+
+    expect(result.stdout).toContain("2 unreadable");
+    expect(result.stdout).toContain("neither claim JSON nor NONE");
+  });
+
+  test("doctor WARNs on unreadable answers WITHOUT blaming the runner", async () => {
+    // The binary ran and exited 0, so the runner probe PASSes: pointing the
+    // reader at it would send them to a healthy binary. This WARN names the
+    // model and the contract instead.
+    const repo = await makeRepo("cost-unreadable-doctor", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-unreadable-doctor");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-unreadable-doctor-a", {
+      summarizerFireCount: 2,
+      summarizerEstimatedTokens: 900,
+      summarizerUnreadableCount: 2,
+      summarizerLastUnreadable: UNREADABLE_EMPTY,
+    });
+
+    const result = await runCli(["doctor"], env(home), repo);
+
+    expect(result.stdout).toContain("WARN  summarizer cost");
+    expect(result.stdout).toContain("nothing it said fitted the output contract");
+    expect(result.stdout).toContain("FOREIGN-MODELS.md");
+    // And it does NOT send the reader to the runner check: that is the other
+    // WARN, for a binary that never spoke at all.
+    expect(result.stdout).not.toContain("runs fired, none answered");
+  });
+
+  test("one unreadable answer beside a kept draft stays a PASS", async () => {
+    // The threshold's control: a model wanders off-format now and then, and
+    // a WARN that fires on that is one people learn to skip.
+    const repo = await makeRepo("cost-unreadable-ok", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-unreadable-ok");
+    paths.push(repo, home);
+    await seedSession(home, repo, "cost-unreadable-ok-a", {
+      summarizerFireCount: 2,
+      summarizerEstimatedTokens: 900,
+      summarizerDraftCount: 1,
+      summarizerUnreadableCount: 1,
+      summarizerLastUnreadable: UNREADABLE_SHAPE,
+    });
+
+    const result = await runCli(["doctor"], env(home), repo);
+
+    expect(result.stdout).toContain("PASS  summarizer cost");
   });
 
   test("one refusal beside a kept draft stays a PASS", async () => {
@@ -166,6 +251,8 @@ describe("summarizer cost surfaces", () => {
       summarizerEstimatedTokens: 900,
       summarizerDraftCount: 1,
       summarizerRejectCount: 1,
+      summarizerNoSliceCount: 0,
+      summarizerLastNoSlice: null,
       summarizerLastRejection:
         "echo: the answer was a teammate hint this repo had already delivered",
     });
@@ -288,5 +375,186 @@ describe("summarizer cost surfaces", () => {
     const result = await runCli(["status"], env(home), repo);
 
     expect(result.stdout).toContain("summarizer: no live sessions");
+  });
+});
+
+/**
+ * ── M5: which files the scan reads, and what it calls them ────────────────
+ *
+ * `readSummarizerCost` took `readdir` order — neither alphabetical nor
+ * chronological on bun — sliced the first 50 and reduced. On the trial machine
+ * that read an arbitrary half of 100 files and printed
+ * `13 runs (1 NONE, 2 drafts) … across 50 live sessions`, where the full set
+ * said 27/3/3; every one of those "live sessions" was a state file, and 75 of
+ * them belonged to sessions killed hours or days earlier.
+ */
+describe("summarizer cost reads the newest sessions, and says how many", () => {
+  /** Backdates a state file so mtime order is ours, not the writer's. */
+  const backdate = async (
+    home: string,
+    hostSessionKey: string,
+    ageMs: number,
+  ): Promise<void> => {
+    const when = new Date(Date.now() - ageMs);
+    await utimes(join(home, "sessions", `${hostSessionKey}.json`), when, when);
+  };
+
+  test("with 60 files, the 50 NEWEST are read and the fires in them are counted", async () => {
+    // Arrange: 60 sessions. The ten NEWEST carry every fire; the fifty oldest
+    // carry none, and are backdated so that ANY order-blind slice of 50 that
+    // is not mtime-sorted can miss the fires entirely.
+    const repo = await makeRepo("cost-order", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-order");
+    paths.push(repo, home);
+    for (let index = 0; index < 60; index += 1) {
+      const carriesFires = index >= 50;
+      await seedSession(home, repo, `zzz-old-${String(index).padStart(3, "0")}`, {
+        lastHeartbeatAt: new Date().toISOString(),
+        ...(carriesFires
+          ? { summarizerFireCount: 2, summarizerNoneCount: 2, summarizerEstimatedTokens: 100 }
+          : {}),
+      });
+    }
+    // Older files first by mtime; the fire-carrying ten are the newest.
+    for (let index = 0; index < 60; index += 1) {
+      await backdate(
+        home,
+        `zzz-old-${String(index).padStart(3, "0")}`,
+        (60 - index) * 60_000,
+      );
+    }
+
+    // Act
+    const cost = await readSummarizerCost(home, HUB_URL, REPO_ID);
+
+    // Assert: all twenty fires of the ten newest files are in the total, and
+    // the line says it read fifty of sixty rather than implying all of them.
+    expect(cost.filesSeen).toBe(60);
+    expect(cost.filesRead).toBe(50);
+    expect(cost.fires).toBe(20);
+    expect(formatSummarizerCost(cost)).toContain("50 of 60 session state files");
+  });
+
+  test("sessions that stopped heartbeating are skipped and counted, not called live", async () => {
+    // Arrange: three state files whose sessions died 26 hours ago
+    const repo = await makeRepo("cost-zombie", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-zombie");
+    paths.push(repo, home);
+    const deadAgeMs = 26 * 60 * 60 * 1000;
+    const dead = new Date(Date.now() - deadAgeMs).toISOString();
+    for (const id of ["dead-1", "dead-2", "dead-3"]) {
+      await seedSession(home, repo, id, {
+        startedAt: dead,
+        lastHeartbeatAt: dead,
+        summarizerFireCount: 4,
+      });
+      // The FILE is 26 hours old too. Silence is measured off the newest of the
+      // heartbeat, the start and the file's own mtime (state/session-scan.ts),
+      // because every writer of a state file is one of that session's hooks —
+      // so a file written a moment ago belongs to a session that is running.
+      await backdate(home, id, deadAgeMs);
+    }
+
+    // Act
+    const cost = await readSummarizerCost(home, HUB_URL, REPO_ID);
+
+    // Assert: zero live sessions, and the corpses are a number rather than
+    // silence — on the pre-fix tree this read "3 live sessions".
+    expect(cost.sessions).toBe(0);
+    expect(cost.staleSkipped).toBe(3);
+    const line = formatSummarizerCost(cost);
+    expect(line).toContain("3 stale skipped");
+    expect(line).not.toContain("3 live sessions");
+  });
+
+  // Was "unparsed answers are their own number" against `unparsedAnswers`.
+  // That counter and `unreadable` booked the SAME outcome — an answer the
+  // contract could not read — from two branches; the writer behind this one
+  // is the one every host reaches, so the assertion moved rather than went.
+  test("unreadable answers are their own number, not part of the failure count", async () => {
+    // Arrange
+    const repo = await makeRepo("cost-unreadable", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-unreadable");
+    paths.push(repo, home);
+    await seedSession(home, repo, "unreadable-a", {
+      lastHeartbeatAt: new Date().toISOString(),
+      summarizerFireCount: 3,
+      summarizerNoneCount: 1,
+      summarizerUnreadableCount: 2,
+    });
+
+    // Act
+    const cost = await readSummarizerCost(home, HUB_URL, REPO_ID);
+
+    // Assert
+    expect(cost.unreadable).toBe(2);
+    expect(cost.fails).toBe(0);
+    expect(formatSummarizerCost(cost)).toContain("2 unreadable");
+  });
+
+  test("mostly-dead: more than half the fires unexplained, above the sample floor", () => {
+    // Arrange: the trial's own shape — 27 fires, 6 explained, 21 vanished
+    const trial: SummarizerCost = {
+      sessions: 1,
+      filesSeen: 100,
+      filesRead: 50,
+      staleSkipped: 0,
+      parseFailures: 0,
+      fires: 27,
+      nones: 3,
+      drafts: 3,
+      fails: 0,
+      lastFailure: null,
+      rejects: 0,
+      lastRejection: null,
+      noSlice: 0,
+      lastNoSlice: null,
+      unreadable: 0,
+      lastUnreadable: null,
+      estimatedTokens: 0,
+    };
+
+    // Act + Assert
+    expect(isSummarizerSilentlyDead(trial)).toBe(true);
+    // And the sample floor: the same RATIO on three fires is not evidence,
+    // because a draft dropped by the echo/secret/contract gates books nothing.
+    expect(
+      isSummarizerSilentlyDead({ ...trial, fires: 3, nones: 1, drafts: 0 }),
+    ).toBe(false);
+  });
+
+  test("the summarizer line does not speak for the intent surface", async () => {
+    // Arrange: this counter was a PLACEHOLDER on the summarizer line — the
+    // additive field `feat/session-intent` was expected to write, printed
+    // there only so that branch would need no edit on this side. That branch
+    // has landed, with `readIntentCost`/`formatIntentCost` and a doctor check
+    // of its own, so the fact now has an owner: printing it here as well put
+    // "2 intent captures" inside the summarizer's own run accounting
+    // (`0 runs (0 NONE, 0 drafts, 2 intent captures)`) and gave `doctor` two
+    // lines carrying one number.
+    const repo = await makeRepo("cost-intent", {
+      remote: "git@github.com:acme/api.git",
+    });
+    const home = await makeHome("cost-intent");
+    paths.push(repo, home);
+    await seedSession(home, repo, "intent-a", {
+      lastHeartbeatAt: new Date().toISOString(),
+      summarizerFireCount: 1,
+      summarizerNoneCount: 1,
+      intentFireCount: 4,
+    });
+
+    // Act
+    const cost = await readSummarizerCost(home, HUB_URL, REPO_ID);
+
+    // Assert: four intent fires on disk, and this line says nothing about them
+    expect(formatSummarizerCost(cost)).not.toContain("intent");
+    expect(formatSummarizerCost(cost)).toContain("1 runs");
   });
 });

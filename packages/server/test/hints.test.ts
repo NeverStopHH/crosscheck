@@ -32,6 +32,12 @@ interface ClaimCandidateView {
   readonly body: string;
 }
 
+interface MatchedTargetView {
+  readonly kind: string;
+  readonly value: string;
+  readonly createdAt: string | null;
+}
+
 interface ContextCandidateView {
   readonly workContext: {
     readonly id: string;
@@ -41,6 +47,7 @@ interface ContextCandidateView {
     readonly baseCommit: string;
   };
   readonly claims: readonly ClaimCandidateView[];
+  readonly matchedTargets: readonly MatchedTargetView[];
 }
 
 const fetchCandidates = async (
@@ -157,6 +164,21 @@ describe("GET /api/hints/candidates", () => {
     expect(rejected?.kind).toBe("rejected_approach");
     expect(rejected?.evidenceRefCount).toBe(1);
     expect(rejected?.authorDeveloperName).toBe("Nick");
+  });
+
+  test("carries the targets the prompt exact-matched, with an age (#19)", async () => {
+    // Arrange
+    const { harness, robin } = await setupTwoDevelopers();
+
+    // Act — the prompt names the file Nick's context targets
+    const result = await fetchCandidates(harness, robin, "why does refresh.ts 500");
+
+    // Assert: the matched file rides the candidate with a first-seen timestamp,
+    // so the connector can render a targets-only pointer with its age
+    const matched = result.candidates[0]?.matchedTargets ?? [];
+    const file = matched.find((target) => target.value === TARGET_FILE);
+    expect(file?.kind).toBe("file");
+    expect(typeof file?.createdAt).toBe("string");
   });
 
   test("a solved candidate context carries the solved kind and diagnosis age", async () => {

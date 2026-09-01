@@ -19,6 +19,12 @@
  * developer may actually see, the Claude ordering rule — and a successful
  * tool result attempts nothing: no failure, no query, no HTTP.
  *
+ * Block 9: this event ALSO pays the ghost debt (derive/triggers.ts). Cursor
+ * has no single "next prompt" event that always runs, so the debt is paid by
+ * whichever of `postToolUse` and `stop` fires first — a check-and-set under
+ * the state lock, so two of them racing still spawn one worker. Until this
+ * landed, `set_intent` in Cursor set `ghostPending` and nothing ever paid it.
+ *
  * Briefing parity: a conversation that registered LATE (requireSessionState's
  * recovery) is owed the briefing sessionStart never delivered, and THIS is
  * the hook that pays it (inject/deferred-briefing.ts) — on the invocation
@@ -43,6 +49,7 @@ import {
 } from "../inject/deferred-briefing.ts";
 import { attemptFailureHint } from "../inject/hint.ts";
 import { cursorInjectionOutput } from "../inject/output.ts";
+import { maybeSpawnCursorGhostWorker } from "../derive/triggers.ts";
 import { requireSessionState } from "./recover.ts";
 
 /**
@@ -94,6 +101,11 @@ export const handleCursorPostToolUse = async (
   if (state === null) {
     return "";
   }
+  // The GHOST DEBT, paid here or on `stop`, whichever fires first
+  // (derive/triggers.ts states why Cursor needs both). It emits nothing, so
+  // it runs before the injection decisions and cannot change them; a session
+  // owing nothing pays one state read.
+  await maybeSpawnCursorGhostWorker(ctx);
   // The deferred briefing first — it is what the developer may actually see,
   // and whether it delivered decides if the hint pipeline is consulted at all.
   const briefingText = owedBefore ? await deliverOwedBriefing(ctx) : "";

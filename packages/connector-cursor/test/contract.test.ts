@@ -239,7 +239,7 @@ describe("the docs excerpt stays in step with the code", () => {
       join(import.meta.dir, "fixtures", "cursor-contract", "docs-excerpt-cursor-hooks.md"),
     ).text();
 
-    // Assert: source + date recorded, all seven events documented.
+    // Assert: source + date recorded, all eight events documented.
     expect(excerpt).toContain("https://cursor.com/docs/hooks");
     expect(excerpt).toContain("2026-08-18");
     for (const event of CURSOR_HOOK_EVENTS) {

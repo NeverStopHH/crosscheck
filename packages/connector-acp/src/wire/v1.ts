@@ -10,10 +10,29 @@
  * VERSION-PINNED (§2.5): this module speaks protocol 1. The v2 diff overhaul
  * lands as a NEW sibling module behind a version switch — never as edits here.
  *
- * PRIVACY BY SHAPE: no schema in this file models prompt text, diff
- * old/new text, fs write content, or terminal command text. What is not
- * parsed cannot be stored, spooled, or logged (design §2.4 "not captured,
- * deliberately" + the hostile-prompt pin in capture-engine.test.ts).
+ * PRIVACY BY SHAPE, AND THE TWO TEXTS THAT ARE NOW MODELLED. Diff old/new
+ * text, fs write content and terminal COMMAND text are still modelled by no
+ * schema here: what is not parsed cannot be stored, spooled or logged
+ * (design §2.4 "not captured, deliberately").
+ *
+ * The derive rungs made two exceptions, deliberately and narrowly, because a
+ * connector that reads nothing can infer nothing:
+ *
+ *   - `parseSessionPromptParams` decodes the prompt's TEXT blocks, so the
+ *     capture copy can decide whether a prompt is substantive enough to
+ *     derive an intent from. The injector already decoded exactly this,
+ *     ephemerally, for the hint query (inject/injector.ts promptQueryOf) —
+ *     this is the same decode at the same choke point, with a cap.
+ *   - `parseSessionUpdateParams` now also returns an `agent_message_chunk`'s
+ *     text, which is the Tier-1 slice's main source.
+ *
+ * Both are CAPPED here (MAX_WIRE_TEXT_CHARS) so one hostile line cannot cost
+ * unbounded parse memory, and what the callers may do with the result is
+ * pinned one layer up: the prompt reaches exactly one 0600 file the intent
+ * worker removes as its first act, the slice reaches a spawned worker's
+ * stdin and no disk at all, and NEITHER may reach a spool record, a state
+ * file or a log line (capture-engine.test.ts's prompt-privacy pin, narrowed
+ * rather than deleted, plus derive.test.ts's two privacy cases).
  */
 import { z } from "zod";
 
@@ -187,6 +206,75 @@ export const parseSessionIdParams = (
   return sessionId === null ? null : { sessionId };
 };
 
+/**
+ * Cap on ONE decoded wire text field — a prompt's joined text blocks, or one
+ * agent message chunk. Neither is ever stored at this size: the intent
+ * trigger cuts to INTENT_PROMPT_MAX_CHARS before it writes anything, and the
+ * turn slice has its own smaller running cap. This bound exists so a hostile
+ * megabyte line costs a bounded string at PARSE time, on the copy path,
+ * before any caller has a chance to be careless with it.
+ */
+const MAX_WIRE_TEXT_CHARS = 16_384;
+
+/** An ACP text ContentBlock. Any other block type contributes nothing. */
+const TextBlockSchema = z.looseObject({
+  type: z.string().min(1),
+  text: z.string().optional(),
+});
+
+const TEXT_BLOCK_TYPE = "text";
+
+/** The text of one ContentBlock, or "" for every non-text block. */
+const blockText = (block: unknown): string => {
+  const parsed = parseOrNull(TextBlockSchema, block);
+  return parsed !== null && parsed.type === TEXT_BLOCK_TYPE
+    ? (parsed.text ?? "")
+    : "";
+};
+
+const joinBlockTexts = (blocks: readonly unknown[]): string => {
+  const parts: string[] = [];
+  let length = 0;
+  for (const block of blocks) {
+    const text = blockText(block);
+    if (text.length === 0) {
+      continue;
+    }
+    parts.push(text);
+    length += text.length;
+    if (length >= MAX_WIRE_TEXT_CHARS) {
+      break;
+    }
+  }
+  return parts.join("\n").slice(0, MAX_WIRE_TEXT_CHARS);
+};
+
+const SessionPromptParamsSchema = z.looseObject({
+  sessionId: z.string().min(1),
+  prompt: z.array(z.unknown()).optional().catch(undefined),
+});
+
+/**
+ * The prompt path WITH its text — see the module header for why this exists
+ * and what the callers may not do with it. A prompt that is not a block
+ * array (spec-illegal, or a shape this version does not model) yields the
+ * session id and an EMPTY text, never null: capture's heartbeat row must
+ * keep working on a prompt whose content we cannot read.
+ */
+export const parseSessionPromptParams = (
+  params: unknown,
+): { readonly sessionId: string; readonly text: string } | null => {
+  const parsed = parseOrNull(SessionPromptParamsSchema, params);
+  const sessionId = parsed === null ? null : safeAcpSessionId(parsed.sessionId);
+  if (parsed === null || sessionId === null) {
+    return null;
+  }
+  return {
+    sessionId,
+    text: Array.isArray(parsed.prompt) ? joinBlockTexts(parsed.prompt) : "",
+  };
+};
+
 const SessionPromptResultSchema = z.looseObject({
   stopReason: z.string().min(1).optional(),
 });
@@ -208,8 +296,12 @@ const DiffContentSchema = z.looseObject({
   path: z.string().min(1).optional(),
 });
 
-const TOOL_CALL_UPDATES = new Set(["tool_call", "tool_call_update"]);
+/** The row that ANNOUNCES a tool call; the other one revises it. */
+const NEW_TOOL_CALL = "tool_call";
+const TOOL_CALL_UPDATES = new Set([NEW_TOOL_CALL, "tool_call_update"]);
 const DIFF_CONTENT_TYPE = "diff";
+/** The agent's own prose. `agent_thought_chunk` is NOT here — see below. */
+const AGENT_MESSAGE_CHUNK = "agent_message_chunk";
 
 /**
  * Wrong-typed optional fields fold to undefined (`catch`) instead of failing
@@ -221,10 +313,15 @@ const SessionUpdateParamsSchema = z.looseObject({
   sessionId: z.string().min(1),
   update: z.looseObject({
     sessionUpdate: z.string().min(1),
+    toolCallId: z.string().min(1).optional().catch(undefined),
     kind: z.string().min(1).optional().catch(undefined),
     status: z.string().min(1).optional().catch(undefined),
     locations: z.array(z.unknown()).optional().catch(undefined),
-    content: z.array(z.unknown()).optional().catch(undefined),
+    // Deliberately `unknown`: a tool call's `content` is an ARRAY of rows
+    // and a message chunk's is a single ContentBlock OBJECT, and both must
+    // classify. The shape test is done in code below rather than by two
+    // schema keys, because one wire key cannot have two.
+    content: z.unknown().optional(),
     rawOutput: z.unknown().optional(),
   }),
 });
@@ -232,15 +329,59 @@ const SessionUpdateParamsSchema = z.looseObject({
 export interface ToolCallUpdate {
   /** Location paths + diff-content paths, in wire order. PATHS ONLY. */
   readonly paths: readonly string[];
+  /**
+   * The agent's own id for this tool CALL, carried by both the announce row
+   * and every later revision of it — the identity the edit-tool fire is
+   * counted on (capture/engine.ts). Null only for a row that omits it, which
+   * the ACP schema does not permit but a tolerant parser must survive; the
+   * `isNewToolCall` fallback below is what such a row falls back to.
+   */
+  readonly toolCallId: string | null;
   readonly toolKind: string | null;
   readonly status: string | null;
   readonly rawOutput: unknown;
+  /**
+   * True for `sessionUpdate: "tool_call"` — the row that ANNOUNCES a tool
+   * call — and false for every later `tool_call_update` on the same call.
+   *
+   * The two are folded into one shape above (TOOL_CALL_UPDATES) because the
+   * capture mapping treats their payloads identically, and that is still
+   * right for paths and failures. It is NOT right for counting: agents
+   * commonly repeat the whole update — `kind` included — on each status
+   * change, so a fire counted per row would report three edit-tool fires for
+   * one edit and corrupt the `N fires -> M targets` ratio the doctor WARN is
+   * measured on. One fire per tool call is also exactly what the Claude
+   * reference counts.
+   *
+   * It is the FALLBACK discriminator, not the primary one. Counting on this
+   * alone booked ZERO fires for an agent that announces
+   * `tool_call {status: "pending"}` and only reveals `kind: "edit"` on the
+   * following revision — `kind` is optional on the announce row (the schema
+   * above, and the ACP schema's own `"other"` default), so that agent is
+   * conformant and its WARN was structurally unreachable. `toolCallId` is the
+   * identity the fire is counted on now; this stands in for a row that
+   * carries no id at all.
+   *
+   * Both are ADDITIVE fields on a version-pinned module: nothing that existed
+   * changed shape, and no new wire FACT is parsed — both discriminators were
+   * already on the wire and simply thrown away.
+   */
+  readonly isNewToolCall: boolean;
 }
 
 export interface SessionUpdate {
   readonly sessionId: string;
   /** Null for non-tool updates (message chunks, plans, mode changes). */
   readonly toolCall: ToolCallUpdate | null;
+  /**
+   * The text of an `agent_message_chunk`, capped — the Tier-1 slice's main
+   * source. Null for every other update kind, INCLUDING
+   * `agent_thought_chunk`: reasoning text is the model talking to itself, it
+   * is the most sensitive prose on this wire, and the gate's conjunctions
+   * want what the agent said and what actually ran — so thoughts are left
+   * out on purpose rather than by omission.
+   */
+  readonly agentText: string | null;
 }
 
 export const parseSessionUpdateParams = (
@@ -252,12 +393,23 @@ export const parseSessionUpdateParams = (
     return null;
   }
   if (!TOOL_CALL_UPDATES.has(parsed.update.sessionUpdate)) {
-    return { sessionId, toolCall: null };
+    const agentText =
+      parsed.update.sessionUpdate === AGENT_MESSAGE_CHUNK
+        ? blockText(parsed.update.content).slice(0, MAX_WIRE_TEXT_CHARS)
+        : "";
+    return {
+      sessionId,
+      toolCall: null,
+      agentText: agentText.length === 0 ? null : agentText,
+    };
   }
+  const contentRows = Array.isArray(parsed.update.content)
+    ? parsed.update.content
+    : [];
   const locationPaths = (parsed.update.locations ?? [])
     .map((row) => parseOrNull(LocationSchema, row))
     .flatMap((row) => (row === null ? [] : [row.path]));
-  const diffPaths = (parsed.update.content ?? [])
+  const diffPaths = contentRows
     .map((row) => parseOrNull(DiffContentSchema, row))
     .flatMap((row) =>
       row !== null && row.type === DIFF_CONTENT_TYPE && row.path !== undefined
@@ -266,11 +418,14 @@ export const parseSessionUpdateParams = (
     );
   return {
     sessionId,
+    agentText: null,
     toolCall: {
       paths: [...locationPaths, ...diffPaths],
+      toolCallId: parsed.update.toolCallId ?? null,
       toolKind: parsed.update.kind ?? null,
       status: parsed.update.status ?? null,
       rawOutput: parsed.update.rawOutput,
+      isNewToolCall: parsed.update.sessionUpdate === NEW_TOOL_CALL,
     },
   };
 };

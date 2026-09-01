@@ -27,8 +27,11 @@ import {
   spoolDataPath,
   spoolDir,
 } from "../config/paths.ts";
+import { z } from "zod";
+
+import { readJsonOrNull } from "../config/paths.ts";
 import { readCursorOffset, sliceFrom } from "./cursor.ts";
-import { readHandleFacts } from "./identity.ts";
+import { isSameFile, readFileFacts, readHandleFacts } from "./identity.ts";
 import type { FileFacts, FileIdentity } from "./identity.ts";
 import { completeLines, lineTimestampMs, toLines } from "./lines.ts";
 
@@ -216,6 +219,52 @@ export const readSpoolLines = async (
 
 export const spoolDepth = async (home: string, key: string): Promise<number> =>
   (await readSpoolLines(home, key)).length;
+
+const StoredCursorSchema = z.looseObject({
+  ino: z.number().int().min(0),
+  firstLine: z.string().min(1),
+  offset: z.number().int().min(0),
+});
+
+/**
+ * Session files whose cursor belongs to a DIFFERENT file than the one at that
+ * path now (Anhang A, A4-10).
+ *
+ * `readCursorOffset` refuses any cursor that fails `isSameFile`, and it is
+ * right to: trusting a wrong offset would skip records for good, while
+ * re-sending costs a `duplicate` in the ingest summary and nothing else. But
+ * the inode is half of that identity, and a `~/.crosscheck` that was COPIED or
+ * RESTORED — a new laptop, a backup, a `cp -R` — gets new inodes for every
+ * file. Every already-delivered line then reads as pending: 315 phantom
+ * records observed on one such home, and `spool depth` said so in the voice it
+ * uses for real backlog.
+ *
+ * This counts the mismatches so the doctor line can say WHICH kind of pending
+ * it is looking at. It changes no threshold and no level — the records really
+ * will be re-sent, and the hub really will dedup them; what changes is that a
+ * developer reading the number is not left thinking data is stuck.
+ */
+export const countCursorIdentityMismatches = async (
+  home: string,
+  key: string,
+): Promise<number> => {
+  const slugs = await listSessionSlugs(home, key);
+  const verdicts = await Promise.all(
+    slugs.map(async (slug) => {
+      const stored = StoredCursorSchema.safeParse(
+        await readJsonOrNull(spoolCursorPath(home, key, slug)),
+      );
+      if (!stored.success) {
+        // No cursor at all is a file nothing has delivered yet, not a
+        // mismatch: counting it would turn every fresh spool into a warning.
+        return false;
+      }
+      const observed = await readFileFacts(spoolDataPath(home, key, slug));
+      return observed !== null && !isSameFile(observed, stored.data);
+    }),
+  );
+  return verdicts.filter(Boolean).length;
+};
 
 export const oldestSpoolLineMs = async (
   home: string,

@@ -1,4 +1,13 @@
 export { runHook, isHookName } from "./hooks/index.ts";
+// What this connector can make a model do, declared as data (§4.4's sibling
+// pin for the derive rungs): connector-core/test/derive-capability-registry
+// reads it against what this package actually ships.
+export { CLAUDE_CAPABILITY_MANIFEST } from "./capabilities.ts";
+// ...and the doctor section that RENDERS it, so the reference host has a
+// row on the surface that describes this machine (the other two connectors
+// each export their own).
+export { claudeDoctorChecks } from "./doctor.ts";
+export type { ClaudeCheck } from "./doctor.ts";
 export type { HookName, HookContext } from "./hooks/runner.ts";
 export { runStatusline } from "./statusline/statusline.ts";
 // The Tier-1 summarizer surface (Claude-specific by construction, DESIGN.md
@@ -10,27 +19,30 @@ export {
   formatSummarizerCost,
   isSummarizerAlwaysRejected,
   isSummarizerSilentlyDead,
+  isSummarizerUnreadable,
   readSummarizerCost,
-} from "./summarizer/cost.ts";
+} from "@crosscheck/connector-core/derive/summarizer/cost.ts";
+export type { SummarizerCost } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
 // The derived-intent surface (trial finding #16): the worker entry the
 // prompt hook spawns, and the cost read/format pair `status`/`doctor` print.
-export { runIntentWorker } from "./intent/worker.ts";
-export { formatIntentCost, isIntentSilentlyDead, readIntentCost } from "./intent/cost.ts";
-export type { IntentCost } from "./intent/cost.ts";
+export { runIntentWorker } from "@crosscheck/connector-core/derive/intent/worker.ts";
+export { formatIntentCost, isIntentSilentlyDead, readIntentCost } from "@crosscheck/connector-core/derive/intent/cost.ts";
+export type { IntentCost } from "@crosscheck/connector-core/derive/intent/cost.ts";
 // The gated ghost-check surface (VISION.md §3): the worker entry the prompt
 // hook spawns when a recorded intent still owes a comparison.
-export { runGhostWorker } from "./ghost/worker.ts";
+export { runGhostWorker } from "@crosscheck/connector-core/derive/ghost/worker.ts";
 export {
   formatGhostCost,
   isGhostSilentlyDead,
   readGhostCost,
   summarizeGhostCost,
-} from "./ghost/cost.ts";
-export type { GhostCost } from "./ghost/cost.ts";
-// The agent conference's model half (VISION.md §2): what `crosscheck
-// conference` shows the model, how it labels the sessions so an answer can be
-// attributed deterministically, and how the answer is read back. No worker
-// entry — a conference is a command a human runs, never a detached spawn.
+} from "@crosscheck/connector-core/derive/ghost/cost.ts";
+export type { GhostCost } from "@crosscheck/connector-core/derive/ghost/cost.ts";
+// The agent conference's model half (VISION.md §2) moved to connector-core
+// (src/derive/conference/prompt.ts) when it became every connector's: a
+// conference is a command a human runs, so it was never Claude-specific —
+// only Claude-located. Re-exported here unchanged so this package's public
+// surface is byte-identical and packages/cli needed no edit.
 export {
   CONFERENCE_PROMPT,
   estimateInputTokens,
@@ -39,34 +51,40 @@ export {
   parseConferenceAnswer,
   renderConferenceInput,
   resolveConferenceArgv,
-} from "./conference/prompt.ts";
+} from "@crosscheck/connector-core/derive/conference/prompt.ts";
 export type {
   ConferenceAnswer,
   LabelledSession,
   ParsedFinding,
-} from "./conference/prompt.ts";
+} from "@crosscheck/connector-core/derive/conference/prompt.ts";
 // The shared model-cost scan's per-counter summarizers (state/session-state.ts
 // readLiveSessionStates reads the directory once for all three).
-export { summarizeSummarizerCost } from "./summarizer/cost.ts";
-export { summarizeIntentCost } from "./intent/cost.ts";
+export { summarizeSummarizerCost } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
+export { summarizeIntentCost } from "@crosscheck/connector-core/derive/intent/cost.ts";
 // The runner's own surface for `doctor` (trial finding #14): the real argv,
 // the real worker env, the booked-failure formatter and the active probe.
+//
+// PASS-THROUGH SINCE THE SEAM MOVED. runner.ts and worker-env.ts are
+// connector-core's now (src/model/), so any connector can spawn a model;
+// they are re-exported here unchanged so this package's surface — and every
+// caller of it, packages/cli included — is byte-for-byte what it was. The
+// probe below is still this package's own.
 export {
   SUMMARIZER_LEAN_FLAGS,
   formatSummarizerFailure,
   resolveSummarizerArgv,
   resolveSummarizerTimeoutMs,
   runSummarizer,
-} from "./summarizer/runner.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
 export type {
   SummarizerFailure,
   SummarizerResult,
-} from "./summarizer/runner.ts";
+} from "@crosscheck/connector-core/model/runner.ts";
 export {
   PARENT_SESSION_MARKER_PATTERN,
   ensureSummarizerCwd,
   summarizerWorkerEnv,
-} from "./summarizer/worker-env.ts";
+} from "@crosscheck/connector-core/model/worker-env.ts";
 export {
   isBelowSummarizerVersionFloor,
   probeSummarizerRunner,

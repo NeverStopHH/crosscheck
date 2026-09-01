@@ -25,6 +25,7 @@
  * the suppression is counted in the injection ledger, like the empty case,
  * so the dogfood checklist reads facts.
  */
+import { HTTP_NOT_FOUND } from "@crosscheck/connector-core/constants.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { endSession } from "@crosscheck/connector-core/http/hub.ts";
@@ -39,7 +40,10 @@ import {
   hasSpendablePendingEnd,
   reapSpool,
 } from "@crosscheck/connector-core/spool/reap.ts";
-import type { DeferredEnder } from "@crosscheck/connector-core/spool/reap.ts";
+import type {
+  DeferredEndOutcome,
+  DeferredEnder,
+} from "@crosscheck/connector-core/spool/reap.ts";
 import { CURSOR_BACKGROUND_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";
 import { updateSyncState } from "@crosscheck/connector-core/state/sync-state.ts";
 import type { HookBudget } from "@crosscheck/connector-core/config/hook-budget.ts";
@@ -58,16 +62,28 @@ const INITIAL_STATUS = "analyzing";
  */
 const deferredEnder =
   (ctx: CursorHookContext, budget: HookBudget): DeferredEnder =>
-  async (crosscheckSessionId: string): Promise<boolean> => {
+  async (crosscheckSessionId: string): Promise<DeferredEndOutcome> => {
     const roomMs = budget.spareMs();
     if (roomMs <= 0) {
-      return false;
+      return "retry";
     }
     const result = await endSession(
       { ...ctx.hub, timeoutMs: Math.min(ctx.hub.timeoutMs, roomMs) },
       crosscheckSessionId,
     );
-    return result.ok;
+    if (result.ok) {
+      return "ended";
+    }
+    // A 404 is TERMINAL for a deferred end (trial finding M6): the hub has
+    // never heard of this session — the failed-first-register shape — so
+    // there is nothing to end and no later attempt can change that. Retrying
+    // it cost a hub call on every SessionStart until the marker aged out
+    // seven days later; the trial machine was carrying one 48 hours old.
+    //
+    // SCOPE: this is the DEFERRED-end path only. A 404 on a LIVE session's
+    // heartbeat means something else entirely (re-register), and that ladder
+    // belongs to the capture branch — `flows/heartbeat.ts` is untouched here.
+    return result.status === HTTP_NOT_FOUND ? "gone" : "retry";
   };
 
 export const handleCursorSessionStart = async (

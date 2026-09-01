@@ -29,3 +29,9 @@ export {
   runAcpReport,
 } from "./report.ts";
 export type { AcpRecordReport, AcpReportResult } from "./report.ts";
+// The derive rungs: the manifest doctor renders, and the section that renders
+// it. Dynamically imported by packages/cli, like `runAcpProxy` itself, so a
+// hook or a statusline never pays this package's load.
+export { ACP_CAPABILITY_MANIFEST } from "./capabilities.ts";
+export { acpCapabilityDetail, acpDoctorChecks, acpUsedHere } from "./doctor.ts";
+export type { AcpCheck, AcpDoctorInput } from "./doctor.ts";

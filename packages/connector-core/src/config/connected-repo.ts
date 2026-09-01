@@ -53,7 +53,7 @@ import { stat } from "node:fs/promises";
 import { readRepoConfig } from "./repo-config.ts";
 
 /** The repo-boundary marker — a checkout's directory or a worktree's file. */
-const GIT_ENTRY_NAME = ".git";
+export const GIT_ENTRY_NAME = ".git";
 
 /**
  * Bound on the upward walk from the touched file to a repo root. Deep
