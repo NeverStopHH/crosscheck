@@ -1599,6 +1599,34 @@ export const MUTATIONS: readonly Mutation[] = [
       "keep matching somebody else",
   },
   {
+    // The listing exists so a lost id is recoverable. A page that stopped at
+    // the cap and stayed quiet is the "200 listed must not read as all 250"
+    // failure, one table over.
+    label: "a developer listing cut at the cap claims to be the whole team",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "  const truncated = rows.length > DEVELOPERS_MAX_LISTED;",
+    to: "  const truncated = false;",
+    test: `${SERVER}/test/developer-listing.test.ts`,
+    because:
+      "an admin reads a full page as the entire membership, concludes a " +
+      "developer has no account, and creates a second one for a person who " +
+      "already has one — splitting their commits across two identities",
+  },
+  {
+    // Emails are the whole reason to read this listing: they decide whose
+    // commits are whose, so an empty list per developer looks exactly like an
+    // unlinked alias that still needs adding.
+    label: "the developer listing drops every linked email",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "      emails: byDeveloper.get(row.id) ?? [],",
+    to: "      emails: [],",
+    test: `${SERVER}/test/developer-listing.test.ts`,
+    because:
+      "an admin cannot see which git addresses are already linked, so the " +
+      "alias fix for trial finding #7 becomes guesswork and re-adding an " +
+      "existing one is the only way to find out",
+  },
+  {
     // The load-bearing half of the agent-restart check (trial finding #8):
     // "in THIS repo". A name-and-age match alone warns on every two-project
     // dev machine, and that noise is how doctors get ignored.
@@ -4668,6 +4696,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 1
+ * PRINTS: packages/server/test/developer-listing.test.ts 2
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
