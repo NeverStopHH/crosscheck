@@ -2139,6 +2139,50 @@ export const MUTATIONS: readonly Mutation[] = [
       "trusted with it",
   },
   {
+    // Shipped, and red on Linux CI while macOS stayed green. The bounded read
+    // cancels the pipe at the cap, which BREAKS it: the child's next write
+    // gets EPIPE, SIGPIPE ends it, and the seam then read its own kill (141)
+    // as the model's failure. Measured in oven/bun:1: a flood-only probe was
+    // ok=false 5 of 5, all reason "exit", exitCode 141.
+    label: "a model cut at the byte cap is booked as a failed call",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "    if (outcome.exitCode !== 0 && !outcome.cutByCap) {",
+    to: "    if (outcome.exitCode !== 0) {",
+    test: `${CORE}/test/model-seam.test.ts`,
+    because:
+      "every model that produces more output than the cap is booked as a " +
+      "broken binary — which for a reasoning model that thinks out loud " +
+      "before answering is EVERY fire, the normal case and not a corner one",
+  },
+  {
+    // The other half, and deliberately its own entry: the run can be booked
+    // ok and the caller still be unable to tell a cut answer from a whole
+    // one. That is the state this branch is FOR — a foreign model whose
+    // answer was cut looks exactly like one that chose to stop there.
+    label: "a cut run is indistinguishable from a complete one",
+    file: `${CORE}/src/model/runner.ts`,
+    from: "      truncated: outcome.truncated,",
+    to: "      truncated: false,",
+    test: `${CORE}/test/model-seam.test.ts`,
+    because:
+      "the one fact that explains a truncated answer never reaches the " +
+      "caller, so the cut is booked as the model's bad output shape and " +
+      "the reader is sent to the model instead of to the cap",
+  },
+  {
+    // Rule 4 at the booking line: fail open must never mean silently dead,
+    // and a reason that names the wrong cause is the same thing one step on.
+    label: "a cut answer is booked as a bad output shape",
+    file: `${CORE}/src/derive/summarizer/derive.ts`,
+    from: "    const reason = result.truncated",
+    to: "    const reason = false",
+    test: `${CONNECTOR}/test/foreign-model.test.ts`,
+    because:
+      "status and doctor say the answer was neither claim JSON nor NONE " +
+      "when it was simply cut at the output cap, sending the reader to the " +
+      "model's formatting for a bound this seam imposed",
+  },
+  {
     // A counter the schema declares, the cost reader sums and the cost line
     // renders, that no production path can move off 0.
     label: "a summarizer outcome writer nothing in src ever calls",
@@ -4552,6 +4596,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/double-wiring.test.ts 1
  * PRINTS: packages/connector-claude/test/failure-hook.test.ts 2
  * PRINTS: packages/connector-claude/test/fingerprint.test.ts 1
+ * PRINTS: packages/connector-claude/test/foreign-model.test.ts 1
  * PRINTS: packages/connector-claude/test/ghost-worker.test.ts 5
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
@@ -4595,7 +4640,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 12
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
- * PRINTS: packages/connector-core/test/model-seam.test.ts 2
+ * PRINTS: packages/connector-core/test/model-seam.test.ts 4
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3

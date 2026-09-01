@@ -45,6 +45,7 @@ import {
   isSummarizerUnreadable,
   readSummarizerCost,
 } from "@crosscheck/connector-core/derive/summarizer/cost.ts";
+import { UNREADABLE_TRUNCATED } from "@crosscheck/connector-core/derive/summarizer/gate.ts";
 import { recordDeliveredHintHash } from "@crosscheck/connector-core/hints/delivered-store.ts";
 import { hintBodyHash } from "@crosscheck/connector-core/hints/echo.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
@@ -365,6 +366,12 @@ describe("a model that keeps talking cannot flood the read", () => {
     // Assert: one bounded outcome, no draft, no hang.
     const state = await readSessionState(run.fixture.home, FOREIGN_SESSION_ID);
     expect(state?.summarizerUnreadableCount).toBe(1);
+    // And it is booked as the CUT it was. This used to book the shape
+    // sentence — "neither claim JSON nor NONE" — which is true of the
+    // fragment and useless to the reader, because it sends them to the
+    // model's formatting when the cause is this seam's output cap. A
+    // reasoning model that thinks out loud hits this on every fire.
+    expect(state?.summarizerLastUnreadable).toBe(UNREADABLE_TRUNCATED);
     expect(await spooledClaims(run.fixture)).toHaveLength(0);
     expect(run.elapsedMs).toBeLessThan(BOUNDED_CEILING_MS);
   });
