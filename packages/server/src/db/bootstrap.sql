@@ -473,6 +473,21 @@ CREATE TABLE IF NOT EXISTS pin_files (
 CREATE INDEX IF NOT EXISTS pin_files_repo_path_idx
   ON pin_files (repo, path);
 
+-- WHO REPOINTED A PIN, and when. A sweep rewrites the file set a pin watches,
+-- which is the set `suspect` intersects — so a rewrite changes which sessions
+-- get named, under the same surface label and the same authoritative header.
+-- `anyone may pin` is a team decision and repointing is inside the authority
+-- it grants, so this is not a refusal; it is the record that used to be
+-- missing entirely. ALTER with defaults so one statement covers a fresh
+-- database and one created before these columns existed, and the defaults are
+-- what every existing row actually is: never swept.
+ALTER TABLE pins
+  ADD COLUMN IF NOT EXISTS renamed_paths integer NOT NULL DEFAULT 0;
+ALTER TABLE pins
+  ADD COLUMN IF NOT EXISTS renamed_at timestamptz;
+ALTER TABLE pins
+  ADD COLUMN IF NOT EXISTS renamed_by text REFERENCES developers(id);
+
 -- WHICH lane saw a file target (regression-guard Stage 1): the host's own
 -- Edit/Write report ('tool_edit'), the Stop-time `git diff --name-only`
 -- ('git_diff'), or 'both'. ALTER with a DEFAULT so one statement covers a

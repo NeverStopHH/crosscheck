@@ -21,6 +21,7 @@ import {
   createTestDeveloper,
   createTestHarness,
   jsonRequest,
+  TEST_ADMIN_TOKEN,
 } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
 
@@ -46,6 +47,9 @@ interface PinView {
   readonly brokeByName: string | null;
   readonly speaking: boolean;
   readonly missingPaths: number;
+  readonly renamedPaths: number;
+  readonly renamedAt: string | null;
+  readonly renamedByName: string | null;
 }
 
 interface CoverageView {
@@ -512,5 +516,124 @@ describe("POST /api/pins/sweep", () => {
     expect(body2.data.ignored).toBe(1);
     const pin = (await listPins(harness, nick.apiKey, OTHER_REPO)).pins[0] as PinView;
     expect(pin.missingPaths).toBe(0);
+  });
+
+  test("ignores an update naming a path the pin never watched", async () => {
+    // Arrange: a sweep MOVES a path the pin holds; it does not invent one.
+    // Without this the INSERT at the rename branch wrote a row for any path
+    // at all, so 40 updates whose `path` named nothing made a 2-file pin
+    // watch 42 — MAX_PIN_FILES, the documented blast-radius control, never
+    // re-checked on this route.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-ghost@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+
+    // Act
+    const response = await harness.app.request(
+      "/api/pins/sweep",
+      jsonRequest("POST", nick.apiKey, {
+        repo: REPO,
+        updates: [
+          {
+            pinId: body["id"],
+            path: "src/never/pinned.ts",
+            newPath: "src/billing/invoice.ts",
+          },
+        ],
+      }),
+    );
+
+    // Assert
+    expect(response.status).toBe(200);
+    const outcome = (await response.json()) as {
+      data: { applied: number; ignored: number };
+    };
+    expect(outcome.data.applied).toBe(0);
+    expect(outcome.data.ignored).toBe(1);
+    const pin = (await listPins(harness, nick.apiKey)).pins[0] as PinView;
+    expect(pin.files.map((file) => file.path).sort()).toEqual([
+      "src/workbench/PlaybackControls.tsx",
+      "src/workbench/usePlayback.ts",
+    ]);
+  });
+
+  test("obeys the touched-files policy the create route enforces", async () => {
+    // Arrange: a team on `touched_files` refuses a pin on a file you have
+    // never worked in. The sweep wrote any path it liked, so the same
+    // forbidden path went in through this route instead — one policy,
+    // enforced on one of the two routes that write pin_files.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-policy@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+    const set = await harness.app.request(
+      "/api/team-settings",
+      jsonRequest("PUT", TEST_ADMIN_TOKEN, {
+        repo: REPO,
+        pinPolicy: "touched_files",
+      }),
+    );
+    expect(set.status).toBe(200);
+
+    // Act
+    const response = await harness.app.request(
+      "/api/pins/sweep",
+      jsonRequest("POST", nick.apiKey, {
+        repo: REPO,
+        updates: [
+          {
+            pinId: body["id"],
+            path: "src/workbench/usePlayback.ts",
+            newPath: "src/billing/invoice.ts",
+          },
+        ],
+      }),
+    );
+
+    // Assert
+    expect(response.status).toBe(200);
+    const outcome = (await response.json()) as {
+      data: { applied: number; ignored: number };
+    };
+    expect(outcome.data.ignored).toBe(1);
+    const pin = (await listPins(harness, nick.apiKey)).pins[0] as PinView;
+    expect(pin.files.map((file) => file.path)).not.toContain(
+      "src/billing/invoice.ts",
+    );
+  });
+
+  test("records that a sweep rewrote the file set, and who", async () => {
+    // Arrange: repointing a pin at another file changes who `suspect` names,
+    // under the same authoritative header and the same surface label. It is
+    // within the authority `anyone may pin` grants, so it is not refused —
+    // but it left NO record anywhere that the file set had ever moved.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-prov@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+    const ken = await createTestDeveloper(harness, "Ken", "ken-prov@example.com");
+
+    // Act
+    const response = await harness.app.request(
+      "/api/pins/sweep",
+      jsonRequest("POST", ken.apiKey, {
+        repo: REPO,
+        updates: [
+          {
+            pinId: body["id"],
+            path: "src/workbench/usePlayback.ts",
+            newPath: "src/billing/invoice.ts",
+          },
+        ],
+      }),
+    );
+
+    // Assert
+    expect(response.status).toBe(200);
+    const pin = (await listPins(harness, nick.apiKey)).pins[0] as PinView;
+    expect(pin.renamedPaths).toBe(1);
+    expect(pin.renamedByName).toBe("Ken");
+    expect(pin.renamedAt).not.toBeNull();
   });
 });

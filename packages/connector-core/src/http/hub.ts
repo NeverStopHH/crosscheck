@@ -1710,6 +1710,15 @@ export const PinEntrySchema = z.looseObject({
   brokeByName: z.string().nullable().default(null),
   speaking: z.boolean().default(false),
   missingPaths: z.number().int().min(0).default(0),
+  /**
+   * WHAT A SWEEP REWROTE, and who ran it. The file set is what `suspect`
+   * intersects, so moving it moves which sessions an answer names — and the
+   * registry used to carry no trace of the move at all. Defaulted, so a hub
+   * that predates the columns reads as "never swept".
+   */
+  renamedPaths: z.number().int().min(0).default(0),
+  renamedAt: z.string().nullable().default(null),
+  renamedByName: z.string().nullable().default(null),
 });
 
 export type PinEntry = z.infer<typeof PinEntrySchema>;
@@ -1885,6 +1894,9 @@ export interface SuspectView {
     readonly files: readonly string[];
     /** Of `files`, the ones the hub already knows git no longer has. */
     readonly missingFiles: readonly string[];
+    /** Pinned paths a sweep has rewritten since the pin was made. */
+    readonly rewrittenPaths: number;
+    readonly rewrittenAt: string | null;
   };
   readonly totals: {
     readonly sessionsTouching: number;
@@ -1911,6 +1923,8 @@ const SuspectViewSchema = z
       // Defaulted, so a hub that predates the field reads as "nothing known
       // to be gone" rather than as a parse failure of the whole answer.
       missingFiles: z.array(z.string().min(1)).default([]),
+      rewrittenPaths: z.number().int().min(0).default(0),
+      rewrittenAt: z.string().nullable().default(null),
     }),
     totals: z.looseObject({
       sessionsTouching: z.number().int().min(0).default(0),

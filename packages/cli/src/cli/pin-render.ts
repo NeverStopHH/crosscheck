@@ -95,9 +95,19 @@ const pinLines = (pin: PinEntry, now: Date): readonly string[] => {
         : pin.speaking
           ? "watching"
           : "watching (briefing-only: too many files to speak)";
+  // THE REWRITE IS ON THE ROW, not in a log nobody reads. The file set is
+  // what `crosscheck suspect` intersects, so moving it moves which sessions
+  // that answer can name — and a repointed pin used to read exactly like one
+  // nobody had ever touched.
+  const rewrite =
+    pin.renamedPaths === 0
+      ? ""
+      : ` · ${String(pin.renamedPaths)} path(s) rewritten by a sweep${
+          pin.renamedAt === null ? "" : ` ${ageOf(pin.renamedAt, now)}`
+        }${pin.renamedByName === null ? "" : ` by ${bareUntrusted(pin.renamedByName)}`}`;
   return [
     `- ${safeId(pin.id)} ${quoted(pin.surface, MAX_PIN_SURFACE_CHARS)}`,
-    `  ${trustLabel(pin)} · at ${safeId(pin.verifiedAtCommit)} · ${ageOf(pin.verifiedAt, now)} · ${state}`,
+    `  ${trustLabel(pin)} · at ${safeId(pin.verifiedAtCommit)} · ${ageOf(pin.verifiedAt, now)} · ${state}${rewrite}`,
     ...(pin.check === null
       ? ["  check: none recorded — this pin can never be falsified in 30 seconds"]
       : [`  check: ${quotedBody(pin.check, MAX_PIN_CHECK_CHARS)}`]),

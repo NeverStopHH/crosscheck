@@ -125,6 +125,25 @@ const scopeLine = (view: SuspectView): string => {
  * set narrows the intersection without emptying it, which is the same lie in
  * smaller print.
  */
+/**
+ * THE FILE SET MOVED, SO THE ANSWER MOVED. A sweep rewrites the paths a pin
+ * watches, and those paths are exactly what this answer intersected — so a
+ * rewrite changes which sessions can appear here, under this same surface
+ * label and this same "the check was run and failed" header. No developer
+ * name: `suspect` names sessions, and `crosscheck pin list` is where the
+ * reader takes the hop to who ran the sweep.
+ */
+const rewriteLines = (view: SuspectView, now: Date): readonly string[] =>
+  view.scope.rewrittenPaths === 0
+    ? []
+    : [
+        `${String(view.scope.rewrittenPaths)} pinned path(s) were rewritten by a sweep${
+          view.scope.rewrittenAt === null
+            ? ""
+            : ` ${ageOf(view.scope.rewrittenAt, now)}`
+        }, so this answer intersected a file set that has moved since the pin was made: crosscheck pin list names who ran it.`,
+      ];
+
 const deadScopeLines = (view: SuspectView): readonly string[] => {
   const gone = view.scope.missingFiles.length;
   if (gone === 0 || view.scope.files.length === 0) {
@@ -215,6 +234,7 @@ export const renderSuspect = (view: SuspectView, now: Date): string => {
     ...falsifierLines(view, now),
     scopeLine(view),
     outcomeLine(view),
+    ...rewriteLines(view, now),
     ...deadScopeLines(view),
     ...boundLines(view),
     ...view.candidates.flatMap((candidate, index) =>

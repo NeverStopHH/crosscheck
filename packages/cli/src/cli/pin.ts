@@ -249,7 +249,16 @@ const runSweep = async (resolved: Resolved): Promise<CliResult> => {
   const missing = swept.filter((entry) => entry.status === "missing").length;
   return {
     stdout: [
-      `pin sweep: ${String(reported.data.applied)} path(s) recorded — ${String(renamed)} renamed, ${String(missing)} missing, ${String(unknown)} not answered`,
+      `pin sweep: ${String(reported.data.applied)} path(s) recorded — ${String(renamed)} renamed, ${String(missing)} missing, ${String(unknown)} not answered, ${String(reported.data.ignored)} not recorded`,
+      // THE HUB'S REFUSALS ARE THE READER'S, TOO. git said one thing and the
+      // hub declined to write it — a sweep that printed only what git found
+      // would report the register as current while it is not, which is the
+      // fail-silent shape this whole command exists to remove.
+      ...(reported.data.ignored === 0
+        ? []
+        : [
+            "not recorded means the hub declined the update: the pin belongs to another repo, the path is not one the pin watches, or this team's pin policy covers the new path. Run crosscheck pin list to see what the register actually holds.",
+          ]),
       ...(unknown === 0
         ? []
         : [

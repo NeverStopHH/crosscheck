@@ -179,7 +179,12 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     }
     return ok(
       c,
-      await applyPinSweep(deps, parsed.data.repo, parsed.data.updates),
+      await applyPinSweep(
+        deps,
+        c.get("developer").id,
+        parsed.data.repo,
+        parsed.data.updates,
+      ),
     );
   });
 

@@ -126,6 +126,15 @@ export interface SuspectView {
      * surface at its new path, not go looking for a session).
      */
     readonly missingFiles: readonly string[];
+    /**
+     * Pinned paths a sweep has REWRITTEN. The file set below is what this
+     * answer intersected, so a rewrite moved which sessions could be named —
+     * under this same surface label and this same "the check was run and
+     * failed" header. Printed, because the registry used to carry no trace of
+     * the move and the answer read identically either way.
+     */
+    readonly rewrittenPaths: number;
+    readonly rewrittenAt: string | null;
   };
   readonly totals: {
     /** Contexts that touched the surface in the window — the whole of it. */
@@ -146,6 +155,9 @@ export interface SuspectScope {
   readonly files: readonly string[];
   /** Of `files`, the ones the pin registry already marks as gone. */
   readonly missingFiles: readonly string[];
+  /** Pinned paths a sweep rewrote, and when it last did. */
+  readonly rewrittenPaths: number;
+  readonly rewrittenAt: string | null;
   readonly falsifierKind: SuspectFalsifierKind;
   readonly falsifierAt: string | null;
   readonly check: string | null;
@@ -175,6 +187,8 @@ export const resolveSuspectScope = async (
         files: input.paths,
         // The reader named these by hand; the hub holds no status for them.
         missingFiles: [],
+        rewrittenPaths: 0,
+        rewrittenAt: null,
         // No pin means no recorded claim to falsify: the reader is asserting
         // the breakage themselves, and the renderer says exactly that.
         falsifierKind: "reader_named_files",
@@ -206,6 +220,8 @@ export const resolveSuspectScope = async (
       missingFiles: pin.files
         .filter((file) => file.status === "missing")
         .map((file) => file.path),
+      rewrittenPaths: pin.renamedPaths,
+      rewrittenAt: pin.renamedAt,
       falsifierKind,
       falsifierAt: pin.brokeAt,
       check: pin.check,
@@ -480,6 +496,8 @@ export const suspectSessions = async (
       surface: input.scope.surface,
       files: input.scope.files,
       missingFiles: input.scope.missingFiles,
+      rewrittenPaths: input.scope.rewrittenPaths,
+      rewrittenAt: input.scope.rewrittenAt,
     },
     totals: {
       // The WHOLE intersection, and how much of it was scored. A total taken

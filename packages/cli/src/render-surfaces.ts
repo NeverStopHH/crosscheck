@@ -38,6 +38,11 @@ const pinWith = (payload: string): PinEntry => ({
   brokeByName: payload,
   speaking: true,
   missingPaths: 1,
+  // SWEPT, so the rewrite clause on the trust line — which interpolates the
+  // sweeping developer's name — is in the corpus rather than merely written.
+  renamedPaths: 1,
+  renamedAt: ISO,
+  renamedByName: payload,
 });
 
 /**
@@ -108,6 +113,9 @@ const suspectWith = (payload: string): SuspectView => ({
     // The SAME payload, so the (MISSING) marker the dead-path branch adds is
     // planted in the corpus rather than being a rendering nobody ever fuzzed.
     missingFiles: [payload],
+    // A swept pin, so the rewrite sentence is in the corpus too.
+    rewrittenPaths: 1,
+    rewrittenAt: ISO,
   },
   totals: { sessionsTouching: 1, sessionsScored: 1, windowDays: 14 },
   attribution: "sessions",

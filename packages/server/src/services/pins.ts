@@ -37,6 +37,7 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
+import { readTeamSettings } from "./team-settings.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -73,6 +74,10 @@ export interface PinView {
   readonly verifiedAt: string;
   readonly brokeAt: string | null;
   readonly brokeByName: string | null;
+  /** Pinned paths a sweep has rewritten — 0 on a pin nobody has moved. */
+  readonly renamedPaths: number;
+  readonly renamedAt: string | null;
+  readonly renamedByName: string | null;
   /** Small enough to speak AND falsifiable — Stage 2's eligibility, printed now. */
   readonly speaking: boolean;
   /** Paths the sweep could not find at HEAD; > 0 means the pin is rotting. */
@@ -298,9 +303,12 @@ const toPinView = (
     readonly verifiedAtCommit: string;
     readonly verifiedAt: Date;
     readonly brokeAt: Date | null;
+    readonly renamedPaths: number;
+    readonly renamedAt: Date | null;
   },
   files: readonly PinFileView[],
   brokeByName: string | null,
+  renamedByName: string | null,
 ): PinView => ({
   id: row.id,
   repo: row.repo,
@@ -314,6 +322,9 @@ const toPinView = (
   verifiedAt: row.verifiedAt.toISOString(),
   brokeAt: iso(row.brokeAt),
   brokeByName,
+  renamedPaths: Number(row.renamedPaths),
+  renamedAt: iso(row.renamedAt),
+  renamedByName,
   speaking: isSpeakingPin({
     files: files.map((file) => file.path),
     check: row.checkRecipe ?? undefined,
@@ -347,6 +358,9 @@ export const listPins = async (
       verifiedAt: pins.verifiedAt,
       brokeAt: pins.brokeAt,
       brokeBy: pins.brokeBy,
+      renamedPaths: pins.renamedPaths,
+      renamedAt: pins.renamedAt,
+      renamedBy: pins.renamedBy,
     })
     .from(pins)
     .innerJoin(developers, eq(pins.verifiedBy, developers.id))
@@ -366,21 +380,24 @@ export const listPins = async (
           .from(pinFiles)
           .where(and(eq(pinFiles.repo, repo), inArray(pinFiles.pinId, ids)))
           .orderBy(asc(pinFiles.path));
-  const breakerIds = [
+  // ONE name lookup for both roles: whoever retracted a pin and whoever last
+  // swept it are the same kind of fact about the same page of rows, and two
+  // queries would be two chances to disagree about a developer's name.
+  const namedIds = [
     ...new Set(
       rows
-        .map((row) => row.brokeBy)
+        .flatMap((row) => [row.brokeBy, row.renamedBy])
         .filter((value): value is string => value !== null),
     ),
   ];
-  const breakers =
-    breakerIds.length === 0
+  const named =
+    namedIds.length === 0
       ? []
       : await deps.db
           .select({ id: developers.id, name: developers.name })
           .from(developers)
-          .where(inArray(developers.id, breakerIds));
-  const breakerNames = new Map(breakers.map((row) => [row.id, row.name]));
+          .where(inArray(developers.id, namedIds));
+  const breakerNames = new Map(named.map((row) => [row.id, row.name]));
   const filesByPin = new Map<string, PinFileView[]>();
   for (const file of files) {
     const bucket = filesByPin.get(file.pinId) ?? [];
@@ -393,6 +410,7 @@ export const listPins = async (
         row,
         filesByPin.get(row.id) ?? [],
         row.brokeBy === null ? null : breakerNames.get(row.brokeBy) ?? null,
+        row.renamedBy === null ? null : breakerNames.get(row.renamedBy) ?? null,
       ),
     ),
     coverage: await readCoverage(deps, repo),
@@ -417,6 +435,9 @@ export const readPin = async (
       verifiedAt: pins.verifiedAt,
       brokeAt: pins.brokeAt,
       brokeBy: pins.brokeBy,
+      renamedPaths: pins.renamedPaths,
+      renamedAt: pins.renamedAt,
+      renamedBy: pins.renamedBy,
     })
     .from(pins)
     .innerJoin(developers, eq(pins.verifiedBy, developers.id))
@@ -431,18 +452,22 @@ export const readPin = async (
     .from(pinFiles)
     .where(eq(pinFiles.pinId, pinId))
     .orderBy(asc(pinFiles.path));
-  const breaker =
-    row.brokeBy === null
-      ? []
-      : await deps.db
-          .select({ name: developers.name })
-          .from(developers)
-          .where(eq(developers.id, row.brokeBy))
-          .limit(1);
+  const nameOf = async (id: string | null): Promise<string | null> => {
+    if (id === null) {
+      return null;
+    }
+    const rows = await deps.db
+      .select({ name: developers.name })
+      .from(developers)
+      .where(eq(developers.id, id))
+      .limit(1);
+    return rows[0]?.name ?? null;
+  };
   return toPinView(
     row,
     files.map((file) => ({ path: file.path, status: file.status })),
-    breaker[0]?.name ?? null,
+    await nameOf(row.brokeBy),
+    await nameOf(row.renamedBy),
   );
 };
 
@@ -456,6 +481,8 @@ export interface PinPathUpdate {
 export interface SweepOutcome {
   readonly applied: number;
   readonly ignored: number;
+  /** Of `applied`, the ones that MOVED a path rather than restating it. */
+  readonly renamed: number;
 }
 
 /**
@@ -472,17 +499,51 @@ export interface SweepOutcome {
  *     files vanish and return, and a sweep that could only ever mark things
  *     missing would leave permanent scars from ordinary git.
  *
- * An update naming a pin outside this repo is IGNORED and counted: the sweep
- * speaks for one checkout, and a body reaching across repos is either a bug
- * or somebody editing another team's registry from their own machine.
+ * WHAT IS IGNORED, and counted rather than silently dropped:
+ *
+ *   - an update naming a pin outside this repo. The sweep speaks for one
+ *     checkout, and a body reaching across repos is either a bug or somebody
+ *     editing another team's registry from their own machine;
+ *   - an update naming a (pin, path) row THE PIN DOES NOT HOLD. A sweep MOVES
+ *     a path the pin watches; it never invents one. Without this the rename
+ *     branch INSERTed a row for any path at all, so a body of 40 updates whose
+ *     `path` named nothing made a 2-file pin watch 42 — and MAX_PIN_FILES, the
+ *     documented blast-radius control, was never re-checked on this route.
+ *     With it, an applied rename replaces exactly one existing row, so the
+ *     file count can only ever stay level or shrink and the cap holds by
+ *     construction rather than by a second check that could drift;
+ *   - a `newPath` this team's pin policy forbids. `touched_files` is enforced
+ *     on POST /api/pins and was enforced NOWHERE here, so the same refused
+ *     path went in through the other door.
+ *
+ * A REWRITE IS RECORDED, NEVER REFUSED under the default policy. The paths a
+ * pin watches are the set `suspect` intersects, so moving them moves who gets
+ * named — under the same surface label and the same "the check was run and
+ * failed" header. `anyone may pin` is the team's decision and repointing is
+ * inside the authority it grants; what was missing was any record at all that
+ * it happened, which is what pins.renamed_* now carries to every reader.
  */
 export const applyPinSweep = async (
   deps: Deps,
+  developerId: string,
   repo: string,
   updates: readonly PinPathUpdate[],
 ): Promise<SweepOutcome> => {
+  const settings = await readTeamSettings(deps, repo);
+  const proposed = [
+    ...new Set(
+      updates
+        .map((update) => update.newPath)
+        .filter((value): value is string => value !== null),
+    ),
+  ];
+  const forbidden =
+    settings.pinPolicy === "touched_files"
+      ? new Set(await untouchedByDeveloper(deps, developerId, repo, proposed))
+      : new Set<string>();
   let applied = 0;
   let ignored = 0;
+  let renamed = 0;
   for (const update of updates) {
     const owner = await deps.db
       .select({ repo: pins.repo })
@@ -490,6 +551,23 @@ export const applyPinSweep = async (
       .where(eq(pins.id, update.pinId))
       .limit(1);
     if (owner[0]?.repo !== repo) {
+      ignored += 1;
+      continue;
+    }
+    if (update.newPath !== null && forbidden.has(update.newPath)) {
+      ignored += 1;
+      continue;
+    }
+    // THE ROW MUST EXIST. Read before write, because both branches below
+    // otherwise treat "this path is not in the pin" as "write it anyway".
+    const held = await deps.db
+      .select({ path: pinFiles.path })
+      .from(pinFiles)
+      .where(
+        and(eq(pinFiles.pinId, update.pinId), eq(pinFiles.path, update.path)),
+      )
+      .limit(1);
+    if (held[0] === undefined) {
       ignored += 1;
       continue;
     }
@@ -526,8 +604,17 @@ export const applyPinSweep = async (
         .where(
           and(eq(pinFiles.pinId, update.pinId), eq(pinFiles.path, update.path)),
         );
+      renamed += inserted.length;
+      await deps.db
+        .update(pins)
+        .set({
+          renamedPaths: sql`${pins.renamedPaths} + ${inserted.length}`,
+          renamedAt: deps.now(),
+          renamedBy: developerId,
+        })
+        .where(eq(pins.id, update.pinId));
     }
     applied += inserted.length;
   }
-  return { applied, ignored };
+  return { applied, ignored, renamed };
 };

@@ -337,6 +337,9 @@ describe("crosscheck pin list at scale", () => {
           brokeByName: null,
           speaking: true,
           missingPaths: 0,
+          renamedPaths: 0,
+          renamedAt: null,
+          renamedByName: null,
         },
       ],
       coverage: {
@@ -355,6 +358,50 @@ describe("crosscheck pin list at scale", () => {
     // Assert
     expect(rendered).toContain("pins: 250");
     expect(rendered).toContain("showing 1 of 250");
+  });
+
+  test("names who rewrote a pin's file set, and when", () => {
+    // Arrange: the file set is what suspect intersects, so a rewrite moves
+    // who gets named. The registry recorded nothing about it at all — a
+    // repointed pin read exactly like one nobody had touched.
+    const now = new Date();
+    const registry = {
+      pins: [
+        {
+          id: "pin_11111111-2222-4333-8444-555555555555",
+          repo: REPO_ID,
+          surface: "Play button plays/pauses",
+          files: [{ path: "src/billing/invoice.ts", status: "present" }],
+          check: "open /workbench, press Play",
+          captureMode: "human",
+          verifiedById: "dev_nick",
+          verifiedByName: "Nick",
+          verifiedAtCommit: "a1b2c3d4",
+          verifiedAt: now.toISOString(),
+          brokeAt: null,
+          brokeByName: null,
+          speaking: true,
+          missingPaths: 0,
+          renamedPaths: 1,
+          renamedAt: new Date(now.getTime() - 120_000).toISOString(),
+          renamedByName: "Ken",
+        },
+      ],
+      coverage: {
+        pins: 1,
+        files: 1,
+        speaking: 1,
+        broken: 0,
+        missingPaths: 0,
+        oldestVerifiedAt: now.toISOString(),
+      },
+    };
+
+    // Act
+    const rendered = renderPinList(REPO_ID, registry, now);
+
+    // Assert
+    expect(rendered).toContain("1 path(s) rewritten by a sweep 2m ago by Ken");
   });
 });
 
@@ -388,6 +435,8 @@ describe("crosscheck suspect at scale", () => {
         surface: "Play button plays/pauses",
         files: [PINNED],
         missingFiles: [],
+        rewrittenPaths: 0,
+        rewrittenAt: null,
       },
       totals: { sessionsTouching: 305, sessionsScored: 50, windowDays: 14 },
       attribution: "sessions",
@@ -400,6 +449,37 @@ describe("crosscheck suspect at scale", () => {
     // Assert
     expect(rendered).toContain("305 session(s) touched this surface");
     expect(rendered).toContain("scored 50 of 305");
+  });
+
+  test("says the pin's file set was rewritten by a sweep, and when", () => {
+    // Arrange: repointing a pin moves the set suspect intersects, so it moves
+    // who gets named — under the same surface label and the same "the check
+    // was run and failed" header. It is inside the authority `anyone may pin`
+    // grants, so it is recorded rather than refused; before this there was no
+    // record anywhere that the file set had ever moved.
+    const now = new Date();
+    const view = {
+      outcome: "no_touch",
+      falsifier: { kind: "recorded_break", at: now.toISOString(), check: null },
+      scope: {
+        kind: "pin",
+        pinId: "pin_playback",
+        surface: "Play button plays/pauses",
+        files: ["src/billing/invoice.ts"],
+        missingFiles: [],
+        rewrittenPaths: 1,
+        rewrittenAt: new Date(now.getTime() - 60_000).toISOString(),
+      },
+      totals: { sessionsTouching: 0, sessionsScored: 0, windowDays: 14 },
+      attribution: "sessions",
+      candidates: [],
+    };
+
+    // Act
+    const rendered = renderSuspect(view, now);
+
+    // Assert
+    expect(rendered).toContain("1 pinned path(s) were rewritten by a sweep");
   });
 
   test("says a zero over a dead path is about the pin, not the world", () => {
@@ -417,6 +497,8 @@ describe("crosscheck suspect at scale", () => {
         surface: "Play button plays/pauses",
         files: [PINNED],
         missingFiles: [PINNED],
+        rewrittenPaths: 0,
+        rewrittenAt: null,
       },
       totals: { sessionsTouching: 0, sessionsScored: 0, windowDays: 14 },
       attribution: "sessions",
@@ -456,5 +538,48 @@ describe("crosscheck pin --sweep", () => {
     const listed = await runFor(nickKey, ["pin", "list"]);
     expect(listed.stdout).toContain("src/workbench/usePlaybackState.ts");
     expect(listed.stdout).toContain(pinId);
+  });
+
+  test("says how many updates the hub refused to record", async () => {
+    // Arrange: this team pins only files you have worked in. The rename
+    // target is a file Nick has no recorded touch of, so the hub declines to
+    // write it — and a sweep that reports "1 path recorded" while one update
+    // was dropped has told the reader the register is current when it is not.
+    const setPolicy = async (pinPolicy: string): Promise<void> => {
+      const response = await fetch(`${hubUrl}/api/team-settings`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${ADMIN_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ repo: REPO_ID, pinPolicy }),
+      });
+      expect(response.status).toBe(200);
+    };
+    await writeRepoFile(repo, "src/core/policy-target.ts", "export const x = 1;\n");
+    await git(repo, ["add", "src/core/policy-target.ts"]);
+    await git(repo, ["commit", "-m", "add the policy target"]);
+    await runFor(nickKey, [
+      "pin",
+      "Policy target still builds",
+      "--files",
+      "src/core/policy-target.ts",
+      "--check",
+      "run the build",
+    ]);
+    await git(repo, ["mv", "src/core/policy-target.ts", "src/core/invoice-target.ts"]);
+    await git(repo, ["commit", "-m", "move the target into billing"]);
+    await setPolicy("touched_files");
+
+    // Act
+    const swept = await runFor(nickKey, ["pin", "--sweep"]);
+    await setPolicy("anyone");
+
+    // Assert
+    // Every live pin's rename target is a file Nick never worked in, so the
+    // count follows how many pins this file left behind — the assertion is
+    // that it is not zero and that the sentence names the cause.
+    expect(swept.stdout).toMatch(/[1-9]\d* not recorded/);
+    expect(swept.stdout).toContain("this team's pin policy");
   });
 });

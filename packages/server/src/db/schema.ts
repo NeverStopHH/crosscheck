@@ -603,6 +603,16 @@ export const pins = pgTable(
     /** The retraction, and the falsifier timestamp suspect gates on. */
     brokeAt: timestamptz("broke_at"),
     brokeBy: text("broke_by").references(() => developers.id),
+    /**
+     * WHAT A SWEEP REWROTE. A sweep moves the paths a pin watches, and those
+     * paths are what `suspect` intersects — so a rewrite silently changes
+     * which sessions an answer names. Recorded rather than refused: `anyone
+     * may pin` is the team's decision and repointing is inside the authority
+     * it grants; what was missing was any record that it had happened.
+     */
+    renamedPaths: integer("renamed_paths").notNull().default(0),
+    renamedAt: timestamptz("renamed_at"),
+    renamedBy: text("renamed_by").references(() => developers.id),
     createdAt: timestamptz("created_at").notNull(),
   },
   (table) => [
