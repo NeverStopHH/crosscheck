@@ -4530,10 +4530,14 @@ export const MUTATIONS: readonly Mutation[] = [
     // literal. review_draft is a tool an agent can point at its OWN draft and
     // its header says "the agent now vouches" — so nothing but the wire type
     // stands between that and a machine writing "Nick checked this works".
+    // The field is `presence` — the EVIDENCE a client states, which the hub
+    // stamps the stored mode from — since the trust fix retired
+    // `captureMode: "human"`, the caller's own verdict about itself; this
+    // anchor pointed at the retired line and the script died on it.
     label: "an agent can sign a pin as a human's word",
     file: `${SCHEMA}/src/pin.ts`,
-    from: '  captureMode: z.literal("human"),',
-    to: "  captureMode: z.string(),",
+    from: "  presence: z.literal(PIN_PRESENCE_TERMINAL),",
+    to: "  presence: z.string(),",
     test: `${SERVER}/test/pins.test.ts`,
     because:
       "the one provenance a person is supposed to own becomes writable by " +
