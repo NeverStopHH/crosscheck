@@ -97,12 +97,47 @@ const falsifierLines = (view: SuspectView, now: Date): readonly string[] => {
  */
 const filePath = (path: string): string => bareUntrusted(path, MAX_PIN_PATH_CHARS);
 
+/**
+ * THE SCOPE, WITH THE DEAD PATHS MARKED — the same (MISSING) marker
+ * `crosscheck pin list` gives the same data, because a path git no longer has
+ * can never be intersected against: a touch row only ever exists for a path
+ * that EXISTS. Rendering a dead path as if it were being watched turns "the
+ * intersection was empty" into "nobody was in there", which is a fact about
+ * the world rather than a fact about the pin, and points at the wrong remedy.
+ */
 const scopeLine = (view: SuspectView): string => {
+  const gone = new Set(view.scope.missingFiles);
   const shown = view.scope.files.slice(0, MAX_PRINTED_FILES);
   const rest = view.scope.files.length - shown.length;
-  return `  files: ${shown.map((path) => filePath(path)).join(", ")}${
-    rest > 0 ? ` … and ${String(rest)} more` : ""
-  }`;
+  const paths = shown
+    .map((path) =>
+      gone.has(path) ? `${filePath(path)} (MISSING)` : filePath(path),
+    )
+    .join(", ");
+  return `  files: ${paths}${rest > 0 ? ` … and ${String(rest)} more` : ""}`;
+};
+
+/**
+ * WHY THE ZERO IS A ZERO, when the pin is the reason. `no_touch` over a pin
+ * whose paths git has lost is not evidence about anybody: the remedy is to
+ * re-pin the surface at its new path, not to go looking for a session. Said
+ * only when it applies, and the partial case is said too — a half-dead file
+ * set narrows the intersection without emptying it, which is the same lie in
+ * smaller print.
+ */
+const deadScopeLines = (view: SuspectView): readonly string[] => {
+  const gone = view.scope.missingFiles.length;
+  if (gone === 0 || view.scope.files.length === 0) {
+    return [];
+  }
+  if (gone >= view.scope.files.length) {
+    return [
+      "every path this pin watches is gone from git, so nothing could ever have matched: this zero is about the pin, not about anybody. Re-pin the surface at its new path (crosscheck pin --sweep re-resolves a rename).",
+    ];
+  }
+  return [
+    `${String(gone)} of ${String(view.scope.files.length)} pinned path(s) are gone from git, so no touch of them could ever match: the intersection above is narrower than the surface.`,
+  ];
 };
 
 /**
@@ -180,6 +215,7 @@ export const renderSuspect = (view: SuspectView, now: Date): string => {
     ...falsifierLines(view, now),
     scopeLine(view),
     outcomeLine(view),
+    ...deadScopeLines(view),
     ...boundLines(view),
     ...view.candidates.flatMap((candidate, index) =>
       candidateLines(candidate, index, now),

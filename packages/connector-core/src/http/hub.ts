@@ -1883,6 +1883,8 @@ export interface SuspectView {
     readonly pinId: string | null;
     readonly surface: string | null;
     readonly files: readonly string[];
+    /** Of `files`, the ones the hub already knows git no longer has. */
+    readonly missingFiles: readonly string[];
   };
   readonly totals: {
     readonly sessionsTouching: number;
@@ -1906,6 +1908,9 @@ const SuspectViewSchema = z
       pinId: z.string().nullable().default(null),
       surface: z.string().nullable().default(null),
       files: z.array(z.string().min(1)).default([]),
+      // Defaulted, so a hub that predates the field reads as "nothing known
+      // to be gone" rather than as a parse failure of the whole answer.
+      missingFiles: z.array(z.string().min(1)).default([]),
     }),
     totals: z.looseObject({
       sessionsTouching: z.number().int().min(0).default(0),

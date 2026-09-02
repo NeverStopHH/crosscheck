@@ -105,6 +105,9 @@ const suspectWith = (payload: string): SuspectView => ({
     pinId: "pin_11111111-2222-4333-8444-555555555555",
     surface: payload,
     files: [payload],
+    // The SAME payload, so the (MISSING) marker the dead-path branch adds is
+    // planted in the corpus rather than being a rendering nobody ever fuzzed.
+    missingFiles: [payload],
   },
   totals: { sessionsTouching: 1, sessionsScored: 1, windowDays: 14 },
   attribution: "sessions",

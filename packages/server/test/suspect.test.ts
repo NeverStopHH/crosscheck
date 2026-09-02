@@ -68,6 +68,7 @@ interface SuspectView {
   readonly scope: {
     readonly kind: string;
     readonly files: readonly string[];
+    readonly missingFiles: readonly string[];
     readonly surface: string | null;
   };
   readonly totals: {
@@ -96,7 +97,7 @@ const suspect = async (
         outcome: "missing",
         falsifier: { kind: "missing", at: null },
         attribution: "missing",
-        scope: { kind: "missing", files: [], surface: null },
+        scope: { kind: "missing", files: [], missingFiles: [], surface: null },
         totals: { sessionsTouching: -1, sessionsScored: -1, windowDays: -1 },
         candidates: [],
       } satisfies SuspectView),
@@ -645,5 +646,36 @@ describe("evidence and privacy", () => {
     // Assert
     expect(view.candidates).toHaveLength(1);
     expect(view.candidates[0]?.readerMuted).toBe(true);
+  });
+});
+
+describe("a pin whose paths git no longer has", () => {
+  test("carries the paths the hub knows are gone", async () => {
+    // Arrange: a target row can only ever be recorded against a path that
+    // EXISTS, so intersecting on a path the sweep already marked missing can
+    // only ever return zero — and "no session touched this surface" reports
+    // that zero as a fact about the world rather than about the pin.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-gone@example.com");
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    await createPin(harness, nick.apiKey);
+    const swept = await harness.app.request(
+      "/api/pins/sweep",
+      jsonRequest("POST", nick.apiKey, {
+        repo: REPO,
+        updates: [{ pinId: "pin_playback", path: PINNED_A, newPath: null }],
+      }),
+    );
+    expect(swept.status).toBe(200);
+    await breakPin(harness, nick.apiKey);
+
+    // Act
+    const view = (await suspect(harness, nick.apiKey, "pin=pin_playback")).view;
+
+    // Assert: both paths are still the scope, and the dead one is named as
+    // dead rather than silently intersected against.
+    expect(view.outcome).toBe("no_touch");
+    expect([...view.scope.files].sort()).toEqual([PINNED_A, PINNED_B].sort());
+    expect(view.scope.missingFiles).toEqual([PINNED_A]);
   });
 });

@@ -117,6 +117,15 @@ export interface SuspectView {
     readonly pinId: string | null;
     readonly surface: string | null;
     readonly files: readonly string[];
+    /**
+     * The subset of `files` the hub already knows git no longer has. A target
+     * row can only ever be recorded against a path that EXISTS, so a missing
+     * path can only ever intersect to zero — and "no session touched this
+     * surface" would report that zero as a fact about the WORLD instead of a
+     * fact about the pin, with a different remedy behind it (re-pin the
+     * surface at its new path, not go looking for a session).
+     */
+    readonly missingFiles: readonly string[];
   };
   readonly totals: {
     /** Contexts that touched the surface in the window — the whole of it. */
@@ -135,6 +144,8 @@ export interface SuspectScope {
   readonly pinId: string | null;
   readonly surface: string | null;
   readonly files: readonly string[];
+  /** Of `files`, the ones the pin registry already marks as gone. */
+  readonly missingFiles: readonly string[];
   readonly falsifierKind: SuspectFalsifierKind;
   readonly falsifierAt: string | null;
   readonly check: string | null;
@@ -162,6 +173,8 @@ export const resolveSuspectScope = async (
         pinId: null,
         surface: null,
         files: input.paths,
+        // The reader named these by hand; the hub holds no status for them.
+        missingFiles: [],
         // No pin means no recorded claim to falsify: the reader is asserting
         // the breakage themselves, and the renderer says exactly that.
         falsifierKind: "reader_named_files",
@@ -190,6 +203,9 @@ export const resolveSuspectScope = async (
       pinId: pin.id,
       surface: pin.surface,
       files: pin.files.map((file) => file.path),
+      missingFiles: pin.files
+        .filter((file) => file.status === "missing")
+        .map((file) => file.path),
       falsifierKind,
       falsifierAt: pin.brokeAt,
       check: pin.check,
@@ -463,6 +479,7 @@ export const suspectSessions = async (
       pinId: input.scope.pinId,
       surface: input.scope.surface,
       files: input.scope.files,
+      missingFiles: input.scope.missingFiles,
     },
     totals: {
       // The WHOLE intersection, and how much of it was scored. A total taken

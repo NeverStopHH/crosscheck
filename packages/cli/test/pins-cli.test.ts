@@ -387,6 +387,7 @@ describe("crosscheck suspect at scale", () => {
         pinId: "pin_playback",
         surface: "Play button plays/pauses",
         files: [PINNED],
+        missingFiles: [],
       },
       totals: { sessionsTouching: 305, sessionsScored: 50, windowDays: 14 },
       attribution: "sessions",
@@ -399,6 +400,35 @@ describe("crosscheck suspect at scale", () => {
     // Assert
     expect(rendered).toContain("305 session(s) touched this surface");
     expect(rendered).toContain("scored 50 of 305");
+  });
+
+  test("says a zero over a dead path is about the pin, not the world", () => {
+    // Arrange: the sweep already recorded that git no longer has this path.
+    // A touch row can only exist against a path that EXISTS, so the
+    // intersection can only ever be empty — and "whatever broke it is not in
+    // crosscheck's record" sends the reader hunting for a session when the
+    // remedy is to re-pin the surface at its new path.
+    const view = {
+      outcome: "no_touch",
+      falsifier: { kind: "recorded_break", at: new Date().toISOString(), check: null },
+      scope: {
+        kind: "pin",
+        pinId: "pin_playback",
+        surface: "Play button plays/pauses",
+        files: [PINNED],
+        missingFiles: [PINNED],
+      },
+      totals: { sessionsTouching: 0, sessionsScored: 0, windowDays: 14 },
+      attribution: "sessions",
+      candidates: [],
+    };
+
+    // Act
+    const rendered = renderSuspect(view, new Date());
+
+    // Assert
+    expect(rendered).toContain(`${PINNED} (MISSING)`);
+    expect(rendered).toContain("every path this pin watches is gone from git");
   });
 });
 
