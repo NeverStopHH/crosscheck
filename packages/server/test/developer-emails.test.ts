@@ -7,6 +7,7 @@
  * caller can read (not a silent no-op that leaves absence matching wrong).
  */
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 
 import {
   TEST_ADMIN_TOKEN,
@@ -15,6 +16,7 @@ import {
   jsonRequest,
 } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
+import { developerEmails } from "../src/db/schema.ts";
 import { MAX_EMAILS_PER_DEVELOPER } from "../src/services/developers.ts";
 
 interface EmailView {
@@ -197,6 +199,57 @@ describe("developer alias emails (admin)", () => {
     const reAdd = await addEmail(harness, nick.developerId, "alias1@example.com");
     expect(reAdd.status).toBe(200);
     expect((reAdd.body["data"] as { alreadyLinked: boolean }).alreadyLinked).toBe(true);
+  });
+
+  // The cap used to be a promise about call order and not a fact about the
+  // table: every link read the capped list and then inserted outside a
+  // transaction, so eight concurrent links against nine rows each read nine,
+  // each inserted, and one developer held seventeen addresses — seven that no
+  // admin surface could show or remove while absence matching kept
+  // attributing their commits (developer-listing.test.ts pins that the
+  // listing DISCLOSES that state; this pins that the API no longer PRODUCES
+  // it). Concurrent by construction, through the real route, and
+  // deterministic rather than rolled for: the hub is a single-connection
+  // PGlite that serialises transactions, so once the check and the insert
+  // share one, exactly one link can win. Asserted on the TABLE, because every
+  // read surface is capped at ten and shows ten whether seventeen are stored
+  // or not.
+  test("concurrent links cannot carry a developer past the cap", async () => {
+    // Arrange: nine rows — the primary plus eight aliases, one short of the cap
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick@example.com");
+    for (let index = 1; index < MAX_EMAILS_PER_DEVELOPER - 1; index += 1) {
+      const added = await addEmail(
+        harness,
+        nick.developerId,
+        `alias${String(index)}@example.com`,
+      );
+      expect(added.status).toBe(200);
+    }
+
+    // Act: eight links at once, each for a fresh address
+    const RACERS = 8;
+    const raced = await Promise.all(
+      Array.from({ length: RACERS }, (_, nth) =>
+        addEmail(harness, nick.developerId, `raced${String(nth)}@example.com`),
+      ),
+    );
+
+    // Assert: one wins, every other hears the DISTINCT refusal, and the table
+    // holds exactly the cap
+    expect(raced.map((result) => result.status).toSorted()).toEqual([
+      200,
+      ...Array.from({ length: RACERS - 1 }, () => 409),
+    ]);
+    for (const refused of raced.filter((result) => result.status === 409)) {
+      const error = refused.body["error"] as { code: string };
+      expect(error.code).toBe("email_limit_reached");
+    }
+    const stored = await harness.db
+      .select({ email: developerEmails.email })
+      .from(developerEmails)
+      .where(eq(developerEmails.developerId, nick.developerId));
+    expect(stored).toHaveLength(MAX_EMAILS_PER_DEVELOPER);
   });
 
   test("a body that is not an email is a 400, before any lookup", async () => {

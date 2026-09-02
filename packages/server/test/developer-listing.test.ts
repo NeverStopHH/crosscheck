@@ -225,10 +225,11 @@ describe("admin developer listing", () => {
   });
 
   // `truncated` covers the developer axis only, and the emails have a cap of
-  // their own. A developer can hold more rows than the cap — `addDeveloperEmail`
-  // reads the capped list and then inserts outside a transaction, so concurrent
-  // links race past it — and the state is what matters here, not the race, so
-  // it is constructed directly rather than rolled for. What the listing did
+  // their own. A developer can hold more rows than the cap — rows written
+  // before `addDeveloperEmail` checked the cap and inserted inside one
+  // transaction (developer-emails.test.ts pins that it does now), or written
+  // straight into the database — and the state is what matters here, not how
+  // it arose, so it is constructed directly. What the listing did
   // with it was report ten addresses and `truncated: false`: an admin auditing
   // who is linked to what saw a smaller set than the one absence matching acts
   // on, since that join reads developer_emails unbounded, and re-adding an

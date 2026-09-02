@@ -5,7 +5,7 @@ import { DEVELOPERS_MAX_LISTED, EVENT_KINDS } from "../constants.ts";
 import { developerEmails, developers } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import { normalizeEmail } from "./commit-evidence.ts";
-import type { Db } from "../db/client.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 const DEVELOPER_ID_PREFIX = "dev_";
@@ -112,7 +112,7 @@ export const createDeveloper = async (
 
 /** Primary first, then aliases oldest-first — the order every surface shows. */
 export const listDeveloperEmails = async (
-  db: Db,
+  db: DbExecutor,
   developerId: string,
 ): Promise<readonly DeveloperEmailView[]> => {
   const rows = await db
@@ -227,14 +227,15 @@ export const listDevelopers = async (db: Db): Promise<DeveloperListing> => {
     )
     .limit(DEVELOPERS_MAX_LISTED * MAX_EMAILS_PER_DEVELOPER);
 
-  // ASKED, not assumed. MAX_EMAILS_PER_DEVELOPER is a service promise and not
-  // a database fact — developer_emails' PK makes "one developer per email"
-  // true no matter who writes, and nothing makes "ten emails per developer"
-  // true: addDeveloperEmail reads the capped list and then inserts outside a
-  // transaction, so concurrent links walk past it. One bounded aggregate over
-  // the page's ids says how many each developer really has, which also covers
-  // the case where the read above hit its own ceiling and cut somebody's list
-  // short. It is what lets this listing stop claiming a clipped list is whole.
+  // ASKED, not assumed. MAX_EMAILS_PER_DEVELOPER is enforced by
+  // addDeveloperEmail inside one transaction and by nothing in the table —
+  // developer_emails' PK makes "one developer per email" true no matter who
+  // writes, and nothing makes "ten emails per developer" true for rows that
+  // predate that transaction or were written straight into the database. One
+  // bounded aggregate over the page's ids says how many each developer really
+  // has, which also covers the case where the read above hit its own ceiling
+  // and cut somebody's list short. It is what lets this listing stop claiming
+  // a clipped list is whole.
   const totals = await db
     .select({ developerId: developerEmails.developerId, total: count() })
     .from(developerEmails)
@@ -290,23 +291,20 @@ export type AddDeveloperEmailResult =
   | { readonly outcome: "limit_reached" };
 
 /**
- * Links one more email to a developer (admin surface, trial finding #7).
- * Case-normalized; idempotent for an email the developer already has; a 409
- * for one ANY other developer has — the caller must hear about a
- * cross-developer duplicate, because silently skipping it would leave absence
- * matching attributing commits to the wrong person. No outbox event: emails
- * never leave the hub (services/absences.ts), and an event payload is the
- * feed — the developer_created event carries ids only for the same reason.
+ * The cap check and the insert, against ONE executor. Inside a transaction
+ * they are a single step — the hub's PGlite serialises transactions under its
+ * connection mutex, so a second link waits for the first to commit and then
+ * reads the row it wrote. Outside one they were the race the "ten per
+ * developer" promise used to have: eight concurrent links against nine rows
+ * each read nine, each inserted, and a developer held seventeen addresses of
+ * which every admin surface could show ten. `addDeveloperEmail` is the only
+ * caller, and the transaction it opens is the whole point.
  */
-export const addDeveloperEmail = async (
-  deps: { readonly db: Db; readonly now: Clock },
+const linkEmailUnderCap = async (
+  deps: { readonly db: DbExecutor; readonly now: Clock },
   developerId: string,
-  rawEmail: string,
+  email: string,
 ): Promise<AddDeveloperEmailResult> => {
-  if (!(await developerExists(deps.db, developerId))) {
-    return { outcome: "developer_not_found" };
-  }
-  const email = normalizeEmail(rawEmail);
   const existing = await listDeveloperEmails(deps.db, developerId);
   if (existing.some((row) => row.email === email)) {
     return { outcome: "added", alreadyLinked: true, emails: existing };
@@ -328,6 +326,36 @@ export const addDeveloperEmail = async (
     alreadyLinked: false,
     emails: await listDeveloperEmails(deps.db, developerId),
   };
+};
+
+/**
+ * Links one more email to a developer (admin surface, trial finding #7).
+ * Case-normalized; idempotent for an email the developer already has; a 409
+ * for one ANY other developer has — the caller must hear about a
+ * cross-developer duplicate, because silently skipping it would leave absence
+ * matching attributing commits to the wrong person. No outbox event: emails
+ * never leave the hub (services/absences.ts), and an event payload is the
+ * feed — the developer_created event carries ids only for the same reason.
+ *
+ * The cap is decided inside one transaction so that it is a fact about the
+ * table and not a promise about call order (linkEmailUnderCap). What the
+ * transaction does NOT undo is history: rows written before it existed, or
+ * straight into the database, can still hold a developer past the cap, and
+ * the listing discloses that state (emailsTruncated) rather than assuming it
+ * away.
+ */
+export const addDeveloperEmail = async (
+  deps: { readonly db: Db; readonly now: Clock },
+  developerId: string,
+  rawEmail: string,
+): Promise<AddDeveloperEmailResult> => {
+  if (!(await developerExists(deps.db, developerId))) {
+    return { outcome: "developer_not_found" };
+  }
+  const email = normalizeEmail(rawEmail);
+  return deps.db.transaction((tx) =>
+    linkEmailUnderCap({ db: tx, now: deps.now }, developerId, email),
+  );
 };
 
 export type RemoveDeveloperEmailResult =

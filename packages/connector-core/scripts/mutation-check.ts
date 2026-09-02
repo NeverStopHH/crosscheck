@@ -1659,11 +1659,12 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // The email axis has a flag of its own, and this is the one line that
     // decides it. A developer can hold more rows than MAX_EMAILS_PER_DEVELOPER
-    // — addDeveloperEmail reads the capped list and inserts outside a
-    // transaction, so concurrent links walk past it — and with the flag stuck
-    // at false the page is the silent clip again: ten addresses, `truncated:
-    // false`, and nothing to say the set the admin audits is smaller than the
-    // set absence matching acts on, which joins developer_emails unbounded.
+    // — rows written before the cap check and the insert shared a transaction
+    // (the anchor below is what keeps them sharing one), or written straight
+    // into the database — and with the flag stuck at false the page is the
+    // silent clip again: ten addresses, `truncated: false`, and nothing to say
+    // the set the admin audits is smaller than the set absence matching acts
+    // on, which joins developer_emails unbounded.
     label: "a developer's clipped email list is reported as their whole list",
     file: `${SERVER}/src/services/developers.ts`,
     from: "        emailsTruncated: (totalByDeveloper.get(row.id) ?? 0) > emails.length,",
@@ -1674,6 +1675,27 @@ export const MUTATIONS: readonly Mutation[] = [
       "that says those are all of them, while the hub keeps attributing " +
       "commits from the ones the page hid — and re-adding one of those " +
       "answers \"this developer's email list is full\"",
+  },
+  {
+    // The cap check and the row insert share one transaction, which the
+    // hub's single-connection PGlite serialises; on the bare db every
+    // concurrent link reads the same nine rows and every one inserts. That is
+    // how a developer came to hold seventeen addresses the admin surfaces
+    // could show ten of — the anchor above is what DISCLOSES that state, this
+    // is what stops the API PRODUCING it.
+    label: "concurrent alias links carry a developer past the email cap",
+    file: `${SERVER}/src/services/developers.ts`,
+    from:
+      "  return deps.db.transaction((tx) =>\n" +
+      "    linkEmailUnderCap({ db: tx, now: deps.now }, developerId, email),\n" +
+      "  );",
+    to: "  return linkEmailUnderCap(deps, developerId, email);",
+    test: `${SERVER}/test/developer-emails.test.ts`,
+    because:
+      "two admins — or one admin's retried request — linking aliases at once " +
+      "leave a developer with rows past the cap that no admin surface can " +
+      "show or remove, while absence matching keeps attributing commits from " +
+      "every one of them",
   },
   {
     // The load-bearing half of the agent-restart check (trial finding #8):
@@ -4744,7 +4766,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
- * PRINTS: packages/server/test/developer-emails.test.ts 1
+ * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
