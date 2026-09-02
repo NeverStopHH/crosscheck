@@ -208,15 +208,31 @@ interface CandidateRow {
   readonly developerId: string;
   readonly lastActiveAt: Date;
   readonly overlap: number;
+  /** That author's own distinct file touches on this repo in the window. */
+  readonly authorTouches: number;
   readonly sources: readonly string[];
 }
 
 /**
- * The intersection, in ONE bounded query. It is driven by the path list
- * through `work_context_targets_kind_value_idx`, so its cost grows with how
- * many contexts touched THESE files — never with the size of the corpus —
- * and the repo and window predicates run inside the WHERE rather than after
- * the bound, so a busy neighbouring repo cannot crowd real candidates out.
+ * The intersection AND its ranking, in ONE bounded query.
+ *
+ * THE BOUND MUST NOT DECIDE WHAT THE RANKING DECIDES (rule 2). An earlier
+ * shape ordered this query by `count(distinct value) desc` and cut at
+ * SUSPECT_MAX_CANDIDATES — so the candidate SET was chosen by raw overlap and
+ * only the survivors were then scored by lift. Measured at the boundary: with
+ * 50 sweep contexts of overlap 2 and one focused session of overlap 1 and
+ * lift 1.00, the focused session was ABSENT from the answer entirely, and the
+ * printed outcome was "no separated suspect" over three sweeps 26x weaker.
+ * The busiest person won anyway, one layer below the metric that exists to
+ * stop exactly that.
+ *
+ * So LIFT IS COMPUTED IN SQL and the bound cuts the lowest scores. The
+ * denominator — each author's own distinct file touches on this repo in the
+ * window — is the second CTE, restricted to the authors who reached the
+ * intersection, so its cost follows the people who touched these files rather
+ * than the corpus. A row this bound drops therefore scored below every row it
+ * kept, and `suspectSessions` says the list was cut rather than implying the
+ * cut rows did not exist.
  */
 const readCandidates = async (
   deps: Deps,
@@ -228,43 +244,99 @@ const readCandidates = async (
     return [];
   }
   const activity = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
-  const rows = await deps.db
-    .select({
-      workContextId: workContexts.id,
-      workContextTitle: workContexts.title,
-      intent: workContexts.intent,
-      sessionId: agentSessions.id,
-      agentKind: agentSessions.agentKind,
-      branch: agentSessions.branch,
-      developerId: agentSessions.developerId,
-      lastActiveAt: sql<Date>`${activity}`,
-      overlap: sql<number>`count(distinct ${workContextTargets.value})`,
-      sources: sql<string[]>`array_agg(distinct ${workContextTargets.source})`,
-    })
-    .from(workContextTargets)
-    .innerJoin(
-      workContexts,
-      eq(workContextTargets.workContextId, workContexts.id),
-    )
-    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(
-      and(
-        eq(workContextTargets.kind, "file"),
-        inArray(workContextTargets.value, [...files]),
-        eq(agentSessions.repo, repo),
-        gt(sql`${activity}`, since),
+  const touching = deps.db.$with("touching").as(
+    deps.db
+      .select({
+        // Aliased one by one: `work_contexts.id` and `agent_sessions.id` both
+        // land in this CTE, and an unaliased pair makes every later reference
+        // to "id" ambiguous — a runtime error, not a type error.
+        workContextId: sql<string>`${workContexts.id}`.as("work_context_id"),
+        workContextTitle: sql<string>`${workContexts.title}`.as("work_context_title"),
+        intent: sql<Record<string, unknown> | null>`${workContexts.intent}`.as("intent"),
+        sessionId: sql<string>`${agentSessions.id}`.as("session_id"),
+        agentKind: sql<string>`${agentSessions.agentKind}`.as("agent_kind"),
+        branch: sql<string>`${agentSessions.branch}`.as("branch"),
+        developerId: sql<string>`${agentSessions.developerId}`.as("developer_id"),
+        lastActiveAt: sql<Date>`${activity}`.as("last_active_at"),
+        overlap: sql<number>`count(distinct ${workContextTargets.value})`.as("overlap"),
+        sources: sql<string[]>`array_agg(distinct ${workContextTargets.source})`.as("sources"),
+      })
+      .from(workContextTargets)
+      .innerJoin(
+        workContexts,
+        eq(workContextTargets.workContextId, workContexts.id),
+      )
+      .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+      .where(
+        and(
+          eq(workContextTargets.kind, "file"),
+          inArray(workContextTargets.value, [...files]),
+          eq(agentSessions.repo, repo),
+          gt(sql`${activity}`, since),
+        ),
+      )
+      .groupBy(
+        workContexts.id,
+        workContexts.title,
+        workContexts.intent,
+        agentSessions.id,
+        agentSessions.agentKind,
+        agentSessions.branch,
+        agentSessions.developerId,
       ),
+  );
+  const windowTouches = deps.db.$with("window_touches").as(
+    deps.db
+      .select({
+        // `author_id`, not `developer_id`: the alias is unique across both
+        // CTEs so the join predicate below names one column, not two.
+        authorId: sql<string>`${agentSessions.developerId}`.as("author_id"),
+        touches: sql<number>`count(distinct ${workContextTargets.value})`.as("touches"),
+      })
+      .from(workContextTargets)
+      .innerJoin(
+        workContexts,
+        eq(workContextTargets.workContextId, workContexts.id),
+      )
+      .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
+      .where(
+        and(
+          eq(workContextTargets.kind, "file"),
+          eq(agentSessions.repo, repo),
+          gt(sql`${activity}`, since),
+          sql`${agentSessions.developerId} in (select "developer_id" from "touching")`,
+        ),
+      )
+      .groupBy(agentSessions.developerId),
+  );
+  // Never zero, and never below the overlap itself: this author touched at
+  // least the overlapping files, so the floor keeps the ratio finite even if
+  // the two halves disagree after a concurrent write.
+  const authorTouches = sql<number>`greatest(coalesce(${windowTouches.touches}, ${touching.overlap}), ${touching.overlap}, 1)`;
+  const rows = await deps.db
+    .with(touching, windowTouches)
+    .select({
+      workContextId: touching.workContextId,
+      workContextTitle: touching.workContextTitle,
+      intent: touching.intent,
+      sessionId: touching.sessionId,
+      agentKind: touching.agentKind,
+      branch: touching.branch,
+      developerId: touching.developerId,
+      lastActiveAt: touching.lastActiveAt,
+      overlap: touching.overlap,
+      sources: touching.sources,
+      authorTouches: sql<number>`${authorTouches}`,
+    })
+    .from(touching)
+    .leftJoin(windowTouches, eq(windowTouches.authorId, touching.developerId))
+    // The SAME total order suspectSessions re-applies to these rows, so the
+    // bound and the printed ranking can never disagree about which row is top.
+    .orderBy(
+      sql`${touching.overlap}::float8 / ${authorTouches} desc`,
+      sql`${touching.overlap} desc`,
+      sql`${touching.sessionId} asc`,
     )
-    .groupBy(
-      workContexts.id,
-      workContexts.title,
-      workContexts.intent,
-      agentSessions.id,
-      agentSessions.agentKind,
-      agentSessions.branch,
-      agentSessions.developerId,
-    )
-    .orderBy(sql`count(distinct ${workContextTargets.value}) desc`)
     .limit(SUSPECT_MAX_CANDIDATES);
   return rows.map((row) => ({
     workContextId: row.workContextId,
@@ -279,6 +351,7 @@ const readCandidates = async (
         ? row.lastActiveAt
         : new Date(String(row.lastActiveAt)),
     overlap: Number(row.overlap),
+    authorTouches: Number(row.authorTouches),
     sources: expandSources(row.sources ?? []),
   }));
 };
@@ -299,45 +372,6 @@ const expandSources = (stored: readonly string[]): readonly string[] => {
     expanded.add(value);
   }
   return [...expanded].sort();
-};
-
-/**
- * THE DENOMINATOR: each candidate author's own distinct file touches on this
- * repo inside the window. One grouped query over the candidate authors —
- * bounded by the candidate set (at most SUSPECT_MAX_CANDIDATES authors) and
- * by the window, never by the corpus.
- */
-const readAuthorTouches = async (
-  deps: Deps,
-  repo: string,
-  developerIds: readonly string[],
-  since: Date,
-): Promise<ReadonlyMap<string, number>> => {
-  if (developerIds.length === 0) {
-    return new Map();
-  }
-  const activity = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
-  const rows = await deps.db
-    .select({
-      developerId: agentSessions.developerId,
-      touches: sql<number>`count(distinct ${workContextTargets.value})`,
-    })
-    .from(workContextTargets)
-    .innerJoin(
-      workContexts,
-      eq(workContextTargets.workContextId, workContexts.id),
-    )
-    .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
-    .where(
-      and(
-        eq(workContextTargets.kind, "file"),
-        eq(agentSessions.repo, repo),
-        inArray(agentSessions.developerId, [...developerIds]),
-        gt(sql`${activity}`, since),
-      ),
-    )
-    .groupBy(agentSessions.developerId);
-  return new Map(rows.map((row) => [row.developerId, Number(row.touches)]));
 };
 
 /** The reader's mute list, read once — a label on the row, never a filter. */
@@ -430,20 +464,12 @@ export const suspectSessions = async (
     return { ...base, outcome: "no_touch", candidates: [] };
   }
   const developerIds = [...new Set(rows.map((row) => row.developerId))];
-  const [touches, muted] = await Promise.all([
-    readAuthorTouches(deps, input.repo, developerIds, since),
-    readMutedAuthors(deps, readerDeveloperId, developerIds),
-  ]);
+  const muted = await readMutedAuthors(deps, readerDeveloperId, developerIds);
   const candidates: SuspectCandidate[] = rows
     .map((row) => {
-      // Never zero: this author touched at least the overlapping files, so
-      // the floor keeps the ratio finite even if the denominator query and
-      // the candidate query disagree after a concurrent write.
-      const authorTouches = Math.max(
-        touches.get(row.developerId) ?? row.overlap,
-        row.overlap,
-        1,
-      );
+      // The denominator the QUERY already ranked by: recomputing it here
+      // would let the printed score disagree with the order the bound cut on.
+      const authorTouches = row.authorTouches;
       return {
         sessionId: row.sessionId,
         agentKind: row.agentKind,

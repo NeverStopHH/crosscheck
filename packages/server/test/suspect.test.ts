@@ -25,6 +25,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { SUSPECT_MAX_CANDIDATES } from "../src/constants.ts";
 import {
   addTestDeveloperWithSession,
   createTestDeveloper,
@@ -416,6 +417,52 @@ describe("ranking", () => {
     // Assert
     expect(view.outcome).toBe("no_touch");
     expect(view.candidates).toHaveLength(0);
+  });
+
+  test("keeps the highest-lift session when more contexts touch than the read bound", async () => {
+    // Arrange: the case SUSPECT_MAX_CANDIDATES' own comment anticipates — a
+    // pinned file a whole team swept. Mike runs one more sweep context than
+    // the read bound, each touching BOTH pinned files (overlap 2) out of a
+    // 53-file fortnight. Ken touched one pinned file out of four, so his
+    // raw overlap is the LOWEST in the repo and his lift is the highest.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-bound@example.com");
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    await createPin(harness, nick.apiKey);
+    await breakPin(harness, nick.apiKey);
+    const mike = await createTestDeveloper(harness, "Mike", "mike-bound@example.com");
+    for (let index = 0; index <= SUSPECT_MAX_CANDIDATES; index += 1) {
+      const sessionId = `ses_mike_${String(index)}`;
+      await registerTestSession(harness, mike.apiKey, { id: sessionId });
+      await seedTouches(harness, mike, {
+        sessionId,
+        contextId: `wc_mike_${String(index)}`,
+        title: `Sweep ${String(index)}`,
+        files: [PINNED_A, PINNED_B, `src/sweep/f${String(index)}.ts`],
+      });
+    }
+    const ken = await addTestDeveloperWithSession(
+      harness,
+      "Ken",
+      "ken-bound@example.com",
+      { id: "ses_ken" },
+    );
+    await seedTouches(harness, ken, {
+      sessionId: "ses_ken",
+      contextId: "wc_ken",
+      title: "Rework the playback transport",
+      files: [PINNED_A, "src/ken/a.ts", "src/ken/b.ts", "src/ken/c.ts"],
+    });
+
+    // Act
+    const view = (await suspect(harness, nick.apiKey, "pin=pin_playback")).view;
+
+    // Assert: the bound may cut the LOWEST scores, never the highest. A
+    // pre-filter on raw overlap discards Ken before any lift is computed,
+    // which is the metric this module's own rule 2 forbids from deciding.
+    expect(view.candidates[0]?.workContextId).toBe("wc_ken");
+    expect(view.candidates[0]?.lift).toBeCloseTo(0.25, 5);
+    expect(view.outcome).toBe("ranked");
   });
 
   test("says NO SEPARATED SUSPECT when the top two score the same", async () => {
