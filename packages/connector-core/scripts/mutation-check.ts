@@ -4590,6 +4590,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "pins are reported broken on the strength of a call budget, so a large " +
       "repo retires working references and doctor prints the loss as a fact",
   },
+  {
+    // Only the side that BUILT the body can split it: the route caps the
+    // array with zod `.max()`, which refuses a whole body rather than
+    // truncating it, so a client that stopped chunking is refused outright
+    // from 101 two-file pins upward — measured with the real binary.
+    label: "the pin sweep sends the whole registry in one request again",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    const chunk = updates.slice(start, start + MAX_PIN_SWEEP_UPDATES);",
+    to: "    const chunk = updates;",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "the hub answers `Too big`, `crosscheck pin --sweep` records nothing " +
+      "and names no remedy, and the register stops being maintained on any " +
+      "team past a hundred two-file pins",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

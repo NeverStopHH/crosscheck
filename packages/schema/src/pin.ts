@@ -92,6 +92,19 @@ export const PIN_PRESENCE_TERMINAL = "controlling_terminal";
 export const MAX_PIN_PATH_CHARS = 300;
 
 /**
+ * Upper bound on path updates ONE sweep request may carry — a bound on the
+ * REQUEST, never on the registry: a larger registry sweeps in more requests.
+ *
+ * IT LIVES IN THE SHARED SCHEMA because both ends have to agree about it. The
+ * hub enforces it with zod `.max()`, which REJECTS a whole body rather than
+ * truncating it, and the client that built the body is the only thing that can
+ * split it. When the two were in different packages the client did not split
+ * at all: `crosscheck pin --sweep` was refused outright, recorded nothing, and
+ * named no remedy, from 101 two-file pins upward.
+ */
+export const MAX_PIN_SWEEP_UPDATES = 200;
+
+/**
  * The one path shape a recorded touch can have. `toRepoRelative`
  * (connector-core capture/target-paths.ts) is the only minter of a target
  * value, and it emits POSIX-separated, repo-relative paths with no leading

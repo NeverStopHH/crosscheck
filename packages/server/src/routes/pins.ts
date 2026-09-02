@@ -36,6 +36,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import {
   MAX_PIN_PATH_CHARS,
+  MAX_PIN_SWEEP_UPDATES,
   MAX_RECORD_ID_LENGTH,
   PIN_PRESENCE_TERMINAL,
   PinSchema,
@@ -43,8 +44,6 @@ import {
   describeUnstorableText,
   unstorableTextPath,
 } from "@crosscheck/schema";
-
-import { MAX_PIN_SWEEP_UPDATES } from "../constants.ts";
 
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues, readJsonBody } from "../http/request.ts";

@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
+import {
+  MAX_PIN_SWEEP_UPDATES,
+  PIN_PRESENCE_TERMINAL,
+} from "@crosscheck/schema";
 
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
@@ -1844,18 +1847,50 @@ export type PinSweepResult = z.infer<typeof SweepResultSchema>;
  * Reports what the local sweep found (git/pin-sweep.ts computes it — the hub
  * has no checkout). PATH NAMES ONLY: no file content crosses this wire, and
  * git answered the question without any entering this process either.
+ *
+ * CHUNKED HERE, because only the side that BUILT the body can split it. The
+ * route caps the array with zod `.max(MAX_PIN_SWEEP_UPDATES)`, which rejects
+ * a whole body rather than truncating it, and the sweep builds one update per
+ * (pin, file) pair over the listed page — 200 pins of two files is 400. With
+ * no split anywhere, `crosscheck pin --sweep` was refused outright and
+ * recorded NOTHING from 101 two-file pins upward: the register the module
+ * header calls "the difference between a register and a graveyard" simply
+ * stopped being maintained, with no remedy in the message.
+ *
+ * ONE ANSWER OUT OF N REQUESTS. The counts are summed, so a caller reads the
+ * same two numbers whether it took one request or twenty. A chunk that fails
+ * ends the sweep and returns its failure rather than reporting a partial
+ * total as a whole one: "300 recorded" over a sweep that stopped at 200 is
+ * the fail-silent shape this command exists to remove.
  */
-export const sweepPins = (
+export const sweepPins = async (
   ctx: HubContext,
   repo: string,
   updates: readonly PinSweepUpdate[],
-): Promise<HubResult<PinSweepResult>> =>
-  hubRequest(ctx, {
-    method: "POST",
-    path: "/api/pins/sweep",
-    schema: SweepResultSchema,
-    body: { repo, updates },
-  });
+): Promise<HubResult<PinSweepResult>> => {
+  let applied = 0;
+  let ignored = 0;
+  let dateHeader: string | null = null;
+  // An EMPTY sweep still speaks to the hub: a caller that skipped the request
+  // would report "0 recorded" without ever having asked, which reads the same
+  // as a hub that answered.
+  for (let start = 0; start < Math.max(updates.length, 1); start += MAX_PIN_SWEEP_UPDATES) {
+    const chunk = updates.slice(start, start + MAX_PIN_SWEEP_UPDATES);
+    const result = await hubRequest(ctx, {
+      method: "POST",
+      path: "/api/pins/sweep",
+      schema: SweepResultSchema,
+      body: { repo, updates: chunk },
+    });
+    if (!result.ok) {
+      return result;
+    }
+    applied += result.data.applied;
+    ignored += result.data.ignored;
+    dateHeader = result.dateHeader;
+  }
+  return { ok: true, data: { applied, ignored }, dateHeader };
+};
 
 /**
  * One candidate session. NO developer name and NO developer id — by design,

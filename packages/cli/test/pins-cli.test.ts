@@ -21,6 +21,10 @@ import { rm } from "node:fs/promises";
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
+import { sweepPins } from "@crosscheck/connector-core/http/hub.ts";
+import { MAX_PIN_SWEEP_UPDATES } from "@crosscheck/schema";
+import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
+
 import { runCli } from "../src/index.ts";
 import { renderPinList } from "../src/cli/pin-render.ts";
 import { renderSuspect } from "../src/cli/suspect-render.ts";
@@ -538,6 +542,41 @@ describe("crosscheck pin --sweep", () => {
     const listed = await runFor(nickKey, ["pin", "list"]);
     expect(listed.stdout).toContain("src/workbench/usePlaybackState.ts");
     expect(listed.stdout).toContain(pinId);
+  });
+
+  test("chunks a sweep bigger than one request instead of being refused", async () => {
+    // Arrange: runSweep builds one update per (pin, file) pair over the whole
+    // listed page — 200 pins of 2 files is 400 — and the route caps the array
+    // with zod .max(), which REJECTS the whole body rather than truncating.
+    // With no chunking anywhere, the sweep was refused outright and recorded
+    // NOTHING from 101 two-file pins upward: far below the 5,000-pin target
+    // and reachable by a thirty-engineer team.
+    const ctx: HubContext = {
+      hubUrl,
+      apiKey: nickKey,
+      timeoutMs: 8000,
+      home,
+      repoKey: REPO_ID,
+      now: () => new Date(),
+    };
+    const updates = Array.from(
+      { length: MAX_PIN_SWEEP_UPDATES + 1 },
+      (_unused, index) => ({
+        pinId: `pin_absent_${String(index)}`,
+        path: "src/core/absent.ts",
+        newPath: "src/core/absent-moved.ts",
+      }),
+    );
+
+    // Act
+    const reported = await sweepPins(ctx, REPO_ID, updates);
+
+    // Assert: two requests, one answer, and every update accounted for —
+    // these name pins this hub does not hold, so they land as ignored.
+    expect(reported.ok).toBe(true);
+    if (reported.ok) {
+      expect(reported.data.applied + reported.data.ignored).toBe(updates.length);
+    }
   });
 
   test("says how many updates the hub refused to record", async () => {
