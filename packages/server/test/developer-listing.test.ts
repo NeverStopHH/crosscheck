@@ -335,6 +335,15 @@ describe("the disclosure the listing adds", () => {
     const boundary = lineContaining(design, "Teammate email addresses");
     expect(boundary).not.toContain('there is no "who works here" endpoint');
     expect(boundary).toContain("GET /api/developers");
+    // The party, named as what it is. The admin token is a bearer secret in
+    // shell history and CI settings, not a person: before this listing a
+    // leaked one could create accounts and link aliases but could not list
+    // the team, and now it yields every developer's every address in one
+    // request. A line that calls its holder "the operator" — someone who
+    // could read the database anyway — rounds that off, and this paragraph
+    // is where a works council or a security review comes to find out what
+    // a leaked token buys.
+    expect(boundary).toContain("whoever presents the admin token");
 
     // The same disclosure, from the operator's side: the walkthrough teaches
     // POST /api/developers and POST /api/developers/<id>/emails and never
