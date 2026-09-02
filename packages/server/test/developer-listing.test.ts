@@ -153,20 +153,44 @@ describe("admin developer listing", () => {
     expect(admin.developers).toHaveLength(1);
   });
 
-  test("a listing that stops at the cap says so instead of reading as complete", async () => {
+  // Walked across the cap rather than asserted once past it. `truncated` is a
+  // one-comparison contract, so the only place an error can live is the
+  // comparison itself, and a test that only ever sees cap+1 pins the flag
+  // being TRUE while leaving the operator `>` free: `>=` reports a complete
+  // 200-developer team as cut short, which sends an admin looking for a
+  // developer among invisible rows that do not exist and back to creating a
+  // second account for someone who already has one. Three points, one hub —
+  // seeded once and grown across the boundary, so the walk costs what a
+  // single cap+1 test used to.
+  test("the cut is decided at the cap itself, not one either side of it", async () => {
     const harness = await createTestHarness();
-    for (let nth = 0; nth <= DEVELOPERS_MAX_LISTED; nth += 1) {
-      await createTestDeveloper(
-        harness,
-        `Dev ${String(nth)}`,
-        `dev${String(nth)}@example.test`,
-      );
-    }
+    let seeded = 0;
+    const growTo = async (total: number): Promise<void> => {
+      while (seeded < total) {
+        await createTestDeveloper(
+          harness,
+          `Dev ${String(seeded)}`,
+          `dev${String(seeded)}@example.test`,
+        );
+        seeded += 1;
+      }
+    };
 
-    const listing = await listDevelopers(harness);
+    await growTo(DEVELOPERS_MAX_LISTED - 1);
+    const belowCap = await listDevelopers(harness);
+    await growTo(DEVELOPERS_MAX_LISTED);
+    const atCap = await listDevelopers(harness);
+    await growTo(DEVELOPERS_MAX_LISTED + 1);
+    const pastCap = await listDevelopers(harness);
 
-    expect(listing.developers).toHaveLength(DEVELOPERS_MAX_LISTED);
-    expect(listing.truncated).toBe(true);
+    expect(belowCap.developers).toHaveLength(DEVELOPERS_MAX_LISTED - 1);
+    expect(belowCap.truncated).toBe(false);
+    // The load-bearing point: a page that is exactly full is COMPLETE, and
+    // saying otherwise is as dishonest as the silence the flag exists to end.
+    expect(atCap.developers).toHaveLength(DEVELOPERS_MAX_LISTED);
+    expect(atCap.truncated).toBe(false);
+    expect(pastCap.developers).toHaveLength(DEVELOPERS_MAX_LISTED);
+    expect(pastCap.truncated).toBe(true);
   });
 
   test("a listing that fits reports itself as complete", async () => {

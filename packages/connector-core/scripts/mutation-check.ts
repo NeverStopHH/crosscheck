@@ -1613,6 +1613,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "already has one — splitting their commits across two identities",
   },
   {
+    // The COMPARISON, not the expression. Replacing the whole line with
+    // `false` is caught by a single cap+1 case, and the off-by-one this flag
+    // can actually carry lives one character to the right of the operator —
+    // which is why the guard walks cap-1, cap and cap+1 rather than asserting
+    // once past the cap.
+    label: "a complete developer listing reports itself as cut short",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "  const truncated = rows.length > DEVELOPERS_MAX_LISTED;",
+    to: "  const truncated = rows.length >= DEVELOPERS_MAX_LISTED;",
+    test: `${SERVER}/test/developer-listing.test.ts`,
+    because:
+      "an admin is told the directory is incomplete when it is complete, so " +
+      "a developer who is genuinely absent reads as one of the rows the page " +
+      "hid — and they create a second account for a person who already has one",
+  },
+  {
     // Emails are the whole reason to read this listing: they decide whose
     // commits are whose, so an empty list per developer looks exactly like an
     // unlinked alias that still needs adding.
@@ -4696,7 +4712,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 1
- * PRINTS: packages/server/test/developer-listing.test.ts 2
+ * PRINTS: packages/server/test/developer-listing.test.ts 3
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
