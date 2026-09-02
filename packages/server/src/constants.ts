@@ -11,6 +11,15 @@ export const EVENTS_DEFAULT_LIMIT = 100;
 export const EVENTS_MAX_LIMIT = 500;
 
 /**
+ * Hard cap on one admin developer listing. A hub is a team, not a directory,
+ * so this sits far above any real membership — but the read stays bounded by
+ * a constant like every other listing here, and the response carries
+ * `truncated` rather than letting a page that stopped at the cap read as the
+ * whole team.
+ */
+export const DEVELOPERS_MAX_LISTED = 200;
+
+/**
  * Hard cap on one `GET /api/work-contexts` page (trial finding M8).
  *
  * The listing had no LIMIT and no window at all: 127 rows / 56 928 bytes on

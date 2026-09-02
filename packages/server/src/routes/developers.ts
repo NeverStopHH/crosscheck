@@ -9,6 +9,7 @@ import {
   addDeveloperEmail,
   createDeveloper,
   listDeveloperEmails,
+  listDevelopers,
   removeDeveloperEmail,
 } from "../services/developers.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -24,6 +25,10 @@ const AddEmailBodySchema = z.object({ email: z.email() });
 export const developersRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();
   router.use("*", requireAdmin(deps.adminToken));
+
+  router.get("/", async (c) => {
+    return ok(c, await listDevelopers(deps.db));
+  });
 
   router.post("/", async (c) => {
     const parsed = CreateDeveloperBodySchema.safeParse(await readJsonBody(c));
