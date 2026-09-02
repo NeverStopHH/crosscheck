@@ -1629,6 +1629,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "hid — and they create a second account for a person who already has one",
   },
   {
+    // The read bound, which the response cannot show: the page is sliced to
+    // the cap in memory, so an unbounded query answers identically and only
+    // the read itself can be asked how many rows it took.
+    label: "the developer listing reads the whole table to hand back a page",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "    .limit(DEVELOPERS_MAX_LISTED + 1);",
+    to: "    .limit(1000000);",
+    test: `${SERVER}/test/developer-listing.test.ts`,
+    because:
+      "every admin listing materialises the entire developers table inside a " +
+      "single-connection in-process PGlite to hand back 200 rows, and every " +
+      "other request on the hub queues behind that read",
+  },
+  {
     // Emails are the whole reason to read this listing: they decide whose
     // commits are whose, so an empty list per developer looks exactly like an
     // unlinked alias that still needs adding.
@@ -4712,7 +4726,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 1
- * PRINTS: packages/server/test/developer-listing.test.ts 3
+ * PRINTS: packages/server/test/developer-listing.test.ts 4
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/normalized-doc.test.ts 1

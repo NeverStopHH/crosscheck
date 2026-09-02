@@ -25,6 +25,7 @@ import {
 } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
 import { DEVELOPERS_MAX_LISTED } from "../src/constants.ts";
+import { readDeveloperPage } from "../src/services/developers.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 
@@ -191,6 +192,31 @@ describe("admin developer listing", () => {
     expect(atCap.truncated).toBe(false);
     expect(pastCap.developers).toHaveLength(DEVELOPERS_MAX_LISTED);
     expect(pastCap.truncated).toBe(true);
+  });
+
+  // The one property of this listing that the listing itself cannot show. The
+  // page is sliced to the cap in memory, so a read of the WHOLE developers
+  // table and a read of cap+1 rows answer identically — same 200 developers,
+  // same `truncated`, no field that counts rows — and the cap's stated reason
+  // for existing ("the read stays bounded by a constant like every other
+  // listing here") is therefore provable only against the read itself. Asserted
+  // with more developers in the hub than the bound allows, because a bound is
+  // only observable when something is on the far side of it.
+  test("the read stops one row past the cap however big the team is", async () => {
+    const harness = await createTestHarness();
+    for (let nth = 0; nth < DEVELOPERS_MAX_LISTED + 2; nth += 1) {
+      await createTestDeveloper(
+        harness,
+        `Dev ${String(nth)}`,
+        `dev${String(nth)}@example.test`,
+      );
+    }
+
+    const rows = await readDeveloperPage(harness.db);
+
+    // Exactly, not at-most: one row over the cap is what tells a full page
+    // from a cut one, and no row beyond that is ever looked at again.
+    expect(rows).toHaveLength(DEVELOPERS_MAX_LISTED + 1);
   });
 
   test("a listing that fits reports itself as complete", async () => {

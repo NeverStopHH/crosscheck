@@ -144,6 +144,40 @@ export interface DeveloperListing {
   readonly truncated: boolean;
 }
 
+export interface DeveloperPageRow {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: Date;
+}
+
+/**
+ * The bounded read, on its own and exported, because the bound is the whole
+ * safety property here and NOTHING OUTSIDE THIS FUNCTION CAN SEE IT.
+ * `listDevelopers` slices the page to the cap in memory, so widening or
+ * dropping the LIMIT changes which rows the process materialises and not one
+ * field of the answer: the same 200 developers come back, with the same
+ * `truncated`, to a caller who has no way to ask how many rows were read.
+ * That is why "cost is bounded by DEVELOPERS_MAX_LISTED rather than by team
+ * size" could only ever be checked at this seam — and it is worth checking,
+ * because the hub is a single-connection in-process PGlite where one
+ * unbounded materialisation stalls every other request behind it.
+ *
+ * Exactly ONE row past the cap, never more: that extra row is the whole
+ * evidence that the page was cut, and it is all the caller needs to say so.
+ */
+export const readDeveloperPage = async (
+  db: Db,
+): Promise<readonly DeveloperPageRow[]> =>
+  db
+    .select({
+      id: developers.id,
+      name: developers.name,
+      createdAt: developers.createdAt,
+    })
+    .from(developers)
+    .orderBy(asc(developers.createdAt), asc(developers.id))
+    .limit(DEVELOPERS_MAX_LISTED + 1);
+
 /**
  * The admin's way back to an id. `createDeveloper` hands one out exactly once
  * and every other admin route takes it as a path parameter, so without this a
@@ -156,15 +190,7 @@ export interface DeveloperListing {
  * is shown once, at creation, and this listing is not a second chance at it.
  */
 export const listDevelopers = async (db: Db): Promise<DeveloperListing> => {
-  const rows = await db
-    .select({
-      id: developers.id,
-      name: developers.name,
-      createdAt: developers.createdAt,
-    })
-    .from(developers)
-    .orderBy(asc(developers.createdAt), asc(developers.id))
-    .limit(DEVELOPERS_MAX_LISTED + 1);
+  const rows = await readDeveloperPage(db);
 
   const truncated = rows.length > DEVELOPERS_MAX_LISTED;
   const page = truncated ? rows.slice(0, DEVELOPERS_MAX_LISTED) : rows;
