@@ -4609,6 +4609,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "and names no remedy, and the register stops being maintained on any " +
       "team past a hundred two-file pins",
   },
+  {
+    // The page lists live and retracted pins alike; coverage.pins counts the
+    // live ones. Compared against the live count, the notice went quiet the
+    // moment retractions filled the page — measured: 252 pins, 92 retracted,
+    // 200 listed, zero "showing" lines.
+    label: "the pin list compares its page against the live count again",
+    file: `${CLI}/src/cli/pin-render.ts`,
+    from: "  const total = registry.coverage.pins + registry.coverage.broken;",
+    to: "  const total = registry.coverage.pins;",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "52 pins are absent from the listing and nothing says so, which on a " +
+      "five-year repo is the steady state rather than the edge case",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

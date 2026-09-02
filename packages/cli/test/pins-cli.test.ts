@@ -24,6 +24,7 @@ import type { Db } from "@crosscheck/server";
 import { sweepPins } from "@crosscheck/connector-core/http/hub.ts";
 import { MAX_PIN_SWEEP_UPDATES } from "@crosscheck/schema";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
+import type { PinEntry as PinRow } from "@crosscheck/connector-core/http/hub.ts";
 
 import { runCli } from "../src/index.ts";
 import { renderPinList } from "../src/cli/pin-render.ts";
@@ -362,6 +363,56 @@ describe("crosscheck pin list at scale", () => {
     // Assert
     expect(rendered).toContain("pins: 250");
     expect(rendered).toContain("showing 1 of 250");
+  });
+
+  test("says the listing was truncated when retracted pins fill the page", () => {
+    // Arrange: a registry of 252 pins, 92 of them retracted. The hub lists
+    // 200 rows — live and retracted alike, because a retraction is knowledge
+    // — while coverage.pins counts the 160 LIVE ones. Compared against the
+    // live count alone the notice went quiet: 52 pins were absent from the
+    // listing and nothing said so. Measured on a live hub: listed 200 ·
+    // coverage.pins 160 · broken 92 · lines containing "showing": 0. On a
+    // five-year repo "more retracted than live" is the steady state, so the
+    // notice was off exactly where it was needed.
+    const now = new Date();
+    const row = (index: number): PinRow => ({
+      id: `pin_${String(index).padStart(8, "0")}-2222-4333-8444-555555555555`,
+      repo: REPO_ID,
+      surface: "Play button plays/pauses",
+      files: [{ path: PINNED, status: "present" }],
+      check: "open /workbench, press Play",
+      captureMode: "human",
+      verifiedById: "dev_nick",
+      verifiedByName: "Nick",
+      verifiedAtCommit: "a1b2c3d4",
+      verifiedAt: now.toISOString(),
+      // The newest 40 on the page are retracted; the hub keeps them listed.
+      brokeAt: index < 40 ? now.toISOString() : null,
+      brokeByName: index < 40 ? "Ken" : null,
+      speaking: true,
+      missingPaths: 0,
+      renamedPaths: 0,
+      renamedAt: null,
+      renamedByName: null,
+    });
+    const registry = {
+      pins: Array.from({ length: 200 }, (_unused, index) => row(index)),
+      coverage: {
+        pins: 160,
+        files: 160,
+        speaking: 160,
+        broken: 92,
+        missingPaths: 0,
+        oldestVerifiedAt: now.toISOString(),
+      },
+    };
+
+    // Act
+    const rendered = renderPinList(REPO_ID, registry, now);
+
+    // Assert: the denominator of the notice is the whole registry — live
+    // and retracted — because that is what the page is a page OF.
+    expect(rendered).toContain("showing 200 of 252");
   });
 
   test("names who rewrote a pin's file set, and when", () => {

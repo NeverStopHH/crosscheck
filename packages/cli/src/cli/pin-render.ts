@@ -132,15 +132,25 @@ export const renderPinList = (
   // as the registry. This is the same failure as the coverage sentence
   // itself, one level down, and it only appears on a repo big enough that
   // nobody would notice by counting.
+  //
+  // THE WHOLE IS LIVE PLUS RETRACTED. The page holds both — a retraction is
+  // knowledge, so the hub keeps it listed — while `coverage.pins` counts the
+  // LIVE pins alone. Compared against the live count, this notice went quiet
+  // the moment retracted pins filled the page: measured on a live hub, 252
+  // pins of which 92 retracted, 200 listed, 52 absent, and zero lines saying
+  // so. Retractions only ever accumulate, so on a five-year repo "more
+  // retracted than live" is the steady state, and the notice was off exactly
+  // where it was needed.
   const shown = registry.pins.length;
-  const truncated = shown < registry.coverage.pins;
+  const total = registry.coverage.pins + registry.coverage.broken;
+  const truncated = shown < total;
   return [
     `crosscheck pins for ${bareUntrusted(repoId)}.`,
     QUOTED_DATA_NOTICE,
     pinCoverageSentence(registry, now),
     ...(truncated
       ? [
-          `showing ${String(shown)} of ${String(registry.coverage.pins)} — newest first; the rest are counted above but not listed`,
+          `showing ${String(shown)} of ${String(total)} — newest first, live and retracted alike; the rest are counted above but not listed`,
         ]
       : []),
     ...(registry.pins.length === 0
