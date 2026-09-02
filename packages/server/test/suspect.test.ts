@@ -70,6 +70,7 @@ interface SuspectView {
   };
   readonly totals: {
     readonly sessionsTouching: number;
+    readonly sessionsScored: number;
     readonly windowDays: number;
   };
   readonly candidates: readonly CandidateView[];
@@ -94,7 +95,7 @@ const suspect = async (
         falsifier: { kind: "missing", at: null },
         attribution: "missing",
         scope: { kind: "missing", files: [], surface: null },
-        totals: { sessionsTouching: -1, windowDays: -1 },
+        totals: { sessionsTouching: -1, sessionsScored: -1, windowDays: -1 },
         candidates: [],
       } satisfies SuspectView),
   };
@@ -463,6 +464,47 @@ describe("ranking", () => {
     expect(view.candidates[0]?.workContextId).toBe("wc_ken");
     expect(view.candidates[0]?.lift).toBeCloseTo(0.25, 5);
     expect(view.outcome).toBe("ranked");
+  });
+
+  test("counts every touching session, not the ones the bound had room for", async () => {
+    // Arrange: one more sweep context than the read bound, plus Ken. Fifty
+    // two contexts touched the surface; fifty of them are scored.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-count@example.com");
+    await registerTestSession(harness, nick.apiKey, { id: "ses_nick" });
+    await createPin(harness, nick.apiKey);
+    await breakPin(harness, nick.apiKey);
+    const mike = await createTestDeveloper(harness, "Mike", "mike-count@example.com");
+    for (let index = 0; index <= SUSPECT_MAX_CANDIDATES; index += 1) {
+      const sessionId = `ses_mike_${String(index)}`;
+      await registerTestSession(harness, mike.apiKey, { id: sessionId });
+      await seedTouches(harness, mike, {
+        sessionId,
+        contextId: `wc_mike_${String(index)}`,
+        title: `Sweep ${String(index)}`,
+        files: [PINNED_A, PINNED_B, `src/sweep/f${String(index)}.ts`],
+      });
+    }
+    const ken = await addTestDeveloperWithSession(
+      harness,
+      "Ken",
+      "ken-count@example.com",
+      { id: "ses_ken" },
+    );
+    await seedTouches(harness, ken, {
+      sessionId: "ses_ken",
+      contextId: "wc_ken",
+      title: "Rework the playback transport",
+      files: [PINNED_A, "src/ken/a.ts"],
+    });
+
+    // Act
+    const view = (await suspect(harness, nick.apiKey, "pin=pin_playback")).view;
+
+    // Assert: a printed total taken from the truncated array under-reports
+    // by exactly the number of rows the reader is never told about.
+    expect(view.totals.sessionsTouching).toBe(SUSPECT_MAX_CANDIDATES + 2);
+    expect(view.totals.sessionsScored).toBe(SUSPECT_MAX_CANDIDATES);
   });
 
   test("says NO SEPARATED SUSPECT when the top two score the same", async () => {

@@ -105,9 +105,8 @@ const suspectWith = (payload: string): SuspectView => ({
     pinId: "pin_11111111-2222-4333-8444-555555555555",
     surface: payload,
     files: [payload],
-    filesTruncated: false,
   },
-  totals: { sessionsTouching: 1, windowDays: 14 },
+  totals: { sessionsTouching: 1, sessionsScored: 1, windowDays: 14 },
   attribution: "sessions",
   candidates: [candidateWith(payload)],
 });

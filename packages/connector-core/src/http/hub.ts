@@ -1872,10 +1872,10 @@ export interface SuspectView {
     readonly pinId: string | null;
     readonly surface: string | null;
     readonly files: readonly string[];
-    readonly filesTruncated: boolean;
   };
   readonly totals: {
     readonly sessionsTouching: number;
+    readonly sessionsScored: number;
     readonly windowDays: number;
   };
   readonly attribution: string;
@@ -1895,10 +1895,10 @@ const SuspectViewSchema = z
       pinId: z.string().nullable().default(null),
       surface: z.string().nullable().default(null),
       files: z.array(z.string().min(1)).default([]),
-      filesTruncated: z.boolean().default(false),
     }),
     totals: z.looseObject({
       sessionsTouching: z.number().int().min(0).default(0),
+      sessionsScored: z.number().int().min(0).default(0),
       windowDays: z.number().int().min(1).default(14),
     }),
     attribution: z.string().min(1).default("sessions"),

@@ -38,6 +38,13 @@ const SCORE_DECIMALS = 2;
 
 const MAX_PRINTED_FILES = 8;
 
+/**
+ * How many candidates the hub ever sends (SUSPECT_TOP_CANDIDATES). Spelled
+ * here rather than counted from the rows, so the sentence states the BOUND
+ * and not the length of this particular answer.
+ */
+const MAX_LISTED_CANDIDATES = 3;
+
 const ageOf = (iso: string, now: Date): string => {
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? "unknown" : `${formatAge(now.getTime() - ms)} ago`;
@@ -99,6 +106,21 @@ const scopeLine = (view: SuspectView): string => {
 };
 
 /**
+ * THE READ BOUND, SAID OUT LOUD. The hub scores the highest-lift contexts
+ * first and cuts at its read bound, so a cut row scored below every row
+ * printed — but a reader handed "50 session(s) touched this surface" when 305
+ * did has been given the bound as if it were the world. `crosscheck pin list`
+ * already prints "showing 200 of 250" one level up; this is the same sentence
+ * on the one surface where being wrong costs somebody an accusation.
+ */
+const boundLines = (view: SuspectView): readonly string[] =>
+  view.totals.sessionsScored >= view.totals.sessionsTouching
+    ? []
+    : [
+        `scored ${String(view.totals.sessionsScored)} of ${String(view.totals.sessionsTouching)} — the rest scored below every session above and are not listed`,
+      ];
+
+/**
  * The outcome sentence. Four of them, and the three that name nobody are as
  * first-class as the one that does: "nothing touched these files" and "no
  * separated suspect" are different facts, and a reader who cannot tell them
@@ -158,13 +180,16 @@ export const renderSuspect = (view: SuspectView, now: Date): string => {
     ...falsifierLines(view, now),
     scopeLine(view),
     outcomeLine(view),
+    ...boundLines(view),
     ...view.candidates.flatMap((candidate, index) =>
       candidateLines(candidate, index, now),
     ),
-    // The bound is printed even when it did not bite: a list of three that
-    // never says three is the most it shows reads as a complete answer.
+    // The top-3 bound is printed even when it did not bite: a list of three
+    // that never says three is the most it shows reads as a complete answer.
     ...(view.candidates.length > 0
-      ? ["(sessions, not people — open a work context above to see whose it is)"]
+      ? [
+          `(at most ${String(MAX_LISTED_CANDIDATES)} are listed; sessions, not people — open a work context above to see whose it is)`,
+        ]
       : []),
     "",
   ].join("\n");

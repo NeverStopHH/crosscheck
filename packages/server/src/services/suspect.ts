@@ -117,10 +117,12 @@ export interface SuspectView {
     readonly pinId: string | null;
     readonly surface: string | null;
     readonly files: readonly string[];
-    readonly filesTruncated: boolean;
   };
   readonly totals: {
+    /** Contexts that touched the surface in the window — the whole of it. */
     readonly sessionsTouching: number;
+    /** How many of them the read bound scored. Below the total = cut. */
+    readonly sessionsScored: number;
     readonly windowDays: number;
   };
   /** This team's setting, printed with the answer so silence is explicable. */
@@ -133,7 +135,6 @@ export interface SuspectScope {
   readonly pinId: string | null;
   readonly surface: string | null;
   readonly files: readonly string[];
-  readonly filesTruncated: boolean;
   readonly falsifierKind: SuspectFalsifierKind;
   readonly falsifierAt: string | null;
   readonly check: string | null;
@@ -161,7 +162,6 @@ export const resolveSuspectScope = async (
         pinId: null,
         surface: null,
         files: input.paths,
-        filesTruncated: false,
         // No pin means no recorded claim to falsify: the reader is asserting
         // the breakage themselves, and the renderer says exactly that.
         falsifierKind: "reader_named_files",
@@ -190,7 +190,6 @@ export const resolveSuspectScope = async (
       pinId: pin.id,
       surface: pin.surface,
       files: pin.files.map((file) => file.path),
-      filesTruncated: false,
       falsifierKind,
       falsifierAt: pin.brokeAt,
       check: pin.check,
@@ -233,15 +232,26 @@ interface CandidateRow {
  * than the corpus. A row this bound drops therefore scored below every row it
  * kept, and `suspectSessions` says the list was cut rather than implying the
  * cut rows did not exist.
+ *
+ * THE TOTAL COMES FROM THE SAME QUERY, before the bound: `count(*) over ()`
+ * is evaluated over the whole intersection, so the printed denominator is the
+ * number of contexts that touched the surface rather than the number the
+ * LIMIT had room for.
  */
+interface CandidateSet {
+  readonly rows: readonly CandidateRow[];
+  /** Contexts that touched these files in the window, BEFORE the bound. */
+  readonly totalTouching: number;
+}
+
 const readCandidates = async (
   deps: Deps,
   repo: string,
   files: readonly string[],
   since: Date,
-): Promise<readonly CandidateRow[]> => {
+): Promise<CandidateSet> => {
   if (files.length === 0) {
-    return [];
+    return { rows: [], totalTouching: 0 };
   }
   const activity = sql`coalesce(${workContexts.updatedAt}, ${workContexts.createdAt})`;
   const touching = deps.db.$with("touching").as(
@@ -327,6 +337,7 @@ const readCandidates = async (
       overlap: touching.overlap,
       sources: touching.sources,
       authorTouches: sql<number>`${authorTouches}`,
+      totalTouching: sql<number>`count(*) over ()`,
     })
     .from(touching)
     .leftJoin(windowTouches, eq(windowTouches.authorId, touching.developerId))
@@ -338,22 +349,26 @@ const readCandidates = async (
       sql`${touching.sessionId} asc`,
     )
     .limit(SUSPECT_MAX_CANDIDATES);
-  return rows.map((row) => ({
-    workContextId: row.workContextId,
-    workContextTitle: row.workContextTitle,
-    intent: row.intent ?? null,
-    sessionId: row.sessionId,
-    agentKind: row.agentKind,
-    branch: row.branch,
-    developerId: row.developerId,
-    lastActiveAt:
-      row.lastActiveAt instanceof Date
-        ? row.lastActiveAt
-        : new Date(String(row.lastActiveAt)),
-    overlap: Number(row.overlap),
-    authorTouches: Number(row.authorTouches),
-    sources: expandSources(row.sources ?? []),
-  }));
+  return {
+    // Every row carries the same window count; no rows means nothing touched.
+    totalTouching: Number(rows[0]?.totalTouching ?? 0),
+    rows: rows.map((row) => ({
+      workContextId: row.workContextId,
+      workContextTitle: row.workContextTitle,
+      intent: row.intent ?? null,
+      sessionId: row.sessionId,
+      agentKind: row.agentKind,
+      branch: row.branch,
+      developerId: row.developerId,
+      lastActiveAt:
+        row.lastActiveAt instanceof Date
+          ? row.lastActiveAt
+          : new Date(String(row.lastActiveAt)),
+      overlap: Number(row.overlap),
+      authorTouches: Number(row.authorTouches),
+      sources: expandSources(row.sources ?? []),
+    })),
+  };
 };
 
 /**
@@ -431,7 +446,12 @@ export const suspectSessions = async (
   input: SuspectInput,
 ): Promise<SuspectView> => {
   const since = new Date(deps.now().getTime() - SUSPECT_WINDOW_DAYS * MS_PER_DAY);
-  const rows = await readCandidates(deps, input.repo, input.scope.files, since);
+  const { rows, totalTouching } = await readCandidates(
+    deps,
+    input.repo,
+    input.scope.files,
+    since,
+  );
   const base = {
     falsifier: {
       kind: input.scope.falsifierKind,
@@ -443,10 +463,14 @@ export const suspectSessions = async (
       pinId: input.scope.pinId,
       surface: input.scope.surface,
       files: input.scope.files,
-      filesTruncated: input.scope.filesTruncated,
     },
     totals: {
-      sessionsTouching: rows.length,
+      // The WHOLE intersection, and how much of it was scored. A total taken
+      // from the bounded array under-reports by exactly the rows the reader
+      // is never told about, and `pin list` already solved this one level up
+      // ("showing 200 of 250"). Two numbers, so the renderer can say which.
+      sessionsTouching: totalTouching,
+      sessionsScored: rows.length,
       windowDays: SUSPECT_WINDOW_DAYS,
     },
     attribution: input.attribution,

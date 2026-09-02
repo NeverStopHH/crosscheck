@@ -23,6 +23,7 @@ import type { Db } from "@crosscheck/server";
 
 import { runCli } from "../src/index.ts";
 import { renderPinList } from "../src/cli/pin-render.ts";
+import { renderSuspect } from "../src/cli/suspect-render.ts";
 import {
   git,
   makeHome,
@@ -354,6 +355,50 @@ describe("crosscheck pin list at scale", () => {
     // Assert
     expect(rendered).toContain("pins: 250");
     expect(rendered).toContain("showing 1 of 250");
+  });
+});
+
+describe("crosscheck suspect at scale", () => {
+  test("says the candidate list was cut, so 50 rows never read as all of them", () => {
+    // Arrange: the company corpus shape — 305 work contexts touched the
+    // pinned files inside the window and the hub scored the 50 that ranked
+    // highest. A reader told only "50 session(s) touched this surface"
+    // counts fifty and concludes crosscheck saw everything.
+    const candidate = {
+      sessionId: "cc_one",
+      agentKind: "claude-code",
+      branch: "main",
+      workContextId: "wc_one",
+      workContextTitle: "Playback transport rework",
+      intent: null,
+      lastActiveAt: new Date().toISOString(),
+      overlap: 2,
+      authorTouches: 8,
+      lift: 0.25,
+      sources: ["tool_edit"],
+      readerMuted: false,
+      isSelf: false,
+    };
+    const view = {
+      outcome: "no_separation",
+      falsifier: { kind: "recorded_break", at: new Date().toISOString(), check: null },
+      scope: {
+        kind: "pin",
+        pinId: "pin_playback",
+        surface: "Play button plays/pauses",
+        files: [PINNED],
+      },
+      totals: { sessionsTouching: 305, sessionsScored: 50, windowDays: 14 },
+      attribution: "sessions",
+      candidates: [candidate],
+    };
+
+    // Act
+    const rendered = renderSuspect(view, new Date());
+
+    // Assert
+    expect(rendered).toContain("305 session(s) touched this surface");
+    expect(rendered).toContain("scored 50 of 305");
   });
 });
 
