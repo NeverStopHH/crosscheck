@@ -21,14 +21,15 @@ import { SAFE_ID_PATTERN, MAX_RECORD_ID_LENGTH } from "./question.ts";
  * PHANTOM TEAMMATE in presence, in briefings and in the tripwire. Pins get
  * their own table pair instead (server db/schema.ts `pins` + `pin_files`).
  *
- * THE HUMAN GATE. `captureMode` is the literal "human" — the one value of
- * `CAPTURE_MODES` that no writer in this tree produces today. It is here, in
- * the shared schema, rather than only in a service, because "Nick verified
- * this working" must not be a sentence a model can write about Nick: the
- * shipped `review_draft` MCP tool is one an agent can call on its own drafts,
- * and `HintTrust` exposes provenance but not capture mode. The literal makes
- * the gate fail CLOSED — an absent or unknown mode is a parse failure, never
- * a default.
+ * THE HUMAN GATE IS AN EVIDENCE FIELD, and the hub owns the verdict. The wire
+ * carries `presence` — what the client OBSERVED — and the hub stamps the
+ * stored capture mode from it. It used to carry `captureMode: "human"`, which
+ * is the caller's own conclusion about itself, printed back to every teammate
+ * as "verified by Nick (a human, at a terminal)": a sentence a model could
+ * write about Nick, which is the exact hole the trust critique found in
+ * shipped 0.7.5's `review_draft`. The literal makes the gate fail CLOSED —
+ * an absent or unknown value is a parse failure, never a default — and
+ * PIN_PRESENCE_TERMINAL states what the gate is worth.
  */
 export const MAX_PIN_SURFACE_CHARS = 120;
 
@@ -68,6 +69,25 @@ export const PIN_FILE_STATUSES = ["present", "missing"] as const;
 
 export type PinFileStatus = (typeof PIN_FILE_STATUSES)[number];
 
+/**
+ * THE EVIDENCE A CLIENT MAY STATE about who is on the other end, and the only
+ * value the hub accepts. It is EVIDENCE, not a verdict: the client says what
+ * it observed — a controlling terminal, which an agent's Bash tool call does
+ * not have — and the hub decides what to store from it. That split is the
+ * whole difference from the field this replaces: `captureMode: "human"` was
+ * the caller's own conclusion ABOUT ITSELF, which the hub then printed as
+ * "verified by Nick (a human, at a terminal)".
+ *
+ * WHAT THIS DOES NOT DO, stated here so nobody believes it again: a bearer key
+ * that can reach this route can also send this field, and the key sits in
+ * plaintext in ~/.crosscheck/config.json. The gate makes the claim EXPLICIT,
+ * REQUIRED and REFUSABLE at the hub, where every other gate in this product
+ * lives; it does not make it unforgeable by an attacker who already holds the
+ * developer's key. Closing THAT needs a credential an agent on the same
+ * machine cannot read, which this schema does not invent.
+ */
+export const PIN_PRESENCE_TERMINAL = "controlling_terminal";
+
 /** A repo-relative path is never long; the cap keeps one row renderable. */
 export const MAX_PIN_PATH_CHARS = 300;
 
@@ -106,7 +126,12 @@ const PinShapeSchema = z.object({
    * assertion, not a reference.
    */
   check: z.string().min(1).max(MAX_PIN_CHECK_CHARS).optional(),
-  captureMode: z.literal("human"),
+  /**
+   * EVIDENCE, not a verdict (PIN_PRESENCE_TERMINAL). The hub stamps the
+   * stored capture mode from it; a body that omits it or names anything else
+   * fails CLOSED here, before anything reaches the database.
+   */
+  presence: z.literal(PIN_PRESENCE_TERMINAL),
   /** Drift is rendered against this ("verified at abc1234; your base is …"). */
   verifiedAtCommit: z.string().min(1).max(MAX_RECORD_ID_LENGTH),
 });

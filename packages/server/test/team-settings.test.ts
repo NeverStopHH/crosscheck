@@ -16,6 +16,7 @@
  * to" depends on knowing whether anybody ever pressed the switch.
  */
 import { describe, expect, test } from "bun:test";
+import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
 
 import {
   addTestDeveloperWithSession,
@@ -72,7 +73,7 @@ const pinBody = (overrides: Record<string, unknown> = {}): Record<string, unknow
   surface: "Play button plays/pauses",
   files: [PINNED_A, PINNED_B],
   check: "open /workbench, press Play",
-  captureMode: "human",
+  presence: PIN_PRESENCE_TERMINAL,
   verifiedAtCommit: "abc1234",
   ...overrides,
 });
@@ -268,7 +269,10 @@ describe("the attribution setting", () => {
       (
         await harness.app.request(
           "/api/pins/pin_counts/broke",
-          jsonRequest("POST", nick.apiKey, {}),
+          jsonRequest("POST", nick.apiKey, {
+            repo: REPO,
+            presence: PIN_PRESENCE_TERMINAL,
+          }),
         )
       ).status,
     ).toBe(200);

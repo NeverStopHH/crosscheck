@@ -133,12 +133,18 @@ crosscheck pin "Play button plays/pauses" \
   --check "open /workbench, press Play"
 ```
 
-Only a person can create one. The command refuses when the process has no
-controlling terminal, so an agent calling it through Bash cannot vouch for
-you, and `crosscheck pin list` prints the capture mode beside the name —
-"verified by Nick (a human, at a terminal)" — because provenance on its own
-never distinguished "Nick verified this" from "an agent wrote that Nick
-verified this". A pin of at most 5 files may be shown to other sessions later
+Both writing routes demand terminal evidence AT THE HUB, and the hub — not
+the caller — stamps the trust label from it. `crosscheck pin` refuses when the
+process has no controlling terminal, so an agent calling the command through
+Bash cannot vouch for you, and `crosscheck pin list` prints the label beside
+the name — "verified by Nick (a human, at a terminal)" — because provenance on
+its own never distinguished "Nick verified this" from "an agent wrote that Nick
+verified this". What that is worth, stated rather than implied: the hub
+REQUIRES the evidence, it cannot verify it. Anyone holding your bearer key —
+which sits in plaintext in `~/.crosscheck/config.json`, where an agent on your
+machine can read it — can state it too. The gate makes the claim explicit,
+required and refusable where every other gate in this product lives, and the
+name printed beside it is what makes a forged claim an attributable one. A pin of at most 5 files may be shown to other sessions later
 and must carry a check recipe; up to 30 files are allowed for briefing-only
 pins. `crosscheck pin --broke <id>` retracts one, and `crosscheck pin --sweep`
 asks git where the pinned paths went after a rename.

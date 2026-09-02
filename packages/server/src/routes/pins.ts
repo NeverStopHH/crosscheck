@@ -11,17 +11,33 @@
  * vouch for a human", "this pin needs a check recipe" — in their terminal,
  * synchronously, not silently dropped into a ledger.
  *
- * THE HUMAN GATE IS THE SCHEMA. `PinSchema` demands the literal capture mode
- * "human"; a body that omits it or sends "agent" fails validation here, before
- * anything reaches the database. That is the whole of the fail-closed rule on
- * this side of the wire — the CLI's side is that it only sends "human" when a
- * person is demonstrably at a terminal (packages/cli/src/cli/pin.ts).
+ * THE HUMAN GATE IS HUB-SIDE, on BOTH writing routes, and it is a gate on
+ * EVIDENCE rather than on a verdict. `PinSchema` demands `presence:
+ * "controlling_terminal"` — what the client observed — and the hub stamps the
+ * stored capture mode itself; the retraction demands the same field plus the
+ * repo it speaks for. A body that omits either fails validation here, before
+ * anything reaches the database.
+ *
+ * WHY BOTH, and why the retraction most of all: `/:id/broke` is the falsifier
+ * `crosscheck suspect` reads before it names a single session, and it used to
+ * take an EMPTY body from any key with no hub-side check whatsoever — so an
+ * agent could unlock attribution on its own word while the only gate sat in
+ * a CLI it never had to run.
+ *
+ * WHAT THE GATE IS WORTH, stated rather than implied. A bearer key that can
+ * reach these routes can also send the field, and that key sits in plaintext
+ * in ~/.crosscheck/config.json. This makes the claim explicit, required and
+ * refusable AT THE HUB — where every other gate in this product lives — and
+ * it does not make it unforgeable by an attacker who already holds the key.
+ * `pin list` therefore prints WHO vouched, and `suspect` prints who recorded
+ * the retraction, so a forged claim is at least an attributable one.
  */
 import { Hono } from "hono";
 import { z } from "zod";
 import {
   MAX_PIN_PATH_CHARS,
   MAX_RECORD_ID_LENGTH,
+  PIN_PRESENCE_TERMINAL,
   PinSchema,
   SAFE_ID_PATTERN,
   describeUnstorableText,
@@ -78,6 +94,16 @@ const PinIdSchema = z
   .min(1)
   .max(MAX_RECORD_ID_LENGTH)
   .regex(SAFE_ID_PATTERN);
+
+/**
+ * The retraction body. The repo scopes the UPDATE, and `presence` is the same
+ * evidence field a pin's creation carries — this route unlocks naming
+ * people, so it takes the STRONGER of the two gates, never none.
+ */
+const BreakBodySchema = z.object({
+  repo: z.string().min(1),
+  presence: z.literal(PIN_PRESENCE_TERMINAL),
+});
 
 export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();
@@ -158,15 +184,29 @@ export const pinsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.post("/:id/broke", async (c) => {
-    const parsed = PinIdSchema.safeParse(c.req.param("id"));
+    const id = PinIdSchema.safeParse(c.req.param("id"));
+    if (!id.success) {
+      return fail(c, 400, "validation_failed", formatIssues(id.error));
+    }
+    const parsed = BreakBodySchema.safeParse(await readJsonBody(c));
     if (!parsed.success) {
-      return fail(c, 400, "validation_failed", formatIssues(parsed.error));
+      return fail(
+        c,
+        400,
+        "validation_failed",
+        `${formatIssues(parsed.error)} — retracting a pin is what lets crosscheck suspect name sessions, so it needs the repo and evidence a person ran the check at a terminal`,
+      );
     }
-    const outcome = await markPinBroke(deps, c.get("developer").id, parsed.data);
+    const outcome = await markPinBroke(
+      deps,
+      c.get("developer").id,
+      parsed.data.repo,
+      id.data,
+    );
     if (outcome === "not_found") {
-      return fail(c, 404, "not_found", "no pin with that id");
+      return fail(c, 404, "not_found", "no pin with that id in this repo");
     }
-    return ok(c, { id: parsed.data });
+    return ok(c, { id: id.data });
   });
 
   return router;

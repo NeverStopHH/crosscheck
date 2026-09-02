@@ -49,10 +49,15 @@ const ageOf = (iso: string, now: Date): string => {
 /**
  * The trust label, and `captureMode` is in it deliberately: `HintTrust`
  * exposes provenance and provenance alone never distinguished "Nick verified
- * this" from "an agent wrote that Nick verified this". A pin whose stored
- * mode is not "human" — which the hub refuses to create, so this can only be
- * a hub that changed its mind — is printed as what it is rather than as a
- * human's word.
+ * this" from "an agent wrote that Nick verified this". The mode is STAMPED BY
+ * THE HUB from the terminal evidence the writing route demands, so a stored
+ * mode that is not "human" can only be an older row or a hub that changed its
+ * mind, and is printed as what it is rather than as a human's word.
+ *
+ * WHAT THE LABEL IS WORTH: the hub requires the evidence, it cannot verify
+ * it. Somebody who holds this developer's bearer key can state it too, which
+ * is why the NAME is printed beside it — a claim under a name somebody can
+ * ask about beats a claim under none.
  */
 const trustLabel = (pin: PinEntry): string =>
   pin.captureMode === "human"

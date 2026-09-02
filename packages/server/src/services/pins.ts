@@ -100,6 +100,12 @@ export type CreatePinOutcome =
 
 export type BreakPinOutcome = "broken" | "not_found";
 
+/**
+ * What the hub stores for a pin that arrived with terminal evidence. The one
+ * value of CAPTURE_MODES no automatic writer in this tree produces.
+ */
+const HUMAN_CAPTURE_MODE = "human" as const;
+
 const iso = (value: Date | null): string | null =>
   value === null ? null : value.toISOString();
 
@@ -171,9 +177,11 @@ export const createPin = async (
         verifiedAtCommit: input.verifiedAtCommit,
         verifiedAt: now,
         checkRecipe: input.check ?? null,
-        // The literal the schema already enforced. Stored so the reader can
-        // tell a human's word from an agent's report of one.
-        captureMode: input.captureMode,
+        // STAMPED BY THE HUB, never carried by the body: the caller states
+        // the evidence it observed (`presence`) and the hub decides what that
+        // is worth. A body that could set this field would be writing the
+        // trust label `pin list` prints about its own author.
+        captureMode: HUMAN_CAPTURE_MODE,
         brokeAt: null,
         brokeBy: null,
         createdAt: now,
@@ -212,12 +220,16 @@ export const createPin = async (
 export const markPinBroke = async (
   deps: Deps,
   developerId: string,
+  repo: string,
   pinId: string,
 ): Promise<BreakPinOutcome> => {
+  // SCOPED BY REPO, like every other read on this table. Scoped by pin id
+  // alone, one checkout's retraction reached any pin on the hub — and this
+  // is the row `crosscheck suspect` reads before it names anybody.
   const updated = await deps.db
     .update(pins)
     .set({ brokeAt: deps.now(), brokeBy: developerId })
-    .where(and(eq(pins.id, pinId), isNull(pins.brokeAt)))
+    .where(and(eq(pins.id, pinId), eq(pins.repo, repo), isNull(pins.brokeAt)))
     .returning({ id: pins.id });
   if (updated[0] !== undefined) {
     return "broken";
@@ -225,7 +237,7 @@ export const markPinBroke = async (
   const existing = await deps.db
     .select({ id: pins.id })
     .from(pins)
-    .where(eq(pins.id, pinId))
+    .where(and(eq(pins.id, pinId), eq(pins.repo, repo)))
     .limit(1);
   return existing[0] === undefined ? "not_found" : "broken";
 };

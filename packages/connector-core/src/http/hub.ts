@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
 
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
@@ -1777,8 +1778,12 @@ export interface CreatePinRequest {
   readonly surface: string;
   readonly files: readonly string[];
   readonly check?: string;
-  /** The literal "human". The hub refuses anything else (PinSchema). */
-  readonly captureMode: "human";
+  /**
+   * What this process OBSERVED about who is on the other end — a controlling
+   * terminal. The hub stamps the stored capture mode from it and refuses any
+   * other value (PinSchema); it is never this client's verdict about itself.
+   */
+  readonly presence: typeof PIN_PRESENCE_TERMINAL;
   readonly verifiedAtCommit: string;
 }
 
@@ -1795,16 +1800,22 @@ export const createPin = (
     body: request,
   });
 
-/** The retraction: the check was run and it failed. */
+/**
+ * The retraction: the check was run and it failed. It carries the repo it
+ * speaks for and the same terminal evidence a pin's creation carries — this
+ * is the falsifier `crosscheck suspect` reads before it names any session,
+ * and it used to travel as an empty body with no hub-side gate at all.
+ */
 export const breakPin = (
   ctx: HubContext,
+  repo: string,
   pinId: string,
 ): Promise<HubResult<{ readonly id: string }>> =>
   hubRequest(ctx, {
     method: "POST",
     path: `/api/pins/${encodeURIComponent(pinId)}/broke`,
     schema: CreatedPinSchema,
-    body: {},
+    body: { repo, presence: PIN_PRESENCE_TERMINAL },
   });
 
 export interface PinSweepUpdate {

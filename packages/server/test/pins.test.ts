@@ -15,6 +15,8 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
+
 import {
   createTestDeveloper,
   createTestHarness,
@@ -61,8 +63,20 @@ const pinBody = (overrides: Record<string, unknown> = {}): Record<string, unknow
   surface: "Play button plays/pauses",
   files: ["src/workbench/PlaybackControls.tsx", "src/workbench/usePlayback.ts"],
   check: "open /workbench, press Play",
-  captureMode: "human",
+  presence: PIN_PRESENCE_TERMINAL,
   verifiedAtCommit: "abc1234",
+  ...overrides,
+});
+
+/**
+ * The retraction body. It is the falsifier that unlocks naming sessions, so
+ * it carries the repo it speaks for and the evidence a person ran the check.
+ */
+const breakBody = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  repo: REPO,
+  presence: PIN_PRESENCE_TERMINAL,
   ...overrides,
 });
 
@@ -147,14 +161,36 @@ describe("POST /api/pins", () => {
     const response = await createPin(
       harness,
       nick.apiKey,
-      pinBody({ captureMode: "agent" }),
+      pinBody({ presence: "agent" }),
     );
 
     // Assert
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("captureMode");
+    expect(body.error.message).toContain("presence");
     // And nothing was stored on the way to the refusal.
+    const listed = await listPins(harness, nick.apiKey);
+    expect(listed.pins).toHaveLength(0);
+  });
+
+  test("refuses a pin body that only CLAIMS a person wrote it", async () => {
+    // Arrange: the attack that needs no terminal at all. The key sits in
+    // plaintext in ~/.crosscheck/config.json, so an agent with a Bash tool
+    // posts the pin itself — and captureMode "human" is a TAG the caller
+    // wrote about itself, never evidence about who is on the other end.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-tag@example.com");
+    // The VERBATIM body the adversary posted, which answered 200 and then
+    // printed "verified by Nick (a human, at a terminal)" to every teammate.
+    const tagged = pinBody({ captureMode: "human" });
+    delete tagged["presence"];
+
+    // Act
+    const response = await createPin(harness, nick.apiKey, tagged);
+
+    // Assert: the hub decides the capture mode from evidence the caller
+    // states, and states nothing when the evidence is absent.
+    expect(response.status).toBe(400);
     const listed = await listPins(harness, nick.apiKey);
     expect(listed.pins).toHaveLength(0);
   });
@@ -283,7 +319,7 @@ describe("POST /api/pins/:id/broke", () => {
     // Act: Ken ran Nick's check recipe and it failed.
     const response = await harness.app.request(
       `/api/pins/${String(body["id"])}/broke`,
-      jsonRequest("POST", ken.apiKey, {}),
+      jsonRequest("POST", ken.apiKey, breakBody()),
     );
 
     // Assert
@@ -297,6 +333,48 @@ describe("POST /api/pins/:id/broke", () => {
     expect(listed.coverage.pins).toBe(0);
   });
 
+  test("refuses an empty body — the falsifier is what unlocks naming", async () => {
+    // Arrange: this route is the brake behind "name nobody before the
+    // recheck recipe has RUN AND FAILED", and it had no hub-side gate at
+    // all: an agent posting {} with the key from ~/.crosscheck/config.json
+    // turned "nothing is named yet" into a ranked accusation.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-empty@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+
+    // Act
+    const response = await harness.app.request(
+      `/api/pins/${String(body["id"])}/broke`,
+      jsonRequest("POST", nick.apiKey, {}),
+    );
+
+    // Assert: refused, and the pin is still live — nothing is unlocked.
+    expect(response.status).toBe(400);
+    const listed = await listPins(harness, nick.apiKey);
+    expect((listed.pins[0] as PinView).brokeAt).toBeNull();
+  });
+
+  test("does not reach a pin in a repo the body does not name", async () => {
+    // Arrange: the UPDATE was scoped by pin id alone, so any key on the hub
+    // retracted any pin in any repo.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-xbroke@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+
+    // Act
+    const response = await harness.app.request(
+      `/api/pins/${String(body["id"])}/broke`,
+      jsonRequest("POST", nick.apiKey, breakBody({ repo: OTHER_REPO })),
+    );
+
+    // Assert
+    expect(response.status).toBe(404);
+    const listed = await listPins(harness, nick.apiKey);
+    expect((listed.pins[0] as PinView).brokeAt).toBeNull();
+  });
+
   test("answers 404 for a pin the hub has never held", async () => {
     // Arrange
     const harness = await createTestHarness();
@@ -305,7 +383,7 @@ describe("POST /api/pins/:id/broke", () => {
     // Act
     const response = await harness.app.request(
       "/api/pins/pin_nothing/broke",
-      jsonRequest("POST", nick.apiKey, {}),
+      jsonRequest("POST", nick.apiKey, breakBody()),
     );
 
     // Assert

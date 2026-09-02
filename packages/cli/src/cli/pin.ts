@@ -6,9 +6,10 @@
  *   crosscheck pin --broke <id>
  *   crosscheck pin --sweep
  *
- * THE HUMAN GATE, and why it is a TTY. The hub refuses any pin whose capture
- * mode is not the literal "human" (PinSchema), and this command is the only
- * thing that ever sends one — so the question becomes "is a person here?".
+ * THE HUMAN GATE, and why it is a TTY. The hub refuses any pin and any
+ * retraction that does not state terminal evidence (PinSchema's `presence`),
+ * and this command is the only honest sender of it — so the question here
+ * becomes "is a person here?".
  * The evidence available to a CLI is an interactive terminal: an agent's Bash
  * tool call has no controlling tty, so it cannot mint a pin, and the refusal
  * says what to do instead. That is evidence, not proof — a pty would pass —
@@ -36,6 +37,7 @@ import type { HubContext, PinSweepUpdate } from "@crosscheck/connector-core/http
 import {
   MAX_PIN_FILES,
   MAX_SPEAKING_PIN_FILES,
+  PIN_PRESENCE_TERMINAL,
   PinSchema,
 } from "@crosscheck/schema";
 import { renderPinList } from "./pin-render.ts";
@@ -275,7 +277,7 @@ const create = async (
     surface,
     files: args.files,
     ...(args.check === undefined ? {} : { check: args.check }),
-    captureMode: "human",
+    presence: PIN_PRESENCE_TERMINAL,
     verifiedAtCommit: resolved.baseCommit,
   });
   if (!parsed.success) {
@@ -290,7 +292,7 @@ const create = async (
     surface: parsed.data.surface,
     files: parsed.data.files,
     ...(parsed.data.check === undefined ? {} : { check: parsed.data.check }),
-    captureMode: "human",
+    presence: PIN_PRESENCE_TERMINAL,
     verifiedAtCommit: parsed.data.verifiedAtCommit,
   });
   if (!created.ok) {
@@ -334,7 +336,7 @@ export const runPin = async (
     if (!isInteractive()) {
       return { stdout: AGENT_REFUSAL, exitCode: EXIT_USAGE };
     }
-    const broken = await breakPin(resolved.ctx, args.broke);
+    const broken = await breakPin(resolved.ctx, resolved.repoId, args.broke);
     if (!broken.ok) {
       return failureResult(broken);
     }

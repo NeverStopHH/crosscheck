@@ -25,6 +25,8 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
+
 import { SUSPECT_MAX_CANDIDATES } from "../src/constants.ts";
 import {
   addTestDeveloperWithSession,
@@ -107,7 +109,7 @@ const pinBody = (overrides: Record<string, unknown> = {}): Record<string, unknow
   surface: "Play button plays/pauses",
   files: [PINNED_A, PINNED_B],
   check: "open /workbench, press Play",
-  captureMode: "human",
+  presence: PIN_PRESENCE_TERMINAL,
   verifiedAtCommit: "abc1234",
   ...overrides,
 });
@@ -175,7 +177,7 @@ const breakPin = async (
 ): Promise<void> => {
   const response = await harness.app.request(
     `/api/pins/${id}/broke`,
-    jsonRequest("POST", apiKey, {}),
+    jsonRequest("POST", apiKey, { repo: REPO, presence: PIN_PRESENCE_TERMINAL }),
   );
   expect(response.status).toBe(200);
 };

@@ -21,6 +21,7 @@ import {
   MAX_PIN_FILES,
   MAX_PIN_SURFACE_CHARS,
   MAX_SPEAKING_PIN_FILES,
+  PIN_PRESENCE_TERMINAL,
   PinSchema,
   isSpeakingPin,
 } from "../src/index.ts";
@@ -31,7 +32,7 @@ const pin = (overrides: Record<string, unknown> = {}): Record<string, unknown> =
   surface: "Play button plays/pauses",
   files: ["src/workbench/PlaybackControls.tsx", "src/workbench/usePlayback.ts"],
   check: "open /workbench, press Play",
-  captureMode: "human",
+  presence: PIN_PRESENCE_TERMINAL,
   verifiedAtCommit: "a1b2c3d4",
   ...overrides,
 });
@@ -45,22 +46,22 @@ describe("PinSchema", () => {
     expect(parsed.success).toBe(true);
   });
 
-  test("rejects captureMode agent — an agent may not vouch for a human", () => {
+  test("rejects any presence but a terminal — an agent may not vouch", () => {
     // Arrange: the exact hole the trust critique found in shipped 0.7.5 —
     // review_draft is an MCP tool an agent can call on its own drafts.
-    for (const captureMode of ["agent", "auto"]) {
+    for (const presence of ["agent", "auto", "human"]) {
       // Act
-      const parsed = PinSchema.safeParse(pin({ captureMode }));
+      const parsed = PinSchema.safeParse(pin({ presence }));
 
       // Assert
-      expect(parsed.success, captureMode).toBe(false);
+      expect(parsed.success, presence).toBe(false);
     }
   });
 
-  test("rejects a missing captureMode — the gate fails CLOSED", () => {
+  test("rejects a missing presence — the gate fails CLOSED", () => {
     // Arrange
     const withoutMode = pin();
-    delete withoutMode["captureMode"];
+    delete withoutMode["presence"];
 
     // Act
     const parsed = PinSchema.safeParse(withoutMode);
