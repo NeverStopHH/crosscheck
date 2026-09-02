@@ -256,6 +256,15 @@ describe("admin developer listing", () => {
     // developer-axis flag cannot be the one that carries this.
     expect(listing.truncated).toBe(false);
     expect(found?.emails).toHaveLength(MAX_EMAILS_PER_DEVELOPER);
+    // Gone from the answer, not merely counted: these addresses reach no admin
+    // surface — GET /api/developers/<id>/emails caps at ten as well — while
+    // absence matching keeps attributing their commits. The flag is the only
+    // thing that tells an admin the set they are auditing is not the set the
+    // hub acts on.
+    const shown = found?.emails.map((email) => email.email) ?? [];
+    for (const address of hidden) {
+      expect(shown).not.toContain(address);
+    }
     expect(found?.emailsTruncated).toBe(true);
   });
 
