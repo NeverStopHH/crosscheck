@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 
 import { generateApiKey, hashApiKey } from "../auth/keys.ts";
 import { DEVELOPERS_MAX_LISTED, EVENT_KINDS } from "../constants.ts";
@@ -136,6 +136,14 @@ export interface ListedDeveloperView {
   readonly name: string;
   readonly createdAt: string;
   readonly emails: readonly DeveloperEmailView[];
+  /**
+   * True when this developer holds addresses the page did not show. The
+   * developer-level `truncated` cannot carry this: a complete page of one
+   * developer can still be hiding half of that developer's aliases, and
+   * silence there reads as "those are all their addresses" while absence
+   * matching goes on attributing commits from the ones it hid.
+   */
+  readonly emailsTruncated: boolean;
 }
 
 export interface DeveloperListing {
@@ -184,10 +192,11 @@ export const readDeveloperPage = async (
  * lost id meant a developer whose git aliases could never be linked again —
  * and absence matching then keeps attributing their commits to nobody.
  *
- * Two queries, never one per developer: the second reads every email of the
- * page at once, so cost is bounded by DEVELOPERS_MAX_LISTED rather than by
- * team size. The api key hash is not selected here and must never be — the key
- * is shown once, at creation, and this listing is not a second chance at it.
+ * Three queries, never one per developer: the second reads every email of the
+ * page at once and the third counts them, so cost is bounded by
+ * DEVELOPERS_MAX_LISTED rather than by team size. The api key hash is not
+ * selected here and must never be — the key is shown once, at creation, and
+ * this listing is not a second chance at it.
  */
 export const listDevelopers = async (db: Db): Promise<DeveloperListing> => {
   const rows = await readDeveloperPage(db);
@@ -198,6 +207,7 @@ export const listDevelopers = async (db: Db): Promise<DeveloperListing> => {
     return { developers: [], truncated: false };
   }
 
+  const ids = page.map((row) => row.id);
   const emailRows = await db
     .select({
       developerId: developerEmails.developerId,
@@ -205,18 +215,30 @@ export const listDevelopers = async (db: Db): Promise<DeveloperListing> => {
       isPrimary: developerEmails.isPrimary,
     })
     .from(developerEmails)
-    .where(
-      inArray(
-        developerEmails.developerId,
-        page.map((row) => row.id),
-      ),
-    )
+    .where(inArray(developerEmails.developerId, ids))
     .orderBy(
       desc(developerEmails.isPrimary),
       asc(developerEmails.createdAt),
       asc(developerEmails.email),
     )
     .limit(DEVELOPERS_MAX_LISTED * MAX_EMAILS_PER_DEVELOPER);
+
+  // ASKED, not assumed. MAX_EMAILS_PER_DEVELOPER is a service promise and not
+  // a database fact — developer_emails' PK makes "one developer per email"
+  // true no matter who writes, and nothing makes "ten emails per developer"
+  // true: addDeveloperEmail reads the capped list and then inserts outside a
+  // transaction, so concurrent links walk past it. One bounded aggregate over
+  // the page's ids says how many each developer really has, which also covers
+  // the case where the read above hit its own ceiling and cut somebody's list
+  // short. It is what lets this listing stop claiming a clipped list is whole.
+  const totals = await db
+    .select({ developerId: developerEmails.developerId, total: count() })
+    .from(developerEmails)
+    .where(inArray(developerEmails.developerId, ids))
+    .groupBy(developerEmails.developerId);
+  const totalByDeveloper = new Map(
+    totals.map((row) => [row.developerId, row.total] as const),
+  );
 
   const byDeveloper = new Map<string, DeveloperEmailView[]>();
   for (const row of emailRows) {
@@ -230,12 +252,16 @@ export const listDevelopers = async (db: Db): Promise<DeveloperListing> => {
   }
 
   return {
-    developers: page.map((row) => ({
-      id: row.id,
-      name: row.name,
-      createdAt: row.createdAt.toISOString(),
-      emails: byDeveloper.get(row.id) ?? [],
-    })),
+    developers: page.map((row) => {
+      const emails = byDeveloper.get(row.id) ?? [];
+      return {
+        id: row.id,
+        name: row.name,
+        createdAt: row.createdAt.toISOString(),
+        emails,
+        emailsTruncated: (totalByDeveloper.get(row.id) ?? 0) > emails.length,
+      };
+    }),
     truncated,
   };
 };

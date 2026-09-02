@@ -1648,8 +1648,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // unlinked alias that still needs adding.
     label: "the developer listing drops every linked email",
     file: `${SERVER}/src/services/developers.ts`,
-    from: "      emails: byDeveloper.get(row.id) ?? [],",
-    to: "      emails: [],",
+    from: "      const emails = byDeveloper.get(row.id) ?? [];",
+    to: "      const emails: DeveloperEmailView[] = [];",
     test: `${SERVER}/test/developer-listing.test.ts`,
     because:
       "an admin cannot see which git addresses are already linked, so the " +

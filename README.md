@@ -71,8 +71,9 @@ takes the admin token and not a developer key:
 
 ```bash
 curl -s http://localhost:7100/api/developers -H "Authorization: Bearer $ADMIN_TOKEN"
-# -> {"ok":true,"data":{"developers":[{"id":"...","name":"Alice","createdAt":"...","emails":[...]}],"truncated":false}}
-# truncated:true means the hub holds more developers than one page carries
+# -> {"ok":true,"data":{"developers":[{"id":"...","name":"Alice","createdAt":"...","emails":[...],"emailsTruncated":false}],"truncated":false}}
+# truncated:true means the hub holds more developers than one page carries;
+# emailsTruncated:true means that developer has more addresses than it showed
 ```
 
 **3. Each developer installs the connector permanently, logs in once, then wires the machine:**

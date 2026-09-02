@@ -25,7 +25,11 @@ import {
 } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
 import { DEVELOPERS_MAX_LISTED } from "../src/constants.ts";
-import { readDeveloperPage } from "../src/services/developers.ts";
+import { developerEmails } from "../src/db/schema.ts";
+import {
+  MAX_EMAILS_PER_DEVELOPER,
+  readDeveloperPage,
+} from "../src/services/developers.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 
@@ -52,6 +56,7 @@ interface ListedDeveloper {
   readonly id: string;
   readonly name: string;
   readonly emails: readonly ListedEmail[];
+  readonly emailsTruncated: boolean;
 }
 
 interface Listing {
@@ -217,6 +222,57 @@ describe("admin developer listing", () => {
     // Exactly, not at-most: one row over the cap is what tells a full page
     // from a cut one, and no row beyond that is ever looked at again.
     expect(rows).toHaveLength(DEVELOPERS_MAX_LISTED + 1);
+  });
+
+  // `truncated` covers the developer axis only, and the emails have a cap of
+  // their own. A developer can hold more rows than the cap — `addDeveloperEmail`
+  // reads the capped list and then inserts outside a transaction, so concurrent
+  // links race past it — and the state is what matters here, not the race, so
+  // it is constructed directly rather than rolled for. What the listing did
+  // with it was report ten addresses and `truncated: false`: an admin auditing
+  // who is linked to what saw a smaller set than the one absence matching acts
+  // on, since that join reads developer_emails unbounded, and re-adding an
+  // address they could not see answered "this developer's email list is full".
+  test("a developer with more addresses than the cap is not shown as complete", async () => {
+    const harness = await createTestHarness();
+    const ken = await createTestDeveloper(harness, "Ken", "ken@work.test");
+    const hidden = ["hidden1@ex.test", "hidden2@ex.test", "hidden3@ex.test"];
+    for (let nth = 0; nth < MAX_EMAILS_PER_DEVELOPER - 1; nth += 1) {
+      expect(await addEmail(harness, ken.developerId, `alias${String(nth)}@ex.test`)).toBe(200);
+    }
+    await harness.db.insert(developerEmails).values(
+      hidden.map((email) => ({
+        email,
+        developerId: ken.developerId,
+        isPrimary: false,
+        createdAt: harness.clock.now(),
+      })),
+    );
+
+    const listing = await listDevelopers(harness);
+    const found = listing.developers.find((d) => d.id === ken.developerId);
+
+    // The page itself IS complete — one developer, nothing cut — so the
+    // developer-axis flag cannot be the one that carries this.
+    expect(listing.truncated).toBe(false);
+    expect(found?.emails).toHaveLength(MAX_EMAILS_PER_DEVELOPER);
+    expect(found?.emailsTruncated).toBe(true);
+  });
+
+  test("a developer inside the email cap is not accused of hiding addresses", async () => {
+    const harness = await createTestHarness();
+    const ken = await createTestDeveloper(harness, "Ken", "ken@work.test");
+    for (let nth = 0; nth < MAX_EMAILS_PER_DEVELOPER - 1; nth += 1) {
+      expect(await addEmail(harness, ken.developerId, `alias${String(nth)}@ex.test`)).toBe(200);
+    }
+
+    const listing = await listDevelopers(harness);
+    const found = listing.developers.find((d) => d.id === ken.developerId);
+
+    // Exactly at the cap and honest about it: the signal has to be able to say
+    // "these are all of them", or an admin learns to ignore it.
+    expect(found?.emails).toHaveLength(MAX_EMAILS_PER_DEVELOPER);
+    expect(found?.emailsTruncated).toBe(false);
   });
 
   test("a listing that fits reports itself as complete", async () => {
