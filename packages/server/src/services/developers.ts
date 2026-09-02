@@ -148,7 +148,11 @@ export interface ListedDeveloperView {
 
 export interface DeveloperListing {
   readonly developers: readonly ListedDeveloperView[];
-  /** True when the hub holds more developers than this page could carry. */
+  /**
+   * True when the hub holds more developers than the listing carried. There
+   * is no second page — the cap is a hard bound, not a page size — so a hub
+   * past it is told so here, and nowhere else.
+   */
   readonly truncated: boolean;
 }
 

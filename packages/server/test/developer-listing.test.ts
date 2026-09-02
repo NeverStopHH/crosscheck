@@ -342,5 +342,24 @@ describe("the disclosure the listing adds", () => {
     // built. A boundary nobody can find in the instructions is not one.
     const readme = await readFile(join(REPO_ROOT, "README.md"), "utf8");
     expect(readme).toContain("curl -s http://localhost:7100/api/developers");
+
+    // The cap is a hard bound, not a page size — MEASURED: the route takes no
+    // cursor and no offset, so a request that asks for the rest is answered
+    // with the same first page. If a second page ever exists this goes red
+    // and the sentences pinned below are owed their update; until then a
+    // document that says "per page" promises a page the endpoint does not
+    // have, and an admin whose hub outgrew the cap goes looking for it
+    // instead of being told the tail is unreachable from here.
+    const asked = await harness.app.request(
+      `/api/developers?after=${encodeURIComponent(ken.developerId)}&offset=1&page=2`,
+      jsonRequest("GET", TEST_ADMIN_TOKEN),
+    );
+    const paged = (await asked.json()) as {
+      data: { developers: ListedDeveloper[] };
+    };
+    expect(asked.status).toBe(200);
+    expect(paged.data.developers.map((d) => d.id)).toEqual([ken.developerId]);
+    expect(boundary).toContain("no second page");
+    expect(readme).toContain("no second page");
   });
 });
