@@ -12,6 +12,9 @@
  * — and when the listing cannot show them all it says so, because a page that
  * stops at the cap and stays quiet reads as "that is everyone".
  */
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -22,6 +25,22 @@ import {
 } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
 import { DEVELOPERS_MAX_LISTED } from "../src/constants.ts";
+
+const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
+
+/**
+ * The single line a document devotes to a subject, addressed by a phrase
+ * inside it — so an assertion cannot pass on prose elsewhere in the file that
+ * happens to carry the same words. DESIGN.md writes one risk per line, and
+ * §10 numbers them, so a line IS the unit here.
+ */
+const lineContaining = (document: string, marker: string): string => {
+  const line = document.split("\n").find((text) => text.includes(marker));
+  if (line === undefined) {
+    throw new Error(`no line in the document contains: ${marker}`);
+  }
+  return line;
+};
 
 interface ListedEmail {
   readonly email: string;
@@ -160,5 +179,53 @@ describe("admin developer listing", () => {
     // helper's error path, which would make this pass while proving nothing.
     expect(listing.status).toBe(200);
     expect(listing.truncated).toBe(false);
+  });
+});
+
+/**
+ * A listing of the team IS a new disclosure of personal data, and DESIGN.md
+ * §10 risk 3 is where this project enumerates every one of them — the
+ * paragraph a works council, a DPIA or a customer security review reads to
+ * find out what addresses the hub emits. It ends with the rule this surface
+ * arrives under: "A future surface that wants to widen this — a directory, a
+ * picker, question targeting — is adding a new disclosure and owes its own
+ * line here." An endpoint that hands out every teammate's addresses while
+ * that paragraph still says no endpoint lists the team does not just leave a
+ * document stale; it makes the honest answer to an external question wrong.
+ */
+describe("the disclosure the listing adds", () => {
+  test("the privacy boundary and the admin walkthrough both name the listing", async () => {
+    const harness = await createTestHarness();
+    const ken = await createTestDeveloper(harness, "Ken", "ken@work.test");
+    expect(await addEmail(harness, ken.developerId, "ken@personal.test")).toBe(200);
+
+    const response = await harness.app.request(
+      "/api/developers",
+      jsonRequest("GET", TEST_ADMIN_TOKEN),
+    );
+    const raw = await response.text();
+
+    // Measured first, so the documentation assertions below are owed rather
+    // than assumed: this is the response an operator would be answering
+    // questions about. If the listing ever stops carrying addresses, this
+    // half goes red and the paragraph is free to shrink again.
+    expect(response.status).toBe(200);
+    expect(raw).toContain("ken@work.test");
+    expect(raw).toContain("ken@personal.test");
+
+    const design = await readFile(join(REPO_ROOT, "docs", "DESIGN.md"), "utf8");
+    // Marker chosen to survive the edit it demands: it names the subject of
+    // the sentence, not the claim under test, so a stale document is caught
+    // by the assertion below rather than by the lookup failing to find it.
+    const boundary = lineContaining(design, "Teammate email addresses");
+    expect(boundary).not.toContain('there is no "who works here" endpoint');
+    expect(boundary).toContain("GET /api/developers");
+
+    // The same disclosure, from the operator's side: the walkthrough teaches
+    // POST /api/developers and POST /api/developers/<id>/emails and never
+    // said how to get <id> back, which is the whole reason the listing was
+    // built. A boundary nobody can find in the instructions is not one.
+    const readme = await readFile(join(REPO_ROOT, "README.md"), "utf8");
+    expect(readme).toContain("curl -s http://localhost:7100/api/developers");
   });
 });

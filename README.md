@@ -64,6 +64,17 @@ curl -sX POST http://localhost:7100/api/developers/<developerId>/emails \
 # unlink with DELETE /api/developers/<developerId>/emails/alice@gmail.com
 ```
 
+The id is shown exactly once, above, and every admin route after that takes it
+as a path parameter — so if it is lost, list the team back out. This is the
+only surface that prints ids and linked addresses together, which is why it
+takes the admin token and not a developer key:
+
+```bash
+curl -s http://localhost:7100/api/developers -H "Authorization: Bearer $ADMIN_TOKEN"
+# -> {"ok":true,"data":{"developers":[{"id":"...","name":"Alice","createdAt":"...","emails":[...]}],"truncated":false}}
+# truncated:true means the hub holds more developers than one page carries
+```
+
 **3. Each developer installs the connector permanently, logs in once, then wires the machine:**
 
 ```bash
