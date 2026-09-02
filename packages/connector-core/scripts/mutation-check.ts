@@ -1657,6 +1657,25 @@ export const MUTATIONS: readonly Mutation[] = [
       "existing one is the only way to find out",
   },
   {
+    // The email axis has a flag of its own, and this is the one line that
+    // decides it. A developer can hold more rows than MAX_EMAILS_PER_DEVELOPER
+    // — addDeveloperEmail reads the capped list and inserts outside a
+    // transaction, so concurrent links walk past it — and with the flag stuck
+    // at false the page is the silent clip again: ten addresses, `truncated:
+    // false`, and nothing to say the set the admin audits is smaller than the
+    // set absence matching acts on, which joins developer_emails unbounded.
+    label: "a developer's clipped email list is reported as their whole list",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "        emailsTruncated: (totalByDeveloper.get(row.id) ?? 0) > emails.length,",
+    to: "        emailsTruncated: false,",
+    test: `${SERVER}/test/developer-listing.test.ts`,
+    because:
+      "an admin auditing who is linked to what sees ten addresses and a flag " +
+      "that says those are all of them, while the hub keeps attributing " +
+      "commits from the ones the page hid — and re-adding one of those " +
+      "answers \"this developer's email list is full\"",
+  },
+  {
     // The load-bearing half of the agent-restart check (trial finding #8):
     // "in THIS repo". A name-and-age match alone warns on every two-project
     // dev machine, and that noise is how doctors get ignored.
@@ -4726,7 +4745,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 1
- * PRINTS: packages/server/test/developer-listing.test.ts 4
+ * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
