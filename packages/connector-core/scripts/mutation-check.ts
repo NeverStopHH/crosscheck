@@ -4545,6 +4545,36 @@ export const MUTATIONS: readonly Mutation[] = [
       'told a human "verified this works" when none did',
   },
   {
+    // THE OTHER HALF of the pin registry's trust boundary, and the half that
+    // unlocks naming a person. `/:id/broke` is the falsifier `suspect` reads
+    // before it prints a single session, and it shipped taking an EMPTY body
+    // from any key. Weakening this literal used to leave the whole pins suite
+    // green — the empty-body test refuses `{}` for its MISSING REPO, so it
+    // never saw the evidence gate go — and the repo is not a secret to
+    // anything holding the key. "refuses a retraction that names the repo but
+    // states no evidence" exists to pin exactly this line.
+    label: "the falsifier unlocks naming without stating any evidence",
+    file: `${SERVER}/src/routes/pins.ts`,
+    from: "  presence: z.literal(PIN_PRESENCE_TERMINAL),",
+    to: "  presence: z.literal(PIN_PRESENCE_TERMINAL).optional(),",
+    test: `${SERVER}/test/pins.test.ts`,
+    because:
+      "an agent that knows the repo name trips the brake behind \"name " +
+      "nobody before the recheck recipe has RUN AND FAILED\", turning " +
+      "\"nothing is named yet\" into a ranked accusation on its own word",
+  },
+  {
+    // The same route's other scope. A retraction is not a global verb.
+    label: "one key's retraction reaches a pin in any repo on the hub",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "and(eq(pins.id, pinId), eq(pins.repo, repo), isNull(pins.brokeAt))",
+    to: "and(eq(pins.id, pinId), isNull(pins.brokeAt))",
+    test: `${SERVER}/test/pins.test.ts`,
+    because:
+      "any checkout retracts any other team's pin by id alone, and the row " +
+      "it flips is the one suspect reads before it names somebody",
+  },
+  {
     // Raw overlap is a popularity contest: whoever touches the most files is
     // in the most pins, so suspect would name the busiest teammate for every
     // breakage in the repo.
@@ -4790,7 +4820,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
- * PRINTS: packages/server/test/pins.test.ts 1
+ * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 1

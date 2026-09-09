@@ -359,6 +359,31 @@ describe("POST /api/pins/:id/broke", () => {
     expect((listed.pins[0] as PinView).brokeAt).toBeNull();
   });
 
+  test("refuses a retraction that names the repo but states no evidence", async () => {
+    // Arrange: the empty-body test above cannot see this half. `{}` is
+    // refused for its MISSING REPO, so the evidence literal can be deleted
+    // outright and that test stays green — measured: weakening `presence` to
+    // `.optional()` left all 19 tests in this file passing. The repo is not a
+    // secret; any agent holding the key knows it. So the shape that actually
+    // walks the naming path is a body that names the repo and states no
+    // evidence, and it is the one nothing was pinning.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-noev@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+
+    // Act
+    const response = await harness.app.request(
+      `/api/pins/${String(body["id"])}/broke`,
+      jsonRequest("POST", nick.apiKey, { repo: REPO }),
+    );
+
+    // Assert: refused, and the pin is still live — nothing is unlocked.
+    expect(response.status).toBe(400);
+    const listed = await listPins(harness, nick.apiKey);
+    expect((listed.pins[0] as PinView).brokeAt).toBeNull();
+  });
+
   test("does not reach a pin in a repo the body does not name", async () => {
     // Arrange: the UPDATE was scoped by pin id alone, so any key on the hub
     // retracted any pin in any repo.
