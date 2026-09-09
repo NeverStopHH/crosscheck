@@ -215,24 +215,27 @@ describe("crosscheck status: the second evidence lane", () => {
       startedAt: new Date().toISOString(),
       gitTouchCount: 2,
       gitLaneSkipped: 1,
+      gitLaneRan: 2,
     });
 
     // Act
     const result = await runFor(["status"]);
 
-    // Assert: BOTH halves, with real numbers that include this session's
-    // contribution. A lane reported only by what it FOUND would look healthy
-    // on every turn it never ran. Read through a pattern rather than as two
-    // literal totals, because `status` sums every live session and another
-    // test in this file legitimately adds to them — a literal count would be
-    // asserting the order bun ran the describes in.
+    // Assert: ALL THREE counts, with real numbers that include this
+    // session's contribution. A lane reported only by what it FOUND would
+    // look healthy on every turn it never ran, and one reported without the
+    // turns it RAN cannot be judged at all. Read through a pattern rather
+    // than as literal totals, because `status` sums every live session and
+    // another test in this file legitimately adds to them — a literal count
+    // would be asserting the order bun ran the describes in.
     const lane =
-      /git evidence lane: (\d+) file\(s\) no Edit tool reported · (\d+) turn\(s\) skipped/.exec(
+      /git evidence lane: (\d+) file\(s\) no Edit tool reported · (\d+) turn\(s\) ran · (\d+) turn\(s\) skipped/.exec(
         result.stdout,
       );
     expect(lane).not.toBeNull();
     expect(Number(lane?.[1])).toBeGreaterThanOrEqual(2);
-    expect(Number(lane?.[2])).toBeGreaterThanOrEqual(1);
+    expect(Number(lane?.[2])).toBeGreaterThanOrEqual(2);
+    expect(Number(lane?.[3])).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -253,6 +256,7 @@ describe("crosscheck doctor: the second evidence lane", () => {
       startedAt: new Date().toISOString(),
       gitTouchCount: 1,
       gitLaneSkipped: 9,
+      gitLaneRan: 1,
     });
 
     // Act
@@ -264,7 +268,37 @@ describe("crosscheck doctor: the second evidence lane", () => {
     // the order bun happened to run them in.
     expect(result.stdout).toContain("WARN  git evidence lane");
     expect(result.stdout).toContain("turn(s) skipped");
-    expect(result.stdout).toContain("skipped more often than it records");
+    expect(result.stdout).toContain("skipped more often than it runs");
+  });
+
+  test("passes a healthy install whose lane ran far more often than it skipped", async () => {
+    // Arrange: the install the WARN used to cry wolf on. Every edit came
+    // through the Edit tool, so the lane RECORDED nothing in two hundred
+    // turns — and three turns were skipped because the hook was already past
+    // its spare budget. Compared file-to-turn that was a permanent WARN whose
+    // named remedy (CROSSCHECK_TIMEOUT_MS) could never clear it; compared
+    // turn-to-turn it is a lane doing its job. Written AFTER the starved
+    // fixture above, and large enough to dominate the sum doctor prints.
+    await writeSessionState(home, {
+      hostSessionKey: "cc-git-healthy",
+      crosscheckSessionId: "cc_git_healthy",
+      workContextId: "wc_cc_git_healthy",
+      repoId: REPO_ID,
+      repoRoot: repo,
+      hubUrl,
+      developerId: "dev_nick",
+      startedAt: new Date().toISOString(),
+      gitTouchCount: 0,
+      gitLaneSkipped: 3,
+      gitLaneRan: 200,
+    });
+
+    // Act
+    const result = await runFor(["doctor"]);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  git evidence lane");
+    expect(result.stdout).not.toContain("WARN  git evidence lane");
   });
 });
 

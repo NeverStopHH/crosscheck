@@ -220,6 +220,7 @@ const aliceFixture = async (
     ghostPending: false,
   gitTouchCount: 0,
   gitLaneSkipped: 0,
+  gitLaneRan: 0,
     ...stateOverrides,
   });
   return {

@@ -164,6 +164,7 @@ describe("the Stop hook's git evidence lane", () => {
     // can explain rather than a silence (the finding-#14 lesson).
     expect(state?.gitTouchCount).toBe(1);
     expect(state?.gitLaneSkipped).toBe(0);
+    expect(state?.gitLaneRan).toBe(1);
   });
 
   test("records nothing for a worktree that was already dirty before the session", async () => {
@@ -187,6 +188,10 @@ describe("the Stop hook's git evidence lane", () => {
     // also pass on a turn where the lane never ran at all — which is what a
     // missing feature looks like.
     expect(state?.gitLaneSkipped).toBe(0);
+    // And the run is BOOKED: a quiet turn used to write nothing, which left
+    // doctor's denominator at zero and its WARN permanently red on an install
+    // whose every edit goes through the Edit tool.
+    expect(state?.gitLaneRan).toBe(1);
   });
 
   test("stays inside the Stop budget, and is never silently nothing", async () => {
@@ -210,8 +215,12 @@ describe("the Stop hook's git evidence lane", () => {
     const state = await readSessionState(fix.home, SESSION_ID);
     const recorded = state?.gitTouchCount ?? 0;
     const skipped = state?.gitLaneSkipped ?? 0;
-    console.log(`[stop-git-lane] recorded=${String(recorded)} skipped=${String(skipped)}`);
+    const ran = state?.gitLaneRan ?? 0;
+    console.log(`[stop-git-lane] recorded=${String(recorded)} skipped=${String(skipped)} ran=${String(ran)}`);
     expect(recorded + skipped).toBe(1);
+    // Exactly one of the two turn counters moved, and they agree with the
+    // outcome: a recorded file means the lane ran.
+    expect(ran + skipped).toBe(1);
     console.log(`[stop-git-lane] Stop returned in ${String(elapsedMs)} ms (ceiling ${String(STOP_RETURN_CEILING_MS)})`);
     expect(elapsedMs).toBeLessThan(STOP_RETURN_CEILING_MS);
   });

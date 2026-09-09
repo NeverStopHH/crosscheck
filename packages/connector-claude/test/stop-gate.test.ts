@@ -79,6 +79,7 @@ const baseState = (overrides: Partial<SessionState> = {}): SessionState => ({
   ghostPending: false,
   gitTouchCount: 0,
   gitLaneSkipped: 0,
+  gitLaneRan: 0,
   ghostNoticeCount: 0,
   ghostFireCount: 0,
   ghostNoOverlapCount: 0,

@@ -186,13 +186,17 @@ export const handleStop = async (
         now: ctx.now(),
       })
     : { paths: [], unavailable: true };
-  const captured = outcome.paths;
-  const skipped = outcome.unavailable;
-  if (captured.length > 0 || skipped) {
-    await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
-      withGitTouches(fresh, { captured, skipped }),
-    );
-  }
+  // BOOKED ON EVERY TURN, the one that ran and found nothing included. That
+  // turn is the denominator doctor's verdict divides by (state/git-lane-cost
+  // .ts): skipping the write when there was nothing to record left the ran
+  // count structurally zero, so the WARN compared skipped TURNS against
+  // recorded FILES and stayed red forever on a healthy install that runs no
+  // codemods. One more locked write on a quiet turn is the price of a
+  // verdict that can be true.
+  const laneOutcome = { captured: outcome.paths, skipped: outcome.unavailable };
+  await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) =>
+    withGitTouches(fresh, laneOutcome),
+  );
 
   // Maintenance on the spare budget, like every hook: earlier drafts and
   // records ship now instead of waiting for the next tool use.

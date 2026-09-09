@@ -37,9 +37,16 @@ export interface GitLaneCost {
   readonly recorded: number;
   /** Stop turns the lane did not run: no budget, or git did not answer. */
   readonly skipped: number;
+  /**
+   * Stop turns the lane RAN and git answered — whether or not anything was
+   * fresh. The denominator the verdict below divides by: `skipped` and `ran`
+   * are both TURNS, and the verdict used to weigh `skipped` against
+   * `recorded`, which is FILES.
+   */
+  readonly ran: number;
 }
 
-const NO_COST: GitLaneCost = { sessions: 0, recorded: 0, skipped: 0 };
+const NO_COST: GitLaneCost = { sessions: 0, recorded: 0, skipped: 0, ran: 0 };
 
 /**
  * Below this many skips there is nothing to say: one starved turn on a busy
@@ -56,21 +63,33 @@ export const summarizeGitLaneCost = (
       sessions: total.sessions + 1,
       recorded: total.recorded + state.gitTouchCount,
       skipped: total.skipped + state.gitLaneSkipped,
+      ran: total.ran + state.gitLaneRan,
     }),
     NO_COST,
   );
 
 /**
  * When the lane is worth complaining about — and NOT "any skip". The warning
- * fires when the lane is skipped more often than it records AND has been
+ * fires when the lane is skipped more often than it RUNS and has been
  * skipped enough times to be a pattern rather than an afternoon: at that
  * point `crosscheck suspect` is mostly blind to codemods while every
  * individual Stop hook behaved perfectly, which is precisely the failure
  * nothing else would ever mention.
+ *
+ * TURNS AGAINST TURNS. The first shipped verdict compared `skipped` (turns)
+ * with `recorded` (files), and `recorded` is structurally zero on an install
+ * whose every edit goes through the Edit tool — the lane hands the tool
+ * lane's seen-set to captureFileTargets, so a session with no codemods
+ * contributes no files however often the lane runs. Three lifetime skips
+ * among live sessions then re-fired this WARN forever, and the remedy it
+ * named (CROSSCHECK_TIMEOUT_MS) could never clear it. Measured against that
+ * code: {recorded 0, skipped 3} WARN, {recorded 2, skipped 3} WARN. The check
+ * could not tell a starved lane from a lane that ran perfectly and had
+ * nothing to find, which is why the lane now counts the turns it ran.
  */
 export const gitLaneWarning = (cost: GitLaneCost): string | null =>
-  cost.skipped >= MIN_SKIPS_TO_WARN && cost.skipped > cost.recorded
-    ? "the lane is skipped more often than it records, so suspect is largely blind to codemods and `sed -i`: give the hooks more room with CROSSCHECK_TIMEOUT_MS, or expect its answers to under-report"
+  cost.skipped >= MIN_SKIPS_TO_WARN && cost.skipped > cost.ran
+    ? "the lane is skipped more often than it runs, so suspect is largely blind to codemods and `sed -i`: give the hooks more room with CROSSCHECK_TIMEOUT_MS, or expect its answers to under-report"
     : null;
 
 /**
@@ -91,6 +110,7 @@ export const formatGitLaneCost = (cost: GitLaneCost): string => {
   }`;
   return (
     `${String(cost.recorded)} file(s) no Edit tool reported · ` +
+    `${String(cost.ran)} turn(s) ran · ` +
     `${String(cost.skipped)} turn(s) skipped (no budget, or git did not answer) ${sessions}` +
     " — uncommitted changes only: commits made during the turn, and untracked files, are invisible to it"
   );

@@ -280,6 +280,7 @@ describe("wire-level pin: the ephemeral hint query is secret-gated before it lea
     ghostPending: false,
   gitTouchCount: 0,
   gitLaneSkipped: 0,
+  gitLaneRan: 0,
     ghostNoticeCount: 0,
     ghostFireCount: 0,
     ghostNoOverlapCount: 0,

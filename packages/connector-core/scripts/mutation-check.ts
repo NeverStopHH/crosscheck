@@ -4574,13 +4574,29 @@ export const MUTATIONS: readonly Mutation[] = [
     // lane that never got to run.
     label: "a git lane that mostly skips reads as a quiet repo",
     file: `${CORE}/src/state/git-lane-cost.ts`,
-    from: "  cost.skipped >= MIN_SKIPS_TO_WARN && cost.skipped > cost.recorded",
+    from: "  cost.skipped >= MIN_SKIPS_TO_WARN && cost.skipped > cost.ran",
     to: "  false",
     test: `${CLI}/test/pin-observability.test.ts`,
     because:
       "suspect goes blind to codemods and `sed -i` while doctor reports " +
       "nothing wrong, so the under-reporting is invisible to the one person " +
       "who could raise the hook timeout",
+  },
+  {
+    // The other half of that verdict, and the one that shipped wrong: WHAT it
+    // compares. `skipped` counts turns, `recorded` counts files, and an
+    // install whose every edit goes through the Edit tool records no files
+    // however well the lane runs — so the file-to-turn form was red forever
+    // and the remedy it named could never clear it.
+    label: "the git lane's verdict weighs skipped turns against recorded files",
+    file: `${CORE}/src/state/git-lane-cost.ts`,
+    from: "  cost.skipped >= MIN_SKIPS_TO_WARN && cost.skipped > cost.ran",
+    to: "  cost.skipped >= MIN_SKIPS_TO_WARN && cost.skipped > cost.recorded",
+    test: `${CORE}/test/git-lane-cost.test.ts`,
+    because:
+      "doctor cries wolf on precisely the healthy install it is meant to " +
+      "clear, and a WARN nobody can act on is one every reader learns to " +
+      "scroll past — including on the day the lane really is starved",
   },
   {
     // A verdict reached because the budget ran out is a verdict about this
@@ -4680,6 +4696,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
+ * PRINTS: packages/cli/test/pins-cli.test.ts 2
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
@@ -4731,6 +4748,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
+ * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 3
