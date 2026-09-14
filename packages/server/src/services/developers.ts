@@ -1,11 +1,11 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 
 import { generateApiKey, hashApiKey } from "../auth/keys.ts";
-import { EVENT_KINDS } from "../constants.ts";
+import { DEVELOPERS_MAX_LISTED, EVENT_KINDS } from "../constants.ts";
 import { developerEmails, developers } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import { normalizeEmail } from "./commit-evidence.ts";
-import type { Db } from "../db/client.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 const DEVELOPER_ID_PREFIX = "dev_";
@@ -112,7 +112,7 @@ export const createDeveloper = async (
 
 /** Primary first, then aliases oldest-first — the order every surface shows. */
 export const listDeveloperEmails = async (
-  db: Db,
+  db: DbExecutor,
   developerId: string,
 ): Promise<readonly DeveloperEmailView[]> => {
   const rows = await db
@@ -129,6 +129,146 @@ export const listDeveloperEmails = async (
     )
     .limit(MAX_EMAILS_PER_DEVELOPER);
   return rows;
+};
+
+export interface ListedDeveloperView {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: string;
+  readonly emails: readonly DeveloperEmailView[];
+  /**
+   * True when this developer holds addresses the page did not show. The
+   * developer-level `truncated` cannot carry this: a complete page of one
+   * developer can still be hiding half of that developer's aliases, and
+   * silence there reads as "those are all their addresses" while absence
+   * matching goes on attributing commits from the ones it hid.
+   */
+  readonly emailsTruncated: boolean;
+}
+
+export interface DeveloperListing {
+  readonly developers: readonly ListedDeveloperView[];
+  /**
+   * True when the hub holds more developers than the listing carried. There
+   * is no second page — the cap is a hard bound, not a page size — so a hub
+   * past it is told so here, and nowhere else.
+   */
+  readonly truncated: boolean;
+}
+
+export interface DeveloperPageRow {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: Date;
+}
+
+/**
+ * The bounded read, on its own and exported, because the bound is the whole
+ * safety property here and NOTHING OUTSIDE THIS FUNCTION CAN SEE IT.
+ * `listDevelopers` slices the page to the cap in memory, so widening or
+ * dropping the LIMIT changes which rows the process materialises and not one
+ * field of the answer: the same 200 developers come back, with the same
+ * `truncated`, to a caller who has no way to ask how many rows were read.
+ * That is why "cost is bounded by DEVELOPERS_MAX_LISTED rather than by team
+ * size" could only ever be checked at this seam — and it is worth checking,
+ * because the hub is a single-connection in-process PGlite where one
+ * unbounded materialisation stalls every other request behind it.
+ *
+ * Exactly ONE row past the cap, never more: that extra row is the whole
+ * evidence that the page was cut, and it is all the caller needs to say so.
+ */
+export const readDeveloperPage = async (
+  db: Db,
+): Promise<readonly DeveloperPageRow[]> =>
+  db
+    .select({
+      id: developers.id,
+      name: developers.name,
+      createdAt: developers.createdAt,
+    })
+    .from(developers)
+    .orderBy(asc(developers.createdAt), asc(developers.id))
+    .limit(DEVELOPERS_MAX_LISTED + 1);
+
+/**
+ * The admin's way back to an id. `createDeveloper` hands one out exactly once
+ * and every other admin route takes it as a path parameter, so without this a
+ * lost id meant a developer whose git aliases could never be linked again —
+ * and absence matching then keeps attributing their commits to nobody.
+ *
+ * Three queries, never one per developer: the second reads every email of the
+ * page at once and the third counts them, so cost is bounded by
+ * DEVELOPERS_MAX_LISTED rather than by team size. The api key hash is not
+ * selected here and must never be — the key is shown once, at creation, and
+ * this listing is not a second chance at it.
+ */
+export const listDevelopers = async (db: Db): Promise<DeveloperListing> => {
+  const rows = await readDeveloperPage(db);
+
+  const truncated = rows.length > DEVELOPERS_MAX_LISTED;
+  const page = truncated ? rows.slice(0, DEVELOPERS_MAX_LISTED) : rows;
+  if (page.length === 0) {
+    return { developers: [], truncated: false };
+  }
+
+  const ids = page.map((row) => row.id);
+  const emailRows = await db
+    .select({
+      developerId: developerEmails.developerId,
+      email: developerEmails.email,
+      isPrimary: developerEmails.isPrimary,
+    })
+    .from(developerEmails)
+    .where(inArray(developerEmails.developerId, ids))
+    .orderBy(
+      desc(developerEmails.isPrimary),
+      asc(developerEmails.createdAt),
+      asc(developerEmails.email),
+    )
+    .limit(DEVELOPERS_MAX_LISTED * MAX_EMAILS_PER_DEVELOPER);
+
+  // ASKED, not assumed. MAX_EMAILS_PER_DEVELOPER is enforced by
+  // addDeveloperEmail inside one transaction and by nothing in the table —
+  // developer_emails' PK makes "one developer per email" true no matter who
+  // writes, and nothing makes "ten emails per developer" true for rows that
+  // predate that transaction or were written straight into the database. One
+  // bounded aggregate over the page's ids says how many each developer really
+  // has, which also covers the case where the read above hit its own ceiling
+  // and cut somebody's list short. It is what lets this listing stop claiming
+  // a clipped list is whole.
+  const totals = await db
+    .select({ developerId: developerEmails.developerId, total: count() })
+    .from(developerEmails)
+    .where(inArray(developerEmails.developerId, ids))
+    .groupBy(developerEmails.developerId);
+  const totalByDeveloper = new Map(
+    totals.map((row) => [row.developerId, row.total] as const),
+  );
+
+  const byDeveloper = new Map<string, DeveloperEmailView[]>();
+  for (const row of emailRows) {
+    const existing = byDeveloper.get(row.developerId);
+    const view = { email: row.email, isPrimary: row.isPrimary };
+    if (existing === undefined) {
+      byDeveloper.set(row.developerId, [view]);
+    } else if (existing.length < MAX_EMAILS_PER_DEVELOPER) {
+      existing.push(view);
+    }
+  }
+
+  return {
+    developers: page.map((row) => {
+      const emails = byDeveloper.get(row.id) ?? [];
+      return {
+        id: row.id,
+        name: row.name,
+        createdAt: row.createdAt.toISOString(),
+        emails,
+        emailsTruncated: (totalByDeveloper.get(row.id) ?? 0) > emails.length,
+      };
+    }),
+    truncated,
+  };
 };
 
 const developerExists = async (db: Db, developerId: string): Promise<boolean> => {
@@ -151,23 +291,20 @@ export type AddDeveloperEmailResult =
   | { readonly outcome: "limit_reached" };
 
 /**
- * Links one more email to a developer (admin surface, trial finding #7).
- * Case-normalized; idempotent for an email the developer already has; a 409
- * for one ANY other developer has — the caller must hear about a
- * cross-developer duplicate, because silently skipping it would leave absence
- * matching attributing commits to the wrong person. No outbox event: emails
- * never leave the hub (services/absences.ts), and an event payload is the
- * feed — the developer_created event carries ids only for the same reason.
+ * The cap check and the insert, against ONE executor. Inside a transaction
+ * they are a single step — the hub's PGlite serialises transactions under its
+ * connection mutex, so a second link waits for the first to commit and then
+ * reads the row it wrote. Outside one they were the race the "ten per
+ * developer" promise used to have: eight concurrent links against nine rows
+ * each read nine, each inserted, and a developer held seventeen addresses of
+ * which every admin surface could show ten. `addDeveloperEmail` is the only
+ * caller, and the transaction it opens is the whole point.
  */
-export const addDeveloperEmail = async (
-  deps: { readonly db: Db; readonly now: Clock },
+const linkEmailUnderCap = async (
+  deps: { readonly db: DbExecutor; readonly now: Clock },
   developerId: string,
-  rawEmail: string,
+  email: string,
 ): Promise<AddDeveloperEmailResult> => {
-  if (!(await developerExists(deps.db, developerId))) {
-    return { outcome: "developer_not_found" };
-  }
-  const email = normalizeEmail(rawEmail);
   const existing = await listDeveloperEmails(deps.db, developerId);
   if (existing.some((row) => row.email === email)) {
     return { outcome: "added", alreadyLinked: true, emails: existing };
@@ -189,6 +326,36 @@ export const addDeveloperEmail = async (
     alreadyLinked: false,
     emails: await listDeveloperEmails(deps.db, developerId),
   };
+};
+
+/**
+ * Links one more email to a developer (admin surface, trial finding #7).
+ * Case-normalized; idempotent for an email the developer already has; a 409
+ * for one ANY other developer has — the caller must hear about a
+ * cross-developer duplicate, because silently skipping it would leave absence
+ * matching attributing commits to the wrong person. No outbox event: emails
+ * never leave the hub (services/absences.ts), and an event payload is the
+ * feed — the developer_created event carries ids only for the same reason.
+ *
+ * The cap is decided inside one transaction so that it is a fact about the
+ * table and not a promise about call order (linkEmailUnderCap). What the
+ * transaction does NOT undo is history: rows written before it existed, or
+ * straight into the database, can still hold a developer past the cap, and
+ * the listing discloses that state (emailsTruncated) rather than assuming it
+ * away.
+ */
+export const addDeveloperEmail = async (
+  deps: { readonly db: Db; readonly now: Clock },
+  developerId: string,
+  rawEmail: string,
+): Promise<AddDeveloperEmailResult> => {
+  if (!(await developerExists(deps.db, developerId))) {
+    return { outcome: "developer_not_found" };
+  }
+  const email = normalizeEmail(rawEmail);
+  return deps.db.transaction((tx) =>
+    linkEmailUnderCap({ db: tx, now: deps.now }, developerId, email),
+  );
 };
 
 export type RemoveDeveloperEmailResult =
