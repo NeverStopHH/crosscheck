@@ -71,7 +71,7 @@
  * them, so this terminates rather than recursing.
  *
  * VERIFY: bun run packages/connector-claude/scripts/verify-claims.ts --list | wc -l | tr -d ' '
- * PRINTS: 150
+ * PRINTS: 151
  *
  *   bun run packages/connector-claude/scripts/verify-claims.ts
  *   bun run packages/connector-claude/scripts/verify-claims.ts --list

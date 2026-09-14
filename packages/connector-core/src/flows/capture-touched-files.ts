@@ -28,15 +28,22 @@
  * batches differently (state/capture-bookkeeping.ts folds the counters; the
  * refusal to share the write itself is argued there).
  *
- * No connector may call `captureFileTargets` directly: this flow is the only
- * place that builds that call, which is what keeps the resolution from being
- * forgotten again.
+ * No connector may call `captureFileTargets` directly. This flow builds that
+ * call for every HOST-REPORTED edit, which is what keeps the resolution from
+ * being forgotten again. The one other builder is
+ * `flows/capture-git-touches.ts`, the Stop-time git lane, and it is not a
+ * host event: git prints paths relative to the worktree it ran in and cannot
+ * name a file outside it, so that lane resolves every path against that one
+ * root and says so at the call site. The directive below is what keeps a
+ * THIRD builder from appearing silently — a caller that names no resolution
+ * prints MISSING and reddens the claims job.
  *
  * The directive that keeps that true is the pair of line comments below: a
  * block comment cannot hold it, because the glob it needs ends a block
  * comment mid-word.
  */
 // VERIFY: for f in $(grep -rl --include='*.ts' 'captureFileTargets({' packages/*/src | sort); do grep -q 'resolveRoot' "$f" && echo "$f ok" || echo "$f MISSING"; done
+// PRINTS: packages/connector-core/src/flows/capture-git-touches.ts ok
 // PRINTS: packages/connector-core/src/flows/capture-touched-files.ts ok
 import { resolveTouchedRoots } from "../capture/touched-root.ts";
 import type {
