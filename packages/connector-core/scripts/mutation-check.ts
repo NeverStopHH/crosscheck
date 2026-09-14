@@ -4641,6 +4641,23 @@ export const MUTATIONS: readonly Mutation[] = [
       "repo retires working references and doctor prints the loss as a fact",
   },
   {
+    // The probe that decides whether ANY answer may be believed. It has to ask
+    // about THIS repository: git walks the tree upward, so a checkout that
+    // lost its .git inside another repository gets a confident answer about a
+    // repository that never heard of these paths. CI found the original on
+    // macos-latest, where the runner's TMPDIR has an enclosing repository;
+    // ubuntu and every developer Mac stayed green.
+    label: "a sweep believes an answer about a different repository",
+    file: `${CORE}/src/git/pin-sweep.ts`,
+    from: "    return (await realpath(toplevel)) === (await realpath(repoRoot));",
+    to: "    return true;",
+    test: `${CORE}/test/pin-sweep.test.ts`,
+    because:
+      "every path of a checkout whose .git is gone reads as missing instead " +
+      "of unknown, and one sweep retires the entire registry — the single " +
+      "outcome this module's header promises it will never produce",
+  },
+  {
     // Only the side that BUILT the body can split it: the route caps the
     // array with zod `.max()`, which refuses a whole body rather than
     // truncating it, so a client that stopped chunking is refused outright
@@ -4793,7 +4810,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
- * PRINTS: packages/connector-core/test/pin-sweep.test.ts 1
+ * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
