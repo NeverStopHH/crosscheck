@@ -161,6 +161,34 @@ describe("sweepPinPaths", () => {
     expect(swept[0]?.resolved).toBeNull();
   });
 
+  // The same lie, reached the way it actually happens. `rev-parse
+  // --is-inside-work-tree` answers about the NEAREST enclosing repository, not
+  // about this directory, and git walks the tree upward to find one — so a
+  // checkout whose .git is gone, sitting anywhere inside another repository,
+  // answers "true" while `ls-files` knows none of its paths. Every path then
+  // reads as missing and the sweep retires the whole registry, which is the
+  // one outcome this module's header promises it will never produce.
+  //
+  // Found by CI on macos-latest, where the runner's TMPDIR has an enclosing
+  // repository and the test above therefore went red while ubuntu stayed
+  // green. This test does not wait for that accident: it builds the nesting.
+  test("reports UNKNOWN when git answers about a DIFFERENT repository", async () => {
+    // Arrange: a repository, and inside it a checkout that has lost its .git.
+    const parent = await makeRepo("sweep-parent");
+    repos.push(parent);
+    const orphan = join(parent, "vendor", "checkout");
+    await mkdir(orphan, { recursive: true });
+    await writeRepoFile(orphan, "src/workbench/usePlayback.ts", "export const play = 1;\n");
+
+    // Act
+    const swept = await sweepPinPaths(orphan, ["src/workbench/usePlayback.ts"]);
+
+    // Assert: git CAN run here and says `true` — but it is answering for
+    // `parent`, which never heard of this path. Believing it retires the pin.
+    expect(swept[0]?.status).toBe("unknown");
+    expect(swept[0]?.resolved).toBeNull();
+  });
+
   test("bounds the sweep, and says which paths it did not look at", async () => {
     // Arrange: more paths than one sweep may read. The cap is a bound on the
     // WORK, so the paths past it come back "unknown" — never "present",

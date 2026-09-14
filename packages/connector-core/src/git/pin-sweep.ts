@@ -44,6 +44,8 @@
  * and `crosscheck pin --sweep` prints it as unanswered rather than as a
  * verdict about the file.
  */
+import { realpath } from "node:fs/promises";
+
 import {
   GIT_TIMEOUT_MS,
   PIN_SWEEP_MAX_GIT_CALLS,
@@ -72,13 +74,43 @@ export interface PinPathOutcome {
 /** A `-M` name-status line: `R100\told\tnew`. Copies (`C`) are NOT followed. */
 const RENAME_LINE = /^R\d*\t([^\t]+)\t(.+)$/;
 
-/** Is there a working tree here at all? See the header: null is ambiguous. */
-const repositoryAvailable = async (repoRoot: string): Promise<boolean> =>
-  (await runGit(
-    ["rev-parse", "--is-inside-work-tree"],
+/**
+ * Can git answer about THIS repository? See the header: null is ambiguous, so
+ * everything downstream rests on this one question being asked correctly.
+ *
+ * It used to ask `rev-parse --is-inside-work-tree`, which answers about the
+ * NEAREST ENCLOSING repository — and git walks the directory tree upward to
+ * find one. A checkout that has lost its `.git`, sitting anywhere inside
+ * another repository, therefore answered `true` while `ls-files` knew none of
+ * its paths, and every path came back "missing": the sweep retired the whole
+ * registry, which is the single outcome this module exists to prevent. CI
+ * found it on macos-latest, where the runner's TMPDIR has an enclosing
+ * repository; ubuntu stayed green and so did every developer Mac.
+ *
+ * So compare the toplevel git reports against the root we were handed. A
+ * sweep's paths are repository-relative and `cli/pin.ts` passes `repoRoot`,
+ * so an answer about a DIFFERENT repository is not an answer about them.
+ *
+ * Both sides go through `realpath` first: macOS resolves `/var` to
+ * `/private/var` and git returns the resolved form, so a plain string compare
+ * would reject the very directory that IS this repository.
+ */
+const repositoryAvailable = async (repoRoot: string): Promise<boolean> => {
+  const toplevel = await runGit(
+    ["rev-parse", "--show-toplevel"],
     repoRoot,
     GIT_TIMEOUT_MS,
-  )) === "true";
+  );
+  if (toplevel === null) {
+    return false;
+  }
+  try {
+    return (await realpath(toplevel)) === (await realpath(repoRoot));
+  } catch {
+    // A root that cannot be resolved cannot be vouched for either.
+    return false;
+  }
+};
 
 /**
  * Which of these paths git is tracking right now — ONE call for the whole
