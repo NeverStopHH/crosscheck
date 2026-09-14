@@ -113,8 +113,22 @@ top_lift double NULL · candidates int · coverage_judgeable bool · answered_at
 
 ### 3.4 `pins.repairs_pin_id` — how the eventual fix is named
 
-Nullable self-FK on #50's `pins`, set by `crosscheck pin add` when a broken pin exists for the
-same `(repo, surface)` — looked up, never asked. The **fix range** is
+**Two nullable columns on #50's `pins`, and they stack on 04's, which lands first.** `repairs_pin_id`
+is a self-FK set by `crosscheck pin add` when a broken pin exists for the same `(repo, surface)` —
+looked up, never asked — and `repairs_pin_version int NULL` records **which version of that invariant
+was repaired**, read at the moment the lookup resolves.
+
+**The second column closes an ambiguity neither spec had noticed.** 04 §3.5 adds `pins.version` and
+bumps it inside `applyPinSweep` (`crosscheck-pins:services/pins.ts:526`) *"once per sweep request per
+pin … before the first path moves"*; this spec adds `markPinOk` beside `markPinBroke` (`:225`). So
+**both specs add a column to the same #50 table and both write `services/pins.ts`** — two
+`ALTER TABLE pins`, two `bootstrap.sql` edits, two `ddl-sync.test.ts` blocks — and neither §9 named
+the other on this file (04 talked to this spec only about `pilot_attributions`, this spec to 04 only
+about the outcome enums). Worse, the write paths interact: a repair recorded *after* a sweep had no
+stated version, so **a repair after a rename was ambiguous by construction** — proof 3 asks whether the
+fix touched what the answer named, and "the invariant" had silently become a different file set in
+between. `repairs_pin_version` is the answer, and **04 sequences first** (00 §9.7), so this migration
+stacks on its column rather than racing it. The **fix range** is
 `brokenPin.verified_at_commit .. repairPin.verified_at_commit` and the **fix diff** is `git diff
 --name-only` over it, run inside `crosscheck pilot`, bounded by `PILOT_FIX_DIFF_MAX_FILES = 200`
 and `GIT_TIMEOUT_MS = 1500` (`connector-core/src/constants.ts:117`). The hub never runs git.
@@ -150,13 +164,39 @@ session's targets; CI delta → `readCiCoverage(repo, commitSha)` (05 §3.6) at 
 ```
 session_id PK FK→agent_sessions · observed_at · end_reason ("reported"|"reaped")
 coverage jsonb   -- FIVE {source,state,reason} triples, enums only
-seq_first · seq_last · seq_gaps · seq_null_records   int NULL
+seq_epoch text NULL                                 -- 01 §3.1: positions compare only inside one epoch
+seq_first · seq_last · seq_gaps · seq_null_records  int NULL
+seq_epochs int NULL                                 -- >1 means the counter restarted; the span is refused
 ```
 
+**`seq` is a `{ epoch, n }` PAIR, not a scalar** (01 §3.1) — corrected here and in 06 §3.1, both of which
+had stored a bare integer. A session whose counter restarted (a SessionStart re-fire, a busy-lock
+fallback, two homes on one `hostSessionKey` — 01 §3.4 lists all three) has more than one epoch, and
+`seq_first .. seq_last` across two epochs is not a span at all. So `seq_epochs > 1` makes the report print
+`sequence restarted (N epochs)` and **no span**, which is 01 SEQ-5's epoch-split refusal reaching the
+counting layer. PIL-7 tests it.
+
 `coverage` is a **snapshot of what the hub said at `observed_at`**, never read back as current
-coverage (§9 states the collision with 03 §3.2 and its bound). Enrolment is per repo, **off by
-default**, via `team_settings`. At `PILOT_MAX_SESSIONS = 50` the 51st write is **refused and
-counted** (`pilot_sessions_refused`), never dropped silently.
+coverage (§9 states the collision with 03 §3.2 and its bound). At `PILOT_MAX_SESSIONS = 50` the 51st
+write is **refused and counted** (`pilot_sessions_refused`), never dropped silently.
+
+**Enrolment is per repo, off by default, and it needs a column this spec had never created.**
+`team_settings` (`crosscheck-pins:server/src/db/schema.ts:675-683`) has exactly `repo` (PK), `pin_policy`,
+`suspect_attribution`, `updated_at`, `updated_by` — measured. §4's migration list named four new tables
+and one `pins` column and **no `team_settings` alteration at all**, so the flag this whole section depends
+on had no migration, no `bootstrap.sql` mirror and no `ddl-sync` case; meanwhile 04 §4 recorded
+`team_settings` as untouched in 1.0, giving a reader two contradictory accounts of whether #50's
+two-column table grows. It grows by one:
+
+```
+pilot_enrolled boolean NOT NULL DEFAULT false
+```
+
+**And the default story is explicit, because #50's own comment makes an absent row mean defaults**
+(`crosscheck-pins:schema.ts:670-674`): **no row ⇒ not enrolled**, exactly as `DEFAULT false` ⇒ not
+enrolled, so the two paths cannot disagree. Enrolment is a mutable team decision, which is what a mutable
+settings table is for — and is precisely why 04 §3.6 refuses to put a **waiver** there. Both specs now say
+so. §4 carries the migration.
 
 ### 3.7 Constants
 
@@ -178,10 +218,16 @@ something it opened, against ceilings of `MAX_HINTS_PER_SESSION = 5` (`constants
 ## 4. Migration
 
 Nothing existing is redefined. Every `hint_deliveries` row becomes `channel = 'unknown'` —
-truthful, because the two writers are indistinguishable in the row. `pins` gains one nullable
-column; nothing is repaired retroactively, so proof 3's denominator starts at the first repair
-after this lands. Four new tables, `CREATE TABLE IF NOT EXISTS` mirrored in
-`server/src/db/bootstrap.sql` with every index — `server/test/ddl-sync.test.ts` enforces it.
+truthful, because the two writers are indistinguishable in the row. **`pins` gains two nullable columns**
+(`repairs_pin_id`, `repairs_pin_version` — §3.4), stacked on 04's `pins.version`, which lands first
+(00 §9.7); nothing is repaired retroactively, so proof 3's denominator starts at the first repair after
+this lands. **`team_settings` gains `pilot_enrolled boolean NOT NULL DEFAULT false`** — *added: §3.6 gates
+the whole pilot on it and this list did not create it, so the design depended on a column with no
+migration.* Every existing row becomes `false` and an absent row still means defaults, i.e. not enrolled
+(§3.6), so the two paths agree; 04 §4's *"`team_settings` untouched"* is corrected to *untouched by that
+spec*. Four new tables, `CREATE TABLE IF NOT EXISTS` mirrored in `server/src/db/bootstrap.sql` with every
+index, and the three column additions mirrored there too — `server/test/ddl-sync.test.ts` enforces all of
+it, with one case per added column.
 `pilot_counters` and `pilot_attributions` prune past `PILOT_RETENTION_DAYS` and clamp future-dated
 rows on write as `commit_evidence` does (`services/commit-evidence.ts:34-42`), or a forged
 timestamp outruns retention. `pilot_sessions` is capped by count, not time — fifty rows **are**
@@ -212,9 +258,13 @@ repo: <repoId> · 2026-07-20..2026-09-14 · 1,208 sessions · 50-session set 31/
    git / ci / runtime / human_edit — one line each, never one number
 ```
 
-**Registry obligation.** `packages/cli/src/render-surfaces.ts` gains `cli-pilot` below #50's
-`cli-suspect` (`crosscheck-pins:cli/src/render-surfaces.ts:164-175`) — 00 §9.1 corrects the claim
-that this file is free ground; #50 takes it 3 → 6.
+**Registry obligation.** `packages/cli/src/render-surfaces.ts` gains `cli-pilot` at the **array tail,
+after `cli-status` (`crosscheck-pins:192`)** — 00 §9.1a. *Corrected: this line said "below #50's
+`cli-suspect` (`:164-175`)", which is six lines above the tail — #50 **prepended** its three surfaces, so
+`cli-suspect` sits at `:166` and main's original three at `:178`, `:185`, `:192`. Three specs named that
+same insertion point while a fourth called it the tail, so four new surfaces would have conflicted on one
+line; all four now append at the tail in build order, and this spec is **last** of them (00 §9.7).* #50
+takes the file 3 → 6.
 
 ```ts
 { kind: "corpus", name: "cli-pilot", delivery: "pulled",
@@ -262,8 +312,12 @@ one before merge, on the harness that exists (`connector-claude/test/capture-lat
 
 ## 7. Acceptance tests
 
-I own **AT-10** for these surfaces, *measure* AT-1, AT-5 and AT-9 without owning their behaviour
-(03 does), and hold shut the holes AT-3 and AT-4 would open here. Each can fail; each names its
+**I own no acceptance test outright, and say so rather than claim one.** *Corrected: this line read "I
+own **AT-10** for these surfaces" while 05 claimed AT-10 "for its provider refusals", 03 anchored COV-5 to
+"AT-10's refusal clause" and 08 claimed "an AT-10 half" — four partial owners, no single failing test.*
+**AT-10 is 03's**, whole; this spec discharges an *instance* of its rule for the rungs that cannot exist
+here (PIL-8, §8.6). It *measures* AT-1, AT-5 and AT-9 without owning their behaviour (03 does), and holds
+shut the holes AT-3 and AT-4 would open here — **AT-3's owner is 08** (§9), AT-4's is 01. Each can fail; each names its
 mutation anchor in `connector-core/scripts/mutation-check.ts` (00 §7.2).
 
 **PIL-1 — a channel split that cannot collapse, and `unknown` is not a guess.** One bucket per
@@ -294,9 +348,13 @@ if* an uninstrumented surface looks like a perfect one. *Mutation:* `value ?? 0`
 route writes `pilot_marks`; the attempt is **refused**, not downgraded — silent coercion is AT-3's
 second "fails if". *Mutation:* take `capture_mode` from the body.
 
-**PIL-7 — sequence is consumed, never fabricated (AT-4).** With no `seq` on the records,
-`pilot_sessions.seq_*` are null and the report prints `sequence not recorded`. *Fails if* an order
-is derived from envelope `ts`. *Mutation:* sort by `ts` and populate `seq_first`/`seq_last`.
+**PIL-7 — sequence is consumed, never fabricated, and a restarted counter is not a span (AT-4).** (a)
+With no `seq` on the records, `pilot_sessions.seq_*` are null and the report prints `sequence not
+recorded`. (b) **With two `seq_epoch`s in one session, `seq_epochs = 2` and the report prints `sequence
+restarted (2 epochs)` and NO `seq_first .. seq_last` span** — 01 SEQ-5's epoch-split refusal at the
+counting layer; a span across two epochs is two unrelated counters subtracted from each other. *Fails if*
+an order is derived from envelope `ts`, or if (b) prints a span. *Mutations:* sort by `ts` and populate
+`seq_first`/`seq_last`; ignore `seq_epoch` when computing the span.
 
 **PIL-8 — every rung that cannot exist is a doctor refusal (AT-10).** On Cursor or ACP,
 `checkPilot` names the tripwire channel unavailable with the platform reason from that connector's
@@ -336,7 +394,7 @@ written and CI prints the number (00 §9.2).
    stored under `INTENT_MAX_CHARS = 120`. `--json` writes to stdout; nothing uploads a report
    anywhere.
 6. **Platform rungs that cannot exist**, each a doctor line from the connector manifest, never a
-   zero. **Tripwire channel — `off` on Cursor** (ask is advisory only,
+   zero — **03's AT-10 rule applied here, not a share of AT-10 claimed here**. **Tripwire channel — `off` on Cursor** (ask is advisory only,
    `connector-cursor/src/capabilities.ts:46-49`) **and on ACP** (permission traffic forwarded
    untouched, `:70-74`): proof 2's tripwire bucket reads `unavailable` there, never `0`. **`ci
    regressed` — `unavailable`** without a CI reporter (05 §3.6). **`runtime` —
@@ -346,17 +404,37 @@ written and CI prints the number (00 §9.2).
 
 ## 9. Collisions
 
-**PR #50** (assume merged, 00 §9.1) — extended in five places, contradicted nowhere: `pins` gains
-`repairs_pin_id`; `services/pins.ts` gains `markPinOk` beside `markPinBroke` (`:225-248`);
-`services/suspect.ts` appends at answer time; `cli/src/render-surfaces.ts` gains `cli-pilot` after
-`cli-suspect`; `cli/src/cli/doctor.ts` gains `checkPilot` after `checkPins`. Constants append
+**PR #50** (assume merged, 00 §9.1) — extended in **six** places, contradicted nowhere: `pins` gains
+`repairs_pin_id` **and `repairs_pin_version`** (§3.4); **`team_settings` gains `pilot_enrolled`** (§3.6,
+§4); `services/pins.ts` gains `markPinOk` beside `markPinBroke` (`crosscheck-pins:225-248`);
+`services/suspect.ts` appends at answer time; `cli/src/render-surfaces.ts` gains `cli-pilot` at the
+**array tail after `cli-status` (`crosscheck-pins:192`)**, not after `cli-suspect` (00 §9.1a);
+`cli/src/cli/doctor.ts` gains `checkPilot` after `checkPins`. Constants append
 below the `SUSPECT_*` and `PIN_SWEEP_*` blocks, never renumbered. **Sequencing: #50 lands first**
-— every input to proofs 2 and 3 is its ground. **PR #49** (merged): shared file
+— every input to proofs 2 and 3 is its ground, and this spec is **last of the eight** (00 §9.7).
+
+**04 (verdict / fence) — a hard collision on #50's ground that neither spec had named, now sequenced.**
+We **both add a column to `pins` and both write `services/pins.ts`**: 04 §3.5 adds `pins.version` and the
+bump inside `applyPinSweep` (`crosscheck-pins:services/pins.ts:526`), this spec adds two columns and
+`markPinOk` (`:225`). Two `ALTER TABLE pins`, two `bootstrap.sql` edits and two `ddl-sync.test.ts` blocks
+on one table, with no stated order — and each §9 discussed the other about something else entirely (04
+about `pilot_attributions`, this spec about the outcome and falsifier enums). **04 first, this spec
+appends**, so `repairs_pin_version` stacks on the column 04 introduces rather than racing it. The write
+paths interact semantically too, and that is why the second column exists: `applyPinSweep` bumps
+`version`, `markPinOk` records a repair, and **nothing said which version a repair was recorded against**,
+so a repair after a sweep was ambiguous by construction — proof 3 asks whether the eventual fix touched
+what the answer named, and "the invariant" may have become a different file set in between (§3.4).
+
+**PR #49** (merged): shared file
 `server/src/constants.ts`, which #49 edits near the head and #50 at the tail: low textual risk,
 real merge-order risk. I deliberately do **not** consume `listDevelopers` / `readDeveloperPage`
-(`services/developers.ts`) — see §8.4. **`.github/workflows/ci.yml`**: PIL-1…PIL-8 add `MUTATIONS`
-entries, so this spec bumps the count and adds its own per-file `PRINTS:` lines, and writes no
-post-merge total (00 §9.2).
+(`services/developers.ts`) — see §8.4. **`.github/workflows/ci.yml`**: PIL-1…PIL-9 add `MUTATIONS`
+entries, so this spec bumps the count at `ci.yml:119-120` and adds its lines in **all three listings, not
+two** — the count (`:119`), the per-file block (`:127`) and the **per-basename block** (`:246` on
+`crosscheck-pins`, `:239` on main), which the first draft did not name; a spec that updates two of three
+leaves the guard stale and CI red. New per-file lines for `cli/src/cli/pilot-render.ts` and
+`cli/src/cli/pilot-mark.ts`, both new basenames too. It writes **no post-merge total** (00 §9.2), and on
+`mutation-check.ts` it is **editor 10**, the last of the eight.
 
 **03 — coverage integrity:** I consume `readCoverage`, `CoverageRecord`, `isJudgeable`,
 `COVERAGE_SOURCES`, `COVERAGE_STATES` and `CoverageReason` unchanged and mint no second coverage
@@ -373,12 +451,22 @@ consume `seq`, do not own it, and do not decide the worker/subagent question; PI
 fabrication path shut either way. **The claim-binding spec (`stale_at`, 00 §10 Q11):** Proof 1
 counts an opened pointer at a **claim** as much as at a work context; if claim binding lands, a
 pointer at a claim that is no longer current is a different event and proof 1 gains a third
-bucket. Until then there is one bucket, because nothing marks a claim stale (00 §1.7a). **The
-fence / verdict spec:** `pilot_attributions.outcome` and `.falsifier` are #50's enums today; if
-the verdict spec renames or widens them my columns follow, I do not fork the enum. **The
-human-authority spec:** `pilot_marks.capture_mode` uses whatever writer it produces; until it
-exists the mark route stamps `"human"` hub-side exactly as `pins.ts:112` does, and PIL-6 keeps the
-agent path out.
+bucket. Until then there is one bucket, because nothing marks a claim stale (00 §1.7a). **04 — the
+fence / verdict spec:** `pilot_attributions.outcome` and `.falsifier` are #50's enums today; **04 §3.3a
+mints `VerdictFalsifier` at the verdict level rather than widening `SuspectFalsifierKind`**, so #50's enum
+stays closed and my columns keep storing suspect's four values — a CI-lane verdict carries
+`ci_confirmed_regression`, which this spec stores as the verdict's falsifier when proof 3 counts a CI-lane
+answer. I do not fork the enum. 04 also suggests `pilot_attributions` add `attribution` and `basis`, since
+proof 3 is about the verdict rather than the outcome: **adopted**, two enum columns, no new table.
+
+**08 — AT-3's owner, which is the spec this section used to hand it to by a name that did not exist.**
+`pilot_marks.capture_mode` is stamped `"human"` hub-side exactly as `pins.ts:112` does, and PIL-6 keeps the
+agent path out. Until this revision that paragraph read *"the human-authority spec: `pilot_marks.capture_mode`
+uses whatever writer it produces"* — and **no such spec is in `docs/1.0/`**; three specs deferred AT-3 to
+it and it was never commissioned, so Tier 1's *"a production writer for human authority"* was owned by
+nobody. **08 §3.2 now owns AT-3**, including the claims write path, and this spec's mark route follows the
+pattern it lands rather than inventing a second one. PIL-6's mutation (*take `capture_mode` from the
+body*) is the same defect 08's EV-9 guards one table over.
 
 ## 10. Decisions for Nick
 

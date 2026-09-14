@@ -52,7 +52,10 @@ across 24 files. New material the first draft could not see:
 - three new `SessionState` fields and a new transform (§2.1);
 - `MUTATIONS` on #50 went 298 → **308** (measured, §9.2);
 - CLI registered render surfaces went 3 → **6** (measured, §6.1). This
-  invalidates 05 §9's line calling `cli/src/render-surfaces.ts` free ground.
+  invalidated 05 §9's line calling `cli/src/render-surfaces.ts` free ground.
+  **Closed 2026-09-14:** 05 §9.4 carries that correction with its own
+  measurement, and §9.1 below now states the one insertion convention all four
+  CLI-surface-adding specs follow.
 
 **0.3 — `claims.stale_at` has no writer. It is a dead column.** This is the
 single most consequential correction in this revision and it changes the shape
@@ -862,7 +865,8 @@ leading/trailing blanks dropped; **exit status is ignored deliberately** (`:39-4
 **Measured: 149 `VERIFY:` directives across `packages/` on main.** Examples this
 map relies on: the 800 ms budget (`connector-core/src/constants.ts:56-57`), the
 refusal bound (`server/src/services/refusal.ts:24-25`), the corpus sizes (§6.2),
-the mutation guard-count (`.github/workflows/ci.yml:117-118`).
+the mutation guard-count (`.github/workflows/ci.yml:119-120` — **re-measured 2026-09-14**; an earlier
+draft of this map said `:117-118` and 05 §9.5 caught it, so the code wins and 03 §9 / 04 §9 are corrected).
 
 Why it exists (`:4-15`): one branch produced eleven instances of one defect — a
 comment stating behaviour its named command does not produce. What rotted were
@@ -895,10 +899,14 @@ dev-listing@2642640   304   (+6)
 ```
 
 The count is **not** pinned inside `mutation-check.ts`. It is pinned in
-**`.github/workflows/ci.yml:117-118`** as a `VERIFY:` / `PRINTS:` pair, together
+**`.github/workflows/ci.yml:119-120`** as a `VERIFY:` / `PRINTS:` pair, together
 with two further directives that print one line **per file** and one line **per
-basename**. **That makes `ci.yml` the highest-traffic collision file in the tree —
-see §9.2.**
+basename**. **THREE independent listings, not two** — measured on all three
+branches: `:119` the count (`PRINTS:` at `:120`), `:127` the per-file block
+(entries `:128-244` on `crosscheck-pins`), and `:246` on `crosscheck-pins` /
+`:239` on `main` the per-**basename** block. A spec that updates the count and the
+per-file block and forgets the third leaves the guard stale and CI red. **That
+makes `ci.yml` the highest-traffic collision file in the tree — see §9.2.**
 
 **How derived counts are pinned** — the pattern a 1.0 spec should copy:
 
@@ -993,8 +1001,26 @@ COVERAGE_STATES  = ["complete","incomplete","unknown","unavailable"]
 interface CoverageSourceRecord { source; state; reason; gapSince; observedAt }
 interface CoverageRecord       { repo; computedAt; sources /* EXACTLY five */ }
 
-isJudgeable(record): boolean   // principle 1, as a function
+isJudgeable(record, scope?): boolean   // principle 1, as a function
 ```
+
+**`isJudgeable` reads all five sources, not two — corrected 2026-09-14.** The
+first shape tested `agent_event` and `git` only, which left `UNATTRIBUTED`
+reachable while `ci` was known `incomplete` (05 §3.6's mid-flight or missing lane)
+— **AT-5's own "fails if", live in the design**. The binding definition is now:
+
+```ts
+isJudgeable = (r, scope?) =>
+  stateOf(r,"agent_event") === "complete" &&
+  stateOf(r,"git")         === "complete" &&
+  r.sources.every(s => s.state !== "incomplete");
+```
+
+`incomplete` is the only disqualifying state for the other three, deliberately: a
+rung that **cannot exist** (`unavailable`) must not block judging, or no verdict is
+ever reachable, and `unknown` on a rung nobody reports is the ordinary state of a
+fresh install. A *known, positively observed* gap is what AT-5 names. 03 COV-10
+enumerates all five.
 
 Plus: `CoverageReason` is **an enum, never prose** — `sessions_reported ·
 session_reaped · session_silent · no_session_in_window · commits_reported ·
@@ -1194,7 +1220,7 @@ your spec should treat as the baseline. All numbers measured by
 | `connector-core/src/flows/capture-touched-files.ts` | +13 | event model | **#50 merged.** |
 | `connector-core/src/capture/records.ts` | +10 | event model | **#50 merged.** |
 | `connector-core/src/git/git.ts` | +45 | coverage (`git` source), commit identity | **#50 merged.** |
-| `cli/src/render-surfaces.ts` | **+163: 3 → 6 surfaces** | **any spec adding a CLI surface** | **#50 merged.** The first draft of this map and 05 §9 both called this free ground. **It is not.** A new CLI surface registers after `cli-suspect`. |
+| `cli/src/render-surfaces.ts` | **+163: 3 → 6 surfaces** | **any spec adding a CLI surface** | **#50 merged.** The first draft of this map and 05 §9 both called this free ground. **It is not.** See the insertion convention immediately below — it is one place, and it is the array tail. |
 | `cli/src/cli/doctor.ts` | +105 | coverage, fence, every "visible in doctor" obligation | **#50 merged.** Non-negotiable #4 lands here; #50 already added `checkPins`. |
 | `cli/src/cli/status.ts` | +34 | pilot instrumentation | **#50 merged.** |
 | `server/src/app.ts` | +17: three route mounts | CI ingestion, any new route | Append; do not reorder. |
@@ -1202,9 +1228,31 @@ your spec should treat as the baseline. All numbers measured by
 | `connector-claude/scripts/verify-claims.ts` | touched | any spec adding a `VERIFY:` | **#50 merged.** The first draft missed this file. |
 | `connector-core/scripts/mutation-check.ts` | **+151** (was +103) | any spec adding a guarded predicate | **Both PRs edit this file.** See §9.4. |
 
+**9.1a `cli/src/render-surfaces.ts` — ONE insertion convention, binding.**
+Four specs add a CLI surface — 02 `cli-claim-revalidate`, 04 `cli-verdict`, 05
+`cli-ci-report`, 07 `cli-pilot` — and before this revision three of them named
+*"after `cli-suspect`"* while one named *"the array tail"*, as though those were
+the same place. **They are six lines apart.** #50 **prepended** its three surfaces,
+so the measured order on `crosscheck-pins` is `cli-pin-observability` (`:128`),
+`cli-pin-list` (`:153`), `cli-suspect` (`:166`), `cli-doctor` (`:178`),
+`cli-conference` (`:185`), `cli-status` (`:192`) — main's original three sit at the
+**end**, and the array tail is `cli-status` at `:192`, not `cli-suspect` at `:166`.
+
+> **A new CLI surface appends at the ARRAY TAIL, after `cli-status`.** Never
+> "after `cli-suspect`". Inserting mid-array makes three specs conflict three ways
+> on one line for no reason; appending makes each a one-line addition at a
+> different offset.
+
+**And the tail order is the build order** (§9.7), so each spec appends after the
+last one that landed: `cli-claim-revalidate` (02) → `cli-ci-report` (05) →
+`cli-verdict` (04) → `cli-pilot` (07), plus 07's `pilot-mark` composite entry.
+The registry is machine-checked (`test/render-surface-registry.test.ts:25-28`), so
+getting this wrong is a red build, not a cosmetic diff.
+
 ### 9.2 `.github/workflows/ci.yml` — the collision the first draft missed
 
-**Both PRs edit the same line.** `ci.yml:117-118` carries
+**Both PRs edit the same line.** `ci.yml:119-120` (**re-measured**; this map
+first said `:117-118`) carries
 
 ```
 VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
@@ -1222,11 +1270,37 @@ are disjoint (different files), so **after both merge the line reads
 `PRINTS: 314`** — a number neither branch contains. This is a guaranteed textual
 conflict and a semantic one: resolving it by taking one side leaves CI red.
 
+**Instruction for whoever merges the second PR** — the first thing that happens
+in the build order (§9.7), and previously written nowhere: `ci.yml:120` and the
+`mutation-check.ts` array tail conflict between #50 and #49 themselves, before any
+spec starts. **Take neither side.** Re-run the `VERIFY:` command on the merged tree
+and write what it prints; the arithmetic (298 + 10 + 6 = 314) is the expectation,
+not the source. The same applies to both further listings.
+
 **Binding on all eight writers.** Any spec that adds a `MUTATIONS` entry — and by
 §7.2 most should — **must name `ci.yml` in its own collision section**, state that
-it bumps the count and adds its own per-file `PRINTS:` line, and **must not write a
-literal post-merge total into the spec**, because it cannot know how many other
-specs land first. Write the `VERIFY:` directive; let CI print the number.
+it bumps the count and **adds or bumps its lines in BOTH further listings — the
+per-file block at `:127` and the per-basename block at `:246`** — and **must not
+write a literal post-merge total into the spec**, because it cannot know how many
+other specs land first. Write the `VERIFY:` directive; let CI print the number.
+
+**Add versus bump, because the two listings key differently.** The per-file block
+keys on the full path, so a new file is always a new line. The per-basename block
+keys on the **basename**, so a new file whose basename already exists is a **BUMP
+of an existing line, never a new one**. Measured on `crosscheck-pins`: `render.ts`
+already stands at 26 (`ci.yml:312`) and `record-handlers.ts` at 1 (`:307`), so 03's
+`coverage/render.ts` and 06's `mcp/render-intent-chain.ts` bump `render.ts`, and
+06's `record-handlers.ts` entries bump a line that exists. Both specs are corrected.
+
+**The same rule binds a second shared directive, discovered 2026-09-14.**
+`MCP_DIAGNOSIS_SLOTS` (`connector-core/test/fixtures/injection-corpus.ts:582`)
+carries a `VERIFY:` / `PRINTS:` pair over a list **two specs append to** — 06 adds
+two slots, 08 adds one, today's measured length is 18, and each spec had written
+its own absolute post-change total (`20` and `19`), so whichever landed second
+would have reddened the other. Generalised: **no spec writes a literal total into
+any `PRINTS:` whose command counts a list more than one spec appends to.** Write
+the directive, name the fixture file and the other appender under *Collisions*, and
+let CI print the number.
 
 05 has a second reason to touch this file: the CI reporter step itself. `ci.yml`
 also already documents, at `:10-12`, that the team keeps both matrix legs
@@ -1258,6 +1332,29 @@ tell a landed fact from a pending one. **PR #50 is being actively fixed** — re
 `crosscheck-pins` before you cite a line number from it, and prefer citing a header
 or a symbol name over a line number on that branch.
 
+**9.4a CITATION CONVENTION — one, because the set had two and no way to tell them
+apart.** Specs 04, 05 and 08 cited `origin/main` line numbers while declaring *"#50
+assume merged"*; 03 and 07 used post-#50 numbers in the same document set. #50 adds
++105 lines to `doctor.ts`, +143/−1 to `schema.ts` and +19 to `record-handlers.ts`,
+so every anchor below an insertion point moves and a builder who takes a stale cite
+literally reads the wrong code. Measured pairs, so nobody re-derives them:
+
+| anchor | `origin/main` | `crosscheck-pins@bc88b8b` |
+|---|---|---|
+| `const check = (level, name, detail)` — `cli/src/cli/doctor.ts` | `:190` | `:204` |
+| `export const claims = pgTable(` — `server/src/db/schema.ts` | `:237` (block `:237-291`) | `:257` (block `:257-311`) |
+| `.insert(claims)` — `services/record-handlers.ts` | `:492` | `:511` |
+| `captureMode: body.captureMode` — `services/record-handlers.ts` | `:501` | `:520` |
+| `commitEvidence.reportedBy` — `server/src/db/schema.ts` | `:394` | `:414` |
+| `describe("bootstrap.sql DDL sync"` — `server/test/ddl-sync.test.ts` | `:16` | `:22` |
+| `app.route(` mounts — `server/src/app.ts` | `:26-50`, 17 mounts | `:29-67`, 20 mounts |
+
+> **A bare line number means `origin/main` at `e9aab82`. A post-#50 line number
+> carries the `crosscheck-pins:` prefix, always — even when the file also exists on
+> main.** Where an anchor moves, cite the **symbol** and give both numbers, as the
+> table above does. This is the one convention; a cite without a prefix that names
+> a post-#50 position is a defect, not a style choice.
+
 ### 9.5 Genuinely free ground — not touched by either PR
 
 `services/absences.ts` · `services/search.ts` · `services/hints.ts` ·
@@ -1281,6 +1378,68 @@ Two specs already exist and their ground is taken:
 | `routes/absences.ts`, `routes/search.ts`, `routes/hints.ts`, the diagnosis route — each gains a `coverage` sibling field | **03 §3.5** | a spec adding a field to these responses coordinates with 03's shape |
 | `middleware/auth.ts` — `requireCiToken` | **05 §3.7** | a spec needing machine auth reuses it or argues for a third |
 
+**Every one of the eight specs appends to `MUTATIONS` in
+`connector-core/scripts/mutation-check.ts`, so all eight conflict at the array
+tail.** Three specs (03 §9, 05 §9.6, 06 §9) independently called themselves *"the
+third editor"* of that file, which is direct evidence that none of them sequenced
+against the others on it. **There is no third seat.** #50 is the first editor
+(+151/−0, measured) and #49 the second (+101/−1); the eight specs are editors
+**3 through 10**, in the build order below, and each states its own position rather
+than a rank it shares with two others.
+
+### 9.7 BUILD ORDER — binding, and where the gates come from
+
+```
+#50 → #49 → 03 → 01 → 06 → 02 → 08 → 05 → 04 → 07
+```
+
+**Step 0 is the two PRs against each other**, not a spec: they collide on
+`ci.yml:120` and the `mutation-check.ts` tail before anything else starts (§9.2 now
+carries the instruction).
+
+**Six of the eight are hard-gated on #50** — they consume code or tables that exist
+only on that branch, not merely text:
+
+| spec | the #50-only ground it consumes |
+|---|---|
+| 01 | `work_context_targets.source` / `TARGET_SOURCES` for `seq_kind`; folds allocation into `withGitTouches`; appends to #50's `SessionState` fields |
+| 02 | `runGitOutcome` (`crosscheck-pins:connector-core/src/git/git.ts:138`, **absent on main**), which `claim-drift.ts` requires |
+| 03 | `GitTouchesOutcome` from `flows/capture-git-touches.ts` (**a file that does not exist on main**, imported only by `connector-claude/src/hooks/stop.ts:25`); mirrors #50's `checkGitLane` ladder (`doctor.ts:1660`) |
+| 04 | every table and surface it extends is #50's — `pins`, `pin_files`, `suspect`, `cli-suspect`, `checkPins` |
+| 06 | adds a clause to #50's `cli-suspect` intent line |
+| 07 | extends #50's `pins`, `services/pins.ts`, suspect answer, doctor ladder and CLI surface list |
+
+**Only two are gated textually rather than structurally:** 05 (it appends tables,
+constants and mounts after #50's; no #50 code dependency) and 08 (its hard
+dependency is 02, not #50).
+
+**Why this order, clause by clause:**
+
+- **03 first** — it owns `CoverageReason` and the COV-5 shape 05 must then edit,
+  and both 04 and 07 consume `isJudgeable`. 04 §9 already declares
+  *"#50 → #49 → 03 → 04"*; 05 §9.1 already declares *"Sequence 03 first"*.
+- **01 next** — 04 consumes `isOrderable` and 06 consumes `seq`; 01 §9 calls the
+  verdict spec *"the only hard dependency in the set … this spec first"*. 03 §9 and
+  06 §9 both state no dependency either way with 01, so 03 may precede it.
+- **06 next** — 04 consumes `explanationTimingFor`, and 01's two intent event kinds
+  project into 06's ledger rather than `session_events` (01 §3.2, 06 §8.5).
+- **02 before 08** — 08 §9 adopts *"02 first, 08 appends — one migration, one
+  `bootstrap.sql` edit, one `ddl-sync.test.ts` block."*
+- **05 late** — 05 §9.5 states it: *"Sequence last, after #50, #49 and the other
+  … specs' entries"*, because it is the only spec editing `ci.yml` for **content**
+  as well as counts.
+- **04 second-to-last** — it is the only spec consuming all of 03, 01, 06, 05
+  and 08.
+- **07 last** — 07 §9 states *"if the verdict spec renames or widens them my
+  columns follow, I do not fork the enum"*, and its `pins` column stacks on 04's
+  `pins.version`.
+
+**The one contradiction that had to be decided before this order could be
+finalised** — 01 §3.7 forcing `attribution: INDETERMINATE` under unusable causal
+order, against 04 §9's refusal — **is resolved in 04's favour** (01 §3.7 now
+yields, 04 §10 D7 is retired). Had 01 landed as first written, every pre-`seq`
+connector would silently lose attribution.
+
 ---
 
 ## 10. Open questions the writers must resolve
@@ -1294,10 +1453,21 @@ Ordered by how much downstream work each blocks. **Q1 is answered and retired.**
 Both were written under the old refusal and say *"AT-1 and AT-9 do not exist as
 text"*, which is now false. Their fresh `COV-*` / CI tests are good and should
 stay. What is missing is one line in each saying which AT each test discharges:
-**03 → AT-1, AT-5, AT-9**; **05 → AT-8, and AT-10 for its provider-refusal
-handling**. 05 §9 additionally needs the `cli/src/render-surfaces.ts` line corrected
-(§9.1). This is an edit to two existing files, not a rewrite. *Owner: whoever
-sequences the set; it is not a new spec.*
+**03 → AT-1, AT-9, AT-10**; **05 → AT-8**. This is an edit to two existing files,
+not a rewrite.
+
+**CLOSED 2026-09-14.** Both edits are made. 03 §7 names an AT per `COV-*` test and
+its header now reads *"Owns AT-1, AT-9 and AT-10"*; 05 §7 maps `CI-1…CI-8` onto
+AT-8 and its header now reads *"Owns AT-8"*. **The `cli/src/render-surfaces.ts`
+half was already done** before this map was re-read — 05 §9.4 carries the
+correction with its own measurement (*"main has exactly three `name:` entries
+(`:15`, `:22`, `:29`), `crosscheck-pins` has six"*), which §9.1a above verifies as
+accurate. A fixer working this list must not re-open it.
+
+**One owner per AT, and the whole table now lives in `docs/1.0/README.md`.** Four
+ATs had been claimed twice or half-claimed four ways (AT-4, AT-8, AT-10 and, worst,
+AT-3, which no spec owned at all). The README is the authority; a spec header that
+disagrees with it is the spec that is wrong.
 
 **Q2 — Where does `seq` come from, and who guarantees monotonicity? STILL BLOCKING,
 but narrowed to one mechanism.**
@@ -1316,16 +1486,22 @@ Three candidates, and two are now eliminated on measured grounds:
   (`z.number().int().min(0).default(0)` + a transform) is monotonic per host session
   by construction, and `.default(0)` keeps every older state file parsing.
 
-**What is still open, and it is not small.** Two writers on the state file sit
-*outside* the lock discipline:
+**ANSWERED 2026-09-14 by 01 §3.6, on a measurement that corrects §4.4a.**
 
-1. **The detached summarizer worker.** Measured: it reads state (`worker.ts:25`) and
-   **appends to the spool without updating state** (`worker.ts:3-4`). A draft it
-   appends therefore has **no `seq`**, or a stale one. Is a worker-authored record
-   sequenced at spawn time by the hook (which holds the lock, `stop.ts:9-15`), or
-   does it carry `seq: null` and stay outside causal comparison? **The honest
-   default is `seq: null` = not comparable**, but someone must decide and every
-   consumer must handle it.
+1. **The detached summarizer worker — NOT outside the lock after all.** The first
+   reading measured `connector-claude/src/summarizer/worker.ts` and stopped there.
+   The path it calls writes: `worker.ts:24` imports `deriveFromSlice`, and
+   `derive/summarizer/derive.ts` imports `updateSessionState` (`:41`) and calls it
+   at `:92`, `:154`, `:160`, `:168`, `:202`; `derive/ghost/worker.ts:378` likewise.
+   So the three detached workers allocate inside the lock discipline (01 §3.6) and
+   `seq: null` is reserved for **genuine allocation failure**, not made the default.
+   **The residual, which 01 §3.6 now states rather than hides:** a worker summarises
+   a slice from *earlier* in the session, so the position it allocates records when
+   the row was **written**, not when the fact was observed — the same objection 02
+   §6 makes against resolving `RepoIdentity` in those workers. A worker-authored
+   record therefore carries `seq_kind = "observed"`, an **upper bound only**, and a
+   "did X precede this" query against one refuses exactly as it does for a
+   `git_diff`-sourced `file.modified`.
 2. **Subagents.** `connector-core/src/constants.ts:1277-1296` records, measured,
    that *"orchestration subagents are spawned FROM a Claude Code session, so the
    parent's interactive value leaks into exactly the shape a detector exists for"*,
@@ -1430,8 +1606,24 @@ zero, measured**. Nothing in the tree runs a task twice and diffs behaviour. The
 corpora that *do* run the real stack (`precision-corpus`, `conclusion-corpus`) are
 single-run fixture graders. This is Tier 2, and the cut line puts it **behind**
 git/code-state binding in the order of work — but whoever owns it should state early
-that it is net-new harness, not an extension of the corpus. *Owner: the
-injection-benchmark spec, if one is commissioned.*
+that it is net-new harness, not an extension of the corpus.
+
+**ANSWERED 2026-09-14, and the answer is a refusal, not a deferral.** No ninth spec
+was commissioned, and `grep -n "AT-7" docs/1.0/*.md` returns hits in this map and
+`00-cut-line.md` only — **zero across 01…08**. Leaving it unnamed would have been
+the silent absence §11.6 forbids, so it is named here, in the README's AT table and
+in 08 §8:
+
+> **AT-7 is the one acceptance test this set does not discharge.** It requires a
+> net-new control-vs-treatment harness that runs a task twice per provider and
+> diffs tool calls, files read and written, shell commands, plan changes and final
+> result. `INJECTION_CORPUS` is prior art for the **payloads** and for framing —
+> and AT-7's own "fails if" line says framing is not behaviour, so the corpus
+> cannot be stretched into the measurement. **The eight specs discharge nine of ten
+> acceptance tests.** Shipping 1.0 against ten is a scope decision for Nick, not an
+> omission a writer can close.
+
+*Owner: none. Commission a ninth spec, or ship nine of ten and say so.*
 
 ---
 

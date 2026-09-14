@@ -2,10 +2,15 @@
 
 **Tier 2 — provisional v1** (`00-cut-line.md`: *"Structured intent: desired delta, expected surface,
 non-goals, plus amendments"*). The pilot decides the final shape; §8 says what is deliberately left
-open. **Owns the intent half of AT-4** — *declared-before is distinguishable from declared-after* —
-whose "fails if" line is *"the answer depends on wall-clock timestamps from two processes rather than a
-monotonic per-session sequence."* It **supports** AT-3 and AT-6 without owning either: §8.1 refuses a
-human intent rung, §3.6 forbids an amendment from ever acting as a waiver.
+open. **Supports AT-4 without owning it** — 01 owns it, because AT-4's "fails if" line is *"the answer depends
+on wall-clock timestamps from two processes rather than a monotonic per-session sequence"*, and that is
+01's mechanism. This spec supplies **what is compared** (the declared scope and the chain), 01 supplies
+**whether two things may be compared at all**. *An earlier header here claimed "the intent half", while 01
+claimed AT-4 outright and its §9 named this spec only as owning "its record's content" — so a reviewer
+checking AT-4 had two specs and no stated division. One AT, one owner;* `docs/1.0/README.md` *is the
+table.* It likewise **supports** AT-3 and AT-6 without owning either: §8.1 refuses a human intent rung,
+§3.6 forbids an amendment from ever acting as a waiver. **AT-3's owner is 08** (its §3.2 now carries the
+write path), not "the human-authority spec", which was never commissioned.
 
 **Baseline.** `main@e9aab82` at `/Users/nicknouschirvan/worktrees/crosscheck-main`, written against
 **main + #50 + #49 merged** (00 §9.4); a PR-only line is cited `crosscheck-pins:<path>`, paths are
@@ -72,11 +77,21 @@ IntentScopeEntrySchema = { kind: enum(INTENT_SCOPE_KINDS), value: string(1..MAX_
 
 IntentSchema += {
   expectedSurface?, nonGoals?: IntentScopeEntry[]  // each <= MAX_INTENT_SCOPE_ENTRIES
-  seq?:           number | null    // from 01; null = not comparable
+  seq?:           SeqStamp | null  // 01 §3.1's { epoch, n } PAIR; null = not comparable
   amendsVersion?: number | null    // null on the first intent
   reason?:        string | null    // <= MAX_INTENT_AMEND_REASON_CHARS
 }
 ```
+
+**`seq` is a PAIR, not an integer — corrected, because a bare integer answers confidently where 01
+requires a refusal.** 01 §3.1 defines `SeqStampSchema = { epoch: uuid, n: int }` and §3.4 defines
+happens-before as *"A and B share a `session_id`, share a **non-null** `seq_epoch`, and `A.seq_n <
+B.seq_n`"*; 01 SEQ-5 requires a cross-epoch pair to come back `state = broken`, `reason = epoch_split`,
+timing **not computed**. This spec had `seq?: number | null` and compared two bare integers — so every
+mechanism 01 lists as restarting the counter (a SessionStart re-fire inside a live session, the uncarried
+fallback when a lock is busy, two homes on one `hostSessionKey`) would have produced a confident
+`predeclared` or `post_hoc` from two positions in different epochs. 07 §3.6 carried the same scalar shape
+and is corrected too. The epoch is **opaque and never rendered** (01 §3.1), so it adds no untrusted slot.
 
 **`summary` IS the desired delta** — not renamed, and no second prose field minted: four readers depend
 on that sentence (`briefing/intent.ts:47`, and **measured** `grep -rn -e "->> 'summary'"
@@ -101,7 +116,8 @@ Appended after #50's `team_settings` in `server/src/db/schema.ts`; both indexes 
 | `amends_version` | int NULL | null on the first intent |
 | `author_session_id` | text **NULL** FK→`agent_sessions` | NULL only on backfill (§4) — the `work_context_targets.created_at` precedent: a pre-column row reads null and the surface says *unknown* rather than fabricating one (`schema.ts:218-225`) |
 | `version` | int NOT NULL | **hub-assigned** `max(version)+1`; unique `(work_context_id, version)` |
-| `seq` | int **NULL** | 01's per-session sequence; NULL = not causally comparable; CHECK `>= 0` |
+| `seq_epoch` | text **NULL** | 01's epoch; NULL = not causally comparable. **Two positions are comparable only inside one epoch** (01 §3.4) |
+| `seq` | int **NULL** | 01's `n` within that epoch; NULL = not causally comparable; CHECK `>= 0`. CHECK: `seq` and `seq_epoch` are both NULL or both NOT NULL |
 | `provenance` | enum `PROVENANCES` NOT NULL | what the body claimed — unverifiable (§1.2, §8.1) |
 | `summary` | text NOT NULL | CHECK ≤ `MAX_INTENT_SUMMARY_CHARS` |
 | `reason` | text NULL | CHECK ≤ `MAX_INTENT_AMEND_REASON_CHARS`; table CHECK makes it NOT NULL whenever `amends_version` is |
@@ -147,8 +163,9 @@ read as *not comparable* — the fail-closed direction.
 ```ts
 export const EXPLANATION_TIMINGS = ["predeclared", "post_hoc", "absent"] as const;
 export const TIMING_REASONS = [
-  "declared_before", "declared_after", "no_intent", "derived_excluded",
-  "different_session", "not_comparable", "scope_not_named",
+  "declared_before", "declared_after", "declared_non_goal_edited",
+  "no_intent", "derived_excluded", "different_session", "not_comparable",
+  "scope_not_named",
 ] as const;
 
 explanationTimingFor(chain, edit) => { timing, reason, version: number | null }
@@ -159,12 +176,53 @@ A ladder of early returns; the order is the contract.
 1. chain empty → `absent` / `no_intent`
 2. drop `provenance !== "declared"`; nothing left → `absent` / `derived_excluded`
 3. drop `author_session_id !== edit.sessionId`; nothing left → `absent` / `different_session`
-4. drop `seq === null`, and drop all if `edit.seq === null`; nothing left → `absent` /
-   `not_comparable`
-5. drop entries whose `intent_scope` lacks `(edit.kind, edit.value)` in either role; nothing left →
+4. drop `seq === null` **or `seq_epoch !== edit.seqEpoch`**, and drop all if `edit.seq === null`;
+   nothing left → `absent` / `not_comparable`
+5. drop entries whose `intent_scope` lacks `(edit.kind, edit.value)` in **either** role; nothing left →
    `absent` / `scope_not_named`
-6. take the **earliest** survivor E — *did any declaration precede this?* — and answer
-   `E.seq < edit.seq ? predeclared/declared_before : post_hoc/declared_after`, with `E.version`
+6. **answer by ROLE, non-goal first** (below), over the **earliest** survivor in each role
+
+**Step 4's epoch term is new** and it is what makes 01 SEQ-5 true from this side: two positions in
+different epochs are `not_comparable`, never an answer. Without it a counter restart — a SessionStart
+re-fire, a busy-lock fallback, two homes on one key — silently produced a confident timing.
+
+**Step 6 — the roles answer differently, and the first draft answered a violated non-goal
+`predeclared`.** Step 5 keeps an entry whose scope names the edited path *"in either role"*, and step 6
+then answered `predeclared` / `declared_before` whenever that entry's `seq` preceded the edit. So a
+session that declared `non_goal: packages/b.ts` at seq 5 and edited `b.ts` at seq 7 was reported as having
+**declared the reason before the change — for a sentence that said the opposite**. That is principle 3
+answered backwards on the one input this ledger exists to capture. The corollary was worse: `role` was
+written and never read — §3.6 makes `explanationTimingFor` the only consumer of the two tables and INT-7
+reddens the build on a second one, so `expected` versus `non_goal` was stored, decided nothing, and had no
+test (INT-1's fixture says only *"amendment_v2 naming b.ts"*, with no role). An unread column is the
+silent absence AT-10 forbids.
+
+```
+E_non_goal = earliest survivor whose scope names the path as non_goal
+E_expected = earliest survivor whose scope names it as expected
+
+if E_non_goal and E_non_goal.seq < edit.seq
+      -> post_hoc / declared_non_goal_edited   (version = E_non_goal.version)
+else if E_expected and E_expected.seq < edit.seq
+      -> predeclared / declared_before          (version = E_expected.version)
+else  -> post_hoc / declared_after              (earliest survivor's version)
+```
+
+**Non-goal wins where both name the path**, because it is the stronger signal: *"a declared non-goal that
+was then edited"* is the most post-hoc thing a session can do, and a later `expected` entry naming the
+same path is the amendment that widened past it — which is exactly the event AT-4 asks about.
+`declared_non_goal_edited` is a new `TIMING_REASONS` member, not a fourth `EXPLANATION_TIMINGS` value: the
+dimension keeps its three values (00 §8.1, 01 §8 refusal 4).
+
+**`absent` never renders alone — 01 §3.7's objection, answered without a fourth value.** 01 argued that
+falling back to `absent` under unusable order *"asserts no explanation exists, a different and falsifiable
+claim"*, and proposed declining to compute the dimension instead. **Resolved in this spec's favour, with
+the rule that makes it honest:** the timing and its reason are **one atomic answer, and no surface prints
+the value without the reason** — exactly as `attribution: INDETERMINATE` never prints without its `basis`
+(04 §3.1) and a `CoverageState` never prints without its `CoverageReason` (03 §3.3). `TIMING_REASONS`
+already separates `no_intent` (genuinely absent) from `not_comparable` (cannot be ordered) and
+`different_session`, so nothing is lost; what was missing was the rule forbidding the bare word. It is
+binding on every renderer of this value, and INT-3 tests it. 01 §3.7 now states the same thing.
 
 `captured_at`, `received_at` and the envelope `ts` appear nowhere in this function, and `TIMING_REASONS`
 is an enum, never prose (03 §3.3), so a timing line adds **no untrusted slot** to any surface it lands
@@ -215,8 +273,15 @@ tripwire, statusline — gains **nothing** (§8.6).
 **Registry and corpus obligations.** The chain adds two untrusted slots — the amendment `reason` and an
 `intent_scope` `value`, both agent-written — in a `pulled` MCP answer, so both are corpus obligations,
 not notes. `MCP_DIAGNOSIS_SLOTS` (`test/fixtures/injection-corpus.ts:582-601`) gains `intentAmendReason`
-and `intentScopeValue`; **measured today** `bun -e '…console.log(m.MCP_DIAGNOSIS_SLOTS.length)'` prints
-`18`, and the implementation carries that command as a `VERIFY:` / `PRINTS: 20` directive at the list.
+and `intentScopeValue`. **Measured today: 18 slots.** The implementation plants the `VERIFY:` directive at
+the list **and writes no literal post-change total** — *corrected: the first draft pinned `PRINTS: 20`
+while 08 §5, appending `verificationRef` to the same array, pinned `PRINTS: 19`. Whichever landed second
+would have reddened the other, and if both land the answer is 21, a number neither spec contained.* That
+is exactly the trap 00 §9.2 makes binding for `ci.yml` — *"must not write a literal post-merge total …
+because it cannot know how many other specs land first"* — on a second shared directive the map had not
+named. It now names it, generalised: **no spec writes a literal total into any `PRINTS:` whose command
+counts a list more than one spec appends to.** Write the directive, name the fixture file and the other
+appender under *Collisions* (§9), and let CI print the number.
 The renderer is a new module `connector-core/src/mcp/render-intent-chain.ts`, registered in
 `connector-core/src/render-surfaces.ts` as `kind: "corpus"`, `name: "mcp-intent-chain"`, `delivery:
 "pulled"`, `framing: "framed"`, planting the payload in the `reason` slot. `RENDER_LAYER_MODULES` /
@@ -248,8 +313,14 @@ index, one insert and at most `2 × MAX_INTENT_SCOPE_ENTRIES` scope inserts, all
   (`:222-228`), keeping the Stop-hook ordering contract (`hooks/stop.ts:9-15`) — book first, lose a slot
   on a crash, never double-spend.
 
-**No millisecond figure appears above** because I benchmarked nothing; INT-5 requires one before merge,
-on `connector-claude/test/capture-latency.test.ts`.
+**No millisecond figure appears above** because I benchmarked nothing; **INT-11** requires one before
+merge, on `connector-claude/test/capture-latency.test.ts` and the MCP harness pattern of
+`connector-core/test/latency.test.ts`. *Corrected: this line pointed at **INT-5**, which is the
+derived-intent test — "a derived intent still never overwrites a declared one, and appends nothing" — and
+measures nothing at all. No test in the INT-1…INT-9 list did, so this spec's zero-cost claim and its
+~100 ms `set_intent` lock acquisition had **no gate**, while the six sibling specs each discharge the same
+obligation with a numbered test (CCB-8, COV-8, VER-8, PIL-9, EV-8). INT-11 is that test. 01 §7 had the
+same hole and now has SEQ-9.*
 
 ## 7. Acceptance tests
 
@@ -267,9 +338,14 @@ the other: first answers `predeclared`, second `post_hoc`. *Fails if* both agree
 by a successor session, `records.ts:67-69`). The answer must be `post_hoc`. *Mutation:* swap step 6's
 `seq` comparison for `captured_at`.
 
-**INT-3 — an unorderable pair is never `predeclared`.** `seq: null` against any edit answers `absent` /
-`not_comparable`; an entry from session A against an edit in session B answers `absent` /
-`different_session`, whatever the numbers. *Two mutations:* null `seq` → `0`; delete step 3.
+**INT-3 — an unorderable pair is never `predeclared`, and `absent` never renders alone.** Three cases:
+(a) `seq: null` against any edit answers `absent` / `not_comparable`; (b) an entry from session A against
+an edit in session B answers `absent` / `different_session`, whatever the numbers; (c) **two positions in
+different `seq_epoch`s answer `absent` / `not_comparable`, never a comparison** — 01 SEQ-5's epoch-split
+refusal from this side, which a bare-integer `seq` could not express. Plus the rendering rule §3.5 makes
+binding: every surface printing an `EXPLANATION_TIMINGS` value prints its `TIMING_REASONS` value in the
+same clause. *Fails if* (c) answers, or if any surface can print the bare word `absent`. *Three
+mutations:* null `seq` → `0`; delete step 3; drop the `seq_epoch !== edit.seqEpoch` term from step 4.
 
 **INT-4 — the head cannot disagree with the ledger.** After N amendments `work_contexts.intent` equals
 version N's `wire` and `max(version) = N`; a replayed spool line returns `duplicate` and no new version.
@@ -295,8 +371,27 @@ is accepted, renders `intent: «…»` exactly as today, and creates version 1 w
 **INT-9 — an uncheckable scope entry is refused at the wire.** `kind: "symbol"` fails
 `IntentScopeEntrySchema`. *Mutation:* widen `INTENT_SCOPE_KINDS` to `TARGET_KINDS`.
 
-Six entries reach `MUTATIONS` (INT-2, INT-3 ×2, INT-4, INT-5, INT-6, INT-9), so this spec bumps
-`.github/workflows/ci.yml` and adds its own per-file `PRINTS:` lines — §9.
+**INT-10 — a declared non-goal that was then edited is `post_hoc`, and `role` is read. (AT-4.)** One
+session declares `non_goal: packages/b.ts` at seq 5 and edits `b.ts` at seq 7 → `post_hoc` /
+`declared_non_goal_edited`, **not** `predeclared`. A second fixture declares the same path as `expected`
+at seq 5 → `predeclared` / `declared_before`. A third names it in both roles → the non-goal answer wins.
+*Fails if* the two roles produce the same answer — which is what the first draft's step 6 did, reporting a
+violated non-goal as a reason declared before the change, and leaving `INTENT_SCOPE_ROLES` with no reader
+in the whole of 1.0. *Mutation:* collapse step 6's two branches into the `expected` one.
+
+**INT-11 — the budget is measured, not asserted.** `set_intent` wall clock with the `seq` reservation on,
+against the pre-change baseline with a named allowance, on `connector-core/test/latency.test.ts`'s
+harness, plus SessionStart / PostToolUse p95 on `connector-claude/test/capture-latency.test.ts` (nothing
+here is on a hook path, so the second half proves the claim rather than measuring a change). *Fails if* no
+measurement exists. **§6 points here**, not at INT-5, which measures nothing.
+
+**Nine entries reach `MUTATIONS`** — INT-2, INT-3 ×3, INT-4, INT-5, INT-6, INT-9, INT-10 — so this spec
+bumps `.github/workflows/ci.yml` and adds its own lines in all three listings (§9). *Corrected: this
+sentence read "Six entries … (INT-2, INT-3 ×2, INT-4, INT-5, INT-6, INT-9)", which is **seven** items
+counted as six — the exact defect class `verify-claims.ts` exists to kill (*"what rotted were quantifiers
+and pointers: 'exactly one', 'the ONLY', '2 of 8'"*, 00 §7.1), in a spec that cites that discipline, on a
+number that feeds the `ci.yml` bump. The count is now derived from the list and the list is the
+authority.*
 
 ## 8. Refusals
 
@@ -322,7 +417,15 @@ Six entries reach `MUTATIONS` (INT-2, INT-3 ×2, INT-4, INT-5, INT-6, INT-9), so
 5. **No new outbox kind** (00 §8.4b: a 1.0 event kind is not automatically an SSE kind, and
    `work_context_updated` already names `"intent"` in `changed` with no text crossing,
    `record-handlers.ts:186-194`). `intent.declared` and `intent.amended` (00 §8.4) are **durably this
-   table** — 01 needs no second store.
+   table** — 01 needs no second store. **01 §3.2 and §3.5 now agree**, and the agreement fixed a real
+   defect on its side: its first draft projected *both* kinds from a `work_context` record into
+   `session_events`, whose id hashed `(session_id, ref_kind, ref_id)` — so the declaration and every
+   amendment in one session shared a referent, and every amendment after the first was answered
+   `duplicate` and received no position at all. The amendment is precisely the event AT-4 asks about.
+   **This table is the event**: one row per version, with `version`, `seq` and `seq_epoch` on the row, and
+   an id (`iv_ + sha256(workContextId \n authorSessionId \n seq \n summary)`) that is unique per version
+   by construction. 01 lands before this spec (00 §9.7), so until this table exists the two kinds are **not
+   projected at all** rather than projected wrongly, and doctor says so.
 6. **The chain never reaches an unsolicited surface**, and **superseded intents never enter search.**
    Briefing, hints, tripwire and statusline show the head only (`MAX_BRIEFING_CHARS = 2200` is already
    contested, 00 §10 Q8), and `normalized_doc` keeps indexing the head alone
@@ -353,20 +456,48 @@ collision, I add a branch to `ingestWorkContext`: different functions, one file.
 the outcome enum (`ranked | no_separation | no_touch | withheld`) **nor** the falsifier enum; closed
 ground stays closed. `connector-core/src/constants.ts` (+62) — `INTENT_CHAIN_MAX_SHOWN` appends below
 #50's `PIN_SWEEP_*` block; `cli/src/render-surfaces.ts` (+163, 3 → 6) gains no new surface; and on
-`scripts/mutation-check.ts` (+151 on #50, +101 on #49) I am the third editor, conflicting at the array
-tail.
+`scripts/mutation-check.ts` (+151 on #50, +101 on #49) I am **editor 5** in the build order (00 §9.7),
+conflicting at the array tail. *Corrected from "the third editor" — 03 §9 and 05 §9.6 had each claimed
+that same seat, which was the evidence that none of the three had sequenced against the others on this
+file. **All eight specs** append to that tail.*
 
-**`.github/workflows/ci.yml`** (00 §9.2) — both PRs already rewrite the same `PRINTS:` line and I add
-six `MUTATIONS` entries on top, so this spec bumps that count and adds its own per-file `PRINTS:` lines
-(`services/intent-ledger.ts`, `mcp/render-intent-chain.ts`, `record-handlers.ts`). **No post-merge total
-is written here** — I cannot know how many specs land first, so write the directive and let CI print the
-number. **PR #49** has no structural collision: every new bound lives in `packages/schema/src`, not
+**`.github/workflows/ci.yml`** (00 §9.2) — both PRs already rewrite the same `PRINTS:` line at
+`ci.yml:119-120`, and they collide there **with each other** before any spec starts (00 §9.2 carries the
+instruction). I add **nine** `MUTATIONS` entries on top (§7), so this spec bumps that count and touches
+**all three listings, not two**: the count (`:119`), the per-file block (`:127`) and the **per-basename**
+block (`:246` on `crosscheck-pins`, `:239` on main), which the first draft did not name. New per-file
+lines for `services/intent-ledger.ts` and `mcp/render-intent-chain.ts` plus a bump to the existing
+`services/record-handlers.ts` line. **In the per-basename listing two of my three are BUMPS, not
+additions** — that block keys on the basename, and `record-handlers.ts` already stands at 1
+(`crosscheck-pins:.github/workflows/ci.yml:307`) while `render.ts` already stands at 26 (`:312`), which is
+the line `mcp/render-intent-chain.ts`… does *not* touch, since its basename is `render-intent-chain.ts`
+and that one is new. An earlier draft of this line listed `record-handlers.ts` as an **added** line; it is
+a bump. **No post-merge total is written here** — I cannot know how many specs land first, so write the
+directive and let CI print the number.
+
+**Spec 08 — one shared fixture, and we were about to redden each other.** We both append to
+`MCP_DIAGNOSIS_SLOTS` in `connector-core/test/fixtures/injection-corpus.ts` (measured today: 18 entries):
+I add `intentAmendReason` and `intentScopeValue`, 08 adds `verificationRef`. Each of us had written its own
+absolute post-change total into that list's `VERIFY:` / `PRINTS:` directive — `20` here, `19` there — so
+whichever landed second would have turned the other's directive red, and the correct number if both land
+is 21, which neither spec contained. Neither §9 mentioned the other on this file. **Both now write the
+directive and no total** (§5 here, 08 §5 there), and 00 §9.2 generalises the rule beyond `ci.yml`.
+**Sequence: either order**, which is the point of not writing a total.
+
+**PR #49** has no structural collision: every new bound lives in `packages/schema/src`, not
 `server/src/constants.ts`.
 
-**Other 1.0 specs.** **01 (`seq`) is a hard dependency I do not define**: reservable from an MCP tool
-*and* a detached worker (`derive/intent/worker.ts` already takes the lock), `null` when the lock fails,
-`null` propagating to the row — if 01 settles Q2's worker default as `seq: null`, §3.5 already handles
-it. **03 (coverage)** has no dependency either way and one thing to keep apart: an `absent` /
+**Other 1.0 specs.** **01 (`seq`) is a hard dependency I do not define, and it lands first** (00 §9.7):
+reservable from an MCP tool *and* a detached worker (`derive/intent/worker.ts` already takes the lock),
+`null` when the lock fails, `null` propagating to the row — §3.5 handles that. **Two shapes had to be made
+to match and both edits are mine:** `seq` is 01's `{ epoch, n }` **pair**, so this ledger carries
+`seq_epoch` beside `seq` and step 4 refuses a cross-epoch comparison (§3.1, §3.2, §3.5); and
+`intent.declared` / `intent.amended` are **rows in this table, not in `session_events`** — 01 §3.2 and
+§3.5 now say so, which also fixes the id collision that would have discarded every amendment after the
+first. **04 consumes `explanationTimingFor` and cites INT-7** — *"the ledger authorises nothing"* — as the
+ledger-side half of principle 4; it had cited INT-8 (the back-compat test) in four places and is
+corrected, and its VER-4 is now a meta-test in INT-7's shape, because its own version was vacuously
+green. **03 (coverage)** has no dependency either way and one thing to keep apart: an `absent` /
 `not_comparable` timing is **not** a coverage gap and must never be folded into `agent_event` — coverage
 asks whether we were watching, timing asks whether two observed events can be ordered, and folding them
 is the `coverage = 87%` lie in a third shape. **05 (CI)** does not overlap: CI has no producer session
@@ -390,6 +521,17 @@ consume `explanationTimingFor` and gate on 03's `isJudgeable`, which I never cal
 4. **Are non-goals paths-only?** *Default: yes.* Cost: *"do not change the public API"* cannot be
    declared in 1.0 at all; the checkable field stays checkable, or becomes a second prose sentence
    nobody can verify.
+
+4a. **Does a violated non-goal get its own timing answer, or does `non_goal` leave 1.0?** *Default: its
+   own answer* — `post_hoc` / `declared_non_goal_edited`, with the non-goal winning where both roles name
+   the path (§3.5 step 6). Before this, step 5 kept non-goal entries and step 6 reported them
+   `predeclared`, so a session that declared *"do not touch `b.ts`"* and then touched it was recorded as
+   having declared its reason **before** the change — principle 3 answered backwards — and `role` was a
+   column nothing read. The alternative is honest too and cheaper: **drop `non_goal` from
+   `INTENT_SCOPE_ROLES` in 1.0** and say so, since an unread column is the silent absence AT-10 forbids.
+   Cost of the default: one more `TIMING_REASONS` value and one more branch. Cost of the alternative: a
+   session cannot declare what it is deliberately not doing, which is half of what structured intent was
+   for.
 5. **Does doctor WARN on a high null-`seq` ratio, or only report it?** *Default: WARN above half,
    denominator printed either way.* Cost: a WARN on every install until 01 lands; the alternative is a
    hub that cannot answer AT-4 and says nothing.

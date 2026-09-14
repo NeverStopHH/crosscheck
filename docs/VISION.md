@@ -46,3 +46,5 @@ Sequenced this way because each step makes the next one cheaper, not because of 
 **Ghost commits carry a foundation obligation.** They are gated on intent capture being reliable, which makes intent capture a load-bearing requirement of the foundation rather than a nice-to-have: `work_contexts.intent` has to be filled substantially (planned changes, APIs likely to change, expected side effects), not left empty. Simulating two vague intents against each other produces expensive noise, and noise is what destroys trust in a warning system.
 
 None of this changes the v0/v0.5/v1 roadmap in [DESIGN.md §8](DESIGN.md). The point of writing it down is narrower: when a foundation decision looks like over-engineering (append-only claims, typed edges, intent as structured data rather than prose), this is what it is buying.
+
+The 1.0 spec set that turns this foundation into acceptance tests is indexed at [docs/1.0/README.md](1.0/README.md).
