@@ -24,7 +24,7 @@ import { isDenied, resolveDenylist } from "../capture/denylist.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import { fingerprint } from "../capture/fingerprint.ts";
 import { targetRecord } from "../capture/records.ts";
-import type { Producer } from "../capture/records.ts";
+import type { Producer, TargetSource } from "../capture/records.ts";
 import { containsSecret } from "../capture/secret-scan.ts";
 import { toRepoRelative } from "../capture/target-paths.ts";
 import { appendRecords } from "../spool/append.ts";
@@ -41,6 +41,12 @@ export interface CaptureFileTargetsInput {
   readonly seenTargets: readonly string[];
   readonly workContextId: string;
   readonly producer: Producer;
+  /**
+   * WHICH lane saw these paths (regression-guard Stage 1). Defaults to the
+   * tool lane, because that is what every caller of this flow was before the
+   * git lane existed; `captureGitTouches` passes "git_diff".
+   */
+  readonly source?: TargetSource;
   readonly now: Date;
   /**
    * Per-path root override (trial finding #17): resolves the root a touched
@@ -48,12 +54,14 @@ export interface CaptureFileTargetsInput {
    * repo instead of the session's checkout — or null to DROP the path (a
    * foreign or outside-root touch the caller has already counted). Omitting it
    * keeps the pre-#17 single-root behaviour: every path resolves against
-   * `repoRoot`. NO CONNECTOR OMITS IT ANY MORE — `flows/capture-touched-files.ts`
-   * is the one place that builds this call, and it precomputes the map once per
-   * event (capture/touched-root.ts) so the git cost is paid at most once per NEW
-   * worktree root per session, never per tool call. The option survives because
-   * it is the seam the unit tests drive, and because an ABSENT hook and one
-   * returning null must stay different answers.
+   * `repoRoot`. NO CALLER OMITS IT ANY MORE — `flows/capture-touched-files.ts`
+   * builds this call for every host-reported edit and precomputes the map once
+   * per event (capture/touched-root.ts), so the git cost is paid at most once
+   * per NEW worktree root per session and never per tool call;
+   * `flows/capture-git-touches.ts` builds the only other one and passes the
+   * single root git answered in. The option survives because it is the seam
+   * the unit tests drive, and because an ABSENT hook and one returning null
+   * must stay different answers.
    */
   readonly resolveRoot?: (path: string) => string | null;
 }
@@ -99,7 +107,14 @@ export const captureFileTargets = async (
       input.repoKey,
       input.hostSessionKey,
       collected.map((value) =>
-        targetRecord(input.workContextId, "file", value, input.producer, input.now),
+        targetRecord(
+          input.workContextId,
+          "file",
+          value,
+          input.producer,
+          input.now,
+          input.source ?? "tool_edit",
+        ),
       ),
       input.now,
     );

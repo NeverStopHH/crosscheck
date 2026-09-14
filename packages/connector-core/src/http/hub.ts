@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  MAX_PIN_SWEEP_UPDATES,
+  PIN_PRESENCE_TERMINAL,
+} from "@crosscheck/schema";
 
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
@@ -1672,4 +1676,357 @@ export const getConference = (
     method: "GET",
     path: `/api/conference${encodeRepo(repo)}`,
     schema: ConferenceResponseSchema,
+  });
+
+// ── The pin registry and suspect (regression-guard Stage 1) ─────────────────
+
+/**
+ * One file a pin watches, and what the last sweep found for it. `status` is
+ * an OPEN string for the usual reason every hub-served enum here is: a hub
+ * that learns a new value must not cost this client the whole row, and the
+ * renderers print what they know.
+ */
+export const PinFileSchema = z.looseObject({
+  path: z.string().min(1),
+  status: z.string().min(1),
+});
+
+export type PinFile = z.infer<typeof PinFileSchema>;
+
+/**
+ * A pin as the hub serves it. `captureMode` is carried and PRINTED, because
+ * provenance alone never distinguished "Nick verified this" from "an agent
+ * wrote that Nick verified this" — the trust label says which.
+ */
+export const PinEntrySchema = z.looseObject({
+  id: z.string().min(1),
+  repo: z.string().min(1),
+  surface: z.string().min(1),
+  files: z.array(PinFileSchema).default([]),
+  check: z.string().nullable().default(null),
+  captureMode: z.string().min(1),
+  verifiedById: z.string().min(1),
+  verifiedByName: z.string().min(1),
+  verifiedAtCommit: z.string().min(1),
+  verifiedAt: z.string().min(1),
+  brokeAt: z.string().nullable().default(null),
+  brokeByName: z.string().nullable().default(null),
+  speaking: z.boolean().default(false),
+  missingPaths: z.number().int().min(0).default(0),
+  /**
+   * WHAT A SWEEP REWROTE, and who ran it. The file set is what `suspect`
+   * intersects, so moving it moves which sessions an answer names — and the
+   * registry used to carry no trace of the move at all. Defaulted, so a hub
+   * that predates the columns reads as "never swept".
+   */
+  renamedPaths: z.number().int().min(0).default(0),
+  renamedAt: z.string().nullable().default(null),
+  renamedByName: z.string().nullable().default(null),
+});
+
+export type PinEntry = z.infer<typeof PinEntrySchema>;
+
+/**
+ * The DENOMINATOR. It travels with every listing rather than living behind a
+ * second call, because "4 pins" printed without "nothing else is watched"
+ * beside it is the sentence this whole feature exists to prevent.
+ */
+export const PinCoverageSchema = z.looseObject({
+  pins: z.number().int().min(0).default(0),
+  files: z.number().int().min(0).default(0),
+  speaking: z.number().int().min(0).default(0),
+  broken: z.number().int().min(0).default(0),
+  missingPaths: z.number().int().min(0).default(0),
+  oldestVerifiedAt: z.string().nullable().default(null),
+});
+
+export type PinCoverage = z.infer<typeof PinCoverageSchema>;
+
+export interface PinRegistry {
+  readonly pins: readonly PinEntry[];
+  readonly coverage: PinCoverage;
+}
+
+const PinRegistrySchema = z
+  .looseObject({
+    pins: z.array(z.unknown()).default([]),
+    coverage: z.unknown().optional(),
+  })
+  .transform((value): PinRegistry => {
+    const coverage = PinCoverageSchema.safeParse(value.coverage);
+    return {
+      // One malformed pin must not cost the whole registry — the same
+      // tolerant-row rule every listing here follows.
+      pins: value.pins
+        .map((row) => PinEntrySchema.safeParse(row))
+        .filter((parsed) => parsed.success)
+        .map((parsed) => parsed.data),
+      coverage: coverage.success
+        ? coverage.data
+        : {
+            pins: 0,
+            files: 0,
+            speaking: 0,
+            broken: 0,
+            missingPaths: 0,
+            oldestVerifiedAt: null,
+          },
+    };
+  });
+
+export const getPins = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<PinRegistry>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/pins${encodeRepo(repo)}`,
+    schema: PinRegistrySchema,
+  });
+
+export interface CreatePinRequest {
+  readonly id: string;
+  readonly repo: string;
+  readonly surface: string;
+  readonly files: readonly string[];
+  readonly check?: string;
+  /**
+   * What this process OBSERVED about who is on the other end — a controlling
+   * terminal. The hub stamps the stored capture mode from it and refuses any
+   * other value (PinSchema); it is never this client's verdict about itself.
+   */
+  readonly presence: typeof PIN_PRESENCE_TERMINAL;
+  readonly verifiedAtCommit: string;
+}
+
+const CreatedPinSchema = z.looseObject({ id: z.string().min(1) });
+
+export const createPin = (
+  ctx: HubContext,
+  request: CreatePinRequest,
+): Promise<HubResult<{ readonly id: string }>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/pins",
+    schema: CreatedPinSchema,
+    body: request,
+  });
+
+/**
+ * The retraction: the check was run and it failed. It carries the repo it
+ * speaks for and the same terminal evidence a pin's creation carries — this
+ * is the falsifier `crosscheck suspect` reads before it names any session,
+ * and it used to travel as an empty body with no hub-side gate at all.
+ */
+export const breakPin = (
+  ctx: HubContext,
+  repo: string,
+  pinId: string,
+): Promise<HubResult<{ readonly id: string }>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: `/api/pins/${encodeURIComponent(pinId)}/broke`,
+    schema: CreatedPinSchema,
+    body: { repo, presence: PIN_PRESENCE_TERMINAL },
+  });
+
+export interface PinSweepUpdate {
+  readonly pinId: string;
+  readonly path: string;
+  readonly newPath: string | null;
+}
+
+const SweepResultSchema = z.looseObject({
+  applied: z.number().int().min(0).default(0),
+  ignored: z.number().int().min(0).default(0),
+});
+
+export type PinSweepResult = z.infer<typeof SweepResultSchema>;
+
+/**
+ * Reports what the local sweep found (git/pin-sweep.ts computes it — the hub
+ * has no checkout). PATH NAMES ONLY: no file content crosses this wire, and
+ * git answered the question without any entering this process either.
+ *
+ * CHUNKED HERE, because only the side that BUILT the body can split it. The
+ * route caps the array with zod `.max(MAX_PIN_SWEEP_UPDATES)`, which rejects
+ * a whole body rather than truncating it, and the sweep builds one update per
+ * (pin, file) pair over the listed page — 200 pins of two files is 400. With
+ * no split anywhere, `crosscheck pin --sweep` was refused outright and
+ * recorded NOTHING from 101 two-file pins upward: the register the module
+ * header calls "the difference between a register and a graveyard" simply
+ * stopped being maintained, with no remedy in the message.
+ *
+ * ONE ANSWER OUT OF N REQUESTS. The counts are summed, so a caller reads the
+ * same two numbers whether it took one request or twenty. A chunk that fails
+ * ends the sweep and returns its failure rather than reporting a partial
+ * total as a whole one: "300 recorded" over a sweep that stopped at 200 is
+ * the fail-silent shape this command exists to remove.
+ */
+export const sweepPins = async (
+  ctx: HubContext,
+  repo: string,
+  updates: readonly PinSweepUpdate[],
+): Promise<HubResult<PinSweepResult>> => {
+  let applied = 0;
+  let ignored = 0;
+  let dateHeader: string | null = null;
+  // An EMPTY sweep still speaks to the hub: a caller that skipped the request
+  // would report "0 recorded" without ever having asked, which reads the same
+  // as a hub that answered.
+  for (let start = 0; start < Math.max(updates.length, 1); start += MAX_PIN_SWEEP_UPDATES) {
+    const chunk = updates.slice(start, start + MAX_PIN_SWEEP_UPDATES);
+    const result = await hubRequest(ctx, {
+      method: "POST",
+      path: "/api/pins/sweep",
+      schema: SweepResultSchema,
+      body: { repo, updates: chunk },
+    });
+    if (!result.ok) {
+      return result;
+    }
+    applied += result.data.applied;
+    ignored += result.data.ignored;
+    dateHeader = result.dateHeader;
+  }
+  return { ok: true, data: { applied, ignored }, dateHeader };
+};
+
+/**
+ * One candidate session. NO developer name and NO developer id — by design,
+ * and the hub does not send them: `suspect` names SESSIONS and their declared
+ * intents, and reaching the person is one deliberate hop the reader takes.
+ */
+export const SuspectCandidateSchema = z.looseObject({
+  sessionId: z.string().min(1),
+  agentKind: z.string().min(1),
+  branch: z.string().min(1),
+  workContextId: z.string().min(1),
+  workContextTitle: z.string().min(1),
+  intent: tolerantIntent,
+  lastActiveAt: z.string().min(1),
+  overlap: z.number().int().min(0),
+  authorTouches: z.number().int().min(0),
+  lift: z.number().min(0),
+  sources: z.array(z.string().min(1)).default([]),
+  readerMuted: z.boolean().default(false),
+  isSelf: z.boolean().default(false),
+});
+
+export type SuspectCandidate = z.infer<typeof SuspectCandidateSchema>;
+
+export interface SuspectView {
+  readonly outcome: string;
+  readonly falsifier: {
+    readonly kind: string;
+    readonly at: string | null;
+    readonly check: string | null;
+  };
+  readonly scope: {
+    readonly kind: string;
+    readonly pinId: string | null;
+    readonly surface: string | null;
+    readonly files: readonly string[];
+    /** Of `files`, the ones the hub already knows git no longer has. */
+    readonly missingFiles: readonly string[];
+    /** Pinned paths a sweep has rewritten since the pin was made. */
+    readonly rewrittenPaths: number;
+    readonly rewrittenAt: string | null;
+  };
+  readonly totals: {
+    readonly sessionsTouching: number;
+    readonly sessionsScored: number;
+    readonly windowDays: number;
+  };
+  readonly attribution: string;
+  readonly candidates: readonly SuspectCandidate[];
+}
+
+const SuspectViewSchema = z
+  .looseObject({
+    outcome: z.string().min(1),
+    falsifier: z.looseObject({
+      kind: z.string().min(1),
+      at: z.string().nullable().default(null),
+      check: z.string().nullable().default(null),
+    }),
+    scope: z.looseObject({
+      kind: z.string().min(1),
+      pinId: z.string().nullable().default(null),
+      surface: z.string().nullable().default(null),
+      files: z.array(z.string().min(1)).default([]),
+      // Defaulted, so a hub that predates the field reads as "nothing known
+      // to be gone" rather than as a parse failure of the whole answer.
+      missingFiles: z.array(z.string().min(1)).default([]),
+      rewrittenPaths: z.number().int().min(0).default(0),
+      rewrittenAt: z.string().nullable().default(null),
+    }),
+    totals: z.looseObject({
+      sessionsTouching: z.number().int().min(0).default(0),
+      sessionsScored: z.number().int().min(0).default(0),
+      windowDays: z.number().int().min(1).default(14),
+    }),
+    attribution: z.string().min(1).default("sessions"),
+    candidates: z.array(z.unknown()).default([]),
+  })
+  .transform(
+    (value): SuspectView => ({
+      outcome: value.outcome,
+      falsifier: value.falsifier,
+      scope: value.scope,
+      totals: value.totals,
+      attribution: value.attribution,
+      candidates: value.candidates
+        .map((row) => SuspectCandidateSchema.safeParse(row))
+        .filter((parsed) => parsed.success)
+        .map((parsed) => parsed.data),
+    }),
+  );
+
+export interface SuspectRequest {
+  readonly repo: string;
+  readonly pinId?: string;
+  readonly paths?: readonly string[];
+}
+
+export const getSuspect = (
+  ctx: HubContext,
+  request: SuspectRequest,
+): Promise<HubResult<SuspectView>> => {
+  const pin =
+    request.pinId === undefined
+      ? ""
+      : `&pin=${encodeURIComponent(request.pinId)}`;
+  const paths = (request.paths ?? [])
+    .map((path) => `&path=${encodeURIComponent(path)}`)
+    .join("");
+  return hubRequest(ctx, {
+    method: "GET",
+    path: `/api/suspect${encodeRepo(request.repo)}${pin}${paths}`,
+    schema: SuspectViewSchema,
+  });
+};
+
+/**
+ * This team's two regression-guard settings. Read by every member — everybody
+ * affected by "suspect names sessions" has to be able to see that it does —
+ * and written only with the hub's admin token.
+ */
+export const TeamSettingsSchema = z.looseObject({
+  repo: z.string().min(1),
+  pinPolicy: z.string().min(1),
+  suspectAttribution: z.string().min(1),
+  updatedAt: z.string().nullable().default(null),
+});
+
+export type TeamSettings = z.infer<typeof TeamSettingsSchema>;
+
+export const getTeamSettings = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<TeamSettings>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/team-settings${encodeRepo(repo)}`,
+    schema: TeamSettingsSchema,
   });

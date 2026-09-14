@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 import { DERIVED_CONFIDENCE_CAP } from "./claim.ts";
-import { ProvenanceSchema, SessionStatusSchema, TargetKindSchema } from "./enums.ts";
+import {
+  ProvenanceSchema,
+  SessionStatusSchema,
+  TargetKindSchema,
+  TargetSourceSchema,
+} from "./enums.ts";
 
 const nonEmptyId = z.string().min(1);
 
@@ -74,6 +79,14 @@ export const TargetSchema = z.looseObject({
   workContextId: nonEmptyId,
   kind: TargetKindSchema,
   value: z.string().min(1),
+  /**
+   * WHICH lane saw this file (regression-guard Stage 1). Optional and
+   * defaulted, because every connector shipped before Stage 1 sends targets
+   * without it and those ARE tool-reported edits — the only lane that existed.
+   * Defaulting keeps a replayed spool from an older connector honest instead
+   * of relabelling its history as something it never claimed.
+   */
+  source: TargetSourceSchema.optional().default("tool_edit"),
 });
 
 export type AgentSession = z.infer<typeof AgentSessionSchema>;
