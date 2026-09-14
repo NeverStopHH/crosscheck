@@ -1600,6 +1600,105 @@ export const MUTATIONS: readonly Mutation[] = [
       "keep matching somebody else",
   },
   {
+    // The listing exists so a lost id is recoverable. A page that stopped at
+    // the cap and stayed quiet is the "200 listed must not read as all 250"
+    // failure, one table over.
+    label: "a developer listing cut at the cap claims to be the whole team",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "  const truncated = rows.length > DEVELOPERS_MAX_LISTED;",
+    to: "  const truncated = false;",
+    test: `${SERVER}/test/developer-listing.test.ts`,
+    because:
+      "an admin reads a full page as the entire membership, concludes a " +
+      "developer has no account, and creates a second one for a person who " +
+      "already has one — splitting their commits across two identities",
+  },
+  {
+    // The COMPARISON, not the expression. Replacing the whole line with
+    // `false` is caught by a single cap+1 case, and the off-by-one this flag
+    // can actually carry lives one character to the right of the operator —
+    // which is why the guard walks cap-1, cap and cap+1 rather than asserting
+    // once past the cap.
+    label: "a complete developer listing reports itself as cut short",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "  const truncated = rows.length > DEVELOPERS_MAX_LISTED;",
+    to: "  const truncated = rows.length >= DEVELOPERS_MAX_LISTED;",
+    test: `${SERVER}/test/developer-listing.test.ts`,
+    because:
+      "an admin is told the directory is incomplete when it is complete, so " +
+      "a developer who is genuinely absent reads as one of the rows the page " +
+      "hid — and they create a second account for a person who already has one",
+  },
+  {
+    // The read bound, which the response cannot show: the page is sliced to
+    // the cap in memory, so an unbounded query answers identically and only
+    // the read itself can be asked how many rows it took.
+    label: "the developer listing reads the whole table to hand back a page",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "    .limit(DEVELOPERS_MAX_LISTED + 1);",
+    to: "    .limit(1000000);",
+    test: `${SERVER}/test/developer-listing.test.ts`,
+    because:
+      "every admin listing materialises the entire developers table inside a " +
+      "single-connection in-process PGlite to hand back 200 rows, and every " +
+      "other request on the hub queues behind that read",
+  },
+  {
+    // Emails are the whole reason to read this listing: they decide whose
+    // commits are whose, so an empty list per developer looks exactly like an
+    // unlinked alias that still needs adding.
+    label: "the developer listing drops every linked email",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "      const emails = byDeveloper.get(row.id) ?? [];",
+    to: "      const emails: DeveloperEmailView[] = [];",
+    test: `${SERVER}/test/developer-listing.test.ts`,
+    because:
+      "an admin cannot see which git addresses are already linked, so the " +
+      "alias fix for trial finding #7 becomes guesswork and re-adding an " +
+      "existing one is the only way to find out",
+  },
+  {
+    // The email axis has a flag of its own, and this is the one line that
+    // decides it. A developer can hold more rows than MAX_EMAILS_PER_DEVELOPER
+    // — rows written before the cap check and the insert shared a transaction
+    // (the anchor below is what keeps them sharing one), or written straight
+    // into the database — and with the flag stuck at false the page is the
+    // silent clip again: ten addresses, `truncated: false`, and nothing to say
+    // the set the admin audits is smaller than the set absence matching acts
+    // on, which joins developer_emails unbounded.
+    label: "a developer's clipped email list is reported as their whole list",
+    file: `${SERVER}/src/services/developers.ts`,
+    from: "        emailsTruncated: (totalByDeveloper.get(row.id) ?? 0) > emails.length,",
+    to: "        emailsTruncated: false,",
+    test: `${SERVER}/test/developer-listing.test.ts`,
+    because:
+      "an admin auditing who is linked to what sees ten addresses and a flag " +
+      "that says those are all of them, while the hub keeps attributing " +
+      "commits from the ones the page hid — and re-adding one of those " +
+      "answers \"this developer's email list is full\"",
+  },
+  {
+    // The cap check and the row insert share one transaction, which the
+    // hub's single-connection PGlite serialises; on the bare db every
+    // concurrent link reads the same nine rows and every one inserts. That is
+    // how a developer came to hold seventeen addresses the admin surfaces
+    // could show ten of — the anchor above is what DISCLOSES that state, this
+    // is what stops the API PRODUCING it.
+    label: "concurrent alias links carry a developer past the email cap",
+    file: `${SERVER}/src/services/developers.ts`,
+    from:
+      "  return deps.db.transaction((tx) =>\n" +
+      "    linkEmailUnderCap({ db: tx, now: deps.now }, developerId, email),\n" +
+      "  );",
+    to: "  return linkEmailUnderCap(deps, developerId, email);",
+    test: `${SERVER}/test/developer-emails.test.ts`,
+    because:
+      "two admins — or one admin's retried request — linking aliases at once " +
+      "leave a developer with rows past the cap that no admin surface can " +
+      "show or remove, while absence matching keeps attributing commits from " +
+      "every one of them",
+  },
+  {
     // The load-bearing half of the agent-restart check (trial finding #8):
     // "in THIS repo". A name-and-age match alone warns on every two-project
     // dev machine, and that noise is how doctors get ignored.
@@ -4833,7 +4932,8 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
- * PRINTS: packages/server/test/developer-emails.test.ts 1
+ * PRINTS: packages/server/test/developer-emails.test.ts 2
+ * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
