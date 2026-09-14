@@ -222,3 +222,5 @@ reader opens is a pull, and §2.1 scopes mute to unasked surfaces.
 - PGlite concurrency validation outcome (see §2) — may flip the default deploy story.
 - Embedding default: ship keyless-degraded as default, or prompt for a key during `init`?
 - First dogfood team and success metric (proposal: hint-precision ≥ 0.5 pulled/delivered and ≥1 documented prevented collision per week).
+
+The 1.0 spec set — scope, build order and the ten acceptance tests — lives in [docs/1.0/README.md](1.0/README.md).
