@@ -32,6 +32,7 @@ const CONNECTOR = "packages/connector-claude";
 const CORE = "packages/connector-core";
 const CLI = "packages/cli";
 const SERVER = "packages/server";
+const SCHEMA = "packages/schema";
 const ACP = "packages/connector-acp";
 const CURSOR = "packages/connector-cursor";
 
@@ -4623,6 +4624,167 @@ export const MUTATIONS: readonly Mutation[] = [
       "and flows/hint.ts runs this scan over the whole user prompt on " +
       "UserPromptSubmit, which has no length bound at all",
   },
+  {
+    // THE trust guarantee of the whole pin registry, and it rests on one
+    // literal. review_draft is a tool an agent can point at its OWN draft and
+    // its header says "the agent now vouches" — so nothing but the wire type
+    // stands between that and a machine writing "Nick checked this works".
+    // The field is `presence` — the EVIDENCE a client states, which the hub
+    // stamps the stored mode from — since the trust fix retired
+    // `captureMode: "human"`, the caller's own verdict about itself; this
+    // anchor pointed at the retired line and the script died on it.
+    label: "an agent can sign a pin as a human's word",
+    file: `${SCHEMA}/src/pin.ts`,
+    from: "  presence: z.literal(PIN_PRESENCE_TERMINAL),",
+    to: "  presence: z.string(),",
+    test: `${SERVER}/test/pins.test.ts`,
+    because:
+      "the one provenance a person is supposed to own becomes writable by " +
+      "the agent whose work it is meant to judge, and every later reader is " +
+      'told a human "verified this works" when none did',
+  },
+  {
+    // THE OTHER HALF of the pin registry's trust boundary, and the half that
+    // unlocks naming a person. `/:id/broke` is the falsifier `suspect` reads
+    // before it prints a single session, and it shipped taking an EMPTY body
+    // from any key. Weakening this literal used to leave the whole pins suite
+    // green — the empty-body test refuses `{}` for its MISSING REPO, so it
+    // never saw the evidence gate go — and the repo is not a secret to
+    // anything holding the key. "refuses a retraction that names the repo but
+    // states no evidence" exists to pin exactly this line.
+    label: "the falsifier unlocks naming without stating any evidence",
+    file: `${SERVER}/src/routes/pins.ts`,
+    from: "  presence: z.literal(PIN_PRESENCE_TERMINAL),",
+    to: "  presence: z.literal(PIN_PRESENCE_TERMINAL).optional(),",
+    test: `${SERVER}/test/pins.test.ts`,
+    because:
+      "an agent that knows the repo name trips the brake behind \"name " +
+      "nobody before the recheck recipe has RUN AND FAILED\", turning " +
+      "\"nothing is named yet\" into a ranked accusation on its own word",
+  },
+  {
+    // The same route's other scope. A retraction is not a global verb.
+    label: "one key's retraction reaches a pin in any repo on the hub",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "and(eq(pins.id, pinId), eq(pins.repo, repo), isNull(pins.brokeAt))",
+    to: "and(eq(pins.id, pinId), isNull(pins.brokeAt))",
+    test: `${SERVER}/test/pins.test.ts`,
+    because:
+      "any checkout retracts any other team's pin by id alone, and the row " +
+      "it flips is the one suspect reads before it names somebody",
+  },
+  {
+    // Raw overlap is a popularity contest: whoever touches the most files is
+    // in the most pins, so suspect would name the busiest teammate for every
+    // breakage in the repo.
+    label: "suspect ranks by raw overlap instead of lift",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "        lift: row.overlap / authorTouches,",
+    to: "        lift: row.overlap,",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because:
+      "the hardest-working person becomes the standing suspect, which is " +
+      "both wrong and the fastest way to make a team switch the feature off",
+  },
+  {
+    // "No clear suspect" has to be a real answer, not a slot that always
+    // fills. A top-three printed regardless of separation reads as evidence.
+    label: "a tie prints three names instead of no clear suspect",
+    file: `${SERVER}/src/services/suspect.ts`,
+    from: "  return top.lift >= runnerUp.lift * SUSPECT_SEPARATION_RATIO;",
+    to: "  return true;",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because:
+      "indistinguishable candidates are rendered as a ranking, so a reader " +
+      "acts on an order the data does not support",
+  },
+  {
+    // Silence has two causes and they must not look alike: a tidy repo, and a
+    // lane that never got to run.
+    label: "a git lane that mostly skips reads as a quiet repo",
+    file: `${CORE}/src/state/git-lane-cost.ts`,
+    from: "  cost.skipped >= MIN_SKIPS_TO_WARN && cost.skipped > cost.ran",
+    to: "  false",
+    test: `${CLI}/test/pin-observability.test.ts`,
+    because:
+      "suspect goes blind to codemods and `sed -i` while doctor reports " +
+      "nothing wrong, so the under-reporting is invisible to the one person " +
+      "who could raise the hook timeout",
+  },
+  {
+    // The other half of that verdict, and the one that shipped wrong: WHAT it
+    // compares. `skipped` counts turns, `recorded` counts files, and an
+    // install whose every edit goes through the Edit tool records no files
+    // however well the lane runs — so the file-to-turn form was red forever
+    // and the remedy it named could never clear it.
+    label: "the git lane's verdict weighs skipped turns against recorded files",
+    file: `${CORE}/src/state/git-lane-cost.ts`,
+    from: "  cost.skipped >= MIN_SKIPS_TO_WARN && cost.skipped > cost.ran",
+    to: "  cost.skipped >= MIN_SKIPS_TO_WARN && cost.skipped > cost.recorded",
+    test: `${CORE}/test/git-lane-cost.test.ts`,
+    because:
+      "doctor cries wolf on precisely the healthy install it is meant to " +
+      "clear, and a WARN nobody can act on is one every reader learns to " +
+      "scroll past — including on the day the lane really is starved",
+  },
+  {
+    // A verdict reached because the budget ran out is a verdict about this
+    // process, not about the repository.
+    label: "an unfinished rename sweep retires pins it never looked at",
+    file: `${CORE}/src/git/pin-sweep.ts`,
+    from: '      swept.push({ path, resolved: null, status: "unknown" });',
+    to: '      swept.push({ path, resolved: null, status: "missing" });',
+    test: `${CORE}/test/pin-sweep.test.ts`,
+    because:
+      "pins are reported broken on the strength of a call budget, so a large " +
+      "repo retires working references and doctor prints the loss as a fact",
+  },
+  {
+    // The probe that decides whether ANY answer may be believed. It has to ask
+    // about THIS repository: git walks the tree upward, so a checkout that
+    // lost its .git inside another repository gets a confident answer about a
+    // repository that never heard of these paths. CI found the original on
+    // macos-latest, where the runner's TMPDIR has an enclosing repository;
+    // ubuntu and every developer Mac stayed green.
+    label: "a sweep believes an answer about a different repository",
+    file: `${CORE}/src/git/pin-sweep.ts`,
+    from: "    return (await realpath(toplevel)) === (await realpath(repoRoot));",
+    to: "    return true;",
+    test: `${CORE}/test/pin-sweep.test.ts`,
+    because:
+      "every path of a checkout whose .git is gone reads as missing instead " +
+      "of unknown, and one sweep retires the entire registry — the single " +
+      "outcome this module's header promises it will never produce",
+  },
+  {
+    // Only the side that BUILT the body can split it: the route caps the
+    // array with zod `.max()`, which refuses a whole body rather than
+    // truncating it, so a client that stopped chunking is refused outright
+    // from 101 two-file pins upward — measured with the real binary.
+    label: "the pin sweep sends the whole registry in one request again",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "    const chunk = updates.slice(start, start + MAX_PIN_SWEEP_UPDATES);",
+    to: "    const chunk = updates;",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "the hub answers `Too big`, `crosscheck pin --sweep` records nothing " +
+      "and names no remedy, and the register stops being maintained on any " +
+      "team past a hundred two-file pins",
+  },
+  {
+    // The page lists live and retracted pins alike; coverage.pins counts the
+    // live ones. Compared against the live count, the notice went quiet the
+    // moment retractions filled the page — measured: 252 pins, 92 retracted,
+    // 200 listed, zero "showing" lines.
+    label: "the pin list compares its page against the live count again",
+    file: `${CLI}/src/cli/pin-render.ts`,
+    from: "  const total = registry.coverage.pins + registry.coverage.broken;",
+    to: "  const total = registry.coverage.pins;",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "52 pins are absent from the listing and nothing says so, which on a " +
+      "five-year repo is the steady state rather than the edge case",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -4679,6 +4841,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
+ * PRINTS: packages/cli/test/pin-observability.test.ts 1
+ * PRINTS: packages/cli/test/pins-cli.test.ts 2
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
@@ -4730,6 +4894,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
+ * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
  * PRINTS: packages/connector-core/test/hint-render.test.ts 3
@@ -4744,6 +4909,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
+ * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
@@ -4771,6 +4937,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
+ * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 1
@@ -4786,6 +4953,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
+ * PRINTS: packages/server/test/suspect.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */

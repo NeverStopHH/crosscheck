@@ -102,14 +102,22 @@ export const hintDeliveryRecord = (
     now,
   );
 
+/**
+ * WHICH lane saw a file (regression-guard Stage 1). Omitted means the tool
+ * lane, which is what every target minted before Stage 1 was — so an old
+ * spool replays as itself instead of as an unlabelled unknown.
+ */
+export type TargetSource = "tool_edit" | "git_diff";
+
 export const targetRecord = (
   workContextId: string,
   kind: TargetKind,
   value: string,
   producer: Producer,
   now: Date,
+  source: TargetSource = "tool_edit",
 ): Envelope =>
-  buildEnvelope("target", { workContextId, kind, value }, producer, now);
+  buildEnvelope("target", { workContextId, kind, value, source }, producer, now);
 
 /** Flush-time rewrite: ingest rejects records from an ended producer session. */
 export const withProducer = (

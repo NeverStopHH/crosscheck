@@ -19,14 +19,18 @@ import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identit
 import {
   getAbsences,
   getHintStats,
+  getPins,
   getPresence,
   getPrivacySettings,
   getQuestions,
   getSolvedMatchCounts,
+  getTeamSettings,
 } from "@crosscheck/connector-core/http/hub.ts";
+import { resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { readCaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import type { CaptureHealth } from "@crosscheck/connector-core/state/capture-health.ts";
 import type { HintStats, HubResult } from "@crosscheck/connector-core/http/hub.ts";
+import { pinStatusLines } from "./pin-observability.ts";
 import { presenceStateLine } from "./privacy.ts";
 import { readDropSummary, readUnrecordedDrop } from "@crosscheck/connector-core/spool/drops.ts";
 import {
@@ -40,6 +44,10 @@ import {
   formatConferenceCost,
   readConferenceCost,
 } from "@crosscheck/connector-core/state/conference-cost.ts";
+import {
+  formatGitLaneCost,
+  summarizeGitLaneCost,
+} from "@crosscheck/connector-core/state/git-lane-cost.ts";
 import {
   formatGhostCost,
   formatIntentCost,
@@ -182,6 +190,10 @@ export const runStatus = async (
   // then the gated model half with the not-called count named, so a quiet
   // team never reads as a broken runner.
   const ghostCost = summarizeGhostCost(liveStates.states);
+  // The regression guard's SECOND evidence lane (Stage 1). Printed beside the
+  // other per-session counters and out of the same one scan: a lane whose
+  // skips are never shown is a blind spot `suspect` answers out of.
+  const gitLaneCost = summarizeGitLaneCost(liveStates.states);
   // The conference counters (VISION.md §2). A LOCAL file rather than session
   // state: a conference is a command, often run from a scheduler at 03:00,
   // and its numbers must survive on a machine with no live session at all.
@@ -250,6 +262,26 @@ export const runStatus = async (
   const solvedLines = solvedCounts.ok
     ? [`solved-tree pointers: ${formatSolvedCounts(solvedCounts.data)}`]
     : [];
+  // The regression guard's coverage (Stage 1). THE DENOMINATOR IS THE LINE:
+  // a pin count without "nothing else is watched" beside it reads as
+  // protection of a repo nobody pinned. An unreachable hub prints UNKNOWN
+  // rather than nothing, because a missing line is the one reading this
+  // feature may never produce — silence that looks like safety.
+  const pins = await getPins(hubCtx, identity.repoId);
+  const teamSettings = await getTeamSettings(hubCtx, identity.repoId);
+  const pinLines = pins.ok
+    ? pinStatusLines(
+        pins.data,
+        // The EFFECTIVE list, defaults included — the shadowing question is
+        // about what actually suppresses capture, not about what this
+        // developer added to it.
+        resolveDenylist(config.denylist ?? undefined),
+        teamSettings.ok ? teamSettings.data : null,
+        now,
+      )
+    : [
+        "pins: coverage UNKNOWN — the hub did not answer, so nothing here says what is watched",
+      ];
   const privacy = await getPrivacySettings(hubCtx);
   const privacyLines = privacy.ok
     ? [
@@ -315,12 +347,14 @@ export const runStatus = async (
       ...foreignDropLines,
       ...questionLines,
       ...solvedLines,
+      ...pinLines,
       targetsLine(captureHealth, now),
       hintsLine(captureHealth, hintStats),
       tripwireLine(env),
       `summarizer: ${formatSummarizerCost(summarizerCost)}`,
       `intent: ${formatIntentCost(intentCost)}`,
       `ghost checks: ${formatGhostCost(ghostCost)}`,
+      `git evidence lane: ${formatGitLaneCost(gitLaneCost)}`,
       `conference: ${formatConferenceCost(conferenceCost, now)}`,
       // The CAPTURE stamp, not `lastOkAt`: only register/heartbeat/records/end
       // move it, so this age is the hook path's and not this command's (H5).
