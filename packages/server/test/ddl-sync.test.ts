@@ -195,6 +195,31 @@ describe("bootstrap.sql DDL sync", () => {
     expect(await hasStaleAt()).toBe(false);
   });
 
+  test("the claim commit-binding columns are added and their CHECK is guarded", async () => {
+    // Arrange: the drizzle schema declares both columns and the CHECK, so
+    // bootstrap.sql — the DDL a real-Postgres hub runs — must add exactly the
+    // same two, with the same NOT NULL default, and add the constraint under
+    // the ADD-CONSTRAINT guard rather than on every start.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    expect(bootstrapSql).toContain(
+      "ALTER TABLE claims ADD COLUMN IF NOT EXISTS observed_at_commit text;",
+    );
+    expect(bootstrapSql).toContain(
+      "ALTER TABLE claims ADD COLUMN IF NOT EXISTS commit_binding text NOT NULL DEFAULT 'none';",
+    );
+    const guard = guardedBlockContaining(
+      bootstrapSql,
+      "claims_commit_binding_check",
+    );
+    expect(guard).toContain("IF NOT EXISTS (");
+    expect(guard).toContain(
+      "CHECK ((observed_at_commit IS NULL) = (commit_binding = 'none'));",
+    );
+    expect(bootstrapSql).not.toMatch(/^ALTER TABLE claims ADD CONSTRAINT/m);
+  });
+
   test("work_context_targets.created_at is added for the #19 pointer age", async () => {
     // Arrange: the drizzle column is nullable, so bootstrap must add it with
     // the same ADD COLUMN IF NOT EXISTS evolution idiom or a fresh DB and an

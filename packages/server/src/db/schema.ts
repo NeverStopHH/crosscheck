@@ -19,6 +19,7 @@ import {
 import {
   ARTIFACT_SENSITIVITIES,
   CAPTURE_MODES,
+  CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
   CLAIM_STATUSES,
   EDGE_KINDS,
@@ -272,6 +273,28 @@ export const claims = pgTable(
     provenance: text("provenance", { enum: PROVENANCES }).notNull(),
     dedupCount: integer("dedup_count").notNull().default(1),
     lastSeenAt: timestamptz("last_seen_at"),
+    /**
+     * WHICH COMMIT THIS CLAIM WAS OBSERVED AT — the code state the assertion
+     * is about, not the clock it was written on (1.0 spec 02 §3.1).
+     *
+     * Written ONCE at INSERT and never updated, so the append-only property
+     * `services/hints.ts:68-70` relies on ("revision means a NEW claim")
+     * survives: the only columns ingest ever bumps on an existing claim are
+     * dedup_count and last_seen_at.
+     *
+     * NULL exactly when `commitBinding` is "none", enforced by
+     * claims_commit_binding_check below rather than promised by a service.
+     */
+    observedAtCommit: text("observed_at_commit"),
+    /**
+     * How precisely the commit above is known — CLAIM_COMMIT_BINDINGS. The
+     * default is the honest answer for every row written before this column
+     * existed and for every connector too old to send one: bound to nothing,
+     * which fails CLOSED (never unsolicited substance, never revalidatable).
+     */
+    commitBinding: text("commit_binding", { enum: CLAIM_COMMIT_BINDINGS })
+      .notNull()
+      .default("none"),
     // Persisted wire refs; materializing supports-edges from them is a
     // follow-up because referenced claims may arrive later in the same flush.
     evidenceRefs: jsonb("evidence_refs")
@@ -288,6 +311,15 @@ export const claims = pgTable(
     check(
       "claims_body_length_check",
       sql`char_length(${table.body}) <= ${sql.raw(String(MAX_CLAIM_BODY_LENGTH))}`,
+    ),
+    // "No commit means no binding" as a DATABASE fact, the shape
+    // questions_addressee_check uses. Without it the two columns can
+    // disagree, and a reader of claim_validity is told something nobody
+    // measured — a commit filed under "bound to nothing", or a binding
+    // claiming a commit that is not there.
+    check(
+      "claims_commit_binding_check",
+      sql`(${table.observedAtCommit} IS NULL) = (${table.commitBinding} = 'none')`,
     ),
     // `work_context_id` is a foreign key, which Postgres does NOT index on
     // its own, and three hot readers ask "the claims of THESE contexts,

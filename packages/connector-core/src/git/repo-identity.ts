@@ -225,7 +225,15 @@ const resolveLocalRepoId = async (
   return localRepoId(`${rootCommit}\n${mainCheckout}`);
 };
 
-const NO_COMMIT_SHA = "0000000";
+/**
+ * What `baseCommit` is when git could not name HEAD at all — an unborn branch,
+ * a repository with no commits, a git that did not answer.
+ *
+ * EXPORTED because the hub's claim binding has to recognise it: a claim whose
+ * only code state is this placeholder is bound to nothing, and comparing
+ * against a magic literal in a second place is how the two drift apart.
+ */
+export const NO_COMMIT_SHA = "0000000";
 
 /**
  * The branch label of a detached HEAD: this prefix plus git's own `--short`

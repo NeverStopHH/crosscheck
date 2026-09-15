@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
+
 /**
  * One connector's bounded git reading of which commits are ancestors of the
  * repo's default branch (DESIGN.md §5 merged-branch detection). Like commit
@@ -10,13 +12,6 @@ import { z } from "zod";
  * branch", never "this context is done".
  */
 export const MAX_LANDED_COMMITS = 20;
-
-/**
- * A commit named on the wire must already look like an object name — the
- * same guard the connector's own git callers apply (COMMIT_SHA_PATTERN in
- * git/commit-drift.ts): nothing flag- or prose-shaped may reach git or SQL.
- */
-const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;
 
 /** Longest ref label a connector may claim it checked against. */
 const MAX_DEFAULT_BRANCH_CHARS = 200;

@@ -1,3 +1,5 @@
+import { COMMIT_SHA_PATTERN } from "@crosscheck/schema";
+
 import { DRIFT_GIT_TIMEOUT_MS, MAX_DRIFT_LOOKUPS } from "../constants.ts";
 import { runGit } from "./git.ts";
 
@@ -11,10 +13,14 @@ export interface CommitDrift {
 
 /**
  * Only a plain object name reaches git — never a value that could read as a
- * flag. Exported: the landed ancestry check (capture/landed.ts) guards its
- * commits with the same alphabet, and two copies would be two things to widen.
+ * flag. Re-exported rather than redeclared: the pattern now lives in
+ * `@crosscheck/schema` (commit-sha.ts), which is where the landed-evidence
+ * wire schema and the claim-binding wire schema both read it from, so there is
+ * ONE thing to widen. The re-export keeps this module's existing importers
+ * (capture/landed.ts, git/claim-drift.ts) pointing at the git layer they
+ * belong to.
  */
-export const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;
+export { COMMIT_SHA_PATTERN } from "@crosscheck/schema";
 
 const RADIX = 10;
 

@@ -554,6 +554,28 @@ $$;
 
 -- ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
 
+-- WHICH COMMIT A CLAIM WAS OBSERVED AT, and how precisely we know it. Written
+-- once at INSERT and never updated, so `claims` stays append-only apart from
+-- the two telemetry columns ingest already bumps (dedup_count, last_seen_at).
+--
+--   reported      — the emitter sent its own HEAD with the claim
+--   session_base  — no commit on the wire, so ingest read the author
+--                   session's base_commit. An APPROXIMATION, not a bound:
+--                   base_commit is re-written on every re-registration
+--                   (services/sessions.ts), so it can sit either side of the
+--                   real observation point.
+--   none          — nothing usable: the NO_COMMIT_SHA placeholder, a session
+--                   registered with a label rather than a sha, or a hub row
+--                   that predates these columns. Never revalidated, never
+--                   substance (spec 02 §8.5).
+--
+-- ALTER with a DEFAULT so one statement covers a fresh database and one
+-- created before the columns existed, and the default is what every existing
+-- row actually is: bound to nothing.
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS observed_at_commit text;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS commit_binding text NOT NULL DEFAULT 'none';
+
+
 -- `stale_at` IS RETIRED, NOT REDEFINED. It had one declaration and no writer:
 -- no INSERT, no UPDATE, no service, no job, and it was not on the wire, so
 -- every reader got a permanent NULL that `get_diagnosis` shipped as a claim's
@@ -581,6 +603,28 @@ BEGIN
       AND column_name = 'stale_at'
   ) THEN
     ALTER TABLE claims DROP COLUMN stale_at;
+  END IF;
+END
+$$;
+
+-- THE TWO COLUMNS MAY NOT DISAGREE, and that is a database fact rather than a
+-- service promise — the shape questions_addressee_check uses. A commit stored
+-- under 'none' would read as unbindable while carrying a bindable commit; a
+-- NULL under 'session_base' would read as bound to nothing at all. Either way
+-- a reader of `claim_validity` is told something nobody measured.
+--
+-- GUARDED for the body-length widener's reason: ADD CONSTRAINT takes ACCESS
+-- EXCLUSIVE and revalidates every row, and this file runs on every hub start.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'claims_commit_binding_check'
+      AND conrelid = 'claims'::regclass
+  ) THEN
+    ALTER TABLE claims ADD CONSTRAINT claims_commit_binding_check
+      CHECK ((observed_at_commit IS NULL) = (commit_binding = 'none'));
   END IF;
 END
 $$;

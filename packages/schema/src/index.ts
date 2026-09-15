@@ -2,10 +2,16 @@ export {
   ARTIFACT_SENSITIVITIES,
   ArtifactSensitivitySchema,
   CAPTURE_MODES,
+  CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
+  CLAIM_REVALIDATION_BASES,
+  CLAIM_REVALIDATION_RESULTS,
   CLAIM_STATUSES,
   CaptureModeSchema,
+  ClaimCommitBindingSchema,
   ClaimKindSchema,
+  ClaimRevalidationBasisSchema,
+  ClaimRevalidationResultSchema,
   ClaimStatusSchema,
   EDGE_KINDS,
   EdgeKindSchema,
@@ -22,7 +28,10 @@ export {
 export type {
   ArtifactSensitivity,
   CaptureMode,
+  ClaimCommitBinding,
   ClaimKind,
+  ClaimRevalidationBasis,
+  ClaimRevalidationResult,
   ClaimStatus,
   EdgeKind,
   Provenance,
@@ -31,6 +40,8 @@ export type {
   TargetKind,
   TargetSource,
 } from "./enums.ts";
+
+export { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
 
 export {
   ClaimEdgeSchema,
