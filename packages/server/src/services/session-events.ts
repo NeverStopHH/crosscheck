@@ -250,6 +250,16 @@ export const recordSessionEvent = async (
  * thirty days keeps its body and loses its position, so a verdict on old work
  * can still say WHAT was claimed and no longer WHETHER the reason predated the
  * change.
+ *
+ * AND IT RETIRES THE SKELETON WITH THE DETAIL — the part to weigh before this
+ * shape is read as final. Every column here is already a ref or an enum (no
+ * body, no prose, no path — non-negotiable #6), so the row this DELETE removes
+ * IS very nearly the causal skeleton: the ids, the kind, the epoch and the
+ * position. No setting on this sweep keeps `A happens-before B` while letting
+ * the surrounding detail go, because the surrounding detail was never in this
+ * table — it is in the rows `ref_id` points at, each on its own retention. So
+ * retiring content sooner than proven order is a change to the MODEL, a tier
+ * that outlives what it orders, and not a different number in this constant.
  */
 export const pruneSessionEvents = async (deps: Deps): Promise<void> => {
   const cutoff = new Date(
