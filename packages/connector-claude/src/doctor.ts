@@ -41,7 +41,7 @@ const check = (
  * these sentences are the same on every Claude machine.
  *
  * VERIFY: bun -e 'const {claudeDoctorChecks:c}=await import("./packages/connector-claude/src/doctor.ts");console.log(c().length, c().map(l=>l.name).join(","), new Set(c().map(l=>l.level)).size)'
- * PRINTS: 6 intent (claude-code),ghost (claude-code),summarizer (claude-code),conference (claude-code),event_seq (claude-code),git lane blind spots (claude-code) 1
+ * PRINTS: 7 intent (claude-code),ghost (claude-code),summarizer (claude-code),conference (claude-code),event_seq (claude-code),intent timing events (claude-code),git lane blind spots (claude-code) 1
  */
 export const claudeDoctorChecks = (): readonly ClaudeCheck[] => [
   ...CLAUDE_CAPABILITY_MANIFEST.capabilities.map((capability) =>
@@ -51,10 +51,16 @@ export const claudeDoctorChecks = (): readonly ClaudeCheck[] => [
       `${capability.rung} — ${capability.sentence}`,
     ),
   ),
-  // One entry today, and it arrived with the causal order: this host runs the
-  // ONLY Stop-time git lane, so it is the only host that has to say what that
-  // lane cannot see. Rendered from the manifest, so a refusal added there
-  // prints here without a second edit — a decision nobody can find is a bug.
+  // Rendered from the manifest, so a refusal added there prints here without
+  // a second edit — a decision nobody can find is a bug. WHICH ones are live
+  // is named by the directive above and deliberately not counted here, because
+  // counting them here is how this block went stale: a refusal reached the
+  // manifest, rendered correctly, and left a hand-written total above it that
+  // said six while the function returned seven. They arrive by two routes. One
+  // is carried by reference from core because the fact is about the MODEL and
+  // holds on every host, so the three manifests cannot drift apart while it is
+  // true. The other is this host's alone: it runs the only Stop-time git lane,
+  // so this is the only section that has to say what that lane cannot see.
   ...CLAUDE_CAPABILITY_MANIFEST.refusals.map((refusal) =>
     check("PASS", `${refusal.name} (claude-code)`, refusal.sentence),
   ),
