@@ -7,12 +7,14 @@ export {
   CLAIM_REVALIDATION_BASES,
   CLAIM_REVALIDATION_RESULTS,
   CLAIM_STATUSES,
+  CLAIM_VALIDITY_STATES,
   CaptureModeSchema,
   ClaimCommitBindingSchema,
   ClaimKindSchema,
   ClaimRevalidationBasisSchema,
   ClaimRevalidationResultSchema,
   ClaimStatusSchema,
+  ClaimValidityStateSchema,
   EDGE_KINDS,
   EdgeKindSchema,
   PROVENANCES,
@@ -33,6 +35,7 @@ export type {
   ClaimRevalidationBasis,
   ClaimRevalidationResult,
   ClaimStatus,
+  ClaimValidityState,
   EdgeKind,
   Provenance,
   SessionStatus,
@@ -120,12 +123,14 @@ export type {
 export {
   ClaimRevalidationEntrySchema,
   ClaimRevalidationReportSchema,
+  ClaimValiditySchema,
   MAX_CLAIM_REVALIDATION_ENTRIES,
   MAX_CLAIM_TOUCHING_COMMITS,
 } from "./claim-revalidation.ts";
 export type {
   ClaimRevalidationEntry,
   ClaimRevalidationReport,
+  ClaimValidity,
 } from "./claim-revalidation.ts";
 
 export {

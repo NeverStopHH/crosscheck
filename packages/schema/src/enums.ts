@@ -106,6 +106,29 @@ export const CLAIM_REVALIDATION_RESULTS = [
   "unknown",
 ] as const;
 
+/**
+ * HOW MUCH A RECORDED CLAIM IS STILL WORTH ABOUT THE CODE (1.0 spec 02 §3.5).
+ *
+ * Five states, derived on read by ONE function — server
+ * services/claim-validity.ts — and never stored. The vocabulary lives here so
+ * the hub and every connector spell it identically; the RESOLUTION lives there
+ * so there is one place that decides.
+ *
+ *   current      a revalidation looked and the surface had not moved
+ *   superseded   a `supersedes` edge points at this claim
+ *   invalidated  the author set status `rejected`
+ *   stale        a revalidation looked and the surface HAD moved
+ *   unknown      nobody looked, the look failed, or the claim is bound to
+ *                no commit at all
+ */
+export const CLAIM_VALIDITY_STATES = [
+  "current",
+  "superseded",
+  "invalidated",
+  "stale",
+  "unknown",
+] as const;
+
 export const ARTIFACT_SENSITIVITIES = [
   "team_visible",
   "needs_approval",
@@ -113,6 +136,7 @@ export const ARTIFACT_SENSITIVITIES = [
 
 export const ClaimKindSchema = z.enum(CLAIM_KINDS);
 export const ClaimCommitBindingSchema = z.enum(CLAIM_COMMIT_BINDINGS);
+export const ClaimValidityStateSchema = z.enum(CLAIM_VALIDITY_STATES);
 export const ClaimRevalidationBasisSchema = z.enum(CLAIM_REVALIDATION_BASES);
 export const ClaimRevalidationResultSchema = z.enum(CLAIM_REVALIDATION_RESULTS);
 export const ClaimStatusSchema = z.enum(CLAIM_STATUSES);
@@ -126,6 +150,7 @@ export const ArtifactSensitivitySchema = z.enum(ARTIFACT_SENSITIVITIES);
 
 export type ClaimKind = z.infer<typeof ClaimKindSchema>;
 export type ClaimCommitBinding = z.infer<typeof ClaimCommitBindingSchema>;
+export type ClaimValidityState = z.infer<typeof ClaimValidityStateSchema>;
 export type ClaimRevalidationBasis = z.infer<typeof ClaimRevalidationBasisSchema>;
 export type ClaimRevalidationResult = z.infer<typeof ClaimRevalidationResultSchema>;
 export type ClaimStatus = z.infer<typeof ClaimStatusSchema>;

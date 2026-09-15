@@ -21,8 +21,10 @@ import { z } from "zod";
 
 import { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
 import {
+  ClaimCommitBindingSchema,
   ClaimRevalidationBasisSchema,
   ClaimRevalidationResultSchema,
+  ClaimValidityStateSchema,
 } from "./enums.ts";
 import { MAX_RECORD_ID_LENGTH, SAFE_ID_PATTERN } from "./question.ts";
 
@@ -117,3 +119,24 @@ export const ClaimRevalidationReportSchema = z
 
 export type ClaimRevalidationEntry = z.infer<typeof ClaimRevalidationEntrySchema>;
 export type ClaimRevalidationReport = z.infer<typeof ClaimRevalidationReportSchema>;
+
+/**
+ * The derived record every claim-bearing surface carries beside the claim.
+ *
+ * Shipped rather than recomputed: the hub holds the edges and the
+ * revalidation rows, the connector holds neither, and a connector that
+ * re-derived a state from three fields would be the second definition this
+ * whole spec exists to prevent.
+ */
+export const ClaimValiditySchema = z.looseObject({
+  state: ClaimValidityStateSchema,
+  observedAtCommit: z.string().nullable(),
+  commitBinding: ClaimCommitBindingSchema,
+  basis: ClaimRevalidationBasisSchema.nullable(),
+  touchingCommits: z.array(commitSha).max(MAX_CLAIM_TOUCHING_COMMITS).default([]),
+  touchingTotal: z.number().int().min(0).nullable().default(null),
+  lastRevalidatedAt: z.string().nullable(),
+  supersededByClaimId: z.string().nullable(),
+});
+
+export type ClaimValidity = z.infer<typeof ClaimValiditySchema>;

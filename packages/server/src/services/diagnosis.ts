@@ -10,8 +10,14 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
+import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import { notMutedCondition } from "./visibility.ts";
+import type { ClaimRevalidationReading } from "./claim-validity.ts";
+import type { ClaimValidity } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
+
+/** Same-author revision edge; its TARGET is the retracted claim (DESIGN.md §5). */
+const SUPERSEDES_EDGE_KIND = "supersedes";
 
 /** Upper bound on claims returned per diagnosis tree; excess sets `truncated`. */
 export const DIAGNOSIS_MAX_CLAIMS = 500;
@@ -125,6 +131,12 @@ export interface ClaimView {
   readonly dedupCount: number;
   readonly evidenceRefs: readonly string[];
   readonly lastSeenAt: string | null;
+  /**
+   * How much this claim is still worth about the CODE (1.0 spec 02). Derived
+   * on read by services/claim-validity.ts — the one authority — and shipped
+   * rather than left for a connector to recompute from three fields.
+   */
+  readonly validity: ClaimValidity;
   readonly createdAt: string;
 }
 
@@ -188,11 +200,11 @@ interface AttributedClaimRow {
   readonly authorDeveloperName: string;
 }
 
-const toClaimView = ({
-  claim: row,
-  authorDeveloperId,
-  authorDeveloperName,
-}: AttributedClaimRow): ClaimView => ({
+const toClaimView = (
+  { claim: row, authorDeveloperId, authorDeveloperName }: AttributedClaimRow,
+  revalidation: ClaimRevalidationReading | undefined,
+  supersededByClaimId: string | null,
+): ClaimView => ({
   id: row.id,
   workContextId: row.workContextId,
   authorSessionId: row.authorSessionId,
@@ -207,6 +219,7 @@ const toClaimView = ({
   dedupCount: row.dedupCount,
   evidenceRefs: row.evidenceRefs,
   lastSeenAt: toIsoOrNull(row.lastSeenAt),
+  validity: claimValidity(row, revalidation, supersededByClaimId),
   createdAt: row.createdAt.toISOString(),
 });
 
@@ -451,9 +464,29 @@ export const getDiagnosis = async (
   );
   const targets = await listDiagnosisTargets(db, workContextId);
 
+  // THE SUPERSEDED LEG COSTS NOTHING HERE. Every edge touching the tree's
+  // claims is already loaded above, so the "is this claim a supersedes
+  // target" question is answered from memory — only hints and referee, which
+  // hold one page of claims and no edges, need the batched IN (…).
+  const supersededBy = new Map(
+    edgeRows
+      .filter(
+        (edge) =>
+          edge.kind === SUPERSEDES_EDGE_KIND && localClaimIds.has(edge.toClaimId),
+      )
+      .map((edge) => [edge.toClaimId, edge.fromClaimId] as const),
+  );
+  const revalidations = await loadRevalidations(db, [...localClaimIds]);
+
   return {
     workContext: toWorkContextView(contextRow.workContext, contextRow.baseCommit),
-    claims: claimRows.map(toClaimView),
+    claims: claimRows.map((row) =>
+      toClaimView(
+        row,
+        revalidations.get(row.claim.id),
+        supersededBy.get(row.claim.id) ?? null,
+      ),
+    ),
     edges: edgeRows.map(toClaimEdgeView),
     externalClaims,
     targets,

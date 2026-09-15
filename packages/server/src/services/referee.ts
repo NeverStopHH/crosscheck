@@ -46,6 +46,9 @@ import {
   findContradictionById,
 } from "./contradictions.ts";
 import type { CandidateSide, ContradictionView } from "./contradictions.ts";
+import { claimValidity, loadRevalidations } from "./claim-validity.ts";
+import type { ClaimValidityInput } from "./claim-validity.ts";
+import type { ClaimValidity } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
 
 /** Evidence claims one position may cite in a brief; excess sets the flag. */
@@ -90,6 +93,12 @@ export interface RefereePositionView {
   readonly ruledOutTruncated: boolean;
   /** Retirement honesty: the revision that retracted this position, if any. */
   readonly supersededByClaimId: string | null;
+  /**
+   * How much this position is still worth about the CODE (1.0 spec 02). The
+   * cheapest surface to wire: `supersededByClaimId` was already computed here,
+   * and `claimValidity` takes it verbatim rather than re-deriving it.
+   */
+  readonly validity: ClaimValidity;
 }
 
 export interface SharedTargetView {
@@ -111,6 +120,8 @@ export interface RefereeBriefView {
 interface LoadedClaim {
   readonly view: RefereeClaimView;
   readonly evidenceRefs: readonly string[];
+  /** The binding columns claimValidity reads — kept off the rendered view. */
+  readonly binding: ClaimValidityInput;
 }
 
 const loadClaims = async (
@@ -145,6 +156,11 @@ const loadClaims = async (
       createdAt: row.claim.createdAt.toISOString(),
     },
     evidenceRefs: row.claim.evidenceRefs,
+    binding: {
+      status: row.claim.status,
+      observedAtCommit: row.claim.observedAtCommit,
+      commitBinding: row.claim.commitBinding,
+    },
   }));
 };
 
@@ -352,11 +368,13 @@ const buildPosition = async (
   if (loaded === undefined) {
     return undefined;
   }
-  const [evidence, ruledOut, supersededByClaimId] = await Promise.all([
-    walkEvidence(db, loaded, [otherClaimId]),
-    listRuledOut(db, loaded.view.workContextId, loaded.view.authorDeveloperId),
-    findSupersededBy(db, side.id),
-  ]);
+  const [evidence, ruledOut, supersededByClaimId, revalidations] =
+    await Promise.all([
+      walkEvidence(db, loaded, [otherClaimId]),
+      listRuledOut(db, loaded.view.workContextId, loaded.view.authorDeveloperId),
+      findSupersededBy(db, side.id),
+      loadRevalidations(db, [side.id]),
+    ]);
   return {
     claim: loaded.view,
     workContextTitle: workContextTitles.get(loaded.view.workContextId) ?? "",
@@ -365,6 +383,11 @@ const buildPosition = async (
     ruledOut: ruledOut.ruledOut,
     ruledOutTruncated: ruledOut.truncated,
     supersededByClaimId,
+    validity: claimValidity(
+      loaded.binding,
+      revalidations.get(side.id),
+      supersededByClaimId,
+    ),
   };
 };
 
