@@ -307,20 +307,32 @@ describe("Stop's git lane positions what it observes", () => {
  * documented worst case under contention, not a measurement of this change.
  * This measures it.
  *
- * MEASURED ON THIS MACHINE, interleaved ON/OFF so machine drift cancels rather
- * than landing on one arm (n = 60 each, plus 300 isolated allocator calls):
+ * MEASURED ON THIS MACHINE. The reliable number is the ISOLATED one, because
+ * a hook's own wall clock is dominated by work that has nothing to do with
+ * this change (300 allocator calls, interleaved against the write every hook
+ * already performs):
  *
  *   allocateSeq alone          p95 2.66 ms · max 8.06 ms
  *   updateSessionState alone   p95 2.31 ms · max 6.10 ms   ← already paid
- *   post-tool-use              p95 delta  -9.6 .. -2.0 ms  (budget 1600 ms)
- *   post-tool-use-failure      p95 delta  -0.1 .. +0.0 ms  (budget  800 ms)
- *   stop                       p95 delta  +0.3 .. +3.8 ms  (budget  800 ms)
  *
- * Read those as an order of magnitude, not constants — they move with machine
- * load, which is why the assertions below compare against the BUDGET. The
- * finding they carry: one allocation costs the same as the state write every
- * one of these hooks already performs, and every delta is inside the noise of
- * a single run.
+ * THE FINDING: one allocation costs the same as the locked state write each of
+ * these hooks already makes. The documented ~100 ms worst case is
+ * SPOOL_LOCK_RETRIES × SPOOL_LOCK_RETRY_DELAY_MS — the price of CONTENTION,
+ * not of an uncontended acquisition.
+ *
+ * Whole-hook p95 deltas, interleaved ON/OFF so drift cancels rather than
+ * landing on one arm (n = 60 each, two runs):
+ *
+ *   post-tool-use          -2.0 and -9.6 ms          (budget 1600 ms)
+ *   post-tool-use-failure  +46.9 and -0.1 ms         (budget  800 ms)
+ *   stop                   +3.8 and +0.3 ms          (budget  800 ms)
+ *
+ * THE +46.9 ms IS REPORTED RATHER THAN DROPPED, and it is measurement noise: a
+ * second interleaved run of the identical harness gave -0.1 ms for the same
+ * hook, the isolated allocator above never exceeded 8.06 ms, and a competing
+ * test suite was running during the first. A negative delta is the same noise
+ * with the opposite sign. Read all six as an order of magnitude, which is why
+ * the assertion below compares against the BUDGET and not against a constant.
  *
  * THE TWO 800 ms HOOKS ALLOCATE NOTHING AT ALL, and that is checkable rather
  * than measured: UserPromptSubmit emits only `hint_delivery`, which is not a
