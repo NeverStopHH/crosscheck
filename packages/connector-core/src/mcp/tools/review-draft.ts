@@ -39,6 +39,7 @@ import {
   requireOwnContext,
 } from "./publish-claim.ts";
 import {
+  allocateToolSeq,
   envelopeFor,
   hubFailure,
   idArg,
@@ -48,6 +49,7 @@ import {
   parseArgs,
   resultAt,
 } from "./shared.ts";
+import { seqAt } from "../../capture/seq.ts";
 
 const ACTIONS = ["confirm", "edit", "discard"] as const;
 
@@ -260,9 +262,13 @@ export const run = async (
   };
   // One batch, claim before edge: ingest processes records in order, so the
   // edge finds both endpoints (services/records.ts).
+  // TWO positions in ONE block, claim then edge — the revision and the
+  // supersedes edge that retires the draft are one act, and an order that
+  // separated them would let a reader ask which came first.
+  const seq = await allocateToolSeq(ctx, own, 2);
   const posted = await postRecords(ctx.hub, [
-    envelopeFor(ctx, producer, "claim", claim),
-    envelopeFor(ctx, producer, "claim_edge", edge),
+    envelopeFor(ctx, producer, "claim", claim, seqAt(seq, 0)),
+    envelopeFor(ctx, producer, "claim_edge", edge, seqAt(seq, 1)),
   ]);
   if (!posted.ok) {
     return hubFailure(ctx, posted);

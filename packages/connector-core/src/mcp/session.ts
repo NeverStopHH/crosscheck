@@ -57,6 +57,23 @@ export interface OwnWorkContext {
   readonly workContextTitle: string | null;
   readonly workContextStatus: string | null;
   readonly startedAt: string;
+  /**
+   * THE PICK WAS A COIN FLIP (spec 01 §10 D1). True when more than one
+   * eligible state file matched this worktree root, or — when no root matched
+   * at all — when more than one session was eligible. The rule above still
+   * returns its deterministic answer; this says the answer is not evidence.
+   *
+   * Every MCP writer reads it and REFUSES THE POSITION, not the record: the
+   * claim or intent lands carrying `allocation_failed`, and only its place in
+   * the session's order is withheld. `set_intent` is exactly the call AT-4
+   * hangs on, so stamping the guess would let "did the amendment precede the
+   * edit" be answered confidently from a coin flip — and an amendment filed
+   * into ANOTHER session's order is worse than one filed into none.
+   *
+   * ONE BOUNDED BOOLEAN, not a list of candidates: nothing downstream may act
+   * on WHICH sessions collided, only on the fact that they did.
+   */
+  readonly sessionAmbiguous: boolean;
 }
 
 /**
@@ -116,6 +133,13 @@ export const resolveOwnWorkContext = async (
   if (chosen === undefined) {
     return null;
   }
+  // Counted at the PICK, where the evidence is, and nowhere else: two matches
+  // on this root means the root could not separate them, and zero matches with
+  // several candidates means the fall-through to newest-started is choosing
+  // between strangers. One match, or one candidate, is not a guess.
+  const rootMatches = sameRoot.filter(Boolean).length;
+  const sessionAmbiguous =
+    rootMatches > 1 || (rootMatches === 0 && eligible.length > 1);
   return {
     hostSessionKey: chosen.hostSessionKey,
     crosscheckSessionId: chosen.crosscheckSessionId,
@@ -124,5 +148,6 @@ export const resolveOwnWorkContext = async (
     workContextTitle: chosen.workContextTitle,
     workContextStatus: chosen.workContextStatus,
     startedAt: chosen.startedAt,
+    sessionAmbiguous,
   };
 };

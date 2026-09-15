@@ -39,6 +39,7 @@ import {
   requireOwnContext,
 } from "./publish-claim.ts";
 import {
+  allocateToolSeq,
   envelopeFor,
   hubFailure,
   idArg,
@@ -48,6 +49,7 @@ import {
   parseArgs,
   resultAt,
 } from "./shared.ts";
+import { seqAt } from "../../capture/seq.ts";
 import { MAX_ID_CHARS } from "../../constants.ts";
 import { quoted, quotingText, safeId } from "../render.ts";
 
@@ -289,9 +291,14 @@ export const run = async (
     sessionId: own.crosscheckSessionId,
     developerId: own.developerId,
   };
+  // TWO positions in ONE block, claim then edge, in the order they are
+  // posted: `claim.invalidated` has exactly two emitters in the whole tree
+  // and this is one of them, so an unpositioned edge here means no host
+  // without the MCP server can order an invalidation at all.
+  const seq = await allocateToolSeq(ctx, own, 2);
   const posted = await postRecords(ctx.hub, [
-    envelopeFor(ctx, producer, "claim", claim),
-    envelopeFor(ctx, producer, "claim_edge", edge),
+    envelopeFor(ctx, producer, "claim", claim, seqAt(seq, 0)),
+    envelopeFor(ctx, producer, "claim_edge", edge, seqAt(seq, 1)),
   ]);
   if (!posted.ok) {
     return hubFailure(ctx, posted);

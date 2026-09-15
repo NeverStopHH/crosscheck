@@ -23,6 +23,7 @@ import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { readSessionState } from "../../state/session-state.ts";
 import { postRecords } from "../../http/hub.ts";
 import {
+  allocateToolSeq,
   envelopeFor,
   hubFailure,
   issuesOf,
@@ -30,6 +31,7 @@ import {
   parseArgs,
   resultAt,
 } from "./shared.ts";
+import { seqAt } from "../../capture/seq.ts";
 
 /**
  * Neither confident nor dismissive. A model that omits `confidence` is not
@@ -201,8 +203,11 @@ export const run = async (
     sessionId: own.crosscheckSessionId,
     developerId: own.developerId,
   };
+  // One position, taken before the envelope: this tool posts DIRECTLY, so the
+  // record is on the wire the moment it is built.
+  const seq = await allocateToolSeq(ctx, own, 1);
   const posted = await postRecords(ctx.hub, [
-    envelopeFor(ctx, producer, "claim", claim),
+    envelopeFor(ctx, producer, "claim", claim, seqAt(seq, 0)),
   ]);
   if (!posted.ok) {
     return hubFailure(ctx, posted);

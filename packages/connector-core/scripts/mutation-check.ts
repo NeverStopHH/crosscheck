@@ -4976,6 +4976,35 @@ export const MUTATIONS: readonly Mutation[] = [
       "second is stored with no position at all — the git lane, which passes " +
       "the same flow, loses a whole codemod's worth of order this way",
   },
+  {
+    // Spec 01 §10 D1, Nick's decision. An MCP server is never told which
+    // session is calling it; the picker returns its best guess, and stamping
+    // that guess files an amendment into ANOTHER session's causal order.
+    label: "an MCP tool stamps the session it guessed at",
+    file: `${CORE}/src/mcp/tools/shared.ts`,
+    from:
+      "  own.sessionAmbiguous\n" +
+      "    ? null\n" +
+      "    : allocateSeq(ctx.config.home, own.hostSessionKey, count);",
+    to: "  allocateSeq(ctx.config.home, own.hostSessionKey, count);",
+    test: `${CORE}/test/mcp-seq-e2e.test.ts`,
+    because:
+      "in a two-agent worktree `set_intent` bumps the OTHER session's counter " +
+      "and files the amendment in its order, so AT-4 answers `declared " +
+      "before` or `declared after` from a coin flip — with full confidence",
+  },
+  {
+    // The detection half. A boolean that is never true is the same silence.
+    label: "the session picker never admits it guessed",
+    file: `${CORE}/src/mcp/session.ts`,
+    from: "    rootMatches > 1 || (rootMatches === 0 && eligible.length > 1);",
+    to: "    false;",
+    test: `${CORE}/test/mcp-seq-e2e.test.ts`,
+    because:
+      "every MCP position is stamped as though the pick were evidence, and " +
+      "doctor's count of ambiguous worktrees stays at zero on the very " +
+      "machines where it should be raising its hand",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
