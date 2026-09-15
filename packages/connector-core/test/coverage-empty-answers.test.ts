@@ -78,19 +78,24 @@ describe("COV-1: an empty search may not stand alone over a gap", () => {
     expect(output).toContain("Coverage unknown");
   });
 
-  test("a watched repo says so — nothing matched AND we were looking", () => {
+  test("a watched repo gets the bare sentence and NO caveat", () => {
     // Act
     const output = renderSearchResults([], "token refresh", {
       coverage: { record: watched(), now: NOW },
     });
 
-    // Assert: the strong answer, which is the whole reason the clause is
-    // unconditional rather than conditional on a gap. The unqualified
-    // sentence is HONEST here and stays — "no work context matched" is a
-    // claim about the repository, and this is the one state in which the
-    // repository and the archive are the same thing.
-    expect(output).toContain("Coverage complete");
+    // Assert: §5.1's hard rule binds "while `agent_event` or `git` is
+    // anything but `complete`". It does not ask for a sentence here, and the
+    // sentence it does not ask for is the expensive one: zero-hit searches
+    // are the ordinary case on any repo whose archive has not covered the
+    // topic yet, so on a healthy install EVERY coverage line a person ever
+    // read said `complete` — which is how the one that says `incomplete`
+    // gets skipped with the rest. The unqualified sentence IS the strong
+    // answer here: "no work context matched" is a claim about the
+    // repository, and this is the state in which the repository and the
+    // archive are the same thing.
     expect(output).toContain(BARE_NO_MATCH);
+    expect(output).not.toContain("Coverage");
   });
 
   test("an options object with NO coverage still qualifies the empty answer", () => {
@@ -187,14 +192,17 @@ describe("the diagnosis empty branches may not stand alone over a gap", () => {
     expect(output).toContain("Coverage incomplete");
   });
 
-  test("a watched tree keeps both sentences and says coverage is complete", () => {
+  test("a watched tree keeps both sentences and adds no caveat", () => {
     // Act
     const output = renderDiagnosis(tree(watched()), NOW);
 
-    // Assert
+    // Assert: same rule as the search branch above. A claim-less tree is the
+    // ordinary state of a work context nobody has published to yet, so a
+    // clause here would print on a healthy repo more often than anywhere
+    // else in the product.
     expect(output).toContain(CLAIMS_EMPTY);
     expect(output).toContain(TARGETS_EMPTY);
-    expect(output).toContain("Coverage complete");
+    expect(output).not.toContain("Coverage");
   });
 
   test("a tree WITH claims and targets carries no clause — the hard rule is about empties", () => {

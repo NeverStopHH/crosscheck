@@ -5070,13 +5070,46 @@ export const MUTATIONS: readonly Mutation[] = [
     // see.
     label: "an empty search answers under a gap as if it had looked",
     file: `${CORE}/src/mcp/render.ts`,
-    from: "  return `${sentence}${filtersNote}\\n${coverageQualifier(options.coverage)}`;",
+    from: `  const qualifier = coverageQualifier(options.coverage);
+  return \`\${sentence}\${filtersNote}\${qualifier === null ? "" : \`\\n\${qualifier}\`}\`;`,
     to: "  return `${sentence}${filtersNote}`;",
     test: `${CORE}/test/coverage-empty-answers.test.ts`,
     because:
       "an empty result carries no statement of how far the archive reached, " +
       "so a model reads it as `nobody has worked on this` and goes off to " +
       "redo the work — AT-1's failure condition, live on main",
+  },
+  {
+    // The rule is as WIDE as §5.1 and no wider. Rendering on `complete` too
+    // puts a 66-character sentence on every zero-hit search of every healthy
+    // repo, and a caveat that always says the same thing is how the one that
+    // says `incomplete` gets skipped with the rest.
+    label: "a caveat on every empty answer teaches people to ignore caveats",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: `  return mustQualifyEmptyAnswer(record)
+    ? coverageClause(record, view?.now ?? EPOCH)
+    : null;`,
+    to: "  return coverageClause(record, view?.now ?? EPOCH);",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "zero-hit searches are the ordinary case on any repo whose archive has " +
+      "not covered the topic yet, so on a healthy install every coverage " +
+      "line a person ever reads states the default",
+  },
+  {
+    // The diagnosis half of the same rule: a claim-less tree is the ordinary
+    // state of a work context nobody has published to yet.
+    label: "a watched tree is caveated for having no claims yet",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: `  const qualifier =
+    emitsEmptyPhrasing && gapped ? [coverageClause(diagnosis.coverage, now)] : [];`,
+    to: `  const qualifier = emitsEmptyPhrasing
+    ? [coverageClause(diagnosis.coverage, now)]
+    : [];`,
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "every `get_diagnosis` on a tree with no claims carries a caveat whose " +
+      "body says nothing is missing, on a repo where nothing is",
   },
   {
     // The other half of the same sentence. "No work context matched" is a
@@ -5507,7 +5540,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
- * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 3
+ * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 5
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 9

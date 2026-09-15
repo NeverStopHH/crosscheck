@@ -882,9 +882,8 @@ export const renderDiagnosis = (
   const targetLines = targetsStateLines(diagnosis, gapped);
   const emitsEmptyPhrasing =
     diagnosis.claims.length === 0 || saysNoTargets(diagnosis);
-  const qualifier = emitsEmptyPhrasing
-    ? [coverageClause(diagnosis.coverage, now)]
-    : [];
+  const qualifier =
+    emitsEmptyPhrasing && gapped ? [coverageClause(diagnosis.coverage, now)] : [];
   const opening =
     diagnosis.claims.length === 0
       ? [
@@ -1144,15 +1143,32 @@ export interface SearchRenderOptions {
 const EPOCH = new Date(0);
 
 /**
- * §5.1's HARD rule, in the one place every empty answer passes through. It is
- * UNCONDITIONAL — it renders on `complete` too — because "nothing matched,
- * and we were watching" is a stronger answer than "nothing matched", and one
- * code path is harder to get wrong than a branch nobody exercises.
+ * §5.1's HARD rule, in the one place every empty answer passes through, AND
+ * EXACTLY AS WIDE AS THE RULE: it binds "while `agent_event` or `git` is
+ * anything but `complete`", which is `mustQualifyEmptyAnswer` and nothing
+ * else. An earlier shape rendered on `complete` too, on the argument that
+ * "nothing matched and we WERE watching" is the stronger answer. It is — but
+ * the sentence that carries it is the expensive one: zero-hit searches and
+ * claim-less trees are the ordinary case on any repo whose archive has not
+ * covered the topic yet, so on a healthy install every coverage line a person
+ * ever read said `complete`, and a caveat that always says the same thing is
+ * how the one that says `incomplete` gets skipped with the rest. The
+ * unqualified sentence already carries the good news: under `complete` it
+ * reads "No work context ON THIS REPO matched", a claim about the repository
+ * rather than about the archive, which the gapped branch may not make.
+ *
+ * An ABSENT record still renders — absent is `unknown`, never `complete`
+ * (§4) — so a caller that forgot the field shouts rather than passing for a
+ * watched repo. `crosscheck status` keeps its line unconditionally: every
+ * other line of that command prints its state whatever the state is, and
+ * AT-9 names it as the surface a person should not have to run doctor after.
  */
-const coverageQualifier = (view: CoverageView | undefined): string =>
-  view === undefined
-    ? coverageClause(UNKNOWN_COVERAGE, EPOCH)
-    : coverageClause(view.record, view.now);
+const coverageQualifier = (view: CoverageView | undefined): string | null => {
+  const record = view?.record ?? UNKNOWN_COVERAGE;
+  return mustQualifyEmptyAnswer(record)
+    ? coverageClause(record, view?.now ?? EPOCH)
+    : null;
+};
 
 const searchMethodLine = (options: SearchRenderOptions): string =>
   options.semanticTier === true
@@ -1245,7 +1261,8 @@ const noMatchLine = (options: SearchRenderOptions): string => {
       ? ""
       : ` Those filters are part of that answer: other words, a longer ` +
         "window or another teammate may well match.";
-  return `${sentence}${filtersNote}\n${coverageQualifier(options.coverage)}`;
+  const qualifier = coverageQualifier(options.coverage);
+  return `${sentence}${filtersNote}${qualifier === null ? "" : `\n${qualifier}`}`;
 };
 
 /**
