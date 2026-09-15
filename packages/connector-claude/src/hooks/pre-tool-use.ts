@@ -137,11 +137,20 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   if (!result.ok) {
     return "";
   }
-  const [teammate] = result.data;
+  const [teammate] = result.data.sessions;
   if (teammate === undefined) {
     return "";
   }
-  const reason = renderTripwireReason(teammate, file, ctx.now());
+  // The ask reason states what a teammate is doing; the record states how far
+  // the archive that claim came from reaches (03 §5.1). It annotates only on
+  // a positively observed gap, so an un-upgraded hub leaves this line
+  // byte-identical to what it was.
+  const reason = renderTripwireReason(
+    teammate,
+    file,
+    ctx.now(),
+    result.data.coverage,
+  );
   const mode = resolveTripwireMode(ctx.env);
   // The marker is CLAIMED atomically — check-and-set under the state lock, on
   // the freshest state: a sibling PreToolUse racing this one finds the marker

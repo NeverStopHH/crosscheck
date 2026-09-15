@@ -5058,6 +5058,35 @@ export const MUTATIONS: readonly Mutation[] = [
       "so the verdict layer reads five unknowns and every suspect answer " +
       "becomes either silent or unjudgeable",
   },
+  {
+    // fitHint drops from the TAIL and returns "" below two kept lines, so a
+    // clause appended blindly either goes first (harmless) or takes the hint
+    // with it — a silence nobody asked for, on the one surface whose whole
+    // job is to say something.
+    label: "the coverage caveat costs the hint it was meant to qualify",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return joined.length <= MAX_HINT_TEXT_LENGTH ? joined : hint;",
+    to: "  return joined;",
+    test: `${CORE}/test/coverage-hints.test.ts`,
+    because:
+      "a full-length hint plus the clause exceeds the wire cap, and the " +
+      "delivery the reader needed is truncated or dropped for a caveat that " +
+      "doctor and status already carry",
+  },
+  {
+    // The PreToolUse ask states what a teammate is doing; the note states how
+    // far the archive that claim came from reaches. Dropped, the ask reads as
+    // a complete picture of who is in the file.
+    label: "the ask reason states a teammate and not what was watched",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    ...(note === null ? [] : [note]),",
+    to: "    ...[],",
+    test: `${CORE}/test/coverage-hints.test.ts`,
+    because:
+      "the one surface that interrupts a tool call says nothing about the " +
+      "window it rests on, so a gap that hid a second teammate is invisible " +
+      "at exactly the moment somebody is deciding whether to edit",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5167,6 +5196,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 3
+ * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1

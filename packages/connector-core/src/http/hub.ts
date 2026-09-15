@@ -1080,18 +1080,22 @@ export interface HintCandidatesResult {
    * then behaves exactly as it did before R2.
    */
   readonly answers: readonly AnsweredQuestion[];
+  /** How far the archive behind a delivered hint reaches (03 §3.5). */
+  readonly coverage: CoverageRecord;
 }
 
 const HintCandidatesResponseSchema = z
   .looseObject({
     candidates: z.array(z.unknown()).default([]),
     answers: z.array(z.unknown()).default([]),
+    coverage: z.unknown().optional(),
   })
   .transform(
     (value): HintCandidatesResult => ({
       // Tolerant rows, silent drop — a candidate list is advisory by nature.
       candidates: parseRows(value.candidates, HintContextCandidateSchema).rows,
       answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
+      coverage: parseCoverage(value.coverage),
     }),
   );
 
@@ -1586,17 +1590,35 @@ export const TripwireSessionSchema = z.looseObject({
 
 export type TripwireSession = z.infer<typeof TripwireSessionSchema>;
 
+export interface TripwireOutcome {
+  readonly sessions: readonly TripwireSession[];
+  /** Never absent: a hub that reported none yields UNKNOWN_COVERAGE. */
+  readonly coverage: CoverageRecord;
+}
+
+const TripwireResponseSchema = z
+  .looseObject({
+    sessions: z.array(z.unknown()).default([]),
+    coverage: z.unknown().optional(),
+  })
+  .transform(
+    (value): TripwireOutcome => ({
+      sessions: parseRows(value.sessions, TripwireSessionSchema).rows,
+      coverage: parseCoverage(value.coverage),
+    }),
+  );
+
 /** The PreToolUse tripwire's ONE bounded hub call (DESIGN.md §4). */
 export const getTripwireSessions = (
   ctx: HubContext,
   repo: string,
   value: string,
-): Promise<HubResult<readonly TripwireSession[]>> => {
+): Promise<HubResult<TripwireOutcome>> => {
   const params = new URLSearchParams({ repo, value });
   return hubRequest(ctx, {
     method: "GET",
     path: `/api/hints/tripwire?${params.toString()}`,
-    schema: tolerantList("sessions", TripwireSessionSchema),
+    schema: TripwireResponseSchema,
   });
 };
 

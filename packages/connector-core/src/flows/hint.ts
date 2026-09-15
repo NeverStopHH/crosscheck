@@ -45,6 +45,7 @@ import {
   renderAnswerHint,
   renderClaimHint,
   renderPointerHint,
+  withCoverageNote,
 } from "../hints/render.ts";
 import { selectHint } from "../hints/select.ts";
 import type { HintSelection } from "../hints/select.ts";
@@ -213,8 +214,11 @@ export const selectAndRenderHint = async (
         bodyHash: hintBodyHash(answer.claimBody),
         text,
       };
+      // The note rides the EMITTED text, never the remembered one: the
+      // delivery record is what dedup and the echo-loop exclusion hash, and a
+      // caveat that changed from day to day would defeat both.
       return (await rememberHintDelivery(input, state, delivery, true))
-        ? text
+        ? withCoverageNote(text, result.data.coverage, input.now)
         : "";
     }
   }
@@ -240,5 +244,5 @@ export const selectAndRenderHint = async (
   if (!remembered) {
     return "";
   }
-  return delivery.text;
+  return withCoverageNote(delivery.text, result.data.coverage, input.now);
 };
