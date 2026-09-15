@@ -4860,6 +4860,33 @@ export const MUTATIONS: readonly Mutation[] = [
       "commit evidence at all becomes judgeable — the exact shape of AT-5's " +
       "false accusation",
   },
+  {
+    // The term this spec's own first draft was missing. Without it a verdict
+    // is reachable while a lane the system watches is still mid-flight.
+    label: "a verdict is reachable while a watched lane is mid-flight",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: `  stateOf(record, "git") === "complete" &&
+  record.sources.every((row) => row.state !== "incomplete");`,
+    to: '  stateOf(record, "git") === "complete";',
+    test: `${SERVER}/test/coverage-judgeable.test.ts`,
+    because:
+      "the moment CI ingestion lands, a repo with a half-reported lane is " +
+      "judgeable again and `no_touch` becomes UNATTRIBUTED over a gap the " +
+      "hub can see — AT-5's failure condition, word for word",
+  },
+  {
+    // The opposite over-correction: treat a rung that CANNOT EXIST as a gap
+    // and no verdict is ever reachable, which makes the predicate useless and
+    // invites the next author to delete it.
+    label: "a rung nobody built blocks every verdict for ever",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: 'record.sources.every((row) => row.state !== "incomplete");',
+    to: 'record.sources.every((row) => row.state === "complete");',
+    test: `${SERVER}/test/coverage-judgeable.test.ts`,
+    because:
+      "runtime is unavailable for the whole of 1.0, so every record on every " +
+      "repo becomes unjudgeable and INDETERMINATE stops meaning anything",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5007,6 +5034,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
+ * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage.test.ts 5
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5

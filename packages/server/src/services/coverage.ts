@@ -378,6 +378,39 @@ const readGitCoverage = async (
   );
 };
 
+const stateOf = (
+  record: CoverageRecord,
+  source: CoverageSource,
+): CoverageState | undefined =>
+  record.sources.find((row) => row.source === source)?.state;
+
+/**
+ * PRINCIPLE 1 — "only judge when you know you were watching" — AS A FUNCTION.
+ * AT-5 is decided by this and nothing else; 04's verdict layer CALLS it and
+ * must never recompute it, because two spellings of "were we watching" are
+ * two answers the moment one of them is edited.
+ *
+ * THE THIRD TERM IS NOT DECORATION. The first shape read `agent_event` and
+ * `git` only. 04 gates `no_touch` on this predicate and on nothing else
+ * coverage-shaped, so the moment 05 lands and a repo's `ci` source reads
+ * `incomplete` — some expected lanes reported and some did not, or a lane is
+ * mid-flight — a pin-lane `no_touch` answer would still have emitted
+ * `UNATTRIBUTED`. The system would have said "nobody in the record did this"
+ * while knowing a lane it watches had not finished. That is AT-5's "fails if"
+ * verbatim, and it was reachable from inside this spec's own predicate.
+ *
+ * `incomplete` IS THE ONLY DISQUALIFYING STATE FOR THE OTHER THREE,
+ * DELIBERATELY. A rung that cannot exist (`unavailable`) must not block
+ * judging, or with `runtime` permanently unavailable no verdict is ever
+ * reachable and the predicate is useless; and `unknown` on a rung nobody
+ * reports is the ordinary state of a fresh install. AT-5 names a KNOWN gap,
+ * and `incomplete` is the only state that is one.
+ */
+export const isJudgeable = (record: CoverageRecord): boolean =>
+  stateOf(record, "agent_event") === "complete" &&
+  stateOf(record, "git") === "complete" &&
+  record.sources.every((row) => row.state !== "incomplete");
+
 /**
  * The five rows for one repo, always, in order.
  *
