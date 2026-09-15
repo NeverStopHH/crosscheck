@@ -4863,6 +4863,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "duplicate and receives no position, so the half of the session after " +
       "the compact has one fewer event than it had",
   },
+  {
+    // Spec 01 §3.5. A POSITION IS TAKEN ONCE. The partial unique index is what
+    // turns a restarted counter or a second home into a counted conflict; a
+    // plain index lets two events sit at one point and the order answers
+    // "which came first" with a coin flip. bootstrap.sql is the DDL the test
+    // harness actually runs, so mutating it alone reddens the guard.
+    label: "two events may sit at one position in a session",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE UNIQUE INDEX IF NOT EXISTS session_events_position_idx",
+    to: "CREATE INDEX IF NOT EXISTS session_events_position_idx",
+    test: `${SERVER}/test/session-event-conflict.test.ts`,
+    because:
+      "a connector whose counter restarted files its whole second half over " +
+      "its first, and every comparison inside that session answers " +
+      "confidently from two events that both claim position 4",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
