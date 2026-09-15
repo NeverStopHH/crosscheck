@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 343
+    # PRINTS: 345
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -243,9 +243,9 @@ jobs:
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/search-tokens.ts 4
     # PRINTS: packages/server/src/services/search.ts 10
-    # PRINTS: packages/server/src/services/session-events.ts 3
+    # PRINTS: packages/server/src/services/session-events.ts 4
     # PRINTS: packages/server/src/services/session-order.ts 4
-    # PRINTS: packages/server/src/services/sessions.ts 3
+    # PRINTS: packages/server/src/services/sessions.ts 4
     # PRINTS: packages/server/src/services/solved-counts.ts 1
     # PRINTS: packages/server/src/services/solved-matches.ts 9
     # PRINTS: packages/server/src/services/solved.ts 1
@@ -332,13 +332,13 @@ jobs:
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 9
     # PRINTS: seq-cost.ts 1
-    # PRINTS: session-events.ts 3
+    # PRINTS: session-events.ts 4
     # PRINTS: session-order.ts 4
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 3
     # PRINTS: session-state.ts 9
     # PRINTS: session.ts 2
-    # PRINTS: sessions.ts 3
+    # PRINTS: sessions.ts 4
     # PRINTS: set-intent.ts 2
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 1

@@ -542,6 +542,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS session_events_position_idx
   WHERE seq_epoch IS NOT NULL;
 CREATE INDEX IF NOT EXISTS session_events_session_kind_idx
   ON session_events (session_id, kind);
+-- Retention sweeps by AGE, because a session is terminal and nothing ever
+-- revisits its key. Without this the sweep scans every event on the hub.
+CREATE INDEX IF NOT EXISTS session_events_observed_at_idx
+  ON session_events (observed_at);
 
 -- TEAM-level settings for the regression guard, one row per repo. ABSENT
 -- MEANS DEFAULTS ("anyone" may pin; `suspect` names sessions) — nothing

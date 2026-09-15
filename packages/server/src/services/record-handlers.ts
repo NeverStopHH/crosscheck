@@ -21,7 +21,6 @@ import {
 import { appendEvent } from "./events.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
 import {
-  pruneSessionEvents,
   recordSessionEvent,
   targetDigest,
   windowFloorOf,
@@ -374,7 +373,6 @@ export const ingestTarget = async (
       refKind: "target_digest",
       refId: targetDigest(body.workContextId, body.kind, body.value),
     });
-    await pruneSessionEvents(deps, owner.sessionId);
   };
   const inserted = await deps.db
     .insert(workContextTargets)
@@ -691,7 +689,6 @@ export const ingestClaimWithin = async (
     refKind: "claim",
     refId: body.id,
   });
-  await pruneSessionEvents(txDeps, body.authorSessionId);
   return accepted(body.id);
 };
 
@@ -837,7 +834,6 @@ export const ingestClaimEdge = async (
       refKind: "claim_edge",
       refId: body.id,
     });
-    await pruneSessionEvents(deps, body.authorSessionId);
   }
   return accepted(body.id);
 };

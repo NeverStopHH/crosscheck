@@ -4992,6 +4992,34 @@ export const MUTATIONS: readonly Mutation[] = [
       "a confident sentence about an ordering nobody observed",
   },
   {
+    // D2's retention was keyed on a session and ran in-band on a write for
+    // that same session — and a session is TERMINAL, so nothing ever revisits
+    // the key. It could only fire inside a session alive for over 30 days.
+    label: "a retention rule prunes only sessions that never end",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  await pruneSessionEvents(deps);\n",
+    to: "",
+    test: `${SERVER}/test/session-event-retention.test.ts`,
+    because:
+      "every position of every ended session survives forever, so a fence " +
+      "verdict on year-old work still answers whether the reason predated " +
+      "the change — the exact thing D2 chose to give up — and the table " +
+      "grows on a hub whose only other retention was bounded to avoid that",
+  },
+  {
+    // The cutoff is the decision itself. Zero retires a position the moment
+    // it is written, which reads as a working sweep in every count.
+    label: "a position is retired the moment it is written",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "    deps.now().getTime() - SESSION_EVENT_RETENTION_DAYS * MS_PER_DAY,",
+    to: "    deps.now().getTime(),",
+    test: `${SERVER}/test/session-event-retention.test.ts`,
+    because:
+      "a live session's own order is swept out from under it on the next " +
+      "reaper pass, so AT-4 is unanswerable for work in progress and the " +
+      "session reports `pre_seq_connector` for events it positioned itself",
+  },
+  {
     // Spec 01 §3.2 row 1. `session.started` is the ONE position nothing
     // allocates — the counter is minted at 0 and hands out from 1 — so the
     // register call is the only place it can be sent from.
@@ -5358,6 +5386,7 @@ interface Outcome {
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
  * PRINTS: packages/server/test/session-event-conflict.test.ts 1
+ * PRINTS: packages/server/test/session-event-retention.test.ts 2
  * PRINTS: packages/server/test/session-event-seq-kind.test.ts 2
  * PRINTS: packages/server/test/session-events.test.ts 2
  * PRINTS: packages/server/test/session-order-window.test.ts 3

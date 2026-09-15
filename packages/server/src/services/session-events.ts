@@ -224,35 +224,40 @@ export const recordSessionEvent = async (
 };
 
 /**
- * RETENTION, in the transaction that writes rather than in a job nobody runs.
- * The hub has exactly one standalone sweep (the session reaper) and adding a
- * second for this would be a second thing to forget to start;
- * `ingestCommitEvidence` already prunes in-band for the same reason.
+ * RETENTION, ON THE ONE PASS THE HUB ALREADY RUNS — and the first version of
+ * this could never fire at all.
  *
- * SCOPED TO ONE SESSION, because a session holds roughly five hundred rows
- * (MAX_SEEN_TARGETS bounds its targets) and an unscoped delete on every write
- * would scan the table for every event on the hub.
+ * It was keyed on ONE session and called in-band on a write for that same
+ * session. A session is TERMINAL: after `session.ended` no record is ever
+ * ingested for it again, so the key was never revisited and the rows could
+ * only be retired while the session was still alive — when every row is
+ * younger than the session itself. It could only ever fire inside a session
+ * that had been alive for more than thirty days.
+ *
+ * THE HOUSE PATTERN IT COPIED DOES NOT HAVE THIS SHAPE. `ingestCommitEvidence`
+ * prunes keyed by REPO, which every later session of every teammate revisits —
+ * that constant's own comment names "the next ingest for their repo" as the
+ * bound on the table's growth. Nothing revisits an ended session.
+ *
+ * SO IT SWEEPS BY AGE, from inside `reapStaleSessions`. That is not a second
+ * job to forget to start — it is the hub's ONE standalone pass, on a timer —
+ * and it runs BEFORE that pass's own early return, because a retirement that
+ * only happens when there is also a session to close is the same defect with a
+ * different key. `session_events_observed_at_idx` is what keeps it an index
+ * range rather than a scan of every event on the hub.
  *
  * WHAT THIRTY DAYS COSTS, chosen rather than discovered: a claim older than
  * thirty days keeps its body and loses its position, so a verdict on old work
  * can still say WHAT was claimed and no longer WHETHER the reason predated the
  * change.
  */
-export const pruneSessionEvents = async (
-  deps: Deps,
-  sessionId: string,
-): Promise<void> => {
+export const pruneSessionEvents = async (deps: Deps): Promise<void> => {
   const cutoff = new Date(
     deps.now().getTime() - SESSION_EVENT_RETENTION_DAYS * MS_PER_DAY,
   );
   await deps.db
     .delete(sessionEvents)
-    .where(
-      and(
-        eq(sessionEvents.sessionId, sessionId),
-        lt(sessionEvents.observedAt, cutoff),
-      ),
-    );
+    .where(lt(sessionEvents.observedAt, cutoff));
 };
 
 export interface SessionEventCounts {

@@ -9,7 +9,7 @@ import {
 } from "../constants.ts";
 import { agentSessions } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
-import { recordSessionEvent } from "./session-events.ts";
+import { pruneSessionEvents, recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { RegisterSessionBody } from "../http/schemas.ts";
@@ -309,6 +309,12 @@ export const reapStaleSessions = async (
     options.limit ?? SESSION_REAP_MAX_PER_PASS,
     SESSION_REAP_MAX_PER_PASS,
   );
+  // D2's retention, on the one standalone pass this hub runs. BEFORE the early
+  // return below, not after: a session's events can only be retired by age,
+  // because a session is terminal and nothing writes for it again — so a sweep
+  // that ran only when the pass also found a session to close would be the
+  // same unreachable rule with a different key.
+  await pruneSessionEvents(deps);
   // Candidates first, then one UPDATE by id: a bare `UPDATE … LIMIT` is not
   // portable, and the two-step keeps the write bounded by construction.
   const candidates = await deps.db

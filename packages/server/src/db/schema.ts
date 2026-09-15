@@ -736,6 +736,10 @@ export const sessionEvents = pgTable(
       .on(table.sessionId, table.seqEpoch, table.seqN)
       .where(sql`${table.seqEpoch} IS NOT NULL`),
     index("session_events_session_kind_idx").on(table.sessionId, table.kind),
+    // RETENTION READS THIS AND NOTHING ELSE. The sweep is keyed by AGE, not by
+    // session — a session is terminal, so nothing ever revisits its key — and
+    // without this index that sweep scans every event on the hub every pass.
+    index("session_events_observed_at_idx").on(table.observedAt),
   ],
 );
 

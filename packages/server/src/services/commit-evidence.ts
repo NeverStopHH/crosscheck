@@ -6,7 +6,7 @@ import type { SeqField } from "@crosscheck/schema";
 
 import { COMMIT_EVIDENCE_RETENTION_DAYS } from "../constants.ts";
 import { commitEvidence } from "../db/schema.ts";
-import { pruneSessionEvents, recordSessionEvent } from "./session-events.ts";
+import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { HandlerOutcome } from "./record-handlers.ts";
@@ -134,7 +134,6 @@ export const ingestCommitEvidence = async (
           refId: producerSessionId,
         },
       );
-      await pruneSessionEvents({ db: tx, now: deps.now }, producerSessionId);
     }
     return { status: "accepted" };
   });
