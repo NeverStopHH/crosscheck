@@ -47,6 +47,18 @@ export const AMBIGUOUS_SESSION: SeqRefusal = {
 };
 
 /**
+ * A position that existed and could not survive DELIVERY. A flush rewrites a
+ * dead session's backlog into the flushing session's name, and a position
+ * belongs to one session's counter — so for a body that does not name its own
+ * session the position has nowhere to be filed. Deleting the field said
+ * "a connector from before this protocol" about a current connector; this says
+ * what actually happened.
+ */
+export const FOREIGN_SESSION_DELIVERY: SeqRefusal = {
+  reason: "foreign_session_delivery",
+};
+
+/**
  * What an allocator hands back: a block, a refusal it already knows the name
  * of, or nothing at all. A `null` still means `allocation_failed` — that is
  * every allocator that failed at the LOCK, which is the only thing it could

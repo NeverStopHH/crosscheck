@@ -5303,6 +5303,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "whole cost — a refused position rather than a guessed one — buys a " +
       "false accusation instead of a silence",
   },
+  {
+    // An ABSENT seq and a REFUSED one are different facts, and the wire enum's
+    // own header forbids confounding them. This line was producing the
+    // confound the header sits above.
+    label: "a position withheld by design is reported as an old connector",
+    file: `${CORE}/src/capture/records.ts`,
+    from: "    ...(losesItsPosition ? { seq: FOREIGN_SESSION_DELIVERY } : {}),",
+    to: "    ...(losesItsPosition ? { seq: undefined } : {}),",
+    test: `${CORE}/test/seq-flush-rewrite.test.ts`,
+    because:
+      "every record an offline backlog delivers through a successor session " +
+      "is filed as a connector too old to carry a position, so the one " +
+      "instrumentation number that says how much of the fleet predates the " +
+      "field counts machines that are running the current build",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5443,6 +5458,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
+ * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-seq.test.ts 3
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 1

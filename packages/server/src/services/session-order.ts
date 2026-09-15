@@ -40,6 +40,7 @@ export const CAUSAL_ORDER_REASONS = [
   "pre_seq_connector",
   "allocation_failed",
   "ambiguous_session_assignment",
+  "foreign_session_delivery",
   "reaped_end",
 ] as const;
 
@@ -127,13 +128,16 @@ const windowStart = (event: OrderedEvent): number =>
  * close one and will not clear otherwise — so it outranks `allocation_failed`,
  * which means this machine tried and could not (a busy lock, a deleted state
  * file) and clears on its own. `reaped_end` is the hub's own inference from
- * silence and is nobody's bug. `pre_seq_connector` is the baseline: an envelope
- * that carried no position at all.
+ * silence and `foreign_session_delivery` is a backlog a successor session
+ * drained; both are nobody's bug and neither has a remedy, so they sit below
+ * the two that do. `pre_seq_connector` is the baseline: an envelope that
+ * carried no position at all, from a connector too old to have the field.
  */
 const ABSENCE_PRIORITY: readonly CausalOrderReason[] = [
   "ambiguous_session_assignment",
   "allocation_failed",
   "reaped_end",
+  "foreign_session_delivery",
   "pre_seq_connector",
 ];
 

@@ -90,6 +90,14 @@ export const SeqStampSchema = z.object({
  *                                  taken at all (§10 D1). Nothing clears until
  *                                  one of the two sessions ends, and the remedy
  *                                  is a person closing one of them.
+ *   foreign_session_delivery     — the emitter HAD a position and it could not
+ *                                  survive delivery. A flush rewrites a dead
+ *                                  session's backlog into the flushing
+ *                                  session's name, and a position belongs to
+ *                                  ONE session's counter: carrying A's epoch
+ *                                  into B's sequence would mark B's entire
+ *                                  causal order broken for a reason that is
+ *                                  not B's. Nobody's bug, and no remedy.
  *
  * One word for both would send the reader of a permanently ambiguous worktree
  * to wait for a lock that was never contended — and the ambiguous case is the
@@ -102,6 +110,7 @@ export const SeqStampSchema = z.object({
 export const SEQ_REFUSAL_REASONS = [
   "allocation_failed",
   "ambiguous_session_assignment",
+  "foreign_session_delivery",
 ] as const;
 
 export const SeqRefusalSchema = z.object({

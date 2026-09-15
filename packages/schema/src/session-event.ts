@@ -84,8 +84,14 @@ export type EventRefKind = (typeof EVENT_REF_KINDS)[number];
  *
  *   sequenced         — it has one.
  *   pre_seq_connector — the envelope carried no `seq` at all: a connector from
- *                       before the field, or a record whose position could not
- *                       survive delivery by a foreign session.
+ *                       before this protocol field, and nothing else. It used
+ *                       to mean a second thing — a record whose position could
+ *                       not survive delivery by a foreign session — and that
+ *                       second meaning was a CONFOUND: it said "too old for
+ *                       the field" about a current connector that had withheld
+ *                       a position on purpose. That case has its own reason
+ *                       below, and this one is a statement about the emitter's
+ *                       VERSION again.
  *   allocation_failed — a seq-capable emitter tried and could not: no state
  *                       file, a state file from before the field, or a lock
  *                       that stayed busy. Every one of those clears on its own.
@@ -95,6 +101,11 @@ export type EventRefKind = (typeof EVENT_REF_KINDS)[number];
  *                       taken and the picker's guess was not stamped. It does
  *                       NOT clear on its own: it lasts until one of the two
  *                       sessions ends, which is why it is not the word above.
+ *   foreign_session_delivery
+ *                     — the emitter had a position and the flush that
+ *                       delivered the record moved it into another session's
+ *                       name, where the position could not be filed. Withheld
+ *                       by design; nobody's bug and no remedy.
  *   epoch_conflict    — the position was already taken in this session by a
  *                       DIFFERENT event. The record is kept and the position
  *                       is dropped: rejecting would destroy the record, because
@@ -108,6 +119,7 @@ export const SEQ_REASONS = [
   "pre_seq_connector",
   "allocation_failed",
   "ambiguous_session_assignment",
+  "foreign_session_delivery",
   "epoch_conflict",
   "reaped_end",
 ] as const;
