@@ -4951,6 +4951,35 @@ export const MUTATIONS: readonly Mutation[] = [
       "runtime is unavailable on every install for the whole of 1.0, so the " +
       "note would render on literally every briefing and stop being read",
   },
+  {
+    // The defect 03 §1 names at one line. This file already knows "nothing
+    // matched" is the expensive direction to be wrong in — renderUnusableQuery
+    // says so — and drew the distinction for a query it could not tokenise
+    // and a filter it could not resolve, but not for an archive it could not
+    // see.
+    label: "an empty search answers under a gap as if it had looked",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  return `${sentence}${filtersNote}\n${coverageQualifier(options.coverage)}`;",
+    to: "  return `${sentence}${filtersNote}`;",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "an empty result carries no statement of how far the archive reached, " +
+      "so a model reads it as `nobody has worked on this` and goes off to " +
+      "redo the work — AT-1's failure condition, live on main",
+  },
+  {
+    // The other half of the same sentence. "No work context matched" is a
+    // claim about the REPOSITORY and is only true if the repository was
+    // watched; under a gap it has to narrow to a claim about the ARCHIVE.
+    label: "an empty answer claims the repository, not the archive",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  const sentence = mustQualifyEmptyAnswer(record)",
+    to: "  const sentence = false && mustQualifyEmptyAnswer(record)",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "the unqualified sentence comes back over a known gap and the clause " +
+      "beside it reads as a footnote rather than as the correction it is",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5058,6 +5087,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1

@@ -1041,12 +1041,15 @@ describe("renderSearchResults", () => {
   });
 
   test("says it found nothing rather than returning an empty string", () => {
-    // Act
+    // Act: no coverage passed, which is what an un-upgraded hub yields — so
+    // the sentence is the one narrowed to the ARCHIVE rather than the claim
+    // about the repository (03 §5.1, test/coverage-empty-answers.test.ts).
     const rendered = renderSearchResults([], "nothing matches this");
 
     // Assert
     expect(rendered.length).toBeGreaterThan(0);
-    expect(rendered.toLowerCase()).toContain("no work context");
+    expect(rendered.toLowerCase()).toContain("matched that query");
+    expect(rendered.toLowerCase()).toContain("nothing in what was observed");
   });
 
   test("distinguishes a query that could not be searched from one that missed", () => {
@@ -1261,7 +1264,7 @@ describe("renderSearchResults names the filters that ran", () => {
     });
 
     // Assert
-    expect(rendered.toLowerCase()).toContain("no work context");
+    expect(rendered.toLowerCase()).toContain("matched that query");
     expect(rendered).toContain("from Ken");
     expect(rendered).toContain("in the last 14d");
     expect(rendered.toLowerCase()).toContain("part of that answer");

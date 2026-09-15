@@ -36,6 +36,12 @@ import {
 } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
 import {
+  coverageClause,
+  mustQualifyEmptyAnswer,
+} from "../coverage/render.ts";
+import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
+import type { CoverageRecord } from "../http/coverage.ts";
+import {
   QUOTED_DATA_NOTICE,
   formatAge,
   formatSolvedAge,
@@ -1072,11 +1078,42 @@ export interface SearchFilterView {
   readonly sinceAgeMs?: number | undefined;
 }
 
+/**
+ * A coverage record and the instant it is read against — a PAIR, because a
+ * record with no clock cannot say how old the git evidence is, and a renderer
+ * that reached for the wall clock itself would make its own output untestable.
+ */
+export interface CoverageView {
+  readonly record: CoverageRecord;
+  readonly now: Date;
+}
+
 export interface SearchRenderOptions {
   /** The hub reported its vector tier ran for this search. */
   readonly semanticTier?: boolean;
   readonly filters?: SearchFilterView | undefined;
+  /** Omitted reads as "this client holds no record", never as "all clear". */
+  readonly coverage?: CoverageView | undefined;
 }
+
+/**
+ * Only the clock ever reads a stale-evidence AGE, and UNKNOWN_COVERAGE has no
+ * evidence row to be stale — every row is `hub_did_not_report`, which renders
+ * one clock-free sentence. So the epoch here cannot produce a wrong number,
+ * and coverage-empty-answers.test.ts pins that rather than trusting it.
+ */
+const EPOCH = new Date(0);
+
+/**
+ * §5.1's HARD rule, in the one place every empty answer passes through. It is
+ * UNCONDITIONAL — it renders on `complete` too — because "nothing matched,
+ * and we were watching" is a stronger answer than "nothing matched", and one
+ * code path is harder to get wrong than a branch nobody exercises.
+ */
+const coverageQualifier = (view: CoverageView | undefined): string =>
+  view === undefined
+    ? coverageClause(UNKNOWN_COVERAGE, EPOCH)
+    : coverageClause(view.record, view.now);
 
 const searchMethodLine = (options: SearchRenderOptions): string =>
   options.semanticTier === true
@@ -1154,11 +1191,22 @@ const noMatchLine = (options: SearchRenderOptions): string => {
     filters?.sinceAgeMs === undefined
       ? ""
       : ` in the last ${formatAge(filters.sinceAgeMs)}`;
-  const sentence = `No work context on this repo matched that query${from}${window}.`;
-  return from.length === 0 && window.length === 0
-    ? sentence
-    : `${sentence} Those filters are part of that answer: other words, a longer ` +
+  // AT-1, AND THE WORDING IS THE WHOLE POINT. "No work context matched" is a
+  // claim about the REPOSITORY; it is only true if the repository was being
+  // watched. Under any gap — `unknown` included, which is an un-upgraded or
+  // unreachable hub — the sentence narrows to a claim about the ARCHIVE, and
+  // the clause below says how far that archive reaches. Without this a model
+  // reads an empty answer as "nobody has worked on this" and redoes the work.
+  const record = options.coverage?.record ?? UNKNOWN_COVERAGE;
+  const sentence = mustQualifyEmptyAnswer(record)
+    ? `Nothing in what was observed on this repo matched that query${from}${window}.`
+    : `No work context on this repo matched that query${from}${window}.`;
+  const filtersNote =
+    from.length === 0 && window.length === 0
+      ? ""
+      : ` Those filters are part of that answer: other words, a longer ` +
         "window or another teammate may well match.";
+  return `${sentence}${filtersNote}\n${coverageQualifier(options.coverage)}`;
 };
 
 /**
@@ -1279,6 +1327,9 @@ export const renderSearchResults = (
     searchMethodLine(options),
   ];
   if (hits.length === 0) {
+    // AT-1. `noMatchLine` says these WORDS matched nothing; the clause says
+    // how much of the archive those words were matched against. Without it a
+    // model reads "no work context matched" as "nobody has worked on this".
     return [...opening, noMatchLine(options)].join("\n");
   }
   const lines = appendSection(

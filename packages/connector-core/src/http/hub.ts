@@ -860,6 +860,13 @@ export interface SearchOutcome {
   readonly vectorTierActive: boolean;
   /** Null from a hub that predates the filters — then nothing is claimed. */
   readonly filters: SearchFilters | null;
+  /**
+   * NOT null from a hub that predates it, unlike `filters` one line up, and
+   * the asymmetry is deliberate (03 §4): an unclaimed filter costs a line of
+   * context, an unclaimed coverage record would let an empty result read as
+   * "we looked everywhere". Absent becomes five `unknown` rows.
+   */
+  readonly coverage: CoverageRecord;
 }
 
 const SearchFiltersSchema = z.looseObject({
@@ -885,10 +892,12 @@ const SearchResponseSchema = z
     // and a malformed one is treated as nothing — a filter line the reader
     // cannot trust is worse than no filter line at all.
     filters: z.unknown().optional(),
+    coverage: z.unknown().optional(),
   })
   .transform((value): SearchOutcome => {
     const filters = SearchFiltersSchema.safeParse(value.filters);
     return {
+      coverage: parseCoverage(value.coverage),
       // Tolerant rows, silent drop — a listing, like tolerantList above; the
       // diagnosis path counts its drops because a TREE must not silently
       // shrink, a search result list is advisory by nature.
