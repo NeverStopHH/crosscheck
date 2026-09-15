@@ -87,9 +87,14 @@ export type EventRefKind = (typeof EVENT_REF_KINDS)[number];
  *                       before the field, or a record whose position could not
  *                       survive delivery by a foreign session.
  *   allocation_failed — a seq-capable emitter tried and could not: no state
- *                       file, a state file from before the field, a lock that
- *                       stayed busy, or an ambiguous MCP session whose picker's
- *                       guess must not be stamped.
+ *                       file, a state file from before the field, or a lock
+ *                       that stayed busy. Every one of those clears on its own.
+ *   ambiguous_session_assignment
+ *                     — the MCP picker could not tell which of two live
+ *                       sessions in one worktree is calling, so no lock was
+ *                       taken and the picker's guess was not stamped. It does
+ *                       NOT clear on its own: it lasts until one of the two
+ *                       sessions ends, which is why it is not the word above.
  *   epoch_conflict    — the position was already taken in this session by a
  *                       DIFFERENT event. The record is kept and the position
  *                       is dropped: rejecting would destroy the record, because
@@ -102,6 +107,7 @@ export const SEQ_REASONS = [
   "sequenced",
   "pre_seq_connector",
   "allocation_failed",
+  "ambiguous_session_assignment",
   "epoch_conflict",
   "reaped_end",
 ] as const;

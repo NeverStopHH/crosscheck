@@ -12,9 +12,9 @@ import { z } from "zod";
 import { PROTOCOL_VERSION } from "@crosscheck/schema";
 
 import { MAX_HUB_MESSAGE_CHARS, MAX_ID_CHARS } from "../../constants.ts";
-import { ALLOCATION_FAILED } from "../../capture/seq.ts";
+import { ALLOCATION_FAILED, AMBIGUOUS_SESSION } from "../../capture/seq.ts";
+import type { SeqAllocation } from "../../capture/seq.ts";
 import { allocateSeq } from "../../state/session-state.ts";
-import type { SeqRange } from "../../state/session-state.ts";
 import type { OwnWorkContext } from "../session.ts";
 import type { SeqField } from "@crosscheck/schema";
 import { toolFailure } from "../protocol.ts";
@@ -242,14 +242,21 @@ export const envelopeFor = (
  * tell which session is calling, taking a position would move ANOTHER
  * session's counter and file this record inside that session's order. So no
  * lock is taken at all and the refusal travels instead.
+ *
+ * AND IT TRAVELS UNDER ITS OWN NAME. Returning `null` here would arrive on the
+ * wire as `allocation_failed` — "this machine tried and could not", whose
+ * remedy is to wait, because a busy lock clears itself. Nothing here clears:
+ * two agents are live in one worktree and the picker cannot tell them apart
+ * until one of them ends. The only caller who KNOWS which refusal this is, is
+ * this one, so it is the one that has to say.
  */
 export const allocateToolSeq = async (
   ctx: McpContext,
   own: OwnWorkContext,
   count: number,
-): Promise<SeqRange | null> =>
+): Promise<SeqAllocation> =>
   own.sessionAmbiguous
-    ? null
+    ? AMBIGUOUS_SESSION
     : allocateSeq(ctx.config.home, own.hostSessionKey, count);
 
 /** The per-record outcome at one index, or undefined on a hub that omits them. */

@@ -79,11 +79,30 @@ export const SeqStampSchema = z.object({
  * answer confidently from a coin flip. The record still lands; only its
  * POSITION is withheld.
  *
+ * TWO REFUSALS, NOT ONE WORD, because the two remedies are opposites:
+ *
+ *   allocation_failed            — this machine tried and could not. A busy
+ *                                  state lock, a deleted state file, a state
+ *                                  file from before this field. It CLEARS ON
+ *                                  ITS OWN and the remedy is to do nothing.
+ *   ambiguous_session_assignment — the MCP picker could not tell which of two
+ *                                  live sessions is calling, so no lock was
+ *                                  taken at all (§10 D1). Nothing clears until
+ *                                  one of the two sessions ends, and the remedy
+ *                                  is a person closing one of them.
+ *
+ * One word for both would send the reader of a permanently ambiguous worktree
+ * to wait for a lock that was never contended — and the ambiguous case is the
+ * one AT-4 hangs on, because `set_intent` is the call it asks about.
+ *
  * An ENUM from our own source, never prose — the same discipline the hub's
  * CAUSAL_ORDER_REASONS follows, and for the same reason: a reason a renderer
  * prints must not be a slot a producer can write into.
  */
-export const SEQ_REFUSAL_REASONS = ["allocation_failed"] as const;
+export const SEQ_REFUSAL_REASONS = [
+  "allocation_failed",
+  "ambiguous_session_assignment",
+] as const;
 
 export const SeqRefusalSchema = z.object({
   reason: z.enum(SEQ_REFUSAL_REASONS),

@@ -320,7 +320,7 @@ describe("SEQ-8 — a pre-seq connector is reported, never silenced", () => {
 
   test("a refused allocation outranks a pre-seq absence in the reported reason", () => {
     // Arrange: `allocation_failed` is the one a reader can act on — a busy
-    // lock, a deleted state file, an ambiguous MCP session.
+    // lock or a deleted state file, both of which clear on their own.
     const order = causalOrderOf(SESSION, [
       { seqEpoch: null, seqReason: "pre_seq_connector" },
       { seqEpoch: null, seqReason: "allocation_failed" },
@@ -329,6 +329,20 @@ describe("SEQ-8 — a pre-seq connector is reported, never silenced", () => {
     // Assert
     expect(order.state).toBe("unsequenced");
     expect(order.reason).toBe("allocation_failed");
+  });
+
+  test("an ambiguous session outranks a refusal that clears on its own", () => {
+    // Arrange: the two refusals in one session. The one that needs a PERSON —
+    // close one of the two agents sharing this worktree — is the one worth
+    // printing, because the other resolves itself while the reader reads it.
+    const order = causalOrderOf(SESSION, [
+      { seqEpoch: null, seqReason: "allocation_failed" },
+      { seqEpoch: null, seqReason: "ambiguous_session_assignment" },
+    ]);
+
+    // Assert
+    expect(order.state).toBe("unsequenced");
+    expect(order.reason).toBe("ambiguous_session_assignment");
   });
 
   test("an observed position refuses a happens-before question", () => {

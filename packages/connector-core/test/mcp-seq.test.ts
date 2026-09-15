@@ -20,7 +20,10 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
+import { seqAt } from "../src/capture/seq.ts";
+import type { McpContext } from "../src/mcp/context.ts";
 import { resolveOwnWorkContext } from "../src/mcp/session.ts";
+import { allocateToolSeq } from "../src/mcp/tools/shared.ts";
 import { writeSessionState } from "../src/state/session-state.ts";
 import { summarizeSeqCost, formatSeqCost, seqWarning } from "../src/state/seq-cost.ts";
 import type { SessionState } from "../src/state/session-state.ts";
@@ -189,5 +192,60 @@ describe("the ambiguity is countable and printed", () => {
   test("no live sessions says so rather than printing zeros", () => {
     expect(formatSeqCost(summarizeSeqCost([]))).toBe("no live sessions");
     expect(seqWarning(summarizeSeqCost([]))).toBeNull();
+  });
+});
+
+describe("a refused position says WHICH refusal, because the remedies differ", () => {
+  /**
+   * Both refusals withhold a position, and there the resemblance ends.
+   *
+   *   allocation_failed             — this machine tried and could not: a busy
+   *                                   lock, a deleted state file. It CLEARS ON
+   *                                   ITS OWN, and the remedy is to do nothing.
+   *   ambiguous_session_assignment  — the picker could not tell which of two
+   *                                   live sessions is calling, so no lock was
+   *                                   taken at all. Nothing clears until one of
+   *                                   the two sessions ends, and the remedy is
+   *                                   a person closing one.
+   *
+   * Collapsing them into one word sends the reader of a permanently ambiguous
+   * worktree to wait for a lock that was never contended.
+   */
+  const ctxFor = (home: string): McpContext =>
+    ({ config: { home } }) as McpContext;
+
+  test("an ambiguous session refuses with its own reason, not the busy-lock one", async () => {
+    // Arrange: two live sessions, one worktree — the shape the picker's own
+    // header calls indistinguishable.
+    const home = await newHome("mcp-seq-reason-ambig");
+    await seed(home, "one-uuid", "2026-07-24T09:00:00.000Z");
+    await seed(home, "two-uuid", "2026-07-24T11:00:00.000Z");
+    const own = await resolveOwnWorkContext(home, identity(), HUB);
+    if (own === null) {
+      throw new Error("the picker resolved nothing to refuse a position for");
+    }
+
+    // Act
+    const seq = seqAt(await allocateToolSeq(ctxFor(home), own, 1), 0);
+
+    // Assert
+    expect(seq).toEqual({ reason: "ambiguous_session_assignment" });
+  });
+
+  test("one session in the worktree still gets a real position", async () => {
+    // Arrange: the same call on an unambiguous machine, so the assertion above
+    // is about the ambiguity and not about the harness.
+    const home = await newHome("mcp-seq-reason-alone");
+    await seed(home, "alone-uuid", "2026-07-24T09:00:00.000Z");
+    const own = await resolveOwnWorkContext(home, identity(), HUB);
+    if (own === null) {
+      throw new Error("the picker resolved nothing to position");
+    }
+
+    // Act
+    const seq = seqAt(await allocateToolSeq(ctxFor(home), own, 1), 0);
+
+    // Assert: the seeded state file is at eventSeq 3, so the next is 4.
+    expect(seq).toEqual({ epoch: EPOCH, n: 4 });
   });
 });

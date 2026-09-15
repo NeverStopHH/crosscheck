@@ -4,8 +4,10 @@
  *
  * `mcp-seq.test.ts` pins the picker's boolean; this pins what an MCP tool DOES
  * with it against a real hub, because the whole decision is about what survives
- * a wrong guess: the record must arrive, and the hub must record `allocation_failed`
- * rather than a position it cannot trust.
+ * a wrong guess: the record must arrive, and the hub must record WHY the
+ * position is missing rather than a position it cannot trust — and the why is
+ * `ambiguous_session_assignment`, not the busy-lock reason whose remedy is to
+ * wait for something that will never clear.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
@@ -197,9 +199,15 @@ describe("D1 — an ambiguous session refuses the position, not the record", () 
     expect(text).toContain("Recorded");
     // ...and its position is withheld with a reason a consumer can read,
     // never guessed and never a silent null.
+    //
+    // AND THE REASON IS THE ONE THAT NAMES A REMEDY. `allocation_failed` says
+    // "this machine tried and could not", whose remedy is to wait — a busy
+    // lock clears itself. Nothing about THIS machine clears: two agents are
+    // live in one worktree and the picker cannot tell them apart until one of
+    // them ends. A reader sent to retry would wait forever.
     const order = await orderOf(fixture.sessionId);
     expect(order.state).toBe("unsequenced");
-    expect(order.reason).toBe("allocation_failed");
+    expect(order.reason).toBe("ambiguous_session_assignment");
     expect(order.epochs).toBe(0);
   });
 

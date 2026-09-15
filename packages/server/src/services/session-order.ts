@@ -39,6 +39,7 @@ export const CAUSAL_ORDER_REASONS = [
   "epoch_split",
   "pre_seq_connector",
   "allocation_failed",
+  "ambiguous_session_assignment",
   "reaped_end",
 ] as const;
 
@@ -83,13 +84,17 @@ const windowStart = (event: OrderedEvent): number =>
 /**
  * WHICH ABSENCE TO REPORT when a session has positions for nothing.
  *
- * Ordered by how much they tell a reader to DO. `allocation_failed` means this
- * machine tried and could not — a busy lock, a deleted state file, an
- * ambiguous MCP session — and it is actionable. `reaped_end` is the hub's own
- * inference from silence and is nobody's bug. `pre_seq_connector` is the
- * baseline: an envelope that carried no position at all.
+ * Ordered by how much they tell a reader to DO, and the first two are not one
+ * reason: `ambiguous_session_assignment` means two live sessions share one
+ * worktree and the MCP picker cannot tell them apart, which needs a PERSON to
+ * close one and will not clear otherwise — so it outranks `allocation_failed`,
+ * which means this machine tried and could not (a busy lock, a deleted state
+ * file) and clears on its own. `reaped_end` is the hub's own inference from
+ * silence and is nobody's bug. `pre_seq_connector` is the baseline: an envelope
+ * that carried no position at all.
  */
 const ABSENCE_PRIORITY: readonly CausalOrderReason[] = [
+  "ambiguous_session_assignment",
   "allocation_failed",
   "reaped_end",
   "pre_seq_connector",

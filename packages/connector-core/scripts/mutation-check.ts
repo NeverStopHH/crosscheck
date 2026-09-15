@@ -5248,6 +5248,33 @@ export const MUTATIONS: readonly Mutation[] = [
       "on any host, `doctor` says nothing about it, and the silence reads " +
       "exactly like an install that works",
   },
+  {
+    // The two refusals have OPPOSITE remedies — wait, versus close one of the
+    // two sessions — and only this call site knows which one it is refusing.
+    label: "two refusals with opposite remedies share one word",
+    file: `${CORE}/src/mcp/tools/shared.ts`,
+    from: "    ? AMBIGUOUS_SESSION\n",
+    to: "    ? ALLOCATION_FAILED\n",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "a developer whose worktree holds two live agents is told this machine " +
+      "tried and could not, whose remedy is to wait for a busy lock to clear " +
+      "— and nothing clears until one of the two sessions ends",
+  },
+  {
+    // ABSENCE_PRIORITY is ordered by how much a reason tells a reader to DO,
+    // and the ambiguous one names a person and an action where the other one
+    // names nothing, because it resolves itself.
+    label: "the refusal a person must act on is printed last",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '  "ambiguous_session_assignment",\n  "allocation_failed",',
+    to: '  "allocation_failed",',
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "a session holding both refusals reports the one that clears on its " +
+      "own, so the worktree with two live agents reads as a transient lock " +
+      "and nobody is ever told to close one of them",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5375,6 +5402,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 12
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
+ * PRINTS: packages/connector-core/test/mcp-seq.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
@@ -5420,7 +5448,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-event-seq-kind.test.ts 2
  * PRINTS: packages/server/test/session-events.test.ts 2
  * PRINTS: packages/server/test/session-order-window.test.ts 3
- * PRINTS: packages/server/test/session-order.test.ts 3
+ * PRINTS: packages/server/test/session-order.test.ts 4
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1

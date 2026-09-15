@@ -15,11 +15,18 @@
  *
  * A REFUSAL IS A VALUE, NOT AN OMISSION. When there is no block — no state
  * file, a state file from before this field, a lock that stayed busy, or an
- * MCP call whose session is ambiguous — the record still travels and carries
- * `allocation_failed`. An OMITTED field would say "a connector from before
- * this protocol", which is a different fact about a different machine.
+ * MCP call whose session is ambiguous — the record still travels and carries a
+ * refusal. An OMITTED field would say "a connector from before this protocol",
+ * which is a different fact about a different machine.
+ *
+ * AND THE REFUSAL SAYS WHICH ONE. A busy lock clears on its own and its remedy
+ * is to do nothing; an ambiguous MCP session does not clear until one of the
+ * two sessions ends and its remedy is a person. One word for both would send
+ * the reader of a permanently ambiguous worktree to wait for a lock that was
+ * never contended, so an allocator that already KNOWS which it is hands the
+ * refusal back rather than a null this file would have to guess a word for.
  */
-import type { Envelope, SeqField } from "@crosscheck/schema";
+import type { Envelope, SeqField, SeqRefusal } from "@crosscheck/schema";
 
 /** Re-exported so a connector that does not depend on the schema package
  *  directly can still name the field it is passing through. */
@@ -27,18 +34,47 @@ export type { SeqField };
 
 import type { SeqRange } from "../state/session-state.ts";
 
-export const ALLOCATION_FAILED: SeqField = { reason: "allocation_failed" };
+export const ALLOCATION_FAILED: SeqRefusal = { reason: "allocation_failed" };
+
+/**
+ * D1's refusal, and the reason it is not the one above: the picker could not
+ * tell which of two live sessions in one worktree is calling, so no lock was
+ * taken at all. Stamping the guess would file an amendment into another
+ * session's causal order and let AT-4 answer confidently from a coin flip.
+ */
+export const AMBIGUOUS_SESSION: SeqRefusal = {
+  reason: "ambiguous_session_assignment",
+};
+
+/**
+ * What an allocator hands back: a block, a refusal it already knows the name
+ * of, or nothing at all. A `null` still means `allocation_failed` — that is
+ * every allocator that failed at the LOCK, which is the only thing it could
+ * have failed at.
+ */
+export type SeqAllocation = SeqRange | SeqRefusal | null | undefined;
 
 /**
  * The stamp for the offset-th record of a block, or the refusal when there is
  * no block — or when the caller has emitted more records than it reserved,
  * which is a bug in the caller and must not silently reuse a position.
+ *
+ * A refusal passes straight THROUGH: an allocator that refused for a named
+ * reason has said something this function could not have worked out, and
+ * flattening it to `allocation_failed` here would throw that sentence away at
+ * the last step before the wire.
  */
 export const seqAt = (
-  range: SeqRange | null | undefined,
+  range: SeqAllocation,
   offset: number,
 ): SeqField => {
-  if (range === null || range === undefined || offset >= range.count) {
+  if (range === null || range === undefined) {
+    return ALLOCATION_FAILED;
+  }
+  if ("reason" in range) {
+    return range;
+  }
+  if (offset >= range.count) {
     return ALLOCATION_FAILED;
   }
   const stamp = { epoch: range.epoch, n: range.from + offset };
