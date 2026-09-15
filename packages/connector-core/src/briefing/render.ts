@@ -114,6 +114,18 @@ export interface BriefingInput {
   readonly questions?: readonly InboxQuestion[] | undefined;
   /** Teammates whose live plan overlaps the reader's; empty renders none. */
   readonly ghostChecks?: readonly GhostCheckEntry[] | undefined;
+  /**
+   * The coverage qualifier (03 §5.3), ALREADY RENDERED by coverage/render.ts
+   * and passed in rather than computed here — one direction only, because a
+   * briefing that imported the coverage renderer and a coverage renderer that
+   * imports `formatAge` from this file would be a cycle.
+   *
+   * It is not a Section and must never become one: Sections are cuttable by
+   * construction (`appendSection` drops a whole one when the budget is spent),
+   * and this line states how far everything below it can be trusted. So it is
+   * spliced in beside the header, where the fitter cannot reach it.
+   */
+  readonly coverageLine?: string | undefined;
 }
 
 interface Section {
@@ -908,11 +920,27 @@ export const renderBriefing = (input: BriefingInput): string => {
     renderDraftSection(input),
     renderAbsenceSection(input),
   ];
-  if (sections.every((section) => section.lines.length === 0)) {
+  // A briefing with nothing to say still says it when we know we were NOT
+  // watching: "no news" and "no news, and nobody was looking" are different
+  // answers, and the second one is the whole point of this record. The line
+  // only exists on a positively observed gap (coverageNote returns null on
+  // `unknown`), so a quiet repo behind a healthy hub stays silent exactly as
+  // it did before.
+  const coverageLines =
+    input.coverageLine === undefined || input.coverageLine.length === 0
+      ? []
+      : [input.coverageLine];
+  if (
+    coverageLines.length === 0 &&
+    sections.every((section) => section.lines.length === 0)
+  ) {
     return "";
   }
   const repoLabel = sanitizeUntrusted(input.repoId);
   const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}. ${QUOTED_DATA_NOTICE}`;
-  const lines = sections.reduce<readonly string[]>(appendSection, [header]);
+  const lines = sections.reduce<readonly string[]>(appendSection, [
+    header,
+    ...coverageLines,
+  ]);
   return lines.length <= 1 ? "" : lines.join("\n");
 };

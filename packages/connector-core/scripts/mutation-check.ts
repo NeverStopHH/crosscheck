@@ -4906,6 +4906,51 @@ export const MUTATIONS: readonly Mutation[] = [
       "complete rungs, isJudgeable says yes, and the verdict layer names " +
       "people on the strength of a field the hub never sent",
   },
+  {
+    // A caveat that can be cut is a caveat that lies: the briefing it was cut
+    // from still reads as complete. Sections are cuttable by construction —
+    // appendSection drops a whole one when the budget is spent — so the line
+    // is spliced beside the header where the fitter cannot reach it.
+    label: "a briefing says what the team knows, not how far it saw",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: `  const lines = sections.reduce<readonly string[]>(appendSection, [
+    header,
+    ...coverageLines,
+  ]);`,
+    to: "  const lines = sections.reduce<readonly string[]>(appendSection, [header]);",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "the one SessionStart line that says how far the rest can be trusted " +
+      "disappears exactly when the briefing is busiest, which is when a " +
+      "reader is least likely to notice it is gone",
+  },
+  {
+    // 00 §8.5 bans it by name and this is the shape it would arrive in: a
+    // ratio of complete rungs, printed beside the head word, collapsing five
+    // different answers into one reassuring figure.
+    label: "a percentage collapses the five rows on the way to a reader",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: '    fragments.length === 0 ? `${head}.` : `${head}: ${fragments.join("; ")}.`,',
+    to: '    fragments.length === 0 ? `${head}.` : `${head} (${String(Math.round((100 * record.sources.filter((row) => row.state === "complete").length) / record.sources.length))}%): ${fragments.join("; ")}.`,',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "`coverage = 87%` is the exact lie the per-source record exists to " +
+      "stop, and a ratio on a surface is how it gets back in",
+  },
+  {
+    // Nick's decision 4, which is the ONE place this spec bends an AT — so
+    // the bend has a guard rather than a comment. Annotating on `unknown`
+    // puts a caveat on every answer of every fresh install, which is how
+    // caveats get ignored.
+    label: "a caveat on every answer teaches people to ignore caveats",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: '  record.sources.some((row) => row.state === "incomplete")',
+    to: '  record.sources.some((row) => row.state !== "complete")',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "runtime is unavailable on every install for the whole of 1.0, so the " +
+      "note would render on literally every briefing and stop being read",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5013,6 +5058,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2

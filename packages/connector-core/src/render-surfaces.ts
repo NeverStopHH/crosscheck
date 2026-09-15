@@ -879,6 +879,25 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
       composeDetachedTitle("detached@0badc0ffe", payload, "github.com/acme/api"),
   },
   {
+    // §3.3's consequence, registered so it is a row a reviewer can see: the
+    // coverage line carries no author-written string — enum values, ISO
+    // instants re-formatted from the parsed value, and renderer-owned
+    // literals — so it adds no untrusted slot to any surface it lands on.
+    // That claim is attacked rather than asserted: the named test plants the
+    // whole injection corpus in `gapSince` and `observedAt`, the two strings
+    // the HUB sends, and holds the output to the shared invariants.
+    //
+    // `unsolicited` even though the same text also lands on `pulled`
+    // surfaces: one module, one classification, and the tighter of the two is
+    // the safe one to be held to.
+    kind: "composite",
+    name: "coverage-note",
+    delivery: "unsolicited",
+    module: "src/coverage/render.ts",
+    note: "enum values, renderer-owned literals and ISO instants re-formatted from Date.parse; the two hub-sent strings (gapSince, observedAt) never print through",
+    corpusCoveredBy: ["test/coverage-render.test.ts"],
+  },
+  {
     kind: "composite",
     name: "briefing-flow",
     delivery: "unsolicited",
