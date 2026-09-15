@@ -4835,6 +4835,34 @@ export const MUTATIONS: readonly Mutation[] = [
       "`conflict` to all but the first, and a session whose events all sit " +
       "at one point has no order at all while every emitter reports success",
   },
+  {
+    // Spec 01 §3.5. The hint-delivery id shape — sha256(session, ref) — is the
+    // obvious one and it SILENTLY DELETES EVENTS here, because three kinds
+    // share one referent: session.started, commit.observed and session.ended
+    // all point at the session.
+    label: "two kinds on one referent collapse into one event row",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "        input.sessionId,\n        input.kind,\n        input.seqEpoch ?? \"null\",",
+    to: "        input.sessionId,\n        input.seqEpoch ?? \"null\",",
+    test: `${SERVER}/test/session-events.test.ts`,
+    because:
+      "on every connector from before this protocol field both session events " +
+      "are unsequenced, so the position cannot tell them apart and the end is " +
+      "answered duplicate — the session's history stops at its start",
+  },
+  {
+    // The other half of the same id. A SessionStart re-fire collects commit
+    // evidence a second time against the same session referent.
+    label: "a re-fire's second collection takes the first one's row",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: '        input.seqN === null ? "null" : String(input.seqN),\n',
+    to: "",
+    test: `${SERVER}/test/session-events.test.ts`,
+    because:
+      "the second commit.observed of a compacted session is answered " +
+      "duplicate and receives no position, so the half of the session after " +
+      "the compact has one fewer event than it had",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

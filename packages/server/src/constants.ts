@@ -106,6 +106,16 @@ export const DEFAULT_PORT = 7100;
  */
 export const COMMIT_EVIDENCE_RETENTION_DAYS = 30;
 /**
+ * How long a canonical event keeps its POSITION (spec 01 §10 D2). Matched to
+ * COMMIT_EVIDENCE_RETENTION_DAYS above rather than to the life of the row it
+ * orders, which would be unbounded in exactly the way commit evidence was
+ * designed to avoid. The consequence is chosen rather than discovered: a claim
+ * older than this keeps its body and loses its position, so a verdict on old
+ * work can still say WHAT was claimed and no longer WHETHER the reason
+ * predated the change.
+ */
+export const SESSION_EVENT_RETENTION_DAYS = 30;
+/**
  * Evidence older than this never fires a finding. Every SessionStart of every
  * connected teammate refreshes collection, so evidence this stale means nobody
  * connected has run a session in a week — at which point per-developer absence

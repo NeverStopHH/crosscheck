@@ -499,6 +499,38 @@ ALTER TABLE pins
 ALTER TABLE work_context_targets
   ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'tool_edit';
 
+-- THE PER-SESSION CAUSAL ORDER (spec 01 §3.5): append-only, content-free, one
+-- row per canonical event. `ref_id` names the row that already holds the
+-- content — a claim id, a session id, or a HASH of a target's (context, kind,
+-- value), because that row's only identity contains the author-written file
+-- path. No body, no prose, no path text ever lands here.
+--
+-- observed_at is the HUB clock and serves retention and display ONLY. Nothing
+-- orders two events by it; that is the wall-clock answer this table replaces.
+CREATE TABLE IF NOT EXISTS session_events (
+  id text PRIMARY KEY,
+  session_id text NOT NULL REFERENCES agent_sessions(id),
+  seq_epoch text,
+  seq_n integer,
+  kind text NOT NULL,
+  seq_kind text NOT NULL,
+  seq_reason text NOT NULL,
+  ref_kind text NOT NULL,
+  ref_id text NOT NULL,
+  observed_at timestamptz NOT NULL
+);
+
+-- A POSITION IS TAKEN ONCE. PARTIAL, because unsequenced rows are legitimately
+-- many per session and must not collide with one another — only real
+-- positions are unique. A write whose position is already held by a DIFFERENT
+-- id is stored with a null position and counted, never rejected: a connector's
+-- flush advances its cursor on any 2xx, so a rejected record is a lost one.
+CREATE UNIQUE INDEX IF NOT EXISTS session_events_position_idx
+  ON session_events (session_id, seq_epoch, seq_n)
+  WHERE seq_epoch IS NOT NULL;
+CREATE INDEX IF NOT EXISTS session_events_session_kind_idx
+  ON session_events (session_id, kind);
+
 -- TEAM-level settings for the regression guard, one row per repo. ABSENT
 -- MEANS DEFAULTS ("anyone" may pin; `suspect` names sessions) — nothing
 -- bootstraps rows here, so a hub that was never configured behaves exactly

@@ -133,6 +133,20 @@ export type {
 } from "./envelope.ts";
 
 export {
+  EVENT_REF_KINDS,
+  LEDGER_EVENT_KINDS,
+  SEQ_KINDS,
+  SEQ_REASONS,
+  SESSION_EVENT_KINDS,
+} from "./session-event.ts";
+export type {
+  EventRefKind,
+  SeqKind,
+  SeqReason,
+  SessionEventKind,
+} from "./session-event.ts";
+
+export {
   describeUnstorableText,
   unstorableTextPath,
 } from "./storable-text.ts";
