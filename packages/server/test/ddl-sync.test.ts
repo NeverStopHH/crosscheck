@@ -238,6 +238,29 @@ describe("bootstrap.sql DDL sync", () => {
     expect(COMMIT_SHA_PATTERN.flags).toContain("i");
   });
 
+  test("claim_revalidations exists in both DDL authorities", async () => {
+    // Arrange: bootstrap.sql is the DDL a real-Postgres hub runs and drizzle
+    // is the migration authority everywhere else. A table in one and not the
+    // other means the downgrade-only UPSERT has nowhere to land on exactly
+    // one deployment — and the failure surfaces as a 500 on a revalidation.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    expect(bootstrapSql).toContain("CREATE TABLE IF NOT EXISTS claim_revalidations (");
+    for (const column of [
+      "claim_id text PRIMARY KEY REFERENCES claims(id)",
+      "result text NOT NULL",
+      "basis text NOT NULL",
+      "ref_commit text NOT NULL",
+      "touching_commits jsonb NOT NULL DEFAULT '[]'::jsonb",
+      "touching_total integer",
+      "revalidated_at timestamptz NOT NULL",
+      "reported_by text NOT NULL REFERENCES developers(id)",
+    ]) {
+      expect(bootstrapSql).toContain(column);
+    }
+  });
+
   test("work_context_targets.created_at is added for the #19 pointer age", async () => {
     // Arrange: the drizzle column is nullable, so bootstrap must add it with
     // the same ADD COLUMN IF NOT EXISTS evolution idiom or a fresh DB and an

@@ -649,8 +649,11 @@ export const STALENESS_MAX_PATHS = 20;
  * log. The count itself is not capped — "and N more" is measured — so raising
  * this buys names, not truth, at the price of a jsonb column on a table
  * bounded by claims.
+ *
+ * Re-exported rather than declared: it bounds a WIRE array and the stored
+ * jsonb column, so @crosscheck/schema owns it and there is one thing to move.
  */
-export const MAX_CLAIM_TOUCHING_COMMITS = 5;
+export { MAX_CLAIM_TOUCHING_COMMITS } from "@crosscheck/schema";
 
 /**
  * Most paths one claim's drift check hands git as pathspecs.

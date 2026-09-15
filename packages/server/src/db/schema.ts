@@ -21,6 +21,8 @@ import {
   CAPTURE_MODES,
   CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
+  CLAIM_REVALIDATION_BASES,
+  CLAIM_REVALIDATION_RESULTS,
   CLAIM_STATUSES,
   EDGE_KINDS,
   MAX_CLAIM_BODY_LENGTH,
@@ -711,4 +713,55 @@ export const teamSettings = pgTable("team_settings", {
   }).notNull(),
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
+});
+
+/**
+ * ONE ROW PER REVALIDATED CLAIM — the latest reading a clone reported of
+ * whether the code under that claim moved (1.0 spec 02 §3.3).
+ *
+ * UPSERT-ONLY, never append-only: bounded by how many claims anybody actually
+ * revalidates rather than by reporting frequency, which is `commit_evidence`'s
+ * argument for the same shape. `revalidated_at` is stamped by the HUB and never
+ * taken from the body — a sender-controlled timestamp on a last-writer-wins row
+ * is a ratchet (services/commit-evidence.ts learned that one the hard way).
+ *
+ * THE UPSERT IS DOWNGRADE-ONLY, and the whole gate on the unsolicited
+ * substance lane rests on it. The only producer is a connector-computed report
+ * POSTed under `developerAuth`, and the developer bearer key sits in plaintext
+ * in ~/.crosscheck/config.json where any agent on the machine can read it. So
+ * an incoming `unchanged` may never overwrite a stored `changed`: returning a
+ * stale claim to the substance lane needs what the tree already requires for
+ * every other revision — a NEW claim, which is authored and attributable.
+ * Enforced in SQL by the UPSERT's setWhere, not by a service branch.
+ *
+ * NO PER-COMMIT TABLE. The hashes ride here, bounded, newest-first. A `commits`
+ * table is unbounded by construction — exactly the property `commit_evidence`
+ * was designed against — and would collide with retention and with data
+ * minimisation. What is stored is abbreviated hashes and nothing else: no
+ * author, no email, no message, no parents, no timestamps, no paths.
+ */
+export const claimRevalidations = pgTable("claim_revalidations", {
+  claimId: text("claim_id")
+    .primaryKey()
+    .references(() => claims.id),
+  result: text("result", { enum: CLAIM_REVALIDATION_RESULTS }).notNull(),
+  basis: text("basis", { enum: CLAIM_REVALIDATION_BASES }).notNull(),
+  /** Which ref state the reading was taken against — context, not a key. */
+  refCommit: text("ref_commit").notNull(),
+  touchingCommits: jsonb("touching_commits")
+    .$type<readonly string[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  /**
+   * How many commits touched the surface in total. NULL means "more than the
+   * ones named, and the count could not be taken" — the renderer then says
+   * "and more" rather than inventing a number. Spec 02 §3.4 promises the
+   * downgrade can say "and 12 more"; the hashes alone cannot carry that.
+   */
+  touchingTotal: integer("touching_total"),
+  revalidatedAt: timestamptz("revalidated_at").notNull(),
+  /** Provenance, never a score: reported_by is not rendered as a ranking. */
+  reportedBy: text("reported_by")
+    .notNull()
+    .references(() => developers.id),
 });

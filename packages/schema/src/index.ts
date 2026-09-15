@@ -118,6 +118,17 @@ export type {
 } from "./commit-evidence.ts";
 
 export {
+  ClaimRevalidationEntrySchema,
+  ClaimRevalidationReportSchema,
+  MAX_CLAIM_REVALIDATION_ENTRIES,
+  MAX_CLAIM_TOUCHING_COMMITS,
+} from "./claim-revalidation.ts";
+export type {
+  ClaimRevalidationEntry,
+  ClaimRevalidationReport,
+} from "./claim-revalidation.ts";
+
+export {
   LandedEvidenceSchema,
   MAX_LANDED_COMMITS,
 } from "./landed-evidence.ts";

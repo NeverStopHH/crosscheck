@@ -577,3 +577,15 @@ export const SUSPECT_TOP_CANDIDATES = 3;
  * dataset here could justify a second decimal.
  */
 export const SUSPECT_SEPARATION_RATIO = 1.5;
+
+// ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
+
+/**
+ * Revalidation rows older than this are pruned on the next report — the bound
+ * on claim_revalidations growth, matching COMMIT_EVIDENCE_RETENTION_DAYS
+ * because both answer "how long is a clone's reading still worth anything".
+ *
+ * A PRUNED ROW READS `unknown` AGAIN, and that is the point rather than a side
+ * effect: a stored verdict must not outlive the evidence it was derived from.
+ */
+export const CLAIM_REVALIDATION_RETENTION_DAYS = 30;

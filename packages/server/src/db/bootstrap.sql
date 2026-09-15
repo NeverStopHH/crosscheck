@@ -620,6 +620,31 @@ BEGIN
 END
 $$;
 
+-- ONE ROW PER REVALIDATED CLAIM: the latest reading a clone reported of
+-- whether the code under that claim moved. UPSERT-only, so the table is
+-- bounded by how many claims anybody revalidates rather than by reporting
+-- frequency — commit_evidence's argument for the same shape. revalidated_at is
+-- stamped by the HUB, never taken from the body, because a sender-controlled
+-- timestamp on a last-writer-wins row is a ratchet.
+--
+-- touching_commits holds ABBREVIATED HASHES AND NOTHING ELSE — no author, no
+-- email, no message, no parents, no paths. A commit hash is already-shared git
+-- history every clone can re-derive, which is landed_evidence's trust
+-- argument verbatim; no identity is attached to a hash here at all.
+--
+-- There is deliberately NO `commits` table: unbounded by construction, which
+-- is the property commit_evidence was designed against.
+CREATE TABLE IF NOT EXISTS claim_revalidations (
+  claim_id text PRIMARY KEY REFERENCES claims(id),
+  result text NOT NULL,
+  basis text NOT NULL,
+  ref_commit text NOT NULL,
+  touching_commits jsonb NOT NULL DEFAULT '[]'::jsonb,
+  touching_total integer,
+  revalidated_at timestamptz NOT NULL,
+  reported_by text NOT NULL REFERENCES developers(id)
+);
+
 -- `stale_at` IS RETIRED, NOT REDEFINED. It had one declaration and no writer:
 -- no INSERT, no UPDATE, no service, no job, and it was not on the wire, so
 -- every reader got a permanent NULL that `get_diagnosis` shipped as a claim's
