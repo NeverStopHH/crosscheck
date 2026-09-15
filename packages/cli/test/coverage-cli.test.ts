@@ -128,7 +128,7 @@ describe("crosscheck status carries the qualifier — AT-9", () => {
     const result = await runCli(["status"], env, repo);
 
     // Assert
-    expect(result.stdout).toContain("coverage: Coverage incomplete");
+    expect(result.stdout).toContain("\nCoverage incomplete");
     expect(result.stdout).toContain(GAP_SHOWN);
   });
 
@@ -141,7 +141,7 @@ describe("crosscheck status carries the qualifier — AT-9", () => {
 
     // Assert: a person asked. "We cannot tell" is the answer they need most,
     // and an omitted line would read as "all clear".
-    expect(result.stdout).toContain("coverage: Coverage unknown");
+    expect(result.stdout).toContain("\nCoverage unknown");
   });
 
   test("an unreachable hub is a statement about the network, not the hub's age", async () => {
@@ -176,6 +176,26 @@ describe("crosscheck status carries the qualifier — AT-9", () => {
     expect(result.stdout).not.toContain("could not reach the hub");
   });
 
+  test("the coverage line does not restate its own key", async () => {
+    // Arrange
+    const { repo, env } = await fixture("status-coverage-key", reported);
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+    const line = result.stdout
+      .split("\n")
+      .find((entry) => entry.toLowerCase().startsWith("coverage"));
+
+    // Assert: `coverage: Coverage incomplete: …` was the only line in this
+    // command carrying two colons, and it said its own key twice. The clause
+    // is a SENTENCE that names its subject — the briefing prints it exactly
+    // this way, and both surfaces stating the same fact the same way is the
+    // rule this file already follows for absence lines.
+    expect(line).toBeDefined();
+    expect(line?.startsWith("Coverage ")).toBe(true);
+    expect(line?.startsWith("coverage: ")).toBe(false);
+  });
+
   test("no percentage reaches the line", async () => {
     // Arrange
     const { repo, env } = await fixture("status-no-percent", reported);
@@ -184,7 +204,7 @@ describe("crosscheck status carries the qualifier — AT-9", () => {
     const result = await runCli(["status"], env, repo);
     const line = result.stdout
       .split("\n")
-      .find((entry) => entry.startsWith("coverage: "));
+      .find((entry) => entry.startsWith("Coverage "));
 
     // Assert
     expect(line).toBeDefined();

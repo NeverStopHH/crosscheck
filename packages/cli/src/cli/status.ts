@@ -354,13 +354,17 @@ export const runStatus = async (
       // doctor branches on it — collapsing it into the record would print a
       // sentence about what this hub reports beside "(hub unreachable)", and
       // name a cause the reader cannot act on.
-      `coverage: ${
-        absences.ok
-          ? coverageClause(absences.data.coverage, now)
-          : absences.kind === "network"
-            ? HUB_UNREACHABLE_CLAUSE
-            : coverageClause(UNKNOWN_COVERAGE, now)
-      }`,
+      //
+      // NO `coverage:` KEY. The clause is a SENTENCE that names its own
+      // subject — "Coverage incomplete: …" — so a key in front of it made
+      // this the only line in the command to say its subject twice and the
+      // only one carrying two colons. The briefing prints the same sentence
+      // unprefixed; one fact spelled one way on both surfaces.
+      absences.ok
+        ? coverageClause(absences.data.coverage, now)
+        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),
       ...emailLines,
       ...privacyLines,
       "teammates:",

@@ -5135,15 +5135,33 @@ export const MUTATIONS: readonly Mutation[] = [
     // a claim about its version produced from a network error.
     label: "an unreachable hub reads as a hub that reports no coverage",
     file: `${CLI}/src/cli/status.ts`,
-    from: `          : absences.kind === "network"
-            ? HUB_UNREACHABLE_CLAUSE
-            : coverageClause(UNKNOWN_COVERAGE, now)`,
-    to: "          : coverageClause(UNKNOWN_COVERAGE, now)",
+    from: `        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),`,
+    to: "        : coverageClause(UNKNOWN_COVERAGE, now),",
     test: `${CLI}/test/coverage-cli.test.ts`,
     because:
       "status tells a person to upgrade a hub that is simply down, two " +
       "lines above its own `(hub unreachable)`, on the one surface AT-9 " +
       "exists to make self-sufficient",
+  },
+  {
+    // The clause is a SENTENCE that names its own subject. A key in front of
+    // it made this the only line in `crosscheck status` to say its subject
+    // twice, and the only one carrying two colons.
+    label: "the status line says the word coverage twice",
+    file: `${CLI}/src/cli/status.ts`,
+    from: `      absences.ok
+        ? coverageClause(absences.data.coverage, now)
+        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),`,
+    to: '      `coverage: ${absences.ok ? coverageClause(absences.data.coverage, now) : absences.kind === "network" ? HUB_UNREACHABLE_CLAUSE : coverageClause(UNKNOWN_COVERAGE, now)}`,',
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "the briefing prints this sentence unprefixed and status printed it " +
+      "with a key, so one fact had two spellings on the two surfaces a " +
+      "person reads side by side",
   },
   {
     // §3.2a lets a caller narrow the question; the hub's record says so in
@@ -5429,7 +5447,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
- * PRINTS: packages/cli/test/coverage-cli.test.ts 4
+ * PRINTS: packages/cli/test/coverage-cli.test.ts 5
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
