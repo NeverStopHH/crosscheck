@@ -5041,8 +5041,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // different answers into one reassuring figure.
     label: "a percentage collapses the five rows on the way to a reader",
     file: `${CORE}/src/coverage/render.ts`,
-    from: "  return fit(headOf(record), fragments);",
-    to: '  return fit(`${headOf(record)} (${String(Math.round((100 * record.sources.filter((row) => row.state === "complete").length) / record.sources.length))}%)`, fragments);',
+    from: "  const head = headOf(record);",
+    to: '  const head = `${headOf(record)} (${String(Math.round((100 * record.sources.filter((row) => row.state === "complete").length) / record.sources.length))}%)`;',
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
       "`coverage = 87%` is the exact lie the per-source record exists to " +
@@ -5145,15 +5145,16 @@ export const MUTATIONS: readonly Mutation[] = [
     // run instead, and an omitted line there reads as all clear.
     label: "status states the team and not how far it was watched",
     file: `${CLI}/src/cli/status.ts`,
-    from: `      \`coverage: \${
-        absences.ok
-          ? coverageClause(absences.data.coverage, now)
-          : absences.kind === "network"
-            ? HUB_UNREACHABLE_CLAUSE
-            : coverageClause(UNKNOWN_COVERAGE, now)
-      }\`,`,
+    // Same anchor text as the `says the word coverage twice` mutation below,
+    // and a different defect: that one puts a key back, this one takes the
+    // whole line away unless something is already known to be wrong.
+    from: `      absences.ok
+        ? coverageClause(absences.data.coverage, now)
+        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),`,
     to: `      ...(absences.ok && absences.data.coverage.sources.some((row) => row.state === "incomplete")
-        ? [\`coverage: \${coverageClause(absences.data.coverage, now)}\`]
+        ? [coverageClause(absences.data.coverage, now)]
         : []),`,
     test: `${CLI}/test/coverage-cli.test.ts`,
     because:
