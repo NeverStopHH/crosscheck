@@ -597,6 +597,57 @@ export const publishSessionState = async (
   }
 };
 
+/** A block of positions this caller now owns, and the epoch they belong to. */
+export interface SeqRange {
+  readonly epoch: string;
+  readonly from: number;
+  readonly count: number;
+}
+
+/**
+ * HANDS OUT POSITIONS IN THIS SESSION'S CAUSAL ORDER (spec 01 §3.3).
+ *
+ * `updateSessionState` cannot serve this: it answers `boolean`, and an
+ * allocator has to hand the NUMBER back. Everything else is the same
+ * discipline — read-transform-write inside the state file's own lock, so
+ * MONOTONICITY IS A PROPERTY OF THE LOCK rather than of the caller. Two
+ * sibling hooks, an MCP tool and a detached worker can all be inside this
+ * function at once; a read-then-write outside the lock gives two of them the
+ * same `from`, which is the one thing a causal order may never do (proved
+ * against this test: 200 allocations, 100 distinct positions).
+ *
+ * `count` is allocated as a BLOCK and the counter moves once. A hook that
+ * pre-allocates its worst case and then emits fewer records leaves a GAP, and
+ * gaps are legal (§3.4) — an allocation whose emitter crashed leaves the same
+ * hole by design. Loss lives in the spool `.drops` ledger, never here.
+ *
+ * NULL IS A FIRST-CLASS ANSWER, not an error: no state file (a worker that
+ * outlived SessionEnd's delete), a state file from before this protocol field
+ * (`seqEpoch === null`), or a lock that stayed busy past its retries. Every
+ * one of them becomes `seq: { reason: "allocation_failed" }` on the envelope —
+ * the record still lands, only its POSITION is withheld. Fail-open is the rule
+ * on every hook path and this is no exception; worst case is the spool lock's
+ * own, SPOOL_LOCK_RETRIES × SPOOL_LOCK_RETRY_DELAY_MS.
+ */
+export const allocateSeq = async (
+  home: string,
+  hostSessionKey: string,
+  count: number,
+): Promise<SeqRange | null> =>
+  withLock<SeqRange | null>(
+    sessionStateLockPath(home, hostSessionKey),
+    null,
+    async () => {
+      const fresh = await readSessionState(home, hostSessionKey);
+      if (fresh === null || fresh.seqEpoch === null) {
+        return null;
+      }
+      const from = fresh.eventSeq + 1;
+      await writeSessionState(home, { ...fresh, eventSeq: from + count - 1 });
+      return { epoch: fresh.seqEpoch, from, count };
+    },
+  );
+
 export interface SessionStateClaim {
   /** True when THIS caller published the state; false when it adopted one. */
   readonly claimed: boolean;

@@ -4815,6 +4815,26 @@ export const MUTATIONS: readonly Mutation[] = [
       "on a compacted session refuses to say whether the reason predated the " +
       "change — and nothing in the session's own telemetry explains why",
   },
+  {
+    // Spec 01 §3.3. The allocator's whole job is the WRITE-BACK inside the
+    // lock; reading and returning is the read-then-write this design exists
+    // to refuse. Measured against the unwritten-back version: 200 allocations
+    // across two emitters, 1 distinct position.
+    label: "the allocator hands two emitters the same position",
+    file: `${CORE}/src/state/session-state.ts`,
+    from:
+      "      const from = fresh.eventSeq + 1;\n" +
+      "      await writeSessionState(home, { ...fresh, eventSeq: from + count - 1 });\n" +
+      "      return { epoch: fresh.seqEpoch, from, count };",
+    to:
+      "      const from = fresh.eventSeq + 1;\n" +
+      "      return { epoch: fresh.seqEpoch, from, count };",
+    test: `${CORE}/test/session-seq.test.ts`,
+    because:
+      "every record in the session claims position 1, the hub answers " +
+      "`conflict` to all but the first, and a session whose events all sit " +
+      "at one point has no order at all while every emitter reports success",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

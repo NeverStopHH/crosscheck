@@ -123,6 +123,8 @@ const freshState = (
   ghostDraftCount: 0,
   ghostFailCount: 0,
   ghostLastFailure: null,
+  seqEpoch: null,
+  eventSeq: 0,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,

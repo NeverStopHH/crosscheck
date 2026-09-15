@@ -20,6 +20,7 @@ import { describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import {
+  allocateSeq,
   publishSessionState,
   readSessionState,
   writeSessionState,
@@ -120,6 +121,97 @@ describe("SEQ-4 — a re-fire must not restart the counter", () => {
       const after = await readSessionState(home, HOST_KEY);
       expect(after?.seqEpoch).toBeNull();
       expect(after?.eventSeq).toBe(0);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("SEQ-3 — two emitters on one session cannot take one position", () => {
+  test("two hundred interleaved allocations are strictly increasing", async () => {
+    // Arrange: the shape of connector-claude/test/state-race.test.ts —
+    // MONOTONICITY IS A PROPERTY OF THE LOCK, not of the caller, so the test
+    // that matters runs many allocators at once and asks for a set, not an
+    // order of arrival.
+    const home = await makeHome("seq-race");
+    try {
+      await writeSessionState(home, stateInput({ seqEpoch: EPOCH }));
+
+      // Act: two emitters, a hundred allocations each, all overlapping.
+      const emitter = async (): Promise<readonly number[]> => {
+        const taken: number[] = [];
+        for (let index = 0; index < 100; index += 1) {
+          const range = await allocateSeq(home, HOST_KEY, 1);
+          if (range !== null) {
+            taken.push(range.from);
+          }
+        }
+        return taken;
+      };
+      const [left, right] = await Promise.all([emitter(), emitter()]);
+      const all = [...left, ...right].sort((a, b) => a - b);
+
+      // Assert: 200 positions, every one distinct, none reused, none zero —
+      // n = 0 belongs to session.started and is never allocated again.
+      expect(all).toHaveLength(200);
+      expect(new Set(all).size).toBe(200);
+      expect(all[0]).toBe(1);
+      expect(all.at(-1)).toBe(200);
+      const state = await readSessionState(home, HOST_KEY);
+      expect(state?.eventSeq).toBe(200);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a range of many hands back consecutive positions and moves the counter once", async () => {
+    // Arrange: the hook path pre-allocates a WORST-CASE range once rather than
+    // paying a lock per record — gaps inside it are legal (§3.4).
+    const home = await makeHome("seq-range");
+    try {
+      await writeSessionState(home, stateInput({ seqEpoch: EPOCH }));
+
+      // Act
+      const first = await allocateSeq(home, HOST_KEY, 21);
+      const second = await allocateSeq(home, HOST_KEY, 1);
+
+      // Assert
+      expect(first).toEqual({ epoch: EPOCH, from: 1, count: 21 });
+      expect(second).toEqual({ epoch: EPOCH, from: 22, count: 1 });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a session with no epoch yet refuses the position rather than inventing one", async () => {
+    // Arrange: a state file written before this protocol field. Allocating
+    // under a null epoch would produce positions nothing can compare and
+    // nothing can tell apart from another home's.
+    const home = await makeHome("seq-no-epoch");
+    try {
+      await writeSessionState(home, stateInput());
+
+      // Act
+      const range = await allocateSeq(home, HOST_KEY, 1);
+
+      // Assert
+      expect(range).toBeNull();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a deleted state file refuses rather than throwing on the hook path", async () => {
+    // Arrange: a detached worker can outlive SessionEnd, whose state delete
+    // removes the file underneath it. Fail-open like every state write on a
+    // hook path — the record still lands, carrying `allocation_failed`.
+    const home = await makeHome("seq-no-state");
+    try {
+      // Act
+      const range = await allocateSeq(home, HOST_KEY, 1);
+
+      // Assert
+      expect(range).toBeNull();
     } finally {
       await rm(home, { recursive: true, force: true });
     }
