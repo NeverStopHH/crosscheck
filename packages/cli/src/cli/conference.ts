@@ -75,6 +75,7 @@ import type {
   HubContext,
 } from "@crosscheck/connector-core/http/hub.ts";
 import { buildEnvelope } from "@crosscheck/connector-core/capture/records.ts";
+import { ALLOCATION_FAILED } from "@crosscheck/connector-core/capture/seq.ts";
 import { mintClaimId } from "@crosscheck/connector-core/mcp/tools/shared.ts";
 import { recordConferenceRun } from "@crosscheck/connector-core/state/conference-cost.ts";
 // Straight from core since the relocation: a conference is a command a
@@ -470,6 +471,12 @@ const publishFindings = async (
     branch,
     baseCommit: "conference",
     status: "analyzing",
+    // A conference is a command a human runs, not a hook: it has no session
+    // state file and therefore no counter to take a position from. It says
+    // so. An OMITTED field would say "a connector from before this protocol
+    // field" instead, which is a statement about the install rather than
+    // about this one state-less session.
+    seq: ALLOCATION_FAILED,
   });
   if (!registered.ok) {
     return {

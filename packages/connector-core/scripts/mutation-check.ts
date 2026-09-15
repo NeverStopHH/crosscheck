@@ -4992,6 +4992,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "a confident sentence about an ordering nobody observed",
   },
   {
+    // Spec 01 §3.2 row 1. `session.started` is the ONE position nothing
+    // allocates — the counter is minted at 0 and hands out from 1 — so the
+    // register call is the only place it can be sent from.
+    label: "a session start is filed as a connector too old for the field",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      seq: { epoch, n: 0 },\n",
+    to: "",
+    test: `${CORE}/test/register-seq.test.ts`,
+    because:
+      "the one row every session is guaranteed to have goes back to reading " +
+      "`pre_seq_connector` — a statement that this machine predates the " +
+      "protocol field — on every session on every host, forever",
+  },
+  {
     // The bracket must consume a position of its own. If it does not, the
     // window opens exactly where the block begins and holds nothing.
     label: "a window opens on a position the block then takes anyway",
@@ -5310,6 +5324,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
+ * PRINTS: packages/connector-core/test/register-seq.test.ts 1
  * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 2
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1

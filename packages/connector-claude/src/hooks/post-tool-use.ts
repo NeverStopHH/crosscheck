@@ -29,7 +29,7 @@ import {
   updateSessionState,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
-import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
+import { ALLOCATION_FAILED, seqAt } from "@crosscheck/connector-core/capture/seq.ts";
 import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { resolveSessionWorkContextTitle } from "./session-start.ts";
@@ -80,6 +80,17 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     branch: ctx.identity.branch,
     baseCommit: ctx.identity.baseCommit,
     status: IMPLEMENTING_STATUS,
+    // A RECOVERY IS A CREATE, so it mints an epoch like SessionStart does and
+    // `session.started` takes position 0 under it. Sending nothing would file
+    // a current connector under `pre_seq_connector` — "a connector from
+    // before this field" — on the one row every session is guaranteed to
+    // have. `derived.seqEpoch` is minted by `deriveSessionState` and is never
+    // null in practice; the refusal is what an impossible null becomes,
+    // because an omitted field is a sentence about a different machine.
+    seq:
+      derived.seqEpoch === null
+        ? ALLOCATION_FAILED
+        : { epoch: derived.seqEpoch, n: 0 },
   });
   // A conflict means the id belongs to somebody else, OR to a live session
   // this developer already bound to ANOTHER repo (the hub's repo_mismatch,

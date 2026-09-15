@@ -177,6 +177,15 @@ export interface RegisterSessionInput {
   readonly branch: string;
   readonly baseCommit: string;
   readonly status: string;
+  /**
+   * `session.started`'s own position — `n = 0`, minted with the epoch rather
+   * than allocated, because the allocator hands out from 1. Optional on the
+   * type only so a caller with no session state (`crosscheck conference`) can
+   * send the refusal instead; a caller that sends NOTHING is read by the hub
+   * as a connector from before this field, which is a different fact about a
+   * different machine.
+   */
+  readonly seq?: SeqField;
 }
 
 const encodeRepo = (repo: string): string =>

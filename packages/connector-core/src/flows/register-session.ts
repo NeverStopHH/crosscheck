@@ -128,6 +128,7 @@ interface Registration {
 const registerWithRetry = async (
   input: RegisterSessionFlowInput,
   baseId: string,
+  epoch: string,
 ): Promise<Registration | typeof REPO_MISMATCH | null> => {
   for (const suffix of RETRY_SUFFIXES) {
     const sessionId = `${baseId}${suffix}`;
@@ -138,6 +139,15 @@ const registerWithRetry = async (
       branch: input.branch,
       baseCommit: input.baseCommit,
       status: input.status,
+      // `session.started` AT POSITION ZERO (spec 01 §3.2), and this is the
+      // only call that can send it: the allocator mints `eventSeq` at 0 and
+      // hands out from 1, so nothing ever allocates this position — it is
+      // minted with the epoch, by construction. An ABSENT field here would
+      // not be a missing position but a WRONG SENTENCE: the hub reads an
+      // absent `seq` as `pre_seq_connector`, "a connector from before this
+      // field", and would say it about a current connector on the one row
+      // every session is guaranteed to have.
+      seq: { epoch, n: 0 },
     });
     if (result.ok) {
       return { sessionId, developerId: result.data.session.developerId };
@@ -157,7 +167,12 @@ export const registerSessionFlow = async (
   input: RegisterSessionFlowInput,
 ): Promise<RegisterSessionFlowResult> => {
   const baseSessionId = crosscheckSessionIdFor(input.hostSessionKey);
-  const registration = await registerWithRetry(input, baseSessionId);
+  // MINTED BEFORE THE CALL, because the call carries it. The epoch was minted
+  // on the state input below — after the POST had already gone out — so the
+  // register body had nothing to send and `session.started` landed
+  // unpositioned on every host. One epoch, used by both halves.
+  const seqEpoch = crypto.randomUUID();
+  const registration = await registerWithRetry(input, baseSessionId, seqEpoch);
   if (registration === REPO_MISMATCH) {
     // First-wins (trial finding #9): a LIVE session with this id is bound to
     // another repo. NOTHING is written — a state file would re-home the
@@ -207,7 +222,7 @@ export const registerSessionFlow = async (
     // than sharing positions. On the ordinary path withCarriedCapture
     // restores the previous pair, so a re-fire that takes the lock keeps one
     // epoch for the whole session.
-    seqEpoch: crypto.randomUUID(),
+    seqEpoch,
     eventSeq: 0,
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
   };
