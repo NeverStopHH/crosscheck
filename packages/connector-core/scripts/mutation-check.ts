@@ -4928,7 +4928,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // load-bearing rather than defensive.
     label: "two counters are compared as though they were one",
     file: `${SERVER}/src/services/session-order.ts`,
-    from: "  a.seqEpoch === b.seqEpoch &&\n",
+    from: '  if (a.seqEpoch !== b.seqEpoch) {\n    return indeterminate("epoch_mismatch");\n  }\n',
     to: "",
     test: `${SERVER}/test/session-order.test.ts`,
     because:
@@ -4957,8 +4957,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // are CONCURRENT, and concurrent is not an order.
     label: "two events that raced are given an order anyway",
     file: `${SERVER}/src/services/session-order.ts`,
-    from: "  !overlaps(a, b);",
-    to: "  true;",
+    from: '  if (overlaps(a, b)) {\n    return indeterminate("concurrent");\n  }\n',
+    to: "",
     test: `${SERVER}/test/session-order-window.test.ts`,
     because:
       "a claim allocated while a tool was still running is ordered against " +
@@ -4983,8 +4983,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // the detached workers both record when a fact was WRITTEN DOWN.
     label: "an upper bound is compared as a happens-before",
     file: `${SERVER}/src/services/session-order.ts`,
-    from: '  a.seqKind === "emitted" &&\n  b.seqKind === "emitted" &&',
-    to: "  true &&",
+    from: '  if (a.seqKind !== "emitted" || b.seqKind !== "emitted") {\n    return indeterminate("upper_bound_only");\n  }\n',
+    to: "",
     test: `${SERVER}/test/session-order.test.ts`,
     because:
       "a codemod's file.modified and a summarizer's claim both answer " +
@@ -5120,7 +5120,7 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${CORE}/src/mcp/tools/shared.ts`,
     from:
       "  own.sessionAmbiguous\n" +
-      "    ? null\n" +
+      "    ? AMBIGUOUS_SESSION\n" +
       "    : allocateSeq(ctx.config.home, own.hostSessionKey, count);",
     to: "  allocateSeq(ctx.config.home, own.hostSessionKey, count);",
     test: `${CORE}/test/mcp-seq-e2e.test.ts`,
@@ -5179,7 +5179,7 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${CLI}/src/cli/doctor.ts`,
     from:
       "    checkGitLane(liveStates.states),\n" +
-      "    checkEventSeq(liveStates.states),",
+      "    checkEventSeq(liveStates.states, brokenOrders),",
     to: "    checkGitLane(liveStates.states),",
     test: `${CLI}/test/seq-doctor.test.ts`,
     because:
