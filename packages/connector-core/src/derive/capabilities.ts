@@ -36,12 +36,21 @@
 
 export type DeriveRung = "full" | "reduced" | "off";
 
-/** The four things a connector can be asked to make a model do. */
+/**
+ * What a connector can be asked to do — four model inferences and one thing
+ * that is NOT one: `event_seq` asks a host to put every record it emits in the
+ * session's own causal order, which is a lock and a counter rather than a
+ * model call. It belongs in this list anyway, because the question a reader
+ * asks of `doctor` is the same one — "is crosscheck doing this for ME, and if
+ * not, why not?" — and because the meta-test that refuses a silent absence is
+ * the only mechanism in the tree that can answer it in both directions.
+ */
 export const DERIVE_CAPABILITIES = [
   "intent",
   "ghost",
   "summarizer",
   "conference",
+  "event_seq",
 ] as const;
 
 export type DeriveCapabilityName = (typeof DERIVE_CAPABILITIES)[number];

@@ -58,8 +58,29 @@ export const ACP_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       sentence:
         "`crosscheck conference` is a command a human runs, not a wire event, so it needs nothing from the proxy or the agent at all — only a working model runner (see the summarizer runner check)",
     },
+    {
+      name: "event_seq",
+      rung: "reduced",
+      sentence:
+        "the proxy positions everything it can see off the parse copy, and two sources are missing: no ACP host runs the Stop-time git lane, so a codemod's edits produce no file.modified to order; and intent and claim events need the crosscheck MCP server, which reaches an ACP session only in --inject mode and only when the client already sent an mcpServers array",
+    },
   ],
   refusals: [
+    {
+      name: "commit collection",
+      sentence:
+        "no `commit.observed` event exists on this host: the git authorship scan runs only in Claude Code's SessionStart, and a proxy that shelled out to git per session would be doing work the forward path never asked for",
+    },
+    {
+      name: "MCP-borne events",
+      sentence:
+        "intent.declared, intent.amended, claim.created via publish_claim and claim.invalidated all need the crosscheck MCP server, which this proxy appends to session/new|load|resume only in --inject mode and only when the client already sent an mcpServers ARRAY — a --no-inject proxy emits none of those four kinds, and `crosscheck doctor` names which of the nine documented skip reasons applied",
+    },
+    {
+      name: "second evidence lane",
+      sentence:
+        "the Stop-time `git diff --name-only HEAD` lane is registered only by Claude Code's Stop hook, so a file this host changed through `sed -i`, a codemod or a generator raises no edit event and produces no file.modified to order or to attribute — `crosscheck suspect` will name the session that used an edit tool and never this one",
+    },
     {
       name: "forward-path capture",
       sentence:

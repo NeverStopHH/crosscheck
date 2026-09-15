@@ -122,6 +122,11 @@ import {
   summarizeGitLaneCost,
 } from "@crosscheck/connector-core/state/git-lane-cost.ts";
 import {
+  formatSeqCost,
+  seqWarning,
+  summarizeSeqCost,
+} from "@crosscheck/connector-core/state/seq-cost.ts";
+import {
   orphanSentence,
   orphanedPins,
   pinCoverageSentence,
@@ -1667,6 +1672,32 @@ const checkGitLane = (states: readonly SessionState[]): Check => {
 };
 
 /**
+ * THE CAUSAL ORDER, whose failure mode is also SILENCE.
+ *
+ * A session that cannot position its records keeps working perfectly in every
+ * other respect: the claims land, the intents land, the targets land. What
+ * quietly stops being answerable is *whether the reason predated the change* —
+ * and nothing else in this product would ever mention it. Two conditions
+ * produce that silence and both are printed:
+ *
+ *   - a live session with NO epoch, whose state file predates the sequence;
+ *   - a worktree with TWO live sessions, where an MCP tool cannot tell which
+ *     one is calling it and therefore refuses to stamp a position rather than
+ *     guessing at one (spec 01 §10 D1).
+ *
+ * NEVER PASS-ONLY, for the finding-#14 reason: a machine in either state reads
+ * exactly like a healthy one everywhere else.
+ */
+const checkEventSeq = (states: readonly SessionState[]): Check => {
+  const cost = summarizeSeqCost(states);
+  const line = formatSeqCost(cost);
+  const warning = seqWarning(cost);
+  return warning === null
+    ? check("PASS", "event sequence", line)
+    : check("WARN", "event sequence", `${line} — ${warning}`);
+};
+
+/**
  * The regression guard's two checks (Stage 1, part C). Both exist because
  * their failure mode is SILENCE, which is the only failure a post-hoc guard
  * can have: nothing crashes, nothing is slow, and the answer is simply wrong
@@ -2832,6 +2863,7 @@ export const runDoctor = async (
     checkIntentCost(liveStates.states),
     checkGhostCost(liveStates.states),
     checkGitLane(liveStates.states),
+    checkEventSeq(liveStates.states),
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),

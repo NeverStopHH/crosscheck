@@ -48,6 +48,7 @@ import {
   formatGitLaneCost,
   summarizeGitLaneCost,
 } from "@crosscheck/connector-core/state/git-lane-cost.ts";
+import { formatSeqCost, summarizeSeqCost } from "@crosscheck/connector-core/state/seq-cost.ts";
 import {
   formatGhostCost,
   formatIntentCost,
@@ -194,6 +195,7 @@ export const runStatus = async (
   // other per-session counters and out of the same one scan: a lane whose
   // skips are never shown is a blind spot `suspect` answers out of.
   const gitLaneCost = summarizeGitLaneCost(liveStates.states);
+  const seqCost = summarizeSeqCost(liveStates.states);
   // The conference counters (VISION.md §2). A LOCAL file rather than session
   // state: a conference is a command, often run from a scheduler at 03:00,
   // and its numbers must survive on a machine with no live session at all.
@@ -355,6 +357,9 @@ export const runStatus = async (
       `intent: ${formatIntentCost(intentCost)}`,
       `ghost checks: ${formatGhostCost(ghostCost)}`,
       `git evidence lane: ${formatGitLaneCost(gitLaneCost)}`,
+      // Beside the lane it is measured with: both answer "what can this
+      // machine still tell you", and both fail by going quiet.
+      `event sequence: ${formatSeqCost(seqCost)}`,
       `conference: ${formatConferenceCost(conferenceCost, now)}`,
       // The CAPTURE stamp, not `lastOkAt`: only register/heartbeat/records/end
       // move it, so this age is the hook path's and not this command's (H5).

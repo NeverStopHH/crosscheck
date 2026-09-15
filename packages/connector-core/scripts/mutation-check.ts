@@ -5034,6 +5034,37 @@ export const MUTATIONS: readonly Mutation[] = [
       "afternoon, a slow hub — loses its end from the order, and the sessions " +
       "that deferred are exactly the ones that had the most left to say",
   },
+  {
+    // Non-negotiable 4 on this surface. A session that cannot position its
+    // records works perfectly in every other respect — the claims land, the
+    // intents land — and only "did the reason predate the change" quietly
+    // stops being answerable. Nothing else in this product would say so.
+    label: "doctor goes quiet about a session with no order",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from:
+      "    checkGitLane(liveStates.states),\n" +
+      "    checkEventSeq(liveStates.states),",
+    to: "    checkGitLane(liveStates.states),",
+    test: `${CLI}/test/seq-doctor.test.ts`,
+    because:
+      "a machine whose every position is refused reads exactly like a healthy " +
+      "one, and the remedy — close one of the two sessions — is never named " +
+      "to the only person who can apply it",
+  },
+  {
+    // The count behind that line. Nick's D1 decision is only honest if the
+    // refusals it causes are visible: two sessions in one worktree is the one
+    // case an MCP tool cannot see its way out of.
+    label: "the ambiguous-worktree count is structurally zero",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "  return [...perRoot.values()].filter((count) => count > 1).length;",
+    to: "  return 0;",
+    test: `${CLI}/test/seq-doctor.test.ts`,
+    because:
+      "doctor PASSes on the exact machine where every intent and claim is " +
+      "landing without a position, so the one visible trace of D1's cost " +
+      "disappears and the refusal looks like nothing happening",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5092,6 +5123,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 2
+ * PRINTS: packages/cli/test/seq-doctor.test.ts 2
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
@@ -5118,6 +5150,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
+ * PRINTS: packages/connector-claude/test/hook-seq.test.ts 2
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
@@ -5141,6 +5174,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
@@ -5155,6 +5189,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 4
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 12
+ * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
@@ -5166,6 +5201,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
+ * PRINTS: packages/connector-core/test/session-seq.test.ts 3
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 1
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
@@ -5193,6 +5229,10 @@ interface Outcome {
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
+ * PRINTS: packages/server/test/session-event-conflict.test.ts 1
+ * PRINTS: packages/server/test/session-event-seq-kind.test.ts 2
+ * PRINTS: packages/server/test/session-events.test.ts 2
+ * PRINTS: packages/server/test/session-order.test.ts 3
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1

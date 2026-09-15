@@ -41,27 +41,38 @@ describe("the Claude derive section", () => {
     }
   });
 
-  test("the reference host declares no refusals, and prints no extras", () => {
+  test("every declared refusal is printed, and nothing is invented", () => {
     const checks = claudeDoctorChecks();
 
-    // Claude Code is the host every rung is FULL on — the manifest declares
-    // an empty refusals list, and this pins that the renderer does not invent
-    // one. If a refusal is ever added there, this length assertion is the
-    // thing that makes somebody render it here too.
-    expect(CLAUDE_CAPABILITY_MANIFEST.refusals).toHaveLength(0);
+    // Claude Code was for a long time the host nothing was refused on, and
+    // this assertion existed to make whoever added the first refusal render it
+    // here too. The causal order added it: this host runs the ONLY Stop-time
+    // git lane, and that lane cannot see work committed during the turn or
+    // untracked new files — a blind spot that has to travel beside the
+    // positions it produces, because an `observed` position is an upper bound
+    // partly for that reason.
+    expect(CLAUDE_CAPABILITY_MANIFEST.refusals.length).toBeGreaterThan(0);
+    for (const refusal of CLAUDE_CAPABILITY_MANIFEST.refusals) {
+      const line = named(checks, `${refusal.name} (claude-code)`);
+      expect(line, refusal.name).toBeDefined();
+      expect(line?.level).toBe("PASS");
+      expect(line?.detail).toContain(refusal.sentence);
+    }
     expect(checks).toHaveLength(
       CLAUDE_CAPABILITY_MANIFEST.capabilities.length +
         CLAUDE_CAPABILITY_MANIFEST.refusals.length,
     );
   });
 
-  test("the four rungs are the four the other connectors are read against", () => {
+  test("the rungs are the ones the other connectors are read against", () => {
     const checks = claudeDoctorChecks();
     expect(checks.map((entry) => entry.name)).toEqual([
       "intent (claude-code)",
       "ghost (claude-code)",
       "summarizer (claude-code)",
       "conference (claude-code)",
+      "event_seq (claude-code)",
+      "git lane blind spots (claude-code)",
     ]);
   });
 });

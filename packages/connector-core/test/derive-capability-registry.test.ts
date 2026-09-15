@@ -54,6 +54,15 @@ const TRIGGER_IDENTIFIERS: Readonly<
     "withSummarizerNoSlice",
   ],
   conference: [],
+  /**
+   * `allocateSeq` is the one entry point into the causal order, and every host
+   * that positions a record imports it DIRECTLY — the hooks and handlers do,
+   * because the allocation has to happen before their records are serialized
+   * and no core flow can take it for them. So the trigger is real evidence
+   * here rather than an exemption: a connector that declares `event_seq` and
+   * imports nothing goes red, exactly like the four above it.
+   */
+  event_seq: ["allocateSeq"],
 };
 
 /** Barrels re-export names without using them — the render registry's rule. */

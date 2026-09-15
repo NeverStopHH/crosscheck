@@ -41,7 +41,7 @@ const check = (
  * these sentences are the same on every Claude machine.
  *
  * VERIFY: bun -e 'const {claudeDoctorChecks:c}=await import("./packages/connector-claude/src/doctor.ts");console.log(c().length, c().map(l=>l.name).join(","), new Set(c().map(l=>l.level)).size)'
- * PRINTS: 4 intent (claude-code),ghost (claude-code),summarizer (claude-code),conference (claude-code) 1
+ * PRINTS: 6 intent (claude-code),ghost (claude-code),summarizer (claude-code),conference (claude-code),event_seq (claude-code),git lane blind spots (claude-code) 1
  */
 export const claudeDoctorChecks = (): readonly ClaudeCheck[] => [
   ...CLAUDE_CAPABILITY_MANIFEST.capabilities.map((capability) =>
@@ -51,9 +51,10 @@ export const claudeDoctorChecks = (): readonly ClaudeCheck[] => [
       `${capability.rung} — ${capability.sentence}`,
     ),
   ),
-  // Empty today: Claude Code is the host nothing is refused on. Rendered
-  // anyway so that adding a refusal to the manifest prints it here without a
-  // second edit — a decision nobody can find is a bug (rule 4).
+  // One entry today, and it arrived with the causal order: this host runs the
+  // ONLY Stop-time git lane, so it is the only host that has to say what that
+  // lane cannot see. Rendered from the manifest, so a refusal added there
+  // prints here without a second edit — a decision nobody can find is a bug.
   ...CLAUDE_CAPABILITY_MANIFEST.refusals.map((refusal) =>
     check("PASS", `${refusal.name} (claude-code)`, refusal.sentence),
   ),

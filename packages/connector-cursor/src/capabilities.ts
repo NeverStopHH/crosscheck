@@ -40,8 +40,24 @@ export const CURSOR_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       sentence:
         "`crosscheck conference` is a command a human runs, not a hook, so it needs nothing from Cursor at all — only a working model runner (see the summarizer runner check)",
     },
+    {
+      name: "event_seq",
+      rung: "reduced",
+      sentence:
+        "Cursor's handlers position every record they emit through the same allocator, but Cursor runs no Stop-time `git diff` lane, so a file changed by `sed -i`, a codemod or a generator produces no file.modified here to order at all",
+    },
   ],
   refusals: [
+    {
+      name: "commit collection",
+      sentence:
+        "no `commit.observed` event exists on this host: the git authorship scan runs only in Claude Code's SessionStart, so absence detection here is fed by whatever teammates on that host report, and this connector's sessions contribute none of it",
+    },
+    {
+      name: "second evidence lane",
+      sentence:
+        "the Stop-time `git diff --name-only HEAD` lane is registered only by Claude Code's Stop hook, so a file this host changed through `sed -i`, a codemod or a generator raises no edit event and produces no file.modified to order or to attribute — `crosscheck suspect` will name the session that used an edit tool and never this one",
+    },
     {
       name: "pre-edit ask",
       sentence:
