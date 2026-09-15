@@ -7,14 +7,19 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { agentSessions } from "../src/db/schema.ts";
 import {
   COVERAGE_SOURCES,
   readCoverage,
 } from "../src/services/coverage.ts";
-import { createTestDeveloper, createTestHarness } from "./helpers.ts";
+import { TEST_START_ISO, createTestDeveloper, createTestHarness } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
 
 const REPO = "github.com/acme/api";
+const MINUTE_MS = 60_000;
+
+const at = (offsetMs: number): Date =>
+  new Date(new Date(TEST_START_ISO).getTime() + offsetMs);
 
 const seed = async (): Promise<{
   harness: TestHarness;
@@ -23,6 +28,55 @@ const seed = async (): Promise<{
   const harness = await createTestHarness();
   const developer = await createTestDeveloper(harness, "Nick", "nick@example.com");
   return { harness, viewerId: developer.developerId };
+};
+
+interface SessionRow {
+  readonly id: string;
+  readonly lastHeartbeatAt: Date;
+  readonly endedAt?: Date | null;
+  readonly reapedAt?: Date | null;
+  readonly repo?: string;
+}
+
+const insertSession = async (
+  harness: TestHarness,
+  developerId: string,
+  row: SessionRow,
+): Promise<void> => {
+  await harness.db.insert(agentSessions).values({
+    id: row.id,
+    developerId,
+    agentKind: "claude-code",
+    repo: row.repo ?? REPO,
+    branch: "main",
+    baseCommit: "a1b2c3d4",
+    status: "analyzing",
+    startedAt: at(-60 * MINUTE_MS),
+    lastHeartbeatAt: row.lastHeartbeatAt,
+    endedAt: row.endedAt ?? null,
+    reapedAt: row.reapedAt ?? null,
+  });
+};
+
+const agentEventOf = async (
+  harness: TestHarness,
+  viewerId: string,
+): Promise<{
+  state: string;
+  reason: string;
+  gapSince: string | null;
+  observedAt: string | null;
+}> => {
+  const record = await readCoverage(
+    { db: harness.db, now: harness.clock.now },
+    viewerId,
+    REPO,
+  );
+  const row = record.sources.find((entry) => entry.source === "agent_event");
+  if (row === undefined) {
+    throw new Error("agent_event row missing");
+  }
+  return row;
 };
 
 describe("COV-2: five rows, in order, no scalar", () => {
@@ -93,4 +147,113 @@ describe("COV-5: three rungs refuse, by name", () => {
       expect(row?.gapSince).toBeNull();
     },
   );
+});
+
+/**
+ * COV-4 — the defect this rung exists for. `reaped_at` is set beside
+ * `ended_at` when the HUB guessed the session was over (db/schema.ts:145-152);
+ * a SessionEnd the connector reported is a FACT and a reap is an INFERENCE
+ * from silence. Read as the same thing, a killed terminal — 104 of 127 in the
+ * measured trial — becomes "we watched that session to its end".
+ */
+describe("COV-4: a reaped end is not a clean end", () => {
+  test("two sessions identical but for reaped_at read complete and incomplete", async () => {
+    // Arrange: one session the connector ended, one the hub reaped
+    const reported = await seed();
+    await insertSession(reported.harness, reported.viewerId, {
+      id: "ses_reported",
+      lastHeartbeatAt: at(-30 * MINUTE_MS),
+      endedAt: at(-29 * MINUTE_MS),
+    });
+    const reaped = await seed();
+    await insertSession(reaped.harness, reaped.viewerId, {
+      id: "ses_reaped",
+      lastHeartbeatAt: at(-30 * MINUTE_MS),
+      endedAt: at(-29 * MINUTE_MS),
+      reapedAt: at(-29 * MINUTE_MS),
+    });
+
+    // Act
+    const reportedRow = await agentEventOf(reported.harness, reported.viewerId);
+    const reapedRow = await agentEventOf(reaped.harness, reaped.viewerId);
+
+    // Assert
+    expect(reportedRow.state).toBe("complete");
+    expect(reportedRow.reason).toBe("sessions_reported");
+    expect(reportedRow.gapSince).toBeNull();
+    expect(reapedRow.state).toBe("incomplete");
+    expect(reapedRow.reason).toBe("session_reaped");
+    expect(reapedRow.gapSince).toBe(at(-30 * MINUTE_MS).toISOString());
+  });
+
+  test("an unclosed session past the presence cutoff is incomplete, not live", async () => {
+    // Arrange: no ended_at, and the last heartbeat is older than the TTL
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_silent",
+      lastHeartbeatAt: at(-45 * MINUTE_MS),
+    });
+
+    // Act
+    const row = await agentEventOf(harness, viewerId);
+
+    // Assert
+    expect(row.state).toBe("incomplete");
+    expect(row.reason).toBe("session_silent");
+    expect(row.gapSince).toBe(at(-45 * MINUTE_MS).toISOString());
+  });
+
+  test("an unclosed session still heartbeating is complete — live is not a gap", async () => {
+    // Arrange
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_live",
+      lastHeartbeatAt: at(-30_000),
+    });
+
+    // Act
+    const row = await agentEventOf(harness, viewerId);
+
+    // Assert
+    expect(row.state).toBe("complete");
+    expect(row.observedAt).toBe(at(-30_000).toISOString());
+  });
+
+  test("no session on this repo is unknown — not complete, because no session is not proof nobody worked", async () => {
+    // Arrange: a session on ANOTHER repo only
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_elsewhere",
+      repo: "github.com/acme/web",
+      lastHeartbeatAt: at(-30 * MINUTE_MS),
+      endedAt: at(-29 * MINUTE_MS),
+    });
+
+    // Act
+    const row = await agentEventOf(harness, viewerId);
+
+    // Assert
+    expect(row.state).toBe("unknown");
+    expect(row.reason).toBe("no_session_in_window");
+    expect(row.gapSince).toBeNull();
+    expect(row.observedAt).toBeNull();
+  });
+
+  test("a session older than the coverage window is out of scope, not a gap", async () => {
+    // Arrange: reaped, but twenty days ago
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_ancient",
+      lastHeartbeatAt: at(-20 * 24 * 60 * MINUTE_MS),
+      endedAt: at(-20 * 24 * 60 * MINUTE_MS),
+      reapedAt: at(-20 * 24 * 60 * MINUTE_MS),
+    });
+
+    // Act
+    const row = await agentEventOf(harness, viewerId);
+
+    // Assert
+    expect(row.state).toBe("unknown");
+    expect(row.reason).toBe("no_session_in_window");
+  });
 });

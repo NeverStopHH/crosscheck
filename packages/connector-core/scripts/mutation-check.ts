@@ -4815,6 +4815,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "doctor stops printing the CI refusal as a refusal, and the verdict " +
       "layer treats a rung nobody built as a rung that has not reported yet",
   },
+  {
+    // A SessionEnd is a fact the session reported; a reap is the hub's guess
+    // after six hours of silence, and db/schema.ts:145-152 keeps the two
+    // apart precisely because "an inference has to be revocable". Read as one
+    // thing, a killed terminal becomes a session watched to its end.
+    label: "a reaped end is read as a clean end",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "const isGap = sql`(${agentSessions.reapedAt} is not null or (",
+    to: "const isGap = sql`((",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "every repo whose sessions the reaper closed reports agent_event " +
+      "complete, and the verdict layer names people over a window nobody " +
+      "was reporting through",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -4962,7 +4977,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
- * PRINTS: packages/server/test/coverage.test.ts 2
+ * PRINTS: packages/server/test/coverage.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4

@@ -26,11 +26,15 @@
  * window" — never an inference about what somebody did. We see agent sessions,
  * not keystrokes.
  */
+import { and, eq, gt, sql } from "drizzle-orm";
+
 import {
   COVERAGE_SESSION_WINDOW_DAYS,
   SUSPECT_MAX_PATHS,
 } from "../constants.ts";
+import { agentSessions } from "../db/schema.ts";
 import { listAbsences } from "./absences.ts";
+import { presenceCutoff } from "./presence.ts";
 import type { AbsenceFinding } from "./absences.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -196,13 +200,97 @@ const effectiveSince = (now: Date, scope: CoverageScope | undefined): Date => {
 const scopePaths = (scope: CoverageScope | undefined): readonly string[] =>
   (scope?.paths ?? []).slice(0, SUSPECT_MAX_PATHS);
 
+/** Driver-agnostic timestamp read: raw aggregates bypass drizzle's mapping. */
+const toIso = (value: unknown): string | null => {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+  }
+  return null;
+};
+
+const toCount = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+/**
+ * ONE indexed aggregate over `agent_sessions` by repo (§3.2), riding
+ * agent_sessions_repo_idx / agent_sessions_heartbeat_idx (db/schema.ts:156-157).
+ *
+ * TWO WAYS OBSERVATION STOPS, and neither is an ended session:
+ *
+ *   `reaped_at` NOT NULL — the hub closed this session on a GUESS after
+ *   SESSION_REAP_STALE_HOURS of silence. services/records.ts:71-79 records
+ *   that the reap over-fires: "an afternoon of reading and planning looks
+ *   like a killed terminal". Whatever it was, nobody was reporting.
+ *
+ *   `ended_at` NULL past `presenceCutoff` — the session never said goodbye
+ *   and is not live either. The trial found 104 of 127 sessions in this
+ *   state (connector-core/src/state/capture-health.ts:23-30).
+ *
+ * ZERO ROWS IS `unknown`, NEVER `complete`. No session is not proof nobody
+ * worked; it is proof nobody told us, which is the distinction this whole
+ * record exists to keep.
+ *
+ * `gapSince` is the EARLIEST heartbeat among the sessions that stopped
+ * reporting — "observation has been unreliable since at least this instant",
+ * which is the direction that cannot overstate what was seen. `observedAt` is
+ * the newest heartbeat of any session in the window, gap or not: the last
+ * moment this rung saw anything at all.
+ *
+ * A REAP OUTRANKS A SILENCE when both are present. A reap is a decision this
+ * hub made and can revoke, so it is the one a reader can act on.
+ */
 const readAgentEventCoverage = async (
-  _deps: Deps,
-  _repo: string,
-  _since: Date,
+  deps: Deps,
+  repo: string,
+  since: Date,
   _paths: readonly string[],
-): Promise<CoverageSourceRecord> =>
-  sourceRecord("agent_event", "unknown", "no_session_in_window");
+): Promise<CoverageSourceRecord> => {
+  const cutoff = presenceCutoff(deps.now());
+  const isGap = sql`(${agentSessions.reapedAt} is not null or (${agentSessions.endedAt} is null and ${agentSessions.lastHeartbeatAt} <= ${cutoff}))`;
+  const rows = await deps.db
+    .select({
+      total: sql`count(*)`,
+      reaped: sql`count(*) filter (where ${agentSessions.reapedAt} is not null)`,
+      gaps: sql`count(*) filter (where ${isGap})`,
+      gapSince: sql`min(${agentSessions.lastHeartbeatAt}) filter (where ${isGap})`,
+      observedAt: sql`max(${agentSessions.lastHeartbeatAt})`,
+    })
+    .from(agentSessions)
+    .where(
+      and(
+        eq(agentSessions.repo, repo),
+        gt(agentSessions.lastHeartbeatAt, since),
+      ),
+    );
+  const row = rows[0];
+  const total = toCount(row?.total);
+  if (total === 0) {
+    return sourceRecord("agent_event", "unknown", "no_session_in_window");
+  }
+  const observedAt = toIso(row?.observedAt);
+  if (toCount(row?.gaps) === 0) {
+    return sourceRecord(
+      "agent_event",
+      "complete",
+      "sessions_reported",
+      null,
+      observedAt,
+    );
+  }
+  return sourceRecord(
+    "agent_event",
+    "incomplete",
+    toCount(row?.reaped) > 0 ? "session_reaped" : "session_silent",
+    toIso(row?.gapSince),
+    observedAt,
+  );
+};
 
 const readGitCoverage = async (
   _deps: Deps,
