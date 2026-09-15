@@ -20,6 +20,13 @@
  *   correct and it is invisible: the claim lands, the intent lands, and only
  *   the order quietly stops being answerable. This is the count that says so.
  *
+ *   A BROKEN EPOCH. Two events that claimed one position, or one session
+ *   holding two counters. Neither is visible from here at all — both are facts
+ *   about rows the hub holds — so the hub's own answer is carried in beside
+ *   the local counts rather than guessed at from a state file that cannot know.
+ *   It costs the WHOLE session: every happens-before question about it is
+ *   refused, including the half that was perfectly ordered.
+ *
  * THE REMEDY IS IN THE SENTENCE, not in a document nobody opens: close one of
  * the two sessions, or give each its own worktree.
  */
@@ -80,6 +87,17 @@ export const summarizeSeqCost = (states: readonly SessionState[]): SeqCost => ({
 });
 
 /**
+ * ONE SESSION THE HUB CANNOT ORDER — the shape `getBrokenSessionOrders`
+ * returns, narrowed to what a line prints. `null` means the hub was not asked
+ * or did not answer, which is NOT the same as "none broken" and must not be
+ * printed as though it were.
+ */
+export interface BrokenOrder {
+  readonly sessionId: string;
+  readonly reason: string;
+}
+
+/**
  * When this is worth complaining about — and NOT "any absence". A machine with
  * one healthy session per worktree warns about nothing, forever; warning there
  * would be the noise every counter in this tree is built to avoid.
@@ -89,7 +107,23 @@ export const summarizeSeqCost = (states: readonly SessionState[]): SeqCost => ({
  * written the state file, an ambiguous worktree by the person closing one of
  * the two agents.
  */
-export const seqWarning = (cost: SeqCost): string | null => {
+export const seqWarning = (
+  cost: SeqCost,
+  broken: readonly BrokenOrder[] | null = null,
+): string | null => {
+  // FIRST, because it is the only one that costs a WHOLE session. The other
+  // two withhold positions from records the connector has not emitted yet; a
+  // broken epoch retires every comparison in a session that already ran.
+  if (broken !== null && broken.length > 0) {
+    return (
+      `the hub cannot order ${plural(broken.length, "session")} of yours ` +
+      `(${reasonsOf(broken)}): two events claimed one position, or the ` +
+      "session minted a second counter — every `declared before` question " +
+      "about that session is refused, including the part that was ordered " +
+      "correctly, and a fresh session (a new one, or `/clear`) starts a " +
+      "sequence that is whole"
+    );
+  }
   if (cost.ambiguousRoots > 0) {
     return (
       "more than one live session shares a worktree, so an MCP tool cannot " +
@@ -108,8 +142,18 @@ export const seqWarning = (cost: SeqCost): string | null => {
   return null;
 };
 
+const plural = (count: number, noun: string): string =>
+  `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
+
+/** The reasons behind a broken count, de-duplicated and in a stable order. */
+const reasonsOf = (broken: readonly BrokenOrder[]): string =>
+  [...new Set(broken.map((order) => order.reason))].sort().join(", ");
+
 /** The one spelling both CLI surfaces print. */
-export const formatSeqCost = (cost: SeqCost): string => {
+export const formatSeqCost = (
+  cost: SeqCost,
+  broken: readonly BrokenOrder[] | null = null,
+): string => {
   if (cost.sessions === 0) {
     return "no live sessions";
   }
@@ -122,9 +166,16 @@ export const formatSeqCost = (cost: SeqCost): string => {
       : ` · ${String(cost.ambiguousRoots)} worktree${
           cost.ambiguousRoots === 1 ? "" : "s"
         } with two sessions (MCP positions refused there)`;
+  // ABSENT IS NOT ZERO. A hub too old for the route, or one that did not
+  // answer, says nothing — and printing "0 broken" there would be an assertion
+  // nobody made. The line stays silent about what it could not ask.
+  const hub =
+    broken === null || broken.length === 0
+      ? ""
+      : ` · ${plural(broken.length, "session")} on the hub cannot be ordered (${reasonsOf(broken)})`;
   return (
     `${String(cost.allocated)} position(s) allocated · ` +
-    `${String(cost.unsequenced)} with no position at all ${sessions}${ambiguous}` +
+    `${String(cost.unsequenced)} with no position at all ${sessions}${ambiguous}${hub}` +
     " — order holds inside one session only: two sessions, two machines and a" +
     " CI run are not comparable by construction"
   );

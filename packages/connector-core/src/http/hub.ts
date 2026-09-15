@@ -281,6 +281,40 @@ export const getOpenSessions = (
     schema: tolerantList("sessions", OpenSessionEntrySchema),
   });
 
+/**
+ * THE TWO ORDER FAILURES ONLY THE HUB CAN SEE (spec 01 §3.7).
+ *
+ * `epoch_conflict` — two events claimed one position — and `epoch_split` — one
+ * session holding two counters — are computed from rows the hub holds, and no
+ * local state file knows about either. A session in either state looks healthy
+ * from here, and every happens-before question about it is refused.
+ *
+ * `reason` is REQUIRED and never defaulted: a state with no reason beside it is
+ * the bare word every surface in this product forbids, and there is nothing
+ * sensible to invent when a hub does not say.
+ */
+export const SessionOrderEntrySchema = z.looseObject({
+  sessionId: z.string().min(1),
+  state: z.string().min(1),
+  reason: z.string().min(1),
+  epochs: z.number().int().min(0),
+});
+
+export type SessionOrderEntry = z.infer<typeof SessionOrderEntrySchema>;
+
+/**
+ * An older hub has no such route and answers 404 — a plain HubResult failure,
+ * which the caller reports as "not measured" rather than as "none broken".
+ */
+export const getBrokenSessionOrders = (
+  ctx: HubContext,
+): Promise<HubResult<readonly SessionOrderEntry[]>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/sessions/order",
+    schema: tolerantList("sessions", SessionOrderEntrySchema),
+  });
+
 export const getPresence = (
   ctx: HubContext,
   repo: string,

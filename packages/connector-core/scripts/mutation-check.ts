@@ -5318,6 +5318,34 @@ export const MUTATIONS: readonly Mutation[] = [
       "instrumentation number that says how much of the fleet predates the " +
       "field counts machines that are running the current build",
   },
+  {
+    // The two order failures a connector cannot see from where it stands.
+    // Non-negotiable #4: every error path is visible in status or doctor.
+    label: "the hub counts a broken epoch and prints it nowhere",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    checkEventSeq(liveStates.states, brokenOrders),",
+    to: "    checkEventSeq(liveStates.states, null),",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "a session whose whole causal order is broken — every `declared " +
+      "before` question about it refused, including the half that was " +
+      "ordered correctly — reads as a healthy machine on the one surface " +
+      "that describes this machine",
+  },
+  {
+    // The hub half of the same line: only the BROKEN orders travel, so the
+    // response says nothing about healthy work and a reader is told only what
+    // needs acting on.
+    label: "the order route answers about the sessions that are fine",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '    .filter((order) => order.state === "broken");',
+    to: '    .filter((order) => order.state === "usable");',
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "doctor is handed every healthy session and no broken one, so the line " +
+      "WARNs on machines that are fine and stays silent on the one whose " +
+      "whole causal order is gone",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5376,6 +5404,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 2
+ * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 2
  * PRINTS: packages/cli/test/seq-doctor.test.ts 2
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3

@@ -23,10 +23,11 @@
  * mirrors the coverage spec's discipline deliberately, and `isOrderable`
  * mirrors its `isJudgeable` the same way: both gate one dimension.
  */
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { SeqKind, SeqReason } from "@crosscheck/schema";
 
-import { sessionEvents } from "../db/schema.ts";
+import { OPEN_SESSIONS_MAX } from "../constants.ts";
+import { agentSessions, sessionEvents } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
 
 export const CAUSAL_ORDER_STATES = ["usable", "broken", "unsequenced"] as const;
@@ -211,6 +212,68 @@ export const readSessionCausalOrder = async (
     .from(sessionEvents)
     .where(eq(sessionEvents.sessionId, sessionId));
   return causalOrderOf(sessionId, rows);
+};
+
+/**
+ * THE SESSIONS WHOSE ORDER IS BROKEN, for the caller's own live work.
+ *
+ * WHY IT IS READ BACK AT ALL. `epoch_conflict` and `epoch_split` are the two
+ * failures a connector structurally cannot see: both are facts about rows the
+ * hub holds, and the local state file that doctor's `event sequence` line
+ * reads knows nothing about either. A session in either state keeps working
+ * perfectly — the claims land, the intents land — and only *whether the reason
+ * predated the change* stops being answerable, for the WHOLE session. Without
+ * this read that machine looks healthy on the one surface that describes it.
+ *
+ * ONE STATEMENT, AND IT CANNOT TRUNCATE AN ANSWER. The rows are the DISTINCT
+ * (session, epoch, reason) triples, which is a handful per session however
+ * many events it holds, and the bound is on the number of SESSIONS rather than
+ * on the triples: a limit that cut a session's second epoch off would report
+ * a split session as healthy, which is the one answer this must never give.
+ *
+ * NOT A POLL AND NOT A JOB. It runs when a human types `crosscheck doctor`.
+ */
+export const readBrokenCausalOrders = async (
+  db: DbExecutor,
+  developerId: string,
+): Promise<readonly SessionCausalOrder[]> => {
+  const mine = db
+    .select({ id: agentSessions.id })
+    .from(agentSessions)
+    .where(
+      and(
+        eq(agentSessions.developerId, developerId),
+        isNull(agentSessions.endedAt),
+      ),
+    )
+    .orderBy(desc(agentSessions.lastHeartbeatAt))
+    .limit(OPEN_SESSIONS_MAX);
+  const rows = await db
+    .select({
+      sessionId: sessionEvents.sessionId,
+      seqEpoch: sessionEvents.seqEpoch,
+      seqReason: sessionEvents.seqReason,
+    })
+    .from(sessionEvents)
+    .where(inArray(sessionEvents.sessionId, mine))
+    .groupBy(
+      sessionEvents.sessionId,
+      sessionEvents.seqEpoch,
+      sessionEvents.seqReason,
+    );
+  const perSession = new Map<string, PositionRow[]>();
+  for (const row of rows) {
+    perSession.set(row.sessionId, [
+      ...(perSession.get(row.sessionId) ?? []),
+      { seqEpoch: row.seqEpoch, seqReason: row.seqReason },
+    ]);
+  }
+  // `causalOrderOf` is the ONE place the decision lives, and distinct triples
+  // give it the identical answer: it reads the SET of epochs and whether any
+  // row carries a conflict, and duplicates change neither.
+  return [...perSession.entries()]
+    .map(([sessionId, session]) => causalOrderOf(sessionId, session))
+    .filter((order) => order.state === "broken");
 };
 
 /**

@@ -25,6 +25,7 @@ export {
   causalPositionOf,
   compareEvents,
   isOrderable,
+  readBrokenCausalOrders,
   readSessionCausalOrder,
 } from "./services/session-order.ts";
 export type {

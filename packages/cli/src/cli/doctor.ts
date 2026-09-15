@@ -97,6 +97,7 @@ import {
 import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
 import {
   getAbsences,
+  getBrokenSessionOrders,
   getGhostChecks,
   getHintStats,
   getOpenSessions,
@@ -126,6 +127,7 @@ import {
   seqWarning,
   summarizeSeqCost,
 } from "@crosscheck/connector-core/state/seq-cost.ts";
+import type { BrokenOrder } from "@crosscheck/connector-core/state/seq-cost.ts";
 import {
   orphanSentence,
   orphanedPins,
@@ -1685,13 +1687,23 @@ const checkGitLane = (states: readonly SessionState[]): Check => {
  *     one is calling it and therefore refuses to stamp a position rather than
  *     guessing at one (spec 01 §10 D1).
  *
- * NEVER PASS-ONLY, for the finding-#14 reason: a machine in either state reads
- * exactly like a healthy one everywhere else.
+ * AND A THIRD THIS SIDE CANNOT SEE AT ALL. `epoch_conflict` and `epoch_split`
+ * are computed from rows the HUB holds — two events that claimed one position,
+ * or one session that minted a second counter — and no local state file knows
+ * about either. That one costs the whole session rather than a record, so it
+ * is asked for and printed first. The hub's answer rides in as data: a hub too
+ * old for the route says nothing, and nothing is NOT "none broken".
+ *
+ * NEVER PASS-ONLY, for the finding-#14 reason: a machine in any of the three
+ * states reads exactly like a healthy one everywhere else.
  */
-const checkEventSeq = (states: readonly SessionState[]): Check => {
+const checkEventSeq = (
+  states: readonly SessionState[],
+  broken: readonly BrokenOrder[] | null,
+): Check => {
   const cost = summarizeSeqCost(states);
-  const line = formatSeqCost(cost);
-  const warning = seqWarning(cost);
+  const line = formatSeqCost(cost, broken);
+  const warning = seqWarning(cost, broken);
   return warning === null
     ? check("PASS", "event sequence", line)
     : check("WARN", "event sequence", `${line} — ${warning}`);
@@ -2769,6 +2781,17 @@ export const runDoctor = async (
   // it: an older hub 404s and the count degrades to null (§R6).
   const openSessions = await getOpenSessions(hubCtx);
   const openOnHub = openSessions.ok ? openSessions.data.length : null;
+  // The two order failures only the hub can see. NULL when it could not be
+  // asked — an older hub 404s the route — because "not measured" and "none
+  // broken" are different answers and the line must not print the second when
+  // it got the first.
+  const brokenSessionOrders = await getBrokenSessionOrders(hubCtx);
+  const brokenOrders = brokenSessionOrders.ok
+    ? brokenSessionOrders.data.map((order) => ({
+        sessionId: order.sessionId,
+        reason: order.reason,
+      }))
+    : null;
   // Whether the two PROJECT files this repo's advice keeps recommending can
   // actually reach a teammate (trial finding M11). Resolved once, passed as
   // data, so `globalInstallChecks` stays pure and testable.
@@ -2863,7 +2886,7 @@ export const runDoctor = async (
     checkIntentCost(liveStates.states),
     checkGhostCost(liveStates.states),
     checkGitLane(liveStates.states),
-    checkEventSeq(liveStates.states),
+    checkEventSeq(liveStates.states, brokenOrders),
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),

@@ -80,6 +80,10 @@ describe("doctor prints the event sequence", () => {
     expect(output).toContain("event sequence");
     expect(output).toContain("12 position(s) allocated");
     expect(output).not.toContain("WARN  event sequence");
+    // ...and ABSENT IS NOT ZERO. This hub is unreachable, so the two failures
+    // only the hub can see were never measured — and a line that reported
+    // "none broken" here would be an assertion nobody made.
+    expect(output).not.toContain("on the hub cannot be ordered");
   });
 
   test("two sessions in one worktree WARN, and the line names the remedy", async () => {
