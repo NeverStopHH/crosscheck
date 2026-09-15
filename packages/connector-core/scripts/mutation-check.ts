@@ -4887,6 +4887,25 @@ export const MUTATIONS: readonly Mutation[] = [
       "runtime is unavailable for the whole of 1.0, so every record on every " +
       "repo becomes unjudgeable and INDETERMINATE stops meaning anything",
   },
+  {
+    // The parse rule that INVERTS the tree's tolerant-parse convention. Every
+    // other optional block means "nothing is claimed"; for coverage, silence
+    // reads as "everything was observed", which is the lie the record exists
+    // to stop. An older or unreachable hub must read as five unknowns.
+    label: "an unanswered hub is read as a hub that watched everything",
+    file: `${CORE}/src/http/coverage.ts`,
+    from: `const unknownRow = (source: CoverageSource): CoverageSourceRecord => ({
+  source,
+  state: "unknown",`,
+    to: `const unknownRow = (source: CoverageSource): CoverageSourceRecord => ({
+  source,
+  state: "complete",`,
+    test: `${CORE}/test/coverage-wire.test.ts`,
+    because:
+      "every install pointed at a hub that predates coverage reports five " +
+      "complete rungs, isJudgeable says yes, and the verdict layer names " +
+      "people on the strength of a field the hub never sent",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -4994,6 +5013,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1

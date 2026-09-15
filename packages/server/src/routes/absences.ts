@@ -5,6 +5,7 @@ import { formatIssues } from "../http/request.ts";
 import { RepoQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { listAbsences } from "../services/absences.ts";
+import { readCoverage } from "../services/coverage.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 /**
@@ -27,7 +28,19 @@ export const absencesRoutes = (deps: AppDeps): Hono<AppEnv> => {
       c.get("developer").id,
       parsed.data.repo,
     );
-    return ok(c, { absences });
+    // Nick's decision 1: coverage rides INSIDE this response rather than on a
+    // GET of its own. PGlite is a single-connection embedded database
+    // (services/search.ts:59-67), so a ninth parallel GET at SessionStart
+    // would look free in wall clock and serialise on the hub inside the
+    // 1000 ms budget. The findings are handed on so the git rung costs no
+    // second pass over the rows just read.
+    const coverage = await readCoverage(
+      deps,
+      c.get("developer").id,
+      parsed.data.repo,
+      { findings: absences },
+    );
+    return ok(c, { absences, coverage });
   });
 
   return router;

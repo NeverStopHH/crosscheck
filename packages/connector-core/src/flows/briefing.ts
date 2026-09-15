@@ -154,7 +154,7 @@ export const assembleBriefing = async (
   ]);
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
-  const absences = absencesResult.ok ? absencesResult.data : [];
+  const absences = absencesResult.ok ? absencesResult.data.absences : [];
   const contradictions = contradictionsResult.ok
     ? contradictionsResult.data
     : [];

@@ -304,7 +304,7 @@ export const runStatus = async (
             .join(", ")}`,
         ]
       : [];
-  const absenceLines = (absences.ok ? absences.data : [])
+  const absenceLines = (absences.ok ? absences.data.absences : [])
     .slice(0, STATUS_MAX_ABSENCE_LINES)
     .flatMap((entry) => {
       const line = formatAbsenceLine(entry, now);

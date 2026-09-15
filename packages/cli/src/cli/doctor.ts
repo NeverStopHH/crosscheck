@@ -1332,11 +1332,12 @@ const checkAbsences = async (
   if (!result.ok) {
     return check("PASS", "absence findings", "not measured");
   }
-  if (result.data.length === 0) {
+  const findings = result.data.absences;
+  if (findings.length === 0) {
     return check("PASS", "absence findings", "none");
   }
-  const inactive = result.data.filter((entry) => entry.kind === "inactive").length;
-  const unconnected = result.data.filter(
+  const inactive = findings.filter((entry) => entry.kind === "inactive").length;
+  const unconnected = findings.filter(
     (entry) => entry.kind === "unconnected",
   ).length;
   const parts = [
@@ -1350,7 +1351,7 @@ const checkAbsences = async (
   return check(
     "WARN",
     "absence findings",
-    `${result.data.length} recent commit author${result.data.length === 1 ? "" : "s"} ` +
+    `${findings.length} recent commit author${findings.length === 1 ? "" : "s"} ` +
       `with no matching reported session (${parts.join(", ")}) — crosscheck status has the lines`,
   );
 };

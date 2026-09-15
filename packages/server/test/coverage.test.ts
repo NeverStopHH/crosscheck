@@ -7,12 +7,19 @@
  */
 import { describe, expect, test } from "bun:test";
 
+import { eq } from "drizzle-orm";
+
 import { agentSessions, commitEvidence } from "../src/db/schema.ts";
 import {
   COVERAGE_SOURCES,
   readCoverage,
 } from "../src/services/coverage.ts";
-import { TEST_START_ISO, createTestDeveloper, createTestHarness } from "./helpers.ts";
+import {
+  TEST_START_ISO,
+  createTestDeveloper,
+  createTestHarness,
+  jsonRequest,
+} from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
 
 const REPO = "github.com/acme/api";
@@ -22,12 +29,16 @@ const DAY_MS = 24 * 60 * MINUTE_MS;
 const at = (offsetMs: number): Date =>
   new Date(new Date(TEST_START_ISO).getTime() + offsetMs);
 
+/** The API key each seeded viewer was issued, for the route-level test. */
+const apiKeys = new Map<string, string>();
+
 const seed = async (): Promise<{
   harness: TestHarness;
   viewerId: string;
 }> => {
   const harness = await createTestHarness();
   const developer = await createTestDeveloper(harness, "Nick", "nick@example.com");
+  apiKeys.set(developer.developerId, developer.apiKey);
   return { harness, viewerId: developer.developerId };
 };
 
@@ -424,4 +435,56 @@ describe("git: stale evidence is not the same answer as no evidence", () => {
       expect(row.state).not.toBe("unavailable");
     },
   );
+});
+
+/**
+ * §3.5's wire, and Nick's decision 1: coverage rides INSIDE the response that
+ * exists rather than on a ninth parallel GET. PGlite is a single-connection
+ * embedded database (services/search.ts:59-67), so parallel GETs serialise on
+ * the hub and a new one at SessionStart would spend the 1000 ms budget
+ * looking free in wall clock.
+ */
+describe("GET /api/absences carries the coverage record", () => {
+  test("the response body names five sources beside the findings", async () => {
+    // Arrange
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_reaped",
+      lastHeartbeatAt: at(-30 * MINUTE_MS),
+      endedAt: at(-29 * MINUTE_MS),
+      reapedAt: at(-29 * MINUTE_MS),
+    });
+    const developer = await harness.db
+      .select()
+      .from(agentSessions)
+      .where(eq(agentSessions.id, "ses_reaped"));
+    expect(developer.length).toBe(1);
+
+    // Act
+    const response = await harness.app.request(
+      `/api/absences?repo=${encodeURIComponent(REPO)}`,
+      jsonRequest("GET", apiKeys.get(viewerId) ?? null),
+    );
+    const body = (await response.json()) as {
+      data: {
+        absences: unknown[];
+        coverage: {
+          repo: string;
+          sources: { source: string; state: string }[];
+        };
+      };
+    };
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect(Array.isArray(body.data.absences)).toBe(true);
+    expect(body.data.coverage.repo).toBe(REPO);
+    expect(body.data.coverage.sources.map((row) => row.source)).toEqual([
+      ...COVERAGE_SOURCES,
+    ]);
+    expect(
+      body.data.coverage.sources.find((row) => row.source === "agent_event")
+        ?.state,
+    ).toBe("incomplete");
+  });
 });

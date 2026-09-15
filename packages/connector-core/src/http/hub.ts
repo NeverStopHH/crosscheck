@@ -6,7 +6,9 @@ import {
 
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
+import { parseCoverage } from "./coverage.ts";
 import type { HubContext, HubResult } from "./client.ts";
+import type { CoverageRecord } from "./coverage.ts";
 
 /**
  * Re-exported, because they are part of THIS module's signature.
@@ -332,14 +334,45 @@ export const AbsenceEntrySchema = z.looseObject({
 
 export type AbsenceEntry = z.infer<typeof AbsenceEntrySchema>;
 
+/**
+ * The endpoint named "absences" answers findings AND how far they can be
+ * trusted (03 §3.5). It stopped being a bare list on purpose: coverage rides
+ * inside a response that already exists because PGlite is single-connection
+ * (server/src/services/search.ts:59-67), so a ninth parallel GET at
+ * SessionStart would serialise on the hub inside the 1000 ms budget while
+ * looking free in wall clock.
+ */
+export interface AbsencesOutcome {
+  readonly absences: readonly AbsenceEntry[];
+  /** Never absent: a hub that reported none yields UNKNOWN_COVERAGE. */
+  readonly coverage: CoverageRecord;
+}
+
+const AbsencesResponseSchema = z
+  .looseObject({
+    absences: z.array(z.unknown()).default([]),
+    // Tolerant like every other optional block on the wire — and then read
+    // the OPPOSITE way: http/coverage.ts turns absent or malformed into five
+    // `unknown` rows rather than into silence, because an answer that says
+    // nothing about what was observed reads as one that observed everything.
+    coverage: z.unknown().optional(),
+  })
+  .transform(
+    (value): AbsencesOutcome => ({
+      // Tolerant rows, silent drop — a listing, like tolerantList above.
+      absences: parseRows(value.absences, AbsenceEntrySchema).rows,
+      coverage: parseCoverage(value.coverage),
+    }),
+  );
+
 export const getAbsences = (
   ctx: HubContext,
   repo: string,
-): Promise<HubResult<readonly AbsenceEntry[]>> =>
+): Promise<HubResult<AbsencesOutcome>> =>
   hubRequest(ctx, {
     method: "GET",
     path: `/api/absences${encodeRepo(repo)}`,
-    schema: tolerantList("absences", AbsenceEntrySchema),
+    schema: AbsencesResponseSchema,
   });
 
 /**
