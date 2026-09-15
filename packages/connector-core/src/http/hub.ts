@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { ClaimValiditySchema } from "@crosscheck/schema";
+import type { ClaimValidity } from "@crosscheck/schema";
 import {
   MAX_PIN_SWEEP_UPDATES,
   PIN_PRESENCE_TERMINAL,
@@ -596,6 +598,24 @@ export const DiagnosisClaimSchema = z.looseObject({
    * older hub does not send the field at all.
    */
   lastSeenAt: z.string().nullable().optional(),
+  /**
+   * How much this claim is still worth about the CODE (1.0 spec 02).
+   *
+   * OPTIONAL, and the absence means "the hub did not answer", not "unknown" —
+   * the distinction `targetsReported` exists for, one field over. A hub too
+   * old to know about validity omits it, and the renderer then prints no
+   * clause at all rather than a state nobody measured. Doctor counts the
+   * residue out loud (cli doctor.ts), because a hub that simply omits the
+   * field keeps every claim in the substance lane — which changes nothing a
+   * reader sees, since `unknown` is injectable anyway, but is worth saying.
+   */
+  validity: ClaimValiditySchema.optional(),
+  /**
+   * The files this claim's AUTHOR declared it is about, for the revalidation
+   * leg's `declared` basis. Empty or absent means the reader falls back to the
+   * work context's own file targets, which over-fires by construction.
+   */
+  affectedPaths: z.array(z.string().min(1)).optional(),
 });
 
 export type DiagnosisClaim = z.infer<typeof DiagnosisClaimSchema>;
@@ -920,6 +940,18 @@ export const HintClaimCandidateSchema = z.looseObject({
   authorDeveloperId: z.string().min(1),
   authorDeveloperName: z.string().min(1).optional(),
   body: z.string(),
+  /**
+   * How much this claim is still worth about the CODE (1.0 spec 02).
+   *
+   * OPTIONAL, and the absence means "the hub did not answer", not "unknown" —
+   * the distinction `targetsReported` exists for, one field over. A hub too
+   * old to know about validity omits it, and the renderer then prints no
+   * clause at all rather than a state nobody measured. Doctor counts the
+   * residue out loud (cli doctor.ts), because a hub that simply omits the
+   * field keeps every claim in the substance lane — which changes nothing a
+   * reader sees, since `unknown` is injectable anyway, but is worth saying.
+   */
+  validity: ClaimValiditySchema.optional(),
   createdAt: z.string().min(1),
 });
 
@@ -1328,6 +1360,8 @@ export interface RefereePosition {
   readonly ruledOut: readonly RefereeClaim[];
   readonly ruledOutTruncated: boolean;
   readonly supersededByClaimId: string | null;
+  /** The validity record, or null from a hub too old to send one. */
+  readonly validity: ClaimValidity | null;
   /** Rows of THIS position the client could not parse and dropped. */
   readonly droppedRows: number;
 }
@@ -1341,6 +1375,7 @@ const RefereePositionSchema = z
     ruledOut: z.array(z.unknown()).default([]),
     ruledOutTruncated: z.boolean().default(false),
     supersededByClaimId: z.string().nullable().optional(),
+    validity: ClaimValiditySchema.optional(),
   })
   .transform((value): RefereePosition => {
     const evidence = parseRows(value.evidence, RefereeClaimSchema);
@@ -1353,6 +1388,7 @@ const RefereePositionSchema = z
       ruledOut: ruledOut.rows,
       ruledOutTruncated: value.ruledOutTruncated,
       supersededByClaimId: value.supersededByClaimId ?? null,
+      validity: value.validity ?? null,
       droppedRows: evidence.dropped + ruledOut.dropped,
     };
   });

@@ -75,6 +75,7 @@ const baseBrief = (): RefereeBrief => ({
     ],
     ruledOutTruncated: false,
     supersededByClaimId: null,
+  validity: null,
     droppedRows: 0,
   },
   positionB: {
@@ -92,6 +93,7 @@ const baseBrief = (): RefereeBrief => ({
     ruledOut: [],
     ruledOutTruncated: false,
     supersededByClaimId: null,
+  validity: null,
     droppedRows: 0,
   },
   sharedTargets: [

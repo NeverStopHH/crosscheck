@@ -686,6 +686,30 @@ export const CLAIM_REVALIDATION_MAX_COMMITS = 8;
  * spending the MCP budget on git.
  */
 export const CLAIM_REVALIDATION_MAX_GIT_CALLS = 24;
+
+/**
+ * The validity clause on a PULLED surface — "no longer current: recorded at
+ * abc1234; 3 commits have touched these files since — def5678, 9a1b2c3".
+ *
+ * 160, matching the coverage note's own bound so the two qualifiers that can
+ * land on one row are budgeted the same. It is NOT MAX_HUB_MESSAGE_CHARS:
+ * that constant's own comment scopes it to a string the HUB chose as a tool
+ * prints it back, and this clause is renderer-built from enum values, small
+ * integers and hex.
+ */
+export const MAX_CLAIM_VALIDITY_LINE_CHARS = 160;
+
+/**
+ * The state WORD alone, which is all an UNSOLICITED surface gets.
+ *
+ * The anchoring asymmetry the registry already encodes: a reader who pulled a
+ * diagnosis asked for it, while a hint arrives unasked — and spending its
+ * characters on three commit hashes anchors a session on a file history
+ * nobody asked about. Nothing is hidden: the word is the part that changes
+ * what a reader should DO with the sentence, and the hashes are one
+ * get_diagnosis away.
+ */
+export const MAX_CLAIM_VALIDITY_WORD_CHARS = 32;
 /**
  * "Solved before" entries one briefing may spend — title + id + age, and for
  * a fingerprint match one further line carrying the recorded cause.

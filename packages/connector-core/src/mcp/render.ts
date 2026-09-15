@@ -24,9 +24,12 @@
  * sanitizer rather than a second, weaker copy of it.
  */
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+import type { ClaimValidity, ClaimValidityState } from "@crosscheck/schema";
 
 import {
   HUB_MAX_DIAGNOSIS_TARGETS,
+  MAX_CLAIM_VALIDITY_LINE_CHARS,
+  MAX_CLAIM_VALIDITY_WORD_CHARS,
   MAX_DIAGNOSIS_CHARS,
   MAX_DIAGNOSIS_TARGETS_SHOWN,
   MAX_HUB_MESSAGE_CHARS,
@@ -281,6 +284,143 @@ const claimsOldestFirst = (
     return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
   });
 
+// ── The claim ↔ code binding's one rendered sentence (1.0 spec 02 §5) ───────
+
+/**
+ * WHAT A STATE MEANS, as a sentence opener. An exhaustive Record rather than a
+ * switch, the shape FILE_DRIFT_SENTENCES already has: adding a sixth state is
+ * then a type error here instead of a silently missing case.
+ *
+ * "no longer current" for the three downgrades, because that is AT-2's own
+ * wording and it is what a reader has to act on. Nothing says "ignore this" —
+ * the claim stays readable, the body still renders, only its standing changed.
+ */
+const VALIDITY_OPENERS: Readonly<Record<ClaimValidityState, string>> = {
+  current: "current",
+  stale: "no longer current",
+  superseded: "no longer current",
+  invalidated: "no longer current",
+  unknown: "currency unknown",
+};
+
+/** How many commits were NOT named, or null when the total was unmeasurable. */
+const unnamedCommits = (validity: ClaimValidity): number | null =>
+  validity.touchingTotal === null
+    ? null
+    : validity.touchingTotal - validity.touchingCommits.length;
+
+/**
+ * The tail of a `stale` clause: the commits that caused the downgrade, newest
+ * first, then how many more there were.
+ *
+ * A COUNT THAT COULD NOT BE TAKEN SAYS "more", NOT A NUMBER. `checkClaimDrift`
+ * returns null when the range was too big to count inside its budget, and
+ * printing `touchingCommits.length` there would claim more than it measured.
+ */
+const touchingFragment = (validity: ClaimValidity): string => {
+  const named = validity.touchingCommits
+    .map((commit) => safeId(commit))
+    .filter((commit) => commit.length > 0);
+  if (named.length === 0) {
+    return "commits have touched these files since";
+  }
+  const unnamed = unnamedCommits(validity);
+  const more =
+    unnamed === null
+      ? " and more"
+      : unnamed > 0
+        ? ` and ${String(unnamed)} more`
+        : "";
+  return `commits have touched these files since — ${named.join(", ")}${more}`;
+};
+
+/** The body of the clause after its opener, per state. */
+const validityDetail = (validity: ClaimValidity): string => {
+  if (validity.state === "superseded") {
+    // An id that survives NOTHING of the allowlist renders as the id-less
+    // sentence rather than "replaced by " with a hole where the id was —
+    // the same rule the briefing's solved line follows. The corpus found
+    // this: a payload of pure frame characters reduces to "".
+    const revision =
+      validity.supersededByClaimId === null
+        ? ""
+        : safeId(validity.supersededByClaimId);
+    return revision.length === 0
+      ? "a revision replaced it"
+      : `replaced by ${revision}`;
+  }
+  if (validity.state === "invalidated") {
+    return "its author rejected it";
+  }
+  if (validity.commitBinding === "none" || validity.observedAtCommit === null) {
+    // The §8.5 refusal, said where the reader is rather than only in doctor:
+    // a claim with no observation point can never be revalidated at all.
+    //
+    // The null test is not redundant with the binding test. The hub's CHECK
+    // makes the two agree in ITS database; this renderer reads a looseObject
+    // off the wire, and without the second half a hub sending
+    // `commitBinding: "reported"` beside a null commit produced a sentence
+    // beginning "; " — a rendering nobody wrote.
+    return "recorded against no commit, so it cannot be checked against the code";
+  }
+  const observed = safeId(validity.observedAtCommit);
+  if (observed.length === 0) {
+    return "recorded against no commit, so it cannot be checked against the code";
+  }
+  const at = `recorded at ${observed}`;
+  if (validity.state === "stale") {
+    return `${at}; ${touchingFragment(validity)}`;
+  }
+  if (validity.state === "current") {
+    return `${at}; those files have not changed since`;
+  }
+  return `${at}; whether those files changed since is unknown`;
+};
+
+/**
+ * The full clause, for a PULLED surface only.
+ *
+ * EVERY CHARACTER IS RENDERER-OWNED — enum values, small integers and hex
+ * through `safeId`. It never renders a PATH: paths are author-written and
+ * already reach surfaces through the existing target rendering, so this opens
+ * NO new untrusted slot. Bounded by MAX_CLAIM_VALIDITY_LINE_CHARS, and the
+ * bound is spent on the opener first: a truncated sentence that still says
+ * "no longer current" is worth more than a complete one nobody sees.
+ */
+export const claimValidityClause = (
+  validity: ClaimValidity | undefined,
+): string | null => {
+  if (validity === undefined) {
+    return null;
+  }
+  const clause = `${VALIDITY_OPENERS[validity.state]}: ${validityDetail(validity)}`;
+  return clause.length <= MAX_CLAIM_VALIDITY_LINE_CHARS
+    ? clause
+    : `${clause.slice(0, MAX_CLAIM_VALIDITY_LINE_CHARS - 1)}…`;
+};
+
+/**
+ * The state WORD alone, for an UNSOLICITED surface (§5a).
+ *
+ * Null for a hub that sent nothing — absence is "the hub did not answer",
+ * which is a different statement from `unknown` and must not be rendered as
+ * one (the `targetsReported` rule, one field over).
+ */
+export const claimValidityWord = (
+  validity: ClaimValidity | undefined,
+): string | null => {
+  if (validity === undefined) {
+    return null;
+  }
+  const word = `validity ${bare(validity.state, MAX_CLAIM_VALIDITY_WORD_CHARS)}`;
+  return word.slice(0, MAX_CLAIM_VALIDITY_WORD_CHARS);
+};
+
+const validityFacts = (claim: DiagnosisClaim): readonly string[] => {
+  const clause = claimValidityClause(claim.validity);
+  return clause === null ? [] : [clause];
+};
+
 const claimLine = (
   claim: DiagnosisClaim,
   index: ReadonlyMap<string, string>,
@@ -320,6 +460,12 @@ const claimLine = (
     authorLabel(index, claim.authorSessionId),
     ...age,
     ...lastSeen,
+    // AT-2's visible half. In the FACTS array rather than on a line of its
+    // own: this section is fitted by dropping claim lines whole, so a clause
+    // on the claim's own line can never be separated from the body it
+    // qualifies — which is the only arrangement where "stays readable but is
+    // no longer presented as a current cause" is one sentence.
+    ...validityFacts(claim),
   ];
   return `${facts.join(" · ")}${evidence}${seen}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
 };
