@@ -150,7 +150,29 @@ const headOf = (record: CoverageRecord): string => {
     : "Coverage complete";
 };
 
-const HUB_SILENT = "Coverage unknown: this hub does not report coverage.";
+/**
+ * WHAT THIS CLIENT HOLDS, NOT WHAT THE HUB IS. A record whose every row reads
+ * `hub_did_not_report` is reached four ways: a hub too old to send coverage, a
+ * hub NEWER than this client whose `reason` values its enum does not know, a
+ * body that failed to parse, and an HTTP error. "This hub does not report
+ * coverage" named only the first — a claim about the hub's VERSION produced
+ * from this client's own failure to read an answer, which sends a reader to
+ * upgrade something that may be perfectly current.
+ */
+const HUB_SILENT = "Coverage unknown: no coverage report this client can read.";
+
+/**
+ * The fifth way, and the one that must never wear the sentence above: the hub
+ * was not reached at all. That is a statement about the NETWORK, and the
+ * caller knows which it has — `HubResult` carries `kind: "network"`. Shared
+ * between `crosscheck status` and `crosscheck doctor` so the two cannot
+ * describe one unreachable hub in two ways; doctor appends the connection
+ * cause, which is the remedy channel status does not have.
+ */
+export const COVERAGE_HUB_UNREACHABLE =
+  "could not reach the hub, so nothing here says what was watched";
+
+export const HUB_UNREACHABLE_CLAUSE = `Coverage unknown: ${COVERAGE_HUB_UNREACHABLE}.`;
 
 /** Belt and braces on the bound the briefing's uncuttable seat rests on. */
 const fit = (line: string): string =>

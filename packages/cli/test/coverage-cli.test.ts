@@ -144,6 +144,38 @@ describe("crosscheck status carries the qualifier — AT-9", () => {
     expect(result.stdout).toContain("coverage: Coverage unknown");
   });
 
+  test("an unreachable hub is a statement about the network, not the hub's age", async () => {
+    // Arrange: nothing is listening on this port
+    const { repo, env } = await fixture("status-coverage-unreachable", oldHub, {
+      unreachable: true,
+    });
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert: the same command already prints "(hub unreachable)" and "the hub
+    // did not answer" below this line. A third line telling the reader their
+    // hub is too old sends them to upgrade something that is simply down —
+    // on the one surface AT-9 exists to make self-sufficient.
+    expect(result.stdout).toContain("could not reach the hub");
+    expect(result.stdout).not.toContain("this hub does not report coverage");
+  });
+
+  test("a hub whose report this client cannot read says exactly that", async () => {
+    // Arrange: a hub that answers, with no coverage block at all
+    const { repo, env } = await fixture("status-coverage-unreadable", oldHub);
+
+    // Act
+    const result = await runCli(["status"], env, repo);
+
+    // Assert: true of a hub too old to send one AND of a hub NEWER than this
+    // client, whose reasons parse to `hub_did_not_report`. The old sentence
+    // named the hub's VERSION, which is one of the four ways to get here.
+    expect(result.stdout).toContain("Coverage unknown");
+    expect(result.stdout).toContain("no coverage report this client can read");
+    expect(result.stdout).not.toContain("could not reach the hub");
+  });
+
   test("no percentage reaches the line", async () => {
     // Arrange
     const { repo, env } = await fixture("status-no-percent", reported);

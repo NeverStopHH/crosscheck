@@ -5078,10 +5078,13 @@ export const MUTATIONS: readonly Mutation[] = [
     // run instead, and an omitted line there reads as all clear.
     label: "status states the team and not how far it was watched",
     file: `${CLI}/src/cli/status.ts`,
-    from: `      \`coverage: \${coverageClause(
-        absences.ok ? absences.data.coverage : UNKNOWN_COVERAGE,
-        now,
-      )}\`,`,
+    from: `      \`coverage: \${
+        absences.ok
+          ? coverageClause(absences.data.coverage, now)
+          : absences.kind === "network"
+            ? HUB_UNREACHABLE_CLAUSE
+            : coverageClause(UNKNOWN_COVERAGE, now)
+      }\`,`,
     to: `      ...(absences.ok && absences.data.coverage.sources.some((row) => row.state === "incomplete")
         ? [\`coverage: \${coverageClause(absences.data.coverage, now)}\`]
         : []),`,
@@ -5090,6 +5093,38 @@ export const MUTATIONS: readonly Mutation[] = [
       "every install pointed at a hub that reports no coverage prints no " +
       "coverage line at all, which is the one state a reader would read as " +
       "`nothing to report` rather than `we cannot tell`",
+  },
+  {
+    // The failure kind is in hand at the call site and the same command's
+    // pins line and doctor's own check both branch on it. Collapsed, a
+    // refused connection wears a sentence about what this HUB reports —
+    // a claim about its version produced from a network error.
+    label: "an unreachable hub reads as a hub that reports no coverage",
+    file: `${CLI}/src/cli/status.ts`,
+    from: `          : absences.kind === "network"
+            ? HUB_UNREACHABLE_CLAUSE
+            : coverageClause(UNKNOWN_COVERAGE, now)`,
+    to: "          : coverageClause(UNKNOWN_COVERAGE, now)",
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "status tells a person to upgrade a hub that is simply down, two " +
+      "lines above its own `(hub unreachable)`, on the one surface AT-9 " +
+      "exists to make self-sufficient",
+  },
+  {
+    // The sentence for a record this client cannot READ must not name the
+    // hub's VERSION: the same five `hub_did_not_report` rows come from a hub
+    // too old to send coverage, a hub NEWER than this client, a body that
+    // failed to parse, and an HTTP error.
+    label: "a report this client cannot read is blamed on the hub's age",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: 'const HUB_SILENT = "Coverage unknown: no coverage report this client can read.";',
+    to: 'const HUB_SILENT = "Coverage unknown: this hub does not report coverage.";',
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "a hub one version AHEAD of this client — whose reasons its enum does " +
+      "not know yet — is reported as one that predates coverage, and the " +
+      "reader upgrades the wrong end",
   },
   {
     // COV-5. A rung that cannot exist is only honest if somebody can read the
@@ -5263,7 +5298,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
- * PRINTS: packages/cli/test/coverage-cli.test.ts 2
+ * PRINTS: packages/cli/test/coverage-cli.test.ts 4
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1

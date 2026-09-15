@@ -86,6 +86,7 @@ import type {
   HubResult,
 } from "@crosscheck/connector-core/http/client.ts";
 import { COVERAGE_EXEMPT_SURFACES } from "@crosscheck/connector-core/coverage/exempt-surfaces.ts";
+import { COVERAGE_HUB_UNREACHABLE } from "@crosscheck/connector-core/coverage/render.ts";
 import type { CoverageSourceRecord } from "@crosscheck/connector-core/http/coverage.ts";
 import {
   describeConnectionFailure,
@@ -1398,7 +1399,11 @@ const coverageChecks = (
         ? check(
             "WARN",
             "coverage",
-            `could not reach the hub, so nothing here says what was watched — ${result.message}`,
+            // The sentence is shared with `crosscheck status`
+            // (connector-core/src/coverage/render.ts), so one unreachable hub
+            // cannot be described two ways. The cause is appended here and
+            // only here: this is the surface with a remedy channel.
+            `${COVERAGE_HUB_UNREACHABLE} — ${result.message}`,
           )
         : check("PASS", "coverage", "not measured"),
       coverageRangeRefusal(),
