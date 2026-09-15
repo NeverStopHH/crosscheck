@@ -65,6 +65,7 @@ export {
 export type { AgentSession, Intent, Target, WorkContext } from "./session.ts";
 
 export {
+  MAX_CLAIM_SURFACE_PATHS,
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_FILES,
   MAX_PIN_PATH_CHARS,

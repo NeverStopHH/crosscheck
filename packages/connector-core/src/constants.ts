@@ -639,6 +639,50 @@ export const MAX_LANDED_ANCESTRY_CHECKS = 10;
 export const STALENESS_GIT_TIMEOUT_MS = 250;
 /** Most referenced files one staleness probe hands git as pathspecs. */
 export const STALENESS_MAX_PATHS = 20;
+
+// ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
+
+/**
+ * How many commits a downgrade may NAME. Five (spec 02 D6, default): the
+ * sentence is "3 commits have touched these files since — <sha>, <sha>,
+ * <sha>", and past a handful the hashes stop being readable and start being a
+ * log. The count itself is not capped — "and N more" is measured — so raising
+ * this buys names, not truth, at the price of a jsonb column on a table
+ * bounded by claims.
+ */
+export const MAX_CLAIM_TOUCHING_COMMITS = 5;
+
+/**
+ * Most paths one claim's drift check hands git as pathspecs.
+ *
+ * INHERITED BY NAME from the pin registry's MAX_PIN_FILES, which is what
+ * `MAX_CLAIM_SURFACE_PATHS` in @crosscheck/schema already bounds a declared
+ * surface to. Deliberately NOT the older STALENESS_MAX_PATHS (20): that one
+ * bounds a WORK CONTEXT's target list, which the hub serves up to 100 of,
+ * while a claim's declared surface is already 30 at the schema. Slicing to 20
+ * here would drop a third of what an author declared and still print a
+ * verdict over the rest.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.MAX_CLAIM_SURFACE_PATHS === s.MAX_CLAIM_SURFACE_PATHS, c.MAX_CLAIM_SURFACE_PATHS === s.MAX_PIN_FILES)'
+ * PRINTS: true true
+ */
+export const MAX_CLAIM_SURFACE_PATHS = 30;
+
+/**
+ * Most DISTINCT (commit, path-set) groups one `get_diagnosis` pull
+ * revalidates. Newest-commit-first before the cut, and the cut is REPORTED as
+ * `revalidated / total` — a bound must not be spent at random and must not
+ * claim more than it measured (state/capture-health.ts).
+ */
+export const CLAIM_REVALIDATION_MAX_COMMITS = 8;
+
+/**
+ * Process cap for the whole revalidation leg, the way PIN_SWEEP_MAX_GIT_CALLS
+ * bounds the sweep. Each group costs at most two calls, so this is headroom
+ * rather than a working limit — and it is what stops a pathological tree from
+ * spending the MCP budget on git.
+ */
+export const CLAIM_REVALIDATION_MAX_GIT_CALLS = 24;
 /**
  * "Solved before" entries one briefing may spend — title + id + age, and for
  * a fingerprint match one further line carrying the recorded cause.

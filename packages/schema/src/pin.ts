@@ -50,6 +50,15 @@ export const MAX_PIN_CHECK_CHARS = 200;
 export const MAX_PIN_FILES = 30;
 
 /**
+ * Hard cap on the file set ONE CLAIM may declare as its affected surface
+ * (1.0 spec 02 §3.2). Inherited from MAX_PIN_FILES by NAME rather than
+ * silently re-chosen: both answer "how big may a hand-declared surface be
+ * before it is an area", and an area-sized surface makes every commit in the
+ * area a downgrade.
+ */
+export const MAX_CLAIM_SURFACE_PATHS = MAX_PIN_FILES;
+
+/**
  * At most five files may ever SPEAK. Larger pins stay briefing-only: they can
  * be listed and they can be looked up with `crosscheck suspect`, but they are
  * not eligible for the Stage-2 notice lane. The cap is the noise control that
