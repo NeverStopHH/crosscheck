@@ -257,18 +257,99 @@ export const isOrderable = (
   order: SessionCausalOrder,
   a: OrderedEvent,
   b: OrderedEvent,
-): boolean =>
-  order.state === "usable" &&
-  a.sessionId === order.sessionId &&
-  b.sessionId === order.sessionId &&
-  a.seqEpoch !== null &&
-  b.seqEpoch !== null &&
-  a.seqEpoch === b.seqEpoch &&
-  a.seqN !== null &&
-  b.seqN !== null &&
-  a.seqKind === "emitted" &&
-  b.seqKind === "emitted" &&
-  !overlaps(a, b);
+): boolean => causalComparisonOf(order, a, b).outcome === "comparable";
+
+/**
+ * WHY TWO EVENTS CANNOT BE COMPARED — one name per condition above, because a
+ * refusal reported under another defect's reason sends its reader to the wrong
+ * remedy.
+ *
+ *   session_order_broken   — this session's counter cannot be trusted at all:
+ *                            two emitters took one position, or the session
+ *                            holds two epochs.
+ *   different_session      — there is no cross-session order, by construction.
+ *   position_indeterminate — one of the two carries no position. WHICH absence
+ *                            it is lives on the event, via `causalPositionOf`.
+ *   epoch_mismatch         — two positions from two different counters. A bare
+ *                            integer compared across epochs answers
+ *                            confidently from unrelated numbers.
+ *   upper_bound_only       — an `observed` position proves the fact was
+ *                            recorded no later than that point, never that it
+ *                            happened after the previous event.
+ *   concurrent             — the two windows overlap. Concurrent is not an
+ *                            order, and answering anyway is how the lane that
+ *                            exonerates answers for a change that came first.
+ *
+ * NONE OF THESE IS A STATEMENT ABOUT WHETHER AN EXPLANATION EXISTS, and that
+ * is the point. "We cannot tell when it was written" excuses a developer;
+ * "nothing was ever written" accuses one. This gate is only ever asked about
+ * two events that EXIST, so it is given no vocabulary for absence and a caller
+ * cannot obtain the accusing word from here. The judgment a human reads — and
+ * the choice of word for it — belongs to the intent ledger's own function,
+ * which is the only place that knows whether there was an explanation at all.
+ */
+export const CAUSAL_INDETERMINACIES = [
+  "session_order_broken",
+  "different_session",
+  "position_indeterminate",
+  "epoch_mismatch",
+  "upper_bound_only",
+  "concurrent",
+] as const;
+
+export type CausalIndeterminacy = (typeof CAUSAL_INDETERMINACIES)[number];
+
+export type CausalComparison =
+  | { readonly outcome: "comparable" }
+  | {
+      readonly outcome: "indeterminate";
+      readonly reason: CausalIndeterminacy;
+    };
+
+const COMPARABLE: CausalComparison = { outcome: "comparable" };
+
+const indeterminate = (reason: CausalIndeterminacy): CausalComparison => ({
+  outcome: "indeterminate",
+  reason,
+});
+
+/**
+ * THE GATE, and the only place the six conditions are evaluated. `isOrderable`
+ * is this function with its reason thrown away, so the cheap question and the
+ * informative one can never give different answers.
+ *
+ * Checked in the order a reader would want to hear them: the session's own
+ * health first, because nothing inside a broken session is worth reporting in
+ * detail, then the pair, then the two positions, then what the positions mean.
+ */
+export const causalComparisonOf = (
+  order: SessionCausalOrder,
+  a: OrderedEvent,
+  b: OrderedEvent,
+): CausalComparison => {
+  if (order.state !== "usable") {
+    return indeterminate("session_order_broken");
+  }
+  if (a.sessionId !== order.sessionId || b.sessionId !== order.sessionId) {
+    return indeterminate("different_session");
+  }
+  if (
+    causalPositionOf(a).status !== "known" ||
+    causalPositionOf(b).status !== "known"
+  ) {
+    return indeterminate("position_indeterminate");
+  }
+  if (a.seqEpoch !== b.seqEpoch) {
+    return indeterminate("epoch_mismatch");
+  }
+  if (a.seqKind !== "emitted" || b.seqKind !== "emitted") {
+    return indeterminate("upper_bound_only");
+  }
+  if (overlaps(a, b)) {
+    return indeterminate("concurrent");
+  }
+  return COMPARABLE;
+};
 
 /**
  * DO THE TWO INTERVALS TOUCH — the sixth condition, and the one a position

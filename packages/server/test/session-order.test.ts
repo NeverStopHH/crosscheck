@@ -27,13 +27,19 @@ import type { SeqReason } from "@crosscheck/schema";
 
 import { sessionEvents } from "../src/db/schema.ts";
 import {
+  CAUSAL_INDETERMINACIES,
+  causalComparisonOf,
   causalOrderOf,
   causalPositionOf,
   compareEvents,
   isOrderable,
   readSessionCausalOrder,
 } from "../src/services/session-order.ts";
-import type { OrderedEvent } from "../src/services/session-order.ts";
+import type {
+  CausalComparison,
+  CausalIndeterminacy,
+  OrderedEvent,
+} from "../src/services/session-order.ts";
 import {
   WORK_CONTEXT_ID,
   createTestDeveloper,
@@ -512,6 +518,130 @@ describe("D1's refinement — a withheld position says so", () => {
         "seq",
         "status",
       ]);
+    }
+  });
+});
+
+describe("the gate that names WHY two events cannot be compared", () => {
+  /**
+   * THE ONE WORD THIS GATE MUST NEVER PRODUCE.
+   *
+   * Every refusal here is a statement about INSTRUMENTATION: this session's
+   * counter is broken, this position was withheld, these two raced. None of
+   * them is a statement about whether an explanation exists — and the two must
+   * not be reachable from one another, because "we cannot tell when it was
+   * written" excuses a developer and "nothing was ever written" accuses one.
+   *
+   * The gate is only ever asked about two events that EXIST, so it is given no
+   * vocabulary for absence: a caller cannot obtain the accusing word from
+   * here, whatever it does with the answer. The judgment itself — the word a
+   * human reads — belongs to the intent ledger's own function, which is the
+   * only place that knows whether there was an explanation at all.
+   */
+  const ABSENCE_WORDS = ["absent", "no_intent", "none", "missing"];
+
+  const usable = causalOrderOf(SESSION, [
+    { seqEpoch: EPOCH, seqReason: "sequenced" },
+  ]);
+  const event = (over: Partial<OrderedEvent> = {}): OrderedEvent => ({
+    sessionId: SESSION,
+    seqEpoch: EPOCH,
+    seqN: 1,
+    seqAfter: null,
+    seqKind: "emitted",
+    seqReason: "sequenced",
+    observedAt: new Date("2026-07-24T10:00:00.000Z"),
+    ...over,
+  });
+
+  test("no indeterminacy can be read as an explanation that does not exist", () => {
+    for (const value of CAUSAL_INDETERMINACIES) {
+      for (const word of ABSENCE_WORDS) {
+        expect(value, `${value} must not read as absence`).not.toContain(word);
+      }
+    }
+  });
+
+  test("two positioned events in one usable session are comparable", () => {
+    // Act
+    const answer = causalComparisonOf(usable, event(), event({ seqN: 5 }));
+
+    // Assert
+    expect(answer).toEqual({ outcome: "comparable" });
+  });
+
+  test("a withheld position is indeterminate, and says the position is why", () => {
+    // Arrange: D1's case — the intent landed, its place did not.
+    const withheld = event({
+      seqEpoch: null,
+      seqN: null,
+      seqReason: "ambiguous_session_assignment",
+    });
+
+    // Act
+    const answer = causalComparisonOf(usable, withheld, event({ seqN: 5 }));
+
+    // Assert
+    expect(answer).toEqual({
+      outcome: "indeterminate",
+      reason: "position_indeterminate",
+    });
+  });
+
+  test("every way isOrderable refuses has a name of its own", () => {
+    // Arrange: one case per condition, so a refusal can never be reported
+    // under a reason that belongs to a different defect.
+    const broken = causalOrderOf(SESSION, [
+      { seqEpoch: EPOCH, seqReason: "epoch_conflict" },
+    ]);
+    const cases: readonly (readonly [
+      CausalIndeterminacy,
+      () => CausalComparison,
+    ])[] = [
+      ["session_order_broken", () => causalComparisonOf(broken, event(), event({ seqN: 5 }))],
+      [
+        "different_session",
+        () => causalComparisonOf(usable, event(), event({ sessionId: "cc_elsewhere", seqN: 5 })),
+      ],
+      [
+        "position_indeterminate",
+        () => causalComparisonOf(usable, event({ seqN: null, seqEpoch: null, seqReason: "allocation_failed" }), event({ seqN: 5 })),
+      ],
+      [
+        "epoch_mismatch",
+        () => causalComparisonOf(usable, event(), event({ seqEpoch: OTHER_EPOCH, seqN: 5 })),
+      ],
+      [
+        "upper_bound_only",
+        () => causalComparisonOf(usable, event(), event({ seqN: 5, seqKind: "observed" })),
+      ],
+      [
+        "concurrent",
+        () => causalComparisonOf(usable, event({ seqN: 5, seqAfter: 1 }), event({ seqN: 6, seqAfter: 2 })),
+      ],
+    ];
+
+    // Assert
+    for (const [reason, run] of cases) {
+      expect(run(), reason).toEqual({ outcome: "indeterminate", reason });
+    }
+  });
+
+  test("the gate and isOrderable never disagree", () => {
+    // One computation, two shapes: the boolean is the gate with its reason
+    // thrown away, so a caller cannot get a different answer by asking the
+    // cheaper question.
+    const pairs: readonly (readonly [OrderedEvent, OrderedEvent])[] = [
+      [event(), event({ seqN: 5 })],
+      [event(), event({ seqN: 5, seqKind: "observed" })],
+      [event({ seqN: null, seqEpoch: null, seqReason: "reaped_end" }), event({ seqN: 5 })],
+      [event(), event({ sessionId: "cc_elsewhere", seqN: 5 })],
+      [event({ seqN: 5, seqAfter: 1 }), event({ seqN: 6, seqAfter: 2 })],
+    ];
+    for (const [a, b] of pairs) {
+      expect(causalComparisonOf(usable, a, b).outcome === "comparable").toBe(
+        isOrderable(usable, a, b),
+      );
     }
   });
 });

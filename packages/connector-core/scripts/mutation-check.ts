@@ -5288,6 +5288,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "a null, so an explanation whose position was withheld because two " +
       "agents share a worktree is compared as though it had one",
   },
+  {
+    // The gate is only ever asked about two events that EXIST, so it is given
+    // no vocabulary for absence. "We cannot tell when it was written" excuses
+    // a developer; "nothing was ever written" accuses one.
+    label: "the order gate gains a word that accuses",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '\n  "position_indeterminate",',
+    to: '\n  "absent",',
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "a consumer handed the one refusal that means a position was WITHHELD " +
+      "reads a word that means no explanation was ever written, and D1's " +
+      "whole cost — a refused position rather than a guessed one — buys a " +
+      "false accusation instead of a silence",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5461,7 +5476,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-event-seq-kind.test.ts 2
  * PRINTS: packages/server/test/session-events.test.ts 2
  * PRINTS: packages/server/test/session-order-window.test.ts 3
- * PRINTS: packages/server/test/session-order.test.ts 5
+ * PRINTS: packages/server/test/session-order.test.ts 6
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1

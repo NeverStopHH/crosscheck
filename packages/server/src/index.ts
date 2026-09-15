@@ -16,9 +16,11 @@ export type { Db } from "./db/client.ts";
 /** The causal-order table, so a connector test can assert what the hub stored. */
 export { sessionEvents } from "./db/schema.ts";
 export {
+  CAUSAL_INDETERMINACIES,
   CAUSAL_ORDER_REASONS,
   CAUSAL_ORDER_STATES,
   CAUSAL_POSITION_STATUSES,
+  causalComparisonOf,
   causalOrderOf,
   causalPositionOf,
   compareEvents,
@@ -26,6 +28,8 @@ export {
   readSessionCausalOrder,
 } from "./services/session-order.ts";
 export type {
+  CausalComparison,
+  CausalIndeterminacy,
   CausalOrderReason,
   CausalOrderState,
   CausalPosition,
