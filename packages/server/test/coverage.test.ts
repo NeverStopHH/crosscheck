@@ -10,13 +10,20 @@ import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
 import {
+  ABSENCE_MAX_EVIDENCE_ROWS,
+  ABSENCE_MAX_FINDINGS,
+} from "../src/constants.ts";
+import {
   agentSessions,
   commitEvidence,
+  developerEmails,
   workContextTargets,
   workContexts,
 } from "../src/db/schema.ts";
+import { listAbsences, readAbsenceCensus } from "../src/services/absences.ts";
 import {
   COVERAGE_SOURCES,
+  isJudgeable,
   readCoverage,
 } from "../src/services/coverage.ts";
 import {
@@ -299,6 +306,50 @@ const insertEvidence = async (
   });
 };
 
+/**
+ * `count` evidence rows that produce NO finding, all newer than anything the
+ * caller adds afterwards — the population that fills `listAbsences`' bound
+ * without being an absence itself. One developer with `count` alias addresses
+ * rather than `count` developers: `developer_emails` is keyed on email, so
+ * every row matches the same member, and that member's session postdates
+ * every commit here.
+ */
+const fillEvidenceToTheBound = async (
+  harness: TestHarness,
+  viewerId: string,
+  count: number,
+): Promise<void> => {
+  await insertSession(harness, viewerId, {
+    id: "ses_filler",
+    lastHeartbeatAt: at(-30 * MINUTE_MS),
+    endedAt: at(-29 * MINUTE_MS),
+  });
+  const emails = Array.from(
+    { length: count },
+    (_unused, index) => `alias${String(index).padStart(4, "0")}@acme.example`,
+  );
+  await harness.db.insert(developerEmails).values(
+    emails.map((email) => ({
+      email,
+      developerId: viewerId,
+      isPrimary: false,
+      createdAt: at(-2 * DAY_MS),
+    })),
+  );
+  await harness.db.insert(commitEvidence).values(
+    emails.map((email, index) => ({
+      repo: REPO,
+      authorEmail: email,
+      authorName: `Alias ${String(index)}`,
+      latestCommitAt: at(-(60 + index) * MINUTE_MS),
+      commitCount: 3,
+      windowDays: 14,
+      collectedAt: at(-MINUTE_MS),
+      reportedBy: viewerId,
+    })),
+  );
+};
+
 const gitOf = async (
   harness: TestHarness,
   viewerId: string,
@@ -440,6 +491,179 @@ describe("git: stale evidence is not the same answer as no evidence", () => {
       expect(row.state).not.toBe("unavailable");
     },
   );
+});
+
+/**
+ * THE CUT IS NOT A CENSUS (`listAbsences` caps twice, and coverage read the
+ * cap as an answer).
+ *
+ * `listAbsences` returns at most ABSENCE_MAX_EVIDENCE_ROWS evidence rows
+ * ordered `latest_commit_at DESC` (absences.ts:155-156) and then at most
+ * ABSENCE_MAX_FINDINGS findings (:190). Both bounds drop the STALEST
+ * committers first — which is exactly the population an absence check exists
+ * to find. A git rung that read `findings.length === 0` as proof would turn
+ * "we stopped looking at 200 rows" into `complete`, and `isJudgeable` with
+ * it: AT-5's "fails if" reached by team size rather than by anything about
+ * observation.
+ *
+ * The boundary is ONE ROW WIDE and it is crossed by how many addresses commit
+ * to a repo, so these two tests are a pair: identical corpora but for the row
+ * that falls off the end.
+ */
+describe("git: a bounded listing is not proof that nobody is absent", () => {
+  test("an absentee cut by the evidence bound still reads incomplete", async () => {
+    // Arrange: ABSENCE_MAX_EVIDENCE_ROWS reported authors with newer commits,
+    // and one contractor nobody matches whose commit is the oldest — so the
+    // DESC order puts the only finding one row past the bound.
+    const { harness, viewerId } = await seed();
+    await fillEvidenceToTheBound(harness, viewerId, ABSENCE_MAX_EVIDENCE_ROWS);
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "contractor@external.example",
+      authorName: "Cass Contractor",
+      latestCommitAt: at(-6 * DAY_MS),
+      collectedAt: at(-MINUTE_MS),
+    });
+
+    // Act
+    const row = await gitOf(harness, viewerId);
+
+    // Assert: one commit author on this repo has no reported session at all.
+    expect(row.state).toBe("incomplete");
+    expect(row.reason).toBe("commit_authors_unreported");
+  });
+
+  test("the same corpus one row under the bound reads incomplete too", async () => {
+    // Arrange: the control — nothing is cut, so this is what the case above
+    // has to agree with.
+    const { harness, viewerId } = await seed();
+    await fillEvidenceToTheBound(
+      harness,
+      viewerId,
+      ABSENCE_MAX_EVIDENCE_ROWS - 1,
+    );
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "contractor@external.example",
+      authorName: "Cass Contractor",
+      latestCommitAt: at(-6 * DAY_MS),
+      collectedAt: at(-MINUTE_MS),
+    });
+
+    // Act
+    const row = await gitOf(harness, viewerId);
+
+    // Assert
+    expect(row.state).toBe("incomplete");
+    expect(row.reason).toBe("commit_authors_unreported");
+  });
+
+  test("`isJudgeable` is false while an absentee sits past the bound", async () => {
+    // Arrange
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_clean",
+      lastHeartbeatAt: at(-30 * MINUTE_MS),
+      endedAt: at(-29 * MINUTE_MS),
+    });
+    await fillEvidenceToTheBound(harness, viewerId, ABSENCE_MAX_EVIDENCE_ROWS);
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "contractor@external.example",
+      authorName: "Cass Contractor",
+      latestCommitAt: at(-6 * DAY_MS),
+      collectedAt: at(-MINUTE_MS),
+    });
+
+    // Act
+    const record = await readCoverage(
+      { db: harness.db, now: harness.clock.now },
+      viewerId,
+      REPO,
+    );
+
+    // Assert: principle 1 — only judge when you know you were watching.
+    expect(isJudgeable(record)).toBe(false);
+  });
+
+  test("under both caps the census and the listing are the same answer", async () => {
+    // Arrange: the gap predicate is now spelled twice — once in JS over the
+    // bounded listing, once in SQL over the unbounded census. Under both caps
+    // the listing IS a census, so the two must agree row for row and instant
+    // for instant, or one of them has drifted.
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_mine",
+      lastHeartbeatAt: at(-3 * DAY_MS),
+      endedAt: at(-3 * DAY_MS),
+    });
+    await harness.db.insert(developerEmails).values({
+      email: "nick-alias@acme.example",
+      developerId: viewerId,
+      isPrimary: false,
+      createdAt: at(-2 * DAY_MS),
+    });
+    // (a) a member who committed long after their last reported session,
+    // (b) a member whose commit is inside the grace window, (c) an address
+    // no member matches at all.
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "nick-alias@acme.example",
+      authorName: "Nick Alias",
+      latestCommitAt: at(-MINUTE_MS),
+      collectedAt: at(-MINUTE_MS),
+    });
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "nick@example.com",
+      authorName: "Nick Primary",
+      latestCommitAt: at(-3 * DAY_MS + MINUTE_MS),
+      collectedAt: at(-MINUTE_MS),
+    });
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "stranger@external.example",
+      authorName: "Sam Stranger",
+      latestCommitAt: at(-5 * DAY_MS),
+      collectedAt: at(-MINUTE_MS),
+    });
+    const deps = { db: harness.db, now: harness.clock.now };
+
+    // Act
+    const findings = await listAbsences(deps, viewerId, REPO);
+    const census = await readAbsenceCensus(deps, viewerId, REPO);
+
+    // Assert
+    expect(findings.length).toBeLessThan(ABSENCE_MAX_FINDINGS);
+    expect(census.unreportedAuthors).toBe(findings.length);
+    expect(census.unreportedAuthors).toBe(2);
+    const sessions = findings
+      .map((finding) => finding.lastSessionAt)
+      .filter((value): value is string => value !== null)
+      .sort();
+    expect(census.earliestSessionAt).toBe(sessions[0] ?? null);
+    const commits = [...findings.map((finding) => finding.latestCommitAt)].sort();
+    expect(census.earliestCommitAt).toBe(commits[0] ?? null);
+  });
+
+  test("the gap instant is the EARLIEST, not the earliest of the kept 20", async () => {
+    // Arrange: ABSENCE_MAX_FINDINGS + 5 unreported authors. The findings cap
+    // keeps the 20 most RECENT, so a minimum taken over the kept list is
+    // taken over the wrong end of the distribution — always later than the
+    // truth, always in the reassuring direction.
+    const { harness, viewerId } = await seed();
+    const oldest = at(-13 * DAY_MS);
+    for (let index = 0; index < ABSENCE_MAX_FINDINGS + 5; index += 1) {
+      await insertEvidence(harness, viewerId, {
+        authorEmail: `absent${String(index)}@external.example`,
+        authorName: `Absent ${String(index)}`,
+        latestCommitAt: new Date(oldest.getTime() + index * 60 * MINUTE_MS),
+        collectedAt: at(-MINUTE_MS),
+      });
+    }
+
+    // Act
+    const row = await gitOf(harness, viewerId);
+
+    // Assert: "observation has been unreliable since AT LEAST here" is a
+    // lower bound or it is a lie.
+    expect(row.state).toBe("incomplete");
+    expect(row.gapSince).toBe(oldest.toISOString());
+  });
 });
 
 /**

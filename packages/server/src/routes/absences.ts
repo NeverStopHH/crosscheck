@@ -32,13 +32,14 @@ export const absencesRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // GET of its own. PGlite is a single-connection embedded database
     // (services/search.ts:59-67), so a ninth parallel GET at SessionStart
     // would look free in wall clock and serialise on the hub inside the
-    // 1000 ms budget. The findings are handed on so the git rung costs no
-    // second pass over the rows just read.
+    // 1000 ms budget. The findings are NOT handed on: this listing is bounded
+    // twice and ordered so the rows it drops are the stalest committers, so
+    // reading it as coverage would read a cut as a census. The git rung asks
+    // the same predicate unbounded instead (services/absences.ts).
     const coverage = await readCoverage(
       deps,
       c.get("developer").id,
       parsed.data.repo,
-      { findings: absences },
     );
     return ok(c, { absences, coverage });
   });

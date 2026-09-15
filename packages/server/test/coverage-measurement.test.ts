@@ -171,15 +171,17 @@ describe("COV-8: what coverage costs the response it rides", () => {
     const after: number[] = [];
 
     // Act: (a) the work this endpoint did BEFORE this spec, (b) the work it
-    // does now — findings handed on, so the git rung costs no second pass.
+    // does now — the listing for the findings, plus coverage, whose git rung
+    // asks the absence question again UNBOUNDED, because the listing's own
+    // answer is a cut rather than a census.
     for (let round = 0; round < rounds; round += 1) {
       const startBefore = performance.now();
       await listAbsences(deps, viewerId, REPO);
       before.push(performance.now() - startBefore);
 
       const startAfter = performance.now();
-      const findings = await listAbsences(deps, viewerId, REPO);
-      await readCoverage(deps, viewerId, REPO, { findings });
+      await listAbsences(deps, viewerId, REPO);
+      await readCoverage(deps, viewerId, REPO);
       after.push(performance.now() - startAfter);
     }
     const p95Before = percentile(before, 0.95);

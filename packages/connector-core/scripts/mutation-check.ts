@@ -4861,6 +4861,52 @@ export const MUTATIONS: readonly Mutation[] = [
       "false accusation",
   },
   {
+    // `listAbsences` returns at most ABSENCE_MAX_EVIDENCE_ROWS rows ordered
+    // `latest_commit_at DESC`, so the rows it drops are the STALEST
+    // committers — the population the absence check exists to find. This
+    // mutation hands the census the listing's own cut back, which is the
+    // shape the git rung shipped with until it was measured.
+    label: "a cut listing of absentees is read as proof nobody is absent",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "      gaps: sql`count(*) filter (where ${isGap})`,",
+    to: "      gaps: sql`count(*) filter (where ${isGap} and ${commitEvidence.latestCommitAt} >= (select min(bounded.latest_commit_at) from (select latest_commit_at from commit_evidence where repo = ${repo} order by latest_commit_at desc limit ${ABSENCE_MAX_EVIDENCE_ROWS}) bounded))`,",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "a repo with more committing addresses than the evidence bound reads " +
+      "git complete and isJudgeable true while authors nobody matched sit " +
+      "past the cut — AT-5's failure condition reached by team size",
+  },
+  {
+    // "Observation has been unreliable since at least here" is a LOWER
+    // BOUND. Naming the newest absentee instead of the earliest keeps the
+    // sentence and moves the instant days later, always in the reassuring
+    // direction, which is the one direction a lower bound may not move.
+    label: "the gap instant names the newest absentee, not the earliest",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "      earliestCommitAt: sql`min(${commitEvidence.latestCommitAt}) filter (where ${isGap})`,",
+    to: "      earliestCommitAt: sql`max(${commitEvidence.latestCommitAt}) filter (where ${isGap})`,",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the briefing's one uncuttable line tells a reader the archive has " +
+      "been unreliable since hours ago when it has been unreliable for days, " +
+      "and that instant is the whole actionable payload of AT-1's sentence",
+  },
+  {
+    // The gap predicate is spelled twice now — JS over the bounded listing,
+    // SQL over the unbounded census — and the grace window is the half a
+    // reader is least likely to keep in step. Under both caps the listing IS
+    // a census, so the two must be the same answer or one has drifted.
+    label: "the grace the listing keeps silent is not the gap coverage counts",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "* 1000) > ${graceMs})`;",
+    to: "* 1000) > 0)`;",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "every ordinary commit-after-session becomes a coverage gap, so git " +
+      "reads incomplete on a healthy repo and the caveat fires on answers " +
+      "the absence listing itself is silent about",
+  },
+  {
     // The term this spec's own first draft was missing. Without it a verdict
     // is reachable while a lane the system watches is still mid-flight.
     label: "a verdict is reachable while a watched lane is mid-flight",
@@ -5292,7 +5338,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
- * PRINTS: packages/server/test/coverage.test.ts 7
+ * PRINTS: packages/server/test/coverage.test.ts 10
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4

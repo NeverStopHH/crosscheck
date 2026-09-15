@@ -40,9 +40,9 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
-import { listAbsences } from "./absences.ts";
+import { readAbsenceCensus } from "./absences.ts";
 import { presenceCutoff } from "./presence.ts";
-import type { AbsenceFinding } from "./absences.ts";
+import type { AbsenceCensus } from "./absences.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -139,12 +139,6 @@ interface Deps {
 
 export interface ReadCoverageOptions {
   readonly scope?: CoverageScope;
-  /**
-   * Findings the caller already has (`GET /api/absences` computes them one
-   * line above), so the git rung costs no second pass over the same rows.
-   * Omitted anywhere else and `listAbsences` is called here.
-   */
-  readonly findings?: readonly AbsenceFinding[];
 }
 
 const sourceRecord = (
@@ -318,27 +312,18 @@ const readAgentEventCoverage = async (
 
 /**
  * "Observation has been unreliable since at least here" for the git rung: the
- * earliest moment a finding says somebody's work was going unreported. A
- * finding with a session names that session's last one; a finding with no
+ * earliest moment the census says somebody's work was going unreported. An
+ * absentee with a session names that session's last heartbeat; one with no
  * session at all can only name the commit, which is §3.2's "else".
+ *
+ * A LOWER BOUND OR IT IS A LIE. This reads the census's minima, never a
+ * minimum over `listAbsences`' kept findings: that list is capped at
+ * ABSENCE_MAX_FINDINGS after ordering newest-commit-first, so its minimum is
+ * taken over the 20 most RECENT absentees and lands days later than the
+ * earliest gap, every time, in the reassuring direction.
  */
-const earliestFindingGap = (
-  findings: readonly AbsenceFinding[],
-): string | null => {
-  const sessions = findings
-    .map((finding) => finding.lastSessionAt)
-    .filter((value): value is string => value !== null);
-  const fallback = findings.map((finding) => finding.latestCommitAt);
-  const candidates = sessions.length > 0 ? sessions : fallback;
-  const earliest = candidates.reduce<number | null>((oldest, iso) => {
-    const ms = Date.parse(iso);
-    if (Number.isNaN(ms)) {
-      return oldest;
-    }
-    return oldest === null || ms < oldest ? ms : oldest;
-  }, null);
-  return earliest === null ? null : new Date(earliest).toISOString();
-};
+const censusGap = (census: AbsenceCensus): string | null =>
+  census.earliestSessionAt ?? census.earliestCommitAt;
 
 /**
  * The git rung, and it needs its OWN UNWINDOWED aggregate rather than the rows
@@ -346,13 +331,23 @@ const earliestFindingGap = (
  * survive contact with the code.
  *
  * `listAbsences` filters `collected_at` against ABSENCE_EVIDENCE_MAX_AGE_DAYS
- * inside its evidence query (services/absences.ts:148). A repo whose newest
- * collection is nine days old therefore returns ZERO findings — byte-identical
- * to a repo no connector has ever collected evidence for. §3.2 needs those two
- * to read `incomplete` / `evidence_stale` and `unknown` / `no_commit_evidence`
- * respectively, and no query that inherits the staleness filter can tell them
- * apart. So: one `max(collected_at)` + `count(*)` over `commit_evidence` for
- * this repo, unwindowed, and the FINDINGS still come from `listAbsences`.
+ * inside its evidence query. A repo whose newest collection is nine days old
+ * therefore returns ZERO findings — byte-identical to a repo no connector has
+ * ever collected evidence for. §3.2 needs those two to read `incomplete` /
+ * `evidence_stale` and `unknown` / `no_commit_evidence` respectively, and no
+ * query that inherits the staleness filter can tell them apart. So: one
+ * `max(collected_at)` + `count(*)` over `commit_evidence` for this repo,
+ * unwindowed.
+ *
+ * AND THE ABSENTEES COME FROM A CENSUS, NOT FROM THE LISTING. §3.2 says this
+ * rung reads "rows `listAbsences` already reads", and it cannot: that listing
+ * is bounded twice (ABSENCE_MAX_EVIDENCE_ROWS, then ABSENCE_MAX_FINDINGS) and
+ * ordered so the rows it drops are the stalest committers — the population
+ * this question is about. An empty listing is then a cut, not a census, and
+ * reading it as `complete` is AT-5's "fails if" reached by TEAM SIZE. So the
+ * count and the earliest instant come from `readAbsenceCensus`, which asks
+ * the listing's own predicate with no LIMIT and no ORDER BY
+ * (services/absences.ts).
  *
  * `collectCommitEvidence` runs only at SessionStart (00 §4.3), which is why a
  * stale `collected_at` is a gap rather than something to ignore: it means no
@@ -376,8 +371,8 @@ const earliestFindingGap = (
 const readGitCoverage = async (
   deps: Deps,
   now: Date,
+  viewerDeveloperId: string,
   repo: string,
-  findings: readonly AbsenceFinding[],
 ): Promise<CoverageSourceRecord> => {
   const rows = await deps.db
     .select({
@@ -395,14 +390,15 @@ const readGitCoverage = async (
   if (newest === null || Date.parse(newest) < staleBefore) {
     return sourceRecord("git", "incomplete", "evidence_stale", newest, newest);
   }
-  if (findings.length === 0) {
+  const census = await readAbsenceCensus(deps, viewerDeveloperId, repo);
+  if (census.unreportedAuthors === 0) {
     return sourceRecord("git", "complete", "commits_reported", null, newest);
   }
   return sourceRecord(
     "git",
     "incomplete",
     "commit_authors_unreported",
-    earliestFindingGap(findings),
+    censusGap(census),
     newest,
   );
 };
@@ -444,11 +440,10 @@ export const isJudgeable = (record: CoverageRecord): boolean =>
  * The five rows for one repo, always, in order.
  *
  * `viewerDeveloperId` rather than §3.2a's bare `(deps, repo, scope?)`: the git
- * rung reads `listAbsences`, whose evidence query carries the privacy
- * predicate (services/absences.ts:150-152), so coverage is scoped to what
- * this viewer may be told — the same rule every other answer on these routes
- * already follows. Coverage that ignored an opt-out would be a side channel
- * around it.
+ * rung's census carries the same privacy predicate the absence listing does
+ * (services/absences.ts), so coverage is scoped to what this viewer may be
+ * told — the same rule every other answer on these routes already follows.
+ * Coverage that ignored an opt-out would be a side channel around it.
  */
 export const readCoverage = async (
   deps: Deps,
@@ -459,11 +454,9 @@ export const readCoverage = async (
   const now = deps.now();
   const since = effectiveSince(now, options.scope);
   const paths = scopePaths(options.scope);
-  const findings =
-    options.findings ?? (await listAbsences(deps, viewerDeveloperId, repo));
   const [agentEvent, git] = await Promise.all([
     readAgentEventCoverage(deps, now, repo, since, paths),
-    readGitCoverage(deps, now, repo, findings),
+    readGitCoverage(deps, now, viewerDeveloperId, repo),
   ]);
   return {
     repo,
