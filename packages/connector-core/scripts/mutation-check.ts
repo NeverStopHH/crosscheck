@@ -5340,6 +5340,23 @@ export const MUTATIONS: readonly Mutation[] = [
       "in the field — which is the outcome the scope exists to prevent",
   },
   {
+    // The caveat's LIFETIME. A reap is revocable only by a record from the
+    // session it closed (services/records.ts reviveReapedSession), and that
+    // record never arrives for a terminal that went away — so the window is
+    // the only thing that ever ends the sentence it produces.
+    label: "a gap nobody can act on is reported for ever",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: `  const ceiling = new Date(
+    now.getTime() - COVERAGE_SESSION_WINDOW_DAYS * MS_PER_DAY,
+  );`,
+    to: "  const ceiling = new Date(0);",
+    test: `${CORE}/test/coverage-fire-rate.test.ts`,
+    because:
+      "one afternoon of reading and planning puts the FIRST, UNCUTTABLE line " +
+      "of every SessionStart briefing in `incomplete` permanently, which is " +
+      "how a caveat stops being read",
+  },
+  {
     // The surface where an unqualified answer costs a name. 04 renders this
     // record on the suspect verdict and gates UNATTRIBUTED on it.
     label: "a ranking names a session with no statement of what was watched",
@@ -5541,6 +5558,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 5
+ * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 9
