@@ -620,6 +620,22 @@ BEGIN
 END
 $$;
 
+-- ONE ROW PER FILE A CLAIM'S AUTHOR DECLARED IT IS ABOUT. repo is
+-- denormalised for pin_files' reason: the hot question is "which rows in this
+-- repo watch this path", asked with a path and no claim id. Rows exist only
+-- where an author declared paths — nothing is inferred from agent prose — and
+-- a claim with none falls back to its work context's file targets, which
+-- over-fires by construction (claim_revalidations.basis says which was used).
+CREATE TABLE IF NOT EXISTS claim_surfaces (
+  claim_id text NOT NULL REFERENCES claims(id),
+  repo text NOT NULL,
+  path text NOT NULL,
+  PRIMARY KEY (claim_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS claim_surfaces_repo_path_idx
+  ON claim_surfaces (repo, path);
+
 -- ONE ROW PER REVALIDATED CLAIM: the latest reading a clone reported of
 -- whether the code under that claim moved. UPSERT-only, so the table is
 -- bounded by how many claims anybody revalidates rather than by reporting

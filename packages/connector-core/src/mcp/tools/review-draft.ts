@@ -22,6 +22,7 @@ import { z } from "zod";
 import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 import { CLAIM_ECHO_MAX_CHARS } from "../../constants.ts";
 
+import { resolveDeclaredSurface } from "../../flows/claim-surface.ts";
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
@@ -77,6 +78,16 @@ export const ArgsSchema = z.object({
     .describe(
       "confirm/edit only: your confidence in the promoted claim. " +
         "Defaults to the draft's own.",
+    ),
+  affectedPaths: z
+    .array(z.string().min(1))
+    .default([])
+    .describe(
+      "Repo-relative files this finding is ABOUT, if you already know them. " +
+        "They scope the staleness check: once a later commit rewrites one of " +
+        "them, this claim stops being presented as a current cause and the " +
+        "downgrade names the commits. Omit rather than guess — with none, the " +
+        "whole work context's touched files stand in, which over-fires.",
     ),
 });
 
@@ -227,6 +238,12 @@ export const run = async (
   }
 
   const revision = buildRevision(action, draft, body, confidence);
+  const surface = await resolveDeclaredSurface({
+    repoRoot: ctx.identity.root,
+    cwd: ctx.identity.root,
+    paths: parsed.value.affectedPaths,
+    denylist: ctx.config.denylist ?? undefined,
+  });
   const now = ctx.now().toISOString();
   const claim = {
     id: mintClaimId(),
@@ -239,6 +256,7 @@ export const run = async (
     captureMode: "agent",
     provenance: revision.provenance,
     evidenceRefs: [],
+    affectedPaths: surface.paths,
     createdAt: now,
   };
   const rules = checkClaim(claim);

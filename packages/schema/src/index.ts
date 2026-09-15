@@ -55,7 +55,14 @@ export {
   ClaimSchema,
   DERIVED_CONFIDENCE_CAP,
   MAX_CLAIM_BODY_LENGTH,
+  MAX_CLAIM_SURFACE_PATHS,
 } from "./claim.ts";
+
+export {
+  MAX_REPO_PATH_CHARS,
+  REPO_RELATIVE_PATH,
+  repoRelativePath,
+} from "./repo-path.ts";
 export type { Claim, ClaimEdge } from "./claim.ts";
 
 export {
@@ -68,7 +75,6 @@ export {
 export type { AgentSession, Intent, Target, WorkContext } from "./session.ts";
 
 export {
-  MAX_CLAIM_SURFACE_PATHS,
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_FILES,
   MAX_PIN_PATH_CHARS,

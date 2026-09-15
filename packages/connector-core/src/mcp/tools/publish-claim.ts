@@ -19,6 +19,7 @@ import type { OwnWorkContext } from "../session.ts";
 import { checkClaim, explainRejection } from "../violations.ts";
 import { redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
+import { resolveDeclaredSurface } from "../../flows/claim-surface.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { readSessionState } from "../../state/session-state.ts";
 import { postRecords } from "../../http/hub.ts";
@@ -64,6 +65,16 @@ export const ArgsSchema = z.object({
     .default([])
     .describe(
       "Ids of claims that support this one. Get them from get_diagnosis.",
+    ),
+  affectedPaths: z
+    .array(z.string().min(1))
+    .default([])
+    .describe(
+      "Repo-relative files this finding is ABOUT, if you already know them. " +
+        "They scope the staleness check: once a later commit rewrites one of " +
+        "them, this claim stops being presented as a current cause and the " +
+        "downgrade names the commits. Omit rather than guess — with none, the " +
+        "whole work context's touched files stand in, which over-fires.",
     ),
 });
 
@@ -172,6 +183,16 @@ export const run = async (
     return toolFailure(ECHO_REFUSAL);
   }
 
+  // The author's declared surface, through the SAME pipeline a captured file
+  // target passes — toRepoRelative, the denylist, the secret scan. A path
+  // that fails any of them is dropped, never redacted.
+  const surface = await resolveDeclaredSurface({
+    repoRoot: ctx.identity.root,
+    cwd: ctx.identity.root,
+    paths: parsed.value.affectedPaths,
+    denylist: ctx.config.denylist ?? undefined,
+  });
+
   const claim = {
     id: mintClaimId(),
     workContextId: own.workContextId,
@@ -186,6 +207,7 @@ export const run = async (
     // does not apply — and must not be quietly borrowed to escape it either.
     provenance: "declared",
     evidenceRefs: parsed.value.evidenceRefs,
+    affectedPaths: surface.paths,
     createdAt: ctx.now().toISOString(),
   };
 

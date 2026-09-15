@@ -13,6 +13,7 @@ import { EVENT_KINDS } from "../constants.ts";
 import {
   agentSessions,
   claimEdges,
+  claimSurfaces,
   claims,
   workContexts,
   workContextTargets,
@@ -148,20 +149,25 @@ const resolveCommitBinding = async (
 ): Promise<{
   readonly observedAtCommit: string | null;
   readonly commitBinding: ClaimCommitBinding;
+  /** The author session's repo — what claim_surfaces rows are keyed by. */
+  readonly repo: string;
 }> => {
-  const reported = body.observedAtCommit;
-  if (reported !== undefined) {
-    return { observedAtCommit: reported, commitBinding: "reported" };
-  }
+  // ONE lookup whatever the branch: the repo is needed for claim_surfaces
+  // even when the commit came in on the wire.
   const rows = await db
-    .select({ baseCommit: agentSessions.baseCommit })
+    .select({ baseCommit: agentSessions.baseCommit, repo: agentSessions.repo })
     .from(agentSessions)
     .where(eq(agentSessions.id, body.authorSessionId))
     .limit(1);
+  const repo = rows[0]?.repo ?? "";
+  const reported = body.observedAtCommit;
+  if (reported !== undefined) {
+    return { observedAtCommit: reported, commitBinding: "reported", repo };
+  }
   const baseCommit = rows[0]?.baseCommit ?? "";
   return isBindableCommit(baseCommit)
-    ? { observedAtCommit: baseCommit, commitBinding: "session_base" }
-    : { observedAtCommit: null, commitBinding: "none" };
+    ? { observedAtCommit: baseCommit, commitBinding: "session_base", repo }
+    : { observedAtCommit: null, commitBinding: "none", repo };
 };
 
 type WorkContextRow = typeof workContexts.$inferSelect;
@@ -597,6 +603,22 @@ export const ingestClaimWithin = async (
     .returning({ id: claims.id });
   if (inserted[0] === undefined) {
     return classifyClaimIdConflict(tx, developerId, body.id);
+  }
+  // The DECLARED half of the affected surface (spec 02 §3.2), written with
+  // the claim and never after: like the two binding columns, it is part of
+  // what the author asserted, not a later annotation. onConflictDoNothing
+  // because a spool replay of the same claim id is a retransmission.
+  if (body.affectedPaths.length > 0) {
+    await tx
+      .insert(claimSurfaces)
+      .values(
+        body.affectedPaths.map((path) => ({
+          claimId: body.id,
+          repo: binding.repo,
+          path,
+        })),
+      )
+      .onConflictDoNothing();
   }
   // Cross-session similarity: relates_to edge or contradiction candidate
   // (similarity-gate.ts). After the insert so both edge endpoints exist.

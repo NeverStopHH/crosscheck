@@ -10,7 +10,11 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
-import { claimValidity, loadRevalidations } from "./claim-validity.ts";
+import {
+  claimValidity,
+  loadClaimSurfaces,
+  loadRevalidations,
+} from "./claim-validity.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
 import type { ClaimValidity } from "@crosscheck/schema";
@@ -137,6 +141,12 @@ export interface ClaimView {
    * rather than left for a connector to recompute from three fields.
    */
   readonly validity: ClaimValidity;
+  /**
+   * The files this claim's AUTHOR declared it is about (spec 02 §3.2), or an
+   * empty list when they declared none — in which case a reader revalidates
+   * against the tree's own `file` targets and labels the basis accordingly.
+   */
+  readonly affectedPaths: readonly string[];
   readonly createdAt: string;
 }
 
@@ -204,6 +214,7 @@ const toClaimView = (
   { claim: row, authorDeveloperId, authorDeveloperName }: AttributedClaimRow,
   revalidation: ClaimRevalidationReading | undefined,
   supersededByClaimId: string | null,
+  affectedPaths: readonly string[],
 ): ClaimView => ({
   id: row.id,
   workContextId: row.workContextId,
@@ -220,6 +231,7 @@ const toClaimView = (
   evidenceRefs: row.evidenceRefs,
   lastSeenAt: toIsoOrNull(row.lastSeenAt),
   validity: claimValidity(row, revalidation, supersededByClaimId),
+  affectedPaths,
   createdAt: row.createdAt.toISOString(),
 });
 
@@ -476,7 +488,10 @@ export const getDiagnosis = async (
       )
       .map((edge) => [edge.toClaimId, edge.fromClaimId] as const),
   );
-  const revalidations = await loadRevalidations(db, [...localClaimIds]);
+  const [revalidations, surfaces] = await Promise.all([
+    loadRevalidations(db, [...localClaimIds]),
+    loadClaimSurfaces(db, [...localClaimIds]),
+  ]);
 
   return {
     workContext: toWorkContextView(contextRow.workContext, contextRow.baseCommit),
@@ -485,6 +500,7 @@ export const getDiagnosis = async (
         row,
         revalidations.get(row.claim.id),
         supersededBy.get(row.claim.id) ?? null,
+        surfaces.get(row.claim.id) ?? [],
       ),
     ),
     edges: edgeRows.map(toClaimEdgeView),

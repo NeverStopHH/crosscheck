@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { SAFE_ID_PATTERN, MAX_RECORD_ID_LENGTH } from "./question.ts";
+import { MAX_REPO_PATH_CHARS, repoRelativePath } from "./repo-path.ts";
 
 /**
  * A PIN: a human's provenance-stamped statement that a named surface WORKS
@@ -50,15 +51,6 @@ export const MAX_PIN_CHECK_CHARS = 200;
 export const MAX_PIN_FILES = 30;
 
 /**
- * Hard cap on the file set ONE CLAIM may declare as its affected surface
- * (1.0 spec 02 §3.2). Inherited from MAX_PIN_FILES by NAME rather than
- * silently re-chosen: both answer "how big may a hand-declared surface be
- * before it is an area", and an area-sized surface makes every commit in the
- * area a downgrade.
- */
-export const MAX_CLAIM_SURFACE_PATHS = MAX_PIN_FILES;
-
-/**
  * At most five files may ever SPEAK. Larger pins stay briefing-only: they can
  * be listed and they can be looked up with `crosscheck suspect`, but they are
  * not eligible for the Stage-2 notice lane. The cap is the noise control that
@@ -98,7 +90,7 @@ export type PinFileStatus = (typeof PIN_FILE_STATUSES)[number];
 export const PIN_PRESENCE_TERMINAL = "controlling_terminal";
 
 /** A repo-relative path is never long; the cap keeps one row renderable. */
-export const MAX_PIN_PATH_CHARS = 300;
+export const MAX_PIN_PATH_CHARS = MAX_REPO_PATH_CHARS;
 
 /**
  * Upper bound on path updates ONE sweep request may carry — a bound on the
@@ -113,28 +105,14 @@ export const MAX_PIN_PATH_CHARS = 300;
  */
 export const MAX_PIN_SWEEP_UPDATES = 200;
 
-/**
- * The one path shape a recorded touch can have. `toRepoRelative`
- * (connector-core capture/target-paths.ts) is the only minter of a target
- * value, and it emits POSIX-separated, repo-relative paths with no leading
- * slash and no `..` — a pin carrying anything else could never intersect a
- * touch, so it would watch NOTHING while reading as registered in `status`.
- * That is the fail-silent-dead shape constraint 4 forbids, so it is a parse
- * error instead.
- */
-const REPO_RELATIVE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\0\\]+$/;
-
 const pinId = z
   .string()
   .min(1)
   .max(MAX_RECORD_ID_LENGTH)
   .regex(SAFE_ID_PATTERN, "id carries characters an id may not carry");
 
-const pinPath = z
-  .string()
-  .min(1)
-  .max(MAX_PIN_PATH_CHARS)
-  .regex(REPO_RELATIVE_PATH, "path is not repo-relative POSIX");
+/** The shared repo-relative rule (schema/repo-path.ts) — one shape, not two. */
+const pinPath = repoRelativePath;
 
 const PinShapeSchema = z.object({
   id: pinId,

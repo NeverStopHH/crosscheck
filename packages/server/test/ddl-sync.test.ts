@@ -261,6 +261,20 @@ describe("bootstrap.sql DDL sync", () => {
     }
   });
 
+  test("claim_surfaces exists in both DDL authorities", async () => {
+    // Arrange
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert: repo is DENORMALISED on purpose — pin_files' reason, one table
+    // over — so the index that answers "which rows in this repo watch this
+    // path" must exist in both authorities too.
+    expect(bootstrapSql).toContain("CREATE TABLE IF NOT EXISTS claim_surfaces (");
+    expect(bootstrapSql).toContain("PRIMARY KEY (claim_id, path)");
+    expect(bootstrapSql).toContain(
+      "CREATE INDEX IF NOT EXISTS claim_surfaces_repo_path_idx",
+    );
+  });
+
   test("work_context_targets.created_at is added for the #19 pointer age", async () => {
     // Arrange: the drizzle column is nullable, so bootstrap must add it with
     // the same ADD COLUMN IF NOT EXISTS evolution idiom or a fresh DB and an

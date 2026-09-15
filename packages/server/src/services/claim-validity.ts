@@ -58,7 +58,7 @@
  * PRINTS: packages/schema/src/enums.ts
  * PRINTS: packages/server/src/services/claim-validity.ts
  */
-import { inArray } from "drizzle-orm";
+import { asc, inArray } from "drizzle-orm";
 import type {
   ClaimCommitBinding,
   ClaimRevalidationBasis,
@@ -66,7 +66,7 @@ import type {
   ClaimValidityState,
 } from "@crosscheck/schema";
 
-import { claimRevalidations } from "../db/schema.ts";
+import { claimRevalidations, claimSurfaces } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 
 /** The three inputs, as the row shapes the callers already hold. */
@@ -192,4 +192,36 @@ export const loadRevalidations = async (
       },
     ]),
   );
+};
+
+/**
+ * The DECLARED surface of each of these claims, in ONE batched query.
+ *
+ * Empty for a claim whose author declared nothing, which is not a statement
+ * that the claim touches no files: the reader then falls back to the work
+ * context's own `file` targets and says so through `basis`.
+ */
+export const loadClaimSurfaces = async (
+  db: Db,
+  claimIds: readonly string[],
+): Promise<ReadonlyMap<string, readonly string[]>> => {
+  const unique = [...new Set(claimIds)];
+  if (unique.length === 0) {
+    return new Map();
+  }
+  const rows = await db
+    .select({ claimId: claimSurfaces.claimId, path: claimSurfaces.path })
+    .from(claimSurfaces)
+    .where(inArray(claimSurfaces.claimId, unique))
+    .orderBy(asc(claimSurfaces.claimId), asc(claimSurfaces.path));
+  const byClaim = new Map<string, string[]>();
+  for (const row of rows) {
+    const existing = byClaim.get(row.claimId);
+    if (existing === undefined) {
+      byClaim.set(row.claimId, [row.path]);
+      continue;
+    }
+    existing.push(row.path);
+  }
+  return byClaim;
 };

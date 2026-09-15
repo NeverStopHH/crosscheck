@@ -765,3 +765,32 @@ export const claimRevalidations = pgTable("claim_revalidations", {
     .notNull()
     .references(() => developers.id),
 });
+
+/**
+ * ONE ROW PER FILE A CLAIM'S AUTHOR DECLARED IT IS ABOUT (1.0 spec 02 §3.2).
+ *
+ * `repo` is DENORMALISED for pin_files' reason, stated there at length: the
+ * hot question is "which rows in THIS repo watch this path", asked with a path
+ * and no claim id, and reaching repo through a join to claims would read every
+ * matching row in every repo first.
+ *
+ * Rows exist ONLY where an author declared paths. With none, a claim's surface
+ * is the work context's `file` targets — the set `get_diagnosis` already hands
+ * the solved staleness check — and the two are told apart by
+ * `claim_revalidations.basis`, because the context-derived set OVER-FIRES:
+ * any file in the context changing marks every claim on it.
+ */
+export const claimSurfaces = pgTable(
+  "claim_surfaces",
+  {
+    claimId: text("claim_id")
+      .notNull()
+      .references(() => claims.id),
+    repo: text("repo").notNull(),
+    path: text("path").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.claimId, table.path] }),
+    index("claim_surfaces_repo_path_idx").on(table.repo, table.path),
+  ],
+);
