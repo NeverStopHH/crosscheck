@@ -134,14 +134,62 @@ const gitFragment = (
 };
 
 /**
+ * THE RUNGS 05 AND LATER OWN, so that a rung which can set the head word can
+ * also appear in the sentence. `headOf` reads all five; the body read two, so
+ * `ci`, `runtime` and `human_edit` could each turn the head to "incomplete"
+ * over a body that said nothing was missing — and by decision 2 that sentence
+ * is the first, uncuttable line of every SessionStart briefing for as long as
+ * the gap lasts. A caveat a reader cannot reconcile reads as a crosscheck
+ * bug, which is how the next real one gets skipped.
+ *
+ * Only a rung that can DRAG the head is rendered: `complete` and `unavailable`
+ * say nothing the head does not already say, and every character here is spent
+ * against the 160 the briefing seat rests on.
+ */
+const RESERVED_NOUNS: Record<string, string> = {
+  ci: "ci lanes",
+  runtime: "runtime signals",
+  human_edit: "human edits",
+};
+
+const RESERVED_REASONS: Record<string, string> = {
+  ci_lanes_missing: "ci lanes did not all report",
+  ci_awaiting_rerun: "ci lanes awaiting rerun",
+  ci_not_reported_yet: "ci has not reported yet",
+};
+
+const reservedFragment = (row: CoverageSourceRecord): string | null => {
+  if (row.state === "complete" || row.state === "unavailable") {
+    return null;
+  }
+  const named = RESERVED_REASONS[row.reason];
+  if (named !== undefined) {
+    return named;
+  }
+  const noun = RESERVED_NOUNS[row.source] ?? row.source;
+  return row.state === "incomplete"
+    ? `${noun} did not all report`
+    : `${noun} not reported`;
+};
+
+/**
  * The head word is the WORST state among the rungs that can be read. A rung
  * that cannot exist never drags the head: with `runtime` permanently
  * `unavailable`, an "unavailable" head would be the permanent state of every
  * answer and would say nothing. The three refused rungs are printed by name
  * in `crosscheck doctor` instead, once, where somebody can act on them.
+ *
+ * AND AN EMPTY READABLE SET IS `unknown`, NEVER `complete`. Filtering
+ * `unavailable` out and then asking `.some()` twice answers false twice over
+ * nothing, and falling through to "Coverage complete" is a pass produced from
+ * zero evidence — AT-10's "no fake pass" in one line, and the state on which
+ * `mustQualifyEmptyAnswer` says the opposite.
  */
 const headOf = (record: CoverageRecord): string => {
   const readable = record.sources.filter((row) => row.state !== "unavailable");
+  if (readable.length === 0) {
+    return "Coverage unknown";
+  }
   if (readable.some((row) => row.state === "incomplete")) {
     return "Coverage incomplete";
   }
@@ -174,11 +222,27 @@ export const COVERAGE_HUB_UNREACHABLE =
 
 export const HUB_UNREACHABLE_CLAUSE = `Coverage unknown: ${COVERAGE_HUB_UNREACHABLE}.`;
 
-/** Belt and braces on the bound the briefing's uncuttable seat rests on. */
-const fit = (line: string): string =>
-  line.length <= MAX_COVERAGE_LINE_CHARS
+/**
+ * The bound the briefing's uncuttable seat rests on, spent in PRIORITY ORDER.
+ * Fragments are added while they fit and dropped whole once they do not, so a
+ * long sentence loses a trailing clause rather than half a word — and the two
+ * rungs that decide judging are first in the list, so they are the last to go.
+ * The head word survives every cut, because it is the part a reader acts on.
+ */
+const fit = (head: string, fragments: readonly string[]): string => {
+  const kept: string[] = [];
+  for (const fragment of fragments) {
+    const candidate = `${head}: ${[...kept, fragment].join("; ")}.`;
+    if (candidate.length > MAX_COVERAGE_LINE_CHARS) {
+      break;
+    }
+    kept.push(fragment);
+  }
+  const line = kept.length === 0 ? `${head}.` : `${head}: ${kept.join("; ")}.`;
+  return line.length <= MAX_COVERAGE_LINE_CHARS
     ? line
     : `${line.slice(0, MAX_COVERAGE_LINE_CHARS - 1)}.`;
+};
 
 export const coverageClause = (record: CoverageRecord, now: Date): string => {
   if (
@@ -187,14 +251,15 @@ export const coverageClause = (record: CoverageRecord, now: Date): string => {
   ) {
     return HUB_SILENT;
   }
+  const reserved = record.sources
+    .filter((row) => row.source !== "agent_event" && row.source !== "git")
+    .map(reservedFragment);
   const fragments = [
     agentEventFragment(rowOf(record, "agent_event")),
     gitFragment(rowOf(record, "git"), now),
+    ...reserved,
   ].filter((fragment): fragment is string => fragment !== null);
-  const head = headOf(record);
-  return fit(
-    fragments.length === 0 ? `${head}.` : `${head}: ${fragments.join("; ")}.`,
-  );
+  return fit(headOf(record), fragments);
 };
 
 export const coverageNote = (

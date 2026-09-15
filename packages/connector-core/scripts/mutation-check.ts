@@ -5007,8 +5007,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // different answers into one reassuring figure.
     label: "a percentage collapses the five rows on the way to a reader",
     file: `${CORE}/src/coverage/render.ts`,
-    from: '    fragments.length === 0 ? `${head}.` : `${head}: ${fragments.join("; ")}.`,',
-    to: '    fragments.length === 0 ? `${head}.` : `${head} (${String(Math.round((100 * record.sources.filter((row) => row.state === "complete").length) / record.sources.length))}%): ${fragments.join("; ")}.`,',
+    from: "  return fit(headOf(record), fragments);",
+    to: '  return fit(`${headOf(record)} (${String(Math.round((100 * record.sources.filter((row) => row.state === "complete").length) / record.sources.length))}%)`, fragments);',
     test: `${CORE}/test/coverage-render.test.ts`,
     because:
       "`coverage = 87%` is the exact lie the per-source record exists to " +
@@ -5110,6 +5110,40 @@ export const MUTATIONS: readonly Mutation[] = [
       "status tells a person to upgrade a hub that is simply down, two " +
       "lines above its own `(hub unreachable)`, on the one surface AT-9 " +
       "exists to make self-sufficient",
+  },
+  {
+    // `headOf` reads all five rungs; the body read two. So ci, runtime and
+    // human_edit could each turn the head to "incomplete" over a body saying
+    // nothing was missing — as the FIRST, uncuttable line of every
+    // SessionStart briefing, for as long as the gap lasted.
+    label: "a gap on a lane the sentence cannot name reads as no gap",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `  const reserved = record.sources
+    .filter((row) => row.source !== "agent_event" && row.source !== "git")
+    .map(reservedFragment);`,
+    to: "  const reserved: (string | null)[] = [];",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "a CI lane mid-flight renders `Coverage incomplete: agent sessions " +
+      "reported; git evidence reported.` — a caveat a reader cannot " +
+      "reconcile, which is how the next real one gets skipped",
+  },
+  {
+    // Filter `unavailable` out, then ask `.some()` twice over what is left:
+    // over an EMPTY set both answer false and the fall-through says
+    // "Coverage complete" on the strength of no evidence at all.
+    label: "a record with no readable rung at all reports a pass",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `  if (readable.length === 0) {
+    return "Coverage unknown";
+  }
+`,
+    to: "",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "the empty-answer rule fires on that same record, so one answer " +
+      "carries `Coverage complete.` beside a sentence saying observation " +
+      "was partial — AT-10's fake pass, in two adjacent lines",
   },
   {
     // The sentence for a record this client cannot READ must not name the
@@ -5361,7 +5395,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
- * PRINTS: packages/connector-core/test/coverage-render.test.ts 3
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 5
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2

@@ -16,7 +16,11 @@ import { describe, expect, test } from "bun:test";
 
 import { MAX_BRIEFING_CHARS, MAX_COVERAGE_LINE_CHARS } from "../src/constants.ts";
 import { QUOTED_DATA_NOTICE, renderBriefing } from "../src/briefing/render.ts";
-import { coverageClause, coverageNote } from "../src/coverage/render.ts";
+import {
+  coverageClause,
+  coverageNote,
+  mustQualifyEmptyAnswer,
+} from "../src/coverage/render.ts";
 import {
   COVERAGE_REASONS,
   COVERAGE_SOURCES,
@@ -121,6 +125,88 @@ describe("the soft annotation rule — decision 4", () => {
   });
 });
 
+/**
+ * THE HEAD WORD AND THE BODY MUST BE ABOUT THE SAME RECORD.
+ *
+ * `headOf` takes the worst state across all five readable rungs; the body was
+ * built from two fragments. So `ci`, `runtime` and `human_edit` could each set
+ * the head and none of them could ever appear in the sentence — and by
+ * decision 2 that sentence is the FIRST, uncuttable line of every SessionStart
+ * briefing for as long as the gap lasts. A caveat a reader cannot reconcile
+ * reads as a crosscheck bug, which is how the next real "Coverage incomplete"
+ * gets skipped.
+ *
+ * Not hypothetical: this spec minted `ci_lanes_reported`, `ci_lanes_missing`,
+ * `ci_awaiting_rerun` and `ci_not_reported_yet` into both enums for 05, and
+ * `parseCoverage` accepts them today.
+ */
+describe("a gap on a lane the sentence cannot name", () => {
+  test("an incomplete ci lane is named, not contradicted", () => {
+    // Arrange: 05 §3.6's exact state — agent_event and git both clean, one
+    // CI lane mid-flight
+    const record = recordOf([
+      row("agent_event", "complete", "sessions_reported", null, GAP_ISO),
+      row("git", "complete", "commits_reported", null, GAP_ISO),
+      row("ci", "incomplete", "ci_lanes_missing", GAP_ISO, GAP_ISO),
+    ]);
+
+    // Act
+    const clause = coverageClause(record, NOW);
+
+    // Assert
+    expect(clause.startsWith("Coverage incomplete")).toBe(true);
+    expect(clause).not.toBe(
+      "Coverage incomplete: agent sessions reported; git evidence reported.",
+    );
+    expect(clause).toContain("ci");
+  });
+
+  test.each([
+    ["ci", "ci_not_reported_yet"],
+    ["runtime", "out_of_scope_1_0"],
+    ["human_edit", "no_platform_rung"],
+  ] as const)(
+    "an %s rung that is merely unknown still reaches the sentence",
+    (source, reason) => {
+      // Arrange
+      const record = recordOf([
+        row("agent_event", "complete", "sessions_reported", null, GAP_ISO),
+        row("git", "complete", "commits_reported", null, GAP_ISO),
+        row(source, "unknown", reason),
+      ]);
+
+      // Act
+      const clause = coverageClause(record, NOW);
+
+      // Assert: the head says "unknown", so the body has to say about what.
+      expect(clause.startsWith("Coverage unknown")).toBe(true);
+      expect(clause).not.toBe(
+        "Coverage unknown: agent sessions reported; git evidence reported.",
+      );
+    },
+  );
+
+  test("a record with NO readable rung at all is never `complete`", () => {
+    // Arrange: every rung `unavailable`. `headOf` filtered those out and then
+    // asked `.some()` twice over an empty set — both false, so it fell
+    // through to "Coverage complete": a pass produced from zero evidence,
+    // which is the clause AT-10 names by name.
+    const record = recordOf([
+      row("agent_event", "unavailable", "no_emitter"),
+      row("git", "unavailable", "no_emitter"),
+    ]);
+
+    // Act
+    const clause = coverageClause(record, NOW);
+
+    // Assert: and the two halves of the feature have to agree — the
+    // empty-answer rule fires on this record, so the clause may not say the
+    // opposite in the line beside it.
+    expect(clause).not.toContain("Coverage complete");
+    expect(mustQualifyEmptyAnswer(record)).toBe(true);
+  });
+});
+
 describe("COV-6: no percentage, ever, and the bound holds", () => {
   const everyShape = (): readonly CoverageRecord[] =>
     COVERAGE_STATES.flatMap((agentState) =>
@@ -153,6 +239,63 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
       expect(clause.length, clause).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
       expect(clause.includes("\n"), clause).toBe(false);
     }
+  });
+
+  test("every shape of ALL FIVE rungs fits, and none fakes a pass", () => {
+    // Arrange: everyShape() above pins ci, runtime and human_edit at
+    // `unavailable` via recordOf, so no renderer test ever saw one of them
+    // `incomplete` — which is exactly where the head word and the body
+    // disagreed. This sweep varies all five states together, with the
+    // longest reasons and a gap instant on every row.
+    const shapes = COVERAGE_STATES.flatMap((agent) =>
+      COVERAGE_STATES.flatMap((git) =>
+        COVERAGE_STATES.flatMap((ci) =>
+          COVERAGE_STATES.flatMap((runtime) =>
+            COVERAGE_STATES.map((human) =>
+              recordOf([
+                row("agent_event", agent, "session_reaped", GAP_ISO, GAP_ISO),
+                row("git", git, "commit_authors_unreported", GAP_ISO, GAP_ISO),
+                row("ci", ci, "ci_awaiting_rerun", GAP_ISO, GAP_ISO),
+                row("runtime", runtime, "out_of_scope_1_0", GAP_ISO, GAP_ISO),
+                row("human_edit", human, "no_platform_rung", GAP_ISO, GAP_ISO),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(shapes.length).toBe(1024);
+
+    // Act & Assert
+    let fakePasses = 0;
+    let contradictions = 0;
+    for (const record of shapes) {
+      const clause = coverageClause(record, NOW);
+      expect(clause.length, clause).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
+      expect(clause.includes("%"), clause).toBe(false);
+      expect(clause.includes("\n"), clause).toBe(false);
+      const readable = record.sources.filter(
+        (entry) => entry.state !== "unavailable",
+      );
+      const clean =
+        readable.length > 0 &&
+        readable.every((entry) => entry.state === "complete");
+      if (clause.startsWith("Coverage complete") && !clean) {
+        fakePasses += 1;
+      }
+      if (
+        clause.startsWith("Coverage incomplete") &&
+        clause ===
+          "Coverage incomplete: agent sessions reported; git evidence reported."
+      ) {
+        contradictions += 1;
+      }
+    }
+
+    // A head word that says one thing over a body that says the opposite, and
+    // a pass over an empty readable set, are the two ways this line lies.
+    expect(fakePasses).toBe(0);
+    expect(contradictions).toBe(0);
   });
 
   test("the record the renderer reads exposes no numeric aggregate", () => {
