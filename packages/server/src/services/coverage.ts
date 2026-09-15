@@ -29,10 +29,11 @@
 import { and, eq, gt, sql } from "drizzle-orm";
 
 import {
+  ABSENCE_EVIDENCE_MAX_AGE_DAYS,
   COVERAGE_SESSION_WINDOW_DAYS,
   SUSPECT_MAX_PATHS,
 } from "../constants.ts";
-import { agentSessions } from "../db/schema.ts";
+import { agentSessions, commitEvidence } from "../db/schema.ts";
 import { listAbsences } from "./absences.ts";
 import { presenceCutoff } from "./presence.ts";
 import type { AbsenceFinding } from "./absences.ts";
@@ -247,11 +248,12 @@ const toCount = (value: unknown): number => {
  */
 const readAgentEventCoverage = async (
   deps: Deps,
+  now: Date,
   repo: string,
   since: Date,
   _paths: readonly string[],
 ): Promise<CoverageSourceRecord> => {
-  const cutoff = presenceCutoff(deps.now());
+  const cutoff = presenceCutoff(now);
   const isGap = sql`(${agentSessions.reapedAt} is not null or (${agentSessions.endedAt} is null and ${agentSessions.lastHeartbeatAt} <= ${cutoff}))`;
   const rows = await deps.db
     .select({
@@ -292,12 +294,89 @@ const readAgentEventCoverage = async (
   );
 };
 
+/**
+ * "Observation has been unreliable since at least here" for the git rung: the
+ * earliest moment a finding says somebody's work was going unreported. A
+ * finding with a session names that session's last one; a finding with no
+ * session at all can only name the commit, which is §3.2's "else".
+ */
+const earliestFindingGap = (
+  findings: readonly AbsenceFinding[],
+): string | null => {
+  const sessions = findings
+    .map((finding) => finding.lastSessionAt)
+    .filter((value): value is string => value !== null);
+  const fallback = findings.map((finding) => finding.latestCommitAt);
+  const candidates = sessions.length > 0 ? sessions : fallback;
+  const earliest = candidates.reduce<number | null>((oldest, iso) => {
+    const ms = Date.parse(iso);
+    if (Number.isNaN(ms)) {
+      return oldest;
+    }
+    return oldest === null || ms < oldest ? ms : oldest;
+  }, null);
+  return earliest === null ? null : new Date(earliest).toISOString();
+};
+
+/**
+ * The git rung, and it needs its OWN UNWINDOWED aggregate rather than the rows
+ * `listAbsences` reads — which is the one place §3.2's sentence does not
+ * survive contact with the code.
+ *
+ * `listAbsences` filters `collected_at` against ABSENCE_EVIDENCE_MAX_AGE_DAYS
+ * inside its evidence query (services/absences.ts:148). A repo whose newest
+ * collection is nine days old therefore returns ZERO findings — byte-identical
+ * to a repo no connector has ever collected evidence for. §3.2 needs those two
+ * to read `incomplete` / `evidence_stale` and `unknown` / `no_commit_evidence`
+ * respectively, and no query that inherits the staleness filter can tell them
+ * apart. So: one `max(collected_at)` + `count(*)` over `commit_evidence` for
+ * this repo, unwindowed, and the FINDINGS still come from `listAbsences`.
+ *
+ * `collectCommitEvidence` runs only at SessionStart (00 §4.3), which is why a
+ * stale `collected_at` is a gap rather than something to ignore: it means no
+ * connected teammate has started a session in a week.
+ *
+ * NEVER `unavailable`. PR #50 uses that word for the opposite thing —
+ * `GitTouchesOutcome.unavailable` (connector-core/src/flows/capture-git-touches.ts:83-88)
+ * means "git DID NOT ANSWER — a deadline, no repository, no binary", which is
+ * coverage `unknown`: the rung exists and nobody answered. Coverage
+ * `unavailable` is "the rung cannot exist", which is never true of git on any
+ * platform we support. One word, two meanings, and this is the comment that
+ * stops the next reader collapsing them.
+ */
 const readGitCoverage = async (
-  _deps: Deps,
-  _repo: string,
-  _findings: readonly AbsenceFinding[],
-): Promise<CoverageSourceRecord> =>
-  sourceRecord("git", "unknown", "no_commit_evidence");
+  deps: Deps,
+  now: Date,
+  repo: string,
+  findings: readonly AbsenceFinding[],
+): Promise<CoverageSourceRecord> => {
+  const rows = await deps.db
+    .select({
+      total: sql`count(*)`,
+      newest: sql`max(${commitEvidence.collectedAt})`,
+    })
+    .from(commitEvidence)
+    .where(eq(commitEvidence.repo, repo));
+  const row = rows[0];
+  if (toCount(row?.total) === 0) {
+    return sourceRecord("git", "unknown", "no_commit_evidence");
+  }
+  const newest = toIso(row?.newest);
+  const staleBefore = now.getTime() - ABSENCE_EVIDENCE_MAX_AGE_DAYS * MS_PER_DAY;
+  if (newest === null || Date.parse(newest) < staleBefore) {
+    return sourceRecord("git", "incomplete", "evidence_stale", newest, newest);
+  }
+  if (findings.length === 0) {
+    return sourceRecord("git", "complete", "commits_reported", null, newest);
+  }
+  return sourceRecord(
+    "git",
+    "incomplete",
+    "commit_authors_unreported",
+    earliestFindingGap(findings),
+    newest,
+  );
+};
 
 /**
  * The five rows for one repo, always, in order.
@@ -321,8 +400,8 @@ export const readCoverage = async (
   const findings =
     options.findings ?? (await listAbsences(deps, viewerDeveloperId, repo));
   const [agentEvent, git] = await Promise.all([
-    readAgentEventCoverage(deps, repo, since, paths),
-    readGitCoverage(deps, repo, findings),
+    readAgentEventCoverage(deps, now, repo, since, paths),
+    readGitCoverage(deps, now, repo, findings),
   ]);
   return {
     repo,

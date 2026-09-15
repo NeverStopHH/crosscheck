@@ -4830,6 +4830,36 @@ export const MUTATIONS: readonly Mutation[] = [
       "complete, and the verdict layer names people over a window nobody " +
       "was reporting through",
   },
+  {
+    // services/absences.ts:148 filters stale evidence out of its OWN query,
+    // so a windowed aggregate collapses "the archive stopped being refreshed"
+    // and "there is no archive" into one zero-row answer. The git rung needs
+    // the unwindowed one to tell them apart.
+    label: "stale commit evidence is read as no evidence at all",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    .where(eq(commitEvidence.repo, repo));",
+    to: "    .where(and(eq(commitEvidence.repo, repo), gt(commitEvidence.collectedAt, new Date(now.getTime() - ABSENCE_EVIDENCE_MAX_AGE_DAYS * MS_PER_DAY))));",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "a repo nobody has collected evidence for and a repo whose evidence is " +
+      "a week stale report the same thing, and the second one silently loses " +
+      "the gap it is the whole point of this rung to name",
+  },
+  {
+    // PR #50's word collision, as a guard rather than a comment.
+    // GitTouchesOutcome.unavailable means "git did not answer", which is
+    // coverage `unknown`. Coverage `unavailable` means the rung cannot exist,
+    // which is never true of git.
+    label: "a git rung nobody reported reads as a rung that cannot exist",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: '    return sourceRecord("git", "unknown", "no_commit_evidence");',
+    to: '    return sourceRecord("git", "unavailable", "no_commit_evidence");',
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "`unavailable` does not block judging by design, so a repo with no " +
+      "commit evidence at all becomes judgeable — the exact shape of AT-5's " +
+      "false accusation",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -4977,7 +5007,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
- * PRINTS: packages/server/test/coverage.test.ts 3
+ * PRINTS: packages/server/test/coverage.test.ts 5
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4

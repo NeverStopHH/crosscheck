@@ -7,7 +7,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { agentSessions } from "../src/db/schema.ts";
+import { agentSessions, commitEvidence } from "../src/db/schema.ts";
 import {
   COVERAGE_SOURCES,
   readCoverage,
@@ -17,6 +17,7 @@ import type { TestHarness } from "./helpers.ts";
 
 const REPO = "github.com/acme/api";
 const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
 
 const at = (offsetMs: number): Date =>
   new Date(new Date(TEST_START_ISO).getTime() + offsetMs);
@@ -256,4 +257,171 @@ describe("COV-4: a reaped end is not a clean end", () => {
     expect(row.state).toBe("unknown");
     expect(row.reason).toBe("no_session_in_window");
   });
+});
+
+interface EvidenceRow {
+  readonly authorEmail: string;
+  readonly authorName: string;
+  readonly latestCommitAt: Date;
+  readonly collectedAt: Date;
+}
+
+const insertEvidence = async (
+  harness: TestHarness,
+  reportedBy: string,
+  row: EvidenceRow,
+): Promise<void> => {
+  await harness.db.insert(commitEvidence).values({
+    repo: REPO,
+    authorEmail: row.authorEmail,
+    authorName: row.authorName,
+    latestCommitAt: row.latestCommitAt,
+    commitCount: 3,
+    windowDays: 14,
+    collectedAt: row.collectedAt,
+    reportedBy,
+  });
+};
+
+const gitOf = async (
+  harness: TestHarness,
+  viewerId: string,
+): Promise<{
+  state: string;
+  reason: string;
+  gapSince: string | null;
+  observedAt: string | null;
+}> => {
+  const record = await readCoverage(
+    { db: harness.db, now: harness.clock.now },
+    viewerId,
+    REPO,
+  );
+  const row = record.sources.find((entry) => entry.source === "git");
+  if (row === undefined) {
+    throw new Error("git row missing");
+  }
+  return row;
+};
+
+/**
+ * The seam defect this rung exists for. `listAbsences` filters evidence older
+ * than ABSENCE_EVIDENCE_MAX_AGE_DAYS out of its own query (absences.ts:148),
+ * so a repo whose newest collection is nine days old returns ZERO findings —
+ * byte-identical to a repo nobody has ever collected evidence for. Those are
+ * different answers: one says "the archive stopped being refreshed", the
+ * other says "there is no archive". The git rung needs its OWN unwindowed
+ * aggregate to tell them apart, which is what these two tests pin.
+ */
+describe("git: stale evidence is not the same answer as no evidence", () => {
+  test("evidence collected nine days ago is incomplete / evidence_stale", async () => {
+    // Arrange
+    const { harness, viewerId } = await seed();
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "sam@external.example",
+      authorName: "Sam Stranger",
+      latestCommitAt: at(-9 * DAY_MS),
+      collectedAt: at(-9 * DAY_MS),
+    });
+
+    // Act
+    const row = await gitOf(harness, viewerId);
+
+    // Assert
+    expect(row.state).toBe("incomplete");
+    expect(row.reason).toBe("evidence_stale");
+    expect(row.observedAt).toBe(at(-9 * DAY_MS).toISOString());
+    expect(row.gapSince).toBe(at(-9 * DAY_MS).toISOString());
+  });
+
+  test("no commit_evidence row at all is unknown / no_commit_evidence", async () => {
+    // Arrange: nothing ingested
+    const { harness, viewerId } = await seed();
+
+    // Act
+    const row = await gitOf(harness, viewerId);
+
+    // Assert
+    expect(row.state).toBe("unknown");
+    expect(row.reason).toBe("no_commit_evidence");
+    expect(row.gapSince).toBeNull();
+    expect(row.observedAt).toBeNull();
+  });
+
+  test("fresh evidence naming a commit author with no reported session is incomplete", async () => {
+    // Arrange: an author no hub member's email matches
+    const { harness, viewerId } = await seed();
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "sam@external.example",
+      authorName: "Sam Stranger",
+      latestCommitAt: at(-2 * DAY_MS),
+      collectedAt: at(-1 * 60 * MINUTE_MS),
+    });
+
+    // Act
+    const row = await gitOf(harness, viewerId);
+
+    // Assert
+    expect(row.state).toBe("incomplete");
+    expect(row.reason).toBe("commit_authors_unreported");
+    expect(row.gapSince).toBe(at(-2 * DAY_MS).toISOString());
+    expect(row.observedAt).toBe(at(-1 * 60 * MINUTE_MS).toISOString());
+  });
+
+  test("fresh evidence whose authors all reported a session is complete", async () => {
+    // Arrange: the viewer's own commits, an hour after their own session
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_reported",
+      lastHeartbeatAt: at(-3 * 60 * MINUTE_MS),
+      endedAt: at(-3 * 60 * MINUTE_MS),
+    });
+    await insertEvidence(harness, viewerId, {
+      authorEmail: "nick@example.com",
+      authorName: "nick-git",
+      latestCommitAt: at(-2 * 60 * MINUTE_MS),
+      collectedAt: at(-1 * 60 * MINUTE_MS),
+    });
+
+    // Act
+    const row = await gitOf(harness, viewerId);
+
+    // Assert
+    expect(row.state).toBe("complete");
+    expect(row.reason).toBe("commits_reported");
+    expect(row.gapSince).toBeNull();
+    expect(row.observedAt).toBe(at(-1 * 60 * MINUTE_MS).toISOString());
+  });
+
+  /**
+   * PR #50's word collision, guarded rather than commented.
+   * `GitTouchesOutcome.unavailable` (connector-core/src/flows/capture-git-touches.ts:83-88)
+   * means "git DID NOT ANSWER — a deadline, no repository, no binary". That is
+   * coverage `unknown`: the rung EXISTS and nobody answered. Coverage
+   * `unavailable` means the rung CANNOT EXIST, which is never true of git.
+   */
+  test.each([
+    ["no evidence", false],
+    ["stale evidence", true],
+  ] as const)(
+    "the git rung never reads unavailable — %s",
+    async (_label, withEvidence) => {
+      // Arrange
+      const { harness, viewerId } = await seed();
+      if (withEvidence) {
+        await insertEvidence(harness, viewerId, {
+          authorEmail: "sam@external.example",
+          authorName: "Sam Stranger",
+          latestCommitAt: at(-9 * DAY_MS),
+          collectedAt: at(-9 * DAY_MS),
+        });
+      }
+
+      // Act
+      const row = await gitOf(harness, viewerId);
+
+      // Assert
+      expect(row.state).not.toBe("unavailable");
+    },
+  );
 });
