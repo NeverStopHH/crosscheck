@@ -598,7 +598,26 @@ describe("the gate that names WHY two events cannot be compared", () => {
       CausalIndeterminacy,
       () => CausalComparison,
     ])[] = [
-      ["session_order_broken", () => causalComparisonOf(broken, event(), event({ seqN: 5 }))],
+      [
+        "session_order_unusable",
+        () => causalComparisonOf(broken, event(), event({ seqN: 5 })),
+      ],
+      // ...and the OTHER way a session's order is unusable. A session that
+      // never had a position is not a session whose counter broke, and a name
+      // that said "broken" about it would accuse an install of a defect it
+      // does not have — which the session's own reason, carried beside this,
+      // is what tells apart.
+      [
+        "session_order_unusable",
+        () =>
+          causalComparisonOf(
+            causalOrderOf(SESSION, [
+              { seqEpoch: null, seqReason: "pre_seq_connector" },
+            ]),
+            event({ seqN: null, seqEpoch: null, seqReason: "pre_seq_connector" }),
+            event({ seqN: null, seqEpoch: null, seqReason: "pre_seq_connector" }),
+          ),
+      ],
       [
         "different_session",
         () => causalComparisonOf(usable, event(), event({ sessionId: "cc_elsewhere", seqN: 5 })),

@@ -331,9 +331,14 @@ export const isOrderable = (
  * refusal reported under another defect's reason sends its reader to the wrong
  * remedy.
  *
- *   session_order_broken   — this session's counter cannot be trusted at all:
- *                            two emitters took one position, or the session
- *                            holds two epochs.
+ *   session_order_unusable — the session's own order cannot be used, and the
+ *                            two ways that happens are BOTH covered by this
+ *                            one name because both are facts about the
+ *                            SESSION rather than about either event: its
+ *                            counter broke (two emitters took one position,
+ *                            or it holds two epochs), or it never had one at
+ *                            all. `SessionCausalOrder.reason` is what tells
+ *                            those apart, and it travels beside this.
  *   different_session      — there is no cross-session order, by construction.
  *   position_indeterminate — one of the two carries no position. WHICH absence
  *                            it is lives on the event, via `causalPositionOf`.
@@ -356,7 +361,7 @@ export const isOrderable = (
  * which is the only place that knows whether there was an explanation at all.
  */
 export const CAUSAL_INDETERMINACIES = [
-  "session_order_broken",
+  "session_order_unusable",
   "different_session",
   "position_indeterminate",
   "epoch_mismatch",
@@ -395,7 +400,7 @@ export const causalComparisonOf = (
   b: OrderedEvent,
 ): CausalComparison => {
   if (order.state !== "usable") {
-    return indeterminate("session_order_broken");
+    return indeterminate("session_order_unusable");
   }
   if (a.sessionId !== order.sessionId || b.sessionId !== order.sessionId) {
     return indeterminate("different_session");

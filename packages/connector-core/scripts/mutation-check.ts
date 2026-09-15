@@ -5346,6 +5346,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "WARNs on machines that are fine and stays silent on the one whose " +
       "whole causal order is gone",
   },
+  {
+    // The gate's first question is about the SESSION, and a session with no
+    // positions at all is unusable for the same reason a broken one is —
+    // which is why one name covers both and the session's own reason, carried
+    // beside it, is what tells them apart.
+    label: "a session with no order is judged event by event",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '  if (order.state !== "usable") {\n    return indeterminate("session_order_unusable");',
+    to: '  if (order.state === "broken") {\n    return indeterminate("session_order_unusable");',
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "a connector from before this field has every comparison refused for " +
+      "`position_indeterminate`, which points a reader at the two events " +
+      "rather than at the install that never positioned anything",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5521,7 +5536,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-event-seq-kind.test.ts 2
  * PRINTS: packages/server/test/session-events.test.ts 2
  * PRINTS: packages/server/test/session-order-window.test.ts 3
- * PRINTS: packages/server/test/session-order.test.ts 6
+ * PRINTS: packages/server/test/session-order.test.ts 7
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
