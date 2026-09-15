@@ -5029,6 +5029,35 @@ export const MUTATIONS: readonly Mutation[] = [
       "cannot tell a rung this product refuses to build from one that is " +
       "merely broken on their machine",
   },
+  {
+    // §3.2a. Unscoped, `complete` needs every session on the whole repo over
+    // the whole window to have reported cleanly, and the tree's own
+    // measurement says that is the normal state rather than the exception —
+    // 104 of 127 trial sessions never closed. One abandoned session anywhere
+    // in a fortnight would make every verdict INDETERMINATE for ever.
+    label: "a gap somewhere else is read as a gap about this surface",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "        ...(paths.length === 0 ? [] : [touchedScope(paths)]),",
+    to: "        ...[],",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "every scoped question answers repo-wide, so a pin nobody stopped " +
+      "watching still reads incomplete and UNATTRIBUTED becomes unreachable " +
+      "in the field — which is the outcome the scope exists to prevent",
+  },
+  {
+    // The surface where an unqualified answer costs a name. 04 renders this
+    // record on the suspect verdict and gates UNATTRIBUTED on it.
+    label: "a ranking names a session with no statement of what was watched",
+    file: `${SERVER}/src/routes/suspect.ts`,
+    from: "    return ok(c, { ...view, coverage });",
+    to: "    return ok(c, { ...view });",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the one surface whose answer is a person carries no coverage block, " +
+      "so the verdict layer reads five unknowns and every suspect answer " +
+      "becomes either silent or unjudgeable",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5181,7 +5210,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
- * PRINTS: packages/server/test/coverage.test.ts 5
+ * PRINTS: packages/server/test/coverage.test.ts 7
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4

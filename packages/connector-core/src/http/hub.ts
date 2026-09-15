@@ -1992,6 +1992,13 @@ export interface SuspectView {
   };
   readonly attribution: string;
   readonly candidates: readonly SuspectCandidate[];
+  /**
+   * How far the archive this verdict was read from reaches (03 §3.5), scoped
+   * to the PIN'S FILE SET (§3.2a) — "were we watching the thing you asked
+   * about", not "were we watching this repo for a fortnight". This is the
+   * surface where an unqualified answer costs the most: a name.
+   */
+  readonly coverage: CoverageRecord;
 }
 
 const SuspectViewSchema = z
@@ -2020,6 +2027,7 @@ const SuspectViewSchema = z
     }),
     attribution: z.string().min(1).default("sessions"),
     candidates: z.array(z.unknown()).default([]),
+    coverage: z.unknown().optional(),
   })
   .transform(
     (value): SuspectView => ({
@@ -2028,6 +2036,7 @@ const SuspectViewSchema = z
       scope: value.scope,
       totals: value.totals,
       attribution: value.attribution,
+      coverage: parseCoverage(value.coverage),
       candidates: value.candidates
         .map((row) => SuspectCandidateSchema.safeParse(row))
         .filter((parsed) => parsed.success)

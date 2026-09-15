@@ -120,6 +120,35 @@ const suspectWith = (payload: string): SuspectView => ({
   totals: { sessionsTouching: 1, sessionsScored: 1, windowDays: 14 },
   attribution: "sessions",
   candidates: [candidateWith(payload)],
+  // A FIXED `incomplete` record (03 COV-7): the coverage clause lands on this
+  // surface too, and it carries the only instants on it that come off the
+  // wire rather than out of a renderer. `incomplete` because that is the
+  // state with the most renderer-owned text and the only one with a gap
+  // instant to attack.
+  coverage: {
+    repo: "github.com/acme/api",
+    computedAt: NOW.toISOString(),
+    scope: { sinceIso: ISO, paths: [payload] },
+    sources: [
+      {
+        source: "agent_event",
+        state: "incomplete",
+        reason: "session_reaped",
+        gapSince: payload,
+        observedAt: payload,
+      },
+      {
+        source: "git",
+        state: "incomplete",
+        reason: "evidence_stale",
+        gapSince: payload,
+        observedAt: payload,
+      },
+      { source: "ci", state: "unavailable", reason: "no_emitter", gapSince: null, observedAt: null },
+      { source: "runtime", state: "unavailable", reason: "out_of_scope_1_0", gapSince: null, observedAt: null },
+      { source: "human_edit", state: "unavailable", reason: "no_platform_rung", gapSince: null, observedAt: null },
+    ],
+  },
 });
 
 export const RENDER_SURFACES: readonly RenderSurface[] = [

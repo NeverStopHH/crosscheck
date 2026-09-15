@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 331
+    # PRINTS: 333
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -223,9 +223,10 @@ jobs:
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/routes/pins.ts 1
     # PRINTS: packages/server/src/routes/search.ts 1
+    # PRINTS: packages/server/src/routes/suspect.ts 1
     # PRINTS: packages/server/src/services/conference.ts 2
     # PRINTS: packages/server/src/services/contradictions.ts 1
-    # PRINTS: packages/server/src/services/coverage.ts 7
+    # PRINTS: packages/server/src/services/coverage.ts 8
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
     # PRINTS: packages/server/src/services/developers.ts 7
     # PRINTS: packages/server/src/services/diagnosis.ts 3
@@ -265,7 +266,7 @@ jobs:
     # PRINTS: context-group.ts 1
     # PRINTS: contradictions.ts 1
     # PRINTS: cost.ts 2
-    # PRINTS: coverage.ts 8
+    # PRINTS: coverage.ts 9
     # PRINTS: delivery.ts 1
     # PRINTS: derive.ts 2
     # PRINTS: developer-lookup.ts 2
@@ -340,7 +341,7 @@ jobs:
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: status.ts 1
     # PRINTS: stop.ts 2
-    # PRINTS: suspect.ts 2
+    # PRINTS: suspect.ts 3
     # PRINTS: time-window.ts 1
     # PRINTS: tool-events.ts 1
     # PRINTS: tool-failure.ts 3

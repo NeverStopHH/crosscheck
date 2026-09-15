@@ -9,7 +9,12 @@ import { describe, expect, test } from "bun:test";
 
 import { eq } from "drizzle-orm";
 
-import { agentSessions, commitEvidence } from "../src/db/schema.ts";
+import {
+  agentSessions,
+  commitEvidence,
+  workContextTargets,
+  workContexts,
+} from "../src/db/schema.ts";
 import {
   COVERAGE_SOURCES,
   readCoverage,
@@ -486,5 +491,179 @@ describe("GET /api/absences carries the coverage record", () => {
       body.data.coverage.sources.find((row) => row.source === "agent_event")
         ?.state,
     ).toBe("incomplete");
+  });
+});
+
+const insertTouch = async (
+  harness: TestHarness,
+  sessionId: string,
+  contextId: string,
+  path: string,
+): Promise<void> => {
+  await harness.db.insert(workContexts).values({
+    id: contextId,
+    sessionId,
+    title: "work",
+    status: "analyzing",
+    createdAt: at(-40 * MINUTE_MS),
+  });
+  await harness.db.insert(workContextTargets).values({
+    workContextId: contextId,
+    kind: "file",
+    value: path,
+    source: "tool_edit",
+    createdAt: at(-40 * MINUTE_MS),
+  });
+};
+
+/**
+ * §3.2a. Unscoped, `agent_event: complete` needs every session on the whole
+ * repo over the whole window to have reported cleanly — and the tree's own
+ * measurement says that is the normal state, not the exception (104 of 127
+ * trial sessions never closed). One abandoned session anywhere in fourteen
+ * days would flip the entire repo to `incomplete` for ever, which makes
+ * UNATTRIBUTED unreachable in practice and fires the annotation on nearly
+ * every answer.
+ *
+ * The fix is GRANULARITY, not softening: a gap is still a gap, it is just
+ * measured about the thing that was asked.
+ */
+describe("§3.2a: the scope measures the question, not the whole repo", () => {
+  test("a pin's file set reads complete where the repo-wide call reads incomplete", async () => {
+    // Arrange: one clean session that touched the pinned file, one reaped
+    // session that touched something else entirely
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_clean",
+      lastHeartbeatAt: at(-30 * MINUTE_MS),
+      endedAt: at(-29 * MINUTE_MS),
+    });
+    await insertTouch(harness, "ses_clean", "wc_clean", "src/auth.ts");
+    await insertSession(harness, viewerId, {
+      id: "ses_abandoned",
+      lastHeartbeatAt: at(-35 * MINUTE_MS),
+      endedAt: at(-34 * MINUTE_MS),
+      reapedAt: at(-34 * MINUTE_MS),
+    });
+    await insertTouch(harness, "ses_abandoned", "wc_abandoned", "docs/README.md");
+    const deps = { db: harness.db, now: harness.clock.now };
+
+    // Act
+    const wide = await readCoverage(deps, viewerId, REPO);
+    const scoped = await readCoverage(deps, viewerId, REPO, {
+      scope: { sinceIso: at(-60 * MINUTE_MS).toISOString(), paths: ["src/auth.ts"] },
+    });
+
+    // Assert
+    expect(
+      wide.sources.find((row) => row.source === "agent_event")?.state,
+    ).toBe("incomplete");
+    expect(
+      scoped.sources.find((row) => row.source === "agent_event")?.state,
+    ).toBe("complete");
+    expect(scoped.scope.paths).toEqual(["src/auth.ts"]);
+  });
+
+  test("a reaped session that DID touch the scope is still incomplete — no state is softened", async () => {
+    // Arrange
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_abandoned",
+      lastHeartbeatAt: at(-35 * MINUTE_MS),
+      endedAt: at(-34 * MINUTE_MS),
+      reapedAt: at(-34 * MINUTE_MS),
+    });
+    await insertTouch(harness, "ses_abandoned", "wc_abandoned", "src/auth.ts");
+
+    // Act
+    const scoped = await readCoverage(
+      { db: harness.db, now: harness.clock.now },
+      viewerId,
+      REPO,
+      { scope: { sinceIso: at(-60 * MINUTE_MS).toISOString(), paths: ["src/auth.ts"] } },
+    );
+    const row = scoped.sources.find((entry) => entry.source === "agent_event");
+
+    // Assert
+    expect(row?.state).toBe("incomplete");
+    expect(row?.reason).toBe("session_reaped");
+  });
+
+  test("sinceIso is a floor, never a way to look further back than the window", async () => {
+    // Arrange: a reaped session twenty days old, and a caller asking about
+    // the last ninety days
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_ancient",
+      lastHeartbeatAt: at(-20 * DAY_MS),
+      endedAt: at(-20 * DAY_MS),
+      reapedAt: at(-20 * DAY_MS),
+    });
+
+    // Act
+    const scoped = await readCoverage(
+      { db: harness.db, now: harness.clock.now },
+      viewerId,
+      REPO,
+      { scope: { sinceIso: at(-90 * DAY_MS).toISOString() } },
+    );
+
+    // Assert: the hub holds no observation older than its own window to be
+    // honest about, so the ceiling wins and the ancient reap is out of scope.
+    expect(
+      scoped.sources.find((row) => row.source === "agent_event")?.state,
+    ).toBe("unknown");
+    expect(Date.parse(scoped.scope.sinceIso)).toBeGreaterThan(
+      new Date(TEST_START_ISO).getTime() - 15 * DAY_MS,
+    );
+  });
+});
+
+/**
+ * §3.5's sixth response, and the one where an unqualified answer costs the
+ * most: a name. 04 renders this record on the suspect verdict, and it is
+ * scoped to the pin's file set so the gap it reads is a gap about the pinned
+ * surface rather than about the repo.
+ */
+describe("GET /api/suspect carries coverage scoped to the files asked about", () => {
+  test("the record names the paths the question was about", async () => {
+    // Arrange: a clean session on the pinned file, a reaped one elsewhere
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_clean",
+      lastHeartbeatAt: at(-30 * MINUTE_MS),
+      endedAt: at(-29 * MINUTE_MS),
+    });
+    await insertTouch(harness, "ses_clean", "wc_clean", "src/auth.ts");
+    await insertSession(harness, viewerId, {
+      id: "ses_abandoned",
+      lastHeartbeatAt: at(-35 * MINUTE_MS),
+      endedAt: at(-34 * MINUTE_MS),
+      reapedAt: at(-34 * MINUTE_MS),
+    });
+    await insertTouch(harness, "ses_abandoned", "wc_abandoned", "docs/README.md");
+
+    // Act
+    const response = await harness.app.request(
+      `/api/suspect?repo=${encodeURIComponent(REPO)}&path=src%2Fauth.ts`,
+      jsonRequest("GET", apiKeys.get(viewerId) ?? null),
+    );
+    const body = (await response.json()) as {
+      data: {
+        coverage: {
+          scope: { paths?: string[] };
+          sources: { source: string; state: string }[];
+        };
+      };
+    };
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect(body.data.coverage.scope.paths).toEqual(["src/auth.ts"]);
+    expect(
+      body.data.coverage.sources.find((row) => row.source === "agent_event")
+        ?.state,
+    ).toBe("complete");
+    expect(body.data.coverage.sources.length).toBe(5);
   });
 });

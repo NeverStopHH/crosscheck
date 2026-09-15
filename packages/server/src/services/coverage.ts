@@ -26,14 +26,20 @@
  * window" — never an inference about what somebody did. We see agent sessions,
  * not keystrokes.
  */
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 
 import {
   ABSENCE_EVIDENCE_MAX_AGE_DAYS,
   COVERAGE_SESSION_WINDOW_DAYS,
   SUSPECT_MAX_PATHS,
 } from "../constants.ts";
-import { agentSessions, commitEvidence } from "../db/schema.ts";
+import {
+  agentSessions,
+  commitEvidence,
+  workContextTargets,
+  workContexts,
+} from "../db/schema.ts";
 import { listAbsences } from "./absences.ts";
 import { presenceCutoff } from "./presence.ts";
 import type { AbsenceFinding } from "./absences.ts";
@@ -246,12 +252,27 @@ const toCount = (value: unknown): number => {
  * A REAP OUTRANKS A SILENCE when both are present. A reap is a decision this
  * hub made and can revoke, so it is the one a reader can act on.
  */
+/**
+ * §3.2a's `paths` half: count only the sessions that touched the surface the
+ * question is about, through the same
+ * work_contexts -> work_context_targets join `crosscheck suspect` already
+ * makes (services/suspect.ts:306-319), riding
+ * work_context_targets_kind_value_idx (db/schema.ts:253).
+ *
+ * NO STATE IS SOFTENED. A reaped session that touched the scope is still
+ * `incomplete` and the reason still names the reap; what changes is that a
+ * session which abandoned a different corner of the repo stops being a gap
+ * in an answer about THIS surface.
+ */
+const touchedScope = (paths: readonly string[]): SQL =>
+  sql`exists (select 1 from ${workContexts} join ${workContextTargets} on ${workContextTargets.workContextId} = ${workContexts.id} where ${workContexts.sessionId} = ${agentSessions.id} and ${workContextTargets.kind} = 'file' and ${inArray(workContextTargets.value, [...paths])})`;
+
 const readAgentEventCoverage = async (
   deps: Deps,
   now: Date,
   repo: string,
   since: Date,
-  _paths: readonly string[],
+  paths: readonly string[],
 ): Promise<CoverageSourceRecord> => {
   const cutoff = presenceCutoff(now);
   const isGap = sql`(${agentSessions.reapedAt} is not null or (${agentSessions.endedAt} is null and ${agentSessions.lastHeartbeatAt} <= ${cutoff}))`;
@@ -268,6 +289,7 @@ const readAgentEventCoverage = async (
       and(
         eq(agentSessions.repo, repo),
         gt(agentSessions.lastHeartbeatAt, since),
+        ...(paths.length === 0 ? [] : [touchedScope(paths)]),
       ),
     );
   const row = rows[0];
@@ -335,6 +357,13 @@ const earliestFindingGap = (
  * `collectCommitEvidence` runs only at SessionStart (00 §4.3), which is why a
  * stale `collected_at` is a gap rather than something to ignore: it means no
  * connected teammate has started a session in a week.
+ *
+ * THE `paths` SCOPE DOES NOT REACH THIS RUNG, and it cannot. §3.2a says a
+ * scoped call counts "only findings touching" the paths; `commit_evidence` is
+ * keyed on (repo, author_email) and carries commit_count, latest_commit_at and
+ * collected_at — NO PATHS AT ALL (db/schema.ts:404-419). There is nothing to
+ * intersect a file set with, so a scoped call answers the repo-wide git
+ * question and says so here rather than silently pretending to narrow.
  *
  * NEVER `unavailable`. PR #50 uses that word for the opposite thing —
  * `GitTouchesOutcome.unavailable` (connector-core/src/flows/capture-git-touches.ts:83-88)

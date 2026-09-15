@@ -15,6 +15,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { runCli } from "../src/index.ts";
+import { renderSuspect } from "../src/cli/suspect-render.ts";
+import { UNKNOWN_COVERAGE } from "@crosscheck/connector-core/http/coverage.ts";
+import type { CoverageRecord } from "@crosscheck/connector-core/http/coverage.ts";
+import type { SuspectView } from "@crosscheck/connector-core/http/hub.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
 const GAP_ISO = "2026-09-05T08:13:00.000Z";
@@ -236,5 +240,72 @@ describe("crosscheck doctor: the coverage check and COV-5's refusals", () => {
     // green meaning "could not check" is worse than no check at all.
     expect(result.stdout).toContain("WARN  coverage");
     expect(result.stdout).toContain("could not reach");
+  });
+});
+
+const suspectView = (coverage: CoverageRecord): SuspectView => ({
+  outcome: "ranked",
+  falsifier: { kind: "recorded_break", at: GAP_ISO, check: "bun test x" },
+  scope: {
+    kind: "pin",
+    pinId: "pin_1",
+    surface: "playback",
+    files: ["src/player.ts"],
+    missingFiles: [],
+    rewrittenPaths: 0,
+    rewrittenAt: null,
+  },
+  totals: { sessionsTouching: 2, sessionsScored: 2, windowDays: 14 },
+  attribution: "sessions",
+  candidates: [],
+  coverage,
+});
+
+/**
+ * §3.5's sixth response. 03 refusal 5 hands the EMPTY-result rule on
+ * `no_touch` to the verdict spec — this one only has to carry the field and
+ * annotate a positively observed gap, which is AT-9 on the surface where an
+ * unqualified answer costs a name.
+ */
+describe("crosscheck suspect carries the qualifier", () => {
+  test("a reaped rung annotates the ranking it rests on", () => {
+    // Arrange
+    const record: CoverageRecord = {
+      repo: "github.com/acme/api",
+      computedAt: GAP_ISO,
+      scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+      sources: [
+        {
+          source: "agent_event",
+          state: "incomplete",
+          reason: "session_reaped",
+          gapSince: GAP_ISO,
+          observedAt: GAP_ISO,
+        },
+        { source: "git", state: "complete", reason: "commits_reported", gapSince: null, observedAt: GAP_ISO },
+        { source: "ci", state: "unavailable", reason: "no_emitter", gapSince: null, observedAt: null },
+        { source: "runtime", state: "unavailable", reason: "out_of_scope_1_0", gapSince: null, observedAt: null },
+        { source: "human_edit", state: "unavailable", reason: "no_platform_rung", gapSince: null, observedAt: null },
+      ],
+    };
+
+    // Act
+    const rendered = renderSuspect(suspectView(record), new Date(GAP_ISO));
+
+    // Assert
+    expect(rendered).toContain("Coverage incomplete");
+    expect(rendered).toContain(GAP_SHOWN);
+  });
+
+  test("an un-upgraded hub does not put a caveat on every ranking", () => {
+    // Act
+    const rendered = renderSuspect(
+      suspectView(UNKNOWN_COVERAGE),
+      new Date(GAP_ISO),
+    );
+
+    // Assert: the soft rule, decision 4 — `unknown` reaches doctor and
+    // status every time, so no state is invisible.
+    expect(rendered).not.toContain("Coverage");
   });
 });
