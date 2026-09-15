@@ -4907,6 +4907,37 @@ export const MUTATIONS: readonly Mutation[] = [
       "the absence listing itself is silent about",
   },
   {
+    // A scope may narrow by what was OBSERVED and never by what was not. A
+    // session reaped before it reported a work context has no target row, so
+    // a bare EXISTS answers "it did not touch these files" to a question the
+    // database cannot answer at all.
+    label: "a session that reported nothing is scoped out of every question",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  sql`(${reportedFileTargets(inArray(workContextTargets.value, [...paths]))} or (${isGap} and not ${reportedFileTargets()}))`;",
+    to: "  reportedFileTargets(inArray(workContextTargets.value, [...paths]));",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the sessions whose observation failed hardest vanish from the scoped " +
+      "read, so agent_event reads complete and isJudgeable true on a repo " +
+      "full of reaped sessions — measured at the trial's shape, 23 of 40 " +
+      "pinned surfaces judgeable where none should be",
+  },
+  {
+    // The over-correction on the same arm: admit every session with no file
+    // target, not only the ones whose report was cut short. A clean end IS a
+    // complete report, so a session that touched nothing must still leave
+    // the scope or `unknown` collapses into `complete`.
+    label: "a session that reported its end is read as one that reported nothing",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "or (${isGap} and not ${reportedFileTargets()}))`;",
+    to: "or (not ${reportedFileTargets()}))`;",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "a surface nobody ever worked on reads `complete` instead of " +
+      "`unknown`, so judging becomes reachable over files no session was " +
+      "ever observed touching",
+  },
+  {
     // The term this spec's own first draft was missing. Without it a verdict
     // is reachable while a lane the system watches is still mid-flight.
     label: "a verdict is reachable while a watched lane is mid-flight",
@@ -5083,7 +5114,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // in a fortnight would make every verdict INDETERMINATE for ever.
     label: "a gap somewhere else is read as a gap about this surface",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "        ...(paths.length === 0 ? [] : [touchedScope(paths)]),",
+    from: "        ...(paths.length === 0 ? [] : [touchedScope(paths, isGap)]),",
     to: "        ...[],",
     test: `${SERVER}/test/coverage.test.ts`,
     because:
@@ -5338,7 +5369,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
- * PRINTS: packages/server/test/coverage.test.ts 10
+ * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4

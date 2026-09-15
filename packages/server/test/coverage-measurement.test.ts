@@ -38,7 +38,7 @@ import {
   workContexts,
 } from "../src/db/schema.ts";
 import { listAbsences } from "../src/services/absences.ts";
-import { readCoverage } from "../src/services/coverage.ts";
+import { isJudgeable, readCoverage } from "../src/services/coverage.ts";
 import {
   TEST_START_ISO,
   createTestDeveloper,
@@ -93,9 +93,20 @@ interface TrialFixture {
  * one file of a 40-file surface.
  */
 const trialRepo = async (
-  options: { readonly neverClosed?: number } = {},
+  options: {
+    readonly neverClosed?: number;
+    /**
+     * Whether the sessions the reaper closed ever reported a file target.
+     * Default true — and that default is why this fixture could not exhibit
+     * the scoping hole it was written to measure: a reaped session WITH a
+     * target row is visible to a scoped read, and one reaped before it
+     * reported anything is the case that used to vanish from it.
+     */
+    readonly reapedReportTargets?: boolean;
+  } = {},
 ): Promise<TrialFixture> => {
   const neverClosedCount = options.neverClosed ?? TRIAL_NEVER_CLOSED;
+  const reapedReportTargets = options.reapedReportTargets ?? true;
   const harness = await createTestHarness();
   const developer = await createTestDeveloper(
     harness,
@@ -130,9 +141,13 @@ const trialRepo = async (
     };
   });
   await harness.db.insert(agentSessions).values(sessions);
+  const reporting = sessions.filter(
+    (session, index) =>
+      reapedReportTargets || index >= neverClosedCount || session.reapedAt === null,
+  );
   await harness.db.insert(workContexts).values(
-    sessions.map((session, index) => ({
-      id: `wc_${String(index).padStart(3, "0")}`,
+    reporting.map((session) => ({
+      id: `wc_${session.id}`,
       sessionId: session.id,
       title: "work",
       status: "analyzing" as const,
@@ -140,8 +155,8 @@ const trialRepo = async (
     })),
   );
   await harness.db.insert(workContextTargets).values(
-    sessions.map((_session, index) => ({
-      workContextId: `wc_${String(index).padStart(3, "0")}`,
+    reporting.map((session, index) => ({
+      workContextId: `wc_${session.id}`,
       kind: "file" as const,
       value: files[index % TRIAL_FILES] ?? "src/a.ts",
       source: "tool_edit" as const,
@@ -265,6 +280,48 @@ describe("COV-11: the state distribution, measured before merge", () => {
         (state) => state !== undefined && state.length > 0,
       ),
     ).toBe(true);
+  });
+
+  test("reaped sessions that never reported a file are still a scoped gap", async () => {
+    // Arrange: the trial's shape with the one row the shipped fixture set the
+    // other way — 104 sessions the reaper closed BEFORE they reported any
+    // work context, which is what a terminal killed before the first edit
+    // leaves behind. Those are the sessions whose observation failed hardest,
+    // and a scoped read that could not see them was reading `complete` off
+    // their absence.
+    const { harness, viewerId, files } = await trialRepo({
+      reapedReportTargets: false,
+    });
+    const deps = { db: harness.db, now: harness.clock.now };
+
+    // Act
+    const scopedStates = await Promise.all(
+      files.map(async (file) => {
+        const record = await readCoverage(deps, viewerId, REPO, {
+          scope: { sinceIso: at(-14 * 24 * HOUR_MS).toISOString(), paths: [file] },
+        });
+        return {
+          state: record.sources.find((row) => row.source === "agent_event")
+            ?.state,
+          judgeable: isJudgeable(record),
+        };
+      }),
+    );
+    const complete = scopedStates.filter(
+      (entry) => entry.state === "complete",
+    ).length;
+    const judgeable = scopedStates.filter((entry) => entry.judgeable).length;
+    process.stdout.write(
+      `COV-11 reaped-before-reporting (${String(TRIAL_NEVER_CLOSED)} of ` +
+        `${String(TRIAL_SESSIONS)}) — scoped complete: ${String(complete)} of ` +
+        `${String(files.length)}; judgeable: ${String(judgeable)} of ` +
+        `${String(files.length)}\n`,
+    );
+
+    // Assert: not a noise threshold — the invariant. A session the hub closed
+    // on a guess cannot be scoped out of a question it might have answered,
+    // so no surface on this repo is judgeable.
+    expect(judgeable).toBe(0);
   });
 
   test("the control: the same shape with sessions that CLOSE reaches complete", async () => {

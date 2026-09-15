@@ -849,6 +849,126 @@ describe("§3.2a: the scope measures the question, not the whole repo", () => {
  * scoped to the pin's file set so the gap it reads is a gap about the pinned
  * surface rather than about the repo.
  */
+/**
+ * THE SCOPE MAY NARROW BY WHAT WAS OBSERVED, NEVER BY WHAT WAS NOT.
+ *
+ * §3.2a narrows `agent_event` to sessions with a `work_context_targets` row
+ * on one of the scope's paths — and a session reaped before it ever reported
+ * a work context has no such row at all. Asked "did this session touch
+ * src/auth.ts", the database cannot answer, and a plain EXISTS answers "no":
+ * the sessions whose observation failed HARDEST drop out of exactly the
+ * question they should have qualified, and `complete` — with `isJudgeable`
+ * behind it — becomes reachable on a repo full of reaped sessions.
+ *
+ * Unknown provenance fails CLOSED. A session that ENDED cleanly reported
+ * everything it had, so "no file target" really means "touched no file" and
+ * it may leave the scope. A session the hub closed on a guess reported
+ * whatever it managed to before the silence, so it may not.
+ */
+describe("§3.2a: a session that reported nothing cannot be scoped away", () => {
+  test("a reaped session with no work context keeps the scoped read incomplete", async () => {
+    // Arrange: one clean session that did report the pinned file, and one the
+    // hub reaped before it reported anything at all
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_healthy",
+      lastHeartbeatAt: at(-30 * MINUTE_MS),
+      endedAt: at(-29 * MINUTE_MS),
+    });
+    await insertTouch(harness, "ses_healthy", "wc_healthy", "src/auth.ts");
+    await insertSession(harness, viewerId, {
+      id: "ses_reaped",
+      lastHeartbeatAt: at(-8 * 60 * MINUTE_MS),
+      endedAt: at(-2 * 60 * MINUTE_MS),
+      reapedAt: at(-2 * 60 * MINUTE_MS),
+    });
+    const deps = { db: harness.db, now: harness.clock.now };
+
+    // Act
+    const scoped = await readCoverage(deps, viewerId, REPO, {
+      scope: {
+        sinceIso: at(-13 * DAY_MS).toISOString(),
+        paths: ["src/auth.ts"],
+      },
+    });
+    const row = scoped.sources.find((entry) => entry.source === "agent_event");
+
+    // Assert
+    expect(row?.state).toBe("incomplete");
+    expect(row?.reason).toBe("session_reaped");
+    expect(isJudgeable(scoped)).toBe(false);
+  });
+
+  test("a session that ENDED cleanly and touched nothing still leaves the scope", async () => {
+    // Arrange: the control, and it has to be a repo whose ONLY session is the
+    // clean silent one — otherwise "it left the scope" and "it entered the
+    // scope and was not a gap" are the same green. A clean end is a complete
+    // report, so "no file target" is an observation and not an absence: this
+    // surface was never watched, which is `unknown`, and reading it as
+    // `complete` would make judging reachable over a surface nobody saw.
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_quiet",
+      lastHeartbeatAt: at(-40 * MINUTE_MS),
+      endedAt: at(-39 * MINUTE_MS),
+    });
+    const deps = { db: harness.db, now: harness.clock.now };
+
+    // Act
+    const scoped = await readCoverage(deps, viewerId, REPO, {
+      scope: {
+        sinceIso: at(-13 * DAY_MS).toISOString(),
+        paths: ["src/auth.ts"],
+      },
+    });
+    const row = scoped.sources.find((entry) => entry.source === "agent_event");
+
+    // Assert
+    expect(row?.state).toBe("unknown");
+    expect(row?.reason).toBe("no_session_in_window");
+    expect(isJudgeable(scoped)).toBe(false);
+  });
+
+  test("a reaped session that DID report other files still leaves the scope", async () => {
+    // Arrange: the other control — §3.2a's whole point. A session that
+    // abandoned a different corner of the repo is not a gap in an answer
+    // about THIS surface, and reporting targets is what makes that knowable.
+    const { harness, viewerId } = await seed();
+    await insertSession(harness, viewerId, {
+      id: "ses_healthy",
+      lastHeartbeatAt: at(-30 * MINUTE_MS),
+      endedAt: at(-29 * MINUTE_MS),
+    });
+    await insertTouch(harness, "ses_healthy", "wc_healthy", "src/auth.ts");
+    await insertSession(harness, viewerId, {
+      id: "ses_elsewhere",
+      lastHeartbeatAt: at(-8 * 60 * MINUTE_MS),
+      endedAt: at(-2 * 60 * MINUTE_MS),
+      reapedAt: at(-2 * 60 * MINUTE_MS),
+    });
+    await insertTouch(
+      harness,
+      "ses_elsewhere",
+      "wc_elsewhere",
+      "docs/README.md",
+    );
+    const deps = { db: harness.db, now: harness.clock.now };
+
+    // Act
+    const scoped = await readCoverage(deps, viewerId, REPO, {
+      scope: {
+        sinceIso: at(-13 * DAY_MS).toISOString(),
+        paths: ["src/auth.ts"],
+      },
+    });
+
+    // Assert
+    expect(
+      scoped.sources.find((entry) => entry.source === "agent_event")?.state,
+    ).toBe("complete");
+  });
+});
+
 describe("GET /api/suspect carries coverage scoped to the files asked about", () => {
   test("the record names the paths the question was about", async () => {
     // Arrange: a clean session on the pinned file, a reaped one elsewhere

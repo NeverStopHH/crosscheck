@@ -247,19 +247,42 @@ const toCount = (value: unknown): number => {
  * hub made and can revoke, so it is the one a reader can act on.
  */
 /**
+ * "This session reported a file target" — optionally, one of a given set.
+ * The same work_contexts -> work_context_targets join `crosscheck suspect`
+ * already makes (services/suspect.ts), riding
+ * work_context_targets_kind_value_idx (db/schema.ts).
+ */
+const reportedFileTargets = (match?: SQL): SQL =>
+  sql`exists (select 1 from ${workContexts} join ${workContextTargets} on ${workContextTargets.workContextId} = ${workContexts.id} where ${workContexts.sessionId} = ${agentSessions.id} and ${workContextTargets.kind} = 'file'${match === undefined ? sql.empty() : sql` and ${match}`})`;
+
+/**
  * §3.2a's `paths` half: count only the sessions that touched the surface the
- * question is about, through the same
- * work_contexts -> work_context_targets join `crosscheck suspect` already
- * makes (services/suspect.ts:306-319), riding
- * work_context_targets_kind_value_idx (db/schema.ts:253).
+ * question is about.
  *
  * NO STATE IS SOFTENED. A reaped session that touched the scope is still
  * `incomplete` and the reason still names the reap; what changes is that a
  * session which abandoned a different corner of the repo stops being a gap
  * in an answer about THIS surface.
+ *
+ * AND THE SCOPE MAY NARROW BY WHAT WAS OBSERVED, NEVER BY WHAT WAS NOT —
+ * the second arm, and without it this scope was a hole rather than a
+ * granularity. A session reaped before it ever reported a work context has
+ * NO target row, so asked "did it touch these files" the database cannot
+ * answer and a bare EXISTS answers "no". The sessions whose observation
+ * failed hardest would drop out of precisely the question they should have
+ * qualified, and `complete` — with `isJudgeable` behind it — would be
+ * reachable on a repo full of reaped sessions.
+ *
+ * Unknown provenance fails CLOSED, and the split is exactly the difference
+ * between a report and a silence: a session that ENDED cleanly reported
+ * everything it had, so "no file target" means "touched no file" and it may
+ * leave the scope; a session the hub closed on a guess reported only what it
+ * managed to before the silence, so it may not. Only a gap-session can enter
+ * the scope this way, so the arm can move an answer towards `incomplete` and
+ * never towards `complete`.
  */
-const touchedScope = (paths: readonly string[]): SQL =>
-  sql`exists (select 1 from ${workContexts} join ${workContextTargets} on ${workContextTargets.workContextId} = ${workContexts.id} where ${workContexts.sessionId} = ${agentSessions.id} and ${workContextTargets.kind} = 'file' and ${inArray(workContextTargets.value, [...paths])})`;
+const touchedScope = (paths: readonly string[], isGap: SQL): SQL =>
+  sql`(${reportedFileTargets(inArray(workContextTargets.value, [...paths]))} or (${isGap} and not ${reportedFileTargets()}))`;
 
 const readAgentEventCoverage = async (
   deps: Deps,
@@ -283,7 +306,7 @@ const readAgentEventCoverage = async (
       and(
         eq(agentSessions.repo, repo),
         gt(agentSessions.lastHeartbeatAt, since),
-        ...(paths.length === 0 ? [] : [touchedScope(paths)]),
+        ...(paths.length === 0 ? [] : [touchedScope(paths, isGap)]),
       ),
     );
   const row = rows[0];
