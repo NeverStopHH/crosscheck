@@ -15,9 +15,15 @@
  *
  *   `coverageClause` — the HARD empty-result rule (AT-1). An empty answer may
  *   not stand alone while `agent_event` or `git` is anything but `complete`,
- *   `unknown` included. It always returns a sentence, including the good one:
- *   "nothing matched, and we WERE watching" is a stronger answer than
- *   "nothing matched", and one code path is harder to get wrong than two.
+ *   `unknown` included. It always returns A SENTENCE, for any record it is
+ *   handed; WHEN an empty answer carries one is `mustQualifyEmptyAnswer`'s
+ *   call at the bottom of this file, and the answer surfaces ask it (see
+ *   mcp/render.ts `coverageQualifier`). Under `complete` they print nothing,
+ *   because the unqualified sentence has already said it: "No work context ON
+ *   THIS REPO matched" is a claim about the repository, which the gapped
+ *   branch may not make. `crosscheck status` is the exception and prints on
+ *   every state — every other line of that command does too, and AT-9 names
+ *   it as the surface nobody should have to run doctor after.
  *
  *   `coverageNote` — the SOFT annotation rule (AT-9, Nick's decision 4). On a
  *   NON-EMPTY answer it renders only on `incomplete`, a positively observed
