@@ -4785,6 +4785,36 @@ export const MUTATIONS: readonly Mutation[] = [
       "52 pins are absent from the listing and nothing says so, which on a " +
       "five-year repo is the steady state rather than the edge case",
   },
+  {
+    // Coverage is FIVE ROWS, always. Dropping the rungs that cannot exist
+    // reads as tidying — the rows carry no data — and it is the one edit that
+    // turns "this rung cannot exist here" back into the silent absence AT-10
+    // forbids: a reader seeing four rows cannot tell a refusal from an
+    // oversight.
+    label: "a rung that cannot exist is dropped instead of refused",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    sources: [agentEvent, git, ...REFUSED_RUNGS],",
+    to: '    sources: [agentEvent, git, ...REFUSED_RUNGS].filter((s) => s.state !== "unavailable"),',
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the record stops being five rows, every renderer that walks it by " +
+      "source finds nothing where CI should be, and an absent row is exactly " +
+      "the state the enum exists to make impossible",
+  },
+  {
+    // The difference between "we have no CI rung" and "we have one and it
+    // said nothing" is the difference between a refusal and a pending answer.
+    // `unknown` reads as the second, so a reader waits for data no code path
+    // on main will ever produce.
+    label: "a rung that cannot exist reads as one that might",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: '  sourceRecord("ci", "unavailable", "no_emitter"),',
+    to: '  sourceRecord("ci", "unknown", "no_emitter"),',
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "doctor stops printing the CI refusal as a refusal, and the verdict " +
+      "layer treats a rung nobody built as a rung that has not reported yet",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -4932,6 +4962,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
+ * PRINTS: packages/server/test/coverage.test.ts 2
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
