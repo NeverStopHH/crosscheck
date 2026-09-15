@@ -2,8 +2,11 @@ import { and, eq, gt, lt, or, sql } from "drizzle-orm";
 import { MAX_COMMIT_CLOCK_SKEW_MS } from "@crosscheck/schema";
 import type { CommitEvidence } from "@crosscheck/schema";
 
+import type { SeqField } from "@crosscheck/schema";
+
 import { COMMIT_EVIDENCE_RETENTION_DAYS } from "../constants.ts";
 import { commitEvidence } from "../db/schema.ts";
+import { pruneSessionEvents, recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { HandlerOutcome } from "./record-handlers.ts";
@@ -52,6 +55,8 @@ export const ingestCommitEvidence = async (
   deps: Deps,
   developerId: string,
   body: CommitEvidence,
+  seq?: SeqField,
+  producerSessionId?: string,
 ): Promise<HandlerOutcome> => {
   const now = deps.now();
   const retentionCutoff = new Date(
@@ -103,6 +108,33 @@ export const ingestCommitEvidence = async (
           },
           setWhere: sql`${commitEvidence.collectedAt} <= excluded.collected_at`,
         });
+    }
+    // `commit.observed` — the ONE canonical event whose session cannot come
+    // from a body or a join. The aggregate's own key is (repo, author_email),
+    // and author_email NEVER LEAVES THE HUB: hashing it would make the
+    // referent a content-derived pseudonymous identifier of a person, which
+    // data minimisation forbids outright. So the event refs the SESSION whose
+    // SessionStart ran the collection, which is all a position can honestly
+    // assert about an aggregate — that a collection happened, here in the
+    // order.
+    //
+    // That session is the PRODUCER, and a producer is rewritten by whichever
+    // session drains the spool. `withProducer` therefore strips the position
+    // from exactly this class of record when it rewrites one, so a foreign
+    // drain arrives unsequenced instead of filing A's position under B.
+    if (producerSessionId !== undefined) {
+      await recordSessionEvent(
+        { db: tx, now: deps.now },
+        {
+          sessionId: producerSessionId,
+          kind: "commit.observed",
+          seq,
+          seqKind: "emitted",
+          refKind: "session",
+          refId: producerSessionId,
+        },
+      );
+      await pruneSessionEvents({ db: tx, now: deps.now }, producerSessionId);
     }
     return { status: "accepted" };
   });

@@ -1,5 +1,12 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import type { Claim, ClaimEdge, Intent, Target, WorkContext } from "@crosscheck/schema";
+import type {
+  Claim,
+  ClaimEdge,
+  Intent,
+  SeqField,
+  Target,
+  WorkContext,
+} from "@crosscheck/schema";
 
 import { EVENT_KINDS } from "../constants.ts";
 import {
@@ -11,6 +18,11 @@ import {
 } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
+import {
+  pruneSessionEvents,
+  recordSessionEvent,
+  targetDigest,
+} from "./session-events.ts";
 import {
   DECLARED_PROVENANCE,
   applyCrossSimilarity,
@@ -69,17 +81,30 @@ const resolveSessionOwner = async (
   return rows[0]?.developerId;
 };
 
+/**
+ * The owner AND the session of a work context in one lookup.
+ *
+ * The session half is what keeps a position out of the wrong sequence: a
+ * `target` body carries only a workContextId, and `producer.sessionId` is
+ * rewritten to the FLUSHING session by every spool drain, so the context's own
+ * session is the only honest answer to "whose order does this edit belong to".
+ */
 const resolveWorkContextOwner = async (
   db: DbExecutor,
   workContextId: string,
-): Promise<string | undefined> => {
+): Promise<
+  { readonly developerId: string; readonly sessionId: string } | undefined
+> => {
   const rows = await db
-    .select({ developerId: agentSessions.developerId })
+    .select({
+      developerId: agentSessions.developerId,
+      sessionId: workContexts.sessionId,
+    })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(eq(workContexts.id, workContextId))
     .limit(1);
-  return rows[0]?.developerId;
+  return rows[0];
 };
 
 // Deliberately does not check endedAt: author sessions MAY already be ended —
@@ -243,23 +268,58 @@ export const ingestWorkContext = async (
   });
 };
 
+/**
+ * THE TWO CANONICAL NAMES A TARGET PROJECTS TO, and the two it does not.
+ * `symbol` and `component` are target kinds no 1.0 event name covers, and
+ * inventing one for them would put a word in the shared vocabulary that means
+ * nothing on any host.
+ */
+const TARGET_EVENT_KINDS = {
+  file: "file.modified",
+  error_fingerprint: "tool.failed",
+} as const;
+
 export const ingestTarget = async (
   deps: Deps,
   developerId: string,
   body: Target,
+  seq?: SeqField,
 ): Promise<HandlerOutcome> => {
-  const ownerId = await resolveWorkContextOwner(deps.db, body.workContextId);
-  if (ownerId === undefined) {
+  const owner = await resolveWorkContextOwner(deps.db, body.workContextId);
+  if (owner === undefined) {
     return rejectedOutcome(
       `workContextId: work context "${body.workContextId}" not found`,
     );
   }
-  if (ownerId !== developerId) {
+  if (owner.developerId !== developerId) {
     return rejectedOutcome(
       "workContextId: work context belongs to another developer",
     );
   }
   const source = body.source;
+  const eventKind = TARGET_EVENT_KINDS[body.kind as keyof typeof TARGET_EVENT_KINDS];
+  /**
+   * PROJECTED ON BOTH BRANCHES, accepted AND duplicate. The git lane's
+   * `file.modified` for a file the tool lane already saw arrives on the
+   * duplicate branch below — the primary key collapses the two observations
+   * into one target row — and that second observation is exactly the one a
+   * happens-before question cares about. Writing the event only on `accepted`
+   * would leave `seq_kind = observed` a value no real row ever carries.
+   */
+  const project = async (): Promise<void> => {
+    if (eventKind === undefined) {
+      return;
+    }
+    await recordSessionEvent(deps, {
+      sessionId: owner.sessionId,
+      kind: eventKind,
+      seq,
+      seqKind: "emitted",
+      refKind: "target_digest",
+      refId: targetDigest(body.workContextId, body.kind, body.value),
+    });
+    await pruneSessionEvents(deps, owner.sessionId);
+  };
   const inserted = await deps.db
     .insert(workContextTargets)
     .values({
@@ -291,6 +351,7 @@ export const ingestTarget = async (
           sql`${workContextTargets.source} NOT IN (${source}, 'both')`,
         ),
       );
+    await project();
     return duplicate();
   }
   // The doc regenerates so the new target value is searchable. Not wrapped in
@@ -298,6 +359,7 @@ export const ingestTarget = async (
   // target short until the next ingest touches the context — self-healing,
   // and the record itself is already durable.
   await refreshNormalizedDoc(deps.db, body.workContextId);
+  await project();
   // No per-target event: a busy session emits dozens of targets and would
   // flood the outbox, drowning the signals SSE consumers care about.
   return accepted();
@@ -438,6 +500,7 @@ export const ingestClaimWithin = async (
   developerId: string,
   body: Claim,
   claimVector: readonly number[] | null,
+  seq?: SeqField,
 ): Promise<HandlerOutcome> => {
   const embedder = deps.embedder ?? null;
   const txDeps: ExecutorDeps = { db: tx, now: deps.now };
@@ -553,6 +616,19 @@ export const ingestClaimWithin = async (
     kind: body.kind,
     status: body.status,
   });
+  // IN THE SAME TRANSACTION as the row it projects — one pipeline, not two.
+  // The session is the claim's OWN author, never the producer: a spool drained
+  // by a successor session rewrites the producer, and A's positions inside B's
+  // sequence would break B's whole order for a reason that is not B's.
+  await recordSessionEvent(txDeps, {
+    sessionId: body.authorSessionId,
+    kind: "claim.created",
+    seq,
+    seqKind: "emitted",
+    refKind: "claim",
+    refId: body.id,
+  });
+  await pruneSessionEvents(txDeps, body.authorSessionId);
   return accepted(body.id);
 };
 
@@ -560,15 +636,28 @@ export const ingestClaim = async (
   deps: Deps,
   developerId: string,
   body: Claim,
+  seq?: SeqField,
 ): Promise<HandlerOutcome> => {
   const claimVector = await prepareClaimVector(deps, developerId, body);
   // One transaction so dedup match, INSERT, and dedup_count bump are atomic —
   // two concurrent flushes cannot both miss the match and double-insert.
   // Context-doc embedding happens once per flush in ingestRecords.
   return deps.db.transaction((tx) =>
-    ingestClaimWithin(tx, deps, developerId, body, claimVector),
+    ingestClaimWithin(tx, deps, developerId, body, claimVector, seq),
   );
 };
+
+/**
+ * WHICH EDGE KINDS INVALIDATE A CLAIM. `contradicts` says the target is wrong;
+ * `supersedes` says a revision replaces it. `supports`, `relates_to` and
+ * `deeper_cause_of` add to a tree without taking anything away from it, and
+ * projecting them as `claim.invalidated` would make the name a lie on every
+ * `extend_diagnosis` call that merely connected two findings.
+ */
+const INVALIDATING_EDGE_KINDS: ReadonlySet<string> = new Set([
+  "contradicts",
+  "supersedes",
+]);
 
 const findEdgeIdByTriple = async (
   db: DbExecutor,
@@ -619,6 +708,7 @@ export const ingestClaimEdge = async (
   deps: Deps,
   developerId: string,
   body: ClaimEdge,
+  seq?: SeqField,
 ): Promise<HandlerOutcome> => {
   const authorIssue = await checkOwnedSession(
     deps.db,
@@ -675,5 +765,16 @@ export const ingestClaimEdge = async (
     kind: body.kind,
     developerId,
   });
+  if (INVALIDATING_EDGE_KINDS.has(body.kind)) {
+    await recordSessionEvent(deps, {
+      sessionId: body.authorSessionId,
+      kind: "claim.invalidated",
+      seq,
+      seqKind: "emitted",
+      refKind: "claim_edge",
+      refId: body.id,
+    });
+    await pruneSessionEvents(deps, body.authorSessionId);
+  }
   return accepted(body.id);
 };

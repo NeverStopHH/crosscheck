@@ -119,7 +119,36 @@ export const targetRecord = (
 ): Envelope =>
   buildEnvelope("target", { workContextId, kind, value, source }, producer, now);
 
-/** Flush-time rewrite: ingest rejects records from an ended producer session. */
+/**
+ * KINDS WHOSE BODY NAMES THE SESSION THAT AUTHORED THEM — directly
+ * (`authorSessionId`, `sessionId`) or through a join the hub can make
+ * (`target` → `work_contexts.sessionId`). Their POSITION survives delivery by
+ * any session, because the hub never has to ask the producer whose order they
+ * belong to.
+ *
+ * Everything else — commit evidence, landed evidence, delivery telemetry,
+ * questions — is filed under the producer, and the producer is rewritten one
+ * line below. See `withProducer`.
+ */
+const BODY_NAMES_ITS_SESSION: ReadonlySet<string> = new Set([
+  "claim",
+  "claim_edge",
+  "work_context",
+  "target",
+]);
+
+/**
+ * Flush-time rewrite: ingest rejects records from an ended producer session,
+ * so a dead session's spool is only deliverable in a live session's name.
+ *
+ * THE POSITION IS DROPPED WHEN THE REWRITE MOVES THE RECORD TO A SESSION THAT
+ * CANNOT CLAIM IT. A `seq` belongs to ONE session's counter. For a body that
+ * names its own session the hub files it correctly whoever delivered it, so an
+ * offline backlog drained by a successor keeps its real order. For a body that
+ * names none, the hub can only use the producer — and A's epoch inside B's
+ * sequence makes B hold two epochs, which marks B's ENTIRE causal order broken
+ * for a reason that is not B's. Absent is honest; wrong is not.
+ */
 export const withProducer = (
   envelope: Record<string, unknown>,
   developerId: string | null,
@@ -130,8 +159,13 @@ export const withProducer = (
     typeof producer === "object" && producer !== null
       ? (producer as Record<string, unknown>)
       : {};
+  const kind = envelope["kind"];
+  const movedToAnotherSession =
+    base["sessionId"] !== sessionId &&
+    !BODY_NAMES_ITS_SESSION.has(typeof kind === "string" ? kind : "");
+  const { seq: _dropped, ...withoutSeq } = envelope;
   return {
-    ...envelope,
+    ...(movedToAnotherSession ? withoutSeq : envelope),
     producer: {
       ...base,
       ...(developerId === null ? {} : { developerId }),
