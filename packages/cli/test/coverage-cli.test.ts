@@ -16,6 +16,7 @@ import { rm } from "node:fs/promises";
 
 import { runCli } from "../src/index.ts";
 import { renderSuspect } from "../src/cli/suspect-render.ts";
+import { COVERAGE_EXEMPT_SURFACES } from "@crosscheck/connector-core/coverage/exempt-surfaces.ts";
 import { UNKNOWN_COVERAGE } from "@crosscheck/connector-core/http/coverage.ts";
 import type { CoverageRecord } from "@crosscheck/connector-core/http/coverage.ts";
 import type { SuspectView } from "@crosscheck/connector-core/http/hub.ts";
@@ -213,6 +214,21 @@ describe("crosscheck doctor: the coverage check and COV-5's refusals", () => {
     // the refusal is printed rather than left as an absence somebody plans on.
     expect(result.stdout).toContain("PASS  coverage range");
     expect(result.stdout).toContain("commit_evidence");
+  });
+
+  test("prints every COV-9 exemption with its reason", async () => {
+    // Arrange
+    const { repo, env } = await fixture("doctor-exemptions", reported);
+
+    // Act
+    const result = await runCli(["doctor"], env, repo);
+
+    // Assert: an exemption nobody sees is the silent absence AT-10 forbids.
+    for (const surface of COVERAGE_EXEMPT_SURFACES) {
+      expect(result.stdout).toContain(`PASS  coverage exempt ${surface.name}`);
+      expect(result.stdout).toContain(surface.reason);
+    }
+    expect(COVERAGE_EXEMPT_SURFACES.length).toBeGreaterThan(0);
   });
 
   test("a hub too old to answer is 'not measured' and a PASS", async () => {

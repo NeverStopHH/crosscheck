@@ -85,6 +85,7 @@ import type {
   HubFailureKind,
   HubResult,
 } from "@crosscheck/connector-core/http/client.ts";
+import { COVERAGE_EXEMPT_SURFACES } from "@crosscheck/connector-core/coverage/exempt-surfaces.ts";
 import type { CoverageSourceRecord } from "@crosscheck/connector-core/http/coverage.ts";
 import {
   describeConnectionFailure,
@@ -1358,6 +1359,20 @@ const coverageRangeRefusal = (): Check =>
     "not in 1.0: commit_evidence is an aggregate with no hash column and the claim-binding spec refuses a commits table. The qualifier names the instant observation stopped; it never names commits.",
   );
 
+/**
+ * COV-9's exemptions, printed. An exemption a person can read is an exemption
+ * somebody will argue with; one nobody sees is the silent absence AT-10
+ * forbids by name — which is the whole difference between this list and the
+ * escape hatch the first draft of the rule shipped.
+ *
+ * Printed with or without a hub: it is a statement about this build, not
+ * about any install's data.
+ */
+const coverageExemptionChecks = (): readonly Check[] =>
+  COVERAGE_EXEMPT_SURFACES.map((surface) =>
+    check("PASS", `coverage exempt ${surface.name}`, surface.reason),
+  );
+
 const coverageSourceDetail = (row: CoverageSourceRecord): string => {
   const since =
     row.gapSince === null ? "" : `, since ${row.gapSince.slice(0, 16)}Z`;
@@ -1458,7 +1473,11 @@ const absenceAndCoverageChecks = async (
   repoId: string,
 ): Promise<readonly Check[]> => {
   const result = await getAbsences(ctx, repoId);
-  return [checkAbsences(result), ...coverageChecks(result)];
+  return [
+    checkAbsences(result),
+    ...coverageChecks(result),
+    ...coverageExemptionChecks(),
+  ];
 };
 
 /**

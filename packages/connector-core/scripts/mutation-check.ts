@@ -5087,6 +5087,57 @@ export const MUTATIONS: readonly Mutation[] = [
       "window it rests on, so a gap that hid a second teammate is invisible " +
       "at exactly the moment somebody is deciding whether to edit",
   },
+  {
+    // COV-9's own mutation, verbatim: register a surface that answers about
+    // what the team knows and consumes no record, WITHOUT touching the
+    // exempt list.
+    label: "a new answer surface skips the coverage record unnoticed",
+    file: `${CORE}/src/render-surfaces.ts`,
+    from: `  {
+    kind: "composite",
+    name: "mcp-tool-get-referee-brief",`,
+    to: `  {
+    kind: "composite",
+    name: "smuggled-answer-surface",
+    delivery: "pulled",
+    module: "src/mcp/tools/get-diagnosis.ts",
+    note: "answers about what the team knows and consumes no coverage record",
+  },
+  {
+    kind: "composite",
+    name: "mcp-tool-get-referee-brief",`,
+    test: `${CORE}/test/coverage-registry-walk.test.ts`,
+    because:
+      "AT-9's failure condition arrives one surface at a time, and nothing " +
+      "but this walk would notice a renderer that states what the team knows " +
+      "with no statement of how far it saw",
+  },
+  {
+    // The escape hatch may not be wider than the rule. Raising the cap is how
+    // every exemption list dies, so the cap is pinned by its own test rather
+    // than by a comment asking nicely.
+    label: "the exempt list grows wider than the rule it escapes",
+    file: `${CORE}/src/coverage/exempt-surfaces.ts`,
+    from: "export const COVERAGE_EXEMPT_SURFACES_MAX = 3;",
+    to: "export const COVERAGE_EXEMPT_SURFACES_MAX = 10;",
+    test: `${CORE}/test/coverage-registry-walk.test.ts`,
+    because:
+      "a cap raised to fit the next case is not a cap, and the walk becomes " +
+      "a list of surfaces somebody once exempted rather than a rule",
+  },
+  {
+    // The other way this rule dies: hollow out what it reaches. An empty
+    // response list means every surface is out of scope and the walk passes
+    // over a tree with no coverage anywhere.
+    label: "the walk is hollowed out until it reaches nothing",
+    file: `${CORE}/src/coverage/exempt-surfaces.ts`,
+    from: '  "SuspectView",\n];',
+    to: "];",
+    test: `${CORE}/test/coverage-registry-walk.test.ts`,
+    because:
+      "the walk still passes while reaching fewer surfaces every round, which " +
+      "is the failure mode a green test cannot distinguish from success",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5197,6 +5248,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
+ * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
