@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
 import {
   CaptureModeSchema,
   ClaimKindSchema,
@@ -27,6 +28,21 @@ export const ClaimSchema = z
     captureMode: CaptureModeSchema,
     provenance: ProvenanceSchema,
     evidenceRefs: z.array(nonEmptyId).default([]),
+    /**
+     * The author's HEAD at the moment the claim was made (1.0 spec 02 §3.1).
+     *
+     * OPTIONAL is the forward-compat seam, and it means exactly one thing
+     * here: an old connector sends nothing and ingest stamps `session_base`.
+     * It does NOT mean "keep what you have" — that is `IntentSchema`'s rule
+     * for a MUTABLE object, and a claim is INSERTed once and never updated,
+     * so absent means null forever on that row.
+     *
+     * Free to produce: every claim-writing tool path already holds
+     * `identity.baseCommit` (connector-core mcp/context.ts resolves a
+     * RepoIdentity per call), so this is bytes on a body already being built
+     * rather than a round trip or a git call.
+     */
+    observedAtCommit: z.string().regex(COMMIT_SHA_PATTERN).optional(),
     createdAt: z.iso.datetime(),
   })
   .check((ctx) => {

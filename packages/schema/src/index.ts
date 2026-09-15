@@ -41,7 +41,11 @@ export type {
   TargetSource,
 } from "./enums.ts";
 
-export { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
+export {
+  COMMIT_SHA_PATTERN,
+  NO_COMMIT_SHA,
+  isBindableCommit,
+} from "./commit-sha.ts";
 
 export {
   ClaimEdgeSchema,

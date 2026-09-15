@@ -1,5 +1,13 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import type { Claim, ClaimEdge, Intent, Target, WorkContext } from "@crosscheck/schema";
+import { isBindableCommit } from "@crosscheck/schema";
+import type {
+  Claim,
+  ClaimCommitBinding,
+  ClaimEdge,
+  Intent,
+  Target,
+  WorkContext,
+} from "@crosscheck/schema";
 
 import { EVENT_KINDS } from "../constants.ts";
 import {
@@ -101,6 +109,59 @@ export const checkOwnedSession = async (
     return `${field}: session belongs to another developer`;
   }
   return null;
+};
+
+/**
+ * WHICH COMMIT A CLAIM IS BOUND TO, decided at INSERT and never revisited
+ * (1.0 spec 02 §3.1). Three outcomes, in this order:
+ *
+ *   reported      — the emitter sent its own HEAD. The wire schema has already
+ *                   held it to COMMIT_SHA_PATTERN.
+ *   session_base  — nothing on the wire, so the author session's base_commit
+ *                   stands in.
+ *   none          — that base_commit is not an object name.
+ *
+ * THE PATTERN TEST ON THE FALLBACK IS LOAD-BEARING, and it is not paranoia
+ * about a hostile caller. `agent_sessions.base_commit` is `text NOT NULL` and
+ * `SessionSchema.baseCommit` is `z.string().min(1)`, so any non-empty string
+ * is stored — and one is, by this repo's own CLI: `crosscheck conference`
+ * registers with the literal "conference" (cli/src/cli/conference.ts), and
+ * resolveRepoIdentity falls back to NO_COMMIT_SHA when git cannot name HEAD.
+ * The placeholder is SEVEN HEX CHARACTERS, so the pattern alone accepts it —
+ * `isBindableCommit` is the predicate that refuses both, in one place.
+ *
+ * `session_base` IS AN APPROXIMATION IN BOTH DIRECTIONS, stated here because
+ * the tempting sentence — "a lower bound, so the claim goes stale early, the
+ * safe direction" — is measurably false. registerSession UPDATEs base_commit
+ * on every re-registration (services/sessions.ts, under its own comment
+ * "Branch and base commit may still move — checkouts are normal"), and a
+ * PostToolUse recovery or a SessionStart re-fire re-registers mid-session with
+ * the CURRENT HEAD. This function reads the row at FLUSH time, so the value
+ * can be a commit LATER than the observation, which NARROWS the revalidation
+ * window and makes the claim read fresher than it is. That is why
+ * `commit_binding` is stored beside the sha rather than thrown away: a reader
+ * can tell an emitter's own answer from ingest's guess.
+ */
+const resolveCommitBinding = async (
+  db: DbExecutor,
+  body: Claim,
+): Promise<{
+  readonly observedAtCommit: string | null;
+  readonly commitBinding: ClaimCommitBinding;
+}> => {
+  const reported = body.observedAtCommit;
+  if (reported !== undefined) {
+    return { observedAtCommit: reported, commitBinding: "reported" };
+  }
+  const rows = await db
+    .select({ baseCommit: agentSessions.baseCommit })
+    .from(agentSessions)
+    .where(eq(agentSessions.id, body.authorSessionId))
+    .limit(1);
+  const baseCommit = rows[0]?.baseCommit ?? "";
+  return isBindableCommit(baseCommit)
+    ? { observedAtCommit: baseCommit, commitBinding: "session_base" }
+    : { observedAtCommit: null, commitBinding: "none" };
 };
 
 type WorkContextRow = typeof workContexts.$inferSelect;
@@ -505,6 +566,10 @@ export const ingestClaimWithin = async (
   }
 
   const createdAt = new Date(body.createdAt);
+  // AFTER the dedup gates, so a re-observation never costs the lookup: a
+  // duplicate keeps the binding the first INSERT stamped, which is the honest
+  // one — the second observation is the same claim, not a new assertion.
+  const binding = await resolveCommitBinding(tx, body);
   // evidenceRefs are persisted as-is; materializing supports-edges from them
   // is a follow-up — referenced claims may arrive later in the same flush.
   const inserted = await tx
@@ -520,6 +585,8 @@ export const ingestClaimWithin = async (
       captureMode: body.captureMode,
       provenance: body.provenance,
       evidenceRefs: body.evidenceRefs,
+      observedAtCommit: binding.observedAtCommit,
+      commitBinding: binding.commitBinding,
       embedding: claimVector === null ? null : [...claimVector],
       embeddingModel:
         claimVector === null || embedder === null ? null : embedder.model,

@@ -1,3 +1,5 @@
+import { NO_COMMIT_SHA } from "@crosscheck/schema";
+
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { realpath } from "node:fs/promises";
 
@@ -229,11 +231,11 @@ const resolveLocalRepoId = async (
  * What `baseCommit` is when git could not name HEAD at all — an unborn branch,
  * a repository with no commits, a git that did not answer.
  *
- * EXPORTED because the hub's claim binding has to recognise it: a claim whose
- * only code state is this placeholder is bound to nothing, and comparing
- * against a magic literal in a second place is how the two drift apart.
+ * Re-exported from `@crosscheck/schema` rather than declared here: the HUB has
+ * to recognise the placeholder to refuse binding a claim to it, and the hub
+ * cannot import this package. One literal, two readers.
  */
-export const NO_COMMIT_SHA = "0000000";
+export { NO_COMMIT_SHA };
 
 /**
  * The branch label of a detached HEAD: this prefix plus git's own `--short`
