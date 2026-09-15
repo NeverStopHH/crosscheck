@@ -5153,7 +5153,7 @@ export const MUTATIONS: readonly Mutation[] = [
     file: `${CORE}/src/coverage/render.ts`,
     from: `const scopeSubject = (record: CoverageRecord): string =>
   (record.scope?.paths?.length ?? 0) > 0
-    ? "on the files asked about"
+    ? "on these files"
     : "on this repo";`,
     to: 'const scopeSubject = (_record: CoverageRecord): string => "on this repo";',
     test: `${CORE}/test/coverage-render.test.ts`,
@@ -5211,6 +5211,34 @@ export const MUTATIONS: readonly Mutation[] = [
       "the empty-answer rule fires on that same record, so one answer " +
       "carries `Coverage complete.` beside a sentence saying observation " +
       "was partial — AT-10's fake pass, in two adjacent lines",
+  },
+  {
+    // The only line in the briefing that prints a machine timestamp, beside
+    // four relative ages — and it printed both conventions inside one
+    // sentence, so the reader converted by hand to compare them.
+    label: "an instant is printed with no way to tell how old it is",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "        ages ? agedSince(row.gapSince, now) : null,",
+    to: "        null,",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "fourteen days of briefings after ONE over-fired reap carry the same " +
+      "instant, and only the age says the fact is ageing rather than " +
+      "recurring",
+  },
+  {
+    // The age is decoration; the rung is the caveat. Both rungs gapped with
+    // an instant each is the longest shape this sentence carries, and two
+    // ages cost 20 characters against a 160 bound.
+    label: "an age is bought with somebody else's gap",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  return fit(head, holdsEvery(head, aged) ? aged : fragmentsOf(record, now, false));",
+    to: "  return fit(head, aged);",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "`fit` drops a whole fragment rather than half a word, so the git gap " +
+      "vanishes from a sentence whose head still says incomplete — on GET " +
+      "/api/suspect, the answer that names a person",
   },
   {
     // The sentence for a record this client cannot READ must not name the
@@ -5464,7 +5492,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
- * PRINTS: packages/connector-core/test/coverage-render.test.ts 7
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 9
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2

@@ -26,6 +26,7 @@ import {
   COVERAGE_SOURCES,
   COVERAGE_STATES,
   UNKNOWN_COVERAGE,
+  coverageStateOf,
 } from "../src/http/coverage.ts";
 import type {
   CoverageRecord,
@@ -76,6 +77,60 @@ describe("COV-1's instant reaches the line", () => {
     // Assert
     expect(clause).toContain(GAP_SHOWN);
     expect(clause.startsWith("Coverage incomplete")).toBe(true);
+  });
+
+  test("the instant carries its age, because every line beside it does", () => {
+    // Arrange: a realistic briefing renders five time references across five
+    // content lines, all relative ages — and exactly one line prints a
+    // machine timestamp. That line is this one, and it prints BOTH
+    // conventions inside one 123-character sentence: an ISO instant for
+    // agent_event and "9d ago" for git on the very next clause. The reader
+    // has to convert by hand to compare them, on the line the design calls
+    // the most important on the page.
+    //
+    // The instant itself is spec-pinned — COV-1 requires the output to carry
+    // 2026-09-05T08:13Z — so the age is ADDED, never substituted.
+    const record = recordOf([
+      row("agent_event", "incomplete", "session_reaped", GAP_ISO, GAP_ISO),
+      row("git", "incomplete", "evidence_stale", null, "2026-09-06T10:00:00.000Z"),
+    ]);
+
+    // Act
+    const clause = coverageClause(record, NOW);
+
+    // Assert
+    expect(clause).toContain(GAP_SHOWN);
+    expect(clause).toContain("10d ago");
+    expect(clause).toContain("9d ago");
+  });
+
+  test("an age never costs a gap its place in the sentence", () => {
+    // Arrange: BOTH rungs gapped, both carrying an instant, and the same
+    // shape asked about a file set — the longest this sentence has to carry.
+    // Two ages cost 20 characters against a 160 bound, which pushed this
+    // shape one character over, and `fit` drops a whole fragment rather than
+    // half a word: the age, which is decoration, cost the commit authors,
+    // which are the caveat. Measured on the intermediate state — "Coverage
+    // incomplete: agent sessions on this repo went quiet 2026-09-05T08:13Z
+    // (10d ago)." — with the second gap silently gone.
+    const wide = recordOf([
+      row("agent_event", "incomplete", "session_reaped", GAP_ISO, GAP_ISO),
+      row("git", "incomplete", "commit_authors_unreported", GAP_ISO, GAP_ISO),
+    ]);
+    const scoped: CoverageRecord = {
+      ...wide,
+      scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+    };
+
+    // Act & Assert: the rung always, the age only while it fits.
+    for (const record of [wide, scoped]) {
+      const clause = coverageClause(record, NOW);
+      expect(clause, clause).toContain("agent sessions");
+      expect(clause, clause).toContain("commit authors");
+      expect(clause.length, clause).toBeLessThanOrEqual(
+        MAX_COVERAGE_LINE_CHARS,
+      );
+    }
   });
 
   test("an unparseable instant costs the instant, never the sentence", () => {
@@ -341,6 +396,59 @@ describe("COV-6: no percentage, ever, and the bound holds", () => {
       expect(clause.length, clause).toBeLessThanOrEqual(MAX_COVERAGE_LINE_CHARS);
       expect(clause.includes("\n"), clause).toBe(false);
     }
+  });
+
+  test("no shape drops a rung that decides judging to buy room", () => {
+    // Arrange: the same sweep asked BOTH ways — repo-wide and scoped to a
+    // file set, which is how 04 reads it on GET /api/suspect, the answer
+    // that names a person. `fit` drops a whole fragment when the sentence
+    // runs past 160, and nothing here checked that the dropped one was
+    // decoration: the scoped subject cost twelve characters and, with both
+    // rungs gapped, the git clause vanished from a 99-character sentence
+    // that read as though only the sessions were in doubt.
+    //
+    // `agent_event` and `git` are the two rungs `isJudgeable` reads, so a
+    // sentence may lose an age, a reserved lane or a whole trailing clause
+    // before it loses either of them.
+    const shapes = COVERAGE_STATES.flatMap((agent) =>
+      COVERAGE_STATES.flatMap((git) =>
+        COVERAGE_STATES.flatMap((ci) =>
+          [undefined, ["src/player.ts"]].map((paths) => {
+            const record = recordOf([
+              row("agent_event", agent, "session_silent", GAP_ISO, GAP_ISO),
+              row("git", git, "commit_authors_unreported", GAP_ISO, GAP_ISO),
+              row("ci", ci, "ci_awaiting_rerun", GAP_ISO, GAP_ISO),
+            ]);
+            return paths === undefined
+              ? record
+              : { ...record, scope: { sinceIso: GAP_ISO, paths } };
+          }),
+        ),
+      ),
+    );
+    expect(shapes.length).toBe(128);
+
+    // Act & Assert
+    let dropped = 0;
+    for (const record of shapes) {
+      const clause = coverageClause(record, NOW);
+      expect(clause.length, clause).toBeLessThanOrEqual(
+        MAX_COVERAGE_LINE_CHARS,
+      );
+      const agentState = coverageStateOf(record, "agent_event");
+      const gitState = coverageStateOf(record, "git");
+      if (agentState === "incomplete" && !clause.includes("agent sessions")) {
+        dropped += 1;
+      }
+      if (
+        gitState === "incomplete" &&
+        !clause.includes("commit authors") &&
+        !clause.includes("git evidence")
+      ) {
+        dropped += 1;
+      }
+    }
+    expect(dropped).toBe(0);
   });
 
   test("every shape of ALL FIVE rungs fits, and none fakes a pass", () => {

@@ -56,6 +56,28 @@ const instant = (iso: string | null): string | null => {
   return `${new Date(ms).toISOString().slice(0, 16)}Z`;
 };
 
+/**
+ * Trailing qualifiers, joined once: `(10d ago, reaped)` rather than one
+ * parenthetical per fact.
+ *
+ * THE INSTANT AND ITS AGE, BECAUSE EVERY LINE BESIDE IT IS AN AGE. This is
+ * the only line in the briefing that prints a machine timestamp, and it
+ * printed BOTH conventions inside one sentence: an ISO for the rung that went
+ * quiet and "9d ago" for the rung beside it. A reader comparing the two had
+ * to convert one by hand, on the line §5.3 makes uncuttable because it says
+ * how far everything under it can be trusted.
+ *
+ * The instant is NOT dropped — COV-1 requires `2026-09-05T08:13Z` in the
+ * output, and an absolute instant is what somebody greps a log for. The age
+ * is ADDED beside it, in the parenthetical that already carried the reason,
+ * so one sentence answers "when" and "how long ago" in one reading. Empty in,
+ * nothing out: an unparseable instant costs the age, never the sentence.
+ */
+const parenthetical = (parts: readonly (string | null)[]): string => {
+  const kept = parts.filter((part): part is string => part !== null);
+  return kept.length === 0 ? "" : ` (${kept.join(", ")})`;
+};
+
 const ageSince = (iso: string | null, now: Date): string | null => {
   if (iso === null) {
     return null;
@@ -65,6 +87,11 @@ const ageSince = (iso: string | null, now: Date): string | null => {
     return null;
   }
   return formatAge(Math.max(0, now.getTime() - ms));
+};
+
+const agedSince = (iso: string | null, now: Date): string | null => {
+  const age = ageSince(iso, now);
+  return age === null ? null : `${age} ago`;
 };
 
 const rowOf = (
@@ -89,7 +116,7 @@ const rowOf = (
  */
 const scopeSubject = (record: CoverageRecord): string =>
   (record.scope?.paths?.length ?? 0) > 0
-    ? "on the files asked about"
+    ? "on these files"
     : "on this repo";
 
 const scopeWindow = (record: CoverageRecord, now: Date): string | null => {
@@ -97,10 +124,21 @@ const scopeWindow = (record: CoverageRecord, now: Date): string | null => {
   return since === undefined ? null : ageSince(since, now);
 };
 
+/**
+ * The two `incomplete` reasons the sentence names in a word. A reason with no
+ * word here still renders its instant and its age — the parenthetical simply
+ * carries one fact instead of two.
+ */
+const INCOMPLETE_LABELS: Record<string, string> = {
+  session_reaped: "reaped",
+  session_silent: "unclosed",
+};
+
 const agentEventFragment = (
   record: CoverageRecord,
   row: CoverageSourceRecord | undefined,
   now: Date,
+  ages: boolean,
 ): string | null => {
   if (row === undefined) {
     return null;
@@ -115,11 +153,13 @@ const agentEventFragment = (
     case "complete":
       return "agent sessions reported";
     case "incomplete":
-      return row.reason === "session_reaped"
-        ? `${quiet} (reaped)`
-        : row.reason === "session_silent"
-          ? `${quiet} (unclosed)`
-          : quiet;
+      // The age first, the reason second: a reader scanning fourteen days of
+      // briefings after ONE over-fired reap sees the same instant every day,
+      // and only the age says the fact is ageing rather than recurring.
+      return `${quiet}${parenthetical([
+        ages ? agedSince(row.gapSince, now) : null,
+        INCOMPLETE_LABELS[row.reason] ?? null,
+      ])}`;
     case "unknown": {
       if (row.reason === "hub_did_not_report") {
         return null;
@@ -139,6 +179,7 @@ const agentEventFragment = (
 const gitFragment = (
   row: CoverageSourceRecord | undefined,
   now: Date,
+  ages: boolean,
 ): string | null => {
   if (row === undefined) {
     return null;
@@ -148,15 +189,20 @@ const gitFragment = (
       return "git evidence reported";
     case "incomplete": {
       if (row.reason === "evidence_stale") {
-        const age = ageSince(row.observedAt, now);
+        // An age with no instant to pair with. It is still an age, so the
+        // reduced sentence drops it too: either every time in this sentence
+        // is a relative age, or none is — never one of each.
+        const age = ages ? ageSince(row.observedAt, now) : null;
         return age === null
           ? "git evidence is stale"
           : `git evidence last collected ${age} ago`;
       }
       const since = instant(row.gapSince);
+      // Same rule as the rung above it: the instant, and the age beside it,
+      // so the two halves of one sentence can be compared without arithmetic.
       return since === null
         ? "commit authors with no reported session"
-        : `commit authors with no reported session since ${since}`;
+        : `commit authors with no reported session since ${since}${parenthetical([ages ? agedSince(row.gapSince, now) : null])}`;
     }
     case "unknown":
       return row.reason === "hub_did_not_report"
@@ -278,6 +324,33 @@ const fit = (head: string, fragments: readonly string[]): string => {
     : `${line.slice(0, MAX_COVERAGE_LINE_CHARS - 1)}.`;
 };
 
+const fragmentsOf = (
+  record: CoverageRecord,
+  now: Date,
+  ages: boolean,
+): readonly string[] => {
+  const reserved = record.sources
+    .filter((row) => row.source !== "agent_event" && row.source !== "git")
+    .map(reservedFragment);
+  return [
+    agentEventFragment(record, rowOf(record, "agent_event"), now, ages),
+    gitFragment(rowOf(record, "git"), now, ages),
+    ...reserved,
+  ].filter((fragment): fragment is string => fragment !== null);
+};
+
+const holdsEvery = (head: string, fragments: readonly string[]): boolean =>
+  `${head}: ${fragments.join("; ")}.`.length <= MAX_COVERAGE_LINE_CHARS;
+
+/**
+ * THE AGE IS DECORATION; THE RUNG IS THE CAVEAT. Both rungs gapped with an
+ * instant each is the longest shape this sentence carries, and two ages cost
+ * 20 characters against the 160 the briefing seat rests on — one over, in the
+ * shape that matters most. `fit` drops a whole fragment rather than half a
+ * word, so the age would have bought its own readability with somebody else's
+ * gap. It is therefore spent last: the sentence is built with ages, and if
+ * that will not hold every fragment it is rebuilt without them.
+ */
 export const coverageClause = (record: CoverageRecord, now: Date): string => {
   if (
     record.sources.length > 0 &&
@@ -285,15 +358,9 @@ export const coverageClause = (record: CoverageRecord, now: Date): string => {
   ) {
     return HUB_SILENT;
   }
-  const reserved = record.sources
-    .filter((row) => row.source !== "agent_event" && row.source !== "git")
-    .map(reservedFragment);
-  const fragments = [
-    agentEventFragment(record, rowOf(record, "agent_event"), now),
-    gitFragment(rowOf(record, "git"), now),
-    ...reserved,
-  ].filter((fragment): fragment is string => fragment !== null);
-  return fit(headOf(record), fragments);
+  const head = headOf(record);
+  const aged = fragmentsOf(record, now, true);
+  return fit(head, holdsEvery(head, aged) ? aged : fragmentsOf(record, now, false));
 };
 
 export const coverageNote = (
