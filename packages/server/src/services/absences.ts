@@ -249,28 +249,25 @@ export const readAbsenceCensus = async (
 ): Promise<AbsenceCensus> => {
   const now = deps.now();
   const graceMs = ABSENCE_MIN_GAP_HOURS * MS_PER_HOUR;
-  // One grouped pass over this repo's sessions rather than one correlated
-  // lookup per evidence row: the latter is O(evidence x sessions) on a hub
-  // whose planner has no statistics to save it from choosing that shape.
-  const lastSession = deps.db
-    .select({
-      developerId: agentSessions.developerId,
-      lastAt: sql`max(${agentSessions.lastHeartbeatAt})`.as("last_at"),
-    })
-    .from(agentSessions)
-    .where(eq(agentSessions.repo, repo))
-    .groupBy(agentSessions.developerId)
-    .as("last_session");
+  // A CORRELATED LOOKUP, ON PURPOSE, because `agent_sessions_developer_repo_idx`
+  // is (developer_id, repo) and serves exactly this shape in one index probe
+  // per evidence row. A grouped subquery joined in instead looks cheaper and
+  // is not: on a hub whose planner has no statistics — PGlite runs a
+  // single-process Postgres with no background workers, so autovacuum never
+  // fires and `reltuples` stays -1 — it is re-evaluated per row. Measured on
+  // a 200-developer corpus (5,000 sessions on the repo, 260 evidence rows):
+  // the joined subquery p50 225.6 ms, this p50 7.8 ms.
+  const lastSessionAt = sql`(select max(${agentSessions.lastHeartbeatAt}) from ${agentSessions} where ${agentSessions.developerId} = ${developers.id} and ${agentSessions.repo} = ${repo})`;
   // The listing's two findings in one predicate. An address no member matches
-  // loses the `developers` join and therefore the session join too, so it
-  // reads `last_at is null` — the same gap as a member who never reported a
-  // session on this repo. What is left is the grace rule: a commit more than
+  // loses the `developers` join, so the lookup above is over a NULL id and
+  // answers null — the same gap as a member who never reported a session on
+  // this repo. What is left is the grace rule: a commit more than
   // ABSENCE_MIN_GAP_HOURS after its author's newest reported session.
-  const isGap = sql`(${lastSession.lastAt} is null or (extract(epoch from (${commitEvidence.latestCommitAt} - ${lastSession.lastAt})) * 1000) > ${graceMs})`;
+  const isGap = sql`(${lastSessionAt} is null or (extract(epoch from (${commitEvidence.latestCommitAt} - ${lastSessionAt})) * 1000) > ${graceMs})`;
   const rows = await deps.db
     .select({
       gaps: sql`count(*) filter (where ${isGap})`,
-      earliestSessionAt: sql`min(${lastSession.lastAt}) filter (where ${isGap})`,
+      earliestSessionAt: sql`min(${lastSessionAt}) filter (where ${isGap})`,
       earliestCommitAt: sql`min(${commitEvidence.latestCommitAt}) filter (where ${isGap})`,
     })
     .from(commitEvidence)
@@ -279,7 +276,6 @@ export const readAbsenceCensus = async (
       eq(developerEmails.email, commitEvidence.authorEmail),
     )
     .leftJoin(developers, eq(developers.id, developerEmails.developerId))
-    .leftJoin(lastSession, eq(lastSession.developerId, developers.id))
     .where(
       and(
         eq(commitEvidence.repo, repo),

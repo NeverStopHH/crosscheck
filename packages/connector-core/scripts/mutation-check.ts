@@ -4822,8 +4822,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // thing, a killed terminal becomes a session watched to its end.
     label: "a reaped end is read as a clean end",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "const isGap = sql`(${agentSessions.reapedAt} is not null or (",
-    to: "const isGap = sql`((",
+    from: "  sql`(${table.reapedAt} is not null or (${table.endedAt} is null and ${table.lastHeartbeatAt} <= ${cutoff}))`;",
+    to: "  sql`((${table.endedAt} is null and ${table.lastHeartbeatAt} <= ${cutoff}))`;",
     test: `${SERVER}/test/coverage.test.ts`,
     because:
       "every repo whose sessions the reaper closed reports agent_event " +
@@ -4907,14 +4907,46 @@ export const MUTATIONS: readonly Mutation[] = [
       "the absence listing itself is silent about",
   },
   {
+    // A subquery correlated to the outer session row is re-executed once per
+    // session in the window, and PGlite has no background workers, so
+    // autovacuum never fires, nothing runs ANALYZE, and `reltuples` stays -1
+    // for the life of the hub: the nested loop is the PERMANENT plan, not a
+    // cold-start artefact.
+    label: "a scoped read rescans every session once per session",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  return sql`(${inArray(agentSessions.id, touched)} or ${inArray(agentSessions.id, unreported)})`;",
+    to: "  return sql`(exists (select 1 from ${workContexts} join ${workContextTargets} on ${workContextTargets.workContextId} = ${workContexts.id} where ${workContexts.sessionId} = ${agentSessions.id} and ${workContextTargets.kind} = 'file' and ${inArray(workContextTargets.value, [...paths])}) or (${gapCondition(agentSessions, cutoff)} and not ${reportedAnyFileTarget(agentSessions.id)}))`;",
+    test: `${SERVER}/test/coverage-measurement.test.ts`,
+    because:
+      "measured on a 200-developer corpus the scoped read goes from 10 ms " +
+      "to 536 ms, past the connector's 400 ms per-request timeout — and a " +
+      "timed-out GET reaches the connector as nothing, which §4 then renders " +
+      "as `Coverage unknown` about a hub that answered",
+  },
+  {
+    // The opposite choice for the opposite reason: the census correlates on
+    // (developer_id, repo) because an index serves exactly that shape in one
+    // probe per evidence row. A grouped subquery joined in is re-evaluated
+    // per row with no statistics to stop it.
+    label: "the git census joins a grouped scan instead of probing the index",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "  const lastSessionAt = sql`(select max(${agentSessions.lastHeartbeatAt}) from ${agentSessions} where ${agentSessions.developerId} = ${developers.id} and ${agentSessions.repo} = ${repo})`;",
+    to: '  const grouped = deps.db.select({ developerId: agentSessions.developerId, lastAt: sql`max(${agentSessions.lastHeartbeatAt})`.as("last_at") }).from(agentSessions).where(eq(agentSessions.repo, repo)).groupBy(agentSessions.developerId).as("last_session");\n  const lastSessionAt = sql`(select ${grouped.lastAt} from ${grouped} where ${grouped.developerId} = ${developers.id})`;',
+    test: `${SERVER}/test/coverage-measurement.test.ts`,
+    because:
+      "every unscoped coverage read — the SessionStart briefing's and " +
+      "`crosscheck status`' — goes from 8 ms to 226 ms on the same corpus, " +
+      "for a rung that answers one question about 260 rows",
+  },
+  {
     // A scope may narrow by what was OBSERVED and never by what was not. A
     // session reaped before it reported a work context has no target row, so
     // a bare EXISTS answers "it did not touch these files" to a question the
     // database cannot answer at all.
     label: "a session that reported nothing is scoped out of every question",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "  sql`(${reportedFileTargets(inArray(workContextTargets.value, [...paths]))} or (${isGap} and not ${reportedFileTargets()}))`;",
-    to: "  reportedFileTargets(inArray(workContextTargets.value, [...paths]));",
+    from: "        sql`not ${reportedAnyFileTarget(scopeSessions.id)}`,",
+    to: "        sql`${reportedAnyFileTarget(scopeSessions.id)}`,",
     test: `${SERVER}/test/coverage.test.ts`,
     because:
       "the sessions whose observation failed hardest vanish from the scoped " +
@@ -4929,8 +4961,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // the scope or `unknown` collapses into `complete`.
     label: "a session that reported its end is read as one that reported nothing",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "or (${isGap} and not ${reportedFileTargets()}))`;",
-    to: "or (not ${reportedFileTargets()}))`;",
+    from:
+      "        gapCondition(scopeSessions, cutoff),\n" +
+      "        sql`not ${reportedAnyFileTarget(scopeSessions.id)}`,",
+    to: "        sql`not ${reportedAnyFileTarget(scopeSessions.id)}`,",
     test: `${SERVER}/test/coverage.test.ts`,
     because:
       "a surface nobody ever worked on reads `complete` instead of " +
@@ -5183,7 +5217,9 @@ export const MUTATIONS: readonly Mutation[] = [
     // in a fortnight would make every verdict INDETERMINATE for ever.
     label: "a gap somewhere else is read as a gap about this surface",
     file: `${SERVER}/src/services/coverage.ts`,
-    from: "        ...(paths.length === 0 ? [] : [touchedScope(paths, isGap)]),",
+    from: `        ...(paths.length === 0
+          ? []
+          : [touchedScope(deps, repo, since, cutoff, paths)]),`,
     to: "        ...[],",
     test: `${SERVER}/test/coverage.test.ts`,
     because:
@@ -5438,6 +5474,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
+ * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5

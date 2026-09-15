@@ -34,6 +34,8 @@ import {
   COVERAGE_SESSION_WINDOW_DAYS,
   SUSPECT_MAX_PATHS,
 } from "../constants.ts";
+import { alias } from "drizzle-orm/pg-core";
+
 import {
   agentSessions,
   commitEvidence,
@@ -43,10 +45,18 @@ import {
 import { readAbsenceCensus } from "./absences.ts";
 import { presenceCutoff } from "./presence.ts";
 import type { AbsenceCensus } from "./absences.ts";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * The same table, read a second time inside the scope filter. Aliased because
+ * the outer aggregate is already reading it and Postgres would have no way to
+ * tell the two apart.
+ */
+const scopeSessions = alias(agentSessions, "scope_session");
 
 /** 00 §8.2, binding on all eight 1.0 specs. Order is part of the contract. */
 export const COVERAGE_SOURCES = [
@@ -247,13 +257,22 @@ const toCount = (value: unknown): number => {
  * hub made and can revoke, so it is the one a reader can act on.
  */
 /**
- * "This session reported a file target" — optionally, one of a given set.
- * The same work_contexts -> work_context_targets join `crosscheck suspect`
- * already makes (services/suspect.ts), riding
- * work_context_targets_kind_value_idx (db/schema.ts).
+ * "This session reported a file target at all" — the same
+ * work_contexts -> work_context_targets join `crosscheck suspect` already
+ * makes (services/suspect.ts), riding work_context_targets_kind_value_idx
+ * (db/schema.ts). Correlated on purpose, and only ever evaluated for the
+ * GAP sessions in the window, which is a few hundred rows rather than every
+ * session on the repo.
  */
-const reportedFileTargets = (match?: SQL): SQL =>
-  sql`exists (select 1 from ${workContexts} join ${workContextTargets} on ${workContextTargets.workContextId} = ${workContexts.id} where ${workContexts.sessionId} = ${agentSessions.id} and ${workContextTargets.kind} = 'file'${match === undefined ? sql.empty() : sql` and ${match}`})`;
+const reportedAnyFileTarget = (sessionId: AnyPgColumn): SQL =>
+  sql`exists (select 1 from ${workContexts} join ${workContextTargets} on ${workContextTargets.workContextId} = ${workContexts.id} where ${workContexts.sessionId} = ${sessionId} and ${workContextTargets.kind} = 'file')`;
+
+/** The two ways observation stops, for whichever alias of the table. */
+const gapCondition = (
+  table: typeof agentSessions | typeof scopeSessions,
+  cutoff: Date,
+): SQL =>
+  sql`(${table.reapedAt} is not null or (${table.endedAt} is null and ${table.lastHeartbeatAt} <= ${cutoff}))`;
 
 /**
  * §3.2a's `paths` half: count only the sessions that touched the surface the
@@ -280,9 +299,57 @@ const reportedFileTargets = (match?: SQL): SQL =>
  * managed to before the silence, so it may not. Only a gap-session can enter
  * the scope this way, so the arm can move an answer towards `incomplete` and
  * never towards `complete`.
+ *
+ * TWO SET MEMBERSHIPS, NOT TWO CORRELATED EXISTS, and that is a budget
+ * decision with numbers behind it. A correlated `exists (… value in (…))` is
+ * re-evaluated once per session in the window, and on a hub whose planner has
+ * NO STATISTICS — PGlite runs a single-process Postgres with no background
+ * workers, so autovacuum never fires and `reltuples` stays -1 — it is planned
+ * as a nested loop whose inner side is rescanned per row. Measured on a
+ * 200-developer corpus (5,000 sessions on the repo in the window, 200,000
+ * file targets), scoped to a 30-file pin set:
+ *
+ *   correlated `exists` on the paths alone       p50 536.2 ms
+ *   both arms correlated                         p50 164.5 ms
+ *   the two subqueries below                     p50  10.2 ms
+ *
+ * The second subquery carries the window and the gap predicate itself, so the
+ * NOT EXISTS inside it runs for the few hundred gap sessions rather than for
+ * every session on the repo — which is where the cost actually went.
  */
-const touchedScope = (paths: readonly string[], isGap: SQL): SQL =>
-  sql`(${reportedFileTargets(inArray(workContextTargets.value, [...paths]))} or (${isGap} and not ${reportedFileTargets()}))`;
+const touchedScope = (
+  deps: Deps,
+  repo: string,
+  since: Date,
+  cutoff: Date,
+  paths: readonly string[],
+): SQL => {
+  const touched = deps.db
+    .select({ sessionId: workContexts.sessionId })
+    .from(workContexts)
+    .innerJoin(
+      workContextTargets,
+      eq(workContextTargets.workContextId, workContexts.id),
+    )
+    .where(
+      and(
+        eq(workContextTargets.kind, "file"),
+        inArray(workContextTargets.value, [...paths]),
+      ),
+    );
+  const unreported = deps.db
+    .select({ id: scopeSessions.id })
+    .from(scopeSessions)
+    .where(
+      and(
+        eq(scopeSessions.repo, repo),
+        gt(scopeSessions.lastHeartbeatAt, since),
+        gapCondition(scopeSessions, cutoff),
+        sql`not ${reportedAnyFileTarget(scopeSessions.id)}`,
+      ),
+    );
+  return sql`(${inArray(agentSessions.id, touched)} or ${inArray(agentSessions.id, unreported)})`;
+};
 
 const readAgentEventCoverage = async (
   deps: Deps,
@@ -292,7 +359,7 @@ const readAgentEventCoverage = async (
   paths: readonly string[],
 ): Promise<CoverageSourceRecord> => {
   const cutoff = presenceCutoff(now);
-  const isGap = sql`(${agentSessions.reapedAt} is not null or (${agentSessions.endedAt} is null and ${agentSessions.lastHeartbeatAt} <= ${cutoff}))`;
+  const isGap = gapCondition(agentSessions, cutoff);
   const rows = await deps.db
     .select({
       total: sql`count(*)`,
@@ -306,7 +373,9 @@ const readAgentEventCoverage = async (
       and(
         eq(agentSessions.repo, repo),
         gt(agentSessions.lastHeartbeatAt, since),
-        ...(paths.length === 0 ? [] : [touchedScope(paths, isGap)]),
+        ...(paths.length === 0
+          ? []
+          : [touchedScope(deps, repo, since, cutoff, paths)]),
       ),
     );
   const row = rows[0];

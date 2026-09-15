@@ -29,8 +29,11 @@
  * data, which is what the first draft of the spec could not do.
  */
 import { describe, expect, test } from "bun:test";
+import { drizzle } from "drizzle-orm/pglite";
 
 import { SESSION_REAP_STALE_HOURS } from "../src/constants.ts";
+import * as schema from "../src/db/schema.ts";
+import type { PGlite } from "@electric-sql/pglite";
 import {
   agentSessions,
   commitEvidence,
@@ -241,6 +244,209 @@ describe("COV-8: what coverage costs the response it rides", () => {
 
     // Assert
     expect(p95).toBeLessThan(HUB_RESPONSE_ALLOWANCE_MS);
+  });
+});
+
+/**
+ * The trial's 127 sessions are two orders of magnitude below the size where
+ * this read's PLAN changes, so COV-8 above bounds the corpus it names and
+ * nothing larger. This is the same measurement on a corpus shaped like a
+ * team rather than like the trial — and it is the one that binds, because
+ * `SCALE: a product for MANY teams; the three-person trial is never the
+ * design target`.
+ *
+ * Why a plan changes at all on a hub that is not growing: PGlite runs a
+ * single-process Postgres with NO background workers, so autovacuum never
+ * fires, nothing in this tree runs ANALYZE, and `reltuples` stays -1 for the
+ * life of the hub. The planner therefore believes every table is tiny and
+ * nests loops accordingly — for ever, not as a cold-start artefact. A query
+ * on this path may not depend on statistics it will never get.
+ */
+const SCALE_SESSIONS = 2000;
+const SCALE_FILES = 600;
+const SCALE_TARGETS_PER_CONTEXT = 12;
+
+const scaleRepo = async (): Promise<TrialFixture> => {
+  const harness = await createTestHarness();
+  const developer = await createTestDeveloper(harness, "Nick", "nick@example.com");
+  const files = Array.from(
+    { length: SCALE_FILES },
+    (_unused, index) => `src/mod/file${String(index).padStart(3, "0")}.ts`,
+  );
+  const sessions = Array.from({ length: SCALE_SESSIONS }, (_unused, index) => {
+    const heartbeat = at(-((index % (13 * 24)) * HOUR_MS + (index % 60) * MINUTE_MS));
+    const gap = index % 10 === 0;
+    return {
+      id: `ses_${String(index).padStart(5, "0")}`,
+      developerId: developer.developerId,
+      agentKind: "claude-code",
+      repo: REPO,
+      branch: "main",
+      baseCommit: "a1b2c3d4",
+      status: "analyzing" as const,
+      startedAt: new Date(heartbeat.getTime() - 30 * MINUTE_MS),
+      lastHeartbeatAt: heartbeat,
+      endedAt: gap ? null : new Date(heartbeat.getTime() + MINUTE_MS),
+      reapedAt: null,
+    };
+  });
+  for (let start = 0; start < sessions.length; start += 400) {
+    await harness.db.insert(agentSessions).values(sessions.slice(start, start + 400));
+  }
+  const contexts = sessions.map((session, index) => ({
+    id: `wc_${String(index).padStart(5, "0")}`,
+    sessionId: session.id,
+    title: "work",
+    status: "analyzing" as const,
+    createdAt: session.lastHeartbeatAt,
+  }));
+  for (let start = 0; start < contexts.length; start += 400) {
+    await harness.db.insert(workContexts).values(contexts.slice(start, start + 400));
+  }
+  const targets = contexts.flatMap((context, index) =>
+    Array.from({ length: SCALE_TARGETS_PER_CONTEXT }, (_unused, slot) => ({
+      workContextId: context.id,
+      kind: "file" as const,
+      value: files[(index * 7 + slot * 13) % SCALE_FILES] ?? "src/a.ts",
+      source: "tool_edit" as const,
+      createdAt: context.createdAt,
+    })),
+  );
+  const seen = new Set<string>();
+  const unique = targets.filter((target) => {
+    const key = `${target.workContextId}|${target.value}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+  for (let start = 0; start < unique.length; start += 400) {
+    await harness.db.insert(workContextTargets).values(unique.slice(start, start + 400));
+  }
+  await harness.db.insert(commitEvidence).values({
+    repo: REPO,
+    authorEmail: "nick@example.com",
+    authorName: "nick-git",
+    latestCommitAt: at(-2 * HOUR_MS),
+    commitCount: 40,
+    windowDays: 14,
+    collectedAt: at(-HOUR_MS),
+    reportedBy: developer.developerId,
+  });
+  return { harness, viewerId: developer.developerId, files };
+};
+
+describe("COV-8 at team scale: the shape may not depend on statistics", () => {
+  test("no subquery of the scoped read is correlated to the outer session", async () => {
+    // THE GUARD THAT ACTUALLY SEPARATES THE TWO SHAPES, and the wall-clock
+    // case below does not — said plainly because a threshold that passes
+    // against the unbuilt code proves nothing. The plan flip is knife-edge
+    // and corpus-shaped: it is decisive on a 200-developer corpus (5,000
+    // sessions on the repo, 200,000 file targets, 100,000 claims), where the
+    // correlated form measured p50 536.2 ms against 10.2 ms for this one, and
+    // it does not appear at any corpus small enough to seed in a unit suite.
+    //
+    // So this pins the PROPERTY instead of the clock: a subquery correlated
+    // to the outer `agent_sessions` row is re-executed once per session in
+    // the window, and a hub whose planner has no statistics will nest-loop it
+    // for ever. Set membership cannot be re-executed per row. The SQL is the
+    // one the real service emits — captured through drizzle's own logger over
+    // the harness's client, so there is no second spelling of the query to
+    // drift.
+    const { harness, viewerId } = await trialRepo();
+    const captured: string[] = [];
+    const logged = drizzle(
+      (harness.db as unknown as { readonly $client: PGlite }).$client,
+      {
+        schema,
+        logger: {
+          logQuery: (query: string) => {
+            captured.push(query);
+          },
+        },
+      },
+    );
+
+    // Act
+    await readCoverage(
+      { db: logged as unknown as TestHarness["db"], now: harness.clock.now },
+      viewerId,
+      REPO,
+      {
+        scope: {
+          sinceIso: at(-14 * 24 * HOUR_MS).toISOString(),
+          paths: ["src/mod/file000.ts", "src/mod/file001.ts"],
+        },
+      },
+    );
+    const scan = captured.find((query) =>
+      query.includes('from "agent_sessions"'),
+    );
+
+    // Assert
+    expect(scan, "the agent_event aggregate was not emitted").toBeDefined();
+    expect(scan).toContain('"agent_sessions"."id" in (select');
+    expect(
+      scan?.includes('= "agent_sessions"."id"'),
+      "a subquery correlates to the outer session row",
+    ).toBe(false);
+
+    // And the git census, whose shape is the opposite choice for the opposite
+    // reason: `agent_sessions_developer_repo_idx` is (developer_id, repo) and
+    // serves one index probe per evidence row, where a grouped subquery
+    // joined in is re-evaluated per row with no statistics to stop it —
+    // measured p50 225.6 ms against 7.8 ms on the same corpus.
+    const census = captured.find((query) =>
+      query.includes('from "commit_evidence" left join "developer_emails"'),
+    );
+    expect(census, "the git census was not emitted").toBeDefined();
+    expect(census).toContain(
+      '"agent_sessions"."developer_id" = "developers"."id"',
+    );
+    expect(
+      census?.includes("group by"),
+      "the census joins a grouped scan instead of probing the index",
+    ).toBe(false);
+  });
+
+  test("a pin-sized scoped read stays inside one request timeout", async () => {
+    // Arrange
+    const { harness, viewerId, files } = await scaleRepo();
+    const deps = { db: harness.db, now: harness.clock.now };
+    const rounds = 10;
+    const scoped: number[] = [];
+    const unscoped: number[] = [];
+
+    // Act: the two shapes that ride a hook path — the briefing's repo-wide
+    // read and the pin lane's scoped one.
+    for (let round = 0; round < rounds; round += 1) {
+      const wide = performance.now();
+      await readCoverage(deps, viewerId, REPO);
+      unscoped.push(performance.now() - wide);
+
+      const start = performance.now();
+      await readCoverage(deps, viewerId, REPO, {
+        scope: {
+          sinceIso: at(-14 * 24 * HOUR_MS).toISOString(),
+          paths: files.slice(0, 30),
+        },
+      });
+      scoped.push(performance.now() - start);
+    }
+    const scopedP95 = percentile(scoped, 0.95);
+    const unscopedP95 = percentile(unscoped, 0.95);
+    process.stdout.write(
+      `COV-8  at ${String(SCALE_SESSIONS)} sessions / ${String(SCALE_FILES)} files: ` +
+        `unscoped p95 ${unscopedP95.toFixed(1)} ms, scoped-30 p95 ${scopedP95.toFixed(1)} ms; ` +
+        `allowance ${String(HUB_RESPONSE_ALLOWANCE_MS)} ms\n`,
+    );
+
+    // Assert: a response slower than the connector's per-request timeout
+    // arrives as nothing at all, and §4's rule then renders that as
+    // "Coverage unknown" — a wrong diagnosis of a hub that answered.
+    expect(scopedP95).toBeLessThan(HUB_RESPONSE_ALLOWANCE_MS);
+    expect(unscopedP95).toBeLessThan(HUB_RESPONSE_ALLOWANCE_MS);
   });
 });
 
