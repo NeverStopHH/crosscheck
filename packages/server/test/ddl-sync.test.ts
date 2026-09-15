@@ -18,6 +18,23 @@ const PINS_SURFACE_CHECK_PATTERN =
   /pins_surface_length_check CHECK \(char_length\(surface\) <= (\d+)\)/;
 const PINS_CHECK_RECIPE_PATTERN =
   /pins_check_length_check\s+CHECK \(check_recipe IS NULL OR char_length\(check_recipe\) <= (\d+)\)/;
+/**
+ * One `DO $$ … END $$;` block of bootstrap.sql, picked by something inside it.
+ *
+ * bootstrap.sql now carries MORE THAN ONE guarded block, and the two tests
+ * that replay one of them must not replay the other by accident:
+ * `db.execute` prepares a SINGLE command, so a slice holding two statements
+ * fails for a reason that has nothing to do with what is under test. Named
+ * rather than sliced by index for the same reason — the next guarded block
+ * appended to that file must not silently re-point either test.
+ */
+const guardedBlockContaining = (
+  bootstrapSql: string,
+  needle: string,
+): string => {
+  const blocks = bootstrapSql.match(/DO \$\$\n[\s\S]*?\nEND\n\$\$;/g) ?? [];
+  return blocks.find((block) => block.includes(needle)) ?? "";
+};
 
 describe("bootstrap.sql DDL sync", () => {
   test("claims body CHECK matches MAX_CLAIM_BODY_LENGTH", async () => {
@@ -83,7 +100,10 @@ describe("bootstrap.sql DDL sync", () => {
     // a single command.
     const harness = await createTestHarness();
     const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
-    const widener = bootstrapSql.slice(bootstrapSql.indexOf("DO $$"));
+    const widener = guardedBlockContaining(
+      bootstrapSql,
+      "claims_body_length_check",
+    );
     const oidOfCheck = async (): Promise<string> => {
       const result = (await harness.db.execute(
         sql`SELECT oid::text AS oid FROM pg_constraint WHERE conname = 'claims_body_length_check'`,
@@ -111,6 +131,68 @@ describe("bootstrap.sql DDL sync", () => {
       sql`ALTER TABLE claims ADD CONSTRAINT claims_body_length_check CHECK (char_length(body) <= 10000)`,
     );
     expect(await oidOfCheck()).not.toBe(before);
+  });
+
+  test("claims.stale_at is retired and its drop cannot re-fire", async () => {
+    // Arrange: `stale_at` had five hits and no writer — a column every reader
+    // saw as a permanent null while `get_diagnosis` shipped it as a claim's
+    // currency. Retiring it rather than redefining it is the one-authority
+    // answer (02 §4): a timestamp beside a state invites the next reader to
+    // compute `now() - stale_at` and re-invent the clock definition.
+    //
+    // THE DROP IS GUARDED, and that is not decoration. bootstrap.sql runs in
+    // FULL on every hub start (db/client.ts execs the whole file), and
+    // `ALTER TABLE ... DROP COLUMN IF EXISTS` takes ACCESS EXCLUSIVE whether
+    // or not the column is there — the same defect the body-length widener
+    // above exists to prevent, on a different statement.
+    //
+    // CCB-2, the grep half: after this commit the only surviving hit is the
+    // FROZEN pre-search-block fixture, which is a snapshot of an older
+    // database and would become a different fixture if edited.
+    //
+    // The pattern dodges its own literal on purpose — this directive lives in
+    // a file the grep walks, and `stale[A]t` matches the identifier without
+    // matching the line that names it (verify-claims.ts's own header warns
+    // that an illustration written in the directive's syntax IS a directive).
+    // `stale_at timestamptz` is the COLUMN, so prose about the retirement —
+    // bootstrap.sql's guarded drop — is not a hit. Scoped to `src` plus the
+    // fixture directory: the claim is that no MODULE declares or reads the
+    // column, and this test file necessarily names it to assert that.
+    //
+    // VERIFY: grep -rlE 'stale[A]t|stale_at timestamptz' packages/*/src packages/server/test/fixtures
+    // PRINTS: packages/server/test/fixtures/pre-search-block-bootstrap.sql
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert: gone from the CREATE TABLE, and dropped only under a guard.
+    expect(bootstrapSql).not.toContain("  stale_at timestamptz,");
+    const drop = guardedBlockContaining(bootstrapSql, "stale_at");
+    expect(drop).toContain("IF EXISTS (");
+    expect(drop).toContain("ALTER TABLE claims DROP COLUMN stale_at;");
+    // And the guard has teeth: no top-level ALTER may name the column, which
+    // is what an unguarded retirement would look like.
+    expect(bootstrapSql).not.toMatch(/^ALTER TABLE claims DROP COLUMN/m);
+  });
+
+  test("dropping stale_at twice leaves the claims table alone", async () => {
+    // Arrange: a restart replays the guarded block against a database that
+    // already lost the column. It must be a no-op, not an error and not a
+    // second ALTER.
+    const harness = await createTestHarness();
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    const drop = guardedBlockContaining(bootstrapSql, "stale_at");
+    const hasStaleAt = async (): Promise<boolean> => {
+      const result = (await harness.db.execute(
+        sql`SELECT count(*)::int AS n FROM information_schema.columns WHERE table_name = 'claims' AND column_name = 'stale_at'`,
+      )) as unknown as { readonly rows: readonly { readonly n: number }[] };
+      return (result.rows[0]?.n ?? 0) > 0;
+    };
+
+    // Act: the harness already ran the file once; this is the restart.
+    expect(drop).not.toBe("");
+    await harness.db.execute(sql.raw(drop));
+
+    // Assert
+    expect(await hasStaleAt()).toBe(false);
   });
 
   test("work_context_targets.created_at is added for the #19 pointer age", async () => {

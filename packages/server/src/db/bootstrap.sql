@@ -89,7 +89,6 @@ CREATE TABLE IF NOT EXISTS claims (
   provenance text NOT NULL,
   dedup_count integer NOT NULL DEFAULT 1,
   last_seen_at timestamptz,
-  stale_at timestamptz,
   evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL
 );
@@ -549,6 +548,39 @@ BEGIN
     ALTER TABLE claims DROP CONSTRAINT IF EXISTS claims_body_length_check;
     ALTER TABLE claims ADD CONSTRAINT claims_body_length_check
       CHECK (char_length(body) <= 10000);
+  END IF;
+END
+$$;
+
+-- ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
+
+-- `stale_at` IS RETIRED, NOT REDEFINED. It had one declaration and no writer:
+-- no INSERT, no UPDATE, no service, no job, and it was not on the wire, so
+-- every reader got a permanent NULL that `get_diagnosis` shipped as a claim's
+-- currency. A claim's currency is now DERIVED from its commit binding and its
+-- latest revalidation (services/claim-validity.ts), and that is the one
+-- authority. Redefining this column would have put a timestamp beside a state
+-- and invited the next reader to compute `now() - stale_at`, which is the
+-- clock axis this design refuses: a claim being OLD is not evidence the CODE
+-- moved.
+--
+-- GUARDED, for the reason the body-length widener below carries at length:
+-- this file runs in FULL on every hub start, and `ALTER TABLE ... DROP COLUMN
+-- IF EXISTS` takes ACCESS EXCLUSIVE whether or not the column is there. So the
+-- ALTER only runs on a database that still has it — once, ever.
+--
+-- The frozen test/fixtures/pre-search-block-bootstrap.sql keeps its own
+-- `stale_at`: it is a snapshot of an older database, and editing it would make
+-- it a fixture of something that never existed.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'claims'
+      AND column_name = 'stale_at'
+  ) THEN
+    ALTER TABLE claims DROP COLUMN stale_at;
   END IF;
 END
 $$;

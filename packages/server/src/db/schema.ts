@@ -272,7 +272,6 @@ export const claims = pgTable(
     provenance: text("provenance", { enum: PROVENANCES }).notNull(),
     dedupCount: integer("dedup_count").notNull().default(1),
     lastSeenAt: timestamptz("last_seen_at"),
-    staleAt: timestamptz("stale_at"),
     // Persisted wire refs; materializing supports-edges from them is a
     // follow-up because referenced claims may arrive later in the same flush.
     evidenceRefs: jsonb("evidence_refs")

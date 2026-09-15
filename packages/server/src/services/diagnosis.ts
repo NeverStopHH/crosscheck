@@ -125,7 +125,6 @@ export interface ClaimView {
   readonly dedupCount: number;
   readonly evidenceRefs: readonly string[];
   readonly lastSeenAt: string | null;
-  readonly staleAt: string | null;
   readonly createdAt: string;
 }
 
@@ -208,7 +207,6 @@ const toClaimView = ({
   dedupCount: row.dedupCount,
   evidenceRefs: row.evidenceRefs,
   lastSeenAt: toIsoOrNull(row.lastSeenAt),
-  staleAt: toIsoOrNull(row.staleAt),
   createdAt: row.createdAt.toISOString(),
 });
 
