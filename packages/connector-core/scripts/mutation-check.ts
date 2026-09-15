@@ -5005,6 +5005,35 @@ export const MUTATIONS: readonly Mutation[] = [
       "doctor's count of ambiguous worktrees stays at zero on the very " +
       "machines where it should be raising its hand",
   },
+  {
+    // Spec 01 §3.6 says SessionEnd takes "the last n, READ in the acquisition
+    // that reads state before deletion". That acquisition does not exist —
+    // handleSessionEnd reads unlocked and endSessionFlow deletes unlocked —
+    // and a read is stale whenever Stop's git lane or a detached worker
+    // allocates in the same window.
+    label: "the end reads a position something else already owns",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  const seq = seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0);",
+    to: "  const seq = seqAt(await allocateSeq(input.home, input.hostSessionKey, 0), 0);",
+    test: `${CORE}/test/end-session-seq.test.ts`,
+    because:
+      "`session.ended` lands on a position the session already issued, so the " +
+      "hub answers conflict and the session's last word has no place in its " +
+      "own order — on every session that ended while a worker was still writing",
+  },
+  {
+    // The deferred half. The marker is the ONLY carrier once the state file is
+    // deleted, and reap's DeferredEnder runs in a later process.
+    label: "a deferred end is silently unsequenced",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "      seq,\n    })}\\n`,",
+    to: "    })}\\n`,",
+    test: `${CORE}/test/end-session-seq.test.ts`,
+    because:
+      "every session that ended with a backlog on disk — an offline " +
+      "afternoon, a slow hub — loses its end from the order, and the sessions " +
+      "that deferred are exactly the ones that had the most left to say",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

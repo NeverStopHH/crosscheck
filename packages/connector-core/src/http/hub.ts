@@ -3,6 +3,7 @@ import {
   MAX_PIN_SWEEP_UPDATES,
   PIN_PRESENCE_TERMINAL,
 } from "@crosscheck/schema";
+import type { SeqField } from "@crosscheck/schema";
 
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
@@ -206,15 +207,22 @@ export const heartbeatSession = (
     capture: true,
   });
 
+/**
+ * `session.ended` does not travel an envelope, so its POSITION rides this body.
+ * The hub's SessionStatusBodySchema is a STRICT object and declares the field
+ * for exactly that reason. Omitted, the end is stored unsequenced with its
+ * reason — which is what a reap-closed end and a pre-seq connector both are.
+ */
 export const endSession = (
   ctx: HubContext,
   sessionId: string,
+  seq?: SeqField,
 ): Promise<HubResult<unknown>> =>
   hubRequest(ctx, {
     method: "POST",
     path: `/api/sessions/${encodeURIComponent(sessionId)}/end`,
     schema: z.unknown(),
-    body: { status: "done" },
+    body: seq === undefined ? { status: "done" } : { status: "done", seq },
     capture: true,
   });
 

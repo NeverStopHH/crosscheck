@@ -119,6 +119,7 @@ export const sessionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       developer.id,
       c.req.param("id"),
       parsed.data.status,
+      parsed.data.seq,
     );
     switch (result.outcome) {
       case "not_found":

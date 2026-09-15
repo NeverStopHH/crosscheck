@@ -21,6 +21,10 @@
  */
 import type { Envelope, SeqField } from "@crosscheck/schema";
 
+/** Re-exported so a connector that does not depend on the schema package
+ *  directly can still name the field it is passing through. */
+export type { SeqField };
+
 import type { SeqRange } from "../state/session-state.ts";
 
 export const ALLOCATION_FAILED: SeqField = { reason: "allocation_failed" };

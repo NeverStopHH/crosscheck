@@ -1,3 +1,4 @@
+import type { SeqField } from "@crosscheck/schema";
 import {
   HTTP_NOT_FOUND,
   MAX_WORK_CONTEXT_TITLE_CHARS,
@@ -166,7 +167,10 @@ const selfName = (
  */
 const deferredEnder =
   (ctx: HookContext, budget: HookBudget): DeferredEnder =>
-  async (crosscheckSessionId: string): Promise<DeferredEndOutcome> => {
+  async (
+    crosscheckSessionId: string,
+    seq?: SeqField,
+  ): Promise<DeferredEndOutcome> => {
     const roomMs = budget.spareMs();
     if (roomMs <= 0) {
       return "retry";
@@ -174,6 +178,10 @@ const deferredEnder =
     const result = await endSession(
       { ...ctx.hub, timeoutMs: Math.min(ctx.hub.timeoutMs, roomMs) },
       crosscheckSessionId,
+      // The position the ENDING session allocated, carried through its marker.
+      // Without it a deferred end is permanently unsequenced — and the deferral
+      // happens exactly when a session had the most left to say.
+      seq,
     );
     if (result.ok) {
       return "ended";
