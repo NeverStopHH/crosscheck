@@ -10,6 +10,7 @@
  * cursor.com/docs/hooks on 2026-08-28; the offline copy is
  * test/fixtures/cursor-contract/docs-excerpt-cursor-hooks.md.
  */
+import { UNPROJECTED_LEDGER_KINDS_REFUSAL } from "@crosscheck/connector-core/derive/capabilities.ts";
 import type { DeriveCapabilityManifest } from "@crosscheck/connector-core/derive/capabilities.ts";
 import { CURSOR_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";
 
@@ -48,6 +49,10 @@ export const CURSOR_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
     },
   ],
   refusals: [
+    // The two canonical kinds nothing projects, on any host — one sentence
+    // for the whole product, shared by reference so the three manifests
+    // cannot drift apart while it is true.
+    UNPROJECTED_LEDGER_KINDS_REFUSAL,
     {
       name: "commit collection",
       sentence:

@@ -19,6 +19,7 @@
  * parity feature that cost byte transparency would not be parity, it would be
  * a different product.
  */
+import { UNPROJECTED_LEDGER_KINDS_REFUSAL } from "@crosscheck/connector-core/derive/capabilities.ts";
 import type { DeriveCapabilityManifest } from "@crosscheck/connector-core/derive/capabilities.ts";
 import { ACP_AGENT_KIND_PREFIX } from "@crosscheck/connector-core/state/host-session-key.ts";
 
@@ -66,6 +67,10 @@ export const ACP_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
     },
   ],
   refusals: [
+    // The two canonical kinds nothing projects, on any host — one sentence
+    // for the whole product, shared by reference so the three manifests
+    // cannot drift apart while it is true.
+    UNPROJECTED_LEDGER_KINDS_REFUSAL,
     {
       name: "commit collection",
       sentence:
@@ -74,7 +79,7 @@ export const ACP_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
     {
       name: "MCP-borne events",
       sentence:
-        "intent.declared, intent.amended, claim.created via publish_claim and claim.invalidated all need the crosscheck MCP server, which this proxy appends to session/new|load|resume only in --inject mode and only when the client already sent an mcpServers ARRAY — so a --no-inject proxy, and an --inject one whose client sent no array, emit none of those four kinds; the proxy's own log for that run (`~/.crosscheck/logs/acp-<pid>.log`) carries an `inject skip why=<reason>` line naming which of the documented reasons applied, and `doctor` does NOT: it reads the log directory for file NAMES only and never a byte of their content",
+        "claim.created via publish_claim and claim.invalidated need the crosscheck MCP server, which this proxy appends to session/new|load|resume only in --inject mode and only when the client already sent an mcpServers ARRAY — so a --no-inject proxy, and an --inject one whose client sent no array, emit neither kind; the proxy's own log for that run (`~/.crosscheck/logs/acp-<pid>.log`) carries an `inject skip why=<reason>` line naming which of the documented reasons applied, and `doctor` does NOT: it reads the log directory for file NAMES only and never a byte of their content",
     },
     {
       name: "second evidence lane",

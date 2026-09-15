@@ -5234,6 +5234,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "surface that cannot tell a client-shape problem from a broken " +
       "install, from --no-inject, or from a launcher refusal",
   },
+  {
+    // Two of the nine canonical kinds are projected by nobody, and they are
+    // the two AT-4 is about. Rule 2 of the capability registry: an absent
+    // capability is a SENTENCE, not an omitted field.
+    label: "two kinds are missing on every host and named on one",
+    file: `${CURSOR}/src/capabilities.ts`,
+    from: "    UNPROJECTED_LEDGER_KINDS_REFUSAL,\n",
+    to: "",
+    test: `${CORE}/test/derive-capability-registry.test.ts`,
+    because:
+      "a Cursor developer's set_intent and its amendment reach no event row " +
+      "on any host, `doctor` says nothing about it, and the silence reads " +
+      "exactly like an install that works",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5344,6 +5358,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2

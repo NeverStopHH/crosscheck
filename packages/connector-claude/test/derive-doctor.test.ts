@@ -72,6 +72,7 @@ describe("the Claude derive section", () => {
       "summarizer (claude-code)",
       "conference (claude-code)",
       "event_seq (claude-code)",
+      "intent timing events (claude-code)",
       "git lane blind spots (claude-code)",
     ]);
   });

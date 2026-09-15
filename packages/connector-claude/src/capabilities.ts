@@ -11,6 +11,7 @@
  * undeclared trigger and an undelivered declaration are both red.
  */
 import { DEFAULT_AGENT_KIND } from "@crosscheck/connector-core/constants.ts";
+import { UNPROJECTED_LEDGER_KINDS_REFUSAL } from "@crosscheck/connector-core/derive/capabilities.ts";
 import type { DeriveCapabilityManifest } from "@crosscheck/connector-core/derive/capabilities.ts";
 
 export const CLAUDE_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
@@ -48,6 +49,10 @@ export const CLAUDE_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
     },
   ],
   refusals: [
+    // The two canonical kinds nothing projects, on any host — one sentence
+    // for the whole product, shared by reference so the three manifests
+    // cannot drift apart while it is true.
+    UNPROJECTED_LEDGER_KINDS_REFUSAL,
     {
       name: "git lane blind spots",
       sentence:

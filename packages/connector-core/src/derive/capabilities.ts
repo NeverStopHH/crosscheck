@@ -81,6 +81,32 @@ export interface DeriveCapabilityManifest {
   readonly refusals: readonly DeriveRefusal[];
 }
 
+/**
+ * THE REFUSAL THAT BELONGS TO EVERY HOST, PHRASED ONCE AND SHARED BY
+ * REFERENCE.
+ *
+ * Two of the nine canonical kinds — `intent.declared` and `intent.amended`,
+ * the two AT-4 is actually about — are projected by nobody.
+ * `work_contexts.intent` is overwritten in place, so an amendment has no row
+ * of its own to carry a position; projecting both kinds off that one mutable
+ * row would give the declaration and every amendment ONE referent, and the
+ * amendments would be discarded as duplicates of the sentence they replace.
+ * Until the versioned ledger lands they are NOT PROJECTED AT ALL rather than
+ * projected wrongly.
+ *
+ * IT IS A FACT ABOUT THE MODEL, NOT ABOUT A HOST, so it is not three
+ * sentences. Two manifests named the kinds nowhere at all — the silent
+ * absence rule 2 above forbids — and the third scoped the absence to a
+ * NON-DEFAULT flag, which told a default-mode reader the kinds worked for
+ * them. Shared by reference so there is one line to delete on the day the
+ * ledger lands.
+ */
+export const UNPROJECTED_LEDGER_KINDS_REFUSAL: DeriveRefusal = {
+  name: "intent timing events",
+  sentence:
+    "no host emits `intent.declared` or `intent.amended` yet, on any platform and in any mode: `work_contexts.intent` is OVERWRITTEN in place, so an amendment has no row of its own to carry a position and projecting both kinds off that one mutable row would discard every amendment as a duplicate of the sentence it replaces — so `crosscheck` records WHAT this session says it is doing and cannot yet say whether an explanation was written before or after the change it excuses; the versioned intent ledger is what supplies the row, and this line goes away with it",
+};
+
 /** Lookup that cannot silently miss: an undeclared capability is a bug. */
 export const rungOf = (
   manifest: DeriveCapabilityManifest,
