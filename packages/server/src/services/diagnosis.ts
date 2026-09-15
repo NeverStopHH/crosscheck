@@ -153,6 +153,13 @@ export interface DiagnosisTargetView {
 }
 
 export interface Diagnosis {
+  /**
+   * The repo this tree belongs to, off the session the context hangs from.
+   * Carried because coverage is per repo by definition (03 refusal 4) and the
+   * route that answers this tree has to state how far its archive reaches;
+   * the alternative was a second query for a column this one already joins.
+   */
+  readonly repo: string;
   readonly workContext: WorkContextView;
   readonly claims: readonly ClaimView[];
   readonly edges: readonly ClaimEdgeView[];
@@ -416,6 +423,7 @@ export const getDiagnosis = async (
     .select({
       workContext: workContexts,
       baseCommit: agentSessions.baseCommit,
+      repo: agentSessions.repo,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -454,6 +462,7 @@ export const getDiagnosis = async (
   const targets = await listDiagnosisTargets(db, workContextId);
 
   return {
+    repo: contextRow.repo,
     workContext: toWorkContextView(contextRow.workContext, contextRow.baseCommit),
     claims: claimRows.map(toClaimView),
     edges: edgeRows.map(toClaimEdgeView),

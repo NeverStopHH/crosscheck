@@ -617,6 +617,17 @@ const TARGETS_UNREPORTED =
   "This hub does not report captured targets.";
 const TARGETS_EMPTY =
   "No targets were captured for this work context.";
+/**
+ * §5.1's hard rule on NO_TARGETS. "No targets were captured" is a claim about
+ * the WORK — a reader concludes there is no overlap with the file they are
+ * about to edit — and it is only true if the session was being watched. Under
+ * a gap it narrows to a claim about the archive, exactly as the search
+ * sentence does.
+ */
+const TARGETS_EMPTY_OBSERVED =
+  "No targets for this work context are in what was observed.";
+const CLAIMS_EMPTY = "Claims: no claims recorded yet.";
+const CLAIMS_EMPTY_OBSERVED = "Claims: none in what was observed.";
 
 /**
  * The FOURTH state: the hub answered, and this client could not read what it
@@ -627,16 +638,26 @@ const TARGETS_EMPTY =
 const targetsUnreadable = (dropped: number): string =>
   `The hub sent ${String(dropped)} target row${dropped === 1 ? "" : "s"} this client could not read.`;
 
-const targetsStateLines = (diagnosis: Diagnosis): readonly string[] => {
+/** True exactly when `targetsStateLines` would emit the EMPTY phrasing. */
+const saysNoTargets = (diagnosis: Diagnosis): boolean =>
+  diagnosis.targetsReported &&
+  diagnosis.targets.length === 0 &&
+  diagnosis.droppedTargets === 0;
+
+const targetsStateLines = (
+  diagnosis: Diagnosis,
+  gapped: boolean,
+): readonly string[] => {
   if (!diagnosis.targetsReported) {
     return [TARGETS_UNREPORTED];
   }
   if (diagnosis.targets.length > 0) {
     return [];
   }
-  return diagnosis.droppedTargets > 0
-    ? [targetsUnreadable(diagnosis.droppedTargets)]
-    : [TARGETS_EMPTY];
+  if (diagnosis.droppedTargets > 0) {
+    return [targetsUnreadable(diagnosis.droppedTargets)];
+  }
+  return [gapped ? TARGETS_EMPTY_OBSERVED : TARGETS_EMPTY];
 };
 
 /** Same-author revision edge; its TARGET is the retracted claim. */
@@ -854,6 +875,16 @@ export const renderDiagnosis = (
   const solvedLines = solvedBlock(diagnosis, now, solvedPresentation);
   const claims = claimsOldestFirst(diagnosis.claims);
 
+  // AT-1 on this surface. Both empty phrasings narrow under a gap, and the
+  // clause is added ONCE for the document rather than beside each sentence —
+  // two copies of the same caveat in one answer read as two caveats.
+  const gapped = mustQualifyEmptyAnswer(diagnosis.coverage);
+  const targetLines = targetsStateLines(diagnosis, gapped);
+  const emitsEmptyPhrasing =
+    diagnosis.claims.length === 0 || saysNoTargets(diagnosis);
+  const qualifier = emitsEmptyPhrasing
+    ? [coverageClause(diagnosis.coverage, now)]
+    : [];
   const opening =
     diagnosis.claims.length === 0
       ? [
@@ -861,10 +892,18 @@ export const renderDiagnosis = (
           contextLine,
           ...intentLines,
           ...solvedLines,
-          ...targetsStateLines(diagnosis),
-          "Claims: no claims recorded yet.",
+          ...targetLines,
+          gapped ? CLAIMS_EMPTY_OBSERVED : CLAIMS_EMPTY,
+          ...qualifier,
         ]
-      : [header, contextLine, ...intentLines, ...solvedLines, ...targetsStateLines(diagnosis)];
+      : [
+          header,
+          contextLine,
+          ...intentLines,
+          ...solvedLines,
+          ...targetLines,
+          ...qualifier,
+        ];
 
   const sections: readonly Section[] = [
     // WHERE, BEFORE WHAT. A reader who is about to edit the same file wants

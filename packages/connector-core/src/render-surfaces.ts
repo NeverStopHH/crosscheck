@@ -471,6 +471,7 @@ const diagnosisWith = (payload: string): Diagnosis => ({
   droppedTargets: 0,
   truncated: false,
   droppedRows: 0,
+  coverage: CORPUS_COVERAGE,
 });
 
 const refereeClaimWith = (payload: string, id: string): RefereeClaim => ({

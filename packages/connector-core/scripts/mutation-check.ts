@@ -4980,6 +4980,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "the unqualified sentence comes back over a known gap and the clause " +
       "beside it reads as a footnote rather than as the correction it is",
   },
+  {
+    // The diagnosis carries TWO empty-result phrasings §5.1 binds by name,
+    // and NO_TARGETS is the expensive one: a reader told "no targets were
+    // captured" concludes there is no overlap with the file they are about
+    // to edit, and acts on it.
+    label: "a tree says nothing was captured when nothing was watched",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  const gapped = mustQualifyEmptyAnswer(diagnosis.coverage);",
+    to: "  const gapped = false;",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "both empty sentences go back to claiming the WORK rather than the " +
+      "archive, so an unwatched session reads as a session that touched " +
+      "nothing and recorded nothing",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5087,7 +5102,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
- * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 2
+ * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-render.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1

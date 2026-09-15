@@ -729,6 +729,14 @@ export interface Diagnosis {
    * how many went missing (rule: a degraded state always has a surface).
    */
   readonly droppedRows: number;
+  /**
+   * How far the archive this tree was read from reaches (03 §3.5). REQUIRED,
+   * not optional: this surface carries two empty-result phrasings a reader
+   * acts on — "no claims recorded yet" and "no targets were captured" — and
+   * an optional field would let both be emitted with nothing said. A hub
+   * that sends none yields UNKNOWN_COVERAGE.
+   */
+  readonly coverage: CoverageRecord;
 }
 
 /**
@@ -760,6 +768,7 @@ const DiagnosisEnvelopeSchema = z
     // the renderer would then print an absence as a finding.
     targets: z.array(z.unknown()).optional(),
     truncated: z.boolean().default(false),
+    coverage: z.unknown().optional(),
   })
   .transform((value): Diagnosis => {
     const claims = parseRows(value.claims, DiagnosisClaimSchema);
@@ -777,6 +786,7 @@ const DiagnosisEnvelopeSchema = z
       truncated: value.truncated,
       droppedRows:
         claims.dropped + edges.dropped + external.dropped + targets.dropped,
+      coverage: parseCoverage(value.coverage),
     };
   });
 

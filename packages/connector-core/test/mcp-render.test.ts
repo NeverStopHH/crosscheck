@@ -36,6 +36,7 @@ import {
   safeId,
 } from "../src/mcp/render.ts";
 import type { SearchHit } from "../src/mcp/render.ts";
+import { UNKNOWN_COVERAGE } from "../src/http/coverage.ts";
 import type {
   Diagnosis,
   DiagnosisClaim,
@@ -92,6 +93,10 @@ const diagnosis = (overrides: Partial<Diagnosis> = {}): Diagnosis => ({
   droppedTargets: 0,
   truncated: false,
   droppedRows: 0,
+  // The hub-silent record: these fixtures predate coverage and assert the
+  // shapes that do NOT depend on it. The branches that do are in
+  // test/coverage-empty-answers.test.ts.
+  coverage: UNKNOWN_COVERAGE,
   ...overrides,
 });
 
@@ -955,9 +960,12 @@ describe("renderDiagnosis", () => {
       NOW,
     );
 
-    // Assert
+    // Assert: the fixture's record is the hub-silent one, so the sentence is
+    // the one narrowed to the archive (03 §5.1). The distinction this test
+    // exists for — "the hub answered none" vs "the hub does not answer" —
+    // is unchanged.
     expect(rendered).toContain(
-      "No targets were captured for this work context.",
+      "No targets for this work context are in what was observed.",
     );
     expect(rendered).not.toContain("does not report captured targets");
   });
@@ -1017,7 +1025,7 @@ describe("renderDiagnosis", () => {
 
     // Assert
     expect(rendered).toContain("«Login 500s on staging»");
-    expect(rendered).toContain("no claims");
+    expect(rendered).toContain("Claims: none in what was observed.");
   });
 });
 
@@ -1149,9 +1157,13 @@ describe("the session's intent on the MCP reading tools (trial finding #16)", ()
     // and this fixture's context has none captured. The intent's one-line
     // cost — what this test is about — is unchanged by that.
     expect(rendered.split("\n")[2]).toBe(
-      "No targets were captured for this work context.",
+      "No targets for this work context are in what was observed.",
     );
-    expect(rendered.split("\n")[3]?.startsWith("Claims (")).toBe(true);
+    // Line 3 is the coverage clause: an empty TARGETS state is an
+    // empty-result phrasing, and §5.1 binds NO_TARGETS by name — so the tree
+    // says how far the archive reached even though it has claims to show.
+    expect(rendered.split("\n")[3]?.startsWith("Coverage ")).toBe(true);
+    expect(rendered.split("\n")[4]?.startsWith("Claims (")).toBe(true);
     expect(rendered).not.toContain("intent");
   });
 

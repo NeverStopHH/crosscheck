@@ -16,9 +16,10 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { renderSearchResults } from "../src/mcp/render.ts";
+import { renderDiagnosis, renderSearchResults } from "../src/mcp/render.ts";
 import { UNKNOWN_COVERAGE } from "../src/http/coverage.ts";
 import type { CoverageRecord } from "../src/http/coverage.ts";
+import type { Diagnosis } from "../src/http/hub.ts";
 
 const NOW = new Date("2026-09-15T10:00:00.000Z");
 const GAP_ISO = "2026-09-05T08:13:00.000Z";
@@ -127,5 +128,103 @@ describe("COV-1: an empty search may not stand alone over a gap", () => {
 
     // Assert
     expect(output).toContain("Token refresh 500s");
+  });
+});
+
+const CLAIMS_EMPTY = "Claims: no claims recorded yet.";
+const TARGETS_EMPTY = "No targets were captured for this work context.";
+
+const tree = (
+  coverage: CoverageRecord,
+  overrides: Partial<Diagnosis> = {},
+): Diagnosis => ({
+  workContext: {
+    id: "wc_01",
+    sessionId: "cc_a-uuid",
+    title: "Login 500s on staging",
+    description: null,
+    status: "analyzing",
+    createdAt: "2026-09-14T10:00:00.000Z",
+    updatedAt: null,
+  },
+  claims: [],
+  edges: [],
+  externalClaims: [],
+  targets: [],
+  targetsReported: true,
+  droppedTargets: 0,
+  truncated: false,
+  droppedRows: 0,
+  coverage,
+  ...overrides,
+});
+
+/**
+ * The diagnosis carries TWO empty-result phrasings §5.1 names — the claims
+ * branch and NO_TARGETS — and both are claims a reader acts on. "No targets
+ * were captured" sends somebody away believing there is no overlap with the
+ * file they are about to edit.
+ */
+describe("the diagnosis empty branches may not stand alone over a gap", () => {
+  test("no claims over a gap names the gap and drops the bare sentence", () => {
+    // Act
+    const output = renderDiagnosis(tree(reaped()), NOW);
+
+    // Assert
+    expect(output).not.toContain(CLAIMS_EMPTY);
+    expect(output).toContain(GAP_SHOWN);
+  });
+
+  test("no targets over a gap names the gap and drops the bare sentence", () => {
+    // Act
+    const output = renderDiagnosis(
+      tree(reaped(), { claims: [], targets: [], targetsReported: true }),
+      NOW,
+    );
+
+    // Assert
+    expect(output).not.toContain(TARGETS_EMPTY);
+    expect(output).toContain("Coverage incomplete");
+  });
+
+  test("a watched tree keeps both sentences and says coverage is complete", () => {
+    // Act
+    const output = renderDiagnosis(tree(watched()), NOW);
+
+    // Assert
+    expect(output).toContain(CLAIMS_EMPTY);
+    expect(output).toContain(TARGETS_EMPTY);
+    expect(output).toContain("Coverage complete");
+  });
+
+  test("a tree WITH claims and targets carries no clause — the hard rule is about empties", () => {
+    // Act
+    const output = renderDiagnosis(
+      tree(reaped(), {
+        claims: [
+          {
+            id: "cl_01",
+            workContextId: "wc_01",
+            authorSessionId: "cc_a-uuid",
+            authorDeveloperId: "dev_other",
+            authorDeveloperName: "Robin",
+            kind: "finding",
+            body: "JWT validation fails after refresh",
+            status: "open",
+            confidence: 0.8,
+            provenance: "declared",
+            captureMode: "agent",
+            evidenceRefs: [],
+            dedupCount: 1,
+            createdAt: "2026-09-14T10:00:00.000Z",
+          },
+        ],
+        targets: [{ kind: "file", value: "src/auth.ts" }],
+      }),
+      NOW,
+    );
+
+    // Assert
+    expect(output).not.toContain("Coverage incomplete");
   });
 });
