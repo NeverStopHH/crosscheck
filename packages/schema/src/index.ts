@@ -112,7 +112,13 @@ export {
   KNOWN_RECORD_KINDS,
   PROTOCOL_VERSION,
   ProducerSchema,
+  SEQ_EPOCH_PATTERN,
+  SEQ_REFUSAL_REASONS,
+  SeqFieldSchema,
+  SeqRefusalSchema,
+  SeqStampSchema,
   isCompatibleVersion,
+  isSeqStamp,
   parseRecord,
 } from "./envelope.ts";
 export type {
@@ -120,6 +126,10 @@ export type {
   KnownRecordKind,
   ParseRecordResult,
   Producer,
+  SeqField,
+  SeqRefusal,
+  SeqRefusalReason,
+  SeqStamp,
 } from "./envelope.ts";
 
 export {

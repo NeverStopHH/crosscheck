@@ -23,6 +23,51 @@ export const ProducerSchema = z.looseObject({
 });
 
 /**
+ * THE POSITION A RECORD HOLDS IN ITS OWN SESSION (spec 01 §3.1) — one optional
+ * wire field, not nine new record kinds. The nine dotted names
+ * (`session.started`, `intent.amended`, `file.modified`, …) are a PROJECTION
+ * of records that already travel; a parallel set of event envelopes would
+ * double every record on the wire and build a second pipeline beside the one
+ * that works.
+ *
+ * `epoch` is regex-pinned to a UUID BECAUSE A CONNECTOR IS UNTRUSTED: an
+ * opaque id cannot carry prose into a rendered surface, so this field adds no
+ * untrusted slot anywhere and no case to the injection corpus. `n` is the
+ * per-session monotonic counter — happens-before is `A.n < B.n` inside one
+ * `(session, epoch)` and nowhere else, never a wall clock.
+ */
+export const SEQ_EPOCH_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export const SeqStampSchema = z.object({
+  epoch: z.string().regex(SEQ_EPOCH_PATTERN),
+  n: z.number().int().min(0),
+});
+
+/**
+ * WHY THERE IS NO POSITION, when the emitter is new enough to have tried.
+ *
+ * An ABSENT `seq` and a REFUSED one are different facts and the hub must not
+ * confound them: absent is a connector from before this protocol field
+ * (`pre_seq_connector`), refused is a seq-capable emitter that could not
+ * allocate one — a busy state lock, a deleted state file, or the ambiguous
+ * MCP session of §10 D1, where stamping the picker's guess would let AT-4
+ * answer confidently from a coin flip. The record still lands; only its
+ * POSITION is withheld.
+ *
+ * An ENUM from our own source, never prose — the same discipline the hub's
+ * CAUSAL_ORDER_REASONS follows, and for the same reason: a reason a renderer
+ * prints must not be a slot a producer can write into.
+ */
+export const SEQ_REFUSAL_REASONS = ["allocation_failed"] as const;
+
+export const SeqRefusalSchema = z.object({
+  reason: z.enum(SEQ_REFUSAL_REASONS),
+});
+
+export const SeqFieldSchema = z.union([SeqStampSchema, SeqRefusalSchema]);
+
+/**
  * Wire envelope for every crosscheck record (DESIGN.md §5).
  * Consumers MUST ignore unknown fields and unknown kinds — forward compatibility
  * is a protocol rule, not a convenience.
@@ -34,10 +79,25 @@ export const EnvelopeSchema = z.looseObject({
   producer: ProducerSchema,
   kind: z.string().min(1),
   body: z.unknown(),
+  /**
+   * OPTIONAL FOREVER. An envelope with no `seq` stays legal — the forward
+   * compatibility rule above is what keeps a pre-`seq` connector working
+   * against a new hub, and a new connector's `seq` is simply ignored by an
+   * older one (this is a loose object).
+   */
+  seq: SeqFieldSchema.optional(),
 });
 
 export type Producer = z.infer<typeof ProducerSchema>;
+export type SeqStamp = z.infer<typeof SeqStampSchema>;
+export type SeqRefusal = z.infer<typeof SeqRefusalSchema>;
+export type SeqField = z.infer<typeof SeqFieldSchema>;
+export type SeqRefusalReason = (typeof SEQ_REFUSAL_REASONS)[number];
 export type Envelope = z.infer<typeof EnvelopeSchema>;
+
+/** True for a `seq` that names a position rather than refusing one. */
+export const isSeqStamp = (seq: SeqField | undefined): seq is SeqStamp =>
+  seq !== undefined && "n" in seq;
 
 const RECORD_BODY_SCHEMAS = {
   claim: ClaimSchema,
