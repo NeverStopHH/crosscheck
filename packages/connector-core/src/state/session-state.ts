@@ -395,6 +395,32 @@ const SessionStateObjectSchema = z.looseObject({
   ghostDraftCount: z.number().int().min(0).default(0),
   ghostFailCount: z.number().int().min(0).default(0),
   ghostLastFailure: z.string().nullable().default(null),
+  /**
+   * THE PER-SESSION CAUSAL ORDER (spec 01 §3.3/§3.4): the opaque epoch this
+   * session's positions belong to, and the highest position ALLOCATED under
+   * it. Appended BELOW #50's counters and never renumbered — every consumer
+   * keys on the name.
+   *
+   * WHY A PAIR AND NOT A BARE COUNTER. Three measured mechanisms restart the
+   * counter without the epoch: a SessionStart RE-FIRE re-creates the state
+   * file under the same hostSessionKey (publishSessionState's header); a BUSY
+   * LOCK makes that publication fall back to a plain create with no carry at
+   * all ("the counters lose rather than the file"); and two HOMES on one key
+   * — a cloud or background agent sharing a host session id across machines —
+   * cannot share a ~/.crosscheck lock. A restarted counter under an unchanged
+   * epoch makes two distinct events share one `(session, epoch, n)`, which is
+   * a confident wrong answer about which came first. A restarted counter
+   * under a FRESH epoch is merely not comparable, which is the honest
+   * outcome: the hub sees two epochs, marks the session `broken /
+   * epoch_split`, and refuses the comparison instead of guessing.
+   *
+   * `eventSeq` counts ALLOCATIONS, not records: an emitter that dies between
+   * the allocation and its append leaves a GAP, and gaps are legal (§3.4).
+   * Loss is visible in the spool `.drops` ledger, never inferred from a hole
+   * here. The defaults keep every older state file parsing (§4).
+   */
+  seqEpoch: z.string().min(1).nullable().default(null),
+  eventSeq: z.number().int().min(0).default(0),
 });
 
 /**
@@ -531,6 +557,15 @@ export const withCarriedCapture = (
         // The #17 root cache is the session's, not the fire's: dropping it
         // makes the next tool call pay git again for a root already judged.
         knownWorktreeRoots: previous.knownWorktreeRoots,
+        // THE PAIR MOVES TOGETHER OR NOT AT ALL (spec 01 §3.4). The counter
+        // alone under the incoming fire's fresh epoch would be harmless; the
+        // EPOCH alone beside a counter reset to 0 re-issues positions this
+        // session has already handed out, and the hub cannot tell the second
+        // `(session, epoch, 3)` from a spool replay of the first. #50 added
+        // three counters and forgot this list, which is why both lines here
+        // carry a mutation anchor.
+        seqEpoch: previous.seqEpoch,
+        eventSeq: previous.eventSeq,
       };
 
 /**
@@ -951,5 +986,12 @@ export const deriveSessionState = (
     ghostDraftCount: 0,
     ghostFailCount: 0,
     ghostLastFailure: null,
+    // A RECOVERY IS A CREATE, so it mints its own epoch exactly as
+    // SessionStart does — a derived state with a null epoch would leave every
+    // record of every recovered session unsequenced, silently. This function
+    // enumerates every field by hand, so a field added to the schema tail and
+    // not here is absent from every recovered session and nothing says so.
+    seqEpoch: crypto.randomUUID(),
+    eventSeq: 0,
   };
 };

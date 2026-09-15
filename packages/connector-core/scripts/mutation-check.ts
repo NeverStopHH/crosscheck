@@ -4785,6 +4785,36 @@ export const MUTATIONS: readonly Mutation[] = [
       "52 pins are absent from the listing and nothing says so, which on a " +
       "five-year repo is the steady state rather than the edge case",
   },
+  {
+    // Spec 01 §3.4. #50 added three counters to the state tail and did NOT
+    // add them to withCarriedCapture's carried list; the causal-order pair
+    // cannot afford that omission, because a counter reset under a carried
+    // epoch re-issues positions the session has already handed out.
+    label: "a SessionStart re-fire restarts the position counter",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        seqEpoch: previous.seqEpoch,\n        eventSeq: previous.eventSeq,\n",
+    to: "        seqEpoch: previous.seqEpoch,\n",
+    test: `${CORE}/test/session-seq.test.ts`,
+    because:
+      "a compact re-fire sends the second half of the session back to n = 0 " +
+      "under the same epoch, so two distinct events share one (session, " +
+      "epoch, n) and the hub cannot tell the second from a spool replay",
+  },
+  {
+    // The other half of the same pair, and the one that fails SAFE if it is
+    // ever dropped — a fresh epoch beside a carried counter is merely not
+    // comparable. It is anchored because a reviewer cannot tell which half is
+    // which by reading the list, and the pair must move together.
+    label: "a re-fire mints a second epoch inside one session",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        seqEpoch: previous.seqEpoch,\n        eventSeq: previous.eventSeq,\n",
+    to: "        eventSeq: previous.eventSeq,\n",
+    test: `${CORE}/test/session-seq.test.ts`,
+    because:
+      "every compact splits the session's order in two, so a fence verdict " +
+      "on a compacted session refuses to say whether the reason predated the " +
+      "change — and nothing in the session's own telemetry explains why",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
