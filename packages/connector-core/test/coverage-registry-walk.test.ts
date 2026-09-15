@@ -27,8 +27,33 @@ import {
 } from "../src/coverage/exempt-surfaces.ts";
 import { REGISTERED_PACKAGES } from "./fixtures/registry-packages.ts";
 
-/** The module names a coverage record, by import, by field or by parameter. */
-const NAMES_COVERAGE = /\bcoverage\b|\bCoverage\b/;
+/**
+ * The module names a coverage record IN CODE — by import, by field, by
+ * parameter — and prose does not count.
+ *
+ * COMMENTS AND STRING LITERALS ARE STRIPPED FIRST, because a predicate over
+ * the whole source lets a doc comment satisfy a rule about consuming a
+ * record. That is weaker than the precedent §7 cites for its own escape
+ * hatch — `corpusCoveredBy` is machine-checked and the phrase
+ * "corpus-covered" is BANNED from a `note` precisely because a prose claim of
+ * coverage is not a claim (src/render-surfaces.ts) — and weaker than COV-5,
+ * which forces every refused rung to be a printed doctor line. With a comment
+ * as an escape hatch, COVERAGE_EXEMPT_SURFACES_MAX never binds.
+ *
+ * And the pattern is no longer word-bounded: the code spells `coverageLine`,
+ * `coverageNote`, `CoverageRecord`, `coverage:` — identifiers, not the bare
+ * word — so `\bcoverage\b` matched the doc comments and missed the code.
+ * `briefing` and `briefing-solved` were passing on prose alone because of it.
+ */
+const stripProse = (source: string): string =>
+  source
+    .replaceAll(/\/\*[\s\S]*?\*\//g, " ")
+    .replaceAll(/\/\/[^\n]*/g, " ")
+    .replaceAll(/'(?:[^'\\\n]|\\.)*'/g, "''")
+    .replaceAll(/"(?:[^"\\\n]|\\.)*"/g, '""');
+
+const namesCoverage = (source: string): boolean =>
+  /coverage/i.test(stripProse(source));
 
 interface AnswerSurface {
   readonly name: string;
@@ -80,7 +105,7 @@ describe("COV-9: every answer surface consumes coverage or is exempt", () => {
     // Act
     const exempt = new Set(COVERAGE_EXEMPT_SURFACES.map((row) => row.name));
     const offenders = answerSurfaces()
-      .filter((surface) => !NAMES_COVERAGE.test(surface.source))
+      .filter((surface) => !namesCoverage(surface.source))
       .filter((surface) => !exempt.has(surface.name))
       .map((surface) => `${surface.name} (${surface.module})`);
 
@@ -119,6 +144,84 @@ describe("COV-9: every answer surface consumes coverage or is exempt", () => {
     );
   });
 
+  test("no registered answer surface satisfies the rule on prose alone", () => {
+    // The walk above cannot tell "names a record" from "mentions coverage in
+    // a comment", so this splits the same set and prints it. Two surfaces
+    // were on the wrong side of that line — `briefing` and `briefing-solved`,
+    // both resolving to src/briefing/render.ts, whose only bare-word matches
+    // were two doc-comment lines while the code spelled `coverageLine`.
+    const exempt = new Set(COVERAGE_EXEMPT_SURFACES.map((entry) => entry.name));
+    const surfaces = answerSurfaces();
+    const graded = surfaces.map((surface) => ({
+      name: surface.name,
+      module: surface.module,
+      exempt: exempt.has(surface.name),
+      inCode: /coverage/i.test(stripProse(surface.source)),
+      anywhere: /coverage/i.test(surface.source),
+    }));
+    const proseOnly = graded.filter(
+      (entry) => !entry.exempt && !entry.inCode && entry.anywhere,
+    );
+    process.stdout.write(
+      `COV-9  ${String(surfaces.length)} answer surfaces: ` +
+        `${String(graded.filter((entry) => entry.inCode).length)} name coverage in code, ` +
+        `${String(graded.filter((entry) => entry.exempt).length)} exempt, ` +
+        `${String(proseOnly.length)} on prose alone\n`,
+    );
+
+    // Assert
+    expect(proseOnly.map((entry) => `${entry.name} (${entry.module})`)).toEqual(
+      [],
+    );
+  });
+
+  test("a comment saying the word `coverage` is not a coverage record", () => {
+    // Arrange: the same smuggled surface as below, with one doc comment
+    // added. §7 spent a subsection making the escape hatch narrower than the
+    // rule — a VERIFY on the list's length, one printed doctor line per
+    // exemption, COVERAGE_EXEMPT_SURFACES_MAX = 3 "never raised to make a
+    // case pass" — on the explicit precedent that a prose claim of coverage
+    // is not a claim (render-surfaces.ts bans the phrase "corpus-covered"
+    // from a `note` for exactly this reason). A comment defeated all of it
+    // without touching the list, so the cap never bound.
+    const exempt = new Set(COVERAGE_EXEMPT_SURFACES.map((entry) => entry.name));
+    const smuggled = {
+      name: "smuggled-answer-surface",
+      module: "src/fake.ts",
+      source:
+        "/** No coverage record is needed here. */\n" +
+        "import type { SuspectView } from './http/hub.ts';\n" +
+        "export const render = (view: SuspectView) => view.outcome;\n",
+    };
+
+    // Act
+    const offends =
+      COVERAGE_BEARING_RESPONSES.some((type) =>
+        new RegExp(`\\b${type}\\b`).test(smuggled.source),
+      ) &&
+      !namesCoverage(smuggled.source) &&
+      !exempt.has(smuggled.name);
+
+    // Assert
+    expect(offends).toBe(true);
+    expect(COVERAGE_EXEMPT_SURFACES.length).toBeLessThanOrEqual(
+      COVERAGE_EXEMPT_SURFACES_MAX,
+    );
+  });
+
+  test("a surface that names coverage only in CODE still passes", () => {
+    // Arrange: the control. `briefing/render.ts` spells the field
+    // `coverageLine` — a record reaching a renderer, not a prose claim about
+    // one — and the old word-boundary pattern did not match it, so that
+    // surface was passing on its doc comment alone.
+    const real =
+      "export interface BriefingInput { readonly coverageLine?: string }\n" +
+      "export const render = (input: BriefingInput) => input.coverageLine;\n";
+
+    // Assert
+    expect(namesCoverage(real)).toBe(true);
+  });
+
   test("a new answer surface that skips the record is a red build", () => {
     // Arrange: the mutation COV-9 names, run inline — a module that renders a
     // coverage-bearing response and consumes no record, WITHOUT touching the
@@ -135,7 +238,7 @@ describe("COV-9: every answer surface consumes coverage or is exempt", () => {
       COVERAGE_BEARING_RESPONSES.some((type) =>
         new RegExp(`\\b${type}\\b`).test(smuggled.source),
       ) &&
-      !NAMES_COVERAGE.test(smuggled.source) &&
+      !namesCoverage(smuggled.source) &&
       !exempt.has(smuggled.name);
 
     // Assert
