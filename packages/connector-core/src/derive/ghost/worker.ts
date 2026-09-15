@@ -45,6 +45,7 @@ import {
   buildEnvelope,
   UNKNOWN_DEVELOPER_ID,
 } from "../../capture/records.ts";
+import { seqAt, withSeq } from "../../capture/seq.ts";
 import { ghostDraftBody } from "../../briefing/ghost.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { readDeliveredHintHashes } from "../../hints/delivered-store.ts";
@@ -58,6 +59,7 @@ import { checkClaim } from "../../mcp/violations.ts";
 import { mintClaimId } from "../../mcp/tools/shared.ts";
 import { appendRecords } from "../../spool/append.ts";
 import {
+  allocateSeq,
   readSessionState,
   updateSessionState,
 } from "../../state/session-state.ts";
@@ -355,20 +357,30 @@ const appendGhostDraft = async (
     await bookFailure(home, args.claudeSessionId, DROPPED_CONTRACT);
     return;
   }
+  // OFF THE HOOK PATH, so a new lock acquisition costs nobody's keystroke —
+  // and it is a real one: this worker is a detached process and the state
+  // write below happens AFTER the record is on disk. A null block means the
+  // state file is gone (this worker outlived SessionEnd's delete), which is
+  // the same condition the abandon branch already books; the draft still
+  // lands, carrying `allocation_failed`.
+  const seq = await allocateSeq(home, args.claudeSessionId, 1);
   await appendRecords(
     home,
     repoKey(fresh.hubUrl, fresh.repoId),
     args.claudeSessionId,
     [
-      buildEnvelope(
-        "claim",
-        claim,
-        {
-          developerId: fresh.developerId ?? UNKNOWN_DEVELOPER_ID,
-          agentKind: env["CROSSCHECK_AGENT_KIND"] ?? DEFAULT_AGENT_KIND,
-          sessionId: fresh.crosscheckSessionId,
-        },
-        now,
+      withSeq(
+        buildEnvelope(
+          "claim",
+          claim,
+          {
+            developerId: fresh.developerId ?? UNKNOWN_DEVELOPER_ID,
+            agentKind: env["CROSSCHECK_AGENT_KIND"] ?? DEFAULT_AGENT_KIND,
+            sessionId: fresh.crosscheckSessionId,
+          },
+          now,
+        ),
+        seqAt(seq, 0),
       ),
     ],
     now,

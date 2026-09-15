@@ -34,9 +34,11 @@ import {
   buildEnvelope,
   UNKNOWN_DEVELOPER_ID,
 } from "../../capture/records.ts";
+import { seqAt, withSeq } from "../../capture/seq.ts";
 import { readDeliveredHintHashes } from "../../hints/delivered-store.ts";
 import { appendRecords } from "../../spool/append.ts";
 import {
+  allocateSeq,
   readSessionState,
   updateSessionState,
 } from "../../state/session-state.ts";
@@ -179,20 +181,30 @@ export const deriveFromSlice = async (
   if (attribution === null) {
     return;
   }
+  // OFF THE HOOK PATH, so a new lock acquisition costs nobody's keystroke —
+  // and it is a real one: this worker is a detached process and the state
+  // write below happens AFTER the record is on disk. A null block means the
+  // state file is gone (this worker outlived SessionEnd's delete), which is
+  // the same condition the abandon branch already books; the draft still
+  // lands, carrying `allocation_failed`.
+  const seq = await allocateSeq(home, hostSessionKey, 1);
   await appendRecords(
     home,
     repoKey(attribution.hubUrl, attribution.repoId),
     hostSessionKey,
     [
-      buildEnvelope(
-        "claim",
-        outcome.claim,
-        {
-          developerId: attribution.developerId ?? UNKNOWN_DEVELOPER_ID,
-          agentKind: env["CROSSCHECK_AGENT_KIND"] ?? DEFAULT_AGENT_KIND,
-          sessionId: attribution.crosscheckSessionId,
-        },
-        now,
+      withSeq(
+        buildEnvelope(
+          "claim",
+          outcome.claim,
+          {
+            developerId: attribution.developerId ?? UNKNOWN_DEVELOPER_ID,
+            agentKind: env["CROSSCHECK_AGENT_KIND"] ?? DEFAULT_AGENT_KIND,
+            sessionId: attribution.crosscheckSessionId,
+          },
+          now,
+        ),
+        seqAt(seq, 0),
       ),
     ],
     now,

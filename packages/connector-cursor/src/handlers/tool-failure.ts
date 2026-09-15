@@ -27,6 +27,8 @@
  * pinned in test/injection.test.ts.
  */
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
+import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
+import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
@@ -66,6 +68,10 @@ export const handlePostToolUseFailure = async (
   const briefingText = owedBefore ? await deliverOwedBriefing(ctx) : "";
   // ONE extraction feeds both the fingerprint and the ephemeral query.
   const failureText = extractFailureText({ error: ctx.payload.error_message });
+  // ONE position, allocated before the record is serialized: this handler
+  // spools exactly one fingerprint, and its locked state write (where it has
+  // one) happens after that record is already on disk.
+  const seq = await allocateSeq(ctx.config.home, ctx.hostSessionKey, 1);
   const fingerprint = await captureFailure({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -78,6 +84,7 @@ export const handlePostToolUseFailure = async (
     },
     failureText,
     now: ctx.now(),
+    seq: seqAt(seq, 0),
   });
   // Collective memory first (VISION.md §1): if THIS fingerprint was already
   // diagnosed, that answer beats any similarity guess — see attemptSolvedHint

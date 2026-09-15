@@ -38,9 +38,11 @@ import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { selectAndRenderSolvedHint } from "@crosscheck/connector-core/flows/solved-hint.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
+  allocateSeq,
   readSessionState,
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 export const handlePostToolUseFailure = async (
@@ -81,6 +83,15 @@ export const handlePostToolUseFailure = async (
   // `extractFailureText` reads a bare string as itself — so a Claude failure
   // and an ACP or Cursor one carrying the same bytes fingerprint
   // identically, which is the whole cross-agent match story.
+  // A NEW LOCK ACQUISITION, and the one place in this connector where that is
+  // unavoidable: on the CAPTURE path this hook takes the session-state lock
+  // zero times today — its only locked write is the foreign-repo drop above,
+  // on an early return. The acquisition is inside this hook's own budget
+  // (POST_TOOL_USE_FAILURE_BUDGET_RATIO, the 800 ms keystroke class) and its
+  // worst case is the spool lock's own retries.
+  //
+  // ONE position: this hook spools exactly one fingerprint, or none.
+  const seq = await allocateSeq(ctx.config.home, ctx.payload.session_id, 1);
   const fingerprint = await captureFailure({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -89,6 +100,7 @@ export const handlePostToolUseFailure = async (
     producer,
     failureText: extractFailureText(ctx.payload.error),
     now,
+    seq: seqAt(seq, 0),
   });
   // Null means `fingerprint()` refused the text — no signal, or a secret in
   // it (drop, never a redacted derivative). Nothing was spooled and there is

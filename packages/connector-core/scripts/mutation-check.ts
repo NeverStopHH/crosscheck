@@ -4949,6 +4949,33 @@ export const MUTATIONS: readonly Mutation[] = [
       "questions they cannot support, and the refusal SEQ-7 requires becomes " +
       "a confident sentence about an ordering nobody observed",
   },
+  {
+    // Spec 01 §3.4. One PostToolUse emits its file targets AND its error
+    // fingerprint from ONE reserved block, and the fingerprint's slot is the
+    // one past every target's. Pointing it at slot 0 puts it on top of the
+    // first file the same invocation recorded.
+    label: "a fingerprint takes the position of the file beside it",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "const FINGERPRINT_SEQ_OFFSET = MAX_TARGETS_PER_INVOCATION;",
+    to: "const FINGERPRINT_SEQ_OFFSET = 0;",
+    test: `${CONNECTOR}/test/hook-seq.test.ts`,
+    because:
+      "the hub answers `conflict` to whichever of the two arrives second, so " +
+      "a failing edit loses either its file or its fingerprint from the " +
+      "order — on exactly the turns a reader most wants ordered",
+  },
+  {
+    // The same collision one level down: every record of a block on slot 0.
+    label: "every target in one invocation takes one position",
+    file: `${CORE}/src/flows/capture-targets.ts`,
+    from: "          seqAt(input.seq, index),",
+    to: "          seqAt(input.seq, 0),",
+    test: `${CONNECTOR}/test/hook-seq.test.ts`,
+    because:
+      "a tool call touching two files files both at one position, and the " +
+      "second is stored with no position at all — the git lane, which passes " +
+      "the same flow, loses a whole codemod's worth of order this way",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {

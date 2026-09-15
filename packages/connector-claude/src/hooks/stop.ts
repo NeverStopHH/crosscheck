@@ -21,10 +21,12 @@ import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records
 import {
   CHARS_PER_TOKEN_ESTIMATE,
   GIT_TOUCHES_TIMEOUT_MS,
+  MAX_TARGETS_PER_INVOCATION,
 } from "@crosscheck/connector-core/constants.ts";
 import { captureGitTouches } from "@crosscheck/connector-core/flows/capture-git-touches.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
+  allocateSeq,
   readSessionState,
   updateSessionState,
   withGitTouches,
@@ -102,6 +104,13 @@ const estimateFireTokens = (sliceText: string): number =>
     (SUMMARIZER_PROMPT.length + sliceText.length) / CHARS_PER_TOKEN_ESTIMATE,
   );
 
+/**
+ * The git lane's worst case: `captureFileTargets` caps what it spools at
+ * MAX_TARGETS_PER_INVOCATION however many candidates git printed, so the block
+ * can never be short. Unused positions are gaps, and gaps are legal.
+ */
+const GIT_LANE_SEQ_BLOCK = MAX_TARGETS_PER_INVOCATION;
+
 export const handleStop = async (
   ctx: HookContext,
   budget: HookBudget,
@@ -168,8 +177,21 @@ export const handleStop = async (
   // re-derives it; test/stop-git-touches.test.ts asserts the invariant that
   // holds at any load.)
   const laneAffordable = budget.spareMs() >= GIT_TOUCHES_TIMEOUT_MS;
+  // ALLOCATED BEFORE THE LANE RUNS, not folded into the `withGitTouches` write
+  // below: this lane spools its records inside `captureGitTouches` and that
+  // locked write happens AFTER them. A position stamped there would be stamped
+  // on records already on disk. One block, taken only when the lane is
+  // actually going to run — a starved turn pays nothing.
+  const seq = laneAffordable
+    ? await allocateSeq(
+        ctx.config.home,
+        ctx.payload.session_id,
+        GIT_LANE_SEQ_BLOCK,
+      )
+    : null;
   const outcome = laneAffordable
     ? await captureGitTouches({
+        seq,
         home: ctx.config.home,
         repoKey: ctx.repoKey,
         hostSessionKey: ctx.payload.session_id,

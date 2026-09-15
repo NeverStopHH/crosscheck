@@ -17,6 +17,8 @@
  * either).
  */
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
+import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
+import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
@@ -37,6 +39,10 @@ export const handleAfterShellExecution = async (
   if (state === null) {
     return "";
   }
+  // ONE position, allocated before the record is serialized: this handler
+  // spools exactly one fingerprint, and its locked state write (where it has
+  // one) happens after that record is already on disk.
+  const seq = await allocateSeq(ctx.config.home, ctx.hostSessionKey, 1);
   await captureFailure({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -49,6 +55,7 @@ export const handleAfterShellExecution = async (
     },
     failureText: extractFailureText({ output: ctx.payload.output }),
     now: ctx.now(),
+    seq: seqAt(seq, 0),
   });
   // A failure moment is exactly when a teammate wants the fingerprint fresh:
   // drain on the spare budget (the split-event rule — file-edit.ts).

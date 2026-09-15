@@ -21,18 +21,39 @@ import {
   withCaptureBookkeeping,
 } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
 import {
+  allocateSeq,
   claimSessionState,
   deriveSessionState,
   readSessionState,
   updateSessionState,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
+import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { resolveSessionWorkContextTitle } from "./session-start.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const IMPLEMENTING_STATUS = "implementing";
 const HTTP_CONFLICT = 409;
+
+/**
+ * THE WORST CASE ONE INVOCATION CAN EMIT: every file target it may capture
+ * (capped at MAX_TARGETS_PER_INVOCATION) plus one error fingerprint. Reserved
+ * as a BLOCK, once, before the first record is built.
+ *
+ * WHY A BLOCK AND NOT A POSITION PER RECORD. The records are serialized inside
+ * `captureTouchedFiles` and `captureFailure` and are FLUSHED to the hub before
+ * this hook's single locked state write — so there is nothing to fold the
+ * allocation into, and one acquisition per record would put the state lock on
+ * the path once per touched file. One acquisition per invocation is the whole
+ * of the added cost. The positions this invocation does not use are GAPS, and
+ * gaps are legal by design (spec 01 §3.4).
+ */
+const CAPTURE_SEQ_BLOCK = MAX_TARGETS_PER_INVOCATION + 1;
+
+/** The slot inside that block reserved for the failure fingerprint. */
+const FINGERPRINT_SEQ_OFFSET = MAX_TARGETS_PER_INVOCATION;
 
 /**
  * A hook installed mid-session has no state file. The ids are deterministic, so
@@ -211,10 +232,24 @@ export const handlePostToolUse = async (
   // resolvable root of this repo. ONE pre-pass, so the git cost is paid at
   // most once per NEW worktree root per session (the cache), never per tool.
   const paths = extractFilePaths(ctx.payload.tool_input);
+  const failed = isFailureResponse(ctx.payload.tool_response);
+  // ONE allocation, BEFORE the first record is serialized, and only when this
+  // invocation will actually emit something. A read-only tool call emits no
+  // record, and paying a lock acquisition plus a block on every one of them
+  // would spend the budget on silence — most tool calls in a session are that.
+  const seq =
+    paths.length === 0 && !failed
+      ? null
+      : await allocateSeq(
+          ctx.config.home,
+          ctx.payload.session_id,
+          CAPTURE_SEQ_BLOCK,
+        );
   // The §1.3 flows: targets first, then the fingerprint — the same spool order
   // the combined batch used to produce. Claude-side stays exactly the payload
   // parsing: which fields carry paths, what counts as a failure response.
   const { captured: files, resolution } = await captureTouchedFiles({
+    seq,
     home: ctx.config.home,
     repoKey: ctx.repoKey,
     hostSessionKey: ctx.payload.session_id,
@@ -231,7 +266,7 @@ export const handlePostToolUse = async (
     identityRepoId: ctx.identity.repoId,
     knownWorktreeRoots: state.knownWorktreeRoots,
   });
-  if (isFailureResponse(ctx.payload.tool_response)) {
+  if (failed) {
     await captureFailure({
       home: ctx.config.home,
       repoKey: ctx.repoKey,
@@ -240,6 +275,11 @@ export const handlePostToolUse = async (
       producer,
       failureText: extractFailureText(ctx.payload.tool_response),
       now,
+      // The LAST slot of the same block. Reserved rather than taken next,
+      // because the targets above may have used anywhere from none of their
+      // slots to all of them and neither this hook nor that flow knows which
+      // until after the records are written.
+      seq: seqAt(seq, FINGERPRINT_SEQ_OFFSET),
     });
   }
   // `spareMs`, not the whole remainder: the heartbeat below is another hub call

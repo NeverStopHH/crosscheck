@@ -44,6 +44,7 @@ import { runGitOutcome } from "../git/git.ts";
 import { captureFileTargets } from "./capture-targets.ts";
 import type { DenylistConfig } from "../capture/denylist.ts";
 import type { Producer } from "../capture/records.ts";
+import type { SeqRange } from "../state/session-state.ts";
 
 export interface CaptureGitTouchesInput {
   readonly home: string;
@@ -58,6 +59,12 @@ export interface CaptureGitTouchesInput {
   /** When this session started: older mtimes are somebody else's work. */
   readonly since: Date;
   readonly now: Date;
+  /**
+   * The block of positions Stop reserved for this lane, allocated BEFORE this
+   * flow runs — the records below are spooled here, and Stop's own locked
+   * `withGitTouches` write happens after them.
+   */
+  readonly seq?: SeqRange | null;
 }
 
 /** True when the file changed after the session began. Unreadable = no. */
@@ -146,6 +153,7 @@ export const captureGitTouches = async (
     // is the same value the absent hook resolves to — and it keeps the caller
     // audit in capture-touched-files.ts able to see this call site.
     resolveRoot: () => input.repoRoot,
+    ...(input.seq === undefined ? {} : { seq: input.seq }),
     paths: fresh,
     denylist: input.denylist,
     seenTargets: input.seenTargets,
