@@ -279,6 +279,30 @@ const TARGET_EVENT_KINDS = {
   error_fingerprint: "tool.failed",
 } as const;
 
+/**
+ * WHICH LANE'S POSITION THIS IS (spec 01 §3.2), derived here and never sent —
+ * a connector that could choose its own `seq_kind` could promote an upper
+ * bound to a happens-before.
+ *
+ * `tool_edit` is EMITTED: the host reported the edit as it happened.
+ * `git_diff` is OBSERVED: the Stop-time lane sees the working tree at the end
+ * of a turn and cannot say when inside it `sed -i`, a codemod or a generator
+ * touched the file — and it cannot see work COMMITTED during the turn or
+ * UNTRACKED new files at all.
+ * `both` is EMITTED and is a STORED label only — no connector sends it
+ * (STORED_TARGET_SOURCES), so this entry exists for completeness. The mapping
+ * is read off THIS RECORD's source rather than off the stored row's upgraded
+ * label, because each event is ONE OBSERVATION: when the git lane later sights
+ * a file the tool lane already reported, the row becomes "both" while that
+ * second event is still an upper bound, and stamping it emitted would let a
+ * happens-before question answer from a position that cannot support one.
+ */
+const SEQ_KIND_BY_SOURCE = {
+  tool_edit: "emitted",
+  git_diff: "observed",
+  both: "emitted",
+} as const;
+
 export const ingestTarget = async (
   deps: Deps,
   developerId: string,
@@ -314,7 +338,7 @@ export const ingestTarget = async (
       sessionId: owner.sessionId,
       kind: eventKind,
       seq,
-      seqKind: "emitted",
+      seqKind: SEQ_KIND_BY_SOURCE[source],
       refKind: "target_digest",
       refId: targetDigest(body.workContextId, body.kind, body.value),
     });
@@ -620,11 +644,18 @@ export const ingestClaimWithin = async (
   // The session is the claim's OWN author, never the producer: a spool drained
   // by a successor session rewrites the producer, and A's positions inside B's
   // sequence would break B's whole order for a reason that is not B's.
+  // A DERIVED CLAIM IS A WORKER'S, AND A WORKER'S POSITION IS OBSERVED. The
+  // summarizer, ghost and intent workers run detached and summarise a slice
+  // from EARLIER in the session, so the position they allocate records when
+  // the row was written, not when the fact it describes was seen. Sorting such
+  // a claim after edits it actually predates would be a confident wrong
+  // answer. An agent calling `publish_claim` is DECLARING on its own account,
+  // synchronously, and that position is emitted.
   await recordSessionEvent(txDeps, {
     sessionId: body.authorSessionId,
     kind: "claim.created",
     seq,
-    seqKind: "emitted",
+    seqKind: body.provenance === "derived" ? "observed" : "emitted",
     refKind: "claim",
     refId: body.id,
   });

@@ -4879,6 +4879,34 @@ export const MUTATIONS: readonly Mutation[] = [
       "its first, and every comparison inside that session answers " +
       "confidently from two events that both claim position 4",
   },
+  {
+    // Spec 01 §3.2. The git lane sees a working tree at the END of a turn and
+    // cannot say when inside it the change happened, so its position is an
+    // UPPER BOUND. Promoting it to `emitted` makes it a happens-before.
+    label: "a git-lane sighting claims it happened after the last event",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '  git_diff: "observed",',
+    to: '  git_diff: "emitted",',
+    test: `${SERVER}/test/session-event-seq-kind.test.ts`,
+    because:
+      "a file rewritten by `sed -i` at any point in the turn is ordered after " +
+      "an intent amendment written at the end of it, so `post_hoc` is " +
+      "answered for a change that may well have predated the sentence",
+  },
+  {
+    // Spec 01 §3.6, the half a reader would not guess. The detached workers
+    // summarise a slice from EARLIER in the session, so their position records
+    // when the row was written, not when the fact was seen.
+    label: "a detached worker's claim claims the moment it was written",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '    seqKind: body.provenance === "derived" ? "observed" : "emitted",',
+    to: '    seqKind: "emitted",',
+    test: `${SERVER}/test/session-event-seq-kind.test.ts`,
+    because:
+      "every summarizer draft sorts after edits it actually predates, and a " +
+      "verdict built on that order names the wrong change with full " +
+      "confidence — the one outcome the causal order exists to prevent",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
