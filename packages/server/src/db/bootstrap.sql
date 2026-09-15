@@ -575,6 +575,50 @@ $$;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS observed_at_commit text;
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS commit_binding text NOT NULL DEFAULT 'none';
 
+-- EVERY CLAIM THAT EXISTS TODAY WAS WRITTEN WITH NO COMMIT. D2's default is to
+-- bind them to their author session's base commit rather than leave a whole
+-- hub's history permanently pointer-only. The cost is stated rather than
+-- hidden: base_commit MOVES (registerSession rewrites it on every
+-- re-registration), so this binding can sit either side of the real
+-- observation point — which is exactly why the row also records
+-- `commit_binding = 'session_base'` instead of pretending to be `reported`.
+--
+-- IT MUST NOT RE-FIRE, AND IT MUST NOT WALK OVER A STRONGER BINDING. This file
+-- runs in FULL on every hub start, so an unguarded UPDATE is a full-table
+-- write per restart AND would replace an emitter's own reported commit with
+-- the session's moving base. Two guards, doing different jobs:
+--
+--   1. The CHECK constraint added below is the MIGRATION MARKER. Its absence
+--      is what "this hub has not run the claim-binding migration yet" means,
+--      and asking pg_constraint is an O(1) catalog lookup rather than a scan
+--      of the claims table. A hub that crashed between the two simply runs
+--      this again, which is harmless: the UPDATE is idempotent.
+--   2. `c.commit_binding = 'none'` in the UPDATE itself, so a `reported` or
+--      an already-backfilled row is never touched even during that re-run.
+--
+-- The base-commit predicate mirrors isBindableCommit in @crosscheck/schema —
+-- a label like `crosscheck conference`'s "conference" and the NO_COMMIT_SHA
+-- placeholder both stay bound to nothing rather than reaching git as an
+-- object name. test/ddl-sync.test.ts pins the two spellings together.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'claims_commit_binding_check'
+      AND conrelid = 'claims'::regclass
+  ) THEN
+    UPDATE claims c
+      SET observed_at_commit = s.base_commit,
+          commit_binding = 'session_base'
+      FROM agent_sessions s
+      WHERE s.id = c.author_session_id
+        AND c.commit_binding = 'none'
+        AND s.base_commit ~* '^[0-9a-f]{7,64}$'
+        AND s.base_commit <> '0000000';
+  END IF;
+END
+$$;
 
 -- `stale_at` IS RETIRED, NOT REDEFINED. It had one declaration and no writer:
 -- no INSERT, no UPDATE, no service, no job, and it was not on the wire, so

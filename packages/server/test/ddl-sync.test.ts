@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import {
+  COMMIT_SHA_PATTERN,
   MAX_CLAIM_BODY_LENGTH,
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
+  NO_COMMIT_SHA,
 } from "@crosscheck/schema";
 
 import { createTestHarness } from "./helpers.ts";
@@ -211,13 +213,29 @@ describe("bootstrap.sql DDL sync", () => {
     );
     const guard = guardedBlockContaining(
       bootstrapSql,
-      "claims_commit_binding_check",
+      "ADD CONSTRAINT claims_commit_binding_check",
     );
     expect(guard).toContain("IF NOT EXISTS (");
     expect(guard).toContain(
       "CHECK ((observed_at_commit IS NULL) = (commit_binding = 'none'));",
     );
     expect(bootstrapSql).not.toMatch(/^ALTER TABLE claims ADD CONSTRAINT/m);
+  });
+
+  test("the backfill's base-commit predicate matches isBindableCommit", async () => {
+    // Arrange: the migration cannot call TypeScript, so the "is this a commit
+    // we can bind to" rule exists twice — once in @crosscheck/schema and once
+    // as SQL in bootstrap.sql. Two copies of a rule drift; this is what stops
+    // them drifting SILENTLY, since a widened pattern that reached only one
+    // side would leave a hub binding claims to strings git never resolves.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    expect(bootstrapSql).toContain(
+      `s.base_commit ~* '${COMMIT_SHA_PATTERN.source}'`,
+    );
+    expect(bootstrapSql).toContain(`s.base_commit <> '${NO_COMMIT_SHA}'`);
+    expect(COMMIT_SHA_PATTERN.flags).toContain("i");
   });
 
   test("work_context_targets.created_at is added for the #19 pointer age", async () => {
