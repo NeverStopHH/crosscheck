@@ -23,11 +23,14 @@
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
+import type { SeqReason } from "@crosscheck/schema";
+
 import { sessionEvents } from "../src/db/schema.ts";
 import {
+  causalOrderOf,
+  causalPositionOf,
   compareEvents,
   isOrderable,
-  causalOrderOf,
   readSessionCausalOrder,
 } from "../src/services/session-order.ts";
 import type { OrderedEvent } from "../src/services/session-order.ts";
@@ -127,6 +130,7 @@ const eventsBy = async (
           seqN: row.seqN,
           seqAfter: row.seqAfter,
           seqKind: row.seqKind,
+          seqReason: row.seqReason,
           observedAt: row.observedAt,
         },
       ]),
@@ -263,6 +267,7 @@ describe("SEQ-5 — an epoch split refuses, and never lies", () => {
       seqN: row.seqN,
       seqAfter: row.seqAfter,
       seqKind: row.seqKind,
+      seqReason: row.seqReason,
       observedAt: row.observedAt,
     }));
 
@@ -356,6 +361,7 @@ describe("SEQ-8 — a pre-seq connector is reported, never silenced", () => {
       sessionId: SESSION,
       seqEpoch: EPOCH,
       seqAfter: null,
+      seqReason: "sequenced" as const,
       observedAt: new Date("2026-07-24T10:00:00.000Z"),
     };
 
@@ -397,6 +403,7 @@ describe("SEQ-8 — a pre-seq connector is reported, never silenced", () => {
       seqN: 5,
       seqAfter: null,
       seqKind: "emitted" as const,
+      seqReason: "sequenced" as const,
       observedAt: new Date("2026-07-24T10:00:00.000Z"),
     };
     const ledgerRow = { ...edit, seqEpoch: OTHER_EPOCH, seqN: 2 };
@@ -418,6 +425,7 @@ describe("SEQ-8 — a pre-seq connector is reported, never silenced", () => {
       seqN: 1,
       seqAfter: null,
       seqKind: "emitted" as const,
+      seqReason: "sequenced" as const,
       observedAt: new Date("2026-07-24T10:00:00.000Z"),
     };
 
@@ -425,5 +433,85 @@ describe("SEQ-8 — a pre-seq connector is reported, never silenced", () => {
     expect(
       compareEvents(order, here, { ...here, sessionId: "cc_elsewhere", seqN: 2 }),
     ).toBeNull();
+  });
+});
+
+describe("D1's refinement — a withheld position says so", () => {
+  /**
+   * "WE DO NOT KNOW THE ORDER" IS NOT "THERE WAS NO ORDER".
+   *
+   * A refused position is a bounded, named state: the emitter tried, or
+   * deliberately did not, and said which. Reading it as a plain absence is how
+   * this system would produce a FALSE ACCUSATION — an explanation whose
+   * position was withheld because two agents share a worktree is not an
+   * explanation that was never written.
+   *
+   * So the position is its own answer with its own status, and the reason
+   * travels ON it rather than in a second lookup a caller can forget to make.
+   */
+  const at = (n: number | null, reason: SeqReason): OrderedEvent => ({
+    sessionId: SESSION,
+    seqEpoch: n === null ? null : EPOCH,
+    seqN: n,
+    seqAfter: null,
+    seqKind: "emitted",
+    seqReason: reason,
+    observedAt: new Date("2026-07-24T10:00:00.000Z"),
+  });
+
+  test("a stamped position is known, and is the number itself", () => {
+    // Act
+    const position = causalPositionOf(at(7, "sequenced"));
+
+    // Assert
+    expect(position).toEqual({ seq: 7, status: "known", reason: "sequenced" });
+  });
+
+  test("a position withheld for an ambiguous session is indeterminate", () => {
+    // Act
+    const position = causalPositionOf(at(null, "ambiguous_session_assignment"));
+
+    // Assert: the number is gone, the STATE of the number is not.
+    expect(position).toEqual({
+      seq: null,
+      status: "indeterminate",
+      reason: "ambiguous_session_assignment",
+    });
+  });
+
+  test("every way a position can be missing is indeterminate, never silent", () => {
+    // Arrange: each of the four refusals the row can carry. None of them means
+    // "no such event" — they mean "this event has no usable position", which
+    // is a different sentence with a different consequence.
+    const refusals: readonly SeqReason[] = [
+      "pre_seq_connector",
+      "allocation_failed",
+      "ambiguous_session_assignment",
+      "epoch_conflict",
+      "reaped_end",
+    ];
+    for (const reason of refusals) {
+      // Act
+      const position = causalPositionOf(at(null, reason));
+
+      // Assert
+      expect(position.status, reason).toBe("indeterminate");
+      expect(position.reason, reason).toBe(reason);
+      expect(position.seq, reason).toBeNull();
+    }
+  });
+
+  test("the reason never travels apart from the position it explains", () => {
+    // The binding rule spec 01 §3.7 states for the timing value and 04 states
+    // for attribution: the value and its reason are ONE atomic answer. A
+    // position with no reason on it would let a renderer print "no position"
+    // with nothing beside it, which is the bare word the rule forbids.
+    for (const event of [at(3, "sequenced"), at(null, "allocation_failed")]) {
+      expect(Object.keys(causalPositionOf(event)).sort()).toEqual([
+        "reason",
+        "seq",
+        "status",
+      ]);
+    }
   });
 });

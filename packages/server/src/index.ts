@@ -18,7 +18,9 @@ export { sessionEvents } from "./db/schema.ts";
 export {
   CAUSAL_ORDER_REASONS,
   CAUSAL_ORDER_STATES,
+  CAUSAL_POSITION_STATUSES,
   causalOrderOf,
+  causalPositionOf,
   compareEvents,
   isOrderable,
   readSessionCausalOrder,
@@ -26,6 +28,8 @@ export {
 export type {
   CausalOrderReason,
   CausalOrderState,
+  CausalPosition,
+  CausalPositionStatus,
   OrderedEvent,
   SessionCausalOrder,
 } from "./services/session-order.ts";

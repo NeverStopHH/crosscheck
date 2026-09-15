@@ -24,7 +24,7 @@
  * mirrors its `isJudgeable` the same way: both gate one dimension.
  */
 import { eq } from "drizzle-orm";
-import type { SeqKind } from "@crosscheck/schema";
+import type { SeqKind, SeqReason } from "@crosscheck/schema";
 
 import { sessionEvents } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
@@ -69,7 +69,44 @@ export interface OrderedEvent {
    */
   readonly seqAfter: number | null;
   readonly seqKind: SeqKind;
+  /**
+   * WHY THIS EVENT HAS THE POSITION IT HAS — `sequenced`, or the named refusal
+   * that withheld one. It travels ON the event rather than in a second lookup,
+   * because a caller holding an unpositioned event must be able to say WHICH
+   * absence it is without going back to the database to find out.
+   */
+  readonly seqReason: SeqReason;
   readonly observedAt: Date;
+}
+
+/**
+ * THE STATE OF A POSITION, and there are two of them because "we do not know
+ * the order" and "there was no order" are different sentences.
+ *
+ *   known         — the event carries a position, and it is that number.
+ *   indeterminate — the event carries no position and the row says why. The
+ *                   emitter tried and could not, or deliberately did not.
+ *
+ * There is deliberately no third value for "absent". An event EXISTS; what is
+ * missing is its place in the sequence, never the event. A consumer that
+ * collapses this into a plain absence produces the one outcome this design
+ * exists to prevent — an explanation whose position was withheld because two
+ * agents share a worktree read as an explanation that was never written.
+ */
+export const CAUSAL_POSITION_STATUSES = ["known", "indeterminate"] as const;
+
+export type CausalPositionStatus = (typeof CAUSAL_POSITION_STATUSES)[number];
+
+/**
+ * ONE ATOMIC ANSWER. The status and its reason are always both present, so a
+ * renderer cannot print the bare state — the binding rule §3.7 states for the
+ * timing value and 04 states for attribution, made structural here rather than
+ * left to every call site to remember.
+ */
+export interface CausalPosition {
+  readonly seq: number | null;
+  readonly status: CausalPositionStatus;
+  readonly reason: SeqReason;
 }
 
 /**
@@ -171,6 +208,23 @@ export const readSessionCausalOrder = async (
     .where(eq(sessionEvents.sessionId, sessionId));
   return causalOrderOf(sessionId, rows);
 };
+
+/**
+ * WHERE THIS EVENT SITS, or the explicit statement that we do not know.
+ *
+ * D1's refinement: the withheld state is a VALUE, not a missing field. A
+ * consumer asking "where is this event in the session's order" gets a number
+ * with `known`, or `null` with `indeterminate` and the reason that withheld it
+ * — never a bare null it has to interpret, and never an answer that reads like
+ * the event did not happen.
+ *
+ * It reads no clock, like everything else in this file. `observedAt` sits on
+ * the event it is handed and is not touched.
+ */
+export const causalPositionOf = (event: OrderedEvent): CausalPosition =>
+  event.seqN === null || event.seqEpoch === null
+    ? { seq: null, status: "indeterminate", reason: event.seqReason }
+    : { seq: event.seqN, status: "known", reason: event.seqReason };
 
 /**
  * MAY THESE TWO BE COMPARED AT ALL — the question every consumer asks first,

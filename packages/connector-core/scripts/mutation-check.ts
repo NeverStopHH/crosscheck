@@ -5275,6 +5275,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "own, so the worktree with two live agents reads as a transient lock " +
       "and nobody is ever told to close one of them",
   },
+  {
+    // D1's refinement: the withheld state is a VALUE, not a missing field.
+    // A caller gating on `known` must never be handed a null that says it is.
+    label: "a withheld position reports itself as known",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '    ? { seq: null, status: "indeterminate", reason: event.seqReason }',
+    to: '    ? { seq: null, status: "known", reason: event.seqReason }',
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "every consumer that asks whether a position is known is told yes about " +
+      "a null, so an explanation whose position was withheld because two " +
+      "agents share a worktree is compared as though it had one",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5448,7 +5461,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-event-seq-kind.test.ts 2
  * PRINTS: packages/server/test/session-events.test.ts 2
  * PRINTS: packages/server/test/session-order-window.test.ts 3
- * PRINTS: packages/server/test/session-order.test.ts 4
+ * PRINTS: packages/server/test/session-order.test.ts 5
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1

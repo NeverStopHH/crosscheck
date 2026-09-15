@@ -132,6 +132,7 @@ const eventsBy = async (
           seqN: row.seqN,
           seqAfter: row.seqAfter,
           seqKind: row.seqKind,
+          seqReason: row.seqReason,
           observedAt: row.observedAt,
         },
       ]),
