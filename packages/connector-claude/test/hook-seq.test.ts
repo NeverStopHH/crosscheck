@@ -361,3 +361,57 @@ describe("SEQ-9 — the allocation's cost is measured, not asserted", () => {
     expect((await readSessionState(fx.home, SESSION_ID))?.eventSeq).toBeGreaterThan(0);
   });
 });
+
+/**
+ * COMMIT.OBSERVED IS CLAUDE-ONLY, AND SPEC 01 §3.6 NAMES NO EMITTER FOR IT.
+ *
+ * `collectCommitEvidence` is imported by exactly one module in the whole tree —
+ * this connector's SessionStart — so this is the only host that produces the
+ * event at all. Its record is spooled OUTSIDE every lock the hook takes, after
+ * `registerSessionFlow` has already published the state file, so the
+ * allocation is a genuinely new acquisition on a path the spec's table does
+ * not mention. Without it the one host that can emit `commit.observed` emits
+ * it unpositioned, and the reason it carries would say "a connector from
+ * before this protocol field" about a connector that has the field.
+ */
+describe("SessionStart positions its commit collection", () => {
+  test("the commit-evidence record carries a position from this session", async () => {
+    // Arrange: a repo with a commit, and a home with no state yet — the hook
+    // registers, publishes state (minting the epoch), then collects.
+    const home = await makeHome("seq-commit");
+    const repo = await makeRepo("seq-commit", {
+      remote: "git@github.com:acme/api.git",
+    });
+    paths.push(home, repo);
+
+    // Act
+    await runHook(
+      "session-start",
+      JSON.stringify({
+        session_id: SESSION_ID,
+        cwd: repo,
+        hook_event_name: "SessionStart",
+        source: "startup",
+      }),
+      env(home),
+    );
+
+    // Assert
+    const records = (
+      await readSpoolLines(home, repoKey(DEAD_HUB_URL, REPO_ID))
+    ).map((line) => JSON.parse(line) as Record<string, unknown>);
+    const evidence = records.filter(
+      (record) => record["kind"] === "commit_evidence",
+    );
+    expect(evidence).toHaveLength(1);
+    const stamp = evidence[0]?.["seq"] as { epoch: string; n: number };
+    // A real position from this session's own epoch — not the "no connector
+    // sent one" silence an omitted field would mean.
+    expect(stamp.epoch).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(stamp.n).toBeGreaterThan(0);
+    const state = await readSessionState(home, SESSION_ID);
+    expect(state?.seqEpoch).toBe(stamp.epoch);
+  });
+});

@@ -17,6 +17,8 @@ import {
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { containsSecret } from "@crosscheck/connector-core/capture/secret-scan.ts";
+import { seqAt, withSeq } from "@crosscheck/connector-core/capture/seq.ts";
+import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
 import { endSession } from "@crosscheck/connector-core/http/hub.ts";
 import type { PresenceEntry, WorkContextEntry } from "@crosscheck/connector-core/http/hub.ts";
 import {
@@ -323,20 +325,33 @@ export const handleSessionStart = async (
   // dead hub leaves it spooled like any other record. Appended after the work
   // context record, so a spool replay keeps its create-before-reference order.
   if (commitAuthors !== null && commitAuthors.length > 0) {
+    // `commit.observed` — the one canonical event NO other host emits, and the
+    // one spec 01 §3.6's table names no emitter for. This append sits outside
+    // every lock this hook takes, after `registerSessionFlow` has published the
+    // state file that mints the epoch, so the acquisition is new and it is
+    // unavoidable: a position folded into a later write would be stamped on a
+    // record already spooled and possibly already flushed. ONE position, for
+    // one record.
     await appendRecords(
       ctx.config.home,
       ctx.repoKey,
       ctx.payload.session_id,
       [
-        commitEvidenceRecord(
-          ctx.identity.repoId,
-          commitAuthors,
-          {
-            developerId: developerId ?? UNKNOWN_DEVELOPER_ID,
-            agentKind: ctx.config.agentKind,
-            sessionId: crosscheckSessionId,
-          },
-          now,
+        withSeq(
+          commitEvidenceRecord(
+            ctx.identity.repoId,
+            commitAuthors,
+            {
+              developerId: developerId ?? UNKNOWN_DEVELOPER_ID,
+              agentKind: ctx.config.agentKind,
+              sessionId: crosscheckSessionId,
+            },
+            now,
+          ),
+          seqAt(
+            await allocateSeq(ctx.config.home, ctx.payload.session_id, 1),
+            0,
+          ),
         ),
       ],
       now,

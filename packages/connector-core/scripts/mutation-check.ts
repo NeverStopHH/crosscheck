@@ -5065,6 +5065,24 @@ export const MUTATIONS: readonly Mutation[] = [
       "landing without a position, so the one visible trace of D1's cost " +
       "disappears and the refusal looks like nothing happening",
   },
+  {
+    // `collectCommitEvidence` is imported by exactly ONE module in the tree,
+    // so this is the only host that emits `commit.observed` at all — and spec
+    // 01 §3.6's table of emitters does not list it.
+    label: "the one host that collects commits emits it unpositioned",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from:
+      "          seqAt(\n" +
+      "            await allocateSeq(ctx.config.home, ctx.payload.session_id, 1),\n" +
+      "            0,\n" +
+      "          ),",
+    to: "          seqAt(null, 0),",
+    test: `${CONNECTOR}/test/hook-seq.test.ts`,
+    because:
+      "every commit.observed on every host lands with no position, and the " +
+      "reason it carries names a connector too old for the field — about the " +
+      "one connector that has it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5150,7 +5168,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
- * PRINTS: packages/connector-claude/test/hook-seq.test.ts 2
+ * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
