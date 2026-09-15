@@ -312,4 +312,39 @@ describe("the ACP derive section says every rung and every refusal", () => {
     expect(detail).not.toContain("\u001b");
     expect(detail.split("\n")).toHaveLength(1);
   });
+
+  /**
+   * A REFUSAL MAY ONLY SEND A READER TO A SURFACE THAT CAN ANSWER.
+   *
+   * The MCP-borne-events refusal used to end "`crosscheck doctor` names which
+   * of the nine documented skip reasons applied". Doctor names none of them
+   * and structurally cannot: its ACP gate reads the log directory for file
+   * NAMES and never a byte of their content, and the section it returns is
+   * the backend line, the capability lines and the refusals — nothing that
+   * knows whether an injection happened. So the reader followed the one
+   * sentence in the product that mentions the skip reasons to the one surface
+   * that cannot distinguish a client-shape problem from a broken install.
+   *
+   * The reason lives in the proxy's own log, and the sentence now says so —
+   * with the path, and with what doctor does NOT do.
+   */
+  test("the MCP refusal points at the log that holds the reason, not at doctor", async () => {
+    // Arrange
+    const dir = await home("acp-doctor-refusal-surface");
+    await withProxyLog(dir);
+
+    // Act
+    const checks = await acpDoctorChecks({
+      home: dir,
+      liveStates: await states(dir),
+    });
+
+    // Assert: the sentence names the directory the proxy really logs into and
+    // the file shape `acpUsedHere` really matches, so it cannot drift from
+    // the file it sends a reader to.
+    const detail = named(checks, "MCP-borne events (acp)")?.detail ?? "";
+    expect(detail).toContain(`${ACP_LOG_DIR_NAME}/acp-`);
+    expect(detail).toContain("inject skip why=");
+    expect(detail).not.toContain("`crosscheck doctor` names which");
+  });
 });

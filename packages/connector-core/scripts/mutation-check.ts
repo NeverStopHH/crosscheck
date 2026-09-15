@@ -5219,6 +5219,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "reason it carries names a connector too old for the field — about the " +
       "one connector that has it",
   },
+  {
+    // A refusal may only send a reader to a surface that can answer it.
+    // Doctor's ACP gate reads the log directory for file NAMES and never a
+    // byte of their content, so it cannot name a skip reason and never could.
+    label: "a refusal names a surface that cannot answer it",
+    file: `${ACP}/src/capabilities.ts`,
+    from:
+      "the proxy's own log for that run (`~/.crosscheck/logs/acp-<pid>.log`) carries an `inject skip why=<reason>` line",
+    to: "`crosscheck doctor` names which of the documented skip reasons applied and the proxy log carries an inject skip why=<reason> line",
+    test: `${ACP}/test/derive-doctor.test.ts`,
+    because:
+      "a user whose client sent mcpServers as an OBJECT is sent to the one " +
+      "surface that cannot tell a client-shape problem from a broken " +
+      "install, from --no-inject, or from a launcher refusal",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5282,7 +5297,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
- * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 1
+ * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 6
  * PRINTS: packages/connector-acp/test/injector.test.ts 4

@@ -74,7 +74,7 @@ export const ACP_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
     {
       name: "MCP-borne events",
       sentence:
-        "intent.declared, intent.amended, claim.created via publish_claim and claim.invalidated all need the crosscheck MCP server, which this proxy appends to session/new|load|resume only in --inject mode and only when the client already sent an mcpServers ARRAY — a --no-inject proxy emits none of those four kinds, and `crosscheck doctor` names which of the nine documented skip reasons applied",
+        "intent.declared, intent.amended, claim.created via publish_claim and claim.invalidated all need the crosscheck MCP server, which this proxy appends to session/new|load|resume only in --inject mode and only when the client already sent an mcpServers ARRAY — so a --no-inject proxy, and an --inject one whose client sent no array, emit none of those four kinds; the proxy's own log for that run (`~/.crosscheck/logs/acp-<pid>.log`) carries an `inject skip why=<reason>` line naming which of the documented reasons applied, and `doctor` does NOT: it reads the log directory for file NAMES only and never a byte of their content",
     },
     {
       name: "second evidence lane",
