@@ -336,11 +336,29 @@ describe("Stop's git lane positions what it observes", () => {
  * with the opposite sign. Read all six as an order of magnitude, which is why
  * the assertion below compares against the BUDGET and not against a constant.
  *
- * THE TWO 800 ms HOOKS ALLOCATE NOTHING AT ALL, and that is checkable rather
- * than measured: UserPromptSubmit emits only `hint_delivery`, which is not a
- * canonical event kind, and PreToolUse emits no record. Their budgets are
- * untouched, and `hint-budget.test.ts` / `hint-hook-latency.test.ts` need no
- * new case.
+ * ONE OF THE TWO 800 ms HOOKS DOES ALLOCATE, and spec 01 §6's "marginal cost
+ * on both: 0 ms" is wrong about it. UserPromptSubmit really does allocate
+ * nothing — it emits only `hint_delivery`, which is not a canonical event kind
+ * — but PreToolUse takes a NEW acquisition and emits no record for it:
+ * `openToolWindow`, the window floor that is what lets an edit be ordered
+ * against an explanation at all. A hook that emits nothing can still pay for a
+ * lock, and the note that said otherwise reasoned from the records.
+ *
+ * MEASURED RATHER THAN ASSERTED — three runs of `capture-latency.test.ts` each
+ * way, against the 800 ms budget, on this machine:
+ *
+ *   with openToolWindow     cold 95, 89, 99 ms · warm 43, 41, 40 ms
+ *   without openToolWindow  cold 104, 90, 88 ms · warm 45, 40, 41 ms
+ *
+ * THE TWO RANGES OVERLAP, so the added acquisition is not resolvable above
+ * this harness's own noise — consistent with the isolated allocator above,
+ * p95 2.66 ms against a budget of 800. The honest claim is "below the noise
+ * floor at n = 3", never "0 ms": nobody measured zero, and the difference
+ * between those two sentences is the whole discipline of this block.
+ *
+ * `capture-latency.test.ts` runs that path cold and warm against the budget on
+ * every CI run, so the number has a gate. `hint-budget.test.ts` /
+ * `hint-hook-latency.test.ts` cover UserPromptSubmit and need no new case.
  */
 describe("SEQ-9 — the allocation's cost is measured, not asserted", () => {
   test("PostToolUse with allocation on still clears its budget with room", async () => {
