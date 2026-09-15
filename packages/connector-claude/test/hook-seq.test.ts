@@ -61,6 +61,8 @@ const stateFor = (repoRoot: string): SessionStateInput => ({
   startedAt: new Date().toISOString(),
   seqEpoch: EPOCH,
   eventSeq: 0,
+  toolWindowFloor: null,
+  toolWindowOpen: 0,
 });
 
 const env = (home: string): Env => ({

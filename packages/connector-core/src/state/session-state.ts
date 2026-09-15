@@ -421,6 +421,32 @@ const SessionStateObjectSchema = z.looseObject({
    */
   seqEpoch: z.string().min(1).nullable().default(null),
   eventSeq: z.number().int().min(0).default(0),
+  /**
+   * THE WINDOW A RUNNING TOOL'S EDIT HAPPENED IN — the pair that turns a
+   * position taken AFTER the work into an interval a happens-before question
+   * may be asked of.
+   *
+   * A PostToolUse hook allocates once its tool has returned, so its position
+   * is an upper bound on an edit already on disk, and an MCP tool that
+   * allocated inside that window holds a LOWER number than a change that came
+   * first. `toolWindowFloor` is a position taken BEFORE the tool started and
+   * attached to nothing — a deliberate gap — and `toolWindowOpen` counts how
+   * many tools are running behind it.
+   *
+   * THE FLOOR IS THE OLDEST OPEN WINDOW, not the nearest. Claude Code runs
+   * tools in parallel and neither hook knows which tool the other belongs to,
+   * so the only floor that is safe for every open tool is the earliest one:
+   * every one of them started after it. Too early costs PRECISION — a
+   * comparison refuses where it might have answered — and precision is the
+   * side of this trade that may be spent. Too late would answer wrongly.
+   *
+   * A LEAKED WINDOW IS SAFE IN THE SAME DIRECTION. A PreToolUse whose
+   * PostToolUse never runs leaves the count up and the floor low, so later
+   * windows are merely wider. The defaults keep every older state file
+   * parsing.
+   */
+  toolWindowFloor: z.number().int().min(0).nullable().default(null),
+  toolWindowOpen: z.number().int().min(0).default(0),
 });
 
 /**
@@ -566,6 +592,13 @@ export const withCarriedCapture = (
         // carry a mutation anchor.
         seqEpoch: previous.seqEpoch,
         eventSeq: previous.eventSeq,
+        // A SessionStart re-fire lands INSIDE a live session (compact, resume,
+        // clear), and a tool may be running across it. Dropping the open
+        // window here would close it at zero and let the next PostToolUse
+        // stamp an unbracketed position — the upper bound this pair exists to
+        // avoid — on an edit whose PreToolUse already paid for a floor.
+        toolWindowFloor: previous.toolWindowFloor,
+        toolWindowOpen: previous.toolWindowOpen,
       };
 
 /**
@@ -666,6 +699,96 @@ export const allocateSeq = async (
       const from = fresh.eventSeq + 1;
       await writeSessionState(home, { ...fresh, eventSeq: from + count - 1 });
       return { epoch: fresh.seqEpoch, from, count };
+    },
+  );
+
+/**
+ * OPENS THE WINDOW A TOOL IS ABOUT TO RUN IN, in the SAME acquisition that
+ * takes the position — a separate read-then-write would let a sibling hook
+ * slip between them and record a floor that is not the one it allocated.
+ *
+ * Returns the floor now in force, which is the OLDEST open window rather than
+ * this caller's own: every tool running behind it started later, so it is a
+ * lower bound for all of them. Null is a first-class answer and means the
+ * caller's PostToolUse will send no bracket — its position stays the upper
+ * bound it is, and the hub says so.
+ */
+export const openToolWindow = async (
+  home: string,
+  hostSessionKey: string,
+): Promise<number | null> =>
+  withLock<number | null>(
+    sessionStateLockPath(home, hostSessionKey),
+    null,
+    async () => {
+      const fresh = await readSessionState(home, hostSessionKey);
+      if (fresh === null || fresh.seqEpoch === null) {
+        return null;
+      }
+      const taken = fresh.eventSeq + 1;
+      const floor = fresh.toolWindowOpen === 0 ? taken : fresh.toolWindowFloor;
+      await writeSessionState(home, {
+        ...fresh,
+        eventSeq: taken,
+        toolWindowFloor: floor,
+        toolWindowOpen: fresh.toolWindowOpen + 1,
+      });
+      return floor;
+    },
+  );
+
+/**
+ * The two fields that close one window — a PATCH, not a whole state. Two of
+ * PostToolUse's three exits fold this into an `updateSessionState` transform
+ * that is already changing other counters, and a full-state spread there would
+ * put every one of them back. Exported because those exits emit nothing and
+ * must still drain the count: a window left open only ever makes later
+ * comparisons refuse, but it makes them refuse for the rest of the session.
+ */
+export const closedToolWindow = (
+  state: SessionState,
+): Pick<SessionState, "toolWindowOpen" | "toolWindowFloor"> => {
+  const open = Math.max(0, state.toolWindowOpen - 1);
+  return {
+    toolWindowOpen: open,
+    toolWindowFloor: open === 0 ? null : state.toolWindowFloor,
+  };
+};
+
+/**
+ * ALLOCATES A CAPTURE BLOCK AND CLOSES THE TOOL'S WINDOW IN ONE ACQUISITION —
+ * the whole of PostToolUse's added cost, unchanged from `allocateSeq`'s.
+ *
+ * The range comes back carrying the floor its PreToolUse recorded, so every
+ * record built from it says which window its edit happened in. `closing` is
+ * false for an emitter with no window to close (a failure hook that no
+ * PreToolUse preceded), and then this is `allocateSeq` with a different name.
+ */
+export const allocateToolSeq = async (
+  home: string,
+  hostSessionKey: string,
+  count: number,
+  closing: boolean,
+): Promise<SeqRange | null> =>
+  withLock<SeqRange | null>(
+    sessionStateLockPath(home, hostSessionKey),
+    null,
+    async () => {
+      const fresh = await readSessionState(home, hostSessionKey);
+      if (fresh === null || fresh.seqEpoch === null) {
+        return null;
+      }
+      const from = fresh.eventSeq + 1;
+      const allocated: SessionState = {
+        ...fresh,
+        eventSeq: from + count - 1,
+      };
+      const next = closing
+        ? { ...allocated, ...closedToolWindow(allocated) }
+        : allocated;
+      await writeSessionState(home, next);
+      const range: SeqRange = { epoch: fresh.seqEpoch, from, count };
+      return closing ? withWindowFloor(range, fresh.toolWindowFloor) : range;
     },
   );
 
@@ -1065,5 +1188,7 @@ export const deriveSessionState = (
     // not here is absent from every recovered session and nothing says so.
     seqEpoch: crypto.randomUUID(),
     eventSeq: 0,
+    toolWindowFloor: null,
+    toolWindowOpen: 0,
   };
 };

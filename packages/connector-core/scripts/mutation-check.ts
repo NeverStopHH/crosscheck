@@ -4992,6 +4992,58 @@ export const MUTATIONS: readonly Mutation[] = [
       "a confident sentence about an ordering nobody observed",
   },
   {
+    // The bracket must consume a position of its own. If it does not, the
+    // window opens exactly where the block begins and holds nothing.
+    label: "a window opens on a position the block then takes anyway",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        eventSeq: taken,\n        toolWindowFloor: floor,",
+    to: "        toolWindowFloor: floor,",
+    test: `${CONNECTOR}/test/hook-window.test.ts`,
+    because:
+      "the edit's interval collapses onto the first position of its own " +
+      "block, so an MCP publish that raced the tool sits BELOW the window " +
+      "and is ordered before a change that came first",
+  },
+  {
+    // Parallel tools: the only floor safe for every open window is the OLDEST,
+    // because every tool running behind it started later.
+    label: "a second tool's window opens after the first tool's edit",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      const floor = fresh.toolWindowOpen === 0 ? taken : fresh.toolWindowFloor;",
+    to: "      const floor = taken;",
+    test: `${CONNECTOR}/test/hook-window.test.ts`,
+    because:
+      "an edit made by a tool that was already running is bracketed from a " +
+      "moment AFTER it, so a claim published between the two brackets is " +
+      "ordered before an edit that had already happened",
+  },
+  {
+    // The floor must be released when the last window closes, or every later
+    // edit inherits a floor from a tool that finished long ago.
+    label: "a closed window keeps the floor it opened on",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    toolWindowFloor: open === 0 ? null : state.toolWindowFloor,",
+    to: "    toolWindowFloor: state.toolWindowFloor,",
+    test: `${CONNECTOR}/test/hook-window.test.ts`,
+    because:
+      "one session-long window swallows every position after the first tool " +
+      "call, so nothing in the session can be ordered against any edit and " +
+      "AT-4 goes silent without saying it has",
+  },
+  {
+    // Spec 01 §3.4's carry rule, for the window pair. A SessionStart re-fire
+    // lands INSIDE a live session and a tool can be running across it.
+    label: "a re-fire closes a window the running tool still needs",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        toolWindowFloor: previous.toolWindowFloor,\n        toolWindowOpen: previous.toolWindowOpen,",
+    to: "",
+    test: `${CONNECTOR}/test/hook-window.test.ts`,
+    because:
+      "a compact or resume mid-tool drops the floor its PreToolUse paid for, " +
+      "and the edit that follows is stamped with the upper bound the bracket " +
+      "exists to replace",
+  },
+  {
     // Spec 01 §3.4. One PostToolUse emits its file targets AND its error
     // fingerprint from ONE reserved block, and the fingerprint's slot is the
     // one past every target's. Pointing it at slot 0 puts it on top of the
@@ -5211,6 +5263,7 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
+ * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1

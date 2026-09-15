@@ -110,6 +110,8 @@ const sessionState = (
   ghostLastFailure: null,
   seqEpoch: null,
   eventSeq: 0,
+  toolWindowFloor: null,
+  toolWindowOpen: 0,
   outsideRootDrops: 0,
   knownWorktreeRoots: [],
   editToolFires: 0,

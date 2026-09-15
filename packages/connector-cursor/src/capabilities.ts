@@ -44,7 +44,7 @@ export const CURSOR_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       name: "event_seq",
       rung: "reduced",
       sentence:
-        "Cursor's handlers position every record they emit through the same allocator, but Cursor runs no Stop-time `git diff` lane, so a file changed by `sed -i`, a codemod or a generator produces no file.modified here to order at all",
+        "Cursor's handlers position every record they emit through the same allocator, but two sources are missing: Cursor runs no Stop-time `git diff` lane, so a file changed by `sed -i`, a codemod or a generator produces no file.modified here to order at all; and this connector registers no pre-tool handler, so an edit's position is taken only AFTER the tool returned and is an upper bound — the hub stores those `observed` and refuses a happens-before question against them rather than answering one from a race",
     },
   ],
   refusals: [

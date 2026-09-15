@@ -21,8 +21,9 @@ import {
   withCaptureBookkeeping,
 } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
 import {
-  allocateSeq,
+  allocateToolSeq,
   claimSessionState,
+  closedToolWindow,
   deriveSessionState,
   readSessionState,
   updateSessionState,
@@ -216,6 +217,12 @@ export const handlePostToolUse = async (
       ...(editFired && droppedPath !== null && fresh.lastEditedPath === null
         ? { lastEditedPath: droppedPath, lastEditedPathResolvedAgainst: null }
         : {}),
+      // ...and the window this tool's PreToolUse opened is CLOSED even though
+      // nothing was captured. A window left open is safe — it only ever makes
+      // a later comparison refuse — but it stays open for the rest of the
+      // session, and every edit after it inherits a floor from a tool that
+      // finished long ago.
+      ...(editFired ? closedToolWindow(fresh) : {}),
     }));
     return "";
   }
@@ -240,10 +247,11 @@ export const handlePostToolUse = async (
   const seq =
     paths.length === 0 && !failed
       ? null
-      : await allocateSeq(
+      : await allocateToolSeq(
           ctx.config.home,
           ctx.payload.session_id,
           CAPTURE_SEQ_BLOCK,
+          editFired,
         );
   // The §1.3 flows: targets first, then the fingerprint — the same spool order
   // the combined batch used to produce. Claude-side stays exactly the payload
@@ -299,6 +307,11 @@ export const handlePostToolUse = async (
   // tripwire marker inside this hook's window, and a stale whole-file write
   // here would erase it (test/state-race.test.ts). The #17 root cache and the
   // #18/#20 capture counters fold in here too — the ONE mid-session write.
+  // `closedToolWindow` here covers the ONE remaining exit: an edit tool
+  // that resolved no path at all, so the branch above allocated nothing and
+  // closed nothing. Applied to the freshest state under the lock, like every
+  // other transform folded into this write.
+  const closesWindow = editFired && seq === null;
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
     ...withCaptureBookkeeping(withSeenTargets(fresh, files), {
       resolution,
@@ -309,6 +322,7 @@ export const handlePostToolUse = async (
       now,
     }),
     ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
+    ...(closesWindow ? closedToolWindow(fresh) : {}),
   }));
   return "";
 };

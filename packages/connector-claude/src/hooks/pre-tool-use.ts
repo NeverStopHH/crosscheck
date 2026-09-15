@@ -50,6 +50,7 @@ import { extractFilePaths, isEditTool } from "../capture/tool-events.ts";
 import { getTripwireSessions } from "@crosscheck/connector-core/http/hub.ts";
 import { renderTripwireReason } from "@crosscheck/connector-core/hints/render.ts";
 import {
+  openToolWindow,
   readSessionState,
   updateSessionState,
   withKnownWorktreeRoot,
@@ -119,6 +120,19 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   if (state === null) {
     return "";
   }
+  // OPENS THE WINDOW THIS TOOL'S EDIT WILL HAPPEN IN — before the tripwire
+  // work, because the bracket is about the TOOL and must not depend on whether
+  // a teammate happens to overlap the file, whether the denylist covers it, or
+  // whether the hub answers. PostToolUse allocates once the tool has RETURNED,
+  // so without this its position is an upper bound on an edit already on disk
+  // and an MCP call that raced the hook is ordered BEFORE a change that came
+  // first — `predeclared`, the value that exonerates, from a coin flip.
+  //
+  // ONE acquisition, and the only new cost on this hook. It is the same lock
+  // the tripwire marker below takes, an order of magnitude under the hub call
+  // this hook already makes, and a busy lock is fail-open silence: no bracket
+  // means PostToolUse sends none and the hub reads the upper bound it has.
+  await openToolWindow(ctx.config.home, ctx.payload.session_id);
   const file = await resolveEditedFile(ctx, state);
   if (file === null) {
     return "";
