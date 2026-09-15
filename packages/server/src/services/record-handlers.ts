@@ -1,9 +1,11 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { isSeqStamp } from "@crosscheck/schema";
 import type {
   Claim,
   ClaimEdge,
   Intent,
   SeqField,
+  SeqKind,
   Target,
   WorkContext,
 } from "@crosscheck/schema";
@@ -22,6 +24,7 @@ import {
   pruneSessionEvents,
   recordSessionEvent,
   targetDigest,
+  windowFloorOf,
 } from "./session-events.ts";
 import {
   DECLARED_PROVENANCE,
@@ -284,7 +287,21 @@ const TARGET_EVENT_KINDS = {
  * a connector that could choose its own `seq_kind` could promote an upper
  * bound to a happens-before.
  *
- * `tool_edit` is EMITTED: the host reported the edit as it happened.
+ * `tool_edit` is EMITTED ONLY WHEN THE EMITTER BRACKETED ITS TOOL, and the
+ * first draft of this map got that wrong in the one direction that matters.
+ * The host reports the edit, but the position is taken AFTERWARDS, in the hook
+ * that runs once the tool has returned — so on its own it is an upper bound on
+ * a change that already happened, and any emitter that allocated inside that
+ * window holds a LOWER position than the edit. Comparing the numbers then
+ * reports the explanation as predeclared, the value that exonerates, in the
+ * one shape AT-4 exists to detect. Measured: an Edit and an MCP publish issued
+ * in ONE parallel tool batch inverted 10 trials out of 10.
+ * A bracketing emitter sends the position it took BEFORE starting the tool
+ * (`seq.after`), which turns the upper bound back into an interval a
+ * happens-before question may be asked of. An emitter that cannot send one —
+ * a host with no pre-tool signal, a hook installed mid-tool — gets `observed`,
+ * the upper bound it actually has, and the refusal that goes with it. THE
+ * CONNECTOR STILL CHOOSES NOTHING: omitting the bracket can only downgrade.
  * `git_diff` is OBSERVED: the Stop-time lane sees the working tree at the end
  * of a turn and cannot say when inside it `sed -i`, a codemod or a generator
  * touched the file — and it cannot see work COMMITTED during the turn or
@@ -302,6 +319,21 @@ const SEQ_KIND_BY_SOURCE = {
   git_diff: "observed",
   both: "emitted",
 } as const;
+
+/**
+ * The lane's own answer, downgraded to the upper bound it really is when the
+ * emitter sent no usable bracket. `git_diff` is `observed` either way — that
+ * lane sees a working tree at the end of a turn and has no window at all.
+ */
+const seqKindFor = (
+  source: keyof typeof SEQ_KIND_BY_SOURCE,
+  seq: SeqField | undefined,
+): SeqKind =>
+  SEQ_KIND_BY_SOURCE[source] === "emitted" &&
+  isSeqStamp(seq) &&
+  windowFloorOf(seq) !== null
+    ? "emitted"
+    : "observed";
 
 export const ingestTarget = async (
   deps: Deps,
@@ -338,7 +370,7 @@ export const ingestTarget = async (
       sessionId: owner.sessionId,
       kind: eventKind,
       seq,
-      seqKind: SEQ_KIND_BY_SOURCE[source],
+      seqKind: seqKindFor(source, seq),
       refKind: "target_digest",
       refId: targetDigest(body.workContextId, body.kind, body.value),
     });

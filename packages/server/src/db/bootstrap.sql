@@ -512,6 +512,12 @@ CREATE TABLE IF NOT EXISTS session_events (
   session_id text NOT NULL REFERENCES agent_sessions(id),
   seq_epoch text,
   seq_n integer,
+  -- The open end of the interval this event happened in. A hook's position is
+  -- taken once its tool RETURNED, so seq_n alone is an upper bound there and
+  -- an emitter that raced the tool holds a lower position than work that
+  -- already happened. NULL = the emitter sent no bracket, and an unbracketed
+  -- lane is stored `observed` rather than promoted to a happens-before.
+  seq_after integer,
   kind text NOT NULL,
   seq_kind text NOT NULL,
   seq_reason text NOT NULL,
@@ -519,6 +525,12 @@ CREATE TABLE IF NOT EXISTS session_events (
   ref_id text NOT NULL,
   observed_at timestamptz NOT NULL
 );
+
+-- A hub bootstrapped before the bracket existed has the table already, and
+-- CREATE TABLE IF NOT EXISTS adds nothing to it. Its rows keep a null bracket,
+-- which is exactly right: they were written by an emitter that did not take
+-- one, so their tool-lane positions are upper bounds and say so.
+ALTER TABLE session_events ADD COLUMN IF NOT EXISTS seq_after integer;
 
 -- A POSITION IS TAKEN ONCE. PARTIAL, because unsequenced rows are legitimately
 -- many per session and must not collide with one another — only real

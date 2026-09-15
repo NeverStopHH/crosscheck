@@ -22,6 +22,7 @@ import type {
   SeqField,
   SeqKind,
   SeqReason,
+  SeqStamp,
   SessionEventKind,
 } from "@crosscheck/schema";
 
@@ -121,6 +122,19 @@ export interface RecordSessionEventInput {
  * connector from before this protocol field, refused is a seq-capable emitter
  * that tried and could not.
  */
+/**
+ * THE OPEN END OF THE INTERVAL, or null when there is not one.
+ *
+ * `after` is a position the emitter took BEFORE the work started, so it must
+ * sit at or below the position it brackets. A stamp claiming otherwise is a
+ * broken emitter, and the answer is to drop the bracket rather than the
+ * record: an unbracketed position is read as the upper bound it is, which is
+ * the conservative half of the same fact. Rejecting would destroy the record,
+ * because a connector's flush advances its cursor on any 2xx.
+ */
+export const windowFloorOf = (stamp: SeqStamp): number | null =>
+  stamp.after === undefined || stamp.after > stamp.n ? null : stamp.after;
+
 const reasonFor = (input: RecordSessionEventInput): SeqReason => {
   if (input.seq === undefined) {
     return input.absentReason ?? "pre_seq_connector";
@@ -149,6 +163,7 @@ export const recordSessionEvent = async (
     seqEpoch: string | null,
     seqN: number | null,
     seqReason: SeqReason,
+    seqAfter: number | null = null,
   ): Promise<string> => {
     const id = sessionEventId({
       sessionId: input.sessionId,
@@ -165,6 +180,7 @@ export const recordSessionEvent = async (
         sessionId: input.sessionId,
         seqEpoch,
         seqN,
+        seqAfter,
         kind: input.kind,
         seqKind: input.seqKind,
         seqReason,
@@ -178,7 +194,7 @@ export const recordSessionEvent = async (
   if (stamp === null) {
     return { id: await write(null, null, reason), positioned: false };
   }
-  const id = await write(stamp.epoch, stamp.n, reason);
+  const id = await write(stamp.epoch, stamp.n, reason, windowFloorOf(stamp));
   // Did the position land, or was it already held? `onConflictDoNothing`
   // swallows BOTH the primary key (an honest replay of this very event) and
   // the partial unique index on the position (a different event claiming a

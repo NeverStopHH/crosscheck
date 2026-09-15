@@ -72,6 +72,13 @@ const started = async (email: string): Promise<Fixture> => {
   return { harness, dev };
 };
 
+/**
+ * THE EDIT BRACKETS ITS TOOL, because a real connector now does: `after` is
+ * the position its hook pair took BEFORE starting the tool, and `n` the one it
+ * took after the tool returned. Without it the position is an upper bound on a
+ * change that already happened and this lane refuses — which is SEQ-11's case,
+ * pinned in session-order-window.test.ts, not this file's.
+ */
 const editRecord = (value: string, n: number, ts: string) => ({
   ...recordEnvelope(
     "target",
@@ -83,7 +90,7 @@ const editRecord = (value: string, n: number, ts: string) => ({
     },
     { sessionId: SESSION, ts },
   ),
-  seq: { epoch: EPOCH, n },
+  seq: { epoch: EPOCH, n, after: n - 1 },
 });
 
 const explanationRecord = (n: number, ts: string) => ({
@@ -118,6 +125,7 @@ const eventsBy = async (
           sessionId: row.sessionId,
           seqEpoch: row.seqEpoch,
           seqN: row.seqN,
+          seqAfter: row.seqAfter,
           seqKind: row.seqKind,
           observedAt: row.observedAt,
         },
@@ -127,29 +135,30 @@ const eventsBy = async (
 
 describe("SEQ-1 — the positive case", () => {
   test("the explanation is post_hoc for the earlier edit and predeclared for the later one", async () => {
-    // Arrange: edit at 1, the explanation at 2, a second edit at 3 — with the
-    // clock running FORWARD alongside the positions, so this test is the happy
-    // path a wall-clock implementation also passes. SEQ-2 below is the one it
-    // cannot pass, which is exactly why both exist.
+    // Arrange: the early edit's tool opened at 1 and recorded at 2, the
+    // explanation was published at 3, the late edit's tool opened at 4 and
+    // recorded at 5 — with the clock running FORWARD alongside the positions,
+    // so this test is the happy path a wall-clock implementation also passes.
+    // SEQ-2 below is the one it cannot pass, which is exactly why both exist.
     const { harness, dev } = await started("at4@example.com");
     await postRecords(harness, dev, {
-      records: [editRecord(EARLY_EDIT, 1, "2026-07-24T10:00:00.000Z")],
+      records: [editRecord(EARLY_EDIT, 2, "2026-07-24T10:00:00.000Z")],
     });
     harness.clock.advanceSeconds(HOUR_SECONDS);
     await postRecords(harness, dev, {
-      records: [explanationRecord(2, "2026-07-24T10:05:00.000Z")],
+      records: [explanationRecord(3, "2026-07-24T10:05:00.000Z")],
     });
     harness.clock.advanceSeconds(HOUR_SECONDS);
     await postRecords(harness, dev, {
-      records: [editRecord(LATE_EDIT, 3, "2026-07-24T10:10:00.000Z")],
+      records: [editRecord(LATE_EDIT, 5, "2026-07-24T10:10:00.000Z")],
     });
 
     // Act
     const order = await readSessionCausalOrder(harness.db, SESSION);
     const events = await eventsBy(harness);
-    const early = events.get(1);
-    const explanation = events.get(2);
-    const late = events.get(3);
+    const early = events.get(2);
+    const explanation = events.get(3);
+    const late = events.get(5);
 
     // Assert
     expect(order.state).toBe("usable");
@@ -169,23 +178,23 @@ describe("SEQ-2 — the 'fails if', executable", () => {
     const { harness, dev } = await started("skew@example.com");
     harness.clock.advanceSeconds(2 * HOUR_SECONDS);
     await postRecords(harness, dev, {
-      records: [explanationRecord(2, "2026-07-24T09:00:00.000Z")],
+      records: [explanationRecord(3, "2026-07-24T09:00:00.000Z")],
     });
     harness.clock.advanceSeconds(-HOUR_SECONDS);
     await postRecords(harness, dev, {
-      records: [editRecord(EARLY_EDIT, 1, "2026-07-24T11:00:00.000Z")],
+      records: [editRecord(EARLY_EDIT, 2, "2026-07-24T11:00:00.000Z")],
     });
     harness.clock.advanceSeconds(-HOUR_SECONDS);
     await postRecords(harness, dev, {
-      records: [editRecord(LATE_EDIT, 3, "2026-07-24T12:00:00.000Z")],
+      records: [editRecord(LATE_EDIT, 5, "2026-07-24T12:00:00.000Z")],
     });
 
     // Act
     const order = await readSessionCausalOrder(harness.db, SESSION);
     const events = await eventsBy(harness);
-    const early = events.get(1);
-    const explanation = events.get(2);
-    const late = events.get(3);
+    const early = events.get(2);
+    const explanation = events.get(3);
+    const late = events.get(5);
 
     // Assert: the clocks really are inverted — this is what makes the test a
     // test rather than a restatement of SEQ-1.
@@ -252,6 +261,7 @@ describe("SEQ-5 — an epoch split refuses, and never lies", () => {
       sessionId: row.sessionId,
       seqEpoch: row.seqEpoch,
       seqN: row.seqN,
+      seqAfter: row.seqAfter,
       seqKind: row.seqKind,
       observedAt: row.observedAt,
     }));
@@ -331,6 +341,7 @@ describe("SEQ-8 — a pre-seq connector is reported, never silenced", () => {
     const base = {
       sessionId: SESSION,
       seqEpoch: EPOCH,
+      seqAfter: null,
       observedAt: new Date("2026-07-24T10:00:00.000Z"),
     };
 
@@ -370,6 +381,7 @@ describe("SEQ-8 — a pre-seq connector is reported, never silenced", () => {
       sessionId: SESSION,
       seqEpoch: EPOCH,
       seqN: 5,
+      seqAfter: null,
       seqKind: "emitted" as const,
       observedAt: new Date("2026-07-24T10:00:00.000Z"),
     };
@@ -390,6 +402,7 @@ describe("SEQ-8 — a pre-seq connector is reported, never silenced", () => {
       sessionId: SESSION,
       seqEpoch: EPOCH,
       seqN: 1,
+      seqAfter: null,
       seqKind: "emitted" as const,
       observedAt: new Date("2026-07-24T10:00:00.000Z"),
     };

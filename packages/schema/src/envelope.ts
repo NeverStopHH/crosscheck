@@ -42,6 +42,30 @@ export const SEQ_EPOCH_PATTERN =
 export const SeqStampSchema = z.object({
   epoch: z.string().regex(SEQ_EPOCH_PATTERN),
   n: z.number().int().min(0),
+  /**
+   * THE POSITION THIS EVENT IS KNOWN TO FOLLOW — an INTERVAL, not a point, and
+   * the difference is the whole of AT-4 on a lane whose position is taken
+   * after the fact.
+   *
+   * A hook runs once its tool has returned, so the edit happened BEFORE the
+   * position the hook allocates for it. Any emitter that allocated inside that
+   * window holds a LOWER position than an edit that already happened, and
+   * `A.n < B.n` then reports the explanation as predeclared — the exonerating
+   * answer — for a change that came first. Measured, not argued: an Edit and
+   * an MCP publish in one parallel tool batch inverted 10 times out of 10.
+   *
+   * So a bracketing emitter allocates one position BEFORE it starts the tool
+   * and sends it here. The event lies somewhere in `(after, n]`: anything at
+   * or below `after` precedes it, anything above `n` follows it, and anything
+   * BETWEEN raced it and is not comparable — which is the honest answer.
+   *
+   * ABSENT MEANS UNBRACKETED, never "a point". An emitter that cannot say when
+   * its tool started sends no `after`, and the hub reads the position as the
+   * upper bound it is (`seq_kind = observed`) rather than promoting a guess.
+   * Point emitters — an MCP publish, a session register — are points by lane,
+   * not by this field.
+   */
+  after: z.number().int().min(0).optional(),
 });
 
 /**

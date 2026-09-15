@@ -602,7 +602,28 @@ export interface SeqRange {
   readonly epoch: string;
   readonly from: number;
   readonly count: number;
+  /**
+   * THE POSITION THE WORK THIS BLOCK RECORDS IS KNOWN TO FOLLOW, when the
+   * caller took one before it started. A hook allocates AFTER its tool has
+   * returned, so every position in this block is an upper bound on an edit
+   * that already happened; the bracket is what turns that upper bound back
+   * into an interval a happens-before question may be asked of.
+   *
+   * Absent means unbracketed, and the hub reads an unbracketed tool-lane
+   * position as the upper bound it is rather than promoting a guess.
+   */
+  readonly after?: number;
 }
+
+/**
+ * The same block, told where its tool started. Immutable, like every transform
+ * here: a new range, never a mutation of the one the allocator handed back.
+ */
+export const withWindowFloor = (
+  range: SeqRange | null,
+  floor: number | null,
+): SeqRange | null =>
+  range === null || floor === null ? range : { ...range, after: floor };
 
 /**
  * HANDS OUT POSITIONS IN THIS SESSION'S CAUSAL ORDER (spec 01 §3.3).

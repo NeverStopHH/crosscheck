@@ -4913,8 +4913,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // passes — which is the whole reason SEQ-2 exists beside SEQ-1.
     label: "the causal order is answered from a wall clock",
     file: `${SERVER}/src/services/session-order.ts`,
-    from: "  const left = a.seqN ?? 0;\n  const right = b.seqN ?? 0;",
-    to: "  const left = a.observedAt.getTime();\n  const right = b.observedAt.getTime();",
+    from: "  return (a.seqN ?? 0) < windowStart(b) ? -1 : 1;",
+    to: "  return a.observedAt.getTime() < b.observedAt.getTime() ? -1 : 1;",
     test: `${SERVER}/test/session-order.test.ts`,
     because:
       "two processes, an offline connector and a batch sync all reorder the " +
@@ -4937,12 +4937,54 @@ export const MUTATIONS: readonly Mutation[] = [
       "a sentence written after the change",
   },
   {
+    // Spec 01 §3.2 mapped `tool_edit → emitted` flatly, and that is the one
+    // direction that matters: the position is taken in the hook that runs once
+    // the tool RETURNED, so an emitter that allocated inside the window holds
+    // a lower number than a change that already happened. Measured — an Edit
+    // and an MCP publish in one parallel tool batch inverted 10 trials of 10.
+    label: "a position taken after the edit answers as if taken at it",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "  windowFloorOf(seq) !== null",
+    to: "  true",
+    test: `${SERVER}/test/session-order-window.test.ts`,
+    because:
+      "an unbracketed tool-lane position is promoted back to a " +
+      "happens-before, and an explanation published while the edit's hook was " +
+      "still starting is reported as PREDECLARED for a change that came first",
+  },
+  {
+    // The same defect from the reading side. Two events whose windows overlap
+    // are CONCURRENT, and concurrent is not an order.
+    label: "two events that raced are given an order anyway",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: "  !overlaps(a, b);",
+    to: "  true;",
+    test: `${SERVER}/test/session-order-window.test.ts`,
+    because:
+      "a claim allocated while a tool was still running is ordered against " +
+      "that tool's edit from the numbers alone, which is the coin flip the " +
+      "bracket exists to refuse",
+  },
+  {
+    // `after` is taken BEFORE the work, so it cannot sit above the position it
+    // brackets. Trusting one that does inverts the interval.
+    label: "a window that opens after it closes is believed",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "  stamp.after === undefined || stamp.after > stamp.n ? null : stamp.after;",
+    to: "  stamp.after ?? null;",
+    test: `${SERVER}/test/session-order-window.test.ts`,
+    because:
+      "a broken emitter's inverted bracket makes the window swallow every " +
+      "position below it, so events that plainly preceded the edit are " +
+      "reported as concurrent with it and AT-4 goes quiet for the session",
+  },
+  {
     // Spec 01 §3.2. An `observed` position is an upper bound: the git lane and
     // the detached workers both record when a fact was WRITTEN DOWN.
     label: "an upper bound is compared as a happens-before",
     file: `${SERVER}/src/services/session-order.ts`,
-    from: '  a.seqKind === "emitted" &&\n  b.seqKind === "emitted";',
-    to: "  true;",
+    from: '  a.seqKind === "emitted" &&\n  b.seqKind === "emitted" &&',
+    to: "  true &&",
     test: `${SERVER}/test/session-order.test.ts`,
     because:
       "a codemod's file.modified and a summarizer's claim both answer " +
@@ -5250,6 +5292,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-event-conflict.test.ts 1
  * PRINTS: packages/server/test/session-event-seq-kind.test.ts 2
  * PRINTS: packages/server/test/session-events.test.ts 2
+ * PRINTS: packages/server/test/session-order-window.test.ts 3
  * PRINTS: packages/server/test/session-order.test.ts 3
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2

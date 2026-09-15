@@ -708,6 +708,15 @@ export const sessionEvents = pgTable(
     /** NULL = not comparable. The pair is null together or set together. */
     seqEpoch: text("seq_epoch"),
     seqN: integer("seq_n"),
+    /**
+     * THE POSITION THIS EVENT IS KNOWN TO FOLLOW — the open end of an
+     * interval whose closed end is `seq_n`. A hook's position is taken once
+     * its tool has RETURNED, so on a lane like that `seq_n` alone is an upper
+     * bound and anything that allocated inside the window holds a lower
+     * position than work that already happened. NULL means the emitter sent
+     * no bracket, and an unbracketed lane is stored `observed`.
+     */
+    seqAfter: integer("seq_after"),
     kind: text("kind", { enum: SESSION_EVENT_KINDS }).notNull(),
     seqKind: text("seq_kind", { enum: SEQ_KINDS }).notNull(),
     /** Why there is no position, or `sequenced` when there is one. */

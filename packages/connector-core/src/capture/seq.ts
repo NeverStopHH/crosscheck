@@ -37,10 +37,19 @@ export const ALLOCATION_FAILED: SeqField = { reason: "allocation_failed" };
 export const seqAt = (
   range: SeqRange | null | undefined,
   offset: number,
-): SeqField =>
-  range === null || range === undefined || offset >= range.count
-    ? ALLOCATION_FAILED
-    : { epoch: range.epoch, n: range.from + offset };
+): SeqField => {
+  if (range === null || range === undefined || offset >= range.count) {
+    return ALLOCATION_FAILED;
+  }
+  const stamp = { epoch: range.epoch, n: range.from + offset };
+  // THE BRACKET RIDES THE BLOCK. A hook's position is taken after its tool
+  // returned, so on its own it is an upper bound on an edit that already
+  // happened; `after` is the position the same hook pair took BEFORE the tool
+  // started, and it is what lets a happens-before question be asked of this
+  // lane at all. Absent stays absent — the hub reads that as the upper bound
+  // it is, never as a point.
+  return range.after === undefined ? stamp : { ...stamp, after: range.after };
+};
 
 /** Immutable, like every record transform: a new envelope, never a mutation. */
 export const withSeq = (envelope: Envelope, seq: SeqField): Envelope => ({

@@ -43,7 +43,11 @@ const SESSION = "cc_lane";
 const withSeq = (
   envelope: Record<string, unknown>,
   n: number,
-): Record<string, unknown> => ({ ...envelope, seq: { epoch: EPOCH, n } });
+  after?: number,
+): Record<string, unknown> => ({
+  ...envelope,
+  seq: after === undefined ? { epoch: EPOCH, n } : { epoch: EPOCH, n, after },
+});
 
 const started = async (
   email: string,
@@ -63,6 +67,14 @@ const started = async (
   return { harness, dev };
 };
 
+/**
+ * THE TOOL LANE BRACKETS ITS TOOL and the git lane has nothing to bracket. A
+ * hook's position is taken once the tool RETURNED, so the tool lane sends the
+ * position it took before starting it; the Stop-time git lane sees a working
+ * tree at the end of a turn and has no window at all. An unbracketed tool-lane
+ * position is an upper bound too, and refuses — that is SEQ-11's case, pinned
+ * in session-order-window.test.ts.
+ */
 const targetRecord = (
   value: string,
   source: string,
@@ -75,6 +87,7 @@ const targetRecord = (
       { sessionId: SESSION },
     ),
     n,
+    ...(source === "tool_edit" ? ([n - 1] as const) : ([] as const)),
   );
 
 describe("SEQ-7 — seq_kind is derived on the hub, never sent", () => {
@@ -98,6 +111,44 @@ describe("SEQ-7 — seq_kind is derived on the hub, never sent", () => {
     const byPosition = new Map(rows.map((row) => [row.seqN, row.seqKind]));
     expect(byPosition.get(1)).toBe("emitted");
     expect(byPosition.get(2)).toBe("observed");
+  });
+
+  test("a git-lane sighting that arrives WITH a bracket is still observed", async () => {
+    // Arrange: the bracket says "this position was taken after a window that
+    // opened at N". The git lane has no such window — it sees a working tree
+    // at the END of a turn — so a bracket on one of its records is a claim it
+    // cannot support, and `git_diff` must stay an upper bound whatever the
+    // envelope says. Without this case the source map's own guard is
+    // unfalsifiable: every git-lane fixture would be observed for the OTHER
+    // reason, and a mutation promoting `git_diff` to emitted stays green.
+    const { harness, dev } = await started("gitbracket@example.com");
+
+    // Act
+    await postRecords(harness, dev, {
+      records: [
+        withSeq(
+          recordEnvelope(
+            "target",
+            {
+              workContextId: WORK_CONTEXT_ID,
+              kind: "file",
+              value: "src/codemod/bracketed.ts",
+              source: "git_diff",
+            },
+            { sessionId: SESSION },
+          ),
+          2,
+          1,
+        ),
+      ],
+    });
+
+    // Assert
+    const rows = await harness.db
+      .select()
+      .from(sessionEvents)
+      .where(eq(sessionEvents.sessionId, SESSION));
+    expect(rows.find((row) => row.seqN === 2)?.seqKind).toBe("observed");
   });
 
   test("a file BOTH lanes saw keeps one position per observation", async () => {

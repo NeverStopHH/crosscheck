@@ -62,9 +62,23 @@ export interface OrderedEvent {
   readonly sessionId: string;
   readonly seqEpoch: string | null;
   readonly seqN: number | null;
+  /**
+   * The open end of the interval this event happened in, or null when the
+   * emitter sent no bracket. `seq_n` is always the CLOSED end.
+   */
+  readonly seqAfter: number | null;
   readonly seqKind: SeqKind;
   readonly observedAt: Date;
 }
+
+/**
+ * WHERE AN EVENT'S INTERVAL BEGINS. A point emitter — an MCP publish, a
+ * session register — sends no bracket and IS its position, so the interval is
+ * `[n, n]`. A bracketing emitter took a position before it started the work
+ * and the interval is `(after, n]`. Nothing here reads a clock.
+ */
+const windowStart = (event: OrderedEvent): number =>
+  event.seqAfter ?? event.seqN ?? 0;
 
 /**
  * WHICH ABSENCE TO REPORT when a session has positions for nothing.
@@ -157,7 +171,7 @@ export const readSessionCausalOrder = async (
  * MAY THESE TWO BE COMPARED AT ALL — the question every consumer asks first,
  * and the only place the answer is computed.
  *
- * Five conditions, and every one of them is a way the answer would otherwise
+ * Six conditions, and every one of them is a way the answer would otherwise
  * be a guess:
  *
  *   1. the session's order is usable — no conflict, no split;
@@ -174,6 +188,11 @@ export const readSessionCausalOrder = async (
  *      asymmetric rule (an observed A before an emitted B is sound in one
  *      direction) is real and is not worth a second thing to reason about at
  *      a call site that must never answer wrongly.
+ *   6. their windows DO NOT OVERLAP. A position taken after the work it
+ *      records — every hook lane — is the closed end of a window, and two
+ *      events whose windows overlap are concurrent. Concurrent is not an
+ *      order, and answering one anyway is how the lane that exonerates
+ *      answers `predeclared` for a change that came first.
  */
 export const isOrderable = (
   order: SessionCausalOrder,
@@ -189,7 +208,29 @@ export const isOrderable = (
   a.seqN !== null &&
   b.seqN !== null &&
   a.seqKind === "emitted" &&
-  b.seqKind === "emitted";
+  b.seqKind === "emitted" &&
+  !overlaps(a, b);
+
+/**
+ * DO THE TWO INTERVALS TOUCH — the sixth condition, and the one a position
+ * taken AFTER the work it records makes necessary.
+ *
+ * A hook allocates once its tool has returned, so its position is the closed
+ * end of a window the edit happened somewhere inside. An emitter that
+ * allocated inside that window took a LOWER number than work that already
+ * happened, and comparing the two numbers reports the explanation as
+ * predeclared — the exonerating answer — from what is really a coin flip.
+ * Measured: an Edit and an MCP publish issued in one parallel tool batch
+ * inverted 10 times out of 10.
+ *
+ * Two events whose windows overlap are CONCURRENT, and concurrent is not an
+ * order. A point is its own window, so two point emitters overlap only at the
+ * same position — which the unique index reserves for one event — and this
+ * condition costs the point-to-point case nothing.
+ */
+const overlaps = (a: OrderedEvent, b: OrderedEvent): boolean =>
+  !((a.seqN ?? 0) < windowStart(b) || (b.seqN ?? 0) < windowStart(a)) &&
+  !(a.seqN === b.seqN && windowStart(a) === windowStart(b));
 
 /**
  * HAPPENS-BEFORE, and nothing else (§3.4): `A → B` iff A and B share a session,
@@ -212,10 +253,12 @@ export const compareEvents = (
   if (!isOrderable(order, a, b)) {
     return null;
   }
-  const left = a.seqN ?? 0;
-  const right = b.seqN ?? 0;
-  if (left === right) {
+  // Same position, same window: the event compared with itself. Distinct
+  // events cannot share a position — the partial unique index reserves it —
+  // and overlapping windows never reach here at all, because `isOrderable`
+  // has already refused them.
+  if (a.seqN === b.seqN && windowStart(a) === windowStart(b)) {
     return 0;
   }
-  return left < right ? -1 : 1;
+  return (a.seqN ?? 0) < windowStart(b) ? -1 : 1;
 };
