@@ -4907,6 +4907,48 @@ export const MUTATIONS: readonly Mutation[] = [
       "verdict built on that order names the wrong change with full " +
       "confidence — the one outcome the causal order exists to prevent",
   },
+  {
+    // AT-4's OWN "fails if", as a single edit: order by the hub clock sitting
+    // beside the positions instead of by the positions. The happy path still
+    // passes — which is the whole reason SEQ-2 exists beside SEQ-1.
+    label: "the causal order is answered from a wall clock",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: "  const left = a.seqN ?? 0;\n  const right = b.seqN ?? 0;",
+    to: "  const left = a.observedAt.getTime();\n  const right = b.observedAt.getTime();",
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "two processes, an offline connector and a batch sync all reorder the " +
+      "clock without reordering the work, so `declared before` and `declared " +
+      "after` swap places and the verdict states the opposite of what happened",
+  },
+  {
+    // Spec 01 §3.4: happens-before needs a SHARED epoch. The session-level
+    // state cannot supply this term for a row it never counted — the intent
+    // ledger's versions live in their own table — so the per-pair check is
+    // load-bearing rather than defensive.
+    label: "two counters are compared as though they were one",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: "  a.seqEpoch === b.seqEpoch &&\n",
+    to: "",
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "an intent version from a session's SECOND epoch is compared against an " +
+      "edit from its first, and n = 2 against n = 5 answers `predeclared` for " +
+      "a sentence written after the change",
+  },
+  {
+    // Spec 01 §3.2. An `observed` position is an upper bound: the git lane and
+    // the detached workers both record when a fact was WRITTEN DOWN.
+    label: "an upper bound is compared as a happens-before",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '  a.seqKind === "emitted" &&\n  b.seqKind === "emitted";',
+    to: "  true;",
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "a codemod's file.modified and a summarizer's claim both answer " +
+      "questions they cannot support, and the refusal SEQ-7 requires becomes " +
+      "a confident sentence about an ordering nobody observed",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
