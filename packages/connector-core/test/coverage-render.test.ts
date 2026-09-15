@@ -126,6 +126,108 @@ describe("the soft annotation rule — decision 4", () => {
 });
 
 /**
+ * A SCOPED RECORD MAY NOT BE READ OUT AS A REPO-WIDE ONE.
+ *
+ * §3.2a lets a caller narrow the question — `/api/search` passes the caller's
+ * own `since`, the pin lane passes a file set — and the hub's record is honest
+ * about it: the reason enum literally says `no_session_in_window` and
+ * `scope.sinceIso` carries the window. The renderer threw both away and said
+ * "no agent session reported on this repo", which is false as written on a
+ * busy, fully-watched repo, on the surface §1 names as AT-1's defect line.
+ * Fail-safe direction, still a statement nobody observed — and it makes
+ * "Coverage unknown" fire on ordinary short-window searches against perfectly
+ * watched repos, which is the noise §5.1 argues against arriving through the
+ * section written to prevent it.
+ */
+describe("the sentence is about the question that was asked", () => {
+  test("a window-narrowed record names the window, not the repo", () => {
+    // Arrange: a one-hour search on a repo with plenty of reported sessions
+    const record: CoverageRecord = {
+      repo: "github.com/acme/api",
+      computedAt: NOW.toISOString(),
+      scope: { sinceIso: new Date(NOW.getTime() - 3_600_000).toISOString() },
+      sources: [
+        row("agent_event", "unknown", "no_session_in_window"),
+        row("git", "complete", "commits_reported", null, GAP_ISO),
+        row("ci", "unavailable", "no_emitter"),
+        row("runtime", "unavailable", "out_of_scope_1_0"),
+        row("human_edit", "unavailable", "no_platform_rung"),
+      ],
+    };
+
+    // Act
+    const clause = coverageClause(record, NOW);
+
+    // Assert: a model reading "no agent session reported on this repo"
+    // concludes the archive is empty and re-derives work recorded an hour ago.
+    expect(clause).toContain("1h");
+    expect(clause).not.toBe(
+      "Coverage unknown: no agent session reported on this repo; git evidence reported.",
+    );
+  });
+
+  test("a path-scoped record names the files, not the repo", () => {
+    // Arrange: the pin lane's shape
+    const record: CoverageRecord = {
+      repo: "github.com/acme/api",
+      computedAt: NOW.toISOString(),
+      scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+      sources: [
+        row("agent_event", "unknown", "no_session_in_window"),
+        row("git", "complete", "commits_reported", null, GAP_ISO),
+        row("ci", "unavailable", "no_emitter"),
+        row("runtime", "unavailable", "out_of_scope_1_0"),
+        row("human_edit", "unavailable", "no_platform_rung"),
+      ],
+    };
+
+    // Act
+    const clause = coverageClause(record, NOW);
+
+    // Assert: sessions may well have reported on this repo — just not here.
+    expect(clause).not.toContain("on this repo");
+  });
+
+  test("a path-scoped gap says the gap is about those files", () => {
+    // Arrange
+    const record: CoverageRecord = {
+      repo: "github.com/acme/api",
+      computedAt: NOW.toISOString(),
+      scope: { sinceIso: GAP_ISO, paths: ["src/player.ts"] },
+      sources: [
+        row("agent_event", "incomplete", "session_reaped", GAP_ISO, GAP_ISO),
+        row("git", "complete", "commits_reported", null, GAP_ISO),
+        row("ci", "unavailable", "no_emitter"),
+        row("runtime", "unavailable", "out_of_scope_1_0"),
+        row("human_edit", "unavailable", "no_platform_rung"),
+      ],
+    };
+
+    // Act
+    const clause = coverageClause(record, NOW);
+
+    // Assert
+    expect(clause).toContain(GAP_SHOWN);
+    expect(clause).not.toContain("on this repo");
+  });
+
+  test("an UNSCOPED record still says `on this repo`", () => {
+    // Arrange: the control — the briefing and doctor pass no scope, and
+    // §3.2a says they get the repo-wide answer exactly as before.
+    const record = recordOf([
+      row("agent_event", "unknown", "no_session_in_window"),
+      row("git", "complete", "commits_reported", null, GAP_ISO),
+    ]);
+
+    // Act
+    const clause = coverageClause(record, NOW);
+
+    // Assert
+    expect(clause).toContain("on this repo");
+  });
+});
+
+/**
  * THE HEAD WORD AND THE BODY MUST BE ABOUT THE SAME RECORD.
  *
  * `headOf` takes the worst state across all five readable rungs; the body was

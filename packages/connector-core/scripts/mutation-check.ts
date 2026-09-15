@@ -5146,6 +5146,39 @@ export const MUTATIONS: readonly Mutation[] = [
       "exists to make self-sufficient",
   },
   {
+    // §3.2a lets a caller narrow the question; the hub's record says so in
+    // `scope` and in `no_session_in_window`. A renderer that drops the scope
+    // reports a narrow question's answer as a repo-wide fact.
+    label: "a scoped record is read out as a repo-wide one",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `const scopeSubject = (record: CoverageRecord): string =>
+  (record.scope?.paths?.length ?? 0) > 0
+    ? "on the files asked about"
+    : "on this repo";`,
+    to: 'const scopeSubject = (_record: CoverageRecord): string => "on this repo";',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "a pin-lane answer about one file says `no agent session reported on " +
+      "this repo`, so a model concludes the archive is empty and re-derives " +
+      "work that is recorded and hours old",
+  },
+  {
+    // The window half of the same defect: a one-hour search whose answer is
+    // stated about all fourteen days.
+    label: "a one-hour question is answered about the whole window",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `      const age = scopeWindow(record, now);
+      return age === null
+        ? \`no agent session reported \${subject}\`
+        : \`no agent session reported \${subject} in the last \${age}\`;`,
+    to: "      return `no agent session reported ${subject}`;",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "`search_related_work({since: \"1h\"})` on a watched repo renders " +
+      "`Coverage unknown` with no window in the sentence, which is the " +
+      "caveat-on-every-answer noise §5.1 exists to prevent",
+  },
+  {
     // `headOf` reads all five rungs; the body read two. So ci, runtime and
     // human_edit could each turn the head to "incomplete" over a body saying
     // nothing was missing — as the FIRST, uncuttable line of every
@@ -5431,7 +5464,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 3
  * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
- * PRINTS: packages/connector-core/test/coverage-render.test.ts 5
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 7
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2

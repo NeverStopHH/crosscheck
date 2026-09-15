@@ -73,17 +73,44 @@ const rowOf = (
 ): CoverageSourceRecord | undefined =>
   record.sources.find((entry) => entry.source === source);
 
+/**
+ * WHAT THE RECORD IS ABOUT, in the sentence rather than only in the data.
+ *
+ * §3.2a lets a caller narrow the question: `/api/search` passes the caller's
+ * own `since` and the pin lane passes a file set. The hub's record is honest
+ * about it — the reason says `no_session_in_window` and `scope` carries both
+ * — and a renderer that dropped the scope said "no agent session reported on
+ * this repo" about a busy, fully-watched repo somebody had asked a one-hour
+ * question about. Fail-safe direction, still a statement nobody observed, and
+ * it fires "Coverage unknown" on ordinary short-window searches.
+ *
+ * An UNSCOPED record reads exactly as it did: the briefing and doctor pass
+ * nothing and get the repo-wide answer (§3.2a).
+ */
+const scopeSubject = (record: CoverageRecord): string =>
+  (record.scope?.paths?.length ?? 0) > 0
+    ? "on the files asked about"
+    : "on this repo";
+
+const scopeWindow = (record: CoverageRecord, now: Date): string | null => {
+  const since = record.scope?.sinceIso;
+  return since === undefined ? null : ageSince(since, now);
+};
+
 const agentEventFragment = (
+  record: CoverageRecord,
   row: CoverageSourceRecord | undefined,
+  now: Date,
 ): string | null => {
   if (row === undefined) {
     return null;
   }
   const when = instant(row.gapSince);
+  const subject = scopeSubject(record);
   const quiet =
     when === null
-      ? "agent sessions on this repo went quiet"
-      : `agent sessions on this repo went quiet ${when}`;
+      ? `agent sessions ${subject} went quiet`
+      : `agent sessions ${subject} went quiet ${when}`;
   switch (row.state) {
     case "complete":
       return "agent sessions reported";
@@ -93,10 +120,17 @@ const agentEventFragment = (
         : row.reason === "session_silent"
           ? `${quiet} (unclosed)`
           : quiet;
-    case "unknown":
-      return row.reason === "hub_did_not_report"
-        ? null
-        : "no agent session reported on this repo";
+    case "unknown": {
+      if (row.reason === "hub_did_not_report") {
+        return null;
+      }
+      // The window is the other half of "nothing matched": a caller who asked
+      // about the last hour is told about the last hour.
+      const age = scopeWindow(record, now);
+      return age === null
+        ? `no agent session reported ${subject}`
+        : `no agent session reported ${subject} in the last ${age}`;
+    }
     default:
       return null;
   }
@@ -255,7 +289,7 @@ export const coverageClause = (record: CoverageRecord, now: Date): string => {
     .filter((row) => row.source !== "agent_event" && row.source !== "git")
     .map(reservedFragment);
   const fragments = [
-    agentEventFragment(rowOf(record, "agent_event")),
+    agentEventFragment(record, rowOf(record, "agent_event"), now),
     gitFragment(rowOf(record, "git"), now),
     ...reserved,
   ].filter((fragment): fragment is string => fragment !== null);
