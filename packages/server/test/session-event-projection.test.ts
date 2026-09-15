@@ -41,11 +41,18 @@ const withSeq = (
   epoch: string = EPOCH_A,
 ): Record<string, unknown> => ({ ...envelope, seq: { epoch, n } });
 
+/**
+ * The session's OWN start is an event too — registering emits `session.started`
+ * — so a test about where a RECORD's position is filed reads past it. That row
+ * is asserted where it belongs, in session-lifecycle-seq.test.ts.
+ */
 const eventsOf = async (harness: TestHarness, sessionId: string) =>
-  harness.db
-    .select()
-    .from(sessionEvents)
-    .where(eq(sessionEvents.sessionId, sessionId));
+  (
+    await harness.db
+      .select()
+      .from(sessionEvents)
+      .where(eq(sessionEvents.sessionId, sessionId))
+  ).filter((row) => row.kind !== "session.started");
 
 describe("a position is filed under the session that took it", () => {
   test("a spool written by A and flushed by B files A's position under A", async () => {

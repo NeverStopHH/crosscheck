@@ -121,10 +121,14 @@ describe("SEQ-7 — seq_kind is derived on the hub, never sent", () => {
     });
 
     // Assert
-    const rows = await harness.db
-      .select()
-      .from(sessionEvents)
-      .where(eq(sessionEvents.sessionId, SESSION));
+    // The register's own `session.started` sits beside these; this test is
+    // about the two lanes, so it reads the file events only.
+    const rows = (
+      await harness.db
+        .select()
+        .from(sessionEvents)
+        .where(eq(sessionEvents.sessionId, SESSION))
+    ).filter((row) => row.kind === "file.modified");
     expect(rows).toHaveLength(2);
     expect(rows.find((row) => row.seqN === 1)?.seqKind).toBe("emitted");
     expect(rows.find((row) => row.seqN === 2)?.seqKind).toBe("observed");

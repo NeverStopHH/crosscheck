@@ -97,6 +97,8 @@ describe("SEQ-10 — one referent, three kinds, three rows", () => {
       .select()
       .from(sessionEvents)
       .where(eq(sessionEvents.sessionId, "cc_s3"));
+    // The register emitted a `session.started` of its own, unsequenced like
+    // these two — under a kind-less hash ALL THREE would have collapsed.
     expect(rows.map((row) => row.kind).sort()).toEqual([
       "session.ended",
       "session.started",
@@ -128,10 +130,12 @@ describe("SEQ-10 — one referent, three kinds, three rows", () => {
     }
 
     // Assert
-    const rows = await harness.db
-      .select()
-      .from(sessionEvents)
-      .where(eq(sessionEvents.sessionId, "cc_s4"));
+    const rows = (
+      await harness.db
+        .select()
+        .from(sessionEvents)
+        .where(eq(sessionEvents.sessionId, "cc_s4"))
+    ).filter((row) => row.kind === "commit.observed");
     expect(rows.map((row) => row.seqN).sort((a, b) => Number(a) - Number(b))).toEqual([3, 9]);
   });
 
@@ -166,18 +170,23 @@ describe("SEQ-10 — one referent, three kinds, three rows", () => {
     // Arrange
     const harness = await createTestHarness();
     const dev = await createTestDeveloper(harness, "Seq Dev", "seq@example.com");
-    await registerTestSession(harness, dev.apiKey, { id: "cc_s1" });
+    // The REGISTER is `session.started`, at position 0 by construction — this
+    // is the real emitter, not a stand-in for one.
+    await registerTestSession(harness, dev.apiKey, {
+      id: "cc_s1",
+      seq: { epoch: EPOCH, n: 0 },
+    });
 
-    // Act
+    // Act: the session's other two events, on the same referent.
     for (const [index, kind] of (
-      ["session.started", "commit.observed", "session.ended"] as const
+      ["commit.observed", "session.ended"] as const
     ).entries()) {
       await recordSessionEvent(
         { db: harness.db, now: harness.clock.now },
         {
           sessionId: "cc_s1",
           kind,
-          seq: { epoch: EPOCH, n: index },
+          seq: { epoch: EPOCH, n: index + 1 },
           seqKind: "emitted",
           refKind: "session",
           refId: "cc_s1",
@@ -219,10 +228,12 @@ describe("SEQ-10 — one referent, three kinds, three rows", () => {
     );
 
     // Assert: never a silent null — the row says WHY it has no position.
-    const rows = await harness.db
-      .select()
-      .from(sessionEvents)
-      .where(eq(sessionEvents.sessionId, "cc_s2"));
+    const rows = (
+      await harness.db
+        .select()
+        .from(sessionEvents)
+        .where(eq(sessionEvents.sessionId, "cc_s2"))
+    ).filter((row) => row.kind === "claim.created");
     expect(rows).toHaveLength(1);
     expect(rows[0]?.seqEpoch).toBeNull();
     expect(rows[0]?.seqN).toBeNull();

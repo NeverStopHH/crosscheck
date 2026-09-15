@@ -34,6 +34,19 @@ const harnessWithSession = async (email: string): Promise<TestHarness> => {
   return harness;
 };
 
+/**
+ * Registering a session emits `session.started`, so every one of these
+ * fixtures already holds one row before the first claim arrives. This file is
+ * about what happens to a CLAIM's position, so that row is read past.
+ */
+const claimEventsOf = async (harness: TestHarness) =>
+  (
+    await harness.db
+      .select()
+      .from(sessionEvents)
+      .where(eq(sessionEvents.sessionId, SESSION))
+  ).filter((row) => row.kind !== "session.started");
+
 describe("SEQ-6 — a taken position is a third outcome", () => {
   test("a different event at a taken position keeps its row and loses its position", async () => {
     // Arrange
@@ -61,10 +74,7 @@ describe("SEQ-6 — a taken position is a third outcome", () => {
     // Assert
     expect(first.positioned).toBe(true);
     expect(second.positioned).toBe(false);
-    const rows = await harness.db
-      .select()
-      .from(sessionEvents)
-      .where(eq(sessionEvents.sessionId, SESSION));
+    const rows = await claimEventsOf(harness);
     expect(rows).toHaveLength(2);
     const conflicted = rows.find((row) => row.refId === "clm_second");
     expect(conflicted?.seqN).toBeNull();
@@ -97,10 +107,7 @@ describe("SEQ-6 — a taken position is a third outcome", () => {
     // Assert
     expect(second.id).toBe(first.id);
     expect(second.positioned).toBe(true);
-    const rows = await harness.db
-      .select()
-      .from(sessionEvents)
-      .where(eq(sessionEvents.sessionId, SESSION));
+    const rows = await claimEventsOf(harness);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.seqReason).toBe("sequenced");
   });
@@ -126,10 +133,7 @@ describe("SEQ-6 — a taken position is a third outcome", () => {
     }
 
     // Assert
-    const rows = await harness.db
-      .select()
-      .from(sessionEvents)
-      .where(eq(sessionEvents.sessionId, SESSION));
+    const rows = await claimEventsOf(harness);
     expect(rows).toHaveLength(3);
   });
 });
