@@ -19,6 +19,8 @@
 import { describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
+import { SEQ_EPOCH_PATTERN } from "@crosscheck/schema";
+
 import {
   allocateSeq,
   publishSessionState,
@@ -26,12 +28,17 @@ import {
   writeSessionState,
 } from "../src/state/session-state.ts";
 import type { SessionStateInput } from "../src/state/session-state.ts";
-import { makeHome } from "./helpers.ts";
+import { sessionStatePath } from "../src/config/paths.ts";
+import { registerSessionFlow } from "../src/flows/register-session.ts";
+import { withLock } from "../src/spool/lock.ts";
+import { makeHome, makeRepo } from "./helpers.ts";
 
 const HOST_KEY = "seq-carry-uuid";
 const REPO_ID = "github.com/acme/api";
 const HUB_URL = "http://127.0.0.1:7901";
 const EPOCH = "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+/** Port 1 refuses instantly: an unreachable hub without the wait. */
+const DEAD_HUB_URL = "http://127.0.0.1:1";
 
 const stateInput = (
   overrides: Partial<SessionStateInput> = {},
@@ -212,6 +219,91 @@ describe("SEQ-3 — two emitters on one session cannot take one position", () =>
 
       // Assert
       expect(range).toBeNull();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("SEQ-5 — a busy lock must mint a new epoch, never restart the old one", () => {
+  test("registration mints the epoch onto the state INPUT", async () => {
+    // Arrange: the epoch cannot be minted inside publishSessionState, because
+    // the BUSY-LOCK FALLBACK never runs that code — it writes the caller's
+    // plain state, "the counters lose rather than the file". Minting on the
+    // input is what makes that fallback write a FRESH epoch beside eventSeq 0
+    // instead of a null one, and a fresh epoch is merely not comparable where
+    // a null one is not sequenced at all.
+    const home = await makeHome("seq-register");
+    const repo = await makeRepo("seq-register", {
+      remote: "git@github.com:acme/api.git",
+    });
+    try {
+      // Act: an unreachable hub — registration fails, state is still published.
+      await registerSessionFlow({
+        home,
+        repoKey: "k",
+        hub: {
+          hubUrl: DEAD_HUB_URL,
+          apiKey: "k",
+          timeoutMs: 500,
+          home,
+          repoKey: "k",
+          now: () => new Date(),
+        },
+        agentKind: "claude-code",
+        hostSessionKey: HOST_KEY,
+        repoId: REPO_ID,
+        repoRoot: repo,
+        branch: "main",
+        baseCommit: "0".repeat(40),
+        hubUrl: DEAD_HUB_URL,
+        fallbackDeveloperId: "dev_self",
+        title: "main @ api",
+        status: "analyzing",
+        now: new Date(),
+      });
+
+      // Assert
+      const state = await readSessionState(home, HOST_KEY);
+      expect(state?.seqEpoch).toMatch(SEQ_EPOCH_PATTERN);
+      expect(state?.eventSeq).toBe(0);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  test("a busy lock writes a fresh epoch rather than a session with none", async () => {
+    // Arrange: hold the state lock, so publishSessionState takes its uncarried
+    // fallback exactly as it does when a sibling hook is mid-write.
+    const home = await makeHome("seq-busy");
+    try {
+      await writeSessionState(
+        home,
+        stateInput({ seqEpoch: EPOCH, eventSeq: 9 }),
+      );
+      const fresh = crypto.randomUUID();
+
+      // Act
+      await withLock(
+        `${sessionStatePath(home, HOST_KEY)}.lock`,
+        false,
+        async () => {
+          await publishSessionState(
+            home,
+            stateInput({ seqEpoch: fresh, eventSeq: 0 }),
+          );
+          return true;
+        },
+      );
+
+      // Assert: the counter lost, as the fallback's header says it must — but
+      // under a DIFFERENT epoch, so the two halves are not comparable rather
+      // than sharing positions.
+      const after = await readSessionState(home, HOST_KEY);
+      expect(after?.eventSeq).toBe(0);
+      expect(after?.seqEpoch).toBe(fresh);
+      expect(after?.seqEpoch).not.toBe(EPOCH);
     } finally {
       await rm(home, { recursive: true, force: true });
     }

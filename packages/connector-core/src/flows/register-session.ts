@@ -196,6 +196,19 @@ export const registerSessionFlow = async (
     // fabricate one (trial finding #16).
     workContextTitle: input.title,
     workContextStatus: input.status,
+    // THE EPOCH IS MINTED ON THE INPUT, not inside publishSessionState (spec
+    // 01 §3.4). publishSessionState's busy-lock FALLBACK writes this object
+    // verbatim, with no carry at all — "the counters lose rather than the
+    // file" — so an epoch minted inside the locked branch would be absent
+    // from exactly the write that most needs one: a session whose state file
+    // was re-created with seqEpoch null allocates no positions for the rest
+    // of its life, silently. Minted here, that fallback writes a FRESH epoch
+    // beside eventSeq 0, which leaves the two halves NOT COMPARABLE rather
+    // than sharing positions. On the ordinary path withCarriedCapture
+    // restores the previous pair, so a re-fire that takes the lock keeps one
+    // epoch for the whole session.
+    seqEpoch: crypto.randomUUID(),
+    eventSeq: 0,
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
   };
   if (input.recovery === true) {
