@@ -2730,10 +2730,10 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "a filtered empty result reads as a fact about the teammate",
     file: `${CORE}/src/mcp/render.ts`,
     from:
-      "  return from.length === 0 && window.length === 0\n    ? sentence\n" +
-      "    : `${sentence} Those filters are part of that answer: other words, a longer ` +\n" +
+      "  const filtersNote =\n    from.length === 0 && window.length === 0\n      ? \"\"\n" +
+      "      : ` Those filters are part of that answer: other words, a longer ` +\n" +
       '        "window or another teammate may well match.";',
-    to: "  return sentence;",
+    to: '  const filtersNote = "";',
     test: `${CORE}/test/mcp-render.test.ts`,
     because:
       "`developer: Ken` with no hits renders the same sentence an unfiltered " +
@@ -4592,8 +4592,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // failure was the hole one layer down.
     label: "unreadable target rows render as no targets captured",
     file: `${CORE}/src/mcp/render.ts`,
-    from: "  return diagnosis.droppedTargets > 0\n    ? [targetsUnreadable(diagnosis.droppedTargets)]\n    : [TARGETS_EMPTY];",
-    to: "  return [TARGETS_EMPTY];",
+    from: "  if (diagnosis.droppedTargets > 0) {\n    return [targetsUnreadable(diagnosis.droppedTargets)];\n  }",
+    to: "  if (false) {\n    return [targetsUnreadable(diagnosis.droppedTargets)];\n  }",
     test: `${CORE}/test/mcp-render.test.ts`,
     because:
       "a hub one field ahead of this connector makes the page state that " +
@@ -4959,7 +4959,7 @@ export const MUTATIONS: readonly Mutation[] = [
     // see.
     label: "an empty search answers under a gap as if it had looked",
     file: `${CORE}/src/mcp/render.ts`,
-    from: "  return `${sentence}${filtersNote}\n${coverageQualifier(options.coverage)}`;",
+    from: "  return `${sentence}${filtersNote}\\n${coverageQualifier(options.coverage)}`;",
     to: "  return `${sentence}${filtersNote}`;",
     test: `${CORE}/test/coverage-empty-answers.test.ts`,
     because:
@@ -4994,6 +4994,40 @@ export const MUTATIONS: readonly Mutation[] = [
       "both empty sentences go back to claiming the WORK rather than the " +
       "archive, so an unwatched session reads as a session that touched " +
       "nothing and recorded nothing",
+  },
+  {
+    // AT-9's "fails if" is that a person has to run doctor to learn an answer
+    // rested on partial observation. `crosscheck status` is the command they
+    // run instead, and an omitted line there reads as all clear.
+    label: "status states the team and not how far it was watched",
+    file: `${CLI}/src/cli/status.ts`,
+    from: `      \`coverage: \${coverageClause(
+        absences.ok ? absences.data.coverage : UNKNOWN_COVERAGE,
+        now,
+      )}\`,`,
+    to: `      ...(absences.ok && absences.data.coverage.sources.some((row) => row.state === "incomplete")
+        ? [\`coverage: \${coverageClause(absences.data.coverage, now)}\`]
+        : []),`,
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "every install pointed at a hub that reports no coverage prints no " +
+      "coverage line at all, which is the one state a reader would read as " +
+      "`nothing to report` rather than `we cannot tell`",
+  },
+  {
+    // COV-5. A rung that cannot exist is only honest if somebody can read the
+    // refusal; one nobody sees is the silent absence AT-10 forbids by name.
+    label: "the rungs that cannot exist are refused where nobody looks",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: `  const refusals = record.sources
+    .filter((row) => row.state === "unavailable")`,
+    to: `  const refusals = record.sources
+    .filter(() => false)`,
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "CI, runtime and human_edit vanish from doctor entirely, so a reader " +
+      "cannot tell a rung this product refuses to build from one that is " +
+      "merely broken on their machine",
   },
 ];
 
@@ -5043,6 +5077,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
+ * PRINTS: packages/cli/test/coverage-cli.test.ts 2
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
