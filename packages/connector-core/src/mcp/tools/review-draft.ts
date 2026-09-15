@@ -257,6 +257,13 @@ export const run = async (
     provenance: revision.provenance,
     evidenceRefs: [],
     affectedPaths: surface.paths,
+    // THE EMITTER'S OWN HEAD, at zero marginal cost: prepareMcp already
+    // resolved a RepoIdentity for this call and resolveRepoIdentity ran
+    // `git rev-parse HEAD` inside it. Sending it makes the binding `reported`
+    // instead of leaving ingest to read the session's base_commit, which is
+    // rewritten on every re-registration and can therefore sit LATER than the
+    // observation — the direction that makes a claim read fresher than it is.
+    observedAtCommit: ctx.identity.baseCommit,
     createdAt: now,
   };
   const rules = checkClaim(claim);

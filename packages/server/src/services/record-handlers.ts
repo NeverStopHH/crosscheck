@@ -160,9 +160,17 @@ const resolveCommitBinding = async (
     .where(eq(agentSessions.id, body.authorSessionId))
     .limit(1);
   const repo = rows[0]?.repo ?? "";
+  // THE REPORTED VALUE IS HELD TO THE SAME PREDICATE AS THE FALLBACK. The wire
+  // schema only proves it looks like an object name, and NO_COMMIT_SHA is
+  // seven hex characters — so a connector in a repository with no commits
+  // reports the placeholder and it would otherwise be filed as a precise
+  // observation point that git can never resolve.
   const reported = body.observedAtCommit;
-  if (reported !== undefined) {
+  if (reported !== undefined && isBindableCommit(reported)) {
     return { observedAtCommit: reported, commitBinding: "reported", repo };
+  }
+  if (reported !== undefined) {
+    return { observedAtCommit: null, commitBinding: "none", repo };
   }
   const baseCommit = rows[0]?.baseCommit ?? "";
   return isBindableCommit(baseCommit)

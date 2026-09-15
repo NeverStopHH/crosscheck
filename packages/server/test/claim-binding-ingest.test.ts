@@ -143,6 +143,32 @@ describe("claim ingest stamps a commit binding", () => {
     });
   });
 
+  test("a reported NO_COMMIT_SHA binds to nothing, not to the placeholder", async () => {
+    // Arrange: the wire schema only proves the value LOOKS like an object
+    // name, and "0000000" is seven hex characters. A connector in a
+    // repository with no commits reports exactly that.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, {
+      records: [recordEnvelope("work_context", validWorkContextBody())],
+    });
+
+    // Act
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id: "clm_reported_zero", observedAtCommit: "0000000" }),
+      ),
+    );
+
+    // Assert
+    expect(await readBinding(harness, "clm_reported_zero")).toEqual({
+      observedAtCommit: null,
+      commitBinding: "none",
+    });
+  });
+
   test("a prose-shaped observedAtCommit is refused at the wire schema", async () => {
     // Arrange: nothing flag- or prose-shaped may reach git or SQL — the
     // landed-evidence rule, on the same hoisted COMMIT_SHA_PATTERN.
