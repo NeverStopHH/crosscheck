@@ -4836,6 +4836,24 @@ export const MUTATIONS: readonly Mutation[] = [
       "at one point has no order at all while every emitter reports success",
   },
   {
+    // The allocator's PATIENCE, which SEQ-3 turned out to be about. The lock
+    // is the spool's primitive, and its default retry count is sized by what a
+    // busy FLUSH costs. Dropping the argument compiles, passes every test that
+    // only races emitters on an idle machine, and was measured to refuse 7 of
+    // 800 positions under eight emitters — green on every developer Mac, red
+    // on both CI runners. The guard holds the lock for longer than the spool's
+    // patience on purpose, so it is red on any machine at any load.
+    label: "the session state's lock gives up at the spool's patience",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "): Promise<T> => withLock(path, fallback, action, SESSION_STATE_LOCK_RETRIES);",
+    to: "): Promise<T> => withLock(path, fallback, action);",
+    test: `${CORE}/test/session-seq.test.ts`,
+    because:
+      "any two hooks of one session that overlap for longer than 100 ms turn " +
+      "one of their events into `allocation_failed` — honest, and a hole in " +
+      "the causal order on exactly the busy turns an investigator reads",
+  },
+  {
     // Spec 01 §3.5. The hint-delivery id shape — sha256(session, ref) — is the
     // obvious one and it SILENTLY DELETES EVENTS here, because three kinds
     // share one referent: session.started, commit.observed and session.ended
@@ -5503,7 +5521,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-seq.test.ts 3
+ * PRINTS: packages/connector-core/test/session-seq.test.ts 4
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 1
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4

@@ -370,18 +370,65 @@ export const MAX_INGEST_BATCH = 100;
 export const MAX_FLUSH_BATCHES_PER_HOOK = 20;
 export const SPOOL_LOCK_STALE_MS = 5000;
 /**
- * The lock guards flush and reap only — appends are lock-free — so a busy lock
- * costs a deferred flush that the next hook retries, never a record. Retries ×
- * delay stays far below the smallest hook budget.
+ * THE SPOOL's patience, and only the spool's. A busy flush or reap lock costs a
+ * deferred flush that the next hook retries, never a record, so five attempts is
+ * all that failure is worth and retries × delay stays far below the smallest
+ * hook budget.
  *
  * That accounting covers a BUSY lock, which is the only way an acquisition may
  * fail. A STOLEN lock was never in it: two holders inside the section at once
  * cost concurrent rewrites of the per-repo aggregates and a reap deleting a
  * file the flush was mid-delivery of. Stealing from a live holder is what
  * spool/lock.ts now refuses, which is what makes the sentence above complete.
+ *
+ * WHAT THIS NUMBER MUST NOT BE SPENT ON is below: the session state took the
+ * same primitive and does not have the same failure cost.
  */
 export const SPOOL_LOCK_RETRIES = 5;
 export const SPOOL_LOCK_RETRY_DELAY_MS = 20;
+
+/**
+ * THE SESSION STATE's patience, which is a different number because a busy
+ * session-state lock costs a POSITION.
+ *
+ * The sentence above — a busy lock costs a deferred flush, never a record — was
+ * the whole justification for five attempts, and this branch made it false:
+ * `allocateSeq`, `openToolWindow` and `allocateToolSeq` took the same lock
+ * primitive, and there a refusal is an event carrying `allocation_failed`
+ * instead of a place in the causal order. That refusal is honest — capture/seq.ts
+ * makes it a value rather than an omission — and it is not a correctness bug.
+ * It is a hole in the order, and five attempts bought far more of them than
+ * anybody chose to buy.
+ *
+ * MEASURED 2026-09-16 (bun 1.3.13, M-series Mac, idle), emitters each
+ * allocating one position in a loop; refusals out of the total asked for:
+ *
+ *              retries=5    retries=20   retries=60
+ *   4 emitters   1/400        0/400        0/400
+ *   8 emitters   7/800        0/800        0/800
+ *  16 emitters  41/1600       4/1600       0/1600
+ *
+ * The counter equalled "asked minus refused" in EVERY run: mutual exclusion was
+ * never what failed, patience was. The extra attempts are also close to free —
+ * 8 emitters took 321 ms at five and 324 ms at twenty — because only an emitter
+ * that WOULD have been refused ever spends them, and an uncontended acquire
+ * returns on its first `createLock` without reaching the delay at all. CI is
+ * the loaded machine this idle one stands in for: two emitters refuse nothing
+ * here, and two on a loaded runner is what reddened SEQ-3 on both platforms.
+ *
+ * A jittered retry delay was tried first and REFUTED by the same measurement
+ * (8 emitters 7 → 8 refusals, 16 emitters 41 → 41): the losers were not
+ * colliding in lockstep, they were simply running out of attempts.
+ *
+ * WHY WAITING THIS LONG IS SAFE. The ceiling is the smallest hook budget minus
+ * the one HTTP request that budget must still afford, and `withBudget` races
+ * the whole hook against it regardless — so this cannot hold a developer's
+ * session open even if the arithmetic below were ever wrong.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.SESSION_STATE_LOCK_RETRIES*c.SPOOL_LOCK_RETRY_DELAY_MS <= c.PRE_TOOL_USE_BUDGET_RATIO*c.HTTP_TIMEOUT_MS - c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true
+ */
+export const SESSION_STATE_LOCK_RETRIES = 20;
 
 /** ~550 tokens at 4 chars/token, under the ≤600 token briefing budget (§4). */
 export const MAX_BRIEFING_CHARS = 2200;

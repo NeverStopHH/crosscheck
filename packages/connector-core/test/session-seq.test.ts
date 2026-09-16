@@ -22,9 +22,15 @@ import { rm } from "node:fs/promises";
 import { SEQ_EPOCH_PATTERN } from "@crosscheck/schema";
 
 import {
+  SESSION_STATE_LOCK_RETRIES,
+  SPOOL_LOCK_RETRIES,
+  SPOOL_LOCK_RETRY_DELAY_MS,
+} from "../src/constants.ts";
+import {
   allocateSeq,
   publishSessionState,
   readSessionState,
+  sessionStateLockPath,
   writeSessionState,
 } from "../src/state/session-state.ts";
 import type { SessionStateInput } from "../src/state/session-state.ts";
@@ -32,6 +38,21 @@ import { sessionStatePath } from "../src/config/paths.ts";
 import { registerSessionFlow } from "../src/flows/register-session.ts";
 import { withLock } from "../src/spool/lock.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
+
+const ALLOCATIONS_PER_EMITTER = 100;
+/**
+ * Long enough that the spool's five attempts (5 x 20 ms) run out, short enough
+ * that the session state's twenty do not. The test asserts both halves of that
+ * sentence before it asserts anything about a position.
+ */
+const HOLD_MS = 200;
+/** Long enough for the holder to be INSIDE the section, asserted rather than assumed. */
+const HOLD_SETTLE_MS = 20;
+
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 const HOST_KEY = "seq-carry-uuid";
 const REPO_ID = "github.com/acme/api";
@@ -135,7 +156,26 @@ describe("SEQ-4 — a re-fire must not restart the counter", () => {
 });
 
 describe("SEQ-3 — two emitters on one session cannot take one position", () => {
-  test("two hundred interleaved allocations are strictly increasing", async () => {
+  /**
+   * WHAT THIS TEST MAY ASSERT, and what the test it replaces could not.
+   *
+   * It used to drop every refused allocation on the floor (`if (range !== null)`)
+   * and then assert 200 positions came back. That is a LIVENESS claim wearing a
+   * safety claim's name: it passes or fails on how busy the machine is, and it
+   * reports the failure as `Expected length: 200, Received length: 199` — a
+   * sentence naming neither the lock nor the refusal. It was green on every
+   * developer Mac and red on both CI runners for exactly that reason.
+   *
+   * Safety is what holds at ANY load, so safety is what is asserted here: no two
+   * emitters share a position, none is reused, and the counter moved by exactly
+   * the number of positions actually handed out. A refusal is legal — capture/
+   * seq.ts makes it a first-class value — and it is COUNTED here rather than
+   * hidden, so a regression that starts refusing surfaces as a number a reader
+   * can act on. That the count is near zero in practice is the PATIENCE claim,
+   * pinned deterministically by the busy-lock test below instead of being hoped
+   * for from the scheduler.
+   */
+  test("interleaved allocations never share, reuse or lose a position", async () => {
     // Arrange: the shape of connector-claude/test/state-race.test.ts —
     // MONOTONICITY IS A PROPERTY OF THE LOCK, not of the caller, so the test
     // that matters runs many allocators at once and asks for a set, not an
@@ -145,27 +185,101 @@ describe("SEQ-3 — two emitters on one session cannot take one position", () =>
       await writeSessionState(home, stateInput({ seqEpoch: EPOCH }));
 
       // Act: two emitters, a hundred allocations each, all overlapping.
-      const emitter = async (): Promise<readonly number[]> => {
+      const emitter = async (): Promise<{
+        readonly taken: readonly number[];
+        readonly refused: number;
+      }> => {
         const taken: number[] = [];
-        for (let index = 0; index < 100; index += 1) {
+        let refused = 0;
+        for (let index = 0; index < ALLOCATIONS_PER_EMITTER; index += 1) {
           const range = await allocateSeq(home, HOST_KEY, 1);
-          if (range !== null) {
+          if (range === null) {
+            refused += 1;
+          } else {
             taken.push(range.from);
           }
         }
-        return taken;
+        return { taken, refused };
       };
       const [left, right] = await Promise.all([emitter(), emitter()]);
-      const all = [...left, ...right].sort((a, b) => a - b);
+      const all = [...left.taken, ...right.taken].sort((a, b) => a - b);
+      const refused = left.refused + right.refused;
+      const asked = 2 * ALLOCATIONS_PER_EMITTER;
 
-      // Assert: 200 positions, every one distinct, none reused, none zero —
-      // n = 0 belongs to session.started and is never allocated again.
-      expect(all).toHaveLength(200);
-      expect(new Set(all).size).toBe(200);
+      // Assert: every position handed out is distinct, the run is contiguous
+      // from 1 — n = 0 belongs to session.started and is never allocated again
+      // — and NOTHING vanished: granted plus refused is everything asked for.
+      if (refused > 0) {
+        console.log(
+          `[seq-race] ${String(refused)}/${String(asked)} allocations refused` +
+            " (a busy lock is legal; see SESSION_STATE_LOCK_RETRIES)",
+        );
+      }
+      expect(all.length + refused).toBe(asked);
+      expect(new Set(all).size).toBe(all.length);
       expect(all[0]).toBe(1);
-      expect(all.at(-1)).toBe(200);
+      expect(all.at(-1)).toBe(all.length);
+      // The counter is the ledger: it moved by exactly what was handed out, so
+      // a refusal consumed nothing and no position was minted twice.
       const state = await readSessionState(home, HOST_KEY);
-      expect(state?.eventSeq).toBe(200);
+      expect(state?.eventSeq).toBe(all.length);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * THE PATIENCE, pinned without a stopwatch race.
+   *
+   * SEQ-3's real failure was never two emitters taking one position — the
+   * counter always equalled "asked minus refused", so mutual exclusion held. It
+   * was an emitter running OUT OF ATTEMPTS: `withLock`'s default retry count is
+   * sized by what a busy FLUSH costs, and spec 01 put the causal order on the
+   * same primitive, where that same failure costs a position instead.
+   *
+   * So this holds the lock for longer than the spool's patience and shorter than
+   * the session state's, and asks for a position underneath it. The holder is
+   * THIS process, which is what makes the wait deterministic rather than
+   * scheduler-dependent: `stealableToken` refuses a claim younger than
+   * SPOOL_LOCK_STALE_MS, and refuses it again because the holding pid is running
+   * and is not a zombie — so nothing can shorten the wait, on any machine, at
+   * any load.
+   */
+  test("a lock held past the spool's patience costs no position", async () => {
+    // Arrange
+    const home = await makeHome("seq-busy-lock");
+    try {
+      await writeSessionState(home, stateInput({ seqEpoch: EPOCH }));
+      const spoolPatienceMs = SPOOL_LOCK_RETRIES * SPOOL_LOCK_RETRY_DELAY_MS;
+      const statePatienceMs =
+        SESSION_STATE_LOCK_RETRIES * SPOOL_LOCK_RETRY_DELAY_MS;
+      // The precondition is ARITHMETIC, and asserted before the behaviour: if
+      // these ever stop straddling HOLD_MS, the assertion below proves nothing.
+      expect(spoolPatienceMs).toBeLessThan(HOLD_MS);
+      expect(statePatienceMs).toBeGreaterThan(HOLD_MS + HOLD_SETTLE_MS);
+
+      // Act: take the state's own lock and sit in it, then allocate underneath.
+      let held = false;
+      const holder = withLock(
+        sessionStateLockPath(home, HOST_KEY),
+        null,
+        async () => {
+          held = true;
+          await delay(HOLD_MS);
+          return null;
+        },
+      );
+      await delay(HOLD_SETTLE_MS);
+      expect(held).toBe(true);
+      const range = await allocateSeq(home, HOST_KEY, 1);
+      await holder;
+
+      // Assert: the position was waited for, not refused. At the spool's five
+      // attempts this is null, and the record that would have carried it goes
+      // out stamped `allocation_failed` instead.
+      expect(range).not.toBeNull();
+      expect(range?.from).toBe(1);
+      expect((await readSessionState(home, HOST_KEY))?.eventSeq).toBe(1);
     } finally {
       await rm(home, { recursive: true, force: true });
     }

@@ -10,6 +10,7 @@ import {
   MINUTES_PER_HOUR,
   MS_PER_SECOND,
   SECONDS_PER_MINUTE,
+  SESSION_STATE_LOCK_RETRIES,
   STATUS_MAX_SESSION_STATES,
 } from "../constants.ts";
 import {
@@ -23,6 +24,27 @@ import {
   listSessionStateFiles,
   sessionSilentForMs,
 } from "./session-scan.ts";
+
+/**
+ * THE SESSION STATE'S LOCK, spelled once so no acquisition here can accidentally
+ * buy the SPOOL's patience.
+ *
+ * Both locks are the same primitive, and that is the trap: `withLock`'s default
+ * retry count is sized by what a busy FLUSH costs, which is a deferred flush the
+ * next hook retries. Every acquisition in this file costs something else — a
+ * position in the causal order, a bookkeeping write, a session binding — so it
+ * gets SESSION_STATE_LOCK_RETRIES, whose comment carries the measurement that
+ * chose the number.
+ *
+ * A seventh caller reaching for `withLock` directly would compile, pass its
+ * tests, and quietly reintroduce the refusals SEQ-3 caught. Reaching for this
+ * instead is the only thing standing between that and the order.
+ */
+const withSessionStateLock = async <T>(
+  path: string,
+  fallback: T,
+  action: () => Promise<T>,
+): Promise<T> => withLock(path, fallback, action, SESSION_STATE_LOCK_RETRIES);
 
 /**
  * Past this much silence a state file is a CORPSE, not a live session: the
@@ -504,8 +526,18 @@ export const deleteSessionState = async (
   await removeFile(sessionStatePath(home, hostSessionKey));
 };
 
-const sessionStateLockPath = (home: string, hostSessionKey: string): string =>
-  `${sessionStatePath(home, hostSessionKey)}.lock`;
+/**
+ * Exported so a test can make the lock BUSY on purpose rather than hoping a
+ * loaded machine makes it busy for it. The patience above is the whole reason
+ * `allocateSeq` returns a position instead of a refusal, and a test that cannot
+ * hold the lock can only assert that by running many emitters and trusting the
+ * scheduler — which is how SEQ-3 came to pass on every developer Mac and fail
+ * on both CI runners. Nothing in the source takes it from here.
+ */
+export const sessionStateLockPath = (
+  home: string,
+  hostSessionKey: string,
+): string => `${sessionStatePath(home, hostSessionKey)}.lock`;
 
 /**
  * Read-transform-write under the state file's own lock — how every MID-SESSION
@@ -532,7 +564,7 @@ export const updateSessionState = async (
   hostSessionKey: string,
   transform: (fresh: SessionState) => SessionState | null,
 ): Promise<boolean> =>
-  withLock(sessionStateLockPath(home, hostSessionKey), false, async () => {
+  withSessionStateLock(sessionStateLockPath(home, hostSessionKey), false, async () => {
     const fresh = await readSessionState(home, hostSessionKey);
     if (fresh === null) {
       return false;
@@ -616,7 +648,7 @@ export const publishSessionState = async (
   home: string,
   state: SessionStateInput,
 ): Promise<void> => {
-  const published = await withLock(
+  const published = await withSessionStateLock(
     sessionStateLockPath(home, state.hostSessionKey),
     false,
     async () => {
@@ -688,7 +720,7 @@ export const allocateSeq = async (
   hostSessionKey: string,
   count: number,
 ): Promise<SeqRange | null> =>
-  withLock<SeqRange | null>(
+  withSessionStateLock<SeqRange | null>(
     sessionStateLockPath(home, hostSessionKey),
     null,
     async () => {
@@ -717,7 +749,7 @@ export const openToolWindow = async (
   home: string,
   hostSessionKey: string,
 ): Promise<number | null> =>
-  withLock<number | null>(
+  withSessionStateLock<number | null>(
     sessionStateLockPath(home, hostSessionKey),
     null,
     async () => {
@@ -770,7 +802,7 @@ export const allocateToolSeq = async (
   count: number,
   closing: boolean,
 ): Promise<SeqRange | null> =>
-  withLock<SeqRange | null>(
+  withSessionStateLock<SeqRange | null>(
     sessionStateLockPath(home, hostSessionKey),
     null,
     async () => {
@@ -820,7 +852,7 @@ export const claimSessionState = async (
   home: string,
   state: SessionStateInput,
 ): Promise<SessionStateClaim | null> =>
-  withLock<SessionStateClaim | null>(
+  withSessionStateLock<SessionStateClaim | null>(
     sessionStateLockPath(home, state.hostSessionKey),
     null,
     async () => {
