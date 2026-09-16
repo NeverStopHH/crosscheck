@@ -28,11 +28,12 @@
  * attributable.
  */
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
-import type { ClaimRevalidationReport } from "@crosscheck/schema";
+import type { ClaimRevalidationReport, ClaimValidity } from "@crosscheck/schema";
 
 import { CLAIM_REVALIDATION_RETENTION_DAYS } from "../constants.ts";
 import { claimRevalidations, claims } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
+import { loadClaimValidities } from "./claim-validity.ts";
 import type { Clock } from "../types.ts";
 
 interface Deps {
@@ -53,6 +54,17 @@ export interface ClaimRevalidationOutcome {
   readonly refusedDowngrades: number;
   /** Rows deleted for age on this pass. */
   readonly pruned: number;
+  /**
+   * The DERIVED validity of every claim the report named, after the write.
+   *
+   * Returned so a reader who triggered the check sees the downgrade on the
+   * pull that found it rather than the next one, and so the connector never
+   * has to map a drift result to a state itself — `claimValidity()` stays the
+   * only place a ClaimValidityState is minted. It also makes the refusals
+   * visible: a report whose `unchanged` was refused gets `stale` back, which
+   * is the truth about the claim rather than the truth about the request.
+   */
+  readonly validities: ReadonlyMap<string, ClaimValidity>;
 }
 
 /** Claim ids this hub does not have — reported, never silently dropped. */
@@ -142,6 +154,16 @@ export const ingestClaimRevalidations = async (
         refusedDowngrades += 1;
       }
     }
-    return { recorded, refusedDowngrades, pruned: pruned.length };
+    return {
+      recorded,
+      refusedDowngrades,
+      pruned: pruned.length,
+      // Read back INSIDE the same transaction: a validity derived from a
+      // second connection could reflect a write this one has not committed.
+      validities: await loadClaimValidities(
+        tx,
+        report.entries.map((entry) => entry.claimId),
+      ),
+    };
   });
 };

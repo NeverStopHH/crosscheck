@@ -767,6 +767,93 @@ const TARGETS_EMPTY =
 const targetsUnreadable = (dropped: number): string =>
   `The hub sent ${String(dropped)} target row${dropped === 1 ? "" : "s"} this client could not read.`;
 
+/**
+ * WHAT THIS PULL MEASURED ABOUT ITS CLAIMS' CODE, AND WHAT IT DID NOT
+ * (spec 02 CCB-5, CCB-9).
+ *
+ * The revalidation leg (mcp/tools/get-diagnosis.ts) checks claims per GROUP —
+ * the claims sharing one recorded commit and one file set — at most
+ * REVALIDATION_GROUPS_PER_PULL of them, newest first. Every way it can end is
+ * named here, because each leaves the per-claim clauses reading something the
+ * clauses alone cannot explain: a group past the cut, or a pull that could not
+ * ask git at all, shows the hub's LAST recorded reading rather than this
+ * pull's. A bound spent silently is a measurement claiming more than it made
+ * (state/capture-health.ts).
+ *
+ * `total` counts only claims that CAN be revalidated. A claim bound to no
+ * commit is not a group at all — its own clause says why (§8.5).
+ */
+export type RevalidationSummary =
+  | {
+      /** The hub recorded this pull's reading. */
+      readonly kind: "recorded";
+      readonly revalidated: number;
+      readonly total: number;
+    }
+  | {
+      /** git answered, the hub did not record it: stored readings stand. */
+      readonly kind: "unrecorded";
+      readonly revalidated: number;
+      readonly total: number;
+    }
+  | {
+      /** This checkout has no fetched default branch to compare against. */
+      readonly kind: "no_default_ref";
+      readonly total: number;
+    }
+  | {
+      /** The tree was recorded in a different repository than this clone. */
+      readonly kind: "foreign_repo";
+      readonly total: number;
+    };
+
+/** The shared tail: what a claim the leg did not reach shows instead. */
+const STORED_READING_TAIL =
+  "claims show their last recorded reading, or unknown where there is none.";
+
+const groupsLabel = (count: number): string =>
+  `${String(count)} claim group${count === 1 ? "" : "s"}`;
+
+/**
+ * SILENT WHEN THERE IS NOTHING TO SAY. A pull that measured and recorded every
+ * group it had needs no sentence: the claim lines carry the verdicts, and a
+ * caveat on every answer teaches people to ignore caveats (03 §5.1's rule,
+ * borrowed). Every other outcome is one renderer-owned sentence.
+ */
+const revalidationLines = (
+  summary: RevalidationSummary | undefined,
+): readonly string[] => {
+  if (summary === undefined) {
+    return [];
+  }
+  switch (summary.kind) {
+    case "recorded":
+      return summary.revalidated >= summary.total
+        ? []
+        : [
+            `Claim currency: revalidated ${String(summary.revalidated)} of ${groupsLabel(summary.total)} ` +
+              "(claims sharing a recorded commit and file set) against the default branch on this pull, " +
+              `newest first — the per-pull bound; in the other ${String(summary.total - summary.revalidated)}, ` +
+              STORED_READING_TAIL,
+          ];
+    case "unrecorded":
+      return [
+        `Claim currency: revalidated ${String(summary.revalidated)} of ${groupsLabel(summary.total)} ` +
+          `against the default branch, but the hub did not record the reading, so ${STORED_READING_TAIL}`,
+      ];
+    case "no_default_ref":
+      return [
+        `Claim currency: not revalidated on this pull — this checkout has no fetched default branch ` +
+          `to compare against, so none of the ${groupsLabel(summary.total)} was checked and ${STORED_READING_TAIL}`,
+      ];
+    case "foreign_repo":
+      return [
+        "Claim currency: not revalidated on this pull — this tree was recorded in a different " +
+          `repository than this checkout, whose history cannot speak for it, so ${STORED_READING_TAIL}`,
+      ];
+  }
+};
+
 const targetsStateLines = (diagnosis: Diagnosis): readonly string[] => {
   if (!diagnosis.targetsReported) {
     return [TARGETS_UNREPORTED];
@@ -982,6 +1069,7 @@ export const renderDiagnosis = (
   diagnosis: Diagnosis,
   now: Date,
   solvedPresentation?: SolvedPresentation,
+  revalidation?: RevalidationSummary,
 ): string => {
   const index = authorIndex(diagnosis.claims);
   const context = diagnosis.workContext;
@@ -1002,9 +1090,17 @@ export const renderDiagnosis = (
           ...intentLines,
           ...solvedLines,
           ...targetsStateLines(diagnosis),
+          ...revalidationLines(revalidation),
           "Claims: no claims recorded yet.",
         ]
-      : [header, contextLine, ...intentLines, ...solvedLines, ...targetsStateLines(diagnosis)];
+      : [
+          header,
+          contextLine,
+          ...intentLines,
+          ...solvedLines,
+          ...targetsStateLines(diagnosis),
+          ...revalidationLines(revalidation),
+        ];
 
   const sections: readonly Section[] = [
     // WHERE, BEFORE WHAT. A reader who is about to edit the same file wants

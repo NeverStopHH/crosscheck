@@ -21,6 +21,7 @@ import {
   recordEnvelope,
   validClaimBody,
   validWorkContextBody,
+  WORK_CONTEXT_ID,
 } from "./helpers.ts";
 import type { TestDeveloper, TestHarness } from "./helpers.ts";
 
@@ -227,5 +228,61 @@ describe("claim revalidations", () => {
 
     // Assert
     expect(outcome.status).toBe(400);
+  });
+
+  test("the answer carries each named claim's derived validity, refusals included", async () => {
+    // Arrange: the reader who triggered the check renders the verdict on THIS
+    // pull, so the hub hands back the state it derived from the write it just
+    // accepted — through claimValidity(), the one authority, rather than
+    // leaving the connector to map a drift result to a state itself. A
+    // REFUSED `unchanged` comes back as `stale`: the truth about the claim,
+    // not about the request.
+    const { harness, developer } = await seed();
+    await report(harness, developer, [entry("changed")]);
+
+    // Act
+    const response = await harness.app.request(
+      "/api/claim-revalidations",
+      jsonRequest("POST", developer.apiKey, {
+        repo: REPO,
+        entries: [entry("unchanged")],
+        revalidated: 1,
+        total: 1,
+      }),
+    );
+    const body = (await response.json()) as {
+      data: {
+        refusedDowngrades: number;
+        validities?: Record<
+          string,
+          { state: string; touchingCommits: string[]; commitBinding: string }
+        >;
+      };
+    };
+
+    // Assert
+    expect(body.data.refusedDowngrades).toBe(1);
+    expect(body.data.validities?.["clm_01"]).toMatchObject({
+      state: "stale",
+      touchingCommits: ["deadbee", "cafe123"],
+      commitBinding: "session_base",
+    });
+  });
+
+  test("the tree names the repository its commits belong to", async () => {
+    // Arrange: get_diagnosis serves any tree on the hub, and a claim's
+    // binding is a commit in ONE repository's history. The reader has to be
+    // able to tell a foreign tree before it asks its own git about it.
+    const { harness, developer } = await seed();
+
+    // Act
+    const response = await harness.app.request(
+      `/api/work-contexts/${WORK_CONTEXT_ID}/diagnosis`,
+      jsonRequest("GET", developer.apiKey),
+    );
+    const body = (await response.json()) as { data: { repo?: string } };
+
+    // Assert
+    expect(body.data.repo).toBe(REPO);
   });
 });

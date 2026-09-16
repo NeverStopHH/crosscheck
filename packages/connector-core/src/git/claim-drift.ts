@@ -102,6 +102,35 @@ const countTouching = async (
   return Number.isNaN(total) ? null : total;
 };
 
+/**
+ * The commit a default ref names RIGHT NOW, or null when git cannot say.
+ *
+ * ONE call per pull, and every drift range of that pull is then asked against
+ * this sha rather than against the moving ref name. Two reasons, and the
+ * second is the one that matters: `claim_revalidations.ref_commit` promises
+ * which ref STATE a reading was taken against, and a range written as
+ * `X..origin/main` would let a fetch landing mid-pull split one report across
+ * two states while every row named one of them.
+ */
+export const resolveRefCommit = async (
+  root: string,
+  ref: string,
+): Promise<string | null> => {
+  if (!isSafeRef(ref)) {
+    return null;
+  }
+  const resolved = await runGitOutcome(
+    ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+    root,
+    STALENESS_GIT_TIMEOUT_MS,
+  );
+  if (!resolved.ok) {
+    return null;
+  }
+  const sha = resolved.stdout.trim();
+  return COMMIT_SHA_PATTERN.test(sha) ? sha : null;
+};
+
 export const checkClaimDrift = async (
   root: string,
   defaultRef: string,

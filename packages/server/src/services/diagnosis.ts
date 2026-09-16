@@ -174,6 +174,13 @@ export interface DiagnosisTargetView {
 }
 
 export interface Diagnosis {
+  /**
+   * The repo this tree belongs to, off the session the context hangs from.
+   * Carried because a claim's code binding is a commit in THIS repo's history
+   * (spec 02 §3.6): a reader checked out elsewhere must know not to ask its
+   * own git about it. The column is on the join this query already makes.
+   */
+  readonly repo: string;
   readonly workContext: WorkContextView;
   readonly claims: readonly ClaimView[];
   readonly edges: readonly ClaimEdgeView[];
@@ -439,6 +446,7 @@ export const getDiagnosis = async (
     .select({
       workContext: workContexts,
       baseCommit: agentSessions.baseCommit,
+      repo: agentSessions.repo,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -494,6 +502,7 @@ export const getDiagnosis = async (
   ]);
 
   return {
+    repo: contextRow.repo,
     workContext: toWorkContextView(contextRow.workContext, contextRow.baseCommit),
     claims: claimRows.map((row) =>
       toClaimView(

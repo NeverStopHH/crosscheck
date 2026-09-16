@@ -38,8 +38,21 @@ import { MAX_RECORD_ID_LENGTH, SAFE_ID_PATTERN } from "./question.ts";
  */
 export const MAX_CLAIM_TOUCHING_COMMITS = 5;
 
-/** Claims one report may carry — the MCP pull's own bound is smaller. */
-export const MAX_CLAIM_REVALIDATION_ENTRIES = 50;
+/**
+ * Claims one report may carry: exactly as many as one diagnosis tree can hand
+ * a reader (the hub's DIAGNOSIS_MAX_CLAIMS).
+ *
+ * NOT SMALLER, and the first value was. A pull measures GROUPS — the claims
+ * sharing one commit and one file set — and a tree whose claims all sit on one
+ * commit is ONE group holding every claim. The report still names each claim,
+ * so a cap below the tree's own size refused the whole reading of any tree
+ * past it: nothing recorded, every claim `unknown` on every pull, and the
+ * only sign a sentence saying the hub did not record it.
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/schema/src/claim-revalidation.ts");const d=await import("./packages/server/src/services/diagnosis.ts");console.log(s.MAX_CLAIM_REVALIDATION_ENTRIES === d.DIAGNOSIS_MAX_CLAIMS)'
+ * PRINTS: true
+ */
+export const MAX_CLAIM_REVALIDATION_ENTRIES = 500;
 
 const claimId = z
   .string()

@@ -18,12 +18,19 @@ import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
 import { quoted, quotingText } from "../render.ts";
 import { renderDiagnosis, solvedAtFromTree } from "../render.ts";
-import type { SolvedPresentation } from "../render.ts";
+import type { RevalidationSummary, SolvedPresentation } from "../render.ts";
+import {
+  planClaimRevalidation,
+  readClaimDrift,
+} from "../../flows/claim-revalidation.ts";
+import type { RevalidationPlan } from "../../flows/claim-revalidation.ts";
+import { resolveRefCommit } from "../../git/claim-drift.ts";
 import { resolveCommitDrift } from "../../git/commit-drift.ts";
 import { resolveDefaultBranchRef } from "../../git/default-branch.ts";
 import { checkSolvedFileDrift } from "../../git/solved-staleness.ts";
-import { getDiagnosis } from "../../http/hub.ts";
+import { getDiagnosis, reportClaimRevalidations } from "../../http/hub.ts";
 import type { Diagnosis, HubResult } from "../../http/hub.ts";
+import type { ClaimValidity } from "@crosscheck/schema";
 import { hubFailure, idArg, parseArgs } from "./shared.ts";
 
 const HTTP_NOT_FOUND = 404;
@@ -123,9 +130,9 @@ const solvedPresentationFor = async (
   ctx: McpContext,
   diagnosis: Diagnosis,
   solvedAtMs: number,
+  defaultRef: string | null,
 ): Promise<SolvedPresentation> => {
   const root = ctx.identity.root;
-  const defaultRef = await resolveDefaultBranchRef(root);
   const files = diagnosis.targets
     .filter((target) => target.kind === "file")
     .map((target) => target.value);
@@ -145,6 +152,108 @@ const solvedPresentationFor = async (
   return { drift, fileDrift };
 };
 
+/**
+ * THE REVALIDATION LEG — has the code under these claims moved (spec 02 §3.6)?
+ *
+ * IT RUNS HERE BECAUSE THE READER IS ALREADY WAITING. `get_diagnosis` is
+ * inside MCP_TIMEOUT_MS and on no hook path, so the 2 x 400 ms hook budget is
+ * untouched; the leg costs at most CLAIM_REVALIDATION_MAX_GIT_CALLS processes
+ * at STALENESS_GIT_TIMEOUT_MS each — one to name the ref's commit, then at
+ * most two per group over at most REVALIDATION_GROUPS_PER_PULL groups
+ * (flows/claim-revalidation.ts) — beside the one default-branch lookup it
+ * shares with the solved block.
+ *
+ * IT NEVER FAILS THE PULL, AND IT NEVER FAILS SILENTLY. A tree from another
+ * repository, a checkout with no fetched default branch, a hub that will not
+ * record the reading — each ends the leg with a NAMED outcome the renderer
+ * turns into one sentence, and every claim then shows the validity the hub
+ * already stored. Failing here must cost currency, never a diagnosis: a
+ * reader who asked for a teammate's reasoning gets it.
+ *
+ * `X..origin/main`, NEVER `X..HEAD`. A reader on an unmerged feature branch
+ * must not mark a teammate's claim stale for the whole team on the strength
+ * of their own work in progress — and the downgrade-only rule would make that
+ * verdict impossible to walk back.
+ */
+const revalidateClaims = async (
+  ctx: McpContext,
+  diagnosis: Diagnosis,
+  plan: RevalidationPlan,
+  defaultRef: string | null,
+): Promise<RevalidationOutcome | null> => {
+  if (plan.total === 0) {
+    return null;
+  }
+  const none = new Map<string, ClaimValidity>();
+  // ANOTHER REPOSITORY'S HISTORY IS NOT THIS CLONE'S TO JUDGE. get_diagnosis
+  // reads any tree on the hub by id, and this checkout's git can only say
+  // "unknown" about commits it has never held — a reading that would still
+  // overwrite a teammate's real `unchanged` on every cross-repo pull.
+  if (diagnosis.repo !== undefined && diagnosis.repo !== ctx.identity.repoId) {
+    return { summary: { kind: "foreign_repo", total: plan.total }, validities: none };
+  }
+  const refCommit =
+    defaultRef === null
+      ? null
+      : await resolveRefCommit(ctx.identity.root, defaultRef);
+  if (refCommit === null) {
+    return { summary: { kind: "no_default_ref", total: plan.total }, validities: none };
+  }
+  const readings = await readClaimDrift(ctx.identity.root, refCommit, plan);
+  const reported = await reportClaimRevalidations(
+    ctx.hub,
+    ctx.identity.repoId,
+    readings,
+  );
+  if (!reported.ok) {
+    return {
+      summary: {
+        kind: "unrecorded",
+        revalidated: readings.revalidated,
+        total: readings.total,
+      },
+      validities: none,
+    };
+  }
+  // THE HUB'S OWN VERDICT, not a second opinion derived here. The rows it
+  // just wrote went through the downgrade-only UPSERT, so a refused
+  // `unchanged` comes back as `stale` and this render says `stale` too.
+  return {
+    summary: {
+      kind: "recorded",
+      revalidated: readings.revalidated,
+      total: readings.total,
+    },
+    validities: new Map(Object.entries(reported.data.validities)),
+  };
+};
+
+interface RevalidationOutcome {
+  readonly summary: RevalidationSummary;
+  readonly validities: ReadonlyMap<string, ClaimValidity>;
+}
+
+/**
+ * The tree as it reads AFTER this pull's own measurement.
+ *
+ * A new object rather than a mutated one, and the reason is not style: the
+ * fetched tree is what the hub said, and a reader comparing the two should be
+ * able to. Claims the leg did not reach keep the stored validity untouched.
+ */
+const withFreshValidity = (
+  diagnosis: Diagnosis,
+  validities: ReadonlyMap<string, ClaimValidity>,
+): Diagnosis =>
+  validities.size === 0
+    ? diagnosis
+    : {
+        ...diagnosis,
+        claims: diagnosis.claims.map((claim) => {
+          const fresh = validities.get(claim.id);
+          return fresh === undefined ? claim : { ...claim, validity: fresh };
+        }),
+      };
+
 export const run = async (
   ctx: McpContext,
   args: unknown,
@@ -159,15 +268,34 @@ export const run = async (
       ? toolFailure(notFoundText(parsed.value.workContextId))
       : hubFailure(ctx, result);
   }
-  // Solved trees get the honest-presentation block; the git legs run only
-  // when the tree IS solved — an open tree costs no process.
+  // Solved trees get the honest-presentation block, and trees holding a
+  // bindable claim get the revalidation leg. The default branch is resolved
+  // ONCE for both, and only when one of them will spend it — a tree that
+  // needs neither costs no process at all.
   const solvedAtMs = solvedAtFromTree(result.data);
+  const plan = planClaimRevalidation(result.data);
+  const defaultRef =
+    solvedAtMs === null && plan.total === 0
+      ? null
+      : await resolveDefaultBranchRef(ctx.identity.root);
+  const revalidation = await revalidateClaims(
+    ctx,
+    result.data,
+    plan,
+    defaultRef,
+  );
+  const tree =
+    revalidation === null
+      ? result.data
+      : withFreshValidity(result.data, revalidation.validities);
   const presentation =
     solvedAtMs === null
       ? undefined
-      : await solvedPresentationFor(ctx, result.data, solvedAtMs);
+      : await solvedPresentationFor(ctx, tree, solvedAtMs, defaultRef);
   // ONE clock for the whole document: the per-claim ages and the solved
   // block are read against the same instant, so two lines of one render can
   // never disagree about how old the tree is.
-  return toolText(renderDiagnosis(result.data, ctx.now(), presentation));
+  return toolText(
+    renderDiagnosis(tree, ctx.now(), presentation, revalidation?.summary),
+  );
 };

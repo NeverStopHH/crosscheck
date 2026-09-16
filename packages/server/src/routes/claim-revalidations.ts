@@ -48,10 +48,20 @@ export const claimRevalidationsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         `this hub has no claim ${unknown.join(", ")} — a revalidation names claims read from this hub`,
       );
     }
-    return ok(
-      c,
-      await ingestClaimRevalidations(deps, c.get("developer").id, parsed.data),
+    const outcome = await ingestClaimRevalidations(
+      deps,
+      c.get("developer").id,
+      parsed.data,
     );
+    // The map is the service's shape; the wire gets a plain object keyed by
+    // claim id, so a caller reads back the verdict for exactly the claims it
+    // named — including the ones whose report was refused.
+    return ok(c, {
+      recorded: outcome.recorded,
+      refusedDowngrades: outcome.refusedDowngrades,
+      pruned: outcome.pruned,
+      validities: Object.fromEntries(outcome.validities),
+    });
   });
 
   return router;

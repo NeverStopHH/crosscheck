@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ClaimValiditySchema } from "@crosscheck/schema";
+import type { ClaimRevalidationEntry } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import {
   MAX_PIN_SWEEP_UPDATES,
@@ -666,6 +667,16 @@ export const DiagnosisTargetSchema = z.looseObject({
 export type DiagnosisTarget = z.infer<typeof DiagnosisTargetSchema>;
 
 export interface Diagnosis {
+  /**
+   * The repository this tree was recorded in — the owning session's repo.
+   *
+   * Carried for the revalidation leg (spec 02 §3.6): get_diagnosis reads ANY
+   * tree on the hub, and a checkout of another repository can only answer
+   * "unknown" about commits it never held, so the leg asks git nothing for a
+   * foreign tree. OPTIONAL: an older hub omits it, and the leg then asks git
+   * anyway — which costs a few `unknown` readings, never a wrong verdict.
+   */
+  readonly repo?: string | undefined;
   readonly workContext: DiagnosisWorkContext;
   readonly claims: readonly DiagnosisClaim[];
   readonly edges: readonly DiagnosisEdge[];
@@ -747,6 +758,7 @@ const DiagnosisEnvelopeSchema = z
     // the renderer would then print an absence as a finding.
     targets: z.array(z.unknown()).optional(),
     truncated: z.boolean().default(false),
+    repo: z.string().min(1).optional(),
   })
   .transform((value): Diagnosis => {
     const claims = parseRows(value.claims, DiagnosisClaimSchema);
@@ -754,6 +766,7 @@ const DiagnosisEnvelopeSchema = z
     const external = parseRows(value.externalClaims, ExternalClaimRefSchema);
     const targets = parseRows(value.targets ?? [], DiagnosisTargetSchema);
     return {
+      repo: value.repo,
       workContext: value.workContext,
       claims: claims.rows,
       edges: edges.rows,
@@ -2065,4 +2078,51 @@ export const getTeamSettings = (
     method: "GET",
     path: `/api/team-settings${encodeRepo(repo)}`,
     schema: TeamSettingsSchema,
+  });
+
+/**
+ * What the hub answers a revalidation report with (1.0 spec 02 §3.3, §3.7).
+ *
+ * `validities` is the reason this is a POST WITH A BODY WORTH READING rather
+ * than a fire-and-forget: the hub derives each named claim's state from the
+ * write it just accepted, so the reader who triggered the check sees the
+ * downgrade on THIS pull. It also makes the downgrade-only rule visible — a
+ * refused `unchanged` comes back as `stale`, which is the truth about the
+ * claim rather than the truth about the request.
+ */
+export const ClaimRevalidationOutcomeSchema = z.looseObject({
+  recorded: z.number().int().min(0).default(0),
+  refusedDowngrades: z.number().int().min(0).default(0),
+  pruned: z.number().int().min(0).default(0),
+  validities: z.record(z.string(), ClaimValiditySchema).default({}),
+});
+
+export type ClaimRevalidationOutcome = z.infer<
+  typeof ClaimRevalidationOutcomeSchema
+>;
+
+/**
+ * Reports one clone's reading. Never throws and never blocks a render: the
+ * caller treats a failure as "nothing was revalidated this pull", which reads
+ * `unknown` rather than `current` on every claim it could not measure.
+ */
+export const reportClaimRevalidations = (
+  ctx: HubContext,
+  repo: string,
+  readings: {
+    readonly entries: readonly ClaimRevalidationEntry[];
+    readonly revalidated: number;
+    readonly total: number;
+  },
+): Promise<HubResult<ClaimRevalidationOutcome>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/claim-revalidations",
+    schema: ClaimRevalidationOutcomeSchema,
+    body: {
+      repo,
+      entries: readings.entries,
+      revalidated: readings.revalidated,
+      total: readings.total,
+    },
   });
