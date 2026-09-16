@@ -482,6 +482,10 @@ it the record is emitted normally with `seq: null`, reason `allocation_failed`. 
 position is withheld. Stamping the guess would let AT-4 answer confidently from a coin flip. Cost: in a two-agent worktree
 `explanation_timing` is unavailable until Claude Code passes a session id to MCP servers.
 
+> **Decided otherwise on 2026-09-15.** Nick kept D1 and changed D2: *"Forget content before you forget causality."* The flat
+> thirty days below is withdrawn as the model; [01a](01a-causal-skeleton.md) replaces it with retention by relevance, a causal
+> attestation record and declared provider guarantees. The text below is kept as the record of what was proposed.
+
 **D2 — Retention: 30 days, or the life of the claim it orders?** *Default (recommended): 30 days*, matching
 `COMMIT_EVIDENCE_RETENTION_DAYS` and 05's `CI_RETENTION_DAYS`. The consequence should be chosen rather than discovered: a claim
 older than thirty days keeps its body and loses its position, so a fence verdict on old work can still say *what* was claimed

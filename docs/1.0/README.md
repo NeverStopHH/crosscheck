@@ -64,6 +64,7 @@ Status is **spec** (written, not built), **in progress**, or **shipped**.
 | # | spec | owns | status |
 |---|---|---|---|
 | 01 | [Canonical event model and per-session causal order](01-canonical-event-model.md) | **AT-4** | spec |
+| 01a | [The causal skeleton: retention by relevance, attestation, declared provider guarantees](01a-causal-skeleton.md) | — (makes AT-4 durable; amends 01 §10 D2) | spec |
 | 02 | [Claim-to-code binding and individual commit identity](02-claim-code-binding.md) | **AT-2** | spec |
 | 03 | [Coverage integrity at the answer layer](03-coverage-integrity.md) | **AT-1, AT-9, AT-10** | spec |
 | 04 | [Verdict semantics, fence authority and the human waiver](04-verdict-semantics-and-fence-authority.md) | **AT-5, AT-6** | spec |
