@@ -13,7 +13,10 @@
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+
+import { GIT_TIMEOUT_MS } from "../src/constants.ts";
+import { runGit } from "../src/git/git.ts";
 
 import { sweepPinPaths } from "../src/git/pin-sweep.ts";
 import { git, makeRepo, writeRepoFile } from "./helpers.ts";
@@ -149,16 +152,47 @@ describe("sweepPinPaths", () => {
   test("reports UNKNOWN rather than missing when git cannot answer", async () => {
     // Arrange: a directory that is not a repository. "Missing" here would be
     // a lie that retires somebody's pin; "unknown" is a fact doctor prints.
+    //
+    // THE PRECONDITION IS PINNED, NOT HOPED FOR. Deleting .git only stops git
+    // when nothing ABOVE the directory is a repository, and git walks upward —
+    // so on a host whose TMPDIR sits under one, this fixture quietly became a
+    // test about that other repository. It did: macos-latest reddened here
+    // while ubuntu and every developer Mac stayed green, and the fix for that
+    // walk (comparing --show-toplevel against the root) did not clear it,
+    // which says the runner's ambient state is something neither the fixture
+    // nor the assertion was stating. GIT_CEILING_DIRECTORIES stops the walk at
+    // the fixture's own parent, so "git cannot answer" becomes a fact this
+    // test CREATES rather than one it inherits from $TMPDIR.
     const notARepo = await makeRepo("sweep-outside");
     repos.push(notARepo);
     await rm(`${notARepo}/.git`, { recursive: true, force: true });
 
-    // Act
-    const swept = await sweepPinPaths(notARepo, ["src/workbench/usePlayback.ts"]);
+    const ceilingBefore = process.env.GIT_CEILING_DIRECTORIES;
+    process.env.GIT_CEILING_DIRECTORIES = dirname(notARepo);
+    try {
+      // The precondition is asserted BEFORE the behaviour: if git can still
+      // answer here, this test measures something else, and a green result
+      // would mean nothing.
+      const stillARepo = await runGit(
+        ["rev-parse", "--show-toplevel"],
+        notARepo,
+        GIT_TIMEOUT_MS,
+      );
+      expect(stillARepo).toBeNull();
 
-    // Assert
-    expect(swept[0]?.status).toBe("unknown");
-    expect(swept[0]?.resolved).toBeNull();
+      // Act
+      const swept = await sweepPinPaths(notARepo, ["src/workbench/usePlayback.ts"]);
+
+      // Assert
+      expect(swept[0]?.status).toBe("unknown");
+      expect(swept[0]?.resolved).toBeNull();
+    } finally {
+      if (ceilingBefore === undefined) {
+        delete process.env.GIT_CEILING_DIRECTORIES;
+      } else {
+        process.env.GIT_CEILING_DIRECTORIES = ceilingBefore;
+      }
+    }
   });
 
   // The same lie, reached the way it actually happens. `rev-parse

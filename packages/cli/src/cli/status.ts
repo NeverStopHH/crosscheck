@@ -14,6 +14,11 @@ import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
 import { formatQuestionCounts } from "@crosscheck/connector-core/briefing/questions.ts";
 import { formatSolvedCounts } from "@crosscheck/connector-core/hints/precision.ts";
 import { formatAbsenceLine, formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import {
+  HUB_UNREACHABLE_CLAUSE,
+  coverageClause,
+} from "@crosscheck/connector-core/coverage/render.ts";
+import { UNKNOWN_COVERAGE } from "@crosscheck/connector-core/http/coverage.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import {
@@ -304,7 +309,7 @@ export const runStatus = async (
             .join(", ")}`,
         ]
       : [];
-  const absenceLines = (absences.ok ? absences.data : [])
+  const absenceLines = (absences.ok ? absences.data.absences : [])
     .slice(0, STATUS_MAX_ABSENCE_LINES)
     .flatMap((entry) => {
       const line = formatAbsenceLine(entry, now);
@@ -336,6 +341,30 @@ export const runStatus = async (
       `hub: ${config.hubUrl}`,
       `repo: ${identity.repoId} (${identity.branch})`,
       `developer: ${config.developerName ?? "unknown"} (${config.developerId ?? "unknown"})`,
+      // AT-9, and it renders UNCONDITIONALLY — including "Coverage unknown"
+      // from a hub that reports none. A person ran this command and is
+      // reading every line below it; an omitted qualifier is the one thing
+      // that would read as "all clear". It sits above every fact about the
+      // team for the same reason the briefing's does: it says how far the
+      // rest can be trusted. `coverageClause`, not `coverageNote`, because
+      // the soft annotation rule governs answers nobody asked for.
+      //
+      // AND A REFUSED CONNECTION IS NOT AN OLD HUB. The failure kind is in
+      // hand here (http/client.ts), the pins line below already uses it, and
+      // doctor branches on it — collapsing it into the record would print a
+      // sentence about what this hub reports beside "(hub unreachable)", and
+      // name a cause the reader cannot act on.
+      //
+      // NO `coverage:` KEY. The clause is a SENTENCE that names its own
+      // subject — "Coverage incomplete: …" — so a key in front of it made
+      // this the only line in the command to say its subject twice and the
+      // only one carrying two colons. The briefing prints the same sentence
+      // unprefixed; one fact spelled one way on both surfaces.
+      absences.ok
+        ? coverageClause(absences.data.coverage, now)
+        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),
       ...emailLines,
       ...privacyLines,
       "teammates:",

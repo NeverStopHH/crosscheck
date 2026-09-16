@@ -18,6 +18,7 @@
  * package trees, not the workspace root.
  */
 import type { CommitDrift } from "./git/commit-drift.ts";
+import type { CoverageRecord } from "./http/coverage.ts";
 import { renderBriefing } from "./briefing/render.ts";
 import { renderConferenceReport } from "./conference/report.ts";
 import { formatSummarizerFailure } from "./model/runner.ts";
@@ -156,6 +157,37 @@ export const RENDER_BARREL_MODULES: readonly string[] = [
 const NOW = new Date("2026-08-18T12:00:00.000Z");
 const ISO = "2026-08-18T11:55:00.000Z";
 const NO_DRIFT: CommitDrift | null = null;
+
+/**
+ * A FIXED `incomplete` coverage record for the surfaces whose closures render
+ * the qualifier (03 COV-7). `incomplete` because it is the state that carries
+ * the most renderer-owned text and the only one that carries an instant —
+ * the shape most worth holding to the framing invariants.
+ */
+const CORPUS_COVERAGE: CoverageRecord = {
+  repo: "github.com/acme/api",
+  computedAt: NOW.toISOString(),
+  scope: { sinceIso: "2026-08-04T12:00:00.000Z" },
+  sources: [
+    {
+      source: "agent_event",
+      state: "incomplete",
+      reason: "session_reaped",
+      gapSince: ISO,
+      observedAt: ISO,
+    },
+    {
+      source: "git",
+      state: "incomplete",
+      reason: "evidence_stale",
+      gapSince: ISO,
+      observedAt: ISO,
+    },
+    { source: "ci", state: "unavailable", reason: "no_emitter", gapSince: null, observedAt: null },
+    { source: "runtime", state: "unavailable", reason: "out_of_scope_1_0", gapSince: null, observedAt: null },
+    { source: "human_edit", state: "unavailable", reason: "no_platform_rung", gapSince: null, observedAt: null },
+  ],
+};
 
 /**
  * The payload in the INTENT slot too (trial finding #16): a derived intent is
@@ -439,6 +471,7 @@ const diagnosisWith = (payload: string): Diagnosis => ({
   droppedTargets: 0,
   truncated: false,
   droppedRows: 0,
+  coverage: CORPUS_COVERAGE,
 });
 
 const refereeClaimWith = (payload: string, id: string): RefereeClaim => ({
@@ -828,6 +861,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // `isSelf` false ON PURPOSE: the self branch substitutes the renderer's
     // own word "you" for the name, so it would render one fewer copy of the
     // payload than this surface exists to attack.
+    //
+    // AND THE COVERAGE CLAUSE (COV-7). The empty branch is the one place the
+    // qualifier is UNCONDITIONAL, so without a record here the registry would
+    // count this surface while the clause it now carries went unattacked. The
+    // record is fixed and `incomplete` on purpose: that is the state with the
+    // most renderer-owned text and the only one carrying an instant.
     render: (payload) =>
       renderSearchResults([], payload, {
         filters: {
@@ -836,6 +875,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
           isSelf: false,
           sinceAgeMs: 14 * 24 * 3_600_000,
         },
+        coverage: { record: CORPUS_COVERAGE, now: NOW },
       }),
   },
   {
@@ -877,6 +917,25 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // framed later on every teammate surface.
     render: (payload) =>
       composeDetachedTitle("detached@0badc0ffe", payload, "github.com/acme/api"),
+  },
+  {
+    // §3.3's consequence, registered so it is a row a reviewer can see: the
+    // coverage line carries no author-written string — enum values, ISO
+    // instants re-formatted from the parsed value, and renderer-owned
+    // literals — so it adds no untrusted slot to any surface it lands on.
+    // That claim is attacked rather than asserted: the named test plants the
+    // whole injection corpus in `gapSince` and `observedAt`, the two strings
+    // the HUB sends, and holds the output to the shared invariants.
+    //
+    // `unsolicited` even though the same text also lands on `pulled`
+    // surfaces: one module, one classification, and the tighter of the two is
+    // the safe one to be held to.
+    kind: "composite",
+    name: "coverage-note",
+    delivery: "unsolicited",
+    module: "src/coverage/render.ts",
+    note: "enum values, renderer-owned literals and ISO instants re-formatted from Date.parse; the two hub-sent strings (gapSince, observedAt) never print through",
+    corpusCoveredBy: ["test/coverage-render.test.ts"],
   },
   {
     kind: "composite",

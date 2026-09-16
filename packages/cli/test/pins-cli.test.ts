@@ -22,6 +22,7 @@ import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
 import { sweepPins } from "@crosscheck/connector-core/http/hub.ts";
+import { UNKNOWN_COVERAGE } from "@crosscheck/connector-core/http/coverage.ts";
 import { MAX_PIN_SWEEP_UPDATES } from "@crosscheck/schema";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import type { PinEntry as PinRow } from "@crosscheck/connector-core/http/hub.ts";
@@ -495,6 +496,7 @@ describe("crosscheck suspect at scale", () => {
       },
       totals: { sessionsTouching: 305, sessionsScored: 50, windowDays: 14 },
       attribution: "sessions",
+      coverage: UNKNOWN_COVERAGE,
       candidates: [candidate],
     };
 
@@ -527,6 +529,7 @@ describe("crosscheck suspect at scale", () => {
       },
       totals: { sessionsTouching: 0, sessionsScored: 0, windowDays: 14 },
       attribution: "sessions",
+      coverage: UNKNOWN_COVERAGE,
       candidates: [],
     };
 
@@ -557,6 +560,7 @@ describe("crosscheck suspect at scale", () => {
       },
       totals: { sessionsTouching: 0, sessionsScored: 0, windowDays: 14 },
       attribution: "sessions",
+      coverage: UNKNOWN_COVERAGE,
       candidates: [],
     };
 

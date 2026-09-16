@@ -120,6 +120,35 @@ const suspectWith = (payload: string): SuspectView => ({
   totals: { sessionsTouching: 1, sessionsScored: 1, windowDays: 14 },
   attribution: "sessions",
   candidates: [candidateWith(payload)],
+  // A FIXED `incomplete` record (03 COV-7): the coverage clause lands on this
+  // surface too, and it carries the only instants on it that come off the
+  // wire rather than out of a renderer. `incomplete` because that is the
+  // state with the most renderer-owned text and the only one with a gap
+  // instant to attack.
+  coverage: {
+    repo: "github.com/acme/api",
+    computedAt: NOW.toISOString(),
+    scope: { sinceIso: ISO, paths: [payload] },
+    sources: [
+      {
+        source: "agent_event",
+        state: "incomplete",
+        reason: "session_reaped",
+        gapSince: payload,
+        observedAt: payload,
+      },
+      {
+        source: "git",
+        state: "incomplete",
+        reason: "evidence_stale",
+        gapSince: payload,
+        observedAt: payload,
+      },
+      { source: "ci", state: "unavailable", reason: "no_emitter", gapSince: null, observedAt: null },
+      { source: "runtime", state: "unavailable", reason: "out_of_scope_1_0", gapSince: null, observedAt: null },
+      { source: "human_edit", state: "unavailable", reason: "no_platform_rung", gapSince: null, observedAt: null },
+    ],
+  },
 });
 
 export const RENDER_SURFACES: readonly RenderSurface[] = [
@@ -178,7 +207,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "cli-doctor",
     delivery: "pulled",
     module: "src/cli/doctor.ts",
-    note: "formatAge only — renderer-built ages, no untrusted interpolation; the capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text",
+    // COV-7 for this closure: a CompositeRenderSurface has no `render`, so the
+    // coverage clause cannot be attacked through the registry the way
+    // search-results-empty-filtered's closure is. It is driven instead by
+    // named fixtures in test/coverage-cli.test.ts, which run the real command
+    // against a hub serving a fixed incomplete record.
+    note: "formatAge and the coverage clause — renderer-built ages and enum-derived states, no untrusted interpolation; the capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text. Coverage states and printed refusals are exercised in test/coverage-cli.test.ts",
   },
   {
     kind: "composite",
@@ -192,7 +226,9 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "cli-status",
     delivery: "pulled",
     module: "src/cli/status.ts",
-    note: "formatAbsenceLine + formatAge from the core render layer; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment). NO QUOTED_DATA_NOTICE, deliberately: the notice tells a MODEL that « » is data rather than instruction, and this command's stdout reaches a human terminal only — no hook and no MCP tool reads it (VERIFY below). The frame, the sanitizing and the bounds still apply, because they protect the reader's terminal rather than a context window",
+    // COV-7, same shape as cli-doctor above: driven by named fixtures in
+    // test/coverage-cli.test.ts rather than by a registry closure.
+    note: "formatAbsenceLine, formatAge and the coverage clause from the core render layer, the clause exercised in test/coverage-cli.test.ts; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment). NO QUOTED_DATA_NOTICE, deliberately: the notice tells a MODEL that « » is data rather than instruction, and this command's stdout reaches a human terminal only — no hook and no MCP tool reads it (VERIFY below). The frame, the sanitizing and the bounds still apply, because they protect the reader's terminal rather than a context window",
   },
 ];
 

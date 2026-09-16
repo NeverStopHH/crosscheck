@@ -2730,10 +2730,10 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "a filtered empty result reads as a fact about the teammate",
     file: `${CORE}/src/mcp/render.ts`,
     from:
-      "  return from.length === 0 && window.length === 0\n    ? sentence\n" +
-      "    : `${sentence} Those filters are part of that answer: other words, a longer ` +\n" +
+      "  const filtersNote =\n    from.length === 0 && window.length === 0\n      ? \"\"\n" +
+      "      : ` Those filters are part of that answer: other words, a longer ` +\n" +
       '        "window or another teammate may well match.";',
-    to: "  return sentence;",
+    to: '  const filtersNote = "";',
     test: `${CORE}/test/mcp-render.test.ts`,
     because:
       "`developer: Ken` with no hits renders the same sentence an unfiltered " +
@@ -4592,8 +4592,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // failure was the hole one layer down.
     label: "unreadable target rows render as no targets captured",
     file: `${CORE}/src/mcp/render.ts`,
-    from: "  return diagnosis.droppedTargets > 0\n    ? [targetsUnreadable(diagnosis.droppedTargets)]\n    : [TARGETS_EMPTY];",
-    to: "  return [TARGETS_EMPTY];",
+    from: "  if (diagnosis.droppedTargets > 0) {\n    return [targetsUnreadable(diagnosis.droppedTargets)];\n  }",
+    to: "  if (false) {\n    return [targetsUnreadable(diagnosis.droppedTargets)];\n  }",
     test: `${CORE}/test/mcp-render.test.ts`,
     because:
       "a hub one field ahead of this connector makes the page state that " +
@@ -4785,6 +4785,671 @@ export const MUTATIONS: readonly Mutation[] = [
       "52 pins are absent from the listing and nothing says so, which on a " +
       "five-year repo is the steady state rather than the edge case",
   },
+  {
+    // Coverage is FIVE ROWS, always. Dropping the rungs that cannot exist
+    // reads as tidying — the rows carry no data — and it is the one edit that
+    // turns "this rung cannot exist here" back into the silent absence AT-10
+    // forbids: a reader seeing four rows cannot tell a refusal from an
+    // oversight.
+    label: "a rung that cannot exist is dropped instead of refused",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    sources: [agentEvent, git, ...REFUSED_RUNGS],",
+    to: '    sources: [agentEvent, git, ...REFUSED_RUNGS].filter((s) => s.state !== "unavailable"),',
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the record stops being five rows, every renderer that walks it by " +
+      "source finds nothing where CI should be, and an absent row is exactly " +
+      "the state the enum exists to make impossible",
+  },
+  {
+    // The difference between "we have no CI rung" and "we have one and it
+    // said nothing" is the difference between a refusal and a pending answer.
+    // `unknown` reads as the second, so a reader waits for data no code path
+    // on main will ever produce.
+    label: "a rung that cannot exist reads as one that might",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: '  sourceRecord("ci", "unavailable", "no_emitter"),',
+    to: '  sourceRecord("ci", "unknown", "no_emitter"),',
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "doctor stops printing the CI refusal as a refusal, and the verdict " +
+      "layer treats a rung nobody built as a rung that has not reported yet",
+  },
+  {
+    // A SessionEnd is a fact the session reported; a reap is the hub's guess
+    // after six hours of silence, and db/schema.ts:145-152 keeps the two
+    // apart precisely because "an inference has to be revocable". Read as one
+    // thing, a killed terminal becomes a session watched to its end.
+    label: "a reaped end is read as a clean end",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  sql`(${table.reapedAt} is not null or (${table.endedAt} is null and ${table.lastHeartbeatAt} <= ${cutoff}))`;",
+    to: "  sql`((${table.endedAt} is null and ${table.lastHeartbeatAt} <= ${cutoff}))`;",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "every repo whose sessions the reaper closed reports agent_event " +
+      "complete, and the verdict layer names people over a window nobody " +
+      "was reporting through",
+  },
+  {
+    // services/absences.ts:148 filters stale evidence out of its OWN query,
+    // so a windowed aggregate collapses "the archive stopped being refreshed"
+    // and "there is no archive" into one zero-row answer. The git rung needs
+    // the unwindowed one to tell them apart.
+    label: "stale commit evidence is read as no evidence at all",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    .where(eq(commitEvidence.repo, repo));",
+    to: "    .where(and(eq(commitEvidence.repo, repo), gt(commitEvidence.collectedAt, new Date(now.getTime() - ABSENCE_EVIDENCE_MAX_AGE_DAYS * MS_PER_DAY))));",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "a repo nobody has collected evidence for and a repo whose evidence is " +
+      "a week stale report the same thing, and the second one silently loses " +
+      "the gap it is the whole point of this rung to name",
+  },
+  {
+    // PR #50's word collision, as a guard rather than a comment.
+    // GitTouchesOutcome.unavailable means "git did not answer", which is
+    // coverage `unknown`. Coverage `unavailable` means the rung cannot exist,
+    // which is never true of git.
+    label: "a git rung nobody reported reads as a rung that cannot exist",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: '    return sourceRecord("git", "unknown", "no_commit_evidence");',
+    to: '    return sourceRecord("git", "unavailable", "no_commit_evidence");',
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "`unavailable` does not block judging by design, so a repo with no " +
+      "commit evidence at all becomes judgeable — the exact shape of AT-5's " +
+      "false accusation",
+  },
+  {
+    // `listAbsences` returns at most ABSENCE_MAX_EVIDENCE_ROWS rows ordered
+    // `latest_commit_at DESC`, so the rows it drops are the STALEST
+    // committers — the population the absence check exists to find. This
+    // mutation hands the census the listing's own cut back, which is the
+    // shape the git rung shipped with until it was measured.
+    label: "a cut listing of absentees is read as proof nobody is absent",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "      gaps: sql`count(*) filter (where ${isGap})`,",
+    to: "      gaps: sql`count(*) filter (where ${isGap} and ${commitEvidence.latestCommitAt} >= (select min(bounded.latest_commit_at) from (select latest_commit_at from commit_evidence where repo = ${repo} order by latest_commit_at desc limit ${ABSENCE_MAX_EVIDENCE_ROWS}) bounded))`,",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "a repo with more committing addresses than the evidence bound reads " +
+      "git complete and isJudgeable true while authors nobody matched sit " +
+      "past the cut — AT-5's failure condition reached by team size",
+  },
+  {
+    // "Observation has been unreliable since at least here" is a LOWER
+    // BOUND. Naming the newest absentee instead of the earliest keeps the
+    // sentence and moves the instant days later, always in the reassuring
+    // direction, which is the one direction a lower bound may not move.
+    label: "the gap instant names the newest absentee, not the earliest",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "      earliestCommitAt: sql`min(${commitEvidence.latestCommitAt}) filter (where ${isGap})`,",
+    to: "      earliestCommitAt: sql`max(${commitEvidence.latestCommitAt}) filter (where ${isGap})`,",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the briefing's one uncuttable line tells a reader the archive has " +
+      "been unreliable since hours ago when it has been unreliable for days, " +
+      "and that instant is the whole actionable payload of AT-1's sentence",
+  },
+  {
+    // The gap predicate is spelled twice now — JS over the bounded listing,
+    // SQL over the unbounded census — and the grace window is the half a
+    // reader is least likely to keep in step. Under both caps the listing IS
+    // a census, so the two must be the same answer or one has drifted.
+    label: "the grace the listing keeps silent is not the gap coverage counts",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "* 1000) > ${graceMs})`;",
+    to: "* 1000) > 0)`;",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "every ordinary commit-after-session becomes a coverage gap, so git " +
+      "reads incomplete on a healthy repo and the caveat fires on answers " +
+      "the absence listing itself is silent about",
+  },
+  {
+    // A subquery correlated to the outer session row is re-executed once per
+    // session in the window, and PGlite has no background workers, so
+    // autovacuum never fires, nothing runs ANALYZE, and `reltuples` stays -1
+    // for the life of the hub: the nested loop is the PERMANENT plan, not a
+    // cold-start artefact.
+    label: "a scoped read rescans every session once per session",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  return sql`(${inArray(agentSessions.id, touched)} or ${inArray(agentSessions.id, unreported)})`;",
+    to: "  return sql`(exists (select 1 from ${workContexts} join ${workContextTargets} on ${workContextTargets.workContextId} = ${workContexts.id} where ${workContexts.sessionId} = ${agentSessions.id} and ${workContextTargets.kind} = 'file' and ${inArray(workContextTargets.value, [...paths])}) or (${gapCondition(agentSessions, cutoff)} and not ${reportedAnyFileTarget(agentSessions.id)}))`;",
+    test: `${SERVER}/test/coverage-measurement.test.ts`,
+    because:
+      "measured on a 200-developer corpus the scoped read goes from 10 ms " +
+      "to 536 ms, past the connector's 400 ms per-request timeout — and a " +
+      "timed-out GET reaches the connector as nothing, which §4 then renders " +
+      "as `Coverage unknown` about a hub that answered",
+  },
+  {
+    // The opposite choice for the opposite reason: the census correlates on
+    // (developer_id, repo) because an index serves exactly that shape in one
+    // probe per evidence row. A grouped subquery joined in is re-evaluated
+    // per row with no statistics to stop it.
+    label: "the git census joins a grouped scan instead of probing the index",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "  const lastSessionAt = sql`(select max(${agentSessions.lastHeartbeatAt}) from ${agentSessions} where ${agentSessions.developerId} = ${developers.id} and ${agentSessions.repo} = ${repo})`;",
+    to: '  const grouped = deps.db.select({ developerId: agentSessions.developerId, lastAt: sql`max(${agentSessions.lastHeartbeatAt})`.as("last_at") }).from(agentSessions).where(eq(agentSessions.repo, repo)).groupBy(agentSessions.developerId).as("last_session");\n  const lastSessionAt = sql`(select ${grouped.lastAt} from ${grouped} where ${grouped.developerId} = ${developers.id})`;',
+    test: `${SERVER}/test/coverage-measurement.test.ts`,
+    because:
+      "every unscoped coverage read — the SessionStart briefing's and " +
+      "`crosscheck status`' — goes from 8 ms to 226 ms on the same corpus, " +
+      "for a rung that answers one question about 260 rows",
+  },
+  {
+    // A scope may narrow by what was OBSERVED and never by what was not. A
+    // session reaped before it reported a work context has no target row, so
+    // a bare EXISTS answers "it did not touch these files" to a question the
+    // database cannot answer at all.
+    label: "a session that reported nothing is scoped out of every question",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "        sql`not ${reportedAnyFileTarget(scopeSessions.id)}`,",
+    to: "        sql`${reportedAnyFileTarget(scopeSessions.id)}`,",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the sessions whose observation failed hardest vanish from the scoped " +
+      "read, so agent_event reads complete and isJudgeable true on a repo " +
+      "full of reaped sessions — measured at the trial's shape, 23 of 40 " +
+      "pinned surfaces judgeable where none should be",
+  },
+  {
+    // The over-correction on the same arm: admit every session with no file
+    // target, not only the ones whose report was cut short. A clean end IS a
+    // complete report, so a session that touched nothing must still leave
+    // the scope or `unknown` collapses into `complete`.
+    label: "a session that reported its end is read as one that reported nothing",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from:
+      "        gapCondition(scopeSessions, cutoff),\n" +
+      "        sql`not ${reportedAnyFileTarget(scopeSessions.id)}`,",
+    to: "        sql`not ${reportedAnyFileTarget(scopeSessions.id)}`,",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "a surface nobody ever worked on reads `complete` instead of " +
+      "`unknown`, so judging becomes reachable over files no session was " +
+      "ever observed touching",
+  },
+  {
+    // The term this spec's own first draft was missing. Without it a verdict
+    // is reachable while a lane the system watches is still mid-flight.
+    label: "a verdict is reachable while a watched lane is mid-flight",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: `  stateOf(record, "git") === "complete" &&
+  record.sources.every((row) => row.state !== "incomplete");`,
+    to: '  stateOf(record, "git") === "complete";',
+    test: `${SERVER}/test/coverage-judgeable.test.ts`,
+    because:
+      "the moment CI ingestion lands, a repo with a half-reported lane is " +
+      "judgeable again and `no_touch` becomes UNATTRIBUTED over a gap the " +
+      "hub can see — AT-5's failure condition, word for word",
+  },
+  {
+    // The opposite over-correction: treat a rung that CANNOT EXIST as a gap
+    // and no verdict is ever reachable, which makes the predicate useless and
+    // invites the next author to delete it.
+    label: "a rung nobody built blocks every verdict for ever",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: 'record.sources.every((row) => row.state !== "incomplete");',
+    to: 'record.sources.every((row) => row.state === "complete");',
+    test: `${SERVER}/test/coverage-judgeable.test.ts`,
+    because:
+      "runtime is unavailable for the whole of 1.0, so every record on every " +
+      "repo becomes unjudgeable and INDETERMINATE stops meaning anything",
+  },
+  {
+    // The parse rule that INVERTS the tree's tolerant-parse convention. Every
+    // other optional block means "nothing is claimed"; for coverage, silence
+    // reads as "everything was observed", which is the lie the record exists
+    // to stop. An older or unreachable hub must read as five unknowns.
+    label: "an unanswered hub is read as a hub that watched everything",
+    file: `${CORE}/src/http/coverage.ts`,
+    from: `const unknownRow = (source: CoverageSource): CoverageSourceRecord => ({
+  source,
+  state: "unknown",`,
+    to: `const unknownRow = (source: CoverageSource): CoverageSourceRecord => ({
+  source,
+  state: "complete",`,
+    test: `${CORE}/test/coverage-wire.test.ts`,
+    because:
+      "every install pointed at a hub that predates coverage reports five " +
+      "complete rungs, isJudgeable says yes, and the verdict layer names " +
+      "people on the strength of a field the hub never sent",
+  },
+  {
+    // A caveat that can be cut is a caveat that lies: the briefing it was cut
+    // from still reads as complete. Sections are cuttable by construction —
+    // appendSection drops a whole one when the budget is spent — so the line
+    // is spliced beside the header where the fitter cannot reach it.
+    label: "a briefing says what the team knows, not how far it saw",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: `  const lines = sections.reduce<readonly string[]>(appendSection, [
+    header,
+    ...coverageLines,
+  ]);`,
+    to: "  const lines = sections.reduce<readonly string[]>(appendSection, [header]);",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "the one SessionStart line that says how far the rest can be trusted " +
+      "disappears exactly when the briefing is busiest, which is when a " +
+      "reader is least likely to notice it is gone",
+  },
+  {
+    // 00 §8.5 bans it by name and this is the shape it would arrive in: a
+    // ratio of complete rungs, printed beside the head word, collapsing five
+    // different answers into one reassuring figure.
+    label: "a percentage collapses the five rows on the way to a reader",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  const head = headOf(record);",
+    to: '  const head = `${headOf(record)} (${String(Math.round((100 * record.sources.filter((row) => row.state === "complete").length) / record.sources.length))}%)`;',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "`coverage = 87%` is the exact lie the per-source record exists to " +
+      "stop, and a ratio on a surface is how it gets back in",
+  },
+  {
+    // Nick's decision 4, which is the ONE place this spec bends an AT — so
+    // the bend has a guard rather than a comment. Annotating on `unknown`
+    // puts a caveat on every answer of every fresh install, which is how
+    // caveats get ignored.
+    label: "a caveat on every answer teaches people to ignore caveats",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: '  record.sources.some((row) => row.state === "incomplete")',
+    to: '  record.sources.some((row) => row.state !== "complete")',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "runtime is unavailable on every install for the whole of 1.0, so the " +
+      "note would render on literally every briefing and stop being read",
+  },
+  {
+    // The defect 03 §1 names at one line. This file already knows "nothing
+    // matched" is the expensive direction to be wrong in — renderUnusableQuery
+    // says so — and drew the distinction for a query it could not tokenise
+    // and a filter it could not resolve, but not for an archive it could not
+    // see.
+    label: "an empty search answers under a gap as if it had looked",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: `  const qualifier = coverageQualifier(options.coverage);
+  return \`\${sentence}\${filtersNote}\${qualifier === null ? "" : \`\\n\${qualifier}\`}\`;`,
+    to: "  return `${sentence}${filtersNote}`;",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "an empty result carries no statement of how far the archive reached, " +
+      "so a model reads it as `nobody has worked on this` and goes off to " +
+      "redo the work — AT-1's failure condition, live on main",
+  },
+  {
+    // The rule is as WIDE as §5.1 and no wider. Rendering on `complete` too
+    // puts a 66-character sentence on every zero-hit search of every healthy
+    // repo, and a caveat that always says the same thing is how the one that
+    // says `incomplete` gets skipped with the rest.
+    label: "a caveat on every empty answer teaches people to ignore caveats",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: `  return mustQualifyEmptyAnswer(record)
+    ? coverageClause(record, view?.now ?? EPOCH)
+    : null;`,
+    to: "  return coverageClause(record, view?.now ?? EPOCH);",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "zero-hit searches are the ordinary case on any repo whose archive has " +
+      "not covered the topic yet, so on a healthy install every coverage " +
+      "line a person ever reads states the default",
+  },
+  {
+    // The diagnosis half of the same rule: a claim-less tree is the ordinary
+    // state of a work context nobody has published to yet.
+    label: "a watched tree is caveated for having no claims yet",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: `  const qualifier =
+    emitsEmptyPhrasing && gapped ? [coverageClause(diagnosis.coverage, now)] : [];`,
+    to: `  const qualifier = emitsEmptyPhrasing
+    ? [coverageClause(diagnosis.coverage, now)]
+    : [];`,
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "every `get_diagnosis` on a tree with no claims carries a caveat whose " +
+      "body says nothing is missing, on a repo where nothing is",
+  },
+  {
+    // The other half of the same sentence. "No work context matched" is a
+    // claim about the REPOSITORY and is only true if the repository was
+    // watched; under a gap it has to narrow to a claim about the ARCHIVE.
+    label: "an empty answer claims the repository, not the archive",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  const sentence = mustQualifyEmptyAnswer(record)",
+    to: "  const sentence = false && mustQualifyEmptyAnswer(record)",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "the unqualified sentence comes back over a known gap and the clause " +
+      "beside it reads as a footnote rather than as the correction it is",
+  },
+  {
+    // The diagnosis carries TWO empty-result phrasings §5.1 binds by name,
+    // and NO_TARGETS is the expensive one: a reader told "no targets were
+    // captured" concludes there is no overlap with the file they are about
+    // to edit, and acts on it.
+    label: "a tree says nothing was captured when nothing was watched",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  const gapped = mustQualifyEmptyAnswer(diagnosis.coverage);",
+    to: "  const gapped = false;",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "both empty sentences go back to claiming the WORK rather than the " +
+      "archive, so an unwatched session reads as a session that touched " +
+      "nothing and recorded nothing",
+  },
+  {
+    // AT-9's "fails if" is that a person has to run doctor to learn an answer
+    // rested on partial observation. `crosscheck status` is the command they
+    // run instead, and an omitted line there reads as all clear.
+    label: "status states the team and not how far it was watched",
+    file: `${CLI}/src/cli/status.ts`,
+    // Same anchor text as the `says the word coverage twice` mutation below,
+    // and a different defect: that one puts a key back, this one takes the
+    // whole line away unless something is already known to be wrong.
+    from: `      absences.ok
+        ? coverageClause(absences.data.coverage, now)
+        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),`,
+    to: `      ...(absences.ok && absences.data.coverage.sources.some((row) => row.state === "incomplete")
+        ? [coverageClause(absences.data.coverage, now)]
+        : []),`,
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "every install pointed at a hub that reports no coverage prints no " +
+      "coverage line at all, which is the one state a reader would read as " +
+      "`nothing to report` rather than `we cannot tell`",
+  },
+  {
+    // The failure kind is in hand at the call site and the same command's
+    // pins line and doctor's own check both branch on it. Collapsed, a
+    // refused connection wears a sentence about what this HUB reports —
+    // a claim about its version produced from a network error.
+    label: "an unreachable hub reads as a hub that reports no coverage",
+    file: `${CLI}/src/cli/status.ts`,
+    from: `        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),`,
+    to: "        : coverageClause(UNKNOWN_COVERAGE, now),",
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "status tells a person to upgrade a hub that is simply down, two " +
+      "lines above its own `(hub unreachable)`, on the one surface AT-9 " +
+      "exists to make self-sufficient",
+  },
+  {
+    // The clause is a SENTENCE that names its own subject. A key in front of
+    // it made this the only line in `crosscheck status` to say its subject
+    // twice, and the only one carrying two colons.
+    label: "the status line says the word coverage twice",
+    file: `${CLI}/src/cli/status.ts`,
+    from: `      absences.ok
+        ? coverageClause(absences.data.coverage, now)
+        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),`,
+    to: '      `coverage: ${absences.ok ? coverageClause(absences.data.coverage, now) : absences.kind === "network" ? HUB_UNREACHABLE_CLAUSE : coverageClause(UNKNOWN_COVERAGE, now)}`,',
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "the briefing prints this sentence unprefixed and status printed it " +
+      "with a key, so one fact had two spellings on the two surfaces a " +
+      "person reads side by side",
+  },
+  {
+    // §3.2a lets a caller narrow the question; the hub's record says so in
+    // `scope` and in `no_session_in_window`. A renderer that drops the scope
+    // reports a narrow question's answer as a repo-wide fact.
+    label: "a scoped record is read out as a repo-wide one",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `const scopeSubject = (record: CoverageRecord): string =>
+  (record.scope?.paths?.length ?? 0) > 0
+    ? "on these files"
+    : "on this repo";`,
+    to: 'const scopeSubject = (_record: CoverageRecord): string => "on this repo";',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "a pin-lane answer about one file says `no agent session reported on " +
+      "this repo`, so a model concludes the archive is empty and re-derives " +
+      "work that is recorded and hours old",
+  },
+  {
+    // The window half of the same defect: a one-hour search whose answer is
+    // stated about all fourteen days.
+    label: "a one-hour question is answered about the whole window",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `      const age = scopeWindow(record, now);
+      return age === null
+        ? \`no agent session reported \${subject}\`
+        : \`no agent session reported \${subject} in the last \${age}\`;`,
+    to: "      return `no agent session reported ${subject}`;",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "`search_related_work({since: \"1h\"})` on a watched repo renders " +
+      "`Coverage unknown` with no window in the sentence, which is the " +
+      "caveat-on-every-answer noise §5.1 exists to prevent",
+  },
+  {
+    // `headOf` reads all five rungs; the body read two. So ci, runtime and
+    // human_edit could each turn the head to "incomplete" over a body saying
+    // nothing was missing — as the FIRST, uncuttable line of every
+    // SessionStart briefing, for as long as the gap lasted.
+    label: "a gap on a lane the sentence cannot name reads as no gap",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `  const reserved = record.sources
+    .filter((row) => row.source !== "agent_event" && row.source !== "git")
+    .map(reservedFragment);`,
+    to: "  const reserved: (string | null)[] = [];",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "a CI lane mid-flight renders `Coverage incomplete: agent sessions " +
+      "reported; git evidence reported.` — a caveat a reader cannot " +
+      "reconcile, which is how the next real one gets skipped",
+  },
+  {
+    // Filter `unavailable` out, then ask `.some()` twice over what is left:
+    // over an EMPTY set both answer false and the fall-through says
+    // "Coverage complete" on the strength of no evidence at all.
+    label: "a record with no readable rung at all reports a pass",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `  if (readable.length === 0) {
+    return "Coverage unknown";
+  }
+`,
+    to: "",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "the empty-answer rule fires on that same record, so one answer " +
+      "carries `Coverage complete.` beside a sentence saying observation " +
+      "was partial — AT-10's fake pass, in two adjacent lines",
+  },
+  {
+    // The only line in the briefing that prints a machine timestamp, beside
+    // four relative ages — and it printed both conventions inside one
+    // sentence, so the reader converted by hand to compare them.
+    label: "an instant is printed with no way to tell how old it is",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "        ages ? agedSince(row.gapSince, now) : null,",
+    to: "        null,",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "fourteen days of briefings after ONE over-fired reap carry the same " +
+      "instant, and only the age says the fact is ageing rather than " +
+      "recurring",
+  },
+  {
+    // The age is decoration; the rung is the caveat. Both rungs gapped with
+    // an instant each is the longest shape this sentence carries, and two
+    // ages cost 20 characters against a 160 bound.
+    label: "an age is bought with somebody else's gap",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  return fit(head, holdsEvery(head, aged) ? aged : fragmentsOf(record, now, false));",
+    to: "  return fit(head, aged);",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "`fit` drops a whole fragment rather than half a word, so the git gap " +
+      "vanishes from a sentence whose head still says incomplete — on GET " +
+      "/api/suspect, the answer that names a person",
+  },
+  {
+    // The sentence for a record this client cannot READ must not name the
+    // hub's VERSION: the same five `hub_did_not_report` rows come from a hub
+    // too old to send coverage, a hub NEWER than this client, a body that
+    // failed to parse, and an HTTP error.
+    label: "a report this client cannot read is blamed on the hub's age",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: 'const HUB_SILENT = "Coverage unknown: no coverage report this client can read.";',
+    to: 'const HUB_SILENT = "Coverage unknown: this hub does not report coverage.";',
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "a hub one version AHEAD of this client — whose reasons its enum does " +
+      "not know yet — is reported as one that predates coverage, and the " +
+      "reader upgrades the wrong end",
+  },
+  {
+    // COV-5. A rung that cannot exist is only honest if somebody can read the
+    // refusal; one nobody sees is the silent absence AT-10 forbids by name.
+    label: "the rungs that cannot exist are refused where nobody looks",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: `  const refusals = record.sources
+    .filter((row) => row.state === "unavailable")`,
+    to: `  const refusals = record.sources
+    .filter(() => false)`,
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "CI, runtime and human_edit vanish from doctor entirely, so a reader " +
+      "cannot tell a rung this product refuses to build from one that is " +
+      "merely broken on their machine",
+  },
+  {
+    // §3.2a. Unscoped, `complete` needs every session on the whole repo over
+    // the whole window to have reported cleanly, and the tree's own
+    // measurement says that is the normal state rather than the exception —
+    // 104 of 127 trial sessions never closed. One abandoned session anywhere
+    // in a fortnight would make every verdict INDETERMINATE for ever.
+    label: "a gap somewhere else is read as a gap about this surface",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: `        ...(paths.length === 0
+          ? []
+          : [touchedScope(deps, repo, since, cutoff, paths)]),`,
+    to: "        ...[],",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "every scoped question answers repo-wide, so a pin nobody stopped " +
+      "watching still reads incomplete and UNATTRIBUTED becomes unreachable " +
+      "in the field — which is the outcome the scope exists to prevent",
+  },
+  {
+    // The caveat's LIFETIME. A reap is revocable only by a record from the
+    // session it closed (services/records.ts reviveReapedSession), and that
+    // record never arrives for a terminal that went away — so the window is
+    // the only thing that ever ends the sentence it produces.
+    label: "a gap nobody can act on is reported for ever",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: `  const ceiling = new Date(
+    now.getTime() - COVERAGE_SESSION_WINDOW_DAYS * MS_PER_DAY,
+  );`,
+    to: "  const ceiling = new Date(0);",
+    test: `${CORE}/test/coverage-fire-rate.test.ts`,
+    because:
+      "one afternoon of reading and planning puts the FIRST, UNCUTTABLE line " +
+      "of every SessionStart briefing in `incomplete` permanently, which is " +
+      "how a caveat stops being read",
+  },
+  {
+    // The surface where an unqualified answer costs a name. 04 renders this
+    // record on the suspect verdict and gates UNATTRIBUTED on it.
+    label: "a ranking names a session with no statement of what was watched",
+    file: `${SERVER}/src/routes/suspect.ts`,
+    from: "    return ok(c, { ...view, coverage });",
+    to: "    return ok(c, { ...view });",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the one surface whose answer is a person carries no coverage block, " +
+      "so the verdict layer reads five unknowns and every suspect answer " +
+      "becomes either silent or unjudgeable",
+  },
+  {
+    // fitHint drops from the TAIL and returns "" below two kept lines, so a
+    // clause appended blindly either goes first (harmless) or takes the hint
+    // with it — a silence nobody asked for, on the one surface whose whole
+    // job is to say something.
+    label: "the coverage caveat costs the hint it was meant to qualify",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return joined.length <= MAX_HINT_TEXT_LENGTH ? joined : hint;",
+    to: "  return joined;",
+    test: `${CORE}/test/coverage-hints.test.ts`,
+    because:
+      "a full-length hint plus the clause exceeds the wire cap, and the " +
+      "delivery the reader needed is truncated or dropped for a caveat that " +
+      "doctor and status already carry",
+  },
+  {
+    // The PreToolUse ask states what a teammate is doing; the note states how
+    // far the archive that claim came from reaches. Dropped, the ask reads as
+    // a complete picture of who is in the file.
+    label: "the ask reason states a teammate and not what was watched",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    ...(note === null ? [] : [note]),",
+    to: "    ...[],",
+    test: `${CORE}/test/coverage-hints.test.ts`,
+    because:
+      "the one surface that interrupts a tool call says nothing about the " +
+      "window it rests on, so a gap that hid a second teammate is invisible " +
+      "at exactly the moment somebody is deciding whether to edit",
+  },
+  {
+    // COV-9's own mutation, verbatim: register a surface that answers about
+    // what the team knows and consumes no record, WITHOUT touching the
+    // exempt list.
+    label: "a new answer surface skips the coverage record unnoticed",
+    file: `${CORE}/src/render-surfaces.ts`,
+    from: `  {
+    kind: "composite",
+    name: "mcp-tool-get-referee-brief",`,
+    to: `  {
+    kind: "composite",
+    name: "smuggled-answer-surface",
+    delivery: "pulled",
+    module: "src/mcp/tools/get-diagnosis.ts",
+    note: "answers about what the team knows and consumes no coverage record",
+  },
+  {
+    kind: "composite",
+    name: "mcp-tool-get-referee-brief",`,
+    test: `${CORE}/test/coverage-registry-walk.test.ts`,
+    because:
+      "AT-9's failure condition arrives one surface at a time, and nothing " +
+      "but this walk would notice a renderer that states what the team knows " +
+      "with no statement of how far it saw",
+  },
+  {
+    // The escape hatch may not be wider than the rule. Raising the cap is how
+    // every exemption list dies, so the cap is pinned by its own test rather
+    // than by a comment asking nicely.
+    label: "the exempt list grows wider than the rule it escapes",
+    file: `${CORE}/src/coverage/exempt-surfaces.ts`,
+    from: "export const COVERAGE_EXEMPT_SURFACES_MAX = 3;",
+    to: "export const COVERAGE_EXEMPT_SURFACES_MAX = 10;",
+    test: `${CORE}/test/coverage-registry-walk.test.ts`,
+    because:
+      "a cap raised to fit the next case is not a cap, and the walk becomes " +
+      "a list of surfaces somebody once exempted rather than a rule",
+  },
+  {
+    // The other way this rule dies: hollow out what it reaches. An empty
+    // response list means every surface is out of scope and the walk passes
+    // over a tree with no coverage anywhere.
+    label: "the walk is hollowed out until it reaches nothing",
+    file: `${CORE}/src/coverage/exempt-surfaces.ts`,
+    from: '  "SuspectView",\n];',
+    to: "];",
+    test: `${CORE}/test/coverage-registry-walk.test.ts`,
+    because:
+      "the walk still passes while reaching fewer surfaces every round, which " +
+      "is the failure mode a green test cannot distinguish from success",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -4833,6 +5498,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
+ * PRINTS: packages/cli/test/coverage-cli.test.ts 5
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
@@ -4892,6 +5558,12 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 5
+ * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
+ * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
+ * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 9
+ * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
@@ -4932,6 +5604,9 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
+ * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
+ * PRINTS: packages/server/test/coverage-measurement.test.ts 2
+ * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4

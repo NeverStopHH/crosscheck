@@ -6,7 +6,9 @@ import {
 
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
+import { parseCoverage } from "./coverage.ts";
 import type { HubContext, HubResult } from "./client.ts";
+import type { CoverageRecord } from "./coverage.ts";
 
 /**
  * Re-exported, because they are part of THIS module's signature.
@@ -332,14 +334,45 @@ export const AbsenceEntrySchema = z.looseObject({
 
 export type AbsenceEntry = z.infer<typeof AbsenceEntrySchema>;
 
+/**
+ * The endpoint named "absences" answers findings AND how far they can be
+ * trusted (03 §3.5). It stopped being a bare list on purpose: coverage rides
+ * inside a response that already exists because PGlite is single-connection
+ * (server/src/services/search.ts:59-67), so a ninth parallel GET at
+ * SessionStart would serialise on the hub inside the 1000 ms budget while
+ * looking free in wall clock.
+ */
+export interface AbsencesOutcome {
+  readonly absences: readonly AbsenceEntry[];
+  /** Never absent: a hub that reported none yields UNKNOWN_COVERAGE. */
+  readonly coverage: CoverageRecord;
+}
+
+const AbsencesResponseSchema = z
+  .looseObject({
+    absences: z.array(z.unknown()).default([]),
+    // Tolerant like every other optional block on the wire — and then read
+    // the OPPOSITE way: http/coverage.ts turns absent or malformed into five
+    // `unknown` rows rather than into silence, because an answer that says
+    // nothing about what was observed reads as one that observed everything.
+    coverage: z.unknown().optional(),
+  })
+  .transform(
+    (value): AbsencesOutcome => ({
+      // Tolerant rows, silent drop — a listing, like tolerantList above.
+      absences: parseRows(value.absences, AbsenceEntrySchema).rows,
+      coverage: parseCoverage(value.coverage),
+    }),
+  );
+
 export const getAbsences = (
   ctx: HubContext,
   repo: string,
-): Promise<HubResult<readonly AbsenceEntry[]>> =>
+): Promise<HubResult<AbsencesOutcome>> =>
   hubRequest(ctx, {
     method: "GET",
     path: `/api/absences${encodeRepo(repo)}`,
-    schema: tolerantList("absences", AbsenceEntrySchema),
+    schema: AbsencesResponseSchema,
   });
 
 /**
@@ -696,6 +729,14 @@ export interface Diagnosis {
    * how many went missing (rule: a degraded state always has a surface).
    */
   readonly droppedRows: number;
+  /**
+   * How far the archive this tree was read from reaches (03 §3.5). REQUIRED,
+   * not optional: this surface carries two empty-result phrasings a reader
+   * acts on — "no claims recorded yet" and "no targets were captured" — and
+   * an optional field would let both be emitted with nothing said. A hub
+   * that sends none yields UNKNOWN_COVERAGE.
+   */
+  readonly coverage: CoverageRecord;
 }
 
 /**
@@ -727,6 +768,7 @@ const DiagnosisEnvelopeSchema = z
     // the renderer would then print an absence as a finding.
     targets: z.array(z.unknown()).optional(),
     truncated: z.boolean().default(false),
+    coverage: z.unknown().optional(),
   })
   .transform((value): Diagnosis => {
     const claims = parseRows(value.claims, DiagnosisClaimSchema);
@@ -744,6 +786,7 @@ const DiagnosisEnvelopeSchema = z
       truncated: value.truncated,
       droppedRows:
         claims.dropped + edges.dropped + external.dropped + targets.dropped,
+      coverage: parseCoverage(value.coverage),
     };
   });
 
@@ -827,6 +870,13 @@ export interface SearchOutcome {
   readonly vectorTierActive: boolean;
   /** Null from a hub that predates the filters — then nothing is claimed. */
   readonly filters: SearchFilters | null;
+  /**
+   * NOT null from a hub that predates it, unlike `filters` one line up, and
+   * the asymmetry is deliberate (03 §4): an unclaimed filter costs a line of
+   * context, an unclaimed coverage record would let an empty result read as
+   * "we looked everywhere". Absent becomes five `unknown` rows.
+   */
+  readonly coverage: CoverageRecord;
 }
 
 const SearchFiltersSchema = z.looseObject({
@@ -852,10 +902,12 @@ const SearchResponseSchema = z
     // and a malformed one is treated as nothing — a filter line the reader
     // cannot trust is worse than no filter line at all.
     filters: z.unknown().optional(),
+    coverage: z.unknown().optional(),
   })
   .transform((value): SearchOutcome => {
     const filters = SearchFiltersSchema.safeParse(value.filters);
     return {
+      coverage: parseCoverage(value.coverage),
       // Tolerant rows, silent drop — a listing, like tolerantList above; the
       // diagnosis path counts its drops because a TREE must not silently
       // shrink, a search result list is advisory by nature.
@@ -1028,18 +1080,22 @@ export interface HintCandidatesResult {
    * then behaves exactly as it did before R2.
    */
   readonly answers: readonly AnsweredQuestion[];
+  /** How far the archive behind a delivered hint reaches (03 §3.5). */
+  readonly coverage: CoverageRecord;
 }
 
 const HintCandidatesResponseSchema = z
   .looseObject({
     candidates: z.array(z.unknown()).default([]),
     answers: z.array(z.unknown()).default([]),
+    coverage: z.unknown().optional(),
   })
   .transform(
     (value): HintCandidatesResult => ({
       // Tolerant rows, silent drop — a candidate list is advisory by nature.
       candidates: parseRows(value.candidates, HintContextCandidateSchema).rows,
       answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
+      coverage: parseCoverage(value.coverage),
     }),
   );
 
@@ -1534,17 +1590,35 @@ export const TripwireSessionSchema = z.looseObject({
 
 export type TripwireSession = z.infer<typeof TripwireSessionSchema>;
 
+export interface TripwireOutcome {
+  readonly sessions: readonly TripwireSession[];
+  /** Never absent: a hub that reported none yields UNKNOWN_COVERAGE. */
+  readonly coverage: CoverageRecord;
+}
+
+const TripwireResponseSchema = z
+  .looseObject({
+    sessions: z.array(z.unknown()).default([]),
+    coverage: z.unknown().optional(),
+  })
+  .transform(
+    (value): TripwireOutcome => ({
+      sessions: parseRows(value.sessions, TripwireSessionSchema).rows,
+      coverage: parseCoverage(value.coverage),
+    }),
+  );
+
 /** The PreToolUse tripwire's ONE bounded hub call (DESIGN.md §4). */
 export const getTripwireSessions = (
   ctx: HubContext,
   repo: string,
   value: string,
-): Promise<HubResult<readonly TripwireSession[]>> => {
+): Promise<HubResult<TripwireOutcome>> => {
   const params = new URLSearchParams({ repo, value });
   return hubRequest(ctx, {
     method: "GET",
     path: `/api/hints/tripwire?${params.toString()}`,
-    schema: tolerantList("sessions", TripwireSessionSchema),
+    schema: TripwireResponseSchema,
   });
 };
 
@@ -1940,6 +2014,13 @@ export interface SuspectView {
   };
   readonly attribution: string;
   readonly candidates: readonly SuspectCandidate[];
+  /**
+   * How far the archive this verdict was read from reaches (03 §3.5), scoped
+   * to the PIN'S FILE SET (§3.2a) — "were we watching the thing you asked
+   * about", not "were we watching this repo for a fortnight". This is the
+   * surface where an unqualified answer costs the most: a name.
+   */
+  readonly coverage: CoverageRecord;
 }
 
 const SuspectViewSchema = z
@@ -1968,6 +2049,7 @@ const SuspectViewSchema = z
     }),
     attribution: z.string().min(1).default("sessions"),
     candidates: z.array(z.unknown()).default([]),
+    coverage: z.unknown().optional(),
   })
   .transform(
     (value): SuspectView => ({
@@ -1976,6 +2058,7 @@ const SuspectViewSchema = z
       scope: value.scope,
       totals: value.totals,
       attribution: value.attribution,
+      coverage: parseCoverage(value.coverage),
       candidates: value.candidates
         .map((row) => SuspectCandidateSchema.safeParse(row))
         .filter((parsed) => parsed.success)

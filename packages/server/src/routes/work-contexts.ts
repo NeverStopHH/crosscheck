@@ -4,6 +4,7 @@ import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { WorkContextsQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
+import { readCoverage } from "../services/coverage.ts";
 import { getDiagnosis, listWorkContextsByRepo } from "../services/diagnosis.ts";
 import { markHintsPulled } from "../services/hint-deliveries.ts";
 import { parseSinceWindow } from "../services/time-window.ts";
@@ -94,7 +95,17 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         console.error("[crosscheck] marking hint deliveries pulled failed", error);
       }
     }
-    return ok(c, diagnosis);
+    // AT-1 on this surface (03 §3.5). The tree carries two empty-result
+    // phrasings a reader acts on — "no claims recorded yet" and "no targets
+    // were captured" — and both are claims about the WORK that are only true
+    // if the work was being watched. A SIBLING field, because the service
+    // object is sent directly as `data`.
+    const coverage = await readCoverage(
+      deps,
+      c.get("developer").id,
+      diagnosis.repo,
+    );
+    return ok(c, { ...diagnosis, coverage });
   });
 
   return router;

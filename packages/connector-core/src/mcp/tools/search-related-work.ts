@@ -319,6 +319,10 @@ export const run = async (
     renderSearchResults(hits, query, {
       semanticTier: searched.data.vectorTierActive,
       ...(filters === undefined ? {} : { filters }),
+      // AT-1: the empty branch of this renderer is the defect 03 §1 names by
+      // line, and the record is what lets it say "nothing in what was
+      // OBSERVED" rather than a claim about the repository.
+      coverage: { record: searched.data.coverage, now: ctx.now() },
     }),
   );
 };

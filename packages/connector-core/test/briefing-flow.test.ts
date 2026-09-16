@@ -40,6 +40,8 @@ interface CannedData {
   workContexts: readonly unknown[];
   matches: readonly unknown[];
   ghostChecks: readonly unknown[];
+  /** The coverage block on /api/absences; undefined = an un-upgraded hub. */
+  coverage: unknown;
 }
 
 /** Minimal canned hub for the six GETs — the hint-hub.ts philosophy. */
@@ -49,6 +51,7 @@ const startBriefingHub = () => {
     workContexts: [],
     matches: [],
     ghostChecks: [],
+    coverage: undefined,
   };
   const server = Bun.serve({
     port: 0,
@@ -67,7 +70,13 @@ const startBriefingHub = () => {
         return Response.json({ ok: true, data: { ghostChecks: data.ghostChecks } });
       }
       if (pathname === "/api/absences") {
-        return Response.json({ ok: true, data: { absences: [] } });
+        return Response.json({
+          ok: true,
+          data: {
+            absences: [],
+            ...(data.coverage === undefined ? {} : { coverage: data.coverage }),
+          },
+        });
       }
       if (pathname === "/api/contradictions") {
         return Response.json({ ok: true, data: { contradictions: [] } });
@@ -417,5 +426,81 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
 
     const spool = await readSessionSpool(home, key, sessionSlug(HOST_KEY));
     expect(spool.lines).toHaveLength(0);
+  });
+});
+
+/**
+ * §5.3 through the flow rather than through the renderer: SessionStart is
+ * where the qualifier has to arrive, and the flow is the only place that has
+ * both the hub's record and the briefing in hand.
+ */
+describe("the coverage qualifier reaches the SessionStart briefing", () => {
+  test("a reaped rung renders the line first, above every section", async () => {
+    // Arrange
+    const home = await makeHome("bf-coverage");
+    const repo = await makeRepo("bf-coverage");
+    paths.push(home, repo);
+    hub.data.sessions = [presenceWith("Nick", "feat/rotation", "implementing")];
+    hub.data.workContexts = [];
+    hub.data.matches = [];
+    hub.data.ghostChecks = [];
+    hub.data.coverage = {
+      repo: REPO_ID,
+      computedAt: NOW.toISOString(),
+      scope: { sinceIso: "2026-08-05T12:00:00.000Z" },
+      sources: [
+        {
+          source: "agent_event",
+          state: "incomplete",
+          reason: "session_reaped",
+          gapSince: "2026-08-18T08:13:00.000Z",
+          observedAt: "2026-08-18T08:13:00.000Z",
+        },
+        { source: "git", state: "complete", reason: "commits_reported", gapSince: null, observedAt: ISO },
+        { source: "ci", state: "unavailable", reason: "no_emitter", gapSince: null, observedAt: null },
+        { source: "runtime", state: "unavailable", reason: "out_of_scope_1_0", gapSince: null, observedAt: null },
+        { source: "human_edit", state: "unavailable", reason: "no_platform_rung", gapSince: null, observedAt: null },
+      ],
+    };
+
+    // Act
+    const assembled = await assembleBriefing({
+      hub: hubContext(home),
+      repoId: REPO_ID,
+      repoRoot: repo,
+      selfDeveloperId: SELF,
+      now: NOW,
+    });
+    hub.data.coverage = undefined;
+    const lines = assembled.briefing.split("\n");
+
+    // Assert
+    expect(lines[1]).toContain("2026-08-18T08:13Z");
+    expect(lines[1]?.startsWith("Coverage incomplete")).toBe(true);
+  });
+
+  test("a hub that reports no coverage leaves the briefing exactly as it was", async () => {
+    // Arrange
+    const home = await makeHome("bf-no-coverage");
+    const repo = await makeRepo("bf-no-coverage");
+    paths.push(home, repo);
+    hub.data.sessions = [presenceWith("Nick", "feat/rotation", "implementing")];
+    hub.data.workContexts = [];
+    hub.data.matches = [];
+    hub.data.ghostChecks = [];
+    hub.data.coverage = undefined;
+
+    // Act
+    const assembled = await assembleBriefing({
+      hub: hubContext(home),
+      repoId: REPO_ID,
+      repoRoot: repo,
+      selfDeveloperId: SELF,
+      now: NOW,
+    });
+
+    // Assert: `unknown` does not annotate — decision 4, and the reason a
+    // fresh install does not learn to ignore caveats.
+    expect(assembled.briefing).not.toContain("Coverage");
   });
 });

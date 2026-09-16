@@ -15,6 +15,25 @@ export { createDb } from "./db/client.ts";
 export type { Db } from "./db/client.ts";
 export { createEmbedderFromEnv } from "./services/embedder.ts";
 export type { Embedder } from "./services/embedder.ts";
+// 03's ground, exported because 04's verdict layer and 07's instrumentation
+// both CONSUME `isJudgeable` rather than recomputing it, and because the
+// connector's wire vocabulary is pinned against these three enums in
+// connector-core/test/coverage-wire.test.ts.
+export {
+  COVERAGE_REASONS,
+  COVERAGE_SOURCES,
+  COVERAGE_STATES,
+  isJudgeable,
+  readCoverage,
+} from "./services/coverage.ts";
+export type {
+  CoverageRecord,
+  CoverageReason,
+  CoverageScope,
+  CoverageSource,
+  CoverageSourceRecord,
+  CoverageState,
+} from "./services/coverage.ts";
 export {
   SEARCH_DEFAULT_LIMIT,
   SEARCH_MAX_LIMIT,
