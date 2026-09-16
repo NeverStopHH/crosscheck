@@ -18,7 +18,7 @@
  * size. Two acquisitions move it by twice that, whatever the clock says.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { readSpoolLines, repoKey, runHook } from "../src/index.ts";
@@ -50,6 +50,22 @@ afterEach(async () => {
   paths.length = 0;
 });
 
+/**
+ * How long ago every fixture session began. NOT zero, and the reason is a
+ * kernel's, not this file's.
+ *
+ * The git lane keeps a changed file only when its mtime is at or after the
+ * session's start (capture-git-touches.ts `changedSince`). Linux stamps a
+ * write from the COARSE real-time clock, which trails `Date.now()` by up to a
+ * scheduler tick; a session "started" at `Date.now()` and a file rewritten a
+ * millisecond later can therefore carry an mtime from BEFORE the session. The
+ * lane then correctly calls it somebody else's work and records nothing —
+ * which is how ubuntu-latest recorded zero git-lane records while macOS, whose
+ * APFS stamps finely, recorded one. stop-git-touches.test.ts starts its
+ * sessions a minute back for the same reason.
+ */
+const SESSION_STARTED_AGO_MS = 60_000;
+
 const stateFor = (repoRoot: string): SessionStateInput => ({
   hostSessionKey: SESSION_ID,
   crosscheckSessionId: `cc_${SESSION_ID}`,
@@ -58,18 +74,29 @@ const stateFor = (repoRoot: string): SessionStateInput => ({
   repoRoot,
   hubUrl: DEAD_HUB_URL,
   developerId: "dev_self",
-  startedAt: new Date().toISOString(),
+  startedAt: new Date(Date.now() - SESSION_STARTED_AGO_MS).toISOString(),
   seqEpoch: EPOCH,
   eventSeq: 0,
   toolWindowFloor: null,
   toolWindowOpen: 0,
 });
 
-const env = (home: string): Env => ({
+/**
+ * A Stop envelope wide enough that a loaded machine cannot turn a BEHAVIOUR
+ * assertion into a budget measurement — the idiom stop-git-touches.test.ts
+ * documents. At the default 400 ms the Stop envelope is 800 ms and the git
+ * lane needs GIT_TOUCHES_TIMEOUT_MS of it unspent; a starved turn skips the
+ * lane, correctly and counted, and that is the budget test's question, not
+ * this file's. (Not the cause of the ubuntu failure here — 64 spinning
+ * processes on a 16-core Mac never starved it. SESSION_STARTED_AGO_MS is.)
+ */
+const WIDE_TIMEOUT_MS = 8000;
+
+const env = (home: string, timeoutMs: number = HTTP_TIMEOUT_MS): Env => ({
   CROSSCHECK_HOME: home,
   CROSSCHECK_HUB_URL: DEAD_HUB_URL,
   CROSSCHECK_API_KEY: "test-key",
-  CROSSCHECK_TIMEOUT_MS: String(HTTP_TIMEOUT_MS),
+  CROSSCHECK_TIMEOUT_MS: String(timeoutMs),
   CROSSCHECK_SSH_CANONICALIZE: "off",
 });
 
@@ -274,8 +301,18 @@ describe("Stop's git lane positions what it observes", () => {
     // prints beside its own counters.
     const fx = await fixture("hook-seq-stop");
     await writeRepoFile(fx.repo, "README.md", "# rewritten by a codemod\n");
+    // The precondition, asserted rather than inherited from the kernel's
+    // clock: the rewrite must read as AFTER the session began, or the lane is
+    // right to ignore it and every assertion below measures nothing.
+    const session = await readSessionState(fx.home, SESSION_ID);
+    const rewritten = await stat(join(fx.repo, "README.md"));
+    expect(rewritten.mtimeMs).toBeGreaterThanOrEqual(
+      Date.parse(session?.startedAt ?? ""),
+    );
 
-    // Act
+    // Act: on the WIDE envelope, because this asserts what the lane records,
+    // not whether a starved hook could afford it — skipping is correct and
+    // counted, and the budget question belongs to stop-git-touches.test.ts.
     await runHook(
       "stop",
       JSON.stringify({
@@ -283,10 +320,13 @@ describe("Stop's git lane positions what it observes", () => {
         cwd: fx.repo,
         hook_event_name: "Stop",
       }),
-      env(fx.home),
+      env(fx.home, WIDE_TIMEOUT_MS),
     );
 
-    // Assert
+    // Assert: the lane RAN, first. Without this a skipped lane reports itself
+    // as `Expected: > 0, Received: 0`, which names neither the lane nor why —
+    // and it is the one precondition every assertion below depends on.
+    expect((await readSessionState(fx.home, SESSION_ID))?.gitLaneSkipped).toBe(0);
     const records = await spooled(fx);
     const gitLane = records.filter(
       (record) =>
