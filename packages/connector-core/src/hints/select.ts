@@ -121,12 +121,82 @@ const isDeclared = (claim: HintClaimCandidate): boolean =>
 const hasBody = (claim: HintClaimCandidate): boolean =>
   claim.body.trim().length > 0;
 
-/** The asymmetry, in one predicate: provenance and evidence first, then kind or status. */
+/**
+ * States that have stopped being a CURRENT statement about the code
+ * (1.0 spec 02 §5, D3's default).
+ *
+ * `unknown` is deliberately absent. A claim nobody has revalidated is not a
+ * claim somebody checked and found wrong, and refusing everything unmeasured
+ * would silence a whole hub on the day this shipped — the same direction
+ * §3.3 takes when a pruned row reads `unknown` again rather than keeping its
+ * last verdict.
+ *
+ * `invalidated` IS ABSENT TOO, AND THAT IS A DELIBERATE DEPARTURE FROM §5,
+ * stated here rather than buried. §5 writes the set as
+ * `{stale, invalidated, superseded}`. `invalidated` is derived from
+ * `claims.status === "rejected"` (§3.5), and a claim carrying that status
+ * reaches this predicate through exactly one door — `isNegativeKnowledge`,
+ * since `isSettled` admits only `likely_root_cause` and
+ * `partially_confirmed`. The term therefore cannot fire on anything except an
+ * evidence-backed `rejected_approach` claim: the one category DESIGN.md §4
+ * privileges above all others, and the one whose demotion hands the reader
+ * the settled POSITIVE in its place. Measured on the flagship corpus
+ * scenario, the term alone moves substance precision and recall 1.000 →
+ * 0.818 (test/claim-substance-gate.test.ts states the numbers and the shape).
+ * `invalidated` keeps its place in `claimValidity()` and still renders on
+ * every pulled surface; it is this GATE that does not read it.
+ */
+const NON_CURRENT_STATES: ReadonlySet<string> = new Set(["stale", "superseded"]);
+
+/**
+ * THE CODE AXIS OF THE SUBSTANCE GATE (1.0 spec 02 §5, CCB-1/CCB-7).
+ *
+ * Two terms, both failing closed toward the pointer lane:
+ *
+ *   1. `commitBinding !== "none"` — a claim whose observation point is
+ *      unknown may not be presented as current at all. Non-negotiable #3 on
+ *      the code axis: unknown provenance fails CLOSED.
+ *   2. `state ∉ NON_CURRENT_STATES` — the hub's one authoritative verdict
+ *      (server/src/services/claim-validity.ts), edge-derived for `superseded`
+ *      and revalidation-derived for `stale`.
+ *
+ * ABSENT MEANS "THE HUB DID NOT ANSWER", NOT "REFUSE". A hub too old to send
+ * the field keeps its team's claims in the substance lane; the alternative is
+ * one connector upgrade silencing a whole hub, and `unknown` is injectable
+ * anyway, so the two cases land in the same place. The residue is real and
+ * doctor names it out loud rather than leaving a reader to notice.
+ */
+const isCodeCurrent = (claim: HintClaimCandidate): boolean => {
+  const validity = claim.validity;
+  if (validity === undefined) {
+    return true;
+  }
+  return (
+    validity.commitBinding !== "none" && !NON_CURRENT_STATES.has(validity.state)
+  );
+};
+
+/**
+ * The asymmetry, in one predicate: provenance and evidence first, then kind or
+ * status, then whether the code it is about has moved.
+ *
+ * `status !== "superseded"` STAYS beside the edge-derived term above, and §5
+ * is wrong to call the latter its replacement. §3.5's "the edge is
+ * authoritative" settles which definition DECIDES when the two disagree — the
+ * hub derives `validity.state` from the edge and the status never enters that
+ * derivation. But the hub ALREADY drops superseded rows from the candidate
+ * list by edge (notSuperseded, packages/server/src/services/hints.ts), so
+ * deleting this line changes nothing against an honest hub while removing a
+ * defence against a forging one, which is the reason it was written. A hub
+ * reporting `status: "superseded"` beside a `current` validity asserts two
+ * contradictory things; the connector believes neither.
+ */
 const isInjectable = (claim: HintClaimCandidate): boolean =>
   isDeclared(claim) &&
   hasBody(claim) &&
   hasEvidence(claim) &&
   claim.status !== "superseded" &&
+  isCodeCurrent(claim) &&
   (isNegativeKnowledge(claim) || isSettled(claim));
 
 const isEligibleContext = (context: HintContextCandidate): boolean =>
