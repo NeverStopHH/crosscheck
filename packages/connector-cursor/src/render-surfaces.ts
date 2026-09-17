@@ -77,6 +77,22 @@ const hintClaimWith = (payload: string): HintClaimCandidate => ({
   authorDeveloperId: "dev_other",
   authorDeveloperName: payload,
   body: payload,
+  // THE VALIDITY RECORD, PLANTED. Without it `claimValidityWord` returns null
+  // and the corpus renders this surface exactly as it did before spec 02 —
+  // a new line the corpus cannot see is a new line it does not guard. `stale`
+  // rather than `current`, because the downgrade is the case that changes
+  // what a reader should do; the payload rides the two string-shaped slots a
+  // hostile hub controls, even though the hint prints only the WORD.
+  validity: {
+    state: "stale",
+    observedAtCommit: payload,
+    commitBinding: "session_base",
+    basis: "context_targets",
+    touchingCommits: [],
+    touchingTotal: 1,
+    lastRevalidatedAt: ISO,
+    supersededByClaimId: payload,
+  },
   createdAt: ISO,
 });
 

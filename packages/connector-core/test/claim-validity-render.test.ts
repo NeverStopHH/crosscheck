@@ -231,3 +231,40 @@ describe("the state word on the unsolicited claim hint", () => {
     expect(hintWith(undefined)).not.toContain("validity ");
   });
 });
+
+/**
+ * NON-NEGOTIABLE #2 ON THIS CHANGE: every visible surface registered AND
+ * planted in the injection corpus of connector-core, connector-cursor AND
+ * connector-acp.
+ *
+ * The claim hint is rendered by ONE core function that all three packages
+ * wrap, so the registrations were already in place and nothing new had to be
+ * registered. That made it easy to believe the corpus covered the new line —
+ * and it did not: each package's corpus adapter builds its own
+ * HintClaimCandidate, all three omitted `validity`, so `claimValidityWord`
+ * returned null on every payload and the corpus rendered the surface exactly
+ * as it did before this spec. A surface the corpus cannot see is a surface
+ * the corpus does not guard.
+ */
+describe("the claim-hint corpus sees the state word, in every package", () => {
+  test("all three registered claim-hint surfaces render it", async () => {
+    // Arrange: the registries as the meta-test discovers them — this one, the
+    // Cursor mirror and the ACP mirror.
+    const { ALL_REGISTERED_SURFACES } = await import(
+      "./fixtures/registry-packages.ts"
+    );
+    const hints = ALL_REGISTERED_SURFACES.filter(
+      (surface) => surface.kind === "corpus" && surface.name.includes("claim-hint"),
+    );
+
+    // Assert: three of them, and each renders a state word under the corpus's
+    // own payload rather than skipping the line.
+    expect(hints.length).toBe(3);
+    for (const surface of hints) {
+      expect(
+        surface.kind === "corpus" ? surface.render("rate limit fix") : "",
+        `${surface.name} renders no validity state word`,
+      ).toContain("validity ");
+    }
+  });
+});
