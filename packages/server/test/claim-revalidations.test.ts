@@ -20,6 +20,7 @@ import {
   postRecords,
   recordEnvelope,
   validClaimBody,
+  validClaimEdgeBody,
   validWorkContextBody,
   WORK_CONTEXT_ID,
 } from "./helpers.ts";
@@ -284,5 +285,153 @@ describe("claim revalidations", () => {
 
     // Assert
     expect(body.data.repo).toBe(REPO);
+  });
+});
+
+/**
+ * THE SUMMARY DOCTOR READS (spec 02 §8.5, §8.9) — counts, and where they
+ * come from.
+ *
+ * The temptation is a `GROUP BY commit_binding`: one query, no join, and a
+ * SECOND definition of currency written in SQL beside the one in
+ * `claimValidity()`. That is AT-2's second "fails if" arriving through a
+ * health endpoint, so these cases assert the counts against states only the
+ * derivation produces — a `supersedes` edge has no column to group by, and a
+ * revalidated claim's `stale` lives in a different table from its binding.
+ */
+describe("the claim-validity summary", () => {
+  const readSummary = async (
+    harness: TestHarness,
+    developer: TestDeveloper,
+    repo = REPO,
+  ): Promise<{
+    status: number;
+    counted: number;
+    total: number;
+    unbound: number;
+    neverRevalidated: number;
+    states: Record<string, number>;
+  }> => {
+    const response = await harness.app.request(
+      `/api/claim-revalidations/summary?repo=${encodeURIComponent(repo)}`,
+      jsonRequest("GET", developer.apiKey),
+    );
+    if (response.status !== 200) {
+      return {
+        status: response.status,
+        counted: 0,
+        total: 0,
+        unbound: 0,
+        neverRevalidated: 0,
+        states: {},
+      };
+    }
+    const body = (await response.json()) as {
+      data: {
+        counted: number;
+        total: number;
+        unbound: number;
+        neverRevalidated: number;
+        states: Record<string, number>;
+      };
+    };
+    return { status: response.status, ...body.data };
+  };
+
+  test("every count comes from the derivation, not from a column", async () => {
+    // Arrange: three claims on one session, so all three share a binding —
+    // and then each is made to read a DIFFERENT state by something no single
+    // column carries. clm_01 is revalidated `changed` (another table),
+    // clm_02 is retired by an edge (a third table), clm_03 is untouched.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope("claim", validClaimBody()),
+        recordEnvelope("claim", validClaimBody({ id: "clm_02", body: "two" })),
+        recordEnvelope("claim", validClaimBody({ id: "clm_03", body: "three" })),
+        recordEnvelope(
+          "claim_edge",
+          validClaimEdgeBody({
+            kind: "supersedes",
+            fromClaimId: "clm_03",
+            toClaimId: "clm_02",
+          }),
+        ),
+      ],
+    });
+    await report(harness, developer, [entry("changed")]);
+
+    // Act
+    const summary = await readSummary(harness, developer);
+
+    // Assert
+    expect(summary.counted).toBe(3);
+    expect(summary.total).toBe(3);
+    expect(summary.unbound).toBe(0);
+    expect(summary.states["stale"]).toBe(1);
+    expect(summary.states["superseded"]).toBe(1);
+    expect(summary.states["unknown"]).toBe(1);
+    // clm_01 was measured; clm_02 and clm_03 never were. `superseded` is one
+    // of them — the count is about the MEASUREMENT, not about the verdict.
+    expect(summary.neverRevalidated).toBe(2);
+  });
+
+  test("a claim bound to no commit is counted as one nobody can ever check", async () => {
+    // Arrange: §8.5. The session registered the NO_COMMIT_SHA placeholder, so
+    // ingest stamped `commit_binding = 'none'` — there is no "from" commit
+    // and the rung cannot exist for this claim, ever.
+    const { harness, developer } = await createHarnessWithSession({
+      baseCommit: "0000000",
+    });
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope("claim", validClaimBody()),
+      ],
+    });
+
+    // Act
+    const summary = await readSummary(harness, developer);
+
+    // Assert: counted as unbound, and NOT as merely unmeasured — the two have
+    // opposite remedies and doctor prints them on different lines.
+    expect(summary.unbound).toBe(1);
+    expect(summary.neverRevalidated).toBe(0);
+    expect(summary.states["unknown"]).toBe(1);
+  });
+
+  test("another repo's claims are not this repo's health", async () => {
+    // Arrange: the scope. A claim belongs to the repo its AUTHOR SESSION
+    // registered under, and a summary that ignored that would report one
+    // team's archive as another's.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope("claim", validClaimBody()),
+      ],
+    });
+
+    // Act
+    const summary = await readSummary(harness, developer, "github.com/acme/other");
+
+    // Assert
+    expect(summary.counted).toBe(0);
+    expect(summary.total).toBe(0);
+  });
+
+  test("a summary without a repo is refused rather than answered for all of them", async () => {
+    // Arrange
+    const { harness, developer } = await seed();
+
+    // Act
+    const response = await harness.app.request(
+      "/api/claim-revalidations/summary",
+      jsonRequest("GET", developer.apiKey),
+    );
+
+    // Assert
+    expect(response.status).toBe(400);
   });
 });

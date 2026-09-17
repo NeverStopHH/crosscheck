@@ -2126,3 +2126,33 @@ export const reportClaimRevalidations = (
       total: readings.total,
     },
   });
+
+/**
+ * HOW MUCH OF A REPO'S KNOWLEDGE CAN BE JUDGED AT ALL — counts, for doctor's
+ * two refusals (1.0 spec 02 §8.5, §8.9).
+ *
+ * `looseObject` and defaults on every field, for `targetsReported`'s reason
+ * (see its comment above): a hub too old to answer this route 404s, which the
+ * caller tells apart from a hub that answered with zeros. What must NEVER
+ * happen is a missing field parsing as a confident zero, so every count
+ * defaults to 0 only after the route itself answered.
+ */
+export const ClaimValiditySummarySchema = z.looseObject({
+  counted: z.number().int().min(0).default(0),
+  total: z.number().int().min(0).default(0),
+  unbound: z.number().int().min(0).default(0),
+  neverRevalidated: z.number().int().min(0).default(0),
+  states: z.record(z.string(), z.number().int().min(0)).default({}),
+});
+
+export type ClaimValiditySummary = z.infer<typeof ClaimValiditySummarySchema>;
+
+export const getClaimValiditySummary = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<ClaimValiditySummary>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/claim-revalidations/summary${encodeRepo(repo)}`,
+    schema: ClaimValiditySummarySchema,
+  });

@@ -97,6 +97,7 @@ import {
 import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
 import {
   getAbsences,
+  getClaimValiditySummary,
   getGhostChecks,
   getHintStats,
   getOpenSessions,
@@ -106,7 +107,10 @@ import {
   getSolvedMatchCounts,
   getWorkContexts,
 } from "@crosscheck/connector-core/http/hub.ts";
-import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
+import type {
+  ClaimValiditySummary,
+  GhostCheckEntry,
+} from "@crosscheck/connector-core/http/hub.ts";
 import {
   formatQuestionCounts,
   questionWarning,
@@ -1726,6 +1730,90 @@ const checkPins = async (
 };
 
 /**
+ * THE TWO REFUSALS SPEC 02 OWES THIS REPORT (§8.5, §8.9).
+ *
+ * A claim's currency is judged against the COMMIT it was observed at. Two
+ * things can stop that from happening, and they have OPPOSITE remedies —
+ * which is why they are two lines rather than one number:
+ *
+ *   · `commit_binding = 'none'` — no "from" commit, so the rung cannot exist
+ *     at all. Nothing anybody runs will ever change it, and the claim stays
+ *     pointer-only for life. AT-10's rule: a rung that genuinely cannot be
+ *     served appears as a DOCUMENTED REFUSAL with its count and its cause.
+ *   · bound but never measured — waiting for somebody to pull a diagnosis or
+ *     run `crosscheck revalidate`. Nothing revalidates on CI or at runtime in
+ *     1.0 (§8.9), so a repo nobody pulls from reads `unknown` forever, and
+ *     D5's cost is only paid honestly if this line says so every time.
+ *
+ * THE OLD-HUB SHAPE IS checkPins' VERBATIM: 404 is a hub that predates the
+ * route and says nothing about this install (PASS, "not measured"); any other
+ * failure is a WARN, because a green meaning "could not check" is worse than
+ * no check at all.
+ */
+const claimBindingCheck = (summary: ClaimValiditySummary): Check => {
+  const scope = `${String(summary.counted)} of ${String(summary.total)} claims`;
+  if (summary.unbound === 0) {
+    return check(
+      "PASS",
+      "claim binding",
+      `${scope} are bound to a commit and can be judged against the code`,
+    );
+  }
+  return check(
+    "WARN",
+    "claim binding",
+    `${String(summary.unbound)} of ${String(summary.counted)} claims are bound to no commit ` +
+      "and can never be revalidated — their session registered no usable commit, " +
+      "so they stay readable as pointers and never as current causes",
+  );
+};
+
+/** How many claims read as each state — the part that is working, counted. */
+const validityStateSentence = (summary: ClaimValiditySummary): string => {
+  const named = ["stale", "superseded", "invalidated"]
+    .map((state) => ({ state, n: summary.states[state] ?? 0 }))
+    .filter((entry) => entry.n > 0)
+    .map((entry) => `${String(entry.n)} ${entry.state}`);
+  return named.length === 0 ? "none measured as non-current" : named.join(", ");
+};
+
+const claimCurrencyCheck = (summary: ClaimValiditySummary): Check =>
+  check(
+    "PASS",
+    "claim currency",
+    `${String(summary.neverRevalidated)} of ${String(summary.counted)} claims have never been ` +
+      `checked against the code (${validityStateSentence(summary)}) — nothing ` +
+      "revalidates on CI or at runtime, so this moves when somebody pulls a " +
+      "diagnosis or runs `crosscheck revalidate`",
+  );
+
+const checkClaimValidity = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<readonly Check[]> => {
+  const summary = await getClaimValiditySummary(ctx, repoId);
+  if (!summary.ok) {
+    return summary.status === HTTP_NOT_FOUND
+      ? [
+          check(
+            "PASS",
+            "claim binding",
+            "not measured (this hub does not judge claims against commits)",
+          ),
+        ]
+      : [
+          check(
+            "WARN",
+            "claim binding",
+            `currency unknown — the hub did not answer (${summary.message}); ` +
+              "this says nothing about whether your team's claims still hold",
+          ),
+        ];
+  }
+  return [claimBindingCheck(summary.data), claimCurrencyCheck(summary.data)];
+};
+
+/**
  * The remedy a failed runner probe names, by what the binary said — each a
  * DIFFERENT fix, which is why the first output line is printed at all:
  * "Not logged in" is the developer's login, "unknown option" is the CLI's
@@ -2847,6 +2935,7 @@ export const runDoctor = async (
       resolveDenylist(config.denylist ?? undefined),
       now,
     )),
+    ...(await checkClaimValidity(hubCtx, identity.repoId)),
     await checkGhostOverlap(hubCtx, identity.repoId),
     await checkPrivacy(hubCtx),
     skewCheck,

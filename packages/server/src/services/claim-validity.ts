@@ -58,7 +58,7 @@
  * PRINTS: packages/schema/src/enums.ts
  * PRINTS: packages/server/src/services/claim-validity.ts
  */
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import type {
   ClaimCommitBinding,
   ClaimRevalidationBasis,
@@ -66,7 +66,9 @@ import type {
   ClaimValidityState,
 } from "@crosscheck/schema";
 
+import { CLAIM_VALIDITY_SUMMARY_MAX_CLAIMS } from "../constants.ts";
 import {
+  agentSessions,
   claimEdges,
   claimRevalidations,
   claimSurfaces,
@@ -346,4 +348,94 @@ export const loadSupersededBy = async (
     .orderBy(asc(claimEdges.createdAt));
   // Ascending, then last-write-wins: the newest edge ends up in the map.
   return new Map(rows.map((row) => [row.toClaimId, row.fromClaimId]));
+};
+
+/**
+ * WHAT THIS REPO'S CLAIMS READ AS, as counts — spec 02 §8.5's doctor refusal
+ * and §8.9's line, and nothing else.
+ *
+ * DERIVED, NOT AGGREGATED. Every count here comes from `claimValidity()` via
+ * `loadClaimValidities`, never from a `GROUP BY commit_binding` that would be
+ * a SECOND definition of currency written in SQL — the defect this module
+ * exists to prevent, arriving through the back door of a summary endpoint.
+ * The cost is three batched queries over a bounded row set instead of one
+ * aggregate over all of them, and the bound is reported rather than hidden.
+ *
+ * NEWEST FIRST, because the cut has to fall somewhere and a five-year repo's
+ * oldest claims are the ones a reader is least likely to be about to act on.
+ * `counted / total` says how much of the repo the answer covers;
+ * `capture-health.ts`'s rule, that a bound must not be spent at random and
+ * must not claim more than it measured.
+ *
+ * COUNTS ONLY. No id, no body, no path, no developer — doctor prints this to
+ * a terminal and the question it answers is "how much of what this team knows
+ * can be judged at all", which is a number.
+ */
+export interface ClaimValiditySummary {
+  /** Claims whose state was derived: at most the bound. */
+  readonly counted: number;
+  /** Claims this repo has. `counted < total` means the bound was spent. */
+  readonly total: number;
+  /**
+   * Claims bound to NO commit. These can never be revalidated — there is no
+   * "from" commit, so the rung cannot exist (§8.5) — and they are permanently
+   * pointer-only. A count doctor names rather than a silence it keeps.
+   */
+  readonly unbound: number;
+  /** Bound, but nobody has ever measured them against the code (§8.9). */
+  readonly neverRevalidated: number;
+  /** How many claims read as each state. */
+  readonly states: Readonly<Record<ClaimValidityState, number>>;
+}
+
+const emptyStates = (): Record<ClaimValidityState, number> => ({
+  current: 0,
+  stale: 0,
+  superseded: 0,
+  invalidated: 0,
+  unknown: 0,
+});
+
+export const summariseClaimValidity = async (
+  db: DbExecutor,
+  repo: string,
+): Promise<ClaimValiditySummary> => {
+  // The repo a claim belongs to is its AUTHOR SESSION'S repo — the same join
+  // every other per-repo claim query in this hub makes, and the reason
+  // `agent_sessions_repo_idx` exists.
+  const rows = await db
+    .select({ id: claims.id })
+    .from(claims)
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(eq(agentSessions.repo, repo))
+    .orderBy(desc(claims.createdAt))
+    .limit(CLAIM_VALIDITY_SUMMARY_MAX_CLAIMS);
+  const counted = await db
+    .select({ n: count() })
+    .from(claims)
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(eq(agentSessions.repo, repo));
+  const total = counted[0]?.n ?? rows.length;
+  const validities = await loadClaimValidities(
+    db,
+    rows.map((row) => row.id),
+  );
+  const states = emptyStates();
+  let unbound = 0;
+  let neverRevalidated = 0;
+  for (const validity of validities.values()) {
+    states[validity.state] += 1;
+    if (validity.commitBinding === "none") {
+      unbound += 1;
+      continue;
+    }
+    // A claim with a binding and no reading. Counted apart from `unbound`
+    // because the two have OPPOSITE remedies: one is waiting for somebody to
+    // pull or run `crosscheck revalidate`, the other can never be measured at
+    // all and a remedy nobody can act on is worse than none.
+    if (validity.lastRevalidatedAt === null) {
+      neverRevalidated += 1;
+    }
+  }
+  return { counted: validities.size, total, unbound, neverRevalidated, states };
 };

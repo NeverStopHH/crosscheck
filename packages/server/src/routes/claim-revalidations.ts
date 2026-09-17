@@ -22,11 +22,32 @@ import {
   ingestClaimRevalidations,
   unknownClaimIds,
 } from "../services/claim-revalidations.ts";
+import { summariseClaimValidity } from "../services/claim-validity.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 export const claimRevalidationsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   const router = new Hono<AppEnv>();
   router.use("*", developerAuth(deps));
+
+  /**
+   * `GET /api/claim-revalidations/summary?repo=…` — COUNTS ONLY, for the two
+   * refusals doctor owes (spec 02 §8.5, §8.9).
+   *
+   * It sits on this router rather than becoming a fourth mount because it is
+   * the same subject read the other way: what the reporting half has and has
+   * not been told. Same `developerAuth`, same repo scope — and no claim
+   * identity crosses it at all. An id, a body or a developer name here would
+   * turn a health check into a listing endpoint nobody asked for, and the
+   * question doctor asks ("how much of what this team knows can be judged at
+   * all") is answered by a number.
+   */
+  router.get("/summary", async (c) => {
+    const repo = c.req.query("repo");
+    if (repo === undefined || repo.length === 0) {
+      return fail(c, 400, "validation_failed", "repo is required");
+    }
+    return ok(c, await summariseClaimValidity(deps.db, repo));
+  });
 
   router.post("/", async (c) => {
     const parsed = ClaimRevalidationReportSchema.safeParse(await readJsonBody(c));
