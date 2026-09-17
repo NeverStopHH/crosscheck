@@ -116,6 +116,57 @@ export const MUTATIONS: readonly Mutation[] = [
       "for it — the exact install this parity work exists for",
   },
   {
+    // Found by review: `crosscheck init --global --cursor` writes
+    // ~/.cursor/hooks.json, and the section read only the repo's file.
+    label: "a user-level Cursor install reads as not installed",
+    file: `${CURSOR}/src/doctor.ts`,
+    from:
+      "  const user = await readHooks(cursorUserDir(input.env), \"user\");\n" +
+      "  return user.kind === \"installed\" || user.kind === \"unparseable\"\n" +
+      "    ? user\n" +
+      "    : project;",
+    to: "  return project;",
+    test: `${CLI}/test/cursor-doctor.test.ts`,
+    because:
+      "SILENT: a globally installed developer is told Cursor capture is not " +
+      "installed and never reads that no Cursor edit can be ordered against " +
+      "an explanation, while the same page counts those sessions' positions",
+  },
+  {
+    // The repo's file is the one a cloud agent loads, so it is the install
+    // described whenever it carries our entries.
+    label: "a user-level Cursor install is preferred over the repo's",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "  if (project.kind === \"installed\" || project.kind === \"unparseable\") {",
+    to: "  if (false) {",
+    test: `${CLI}/test/cursor-doctor.test.ts`,
+    because:
+      "MISLEADING: a repo whose committed hooks are what every cloud agent " +
+      "runs is described by one developer's personal file instead",
+  },
+  {
+    // Which file was read is part of the line.
+    label: "a user-level Cursor install is described as the repo's",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "  const where = scope === \"user\" ? `user level (${install.path}): ` : \"\";",
+    to: "  const where = \"\";",
+    test: `${CLI}/test/cursor-doctor.test.ts`,
+    because:
+      "MISLEADING: the reader cannot tell a per-user wiring, which a cloud " +
+      "agent never loads, from the committed one",
+  },
+  {
+    // ...and the mcp line reads the same install's file.
+    label: "a user-level Cursor install checks the repo's mcp file",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "    await mcpCheck(install.cursorDir, scope),",
+    to: "    await mcpCheck(join(input.repoRoot, CURSOR_DIR), scope),",
+    test: `${CLI}/test/cursor-doctor.test.ts`,
+    because:
+      "FALSE ALARM: a working global install FAILs its mcp line for a file " +
+      "it never wrote, and the remedy sends the developer to install twice",
+  },
+  {
     label: "the ACP backend line goes quiet when there is no model",
     file: `${ACP}/src/doctor.ts`,
     from: '    backend.kind === "absent" ? "WARN" : "PASS",',
@@ -5744,6 +5795,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/capture-health.test.ts 2
  * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
+ * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1

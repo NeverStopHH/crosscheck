@@ -6,7 +6,8 @@
  * (§10 risk 5 on the Cursor surface).
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFile, mkdir, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCli } from "../src/cli/index.ts";
@@ -25,17 +26,25 @@ afterEach(async () => {
   cleanups.length = 0;
 });
 
+/**
+ * HOME IS PINNED to an empty directory: the section also reads the USER-level
+ * `~/.cursor/hooks.json` that `init --global --cursor` writes, and a fixture
+ * that left HOME alone would read the developer's own.
+ */
 const fixture = async (label: string) => {
   const repo = await makeRepo(label, { remote: REMOTE });
   const home = await makeHome(label);
-  cleanups.push(repo, home);
+  const userHome = await mkdtemp(join(tmpdir(), `cx-user-${label}-`));
+  cleanups.push(repo, home, userHome);
   return {
     repo,
     home,
+    userHome,
     env: {
       CROSSCHECK_HOME: home,
       CROSSCHECK_HUB_URL: HUB_URL,
       CROSSCHECK_API_KEY: "test-key",
+      HOME: userHome,
     },
   };
 };
@@ -78,5 +87,46 @@ describe("doctor's cursor section", () => {
     const warned = await runDoctor(env, repo);
     expect(warned.stdout).toContain("WARN  cursor contract drift");
     expect(warned.stdout).toContain("afterFileEdit.file_path");
+  });
+
+  test("a user-level install gets the whole section, rungs and refusals included", async () => {
+    // Arrange: `init --global --cursor` is a supported install and writes
+    // ~/.cursor, not the repo. The section read only the repo's file, so this
+    // developer got "not installed" and none of the lines that say what their
+    // Cursor sessions can and cannot be ordered against — while the same page
+    // counted those sessions' positions under `event sequence`.
+    const { repo, userHome, env } = await fixture("doc-user-level");
+    const init = await runCli(["init", "--global", "--cursor"], env, repo);
+    expect(init.exitCode).toBe(0);
+
+    // Act
+    const result = await runDoctor(env, repo);
+
+    // Assert: installed, where, and everything an install renders.
+    expect(result.stdout).not.toContain("cursor hooks  not installed");
+    expect(result.stdout).toContain(
+      `PASS  cursor hooks  user level (${join(userHome, ".cursor", "hooks.json")}): sessionStart`,
+    );
+    expect(result.stdout).toContain("cursor hook launcher");
+    expect(result.stdout).toContain(
+      `PASS  cursor mcp tools  ${join(userHome, ".cursor", "mcp.json")}`,
+    );
+    expect(result.stdout).toContain("event_seq (cursor)");
+    expect(result.stdout).toContain("cloud and background agents (cursor)");
+  });
+
+  test("a repo install wins over a user-level one, and is the file reported", async () => {
+    // Arrange: both installs present — the repo's is the one a cloud agent
+    // loads, so it is the one this section describes.
+    const { repo, env } = await fixture("doc-both-levels");
+    expect((await runCli(["init", "--global", "--cursor"], env, repo)).exitCode).toBe(0);
+    expect((await runCli(["init", "--cursor"], env, repo)).exitCode).toBe(0);
+
+    // Act
+    const result = await runDoctor(env, repo);
+
+    // Assert
+    expect(result.stdout).toContain("PASS  cursor hooks  sessionStart");
+    expect(result.stdout).not.toContain("cursor hooks  user level");
   });
 });
