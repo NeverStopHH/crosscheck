@@ -9,10 +9,13 @@ the `event-order:` prefix and one on #52 the `coverage:` prefix, following the c
 `main@390849d` already contains #50 and #49, so a bare line number here is post-#50 main — not the pre-#50 main the rest of
 the set binds to. **Built after 06** (§9): the sweep, the attestation and three tests need 06's ledger. Nothing here is built.
 
-**Revision 3, 2026-09-17.** An adversarial review of revision 2 returned 47 findings: 8 confirmed by an independent refuter,
-34 plausible but unrefuted, 5 low. Two of them change the model. A pin retained single **rows** while the other roots retained
-**sessions**, and deleting part of a session can turn a `broken` causal order into `usable` (§3.3a). And an unresolvable *pin*
-licensed the deletion an unresolvable *row* was protected from (§3.3e). §11 maps every finding to where it is answered.
+**Revisions 3 and 4, 2026-09-17.** Two adversarial reviews, 47 findings then 36. Revision 3 moved the unit of retention from
+the row to the session, after the review showed that deleting part of a session can turn a `broken` causal order into
+`usable` — missing evidence strengthening a conclusion. Revision 4 answers the second review: the attestation's observation
+gate named a per-session coverage rung **that does not exist** (§3.5 rule 2), a pin spelled in the wrong case produced a
+valid-but-wrong identity that no KEEP covered and the sweep deleted behind it (§3.3d, §3.3e), the redaction UPDATE could not
+run on this schema and left a vector standing (§3.4), and the contract enumerated session references by COLUMN NAME (§3.3f).
+§11 maps every finding of both rounds to where it is answered.
 
 ---
 
@@ -112,7 +115,7 @@ whole pass in one `try/catch`, so a sweep that throws also skips that developer'
 | `pin_file_refs` (new, §3.3d) | none | — | **skeleton** | kept while its pin is |
 | `agent_sessions` | `branch` | never | skeleton anchor | never removed; FK target of the skeleton |
 | `claims` | `body`, and what is derived from it (`tsv`, `embedding`) | never | content, and the institutional memory | §3.4 |
-| `claim_edges` | none that is prose | never | structure | never removed in 1.0 |
+| `claim_edges` | none that is prose — it is structure, and it is NOT in §3.4's redaction list | never | structure | never removed, never redacted in 1.0 |
 | `work_contexts` | `title`, `description`, `intent`, `normalized_doc`, `tsv` | never | content | §3.4 |
 | `work_context_targets` | `value` (a path), **inside the primary key** | never | content | §3.4 rule 4: cannot expire in 1.0 |
 | `work_context_intents` (06) | `summary`, `reason`, `wire` | never | content, with skeleton columns | §3.4 |
@@ -201,11 +204,11 @@ claims. **Every relation that references a session is declared, with its semanti
 
 | relation | `retention_semantics` | lifecycle independent of the session? | liveness — **owned by the spec that owns the root** | status |
 |---|---|---|---|---|
-| `pins`, via `pin_file_refs.file_ref` → `session_events.file_ref` → session | `root` | yes: a person creates it and a person retires it | **the pins feature.** A broken pin is not a dead pin — `pins.broke_at` marks the violated invariant whose history an investigation needs first | built; §3.3d adds the edge |
+| `pins`, via `pin_file_refs.file_ref` → `session_events.file_ref` → session | `root` | yes: a person creates it, and its life is not the session's | **the pins feature.** A broken pin is not a dead pin — `pins.broke_at` marks the violated invariant whose history an investigation needs first | built; §3.3d adds the edge |
 | `claims.author_session_id` | `root` | yes: a claim is presented long after its session | **02 / 04.** The tree decides "current" in six places (00 §1.5); the registry must name which one is the retention predicate | built |
 | `claim_edges.author_session_id` | `root` | yes: an edge (supersedes, contradicts) outlives its session, and `claim.invalidated` is positioned | **02 / 04**, as for claims | built |
 | `work_context_intents.author_session_id` (06) | `root` | **06's to decide**: the ledger is append-only, but whether an amended-away version is live is exactly the open question | **`undefined_pending_spec` (06)** — §3.3c | **not built** |
-| 04's attribution record | `root` | 04 declares | 04 declares | **not built** |
+| 07's `pilot_sessions` and `pilot_attributions` | `root` | yes: a pilot measurement outlives the session it measured | **`undefined_pending_spec` (07)** — 07 declares | **not built** |
 | `work_contexts.session_id` | `non_retaining_edge` | — | — | built. **Reason:** ownership, not dependence; every registered session has one (Nick, 2026-09-17) |
 | `agent_sessions.developer_id` | `non_retaining_edge` | — | — | built. **Reason:** a person owns the session; causal order is not a property of that person |
 | `hint_deliveries.session_id` | `non_retaining_edge` | — | — | built. **Reason:** it records what was shown and reads no position |
@@ -213,6 +216,18 @@ claims. **Every relation that references a session is declared, with its semanti
 | `causal_attestations.session_id` | `non_retaining_edge` | — | — | new. **Reason:** an attestation exists so that the skeleton need not be kept — *"the old session need not be reconstructed"* (Nick, 2026-09-15). Retaining through it would make every attested session permanent |
 | `session_causal_guarantees.session_id` | `non_retaining_edge` | — | — | new. **Reason:** a declaration about a session, not a dependence on its order |
 | `session_events.session_id` | the skeleton itself | — | — | built |
+
+**Two corrections revision 3 needed here.** It listed *"04's attribution record"* as a root: **04 builds no such table** —
+its migration creates `pins.version` and `fence_waivers`, and attribution is a computed field on a verdict, never a stored
+row. That registry entry could never be satisfied and CSK-22 would have carried a permanent hole. The two real unbuilt
+session-bearing relations are **07's**, and they take its place. 04 therefore owes this registry nothing; 07 owes it a
+liveness rule.
+
+**AND WHILE ANY DECLARED ROOT IS `not_built`, THE SWEEP DOES NOT RUN.** §3.3c's *"a table that does not exist holds no
+reference"* is true of the table and false of the future: 07's rows will exist, and a session swept before they do is
+unreachable by the root that was always going to reference it. Deleting on the strength of a table somebody is committed to
+building is deleting without positive proof (principle 6). `doctor` names which root is holding the sweep, so the state is a
+decision somebody can see rather than a silence.
 
 A diagnosis has no row of its own — it is a claim tree — so it retains through `claims` and `claim_edges`. And the Work Context
 escape hatch Nick named — *"unless it is itself independently live under an explicit retention rule"* — **has no rule today**.
@@ -225,8 +240,11 @@ retention rule adds a `root` row here, and the generated predicate (§3.3f) pick
 2. **That state is a declared value, not a default.** The registry reads `liveness: undefined_pending_spec` and names the spec
    that owes the definition; `doctor` prints *"retention roots with undefined liveness: … (06)"* with the number of sessions it
    keeps; the build fails for a root with no `liveness` key at all.
-3. **A root whose table is not built contributes no clause and keeps nothing** — and that is positive knowledge, not a gap: a
-   table that does not exist holds no reference. It is not the same thing as a query that *fails* (§3.3g, CSK-17).
+3. **A root whose table is not built contributes no clause — and while one exists, the sweep does not run at all** (§3.3b).
+   "A table that does not exist holds no reference" is true of today and false of tomorrow: the rows 07 will write would have
+   retained sessions this sweep would already have deleted. That is deletion without positive proof, so the sweep waits, and
+   `doctor` names which root it is waiting for. A missing table is still not the same thing as a query that *fails*
+   (§3.3g, CSK-17): the first is knowledge, the second is ignorance, and neither may delete.
 
 The Work Context edge was *wrong* — ownership never implies dependence — so it left the graph. An intent amendment's liveness
 is *unknown*, so it gets the conservative answer with a visible price.
@@ -257,9 +275,22 @@ export const fileRef = (repoIdentity: string, canonicalPath: string): string =>
   Revision 2 cited `toRepoRelative`, which is async, connector-only and needs two machine-local absolute paths — the hub cannot
   call it, and the pin door never did: `parsePinArgs` pushes raw argv into `files`, so a pin registered as `./src/x.ts` would
   hash differently from every touch of `src/x.ts`, and the sweep would read that as "no pin references it".
-- **Filesystem questions are answered before a path leaves the machine.** Case on a case-insensitive filesystem, symlinks, and
-  which worktree a path came from are resolved connector-side by `toRepoRelative`; a tracked file is sent in the spelling
-  `git ls-files` reports. `canonicalRepoPath` then makes the string canonical. It cannot guess at a filesystem, and does not.
+- **THE DOOR RESOLVES THROUGH GIT, because canonicalisation alone produces a valid-but-wrong identity.** Revision 3 claimed
+  filesystem spelling was settled before a path leaves the machine — *"a tracked file is sent in the spelling `git ls-files`
+  reports"* — and that is **false**: `toRepoRelative` calls no git at all. Two everyday spellings then produce a `file_ref`
+  that is non-NULL and matches nothing, which §3.3e's KEEP does not cover because nothing is unresolved: a human typing
+  `--files SRC/auth.ts` on a case-insensitive filesystem for a file git tracks as `src/auth.ts`, and a human running
+  `crosscheck pin` from `packages/server` and typing a path relative to *there*. The pin then protects nothing and the sweep
+  deletes with a clean conscience — a mis-spelling turned into a deletion, which is principle 6 inverted.
+
+  So the **pin door** resolves the path against git before storing it: `git ls-files --error-unmatch --full-name <path>`,
+  the same machinery `pin-sweep.ts` already runs, from the repo root. A path git tracks is stored in git's spelling; a path
+  git does not track is **refused at the door with its reason** (the CLI says so and the pin is not created), never stored as
+  a resolved-looking identity. The connector side keeps `canonicalRepoPath` over what `toRepoRelative` resolved, and the two
+  sides therefore agree by construction rather than by hope.
+
+  **And a stored pin whose file git can no longer find is UNRESOLVED, not absent** (§3.3e): `pin_files.status <> 'present'`
+  is exactly that state, written by the sweep that already looks for these files.
 - **The HUB computes `file_ref`, for both sides**, from values it already holds: `pin_files.repo` + `pin_files.path`, and the
   session's repo + the target's `value` at projection time. One implementation on one machine, so two developers' connectors
   cannot disagree, and no new data reaches the hub.
@@ -296,9 +327,17 @@ reason             = unresolved_file_reference
 ```
 
 - **Session side.** A `file.modified` row whose `file_ref` is NULL keeps its **whole session**.
-- **Pin side** — the half revision 2 missed. A `pin_file_refs` row with a NULL `file_ref` never *matches* anything, so an
-  equality join reads it as "no pin references this", and that is a deletion. Instead: **while any pin in a repo has an
-  unresolved `file_ref`, no session of that repo carrying a `file.modified` row is swept.**
+- **Pin side** — the half revision 2 missed, in the shape revision 3 still got too narrow. A `pin_file_refs` row with a NULL
+  `file_ref` never *matches* anything, so an equality join reads it as "no pin references this", and that is a deletion. So is
+  a pin whose file git can no longer find, which carries a perfectly valid `file_ref` and matches nothing. **Both are
+  unresolved:** while any pin in a repo has a NULL `file_ref` **or** a `pin_files` row whose `status <> 'present'`, no session
+  of that repo carrying a `file.modified` row is swept.
+
+**This is a repo-wide freeze, and it is deliberate but not free.** One legacy pin nobody will ever fix keeps every
+file-bearing session of that repo forever. The escape is a person's, not a rule's: `doctor` names the pins that are
+unresolved and the number of sessions they are holding, so retiring or repairing a pin is a visible act with a visible
+effect. A future spec may add an explicit "retired" state for a pin nobody wants; 1.0 refuses to invent one, because a rule
+that silently stops honouring a human's pin is the failure this section exists to prevent.
 
 Both are counted under `unresolved_file_reference` and printed by `doctor`, so *"kept because we could not tell"* is a number a
 reader can see, never an invisible default.
@@ -313,8 +352,11 @@ relation could be declared `root` and never appear in the hand-written sweep.** 
    semantics, liveness and build status, and — for `root` and `retaining_edge` — the `NOT EXISTS` fragment that expresses it.
 2. **The sweep is generated from the registry.** No clause exists outside it, and no built `root` or `retaining_edge` is left
    out of it.
-3. **CSK-12** enumerates every `session_id` / `author_session_id` column in `db/bootstrap.sql` and fails for one without a
-   registry entry, or for a `non_retaining_edge` without a reason. **CSK-22** is table-driven over the registry: for each built
+3. **CSK-12 enumerates by FOREIGN KEY, never by column name.** Revision 3 matched the names `session_id` and
+   `author_session_id`, so a future relation referencing `agent_sessions(id)` under any other name — `opener_session_id`,
+   `owner` — would pass the contract while the sweep deleted underneath it. The check collects every column whose DDL carries
+   `REFERENCES agent_sessions(id)` and fails for one without a registry entry, or for a `non_retaining_edge` without a
+   reason. It costs nothing today (the same six columns) and catches the seventh. **CSK-22** is table-driven over the registry: for each built
    `root` it seeds an aged session reachable *only* through that root and asserts that the shipped sweep keeps it — so a
    fragment that is wrong fails, not only one that is missing.
 
@@ -338,7 +380,9 @@ WITH eligible AS (
         WHERE pe.session_id = s.id AND pe.kind = 'file.modified'
           AND (pe.file_ref IS NULL
                OR EXISTS (SELECT 1 FROM pin_file_refs pr JOIN pins p ON p.id = pr.pin_id
-                           WHERE pr.file_ref IS NULL AND p.repo = s.repo)))
+                           WHERE pr.file_ref IS NULL AND p.repo = s.repo)
+               OR EXISTS (SELECT 1 FROM pin_files pf JOIN pins p ON p.id = pf.pin_id
+                           WHERE pf.status <> 'present' AND p.repo = s.repo)))
    ORDER BY s.ended_at
    LIMIT $maxSessions                                                                 -- bounded per pass (§6)
 )
@@ -350,7 +394,7 @@ non-retaining (§3.3b).
 
 **THE CHECK AND THE DELETE SEE ONE SNAPSHOT** — Nick's D-B7. A root written after the predicate ran and before the rows went
 would turn positive deletion evidence into evidence about a state that no longer exists. The predicate is a CTE of the `DELETE`
-itself, and the statement runs inside `db.transaction` (already used at five call sites in `services/`), so a later
+itself, and the statement runs inside `db.transaction` (already used at eight call sites in `services/`), so a later
 multi-statement form cannot silently lose the property. The hub's single PGlite instance is **not** the guarantee: requests
 interleave between `await`s, so a check-then-delete written as two awaited statements would be exposed even there. CSK-18.
 
@@ -378,11 +422,23 @@ whose intent 06 would have recorded is unreachable by construction.
 This spec adds **no content expiry by default** (D-A). It adds the rule that makes a later content policy safe:
 
 1. **Content expires by redaction in place, never by row removal**, for any row a skeleton row or an attestation references:
-   `claims`, `claim_edges`, `work_context_intents`, `work_contexts`, `artifacts`, `questions`, `question_answers`,
-   `agent_sessions`. Each gets `content_expired_at timestamptz NULL`. Redaction sets it, replaces each content column with the
-   fixed marker `[expired]` — which every `NOT NULL` and length `CHECK` on those columns accepts — and **nulls what was derived
-   from the content** (`claims.tsv`, `claims.embedding`, `work_contexts.normalized_doc`, `work_contexts.tsv`), because a vector
-   or a tsvector reconstructs what the marker hid. Ids and foreign keys survive, so `ref_id` always resolves.
+   `claims`, `work_context_intents`, `work_contexts`, `artifacts`, `questions`, `question_answers`, `agent_sessions`.
+   (`claim_edges` is NOT among them: §3.1 files it as structure, and revision 3 listed it in both places.) Each gets
+   `content_expired_at timestamptz NULL`. Redaction sets it, replaces each content column with the
+   fixed marker `[expired]` — which every `NOT NULL` and length `CHECK` on those columns accepts — and **nulls every value
+   derived from that content**. Revision 3's list was both wrong and short:
+   - `claims.tsv` and `work_contexts.tsv` are `GENERATED ALWAYS AS (…) STORED`. PostgreSQL refuses to assign to a generated
+     column, so an UPDATE naming them ABORTS. They are not nulled and do not need to be: they regenerate from the marker.
+     (`to_tsvector('english', '[expired]')` is not empty, so the row stays searchable under a word no author wrote — say so
+     rather than discover it.)
+   - `work_contexts.embedding` and `work_contexts.embedding_model` were MISSING, and that vector is minted from the
+     normalised document, which is built from the title, the intent summary, the description and **every target value** —
+     i.e. from exactly the paths the redaction is hiding. Nulling `normalized_doc` and leaving the vector is redaction in
+     name only.
+   - The rule the omission exposes, stated once: **redacting a row obliges nulling every derived value minted from it, on ANY
+     table.** `services/normalized-doc.ts` names that closure for work contexts; a builder walks it rather than trusting a
+     list in a spec.
+   Ids and foreign keys survive, so `ref_id` always resolves.
 2. **No skeleton reader inner-joins a content column.** The order half of `explanationTimingFor`, `isOrderable`, the
    attestation reader and the §5 doctor lines read ids, enums and positions only. A redacted referent renders as the
    renderer-owned literal `content expired`, and is still orderable.
@@ -413,7 +469,7 @@ CREATE TABLE causal_attestations (
   object_seq             integer NOT NULL,
   object_seq_after       integer NOT NULL,   -- the bracket the comparison relied on (rule 3)
   timing_reason          text NOT NULL,      -- 06 TIMING_REASONS, the three order-derived values only
-  observation            jsonb NOT NULL,     -- viewer-INDEPENDENT coverage only (rule 5)
+  observation            text NOT NULL,      -- enum OBSERVATION_STATES: fully_sequenced (rule 2); no coverage record is stored
   guarantees_at_judgment jsonb NOT NULL,     -- the session's §3.6 declarations: enums only
   ladder_version         integer NOT NULL,   -- EXPLANATION_LADDER_VERSION at write time
   attested_at            timestamptz NOT NULL -- hub clock; display only, orders nothing
@@ -427,20 +483,43 @@ CREATE INDEX causal_attestations_object_idx  ON causal_attestations (object_ref)
 1. **Written once, when the session ends EXPLICITLY** — on `session.ended` ingest, where `reaped_at` stays null. **Never on a
    reap:** a reap is revocable (§3.3a), so an attestation frozen then could describe a session that later continued and went
    `broken`, and would still be read as settled.
-2. **Written only under complete observation.** Nick defined the record as *"we could prove this then on complete
-   observation"*. A statement is attested only when the session's `agent_event` rung (03) is `complete` at that moment;
-   otherwise nothing is attested, and the live skeleton — kept by its roots — stays the only answer. Revision 2 attested under
-   any coverage and glossed the record as *"on this much observation"*: a weaker claim, made silently.
+2. **Written only when THIS SESSION was fully observed — a per-session predicate, because the repo-wide one cannot say
+   that.** Nick defined the record as *"we could prove this then on complete observation"*, and revisions 2 and 3 both failed
+   to deliver it: revision 2 attested under any coverage, and revision 3 gated on *"the session's `agent_event` rung (03)"*,
+   **which does not exist**. `readCoverage` takes no session id, and `readAgentEventCoverage` is a `count(*)` over every
+   session of the REPO inside a rolling window — so that gate asks about other people's sessions, and an explicitly ended
+   session can never contribute a gap to it anyway. It was uncomputable in one reading and a no-op in the other.
+
+   The gate is therefore written over facts the hub holds about **the attested session itself**, all of them
+   viewer-independent and all of them already computed by 01:
+
+   ```ts
+   export const OBSERVATION_STATES = ["fully_sequenced", "partial"] as const;
+   // fully_sequenced requires ALL of:
+   //   causalOrderOf(session).state === "usable"      // one epoch, no conflict (01 §3.7)
+   //   no row of the session carries seq_reason in
+   //     { allocation_failed, ambiguous_session_assignment, foreign_session_delivery,
+   //       epoch_conflict, pre_seq_connector, reaped_end }
+   //   the session's declared guarantee (§3.6) for every kind the statement compares is not `undeclared`
+   ```
+
+   **Only a `fully_sequenced` session is attested.** Everything else keeps its live skeleton through its roots and is not
+   frozen. The render says what was checked — *"attested at <ISO>; this session was fully sequenced"* — and never the phrase
+   "complete observation", which a reader would hear as a claim about the repo that nothing here measured.
+
+   03's repo-wide coverage is **not** stored on the attestation at all (rule 5), which also settles the viewer question.
 3. **Only statements order produced.** A row is written when `explanationTimingFor` answers `declared_before`,
    `declared_after` or `declared_non_goal_edited`, and `isOrderable` held. No other reason depends on the skeleton. An
    `observed` edit, or one without a bracket, is `not_comparable` under 01 and #53, so `object_seq_after` can be `NOT NULL`.
 4. **Bounded on the hub.** One row per `(session, epoch, edited target)`, capped at `ATTESTATIONS_MAX_PER_SESSION`; the rest are
    counted, not written. `MAX_SEEN_TARGETS` is a connector-side cap the hub does not enforce, so it cannot be the bound.
-5. **The coverage it stores is viewer-independent.** On #52, `readCoverage` takes a `viewerDeveloperId`
-   (`coverage:server/src/services/coverage.ts:466`) because the git rung's census is scoped to what that viewer may be told. An
-   attestation is written on an ingest path that has no viewer, and read by everyone. So it stores only the rungs that do not
-   depend on the viewer — this session's `agent_event` record and the three refused rungs — and the `git` rung is recomputed
-   for the asking viewer at read time. CSK-24.
+5. **It stores NO coverage record.** `readCoverage` takes a `viewerDeveloperId` (`coverage:server/src/services/coverage.ts`,
+   the `readCoverage` signature — revision 3 cited line 466, which belongs to `readGitCoverage`) precisely because the git
+   rung's census is scoped to what that viewer may be told. An attestation is written on an ingest path that HAS no viewer and
+   is read by everyone, so any coverage frozen into it is one person's view replayed to another. Revision 3 tried to keep the
+   "viewer-independent half"; revision 4 keeps none of it. The row carries the per-session `observation` of rule 2 — facts
+   about this session, computed by 01, the same for every reader — and a consumer that wants coverage computes it for itself,
+   for its own viewer, at read time. CSK-24 asserts that no `git` rung state reaches a second developer through this table.
 6. **`ladder_version` makes a wrong attestation findable, and a superseded one is not used.** 06 §3.5 records that its first
    draft of step 6 answered a violated non-goal `predeclared`. A row older than the current `EXPLANATION_LADDER_VERSION` is
    `attestation_superseded`: **its statement is withheld** — the consumer gets `not_comparable` with that reason — and the old
@@ -488,6 +567,11 @@ producingModules }` — and the build checks what an import graph can prove, in 
 - every module that calls `allocateSeq`, `allocateToolSeq` (connector-core's — not the MCP helper of the same name in
   `mcp/tools/shared.ts`) or `openToolWindow` appears in the map, and every module in the map calls one of them;
 - a kind declared `guaranteed` / `bracketed_by_pre_tool` has **no** producing module outside a pre-tool-bracketed lane;
+- **and the direction revision 3 left open: a kind with NO producing module in the map must be declared `unavailable` /
+  `no_emitter` (or `not_built`).** A `guaranteed` or `partial` declaration for a kind this connector never produces fails the
+  build. Without it the runtime cap cannot help — "rows outrank declarations" needs a row, and the kinds a vendor would
+  over-declare are exactly the ones that produce none — so a connector could claim ordering for an event it never emits and
+  every surface would believe it;
 - the map's kinds agree with the hub's projection (`TARGET_EVENT_KINDS`, `seqKindFor`), so the two cannot drift.
 
 This is a **new mechanism** this spec asks for, not a check the existing registry test "gains".
@@ -531,7 +615,11 @@ interface CoverageRecord {
   readonly order: {
     readonly state: CausalGuarantee;          // "undeclared" | "unavailable" | "partial" | "guaranteed"
     readonly reason: CausalGuaranteeReason | "declaration_contradicted" | "no_session_in_scope";
-    readonly sessions: number;                // sessions in scope the state was computed over
+    // NO COUNT. Revision 3 carried `sessions: number` here; 03 bans a numeric
+    // aggregate on this record and COV-6 is the test written to fail when one
+    // appears, so a builder following revision 3 would have turned an existing
+    // 1.0 acceptance test red. The count a reader wants lives in `doctor`
+    // (§5), where per-root counts already are.
   };
 }
 ```
@@ -723,13 +811,29 @@ entry owns it. *Mutation:* remove one fragment while keeping its registry row.
 **CSK-23 — a reaped session is neither swept nor attested.** An aged session closed by the reaper keeps every row and has no
 attestation; after a revival and an explicit end, both become possible. *Mutation:* drop `reaped_at IS NULL`.
 
-**CSK-24 — an attestation carries no viewer-scoped coverage.** An attestation written for developer A renders to developer B no
-`git` rung state that B's own `readCoverage` would not produce. *Mutation:* store the full `CoverageRecord`.
+**CSK-24 — an attestation carries no coverage at all.** The table holds no `git` rung state and no `CoverageRecord`: an
+attestation written when developer A's session ended renders to developer B nothing about coverage that B's own
+`readCoverage` did not compute for B. *Mutation:* store the `CoverageRecord` on the row.
 
 **CSK-25 — the file identity's encoding is unambiguous.** Repo `github.com/acme/ap` with path `isrc/x.ts`, and repo
 `github.com/acme/api` with path `src/x.ts`, yield two values; a path containing `\n` is rejected before hashing. *Mutation:*
 join with the empty string.
 
+**CSK-26 — a declared root that nobody built stops the sweep.** With 07's relations declared `root` / `not_built`, an aged
+unreferenced session keeps every row and `doctor` names the root the sweep is waiting for. *Fails if* the sweep runs while a
+declared root has no table — deletion on the strength of rows somebody is still going to write. *Mutation:* treat
+`not_built` as "contributes no clause" and let the sweep proceed.
+
+**CSK-27 — a connector cannot declare ordering for a kind it never emits.** A manifest declaring `commit.observed:
+guaranteed` for a connector with no producing module in the `(connector, kind)` map fails the build. *Fails if* only the
+runtime cap guards it — that cap needs a row, and a kind with no emitter produces none. *Mutation:* keep only the
+`guaranteed`-has-no-unbracketed-lane direction.
+
+**CSK-28 — a mis-spelled pin is refused at the door, not resolved into a deletion.** `crosscheck pin --files SRC/auth.ts`
+for a file git tracks as `src/auth.ts`, and a path typed relative to a subdirectory, are both refused with their reason and
+no pin is stored; and a pin whose file later leaves the index (`pin_files.status <> 'present'`) freezes its repo's
+file-bearing sessions instead of letting them go. *Fails if* either produces a non-NULL `file_ref` that matches nothing.
+*Mutation:* skip the `git ls-files --error-unmatch` resolution at the door.
 ---
 
 ## 8. Refusals
@@ -773,7 +877,11 @@ waiting, because the sweep is off (D-D).
   `EXPLANATION_LADDER_VERSION`; `intent_scope.value` is refused content expiry.
 - **02 / 08** — `claims` gains `content_expired_at` in the migration family 02 and 08 already share, which makes this spec its
   third editor; 02 owes the claims liveness predicate the registry names.
-- **04** — consumes timing through 06 only; owes its attribution record's registry entry when it lands.
+- **04** — consumes timing through 06 only, and **owes this registry nothing**: it builds `pins.version` and
+  `fence_waivers`, and attribution is a computed field on a verdict rather than a stored row. Revision 3 declared an
+  attribution root that 04 was never going to create.
+- **07** — besides the counters, it owns the two unbuilt session-bearing relations this registry now names
+  (`pilot_sessions`, `pilot_attributions`) and owes their liveness rule. Until it lands, §3.3b keeps the sweep off entirely.
 - **07** — `PILOT_RETENTION_DAYS = 90` is unrelated; 07 gains the kept / swept / by-root counters.
 - **Pins (#50's feature)** — `pin_file_refs`; the pin write path and the sweep's rename (`services/pins.ts`) insert into it;
   `parsePinArgs` (CLI) and the pin route canonicalise at the door.
@@ -831,6 +939,35 @@ attribution on order — the coupling 04 refused.
 mechanism you already know deletes exactly the data later causal statements need is unnecessary risk.* The earlier thirty-day
 argument made data survival depend on a delivery date. On #53 this is a documented refusal that `doctor` prints, not a
 commented-out line. This spec turns the sweep back on with §3.3g, and CSK-14 is the test.
+
+---
+
+## 11a. What the review of revision 3 changed (revision 4)
+
+36 findings, 11 confirmed by an independent refuter, 2 refuted outright, 20 unrefuted (their refuters died on a session
+limit), 3 low. The four that changed the model:
+
+| finding | status | answered in |
+|---|---|---|
+| There is no per-session `agent_event` rung; the gate names a repo-and-window aggregate | confirmed ×3 | §3.5 rule 2 — a per-session predicate over facts 01 computes; CSK-5 |
+| A pin spelled in the wrong case, or from a subdirectory, yields a valid-but-wrong `file_ref` and the sweep deletes behind it | confirmed, CRITICAL | §3.3d (the door resolves through git), §3.3e (`status <> 'present'` is unresolved), CSK-28 |
+| The redaction UPDATE cannot run: two columns are GENERATED | confirmed | §3.4 rule 1 |
+| `work_contexts.embedding` survives redaction, and it is minted from the paths being hidden | confirmed | §3.4 rule 1, with the closure rule |
+| The claim that filesystem spelling is settled before a path leaves the machine is false | confirmed | §3.3d — the sentence is withdrawn and replaced by the git resolution |
+| "Rows outrank declarations" cannot fire where a kind produces no rows | confirmed | §3.6 build check, the added direction; CSK-27 |
+| An undeclared relation gets a name match, not the KEEP the sixth principle promises | confirmed | §3.3f — enumeration by foreign key |
+| The registry declares a root 04 never builds, while 07's two real relations are undeclared | confirmed | §3.3b — 07 replaces 04; §9 |
+| `order.sessions` is the numeric aggregate 03 bans and COV-6 fails on | confirmed | §3.7 — the count is gone, `doctor` keeps it |
+| An unbuilt root licenses the deletion its own build order guarantees will come | unrefuted; adopted | §3.3b and §3.3c — while a declared root is unbuilt the sweep does not run; CSK-26 |
+| The pin-side KEEP is permanent and repo-wide: one bad legacy path freezes a repo | unrefuted; adopted as stated cost | §3.3e — named, counted, and a person's to resolve |
+| `claim_edges` is both structure and a redaction target | low | §3.1, §3.4 rule 1 |
+| `db.transaction` has eight call sites, not five | low | §3.3g |
+| the remaining unrefuted MEDIUM findings | open | listed in the PR body, not silently closed |
+
+**What revision 4 does NOT answer, and says so rather than implying otherwise:** the twenty findings whose refuters died are
+carried into the pull request as open items with their evidence. Four of them deserve a decision rather than an edit — the
+interim mode's self-certifying lift, `guarantees_at_judgment` being written and never read, "the kinds the question needs"
+being undefined, and CSK-18 having no seam to inject at — and they are listed for Nick there.
 
 ---
 
