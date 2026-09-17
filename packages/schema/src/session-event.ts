@@ -125,3 +125,24 @@ export const SEQ_REASONS = [
 ] as const;
 
 export type SeqReason = (typeof SEQ_REASONS)[number];
+
+/**
+ * HOW A HUB RETIRES `session_events` ROWS — declared BY THE HUB, on the route
+ * `doctor` already reads for the causal order, and printed as a sentence the
+ * connector owns. The hub states it rather than a connector assuming it
+ * because one hub serves connectors of several versions: a sentence compiled
+ * into a CLI would describe whichever hub that CLI was built beside.
+ *
+ *   off — nothing is retired, and the table grows without bound ON PURPOSE.
+ *         The age-based sweep D2 shipped deletes very nearly the causal
+ *         skeleton itself (every column here is a ref or an enum), so it was
+ *         withdrawn before its first deploy — Nick's D-D, 2026-09-17 — rather
+ *         than trusting a later spec to arrive inside its thirty days.
+ *
+ * Spec 01a's referential predicate is the next value; a connector that does
+ * not know a declared mode says so rather than guessing at its meaning.
+ */
+export const SESSION_EVENT_RETENTION_MODES = ["off"] as const;
+
+export type SessionEventRetentionMode =
+  (typeof SESSION_EVENT_RETENTION_MODES)[number];

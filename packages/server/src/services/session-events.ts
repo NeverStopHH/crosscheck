@@ -224,6 +224,16 @@ export const recordSessionEvent = async (
 };
 
 /**
+ * DORMANT — NOTHING CALLS THIS. The age sweep was withdrawn before its first
+ * deploy (Nick's D-D, 2026-09-17; the refusal is written where the call was,
+ * in services/sessions.ts `reapStaleSessions`), because the rows it deletes are
+ * very nearly the causal skeleton — see the last paragraph below. Spec 01a
+ * narrows this predicate to "past the age AND referenced by nothing" and calls
+ * it again; until then the hub declares SESSION_EVENT_RETENTION `off`, and
+ * test/session-event-retention.test.ts keeps the age half tested directly.
+ *
+ * What follows is the history of the shape 01a inherits.
+ *
  * RETENTION, ON THE ONE PASS THE HUB ALREADY RUNS — and the first version of
  * this could never fire at all.
  *

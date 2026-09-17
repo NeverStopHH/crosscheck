@@ -5010,32 +5010,90 @@ export const MUTATIONS: readonly Mutation[] = [
       "a confident sentence about an ordering nobody observed",
   },
   {
-    // D2's retention was keyed on a session and ran in-band on a write for
-    // that same session — and a session is TERMINAL, so nothing ever revisits
-    // the key. It could only fire inside a session alive for over 30 days.
-    label: "a retention rule prunes only sessions that never end",
+    // CSK-14 (Nick's D-D, 2026-09-17): the age sweep D2 shipped is WITHDRAWN
+    // before its first deploy, because the rows it deletes are very nearly the
+    // causal skeleton. This puts the call back where it ran.
+    label: "the withdrawn age sweep runs again",
     file: `${SERVER}/src/services/sessions.ts`,
-    from: "  await pruneSessionEvents(deps);\n",
-    to: "",
+    from: "  // Candidates first, then one UPDATE by id",
+    to:
+      "  await (await import(\"./session-events.ts\")).pruneSessionEvents(deps);\n" +
+      "  // Candidates first, then one UPDATE by id",
     test: `${SERVER}/test/session-event-retention.test.ts`,
     because:
-      "every position of every ended session survives forever, so a fence " +
-      "verdict on year-old work still answers whether the reason predated " +
-      "the change — the exact thing D2 chose to give up — and the table " +
-      "grows on a hub whose only other retention was bounded to avoid that",
+      "DATA LOSS: every position older than thirty days is deleted on the " +
+      "next reaper pass — ids, kind, epoch and position, which later causal " +
+      "statements are ordered against — while the hub still declares its " +
+      "retention `off` and doctor prints that it keeps everything",
   },
   {
-    // The cutoff is the decision itself. Zero retires a position the moment
-    // it is written, which reads as a working sweep in every count.
+    // The cutoff is the half of the dormant sweep spec 01a keeps. Zero retires
+    // a position the moment it is written, which reads as a working sweep in
+    // every count; the retention test calls the sweep directly to hold it.
     label: "a position is retired the moment it is written",
     file: `${SERVER}/src/services/session-events.ts`,
     from: "    deps.now().getTime() - SESSION_EVENT_RETENTION_DAYS * MS_PER_DAY,",
     to: "    deps.now().getTime(),",
     test: `${SERVER}/test/session-event-retention.test.ts`,
     because:
-      "a live session's own order is swept out from under it on the next " +
-      "reaper pass, so AT-4 is unanswerable for work in progress and the " +
-      "session reports `pre_seq_connector` for events it positioned itself",
+      "DATA LOSS ONCE 01a CALLS IT: a live session's own order is swept out " +
+      "from under it on the next pass, so AT-4 is unanswerable for work in " +
+      "progress — and 01a would inherit a cutoff nobody had tested",
+  },
+  {
+    // CSK-14's other half: the refusal is only a refusal if doctor prints it.
+    label: "doctor goes quiet about the withdrawn retention",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    checkSessionEventRetention(eventRetention),\n",
+    to: "",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "SILENT: an operator discovers a table growing without bound as a " +
+      "surprise, with nothing saying it was decided or what will end it",
+  },
+  {
+    // The hub is the only one who can state its retention.
+    label: "the hub stops declaring its retention",
+    file: `${SERVER}/src/routes/sessions.ts`,
+    from: "    return ok(c, { sessions: orders, retention: SESSION_EVENT_RETENTION });",
+    to: "    return ok(c, { sessions: orders });",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "SILENT: every doctor against the one hub that did decide reads `not " +
+      "measured`, and the refusal is never read by anybody",
+  },
+  {
+    // ABSENT IS NOT OFF.
+    label: "an older hub's silence is printed as a retention",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "      value.retention === undefined\n        ? null\n",
+    to: "      value.retention === undefined\n        ? \"off\"\n",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "FALSE ASSURANCE: a hub that made no promise about its rows is " +
+      "reported as keeping every one of them",
+  },
+  {
+    // UNKNOWN IS NOT OFF either.
+    label: "an unknown retention mode is printed as a known one",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "          ? value.retention\n          : \"unknown\",",
+    to: "          ? value.retention\n          : \"off\",",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "FALSE ASSURANCE: a newer hub that may be retiring rows under a " +
+      "predicate this CLI cannot name is reported as retiring none",
+  },
+  {
+    // ...and NOT MEASURED is not a decision.
+    label: "an unmeasured retention is printed as a decision",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    mode === null\n      ? \"not measured\"\n",
+    to: "    mode === null\n      ? RETENTION_SENTENCES.off\n",
+    test: `${CLI}/test/seq-doctor.test.ts`,
+    because:
+      "FALSE ASSURANCE: a hub nobody could reach is reported as keeping " +
+      "every row it holds",
   },
   {
     // Spec 01 §3.2 row 1. `session.started` is the ONE position nothing
@@ -5696,8 +5754,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 2
- * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 2
- * PRINTS: packages/cli/test/seq-doctor.test.ts 2
+ * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 6
+ * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1

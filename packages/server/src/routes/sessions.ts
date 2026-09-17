@@ -6,6 +6,7 @@ import {
   RegisterSessionBodySchema,
   SessionStatusBodySchema,
 } from "../http/schemas.ts";
+import { SESSION_EVENT_RETENTION } from "../constants.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { readBrokenCausalOrders } from "../services/session-order.ts";
 import {
@@ -59,10 +60,15 @@ export const sessionsRoutes = (deps: AppDeps): Hono<AppEnv> => {
    * work and carries no id a reader has not already got. Read-only, human-run
    * (`crosscheck doctor`), and degrades to "not measured" on an older hub,
    * which answers 404 — the discipline `/api/hints/stats` already uses.
+   *
+   * `retention` is the other thing only the hub can say about this table: how
+   * it retires rows. Today `off`, a documented refusal (constants.ts
+   * SESSION_EVENT_RETENTION) — an enum value from our own source, never a
+   * sentence, so it opens no untrusted slot in what doctor prints.
    */
   router.get("/order", async (c) => {
     const orders = await readBrokenCausalOrders(deps.db, c.get("developer").id);
-    return ok(c, { sessions: orders });
+    return ok(c, { sessions: orders, retention: SESSION_EVENT_RETENTION });
   });
 
   router.post("/", async (c) => {

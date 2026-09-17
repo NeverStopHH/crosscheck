@@ -2,8 +2,9 @@ import { z } from "zod";
 import {
   MAX_PIN_SWEEP_UPDATES,
   PIN_PRESENCE_TERMINAL,
+  SESSION_EVENT_RETENTION_MODES,
 } from "@crosscheck/schema";
-import type { SeqField } from "@crosscheck/schema";
+import type { SeqField, SessionEventRetentionMode } from "@crosscheck/schema";
 
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
@@ -303,16 +304,54 @@ export const SessionOrderEntrySchema = z.looseObject({
 export type SessionOrderEntry = z.infer<typeof SessionOrderEntrySchema>;
 
 /**
- * An older hub has no such route and answers 404 — a plain HubResult failure,
- * which the caller reports as "not measured" rather than as "none broken".
+ * WHAT THE HUB SAYS ABOUT ITS CAUSAL-ORDER TABLE, from ONE read: the sessions
+ * it cannot order, and how it retires that table's rows (CSK-14 — the hub is
+ * the only one who can state the second, schema session-event.ts says why).
+ *
+ * `retention` is null when the hub sent none — a hub from before the field —
+ * and "unknown" when it sent a mode this connector cannot name, a newer hub.
+ * The two are different sentences and neither may be printed as the other.
+ * The mode itself is never echoed: it is an enum on the hub's side, and a
+ * value this connector does not know is a reason to say so, not text to print.
  */
-export const getBrokenSessionOrders = (
+export interface SessionOrderReport {
+  readonly broken: readonly SessionOrderEntry[];
+  readonly retention: SessionEventRetentionMode | "unknown" | null;
+}
+
+const isRetentionMode = (value: unknown): value is SessionEventRetentionMode =>
+  (SESSION_EVENT_RETENTION_MODES as readonly unknown[]).includes(value);
+
+const SessionOrderReportSchema: z.ZodType<SessionOrderReport> = z
+  .looseObject({
+    sessions: z.array(z.unknown()),
+    retention: z.unknown().optional(),
+  })
+  .transform((value) => ({
+    broken: value.sessions
+      .map((item) => SessionOrderEntrySchema.safeParse(item))
+      .filter((parsed) => parsed.success)
+      .map((parsed) => parsed.data),
+    retention:
+      value.retention === undefined
+        ? null
+        : isRetentionMode(value.retention)
+          ? value.retention
+          : "unknown",
+  }));
+
+/**
+ * An older hub has no such route and answers 404 — a plain HubResult failure,
+ * which the caller reports as "not measured" rather than as "none broken" or
+ * as any retention at all.
+ */
+export const getSessionOrderReport = (
   ctx: HubContext,
-): Promise<HubResult<readonly SessionOrderEntry[]>> =>
+): Promise<HubResult<SessionOrderReport>> =>
   hubRequest(ctx, {
     method: "GET",
     path: "/api/sessions/order",
-    schema: tolerantList("sessions", SessionOrderEntrySchema),
+    schema: SessionOrderReportSchema,
   });
 
 export const getPresence = (

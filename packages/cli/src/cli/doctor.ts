@@ -2,6 +2,7 @@ import { readdir, readlink, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { z } from "zod";
+import type { SessionEventRetentionMode } from "@crosscheck/schema";
 
 import {
   CLAUDE_SETTINGS_DIR,
@@ -97,8 +98,8 @@ import {
 import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
 import {
   getAbsences,
-  getBrokenSessionOrders,
   getGhostChecks,
+  getSessionOrderReport,
   getHintStats,
   getOpenSessions,
   getPins,
@@ -1710,6 +1711,37 @@ const checkEventSeq = (
 };
 
 /**
+ * THE HUB'S RETENTION FOR ITS CAUSAL-ORDER TABLE, as the hub declares it
+ * (CSK-14). `off` is a DOCUMENTED REFUSAL rather than a defect: the age-based
+ * sweep was withdrawn before its first deploy (Nick's D-D, 2026-09-17) and the
+ * table grows without bound on purpose, so this is a PASS that says so — the
+ * same rule as every other deliberate choice in this report. An operator who
+ * never reads it discovers the growth as a surprise; one who does knows it
+ * was decided, and what will end it.
+ *
+ * THE SENTENCE IS THIS CONNECTOR'S; the hub sends only the mode. A hub that
+ * sent none is "not measured", exactly as for the order failures beside it,
+ * and one that sent a mode this connector cannot name says so rather than
+ * guessing what that mode keeps.
+ */
+const RETENTION_SENTENCES: Readonly<Record<SessionEventRetentionMode, string>> = {
+  off: "off — the age-based sweep is withdrawn; spec 01a's referential predicate replaces it",
+};
+
+const checkSessionEventRetention = (
+  mode: SessionEventRetentionMode | "unknown" | null,
+): Check =>
+  check(
+    "PASS",
+    "session-event retention",
+    mode === null
+      ? "not measured"
+      : mode === "unknown"
+        ? "the hub declares a retention mode this crosscheck cannot name — upgrade the CLI to read what it keeps"
+        : RETENTION_SENTENCES[mode],
+  );
+
+/**
  * The regression guard's two checks (Stage 1, part C). Both exist because
  * their failure mode is SILENCE, which is the only failure a post-hoc guard
  * can have: nothing crashes, nothing is slow, and the answer is simply wrong
@@ -2781,17 +2813,18 @@ export const runDoctor = async (
   // it: an older hub 404s and the count degrades to null (§R6).
   const openSessions = await getOpenSessions(hubCtx);
   const openOnHub = openSessions.ok ? openSessions.data.length : null;
-  // The two order failures only the hub can see. NULL when it could not be
-  // asked — an older hub 404s the route — because "not measured" and "none
-  // broken" are different answers and the line must not print the second when
-  // it got the first.
-  const brokenSessionOrders = await getBrokenSessionOrders(hubCtx);
-  const brokenOrders = brokenSessionOrders.ok
-    ? brokenSessionOrders.data.map((order) => ({
+  // The two order failures only the hub can see, and the hub's retention for
+  // that table — ONE read. NULL when it could not be asked — an older hub 404s
+  // the route — because "not measured" and "none broken" are different
+  // answers and the line must not print the second when it got the first.
+  const orderReport = await getSessionOrderReport(hubCtx);
+  const brokenOrders = orderReport.ok
+    ? orderReport.data.broken.map((order) => ({
         sessionId: order.sessionId,
         reason: order.reason,
       }))
     : null;
+  const eventRetention = orderReport.ok ? orderReport.data.retention : null;
   // Whether the two PROJECT files this repo's advice keeps recommending can
   // actually reach a teammate (trial finding M11). Resolved once, passed as
   // data, so `globalInstallChecks` stays pure and testable.
@@ -2887,6 +2920,7 @@ export const runDoctor = async (
     checkGhostCost(liveStates.states),
     checkGitLane(liveStates.states),
     checkEventSeq(liveStates.states, brokenOrders),
+    checkSessionEventRetention(eventRetention),
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),

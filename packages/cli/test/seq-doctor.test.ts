@@ -84,6 +84,10 @@ describe("doctor prints the event sequence", () => {
     // only the hub can see were never measured — and a line that reported
     // "none broken" here would be an assertion nobody made.
     expect(output).not.toContain("on the hub cannot be ordered");
+    // The same for the hub's retention: nobody declared one, so nothing may
+    // be printed as though a hub had.
+    expect(output).toContain("PASS  session-event retention  not measured");
+    expect(output).not.toContain("the age-based sweep is withdrawn");
   });
 
   test("two sessions in one worktree WARN, and the line names the remedy", async () => {

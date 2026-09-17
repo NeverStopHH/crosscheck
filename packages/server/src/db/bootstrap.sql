@@ -543,7 +543,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS session_events_position_idx
 CREATE INDEX IF NOT EXISTS session_events_session_kind_idx
   ON session_events (session_id, kind);
 -- Retention sweeps by AGE, because a session is terminal and nothing ever
--- revisits its key. Without this the sweep scans every event on the hub.
+-- revisits its key. Without this the sweep scans every event on the hub. The
+-- age sweep is WITHDRAWN until spec 01a's referential predicate lands
+-- (services/sessions.ts says why); the index is kept for that sweep.
 CREATE INDEX IF NOT EXISTS session_events_observed_at_idx
   ON session_events (observed_at);
 

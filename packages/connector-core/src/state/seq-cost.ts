@@ -108,8 +108,8 @@ export const summarizeSeqCost = (states: readonly SessionState[]): SeqCost => ({
 });
 
 /**
- * ONE SESSION THE HUB CANNOT ORDER — the shape `getBrokenSessionOrders`
- * returns, narrowed to what a line prints. `null` means the hub was not asked
+ * ONE SESSION THE HUB CANNOT ORDER — one entry of `getSessionOrderReport`'s
+ * `broken` list, narrowed to what a line prints. `null` means the hub was not asked
  * or did not answer, which is NOT the same as "none broken" and must not be
  * printed as though it were.
  */

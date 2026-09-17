@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 378
+    # PRINTS: 383
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -126,7 +126,7 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
-    # PRINTS: packages/cli/src/cli/doctor.ts 17
+    # PRINTS: packages/cli/src/cli/doctor.ts 19
     # PRINTS: packages/cli/src/cli/pin-render.ts 1
     # PRINTS: packages/connector-acp/src/capabilities.ts 1
     # PRINTS: packages/connector-acp/src/capture/engine.ts 11
@@ -186,7 +186,7 @@ jobs:
     # PRINTS: hints/render.ts 3
     # PRINTS: hints/select.ts 9
     # PRINTS: http/client.ts 1
-    # PRINTS: http/hub.ts 3
+    # PRINTS: http/hub.ts 5
     # PRINTS: http/latency.ts 1
     # PRINTS: kit.ts 1
     # PRINTS: mcp/render-referee.ts 3
@@ -231,6 +231,7 @@ jobs:
     # PRINTS: packages/server/src/db/bootstrap.sql 1
     # PRINTS: packages/server/src/routes/pins.ts 1
     # PRINTS: packages/server/src/routes/search.ts 1
+    # PRINTS: packages/server/src/routes/sessions.ts 1
     # PRINTS: packages/server/src/services/conference.ts 2
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
@@ -281,7 +282,7 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 7
     # PRINTS: diagnosis.ts 3
-    # PRINTS: doctor.ts 21
+    # PRINTS: doctor.ts 23
     # PRINTS: end-session.ts 2
     # PRINTS: engine.ts 11
     # PRINTS: envelope.ts 1
@@ -295,7 +296,7 @@ jobs:
     # PRINTS: hint.ts 2
     # PRINTS: hints.ts 2
     # PRINTS: hook-budget.ts 1
-    # PRINTS: hub.ts 3
+    # PRINTS: hub.ts 5
     # PRINTS: injector.ts 3
     # PRINTS: intent.ts 1
     # PRINTS: kit.ts 1
@@ -343,7 +344,7 @@ jobs:
     # PRINTS: session-start.ts 3
     # PRINTS: session-state.ts 18
     # PRINTS: session.ts 2
-    # PRINTS: sessions.ts 4
+    # PRINTS: sessions.ts 5
     # PRINTS: set-intent.ts 2
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2

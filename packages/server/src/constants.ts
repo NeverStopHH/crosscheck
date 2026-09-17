@@ -1,3 +1,5 @@
+import type { SessionEventRetentionMode } from "@crosscheck/schema";
+
 /** Sessions with a heartbeat older than this are no longer present (DESIGN.md §5). */
 export const PRESENCE_TTL_SECONDS = 90;
 
@@ -106,15 +108,29 @@ export const DEFAULT_PORT = 7100;
  */
 export const COMMIT_EVIDENCE_RETENTION_DAYS = 30;
 /**
- * How long a canonical event keeps its POSITION (spec 01 §10 D2). Matched to
- * COMMIT_EVIDENCE_RETENTION_DAYS above rather than to the life of the row it
- * orders, which would be unbounded in exactly the way commit evidence was
- * designed to avoid. The consequence is chosen rather than discovered: a claim
- * older than this keeps its body and loses its position, so a verdict on old
- * work can still say WHAT was claimed and no longer WHETHER the reason
- * predated the change.
+ * DORMANT: how old a canonical event must be before a sweep may even consider
+ * retiring it (spec 01 §10 D2). NOTHING READS THIS ON A RUNNING HUB. D2's
+ * sweep retired every row past this age, and a row in `session_events` is very
+ * nearly the causal skeleton itself — ids, kind, epoch, position — so the call
+ * was withdrawn before its first deploy (Nick's D-D, 2026-09-17; the refusal
+ * sits where the call was, in services/sessions.ts `reapStaleSessions`).
+ *
+ * WHAT WILL USE IT: spec 01a's referential predicate, which keeps this value
+ * and narrows the sweep to rows past this age that nothing references any
+ * more. Until that lands `SESSION_EVENT_RETENTION` below says `off`, and
+ * `pruneSessionEvents` — which still applies this cutoff when called
+ * directly, and is tested that way — is called by nobody.
  */
 export const SESSION_EVENT_RETENTION_DAYS = 30;
+
+/**
+ * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
+ * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
+ * rather than a connector's assumption about it (schema session-event.ts says
+ * why the hub is the one that must say it). `off`: no row is ever retired, and
+ * the table grows without bound by decision rather than by oversight.
+ */
+export const SESSION_EVENT_RETENTION: SessionEventRetentionMode = "off";
 /**
  * Evidence older than this never fires a finding. Every SessionStart of every
  * connected teammate refreshes collection, so evidence this stale means nobody

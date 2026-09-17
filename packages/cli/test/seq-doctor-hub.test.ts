@@ -230,6 +230,88 @@ describe("doctor prints the order failures only the hub can see", () => {
     expect(output).toContain("cannot be ordered");
   });
 
+  test("a hub that retires no position says so, and doctor prints the refusal", async () => {
+    // Arrange: CSK-14's other half. The age sweep is withdrawn, so this hub's
+    // session_events grow without bound — ON PURPOSE, until 01a's referential
+    // predicate switches retention back on. An operator has to be able to read
+    // that decision, and the only one who can state it is the hub itself: one
+    // hub serves connectors of several versions, so a sentence compiled into
+    // this CLI would describe whatever hub the CLI was built beside.
+    const home = await makeHome("seq-doctor-hub-retention");
+    const repo = await makeRepo("seq-doctor-hub-retention", {
+      remote: "git@github.com:acme/api.git",
+    });
+    paths.push(home, repo);
+    const account = await newAccount("retentionowner");
+    await seedLocal(account, home, repo);
+
+    // Act
+    const output = await doctorOutput(account, home, repo);
+
+    // Assert: PASS — a decision, not a defect — and the whole sentence.
+    expect(output).toContain(
+      "PASS  session-event retention  off — the age-based sweep is withdrawn; spec 01a's referential predicate replaces it",
+    );
+  });
+
+  test.each([
+    [
+      "a hub from before the field",
+      { sessions: [] },
+      "PASS  session-event retention  not measured",
+    ],
+    [
+      "a hub with a mode this CLI cannot name",
+      { sessions: [], retention: "referential-2099" },
+      "PASS  session-event retention  the hub declares a retention mode this crosscheck cannot name — upgrade the CLI to read what it keeps",
+    ],
+  ] as const)(
+    "%s is never printed as a retention it did not declare",
+    async (_label, body, expected) => {
+      // Arrange: ABSENT IS NOT OFF, and UNKNOWN IS NOT OFF either. A hub that
+      // says nothing has made no promise about its rows, and one that names a
+      // mode this connector cannot read may be deleting them — printing the
+      // withdrawal sentence for either would be a statement nobody made. The
+      // unknown mode is not echoed: it is not ours to render.
+      const fake = Bun.serve({
+        port: 0,
+        fetch: (request) =>
+          new URL(request.url).pathname === "/api/sessions/order"
+            ? Response.json({ ok: true, data: body })
+            : Response.json(
+                { ok: false, error: { code: "not_found", message: "not here" } },
+                { status: 404 },
+              ),
+      });
+      const home = await makeHome("seq-doctor-hub-retention-fake");
+      const repo = await makeRepo("seq-doctor-hub-retention-fake", {
+        remote: "git@github.com:acme/api.git",
+      });
+      paths.push(home, repo);
+
+      try {
+        // Act
+        const result = await runCli(
+          ["doctor"],
+          {
+            CROSSCHECK_HOME: home,
+            CROSSCHECK_HUB_URL: `http://127.0.0.1:${String(fake.port)}`,
+            CROSSCHECK_API_KEY: "k",
+            CROSSCHECK_SSH_CANONICALIZE: "off",
+          },
+          repo,
+        );
+
+        // Assert
+        expect(result.stdout).toContain(expected);
+        expect(result.stdout).not.toContain("the age-based sweep is withdrawn");
+        expect(result.stdout).not.toContain("referential-2099");
+      } finally {
+        fake.stop(true);
+      }
+    },
+  );
+
   test("a healthy hub session adds no warning of its own", async () => {
     // Arrange: the same shape with ONE epoch, so the assertion above is about
     // the split and not about any session existing on the hub at all.

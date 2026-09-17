@@ -1,29 +1,40 @@
 /**
- * D2 — "A CLAIM OLDER THAN THIRTY DAYS KEEPS ITS BODY AND LOSES ITS POSITION."
+ * CSK-14 — THE AGE-BASED SWEEP IS WITHDRAWN, AND THE TABLE IS UNBOUNDED ON
+ * PURPOSE.
  *
- * The decision was taken, the constant was written, and nothing could ever
- * reach it. The prune was keyed on ONE session and ran in-band on a write for
- * that same session — but a session is TERMINAL: after `session.ended` no
- * record is ever ingested for it again, so the prune's key was never revisited
- * and its rows could only be retired while the session was still alive, when
- * every row is younger than the session itself. The prune could therefore only
- * ever fire inside a session that had been alive for more than thirty days.
+ * D2 said "a claim older than thirty days keeps its body and loses its
+ * position", and the sweep that delivered it ran from `reapStaleSessions`.
+ * What it deleted was very nearly the CAUSAL SKELETON itself: every column in
+ * `session_events` is already a ref or an enum — no body, no prose, no path —
+ * so the row it removed WAS the ids, the kind, the epoch and the position.
+ * There is no setting on an age sweep that keeps `A happens-before B` while
+ * letting the surrounding detail go, because the surrounding detail was never
+ * in this table.
  *
- * THE HOUSE PATTERN IT CITED DOES NOT HAVE THIS SHAPE. `ingestCommitEvidence`
- * prunes keyed by REPO, which every later session of every teammate revisits —
- * "the next ingest for their repo" is named in that constant's own comment as
- * the bound on the table's growth. Nothing revisits an ended session.
+ * SO THE CALL IS GONE, and this file is what says so. Deploying a retention
+ * mechanism already known to delete exactly the rows later causal statements
+ * need is the risk; "01a ships within thirty days" is not an answer, because
+ * it makes data survival depend on a delivery date. `SESSION_EVENT_RETENTION_DAYS`
+ * and `pruneSessionEvents` stay DORMANT — 01a's referential predicate is what
+ * will retire a row, by whether anything still points at it, not by its age.
  *
- * SO THE SWEEP RUNS WHERE THE HUB ALREADY SWEEPS: inside `reapStaleSessions`,
- * the one standalone pass the hub starts on a timer. It is not a second job to
- * forget to start, it is not keyed on anything a terminal row cannot revisit,
- * and it runs whether or not that pass finds a session to close.
+ * A REFUSAL IS ONLY A REFUSAL IF SOMEBODY IS TOLD. The other half of this
+ * ticket is the `doctor` line, in cli/test/seq-doctor-hub.test.ts: the hub
+ * declares the mode on the route doctor already reads, and an operator has to
+ * be able to see that the table grows without bound BY DECISION rather than
+ * discovering it as a surprise.
+ *
+ * AND THE DORMANT SWEEP STAYS TESTED. 01a switches retention back on by
+ * narrowing this same function's predicate — age first, then "nothing points
+ * at it" — so its age cutoff is still the half 01a builds on, and the last
+ * test below keeps that half honest while nothing calls it.
  */
 import { describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 
 import { SESSION_EVENT_RETENTION_DAYS } from "../src/constants.ts";
 import { sessionEvents } from "../src/db/schema.ts";
+import { pruneSessionEvents } from "../src/services/session-events.ts";
 import { endSession, reapStaleSessions } from "../src/services/sessions.ts";
 import {
   WORK_CONTEXT_ID,
@@ -52,10 +63,12 @@ const rowsFor = async (
   return rows[0]?.total ?? 0;
 };
 
-describe("session_events retention is reachable", () => {
-  test("an ended session's positions are retired after the window", async () => {
-    // Arrange: one session that works and ends. Its rows are the ones D2
-    // promised to retire, and nothing will ever write for this session again.
+describe("session_events retention is withdrawn", () => {
+  test("a session past the window keeps every row, reaper pass included", async () => {
+    // Arrange: exactly the session the sweep was written for — ended, older
+    // than the retention window, and referenced by nothing. Under the sweep
+    // its rows were deleted; under the refusal they are the causal skeleton of
+    // work a later statement may still have to be ordered against.
     const harness = await createTestHarness();
     const dev = await createTestDeveloper(harness, "Nick", "d2@example.com");
     await registerTestSession(harness, dev.apiKey, { id: SESSION });
@@ -86,34 +99,57 @@ describe("session_events retention is reachable", () => {
       dev.developerId,
       SESSION,
     );
-    expect(await rowsFor(harness, SESSION)).toBeGreaterThan(0);
+    const before = await rowsFor(harness, SESSION);
+    expect(before).toBeGreaterThan(0);
 
-    // Act: the hub's own clock moves past the window, and the hub does
-    // everything it does afterwards — a later session registers and works,
-    // and the reaper pass runs.
+    // Act: past the window by a day, and then the hub's ONE standalone pass —
+    // the place the sweep used to run from, so a call left behind anywhere on
+    // this path still shows up here.
     harness.clock.advanceSeconds((SESSION_EVENT_RETENTION_DAYS + 1) * DAY_SECONDS);
-    await registerTestSession(harness, dev.apiKey, { id: LATER_SESSION });
-    // A second of hub time between the new session's rows and the sweep, so
-    // "survives" means survives a sweep that ran AFTER them rather than at the
-    // same instant. Without that second a cutoff of zero looks identical to a
-    // cutoff of thirty days, and the constant this rule is made of would be
-    // unfalsifiable.
-    harness.clock.advanceSeconds(1);
     await reapStaleSessions({ db: harness.db, now: harness.clock.now });
 
-    // Assert: the old session's positions are gone and the new session's are
-    // untouched — the sweep is bounded by age, not by session.
-    expect(await rowsFor(harness, SESSION)).toBe(0);
-    expect(await rowsFor(harness, LATER_SESSION)).toBeGreaterThan(0);
+    // Assert: EVERY row, not merely some. A partial sweep is the same defect.
+    expect(await rowsFor(harness, SESSION)).toBe(before);
   });
 
-  test("the sweep runs even when the pass finds no session to close", async () => {
-    // Arrange: `reapStaleSessions` returns early when there is no candidate,
-    // and the whole defect this file exists for is a retirement that only
-    // happens on a path nothing takes. A sweep behind that early return would
-    // be the same bug with a different key.
+  test("a pass that does close a session still keeps the old rows", async () => {
+    // Arrange: the sweep used to run BEFORE the pass's early return, so it
+    // fired on both paths. This is the other one — a pass with a real
+    // candidate to close — because a call restored further down
+    // `reapStaleSessions` would be invisible to the test above.
     const harness = await createTestHarness();
-    const dev = await createTestDeveloper(harness, "Nick", "quiet@example.com");
+    const dev = await createTestDeveloper(harness, "Nick", "busy@example.com");
+    await registerTestSession(harness, dev.apiKey, { id: SESSION });
+    await endSession(
+      { db: harness.db, now: harness.clock.now },
+      dev.developerId,
+      SESSION,
+    );
+    const before = await rowsFor(harness, SESSION);
+    harness.clock.advanceSeconds((SESSION_EVENT_RETENTION_DAYS + 1) * DAY_SECONDS);
+    // A live session that has been silent long enough to be reaped, so the
+    // pass takes its writing path rather than the early return.
+    await registerTestSession(harness, dev.apiKey, { id: "cc_stale" });
+    harness.clock.advanceSeconds(DAY_SECONDS);
+
+    // Act
+    const pass = await reapStaleSessions({ db: harness.db, now: harness.clock.now });
+
+    // Assert
+    expect(pass.ended.length).toBeGreaterThan(0);
+    expect(await rowsFor(harness, SESSION)).toBe(before);
+  });
+});
+
+describe("the dormant sweep, called directly", () => {
+  test("still retires only what is past the window", async () => {
+    // Arrange: one ended session, the clock past the window, then a second
+    // session that works — and a second of hub time before the sweep, so
+    // "survives" means survives a sweep that ran AFTER its rows. Without that
+    // second a cutoff of zero looks identical to a cutoff of thirty days, and
+    // the constant 01a keeps would be unfalsifiable.
+    const harness = await createTestHarness();
+    const dev = await createTestDeveloper(harness, "Nick", "dormant@example.com");
     await registerTestSession(harness, dev.apiKey, { id: SESSION });
     await endSession(
       { db: harness.db, now: harness.clock.now },
@@ -121,16 +157,14 @@ describe("session_events retention is reachable", () => {
       SESSION,
     );
     harness.clock.advanceSeconds((SESSION_EVENT_RETENTION_DAYS + 1) * DAY_SECONDS);
+    await registerTestSession(harness, dev.apiKey, { id: LATER_SESSION });
+    harness.clock.advanceSeconds(1);
 
-    // Act: a staleness threshold nothing can reach, so the pass finds no
-    // candidate and takes its early return.
-    const pass = await reapStaleSessions(
-      { db: harness.db, now: harness.clock.now },
-      { staleHours: 24 * 365 * 100 },
-    );
+    // Act: nothing in the hub calls this any more; only 01a will.
+    await pruneSessionEvents({ db: harness.db, now: harness.clock.now });
 
     // Assert
-    expect(pass.ended).toHaveLength(0);
     expect(await rowsFor(harness, SESSION)).toBe(0);
+    expect(await rowsFor(harness, LATER_SESSION)).toBeGreaterThan(0);
   });
 });

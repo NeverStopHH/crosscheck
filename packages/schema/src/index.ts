@@ -138,12 +138,14 @@ export {
   SEQ_KINDS,
   SEQ_REASONS,
   SESSION_EVENT_KINDS,
+  SESSION_EVENT_RETENTION_MODES,
 } from "./session-event.ts";
 export type {
   EventRefKind,
   SeqKind,
   SeqReason,
   SessionEventKind,
+  SessionEventRetentionMode,
 } from "./session-event.ts";
 
 export {

@@ -9,7 +9,7 @@ import {
 } from "../constants.ts";
 import { agentSessions } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
-import { pruneSessionEvents, recordSessionEvent } from "./session-events.ts";
+import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { RegisterSessionBody } from "../http/schemas.ts";
@@ -309,12 +309,17 @@ export const reapStaleSessions = async (
     options.limit ?? SESSION_REAP_MAX_PER_PASS,
     SESSION_REAP_MAX_PER_PASS,
   );
-  // D2's retention, on the one standalone pass this hub runs. BEFORE the early
-  // return below, not after: a session's events can only be retired by age,
-  // because a session is terminal and nothing writes for it again — so a sweep
-  // that ran only when the pass also found a session to close would be the
-  // same unreachable rule with a different key.
-  await pruneSessionEvents(deps);
+  // NO RETENTION SWEEP RUNS HERE, and that is a documented refusal rather
+  // than a gap. D2's age sweep ran from this spot, on the one standalone pass
+  // this hub starts, and it retired every `session_events` row older than
+  // SESSION_EVENT_RETENTION_DAYS — which is very nearly the causal skeleton
+  // itself, since every column of that table is a ref or an enum. Nick's D-D
+  // (2026-09-17) withdrew it before its first deploy: shipping a mechanism
+  // already known to delete what later causal statements need, and trusting
+  // spec 01a to arrive within thirty days, would make data survival depend on
+  // a delivery date. The hub SAYS so — SESSION_EVENT_RETENTION is `off` and
+  // `doctor` prints it — and `pruneSessionEvents` stays, uncalled, until 01a's
+  // referential predicate switches retention back on from here.
   // Candidates first, then one UPDATE by id: a bare `UPDATE … LIMIT` is not
   // portable, and the two-step keeps the write bounded by construction.
   const candidates = await deps.db
