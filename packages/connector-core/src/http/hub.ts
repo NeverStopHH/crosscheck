@@ -2,7 +2,9 @@ import { z } from "zod";
 import {
   MAX_PIN_SWEEP_UPDATES,
   PIN_PRESENCE_TERMINAL,
+  SESSION_EVENT_RETENTION_MODES,
 } from "@crosscheck/schema";
+import type { SeqField, SessionEventRetentionMode } from "@crosscheck/schema";
 
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
@@ -176,6 +178,15 @@ export interface RegisterSessionInput {
   readonly branch: string;
   readonly baseCommit: string;
   readonly status: string;
+  /**
+   * `session.started`'s own position — `n = 0`, minted with the epoch rather
+   * than allocated, because the allocator hands out from 1. Optional on the
+   * type only so a caller with no session state (`crosscheck conference`) can
+   * send the refusal instead; a caller that sends NOTHING is read by the hub
+   * as a connector from before this field, which is a different fact about a
+   * different machine.
+   */
+  readonly seq?: SeqField;
 }
 
 const encodeRepo = (repo: string): string =>
@@ -206,15 +217,22 @@ export const heartbeatSession = (
     capture: true,
   });
 
+/**
+ * `session.ended` does not travel an envelope, so its POSITION rides this body.
+ * The hub's SessionStatusBodySchema is a STRICT object and declares the field
+ * for exactly that reason. Omitted, the end is stored unsequenced with its
+ * reason — which is what a reap-closed end and a pre-seq connector both are.
+ */
 export const endSession = (
   ctx: HubContext,
   sessionId: string,
+  seq?: SeqField,
 ): Promise<HubResult<unknown>> =>
   hubRequest(ctx, {
     method: "POST",
     path: `/api/sessions/${encodeURIComponent(sessionId)}/end`,
     schema: z.unknown(),
-    body: { status: "done" },
+    body: seq === undefined ? { status: "done" } : { status: "done", seq },
     capture: true,
   });
 
@@ -262,6 +280,78 @@ export const getOpenSessions = (
     method: "GET",
     path: "/api/sessions?open=1&mine=1",
     schema: tolerantList("sessions", OpenSessionEntrySchema),
+  });
+
+/**
+ * THE TWO ORDER FAILURES ONLY THE HUB CAN SEE (spec 01 §3.7).
+ *
+ * `epoch_conflict` — two events claimed one position — and `epoch_split` — one
+ * session holding two counters — are computed from rows the hub holds, and no
+ * local state file knows about either. A session in either state looks healthy
+ * from here, and every happens-before question about it is refused.
+ *
+ * `reason` is REQUIRED and never defaulted: a state with no reason beside it is
+ * the bare word every surface in this product forbids, and there is nothing
+ * sensible to invent when a hub does not say.
+ */
+export const SessionOrderEntrySchema = z.looseObject({
+  sessionId: z.string().min(1),
+  state: z.string().min(1),
+  reason: z.string().min(1),
+  epochs: z.number().int().min(0),
+});
+
+export type SessionOrderEntry = z.infer<typeof SessionOrderEntrySchema>;
+
+/**
+ * WHAT THE HUB SAYS ABOUT ITS CAUSAL-ORDER TABLE, from ONE read: the sessions
+ * it cannot order, and how it retires that table's rows (CSK-14 — the hub is
+ * the only one who can state the second, schema session-event.ts says why).
+ *
+ * `retention` is null when the hub sent none — a hub from before the field —
+ * and "unknown" when it sent a mode this connector cannot name, a newer hub.
+ * The two are different sentences and neither may be printed as the other.
+ * The mode itself is never echoed: it is an enum on the hub's side, and a
+ * value this connector does not know is a reason to say so, not text to print.
+ */
+export interface SessionOrderReport {
+  readonly broken: readonly SessionOrderEntry[];
+  readonly retention: SessionEventRetentionMode | "unknown" | null;
+}
+
+const isRetentionMode = (value: unknown): value is SessionEventRetentionMode =>
+  (SESSION_EVENT_RETENTION_MODES as readonly unknown[]).includes(value);
+
+const SessionOrderReportSchema: z.ZodType<SessionOrderReport> = z
+  .looseObject({
+    sessions: z.array(z.unknown()),
+    retention: z.unknown().optional(),
+  })
+  .transform((value) => ({
+    broken: value.sessions
+      .map((item) => SessionOrderEntrySchema.safeParse(item))
+      .filter((parsed) => parsed.success)
+      .map((parsed) => parsed.data),
+    retention:
+      value.retention === undefined
+        ? null
+        : isRetentionMode(value.retention)
+          ? value.retention
+          : "unknown",
+  }));
+
+/**
+ * An older hub has no such route and answers 404 — a plain HubResult failure,
+ * which the caller reports as "not measured" rather than as "none broken" or
+ * as any retention at all.
+ */
+export const getSessionOrderReport = (
+  ctx: HubContext,
+): Promise<HubResult<SessionOrderReport>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/sessions/order",
+    schema: SessionOrderReportSchema,
   });
 
 export const getPresence = (

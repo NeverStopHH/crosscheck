@@ -82,7 +82,8 @@ Runs after Claude creates tool parameters and before processing the tool call.
   "tool_name": "Edit",
   "tool_input": {
     "file_path": "/home/dev/acme/api/src/rate-limit.ts"
-  }
+  },
+  "tool_use_id": "toolu_01ABC123"
 }
 ```
 
@@ -124,7 +125,8 @@ Runs immediately after a tool completes successfully.
   "tool_response": {
     "filePath": "/home/dev/acme/api/src/rate-limit.ts",
     "success": true
-  }
+  },
+  "tool_use_id": "toolu_01ABC123"
 }
 ```
 

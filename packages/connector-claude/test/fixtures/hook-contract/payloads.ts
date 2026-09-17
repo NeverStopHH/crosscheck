@@ -26,10 +26,12 @@
  * the contract is a different question, watched weekly by
  * scripts/hook-contract-watch.ts.
  *
- * Deliberately kept as recorded, including fields we ignore (`transcript_path`,
- * `permission_mode`, `tool_use_id`, `duration_ms`, `model`): tolerating unknown
- * fields is itself part of the contract we rely on (HookPayloadSchema is a
- * `z.looseObject`), and a fixture trimmed to what we read could not prove it.
+ * Deliberately kept as recorded, including fields we ignore (`prompt_id`,
+ * `scratchpad_dir`, `permission_mode`, `duration_ms`, `model`): tolerating
+ * unknown fields is itself part of the contract we rely on (HookPayloadSchema
+ * is a `z.looseObject`), and a fixture trimmed to what we read could not prove
+ * it. `tool_use_id` is no longer on that list: the tool-window bracket pairs a
+ * PreToolUse with its own PostToolUse by it (core state/tool-window-key.ts).
  */
 
 /**
@@ -55,6 +57,31 @@ export const SESSION_START_INPUT_WITH_TITLE = {
   ...SESSION_START_INPUT,
   source: "resume",
   session_title: "Rate limiter drops burst traffic",
+} as const;
+
+/**
+ * Source: https://code.claude.com/docs/en/hooks.md — the common-input example,
+ * which is a PreToolUse call ("a `PreToolUse` hook for a Bash command receives
+ * this on stdin"). The reference's own id ends in an ellipsis; the recorded
+ * one here does not, so the two hooks of one call can share it verbatim.
+ * Recorded 2026-09-17.
+ */
+export const PRE_TOOL_USE_INPUT = {
+  session_id: "abc123",
+  prompt_id: "550e8400-e29b-41d4-a716-446655440000",
+  transcript_path: "/home/dev/.claude/projects/acme-api/transcript.jsonl",
+  cwd: "/home/dev/acme/api",
+  scratchpad_dir: "/tmp/claude-1000/-home-dev-acme-api/abc123/scratchpad",
+  permission_mode: "default",
+  hook_event_name: "PreToolUse",
+  tool_name: "Bash",
+  tool_input: {
+    command: "npm test",
+    description: "Run test suite",
+    timeout: 120000,
+    run_in_background: false,
+  },
+  tool_use_id: "toolu_01ABC123",
 } as const;
 
 /**

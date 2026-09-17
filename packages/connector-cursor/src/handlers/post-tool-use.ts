@@ -35,6 +35,8 @@
  * briefing takes the injection slot.
  */
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
+import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
+import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
@@ -117,6 +119,10 @@ export const handleCursorPostToolUse = async (
     // the shared extractor — identical spelling to every other connector.
     // ONE extraction feeds both the fingerprint and the ephemeral query.
     const failureText = extractFailureText(parsedOutput);
+    // ONE position, allocated before the record is serialized: this handler
+    // spools exactly one fingerprint, and its locked state write (where it has
+    // one) happens after that record is already on disk.
+    const seq = await allocateSeq(ctx.config.home, ctx.hostSessionKey, 1);
     await captureFailure({
       home: ctx.config.home,
       repoKey: ctx.repoKey,
@@ -129,6 +135,7 @@ export const handleCursorPostToolUse = async (
       },
       failureText,
       now,
+      seq: seqAt(seq, 0),
     });
     // Precedence, pinned: a delivered briefing takes this response's one
     // injection slot — the hint pipeline is not even consulted (briefing-

@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
-import type { SessionStatus } from "@crosscheck/schema";
+import type { SeqField, SessionStatus } from "@crosscheck/schema";
 
 import {
   EVENT_KINDS,
@@ -9,6 +9,7 @@ import {
 } from "../constants.ts";
 import { agentSessions } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
+import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { RegisterSessionBody } from "../http/schemas.ts";
@@ -103,6 +104,18 @@ export const registerSession = async (
       repo: insertedRow.repo,
       branch: insertedRow.branch,
     });
+    // `session.started` — position n = 0 by construction, not by allocation:
+    // the state file the allocator reads does not exist yet when this call is
+    // made. A SessionStart RE-FIRE re-registers the same id and is answered by
+    // the conflict branch below, so the row is written once.
+    await recordSessionEvent(deps, {
+      sessionId: insertedRow.id,
+      kind: "session.started",
+      seq: input.seq,
+      seqKind: "emitted",
+      refKind: "session",
+      refId: insertedRow.id,
+    });
     return { outcome: "created", session: toSessionView(insertedRow) };
   }
 
@@ -195,6 +208,7 @@ export const endSession = async (
   developerId: string,
   sessionId: string,
   status?: SessionStatus,
+  seq?: SeqField,
 ): Promise<EndSessionResult> => {
   const existing = await findSessionById(deps.db, sessionId);
   if (existing === undefined) {
@@ -224,6 +238,17 @@ export const endSession = async (
     developerId,
     repo: row.repo,
     status: finalStatus,
+  });
+  // A REPORTED end: the connector allocated this position at SessionEnd, so it
+  // really is last. It must not be READ from the counter a hook saw earlier —
+  // Stop's git lane and the detached workers allocate in that same window.
+  await recordSessionEvent(deps, {
+    sessionId: row.id,
+    kind: "session.ended",
+    seq,
+    seqKind: "emitted",
+    refKind: "session",
+    refId: row.id,
   });
   return { outcome: "ended", session: toSessionView(row) };
 };
@@ -284,6 +309,17 @@ export const reapStaleSessions = async (
     options.limit ?? SESSION_REAP_MAX_PER_PASS,
     SESSION_REAP_MAX_PER_PASS,
   );
+  // NO RETENTION SWEEP RUNS HERE, and that is a documented refusal rather
+  // than a gap. D2's age sweep ran from this spot, on the one standalone pass
+  // this hub starts, and it retired every `session_events` row older than
+  // SESSION_EVENT_RETENTION_DAYS — which is very nearly the causal skeleton
+  // itself, since every column of that table is a ref or an enum. Nick's D-D
+  // (2026-09-17) withdrew it before its first deploy: shipping a mechanism
+  // already known to delete what later causal statements need, and trusting
+  // spec 01a to arrive within thirty days, would make data survival depend on
+  // a delivery date. The hub SAYS so — SESSION_EVENT_RETENTION is `off` and
+  // `doctor` prints it — and `pruneSessionEvents` stays, uncalled, until 01a's
+  // referential predicate switches retention back on from here.
   // Candidates first, then one UPDATE by id: a bare `UPDATE … LIMIT` is not
   // portable, and the two-step keeps the write bounded by construction.
   const candidates = await deps.db
@@ -333,6 +369,21 @@ export const reapStaleSessions = async (
       // not the connector's — `/api/events` is a ledger, so the difference
       // belongs in it.
       reapedAfterHours: options.staleHours ?? SESSION_REAP_STALE_HOURS,
+    });
+    // A REAP HAS NO POSITION, and says so rather than staying silent. It is
+    // the hub's inference from SILENCE — revocable (a record from that session
+    // disproves it), and over-firing on read-and-plan sessions because the
+    // connector heartbeats only on an Edit or a Bash. The hub cannot invent a
+    // place in a sequence it did not emit, so the row carries `reaped_end` and
+    // the session's remaining order stays usable.
+    await recordSessionEvent(deps, {
+      sessionId: row.id,
+      kind: "session.ended",
+      seq: undefined,
+      absentReason: "reaped_end",
+      seqKind: "emitted",
+      refKind: "session",
+      refId: row.id,
     });
   }
   return { ended: updated.map(toSessionView) };

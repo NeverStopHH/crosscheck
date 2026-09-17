@@ -25,9 +25,12 @@ import type { DenylistConfig } from "../capture/denylist.ts";
 import { fingerprint } from "../capture/fingerprint.ts";
 import { targetRecord } from "../capture/records.ts";
 import type { Producer, TargetSource } from "../capture/records.ts";
+import { ALLOCATION_FAILED, seqAt, withSeq } from "../capture/seq.ts";
 import { containsSecret } from "../capture/secret-scan.ts";
 import { toRepoRelative } from "../capture/target-paths.ts";
 import { appendRecords } from "../spool/append.ts";
+import type { SeqField } from "@crosscheck/schema";
+import type { SeqRange } from "../state/session-state.ts";
 
 export interface CaptureFileTargetsInput {
   readonly home: string;
@@ -64,6 +67,18 @@ export interface CaptureFileTargetsInput {
    * must stay different answers.
    */
   readonly resolveRoot?: (path: string) => string | null;
+  /**
+   * The block of positions this invocation reserved, allocated by the CALLER
+   * before this flow runs. Record i takes position `from + i`; an absent or
+   * null block makes every record carry `allocation_failed`, which is the
+   * honest answer and not a silence.
+   *
+   * ALLOCATED BY THE CALLER, not here, for the reason spec 01 §3.6 gets wrong:
+   * a hook emits targets AND a failure fingerprint from one invocation, and a
+   * block taken per flow would give the two overlapping positions. One block,
+   * one acquisition, two consumers.
+   */
+  readonly seq?: SeqRange | null;
 }
 
 /**
@@ -106,14 +121,17 @@ export const captureFileTargets = async (
       input.home,
       input.repoKey,
       input.hostSessionKey,
-      collected.map((value) =>
-        targetRecord(
-          input.workContextId,
-          "file",
-          value,
-          input.producer,
-          input.now,
-          input.source ?? "tool_edit",
+      collected.map((value, index) =>
+        withSeq(
+          targetRecord(
+            input.workContextId,
+            "file",
+            value,
+            input.producer,
+            input.now,
+            input.source ?? "tool_edit",
+          ),
+          seqAt(input.seq, index),
         ),
       ),
       input.now,
@@ -131,6 +149,11 @@ export interface CaptureFailureInput {
   /** Already host-extracted text; `extractFailureText` is the shared helper. */
   readonly failureText: string;
   readonly now: Date;
+  /**
+   * ONE position, already resolved — the fingerprint shares the caller's block
+   * with the targets beside it, and only the caller knows which slot is its.
+   */
+  readonly seq?: SeqField;
 }
 
 /**
@@ -153,12 +176,15 @@ export const captureFailure = async (
     input.repoKey,
     input.hostSessionKey,
     [
-      targetRecord(
-        input.workContextId,
-        "error_fingerprint",
-        value,
-        input.producer,
-        input.now,
+      withSeq(
+        targetRecord(
+          input.workContextId,
+          "error_fingerprint",
+          value,
+          input.producer,
+          input.now,
+        ),
+        input.seq ?? ALLOCATION_FAILED,
       ),
     ],
     input.now,

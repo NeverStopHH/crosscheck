@@ -112,7 +112,13 @@ export {
   KNOWN_RECORD_KINDS,
   PROTOCOL_VERSION,
   ProducerSchema,
+  SEQ_EPOCH_PATTERN,
+  SEQ_REFUSAL_REASONS,
+  SeqFieldSchema,
+  SeqRefusalSchema,
+  SeqStampSchema,
   isCompatibleVersion,
+  isSeqStamp,
   parseRecord,
 } from "./envelope.ts";
 export type {
@@ -120,7 +126,27 @@ export type {
   KnownRecordKind,
   ParseRecordResult,
   Producer,
+  SeqField,
+  SeqRefusal,
+  SeqRefusalReason,
+  SeqStamp,
 } from "./envelope.ts";
+
+export {
+  EVENT_REF_KINDS,
+  LEDGER_EVENT_KINDS,
+  SEQ_KINDS,
+  SEQ_REASONS,
+  SESSION_EVENT_KINDS,
+  SESSION_EVENT_RETENTION_MODES,
+} from "./session-event.ts";
+export type {
+  EventRefKind,
+  SeqKind,
+  SeqReason,
+  SessionEventKind,
+  SessionEventRetentionMode,
+} from "./session-event.ts";
 
 export {
   describeUnstorableText,

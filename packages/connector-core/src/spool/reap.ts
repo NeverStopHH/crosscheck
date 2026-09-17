@@ -56,6 +56,8 @@ import { open, readdir, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { SeqFieldSchema } from "@crosscheck/schema";
+import type { SeqField } from "@crosscheck/schema";
 
 import {
   MAX_SPOOL_AGE_DAYS,
@@ -328,6 +330,14 @@ export const PENDING_END_SUFFIX = ".pending-end";
 const PendingEndSchema = z.looseObject({
   crosscheckSessionId: z.string().min(1),
   at: z.string().min(1),
+  /**
+   * The position SessionEnd allocated for this end (spec 01 §3.2). It rides
+   * the marker because the marker outlives the state file: the counter is
+   * deleted with it, and this ender runs in a later process. Optional, so a
+   * marker written before this field still ends its session — unsequenced,
+   * with the reason the hub records for an absent position.
+   */
+  seq: SeqFieldSchema.optional(),
 });
 
 /**
@@ -347,6 +357,7 @@ export type DeferredEndOutcome = "ended" | "retry" | "gone";
 
 export type DeferredEnder = (
   crosscheckSessionId: string,
+  seq?: SeqField,
 ) => Promise<DeferredEndOutcome>;
 
 const pendingEndSlugs = async (
@@ -459,7 +470,7 @@ const endDeferredSession = async (
   if (spool.lines.length > 0) {
     return;
   }
-  const outcome = await ender(parsed.data.crosscheckSessionId);
+  const outcome = await ender(parsed.data.crosscheckSessionId, parsed.data.seq);
   if (outcome === "retry") {
     return;
   }

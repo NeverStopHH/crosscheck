@@ -19,6 +19,7 @@
  * parity feature that cost byte transparency would not be parity, it would be
  * a different product.
  */
+import { UNPROJECTED_LEDGER_KINDS_REFUSAL } from "@crosscheck/connector-core/derive/capabilities.ts";
 import type { DeriveCapabilityManifest } from "@crosscheck/connector-core/derive/capabilities.ts";
 import { ACP_AGENT_KIND_PREFIX } from "@crosscheck/connector-core/state/host-session-key.ts";
 
@@ -58,8 +59,33 @@ export const ACP_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       sentence:
         "`crosscheck conference` is a command a human runs, not a wire event, so it needs nothing from the proxy or the agent at all — only a working model runner (see the summarizer runner check)",
     },
+    {
+      name: "event_seq",
+      rung: "reduced",
+      sentence:
+        "the proxy positions everything it can see off the parse copy, and three sources are missing: no ACP host runs the Stop-time git lane, so a codemod's edits produce no file.modified to order; intent and claim events need the crosscheck MCP server, which reaches an ACP session only in --inject mode and only when the client already sent an mcpServers array; and the engine positions an edit on the first wire row that names its file — usually the tool_call row that announces it, while the tool is still pending — so that position can come BEFORE the edit and bounds it in neither direction: the hub stores those `observed` and refuses every happens-before question against them, which is the only thing standing between that position and a wrong answer",
+    },
   ],
   refusals: [
+    // The two canonical kinds nothing projects, on any host — one sentence
+    // for the whole product, shared by reference so the three manifests
+    // cannot drift apart while it is true.
+    UNPROJECTED_LEDGER_KINDS_REFUSAL,
+    {
+      name: "commit collection",
+      sentence:
+        "no `commit.observed` event exists on this host: the git authorship scan runs only in Claude Code's SessionStart, and a proxy that shelled out to git per session would be doing work the forward path never asked for",
+    },
+    {
+      name: "MCP-borne events",
+      sentence:
+        "claim.created via publish_claim and claim.invalidated need the crosscheck MCP server, which this proxy appends to session/new|load|resume only in --inject mode and only when the client already sent an mcpServers ARRAY — so a --no-inject proxy, and an --inject one whose client sent no array, emit neither kind; the proxy's own log for that run (`~/.crosscheck/logs/acp-<pid>.log`) carries an `inject skip why=<reason>` line naming which of the documented reasons applied, and `doctor` does NOT: it reads the log directory for file NAMES only and never a byte of their content",
+    },
+    {
+      name: "second evidence lane",
+      sentence:
+        "the Stop-time `git diff --name-only HEAD` lane is registered only by Claude Code's Stop hook, so a file this host changed through `sed -i`, a codemod or a generator raises no edit event and produces no file.modified to order or to attribute — `crosscheck suspect` will name the session that used an edit tool and never this one",
+    },
     {
       name: "forward-path capture",
       sentence:

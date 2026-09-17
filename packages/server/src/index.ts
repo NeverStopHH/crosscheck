@@ -13,6 +13,32 @@ import type { AppEnv, Clock } from "./types.ts";
 export { createApp } from "./app.ts";
 export { createDb } from "./db/client.ts";
 export type { Db } from "./db/client.ts";
+/** The causal-order table, so a connector test can assert what the hub stored. */
+export { sessionEvents } from "./db/schema.ts";
+export {
+  CAUSAL_INDETERMINACIES,
+  CAUSAL_ORDER_REASONS,
+  CAUSAL_ORDER_STATES,
+  CAUSAL_POSITION_STATUSES,
+  causalComparisonOf,
+  causalOrderOf,
+  causalPositionOf,
+  compareEvents,
+  isOrderable,
+  readBrokenCausalOrders,
+  readSessionCausalOrder,
+} from "./services/session-order.ts";
+export type {
+  CausalComparison,
+  CausalIndeterminacy,
+  CausalOrderReason,
+  CausalOrderState,
+  CausalPosition,
+  CausalPositionStatus,
+  OrderedEvent,
+  SessionCausalOrder,
+} from "./services/session-order.ts";
+export { seqKindFor } from "./services/record-handlers.ts";
 export { createEmbedderFromEnv } from "./services/embedder.ts";
 export type { Embedder } from "./services/embedder.ts";
 export {

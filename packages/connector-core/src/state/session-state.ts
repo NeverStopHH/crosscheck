@@ -6,10 +6,12 @@ import {
   MAX_KNOWN_WORKTREE_ROOTS,
   MAX_PROBED_FINGERPRINTS,
   MAX_SEEN_TARGETS,
+  MAX_TOOL_WINDOWS,
   MAX_TRIPWIRE_ASKED_FILES,
   MINUTES_PER_HOUR,
   MS_PER_SECOND,
   SECONDS_PER_MINUTE,
+  SESSION_STATE_LOCK_RETRIES,
   STATUS_MAX_SESSION_STATES,
 } from "../constants.ts";
 import {
@@ -23,6 +25,27 @@ import {
   listSessionStateFiles,
   sessionSilentForMs,
 } from "./session-scan.ts";
+
+/**
+ * THE SESSION STATE'S LOCK, spelled once so no acquisition here can accidentally
+ * buy the SPOOL's patience.
+ *
+ * Both locks are the same primitive, and that is the trap: `withLock`'s default
+ * retry count is sized by what a busy FLUSH costs, which is a deferred flush the
+ * next hook retries. Every acquisition in this file costs something else — a
+ * position in the causal order, a bookkeeping write, a session binding — so it
+ * gets SESSION_STATE_LOCK_RETRIES, whose comment carries the measurement that
+ * chose the number.
+ *
+ * A seventh caller reaching for `withLock` directly would compile, pass its
+ * tests, and quietly reintroduce the refusals SEQ-3 caught. Reaching for this
+ * instead is the only thing standing between that and the order.
+ */
+const withSessionStateLock = async <T>(
+  path: string,
+  fallback: T,
+  action: () => Promise<T>,
+): Promise<T> => withLock(path, fallback, action, SESSION_STATE_LOCK_RETRIES);
 
 /**
  * Past this much silence a state file is a CORPSE, not a live session: the
@@ -62,6 +85,30 @@ const foldLegacySessionKey = (value: unknown): unknown => {
   return host === undefined || host === null
     ? { ...rest, hostSessionKey: legacy }
     : rest;
+};
+
+/**
+ * The two fields the keyed `toolWindows` list retired. This schema is a
+ * `looseObject`, so an unknown key SURVIVES a read and a write-back would
+ * carry a floor and a count nothing reads for the rest of the session's life —
+ * the silent absence this tree forbids. Dropped exactly the way the legacy
+ * session key above is dropped: accepted on read, gone on the next write.
+ */
+const RETIRED_TOOL_WINDOW_KEYS = ["toolWindowFloor", "toolWindowOpen"] as const;
+
+const dropRetiredToolWindowKeys = (value: unknown): unknown => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  if (!RETIRED_TOOL_WINDOW_KEYS.some((key) => key in record)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(record).filter(
+      ([key]) => !RETIRED_TOOL_WINDOW_KEYS.includes(key as never),
+    ),
+  );
 };
 
 const SessionStateObjectSchema = z.looseObject({
@@ -395,14 +442,122 @@ const SessionStateObjectSchema = z.looseObject({
   ghostDraftCount: z.number().int().min(0).default(0),
   ghostFailCount: z.number().int().min(0).default(0),
   ghostLastFailure: z.string().nullable().default(null),
+  /**
+   * THE PER-SESSION CAUSAL ORDER (spec 01 §3.3/§3.4): the opaque epoch this
+   * session's positions belong to, and the highest position ALLOCATED under
+   * it. Appended BELOW #50's counters and never renumbered — every consumer
+   * keys on the name.
+   *
+   * WHY A PAIR AND NOT A BARE COUNTER. Three measured mechanisms restart the
+   * counter without the epoch: a SessionStart RE-FIRE re-creates the state
+   * file under the same hostSessionKey (publishSessionState's header); a BUSY
+   * LOCK makes that publication fall back to a plain create with no carry at
+   * all ("the counters lose rather than the file"); and two HOMES on one key
+   * — a cloud or background agent sharing a host session id across machines —
+   * cannot share a ~/.crosscheck lock. A restarted counter under an unchanged
+   * epoch makes two distinct events share one `(session, epoch, n)`, which is
+   * a confident wrong answer about which came first. A restarted counter
+   * under a FRESH epoch is merely not comparable, which is the honest
+   * outcome: the hub sees two epochs, marks the session `broken /
+   * epoch_split`, and refuses the comparison instead of guessing.
+   *
+   * `eventSeq` counts ALLOCATIONS, not records: an emitter that dies between
+   * the allocation and its append leaves a GAP, and gaps are legal (§3.4).
+   * Loss is visible in the spool `.drops` ledger, never inferred from a hole
+   * here. The defaults keep every older state file parsing (§4).
+   */
+  seqEpoch: z.string().min(1).nullable().default(null),
+  eventSeq: z.number().int().min(0).default(0),
+  /**
+   * THE WINDOW EACH RUNNING TOOL'S EDIT IS HAPPENING IN — one entry per open
+   * window, and the thing that turns a position taken AFTER the work into an
+   * interval a happens-before question may be asked of.
+   *
+   * A PostToolUse hook allocates once its tool has returned, so its position
+   * is an upper bound on an edit already on disk, and an emitter that
+   * allocated inside that window holds a LOWER number than a change that came
+   * first. `floor` is a position taken BEFORE the tool started and attached to
+   * nothing — a deliberate gap — and `key` is what says WHICH call it belongs
+   * to: a digest of the host's `tool_use_id`, which both hooks of a call are
+   * handed and no other call is (state/tool-window-key.ts).
+   *
+   * WHY A LIST AND NOT A FLOOR AND A COUNT. That pair was this field, and it
+   * could not name an owner: `openToolWindow` recorded the OLDEST open floor
+   * and PostToolUse closed a window whenever `isEditTool(tool_name)` was true,
+   * whether or not its own PreToolUse had opened one. So a tool whose open was
+   * refused — a busy state lock, or a hook installed mid-flight with no state
+   * file yet — closed a PARALLEL tool's window and took a floor recorded AFTER
+   * its own edit. MEASURED on the real hooks with the lock held on purpose:
+   * the hub answered `predeclared`, the value that exonerates, for an
+   * explanation written after the change, and the parallel tool LOST its own
+   * bracket to that close. Both are pinned in
+   * connector-claude/test/hook-window-pairing.test.ts, and so is the reason
+   * the key is the host's id rather than a digest of the call's name and
+   * input: two IDENTICAL calls share such a digest, and a twin whose open was
+   * refused took its sibling's later floor the same way.
+   *
+   * A STATE FILE FROM BEFORE THIS LIST carries the retired `toolWindowFloor`
+   * and `toolWindowOpen` and no list, so its in-flight tools match no key and
+   * get NO bracket. That is the honest answer rather than a gap: their
+   * positions stay the upper bound they are and the hub refuses. The retired
+   * keys are DROPPED on read (the preprocess above), so a mid-flight write-back
+   * leaves nothing on disk that looks like a window nobody reads.
+   *
+   * A LEAKED WINDOW BRACKETS NOTHING. A PreToolUse whose call is never closed
+   * (a denied call, an aborted one, a close a busy lock refused) leaves its
+   * entry behind, and no later call carries its id, so it is never matched
+   * again. It costs a slot until MAX_TOOL_WINDOWS evicts it, and the evictions
+   * that bound costs are COUNTED rather than inferred from a missing bracket.
+   * The defaults keep every older state file parsing.
+   */
+  toolWindows: z
+    .array(
+      z.object({
+        key: z.string().min(1),
+        floor: z.number().int().min(0),
+      }),
+    )
+    .default([]),
+  toolWindowEvictions: z.number().int().min(0).default(0),
+  /**
+   * EDIT POSITIONS THAT TRAVELLED WITH NO WINDOW — the count of brackets
+   * actually LOST, from the only side that can see them all.
+   *
+   * `toolWindowEvictions` counts what the CAP threw away, and that is not the
+   * same number: a PreToolUse whose `openToolWindow` the busy state lock
+   * refused writes no entry at all, so nothing is ever evicted for it and the
+   * cap's counter does not move. MEASURED on the real hooks, one turn of K
+   * parallel Edit calls: at K=32 six of 32 opens were refused by a busy state
+   * lock and at K=48 twenty of 48 were, with `toolWindowEvictions` 0 in every
+   * run — so the one number both surfaces printed was blind to the losses that
+   * were happening.
+   *
+   * COUNTED AT THE CLOSE, because the close is where every cause meets. A
+   * PostToolUse that allocated a position for an EDIT and found no window
+   * under its own key has lost the bracket, whether its open was refused, its
+   * entry evicted, its hook installed mid-flight, its state file older than
+   * this list, or its host too old to send a `tool_use_id`. It costs no lock:
+   * the fold rides in the one mid-session write that hook already makes.
+   *
+   * WHAT IT STILL CANNOT COUNT: a call whose PostToolUse allocation was ALSO
+   * refused. Nothing was positioned then, so there is no bracket to miss — the
+   * record travels `allocation_failed` and says so for itself.
+   *
+   * IT IS NOT A WARN. Every cause above is either load or a host's age, none
+   * has a remedy the reader could apply, and the direction is safe — a missing
+   * bracket makes the hub REFUSE, never answer `predeclared`. It is printed so
+   * that a machine losing brackets stops reading exactly like one that is not.
+   */
+  toolWindowMisses: z.number().int().min(0).default(0),
 });
 
 /**
- * The read schema: the object schema behind a preprocess that folds the
- * legacy key. Writers never need the fold — they pass `hostSessionKey`.
+ * The read schema: the object schema behind a preprocess that folds the legacy
+ * session key and drops the retired window fields. Writers never need either —
+ * they pass `hostSessionKey` and the keyed `toolWindows` list.
  */
 export const SessionStateSchema = z.preprocess(
-  foldLegacySessionKey,
+  (value) => dropRetiredToolWindowKeys(foldLegacySessionKey(value)),
   SessionStateObjectSchema,
 );
 
@@ -452,8 +607,18 @@ export const deleteSessionState = async (
   await removeFile(sessionStatePath(home, hostSessionKey));
 };
 
-const sessionStateLockPath = (home: string, hostSessionKey: string): string =>
-  `${sessionStatePath(home, hostSessionKey)}.lock`;
+/**
+ * Exported so a test can make the lock BUSY on purpose rather than hoping a
+ * loaded machine makes it busy for it. The patience above is the whole reason
+ * `allocateSeq` returns a position instead of a refusal, and a test that cannot
+ * hold the lock can only assert that by running many emitters and trusting the
+ * scheduler — which is how SEQ-3 came to pass on every developer Mac and fail
+ * on both CI runners. Nothing in the source takes it from here.
+ */
+export const sessionStateLockPath = (
+  home: string,
+  hostSessionKey: string,
+): string => `${sessionStatePath(home, hostSessionKey)}.lock`;
 
 /**
  * Read-transform-write under the state file's own lock — how every MID-SESSION
@@ -480,7 +645,7 @@ export const updateSessionState = async (
   hostSessionKey: string,
   transform: (fresh: SessionState) => SessionState | null,
 ): Promise<boolean> =>
-  withLock(sessionStateLockPath(home, hostSessionKey), false, async () => {
+  withSessionStateLock(sessionStateLockPath(home, hostSessionKey), false, async () => {
     const fresh = await readSessionState(home, hostSessionKey);
     if (fresh === null) {
       return false;
@@ -492,6 +657,65 @@ export const updateSessionState = async (
     await writeSessionState(home, next);
     return true;
   });
+
+/** What a state file is BOUND TO: one repo, on one hub. */
+interface SessionBinding {
+  readonly repoId: string;
+  readonly hubUrl: string;
+}
+
+/**
+ * Whether a state file on disk describes THIS session's binding. One
+ * predicate, because two readers act on it — `withCarriedCapture` decides
+ * what a re-fire keeps, and `carriedSeqEpoch` decides what the re-fire's
+ * REGISTER may say about it — and a re-fire that carried by one rule and
+ * announced by another is exactly the split this pair exists to prevent.
+ */
+const isSameBinding = (
+  previous: SessionState | null,
+  binding: SessionBinding,
+): previous is SessionState =>
+  previous !== null &&
+  previous.repoId === binding.repoId &&
+  previous.hubUrl === binding.hubUrl;
+
+/**
+ * THE EPOCH THE STATE FILE WILL KEEP, answerable BEFORE the register goes out.
+ *
+ * `registerSessionFlow` has to name an epoch in the register body — that body
+ * carries `session.started` at position 0, and an absent field is read as a
+ * connector too old for the protocol — but it sends that body BEFORE the state
+ * is published, so it used to send the fire's own fresh mint. On a re-fire
+ * `withCarriedCapture` then keeps the PREVIOUS epoch, and the two halves
+ * disagreed: the wire named an epoch the session does not use.
+ *
+ * INVISIBLE UNTIL THE FIRST REGISTER FAILS. A hub that already holds the
+ * session answers a re-register from its conflict branch and records no second
+ * `session.started`, so the foreign epoch never lands. A hub that holds NO row
+ * — the first register never reached it: an unreachable hub, a 5xx, a rejected
+ * key — takes the CREATE branch and stores `session.started` under it. The
+ * session then has two epochs on the hub, `causalOrderOf` answers `broken /
+ * epoch_split`, and every happens-before question about it is refused for the
+ * rest of its life. `session_events` is append-only and retention is `off`, so
+ * nothing removes the row afterwards.
+ *
+ * NOT THE BUSY-LOCK CASE, which looks similar and is not. There the counter
+ * really does restart at 0 beside a fresh epoch, and "not comparable" is the
+ * honest answer — see `publishSessionState`. This is the case where nothing
+ * restarted: the state file held one epoch the whole time.
+ *
+ * `minted` is the caller's own fresh epoch, used when there is nothing to
+ * carry: no state file, a state file bound elsewhere, or one from before the
+ * protocol field (`seqEpoch === null`), which carries a null this cannot send.
+ */
+export const carriedSeqEpoch = (
+  previous: SessionState | null,
+  binding: SessionBinding,
+  minted: string,
+): string =>
+  isSameBinding(previous, binding) && previous.seqEpoch !== null
+    ? previous.seqEpoch
+    : minted;
 
 /**
  * The facts a SessionStart RE-FIRE must not erase (trial findings #17/#18/#20).
@@ -513,9 +737,7 @@ export const withCarriedCapture = (
   state: SessionStateInput,
   previous: SessionState | null,
 ): SessionStateInput =>
-  previous === null ||
-  previous.repoId !== state.repoId ||
-  previous.hubUrl !== state.hubUrl
+  !isSameBinding(previous, state)
     ? state
     : {
         ...state,
@@ -531,6 +753,28 @@ export const withCarriedCapture = (
         // The #17 root cache is the session's, not the fire's: dropping it
         // makes the next tool call pay git again for a root already judged.
         knownWorktreeRoots: previous.knownWorktreeRoots,
+        // THE PAIR MOVES TOGETHER OR NOT AT ALL (spec 01 §3.4). The counter
+        // alone under the incoming fire's fresh epoch would be harmless; the
+        // EPOCH alone beside a counter reset to 0 re-issues positions this
+        // session has already handed out, and the hub cannot tell the second
+        // `(session, epoch, 3)` from a spool replay of the first. #50 added
+        // three counters and forgot this list, which is why both lines here
+        // carry a mutation anchor.
+        seqEpoch: previous.seqEpoch,
+        eventSeq: previous.eventSeq,
+        // A SessionStart re-fire lands INSIDE a live session (compact, resume,
+        // clear), and a tool may be running across it. Dropping the open
+        // windows here would let the next PostToolUse stamp an unbracketed
+        // position — the upper bound this list exists to avoid — on an edit
+        // whose PreToolUse already paid for a floor. The eviction count comes
+        // with them: a counter that resets on every compact cannot say whether
+        // the cap is the right size.
+        toolWindows: previous.toolWindows,
+        toolWindowEvictions: previous.toolWindowEvictions,
+        // ...and so does the count of brackets already lost, for the same
+        // reason: a number that restarts on every compact cannot say whether
+        // this machine is losing them.
+        toolWindowMisses: previous.toolWindowMisses,
       };
 
 /**
@@ -548,7 +792,7 @@ export const publishSessionState = async (
   home: string,
   state: SessionStateInput,
 ): Promise<void> => {
-  const published = await withLock(
+  const published = await withSessionStateLock(
     sessionStateLockPath(home, state.hostSessionKey),
     false,
     async () => {
@@ -561,6 +805,225 @@ export const publishSessionState = async (
     await writeSessionState(home, state);
   }
 };
+
+/** A block of positions this caller now owns, and the epoch they belong to. */
+export interface SeqRange {
+  readonly epoch: string;
+  readonly from: number;
+  readonly count: number;
+  /**
+   * THE POSITION THE WORK THIS BLOCK RECORDS IS KNOWN TO FOLLOW, when the
+   * caller took one before it started. A hook allocates AFTER its tool has
+   * returned, so every position in this block is an upper bound on an edit
+   * that already happened; the bracket is what turns that upper bound back
+   * into an interval a happens-before question may be asked of.
+   *
+   * Absent means unbracketed, and the hub reads an unbracketed tool-lane
+   * position as the upper bound it is rather than promoting a guess.
+   */
+  readonly after?: number;
+}
+
+/**
+ * The same block, told where its tool started. Immutable, like every transform
+ * here: a new range, never a mutation of the one the allocator handed back.
+ */
+export const withWindowFloor = (
+  range: SeqRange | null,
+  floor: number | null,
+): SeqRange | null =>
+  range === null || floor === null ? range : { ...range, after: floor };
+
+/**
+ * HANDS OUT POSITIONS IN THIS SESSION'S CAUSAL ORDER (spec 01 §3.3).
+ *
+ * `updateSessionState` cannot serve this: it answers `boolean`, and an
+ * allocator has to hand the NUMBER back. Everything else is the same
+ * discipline — read-transform-write inside the state file's own lock, so
+ * MONOTONICITY IS A PROPERTY OF THE LOCK rather than of the caller. Two
+ * sibling hooks, an MCP tool and a detached worker can all be inside this
+ * function at once; a read-then-write outside the lock gives two of them the
+ * same `from`, which is the one thing a causal order may never do (proved
+ * against this test: 200 allocations, 100 distinct positions).
+ *
+ * `count` is allocated as a BLOCK and the counter moves once. A hook that
+ * pre-allocates its worst case and then emits fewer records leaves a GAP, and
+ * gaps are legal (§3.4) — an allocation whose emitter crashed leaves the same
+ * hole by design. Loss lives in the spool `.drops` ledger, never here.
+ *
+ * NULL IS A FIRST-CLASS ANSWER, not an error: no state file (a worker that
+ * outlived SessionEnd's delete), a state file from before this protocol field
+ * (`seqEpoch === null`), or a lock that stayed busy past its retries. Every
+ * one of them becomes `seq: { reason: "allocation_failed" }` on the envelope —
+ * the record still lands, only its POSITION is withheld. Fail-open is the rule
+ * on every hook path and this is no exception; worst case is the spool lock's
+ * own, SPOOL_LOCK_RETRIES × SPOOL_LOCK_RETRY_DELAY_MS.
+ */
+export const allocateSeq = async (
+  home: string,
+  hostSessionKey: string,
+  count: number,
+): Promise<SeqRange | null> =>
+  withSessionStateLock<SeqRange | null>(
+    sessionStateLockPath(home, hostSessionKey),
+    null,
+    async () => {
+      const fresh = await readSessionState(home, hostSessionKey);
+      if (fresh === null || fresh.seqEpoch === null) {
+        return null;
+      }
+      const from = fresh.eventSeq + 1;
+      await writeSessionState(home, { ...fresh, eventSeq: from + count - 1 });
+      return { epoch: fresh.seqEpoch, from, count };
+    },
+  );
+
+/**
+ * OPENS THE WINDOW A TOOL IS ABOUT TO RUN IN, in the SAME acquisition that
+ * takes the position — a separate read-then-write would let a sibling hook
+ * slip between them and record a floor that is not the one it allocated.
+ *
+ * The entry is appended under the CALLER'S OWN key and carries the position it
+ * just consumed — its own, never the oldest. Returns that position, so a caller
+ * that wants to know what it paid for can see it; the caller that matters,
+ * PreToolUse, does not need it, because the key is what its PostToolUse looks
+ * the floor up by. Null is a first-class answer (no state file, no epoch, a
+ * lock that stayed busy) and means no entry exists under that key at all, so
+ * the close finds no match and sends no bracket — the honest outcome, and the
+ * one that made discarding this return value safe.
+ *
+ * THE LIST IS CAPPED. An entry nothing closes stays, so the oldest falls out
+ * at MAX_TOOL_WINDOWS and the eviction is COUNTED: an evicted call that was
+ * still running loses its bracket and nothing else, and the count is the only
+ * thing that can say whether the cap is too small.
+ */
+export const openToolWindow = async (
+  home: string,
+  hostSessionKey: string,
+  windowKey: string,
+): Promise<number | null> =>
+  withSessionStateLock<number | null>(
+    sessionStateLockPath(home, hostSessionKey),
+    null,
+    async () => {
+      const fresh = await readSessionState(home, hostSessionKey);
+      if (fresh === null || fresh.seqEpoch === null) {
+        return null;
+      }
+      const taken = fresh.eventSeq + 1;
+      const appended = [...fresh.toolWindows, { key: windowKey, floor: taken }];
+      const evicted = Math.max(0, appended.length - MAX_TOOL_WINDOWS);
+      await writeSessionState(home, {
+        ...fresh,
+        eventSeq: taken,
+        toolWindows: appended.slice(evicted),
+        toolWindowEvictions: fresh.toolWindowEvictions + evicted,
+      });
+      return taken;
+    },
+  );
+
+/**
+ * THE FLOOR A TOOL'S OWN WINDOW OPENED ON, or null when this session holds no
+ * window under that key: a non-edit tool, a hook installed mid-flight, an open
+ * the lock refused, or an entry the cap evicted. Null is what makes the
+ * position travel as the upper bound it is.
+ *
+ * THE OLDEST MATCH, and that is not a detail. The key names ONE call (the
+ * host's `tool_use_id`), so more than one entry under it means that one call
+ * opened more than once — a double-wired install runs PreToolUse once per
+ * wiring — and every entry is then that call's own floor: the oldest is the
+ * widest interval the call is entitled to, and the interval only ever widens.
+ * The younger floor would be the rule that failed when the key could name two
+ * calls: a position allocated between the two opens sits BELOW it, and the hub
+ * reads an explanation written while both tools ran as preceding an edit that
+ * may have come first. Too early widens the interval and makes the hub refuse;
+ * too late lets it answer wrongly, and a position that might be wrong is worse
+ * than an absent one. connector-core/test/tool-window-pairing.test.ts proves
+ * the rule over pairs — and pins the one thing no close-time rule survives,
+ * two DIFFERENT calls under one key with one open refused, which is why the key
+ * is the host's id and not a digest of the call.
+ */
+export const toolWindowFloorFor = (
+  state: SessionState,
+  windowKey: string,
+): number | null =>
+  state.toolWindows.find((window) => window.key === windowKey)?.floor ?? null;
+
+/**
+ * The list with ONE window of that key gone — a PATCH, not a whole state. Two
+ * of PostToolUse's three exits, and PostToolUseFailure's drop path, fold this
+ * into an `updateSessionState` transform that is already changing other
+ * counters, and a full-state spread there would put every one of them back.
+ * Exported because those exits allocate nothing and must still drain the
+ * entry: a window left open brackets nothing, since no later call carries its
+ * key, but it holds a slot in a capped list until the cap evicts it.
+ *
+ * THE YOUNGEST MATCH IS THE ONE REMOVED, so the earliest floor under a key
+ * survives until every entry under it is closed and `toolWindowFloorFor` keeps
+ * answering with it. No match removes nothing: a key this session never opened
+ * must not drain a window belonging to something else.
+ */
+export const closedToolWindow = (
+  state: SessionState,
+  windowKey: string,
+): Pick<SessionState, "toolWindows"> => {
+  const last = state.toolWindows.reduce(
+    (found, window, index) => (window.key === windowKey ? index : found),
+    -1,
+  );
+  return {
+    toolWindows:
+      last === -1
+        ? state.toolWindows
+        : [
+            ...state.toolWindows.slice(0, last),
+            ...state.toolWindows.slice(last + 1),
+          ],
+  };
+};
+
+/**
+ * ALLOCATES A CAPTURE BLOCK AND CLOSES THE TOOL'S OWN WINDOW IN ONE
+ * ACQUISITION — the whole of PostToolUse's added cost, unchanged from
+ * `allocateSeq`'s.
+ *
+ * The range comes back carrying the floor THIS tool's PreToolUse recorded, so
+ * every record built from it says which window its edit happened in.
+ * `windowKey` is null for an emitter that has no window by construction and
+ * for a call whose host sent no `tool_use_id`, and a key with no matching
+ * entry behaves identically: no bracket, no removal, and then this is
+ * `allocateSeq` with a different name.
+ *
+ * NOT THE MCP-SIDE `allocateToolSeq` (mcp/tools/shared.ts): that one takes a
+ * tool context and three arguments, has no window, and is a different function
+ * with the same name.
+ */
+export const allocateToolSeq = async (
+  home: string,
+  hostSessionKey: string,
+  count: number,
+  windowKey: string | null,
+): Promise<SeqRange | null> =>
+  withSessionStateLock<SeqRange | null>(
+    sessionStateLockPath(home, hostSessionKey),
+    null,
+    async () => {
+      const fresh = await readSessionState(home, hostSessionKey);
+      if (fresh === null || fresh.seqEpoch === null) {
+        return null;
+      }
+      const from = fresh.eventSeq + 1;
+      const floor =
+        windowKey === null ? null : toolWindowFloorFor(fresh, windowKey);
+      await writeSessionState(home, {
+        ...fresh,
+        eventSeq: from + count - 1,
+        ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),
+      });
+      return withWindowFloor({ epoch: fresh.seqEpoch, from, count }, floor);
+    },
+  );
 
 export interface SessionStateClaim {
   /** True when THIS caller published the state; false when it adopted one. */
@@ -590,7 +1053,7 @@ export const claimSessionState = async (
   home: string,
   state: SessionStateInput,
 ): Promise<SessionStateClaim | null> =>
-  withLock<SessionStateClaim | null>(
+  withSessionStateLock<SessionStateClaim | null>(
     sessionStateLockPath(home, state.hostSessionKey),
     null,
     async () => {
@@ -951,5 +1414,15 @@ export const deriveSessionState = (
     ghostDraftCount: 0,
     ghostFailCount: 0,
     ghostLastFailure: null,
+    // A RECOVERY IS A CREATE, so it mints its own epoch exactly as
+    // SessionStart does — a derived state with a null epoch would leave every
+    // record of every recovered session unsequenced, silently. This function
+    // enumerates every field by hand, so a field added to the schema tail and
+    // not here is absent from every recovered session and nothing says so.
+    seqEpoch: crypto.randomUUID(),
+    eventSeq: 0,
+    toolWindows: [],
+    toolWindowEvictions: 0,
+    toolWindowMisses: 0,
   };
 };

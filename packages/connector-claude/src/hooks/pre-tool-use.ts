@@ -50,12 +50,14 @@ import { extractFilePaths, isEditTool } from "../capture/tool-events.ts";
 import { getTripwireSessions } from "@crosscheck/connector-core/http/hub.ts";
 import { renderTripwireReason } from "@crosscheck/connector-core/hints/render.ts";
 import {
+  openToolWindow,
   readSessionState,
   updateSessionState,
   withKnownWorktreeRoot,
   withTripwireAsked,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
 import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
 import { resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
@@ -118,6 +120,37 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   const state = await readSessionState(ctx.config.home, ctx.payload.session_id);
   if (state === null) {
     return "";
+  }
+  // OPENS THE WINDOW THIS TOOL'S EDIT WILL HAPPEN IN — before the tripwire
+  // work, because the bracket is about the TOOL and must not depend on whether
+  // a teammate happens to overlap the file, whether the denylist covers it, or
+  // whether the hub answers. PostToolUse allocates once the tool has RETURNED,
+  // so without this its position is an upper bound on an edit already on disk
+  // and an MCP call that raced the hook is ordered BEFORE a change that came
+  // first — `predeclared`, the value that exonerates, from a coin flip.
+  //
+  // UNDER THIS CALL'S OWN KEY, which is what makes the window THIS call's.
+  // The key is the host's `tool_use_id` (core state/tool-window-key.ts): the
+  // one thing both hooks of a call are handed and no other call is.
+  // PostToolUse looks the floor up by that key and closes that entry, never
+  // the oldest one open — and never an identical twin's, which a digest of
+  // `tool_name` + `tool_input` could not tell apart.
+  //
+  // THE RETURN VALUE IS DISCARDED, and with a key that names one call that is
+  // finally honest. A refused open (busy lock, or no state file yet on a hook
+  // installed mid-flight) writes NO entry, so this call's PostToolUse finds no
+  // match and sends no bracket — the hub reads the upper bound it has and
+  // refuses. A payload with no id opens nothing at all, for the same reason.
+  //
+  // ONE acquisition, and the only new cost on this hook. It is the same lock
+  // the tripwire marker below takes, an order of magnitude under the hub call
+  // this hook already makes.
+  const windowKey = toolWindowKey(
+    ctx.payload.tool_name,
+    ctx.payload.tool_use_id,
+  );
+  if (windowKey !== null) {
+    await openToolWindow(ctx.config.home, ctx.payload.session_id, windowKey);
   }
   const file = await resolveEditedFile(ctx, state);
   if (file === null) {

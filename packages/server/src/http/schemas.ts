@@ -1,4 +1,4 @@
-import { SessionStatusSchema } from "@crosscheck/schema";
+import { SeqFieldSchema, SessionStatusSchema } from "@crosscheck/schema";
 import { z } from "zod";
 
 import {
@@ -12,6 +12,18 @@ export const CreateDeveloperBodySchema = z.object({
   email: z.email(),
 });
 
+/**
+ * THE TWO SESSION EVENTS DO NOT TRAVEL AN ENVELOPE (spec 01 §3.2), and these
+ * two bodies are where they actually go. Both are STRICT objects, so a `seq`
+ * sent against the old shape would have been REFUSED rather than ignored — the
+ * field has to be declared here as well as on the envelope.
+ *
+ * `SeqFieldSchema` is the same union the wire uses: a stamp, or the refusal a
+ * seq-capable connector sends when it could not allocate. Optional forever, so
+ * a connector from before the field registers exactly as it always did.
+ */
+const SeqBodyField = { seq: SeqFieldSchema.optional() };
+
 /** Field rules consistent with AgentSessionSchema in @crosscheck/schema. */
 export const RegisterSessionBodySchema = z.object({
   id: z.string().min(1),
@@ -20,10 +32,12 @@ export const RegisterSessionBodySchema = z.object({
   branch: z.string().min(1),
   baseCommit: z.string().min(1),
   status: SessionStatusSchema,
+  ...SeqBodyField,
 });
 
 export const SessionStatusBodySchema = z.object({
   status: SessionStatusSchema.optional(),
+  ...SeqBodyField,
 });
 
 export const PresenceQuerySchema = z.object({

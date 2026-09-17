@@ -138,14 +138,35 @@ describe("the worktree resolution's cost on the capture chain", () => {
     await h.capture.settle();
     const warmMs = Math.round(performance.now() - warmStart);
 
-    // Assert: both targets landed, and the warm dispatch is no slower than the
-    // cold one — the cache is the whole reason the git cost is once per root
+    // Assert: both targets landed, and the dispatch stayed inside the lane's
+    // own budget. THE TIMES ARE PRINTED, NOT COMPARED WITH EACH OTHER.
+    //
+    // This test asserted `warmMs <= coldMs + 50` and called the cache "the
+    // whole reason the git cost is once per root". It never guarded that.
+    // MEASURED 2026-09-17, with the cache READ disabled in
+    // connector-core/src/capture/touched-root.ts: warm went 7 ms -> 51 ms and
+    // the assertion still passed, because a broken cache makes warm resemble
+    // COLD (51 <= 57 + 50) rather than exceed it. A structural version —
+    // asserting one `knownWorktreeRoots` attempt after two touches — passed
+    // the same broken build, because the write-back merges by root either way.
+    // What the comparison did do was fail on load: ubuntu-latest reported cold
+    // 158 ms, warm 283 ms, while this file on an idle machine runs cold 51-55
+    // and warm 7-9 across eight runs, before and after the change that made
+    // this suite heavier (two worktrees, 4f4d15f against HEAD).
+    //
+    // The mechanism IS guarded, by counting resolutions rather than
+    // milliseconds: connector-core/test/touched-root.test.ts, "two touches of
+    // one new root cost exactly one identity resolution" and "a root the
+    // session already knows costs no identity resolution at all". What belongs
+    // here is this file's own subject — the dispatch cost on the ACP chain —
+    // as a printed number and a bound that holds at any load.
     console.log(
       `[acp-capture-latency] cold ${String(coldMs)} ms, warm ${String(warmMs)} ms ` +
         `(flush budget ${String(ACP_CAPTURE_FLUSH_BUDGET_MS)} ms, pending cap ${String(ACP_CAPTURE_MAX_PENDING_BYTES)} bytes)`,
     );
     expect(h.capture.counters().targets).toBe(2);
-    expect(warmMs).toBeLessThanOrEqual(coldMs + 50);
+    expect(warmMs).toBeLessThanOrEqual(ACP_CAPTURE_FLUSH_BUDGET_MS);
+    expect(coldMs).toBeLessThanOrEqual(ACP_CAPTURE_FLUSH_BUDGET_MS);
   });
 
   test("a flood of worktree edits forwards byte-identically and drops no capture line", async () => {

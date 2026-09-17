@@ -68,6 +68,7 @@ import {
   MAX_FIRED_TOOL_CALLS,
   MAX_KNOWN_WORKTREE_ROOTS,
   MAX_SEEN_TARGETS,
+  MAX_TARGETS_PER_INVOCATION,
 } from "@crosscheck/connector-core/constants.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
@@ -78,6 +79,8 @@ import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
+import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
+import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
 import type { KnownWorktreeRoot } from "@crosscheck/connector-core/capture/touched-root.ts";
 import {
   assembleBriefing,
@@ -639,11 +642,21 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       return;
     }
     const at = now();
+    // ONE block, before the records are serialized. This process is long-lived
+    // and serves many sessions, but the MCP server is a SEPARATE process, so
+    // the allocation still has to go through the state file's own lock rather
+    // than through anything in memory here.
+    const seq = await allocateSeq(
+      session.config.home,
+      session.hostSessionKey,
+      MAX_TARGETS_PER_INVOCATION,
+    );
     // On ACP the session identity IS the session cwd's identity, so the free
     // "cwd sits in a sibling worktree" candidate can never apply here and
     // every out-of-checkout path takes the bounded fs walk. The per-session
     // cache above is what keeps that once per root rather than once per edit.
     const { captured, resolution } = await captureTouchedFiles({
+      seq,
       home: session.config.home,
       repoKey: session.repoKey ?? "",
       hostSessionKey: session.hostSessionKey,
@@ -713,6 +726,8 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     if (session.hub === null || session.config === null) {
       return;
     }
+    // ONE position: exactly one fingerprint is spooled here, or none.
+    const seq = await allocateSeq(session.config.home, session.hostSessionKey, 1);
     const value = await captureFailure({
       home: session.config.home,
       repoKey: session.repoKey ?? "",
@@ -721,6 +736,7 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
       producer: producerFor(session),
       failureText,
       now: now(),
+      seq: seqAt(seq, 0),
     });
     if (value === null) {
       return;

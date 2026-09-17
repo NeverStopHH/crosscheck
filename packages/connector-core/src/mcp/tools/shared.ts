@@ -12,6 +12,11 @@ import { z } from "zod";
 import { PROTOCOL_VERSION } from "@crosscheck/schema";
 
 import { MAX_HUB_MESSAGE_CHARS, MAX_ID_CHARS } from "../../constants.ts";
+import { ALLOCATION_FAILED, AMBIGUOUS_SESSION } from "../../capture/seq.ts";
+import type { SeqAllocation } from "../../capture/seq.ts";
+import { allocateSeq } from "../../state/session-state.ts";
+import type { OwnWorkContext } from "../session.ts";
+import type { SeqField } from "@crosscheck/schema";
 import { toolFailure } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
@@ -209,6 +214,7 @@ export const envelopeFor = (
   producer: Producer,
   kind: string,
   body: unknown,
+  seq: SeqField = ALLOCATION_FAILED,
 ): Record<string, unknown> => ({
   cx: PROTOCOL_VERSION,
   id: `env_${crypto.randomUUID()}`,
@@ -221,7 +227,37 @@ export const envelopeFor = (
   },
   kind,
   body,
+  seq,
 });
+
+/**
+ * THE POSITION FOR AN MCP CALL, or the honest refusal (spec 01 §3.6, §10 D1).
+ *
+ * A NEW LOCK ACQUISITION, and an affordable one: an MCP tool runs under
+ * MCP_TIMEOUT_MS rather than a hook budget, and the allocation must precede
+ * `envelopeFor` because these tools POST DIRECTLY — there is no spool and no
+ * flush, so the record is on the wire the moment the envelope is built.
+ *
+ * AMBIGUITY SHORT-CIRCUITS THE ALLOCATION ENTIRELY. When the picker could not
+ * tell which session is calling, taking a position would move ANOTHER
+ * session's counter and file this record inside that session's order. So no
+ * lock is taken at all and the refusal travels instead.
+ *
+ * AND IT TRAVELS UNDER ITS OWN NAME. Returning `null` here would arrive on the
+ * wire as `allocation_failed` — "this machine tried and could not", whose
+ * remedy is to wait, because a busy lock clears itself. Nothing here clears:
+ * two agents are live in one worktree and the picker cannot tell them apart
+ * until one of them ends. The only caller who KNOWS which refusal this is, is
+ * this one, so it is the one that has to say.
+ */
+export const allocateToolSeq = async (
+  ctx: McpContext,
+  own: OwnWorkContext,
+  count: number,
+): Promise<SeqAllocation> =>
+  own.sessionAmbiguous
+    ? AMBIGUOUS_SESSION
+    : allocateSeq(ctx.config.home, own.hostSessionKey, count);
 
 /** The per-record outcome at one index, or undefined on a hub that omits them. */
 export const resultAt = (

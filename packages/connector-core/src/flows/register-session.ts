@@ -20,9 +20,11 @@ import {
   workContextRecord,
 } from "../capture/records.ts";
 import {
+  carriedSeqEpoch,
   claimSessionState,
   crosscheckSessionIdFor,
   publishSessionState,
+  readSessionState,
   workContextIdFor,
 } from "../state/session-state.ts";
 
@@ -128,6 +130,7 @@ interface Registration {
 const registerWithRetry = async (
   input: RegisterSessionFlowInput,
   baseId: string,
+  epoch: string,
 ): Promise<Registration | typeof REPO_MISMATCH | null> => {
   for (const suffix of RETRY_SUFFIXES) {
     const sessionId = `${baseId}${suffix}`;
@@ -138,6 +141,15 @@ const registerWithRetry = async (
       branch: input.branch,
       baseCommit: input.baseCommit,
       status: input.status,
+      // `session.started` AT POSITION ZERO (spec 01 §3.2), and this is the
+      // only call that can send it: the allocator mints `eventSeq` at 0 and
+      // hands out from 1, so nothing ever allocates this position — it is
+      // minted with the epoch, by construction. An ABSENT field here would
+      // not be a missing position but a WRONG SENTENCE: the hub reads an
+      // absent `seq` as `pre_seq_connector`, "a connector from before this
+      // field", and would say it about a current connector on the one row
+      // every session is guaranteed to have.
+      seq: { epoch, n: 0 },
     });
     if (result.ok) {
       return { sessionId, developerId: result.data.session.developerId };
@@ -157,7 +169,28 @@ export const registerSessionFlow = async (
   input: RegisterSessionFlowInput,
 ): Promise<RegisterSessionFlowResult> => {
   const baseSessionId = crosscheckSessionIdFor(input.hostSessionKey);
-  const registration = await registerWithRetry(input, baseSessionId);
+  // MINTED BEFORE THE CALL, because the call carries it. The epoch was minted
+  // on the state input below — after the POST had already gone out — so the
+  // register body had nothing to send and `session.started` landed
+  // unpositioned on every host. One epoch, used by both halves.
+  const mintedEpoch = crypto.randomUUID();
+  // ...AND ON A RE-FIRE THE MINT IS NOT WHAT THE SESSION USES. SessionStart
+  // fires again inside a live session (compact, resume, clear) and
+  // `withCarriedCapture` keeps the PREVIOUS epoch, so a body carrying this
+  // fire's fresh one names an epoch nothing else in the session will be
+  // positioned under. It costs nothing while the hub already holds the session
+  // — the re-register is answered from its conflict branch and records no
+  // second `session.started` — and it costs the WHOLE session when the first
+  // register never landed: the CREATE branch then files `session.started`
+  // under the foreign epoch and the hub answers `broken / epoch_split` for
+  // every pair in that session, permanently. Read here, before the POST,
+  // because the POST is what carries it (carriedSeqEpoch's header).
+  const seqEpoch = carriedSeqEpoch(
+    await readSessionState(input.home, input.hostSessionKey),
+    input,
+    mintedEpoch,
+  );
+  const registration = await registerWithRetry(input, baseSessionId, seqEpoch);
   if (registration === REPO_MISMATCH) {
     // First-wins (trial finding #9): a LIVE session with this id is bound to
     // another repo. NOTHING is written — a state file would re-home the
@@ -196,6 +229,26 @@ export const registerSessionFlow = async (
     // fabricate one (trial finding #16).
     workContextTitle: input.title,
     workContextStatus: input.status,
+    // THE EPOCH IS MINTED ON THE INPUT, not inside publishSessionState (spec
+    // 01 §3.4). publishSessionState's busy-lock FALLBACK writes this object
+    // verbatim, with no carry at all — "the counters lose rather than the
+    // file" — so an epoch minted inside the locked branch would be absent
+    // from exactly the write that most needs one: a session whose state file
+    // was re-created with seqEpoch null allocates no positions for the rest
+    // of its life, silently. Minted here, that fallback writes a FRESH epoch
+    // beside eventSeq 0, which leaves the two halves NOT COMPARABLE rather
+    // than sharing positions. On the ordinary path withCarriedCapture
+    // restores the previous pair, so a re-fire that takes the lock keeps one
+    // epoch for the whole session.
+    //
+    // THE FRESH MINT, NEVER THE CARRIED EPOCH ON THE WIRE ABOVE. The fallback
+    // writes eventSeq 0 with whatever stands here, and the carried epoch
+    // beside a counter reset to 0 RE-ISSUES positions this session has already
+    // handed out — the one thing the order may never do (withCarriedCapture's
+    // header: the pair moves together or not at all). The fallback keeps
+    // costing comparability, and never correctness.
+    seqEpoch: mintedEpoch,
+    eventSeq: 0,
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
   };
   if (input.recovery === true) {

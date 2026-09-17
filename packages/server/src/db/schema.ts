@@ -29,6 +29,10 @@ import {
   PIN_FILE_STATUSES,
   PROVENANCES,
   QUESTION_STATUSES,
+  EVENT_REF_KINDS,
+  SEQ_KINDS,
+  SEQ_REASONS,
+  SESSION_EVENT_KINDS,
   SESSION_STATUSES,
   STORED_TARGET_SOURCES,
   TEAM_PIN_POLICIES,
@@ -672,6 +676,76 @@ export const pinFiles = pgTable(
  * preferences a person holds (those live on `developers` and
  * `developer_mutes`).
  */
+/**
+ * THE PER-SESSION CAUSAL ORDER (spec 01 §3.5) — append-only and CONTENT-FREE.
+ *
+ * `work_contexts.intent` is overwritten in place, so an amendment has no row
+ * of its own to carry a position; that is what makes a table necessary rather
+ * than three new columns on the rows this projects.
+ *
+ * NO BODY, NO PROSE, NO PATH. `ref_id` points at the row that already holds
+ * the content, exactly as `hint_deliveries` carries refs and never rendered
+ * text. A file target's referent is a HASH of (context, kind, value), because
+ * that row's only identity contains the author-written file path; commit
+ * evidence refs the SESSION that collected it, because its own key contains an
+ * author's email, and a hash of that would be a content-derived pseudonymous
+ * identifier of a person. Everything a human ever sees from this table is an
+ * integer, a uuid, or a value from an enum in our own source — so it adds no
+ * untrusted slot to any render surface.
+ *
+ * `observed_at` is the HUB's clock and is for retention and display ONLY.
+ * Nothing may order two events by it: that is the wall-clock answer this whole
+ * table exists to replace, and a mutation anchor pins the distinction.
+ */
+export const sessionEvents = pgTable(
+  "session_events",
+  {
+    /** se_ + sha256(session, kind, epoch, n, ref_kind, ref_id) — deterministic. */
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => agentSessions.id),
+    /** NULL = not comparable. The pair is null together or set together. */
+    seqEpoch: text("seq_epoch"),
+    seqN: integer("seq_n"),
+    /**
+     * THE POSITION THIS EVENT IS KNOWN TO FOLLOW — the open end of an
+     * interval whose closed end is `seq_n`. A hook's position is taken once
+     * its tool has RETURNED, so on a lane like that `seq_n` alone is an upper
+     * bound and anything that allocated inside the window holds a lower
+     * position than work that already happened. NULL means the emitter sent
+     * no bracket, and an unbracketed lane is stored `observed`.
+     */
+    seqAfter: integer("seq_after"),
+    kind: text("kind", { enum: SESSION_EVENT_KINDS }).notNull(),
+    seqKind: text("seq_kind", { enum: SEQ_KINDS }).notNull(),
+    /** Why there is no position, or `sequenced` when there is one. */
+    seqReason: text("seq_reason", { enum: SEQ_REASONS }).notNull(),
+    refKind: text("ref_kind", { enum: EVENT_REF_KINDS }).notNull(),
+    refId: text("ref_id").notNull(),
+    observedAt: timestamptz("observed_at").notNull(),
+  },
+  (table) => [
+    // A POSITION IS TAKEN ONCE. A second event claiming a position this
+    // session already handed out is a restarted counter, a second home, or a
+    // broken connector — and it must be caught here rather than compared
+    // later, because two events at one position answer "which came first"
+    // with a coin flip. PARTIAL, because unsequenced rows are legitimately
+    // many per session and must not collide with each other.
+    uniqueIndex("session_events_position_idx")
+      .on(table.sessionId, table.seqEpoch, table.seqN)
+      .where(sql`${table.seqEpoch} IS NOT NULL`),
+    index("session_events_session_kind_idx").on(table.sessionId, table.kind),
+    // RETENTION READS THIS AND NOTHING ELSE — once there is retention again.
+    // The age sweep is withdrawn (services/sessions.ts says why) and nothing
+    // reads this index today. It stays because spec 01a's referential sweep
+    // still ranges by AGE first — a session is terminal, so nothing ever
+    // revisits its key — and without this index that sweep would scan every
+    // event on the hub every pass.
+    index("session_events_observed_at_idx").on(table.observedAt),
+  ],
+);
+
 export const teamSettings = pgTable("team_settings", {
   repo: text("repo").primaryKey(),
   pinPolicy: text("pin_policy", { enum: TEAM_PIN_POLICIES }).notNull(),

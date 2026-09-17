@@ -77,13 +77,26 @@
  * (bun 1.3.13, the `ps`) against 0.002 ms on Linux (oven/bun:1, the /proc
  * read), where `kill(pid, 0)` costs 0.0009 ms and 0.0005 ms.
  *
+ * A HOLDER THAT EXITS INSIDE THE SECTION PUTS ITS OWN CLAIM BACK, which is the
+ * half none of the rules above can reach. `bin/crosscheck.ts` ends a hook with
+ * `process.exit` the moment `withBudget` resolves, and that race resolves on a
+ * timer whatever the work promise is doing — so a hook inside this lock when
+ * its budget expires is killed there. The steal rules cannot shorten what that
+ * costs the next arrival: the claim is fresh, and the liveness test may only
+ * VETO a steal. MEASURED: eleven refused hook-grade acquisitions and the first
+ * success 5013 ms later. The release below runs the SAME token check
+ * `releaseLock` does, so nothing is deleted that a successor now holds, and no
+ * steal rule moves — the process that made the claim is simply the one that
+ * withdraws it. A SIGKILL or a power loss runs no handler and still leaves an
+ * orphan for the age gate.
+ *
  * What remains unretirable is a crashed holder's pid REUSED by an unrelated
  * long-lived process: that one is alive and is not a zombie, so nothing here can
  * tell it from the holder it replaced. Flush and reap are then deferred for as
  * long as the impostor lives, which is a silent stall, so `doctor` reports it:
  * `readLockHolder` below is what that check reads.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { open, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -382,6 +395,70 @@ const releaseLock = async (
   await rm(path, { force: true });
 };
 
+/**
+ * THE CLAIMS THIS PROCESS IS HOLDING RIGHT NOW, so an exit can put them back.
+ *
+ * WHY AN ORPHANED CLAIM IS EXPENSIVE HERE. `stealableToken` above will not
+ * take a claim younger than SPOOL_LOCK_STALE_MS, and the liveness test may
+ * only VETO a steal — so knowing the holder is dead buys a later arrival
+ * nothing, and it waits the full five seconds. Widening that rule is not the
+ * remedy: a container sharing CROSSCHECK_HOME with its host is a place where
+ * a pid means nothing, and a steal authorised by "kill(pid, 0) says nobody is
+ * home" would hand a LIVE holder's lock away there. The age gate is what
+ * bounds that today.
+ *
+ * SO THE HOLDER PUTS ITS OWN LOCK BACK INSTEAD. This costs no rule and no
+ * probe: it is exactly the `finally` below, run on the way out of a process
+ * that will never reach it.
+ *
+ * WHICH EXITS THIS COVERS, AND WHICH IT DOES NOT. `process.exit` is the one
+ * this branch made common: `bin/crosscheck.ts` calls it as soon as
+ * `withBudget` resolves, and `withBudget` resolves on a `setTimeout` whatever
+ * the work promise is doing — so a hook inside this section when its budget
+ * expires is killed there. Every edit-tool PreToolUse and PostToolUse now
+ * takes the session-state lock, where before neither did on its common path,
+ * and MEASURED before this: one such death refused the next eleven hook-grade
+ * acquisitions and the first success landed 5013 ms later. A SIGKILL, an OOM
+ * kill or a power loss runs no handler and still leaves an orphan — that
+ * residual is the age gate's, unchanged.
+ *
+ * NO SIGNAL HANDLERS. Installing one for SIGINT or SIGTERM would suppress the
+ * default termination for the whole host process — an MCP server, an ACP
+ * proxy — which is a behaviour change this module has no standing to make.
+ */
+const heldLocks = new Map<string, string>();
+
+/**
+ * Removes every claim this process still holds, and ONLY those: the token on
+ * disk must still be the one we wrote, exactly as `releaseLock` requires.
+ * Synchronous, because an `exit` handler is the last thing that runs and no
+ * promise after it is ever settled.
+ */
+const releaseHeldLocks = (): void => {
+  for (const [path, token] of heldLocks) {
+    try {
+      if (readFileSync(path, "utf8") === token) {
+        unlinkSync(path);
+      }
+    } catch {
+      // Already gone, or unreadable. A lock we cannot read is never ours to
+      // delete — the same rule the steal path states.
+    }
+  }
+  heldLocks.clear();
+};
+
+/** ONE listener for the life of the process, however many locks it takes. */
+let exitReleaseInstalled = false;
+
+const rememberHeldLock = (path: string, token: string): void => {
+  if (!exitReleaseInstalled) {
+    exitReleaseInstalled = true;
+    process.on("exit", releaseHeldLocks);
+  }
+  heldLocks.set(path, token);
+};
+
 export const withLock = async <T>(
   path: string,
   fallback: T,
@@ -392,9 +469,11 @@ export const withLock = async <T>(
   if (token === null) {
     return fallback;
   }
+  rememberHeldLock(path, token);
   try {
     return await action();
   } finally {
     await releaseLock(path, token);
+    heldLocks.delete(path);
   }
 };

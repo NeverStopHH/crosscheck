@@ -113,6 +113,32 @@ describe("bootstrap.sql DDL sync", () => {
     expect(await oidOfCheck()).not.toBe(before);
   });
 
+  test("session_events carries the PARTIAL unique index, not a plain one", async () => {
+    // Arrange: the harness ran bootstrap.sql in full (createDb), so this asks
+    // the database rather than the file — the drizzle schema and this SQL are
+    // two DDL authorities, and a hub whose index is plain instead of partial
+    // accepts a second event at a position the session already handed out.
+    // PARTIAL matters in the other direction too: unsequenced rows are
+    // legitimately many per session, and a total unique index would reject
+    // every one after the first.
+    const harness = await createTestHarness();
+
+    // Act
+    const result = (await harness.db.execute(
+      sql`SELECT indexdef FROM pg_indexes WHERE indexname = 'session_events_position_idx'`,
+    )) as unknown as {
+      readonly rows: readonly { readonly indexdef: string }[];
+    };
+
+    // Assert
+    const definition = result.rows[0]?.indexdef ?? "";
+    expect(definition).toContain("CREATE UNIQUE INDEX");
+    expect(definition).toContain("session_id");
+    expect(definition).toContain("seq_epoch");
+    expect(definition).toContain("seq_n");
+    expect(definition).toContain("WHERE (seq_epoch IS NOT NULL)");
+  });
+
   test("work_context_targets.created_at is added for the #19 pointer age", async () => {
     // Arrange: the drizzle column is nullable, so bootstrap must add it with
     // the same ADD COLUMN IF NOT EXISTS evolution idiom or a fresh DB and an

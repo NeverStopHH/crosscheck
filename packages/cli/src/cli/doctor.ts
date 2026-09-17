@@ -2,6 +2,7 @@ import { readdir, readlink, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { z } from "zod";
+import type { SessionEventRetentionMode } from "@crosscheck/schema";
 
 import {
   CLAUDE_SETTINGS_DIR,
@@ -98,6 +99,7 @@ import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency
 import {
   getAbsences,
   getGhostChecks,
+  getSessionOrderReport,
   getHintStats,
   getOpenSessions,
   getPins,
@@ -121,6 +123,12 @@ import {
   gitLaneWarning,
   summarizeGitLaneCost,
 } from "@crosscheck/connector-core/state/git-lane-cost.ts";
+import {
+  formatSeqCost,
+  seqWarning,
+  summarizeSeqCost,
+} from "@crosscheck/connector-core/state/seq-cost.ts";
+import type { BrokenOrder } from "@crosscheck/connector-core/state/seq-cost.ts";
 import {
   orphanSentence,
   orphanedPins,
@@ -1667,6 +1675,86 @@ const checkGitLane = (states: readonly SessionState[]): Check => {
 };
 
 /**
+ * THE CAUSAL ORDER, whose failure mode is also SILENCE.
+ *
+ * A session that cannot position its records keeps working perfectly in every
+ * other respect: the claims land, the intents land, the targets land. What
+ * quietly stops being answerable is *whether the reason predated the change* —
+ * and nothing else in this product would ever mention it. Two conditions
+ * produce that silence and both are printed:
+ *
+ *   - a live session with NO epoch, whose state file predates the sequence;
+ *   - a worktree with TWO live sessions, where an MCP tool cannot tell which
+ *     one is calling it and therefore refuses to stamp a position rather than
+ *     guessing at one (spec 01 §10 D1).
+ *
+ * AND A THIRD THIS SIDE CANNOT SEE AT ALL. `epoch_conflict` and `epoch_split`
+ * are computed from rows the HUB holds — two events that claimed one position,
+ * or one session that minted a second counter — and no local state file knows
+ * about either. That one costs the whole session rather than a record, so it
+ * is asked for and printed first. The hub's answer rides in as data: a hub too
+ * old for the route says nothing, and nothing is NOT "none broken".
+ *
+ * NEVER PASS-ONLY, for the finding-#14 reason: a machine in any of the three
+ * states reads exactly like a healthy one everywhere else.
+ */
+const checkEventSeq = (
+  states: readonly SessionState[],
+  broken: readonly BrokenOrder[] | null,
+): Check => {
+  const cost = summarizeSeqCost(states);
+  const line = formatSeqCost(cost, broken);
+  const warning = seqWarning(cost, broken);
+  return warning === null
+    ? check("PASS", "event sequence", line)
+    : check("WARN", "event sequence", `${line} — ${warning}`);
+};
+
+/**
+ * THE HUB'S RETENTION FOR ITS CAUSAL-ORDER TABLE, as the hub declares it
+ * (CSK-14). `off` is a DOCUMENTED REFUSAL rather than a defect: the age-based
+ * sweep was withdrawn before its first deploy (Nick's D-D, 2026-09-17) and the
+ * table grows without bound on purpose, so this is a PASS that says so — the
+ * same rule as every other deliberate choice in this report. An operator who
+ * never reads it discovers the growth as a surprise; one who does knows it
+ * was decided, and what will end it.
+ *
+ * SO THE SENTENCE HAS TO SAY WHAT IS KEPT. It read "off — the age-based sweep
+ * is withdrawn; spec 01a's referential predicate replaces it", and that
+ * sentence never said the rows are kept, never said nothing removes them, and
+ * described a mechanism that exists nowhere in this tree in the PRESENT tense:
+ * `pruneSessionEvents` is defined and called from nowhere, and no referential
+ * sweep is implemented. A reader took "replaces it" as "something else is
+ * handling retention" — the opposite of the fact, and exactly the surprise the
+ * paragraph above claims this line prevents, on the one axis where being wrong
+ * is expensive: a per-developer, per-second activity trail that nothing
+ * deletes. Measured end to end: one 500-edit session leaves 501 rows and
+ * 327,680 bytes of relation, and `reapStaleSessions` over rows backdated 900
+ * days removes none of them.
+ *
+ * THE SENTENCE IS THIS CONNECTOR'S; the hub sends only the mode. A hub that
+ * sent none is "not measured", exactly as for the order failures beside it,
+ * and one that sent a mode this connector cannot name says so rather than
+ * guessing what that mode keeps.
+ */
+const RETENTION_SENTENCES: Readonly<Record<SessionEventRetentionMode, string>> = {
+  off: "off — nothing deletes session events: every row is kept and the table grows without bound, by decision. The age-based sweep was withdrawn; spec 01a's referential predicate is meant to replace it and is not running here",
+};
+
+const checkSessionEventRetention = (
+  mode: SessionEventRetentionMode | "unknown" | null,
+): Check =>
+  check(
+    "PASS",
+    "session-event retention",
+    mode === null
+      ? "not measured"
+      : mode === "unknown"
+        ? "the hub declares a retention mode this crosscheck cannot name — upgrade the CLI to read what it keeps"
+        : RETENTION_SENTENCES[mode],
+  );
+
+/**
  * The regression guard's two checks (Stage 1, part C). Both exist because
  * their failure mode is SILENCE, which is the only failure a post-hoc guard
  * can have: nothing crashes, nothing is slow, and the answer is simply wrong
@@ -2738,6 +2826,18 @@ export const runDoctor = async (
   // it: an older hub 404s and the count degrades to null (§R6).
   const openSessions = await getOpenSessions(hubCtx);
   const openOnHub = openSessions.ok ? openSessions.data.length : null;
+  // The two order failures only the hub can see, and the hub's retention for
+  // that table — ONE read. NULL when it could not be asked — an older hub 404s
+  // the route — because "not measured" and "none broken" are different
+  // answers and the line must not print the second when it got the first.
+  const orderReport = await getSessionOrderReport(hubCtx);
+  const brokenOrders = orderReport.ok
+    ? orderReport.data.broken.map((order) => ({
+        sessionId: order.sessionId,
+        reason: order.reason,
+      }))
+    : null;
+  const eventRetention = orderReport.ok ? orderReport.data.retention : null;
   // Whether the two PROJECT files this repo's advice keeps recommending can
   // actually reach a teammate (trial finding M11). Resolved once, passed as
   // data, so `globalInstallChecks` stays pure and testable.
@@ -2832,6 +2932,8 @@ export const runDoctor = async (
     checkIntentCost(liveStates.states),
     checkGhostCost(liveStates.states),
     checkGitLane(liveStates.states),
+    checkEventSeq(liveStates.states, brokenOrders),
+    checkSessionEventRetention(eventRetention),
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),

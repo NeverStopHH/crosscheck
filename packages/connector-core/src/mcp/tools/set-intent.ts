@@ -48,7 +48,15 @@ import {
   withRecordedIntent,
 } from "../../state/session-state.ts";
 import { NO_SESSION, contractFailure, requireOwnContext } from "./publish-claim.ts";
-import { envelopeFor, hubFailure, issuesOf, parseArgs, resultAt } from "./shared.ts";
+import {
+  allocateToolSeq,
+  envelopeFor,
+  hubFailure,
+  issuesOf,
+  parseArgs,
+  resultAt,
+} from "./shared.ts";
+import { seqAt } from "../../capture/seq.ts";
 
 /** A declared intent is the session's own statement — full confidence, by definition. */
 const DECLARED_CONFIDENCE = 1;
@@ -197,8 +205,14 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
     createdAt: own.startedAt,
   };
   const producer = { sessionId: own.crosscheckSessionId, developerId: own.developerId };
+  // BEFORE the envelope, never after the post: this tool writes state at the
+  // end of the call, and spec 01 §3.6's "fold it into the updateSessionState it
+  // already calls" would stamp a position on a record the hub has already
+  // stored. Under an ambiguous session no lock is taken at all and the record
+  // carries `allocation_failed` — the intent lands, its POSITION does not.
+  const seq = await allocateToolSeq(ctx, own, 1);
   const posted = await postRecords(ctx.hub, [
-    envelopeFor(ctx, producer, "work_context", body),
+    envelopeFor(ctx, producer, "work_context", body, seqAt(seq, 0)),
   ]);
   if (!posted.ok) {
     return hubFailure(ctx, posted);
