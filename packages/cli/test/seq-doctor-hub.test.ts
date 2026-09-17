@@ -249,8 +249,21 @@ describe("doctor prints the order failures only the hub can see", () => {
     const output = await doctorOutput(account, home, repo);
 
     // Assert: PASS — a decision, not a defect — and the whole sentence.
+    //
+    // IT HAS TO SAY WHAT IS KEPT. The sentence used to read "off — the
+    // age-based sweep is withdrawn; spec 01a's referential predicate replaces
+    // it", which never said the rows are kept, never said nothing deletes
+    // them, and put a mechanism that does not exist in this tree
+    // (`pruneSessionEvents` is called from nowhere and no referential sweep is
+    // implemented) in the PRESENT tense. A reader took "replaces it" as "a
+    // different mechanism is handling retention", which is the opposite of the
+    // fact — the surprise this line's own header claims it prevents, on the
+    // one axis where being wrong is expensive: a per-developer, per-second
+    // activity trail nothing removes. Measured: 501 rows from one 500-edit
+    // session, 327,680 bytes of relation, and `reapStaleSessions` over rows
+    // backdated 900 days removed none of them.
     expect(output).toContain(
-      "PASS  session-event retention  off — the age-based sweep is withdrawn; spec 01a's referential predicate replaces it",
+      "PASS  session-event retention  off — nothing deletes session events: every row is kept and the table grows without bound, by decision. The age-based sweep was withdrawn; spec 01a's referential predicate is meant to replace it and is not running here",
     );
   });
 
@@ -304,7 +317,7 @@ describe("doctor prints the order failures only the hub can see", () => {
 
         // Assert
         expect(result.stdout).toContain(expected);
-        expect(result.stdout).not.toContain("the age-based sweep is withdrawn");
+        expect(result.stdout).not.toContain("nothing deletes session events");
         expect(result.stdout).not.toContain("referential-2099");
       } finally {
         fake.stop(true);

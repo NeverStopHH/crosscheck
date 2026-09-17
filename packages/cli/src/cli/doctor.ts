@@ -1719,13 +1719,26 @@ const checkEventSeq = (
  * never reads it discovers the growth as a surprise; one who does knows it
  * was decided, and what will end it.
  *
+ * SO THE SENTENCE HAS TO SAY WHAT IS KEPT. It read "off — the age-based sweep
+ * is withdrawn; spec 01a's referential predicate replaces it", and that
+ * sentence never said the rows are kept, never said nothing removes them, and
+ * described a mechanism that exists nowhere in this tree in the PRESENT tense:
+ * `pruneSessionEvents` is defined and called from nowhere, and no referential
+ * sweep is implemented. A reader took "replaces it" as "something else is
+ * handling retention" — the opposite of the fact, and exactly the surprise the
+ * paragraph above claims this line prevents, on the one axis where being wrong
+ * is expensive: a per-developer, per-second activity trail that nothing
+ * deletes. Measured end to end: one 500-edit session leaves 501 rows and
+ * 327,680 bytes of relation, and `reapStaleSessions` over rows backdated 900
+ * days removes none of them.
+ *
  * THE SENTENCE IS THIS CONNECTOR'S; the hub sends only the mode. A hub that
  * sent none is "not measured", exactly as for the order failures beside it,
  * and one that sent a mode this connector cannot name says so rather than
  * guessing what that mode keeps.
  */
 const RETENTION_SENTENCES: Readonly<Record<SessionEventRetentionMode, string>> = {
-  off: "off — the age-based sweep is withdrawn; spec 01a's referential predicate replaces it",
+  off: "off — nothing deletes session events: every row is kept and the table grows without bound, by decision. The age-based sweep was withdrawn; spec 01a's referential predicate is meant to replace it and is not running here",
 };
 
 const checkSessionEventRetention = (

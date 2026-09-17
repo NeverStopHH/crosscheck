@@ -5136,6 +5136,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "predicate this CLI cannot name is reported as retiring none",
   },
   {
+    // The sentence this line USED to print. It named a replacement in the
+    // present tense for a sweep that exists nowhere in this tree —
+    // `pruneSessionEvents` is defined and called from nowhere — and it never
+    // said the rows are kept at all.
+    label: "an unbounded table is reported as somebody else's problem",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  off: \"off — nothing deletes session events: every row is kept and the table grows without bound, by decision. The age-based sweep was withdrawn; spec 01a's referential predicate is meant to replace it and is not running here\",",
+    to: "  off: \"off — the age-based sweep is withdrawn; spec 01a's referential predicate replaces it\",",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "FALSE ASSURANCE: an operator reads a PASS naming a replacement and " +
+      "ships, and the hub then holds a per-developer, per-second activity " +
+      "trail nothing deletes — a decision the line said somebody else had made",
+  },
+  {
     // ...and NOT MEASURED is not a decision.
     label: "an unmeasured retention is printed as a decision",
     file: `${CLI}/src/cli/doctor.ts`,
