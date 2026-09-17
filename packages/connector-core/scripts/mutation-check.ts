@@ -5606,6 +5606,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "one connector that has it",
   },
   {
+    // Found by review: the sentence said the engine positions an edit "never
+    // from the pending row that announces it", and the engine does exactly
+    // that — test/announce-position.test.ts pins what it really does.
+    label: "the ACP manifest claims a position the engine never takes",
+    file: `${ACP}/src/capabilities.ts`,
+    from:
+      "and the engine positions an edit on the first wire row that names its file — usually the tool_call row that announces it, while the tool is still pending — so that position can come BEFORE the edit and bounds it in neither direction",
+    to: "and the engine positions an edit only from the tool_call UPDATE that reports it, never from the pending row that announces it, so an edit's position is an upper bound",
+    test: `${ACP}/test/announce-position.test.ts`,
+    because:
+      "FALSE ASSURANCE: doctor tells an ACP user their edit positions are " +
+      "upper bounds, the one reading under which a one-sided happens-before " +
+      "answer would be sound — about positions taken before the edit existed",
+  },
+  {
     // A refusal may only send a reader to a surface that can answer it.
     // Doctor's ACP gate reads the log directory for file NAMES and never a
     // byte of their content, so it cannot name a skip reason and never could.
@@ -5811,6 +5826,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
+ * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1

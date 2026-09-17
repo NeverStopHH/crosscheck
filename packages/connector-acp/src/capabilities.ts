@@ -63,7 +63,7 @@ export const ACP_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       name: "event_seq",
       rung: "reduced",
       sentence:
-        "the proxy positions everything it can see off the parse copy, and three sources are missing: no ACP host runs the Stop-time git lane, so a codemod's edits produce no file.modified to order; intent and claim events need the crosscheck MCP server, which reaches an ACP session only in --inject mode and only when the client already sent an mcpServers array; and the engine positions an edit only from the tool_call UPDATE that reports it, never from the pending row that announces it, so an edit's position is an upper bound — the hub stores those `observed` and refuses a happens-before question against them rather than answering one from a race",
+        "the proxy positions everything it can see off the parse copy, and three sources are missing: no ACP host runs the Stop-time git lane, so a codemod's edits produce no file.modified to order; intent and claim events need the crosscheck MCP server, which reaches an ACP session only in --inject mode and only when the client already sent an mcpServers array; and the engine positions an edit on the first wire row that names its file — usually the tool_call row that announces it, while the tool is still pending — so that position can come BEFORE the edit and bounds it in neither direction: the hub stores those `observed` and refuses every happens-before question against them, which is the only thing standing between that position and a wrong answer",
     },
   ],
   refusals: [

@@ -310,10 +310,13 @@ export const causalPositionOf = (event: OrderedEvent): CausalPosition =>
  *   5. both positions are EMITTED. An `observed` position is an upper bound —
  *      it proves the fact was recorded no later than that point, never that it
  *      happened after the previous event — so a happens-before question
- *      against one is refused. The refusal is deliberately symmetric: the
- *      asymmetric rule (an observed A before an emitted B is sound in one
- *      direction) is real and is not worth a second thing to reason about at
- *      a call site that must never answer wrongly.
+ *      against one is refused. The refusal is deliberately symmetric, and it
+ *      has to be: the asymmetric rule (an observed A before an emitted B is
+ *      sound in one direction) holds only where `observed` really is an upper
+ *      bound, and one lane's is not. The ACP engine positions an edit on the
+ *      wire row that ANNOUNCES it, before the edit exists (connector-acp
+ *      capabilities.ts, test/announce-position.test.ts), so an observed ACP
+ *      edit can sit below an intent written before it happened.
  *   6. their windows DO NOT OVERLAP. A position taken after the work it
  *      records — every hook lane — is the closed end of a window, and two
  *      events whose windows overlap are concurrent. Concurrent is not an
