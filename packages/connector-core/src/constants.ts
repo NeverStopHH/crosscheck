@@ -688,6 +688,20 @@ export const CLAIM_REVALIDATION_MAX_COMMITS = 8;
 export const CLAIM_REVALIDATION_MAX_GIT_CALLS = 24;
 
 /**
+ * How many of a repo's work contexts `crosscheck revalidate` reads in one run
+ * (1.0 spec 02 §10 D5).
+ *
+ * NEWEST FIRST, AND THE CUT IS PRINTED. The command walks trees the hub lists
+ * for this repo and spends the per-tree git bound on each, so the walk itself
+ * needs a ceiling or a five-year archive turns one typed command into an
+ * afternoon. 25 is a working set rather than an archive, and the run SAYS
+ * when it hit the bound rather than reporting the page as the whole repo —
+ * the shape `SESSION_STATE_REAP_MAX_PER_RUN` already uses, where draining
+ * over several runs beats making one of them pay for everything.
+ */
+export const CLAIM_REVALIDATE_MAX_CONTEXTS = 25;
+
+/**
  * The validity clause on a PULLED surface — "no longer current: recorded at
  * abc1234; 3 commits have touched these files since — def5678, 9a1b2c3".
  *

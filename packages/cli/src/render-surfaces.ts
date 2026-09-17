@@ -18,6 +18,7 @@ import type {
 import { renderPinList } from "./cli/pin-render.ts";
 import { pinStatusLines } from "./cli/pin-observability.ts";
 import { renderSuspect } from "./cli/suspect-render.ts";
+import { hubFailureLine } from "./cli/revalidate.ts";
 
 const NOW = new Date("2026-08-25T12:00:00.000Z");
 const ISO = "2026-08-25T11:00:00.000Z";
@@ -193,6 +194,24 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     delivery: "pulled",
     module: "src/cli/status.ts",
     note: "formatAbsenceLine + formatAge from the core render layer; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment). NO QUOTED_DATA_NOTICE, deliberately: the notice tells a MODEL that « » is data rather than instruction, and this command's stdout reaches a human terminal only — no hook and no MCP tool reads it (VERIFY below). The frame, the sanitizing and the bounds still apply, because they protect the reader's terminal rather than a context window",
+  },
+  {
+    kind: "corpus",
+    name: "cli-claim-revalidate",
+    delivery: "pulled",
+    module: "src/cli/revalidate.ts",
+    // BARE, for cli-pin-observability's reason: this command's stdout is
+    // counts, validity ENUM WORDS and one hub-chosen failure string, and
+    // none of them is another person's prose to frame. `crosscheck
+    // revalidate` prints no claim id, no claim body, no path, no teammate
+    // and not even the repo — which claims went stale, and the commits that
+    // did it, stay on the diagnosis surface where a reader pulled for them.
+    // So the corpus has exactly ONE slot to attack, and this adapter plants
+    // in it: the hub's error message, bounded by MAX_HUB_MESSAGE_CHARS, the
+    // constant written for precisely this ("a string THE HUB chose, as a
+    // tool prints it back").
+    framing: "bare",
+    render: (payload) => hubFailureLine(payload),
   },
 ];
 
