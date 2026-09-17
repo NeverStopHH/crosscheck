@@ -84,6 +84,11 @@ const stateOf = (overrides: Partial<SessionState>): SessionState =>
     hubUrl: HUB,
     seqEpoch: null,
     eventSeq: 0,
+    // The schema defaults this to 0 for every state a reader ever sees; the
+    // cast below is what lets a fixture omit it, so the default is restated
+    // here rather than defended against in `summarizeSeqCost`, where a `?? 0`
+    // would hide a field that really had gone missing.
+    toolWindowEvictions: 0,
     ...overrides,
   }) as SessionState;
 
@@ -187,6 +192,45 @@ describe("the ambiguity is countable and printed", () => {
     // Assert
     expect(seqWarning(cost)).toBeNull();
     expect(formatSeqCost(cost)).toContain("7");
+  });
+
+  test("a bracket the window cap dropped is counted and printed", () => {
+    // Arrange: MAX_TOOL_WINDOWS is a CHOSEN number, not a measured one — no
+    // hook payload says how many tool calls the host put in a batch. An
+    // eviction costs that tool its bracket and nothing else (its position
+    // stays the upper bound it was, and the hub refuses rather than answers),
+    // so it is not a WARN and has no remedy a reader could act on. It is
+    // printed because a real install reaching the ceiling is the ONLY thing
+    // that can say the number is too small, and a missing bracket on its own
+    // is indistinguishable from a tool that never opened a window.
+    const cost = summarizeSeqCost([
+      stateOf({ hostSessionKey: "a", seqEpoch: EPOCH, eventSeq: 9, toolWindowEvictions: 2 }),
+      stateOf({
+        hostSessionKey: "b",
+        repoRoot: OTHER_ROOT,
+        seqEpoch: EPOCH,
+        eventSeq: 4,
+        toolWindowEvictions: 1,
+      }),
+    ]);
+
+    // Assert
+    expect(cost.windowEvictions).toBe(3);
+    expect(formatSeqCost(cost)).toContain("3 bracket(s) dropped");
+    expect(seqWarning(cost)).toBeNull();
+  });
+
+  test("a machine that never hit the window cap prints no eviction count", () => {
+    // Arrange: ABSENT IS NOT ZERO everywhere else in this line, and zero
+    // evictions is the ordinary machine — printing "0 dropped" would be noise
+    // on every healthy install forever.
+    const cost = summarizeSeqCost([
+      stateOf({ hostSessionKey: "a", seqEpoch: EPOCH, eventSeq: 7 }),
+    ]);
+
+    // Assert
+    expect(cost.windowEvictions).toBe(0);
+    expect(formatSeqCost(cost)).not.toContain("dropped");
   });
 
   test("no live sessions says so rather than printing zeros", () => {

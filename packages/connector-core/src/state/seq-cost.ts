@@ -46,6 +46,22 @@ export interface SeqCost {
    * without a position.
    */
   readonly ambiguousRoots: number;
+  /**
+   * TOOL WINDOWS THE CAP DROPPED, summed across live sessions. Each one is a
+   * running tool that lost the floor its own PreToolUse paid for, so its edit
+   * reaches the hub as the upper bound it always was and every happens-before
+   * question against it is refused.
+   *
+   * IT IS NOT A WARNING and it has no remedy a reader could act on:
+   * MAX_TOOL_WINDOWS is a limit of this build, the eviction costs only
+   * precision, and this tree's rule for a platform limit nobody can act on is
+   * that it stays PASS and is stated. It is COUNTED because the cap is a
+   * CHOSEN number — nothing in a hook payload says how many tool calls the
+   * host put in one batch — and a real install reaching the ceiling is the
+   * only evidence that can say the number is too small. A missing bracket on
+   * its own cannot say it: it looks identical to a tool that opened no window.
+   */
+  readonly windowEvictions: number;
 }
 
 const NO_COST: SeqCost = {
@@ -54,6 +70,7 @@ const NO_COST: SeqCost = {
   unsequenced: 0,
   allocated: 0,
   ambiguousRoots: 0,
+  windowEvictions: 0,
 };
 
 /**
@@ -80,6 +97,7 @@ export const summarizeSeqCost = (states: readonly SessionState[]): SeqCost => ({
       sequenced: total.sequenced + (state.seqEpoch === null ? 0 : 1),
       unsequenced: total.unsequenced + (state.seqEpoch === null ? 1 : 0),
       allocated: total.allocated + state.eventSeq,
+      windowEvictions: total.windowEvictions + state.toolWindowEvictions,
     }),
     NO_COST,
   ),
@@ -166,6 +184,14 @@ export const formatSeqCost = (
       : ` · ${String(cost.ambiguousRoots)} worktree${
           cost.ambiguousRoots === 1 ? "" : "s"
         } with two sessions (MCP positions refused there)`;
+  // Silent at zero, like the two above it: an eviction is rare by
+  // construction, and "0 bracket(s) dropped" on every healthy machine forever
+  // is the noise this line is built to avoid. Above zero it names what was
+  // lost — brackets, not records — because the records landed.
+  const evicted =
+    cost.windowEvictions === 0
+      ? ""
+      : ` · ${String(cost.windowEvictions)} bracket(s) dropped at the tool-window cap (those edits travel as upper bounds)`;
   // ABSENT IS NOT ZERO. A hub too old for the route, or one that did not
   // answer, says nothing — and printing "0 broken" there would be an assertion
   // nobody made. The line stays silent about what it could not ask.
@@ -175,7 +201,7 @@ export const formatSeqCost = (
       : ` · ${plural(broken.length, "session")} on the hub cannot be ordered (${reasonsOf(broken)})`;
   return (
     `${String(cost.allocated)} position(s) allocated · ` +
-    `${String(cost.unsequenced)} with no position at all ${sessions}${ambiguous}${hub}` +
+    `${String(cost.unsequenced)} with no position at all ${sessions}${ambiguous}${evicted}${hub}` +
     " — order holds inside one session only: two sessions, two machines and a" +
     " CI run are not comparable by construction"
   );
