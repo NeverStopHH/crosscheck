@@ -1,4 +1,4 @@
-# 01a — The causal skeleton: retention by relevance, the attestation record, and declared provider guarantees
+# 01a — The causal skeleton: retention by root reachability, the attestation record, and declared provider guarantees
 
 **Tier 1, as an amendment to 01** — not a new component. **Owns no acceptance test.** It makes AT-4 *durable*: 01 decides
 whether two events may be compared, 06 supplies what is compared, and this spec decides how long that answer survives.
@@ -50,7 +50,7 @@ table and all three #53 indexes; the script is reproduced in this spec's pull re
 session, 232 KiB for a 500-row one. The rows-per-session figure is **not** measured: the pilot hub runs 0.9.0 and has no
 `session_events`, which is 07's to measure. As arithmetic only: ten developers at twenty sessions a working day for 250
 days is 50 000 sessions a year — **1.2 GB/year at 50 rows a session, 12 GB at 500**. On an embedded single-connection
-database that is a design input, and it is why §3.3 keeps rows by relevance rather than keeping all of them.
+database that is a design input, and it is why §3.3 keeps rows by ROOT REACHABILITY rather than keeping all of them.
 
 ### 1.4 What a provider can guarantee is prose
 
@@ -72,11 +72,15 @@ coverage line sees `agent_event: complete` for a session whose edits cannot be o
 - **Provider neutrality, in Nick's formulation:** *"every provider must be able to state which causal guarantees it
   provides."* A new vendor may do less; **it may not look like it does more.**
 - **"Missing evidence may weaken a conclusion. It must never strengthen one."** Nick, 2026-09-17 — the fifth binding
-  principle (README §"The five binding principles"), added after PR #53 was caught breaking it. Its operational form governs
+  principle (README §"The six binding principles"), added after PR #53 was caught breaking it. Its operational form governs
   every match and closure here: *ambiguous or unmatched closure can only reduce certainty, never increase it; no valid match →
   no closure; multiple indistinguishable matches → only a deterministic conservative relation that cannot strengthen the
   causal claim; if even that is not defensible → withhold the relation.* Where this spec chooses between two readings it takes
   the one that produces **more refusals**, and says so at the choice (§3.3b, §3.5 rule 2, §3.6).
+- **"Retention requires positive proof to delete, not positive proof to keep."** Nick, 2026-09-17 — the sixth binding
+  principle, and the one this spec is the first to implement. *Data is deleted only when crosscheck can prove nothing
+  retaining still references it; not knowing is not a reason to delete.* §3.3c turns it into a value
+  (`unresolved_file_reference` → KEEP, counted), §3.3d into a build failure, and CSK-15 … CSK-17 into tests.
 - **Data minimisation (non-negotiable #6)** is unchanged: nothing in this spec stores text, a path, or a hash of a person.
 
 ---
@@ -87,7 +91,7 @@ coverage line sees `agent_event: complete` for a session whose edits cannot be o
 
 | table | author-written content | removed today | tier | 1.0 rule |
 |---|---|---|---|---|
-| `session_events` | none | age, 30 d | **skeleton** | kept by relevance (§3.3) |
+| `session_events` | none | age, 30 d | **skeleton** | kept while reachable from a retention root (§3.3) |
 | `causal_attestations` (new, §3.5) | none | — | **skeleton** | kept while its session is |
 | `session_causal_guarantees` (new, §3.6) | none | — | **skeleton** | kept while its session is |
 | `agent_sessions` | `branch` | never | skeleton anchor | never removed; FK target of the skeleton |
@@ -113,6 +117,7 @@ answer *which session, which epoch, which position, before or after*. Content ma
 | `subject_ref` | yes | `ref_kind` + `ref_id` — an id or a digest, never text |
 | `work_context_id` | **added** | new nullable column, §4 |
 | `provider` | **added** | new nullable column, §4 |
+| *(not on his list, added by §3.3b)* | **added** | `file_ref`, the explicit file identity a pin is reached through — nullable, only on `target_digest` rows |
 | `commit_ref` | **refused on this row** | §8.3 |
 | `parent_event_id` / `causal_parent` | **refused on this row** | §8.4 |
 
@@ -122,96 +127,131 @@ content. A skeleton that needs a content row to say which work context it belong
 only outlived it *so far*. `provider` is copied for the symmetric reason: the guarantee a row was produced under (§3.6) must
 be readable from the skeleton alone. The cost is re-measured with both columns at build (§6).
 
-### 3.3 Retention by relevance
+### 3.3 Retention by root reachability
 
-**A skeleton row lives as long as something that can ask about its order lives — and "relevant" is defined REFERENTIALLY, never
-by judgement.** Nick's wording, 2026-09-17, which this section implements literally:
+**Nick's rule, 2026-09-17, and it replaces the flat referential list this section carried for one day:**
 
-> An ordering event is retained as long as at least one of these long-lived objects references it or its causal relation:
-> **Work Context, Claim, Intent Amendment, Diagnosis, Invariant, Attribution Record, Causal Attestation.** When the last
-> reference falls away, the retention policy may decide.
+> A skeleton row is retained as long as it is reachable from at least one **independent retention root** through **explicit
+> references**.
+>
+> **A Work Context is not a retention root merely because a session belongs to it. It retains causal data only when it is
+> itself independently live under an explicit retention rule or reachable from another retention root.**
 
-**Nothing in this rule asks whether crosscheck still finds an event useful.** "Probably still interesting" is not a predicate;
-it cannot be tested and it drifts with whoever last read the code. A reference either exists in a row or it does not, so the
-sweep is deterministic and every case below is a test.
+**Why the flat list of seven objects was not enough, in his words: every session has a work context, so "a work context
+references it" is not a retention policy, it is unbounded storage by another route.** The fix is to separate two relations a
+schema cannot tell apart on its own:
 
-| Nick's object | the row that carries it | reference to a session | status |
-|---|---|---|---|
-| Work Context | `work_contexts` | `session_id` | exists; **every** session has one (§3.3a) |
-| Claim | `claims` | `author_session_id` | exists |
-| Diagnosis | `claims` + `claim_edges` — a diagnosis IS a claim tree (00 §1.5), it has no row of its own | through its claims | exists, covered by Claim |
-| Intent Amendment | `work_context_intents` (06) | `author_session_id` | **not built** — 06 |
-| Invariant | `pins` / `pin_files`, and 04's fence waivers | **none today**: a pin references a repo and a path, never a session | **gap, §3.3b** |
-| Attribution Record | 04's verdict record | not built, and 04 computes fresh rather than storing | **not built** — 04, §3.3b |
-| Causal Attestation | `causal_attestations` (§3.5) | `session_id` | new here |
+| relation | example | retains? |
+|---|---|---|
+| **ownership / containment** | `work_context contains session` | **no** — the session belongs to it, which says nothing about whether anybody still depends on the session's order |
+| **retention reference** | a human's pin reaches a file, that file reaches a session's touch | **yes** — something durable depends on that causal fact |
 
-**§3.3a — the Work Context line is what makes D-B's two readings diverge.** `registerSessionFlow` spools a work-context record
-for every session it claims (`connector-core/src/flows/register-session.ts`), so *"a work context references it"* is true of
-every session that ever registered, and the referential rule read literally retains **everything**, at §1.3's cost. That is
-D-B, and it is Nick's to settle: the list is his, and the consequence of taking it literally is a number, not an opinion.
+#### 3.3a The declared retention graph
 
-**§3.3b — two of the seven objects cannot reference a session yet, and the rule must fail toward keeping.** A pin names a repo
-and a path; 04's attribution record does not exist. So a session whose only durable consequence is *an invariant somebody
-pinned* is invisible to this predicate. Under principle 5 the sweep therefore **keeps what it cannot classify**: a session is
-prunable only when every implemented reference is absent AND no unimplemented object could have referenced it — which, until
-04 and 06 land, means the sweep refuses to prune any session that touched a pinned path. §7's CSK-11 pins that, and the
-refusal is printed rather than assumed.
+Roots and edges are **declared data**, not a query somebody re-derives. Every row below is an entry in a registry the build
+checks (§3.3d).
 
-**§3.3c — the list must stay complete as tables arrive.** A new table with a session reference that nobody adds here would
-silently shorten retention, which is the same class of defect as a dead column. A meta-test enumerates every table carrying
-`session_id` or `author_session_id` and fails the build unless each is either listed as retaining or explicitly declared
-non-retaining with a reason — the two-directional shape
-`test/derive-capability-registry.test.ts` already uses for capabilities.
+| retention root | why it is a root | reaches a skeleton row via |
+|---|---|---|
+| `pins` — a human-pinned invariant | a person stated that this surface matters; 04's waivers join this row when they land | `pin_files.file_ref` → `session_events.file_ref` (§3.3b) |
+| `claims` | a claim's position is what makes a reason post-hoc (principle 3), so its order is load-bearing for as long as the claim is presented | `claims.author_session_id` → `session_events.session_id` |
+| `work_context_intents` (06) — an intent amendment | `explanationTimingFor` compares exactly these positions | `author_session_id` → `session_events.session_id` |
+| `causal_attestations` (§3.5) | it cites the positions it was derived from | `session_id` → `session_events.session_id` |
+| 04's attribution record — **not built** | a stored verdict depends on the order it was computed over | 04 declares it when it lands |
 
-The sweep replaces `pruneSessionEvents`' predicate — age alone — with age **and** no reference from the list above. Under D-B's
-implemented-references reading (§10), that is:
+| declared **non**-retaining edge | reason, which §3.3d makes mandatory |
+|---|---|
+| `work_contexts.session_id` | ownership, not dependence: every registered session has one, so treating it as retaining is unbounded storage with extra steps — Nick, 2026-09-17 |
+| `agent_sessions.developer_id` | a person owns the session; retention of causal order is not a property of that person |
+| `hint_deliveries.session_id` | a delivery records what was shown and reads no position |
+
+A diagnosis has no row of its own — it is a claim tree — so it retains through its claims rather than as a separate root.
+
+#### 3.3b `file_ref` — an explicit file identity, not a reused digest
+
+A pin names a repo and a path; a skeleton row names a `target_digest`. They cannot be joined today, and **the tempting fix is
+the wrong one.** `ref_id = sha256(work_context_id \n kind \n value)` (01 §3.5) exists to identify *a target inside one work
+context*, and its work-context term makes it useless across sessions anyway. Nick's objection is the deeper one and stands on
+its own: *coupling retention to a digest whose semantics belong to something else means whoever changes that digest later
+silently deletes causal history* — the exact failure class the fifth principle forbids.
+
+So this spec introduces one explicit, semantically named identity, and nothing else uses it:
+
+```
+file_ref = H( "crosscheck:file-ref:v1" || repo_identity || normalized_repo_relative_path )
+```
+
+- **Domain-separated by construction.** The literal prefix carries the version, so a future `v2` cannot collide with a `v1`
+  value and a reader can tell which rule produced one.
+- **`repo_identity`** is the canonical repo id the hub already keys everything on (`github.com/acme/api`), so the same file in
+  two worktrees of one repo is one identity, and the same path in a different repo is not.
+- **`normalized_repo_relative_path`** is what `capture/target-paths.ts` `toRepoRelative` already produces. The normalisation
+  rule is that function's, cited rather than restated, and the builder pins it with a test over the cases it already handles —
+  including the ones where it refuses (outside the root, unresolvable worktree), which are exactly §3.3c's KEEP cases.
+- **No content, no prompt, no tool output.** A hash of a path is what `target_digest` already is, so 01 §3.5's argument for
+  content-freedom applies unchanged and no new class of data reaches the hub.
+
+It lands on **both** sides: a `file_ref` column on `pin_files`, and a `file_ref` column on those `session_events` rows whose
+`ref_kind` is `target_digest`. Neither replaces an existing column — `ref_id` keeps its meaning and its readers.
+
+#### 3.3c Unresolvable is KEEP, never DELETE
+
+Nick's migration rule, in force beyond the migration:
+
+```
+retention_decision = KEEP
+reason             = unresolved_file_reference
+```
+
+**never `DELETE`.** It covers a pre-migration pin whose path no longer normalises, a session whose touches predate the column,
+a repo identity that cannot be resolved, and any row the backfill skipped. The reason is an enum, it is counted, and `doctor`
+prints the count — so *"kept because we could not tell"* is a visible number rather than an invisible default.
+
+#### 3.3d Retention semantics are a declared contract, and CI enforces it
+
+Nick's generalisation of the completeness test. Every reference relation that can reach a session or a skeleton row declares
+exactly one of:
+
+```
+retention_semantics: root | retaining_edge | non_retaining_edge
+```
+
+and `non_retaining_edge` **requires a reason**. The build enumerates every table carrying `session_id`, `author_session_id` or
+`file_ref` and fails unless each relation appears in the registry with one of the three values — the two-directional shape
+`test/derive-capability-registry.test.ts` already uses for capabilities. **That is what turns retention from implicit schema
+behaviour into an explicit contract:** a new table with a session reference cannot be added silently, and whoever adds it has
+to say whether it keeps causal history alive.
+
+#### 3.3e The sweep
 
 ```sql
 DELETE FROM session_events se
- WHERE se.observed_at < $cutoff               -- SESSION_EVENT_RETENTION_DAYS, unchanged at 30
-   -- Claim, and with it Diagnosis: a diagnosis is a claim tree.
+ WHERE se.observed_at < $cutoff                 -- SESSION_EVENT_RETENTION_DAYS, unchanged at 30
+   -- ROOT: claims, and with them diagnoses, which are claim trees
    AND NOT EXISTS (SELECT 1 FROM claims c               WHERE c.author_session_id = se.session_id)
-   -- Intent Amendment (06).
+   -- ROOT: intent amendments (06)
    AND NOT EXISTS (SELECT 1 FROM work_context_intents i WHERE i.author_session_id = se.session_id)
-   -- Causal Attestation (§3.5).
+   -- ROOT: causal attestations (§3.5)
    AND NOT EXISTS (SELECT 1 FROM causal_attestations a  WHERE a.session_id        = se.session_id)
-   -- Invariant, until a pin can reference a session (§3.3b): keep what cannot be
-   -- classified. A session that touched a pinned path is never pruned.
-   AND NOT EXISTS (
-     SELECT 1 FROM pin_files pf
-       JOIN session_events te ON te.session_id = se.session_id
-                             AND te.ref_kind   = 'target_digest'
-      WHERE pf.digest = te.ref_id                     -- see §3.3b on the digest
-   );
+   -- ROOT: a human pin, reached through the explicit file identity (§3.3b)
+   AND NOT EXISTS (SELECT 1 FROM pin_files pf           WHERE pf.file_ref         = se.file_ref)
+   -- §3.3c: a row whose file identity could not be resolved is never deleted
+   AND (se.ref_kind <> 'target_digest' OR se.file_ref IS NOT NULL);
 ```
 
-**The pin clause is where principle 5 is visible in SQL.** `pin_files` stores a path, and a skeleton row stores a digest, so
-joining them needs the pin side to carry `sha256(work_context_id \n kind \n value)` too — which it cannot, because a pin has
-no work context. The builder therefore has a choice, and only one side of it is allowed: either give `pin_files` a
-content-free digest column computed the same way per repo, or **do not prune any session with a `target_digest` row at all**
-until 04's attribution record exists. The second is cruder and keeps more; principle 5 says the crude one ships unless the
-first is actually built. What is forbidden is dropping the clause because it is awkward — that turns a missing reference into
-a licence to delete.
+`work_contexts` appears nowhere in it, which is the point: ownership does not retain. Indexes: `claims_author_session_idx`
+(new, §4), 06's `work_context_intents_session_idx`, §3.5's attestation index, and `pin_files_file_ref_idx` beside
+`session_events_file_ref_idx`. The statement stays one pass on `reapStaleSessions`' existing schedule — **except that #53 now
+ships with the sweep switched off entirely** (§4, D-D), so this predicate is what switches it back on.
 
-`claims_author_session_idx` does not exist today and is added (§4); 06 already specifies
-`work_context_intents_session_idx (author_session_id, seq)`; §3.5 specifies the attestation index. The statement stays one
-pass on `reapStaleSessions`' existing schedule (`event-order:services/sessions.ts`), before its early return, as #53 placed
-it — **except that #53 now ships with the sweep switched off entirely** (§4, D-D), so this predicate is what switches it back
-on. **The thirty-day constant keeps its value and changes its meaning**: it is the grace period for sessions that no
-long-lived object references, and its comment says so.
+**Until the `file_ref` link is proven end to end, the conservative variant stays in force** (Nick): nothing is deleted that a
+pin could possibly protect. Concretely, the sweep ships with the `target_digest` rows exempt until CSK-15 passes against real
+pins and real touches, and `doctor` prints which mode is live rather than leaving the reader to guess.
 
-**What is lost, named.** A session that no object in Nick's list references loses its order after thirty days. Nothing in 1.0
-can compare against it: `explanationTimingFor` step 1 returns `absent` / `no_intent` for it before step 4 ever reads a
-position, and 01 §3.7 (1) already made attribution independent of `seq`. That session's *targets* stay, because they are
-content and `work_context_targets` is never removed. What is **not** lost is anything a person pinned, anything anybody
-claimed, or anything an attestation froze.
-
-**Why the predicate above omits one of the seven, and why that is D-B rather than a decision taken here.** Work Context is on
-Nick's list and every session has one (§3.3a), so including it makes the sweep unreachable and the retention "forever" at
-§1.3's cost. Omitting it makes the sweep reachable but implements six of seven references rather than all seven. Both are
-defensible and the difference is a storage number, not a correctness argument — so the SQL above shows the reachable reading
-and D-B states the other with its cost. **Neither reading is a judgement about usefulness**, which is what Nick's referential
-definition rules out; both are counts of rows that reference a session.
+**What is lost, named.** A session reachable from no root loses its order after thirty days: no claim, no intent amendment, no
+attestation, no pinned file. Nothing in 1.0 can compare against it — `explanationTimingFor` step 1 returns `absent` /
+`no_intent` before step 4 ever reads a position, and 01 §3.7 (1) already made attribution independent of `seq`. Its *targets*
+stay, because they are content and `work_context_targets` is never removed.
 
 ### 3.4 The content rule — redaction in place, never removal, for anything the skeleton references
 
@@ -385,12 +425,23 @@ cost.
 1. **`session_events`**: `ADD COLUMN IF NOT EXISTS work_context_id text`, `ADD COLUMN IF NOT EXISTS provider text`. Existing
    rows are backfilled by join (`work_contexts.session_id`, `agent_sessions.agent_kind`). **This is not the wall-clock backfill
    01 §8 refuses** — it copies identity, not order, and touches no position.
-2. **`claims_author_session_idx`** on `claims (author_session_id)`, for §3.3's sweep.
+2. **`claims_author_session_idx`** on `claims (author_session_id)`, for §3.3e's sweep.
+2a. **`file_ref`** (§3.3b): `ADD COLUMN IF NOT EXISTS file_ref text` on **`pin_files`** and on **`session_events`**, with
+   `pin_files_file_ref_idx` and `session_events_file_ref_idx`. Backfill computes it from rows that already carry both halves —
+   `pin_files` has `repo` and `path`, so every existing pin resolves; a `session_events` row carries neither, so its
+   `file_ref` is filled only for rows whose `work_context_targets` value can still be normalised, and **every row that cannot
+   be resolved stays `NULL` and is therefore never deleted** (§3.3c). Count the unresolved rows, print the count, and do not
+   let the number be zero by construction — a backfill that silently resolves everything is the one that quietly guessed.
+   **The connector computes `file_ref` at capture time** for new rows, beside the `target_digest` it already computes, so the
+   hub never sees a path it did not already receive.
 3. **`causal_attestations`** and **`session_causal_guarantees`**: new tables, mirrored in `db/bootstrap.sql` and pinned by
    `test/ddl-sync.test.ts`. Sessions that ended before deploy get **no attestation** — attesting them after the fact would
    write under coverage nobody recorded at the time. They keep their live skeleton under §3.3.
 4. **`content_expired_at timestamptz NULL`** on the five tables in §3.4 rule 1. Nothing sets it in 1.0 unless D-A says so.
-5. **The prune's predicate** changes in place (§3.3); `SESSION_EVENT_RETENTION_DAYS` keeps its value and gets a new comment.
+5. **The prune's predicate** changes in place (§3.3e); `SESSION_EVENT_RETENTION_DAYS` keeps its value and gets a new comment.
+6. **The retention registry** (§3.3d): one declaration per reference relation, with the build check that fails on an
+   undeclared one. It ships in the same migration family as the sweep, because a predicate without the contract is a rule
+   nobody can keep complete.
 
 **The sweep is off before #53 merges, so no schedule promise carries the risk.** Nick's D-D decision of 2026-09-17: #53 stops
 calling `pruneSessionEvents` and prints a documented refusal instead. The earlier reasoning — that #53's prune only removes
@@ -471,14 +522,16 @@ artifact; end the session; search `session_events`, `causal_attestations` and `s
 *Fails if* one marker is found. This extends 01's existing content-free test rather than adding a parallel one.
 
 
-**CSK-11 — an unclassifiable session is kept, not pruned.** A 31-day-old session with no claim, no intent version and no
-attestation, which touched a path somebody pinned, keeps its rows. *Fails if* the sweep prunes it — a missing reference
-(Invariant, Attribution Record) turned into a licence to delete, which is principle 5 inverted. *Mutation:* drop the pin
-clause from the predicate.
+**CSK-11 — a pin keeps the sessions that touched its files.** A 31-day-old session with no claim, no intent version and no
+attestation, whose only durable consequence is that somebody pinned a file it touched, keeps its rows — reached through
+`pin_files.file_ref` → `session_events.file_ref` (§3.3b). *Fails if* the sweep prunes it: a retention root that could not be
+reached turned into a licence to delete, which is principles 5 and 6 inverted at once. *Mutation:* drop the pin clause from
+the predicate.
 
-**CSK-12 — the retaining list is complete.** The meta-test of §3.3c: a new table carrying `session_id` or
-`author_session_id` that is neither listed as retaining nor declared non-retaining with a reason fails the build. *Fails if* a
-table can be added with no entry. *Mutation:* make the unknown-table case a warning instead of a failure.
+**CSK-12 — no session-bearing relation may be silent about retention.** §3.3d's contract: a table carrying `session_id`,
+`author_session_id` or `file_ref` that declares no `retention_semantics`, or declares `non_retaining_edge` with no reason,
+fails the build. *Fails if* a relation can be added with no declaration — the drift that would shorten retention without
+anybody deciding to. *Mutation:* make the undeclared case a warning instead of a failure.
 
 **CSK-13 — ambiguity never strengthens a relation.** For every ambiguous or unmatched case this spec names — an attestation
 whose ladder version is superseded, a declaration that is `undeclared`, a referent whose content expired, a session whose
@@ -491,6 +544,23 @@ same input with the ambiguity removed. This is principle 5 written as a test ove
 withdrawn, a 31-day-old session with no references keeps every row, and `doctor` prints the refusal rather than a silent
 absence. *Fails if* rows disappear, or if the refusal is missing while the behaviour changed. *Mutation:* restore the
 `pruneSessionEvents` call.
+
+**CSK-15 — the file identity actually links, and an unresolvable one keeps.** Two halves, both required before the
+conservative exemption in §3.3e may be retired: (a) a pin created through the normal flow and a session that edited that file
+produce the **same** `file_ref`, across two worktrees of one repo and not across two repos with the same path; (b) a pin or a
+row whose path cannot be normalised yields `file_ref = NULL`, the sweep keeps it, and the `unresolved_file_reference` count
+rises by exactly one. *Fails if* (a) the two sides disagree, or (b) an unresolved row is deleted. *Mutation for (b):* treat a
+`NULL` `file_ref` as "no pin references it".
+
+**CSK-16 — a work context alone does not retain.** A 31-day-old session with a work context and nothing else — no claim, no
+intent amendment, no attestation, no pinned file — is pruned. *Fails if* it survives, because then ownership is silently
+acting as a root again and there is no retention policy, only unbounded storage (D-B2). *Mutation:* add a
+`work_contexts.session_id` clause to the predicate.
+
+**CSK-17 — deletion requires a positive answer from every root.** Simulate a root whose table is unavailable (the query
+errors, or 06's ledger does not exist yet): the sweep deletes **nothing** rather than treating the failed check as "no
+reference". *Fails if* a failing root check is read as permission to delete — principle 6, stated as a query failure rather
+than a philosophy. *Mutation:* swallow the error and continue with the remaining clauses.
 ---
 
 ## 8. Refusals
@@ -526,8 +596,13 @@ absence. *Fails if* rows disappear, or if the refusal is missing while the behav
   editor of it.
 - **04** — consumes timing through 06 only; no change to its gates.
 - **07** — `PILOT_RETENTION_DAYS = 90` is unrelated (pilot tables); 07 gains two counters (rows kept, rows in grace).
+- **Pins (#50's feature)** — `pin_files` gains `file_ref` and its index, and the pin write path computes it. The pin SWEEP
+  (`services/pins.ts`, the one call site that removes `pin_files` rows) must carry it too: a sweep that rewrites a pin's files
+  without recomputing `file_ref` would silently orphan the retention root, which §3.3c then reads as `NULL` and keeps —
+  correct by principle 6, and still a bug that CSK-15 (a) catches.
 - **Connectors** — each `capabilities.ts` gains a declaration; `test/derive-capability-registry.test.ts` gains the
-  two-directional check.
+  two-directional check. `capture/target-paths.ts` gains the `file_ref` computation beside the existing `target_digest`, so
+  the hot path hashes one more short string per touched file (§6 measures it).
 - **`mutation-check.ts` and `.github/workflows/ci.yml`** — ten anchors; every derived listing is regenerated by running its
   `VERIFY:` command, never transcribed.
 
@@ -543,14 +618,29 @@ institutional memory your same note wants kept *"solange die zugehörigen Claims
 "Zusatzinformationen" cleanly is `artifacts.content`. *Alternative:* redact `artifacts.content` at thirty days and keep the
 row. Cost: an approved artifact attached to a live claim disappears from that claim a month later.
 
-**D-B — Do the implemented references decide, or all seven including Work Context?** Nick settled the *definition* on
-2026-09-17: relevance is **referential only**, never a judgement about usefulness, over Work Context, Claim, Intent Amendment,
-Diagnosis, Invariant, Attribution Record and Causal Attestation (§3.3). What is left is a consequence of his own list, and it
-is a storage number rather than a correctness question. *Default (recommended): the six implemented references* — Claim (and
-with it Diagnosis), Intent Amendment, Causal Attestation, plus the keep-what-cannot-be-classified clause for Invariant, so no
-pinned surface's session is ever pruned. *Alternative:* include Work Context too, which every session has, making the sweep
-unreachable and retention effectively permanent. Cost: §1.3 — 1.2 to 12 GB a year for a ten-person team, on an embedded
-database. Either way the predicate is deterministic and CSK-1 … CSK-3 and CSK-11 test it.
+**D-B — CLOSED 2026-09-17 by Nick, as five rules rather than a choice between two readings.** He refused the either/or this
+spec put to him ("a digest on `pin_files`, or keep everything"), on the ground that the pin question exposed a missing
+retention *semantics* rather than a missing column. What he decided, verbatim in effect:
+
+- **D-B1 — Retention is defined as reachability from explicit roots.** §3.3.
+- **D-B2 — Intrinsic ownership, in particular `Work Context → its own session`, is not a retention root.** §3.3a. *"A Work
+  Context is not a retention root merely because a session belongs to it. It retains causal data only when it is itself
+  independently live under an explicit retention rule or reachable from another retention root."*
+- **D-B3 — Pins are roots and connect through an explicit `file_ref`, never through a generic digest that happens to exist.**
+  §3.3b, with his reason: coupling retention to a digest whose semantics belong to something else means whoever changes that
+  digest later silently deletes causal history.
+- **D-B4 — While a required reference cannot be resolved unambiguously, the decision is `KEEP`.** §3.3c, reason
+  `unresolved_file_reference`, counted and printed.
+- **D-B5 — A new session-bearing table or relation must declare its retention semantics (`root` / `retaining_edge` /
+  `non_retaining_edge`, the last with a mandatory reason) or the build fails.** §3.3d.
+
+**And the sixth binding principle follows from them** (README): *"Retention requires positive proof to delete, not positive
+proof to keep."* Nothing in §3.3 deletes because a reference could not be found; it deletes only when every declared root has
+been checked and none reaches the row. CSK-1 … CSK-3, CSK-11, CSK-12 and CSK-15 … CSK-17 are the tests.
+
+**What is left open, and it is a build question rather than a decision:** until the `file_ref` link is proven end to end, the
+sweep exempts `target_digest` rows entirely (§3.3e). That is the conservative variant Nick asked to keep in force, and CSK-15
+is what retires it.
 
 **D-C — Guarantees beside the coverage sources, or as a sixth source?** *Default (recommended): beside* (§3.7), which keeps
 01 §3.7 (1): unusable order never makes attribution `INDETERMINATE`. *Alternative:* a sixth `COVERAGE_SOURCES` value

@@ -15,7 +15,7 @@ post-#50 position always carries the `crosscheck-pins:` prefix (00 §9.4a). Wher
 rung cannot exist on a platform, or the honest answer is "not in 1.0", the spec
 writes the refusal — a spec that pretends is worse than no spec.
 
-## The five binding principles
+## The six binding principles
 
 1. **"Only judge when you know you were watching."** `UNATTRIBUTED` is emitted
    only under complete coverage; under a known gap the verdict is
@@ -51,6 +51,15 @@ writes the refusal — a spec that pretends is worse than no spec.
    exonerates. A gap that produces an accusation is a bug; a gap that produces an
    exoneration is a bug that nobody reports. Every guard written against this
    principle therefore has to show which way its failure falls.
+6. **"Retention requires positive proof to delete, not positive proof to keep."**
+   Added 2026-09-17, and it is the fifth principle applied to time: *data is
+   deleted only when crosscheck can prove that nothing retaining still references
+   it. Not knowing is not a reason to delete.* An unresolvable reference, a
+   relation nobody declared, a table added without retention semantics — each of
+   those is a **KEEP** with a counted reason, never a silent removal. 01a §3.3
+   builds the retention graph this principle requires: explicit roots, explicit
+   edges, and a declared contract that fails the build when a new session-bearing
+   relation says nothing about whether it keeps causal history alive.
 
 ## Build order
 
