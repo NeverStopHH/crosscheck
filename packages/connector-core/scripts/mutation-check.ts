@@ -5675,6 +5675,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "of evidence never reaches the only person who could act on it",
   },
   {
+    // The THIRD producer of an upper bound (§3.6), beside the git_diff lane
+    // and the detached workers: the position is taken at the collection, and
+    // what it describes is up to COMMIT_EVIDENCE_WINDOW_DAYS older.
+    label: "a commit collection is positioned as if it were the commits",
+    file: `${SERVER}/src/services/commit-evidence.ts`,
+    from: '          seqKind: "observed",',
+    to: '          seqKind: "emitted",',
+    test: `${SERVER}/test/session-event-seq-kind.test.ts`,
+    because:
+      "UNSAFE: an explanation written today sorts BEFORE commits authored " +
+      "last week — `compareEvents` answers -1, which is `predeclared`, the " +
+      "value that clears the agent — and a re-fire's second collection " +
+      "answers the opposite about exactly the same commits",
+  },
+  {
     // `collectCommitEvidence` is imported by exactly ONE module in the tree,
     // so this is the only host that emits `commit.observed` at all — and spec
     // 01 §3.6's table of emitters does not list it.

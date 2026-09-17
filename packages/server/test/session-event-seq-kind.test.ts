@@ -26,11 +26,20 @@ import { eq } from "drizzle-orm";
 
 import { sessionEvents } from "../src/db/schema.ts";
 import {
+  causalComparisonOf,
+  compareEvents,
+} from "../src/services/session-order.ts";
+import type {
+  OrderedEvent,
+  SessionCausalOrder,
+} from "../src/services/session-order.ts";
+import {
   createTestDeveloper,
   createTestHarness,
   postRecords,
   recordEnvelope,
   registerTestSession,
+  TEST_START_ISO,
   validClaimBody,
   validWorkContextBody,
   WORK_CONTEXT_ID,
@@ -231,5 +240,97 @@ describe("SEQ-7 — seq_kind is derived on the hub, never sent", () => {
     const byRef = new Map(rows.map((row) => [row.refId, row.seqKind]));
     expect(byRef.get("clm_declared")).toBe("emitted");
     expect(byRef.get("clm_derived")).toBe("observed");
+  });
+
+  test("(c) a SessionStart's commit collection is observed, not emitted", async () => {
+    // Arrange: THE THIRD PRODUCER, and spec 01's own argument covers it. The
+    // position is allocated when SessionStart WRITES the aggregate down, and
+    // the aggregate describes commits authored up to
+    // COMMIT_EVIDENCE_WINDOW_DAYS = 14 days earlier — "a worker summarises a
+    // slice from earlier in the session, so the position it allocates records
+    // when the row was written, not when the fact it describes was seen"
+    // (01 §3.6). Stamped `emitted`, the position of a fact that is OLDER than
+    // it sorts an explanation written today BEFORE commits from last week:
+    // `compareEvents` answered -1, which is `predeclared`, the value that
+    // clears the agent.
+    //
+    // MEASURED before the fix, on the hub's own readers: one SessionStart
+    // re-fire gives the SAME aggregate two rows, and a claim between them was
+    // answered +1 against the first and -1 against the second — two opposite
+    // happens-before answers about one set of commits, inside one usable
+    // epoch. `observed` is what turns both into the refusal SEQ-7 specifies.
+    const { harness, dev } = await started("commits@example.com");
+
+    // Act: the collection lands twice, as a compact makes it.
+    for (const n of [1, 3]) {
+      await postRecords(harness, dev, {
+        records: [
+          withSeq(
+            recordEnvelope(
+              "commit_evidence",
+              {
+                repo: "github.com/acme/api",
+                collectedAt: TEST_START_ISO,
+                windowDays: 14,
+                authors: [
+                  {
+                    name: "Robin",
+                    email: "robin@example.com",
+                    latestCommitAt: new Date(
+                      new Date(TEST_START_ISO).getTime() - 3 * 86_400_000,
+                    ).toISOString(),
+                    commitCount: 5,
+                  },
+                ],
+              },
+              { sessionId: SESSION },
+            ),
+            n,
+          ),
+        ],
+      });
+    }
+
+    // Assert: both rows are upper bounds, so the hub refuses rather than
+    // answering in either direction about them.
+    const rows = (
+      await harness.db
+        .select()
+        .from(sessionEvents)
+        .where(eq(sessionEvents.sessionId, SESSION))
+    ).filter((row) => row.kind === "commit.observed");
+    expect(rows.length).toBe(2);
+    expect(rows.map((row) => row.seqKind)).toEqual(["observed", "observed"]);
+    const order: SessionCausalOrder = {
+      sessionId: SESSION,
+      state: "usable",
+      reason: "sequenced",
+      epochs: 1,
+    };
+    const claim: OrderedEvent = {
+      sessionId: SESSION,
+      seqEpoch: EPOCH,
+      seqN: 2,
+      seqAfter: null,
+      seqKind: "emitted",
+      seqReason: "sequenced",
+      observedAt: new Date(TEST_START_ISO),
+    };
+    for (const row of rows) {
+      const collection: OrderedEvent = {
+        sessionId: SESSION,
+        seqEpoch: row.seqEpoch,
+        seqN: row.seqN,
+        seqAfter: row.seqAfter,
+        seqKind: row.seqKind,
+        seqReason: row.seqReason,
+        observedAt: row.observedAt,
+      };
+      expect(causalComparisonOf(order, claim, collection)).toEqual({
+        outcome: "indeterminate",
+        reason: "upper_bound_only",
+      });
+      expect(compareEvents(order, claim, collection)).toBeNull();
+    }
   });
 });

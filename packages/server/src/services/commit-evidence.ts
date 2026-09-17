@@ -122,6 +122,24 @@ export const ingestCommitEvidence = async (
     // session drains the spool. `withProducer` therefore strips the position
     // from exactly this class of record when it rewrites one, so a foreign
     // drain arrives unsequenced instead of filing A's position under B.
+    //
+    // `observed`, NOT `emitted` — SessionStart's collection is spec 01 §3.6's
+    // third producer of an upper bound, beside the git_diff lane and the
+    // detached workers. The position is allocated when the aggregate is
+    // WRITTEN DOWN, and what it describes is older: commits authored up to
+    // COMMIT_EVIDENCE_WINDOW_DAYS before the session existed. §3.6's own
+    // sentence about the workers is the argument verbatim — "the position it
+    // allocates records when the row was written, not when the fact it
+    // describes was seen".
+    //
+    // WHY THE "IT ONLY ASSERTS THAT A COLLECTION HAPPENED" READING DOES NOT
+    // SURVIVE. A SessionStart RE-FIRE collects the SAME aggregate again, so
+    // one set of commits holds two positions in one usable epoch; measured on
+    // the hub's own readers, a claim between them was answered +1 against the
+    // first row and -1 against the second. -1 is `predeclared` — the value
+    // that CLEARS the agent — about commits authored days before the session
+    // opened. An upper bound makes both of those a refusal, which is the
+    // answer an aggregate of older facts can honestly support.
     if (producerSessionId !== undefined) {
       await recordSessionEvent(
         { db: tx, now: deps.now },
@@ -129,7 +147,7 @@ export const ingestCommitEvidence = async (
           sessionId: producerSessionId,
           kind: "commit.observed",
           seq,
-          seqKind: "emitted",
+          seqKind: "observed",
           refKind: "session",
           refId: producerSessionId,
         },

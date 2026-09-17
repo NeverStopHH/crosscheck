@@ -41,8 +41,10 @@ export const LEDGER_EVENT_KINDS = ["intent.declared", "intent.amended"] as const
  *              `A.n < B.n` is happens-before.
  *   observed — the position was taken when the fact was WRITTEN DOWN, which is
  *              later than the fact: the Stop-time `git diff` lane sees an edit
- *              made at some unknown earlier point in the turn, and a detached
- *              worker summarises a slice from earlier in the session. An
+ *              made at some unknown earlier point in the turn, a detached
+ *              worker summarises a slice from earlier in the session, and
+ *              SessionStart's commit collection aggregates commits authored up
+ *              to COMMIT_EVIDENCE_WINDOW_DAYS before the session existed. An
  *              observed position is an UPPER BOUND only — it proves the fact
  *              happened no later than that point, never that it happened after
  *              the previous event — so a happens-before question against one
