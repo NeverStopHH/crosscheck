@@ -39,6 +39,9 @@ const paths: string[] = [];
 afterEach(async () => {
   await Promise.all(paths.map((path) => rm(path, { recursive: true, force: true })));
   paths.length = 0;
+  // The enumeration's shared home is one of those paths, so the pointer to it
+  // has to go with it or the next test writes into a directory that is gone.
+  scriptHome = undefined;
 });
 
 const stateFor = (): SessionStateInput => ({
@@ -274,13 +277,26 @@ interface Outcome {
  * eviction is a real one: the call opens, then MAX_TOOL_WINDOWS other calls
  * open behind it and push it out before anything else happens.
  */
+/**
+ * ONE HOME FOR THE WHOLE ENUMERATION, rewritten between scripts rather than
+ * recreated. 270 scripts x (mkdtemp + recursive remove) is the cost that made
+ * this file pathological under a parallel suite: 3.4 s alone on an idle Mac,
+ * past 30 s on ubuntu-latest while eight other test processes shared the disk.
+ * The state is overwritten at the head of every script and the allocator
+ * removes its own lock on release, so a reused home carries nothing from the
+ * script before it — and the per-script assertions on `toolWindows` are what
+ * would catch it if it ever did.
+ */
+let scriptHome: string | undefined;
+
 const runScript = async (
   order: readonly Step[],
   keys: { readonly A: string; readonly B: string },
   fates: { readonly A: OpenFate; readonly B: OpenFate },
 ): Promise<Outcome> => {
-  const home = await makeHome("window-pairs");
-  try {
+  scriptHome ??= await fixture("window-pairs");
+  const home = scriptHome;
+  {
     await writeSessionState(home, stateFor());
     const oracle: { A?: number; B?: number } = {};
     const closed: Closed[] = [];
@@ -293,9 +309,30 @@ const runScript = async (
         throw new Error("the allocator refused with no lock contention");
       }
       if (fates[call] === "evicted") {
-        for (let index = 0; index < MAX_TOOL_WINDOWS; index += 1) {
-          await openToolWindow(home, SESSION_ID, keyOf(`toolu_01FILL${call}${String(index)}`));
-        }
+        // THE EVICTION IS THE ALLOCATOR'S, THE FILLING IS NOT. Opening
+        // MAX_TOOL_WINDOWS further windows one at a time is what the cap
+        // needs and it costs a locked read-modify-write each — about 5 800
+        // of them across this enumeration, which is what made the file take
+        // 3.4 s alone here and time out past 30 s on a CI runner sharing its
+        // disk with eight other test processes. So the filler entries are
+        // SEEDED in one write, and the step that actually pushes this call's
+        // window out is still a real `openToolWindow`: the cap, the choice of
+        // which entry goes, and the eviction count all remain the
+        // allocator's, which is the only part a test may not fake.
+        const seeded = await readSessionState(home, SESSION_ID);
+        await writeSessionState(home, {
+          ...stateFor(),
+          eventSeq: seeded?.eventSeq ?? 0,
+          toolWindows: [
+            ...(seeded?.toolWindows ?? []),
+            ...Array.from({ length: MAX_TOOL_WINDOWS - 1 }, (_unused, index) => ({
+              key: keyOf(`toolu_01SEED${call}${String(index)}`),
+              floor: (seeded?.eventSeq ?? 0) + index + 1,
+            })),
+          ],
+          toolWindowEvictions: seeded?.toolWindowEvictions ?? 0,
+        } as SessionStateInput);
+        await openToolWindow(home, SESSION_ID, keyOf(`toolu_01FILL${call}`));
         return;
       }
       oracle[call] = taken;
@@ -321,8 +358,6 @@ const runScript = async (
       highest: state?.eventSeq ?? 0,
       evictions: state?.toolWindowEvictions ?? 0,
     };
-  } finally {
-    await rm(home, { recursive: true, force: true });
   }
 };
 
@@ -415,6 +450,11 @@ describe("an ambiguous or unmatched close can only cost certainty", () => {
       }
     }
     expect(outcomes.some((outcome) => outcome.evictions === 0)).toBe(true);
+    // ...and the other direction, which the seeded filling in runScript makes
+    // worth stating: an `evicted` fate must really reach the cap. Without this,
+    // a cheaper fixture that never evicted would leave every assertion above
+    // passing while a third of the enumeration quietly tested nothing.
+    expect(outcomes.some((outcome) => outcome.evictions > 0)).toBe(true);
   }, PROOF_TIMEOUT_MS);
 
   test("one call opened twice: both closes answer as its own floor would, or refuse", async () => {
