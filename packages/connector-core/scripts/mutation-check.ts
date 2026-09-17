@@ -4471,8 +4471,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // counters the diagnosis line exists to print.
     label: "a SessionStart re-fire zeroes the capture counters",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "  previous === null ||",
-    to: "  true ||",
+    from: "  !isSameBinding(previous, state)",
+    to: "  true",
     test: `${CONNECTOR}/test/session-refire.test.ts`,
     because:
       "a session that fired 40 edit tools into nothing and then auto-compacted " +
@@ -5159,6 +5159,42 @@ export const MUTATIONS: readonly Mutation[] = [
       "the one row every session is guaranteed to have goes back to reading " +
       "`pre_seq_connector` — a statement that this machine predates the " +
       "protocol field — on every session on every host, forever",
+  },
+  {
+    // The re-fire half of the same row. SessionStart fires again inside a live
+    // session, `withCarriedCapture` keeps the PREVIOUS epoch, and a body that
+    // minted a fresh one anyway named an epoch nothing else in the session
+    // uses.
+    label: "a re-fire registers under an epoch the session does not use",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from:
+      "  const seqEpoch = carriedSeqEpoch(\n" +
+      "    await readSessionState(input.home, input.hostSessionKey),\n" +
+      "    input,\n" +
+      "    mintedEpoch,\n" +
+      "  );",
+    to: "  const seqEpoch = mintedEpoch;",
+    test: `${CORE}/test/register-seq.test.ts`,
+    because:
+      "UNSAFE: a session whose FIRST register never landed has " +
+      "`session.started` stored under the foreign epoch by the CREATE branch, " +
+      "so the hub answers `broken / epoch_split` and refuses every " +
+      "happens-before question in that session for the rest of its life — " +
+      "append-only rows and retention `off` mean nothing repairs it",
+  },
+  {
+    // The BINDING half: the register body and the state file have to answer
+    // "is this the same session's state" with the SAME predicate, or the two
+    // halves disagree again with the roles swapped.
+    label: "a foreign repo's state file lends the register its epoch",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  isSameBinding(previous, binding) && previous.seqEpoch !== null",
+    to: "  previous !== null && previous.seqEpoch !== null",
+    test: `${CORE}/test/register-seq.test.ts`,
+    because:
+      "UNSAFE: `withCarriedCapture` refuses to carry across a re-home, so the " +
+      "wire announces an epoch the publication then replaces with a fresh " +
+      "mint — the same split, with the halves swapped",
   },
   {
     // The bracket must consume a position of its own. If it does not, the

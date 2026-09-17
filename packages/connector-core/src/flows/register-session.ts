@@ -20,9 +20,11 @@ import {
   workContextRecord,
 } from "../capture/records.ts";
 import {
+  carriedSeqEpoch,
   claimSessionState,
   crosscheckSessionIdFor,
   publishSessionState,
+  readSessionState,
   workContextIdFor,
 } from "../state/session-state.ts";
 
@@ -171,7 +173,23 @@ export const registerSessionFlow = async (
   // on the state input below — after the POST had already gone out — so the
   // register body had nothing to send and `session.started` landed
   // unpositioned on every host. One epoch, used by both halves.
-  const seqEpoch = crypto.randomUUID();
+  const mintedEpoch = crypto.randomUUID();
+  // ...AND ON A RE-FIRE THE MINT IS NOT WHAT THE SESSION USES. SessionStart
+  // fires again inside a live session (compact, resume, clear) and
+  // `withCarriedCapture` keeps the PREVIOUS epoch, so a body carrying this
+  // fire's fresh one names an epoch nothing else in the session will be
+  // positioned under. It costs nothing while the hub already holds the session
+  // — the re-register is answered from its conflict branch and records no
+  // second `session.started` — and it costs the WHOLE session when the first
+  // register never landed: the CREATE branch then files `session.started`
+  // under the foreign epoch and the hub answers `broken / epoch_split` for
+  // every pair in that session, permanently. Read here, before the POST,
+  // because the POST is what carries it (carriedSeqEpoch's header).
+  const seqEpoch = carriedSeqEpoch(
+    await readSessionState(input.home, input.hostSessionKey),
+    input,
+    mintedEpoch,
+  );
   const registration = await registerWithRetry(input, baseSessionId, seqEpoch);
   if (registration === REPO_MISMATCH) {
     // First-wins (trial finding #9): a LIVE session with this id is bound to
@@ -222,7 +240,14 @@ export const registerSessionFlow = async (
     // than sharing positions. On the ordinary path withCarriedCapture
     // restores the previous pair, so a re-fire that takes the lock keeps one
     // epoch for the whole session.
-    seqEpoch,
+    //
+    // THE FRESH MINT, NEVER THE CARRIED EPOCH ON THE WIRE ABOVE. The fallback
+    // writes eventSeq 0 with whatever stands here, and the carried epoch
+    // beside a counter reset to 0 RE-ISSUES positions this session has already
+    // handed out — the one thing the order may never do (withCarriedCapture's
+    // header: the pair moves together or not at all). The fallback keeps
+    // costing comparability, and never correctness.
+    seqEpoch: mintedEpoch,
     eventSeq: 0,
     ...(input.briefingPending === true ? { briefingPending: true } : {}),
   };

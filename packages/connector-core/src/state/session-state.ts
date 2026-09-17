@@ -628,6 +628,65 @@ export const updateSessionState = async (
     return true;
   });
 
+/** What a state file is BOUND TO: one repo, on one hub. */
+interface SessionBinding {
+  readonly repoId: string;
+  readonly hubUrl: string;
+}
+
+/**
+ * Whether a state file on disk describes THIS session's binding. One
+ * predicate, because two readers act on it — `withCarriedCapture` decides
+ * what a re-fire keeps, and `carriedSeqEpoch` decides what the re-fire's
+ * REGISTER may say about it — and a re-fire that carried by one rule and
+ * announced by another is exactly the split this pair exists to prevent.
+ */
+const isSameBinding = (
+  previous: SessionState | null,
+  binding: SessionBinding,
+): previous is SessionState =>
+  previous !== null &&
+  previous.repoId === binding.repoId &&
+  previous.hubUrl === binding.hubUrl;
+
+/**
+ * THE EPOCH THE STATE FILE WILL KEEP, answerable BEFORE the register goes out.
+ *
+ * `registerSessionFlow` has to name an epoch in the register body — that body
+ * carries `session.started` at position 0, and an absent field is read as a
+ * connector too old for the protocol — but it sends that body BEFORE the state
+ * is published, so it used to send the fire's own fresh mint. On a re-fire
+ * `withCarriedCapture` then keeps the PREVIOUS epoch, and the two halves
+ * disagreed: the wire named an epoch the session does not use.
+ *
+ * INVISIBLE UNTIL THE FIRST REGISTER FAILS. A hub that already holds the
+ * session answers a re-register from its conflict branch and records no second
+ * `session.started`, so the foreign epoch never lands. A hub that holds NO row
+ * — the first register never reached it: an unreachable hub, a 5xx, a rejected
+ * key — takes the CREATE branch and stores `session.started` under it. The
+ * session then has two epochs on the hub, `causalOrderOf` answers `broken /
+ * epoch_split`, and every happens-before question about it is refused for the
+ * rest of its life. `session_events` is append-only and retention is `off`, so
+ * nothing removes the row afterwards.
+ *
+ * NOT THE BUSY-LOCK CASE, which looks similar and is not. There the counter
+ * really does restart at 0 beside a fresh epoch, and "not comparable" is the
+ * honest answer — see `publishSessionState`. This is the case where nothing
+ * restarted: the state file held one epoch the whole time.
+ *
+ * `minted` is the caller's own fresh epoch, used when there is nothing to
+ * carry: no state file, a state file bound elsewhere, or one from before the
+ * protocol field (`seqEpoch === null`), which carries a null this cannot send.
+ */
+export const carriedSeqEpoch = (
+  previous: SessionState | null,
+  binding: SessionBinding,
+  minted: string,
+): string =>
+  isSameBinding(previous, binding) && previous.seqEpoch !== null
+    ? previous.seqEpoch
+    : minted;
+
 /**
  * The facts a SessionStart RE-FIRE must not erase (trial findings #17/#18/#20).
  *
@@ -648,9 +707,7 @@ export const withCarriedCapture = (
   state: SessionStateInput,
   previous: SessionState | null,
 ): SessionStateInput =>
-  previous === null ||
-  previous.repoId !== state.repoId ||
-  previous.hubUrl !== state.hubUrl
+  !isSameBinding(previous, state)
     ? state
     : {
         ...state,
