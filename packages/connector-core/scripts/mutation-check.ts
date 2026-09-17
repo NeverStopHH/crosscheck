@@ -4922,6 +4922,56 @@ export const MUTATIONS: readonly Mutation[] = [
       "\"conference\", and the NO_COMMIT_SHA placeholder is seven hex " +
       "characters, so both reach git as an object name and read as bound",
   },
+  {
+    // 1.0 spec 02 §8.5 as a doctor refusal: a rung the product genuinely
+    // cannot serve is NAMED, never left as a clean report.
+    label: "a claim nobody can ever revalidate reads as health",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  if (summary.unbound === 0) {",
+    to: "  if (true) {",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "a team whose sessions register no usable commit reads 24 green lines " +
+      "while not one thing they know can ever be judged current, which is " +
+      "AT-10's silent absence exactly",
+  },
+  {
+    // The old-hub / broken-hub split, which one branch would hide.
+    label: "a hub that broke is reported as a hub too old to know",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    return summary.status === HTTP_NOT_FOUND",
+    to: "    return true",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "\"not measured\" is a PASS, so a hub that is DOWN prints the sentence " +
+      "an older hub prints and a green meaning \"could not check\" is worse " +
+      "than no check at all (checkPins states the same rule)",
+  },
+  {
+    // The single untrusted slot on the new CLI surface.
+    label: "the hub's failure string reaches the terminal unsanitized",
+    file: `${CLI}/src/cli/revalidate.ts`,
+    from: "  `hub unreachable: ${bareUntrusted(message, MAX_HUB_MESSAGE_CHARS)} — ` +",
+    to: "  `hub unreachable: ${message} — ` +",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "`crosscheck revalidate` has exactly one slot a hub controls, and a " +
+      "hostile hub's error message then carries control characters and " +
+      "renderer structure straight into the reader's terminal",
+  },
+  {
+    // The two counts doctor prints on DIFFERENT lines because their remedies
+    // are opposite.
+    label: "a claim that can never be checked is counted as merely unchecked",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "      unbound += 1;\n      continue;",
+    to: "      unbound += 1;",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "doctor then tells a team to run `crosscheck revalidate` on claims no " +
+      "revalidation can ever reach — a remedy nobody can act on, which is " +
+      "worse than naming no remedy at all",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -4971,6 +5021,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
+ * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 2
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
@@ -5053,7 +5104,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
- * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 2
+ * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 3
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
@@ -5072,7 +5123,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
- * PRINTS: packages/server/test/claim-revalidations.test.ts 2
+ * PRINTS: packages/server/test/claim-revalidations.test.ts 3
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 2
