@@ -71,6 +71,12 @@ coverage line sees `agent_event: complete` for a session whose edits cannot be o
   answerable a year later, without the prompt, the tool output or the agent's text.
 - **Provider neutrality, in Nick's formulation:** *"every provider must be able to state which causal guarantees it
   provides."* A new vendor may do less; **it may not look like it does more.**
+- **"Missing evidence may weaken a conclusion. It must never strengthen one."** Nick, 2026-09-17 — the fifth binding
+  principle (README §"The five binding principles"), added after PR #53 was caught breaking it. Its operational form governs
+  every match and closure here: *ambiguous or unmatched closure can only reduce certainty, never increase it; no valid match →
+  no closure; multiple indistinguishable matches → only a deterministic conservative relation that cannot strengthen the
+  causal claim; if even that is not defensible → withhold the relation.* Where this spec chooses between two readings it takes
+  the one that produces **more refusals**, and says so at the choice (§3.3b, §3.5 rule 2, §3.6).
 - **Data minimisation (non-negotiable #6)** is unchanged: nothing in this spec stores text, a path, or a hash of a person.
 
 ---
@@ -118,40 +124,94 @@ be readable from the skeleton alone. The cost is re-measured with both columns a
 
 ### 3.3 Retention by relevance
 
-**A skeleton row lives as long as something that can ask about its order lives.**
+**A skeleton row lives as long as something that can ask about its order lives — and "relevant" is defined REFERENTIALLY, never
+by judgement.** Nick's wording, 2026-09-17, which this section implements literally:
 
-A session is **retained** when any of these reference it:
+> An ordering event is retained as long as at least one of these long-lived objects references it or its causal relation:
+> **Work Context, Claim, Intent Amendment, Diagnosis, Invariant, Attribution Record, Causal Attestation.** When the last
+> reference falls away, the retention policy may decide.
 
-| dependent | column | why it can ask about order |
-|---|---|---|
-| `claims` | `author_session_id` | a claim's position is what makes a reason post-hoc (principle 3) |
-| `work_context_intents` (06) | `author_session_id` | `explanationTimingFor` compares exactly these positions |
-| `causal_attestations` | `session_id` | an attestation cites the positions it was derived from (§3.5) |
+**Nothing in this rule asks whether crosscheck still finds an event useful.** "Probably still interesting" is not a predicate;
+it cannot be tested and it drifts with whoever last read the code. A reference either exists in a row or it does not, so the
+sweep is deterministic and every case below is a test.
 
-The sweep replaces `pruneSessionEvents`' predicate — age alone — with age **and** no dependent:
+| Nick's object | the row that carries it | reference to a session | status |
+|---|---|---|---|
+| Work Context | `work_contexts` | `session_id` | exists; **every** session has one (§3.3a) |
+| Claim | `claims` | `author_session_id` | exists |
+| Diagnosis | `claims` + `claim_edges` — a diagnosis IS a claim tree (00 §1.5), it has no row of its own | through its claims | exists, covered by Claim |
+| Intent Amendment | `work_context_intents` (06) | `author_session_id` | **not built** — 06 |
+| Invariant | `pins` / `pin_files`, and 04's fence waivers | **none today**: a pin references a repo and a path, never a session | **gap, §3.3b** |
+| Attribution Record | 04's verdict record | not built, and 04 computes fresh rather than storing | **not built** — 04, §3.3b |
+| Causal Attestation | `causal_attestations` (§3.5) | `session_id` | new here |
+
+**§3.3a — the Work Context line is what makes D-B's two readings diverge.** `registerSessionFlow` spools a work-context record
+for every session it claims (`connector-core/src/flows/register-session.ts`), so *"a work context references it"* is true of
+every session that ever registered, and the referential rule read literally retains **everything**, at §1.3's cost. That is
+D-B, and it is Nick's to settle: the list is his, and the consequence of taking it literally is a number, not an opinion.
+
+**§3.3b — two of the seven objects cannot reference a session yet, and the rule must fail toward keeping.** A pin names a repo
+and a path; 04's attribution record does not exist. So a session whose only durable consequence is *an invariant somebody
+pinned* is invisible to this predicate. Under principle 5 the sweep therefore **keeps what it cannot classify**: a session is
+prunable only when every implemented reference is absent AND no unimplemented object could have referenced it — which, until
+04 and 06 land, means the sweep refuses to prune any session that touched a pinned path. §7's CSK-11 pins that, and the
+refusal is printed rather than assumed.
+
+**§3.3c — the list must stay complete as tables arrive.** A new table with a session reference that nobody adds here would
+silently shorten retention, which is the same class of defect as a dead column. A meta-test enumerates every table carrying
+`session_id` or `author_session_id` and fails the build unless each is either listed as retaining or explicitly declared
+non-retaining with a reason — the two-directional shape
+`test/derive-capability-registry.test.ts` already uses for capabilities.
+
+The sweep replaces `pruneSessionEvents`' predicate — age alone — with age **and** no reference from the list above. Under D-B's
+implemented-references reading (§10), that is:
 
 ```sql
 DELETE FROM session_events se
  WHERE se.observed_at < $cutoff               -- SESSION_EVENT_RETENTION_DAYS, unchanged at 30
+   -- Claim, and with it Diagnosis: a diagnosis is a claim tree.
    AND NOT EXISTS (SELECT 1 FROM claims c               WHERE c.author_session_id = se.session_id)
+   -- Intent Amendment (06).
    AND NOT EXISTS (SELECT 1 FROM work_context_intents i WHERE i.author_session_id = se.session_id)
-   AND NOT EXISTS (SELECT 1 FROM causal_attestations a  WHERE a.session_id        = se.session_id);
+   -- Causal Attestation (§3.5).
+   AND NOT EXISTS (SELECT 1 FROM causal_attestations a  WHERE a.session_id        = se.session_id)
+   -- Invariant, until a pin can reference a session (§3.3b): keep what cannot be
+   -- classified. A session that touched a pinned path is never pruned.
+   AND NOT EXISTS (
+     SELECT 1 FROM pin_files pf
+       JOIN session_events te ON te.session_id = se.session_id
+                             AND te.ref_kind   = 'target_digest'
+      WHERE pf.digest = te.ref_id                     -- see §3.3b on the digest
+   );
 ```
+
+**The pin clause is where principle 5 is visible in SQL.** `pin_files` stores a path, and a skeleton row stores a digest, so
+joining them needs the pin side to carry `sha256(work_context_id \n kind \n value)` too — which it cannot, because a pin has
+no work context. The builder therefore has a choice, and only one side of it is allowed: either give `pin_files` a
+content-free digest column computed the same way per repo, or **do not prune any session with a `target_digest` row at all**
+until 04's attribution record exists. The second is cruder and keeps more; principle 5 says the crude one ships unless the
+first is actually built. What is forbidden is dropping the clause because it is awkward — that turns a missing reference into
+a licence to delete.
 
 `claims_author_session_idx` does not exist today and is added (§4); 06 already specifies
 `work_context_intents_session_idx (author_session_id, seq)`; §3.5 specifies the attestation index. The statement stays one
 pass on `reapStaleSessions`' existing schedule (`event-order:services/sessions.ts`), before its early return, as #53 placed
-it. **The thirty-day constant keeps its value and changes its meaning**: it is now the grace period for sessions nothing can
-ever ask about, and its comment says so.
+it — **except that #53 now ships with the sweep switched off entirely** (§4, D-D), so this predicate is what switches it back
+on. **The thirty-day constant keeps its value and changes its meaning**: it is the grace period for sessions that no
+long-lived object references, and its comment says so.
 
-**What is lost, named.** A session with no claim and no intent version loses its order after thirty days. Nothing in 1.0 can
-compare against it: `explanationTimingFor` step 1 returns `absent` / `no_intent` for it before step 4 ever reads a position,
-and 01 §3.7 (1) already made attribution independent of `seq`. That session's *targets* stay, because they are content and
-`work_context_targets` is never removed.
+**What is lost, named.** A session that no object in Nick's list references loses its order after thirty days. Nothing in 1.0
+can compare against it: `explanationTimingFor` step 1 returns `absent` / `no_intent` for it before step 4 ever reads a
+position, and 01 §3.7 (1) already made attribution independent of `seq`. That session's *targets* stay, because they are
+content and `work_context_targets` is never removed. What is **not** lost is anything a person pinned, anything anybody
+claimed, or anything an attestation froze.
 
-**The literal reading was considered and is D-B.** Nick's sentence names *"Claims, Work Contexts oder Invarianten"*.
-`registerSessionFlow` spools a work-context record for every session it claims (`connector-core/src/flows/register-session.ts`),
-so "as long as its work context exists" is "forever" in this schema, at the §1.3 cost.
+**Why the predicate above omits one of the seven, and why that is D-B rather than a decision taken here.** Work Context is on
+Nick's list and every session has one (§3.3a), so including it makes the sweep unreachable and the retention "forever" at
+§1.3's cost. Omitting it makes the sweep reachable but implements six of seven references rather than all seven. Both are
+defensible and the difference is a storage number, not a correctness argument — so the SQL above shows the reachable reading
+and D-B states the other with its cost. **Neither reading is a judgement about usefulness**, which is what Nick's referential
+definition rules out; both are counts of rows that reference a session.
 
 ### 3.4 The content rule — redaction in place, never removal, for anything the skeleton references
 
@@ -332,9 +392,12 @@ cost.
 4. **`content_expired_at timestamptz NULL`** on the five tables in §3.4 rule 1. Nothing sets it in 1.0 unless D-A says so.
 5. **The prune's predicate** changes in place (§3.3); `SESSION_EVENT_RETENTION_DAYS` keeps its value and gets a new comment.
 
-**The window that makes the order of merges matter.** #53's prune removes only rows older than thirty days, and a hub starts
-writing `session_events` only once #53 is deployed. **If this spec ships within thirty days of #53's first deploy, no row is
-ever lost.** If it ships later, rows older than thirty days are gone, including those of sessions that have claims. D-D.
+**The sweep is off before #53 merges, so no schedule promise carries the risk.** Nick's D-D decision of 2026-09-17: #53 stops
+calling `pruneSessionEvents` and prints a documented refusal instead. The earlier reasoning — that #53's prune only removes
+rows older than thirty days, so shipping this spec inside thirty days of the first deploy loses nothing — was correct and the
+wrong thing to rely on: it makes data survival depend on a delivery date. With the sweep off, the first deploy that deletes a
+skeleton row is the first one that deletes it by the referential predicate. The cost is a table that grows without bound
+between the two merges, which `doctor` prints (§5) and which §1.3 sizes at 476 bytes a row.
 
 ---
 
@@ -407,6 +470,27 @@ increments `declaration_contradicted`. *Mutation:* skip the counter.
 artifact; end the session; search `session_events`, `causal_attestations` and `session_causal_guarantees` byte for byte.
 *Fails if* one marker is found. This extends 01's existing content-free test rather than adding a parallel one.
 
+
+**CSK-11 — an unclassifiable session is kept, not pruned.** A 31-day-old session with no claim, no intent version and no
+attestation, which touched a path somebody pinned, keeps its rows. *Fails if* the sweep prunes it — a missing reference
+(Invariant, Attribution Record) turned into a licence to delete, which is principle 5 inverted. *Mutation:* drop the pin
+clause from the predicate.
+
+**CSK-12 — the retaining list is complete.** The meta-test of §3.3c: a new table carrying `session_id` or
+`author_session_id` that is neither listed as retaining nor declared non-retaining with a reason fails the build. *Fails if* a
+table can be added with no entry. *Mutation:* make the unknown-table case a warning instead of a failure.
+
+**CSK-13 — ambiguity never strengthens a relation.** For every ambiguous or unmatched case this spec names — an attestation
+whose ladder version is superseded, a declaration that is `undeclared`, a referent whose content expired, a session whose
+order is `broken` — the answer a consumer gets is weaker or equal to the answer under full information, and never
+`predeclared` where the unambiguous case would have refused. *Fails if* any one of them yields a stronger relation than the
+same input with the ambiguity removed. This is principle 5 written as a test over a table of pairs rather than prose.
+*Mutation:* make the superseded-ladder branch fall through to the live answer.
+
+**CSK-14 — the sweep is off until this spec turns it on, and says so.** Lands in **#53**, not here (D-D): with the age sweep
+withdrawn, a 31-day-old session with no references keeps every row, and `doctor` prints the refusal rather than a silent
+absence. *Fails if* rows disappear, or if the refusal is missing while the behaviour changed. *Mutation:* restore the
+`pruneSessionEvents` call.
 ---
 
 ## 8. Refusals
@@ -429,7 +513,9 @@ artifact; end the session; search `session_events`, `causal_attestations` and `s
 
 ## 9. Collisions
 
-- **#53 (`feat/session-event-order`)** — `services/session-events.ts` `pruneSessionEvents` (predicate replaced);
+- **#53 (`feat/session-event-order`)** — carries D-D's change itself: the call to `pruneSessionEvents` is withdrawn there with
+  a documented refusal before that PR merges, so this spec's predicate is what re-enables the sweep rather than replacing a
+  live one. `services/session-events.ts` `pruneSessionEvents` (predicate replaced);
   `constants.ts` `SESSION_EVENT_RETENTION_DAYS` (comment rewritten, value kept); `db/bootstrap.sql` `session_events` (two
   columns) and `session_events_observed_at_idx` (kept: the sweep still ranges by age first). Build **after** #53 merges.
 - **#52 / 03** — `CoverageRecord` gains `order` in **both** copies; 03's parity test and COV-5 shape are edited. 03's
@@ -457,15 +543,29 @@ institutional memory your same note wants kept *"solange die zugehörigen Claims
 "Zusatzinformationen" cleanly is `artifacts.content`. *Alternative:* redact `artifacts.content` at thirty days and keep the
 row. Cost: an approved artifact attached to a live claim disappears from that claim a month later.
 
-**D-B — Relevance, or literal "forever"?** *Default (recommended): relevance* (§3.3) — a session's order is kept while a claim,
-an intent version or an attestation references it. *Alternative:* keep every skeleton row, since every session has a work
-context. Cost: §1.3 — 1.2 to 12 GB a year for a ten-person team, on an embedded database.
+**D-B — Do the implemented references decide, or all seven including Work Context?** Nick settled the *definition* on
+2026-09-17: relevance is **referential only**, never a judgement about usefulness, over Work Context, Claim, Intent Amendment,
+Diagnosis, Invariant, Attribution Record and Causal Attestation (§3.3). What is left is a consequence of his own list, and it
+is a storage number rather than a correctness question. *Default (recommended): the six implemented references* — Claim (and
+with it Diagnosis), Intent Amendment, Causal Attestation, plus the keep-what-cannot-be-classified clause for Invariant, so no
+pinned surface's session is ever pruned. *Alternative:* include Work Context too, which every session has, making the sweep
+unreachable and retention effectively permanent. Cost: §1.3 — 1.2 to 12 GB a year for a ten-person team, on an embedded
+database. Either way the predicate is deterministic and CSK-1 … CSK-3 and CSK-11 test it.
 
 **D-C — Guarantees beside the coverage sources, or as a sixth source?** *Default (recommended): beside* (§3.7), which keeps
 01 §3.7 (1): unusable order never makes attribution `INDETERMINATE`. *Alternative:* a sixth `COVERAGE_SOURCES` value
 `causal_order`. Cost: 00 §8.2's source list is a contract all eight specs bind to, and `isJudgeable` would start gating
 attribution on order — the coupling 04 refused.
 
-**D-D — Ship order against #53.** *Default (recommended): build this within thirty days of #53's first deploy* (§4), so no
-row is ever lost. *Alternative:* a one-line change on #53 now that keeps the prune from running until this lands. Cost: a
-second edit to a PR that is under adversarial review while this is written.
+**D-D — DECIDED 2026-09-17 by Nick: the sweep is switched off on #53 before it merges.** Not the thirty-day window this spec
+first recommended. His reason, and it is the better one: *deploying a retention mechanism you already know deletes exactly the
+data later causal statements need is unnecessary risk.* The window argument only held if this spec shipped inside thirty days,
+which is a schedule promise rather than a property of the system.
+
+What that requires on #53, and it is not a commented-out line: `pruneSessionEvents` stops being called and says why, in the
+same breath as the code that used to call it — a **documented refusal** in the sense 00 §8 uses, printed by `doctor`
+(*"session-event retention: off — the age-based sweep is withdrawn; 01a's referential predicate replaces it"*) so that a hub
+operator can see the table is unbounded on purpose rather than by oversight. The constant stays, with a comment saying it is
+dormant. 01a then switches the sweep back on with the referential predicate (§3.3), and the first deploy that prunes anything
+is the one that prunes it correctly. CSK-14: with the sweep off, a 31-day-old session keeps its rows and `doctor` prints the
+refusal; *mutation:* restore the call.

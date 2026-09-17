@@ -15,7 +15,7 @@ post-#50 position always carries the `crosscheck-pins:` prefix (00 §9.4a). Wher
 rung cannot exist on a platform, or the honest answer is "not in 1.0", the spec
 writes the refusal — a spec that pretends is worse than no spec.
 
-## The four binding principles
+## The five binding principles
 
 1. **"Only judge when you know you were watching."** `UNATTRIBUTED` is emitted
    only under complete coverage; under a known gap the verdict is
@@ -32,6 +32,25 @@ writes the refusal — a spec that pretends is worse than no spec.
    intent."** A fence invariant outranks any session widening. Changing one needs
    a human waiver — bounded, reasoned, append-only, expiring. Never
    `amend_intent`.
+5. **"Missing evidence may weaken a conclusion. It must never strengthen one."**
+   Added 2026-09-17, and it is the most general of the five: it binds coverage,
+   provider gaps, claim evidence, CI, the garden fence and attribution alike, not
+   just the ordering path that produced it. Its operational form, for any matching
+   or closure a connector or the hub performs:
+
+   > **Ambiguous or unmatched closure can only reduce certainty. It can never
+   > increase it.**
+   >
+   > No valid match → no closure. Multiple indistinguishable matches → choose only
+   > a deterministic conservative relation that cannot strengthen the causal claim.
+   > If even that is not defensible → withhold the relation.
+
+   The principle exists because PR #53 broke it in the most dangerous direction a
+   system like this can break: an *unmatchable* tool window was closed by a
+   foreign hook, and an unprovable state became `predeclared` — the value that
+   exonerates. A gap that produces an accusation is a bug; a gap that produces an
+   exoneration is a bug that nobody reports. Every guard written against this
+   principle therefore has to show which way its failure falls.
 
 ## Build order
 
