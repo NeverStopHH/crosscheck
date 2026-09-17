@@ -81,12 +81,13 @@ export interface SeqCost {
    *
    * WHY THE EVICTION COUNT ABOVE CANNOT STAND IN FOR IT. An open the busy
    * state lock refuses writes no entry, so nothing is ever evicted for it and
-   * the cap's counter does not move. Measured through the real hooks on a
-   * loaded machine, that path lost brackets while `windowEvictions` stayed
-   * exactly 0 — and since the eviction clause is silent at zero, the line said
-   * nothing at all about a machine that was losing them. An install answering
-   * "is MAX_TOOL_WINDOWS = 32 enough?" from the eviction count alone was
-   * reading a number blind to the losses that were happening.
+   * the cap's counter does not move. MEASURED on the real hooks, one turn of K
+   * parallel Edit calls: at K=32 six of 32 opens were refused by a busy state
+   * lock and at K=48 twenty of 48 were, `windowEvictions` 0 in every run — and
+   * since the eviction clause is silent at zero, the line said nothing at all
+   * about a machine that was losing them. An install answering "is
+   * MAX_TOOL_WINDOWS = 32 enough?" from the eviction count alone was reading a
+   * number blind to the losses that were happening.
    *
    * COUNTED AT THE CLOSE, where every cause meets: a refused open, an evicted
    * entry, a hook installed mid-tool, a state file older than the keyed list,

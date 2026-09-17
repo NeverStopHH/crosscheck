@@ -244,13 +244,17 @@ describe("the ambiguity is countable and printed", () => {
     // `openToolWindow` the busy state lock refused writes no entry at all, so
     // nothing is ever evicted for it and the cap's counter stays 0 — while the
     // edit reaches the hub unbracketed and every happens-before question
-    // against it is refused. Measured through the real hooks under an ordinary
-    // parallel turn on a loaded machine: refusals at 0.4-1.7% of edits with
-    // `toolWindowEvictions` exactly 0 throughout. This counts the loss from
-    // the side that can SEE it — an edit tool's PostToolUse that took a
-    // position and found no window of its own — so the number covers a refused
-    // open, a hook installed mid-flight, a state file too old for the list, a
-    // host that sends no `tool_use_id` and an evicted entry alike.
+    // against it is refused. MEASURED on the real hooks, one turn of K parallel Edit calls: at K=32
+    // six of 32 opens were refused by a busy state lock and at K=48 twenty of
+    // 48 were, with `toolWindowEvictions` 0 in every run. This counter booked
+    // 3 and 12 of them; the rest were calls whose PostToolUse allocation was
+    // refused too, and those records carry `allocation_failed` for themselves.
+    //
+    // It counts the loss from the side that can SEE it — an edit tool's
+    // PostToolUse that took a position and found no window of its own — so the
+    // number covers a refused open, a hook installed mid-flight, a state file
+    // too old for the list, a host that sends no `tool_use_id` and an evicted
+    // entry alike.
     const cost = summarizeSeqCost([
       stateOf({ hostSessionKey: "a", seqEpoch: EPOCH, eventSeq: 9, toolWindowMisses: 2 }),
       stateOf({

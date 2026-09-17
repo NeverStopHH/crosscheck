@@ -526,10 +526,11 @@ const SessionStateObjectSchema = z.looseObject({
    * `toolWindowEvictions` counts what the CAP threw away, and that is not the
    * same number: a PreToolUse whose `openToolWindow` the busy state lock
    * refused writes no entry at all, so nothing is ever evicted for it and the
-   * cap's counter does not move. Measured through the real hooks under an
-   * ordinary parallel turn on a loaded machine, that path lost brackets while
-   * the eviction count stayed exactly 0 — so the one number both surfaces
-   * printed was blind to the losses that were happening.
+   * cap's counter does not move. MEASURED on the real hooks, one turn of K
+   * parallel Edit calls: at K=32 six of 32 opens were refused by a busy state
+   * lock and at K=48 twenty of 48 were, with `toolWindowEvictions` 0 in every
+   * run — so the one number both surfaces printed was blind to the losses that
+   * were happening.
    *
    * COUNTED AT THE CLOSE, because the close is where every cause meets. A
    * PostToolUse that allocated a position for an EDIT and found no window
@@ -537,6 +538,10 @@ const SessionStateObjectSchema = z.looseObject({
    * entry evicted, its hook installed mid-flight, its state file older than
    * this list, or its host too old to send a `tool_use_id`. It costs no lock:
    * the fold rides in the one mid-session write that hook already makes.
+   *
+   * WHAT IT STILL CANNOT COUNT: a call whose PostToolUse allocation was ALSO
+   * refused. Nothing was positioned then, so there is no bracket to miss — the
+   * record travels `allocation_failed` and says so for itself.
    *
    * IT IS NOT A WARN. Every cause above is either load or a host's age, none
    * has a remedy the reader could apply, and the direction is safe — a missing

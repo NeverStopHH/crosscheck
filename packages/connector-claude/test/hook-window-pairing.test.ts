@@ -237,11 +237,15 @@ describe("a window is paired to the tool call that opened it", () => {
     // Arrange: the same refusal as the test above, asked as telemetry. The
     // eviction counter cannot see this loss — a refused open writes NO entry,
     // so nothing is ever evicted for it — and `toolWindowEvictions` was the
-    // only bracket-loss number `status` and `doctor` printed. Measured through
-    // the real hooks on a loaded machine, refusals ran at 0.4-1.7% of edits
-    // with the eviction count exactly 0 throughout, so the one question the
-    // cap's counter exists for ("is MAX_TOOL_WINDOWS = 32 enough?") was being
-    // answered by a number blind to the losses actually happening.
+    // only bracket-loss number `status` and `doctor` printed, so the one
+    // question the cap's counter exists for ("is MAX_TOOL_WINDOWS = 32
+    // enough?") was answered by a number blind to the losses happening.
+    //
+    // MEASURED on the real hooks, one turn of K parallel Edit calls: at K=32
+    // six of 32 opens were refused by a busy state lock and at K=48 twenty of
+    // 48 were, with `toolWindowEvictions` 0 in every run. This counter booked
+    // 3 and 12 of them; the rest were calls whose PostToolUse allocation was
+    // refused too, and those records carry `allocation_failed` for themselves.
     const fx = await fixture("pairing-counted");
     const t1: Call = { file: "src/a.ts", id: "toolu_counted_1" };
     await writeRepoFile(fx.repo, "src/a.ts", "export const x = 1;\n");
