@@ -47,19 +47,22 @@ export interface SeqCost {
    */
   readonly ambiguousRoots: number;
   /**
-   * TOOL WINDOWS THE CAP DROPPED, summed across live sessions. Each one is a
-   * running tool that lost the floor its own PreToolUse paid for, so its edit
-   * reaches the hub as the upper bound it always was and every happens-before
-   * question against it is refused.
+   * TOOL WINDOWS THE CAP EVICTED, summed across live sessions — an UPPER
+   * BOUND on the brackets lost, not a count of them. A call that was still
+   * running when its window went lost the floor its own PreToolUse paid for,
+   * so its edit reaches the hub as the upper bound it always was and every
+   * happens-before question against it is refused. A call that had already
+   * ended with no hook left to close its window — denied, or aborted — lost
+   * nothing, and nothing here can tell the two apart. Failed edits are not in
+   * either group: PostToolUseFailure closes their windows.
    *
    * IT IS NOT A WARNING and it has no remedy a reader could act on:
    * MAX_TOOL_WINDOWS is a limit of this build, the eviction costs only
    * precision, and this tree's rule for a platform limit nobody can act on is
    * that it stays PASS and is stated. It is COUNTED because the cap is a
-   * CHOSEN number — nothing in a hook payload says how many tool calls the
-   * host put in one batch — and a real install reaching the ceiling is the
-   * only evidence that can say the number is too small. A missing bracket on
-   * its own cannot say it: it looks identical to a tool that opened no window.
+   * CHOSEN number and a real install reaching the ceiling is the only
+   * evidence that can say it is too small. A missing bracket on its own
+   * cannot say it: it looks identical to a call that opened no window.
    */
   readonly windowEvictions: number;
 }
@@ -185,13 +188,14 @@ export const formatSeqCost = (
           cost.ambiguousRoots === 1 ? "" : "s"
         } with two sessions (MCP positions refused there)`;
   // Silent at zero, like the two above it: an eviction is rare by
-  // construction, and "0 bracket(s) dropped" on every healthy machine forever
-  // is the noise this line is built to avoid. Above zero it names what was
-  // lost — brackets, not records — because the records landed.
+  // construction, and "0 evicted" on every healthy machine forever is the
+  // noise this line is built to avoid. Above zero it says what an eviction
+  // CAN cost — a bracket, never a record, because the records landed — and
+  // that it may have cost nothing, because the count cannot tell which.
   const evicted =
     cost.windowEvictions === 0
       ? ""
-      : ` · ${String(cost.windowEvictions)} bracket(s) dropped at the tool-window cap (those edits travel as upper bounds)`;
+      : ` · ${String(cost.windowEvictions)} tool window(s) evicted at the cap (an edit still running when its window went travels as an upper bound; a call that had already ended lost nothing)`;
   // ABSENT IS NOT ZERO. A hub too old for the route, or one that did not
   // answer, says nothing — and printing "0 broken" there would be an assertion
   // nobody made. The line stays silent about what it could not ask.

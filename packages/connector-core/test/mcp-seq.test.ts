@@ -194,15 +194,17 @@ describe("the ambiguity is countable and printed", () => {
     expect(formatSeqCost(cost)).toContain("7");
   });
 
-  test("a bracket the window cap dropped is counted and printed", () => {
-    // Arrange: MAX_TOOL_WINDOWS is a CHOSEN number, not a measured one — no
-    // hook payload says how many tool calls the host put in a batch. An
-    // eviction costs that tool its bracket and nothing else (its position
-    // stays the upper bound it was, and the hub refuses rather than answers),
-    // so it is not a WARN and has no remedy a reader could act on. It is
-    // printed because a real install reaching the ceiling is the ONLY thing
-    // that can say the number is too small, and a missing bracket on its own
-    // is indistinguishable from a tool that never opened a window.
+  test("a window the cap evicted is counted and printed for what it cost", () => {
+    // Arrange: MAX_TOOL_WINDOWS is a CHOSEN number — no hook payload says how
+    // many calls are running at once. An eviction costs a call that was STILL
+    // RUNNING its bracket and nothing else (its position stays the upper bound
+    // it was, and the hub refuses rather than answers), so it is not a WARN
+    // and has no remedy a reader could act on. It is printed because a real
+    // install reaching the ceiling is the ONLY thing that can say the number
+    // is too small. And it says "evicted", not "dropped": a call that ended
+    // with no post hook to close its window (a denied or aborted call) is
+    // evicted too, and cost nothing — the count is an upper bound on the
+    // brackets lost, and the line must not read as an exact one.
     const cost = summarizeSeqCost([
       stateOf({ hostSessionKey: "a", seqEpoch: EPOCH, eventSeq: 9, toolWindowEvictions: 2 }),
       stateOf({
@@ -216,7 +218,10 @@ describe("the ambiguity is countable and printed", () => {
 
     // Assert
     expect(cost.windowEvictions).toBe(3);
-    expect(formatSeqCost(cost)).toContain("3 bracket(s) dropped");
+    expect(formatSeqCost(cost)).toContain(
+      "3 tool window(s) evicted at the cap (an edit still running when its window went travels as an upper bound; a call that had already ended lost nothing)",
+    );
+    expect(formatSeqCost(cost)).not.toContain("dropped");
     expect(seqWarning(cost)).toBeNull();
   });
 
@@ -230,7 +235,7 @@ describe("the ambiguity is countable and printed", () => {
 
     // Assert
     expect(cost.windowEvictions).toBe(0);
-    expect(formatSeqCost(cost)).not.toContain("dropped");
+    expect(formatSeqCost(cost)).not.toContain("evicted");
   });
 
   test("no live sessions says so rather than printing zeros", () => {

@@ -124,7 +124,7 @@ describe("a window is found by its own call's key", () => {
 
   test("the cap evicts the OLDEST window and counts the eviction", async () => {
     // Arrange: a session whose PreToolUse hooks outnumber their PostToolUse
-    // ones — every denied, cancelled or failed edit leaves one entry — must
+    // ones — every denied or aborted edit leaves one entry — must
     // cost bounded memory.
     const home = await fixture("window-cap");
     const keys = Array.from({ length: MAX_TOOL_WINDOWS + 1 }, (_, index) =>

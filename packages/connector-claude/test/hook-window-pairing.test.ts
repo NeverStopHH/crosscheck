@@ -363,6 +363,90 @@ describe("a window is paired to the tool call that opened it", () => {
     expect(state?.toolWindows).toHaveLength(1);
   });
 
+  test("a failed edit closes its own window and nobody else's", async () => {
+    // Arrange: a failed edit goes to PostToolUseFailure, never to
+    // PostToolUse. With a key that names one call, no later call can match the
+    // window it leaves behind, so an unclosed one only sits in the capped list
+    // until an eviction counts it — as a bracket lost by an edit that never
+    // happened. Failed edits are common (a stale old_string), so they would be
+    // most of that count.
+    const fx = await fixture("pairing-failed");
+    const failed: Call = { file: "src/a.ts", id: "toolu_failed_1" };
+    const sibling: Call = { file: "src/b.ts", id: "toolu_failed_2" };
+    await writeRepoFile(fx.repo, "src/a.ts", "export const x = 1;\n");
+    await writeRepoFile(fx.repo, "src/b.ts", "export const y = 2;\n");
+    await pre(fx, failed);
+    await pre(fx, sibling);
+
+    // Act
+    await runHook(
+      "post-tool-use-failure",
+      JSON.stringify({
+        session_id: SESSION_ID,
+        cwd: fx.repo,
+        hook_event_name: "PostToolUseFailure",
+        tool_name: "Edit",
+        tool_input: { file_path: join(fx.repo, failed.file) },
+        tool_use_id: failed.id,
+        error: "String to replace not found in file.\nString: export const z = 3;",
+      }),
+      env(fx.home),
+    );
+    const afterFailure = await readSessionState(fx.home, SESSION_ID);
+    await writeRepoFile(fx.repo, "src/b.ts", "export const y = 200;\n");
+    await post(fx, sibling);
+
+    // Assert: the failed call's entry is gone, the sibling's was untouched and
+    // still brackets the sibling's edit from the sibling's own floor...
+    expect(afterFailure?.toolWindows).toHaveLength(1);
+    expect((await targetFor(fx, "src/b.ts")).seq.after).toBe(2);
+    // ...and the failure's own fingerprint is positioned exactly as before —
+    // a position, no bracket — so closing the window changed nothing it says.
+    const fingerprints = (await readSpoolLines(fx.home, repoKey(DEAD_HUB_URL, REPO_ID)))
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter(
+        (record) =>
+          record["kind"] === "target" &&
+          (record["body"] as { kind: string }).kind === "error_fingerprint",
+      );
+    expect(fingerprints).toHaveLength(1);
+    const stamp = fingerprints[0]?.["seq"] as Stamp;
+    expect(stamp.n).toBeGreaterThan(0);
+    expect(stamp.after).toBeUndefined();
+  });
+
+  test("a failed call dropped as another repo's still closes its own window", async () => {
+    // Arrange: the failure hook's own first-wins drop path — the call edits a
+    // file in acme/other while this session reports to acme/api.
+    const fx = await fixture("pairing-failed-foreign");
+    const other = await makeRepo("pairing-failed-foreign-other", {
+      remote: "git@github.com:acme/other.git",
+    });
+    paths.push(other);
+    await writeRepoFile(other, "src/x.ts", "export const x = 1;\n");
+    const foreign = (event: string): string =>
+      JSON.stringify({
+        session_id: SESSION_ID,
+        cwd: other,
+        hook_event_name: event,
+        tool_name: "Edit",
+        tool_input: { file_path: join(other, "src/x.ts") },
+        tool_use_id: "toolu_failed_foreign_1",
+        error: "String to replace not found in file.\nString: export const z = 3;",
+      });
+
+    // Act
+    await runHook("pre-tool-use", foreign("PreToolUse"), env(fx.home));
+    const opened = await readSessionState(fx.home, SESSION_ID);
+    await runHook("post-tool-use-failure", foreign("PostToolUseFailure"), env(fx.home));
+
+    // Assert
+    expect(opened?.toolWindows).toHaveLength(1);
+    const state = await readSessionState(fx.home, SESSION_ID);
+    expect(state?.foreignRepoDrops).toBe(1);
+    expect(state?.toolWindows).toEqual([]);
+  });
+
   test("a host that sends no tool_use_id opens no window and sends no bracket", async () => {
     // Arrange: the documented refusal. Without the host's id there is no key
     // that names ONE call, and a key that can name two is how a refused tool

@@ -503,13 +503,12 @@ const SessionStateObjectSchema = z.looseObject({
    * keys are DROPPED on read (the preprocess above), so a mid-flight write-back
    * leaves nothing on disk that looks like a window nobody reads.
    *
-   * A LEAKED WINDOW BRACKETS NOTHING. A PreToolUse whose PostToolUse never
-   * runs (a denied or cancelled tool; a failed edit, which goes to
-   * PostToolUseFailure, which closes nothing) leaves its entry behind, and no
-   * later call carries its id, so it is never matched again. It costs a slot
-   * until MAX_TOOL_WINDOWS evicts it, and the evictions that bound costs are
-   * COUNTED rather than inferred from a missing bracket. The defaults keep
-   * every older state file parsing.
+   * A LEAKED WINDOW BRACKETS NOTHING. A PreToolUse whose call is never closed
+   * (a denied call, an aborted one, a close a busy lock refused) leaves its
+   * entry behind, and no later call carries its id, so it is never matched
+   * again. It costs a slot until MAX_TOOL_WINDOWS evicts it, and the evictions
+   * that bound costs are COUNTED rather than inferred from a missing bracket.
+   * The defaults keep every older state file parsing.
    */
   toolWindows: z
     .array(
@@ -802,10 +801,10 @@ export const allocateSeq = async (
  * the close finds no match and sends no bracket — the honest outcome, and the
  * one that made discarding this return value safe.
  *
- * THE LIST IS CAPPED. An entry whose PostToolUse never runs stays, so the
- * oldest falls out at MAX_TOOL_WINDOWS and the eviction is COUNTED: an evicted
- * tool loses its bracket and nothing else, and the count is the only thing that
- * can say whether the cap is too small.
+ * THE LIST IS CAPPED. An entry nothing closes stays, so the oldest falls out
+ * at MAX_TOOL_WINDOWS and the eviction is COUNTED: an evicted call that was
+ * still running loses its bracket and nothing else, and the count is the only
+ * thing that can say whether the cap is too small.
  */
 export const openToolWindow = async (
   home: string,
@@ -862,12 +861,12 @@ export const toolWindowFloorFor = (
 
 /**
  * The list with ONE window of that key gone — a PATCH, not a whole state. Two
- * of PostToolUse's three exits fold this into an `updateSessionState` transform
- * that is already changing other counters, and a full-state spread there would
- * put every one of them back. Exported because those exits emit nothing and
- * must still drain the entry: a window left open brackets nothing, since no
- * later call carries its key, but it holds a slot in a capped list until the
- * cap evicts it and counts a dropped bracket that dropped nothing.
+ * of PostToolUse's three exits, and PostToolUseFailure's drop path, fold this
+ * into an `updateSessionState` transform that is already changing other
+ * counters, and a full-state spread there would put every one of them back.
+ * Exported because those exits allocate nothing and must still drain the
+ * entry: a window left open brackets nothing, since no later call carries its
+ * key, but it holds a slot in a capped list until the cap evicts it.
  *
  * THE YOUNGEST MATCH IS THE ONE REMOVED, so the earliest floor under a key
  * survives until every entry under it is closed and `toolWindowFloorFor` keeps

@@ -265,9 +265,10 @@ export const MAX_FIRED_TOOL_CALLS = 256;
  * before the tool started, keyed by the host's `tool_use_id` — and it is
  * removed when that call's PostToolUse closes it.
  *
- * WHY A CAP AT ALL. Not every open window is closed. A failed edit tool goes
- * to PostToolUseFailure, which closes nothing, a denied or cancelled call runs
- * no post hook at all, and any hook the host drops leaves its entry behind; an
+ * WHY A CAP AT ALL. Not every open window is closed. PostToolUse closes a
+ * call that returned and PostToolUseFailure one that failed, but a denied call
+ * runs neither, an aborted one returns before its close, a busy lock can
+ * refuse a close, and any hook the host drops leaves its entry behind; an
  * uncapped list on the hook's hot path grows for the life of the session. FIFO
  * like MAX_SEEN_TARGETS and MAX_FIRED_TOOL_CALLS.
  *
