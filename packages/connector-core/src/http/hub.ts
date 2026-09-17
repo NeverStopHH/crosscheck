@@ -735,6 +735,34 @@ export const DiagnosisTargetSchema = z.looseObject({
 
 export type DiagnosisTarget = z.infer<typeof DiagnosisTargetSchema>;
 
+/** One declared path of one intent version — `role` is what decides a timing. */
+export const IntentScopeViewSchema = z.looseObject({
+  role: z.string().min(1),
+  kind: z.string().min(1),
+  value: z.string().min(1),
+});
+
+/**
+ * ONE VERSION OF THE INTENT. `summary` and `reason` are both AGENT-WRITTEN and
+ * both land on a rendered surface, so both are untrusted slots with corpus
+ * cases of their own; `scope[].value` is an author-written path and is a third.
+ *
+ * NO POSITION CROSSES. The hub answers timing questions; a connector holding
+ * two integers would be a second implementation of the ladder with none of its
+ * refusals.
+ */
+export const IntentVersionSchema = z.looseObject({
+  version: z.number().int().min(1),
+  amendsVersion: z.number().int().min(1).nullable().optional(),
+  provenance: z.string().min(1),
+  summary: z.string().min(1),
+  reason: z.string().nullable().optional(),
+  scope: z.array(IntentScopeViewSchema).optional(),
+});
+
+export type IntentVersion = z.infer<typeof IntentVersionSchema>;
+export type IntentScopeView = z.infer<typeof IntentScopeViewSchema>;
+
 export interface Diagnosis {
   readonly workContext: DiagnosisWorkContext;
   readonly claims: readonly DiagnosisClaim[];
@@ -756,6 +784,24 @@ export interface Diagnosis {
    * no overlap — and it is a claim nobody made.
    */
   readonly targetsReported: boolean;
+  /**
+   * Every version of this context's intent, newest first.
+   *
+   * ITS OWN COMPANION FLAG IS BELOW, for the reason `targetsReported` states
+   * one field up: an empty array is what a hub sends for a context nobody ever
+   * amended AND what a hub too old to know about the field leaves behind.
+   */
+  readonly intentChain: readonly IntentVersion[];
+  /**
+   * Whether the hub ANSWERED the chain question at all.
+   *
+   * "This session never amended its intent" is a claim a reader ACTS on — it
+   * is the sentence that makes a stated plan look like the plan all along —
+   * and against an older hub it is a claim nobody made. Reporting it from an
+   * empty array would be an unearned exoneration, which is the one direction
+   * this whole spec refuses to be wrong in.
+   */
+  readonly chainReported: boolean;
   /**
    * Target rows the hub sent that this client could not parse, kept SEPARATE
    * from the aggregate `droppedRows` below.
@@ -816,6 +862,9 @@ const DiagnosisEnvelopeSchema = z
     // a default erases "the hub said nothing" into "the hub said none", and
     // the renderer would then print an absence as a finding.
     targets: z.array(z.unknown()).optional(),
+    // OPTIONAL for the same reason `targets` is: a default would erase "this
+    // hub does not report the chain" into "this session never amended".
+    intentChain: z.array(z.unknown()).optional(),
     truncated: z.boolean().default(false),
   })
   .transform((value): Diagnosis => {
@@ -823,6 +872,7 @@ const DiagnosisEnvelopeSchema = z
     const edges = parseRows(value.edges, DiagnosisEdgeSchema);
     const external = parseRows(value.externalClaims, ExternalClaimRefSchema);
     const targets = parseRows(value.targets ?? [], DiagnosisTargetSchema);
+    const chain = parseRows(value.intentChain ?? [], IntentVersionSchema);
     return {
       workContext: value.workContext,
       claims: claims.rows,
@@ -831,9 +881,15 @@ const DiagnosisEnvelopeSchema = z
       targets: targets.rows,
       targetsReported: value.targets !== undefined,
       droppedTargets: targets.dropped,
+      intentChain: chain.rows,
+      chainReported: value.intentChain !== undefined,
       truncated: value.truncated,
       droppedRows:
-        claims.dropped + edges.dropped + external.dropped + targets.dropped,
+        claims.dropped +
+        edges.dropped +
+        external.dropped +
+        targets.dropped +
+        chain.dropped,
     };
   });
 

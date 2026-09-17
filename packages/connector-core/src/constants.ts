@@ -1572,6 +1572,20 @@ export const HUB_MAX_DIAGNOSIS_TARGETS = 100;
 export const MAX_DIAGNOSIS_TARGETS_SHOWN = 20;
 
 /**
+ * HOW MANY INTENT VERSIONS THE DIAGNOSIS PRINTS, newest first.
+ *
+ * Below the hub's own chain cap on purpose: the cap is what bounds the TABLE
+ * (there is no retention job over the ledger), and this bounds one rendered
+ * answer. A reader arriving at a twenty-version context wants the recent
+ * amendments and a count of the rest, not twenty framed sentences ahead of the
+ * claims.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.INTENT_CHAIN_MAX_SHOWN < s.MAX_INTENT_CHAIN_VERSIONS)'
+ * PRINTS: true
+ */
+export const INTENT_CHAIN_MAX_SHOWN = 5;
+
+/**
  * Rendering caps for `get_referee_brief` — PER SECTION, not one document cap,
  * and that is the neutrality mechanism: a single document budget spends itself
  * on whichever position renders first, so the later side would truncate

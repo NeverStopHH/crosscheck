@@ -35,6 +35,7 @@ import {
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
+import { renderIntentChain } from "./render-intent-chain.ts";
 import {
   QUOTED_DATA_NOTICE,
   formatAge,
@@ -845,6 +846,11 @@ export const renderDiagnosis = (
   // framed value per line, the one fragment every surface spells.
   const intentFragment = renderIntent(context.intent);
   const intentLines = intentFragment === null ? [] : [`Session ${intentFragment}`];
+  // THE HISTORY THE HEAD DESTROYS, beneath the head it replaced. It sits with
+  // the intent rather than in a section of its own because it IS the intent —
+  // a reader asking what this session said it was doing is the same reader
+  // asking whether that sentence was always the sentence.
+  const chainLines = renderIntentChain(diagnosis);
   const solvedLines = solvedBlock(diagnosis, now, solvedPresentation);
   const claims = claimsOldestFirst(diagnosis.claims);
 
@@ -854,11 +860,19 @@ export const renderDiagnosis = (
           header,
           contextLine,
           ...intentLines,
+          ...chainLines,
           ...solvedLines,
           ...targetsStateLines(diagnosis),
           "Claims: no claims recorded yet.",
         ]
-      : [header, contextLine, ...intentLines, ...solvedLines, ...targetsStateLines(diagnosis)];
+      : [
+          header,
+          contextLine,
+          ...intentLines,
+          ...chainLines,
+          ...solvedLines,
+          ...targetsStateLines(diagnosis),
+        ];
 
   const sections: readonly Section[] = [
     // WHERE, BEFORE WHAT. A reader who is about to edit the same file wants

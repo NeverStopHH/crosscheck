@@ -121,9 +121,32 @@ const EXTERNAL_LINE = /^- [\w.:-]* · .* · in work context [\w.:-]*$/;
 const MORE_LINE = /^\(\+\d+ .+ not shown\)$/;
 const NOTE_LINE = /^Note: .+$/;
 
+/*
+ * THE AMENDMENT HISTORY — four shapes, and each one is the payload's cage.
+ *
+ * The header is renderer-owned literals and one integer, so no payload reaches
+ * it. A version line is `  vN · <supersedes> · intent…: «…»`, where the only
+ * author text sits inside ONE frame; `supersedes vN` is a literal and an
+ * integer. The reason takes its OWN line inside its own single frame, because
+ * a version line carrying the summary and the reason together would be one
+ * line with two pairs — which a reader cannot tell apart from one pair
+ * containing a forged frame. The scope line prints paths BARE, exactly as
+ * TARGET_LINE does and for the same reason: no frame character and no field
+ * separator, so a declared path can neither open a frame nor mint a field.
+ */
+const CHAIN_HEADER = /^Intent history: (\d+ versions, newest first\.|[^«»]+\.)$/;
+const CHAIN_VERSION_LINE =
+  /^ {2}v\d+ · (first declaration|supersedes v\d+) · intent(?: \(derived\))?: («[^«»]*»|\(nothing printable in it\))$/;
+const CHAIN_REASON_LINE = /^ {4}why: («[^«»]*»|\(reason unprintable\))$/;
+const CHAIN_SCOPE_LINE = /^ {4}scope: [^«»:]+$/;
+
 const DIAGNOSIS_LINE_SHAPES = [
   CONTEXT_LINE,
   INTENT_LINE,
+  CHAIN_HEADER,
+  CHAIN_VERSION_LINE,
+  CHAIN_REASON_LINE,
+  CHAIN_SCOPE_LINE,
   NO_CLAIMS_LINE,
   SECTION_HEADER,
   TARGET_LINE,
@@ -160,19 +183,25 @@ const SEARCH_LINE_SHAPES = [
 /**
  * The fixture's shape, which the containment counts below depend on: two claims,
  * one edge, one foreign reference, (since trial finding #16) the session intent
- * on its own line, and (since the diagnosis names the files an investigation
- * touched) one captured target under its own header — twelve lines, and no
- * payload may change that number. A payload that split its own bullet in two,
- * or invented a section, moves it whether or not it also smuggled a character
- * through.
+ * on its own line, (since the diagnosis names the files an investigation
+ * touched) one captured target under its own header, and (since the intent
+ * ledger) the amendment history — eighteen lines, and no payload may change
+ * that number. A payload that split its own bullet in two, or invented a
+ * section, moves it whether or not it also smuggled a character through.
  *
- * THE TARGET ROW CANNOT VANISH THE WAY AN INTENT CAN. A target whose kind and
- * value both sanitize to nothing still renders, as UNPRINTABLE_TARGET, so this
- * count has no target-slot exemption — deliberately: a section one row shorter
- * than the count in its own header is the silent shortening the whole file
- * exists to catch.
+ * SIX OF THE EIGHTEEN ARE THE HISTORY: its header, then for v2 a version line,
+ * its `why` and its `scope`, and for v1 a version line and its `scope` (v1 is
+ * the first declaration and amends nothing, so it has no reason to give).
+ *
+ * NEITHER A TARGET ROW NOR A VERSION LINE CAN VANISH THE WAY AN INTENT CAN. A
+ * target whose kind and value both sanitize to nothing still renders as
+ * UNPRINTABLE_TARGET, and a version whose summary sanitizes to nothing still
+ * renders its line — so this count has no exemption for either slot,
+ * deliberately: a section one row shorter than the count in its own header is
+ * the silent shortening the whole file exists to catch. Only the HEAD intent
+ * line may go, because nothing counts it.
  */
-const EXPECTED_DIAGNOSIS_LINES = 12;
+const EXPECTED_DIAGNOSIS_LINES = 18;
 
 /**
  * The intent line is the one line a payload can legitimately REMOVE: an

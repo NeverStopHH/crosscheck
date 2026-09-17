@@ -10,6 +10,7 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
+import { readIntentChain } from "./intent-ledger.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db } from "../db/client.ts";
 
@@ -152,6 +153,30 @@ export interface DiagnosisTargetView {
   readonly value: string;
 }
 
+/**
+ * ONE VERSION OF A WORK CONTEXT'S INTENT, as a reader sees it (spec 06 §5).
+ *
+ * THE POSITION IS NOT SENT. `seq` and `seq_epoch` are how the hub ANSWERS a
+ * timing question; a rendered chain is a history a person reads. Sending the
+ * numbers would invite a connector to compare them itself, and a connector
+ * comparing positions is a second implementation of §3.5 with none of its
+ * refusals — the upper-bound and overlap conditions live on the hub.
+ */
+export interface IntentVersionView {
+  readonly version: number;
+  readonly amendsVersion: number | null;
+  readonly provenance: string;
+  readonly summary: string;
+  readonly reason: string | null;
+  readonly scope: readonly IntentScopeView[];
+}
+
+export interface IntentScopeView {
+  readonly role: string;
+  readonly kind: string;
+  readonly value: string;
+}
+
 export interface Diagnosis {
   readonly workContext: WorkContextView;
   readonly claims: readonly ClaimView[];
@@ -162,6 +187,12 @@ export interface Diagnosis {
    * staleness check reads at pull time (which files this diagnosis was about).
    */
   readonly targets: readonly DiagnosisTargetView[];
+  /**
+   * EVERY VERSION OF THE INTENT, NEWEST FIRST — the history
+   * `work_contexts.intent` never had, bounded by the chain cap rather than by
+   * a second limit here.
+   */
+  readonly intentChain: readonly IntentVersionView[];
   /** True when the claims or edges query hit its limit — the tree is partial. */
   readonly truncated: boolean;
 }
@@ -452,6 +483,7 @@ export const getDiagnosis = async (
     limits,
   );
   const targets = await listDiagnosisTargets(db, workContextId);
+  const chain = await readIntentChain(db, workContextId);
 
   return {
     workContext: toWorkContextView(contextRow.workContext, contextRow.baseCommit),
@@ -459,6 +491,18 @@ export const getDiagnosis = async (
     edges: edgeRows.map(toClaimEdgeView),
     externalClaims,
     targets,
+    intentChain: chain.map((entry) => ({
+      version: entry.version,
+      amendsVersion: entry.amendsVersion,
+      provenance: entry.provenance,
+      summary: entry.summary,
+      reason: entry.reason,
+      scope: entry.scope.map((scope) => ({
+        role: scope.role,
+        kind: scope.kind,
+        value: scope.value,
+      })),
+    })),
     truncated:
       claimRows.length >= limits.maxClaims ||
       edgeRows.length >= limits.maxEdges,

@@ -88,6 +88,8 @@ const diagnosis = (overrides: Partial<Diagnosis> = {}): Diagnosis => ({
   edges: [],
   externalClaims: [],
   targets: [],
+  intentChain: [],
+  chainReported: true,
   targetsReported: true,
   droppedTargets: 0,
   truncated: false,
@@ -1118,7 +1120,7 @@ describe("the session's intent on the MCP reading tools (trial finding #16)", ()
     );
   });
 
-  test("a diagnosis without an intent keeps its exact shape — one line shorter", () => {
+  test("a diagnosis without an intent keeps its exact shape — two lines shorter", () => {
     const withIntent = renderDiagnosis(
       diagnosis({
         workContext: {
@@ -1131,25 +1133,45 @@ describe("the session's intent on the MCP reading tools (trial finding #16)", ()
           createdAt: CREATED,
           updatedAt: null,
         },
+        // What a hub that knows about the ledger sends for a context declared
+        // once and never amended. The count below is TWO, not one, because an
+        // intent now costs the sentence AND its history: the chain is what
+        // separates a plan stated up front from one widened after the break,
+        // and a diagnosis printing the sentence without it is the surface this
+        // spec exists to fix.
+        intentChain: [
+          {
+            version: 1,
+            amendsVersion: null,
+            provenance: "declared",
+            summary: INTENT.summary,
+            reason: null,
+            scope: [],
+          },
+        ],
+        chainReported: true,
       }),
       NOW,
     );
     const rendered = renderDiagnosis(diagnosis(), NOW);
 
-    // The control: the intent costs exactly one line, and it is line 2
-    expect(withIntent.split("\n").length - rendered.split("\n").length).toBe(1);
+    expect(withIntent.split("\n").length - rendered.split("\n").length).toBe(2);
     expect(withIntent.split("\n")[2]?.startsWith("Session intent")).toBe(true);
+    expect(withIntent.split("\n")[3]?.startsWith("Intent history")).toBe(true);
 
     // Line 2 of an intent-less tree is the TARGETS state, not the claims
     // header: the targets block sits between the opening and the claims by
     // design (a reader about to edit the same file wants the overlap first),
-    // and this fixture's context has none captured. The intent's one-line
-    // cost — what this test is about — is unchanged by that.
+    // and this fixture's context has none captured. The intent's cost — what
+    // this test is about — is unchanged by that.
     expect(rendered.split("\n")[2]).toBe(
       "No targets were captured for this work context.",
     );
     expect(rendered.split("\n")[3]?.startsWith("Claims (")).toBe(true);
+    // AND THE HISTORY DOES NOT OUTLIVE THE SENTENCE. A tree with no intent
+    // says nothing about intent at all — not even that nobody amended one.
     expect(rendered).not.toContain("intent");
+    expect(rendered).not.toContain("Intent");
   });
 
   test("search_related_work prints a hit's intent on an indented second line", () => {
