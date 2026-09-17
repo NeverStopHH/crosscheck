@@ -370,6 +370,21 @@ const everyScript = async (
   return outcomes;
 };
 
+/**
+ * THE ENUMERATION IS THE PROOF, so it is the clock that moves.
+ *
+ * 30 interleavings x 3 fates x 3 fates = 270 scripts, and an `evicted` fate
+ * deliberately opens MAX_TOOL_WINDOWS further windows to push a real entry out
+ * — each one a lock acquisition and a state write. MEASURED 2026-09-17 on this
+ * tree (bun 1.3.13, M-series Mac, idle): 3.0 s for the whole file, twice.
+ * bun's default per-test timeout is 5 s, and CI runners are slower than a
+ * developer's machine: both platforms failed here at exactly 5000 ms while the
+ * assertions themselves passed locally. Trimming the enumeration to fit the
+ * default would narrow the proof to fit a clock, which is the one thing this
+ * file may not do, so the timeout says what the work costs instead.
+ */
+const PROOF_TIMEOUT_MS = 30_000;
+
 describe("an ambiguous or unmatched close can only cost certainty", () => {
   test("one key per call: every close answers what the oracle answers, or refuses", async () => {
     // Arrange: two calls, two host ids — including two IDENTICAL calls, which
