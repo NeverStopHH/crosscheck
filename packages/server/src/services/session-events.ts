@@ -136,12 +136,26 @@ export interface RecordSessionEventInput {
 export const windowFloorOf = (stamp: SeqStamp): number | null =>
   stamp.after === undefined || stamp.after > stamp.n ? null : stamp.after;
 
-const reasonFor = (input: RecordSessionEventInput): SeqReason => {
-  if (input.seq === undefined) {
-    return input.absentReason ?? "pre_seq_connector";
+/**
+ * WHY THIS RECORD HAS THE POSITION IT HAS, read off the envelope field alone.
+ *
+ * EXPORTED because the intent ledger stores the same three facts on its own
+ * rows and must not restate the rule: a second copy that drifted would let one
+ * table call a withheld position `pre_seq_connector` while the other called it
+ * `allocation_failed`, and those two send a reader to different remedies.
+ */
+export const seqReasonOf = (
+  seq: SeqField | undefined,
+  absentReason?: SeqReason,
+): SeqReason => {
+  if (seq === undefined) {
+    return absentReason ?? "pre_seq_connector";
   }
-  return isSeqStamp(input.seq) ? "sequenced" : input.seq.reason;
+  return isSeqStamp(seq) ? "sequenced" : seq.reason;
 };
+
+const reasonFor = (input: RecordSessionEventInput): SeqReason =>
+  seqReasonOf(input.seq, input.absentReason);
 
 export interface SessionEventOutcome {
   readonly id: string;

@@ -115,7 +115,28 @@ export const IntentSchema = z
     seq: SeqStampSchema.nullable().optional(),
     /** Null on the first intent; the hub assigns it on every amendment. */
     amendsVersion: z.number().int().min(1).nullable().optional(),
-    reason: z.string().min(1).max(MAX_INTENT_AMEND_REASON_CHARS).nullable().optional(),
+    /**
+     * WHY THIS SENTENCE SUPERSEDES THE ONE BEFORE IT.
+     *
+     * NEITHER DIRECTION IS REFUSABLE HERE, and that is forced rather than
+     * lax. A connector sends a `reason` WITHOUT a version, because
+     * `amendsVersion` is hub-assigned — its own work-context handle carries no
+     * version, and reading one would be the HTTP call §6 forbids. And a stored
+     * head carries a hub-stamped `amendsVersion` with NO reason whenever the
+     * connector that wrote it predates this field. Refusing either shape here
+     * would refuse a legitimate record.
+     *
+     * THE RULE IS STILL BINDING; it is enforced where it can be acted on. An
+     * amendment with no reason is the field this ledger exists to capture left
+     * blank, and `set_intent` refuses it — that is the one writer that knows
+     * it is amending, and the one place an author can be told why.
+     */
+    reason: z
+      .string()
+      .min(1)
+      .max(MAX_INTENT_AMEND_REASON_CHARS)
+      .nullable()
+      .optional(),
   })
   .check((ctx) => {
     const intent = ctx.value;
@@ -128,21 +149,6 @@ export const IntentSchema = z
         message: `derived intents must not exceed confidence ${DERIVED_CONFIDENCE_CAP}`,
         input: intent.confidence,
         path: ["confidence"],
-      });
-    }
-    // AN AMENDMENT WITH NO REASON IS THE FIELD THIS LEDGER EXISTS TO CAPTURE,
-    // LEFT BLANK — refused here, where the author can still be told, rather
-    // than stored empty where every later reader has to guess what it means.
-    if (
-      intent.amendsVersion !== undefined &&
-      intent.amendsVersion !== null &&
-      (intent.reason === undefined || intent.reason === null)
-    ) {
-      ctx.issues.push({
-        code: "custom",
-        message: "an amendment must say why it supersedes the version it names",
-        input: intent.reason,
-        path: ["reason"],
       });
     }
   });

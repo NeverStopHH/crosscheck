@@ -786,6 +786,18 @@ const readStoredIntent = async (
   return body.data.workContext.intent;
 };
 
+/**
+ * THE HEAD IS A PROJECTION OF THE LEDGER (spec 06 §4), so it is the body's
+ * fields PLUS the two the hub stamps: the position the envelope proved, and
+ * the version this one supersedes. Asserting against the bare body would pass
+ * against a handler that stored the body and wrote no ledger row at all.
+ */
+const asStoredHead = (
+  intent: Record<string, unknown>,
+  amendsVersion: number | null = null,
+  seq: Record<string, unknown> | null = null,
+): Record<string, unknown> => ({ ...intent, seq, amendsVersion });
+
 describe("work_context intent merge", () => {
   test("a later work_context record WITHOUT an intent keeps the stored one", async () => {
     // Arrange: registration, then the derived intent lands
@@ -806,7 +818,9 @@ describe("work_context intent merge", () => {
 
     // Assert: status replaced, intent NOT wiped
     expect(replay.data?.accepted).toBe(1);
-    expect(await readStoredIntent(harness, developer)).toEqual(DERIVED_INTENT);
+    expect(await readStoredIntent(harness, developer)).toEqual(
+      asStoredHead(DERIVED_INTENT),
+    );
   });
 
   test("a derived intent never overwrites a declared one — a late spool replay cannot undo set_intent", async () => {
@@ -825,7 +839,9 @@ describe("work_context intent merge", () => {
 
     // The record carried nothing new once merged: a duplicate, not a rejection
     expect(late.data?.results[0]?.status).toBe("duplicate");
-    expect(await readStoredIntent(harness, developer)).toEqual(DECLARED_INTENT);
+    expect(await readStoredIntent(harness, developer)).toEqual(
+      asStoredHead(DECLARED_INTENT),
+    );
   });
 
   test("a declared intent replaces a derived one, and a re-declaration supersedes", async () => {
@@ -841,7 +857,9 @@ describe("work_context intent merge", () => {
       developer,
       recordEnvelope("work_context", validWorkContextBody({ intent: DECLARED_INTENT })),
     );
-    expect(await readStoredIntent(harness, developer)).toEqual(DECLARED_INTENT);
+    expect(await readStoredIntent(harness, developer)).toEqual(
+      asStoredHead(DECLARED_INTENT, 1),
+    );
 
     const redeclared = { ...DECLARED_INTENT, summary: "Rotate the JWKS cache every minute" };
     await postRecords(
@@ -849,7 +867,9 @@ describe("work_context intent merge", () => {
       developer,
       recordEnvelope("work_context", validWorkContextBody({ intent: redeclared })),
     );
-    expect(await readStoredIntent(harness, developer)).toEqual(redeclared);
+    expect(await readStoredIntent(harness, developer)).toEqual(
+      asStoredHead(redeclared, 2),
+    );
 
     // The MERGE half: a replay without an intent must not undo any of it.
     // Without this line the test is green against a handler that simply
@@ -859,7 +879,9 @@ describe("work_context intent merge", () => {
       developer,
       recordEnvelope("work_context", validWorkContextBody({ status: "testing" })),
     );
-    expect(await readStoredIntent(harness, developer)).toEqual(redeclared);
+    expect(await readStoredIntent(harness, developer)).toEqual(
+      asStoredHead(redeclared, 2),
+    );
   });
 
   test("a derived intent is replaced by a newer derived one (re-derivation)", async () => {
@@ -877,7 +899,9 @@ describe("work_context intent merge", () => {
       recordEnvelope("work_context", validWorkContextBody({ intent: newer })),
     );
 
-    expect(await readStoredIntent(harness, developer)).toEqual(newer);
+    expect(await readStoredIntent(harness, developer)).toEqual(
+      asStoredHead(newer, 1),
+    );
 
     // The MERGE half, as above: a later intent-less record keeps the newer
     // derived intent rather than wiping the column back to null.
@@ -886,7 +910,9 @@ describe("work_context intent merge", () => {
       developer,
       recordEnvelope("work_context", validWorkContextBody({ status: "testing" })),
     );
-    expect(await readStoredIntent(harness, developer)).toEqual(newer);
+    expect(await readStoredIntent(harness, developer)).toEqual(
+      asStoredHead(newer, 1),
+    );
   });
 
   test("a derived intent above the cap rejects the record at the hub too", async () => {

@@ -19,6 +19,7 @@ import {
   workContextTargets,
 } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
+import { appendIntentVersion } from "./intent-ledger.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
 import {
   recordSessionEvent,
@@ -186,6 +187,7 @@ const updateExistingWorkContext = async (
   deps: ExecutorDeps,
   developerId: string,
   body: WorkContext,
+  seq: SeqField | undefined,
 ): Promise<HandlerOutcome> => {
   const rows = await deps.db
     .select({ workContext: workContexts, ownerId: agentSessions.developerId })
@@ -204,10 +206,34 @@ const updateExistingWorkContext = async (
   if (changes === null) {
     return duplicate(body.id);
   }
+  // THE LEDGER IS WRITTEN BEFORE THE HEAD, AND THE HEAD BECOMES A COPY OF WHAT
+  // THE LEDGER STORED. Writing the head from `changes` instead would let the
+  // two disagree the moment the hub stamps anything the body did not carry —
+  // which it now does, for the position and for `amends_version`.
+  //
+  // `mergeIntent` DECIDES WHETHER THERE IS AN INTENT CHANGE AT ALL, and a
+  // refused merge appends nothing: a derived intent arriving behind a declared
+  // one is not intent evolution, and recording it would put a model sentence
+  // nobody accepted within reach of every renderer.
+  const appended =
+    changes.intent === undefined ||
+    changes.intent === null ||
+    JSON.stringify(changes.intent) === JSON.stringify(row.workContext.intent)
+      ? null
+      : await appendIntentVersion(deps, {
+          workContextId: body.id,
+          authorSessionId: row.workContext.sessionId,
+          intent: changes.intent as Intent,
+          seq,
+        });
+  const stored =
+    appended === null || appended.capped
+      ? changes
+      : { ...changes, intent: appended.wire };
   // session_id stays the creating session — updates never re-home a context.
   await deps.db
     .update(workContexts)
-    .set({ ...changes, updatedAt: deps.now() })
+    .set({ ...stored, updatedAt: deps.now() })
     .where(eq(workContexts.id, body.id));
   await refreshNormalizedDoc(deps.db, body.id);
   // Outbox discipline: ids and metadata only — WHICH fields changed, never
@@ -215,7 +241,7 @@ const updateExistingWorkContext = async (
   await appendEvent(deps, EVENT_KINDS.WORK_CONTEXT_UPDATED, {
     workContextId: body.id,
     developerId,
-    changed: Object.entries(changes)
+    changed: Object.entries(stored)
       .filter(([field, value]) => value !== row.workContext[field as keyof WorkContextRow])
       .map(([field]) => field),
   });
@@ -226,6 +252,7 @@ export const ingestWorkContext = async (
   deps: Deps,
   developerId: string,
   body: WorkContext,
+  seq?: SeqField,
 ): Promise<HandlerOutcome> => {
   // One transaction so the conflict probe, the ownership check, and the
   // update all act on the same snapshot — no TOCTOU between them.
@@ -258,7 +285,27 @@ export const ingestWorkContext = async (
       .onConflictDoNothing()
       .returning({ id: workContexts.id });
     if (inserted[0] === undefined) {
-      return updateExistingWorkContext(txDeps, developerId, body);
+      return updateExistingWorkContext(txDeps, developerId, body, seq);
+    }
+    // THE FIRST VERSION CAN BE BORN ON THIS PATH, and an UPDATE-only ledger
+    // would miss it. `set_intent` posts DIRECTLY over HTTP while the
+    // work-context create travels via the SPOOL, so a set_intent issued before
+    // the session's first flush reaches the hub first and CREATES the context
+    // already carrying an intent. `workContextChanges` never runs on that
+    // record, so appending only where it reports a change leaves that sentence
+    // outside the ledger entirely: the head reads v1 and max(version) says
+    // nothing at all.
+    if (body.intent !== undefined) {
+      const appended = await appendIntentVersion(txDeps, {
+        workContextId: body.id,
+        authorSessionId: body.sessionId,
+        intent: body.intent,
+        seq,
+      });
+      await tx
+        .update(workContexts)
+        .set({ intent: appended.wire })
+        .where(eq(workContexts.id, body.id));
     }
     await refreshNormalizedDoc(tx, body.id);
     await appendEvent(txDeps, EVENT_KINDS.WORK_CONTEXT_CREATED, {

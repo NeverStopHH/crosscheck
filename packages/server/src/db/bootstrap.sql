@@ -599,11 +599,13 @@ CREATE TABLE IF NOT EXISTS work_context_intents (
   CONSTRAINT work_context_intents_summary_length_check CHECK (char_length(summary) <= 200),
   CONSTRAINT work_context_intents_reason_length_check
     CHECK (reason IS NULL OR char_length(reason) <= 200),
-  -- An amendment with no reason is the field this ledger exists to capture,
-  -- left blank. Refused on a hub any connector can post to, not only at the
-  -- connector that happens to run this version.
+  -- A reason with nothing to amend explains nothing. The rule runs in THIS
+  -- direction because amends_version is hub-assigned: the other direction
+  -- would reject every re-declaration from every connector shipped before
+  -- `reason` existed. That an amendment SAY why is enforced in set_intent,
+  -- where the author can still be told.
   CONSTRAINT work_context_intents_amend_reason_check
-    CHECK (amends_version IS NULL OR reason IS NOT NULL),
+    CHECK (reason IS NULL OR amends_version IS NOT NULL),
   -- The pair is null together or set together: a bare seq with no epoch is a
   -- number from an unnamed counter.
   CONSTRAINT work_context_intents_seq_pair_check

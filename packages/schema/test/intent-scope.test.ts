@@ -127,17 +127,24 @@ describe("INT-8 — an unscoped intent still lands", () => {
     );
   });
 
-  test("an amendment with no reason is refused where the hub cannot see it", () => {
-    // Arrange: the missing reason IS the field this ledger exists to capture,
-    // so a blank one is refused at the connector rather than stored empty.
+  test("the wire refuses neither half of an amendment, and bounds the reason", () => {
+    // Arrange: `amendsVersion` is HUB-assigned — a connector cannot learn it
+    // without the hub read §6 forbids — so BOTH one-sided shapes are
+    // legitimate records. A connector sends a reason with no version; a stored
+    // head carries a hub-stamped version with no reason, because the connector
+    // that wrote it predates the field. Refusing either here would refuse a
+    // real record, and the spool advances its cursor on any 2xx.
+    //
+    // The rule that an amendment SAY why is enforced in set_intent, which is
+    // the only writer that knows it is amending. What stays bounded here is
+    // the length, because this sentence lands on a rendered surface.
     // Act / Assert
     expect(
       IntentSchema.safeParse({ ...V0_INTENT, amendsVersion: 1 }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       IntentSchema.safeParse({
         ...V0_INTENT,
-        amendsVersion: 1,
         reason: "The provider's id changed under us.",
       }).success,
     ).toBe(true);

@@ -839,12 +839,15 @@ export const workContextIntents = pgTable(
       "work_context_intents_reason_length_check",
       sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_INTENT_AMEND_REASON_CHARS))}`,
     ),
-    // AN AMENDMENT WITHOUT A REASON IS THE FIELD THIS LEDGER EXISTS TO
-    // CAPTURE, LEFT BLANK. The wire refuses it at the connector; this refuses
-    // it on a hub any connector can post to.
+    // A REASON WITH NOTHING TO AMEND EXPLAINS NOTHING. The rule runs in this
+    // direction because `amends_version` is HUB-ASSIGNED: the other direction
+    // would reject every re-declaration from every connector shipped before
+    // `reason` existed, and a hub that 500s on a legacy record is worse than
+    // one that stores it honestly incomplete. That an amendment SAY why is
+    // enforced in `set_intent`, where the author can still be told.
     check(
       "work_context_intents_amend_reason_check",
-      sql`${table.amendsVersion} IS NULL OR ${table.reason} IS NOT NULL`,
+      sql`${table.reason} IS NULL OR ${table.amendsVersion} IS NOT NULL`,
     ),
     // THE PAIR IS NULL TOGETHER OR SET TOGETHER. A bare `seq` with no epoch is
     // a number from an unnamed counter, and comparing two of those answers
