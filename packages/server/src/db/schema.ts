@@ -22,7 +22,11 @@ import {
   CLAIM_KINDS,
   CLAIM_STATUSES,
   EDGE_KINDS,
+  INTENT_SCOPE_KINDS,
+  INTENT_SCOPE_ROLES,
   MAX_CLAIM_BODY_LENGTH,
+  MAX_INTENT_AMEND_REASON_CHARS,
+  MAX_INTENT_SUMMARY_CHARS,
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
@@ -755,3 +759,152 @@ export const teamSettings = pgTable("team_settings", {
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });
+
+/**
+ * THE INTENT LEDGER — APPEND-ONLY, ONE ROW PER VERSION (spec 06 §3.2).
+ *
+ * `work_contexts.intent` is a single mutable cell, so every `set_intent` call
+ * DESTROYS the sentence it replaces: an amendment leaves no trace but an
+ * outbox row carrying the string "intent", and nothing in the tree can say
+ * whether a reason was written before or after the change it explains. This
+ * table is the history that cell never had. The cell stays, as a denormalised
+ * copy of the newest row's `wire` — eleven server-side readers depend on its
+ * shape — and the ledger is authoritative.
+ *
+ * APPEND-ONLY MEANS APPEND-ONLY. A revision is a NEW ROW;
+ * `services/intent-ledger.ts` exposes no UPDATE and no DELETE path, and the
+ * unique `(work_context_id, version)` below is what makes that a statement
+ * about the TABLE rather than about one file.
+ *
+ * IT CARRIES A WHOLE POSITION, not just a number. `seq_epoch` and `seq` alone
+ * cannot be turned back into the shape the order gate is asked about: its
+ * fifth condition reads `seq_kind` (an `observed` position is an upper bound)
+ * and its sixth reads the bracket (`seq_after`, the open end of the window).
+ * A ledger row missing either compares as an unbracketed point of unknown
+ * lane, which is how an upper bound gets promoted to a happens-before and the
+ * exonerating answer gets produced from a coin flip.
+ *
+ * `captured_at` IS A WALL CLOCK AND ORDERS NOTHING. It is sender-controlled,
+ * so it is clamped to the hub clock on write (the `commit-evidence.ts`
+ * precedent) and serves display and retention only.
+ *
+ * `provenance` IS WHAT THE BODY CLAIMED and the hub cannot verify it (§8.1).
+ * On the two evidence axes every 1.0 intent is agent-written, INCLUDING the
+ * one this column calls `declared`: that word means an agent called an MCP
+ * tool, never that a human declared anything. 00 §8.3 maps `claims.provenance`
+ * onto the WHO axis; for intents that mapping is wrong, and this is the only
+ * place it is corrected. Claims are untouched.
+ */
+export const workContextIntents = pgTable(
+  "work_context_intents",
+  {
+    /** iv_ + sha256(context, author session, seq, summary) — a replay is a duplicate. */
+    id: text("id").primaryKey(),
+    workContextId: text("work_context_id")
+      .notNull()
+      .references(() => workContexts.id),
+    /** Hub-assigned max(version)+1; two writers exist per context. */
+    version: integer("version").notNull(),
+    /** Null on the first intent; hub-assigned on every amendment. */
+    amendsVersion: integer("amends_version"),
+    /**
+     * NULL ONLY ON BACKFILL. The declaring session was never stored on
+     * `work_contexts` — updates never re-home a context — so a pre-ledger
+     * intent has no author to name, and guessing the creating session would
+     * put a name on a row nobody recorded. The surface says `unknown`; the
+     * `work_context_targets.created_at` precedent.
+     */
+    authorSessionId: text("author_session_id").references(() => agentSessions.id),
+    /** 01's epoch. NULL = not causally comparable; null together with `seq`. */
+    seqEpoch: text("seq_epoch"),
+    seq: integer("seq"),
+    /** The open end of this declaration's window; null for a point emitter. */
+    seqAfter: integer("seq_after"),
+    seqKind: text("seq_kind", { enum: SEQ_KINDS }).notNull(),
+    seqReason: text("seq_reason", { enum: SEQ_REASONS }).notNull(),
+    provenance: text("provenance", { enum: PROVENANCES }).notNull(),
+    summary: text("summary").notNull(),
+    reason: text("reason"),
+    capturedAt: timestamptz("captured_at").notNull(),
+    /** Hub clock; NULL on backfill, where no hub ever received the row. */
+    receivedAt: timestamptz("received_at"),
+    wire: jsonb("wire").$type<Record<string, unknown>>().notNull(),
+  },
+  (table) => [
+    check(
+      "work_context_intents_summary_length_check",
+      sql`char_length(${table.summary}) <= ${sql.raw(String(MAX_INTENT_SUMMARY_CHARS))}`,
+    ),
+    check(
+      "work_context_intents_reason_length_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_INTENT_AMEND_REASON_CHARS))}`,
+    ),
+    // AN AMENDMENT WITHOUT A REASON IS THE FIELD THIS LEDGER EXISTS TO
+    // CAPTURE, LEFT BLANK. The wire refuses it at the connector; this refuses
+    // it on a hub any connector can post to.
+    check(
+      "work_context_intents_amend_reason_check",
+      sql`${table.amendsVersion} IS NULL OR ${table.reason} IS NOT NULL`,
+    ),
+    // THE PAIR IS NULL TOGETHER OR SET TOGETHER. A bare `seq` with no epoch is
+    // a number from an unnamed counter, and comparing two of those answers
+    // confidently from unrelated integers.
+    check(
+      "work_context_intents_seq_pair_check",
+      sql`(${table.seqEpoch} IS NULL) = (${table.seq} IS NULL)`,
+    ),
+    check(
+      "work_context_intents_seq_nonnegative_check",
+      sql`${table.seq} IS NULL OR ${table.seq} >= 0`,
+    ),
+    // The chain read and the max(version) probe are one index, DESC because
+    // both want the newest first.
+    uniqueIndex("work_context_intents_context_version_idx").on(
+      table.workContextId,
+      table.version.desc(),
+    ),
+    index("work_context_intents_session_idx").on(table.authorSessionId, table.seq),
+  ],
+);
+
+/**
+ * THE CHECKABLE HALF OF A DECLARED INTENT (spec 06 §3.3).
+ *
+ * A declared `(kind, value)` set in the vocabulary the capture lane already
+ * writes, compared by EQUALITY — not the dead "intent covers pin" predicate,
+ * which was 200 characters of prose against a name plus paths and failed both
+ * directions on our own examples. And never a gate: `explanationTimingFor` is
+ * the only consumer, and an amendment authorises nothing (§3.6).
+ *
+ * `work_context_id` IS DENORMALISED (the `pin_files.repo` precedent), and the
+ * `(kind, value)` index is deliberately the shape of
+ * `work_context_targets_kind_value_idx` — the one the suspect intersection
+ * already rides — so "did any intent name this path" is one index lookup
+ * rather than a text predicate.
+ *
+ * `role` IS READ. §3.5 step 6 answers differently for the two, because a
+ * declared non-goal that was then edited is the most post-hoc thing a session
+ * can do; a stored column nothing decides on is the silent absence AT-10
+ * forbids.
+ */
+export const intentScope = pgTable(
+  "intent_scope",
+  {
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => workContextIntents.id),
+    workContextId: text("work_context_id")
+      .notNull()
+      .references(() => workContexts.id),
+    role: text("role", { enum: INTENT_SCOPE_ROLES }).notNull(),
+    kind: text("kind", { enum: INTENT_SCOPE_KINDS }).notNull(),
+    value: text("value").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.intentId, table.role, table.kind, table.value],
+    }),
+    index("intent_scope_kind_value_idx").on(table.kind, table.value),
+    index("intent_scope_context_idx").on(table.workContextId),
+  ],
+);

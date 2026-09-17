@@ -563,6 +563,87 @@ CREATE TABLE IF NOT EXISTS team_settings (
   updated_by text REFERENCES developers(id)
 );
 
+-- THE INTENT LEDGER (spec 06 §3.2): append-only, one row per version. The
+-- `work_contexts.intent` cell is a single mutable value, so every set_intent
+-- call DESTROYS the sentence it replaces and nothing can say whether a reason
+-- was written before or after the change it explains. That cell stays as a
+-- denormalised copy of the newest row's `wire`; this table is authoritative.
+--
+-- IT CARRIES A WHOLE POSITION. seq_epoch + seq alone cannot be turned back
+-- into the shape the order gate is asked about — its fifth condition reads
+-- seq_kind (an `observed` position is an upper bound) and its sixth reads the
+-- bracket seq_after. A row missing either compares as an unbracketed point of
+-- unknown lane, and that is how an upper bound becomes a happens-before.
+--
+-- captured_at is SENDER-CONTROLLED and orders nothing: clamped to the hub
+-- clock on write, display and retention only.
+CREATE TABLE IF NOT EXISTS work_context_intents (
+  id text PRIMARY KEY,
+  work_context_id text NOT NULL REFERENCES work_contexts(id),
+  version integer NOT NULL,
+  amends_version integer,
+  -- NULL only on backfill: the declaring session was never stored, and naming
+  -- the creating session would put a name on a row nobody recorded.
+  author_session_id text REFERENCES agent_sessions(id),
+  seq_epoch text,
+  seq integer,
+  seq_after integer,
+  seq_kind text NOT NULL,
+  seq_reason text NOT NULL,
+  provenance text NOT NULL,
+  summary text NOT NULL,
+  reason text,
+  captured_at timestamptz NOT NULL,
+  received_at timestamptz,
+  wire jsonb NOT NULL,
+  CONSTRAINT work_context_intents_summary_length_check CHECK (char_length(summary) <= 200),
+  CONSTRAINT work_context_intents_reason_length_check
+    CHECK (reason IS NULL OR char_length(reason) <= 200),
+  -- An amendment with no reason is the field this ledger exists to capture,
+  -- left blank. Refused on a hub any connector can post to, not only at the
+  -- connector that happens to run this version.
+  CONSTRAINT work_context_intents_amend_reason_check
+    CHECK (amends_version IS NULL OR reason IS NOT NULL),
+  -- The pair is null together or set together: a bare seq with no epoch is a
+  -- number from an unnamed counter.
+  CONSTRAINT work_context_intents_seq_pair_check
+    CHECK ((seq_epoch IS NULL) = (seq IS NULL)),
+  CONSTRAINT work_context_intents_seq_nonnegative_check
+    CHECK (seq IS NULL OR seq >= 0)
+);
+
+-- UNIQUE, because append-only is a claim about the TABLE and not about one
+-- service file: a second row claiming a version an amendment already holds is
+-- refused here rather than merged.
+CREATE UNIQUE INDEX IF NOT EXISTS work_context_intents_context_version_idx
+  ON work_context_intents (work_context_id, version DESC);
+CREATE INDEX IF NOT EXISTS work_context_intents_session_idx
+  ON work_context_intents (author_session_id, seq);
+
+-- THE CHECKABLE HALF (spec 06 §3.3). A declared (kind, value) set in the
+-- vocabulary the capture lane already writes, compared by EQUALITY and never
+-- a gate. work_context_id is denormalised (the pin_files.repo precedent), and
+-- the (kind, value) index deliberately mirrors
+-- work_context_targets_kind_value_idx so "did any intent name this path" is
+-- one index lookup rather than a text predicate.
+--
+-- `role` IS READ: a declared non-goal that was then edited answers differently
+-- from a declared expectation, and a stored column nothing decides on is a
+-- silent absence.
+CREATE TABLE IF NOT EXISTS intent_scope (
+  intent_id text NOT NULL REFERENCES work_context_intents(id),
+  work_context_id text NOT NULL REFERENCES work_contexts(id),
+  role text NOT NULL,
+  kind text NOT NULL,
+  value text NOT NULL,
+  PRIMARY KEY (intent_id, role, kind, value)
+);
+
+CREATE INDEX IF NOT EXISTS intent_scope_kind_value_idx
+  ON intent_scope (kind, value);
+CREATE INDEX IF NOT EXISTS intent_scope_context_idx
+  ON intent_scope (work_context_id);
+
 -- ── Room for a long finding (Nick's gap 3) ──────────────────────────────────
 
 -- The claims table is created with its body bound inline, and CREATE TABLE IF
