@@ -2,9 +2,17 @@
 
 **Tier 1, as an amendment to 01** — not a new component. **Owns no acceptance test.** It makes AT-4 *durable*: 01 decides
 whether two events may be compared, 06 supplies what is compared, and this spec decides how long that answer survives.
-**Supersedes the default of 01 §10 D2**, which Nick changed on 2026-09-15 (§2). Written against `main@390849d` with **#53
-(`feat/session-event-order`) assumed merged**; a position on that branch carries the `event-order:` prefix, the convention
-00 §9.4a set for #50. Nothing here is built.
+**Supersedes the default of 01 §10 D2**, which Nick changed on 2026-09-15 (§2).
+
+**Written against** `main@390849d` with **#53 (`feat/session-event-order`) assumed merged**. A position on that branch carries
+the `event-order:` prefix and one on #52 the `coverage:` prefix, following the convention 00 §9.4a set for #50.
+`main@390849d` already contains #50 and #49, so a bare line number here is post-#50 main — not the pre-#50 main the rest of
+the set binds to. **Built after 06** (§9): the sweep, the attestation and three tests need 06's ledger. Nothing here is built.
+
+**Revision 3, 2026-09-17.** An adversarial review of revision 2 returned 47 findings: 8 confirmed by an independent refuter,
+34 plausible but unrefuted, 5 low. Two of them change the model. A pin retained single **rows** while the other roots retained
+**sessions**, and deleting part of a session can turn a `broken` causal order into `usable` (§3.3a). And an unresolvable *pin*
+licensed the deletion an unresolvable *row* was protected from (§3.3e). §11 maps every finding to where it is answered.
 
 ---
 
@@ -12,53 +20,61 @@ whether two events may be compared, 06 supplies what is compared, and this spec 
 
 ### 1.1 Today the hub keeps content forever and forgets causality after thirty days
 
-This is the exact inversion of the rule this spec implements, and it is measured rather than inferred. The hub removes rows
-in **five** places and nowhere else (every `.delete(` call site in `packages/server/src`, test files excluded, 2026-09-16;
-no raw SQL removal exists):
+This is the exact inversion of the rule this spec implements, and it is measured rather than inferred. The hub removes rows in
+**five** places and nowhere else (every `.delete(` call site in `packages/server/src`, test files excluded, 2026-09-16; no raw
+SQL removal exists):
 
 | call site | table | trigger |
 |---|---|---|
 | `services/developers.ts` | `developer_emails` | a person removes an address |
 | `services/developer-settings.ts` | `developer_mutes` | a person removes a mute |
-| `services/pins.ts` | `pin_files` | the pin sweep rewrites a pin's files |
+| `services/pins.ts` | `pin_files` | the pin sweep rewrites a pin's files — insert the new path, then delete the old |
 | `services/commit-evidence.ts` | `commit_evidence` | age, `COMMIT_EVIDENCE_RETENTION_DAYS = 30` |
 | `event-order:services/session-events.ts` `pruneSessionEvents` | `session_events` | age, `SESSION_EVENT_RETENTION_DAYS = 30` |
 
 Every table that holds author-written content — `claims.body`, `artifacts.content`, `work_contexts.title` / `description` /
-`intent`, `work_context_targets.value`, the question tables, and 06's `work_context_intents.summary` / `reason` / `wire` — is
-**never removed**. The one table whose every column is an id, an enum, an integer or a hub timestamp is removed at thirty days.
+`intent` / `normalized_doc`, `work_context_targets.value`, `questions` and `question_answers`, and 06's
+`work_context_intents.summary` / `reason` / `wire` and `intent_scope.value` — is **never removed**. The one table whose every
+column is an id, an enum, an integer or a hub timestamp is removed at thirty days.
 
-The consequence is concrete. 06 §3.5 step 4 drops a ledger entry whose `seq` is null and drops everything when
-`edit.seq === null`. Once an edit's `session_events` row is gone, `explanationTimingFor` answers `absent` /
-`not_comparable` for it — *"we do not know the order"* — for every edit older than a month. That is precisely the population
-crosscheck is meant to be most useful on: old diagnoses, recurring failures, fence investigations weeks after the change.
+The consequence is concrete. 06 §3.5 step 4 drops a ledger entry whose `seq` is null, and drops everything when
+`edit.seq === null`. Once an edit's `session_events` row is gone, `explanationTimingFor` answers `absent` / `not_comparable`
+for it — *"we do not know the order"* — for every edit older than a month. That is the population crosscheck is meant to be
+most useful on: old diagnoses, recurring failures, fence investigations weeks after the change.
 
 ### 1.2 The row being removed already is the skeleton
 
-`event-order:services/session-events.ts` says so in the comment above `pruneSessionEvents`: *"the row this DELETE removes IS
-very nearly the causal skeleton … retiring content sooner than proven order is a change to the MODEL, a tier that outlives
-what it orders, and not a different number in this constant."* The columns bear it out (`event-order:db/bootstrap.sql`,
-`session_events`): `id`, `session_id`, `seq_epoch`, `seq_n`, `seq_after`, `kind`, `seq_kind`, `seq_reason`, `ref_kind`,
-`ref_id`, `observed_at`. No body, no prose, no path — `ref_id` for a file is `sha256(work_context_id \n kind \n value)` (01
-§3.5). So D2 cannot be answered by changing thirty to three hundred. It needs a rule for *which* skeleton rows stay.
+`event-order:services/session-events.ts` says so above `pruneSessionEvents`: *"the row this DELETE removes IS very nearly the
+causal skeleton … retiring content sooner than proven order is a change to the MODEL, a tier that outlives what it orders, and
+not a different number in this constant."* The columns bear it out (`event-order:db/bootstrap.sql`, `session_events`): `id`,
+`session_id`, `seq_epoch`, `seq_n`, `seq_after`, `kind`, `seq_kind`, `seq_reason`, `ref_kind`, `ref_id`, `observed_at`. No
+body, no prose, no path — a target's `ref_id` is `targetDigest`, the SHA-256 hex of `[work_context_id, target kind, value]`
+joined with `\n`. So D2 cannot be answered by changing thirty to three hundred. It needs a rule for *which* skeleton stays.
 
 ### 1.3 "Forever" is not free, and the number is measured
 
-**MEASURED 2026-09-16** (PGlite 0.3.16, the hub's own database, in memory; 20 000 synthetic rows at real value lengths, the
-table and all three #53 indexes; the script is reproduced in this spec's pull request, and the build turns it into a
-`VERIFY:` directive at the constant, §6): **476 bytes per row including indexes** — 93 KiB for a 200-row
-session, 232 KiB for a 500-row one. The rows-per-session figure is **not** measured: the pilot hub runs 0.9.0 and has no
-`session_events`, which is 07's to measure. As arithmetic only: ten developers at twenty sessions a working day for 250
-days is 50 000 sessions a year — **1.2 GB/year at 50 rows a session, 12 GB at 500**. On an embedded single-connection
-database that is a design input, and it is why §3.3 keeps rows by ROOT REACHABILITY rather than keeping all of them.
+**MEASURED 2026-09-16** (PGlite 0.3.16, the hub's own database, in memory; 20 000 synthetic rows at real value lengths; the
+table and all three #53 indexes; the script is reproduced in this spec's pull request and becomes a `VERIFY:` directive at the
+constant when built, §6): **476 bytes per row including indexes** — 93 KiB for a 200-row session, 232 KiB for a 500-row one.
+The rows-per-session figure is **not** measured: the pilot hub runs 0.9.0 and has no `session_events`, which is 07's to
+measure. As arithmetic only: ten developers at twenty sessions a working day for 250 days is 50 000 sessions a year — **1.2
+GB/year at 50 rows a session, 12 GB at 500**. On an embedded single-instance database that is a design input, and it is why
+§3.3 keeps skeletons by ROOT REACHABILITY rather than keeping all of them.
 
 ### 1.4 What a provider can guarantee is prose
 
-01 §8 declared one rung per connector — `event_seq: full | reduced | off` — with a sentence. Cursor's sentence already
-states two structured facts in prose (`event-order:connector-cursor/src/capabilities.ts`): no Stop-time git lane, and no
-pre-tool handler, *"so an edit's position is taken only AFTER the tool returned and is an upper bound"*. Nothing downstream
-can read a sentence. Coverage Integrity (03) never learns that a Cursor session cannot bracket an edit; a reader of a
-coverage line sees `agent_event: complete` for a session whose edits cannot be ordered against its intent.
+01 §8 declared one rung per connector — `event_seq: full | reduced | off` — with a sentence. Cursor's sentence already states
+two structured facts in prose (`event-order:connector-cursor/src/capabilities.ts`): no Stop-time git lane, and no pre-tool
+handler, *"so an edit's position is taken only AFTER the tool returned and is an upper bound"*. Nothing downstream can read a
+sentence. Coverage Integrity (03) never learns that a Cursor session cannot bracket an edit, and a reader of a coverage line
+sees `agent_event: complete` for a session whose edits cannot be ordered against its intent.
+
+### 1.5 The sweep runs on the hook path
+
+`event-order:routes/sessions.ts:75-84` awaits `reapStaleSessions` inside `POST /api/sessions` — the request the SessionStart
+hook makes — and `event-order:services/sessions.ts:317` runs `pruneSessionEvents` inside that pass, before its early return and
+**not** scoped to the calling developer. Whatever the sweep costs, a developer's session start pays it. The route wraps the
+whole pass in one `try/catch`, so a sweep that throws also skips that developer's reap.
 
 ---
 
@@ -66,21 +82,20 @@ coverage line sees `agent_event: complete` for a session whose edits cannot be o
 
 - **"Forget content before you forget causality."** Nick, 2026-09-15, with its operational form: *"Content may expire.
   Proven causal structure should not expire merely because content retention expired."*
-- **"Only judge when you know you were watching."** The attestation record carries what was watched when it was judged.
+- **"Only judge when you know you were watching."** An attestation is written only under complete observation of the session
+  it attests (§3.5 rule 2), because Nick defined the record as *"we could prove this then on complete observation"*.
 - **"A reason written after a change is not evidence that the reason existed before the change."** AT-4 must still be
   answerable a year later, without the prompt, the tool output or the agent's text.
 - **Provider neutrality, in Nick's formulation:** *"every provider must be able to state which causal guarantees it
-  provides."* A new vendor may do less; **it may not look like it does more.**
+  provides."* A new vendor may do less; **it may not look like it does more** — on any surface a user reads (§3.7).
 - **"Missing evidence may weaken a conclusion. It must never strengthen one."** Nick, 2026-09-17 — the fifth binding
-  principle (README §"The six binding principles"), added after PR #53 was caught breaking it. Its operational form governs
-  every match and closure here: *ambiguous or unmatched closure can only reduce certainty, never increase it; no valid match →
-  no closure; multiple indistinguishable matches → only a deterministic conservative relation that cannot strengthen the
-  causal claim; if even that is not defensible → withhold the relation.* Where this spec chooses between two readings it takes
-  the one that produces **more refusals**, and says so at the choice (§3.3c, §3.5 rule 2, §3.6).
+  principle (README §"The six binding principles"). Operationally: *ambiguous or unmatched closure can only reduce certainty,
+  never increase it; no valid match → no closure; multiple indistinguishable matches → only a deterministic conservative
+  relation that cannot strengthen the causal claim; if even that is not defensible → withhold the relation.* Where this spec
+  chooses between two readings, it takes the one that produces **more refusals** and says so at the choice.
 - **"Retention requires positive proof to delete, not positive proof to keep."** Nick, 2026-09-17 — the sixth binding
-  principle, and the one this spec is the first to implement. *Data is deleted only when crosscheck can prove nothing
-  retaining still references it; not knowing is not a reason to delete.* §3.3d turns it into a value
-  (`unresolved_file_reference` → KEEP, counted), §3.3e into a build failure, and CSK-15 … CSK-20 into tests.
+  principle, and the one this spec is the first to implement: *data is deleted only when crosscheck can prove that nothing
+  retaining still references it; not knowing is not a reason to delete.*
 - **Data minimisation (non-negotiable #6)** is unchanged: nothing in this spec stores text, a path, or a hash of a person.
 
 ---
@@ -91,14 +106,19 @@ coverage line sees `agent_event: complete` for a session whose edits cannot be o
 
 | table | author-written content | removed today | tier | 1.0 rule |
 |---|---|---|---|---|
-| `session_events` | none | age, 30 d | **skeleton** | kept while reachable from a retention root (§3.3) |
-| `causal_attestations` (new, §3.5) | none | — | **skeleton** | kept while its session is |
-| `session_causal_guarantees` (new, §3.6) | none | — | **skeleton** | kept while its session is |
+| `session_events` | none | age, 30 d | **skeleton** | kept while its session is reachable from a live root (§3.3) |
+| `causal_attestations` (new, §3.5) | none | — | **skeleton** | kept while its session's `agent_sessions` row is |
+| `session_causal_guarantees` (new, §3.6) | none | — | **skeleton** | kept while its session's `agent_sessions` row is |
+| `pin_file_refs` (new, §3.3d) | none | — | **skeleton** | kept while its pin is |
 | `agent_sessions` | `branch` | never | skeleton anchor | never removed; FK target of the skeleton |
-| `work_context_intents` (06) | `summary`, `reason`, `wire` | never | content, with skeleton columns (`id`, `seq_epoch`, `seq`, `version`, `author_session_id`) | §3.4 |
-| `claims` | `body` | never | content, and the institutional memory itself | §3.4 |
+| `claims` | `body`, and what is derived from it (`tsv`, `embedding`) | never | content, and the institutional memory | §3.4 |
+| `claim_edges` | none that is prose | never | structure | never removed in 1.0 |
+| `work_contexts` | `title`, `description`, `intent`, `normalized_doc`, `tsv` | never | content | §3.4 |
+| `work_context_targets` | `value` (a path), **inside the primary key** | never | content | §3.4 rule 4: cannot expire in 1.0 |
+| `work_context_intents` (06) | `summary`, `reason`, `wire` | never | content, with skeleton columns | §3.4 |
+| `intent_scope` (06) | `value` (a path), **inside the primary key** | never | content | §3.4 rule 4: cannot expire in 1.0 |
 | `artifacts` | `content` | never | content | §3.4, D-A |
-| `work_context_targets` | `value` (a path) | never | content | §3.4 |
+| `questions`, `question_answers` | question and answer text | never | content | §3.4 |
 | `commit_evidence` | none that leaves the hub | age, 30 d | unchanged | 01 §3.5 |
 | `events` | none — the outbox carries ids and metadata only (`services/events.ts:30`) | never | unchanged | — |
 
@@ -115,21 +135,18 @@ answer *which session, which epoch, which position, before or after*. Content ma
 | `seq` | yes | `seq_epoch` + `seq_n`, and the bracket `seq_after` |
 | `provenance` | yes | `seq_kind` (`emitted` / `observed`) + `seq_reason` (seven values) |
 | `subject_ref` | yes | `ref_kind` + `ref_id` — an id or a digest, never text |
-| `work_context_id` | **added** | new nullable column, §4 |
-| `provider` | **added** | new nullable column, §4 |
-| *(not on his list, added by §3.3c)* | **added** | `file_ref`, the explicit file identity a pin is reached through — nullable, only on `target_digest` rows |
-| `commit_ref` | **refused on this row** | §8.3 |
-| `parent_event_id` / `causal_parent` | **refused on this row** | §8.4 |
+| `provider` | **added** | copied from `agent_sessions.agent_kind` — one value per session, so the copy is exact |
+| `work_context_id` | **added, per ROW** | the work context of the record this row projects, set by the projection handler. It is **not** derived from the session: `work_contexts.session_id` has no unique constraint (only `work_contexts_session_created_idx`), and `extend_diagnosis` files one session's claim into another session's work context, so "the session's work context" does not exist |
+| *(not on his list)* | **added** | `file_ref`, the explicit file identity (§3.3d) — only on `file.modified` rows. `tool.failed` also refs a `target_digest`, but of an error fingerprint, which names no file |
+| `commit_ref` | **refused on this row** | §8.5 |
+| `parent_event_id` / `causal_parent` | **refused on this row** | §8.6 |
 
-**Why two columns are denormalised rather than joined.** Both are derivable today — `work_contexts.session_id` and
-`agent_sessions.agent_kind` — but the first join passes through a row holding `title`, `description` and `intent`, which is
-content. A skeleton that needs a content row to say which work context it belongs to has not outlived its content; it has
-only outlived it *so far*. `provider` is copied for the symmetric reason: the guarantee a row was produced under (§3.6) must
-be readable from the skeleton alone. The cost is re-measured with both columns at build (§6).
+`provider` and `work_context_id` are copied so the skeleton answers *which vendor* and *which context* without reading a
+content row. A redacted `work_contexts` row keeps its id (§3.4), but a join through it is still a join through content.
 
 ### 3.3 Retention by root reachability
 
-**Nick's rule, 2026-09-17, and it replaces the flat referential list this section carried for one day:**
+**Nick's rule, 2026-09-17:**
 
 > A skeleton row is retained as long as it is reachable from at least one **independent retention root** through **explicit
 > references**.
@@ -137,234 +154,266 @@ be readable from the skeleton alone. The cost is re-measured with both columns a
 > **A Work Context is not a retention root merely because a session belongs to it. It retains causal data only when it is
 > itself independently live under an explicit retention rule or reachable from another retention root.**
 
-**Why the flat list of seven objects was not enough, in his words: every session has a work context, so "a work context
-references it" is not a retention policy, it is unbounded storage by another route.** The fix is to separate two relations a
-schema cannot tell apart on its own:
+Every session has a work context, so "a work context references it" is not a retention policy — it is unbounded storage by
+another route. The rule separates two relations a schema cannot tell apart on its own:
 
 | relation | example | retains? |
 |---|---|---|
-| **ownership / containment** | `work_context contains session` | **no** — the session belongs to it, which says nothing about whether anybody still depends on the session's order |
-| **retention reference** | a human's pin reaches a file, that file reaches a session's touch | **yes** — something durable depends on that causal fact |
+| **ownership / containment** | `work_context contains session` | **no** — belonging says nothing about whether anybody still depends on the session's order |
+| **retention reference** | a human's pin reaches a file, and that file reaches a session's touch | **yes** — something durable depends on that causal fact |
 
-#### 3.3a The declared retention graph — and a root counts only while it is itself live
+#### 3.3a The unit of retention is the SESSION
 
-**Nick's second rule, 2026-09-17, and it closes the door this spec left open one paragraph after closing the Work Context
-one:** an object is a retention root only when **its own lifecycle is independent of the session** *and* **it is still live
-under its own retention policy**. The shape is therefore
+**Revision 2 kept rows. That was wrong, and the review proved it.** Three of its root clauses matched on `session_id`, and the
+pin clause matched on `file_ref`, which only `file.modified` rows carry. So a session retained by a pin kept its edits and lost
+its `session.started`, `session.ended`, `claim.created` and `commit.observed` rows.
 
-```
-live retention root  →  retaining edge  →  skeleton row
-```
+That is worse than lost detail. `event-order:services/session-order.ts` `causalOrderOf` derives a session's order state from
+the **set** of rows present: any row with `seq_reason = epoch_conflict` makes it `broken`, more than one epoch makes it `broken`
+/ `epoch_split`, and otherwise it is `usable`. Delete the one row that carried the conflict or the second epoch, and the hub
+afterwards answers `usable` for a session whose order was `broken`. **Missing evidence strengthens the conclusion** — principle
+5, broken by the predicate that was meant to implement principle 6.
 
-never `intent amendment → skeleton`. His reason, and it is the same defect twice: *if practically every session ends up with
-an intent amendment, and every amendment is a root forever, then nearly every session is immortal again — the Work Context
-problem moved one table along.* The same can happen with claims.
+So:
 
-**So every root declares three things, and the build checks that it declares all three** (§3.3e):
+1. **A session's skeleton is kept or removed whole.** The sweep selects **sessions**, and removes every `session_events` row of
+   a selected session in one statement.
+2. **The age is the session's, not a row's.** A session is old enough when it **ended explicitly** — `ended_at IS NOT NULL AND
+   reaped_at IS NULL` — more than `SESSION_EVENT_RETENTION_DAYS` ago. A row's `observed_at` plays no part, so a long session is
+   never swept in part.
+3. **A reaped session is never swept.** `event-order:services/sessions.ts:340-345` makes a reap *revocable* — *"an end the hub
+   INFERRED from silence, which a record from that session can disprove"*. Deleting the skeleton of a session that may still be
+   running is deleting on an inference. A reaped session keeps its skeleton until it ends explicitly, or until a later policy
+   decides otherwise; `doctor` counts such sessions.
 
-| retention root | lifecycle independent of the session? | liveness predicate — **declared by the spec that owns the root, not by this one** | reaches a skeleton row via |
-|---|---|---|---|
-| `pins` — a human-pinned invariant | yes: a person creates it, a person retires it, and the pin sweep rewrites it as files move | **owned by the pins feature.** Note the trap: *a broken pin is not a dead pin.* `pins.broke_at` marks the invariant somebody cared about being violated, which is exactly the history an investigation needs, so "live" here cannot mean "not broken" | `pin_files.file_ref` → `session_events.file_ref` (§3.3c) |
-| `claims` | yes: a claim outlives its session and is presented long after | **owned by 02/04.** The tree already decides "current" in six places (00 §1.5); the registry must name WHICH of them is the retention predicate, because six definitions with no authority is the defect 02 exists to end | `claims.author_session_id` → `session_events.session_id` |
-| `work_context_intents` (06) — an intent amendment | **undecided, and 06's to decide.** The ledger is append-only and a version outlives its session, which looks independent; whether an *amended-away* version is still live is exactly the open question | **UNDEFINED — `liveness: undefined_pending_spec`.** Until 06 states it, §3.3b applies and the state is COUNTED, never silently permanent | `author_session_id` → `session_events.session_id` |
-| `causal_attestations` (§3.5) | yes: it is the frozen answer and outlives what it cites | live while it exists; a superseded `ladder_version` stays live, because it is evidence about what was believed then | `session_id` → `session_events.session_id` |
-| 04's attribution record — **not built** | 04 declares it | 04 declares it | 04 declares it when it lands |
+#### 3.3b The declared retention graph — a root counts only while it is itself live
 
-| declared **non**-retaining edge | reason, which §3.3e makes mandatory |
-|---|---|
-| `work_contexts.session_id` | ownership, not dependence: every registered session has one, so treating it as retaining is unbounded storage with extra steps — Nick, 2026-09-17 |
-| `agent_sessions.developer_id` | a person owns the session; retention of causal order is not a property of that person |
-| `hint_deliveries.session_id` | a delivery records what was shown and reads no position |
-
-A diagnosis has no row of its own — it is a claim tree — so it retains through its claims rather than as a separate root.
-
-#### 3.3b An undefined liveness is KEEP, counted rather than permanent
-
-Two rules, deliberately in tension so that neither wins silently:
-
-1. **A root whose liveness predicate is undefined retains** — principle 6, the same answer an unresolvable reference gets.
-2. **That state is a declared value, not a default.** The registry entry reads `liveness: undefined_pending_spec` naming the
-   spec that owes the definition; `doctor` prints *"retention roots with undefined liveness: intent_amendment (06)"* together
-   with the row count it is costing; and §3.3e's build check fails if a root carries no `liveness` key at all. "Keeps
-   everything" can therefore happen — but only where somebody can see it, name the owing spec, and read the price.
-
-**Why this is not the Work Context mistake under a nicer name:** the Work Context edge was *wrong* — ownership never implies
-dependence, and no future spec was going to change that, so it left the graph. An intent amendment's liveness is *unknown*,
-because 06 is not built and has no retention rule yet. Unknown gets the conservative answer with a visible price tag; wrong
-gets removed.
-
-#### 3.3c `file_ref` — an explicit file identity, not a reused digest
-
-A pin names a repo and a path; a skeleton row names a `target_digest`. They cannot be joined today, and **the tempting fix is
-the wrong one.** `ref_id = sha256(work_context_id \n kind \n value)` (01 §3.5) exists to identify *a target inside one work
-context*, and its work-context term makes it useless across sessions anyway. Nick's objection is the deeper one and stands on
-its own: *coupling retention to a digest whose semantics belong to something else means whoever changes that digest later
-silently deletes causal history* — the exact failure class the fifth principle forbids.
-
-So this spec introduces one explicit, semantically named identity, and nothing else uses it:
+**Nick's second rule, 2026-09-17:** an object is a retention root only when **its own lifecycle is independent of the session**
+*and* **it is still live under its own retention policy**:
 
 ```
-file_ref = H( "crosscheck:file-ref:v1" || repo_identity || normalized_repo_relative_path )
+live retention root  →  retaining edge  →  session  →  every skeleton row of that session
 ```
 
-- **Domain-separated by construction.** The literal prefix carries the version, so a future `v2` cannot collide with a `v1`
-  value and a reader can tell which rule produced one.
-- **`repo_identity`** is the canonical repo id the hub already keys everything on (`github.com/acme/api`), so the same file in
-  two worktrees of one repo is one identity, and the same path in a different repo is not.
-- **`normalized_repo_relative_path`** is what `capture/target-paths.ts` `toRepoRelative` already produces. The normalisation
-  rule is that function's, cited rather than restated, and the builder pins it with a test over the cases it already handles —
-  including the ones where it refuses (outside the root, unresolvable worktree), which are exactly §3.3d's KEEP cases.
-- **No content, no prompt, no tool output.** A hash of a path is what `target_digest` already is, so 01 §3.5's argument for
-  content-freedom applies unchanged and no new class of data reaches the hub.
+never `intent amendment → skeleton`. His reason: *if practically every session gets an intent amendment and every amendment is
+a root forever, nearly every session is immortal again — the Work Context problem moved one table along.* The same holds for
+claims. **Every relation that references a session is declared, with its semantics, its liveness and its build status:**
 
-It lands on **both** sides: a `file_ref` column on `pin_files`, and a `file_ref` column on those `session_events` rows whose
-`ref_kind` is `target_digest`. Neither replaces an existing column — `ref_id` keeps its meaning and its readers.
+| relation | `retention_semantics` | lifecycle independent of the session? | liveness — **owned by the spec that owns the root** | status |
+|---|---|---|---|---|
+| `pins`, via `pin_file_refs.file_ref` → `session_events.file_ref` → session | `root` | yes: a person creates it and a person retires it | **the pins feature.** A broken pin is not a dead pin — `pins.broke_at` marks the violated invariant whose history an investigation needs first | built; §3.3d adds the edge |
+| `claims.author_session_id` | `root` | yes: a claim is presented long after its session | **02 / 04.** The tree decides "current" in six places (00 §1.5); the registry must name which one is the retention predicate | built |
+| `claim_edges.author_session_id` | `root` | yes: an edge (supersedes, contradicts) outlives its session, and `claim.invalidated` is positioned | **02 / 04**, as for claims | built |
+| `work_context_intents.author_session_id` (06) | `root` | **06's to decide**: the ledger is append-only, but whether an amended-away version is live is exactly the open question | **`undefined_pending_spec` (06)** — §3.3c | **not built** |
+| 04's attribution record | `root` | 04 declares | 04 declares | **not built** |
+| `work_contexts.session_id` | `non_retaining_edge` | — | — | built. **Reason:** ownership, not dependence; every registered session has one (Nick, 2026-09-17) |
+| `agent_sessions.developer_id` | `non_retaining_edge` | — | — | built. **Reason:** a person owns the session; causal order is not a property of that person |
+| `hint_deliveries.session_id` | `non_retaining_edge` | — | — | built. **Reason:** it records what was shown and reads no position |
+| `questions.author_session_id` | `non_retaining_edge` | — | — | built. **Reason:** no skeleton kind projects a question (`SESSION_EVENT_KINDS` has none), so nothing a question depends on is in the skeleton |
+| `causal_attestations.session_id` | `non_retaining_edge` | — | — | new. **Reason:** an attestation exists so that the skeleton need not be kept — *"the old session need not be reconstructed"* (Nick, 2026-09-15). Retaining through it would make every attested session permanent |
+| `session_causal_guarantees.session_id` | `non_retaining_edge` | — | — | new. **Reason:** a declaration about a session, not a dependence on its order |
+| `session_events.session_id` | the skeleton itself | — | — | built |
 
-**RENAME SEMANTICS, stated rather than discovered.** A `file_ref` keyed on a path changes when git moves the file, and the
-answer to *"is that a new object?"* cannot be left implicit. **The code has already answered it for pins:** `sweepPinPaths`
-follows an unambiguous rename and the sweep rewrites the pin onto the new path, counted in `pins.renamed_paths` /
-`renamed_at` / `renamed_by_name`. A pin therefore means **"this logical file"**, not "this path" — so `file_ref` must mean the
-same thing, and today it does not.
+A diagnosis has no row of its own — it is a claim tree — so it retains through `claims` and `claim_edges`. And the Work Context
+escape hatch Nick named — *"unless it is itself independently live under an explicit retention rule"* — **has no rule today**.
+No work context is independently live in 1.0, so no work context retains. A later spec that gives work contexts their own
+retention rule adds a `root` row here, and the generated predicate (§3.3f) picks it up.
 
-The consequence is exact and it is the wrong way round: after a rename the pin's `file_ref` is the NEW path's, while every
-skeleton row from before the rename carries the OLD path's. The rows that lose their root are precisely the ones recording
-**the session that renamed it** — the causal history an investigation of that change would want first.
+#### 3.3c An undefined liveness is KEEP, counted rather than permanent
 
-1. **The semantics: a pin protects the logical file across renames.** Chosen because the pin sweep already behaves that way;
-   the alternative ("a pin means this path, a rename is a new object") would make `sweepPinPaths`' rename-following a bug
-   rather than a feature, and #50 shipped it as a feature on purpose.
-2. **What that needs, later:** a rename/alias edge derived from git — `file_ref(old) ↔ file_ref(new)`, recorded when the pin
-   sweep observes the rename, since that is the one place in the system that already knows both halves.
-3. **Until that edge exists, the conservative rule stands** (§3.3f): `target_digest` rows are exempt from the sweep entirely,
-   so a rename can cost a *link*, never a row. CSK-20 pins the semantics and the interim rule together, and the alias edge is
-   named in §8 as a refusal rather than left as an assumption.
+1. **A built root whose liveness predicate is undefined retains** — principle 6.
+2. **That state is a declared value, not a default.** The registry reads `liveness: undefined_pending_spec` and names the spec
+   that owes the definition; `doctor` prints *"retention roots with undefined liveness: … (06)"* with the number of sessions it
+   keeps; the build fails for a root with no `liveness` key at all.
+3. **A root whose table is not built contributes no clause and keeps nothing** — and that is positive knowledge, not a gap: a
+   table that does not exist holds no reference. It is not the same thing as a query that *fails* (§3.3g, CSK-17).
 
-**Normalisation is tested, not asserted.** `toRepoRelative` is the rule, and the cases that decide whether two machines agree
-are: a path differing only in case on a case-insensitive filesystem; Unicode that normalises differently (NFC vs NFD, which
-macOS and Linux disagree about); `..` segments; a symlinked path inside the worktree; and the same file reached through two
-different local worktree paths of one repo. CSK-20 runs that matrix, because a `file_ref` that differs between two
-developers' machines silently breaks the pin link for one of them.
+The Work Context edge was *wrong* — ownership never implies dependence — so it left the graph. An intent amendment's liveness
+is *unknown*, so it gets the conservative answer with a visible price.
 
-#### 3.3d Unresolvable is KEEP, never DELETE
+#### 3.3d `file_ref` — an explicit file identity, not a reused digest
 
-Nick's migration rule, in force beyond the migration:
+A pin names a repo and a path; a skeleton row names a `target_digest`. The existing digest cannot join them — it contains the
+work context, so the same file touched in two sessions has two digests — and Nick's objection stands on its own: *coupling
+retention to a digest whose semantics belong to something else means whoever changes that digest later silently deletes causal
+history.*
+
+**The identity, with its encoding pinned.** Revision 2 wrote `||` and left the field boundary open: repo `github.com/acme/ap`
+with path `isrc/x.ts` and repo `github.com/acme/api` with path `src/x.ts` hashed the same bytes.
+
+```ts
+// packages/schema/src/file-ref.ts
+export const FILE_REF_DOMAIN = "crosscheck:file-ref:v1";
+export const fileRef = (repoIdentity: string, canonicalPath: string): string =>
+  sha256Hex([FILE_REF_DOMAIN, repoIdentity, canonicalPath].join("\n"));   // targetDigest's encoding
+```
+
+- **The separator is safe only because neither field may contain it.** `REPO_RELATIVE_PATH` (`schema/src/pin.ts:116`) rejects
+  `..` and NUL but **accepts a newline**; `canonicalRepoPath` below rejects `\n` and `\r`, and `fileRef` refuses a
+  `repoIdentity` that contains either. CSK-25 pins the collision pair above as two distinct values.
+- **One canonicalisation, in one pure function, applied at every door.** `canonicalRepoPath(path)` in `@crosscheck/schema`:
+  POSIX separators; collapse `//` and `.` segments; strip a leading `./` and a trailing `/`; Unicode NFC; reject `..`, NUL,
+  `\n`, `\r` and an absolute path. It is synchronous, touches no filesystem, and is imported by **both** connector and hub.
+  Revision 2 cited `toRepoRelative`, which is async, connector-only and needs two machine-local absolute paths — the hub cannot
+  call it, and the pin door never did: `parsePinArgs` pushes raw argv into `files`, so a pin registered as `./src/x.ts` would
+  hash differently from every touch of `src/x.ts`, and the sweep would read that as "no pin references it".
+- **Filesystem questions are answered before a path leaves the machine.** Case on a case-insensitive filesystem, symlinks, and
+  which worktree a path came from are resolved connector-side by `toRepoRelative`; a tracked file is sent in the spelling
+  `git ls-files` reports. `canonicalRepoPath` then makes the string canonical. It cannot guess at a filesystem, and does not.
+- **The HUB computes `file_ref`, for both sides**, from values it already holds: `pin_files.repo` + `pin_files.path`, and the
+  session's repo + the target's `value` at projection time. One implementation on one machine, so two developers' connectors
+  cannot disagree, and no new data reaches the hub.
+- **A hash of a path is what `target_digest` already is**, so 01 §3.5's content-freedom argument applies unchanged.
+
+**RENAME SEMANTICS — stated, and built rather than refused.** `sweepPinPaths` follows an unambiguous rename, and the hub then
+inserts the new `pin_files` row and deletes the old one (`services/pins.ts`), counted in `pins.renamed_paths`. **A pin therefore
+means the logical file.** If `file_ref` were read from `pin_files` alone, a rename would sever the root from every session that
+touched the file under its old name — the history of exactly the change that renamed it.
+
+So the pin side of the edge is an **append-only history**, not the current row:
+
+```sql
+CREATE TABLE pin_file_refs (
+  pin_id     text NOT NULL REFERENCES pins(id),
+  file_ref   text,                       -- NULL = this path could not be canonicalised (§3.3e)
+  first_seen timestamptz NOT NULL,       -- hub clock; display only
+  UNIQUE (pin_id, file_ref)
+);
+```
+
+Every write to `pin_files` — creation, and the sweep's rename — inserts the `file_ref` it computed, and **nothing removes a
+`pin_file_refs` row while its pin exists**. A renamed file stays reachable under every name the pin has watched. That makes the
+git-derived alias edge revision 2 refused unnecessary: the pin sweep is already the one place that knows both halves of a
+rename.
+
+#### 3.3e Unresolvable is KEEP — on BOTH sides
+
+Nick's D-B4, which revision 2 implemented on one side only:
 
 ```
 retention_decision = KEEP
 reason             = unresolved_file_reference
 ```
 
-**never `DELETE`.** It covers a pre-migration pin whose path no longer normalises, a session whose touches predate the column,
-a repo identity that cannot be resolved, and any row the backfill skipped. The reason is an enum, it is counted, and `doctor`
-prints the count — so *"kept because we could not tell"* is a visible number rather than an invisible default.
+- **Session side.** A `file.modified` row whose `file_ref` is NULL keeps its **whole session**.
+- **Pin side** — the half revision 2 missed. A `pin_file_refs` row with a NULL `file_ref` never *matches* anything, so an
+  equality join reads it as "no pin references this", and that is a deletion. Instead: **while any pin in a repo has an
+  unresolved `file_ref`, no session of that repo carrying a `file.modified` row is swept.**
 
-#### 3.3e Retention semantics are a declared contract, and CI enforces it
+Both are counted under `unresolved_file_reference` and printed by `doctor`, so *"kept because we could not tell"* is a number a
+reader can see, never an invisible default.
 
-Nick's generalisation of the completeness test. Every reference relation that can reach a session or a skeleton row declares
-exactly one of:
+#### 3.3f The contract, and a predicate generated from it
 
-```
-retention_semantics: root | retaining_edge | non_retaining_edge
-```
+Nick's D-B5: every reference relation that can reach a session declares `retention_semantics: root | retaining_edge |
+non_retaining_edge`, and `non_retaining_edge` requires a reason. **Revision 2 checked only that a declaration exists — so a
+relation could be declared `root` and never appear in the hand-written sweep.** Revision 3 closes both directions:
 
-and `non_retaining_edge` **requires a reason**. The build enumerates every table carrying `session_id`, `author_session_id` or
-`file_ref` and fails unless each relation appears in the registry with one of the three values — the two-directional shape
-`test/derive-capability-registry.test.ts` already uses for capabilities. **That is what turns retention from implicit schema
-behaviour into an explicit contract:** a new table with a session reference cannot be added silently, and whoever adds it has
-to say whether it keeps causal history alive.
+1. **The registry is data** (`server/src/services/retention-registry.ts`): one entry per row of §3.3b, each carrying its
+   semantics, liveness and build status, and — for `root` and `retaining_edge` — the `NOT EXISTS` fragment that expresses it.
+2. **The sweep is generated from the registry.** No clause exists outside it, and no built `root` or `retaining_edge` is left
+   out of it.
+3. **CSK-12** enumerates every `session_id` / `author_session_id` column in `db/bootstrap.sql` and fails for one without a
+   registry entry, or for a `non_retaining_edge` without a reason. **CSK-22** is table-driven over the registry: for each built
+   `root` it seeds an aged session reachable *only* through that root and asserts that the shipped sweep keeps it — so a
+   fragment that is wrong fails, not only one that is missing.
 
-#### 3.3f The sweep
+#### 3.3g The sweep
+
+Generated from the registry. Its shape today, with 06 and 04 not built:
 
 ```sql
-DELETE FROM session_events se
- WHERE se.observed_at < $cutoff                 -- SESSION_EVENT_RETENTION_DAYS, unchanged at 30
-   -- ROOT: claims, and with them diagnoses, which are claim trees
-   AND NOT EXISTS (SELECT 1 FROM claims c               WHERE c.author_session_id = se.session_id)
-   -- ROOT: intent amendments (06)
-   AND NOT EXISTS (SELECT 1 FROM work_context_intents i WHERE i.author_session_id = se.session_id)
-   -- ROOT: causal attestations (§3.5)
-   AND NOT EXISTS (SELECT 1 FROM causal_attestations a  WHERE a.session_id        = se.session_id)
-   -- ROOT: a human pin, reached through the explicit file identity (§3.3c)
-   AND NOT EXISTS (SELECT 1 FROM pin_files pf           WHERE pf.file_ref         = se.file_ref)
-   -- §3.3d: a row whose file identity could not be resolved is never deleted
-   AND (se.ref_kind <> 'target_digest' OR se.file_ref IS NOT NULL);
+WITH eligible AS (
+  SELECT s.id FROM agent_sessions s
+   WHERE s.ended_at IS NOT NULL AND s.reaped_at IS NULL                               -- §3.3a: ended explicitly, never inferred
+     AND s.ended_at < $cutoff                                                         -- SESSION_EVENT_RETENTION_DAYS
+     AND NOT EXISTS (SELECT 1 FROM claims c       WHERE c.author_session_id = s.id)   -- root: claims (+ liveness, 02/04)
+     AND NOT EXISTS (SELECT 1 FROM claim_edges ce WHERE ce.author_session_id = s.id)  -- root: claim_edges
+     AND NOT EXISTS (                                                                 -- root: pins, via their history (§3.3d)
+       SELECT 1 FROM session_events pe
+         JOIN pin_file_refs pr ON pr.file_ref = pe.file_ref
+        WHERE pe.session_id = s.id)
+     AND NOT EXISTS (                                                                 -- §3.3e: unresolved, on EITHER side
+       SELECT 1 FROM session_events pe
+        WHERE pe.session_id = s.id AND pe.kind = 'file.modified'
+          AND (pe.file_ref IS NULL
+               OR EXISTS (SELECT 1 FROM pin_file_refs pr JOIN pins p ON p.id = pr.pin_id
+                           WHERE pr.file_ref IS NULL AND p.repo = s.repo)))
+   ORDER BY s.ended_at
+   LIMIT $maxSessions                                                                 -- bounded per pass (§6)
+)
+DELETE FROM session_events WHERE session_id IN (SELECT id FROM eligible);
 ```
 
-**The liveness predicates belong inside those clauses, not beside them.** Each `NOT EXISTS` above reads *"no root of this kind
-reaches the row"*, and §3.3a says a root counts only while it is live — so the clause carries its root's liveness predicate
-(`AND <root is live>`) as soon as the owning spec declares one, and carries nothing while the declaration is
-`undefined_pending_spec`, which keeps everything (§3.3b). A liveness term may only ever be ADDED to a clause by the spec that
-owns that root; this spec must not invent one, because a wrong liveness predicate deletes causal history and looks like a
-tightening.
+`work_contexts` appears nowhere in it, which is the point. Neither do `causal_attestations` and `questions`: both are declared
+non-retaining (§3.3b).
 
-**THE CHECK AND THE DELETE MUST SEE ONE SNAPSHOT.** Nick, 2026-09-17: if the sweep reads "no root" and a pin or a claim is
-written before the rows go, the deletion rests on positive evidence about a state that no longer exists — principle 6 broken
-in time rather than in logic. Three requirements, in order of preference:
+**THE CHECK AND THE DELETE SEE ONE SNAPSHOT** — Nick's D-B7. A root written after the predicate ran and before the rows went
+would turn positive deletion evidence into evidence about a state that no longer exists. The predicate is a CTE of the `DELETE`
+itself, and the statement runs inside `db.transaction` (already used at five call sites in `services/`), so a later
+multi-statement form cannot silently lose the property. The hub's single PGlite instance is **not** the guarantee: requests
+interleave between `await`s, so a check-then-delete written as two awaited statements would be exposed even there. CSK-18.
 
-1. **One statement.** The `NOT EXISTS` clauses are subqueries of the `DELETE` itself, so the check and the removal share a
-   single snapshot. This is the shape written above, and it is the one the builder ships.
-2. **Inside a transaction.** The hub already uses `db.transaction` (five call sites in `services/`), and the sweep runs in one
-   so that a future multi-statement form cannot silently lose the property.
-3. **If neither can be guaranteed — revalidate immediately before the delete**, inside the same transaction, and abort the
-   whole pass rather than delete a row whose roots changed underneath it.
+**A FAILED CHECK DELETES NOTHING, AND DOES NOT TAKE THE REAP WITH IT.** The statement is one unit: if a fragment errors, the
+transaction rolls back and nothing is removed (CSK-17). The sweep gets its own `try/catch` inside `reapStaleSessions`, counts the
+failure and returns. Today one `catch` in the route covers both, so a failing sweep would also skip the caller's reap.
 
-A note on why this is not free today: the hub runs one embedded PGlite instance, so no second connection can commit *during*
-a statement — but requests interleave between `await`s, so a check-then-delete written as two awaited statements is exposed
-even here. The property has to come from the statement or the transaction, never from "there is only one connection".
-CSK-18 is the test.
+**LIVENESS TERMS** join a root's fragment — `AND <root is live>` — when its owning spec declares them, and never before. A wrong
+liveness predicate deletes causal history while looking like a tightening, so this spec invents none (§8.3).
 
-`work_contexts` appears nowhere in it, which is the point: ownership does not retain. Indexes: `claims_author_session_idx`
-(new, §4), 06's `work_context_intents_session_idx`, §3.5's attestation index, and `pin_files_file_ref_idx` beside
-`session_events_file_ref_idx`. The statement stays one pass on `reapStaleSessions`' existing schedule — **except that #53 now
-ships with the sweep switched off entirely** (§4, D-D), so this predicate is what switches it back on.
+**THE INTERIM RULE, until the file identity is proven** (Nick): no session that carries a `file.modified` row is swept at all
+until CSK-15 and CSK-20 pass against real pins and real touches, and `doctor` prints which mode is live. Revision 2 exempted the
+*rows*, which under row-grain deletion still removed every other row of every aged session; at session grain, the exemption
+means what it says.
 
-**Until the `file_ref` link is proven end to end, the conservative variant stays in force** (Nick): nothing is deleted that a
-pin could possibly protect. Concretely, the sweep ships with the `target_digest` rows exempt until CSK-15 passes against real
-pins and real touches, and `doctor` prints which mode is live rather than leaving the reader to guess.
-
-**What is lost, named.** A session reachable from no root loses its order after thirty days: no claim, no intent amendment, no
-attestation, no pinned file. Nothing in 1.0 can compare against it — `explanationTimingFor` step 1 returns `absent` /
-`no_intent` before step 4 ever reads a position, and 01 §3.7 (1) already made attribution independent of `seq`. Its *targets*
-stay, because they are content and `work_context_targets` is never removed.
+**What is lost, named.** An explicitly ended session, more than thirty days old, that no live root reaches — no claim, no claim
+edge, no pinned file under any name the pin has had — loses its skeleton, whole. Nothing in 1.0 compares against it: without an
+intent, `explanationTimingFor` returns `absent` / `no_intent` at step 1 before reading a position, and 01 §3.7 (1) made
+attribution independent of `seq`. Its targets stay, because they are content and `work_context_targets` is never removed.
+**Until 06 is built there are no intent roots, and that is why this spec is built after 06** (§9). Swept earlier, a session
+whose intent 06 would have recorded is unreachable by construction.
 
 ### 3.4 The content rule — redaction in place, never removal, for anything the skeleton references
 
-This spec adds **no content expiry by default** (D-A). It adds the rule that makes any future content expiry safe, so that a
-retention policy chosen later cannot silently take causality with it:
+This spec adds **no content expiry by default** (D-A). It adds the rule that makes a later content policy safe:
 
-1. **Content expires by redaction in place, never by row removal**, for any row a skeleton row or an attestation
-   references: `claims`, `work_context_intents`, `work_contexts`, `artifacts`, `agent_sessions`. The content columns are
-   nulled or replaced with a fixed marker, a `content_expired_at timestamptz` column is set, and the row, its id and its
-   foreign keys survive. `ref_id` therefore always resolves to a row.
-2. **No skeleton reader inner-joins a content column.** `explanationTimingFor`'s order half, `isOrderable`, the attestation
-   reader and the §5 doctor lines read ids, enums and positions only. A referent whose content has expired renders as the
-   renderer-owned literal `content expired` — an enum-backed state, never prose — and is still orderable.
-3. **06 step 5 is the one place order needs content** (`intent_scope` holds paths). After redaction the live ladder cannot
-   run step 5 for that version. The **attestation** (§3.5) is what still answers, because it was written while step 5 could
-   run.
+1. **Content expires by redaction in place, never by row removal**, for any row a skeleton row or an attestation references:
+   `claims`, `claim_edges`, `work_context_intents`, `work_contexts`, `artifacts`, `questions`, `question_answers`,
+   `agent_sessions`. Each gets `content_expired_at timestamptz NULL`. Redaction sets it, replaces each content column with the
+   fixed marker `[expired]` — which every `NOT NULL` and length `CHECK` on those columns accepts — and **nulls what was derived
+   from the content** (`claims.tsv`, `claims.embedding`, `work_contexts.normalized_doc`, `work_contexts.tsv`), because a vector
+   or a tsvector reconstructs what the marker hid. Ids and foreign keys survive, so `ref_id` always resolves.
+2. **No skeleton reader inner-joins a content column.** The order half of `explanationTimingFor`, `isOrderable`, the
+   attestation reader and the §5 doctor lines read ids, enums and positions only. A redacted referent renders as the
+   renderer-owned literal `content expired`, and is still orderable.
+3. **06 step 5 is the one place where order needs content**: `intent_scope` holds the path each intent names. The attestation
+   (§3.5) is what answers once the scope can no longer be read.
+4. **Two content columns cannot expire in 1.0 — a refusal, not an oversight.** `work_context_targets.value` and
+   `intent_scope.value` are inside their tables' primary keys. Redacting them in place would change row identity and collide
+   rows, and removing them would break rule 1. Their content stays until a later spec gives them a content-free identity.
 
-`content_expired` is a render state in 03's sense (enum, never prose), and adds one case to the render-surface registry
-(00 §6) for each surface in §5 — **no untrusted slot**, since the literal is renderer-owned.
+`content_expired` is a render state in 03's sense (enum, never prose), and adds one case to the render-surface registry (00 §6)
+per surface in §5 — **no untrusted slot**, since the literal is renderer-owned.
 
 ### 3.5 The Causal Attestation Record
 
-When order has already produced a load-bearing statement, the statement is kept as its own row, so the old session never has
-to be reconstructed.
+When order has already produced a load-bearing statement, the statement is kept as its own row, so the old session never has to
+be reconstructed.
 
 ```sql
 CREATE TABLE causal_attestations (
-  id                     text PRIMARY KEY,   -- ca_ + 32 hex of sha256(session_id \n seq_epoch \n subject_ref \n object_ref \n ladder_version)
+  id                     text PRIMARY KEY,   -- ca_ + 32 hex of sha256([session_id, seq_epoch, subject_ref, object_ref, ladder_version].join("\n"))
   session_id             text NOT NULL REFERENCES agent_sessions(id),
   seq_epoch              text NOT NULL,
-  statement              text NOT NULL,      -- enum ATTESTED_STATEMENTS: predeclared_explanation | post_hoc_explanation | declared_non_goal_edited
+  statement              text NOT NULL,      -- enum: predeclared_explanation | post_hoc_explanation | declared_non_goal_edited
   relation               text NOT NULL,      -- enum: happens_before | happens_after
   subject_ref            text NOT NULL,      -- work_context_intents.id (iv_…)
   object_ref             text NOT NULL,      -- session_events.id (se_…) of the edit
   subject_seq            integer NOT NULL,
   object_seq             integer NOT NULL,
-  object_seq_after       integer NOT NULL,   -- the bracket the comparison relied on (rule 2)
+  object_seq_after       integer NOT NULL,   -- the bracket the comparison relied on (rule 3)
   timing_reason          text NOT NULL,      -- 06 TIMING_REASONS, the three order-derived values only
-  coverage_at_judgment   jsonb NOT NULL,     -- 03 CoverageSourceRecord[] for the session's scope: enums and ISO timestamps only
+  observation            jsonb NOT NULL,     -- viewer-INDEPENDENT coverage only (rule 5)
   guarantees_at_judgment jsonb NOT NULL,     -- the session's §3.6 declarations: enums only
   ladder_version         integer NOT NULL,   -- EXPLANATION_LADDER_VERSION at write time
   attested_at            timestamptz NOT NULL -- hub clock; display only, orders nothing
@@ -375,95 +424,100 @@ CREATE INDEX causal_attestations_object_idx  ON causal_attestations (object_ref)
 
 **Rules.**
 
-1. **Written once per session, when the session ends** — `session.ended` ingest and `reapStaleSessions`' close, the two
-   paths that already make a session terminal. At that point the session's `agent_event` coverage is final, which is what
-   `coverage_at_judgment` is for: *"this statement was provable then, on this much observation."* Writing on ingest of each
-   edit would attest under coverage that is still moving; writing on read would make a read path write.
-2. **Only statements order produced.** A row is written when `explanationTimingFor` answers with one of the three
-   order-derived reasons — `declared_before`, `declared_after`, `declared_non_goal_edited` — and `isOrderable` held. Every
-   other answer (`no_intent`, `derived_excluded`, `different_session`, `not_comparable`, `scope_not_named`) does not depend on
-   the skeleton and is not attested. An `observed` edit, or one without a bracket, is `not_comparable` under 01 and #53, so it
-   never reaches this table — which is why `object_seq_after` can be `NOT NULL`.
-3. **Bounded:** at most one row per `(session, epoch, edited target)` — the ladder already answers over the **earliest**
-   survivor per role (06 §3.5 step 6), so each edited target yields one statement. That is ≤ `MAX_SEEN_TARGETS` per epoch,
-   and in practice the number of distinct files a session changed under a declared intent.
-4. **`ladder_version` makes a wrong attestation findable.** 06 §3.5 records that its first draft of step 6 answered a violated
-   non-goal `predeclared`. An attestation frozen by a ladder with that defect would be wrong forever and indistinguishable
-   from a right one. `EXPLANATION_LADDER_VERSION` is a constant beside `explanationTimingFor`, bumped by any change to its
-   early returns, and a reader treats a row whose version is older than the current one as `attestation_superseded` —
-   printed, never silently trusted, never silently dropped.
-5. **Readers: live first, attestation second, disagreement counted.** A consumer asks the live ladder. Only when the live
-   ladder cannot answer because the skeleton row or the scope content is gone does it read the attestation, and the render
-   says *attested at* with the coverage it carries. When both answer, with the same `ladder_version`, and disagree, the live
-   answer is used and `attestation_disagreements` is counted and printed by doctor — a real defect signal, since both read the
-   same positions.
-6. **No text.** Every column is an id, an enum, an integer, a timestamp, or JSON whose leaves are enums and ISO timestamps.
-   The JSON is validated on write with the zod schemas 03 and §3.6 export, so a free-text field cannot enter through it.
+1. **Written once, when the session ends EXPLICITLY** — on `session.ended` ingest, where `reaped_at` stays null. **Never on a
+   reap:** a reap is revocable (§3.3a), so an attestation frozen then could describe a session that later continued and went
+   `broken`, and would still be read as settled.
+2. **Written only under complete observation.** Nick defined the record as *"we could prove this then on complete
+   observation"*. A statement is attested only when the session's `agent_event` rung (03) is `complete` at that moment;
+   otherwise nothing is attested, and the live skeleton — kept by its roots — stays the only answer. Revision 2 attested under
+   any coverage and glossed the record as *"on this much observation"*: a weaker claim, made silently.
+3. **Only statements order produced.** A row is written when `explanationTimingFor` answers `declared_before`,
+   `declared_after` or `declared_non_goal_edited`, and `isOrderable` held. No other reason depends on the skeleton. An
+   `observed` edit, or one without a bracket, is `not_comparable` under 01 and #53, so `object_seq_after` can be `NOT NULL`.
+4. **Bounded on the hub.** One row per `(session, epoch, edited target)`, capped at `ATTESTATIONS_MAX_PER_SESSION`; the rest are
+   counted, not written. `MAX_SEEN_TARGETS` is a connector-side cap the hub does not enforce, so it cannot be the bound.
+5. **The coverage it stores is viewer-independent.** On #52, `readCoverage` takes a `viewerDeveloperId`
+   (`coverage:server/src/services/coverage.ts:466`) because the git rung's census is scoped to what that viewer may be told. An
+   attestation is written on an ingest path that has no viewer, and read by everyone. So it stores only the rungs that do not
+   depend on the viewer — this session's `agent_event` record and the three refused rungs — and the `git` rung is recomputed
+   for the asking viewer at read time. CSK-24.
+6. **`ladder_version` makes a wrong attestation findable, and a superseded one is not used.** 06 §3.5 records that its first
+   draft of step 6 answered a violated non-goal `predeclared`. A row older than the current `EXPLANATION_LADDER_VERSION` is
+   `attestation_superseded`: **its statement is withheld** — the consumer gets `not_comparable` with that reason — and the old
+   statement is shown only as history. Principle 5: a statement from a ladder since found wrong may weaken an answer, never
+   supply one.
+7. **Readers: live first, attestation second, disagreement counted.** A consumer asks the live ladder; only when the skeleton or
+   the scope content is gone does it read a current-version attestation, and the render says *attested at … under complete
+   observation*. When both answer with the same version and disagree, the live answer is used and `attestation_disagreements`
+   is counted — both read the same positions, so a disagreement is a defect signal.
+8. **No text.** Every column is an id, an enum, an integer, a timestamp, or JSON whose leaves are enums and ISO timestamps,
+   validated on write with the zod schemas 03 and §3.6 export.
 
-**What an attestation is not.** It is not a verdict, not a permission and not a cache of 04. It records one happens-before
-fact and the observation it rested on. 04 still computes attribution fresh; principle 2 is untouched.
+**What an attestation is not.** Not a verdict, not a permission, not a cache of 04 — and **not a retention root** (§3.3b): it
+exists so that the skeleton it summarises may go. 04 still computes attribution fresh; principle 2 is untouched.
 
 ### 3.6 Declared causal guarantees
 
 ```ts
 // packages/schema/src/causal-guarantees.ts
-export const CAUSAL_GUARANTEES = ["guaranteed", "partial", "unavailable"] as const;
+export const CAUSAL_GUARANTEES = ["undeclared", "unavailable", "partial", "guaranteed"] as const;   // weakest first
 export const CAUSAL_GUARANTEE_REASONS = [
   "bracketed_by_pre_tool",      // guaranteed: every producing lane opens the position before the tool runs
   "lifecycle",                  // guaranteed: n = 0 or the terminal position, with no tool to race
   "unbracketed_lane",           // partial: some producing lane positions only after the fact
   "observed_lane_only",         // partial: the kind is produced only by an observing lane (git diff)
+  "derived_after_the_fact",     // partial: a derived record is positioned when written down, after the turn it describes
   "ambiguous_session_possible", // partial: the MCP picker's ambiguity (01 D1) can withhold the position
   "no_emitter",                 // unavailable: this connector never produces the kind
-  "not_built",                  // unavailable: the kind's producer does not exist yet (06's two intent kinds today)
+  "not_built",                  // unavailable: the kind's producer does not exist yet
+  "provider_undeclared",        // undeclared: the session sent no declaration
 ] as const;
-export type CausalGuaranteeKind = SessionEventKind | "intent.declared" | "intent.amended";
-export interface CausalGuaranteeDeclaration {
-  readonly kind: CausalGuaranteeKind;
-  readonly guarantee: (typeof CAUSAL_GUARANTEES)[number];
-  readonly reason: (typeof CAUSAL_GUARANTEE_REASONS)[number];
-}
 ```
 
-**The weakest-lane rule.** A connector declares, per kind, the guarantee of the **weakest lane that can produce that kind**.
-Claude Code produces `file.modified` from bracketed Edit-family tools, from Bash, and from the Stop git lane — Bash is in
-`POST_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash"` and not in `PRE_TOOL_USE_MATCHER =
-"Edit|Write|MultiEdit|NotebookEdit"` (`event-order:connector-core/src/constants.ts`) — so its `file.modified` is `partial` / `unbracketed_lane` — not
-`guaranteed`, however good its Edit path is. A declaration describing only the best lane is the "looks like it does more"
-this spec exists to forbid.
+**The weakest-lane rule.** A connector declares, per kind, the guarantee of the **weakest lane that can produce it**. Claude Code
+produces `file.modified` from bracketed Edit-family tools, from Bash — which is in `POST_TOOL_USE_MATCHER =
+"Edit|Write|MultiEdit|NotebookEdit|Bash"` and not in `PRE_TOOL_USE_MATCHER = "Edit|Write|MultiEdit|NotebookEdit"`
+(`event-order:connector-core/src/constants.ts`) — and from the Stop git lane. So its `file.modified` is `partial` /
+`unbracketed_lane`, however good its Edit path is.
 
-**Where it lives.** Beside `DeriveCapabilityManifest` in each connector's `capabilities.ts`, as data. The existing meta-test
-`test/derive-capability-registry.test.ts` gains the two-directional check it already enforces for rungs: a connector whose
-source emits a kind it has not declared fails the build, and so does one declaring `guaranteed` for a kind with a producing
-call site outside a pre-tool bracket. The trigger identifiers are 01's (`allocateSeq`, `allocateToolSeq`, `openToolWindow`);
-the lane of each call site is read from the file it sits in.
+**Where it lives, and what the build can actually check.** Revision 2 promised that the existing meta-test would learn which kind
+each call site produces. It cannot: connectors emit `target` / `claim` / `session` records, and the projection to the seven dotted
+names happens on the hub. So the map is declared where the kinds are — a table in `connector-core`, `(connector, kind) → { lane,
+producingModules }` — and the build checks what an import graph can prove, in both directions:
 
-**Initial declarations** — read from the code on `event-order:` at `91d79dc`, to be **re-derived by the builder, not copied**:
+- every module that calls `allocateSeq`, `allocateToolSeq` (connector-core's — not the MCP helper of the same name in
+  `mcp/tools/shared.ts`) or `openToolWindow` appears in the map, and every module in the map calls one of them;
+- a kind declared `guaranteed` / `bracketed_by_pre_tool` has **no** producing module outside a pre-tool-bracketed lane;
+- the map's kinds agree with the hub's projection (`TARGET_EVENT_KINDS`, `seqKindFor`), so the two cannot drift.
+
+This is a **new mechanism** this spec asks for, not a check the existing registry test "gains".
+
+**Initial declarations**, read from `event-order:` at `91d79dc` — to be **re-derived by the builder, not copied**:
 
 | kind | `claude-code` | `cursor-ide` | `acp:*` |
 |---|---|---|---|
 | `session.started` | guaranteed / `lifecycle` | guaranteed / `lifecycle` | guaranteed / `lifecycle` |
 | `file.modified` | partial / `unbracketed_lane` | partial / `unbracketed_lane` | partial / `unbracketed_lane` |
 | `tool.failed` | partial / `unbracketed_lane` | partial / `unbracketed_lane` | builder derives |
-| `claim.created` | partial / `ambiguous_session_possible` | partial / `ambiguous_session_possible` | builder derives |
+| `claim.created` | partial / `derived_after_the_fact` — the summarizer's claims are a weaker lane than MCP ambiguity | builder derives the weakest lane | builder derives |
 | `claim.invalidated` | builder derives | builder derives | builder derives |
 | `commit.observed` | guaranteed / `lifecycle` | unavailable / `no_emitter`¹ | unavailable / `no_emitter`¹ |
 | `session.ended` | guaranteed / `lifecycle` | guaranteed / `lifecycle` | builder derives |
 | `intent.declared`, `intent.amended` | unavailable / `not_built` | unavailable / `not_built` | unavailable / `not_built` |
 
-¹ `collectCommitEvidence` has exactly one caller, `connector-claude/src/hooks/session-start.ts`. `connector-core` re-exports
-it from `index.ts` and `kit.ts`, so a fourth connector built on the kit can start calling it — and its declaration must then
-change with it, which is what the CSK-7 meta-test enforces. The builder re-verifies both halves.
+¹ `collectCommitEvidence` has exactly one caller, `connector-claude/src/hooks/session-start.ts`. `connector-core` re-exports it
+from `index.ts` and `kit.ts`, so a fourth connector built on the kit can start calling it — and its declaration must then change
+with it, which the map check enforces.
 
-**Transport.** The declaration travels in the `session.started` record body — at most nine enum triples — and lands in
-`session_causal_guarantees (session_id, kind, guarantee, reason, PRIMARY KEY (session_id, kind))`. A connector that sends none
-is stored as nothing, and every reader treats the absence as `undeclared`, never as `guaranteed`.
+**Transport.** The declaration travels in the `session.started` record body — at most nine enum triples — into
+`session_causal_guarantees (session_id, kind, guarantee, reason, PRIMARY KEY (session_id, kind))`. A session that sends none is
+stored as nothing, and read as `undeclared` / `provider_undeclared`, never as `guaranteed`.
 
-**Rows outrank declarations.** A declaration never upgrades a row: comparability is still decided per row by `seq_kind` and
-`seq_after` (01, #53). The declaration is what coverage and disclosure read. A row that contradicts its session's declaration
-— an `observed` or unbracketed `file.modified` from a session that declared `guaranteed` — is counted as
-`declaration_contradicted` and printed by doctor. That is the runtime enforcement of *"may not look like it does more"*; the
-meta-test is the build-time one.
+**Rows outrank declarations — on every surface, not only in doctor.** Comparability is decided per row by `seq_kind` and
+`seq_after`. A row that contradicts its session's declaration — an `observed` or unbracketed `file.modified` from a session
+that declared `guaranteed` — is counted as `declaration_contradicted` **and** caps that session's effective guarantee for the
+kind at `partial`, with that reason (§3.7). Revision 2 counted it in doctor only, while the coverage line, the briefing and the
+referee page kept showing `guaranteed`: the surface a user reads went on looking more capable than the rows.
 
 ### 3.7 Where it enters Coverage Integrity — beside the source lines, not as one
 
@@ -475,54 +529,60 @@ are part of the coverage **record** but not one of its **sources**:
 interface CoverageRecord {
   // …03's fields, unchanged; COVERAGE_SOURCES keeps its five values and its order (00 §8.2)
   readonly order: {
-    readonly state: "guaranteed" | "partial" | "unavailable" | "undeclared";
-    readonly reason: CausalGuaranteeReason | "provider_undeclared";
-    readonly sessions: number; // sessions in scope the state was computed over
+    readonly state: CausalGuarantee;          // "undeclared" | "unavailable" | "partial" | "guaranteed"
+    readonly reason: CausalGuaranteeReason | "declaration_contradicted" | "no_session_in_scope";
+    readonly sessions: number;                // sessions in scope the state was computed over
   };
 }
 ```
 
-`order.state` is the weakest declaration across the sessions in scope, for the kinds the question needs. `isJudgeable` (03)
-does not read it. `isOrderable`'s callers do, and a timing answer computed under `order.state !== "guaranteed"` renders that
-state beside it — exactly as `attribution: INDETERMINATE` never renders without its basis. **The coverage line stays one
-record and the two gates stay orthogonal.** D-C puts the alternative — a sixth coverage source — in front of Nick with its
-cost.
+**The fold, defined.** `CAUSAL_GUARANTEES` is ordered weakest first. `order.state` is the **minimum**, over the sessions in scope
+and the kinds the question needs, of each session's *effective* guarantee — its declaration, capped by its own rows (§3.6).
+**An empty scope is `undeclared` / `no_session_in_scope`.** Revision 2 left the empty case open, and a plain minimum over nothing
+returns the strongest value — less observation producing a stronger statement. A session that declared nothing contributes
+`undeclared`, and therefore wins the fold.
 
-`COVERAGE_REASONS` is not extended; `order` carries its own enum. The two copies of the coverage vocabulary
-(`server/src/services/coverage.ts` and `connector-core/src/http/coverage.ts`, both on #52) gain the same `order` type, and
-03's parity test covers it.
+`isJudgeable` (03) does not read `order`. `isOrderable`'s callers do, and a timing answer computed under `order.state !==
+"guaranteed"` renders that state beside it. **The coverage line stays one record, and the two gates stay orthogonal.** D-C
+records the alternative.
+
+The two copies of the coverage vocabulary (`coverage:server/src/services/coverage.ts` and
+`coverage:connector-core/src/http/coverage.ts`) gain the same `order` type, and 03's parity test covers it. `COVERAGE_REASONS`
+is not extended.
 
 ---
 
 ## 4. Migration
 
-1. **`session_events`**: `ADD COLUMN IF NOT EXISTS work_context_id text`, `ADD COLUMN IF NOT EXISTS provider text`. Existing
-   rows are backfilled by join (`work_contexts.session_id`, `agent_sessions.agent_kind`). **This is not the wall-clock backfill
-   01 §8 refuses** — it copies identity, not order, and touches no position.
-2. **`claims_author_session_idx`** on `claims (author_session_id)`, for §3.3f's sweep.
-2a. **`file_ref`** (§3.3c): `ADD COLUMN IF NOT EXISTS file_ref text` on **`pin_files`** and on **`session_events`**, with
-   `pin_files_file_ref_idx` and `session_events_file_ref_idx`. Backfill computes it from rows that already carry both halves —
-   `pin_files` has `repo` and `path`, so every existing pin resolves; a `session_events` row carries neither, so its
-   `file_ref` is filled only for rows whose `work_context_targets` value can still be normalised, and **every row that cannot
-   be resolved stays `NULL` and is therefore never deleted** (§3.3d). Count the unresolved rows, print the count, and do not
-   let the number be zero by construction — a backfill that silently resolves everything is the one that quietly guessed.
-   **The connector computes `file_ref` at capture time** for new rows, beside the `target_digest` it already computes, so the
-   hub never sees a path it did not already receive.
-3. **`causal_attestations`** and **`session_causal_guarantees`**: new tables, mirrored in `db/bootstrap.sql` and pinned by
-   `test/ddl-sync.test.ts`. Sessions that ended before deploy get **no attestation** — attesting them after the fact would
-   write under coverage nobody recorded at the time. They keep their live skeleton under §3.3.
-4. **`content_expired_at timestamptz NULL`** on the five tables in §3.4 rule 1. Nothing sets it in 1.0 unless D-A says so.
-5. **The prune's predicate** changes in place (§3.3f); `SESSION_EVENT_RETENTION_DAYS` keeps its value and gets a new comment.
-6. **The retention registry** (§3.3e): one declaration per reference relation, with the build check that fails on an
-   undeclared one. It ships in the same migration family as the sweep, because a predicate without the contract is a rule
-   nobody can keep complete.
+1. **`session_events`**: `ADD COLUMN IF NOT EXISTS` `provider text`, `work_context_id text`, `file_ref text`, plus
+   `session_events_file_ref_idx`. New rows are written complete by the projection handler. **The backfill, and what it cannot
+   reach:**
+   - `provider` — from `agent_sessions.agent_kind`; exact, since there is one value per session.
+   - `work_context_id` — for `claim.created` rows from `claims.work_context_id` through `ref_id`; for `claim.invalidated` rows
+     through `claim_edges`; for `file.modified` and `tool.failed` rows by recomputing `targetDigest` over
+     `work_context_targets` **in SQL** — `encode(sha256(convert_to(work_context_id || E'\n' || kind || E'\n' || value,
+     'UTF8')), 'hex')`, matched on `ref_id`. For the session-level kinds it stays NULL: they belong to no single work context.
+   - `file_ref` — the same `work_context_targets` join yields the target's `value`; the hub applies `canonicalRepoPath` and
+     `fileRef` in application code. **A row the join does not match, or whose path does not canonicalise, stays NULL** and
+     keeps its session (§3.3e). The number of unresolved rows is printed, and a backfill that reports zero is investigated
+     rather than trusted.
+   None of this is the wall-clock backfill 01 §8 refuses: it copies identity, not order, and touches no position.
+2. **Indexes** for §3.3g: `claims (author_session_id)`, `claim_edges (author_session_id)`, and `agent_sessions (ended_at)
+   WHERE reaped_at IS NULL`.
+3. **`pin_file_refs`** (§3.3d): created, and seeded from every existing `pin_files` row through `canonicalRepoPath` and
+   `fileRef`. **Before seeding, the pin door canonicalises** — `parsePinArgs` in the CLI and the hub's pin route — so no new pin
+   is stored in a spelling the seed would disagree with.
+4. **`causal_attestations`** and **`session_causal_guarantees`**: new tables, mirrored in `db/bootstrap.sql` and pinned by
+   `test/ddl-sync.test.ts`. Sessions that ended before deploy get **no attestation**: attesting after the fact would write under
+   an observation nobody recorded at the time.
+5. **`content_expired_at timestamptz NULL`** on the eight tables of §3.4 rule 1. Nothing sets it in 1.0 unless D-A says so.
+6. **The retention registry** (§3.3f) and the generated sweep, which replaces `pruneSessionEvents`' body.
+   `SESSION_EVENT_RETENTION_DAYS` keeps its value, and its comment names its new meaning.
 
-**The sweep is off before #53 merges, so no schedule promise carries the risk.** Nick's D-D decision of 2026-09-17: #53 stops
-calling `pruneSessionEvents` and prints a documented refusal instead. The earlier reasoning — that #53's prune only removes
-rows older than thirty days, so shipping this spec inside thirty days of the first deploy loses nothing — was correct and the
-wrong thing to rely on: it makes data survival depend on a delivery date. With the sweep off, the first deploy that deletes a
-skeleton row is the first one that deletes it by the referential predicate. The cost is a table that grows without bound
-between the two merges, which `doctor` prints (§5) and which §1.3 sizes at 476 bytes a row.
+**The sweep stays off until this spec lands.** Nick's D-D decision of 2026-09-17: #53 withdraws the call to
+`pruneSessionEvents` with a documented refusal before it merges (in progress on that branch as this is written). The first
+deploy that deletes a skeleton row is therefore the one that deletes it by §3.3g. The price is a table that grows without bound
+between the two merges, which `doctor` prints and §1.3 sizes at 476 bytes a row.
 
 ---
 
@@ -530,248 +590,293 @@ between the two merges, which `doctor` prints (§5) and which §1.3 sizes at 476
 
 | surface | adds | untrusted slots |
 |---|---|---|
-| `crosscheck doctor` | skeleton rows kept / rows in the grace period / oldest kept position; attestations written, superseded, disagreeing; `declaration_contradicted`; this connector's declaration table | none — counts, enums, ISO timestamps |
+| `crosscheck doctor` | sweep mode (off / interim / full); sessions kept, by the root that keeps them; sessions kept for `unresolved_file_reference`; roots with `undefined_pending_spec` and what they keep; reaped sessions awaiting an explicit end; sweep failures; attestations written, capped, superseded and disagreeing; `declaration_contradicted`; this connector's declaration table | none — counts, enums, ISO timestamps |
 | coverage line (03) | `order: <state> (<reason>) over <n> sessions` | none |
-| `get_diagnosis`, referee page, briefing | a timing answer read from an attestation renders *attested at <ISO> under coverage <enums>*; a redacted referent renders `content expired` | none |
+| `get_diagnosis`, referee page, briefing | a timing answer read from an attestation renders *attested at <ISO> under complete observation*; a superseded one renders as withheld; a redacted referent renders `content expired` | none |
 
-**Consumers.** 06's `explanationTimingFor` (attestation fallback, §3.5 rule 5), 04 through 06, and 07's pilot counters (rows
-kept against rows in the grace period is a pilot measurement). The render-surface registry (00 §6) gains the three literals;
+**Consumers.** 06's `explanationTimingFor` (the attestation fallback), 04 through 06, and 07's pilot counters — sessions kept
+against sessions swept, and by which root, are pilot measurements. The render-surface registry (00 §6) gains the literals;
 `INJECTION_CORPUS` gains no case, because no new slot carries author text.
 
 ---
 
 ## 6. Budget
 
-- **Hook path: 0 ms added.** The declaration is a constant riding a `session.started` body that is already sent. MEASURE the
-  body-size delta at build (nine enum triples) and report it beside 01's.
-- **Hub ingest:** one INSERT into `session_causal_guarantees` per session start, inside the existing transaction.
-- **Session end:** one ladder pass over the session's edited targets and its intent chain, both of which 06 already reads; at
-  most `MAX_SEEN_TARGETS` INSERTs. **MEASURE** at 50 and 500 edited targets on PGlite and write the numbers as `VERIFY:`
-  directives at the constant.
-- **Sweep:** three `NOT EXISTS` probes per candidate row on indexed columns. **MEASURE** at 100 000 rows, half of them
-  retained, before merge.
-- **Storage:** 476 B per skeleton row today (§1.3); re-measure with the two new columns and report the attestation row size.
+**Revision 2 said "hook path: 0 ms added". That was wrong** for the part that dominates: the sweep runs inside
+`POST /api/sessions` (§1.5), so a SessionStart pays for it. What each part costs, and where:
+
+- **Sweep — on the SessionStart request.** Bounded to `SESSION_EVENT_SWEEP_MAX_SESSIONS` per pass, ordered by `ended_at`, in its
+  own transaction and its own `try/catch`. **MEASURE before merge** on PGlite, at 100 000 `session_events` rows with half of
+  their sessions retained, with the generated clauses: milliseconds per pass at the cap, written as a `VERIFY:` directive at the
+  constant. If a pass does not fit comfortably inside the SessionStart request's own timeout, the sweep moves off the request
+  path — the builder decides that on the number.
+- **Declaration — on the SessionStart request.** One constant array in a body already sent, and one `INSERT` into
+  `session_causal_guarantees` in the existing transaction. MEASURE the body-size delta.
+- **`file_ref` — at ingest, on the hub.** One `canonicalRepoPath` and one SHA-256 per `file.modified` target, beside the
+  `targetDigest` already computed there. No connector cost.
+- **Attestation — on the SessionEnd request.** One ladder pass over the session's edited targets and intent chain, and at most
+  `ATTESTATIONS_MAX_PER_SESSION` inserts. MEASURE at 50 and 500 edited targets.
+- **Storage.** 476 B per skeleton row today (§1.3). Re-measure with the three new columns, and report the attestation and
+  `pin_file_refs` row sizes.
+
+The predicate has four `NOT EXISTS` probes today, and gains one per root as 06 and 04 land — the count is the registry's, not a
+number in this section.
 
 ---
 
 ## 7. Acceptance tests
 
-Each names its mutation anchor. All anchors join `mutation-check.ts`, and **all three** listings in
-`.github/workflows/ci.yml` plus the per-test listing in `mutation-check.ts` are regenerated by running their commands.
+Every test names its mutation anchor. Every anchor joins `mutation-check.ts`, and **all three** listings in
+`.github/workflows/ci.yml`, plus the per-test listing in `mutation-check.ts`, are regenerated by running their commands. No
+count is written here.
 
-**CSK-1 — a session with a claim keeps its order past thirty days.** Seed a session with one `claim.created` and one
-`file.modified`, advance the clock 31 days, run the reaper pass. Both rows remain and `explanationTimingFor` still returns an
-order-derived reason. *Fails if* any positioned row of that session is removed. *Mutation:* drop the `claims` `NOT EXISTS`.
+**CSK-1 — a claim keeps its whole session.** An explicitly ended session, 31 days old, with one `claim.created`, one
+`file.modified` and its lifecycle rows: after the sweep, every row remains. *Fails if* any row of that session is removed.
+*Mutation:* drop the `claims` fragment from the registry.
 
-**CSK-2 — a session with an intent version keeps its order.** As CSK-1 with a 06 ledger row and no claim. *Mutation:* drop
-the `work_context_intents` `NOT EXISTS`.
+**CSK-2 — an intent version keeps its session, and the timing survives.** With 06 built: as CSK-1, with a ledger row that
+predates a bracketed edit and no claim; the rows remain **and** `explanationTimingFor` still answers `declared_before`.
+*Mutation:* drop the `work_context_intents` fragment.
 
-**CSK-3 — a session nothing can ask about is still pruned.** A session with events only, 31 days old, loses its rows; one 29
-days old keeps them. *Fails if* the sweep became "never" — the §1.3 cost chosen by accident. *Mutation:* remove the age term.
+**CSK-3 — a session nothing reaches is swept, whole.** An explicitly ended session with events only, 31 days old, loses every
+row; one 29 days old keeps every row. *Fails if* the sweep became "never", or removed part of a session. *Mutation:* remove the
+age term.
 
-**CSK-4 — an attestation answers after its content is gone.** End a session whose intent predates a bracketed edit; redact the
-intent (`content_expired_at` set, `wire` and `summary` replaced); the timing answer is still `predeclared` /
-`declared_before`, rendered as attested, with the coverage it was written under. *Fails if* the answer becomes `absent`.
-*Mutation:* skip the attestation read.
+**CSK-4 — an attestation answers after the skeleton is gone.** End a session explicitly, under complete observation, with an
+intent that predates a bracketed edit; remove its skeleton as a later policy would; the timing answer is still `predeclared` /
+`declared_before`, rendered as attested. *Fails if* it becomes `absent`. *Mutation:* skip the attestation read.
 
-**CSK-5 — only order-derived statements are attested.** A session whose ladder answers `no_intent`, and one answering
-`not_comparable` because its edit is unbracketed, write zero attestation rows. *Mutation:* widen the reason filter to all
-eight reasons.
+**CSK-5 — attested only when order produced it and observation was complete.** A session answering `no_intent`, one answering
+`not_comparable`, and one with `agent_event: incomplete` each write zero attestations. *Mutation:* drop the observation gate.
 
-**CSK-6 — a superseded ladder is never trusted silently.** An attestation with `ladder_version` one below the constant renders
-`attestation_superseded` and is counted. *Mutation:* compare with `<=`.
+**CSK-6 — a superseded ladder's statement is withheld.** An attestation one version behind yields `not_comparable` /
+`attestation_superseded`, is counted, and its old statement appears only as history. *Fails if* a superseded `predeclared` is
+returned as the answer. *Mutation:* fall through to the superseded statement.
 
-**CSK-7 — no connector declares more than its weakest lane.** The registry test fails for a manifest declaring
-`file.modified: guaranteed` while a Bash-reachable PostToolUse call site allocates for it. *Fails if* Claude Code's current
-code could declare `guaranteed`. *Mutation:* fold the lanes with `max` instead of `min`.
+**CSK-7 — no connector declares more than its weakest lane, and the map matches the code.** A declaration of `file.modified:
+guaranteed` while a Bash-reachable module allocates for it fails the build; so does an allocating module missing from the map,
+and a map kind the hub's projection does not produce. *Mutation:* fold the lanes with `max`.
 
-**CSK-8 — an undeclared session is never read as guaranteed.** A `session.started` with no declaration yields
-`order.state: undeclared` in the coverage record. *Mutation:* default the missing declaration to `guaranteed`.
+**CSK-8 — an empty or undeclared scope is never read as guaranteed.** A scope with no sessions yields `undeclared` /
+`no_session_in_scope`; a session without a declaration yields `undeclared` / `provider_undeclared`. *Mutation:* seed the fold
+with `guaranteed`.
 
-**CSK-9 — a contradicting row is counted.** A session declaring `guaranteed` that sends an `observed` `file.modified`
-increments `declaration_contradicted`. *Mutation:* skip the counter.
+**CSK-9 — a contradicting row lowers what the user sees.** A session declaring `guaranteed` that sends an `observed`
+`file.modified` increments `declaration_contradicted` **and** renders `order: partial (declaration_contradicted)` on the
+coverage line. *Mutation:* count without capping.
 
-**CSK-10 — no text reaches the skeleton.** Plant marked text in a claim body, an intent summary, a target path and an
-artifact; end the session; search `session_events`, `causal_attestations` and `session_causal_guarantees` byte for byte.
-*Fails if* one marker is found. This extends 01's existing content-free test rather than adding a parallel one.
+**CSK-10 — no text reaches the skeleton.** Plant marked text in a claim body, an intent summary, a target path, an artifact and
+a question; end the session; search `session_events`, `causal_attestations`, `session_causal_guarantees` and `pin_file_refs`
+byte for byte. *Fails if* one marker is found. This extends 01's content-free test rather than adding a parallel one.
 
+**CSK-11 — a pin keeps the WHOLE session, including the evidence of a broken order.** An aged session whose only root is a
+pinned file it touched, and which carries an `epoch_conflict` row on a `claim.created`: after the sweep every row remains, and
+the session's order still reads `broken`. *Fails if* any row goes, or the order reads `usable`. *Mutation:* match the pin
+fragment on `file_ref` alone instead of on the session.
 
-**CSK-11 — a pin keeps the sessions that touched its files.** A 31-day-old session with no claim, no intent version and no
-attestation, whose only durable consequence is that somebody pinned a file it touched, keeps its rows — reached through
-`pin_files.file_ref` → `session_events.file_ref` (§3.3c). *Fails if* the sweep prunes it: a retention root that could not be
-reached turned into a licence to delete, which is principles 5 and 6 inverted at once. *Mutation:* drop the pin clause from
-the predicate.
+**CSK-12 — no session-bearing relation may be silent about retention.** A `session_id` or `author_session_id` column in
+`bootstrap.sql` without a registry entry, or a `non_retaining_edge` without a reason, fails the build. *Mutation:* make the
+undeclared case a warning.
 
-**CSK-12 — no session-bearing relation may be silent about retention.** §3.3e's contract: a table carrying `session_id`,
-`author_session_id` or `file_ref` that declares no `retention_semantics`, or declares `non_retaining_edge` with no reason,
-fails the build. *Fails if* a relation can be added with no declaration — the drift that would shorten retention without
-anybody deciding to. *Mutation:* make the undeclared case a warning instead of a failure.
+**CSK-13 — ambiguity never strengthens a relation.** A table of pairs, each input with and without its ambiguity — a superseded
+attestation, an undeclared session, an empty scope, a redacted referent, an unresolved `file_ref` on either side, a reaped
+session, a `broken` order: every ambiguous answer equals the unambiguous one or is weaker, and no retention decision under
+ambiguity is `DELETE`. *Mutation:* make the superseded branch fall through to the live answer.
 
-**CSK-13 — ambiguity never strengthens a relation.** For every ambiguous or unmatched case this spec names — an attestation
-whose ladder version is superseded, a declaration that is `undeclared`, a referent whose content expired, a session whose
-order is `broken` — the answer a consumer gets is weaker or equal to the answer under full information, and never
-`predeclared` where the unambiguous case would have refused. *Fails if* any one of them yields a stronger relation than the
-same input with the ambiguity removed. This is principle 5 written as a test over a table of pairs rather than prose.
-*Mutation:* make the superseded-ladder branch fall through to the live answer.
+**CSK-14 — the sweep is off until this spec turns it on, and says so.** Lands in **#53** (D-D): with the age sweep withdrawn, an
+aged unreferenced session keeps every row, and `doctor` prints the refusal. *Mutation:* restore the `pruneSessionEvents` call.
 
-**CSK-14 — the sweep is off until this spec turns it on, and says so.** Lands in **#53**, not here (D-D): with the age sweep
-withdrawn, a 31-day-old session with no references keeps every row, and `doctor` prints the refusal rather than a silent
-absence. *Fails if* rows disappear, or if the refusal is missing while the behaviour changed. *Mutation:* restore the
-`pruneSessionEvents` call.
+**CSK-15 — the file identity links, and an unresolved one keeps, on both sides.** (a) A pin created through the CLI as
+`./src/x.ts` and a session that edited `src/x.ts` produce the same `file_ref`; two worktrees of one repo agree; two repos with
+the same path do not. (b) A `file.modified` row with a NULL `file_ref` keeps its session. (c) A pin in the repo with a NULL
+`file_ref` keeps every file-bearing session of that repo. *Fails if* any of the three deletes. *Mutation:* compare
+`pr.file_ref = pe.file_ref` without the unresolved clause.
 
-**CSK-15 — the file identity actually links, and an unresolvable one keeps.** Two halves, both required before the
-conservative exemption in §3.3f may be retired: (a) a pin created through the normal flow and a session that edited that file
-produce the **same** `file_ref`, across two worktrees of one repo and not across two repos with the same path; (b) a pin or a
-row whose path cannot be normalised yields `file_ref = NULL`, the sweep keeps it, and the `unresolved_file_reference` count
-rises by exactly one. *Fails if* (a) the two sides disagree, or (b) an unresolved row is deleted. *Mutation for (b):* treat a
-`NULL` `file_ref` as "no pin references it".
+**CSK-16 — a work context alone does not retain.** An explicitly ended aged session with a work context and nothing else is
+swept. *Fails if* it survives. *Mutation:* add a `work_contexts.session_id` fragment.
 
-**CSK-16 — a work context alone does not retain.** A 31-day-old session with a work context and nothing else — no claim, no
-intent amendment, no attestation, no pinned file — is pruned. *Fails if* it survives, because then ownership is silently
-acting as a root again and there is no retention policy, only unbounded storage (D-B2). *Mutation:* add a
-`work_contexts.session_id` clause to the predicate.
+**CSK-17 — a failed root check deletes nothing, and the reap still runs.** Make one fragment's query error: no row is removed,
+the failure is counted, and the calling developer's stale sessions are still reaped. *Fails if* the error is read as "no
+reference", or takes the reap down. *Mutation:* catch the fragment's error in the statement builder and drop the fragment.
 
-**CSK-17 — deletion requires a positive answer from every root.** Simulate a root whose table is unavailable (the query
-errors, or 06's ledger does not exist yet): the sweep deletes **nothing** rather than treating the failed check as "no
-reference". *Fails if* a failing root check is read as permission to delete — principle 6, stated as a query failure rather
-than a philosophy. *Mutation:* swallow the error and continue with the remaining clauses.
+**CSK-18 — a root that appears during the sweep still protects.** Between the predicate's evaluation and the delete, commit a
+pin — or a claim — for an eligible session through the hub's own paths: its rows survive. *Mutation:* split the CTE and the
+`DELETE` into two awaited statements.
 
-**CSK-18 — a root that appears during the sweep still protects.** Start a sweep whose predicate has already found no root for
-a session, commit a pin (or a claim) for that session before the statement completes, and let the sweep finish: the rows
-survive. *Fails if* they are deleted — positive deletion evidence resting on a state that no longer exists, which is
-principle 6 broken in time. Drive it through the hub's own paths, not by hand-writing SQL, so the test measures the shipped
-sweep's isolation rather than a fixture's. *Mutation:* split the predicate and the delete into two awaited statements.
+**CSK-19 — a dead root stops retaining; an undefined liveness keeps, and is counted.** (a) For a root whose owning spec has
+declared liveness, an object that fails it does not by itself keep an aged session. (b) For `undefined_pending_spec`, the
+session is kept, and `doctor` names the owing spec and the count. *Mutation for (b):* keep without counting.
 
-**CSK-19 — a root that is no longer live stops retaining, and one whose liveness is undefined keeps.** Two halves: (a) for a
-root whose owning spec HAS declared a liveness predicate, an object that fails it does not by itself keep a 31-day-old
-session's rows; (b) for a root declared `undefined_pending_spec`, the rows are kept and the `doctor` line names the owing spec
-and the row count. *Fails if* (a) a dead root still retains — the immortality Nick's second rule exists to prevent — or (b) an
-undefined liveness silently retains without being counted. *Mutation for (b):* drop the counter and keep the retention.
+**CSK-20 — a rename never shortens retention, and canonicalisation agrees everywhere.** (a) Pin a file, touch it in session A,
+rename it through `sweepPinPaths`, touch it in session B: both sessions are kept, because `pin_file_refs` holds both names. (b)
+The matrix — `./`, `//`, a trailing `/`, `.` segments, NFC against NFD, and a path reached through two worktrees — yields one
+`file_ref` wherever the rule claims equality, and a rejection for `..`, NUL, `\n` and an absolute path. *Fails if* a rename
+lets session A go. *Mutation:* remove the old `pin_file_refs` row on rename.
 
-**CSK-20 — the file identity says what it means about renames, and normalises the same everywhere.** (a) A pin whose file is
-renamed, with `sweepPinPaths` following the rename: assert the documented outcome — the pin's `file_ref` moves to the new
-path, the pre-rename skeleton rows keep the old one, and **no row is deleted** because §3.3f exempts them. (b) The
-normalisation matrix: case-only difference on a case-insensitive filesystem, NFC vs NFD Unicode, `..` segments, a symlinked
-path inside the worktree, and two different local worktree paths of one repo — the same logical file yields ONE `file_ref` in
-every pair the rule claims to cover, and a different one in every pair it does not. *Fails if* two developers' machines
-compute different values for the same file. *Mutation:* drop the repo-identity term, which makes the same path in two repos
-collide.
+**CSK-21 — partial deletion is impossible.** For every eligible session, either all of its rows are removed or none. A session
+whose rows straddle the cutoff by `observed_at` is decided by its `ended_at` alone. *Mutation:* reintroduce a row-age term.
+
+**CSK-22 — every declared root is in the predicate, and does what it says.** Table-driven over the registry: for each built
+`root`, seed an aged session reachable only through it, and assert that it survives; for each fragment, assert that a registry
+entry owns it. *Mutation:* remove one fragment while keeping its registry row.
+
+**CSK-23 — a reaped session is neither swept nor attested.** An aged session closed by the reaper keeps every row and has no
+attestation; after a revival and an explicit end, both become possible. *Mutation:* drop `reaped_at IS NULL`.
+
+**CSK-24 — an attestation carries no viewer-scoped coverage.** An attestation written for developer A renders to developer B no
+`git` rung state that B's own `readCoverage` would not produce. *Mutation:* store the full `CoverageRecord`.
+
+**CSK-25 — the file identity's encoding is unambiguous.** Repo `github.com/acme/ap` with path `isrc/x.ts`, and repo
+`github.com/acme/api` with path `src/x.ts`, yield two values; a path containing `\n` is rejected before hashing. *Mutation:*
+join with the empty string.
+
 ---
 
 ## 8. Refusals
 
-0. **No rename/alias edge for `file_ref` in 1.0.** §3.3c states the semantics — a pin protects the logical file across
-   renames, because `sweepPinPaths` already follows one — and does **not** build the git-derived alias edge that would make
-   `file_ref(old) ↔ file_ref(new)` true. Until it exists, a rename costs a link and never a row, because `target_digest` rows
-   stay exempt from the sweep (§3.3f). Naming it here rather than leaving it implicit is the point: a reader who assumes the
-   link survives a rename would be wrong today.
-0a. **No liveness predicate invented by this spec.** Each root's liveness is declared by the spec that owns the root (§3.3a).
-   Where that declaration is missing, the state is `undefined_pending_spec` and everything is kept, counted and printed
-   (§3.3b). A liveness rule guessed here would delete causal history while looking like a tightening.
 1. **No content expiry is switched on by this spec.** The mechanism (§3.4) ships; the policy is D-A.
-2. **No skeleton row is removed while a dependent exists**, and no setting overrides that in 1.0. A stricter compliance policy
-   that removes metadata as well is possible later as a deliberately chosen retention policy — Nick's words — and would be its
-   own spec, stating what AT-4 can then no longer answer.
-3. **No `commit_ref` on the skeleton row.** `commit.observed` refs the session (01 §3.5); a claim's commit is 02's binding on
-   `claims`, which is never removed. Copying it here would duplicate 02's authority, which 02 exists to make single. The
-   tension 02 records — it refused a per-commit table while Nick's direction note asks for commit-level identity — is untouched
-   by this spec and remains Nick's.
-4. **No `causal_parent` in 1.0.** No emitter knows a parent event. The only parent-like fact the connectors have is the tool
-   window, and it is already stored as `seq_after`. Subagent parentage is 00 §10 Q2's open half and is not guessed here.
-5. **No attestation for sessions that ended before deploy**, and none written on read.
-6. **No sixth coverage source** by default (§3.7, D-C).
-7. **No cross-session attestation.** 01 §8.1 holds: order exists inside one `(session, epoch)`.
+2. **No skeleton is removed while a live root reaches its session**, and no setting overrides that in 1.0. A stricter compliance
+   policy that also removes metadata is possible later as a deliberately chosen policy — Nick's words — and would be its own
+   spec, stating what AT-4 can then no longer answer.
+3. **No liveness predicate is invented here.** Each root's liveness is declared by the spec that owns it (§3.3b). Where it is
+   missing, the state is `undefined_pending_spec`, and everything it reaches is kept, counted and printed.
+4. **No content expiry for `work_context_targets.value` or `intent_scope.value` in 1.0** (§3.4 rule 4): both are inside a
+   primary key.
+5. **No `commit_ref` on the skeleton row.** `commit.observed` refs the session (01 §3.5), and a claim's commit is 02's binding on
+   `claims`, which is never removed. Copying it here would duplicate 02's authority. The tension 02 records — it refused a
+   per-commit table while Nick's direction note asks for commit-level identity — is untouched here and remains Nick's.
+6. **No `causal_parent` in 1.0.** No emitter knows a parent event; the only parent-like fact is the tool window, already stored
+   as `seq_after`. Subagent parentage is 00 §10 Q2's open half, and it is not guessed.
+7. **No attestation for sessions that ended before deploy, for reaped sessions, or under incomplete observation**, and none is
+   written on read.
+8. **No retention through an attestation** (§3.3b): it exists so that the skeleton may go.
+9. **No sixth coverage source** (§3.7, D-C).
+10. **No cross-session attestation.** 01 §8.1 holds: order exists inside one `(session, epoch)`.
 
 ---
 
-## 9. Collisions
+## 9. Collisions and build order
 
-- **#53 (`feat/session-event-order`)** — carries D-D's change itself: the call to `pruneSessionEvents` is withdrawn there with
-  a documented refusal before that PR merges, so this spec's predicate is what re-enables the sweep rather than replacing a
-  live one. `services/session-events.ts` `pruneSessionEvents` (predicate replaced);
-  `constants.ts` `SESSION_EVENT_RETENTION_DAYS` (comment rewritten, value kept); `db/bootstrap.sql` `session_events` (two
-  columns) and `session_events_observed_at_idx` (kept: the sweep still ranges by age first). Build **after** #53 merges.
-- **#52 / 03** — `CoverageRecord` gains `order` in **both** copies; 03's parity test and COV-5 shape are edited. 03's
-  `COVERAGE_REASONS` is not.
-- **06** — `work_context_intents` is a retaining dependent; `explanationTimingFor` gains the attestation fallback and
-  `EXPLANATION_LADDER_VERSION`; 06 step 5 is the one order computation that needs content (§3.4 rule 3).
-- **02** — `claims` gains `content_expired_at` in the migration family 02 and 08 already share, which makes this spec the third
-  editor of it.
-- **04** — consumes timing through 06 only; no change to its gates.
-- **07** — `PILOT_RETENTION_DAYS = 90` is unrelated (pilot tables); 07 gains two counters (rows kept, rows in grace).
-- **Pins (#50's feature)** — `pin_files` gains `file_ref` and its index, and the pin write path computes it. The pin SWEEP
-  (`services/pins.ts`, the one call site that removes `pin_files` rows) must carry it too: a sweep that rewrites a pin's files
-  without recomputing `file_ref` would silently orphan the retention root, which §3.3d then reads as `NULL` and keeps —
-  correct by principle 6, and still a bug that CSK-15 (a) catches.
-- **Connectors** — each `capabilities.ts` gains a declaration; `test/derive-capability-registry.test.ts` gains the
-  two-directional check. `capture/target-paths.ts` gains the `file_ref` computation beside the existing `target_digest`, so
-  the hot path hashes one more short string per touched file (§6 measures it).
-- **`mutation-check.ts` and `.github/workflows/ci.yml`** — ten anchors; every derived listing is regenerated by running its
-  `VERIFY:` command, never transcribed.
+**Build order: after 06.** The sweep's intent root, the attestation's `subject_ref`, `timing_reason`,
+`EXPLANATION_LADDER_VERSION`, and CSK-2 and CSK-4 all need 06's ledger and ladder. Swept earlier, sessions whose intents 06
+would have recorded are unreachable by construction. README's build order places 01a between 06 and 02. Nothing is lost by
+waiting, because the sweep is off (D-D).
+
+- **#53 (`feat/session-event-order`)** — carries D-D's change: the call to `pruneSessionEvents` is withdrawn with a documented
+  refusal before that PR merges, and CSK-14 lands there. This spec replaces that function's body
+  (`services/session-events.ts`), moves the sweep into its own `try/catch` inside `reapStaleSessions`
+  (`services/sessions.ts`), rewrites the comment on `SESSION_EVENT_RETENTION_DAYS`, and adds three columns to `session_events`
+  in `db/bootstrap.sql`.
+- **#52 / 03** — `CoverageRecord` gains `order` in **both** copies; 03's parity test and COV-5 shape are edited;
+  `COVERAGE_REASONS` is not. §3.5 rule 5 depends on `readCoverage`'s `viewerDeveloperId` staying the viewer boundary.
+- **06** — `work_context_intents` is a root whose liveness 06 owes; `explanationTimingFor` gains the attestation fallback and
+  `EXPLANATION_LADDER_VERSION`; `intent_scope.value` is refused content expiry.
+- **02 / 08** — `claims` gains `content_expired_at` in the migration family 02 and 08 already share, which makes this spec its
+  third editor; 02 owes the claims liveness predicate the registry names.
+- **04** — consumes timing through 06 only; owes its attribution record's registry entry when it lands.
+- **07** — `PILOT_RETENTION_DAYS = 90` is unrelated; 07 gains the kept / swept / by-root counters.
+- **Pins (#50's feature)** — `pin_file_refs`; the pin write path and the sweep's rename (`services/pins.ts`) insert into it;
+  `parsePinArgs` (CLI) and the pin route canonicalise at the door.
+- **Schema** — `file-ref.ts` (`fileRef`, `canonicalRepoPath`) and `causal-guarantees.ts`. `pin.ts`'s `REPO_RELATIVE_PATH` stays
+  a validator; canonicalisation happens before it.
+- **Routes** — `routes/sessions.ts:75-84` keeps calling the reaper; the sweep's cost on that request is §6's measurement.
+- **Connectors** — each `capabilities.ts` gains a declaration; `connector-core` gains the `(connector, kind)` map and its build
+  check (§3.6).
+- **`mutation-check.ts` and `.github/workflows/ci.yml`** — one anchor per CSK that names one; every derived listing is
+  regenerated by running its `VERIFY:` command.
 
 ---
 
 ## 10. Decisions for Nick
 
 **D-A — Does any content expire in 1.0?** *Default (recommended): no.* The mechanism ships (§3.4); nothing sets
-`content_expired_at`. Your note names *"strukturierte Begründung, Oberflächendetails, Werkzeug-Metadaten,
-Zusatzinformationen"* as the thirty-day tier. Measured against the hub: prompts, tool output and agent prose are not stored at
-all (non-negotiable #6), the outbox carries ids only, and what remains is claims, intents, targets and artifacts — the
-institutional memory your same note wants kept *"solange die zugehörigen Claims … existieren"*. The one table that matches
-"Zusatzinformationen" cleanly is `artifacts.content`. *Alternative:* redact `artifacts.content` at thirty days and keep the
+`content_expired_at`. Your note names *"strukturierte Begründung, Oberflächendetails, Werkzeug-Metadaten, Zusatzinformationen"*
+as the thirty-day tier. The complete inventory against the hub: prompts, tool output and agent prose are not stored at all
+(non-negotiable #6); the outbox carries ids only; what remains is claims (with their derived search vector and embedding), claim
+edges, work contexts (title, description, intent, normalised document), targets, intents and their scope, artifacts, and
+questions with their answers — the institutional memory your same note wants kept. The one table that matches
+*"Zusatzinformationen"* cleanly is `artifacts.content`. *Alternative:* redact `artifacts.content` at thirty days and keep the
 row. Cost: an approved artifact attached to a live claim disappears from that claim a month later.
 
-**D-B — CLOSED 2026-09-17 by Nick, as five rules rather than a choice between two readings.** He refused the either/or this
-spec put to him ("a digest on `pin_files`, or keep everything"), on the ground that the pin question exposed a missing
-retention *semantics* rather than a missing column. What he decided, verbatim in effect:
+**D-B — CLOSED 2026-09-17 by Nick.** He refused the either/or revision 1 offered (*"a digest on `pin_files`, or keep
+everything"*): the pin question exposed a missing retention semantics, not a missing column.
 
-- **D-B1 — Retention is defined as reachability from explicit roots.** §3.3.
-- **D-B2 — Intrinsic ownership, in particular `Work Context → its own session`, is not a retention root.** §3.3a. *"A Work
-  Context is not a retention root merely because a session belongs to it. It retains causal data only when it is itself
-  independently live under an explicit retention rule or reachable from another retention root."*
-- **D-B3 — Pins are roots and connect through an explicit `file_ref`, never through a generic digest that happens to exist.**
-  §3.3c, with his reason: coupling retention to a digest whose semantics belong to something else means whoever changes that
-  digest later silently deletes causal history.
-- **D-B4 — While a required reference cannot be resolved unambiguously, the decision is `KEEP`.** §3.3d, reason
-  `unresolved_file_reference`, counted and printed.
-- **D-B5 — A new session-bearing table or relation must declare its retention semantics (`root` / `retaining_edge` /
-  `non_retaining_edge`, the last with a mandatory reason) or the build fails.** §3.3e.
+- **D-B1** Retention is reachability from explicit roots (§3.3).
+- **D-B2** Intrinsic ownership — `Work Context → its own session` — is not a root (§3.3b).
+- **D-B3** Pins are roots and connect through an explicit `file_ref`, never a reused generic digest (§3.3d).
+- **D-B4** An unresolvable reference is `KEEP` / `unresolved_file_reference` (§3.3e) — on both sides, since revision 3.
+- **D-B5** Every session-bearing relation declares its retention semantics, or the build fails (§3.3f).
+- **D-B6** A root counts only while it is itself live, and only if its lifecycle is independent of the session (§3.3b, §3.3c).
+- **D-B7** The check and the delete see one snapshot (§3.3g).
+- **D-B8** `file_ref` has stated rename semantics (§3.3d) — built through `pin_file_refs` since revision 3, not refused.
 
-**Three refinements he added the same day, after reading the graph** — each closes a way the same defect could come back:
+The sixth binding principle follows from them: *"Retention requires positive proof to delete, not positive proof to keep."*
 
-- **D-B6 — a root counts only while it is itself live**, and only if its lifecycle is independent of the session (§3.3a).
-  Otherwise "intent amendments are roots" makes nearly every session immortal again, one table along from Work Context. A
-  liveness predicate is declared by the spec that owns the root; an undefined one keeps and is counted (§3.3b), never
-  silently permanent. CSK-19.
-- **D-B7 — the check and the delete must see one snapshot** (§3.3f). A root written after the predicate ran and before the
-  rows go turns positive deletion evidence into evidence about a state that no longer exists. One statement, or one
-  transaction, or revalidate before deleting — never "there is only one connection". CSK-18.
-- **D-B8 — `file_ref` has stated rename semantics** (§3.3c): a pin protects the logical file across renames, which is what
-  `sweepPinPaths` already does, so the alias edge is owed and named as a refusal (§8) rather than assumed. Path
-  normalisation is tested against case, Unicode, `..`, symlinks and two local worktree paths. CSK-20.
+**Two choices revision 3 makes on your words — overrule them if they misread you:**
 
-**And the sixth binding principle follows from them** (README): *"Retention requires positive proof to delete, not positive
-proof to keep."* Nothing in §3.3 deletes because a reference could not be found; it deletes only when every declared root has
-been checked and none reaches the row. CSK-1 … CSK-3, CSK-11, CSK-12 and CSK-15 … CSK-17 are the tests.
+- **The attestation is not a retention root** (§3.3b), although your first object list named Causal Attestation. The reading:
+  you defined the record so that *"the old session need not be reconstructed"*, and your later rule makes a root retain only
+  *"as far as its policy says it must preserve the underlying causality"*. An attestation's purpose is to replace that
+  causality, so retaining through it would make every attested session permanent.
+- **The attestation is written only under complete observation** (§3.5 rule 2), reading *"we could prove this then on complete
+  observation"* as a condition rather than a description. Cost: a session with incomplete `agent_event` coverage gets no
+  attestation, keeps its skeleton only through live roots, and loses its timing once the skeleton goes.
 
-**What is left open, and it is a build question rather than a decision:** until the `file_ref` link is proven end to end, the
-sweep exempts `target_digest` rows entirely (§3.3f). That is the conservative variant Nick asked to keep in force, and CSK-15
-is what retires it.
-
-**D-C — Guarantees beside the coverage sources, or as a sixth source?** *Default (recommended): beside* (§3.7), which keeps
-01 §3.7 (1): unusable order never makes attribution `INDETERMINATE`. *Alternative:* a sixth `COVERAGE_SOURCES` value
+**D-C — Guarantees beside the coverage sources, or as a sixth source?** *Default (recommended): beside* (§3.7), which keeps 01
+§3.7 (1): unusable order never makes attribution `INDETERMINATE`. *Alternative:* a sixth `COVERAGE_SOURCES` value
 `causal_order`. Cost: 00 §8.2's source list is a contract all eight specs bind to, and `isJudgeable` would start gating
 attribution on order — the coupling 04 refused.
 
-**D-D — DECIDED 2026-09-17 by Nick: the sweep is switched off on #53 before it merges.** Not the thirty-day window this spec
-first recommended. His reason, and it is the better one: *deploying a retention mechanism you already know deletes exactly the
-data later causal statements need is unnecessary risk.* The window argument only held if this spec shipped inside thirty days,
-which is a schedule promise rather than a property of the system.
+**D-D — DECIDED 2026-09-17 by Nick: the sweep is switched off on #53 before it merges.** His reason: *deploying a retention
+mechanism you already know deletes exactly the data later causal statements need is unnecessary risk.* The earlier thirty-day
+argument made data survival depend on a delivery date. On #53 this is a documented refusal that `doctor` prints, not a
+commented-out line. This spec turns the sweep back on with §3.3g, and CSK-14 is the test.
 
-What that requires on #53, and it is not a commented-out line: `pruneSessionEvents` stops being called and says why, in the
-same breath as the code that used to call it — a **documented refusal** in the sense 00 §8 uses, printed by `doctor`
-(*"session-event retention: off — the age-based sweep is withdrawn; 01a's referential predicate replaces it"*) so that a hub
-operator can see the table is unbounded on purpose rather than by oversight. The constant stays, with a comment saying it is
-dormant. 01a then switches the sweep back on with the referential predicate (§3.3), and the first deploy that prunes anything
-is the one that prunes it correctly. CSK-14: with the sweep off, a 31-day-old session keeps its rows and `doctor` prints the
-refusal; *mutation:* restore the call.
+---
+
+## 11. What the review of revision 2 changed
+
+47 findings (2026-09-17): 8 survived an independent refuter, 34 got none (30 beyond the review's refuter cap, and 4 whose
+refuter died on a session limit), and 5 were low. Every one is answered below. "Unrefuted" means plausible and checked by the
+author against the code — not independently verified.
+
+| finding | status | answered in |
+|---|---|---|
+| A pin keeps one row of the session it protects, not the session | confirmed, CRITICAL | §3.3a, §3.3g, CSK-11, CSK-21 |
+| An unresolvable or renamed pin licenses deletion | confirmed, HIGH | §3.3d `pin_file_refs`, §3.3e, CSK-15 (c), CSK-20 |
+| An unresolvable PIN licenses the deletion the spec forbids | confirmed, MEDIUM | §3.3e, CSK-15 (c) |
+| `coverage_at_judgment` replays one viewer's coverage to every reader | confirmed, CRITICAL | §3.5 rule 5, CSK-24 |
+| `file_ref` concatenates without a delimiter | confirmed, MEDIUM | §3.3d encoding, CSK-25 |
+| The normalisation is connector-side, and the pin door skips it | confirmed, HIGH | §3.3d `canonicalRepoPath`, §4.3, CSK-15 (a) |
+| The build check cannot derive kinds from connector source | confirmed, HIGH | §3.6 map, CSK-7 |
+| Nothing forces a declared root into the sweep predicate | confirmed, HIGH | §3.3f generated predicate, CSK-22 |
+| `claim_edges` and `questions` are undeclared session-bearing relations | unrefuted; checked against `bootstrap.sql` | §3.3b |
+| A pin with a NULL `file_ref` protects nothing | unrefuted | §3.3e |
+| `work_context_id` is not a function of a session | unrefuted; checked (no unique constraint) | §3.2, §4.1 |
+| "Complete observation" is silently weakened and never gated | unrefuted | §3.5 rule 2, §10 |
+| An over-declaring vendor still looks more capable on the surface | unrefuted | §3.6, §3.7, CSK-9 |
+| D-B2's escape hatch is quoted but never defined | unrefuted | §3.3b ("no rule today") |
+| The attestation is written at a revocable end | unrefuted; checked (`reaped_at`) | §3.3a, §3.5 rule 1, CSK-23 |
+| Redaction cannot reach `intent_scope` | unrefuted | §3.4 rules 3–4 |
+| CSK-1 asserts a timing reason without an intent row | unrefuted | CSK-1, CSK-2 |
+| "Hook path: 0 ms" — the sweep runs inside SessionStart | unrefuted; checked | §1.5, §6 |
+| 01a needs 06, and no build order placed it | unrefuted | header, §9, README |
+| The weakest-declaration fold has no empty case | unrefuted | §3.7, CSK-8 |
+| What happens to a superseded attestation's statement is unspecified | unrefuted | §3.5 rule 6, CSK-6 |
+| The NULL guard exempts every `tool.failed` row | unrefuted; checked (`tool.failed` refs an error fingerprint) | §3.2, §3.3g (`kind = 'file.modified'`) |
+| An attestation is a root for its own session — a cycle | unrefuted | §3.3b, §8.8 |
+| Redaction is not expressible, and one table cannot be redacted | unrefuted | §3.4 rules 1 and 4 |
+| The sweep names an unbuilt table and can take the reaper down | unrefuted | §3.3c rule 3, §3.3g, CSK-17 |
+| The spec states in the present tense a #53 change not yet made | unrefuted | §4 ("in progress") |
+| D-A rests on an incomplete inventory | unrefuted | §3.1, §3.4, D-A |
+| The registry is incomplete against its own enumeration | unrefuted | §3.3b (all session-bearing columns) |
+| CSK-17's mutation cannot apply to a single statement | unrefuted | CSK-17 |
+| The budget's counts are wrong or rest on an unenforced cap | unrefuted | §3.5 rule 4, §6 |
+| Neither backfill has an implementable mechanism | unrefuted | §4.1 |
+| CSK-7 needs per-kind, per-lane evidence | unrefuted | §3.6, CSK-7 |
+| the remaining unrefuted MEDIUM findings — second-lens duplicates of the rows above | unrefuted | as above |
+| LOW: `claim.created` names the wrong weakest lane | low | §3.6 table |
+| LOW: three `NOT EXISTS` probes in the budget, four in the SQL | low | §6 (the count is the registry's) |
+| LOW: "ten mutation anchors", seventeen defined | low | §9 (one anchor per CSK) |
+| LOW: post-#50 main against the set's pre-#50 binding | low | header |
+| LOW: both pointers still say "retention by relevance" | low | README table, 01 §10 |

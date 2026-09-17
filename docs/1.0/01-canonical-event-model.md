@@ -483,7 +483,7 @@ position is withheld. Stamping the guess would let AT-4 answer confidently from 
 `explanation_timing` is unavailable until Claude Code passes a session id to MCP servers.
 
 > **Decided otherwise on 2026-09-15.** Nick kept D1 and changed D2: *"Forget content before you forget causality."* The flat
-> thirty days below is withdrawn as the model; [01a](01a-causal-skeleton.md) replaces it with retention by relevance, a causal
+> thirty days below is withdrawn as the model; [01a](01a-causal-skeleton.md) replaces it with retention by root reachability, a causal
 > attestation record and declared provider guarantees. The text below is kept as the record of what was proposed.
 
 **D2 — Retention: 30 days, or the life of the claim it orders?** *Default (recommended): 30 days*, matching

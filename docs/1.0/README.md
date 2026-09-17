@@ -33,7 +33,7 @@ writes the refusal — a spec that pretends is worse than no spec.
    a human waiver — bounded, reasoned, append-only, expiring. Never
    `amend_intent`.
 5. **"Missing evidence may weaken a conclusion. It must never strengthen one."**
-   Added 2026-09-17, and it is the most general of the five: it binds coverage,
+   Added 2026-09-17, and it is the most general of the six: it binds coverage,
    provider gaps, claim evidence, CI, the garden fence and attribution alike, not
    just the ordering path that produced it. Its operational form, for any matching
    or closure a connector or the hub performs:
@@ -64,7 +64,7 @@ writes the refusal — a spec that pretends is worse than no spec.
 ## Build order
 
 ```
-#50 → #49 → 03 → 01 → 06 → 02 → 08 → 05 → 04 → 07
+#50 → #49 → 03 → 01 → 06 → 01a → 02 → 08 → 05 → 04 → 07
 ```
 
 **Step 0 is the two PRs against each other.** #50 and #49 both rewrite
@@ -82,7 +82,9 @@ consumes `seq`; **06** next because 04 consumes `explanationTimingFor` and 01's 
 intent event kinds project into 06's ledger; **02 before 08** because they share one
 `claims` migration; **05** late because it is the only spec editing `ci.yml` for
 content as well as counts; **04** second-to-last because it consumes all of 03, 01,
-06, 05 and 08; **07** last because its `pins` columns stack on 04's. The full
+06, 05 and 08; **07** last because its `pins` columns stack on 04's. **01a** sits between 06 and 02: its
+retention sweep needs 06's ledger as a root, and its `claims` column joins the migration family 02 and 08 share. Nothing
+is lost waiting for it, because #53 ships with the sweep switched off (01a §10 D-D). The full
 argument, with the measured #50-only dependencies, is 00 §9.7.
 
 ## The eight specs
@@ -92,7 +94,7 @@ Status is **spec** (written, not built), **in progress**, or **shipped**.
 | # | spec | owns | status |
 |---|---|---|---|
 | 01 | [Canonical event model and per-session causal order](01-canonical-event-model.md) | **AT-4** | spec |
-| 01a | [The causal skeleton: retention by relevance, attestation, declared provider guarantees](01a-causal-skeleton.md) | — (makes AT-4 durable; amends 01 §10 D2) | spec |
+| 01a | [The causal skeleton: retention by root reachability, attestation, declared provider guarantees](01a-causal-skeleton.md) | — (makes AT-4 durable; amends 01 §10 D2) | spec (revision 3) |
 | 02 | [Claim-to-code binding and individual commit identity](02-claim-code-binding.md) | **AT-2** | spec |
 | 03 | [Coverage integrity at the answer layer](03-coverage-integrity.md) | **AT-1, AT-9, AT-10** | spec |
 | 04 | [Verdict semantics, fence authority and the human waiver](04-verdict-semantics-and-fence-authority.md) | **AT-5, AT-6** | spec |
