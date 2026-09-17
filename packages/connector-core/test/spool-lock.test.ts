@@ -40,6 +40,7 @@ import {
   spoolDir,
   spoolFlushLockPath,
 } from "../src/config/paths.ts";
+import { withLock } from "../src/spool/lock.ts";
 import { makeHome, spawnZombie } from "./helpers.ts";
 
 const HUB_URL = "http://127.0.0.1:9";
@@ -465,5 +466,104 @@ describe("flush lock — an abandoned claim is still retired", () => {
 
     // Assert
     expect(reaped).toEqual(ONE_EXPIRED_FILE);
+  });
+});
+
+/**
+ * A HOLDER THAT DIES INSIDE THE SECTION, and what the next arrival waits.
+ *
+ * `bin/crosscheck.ts` ends every hook with `process.exit` as soon as
+ * `withBudget` resolves, and `withBudget` resolves on a `setTimeout` whatever
+ * the work promise is doing — so a hook that is inside this lock when its
+ * budget expires is killed there, abandoning the claim. That is not a rare
+ * shape: this branch put a locked read-modify-write on EVERY edit-tool
+ * PreToolUse (`openToolWindow`) and every PostToolUse (`allocateToolSeq`),
+ * where before neither hook took the state lock on its common path.
+ *
+ * WHAT THE ORPHAN USED TO COST, measured: the lock file survived the exit, the
+ * next ELEVEN hook-grade acquisitions were refused — 400 ms of patience each —
+ * and the first `openToolWindow` to succeed landed 5013 ms after the orphan
+ * appeared. `stealableToken` cannot shorten that: a claim inside
+ * SPOOL_LOCK_STALE_MS is never taken, and the liveness test may only VETO a
+ * steal, so knowing the holder is dead buys nothing. For those five seconds
+ * every position and every bracket in that session is refused.
+ *
+ * SO THE HOLDER PUTS ITS OWN LOCK BACK. The steal rule is untouched — widening
+ * it would hand a live holder's claim away in a container that shares
+ * CROSSCHECK_HOME across pid namespaces, where a pid means nothing — and what
+ * changes is only that a process which exits while holding a claim releases it
+ * on the way out, exactly as its `finally` would have. A holder killed with no
+ * exit at all (SIGKILL, power loss) still leaves an orphan and still waits out
+ * the age gate: that residual is the rule above, not a regression.
+ */
+describe("flush lock — a holder that exits inside the section", () => {
+  test("a lock is released by a holder that process.exit()s while holding it", async () => {
+    // Arrange: a child that takes the lock exactly as a hook does and is then
+    // killed inside it — the shape `emitAndExit` produces when the budget race
+    // resolves first.
+    const path = await home();
+    const lockPath = spoolFlushLockPath(path, KEY);
+    await ensureDir(spoolDir(path, KEY));
+    const child = Bun.spawn({
+      cmd: [
+        process.execPath,
+        "-e",
+        `const { withLock } = await import(${JSON.stringify(
+          resolve(import.meta.dir, "..", "src", "spool", "lock.ts"),
+        )});
+         await withLock(${JSON.stringify(lockPath)}, null, async () => {
+           console.log("held");
+           process.exit(0);
+         });`,
+      ],
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    await new Response(child.stdout).text();
+    await child.exited;
+
+    // Act: the very next arrival, with no waiting at all.
+    const startedAt = Date.now();
+    const observed = await withLock(lockPath, "refused", async () => "acquired");
+
+    // Assert: the claim was gone with the process that held it, so the next
+    // hook is not waiting out SPOOL_LOCK_STALE_MS for a holder nobody can
+    // steal from.
+    expect(await Bun.file(lockPath).exists()).toBe(false);
+    expect(observed).toBe("acquired");
+    expect(Date.now() - startedAt).toBeLessThan(SPOOL_LOCK_STALE_MS);
+  });
+
+  test("an exiting process never removes a lock that is no longer its own", async () => {
+    // Arrange: the release rule, unchanged — a lock that was stolen and
+    // recreated under a different token belongs to whoever holds it now, and
+    // an exit must not delete it any more than `releaseLock` may. The child
+    // takes the lock, the token on disk is then REPLACED behind its back, and
+    // it exits still believing it holds one.
+    const path = await home();
+    const lockPath = spoolFlushLockPath(path, KEY);
+    await ensureDir(spoolDir(path, KEY));
+    const child = Bun.spawn({
+      cmd: [
+        process.execPath,
+        "-e",
+        `const fs = await import("node:fs");
+         const { withLock } = await import(${JSON.stringify(
+           resolve(import.meta.dir, "..", "src", "spool", "lock.ts"),
+         )});
+         await withLock(${JSON.stringify(lockPath)}, null, async () => {
+           fs.writeFileSync(${JSON.stringify(lockPath)}, "999999:successor\\n");
+           console.log("held");
+           process.exit(0);
+         });`,
+      ],
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    await new Response(child.stdout).text();
+    await child.exited;
+
+    // Assert: the successor's claim is untouched.
+    expect(await readTextOrNull(lockPath)).toBe("999999:successor\n");
   });
 });

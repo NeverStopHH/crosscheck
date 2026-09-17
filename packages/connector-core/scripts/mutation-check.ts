@@ -5212,6 +5212,35 @@ export const MUTATIONS: readonly Mutation[] = [
       "mint — the same split, with the halves swapped",
   },
   {
+    // A hook killed by its own budget race (`bin/crosscheck.ts` emitAndExit)
+    // dies inside the section, and this branch put that section on EVERY
+    // edit-tool hook. Measured before the release: eleven refused
+    // acquisitions and the first success 5013 ms later.
+    label: "a hook killed inside the lock orphans its claim for five seconds",
+    file: `${CORE}/src/spool/lock.ts`,
+    from: "  rememberHeldLock(path, token);\n",
+    to: "",
+    test: `${CORE}/test/spool-lock.test.ts`,
+    because:
+      "SILENT STALL: every position and every bracket in that session is " +
+      "refused until the claim ages past SPOOL_LOCK_STALE_MS, and nothing " +
+      "counts the refusals — `stealableToken` cannot shorten it, because a " +
+      "dead holder may only VETO a steal, never authorise one",
+  },
+  {
+    // ...and the release on the way out obeys the SAME rule as `releaseLock`.
+    label: "an exiting holder deletes a lock that is no longer its own",
+    file: `${CORE}/src/spool/lock.ts`,
+    from: '      if (readFileSync(path, "utf8") === token) {',
+    to: "      if (true) {",
+    test: `${CORE}/test/spool-lock.test.ts`,
+    because:
+      "UNSAFE: a claim this process was robbed of belongs to whoever holds " +
+      "it now, and deleting it on the way out puts two writers in the " +
+      "critical section — the collision the holder-identified token exists " +
+      "to prevent",
+  },
+  {
     // The bracket must consume a position of its own. If it does not, the
     // window opens exactly where the block begins and holds nothing.
     label: "a window opens on a position the block then takes anyway",
