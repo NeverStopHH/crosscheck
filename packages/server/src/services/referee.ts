@@ -157,6 +157,7 @@ const loadClaims = async (
     },
     evidenceRefs: row.claim.evidenceRefs,
     binding: {
+      kind: row.claim.kind,
       status: row.claim.status,
       observedAtCommit: row.claim.observedAtCommit,
       commitBinding: row.claim.commitBinding,

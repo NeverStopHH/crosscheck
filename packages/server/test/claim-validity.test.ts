@@ -186,6 +186,71 @@ describe("claim validity", () => {
     );
   });
 
+  test("a rejected approach is judged by its code, not by its own status", async () => {
+    // Arrange: Nick's own example of the problem this spec exists for —
+    // "Raising the timeout does nothing" is gold today and superstition once
+    // the reader is rebuilt. It is a `rejected_approach`, and `rejected` is
+    // that kind's NATURAL status: it records that the APPROACH was rejected,
+    // not that the author retracted the finding. Read as `invalidated`, the
+    // claim would be answered by its status forever — never `stale`, never
+    // naming the commits that rewrote its code, and rendered as "its author
+    // rejected it", which says the opposite of what the author wrote.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_neg",
+            kind: "rejected_approach",
+            status: "rejected",
+            body: "Raising the timeout does nothing",
+          }),
+        ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_neg_unchecked",
+            kind: "rejected_approach",
+            status: "rejected",
+            body: "Retrying the refresh call does not help",
+          }),
+        ),
+        recordEnvelope(
+          "claim",
+          validClaimBody({
+            id: "clm_dead_theory",
+            kind: "hypothesis",
+            status: "rejected",
+            body: "The cache TTL is too short",
+          }),
+        ),
+      ],
+    });
+
+    // Act: the timeout finding's code was rewritten.
+    await revalidate(harness, developer, [
+      {
+        claimId: "clm_neg",
+        result: "changed",
+        basis: "context_targets",
+        refCommit: "ff00aa11",
+        touchingCommits: ["deadbee"],
+        touchingTotal: 1,
+      },
+    ]);
+
+    // Assert: the negative finding goes stale and names the commit; an
+    // unchecked one is unknown like any other claim; a theory its author
+    // rejected is still what `invalidated` means.
+    const validity = await readValidity(harness, developer);
+    expect(validity.get("clm_neg")?.state).toBe("stale");
+    expect(validity.get("clm_neg")?.touchingCommits).toEqual(["deadbee"]);
+    expect(validity.get("clm_neg_unchecked")?.state).toBe("unknown");
+    expect(validity.get("clm_dead_theory")?.state).toBe("invalidated");
+  });
+
   test("a claim bound to no commit is unknown even under a current reading", async () => {
     // Arrange: AT-2's first "fails if" — nothing bound to no commit may read
     // `current`. Unreachable through this hub's own writers (a 'none' claim is

@@ -131,22 +131,33 @@ const hasBody = (claim: HintClaimCandidate): boolean =>
  * §3.3 takes when a pruned row reads `unknown` again rather than keeping its
  * last verdict.
  *
- * `invalidated` IS ABSENT TOO, AND THAT IS A DELIBERATE DEPARTURE FROM §5,
- * stated here rather than buried. §5 writes the set as
- * `{stale, invalidated, superseded}`. `invalidated` is derived from
- * `claims.status === "rejected"` (§3.5), and a claim carrying that status
- * reaches this predicate through exactly one door — `isNegativeKnowledge`,
- * since `isSettled` admits only `likely_root_cause` and
- * `partially_confirmed`. The term therefore cannot fire on anything except an
- * evidence-backed `rejected_approach` claim: the one category DESIGN.md §4
- * privileges above all others, and the one whose demotion hands the reader
- * the settled POSITIVE in its place. Measured on the flagship corpus
- * scenario, the term alone moves substance precision and recall 1.000 →
- * 0.818 (test/claim-substance-gate.test.ts states the numbers and the shape).
- * `invalidated` keeps its place in `claimValidity()` and still renders on
- * every pulled surface; it is this GATE that does not read it.
+ * `invalidated` IS PRESENT, and §5's set is taken verbatim — but only because
+ * the DERIVATION behind the word was narrowed first, which is worth the
+ * paragraph. Read as §3.5's table first wrote it (`status === "rejected"`,
+ * whatever the kind), `invalidated` could reach this predicate through
+ * exactly one door: `isNegativeKnowledge`, since `isSettled` admits only
+ * `likely_root_cause` and `partially_confirmed`. The term could therefore
+ * fire on NOTHING except an evidence-backed `rejected_approach` — the one
+ * category DESIGN.md §4 privileges above all others, and the one whose
+ * demotion hands the reader the settled POSITIVE in its place.
+ *
+ * The fix belongs where the word is minted, not here. The hub derives
+ * `invalidated` only for kinds whose `rejected` status is a RETRACTION
+ * (server services/claim-validity.ts); a rejected approach walks the code
+ * axis like every other claim and goes `stale` when its files move, which is
+ * exactly what has to happen to "raising the timeout does nothing" once the
+ * reader is rebuilt.
+ *
+ * So the term stays as written, and what it refuses is a claim THE HUB calls
+ * invalidated, whatever kind it carries. An older hub, or a forging one, that
+ * hands that label to a rejected approach keeps it out of the substance lane
+ * rather than in it — the same direction every other term here fails.
  */
-const NON_CURRENT_STATES: ReadonlySet<string> = new Set(["stale", "superseded"]);
+const NON_CURRENT_STATES: ReadonlySet<string> = new Set([
+  "stale",
+  "invalidated",
+  "superseded",
+]);
 
 /**
  * THE CODE AXIS OF THE SUBSTANCE GATE (1.0 spec 02 §5, CCB-1/CCB-7).

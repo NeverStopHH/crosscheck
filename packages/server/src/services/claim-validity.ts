@@ -77,8 +77,9 @@ import type { DbExecutor } from "../db/client.ts";
 /** The one edge kind that retires a claim; the same literal four services read. */
 const SUPERSEDES_EDGE_KIND = "supersedes";
 
-/** The three inputs, as the row shapes the callers already hold. */
+/** The four inputs, as the row shapes the callers already hold. */
 export interface ClaimValidityInput {
+  readonly kind: string;
   readonly status: string;
   readonly observedAtCommit: string | null;
   readonly commitBinding: ClaimCommitBinding;
@@ -96,10 +97,35 @@ export interface ClaimRevalidationReading {
 const REJECTED_STATUS = "rejected";
 
 /**
+ * THE ONE KIND WHOSE `rejected` STATUS IS NOT A RETRACTION — and the reason
+ * `invalidated` has to ask about kind at all.
+ *
+ * A `rejected_approach` claim RECORDS a rejection: "retrying the refresh call
+ * does not help". `rejected` is that kind's natural resting status, not the
+ * author taking the finding back — and DESIGN.md §4 privileges exactly this
+ * category above every other ("negative knowledge cannot anchor a wrong
+ * theory, only save a dead end").
+ *
+ * Reading the status alone, as spec 02 §3.5's table does, makes every piece of
+ * negative knowledge `invalidated` from the moment it is written: answered by
+ * its own status forever, never `stale`, never naming the commits that
+ * rewrote its code — and rendered as "its author rejected it", which says the
+ * opposite of what the author wrote. Nick's own example of the problem this
+ * module exists for, "raising the timeout does nothing", is a rejected
+ * approach; it must be able to GO STALE when the reader is rebuilt, which is
+ * the only thing that turns it from gold into superstition.
+ *
+ * So this kind walks the code axis like every other claim. Every other kind's
+ * `rejected` still means a retraction and still reads `invalidated`.
+ */
+const REJECTION_IS_THE_FINDING_KIND = "rejected_approach";
+
+/**
  * Resolution order, FIRST MATCH WINS. This is the whole definition.
  *
  *   superseded   a `supersedes` edge points AT this claim
- *   invalidated  the author set status `rejected`
+ *   invalidated  the author RETRACTED it: status `rejected` on a kind whose
+ *                rejection is not itself the finding (see the constant above)
  *   unknown      commit_binding is 'none' — nothing to revalidate against
  *   stale        the latest revalidation says `changed`
  *   current      the latest revalidation says `unchanged`
@@ -133,6 +159,11 @@ export const claimValidity = (
   return { ...base, state: resolveState(claim, revalidation, supersededByClaimId) };
 };
 
+/** The author took it back — as opposed to having written down a rejection. */
+const isRetracted = (claim: ClaimValidityInput): boolean =>
+  claim.status === REJECTED_STATUS &&
+  claim.kind !== REJECTION_IS_THE_FINDING_KIND;
+
 const resolveState = (
   claim: ClaimValidityInput,
   revalidation: ClaimRevalidationReading | undefined,
@@ -141,7 +172,7 @@ const resolveState = (
   if (supersededByClaimId !== null) {
     return "superseded";
   }
-  if (claim.status === REJECTED_STATUS) {
+  if (isRetracted(claim)) {
     return "invalidated";
   }
   if (claim.commitBinding === "none") {
@@ -262,6 +293,7 @@ export const loadClaimValidities = async (
     db
       .select({
         id: claims.id,
+        kind: claims.kind,
         status: claims.status,
         observedAtCommit: claims.observedAtCommit,
         commitBinding: claims.commitBinding,

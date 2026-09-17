@@ -187,35 +187,55 @@ describe("the edge outranks the status, and the status stays as a second lock", 
   });
 });
 
-describe("`invalidated` is not a term of this gate, and the reason is measured", () => {
+describe("negative knowledge is judged by its code, like every other claim", () => {
   /**
-   * SPEC 02 §5 IS WRONG HERE and this is the disagreement, pinned rather than
-   * argued. §5 writes the gate as `state ∉ {stale, invalidated, superseded}`.
-   * `invalidated` is derived from `claims.status === "rejected"` (§3.5), and a
-   * claim with that status can reach this gate through EXACTLY ONE door:
-   * `isNegativeKnowledge` — `isSettled` admits only `likely_root_cause` and
-   * `partially_confirmed`. So the term cannot fire on anything except an
-   * evidence-backed `rejected_approach` claim, which is the one category
-   * DESIGN.md §4 privileges above all others ("negative knowledge cannot
-   * anchor a wrong theory, only save a dead end").
+   * `rejected` IS A REJECTED APPROACH'S NATURAL STATUS, not a retraction.
+   * Spec 02 §3.5 derives `invalidated` from `status === "rejected"` for every
+   * kind, and read that way the one category DESIGN.md §4 privileges — an
+   * evidence-backed `rejected_approach`, "negative knowledge cannot anchor a
+   * wrong theory, only save a dead end" — is `invalidated` from the moment it
+   * is written. The hub therefore derives `invalidated` only for kinds whose
+   * rejected status IS a retraction (server services/claim-validity.ts), and
+   * a rejected approach walks the code axis instead: `stale` when its files
+   * moved, which is exactly Nick's "raising the timeout does nothing".
    *
-   * Its whole reachable effect is therefore to delete the privileged negative
-   * lane — and to hand the reader the SETTLED POSITIVE in its place, which is
-   * the anchoring the negatives-first rule exists to avoid. Measured on the
-   * flagship corpus scenario: with the term in, `auth-jwt/pr_auth_substance`
-   * and `pr_auth_fingerprint` both swap `clm_auth_neg` for `clm_auth_root`
-   * and substance precision and recall fall 1.000 → 0.818.
-   *
-   * `invalidated` stays in `claimValidity()` and still RENDERS on every pulled
-   * surface, so nothing is hidden. It is the GATE that does not read it.
+   * With that settled, this gate refuses §5's full set — `stale`,
+   * `invalidated` and `superseded` — verbatim.
    */
-  test("a rejected approach stays substance, whatever the validity axis calls it", () => {
+  test("a rejected approach whose code did not move stays substance", () => {
     // Arrange: the corpus's own shape — kind rejected_approach, status
-    // rejected, one evidence ref, declared.
-    const negative = claim({ validity: validity({ state: "invalidated" }) });
+    // rejected, one evidence ref, declared — revalidated and unchanged.
+    const negative = claim();
 
     // Act + Assert
     expect(select([negative]).kind).toBe("claim");
+  });
+
+  test("a rejected approach whose code moved drops to a pointer", () => {
+    // Arrange: the superstition case. The finding was true of code that has
+    // since been rewritten.
+    const superstition = claim({
+      body: "Raising the timeout does nothing",
+      validity: validity({
+        state: "stale",
+        touchingCommits: ["deadbee"],
+        touchingTotal: 1,
+      }),
+    });
+
+    // Act + Assert
+    expect(select([superstition]).kind).toBe("pointer");
+  });
+
+  test("a claim the hub calls invalidated is never substance", () => {
+    // Arrange: whatever its kind. The hub is the one authority on the state,
+    // and §5 refuses `invalidated` outright — a hub that hands this label to
+    // a rejected approach (an older derivation, or a forging hub) keeps it
+    // out of the substance lane rather than in it.
+    const labelled = claim({ validity: validity({ state: "invalidated" }) });
+
+    // Act + Assert
+    expect(select([labelled]).kind).toBe("pointer");
   });
 
   test("no other kind can reach the gate carrying a rejected status", () => {
