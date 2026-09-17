@@ -77,8 +77,8 @@ const stateFor = (repoRoot: string): SessionStateInput => ({
   startedAt: new Date(Date.now() - SESSION_STARTED_AGO_MS).toISOString(),
   seqEpoch: EPOCH,
   eventSeq: 0,
-  toolWindowFloor: null,
-  toolWindowOpen: 0,
+  toolWindows: [],
+  toolWindowEvictions: 0,
 });
 
 /**

@@ -38,6 +38,7 @@ export type {
   OrderedEvent,
   SessionCausalOrder,
 } from "./services/session-order.ts";
+export { seqKindFor } from "./services/record-handlers.ts";
 export { createEmbedderFromEnv } from "./services/embedder.ts";
 export type { Embedder } from "./services/embedder.ts";
 export {

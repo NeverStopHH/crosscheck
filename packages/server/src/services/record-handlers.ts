@@ -323,8 +323,13 @@ const SEQ_KIND_BY_SOURCE = {
  * The lane's own answer, downgraded to the upper bound it really is when the
  * emitter sent no usable bracket. `git_diff` is `observed` either way — that
  * lane sees a working tree at the end of a turn and has no window at all.
+ *
+ * EXPORTED for the connector tests that assert on `compareEvents`: an
+ * unbracketed tool-lane position is refused because it is stored `observed`,
+ * and a test that restated that rule instead of asking THIS function could
+ * pass while the hub's own answer changed underneath it.
  */
-const seqKindFor = (
+export const seqKindFor = (
   source: keyof typeof SEQ_KIND_BY_SOURCE,
   seq: SeqField | undefined,
 ): SeqKind =>

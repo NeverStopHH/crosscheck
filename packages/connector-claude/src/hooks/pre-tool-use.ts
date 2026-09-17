@@ -57,6 +57,7 @@ import {
   withTripwireAsked,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
+import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
 import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
 import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
 import { resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
@@ -128,11 +129,28 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   // and an MCP call that raced the hook is ordered BEFORE a change that came
   // first — `predeclared`, the value that exonerates, from a coin flip.
   //
+  // UNDER THIS CALL'S OWN KEY, which is what makes the window THIS tool's.
+  // The host gives the two hooks no shared tool id, so the key is a digest of
+  // `tool_name` + canonical `tool_input` (core state/tool-window-key.ts) — the
+  // one thing both of them are handed for the same call. PostToolUse looks the
+  // floor up by that key and closes that entry, never the oldest one open.
+  //
+  // THE RETURN VALUE IS DISCARDED, and with a key that is finally honest. A
+  // refused open (busy lock, or no state file yet on a hook installed
+  // mid-flight) writes NO entry, so this call's PostToolUse finds no match and
+  // sends no bracket — the hub reads the upper bound it has and refuses. The
+  // previous version claimed the same thing while the close was driven by
+  // `isEditTool` alone: it closed whatever window WAS open, which is how a
+  // refused open inherited a parallel tool's later floor.
+  //
   // ONE acquisition, and the only new cost on this hook. It is the same lock
   // the tripwire marker below takes, an order of magnitude under the hub call
-  // this hook already makes, and a busy lock is fail-open silence: no bracket
-  // means PostToolUse sends none and the hub reads the upper bound it has.
-  await openToolWindow(ctx.config.home, ctx.payload.session_id);
+  // this hook already makes.
+  await openToolWindow(
+    ctx.config.home,
+    ctx.payload.session_id,
+    toolWindowKey(ctx.payload.tool_name, ctx.payload.tool_input),
+  );
   const file = await resolveEditedFile(ctx, state);
   if (file === null) {
     return "";

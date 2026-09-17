@@ -260,6 +260,35 @@ export const MAX_KNOWN_WORKTREE_ROOTS = 8;
 export const MAX_FIRED_TOOL_CALLS = 256;
 
 /**
+ * Tool windows one session may hold OPEN at once (state/session-state.ts).
+ * Each is one running tool's bracket — the position its PreToolUse took before
+ * the tool started — and it is removed when that tool's PostToolUse closes it.
+ *
+ * WHY A CAP AT ALL. Not every open window is closed. A failed edit tool goes
+ * to PostToolUseFailure, which closes nothing, and any hook the host drops
+ * leaves its entry behind; an uncapped list on the hook's hot path grows for
+ * the life of the session. FIFO like MAX_SEEN_TARGETS and MAX_FIRED_TOOL_CALLS.
+ *
+ * IT IS A CAP, NOT A GUARANTEE, and the number it would take to make it one is
+ * UNMEASURED: nothing in a hook payload says how many tool calls the host put
+ * in this batch, and there is no trustworthy way to observe Claude's maximum
+ * from here. So this is chosen from the two things that ARE known. Evicting the
+ * oldest costs that tool its bracket and nothing else — its position stays the
+ * upper bound it always was and the hub refuses rather than answers — so the
+ * cap trades in the safe direction. And the scan it bounds is free at this
+ * size: MEASURED 2026-09-17 (bun 1.3.13, M-series Mac) with the find + copy a
+ * close performs, 0.21 us at 8 entries, 0.31 at 32, 0.48 at 64, 1.76 at 256,
+ * against a 0.26 us digest per hook and a state-lock acquisition three orders
+ * of magnitude above all of them. Thirty-two is far above every batch this
+ * repo's own hooks and probes produce and still in the free part of that curve.
+ *
+ * WHICH IS WHY EVICTIONS ARE COUNTED (`toolWindowEvictions`) and printed by
+ * `doctor`: the right number is unmeasured, and a real install reaching this
+ * ceiling is the only thing that can say so.
+ */
+export const MAX_TOOL_WINDOWS = 32;
+
+/**
  * How many identity resolutions ONE unresolvable worktree root may cost a
  * session before its null is taken as final (trial finding #17).
  *

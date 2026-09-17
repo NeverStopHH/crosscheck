@@ -14,11 +14,13 @@
  * BETWEEN raced it and is refused. The bracket position itself is never
  * attached to a record — it is a deliberate gap, and gaps are legal.
  *
- * THE FLOOR IS THE OLDEST OPEN WINDOW, drained by count. Claude Code runs
- * tools in parallel, so two windows can be open at once and neither hook knows
- * which tool the other belongs to. Taking the OLDEST is conservative in the
- * only direction that is safe: a window that opens too early makes a
- * comparison refuse, never answer wrongly.
+ * THE FLOOR IS THIS TOOL'S OWN, found by the key both of its hooks digest
+ * from `tool_name` + `tool_input`. Claude Code runs tools in parallel, and the
+ * earlier rule — the OLDEST open floor, drained by a count — could not name an
+ * owner: a tool whose own `openToolWindow` was refused closed a PARALLEL
+ * tool's window and took a floor recorded AFTER its own edit. That pairing is
+ * owned by test/hook-window-pairing.test.ts; this file owns the bracket
+ * itself, and the two parallel tests below say what it costs now.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
@@ -33,6 +35,8 @@ import {
   writeSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionStateInput } from "@crosscheck/connector-core/state/session-state.ts";
+import { causalComparisonOf, seqKindFor } from "@crosscheck/server";
+import type { OrderedEvent, SessionCausalOrder } from "@crosscheck/server";
 import { makeHome, makeRepo, writeRepoFile } from "../../connector-core/test/helpers.ts";
 
 const REPO_ID = "github.com/acme/api";
@@ -106,6 +110,29 @@ const closeWindow = async (fx: Fixture, file: string): Promise<void> => {
   await runHook("post-tool-use", payload(fx, "PostToolUse", file), env(fx.home));
 };
 
+/** The hub's own gate, asked exactly as a consumer asks it. */
+const USABLE_ORDER: SessionCausalOrder = {
+  sessionId: "s",
+  state: "usable",
+  reason: "sequenced",
+  epochs: 1,
+};
+
+/**
+ * A tool-lane row as the HUB stores it, `seqKind` from the hub's own mapping:
+ * a bracketed tool edit is `emitted`, an unbracketed one `observed`, and a
+ * test that restated either could pass while the product's answer moved.
+ */
+const row = (stamp: Stamp): OrderedEvent => ({
+  sessionId: "s",
+  seqEpoch: stamp.epoch,
+  seqN: stamp.n,
+  seqAfter: stamp.after ?? null,
+  seqKind: seqKindFor("tool_edit", stamp),
+  seqReason: "sequenced",
+  observedAt: new Date(),
+});
+
 const stamps = async (fx: Fixture): Promise<readonly Stamp[]> =>
   (await readSpoolLines(fx.home, repoKey(DEAD_HUB_URL, REPO_ID)))
     .map((line) => JSON.parse(line) as Record<string, unknown>)
@@ -152,7 +179,7 @@ describe("the hook pair brackets the tool it reports", () => {
   });
 
   test("a second tool opens its own window rather than reusing the first", async () => {
-    // Arrange: the count must DRAIN, or every later edit keeps the first
+    // Arrange: the list must DRAIN, or every later edit keeps the first
     // tool's floor and its window swallows the whole session.
     const fx = await fixture("hook-window-twice");
     await writeRepoFile(fx.repo, "src/one.ts", "export const x = 1;\n");
@@ -168,8 +195,7 @@ describe("the hook pair brackets the tool it reports", () => {
     const [first, second] = await stamps(fx);
     expect(second?.after).toBeGreaterThanOrEqual(first!.n);
     const state = await readSessionState(fx.home, SESSION_ID);
-    expect(state?.toolWindowOpen).toBe(0);
-    expect(state?.toolWindowFloor).toBeNull();
+    expect(state?.toolWindows).toEqual([]);
   });
 
   test("a SessionStart re-fire inside a running tool keeps the window open", async () => {
@@ -204,11 +230,13 @@ describe("the hook pair brackets the tool it reports", () => {
     expect(edits[0]?.after).toBe(1);
   });
 
-  test("two tools open at once share the OLDEST floor and refuse each other", async () => {
-    // Arrange: Claude Code runs tools in parallel and neither hook knows which
-    // tool the other belongs to. The oldest open window is the only floor that
-    // is safe for both — it is too early for the second tool, and too early
-    // makes a comparison REFUSE rather than answer wrongly.
+  test("two tools open at once keep own floors and still refuse each other", async () => {
+    // Arrange: Claude Code runs tools in parallel. Each tool now keeps the
+    // floor ITS OWN PreToolUse took — the second one's is later than the
+    // first's, which the shared-oldest rule could not express — and the point
+    // of this test is what that does NOT buy: the two windows still overlap,
+    // so the hub refuses to order the two edits against each other. Precision
+    // is the side of the trade that may be spent; an answer is not.
     const fx = await fixture("hook-window-parallel");
     await writeRepoFile(fx.repo, "src/one.ts", "export const x = 1;\n");
     await writeRepoFile(fx.repo, "src/two.ts", "export const y = 2;\n");
@@ -219,12 +247,17 @@ describe("the hook pair brackets the tool it reports", () => {
     await closeWindow(fx, "src/two.ts");
     await closeWindow(fx, "src/one.ts");
 
-    // Assert: both windows open at the first bracket, so each contains the
-    // other's position and the two edits are not ordered against each other.
+    // Assert: own floors, and the hub's OWN gate says concurrent — asked of
+    // `causalComparisonOf` rather than restated here, so a change to the gate
+    // cannot leave this file passing while the product's answer moves.
     const [second, first] = await stamps(fx);
-    expect(second?.after).toBe(1);
     expect(first?.after).toBe(1);
+    expect(second?.after).toBe(2);
+    expect(causalComparisonOf(USABLE_ORDER, row(first!), row(second!))).toEqual({
+      outcome: "indeterminate",
+      reason: "concurrent",
+    });
     const state = await readSessionState(fx.home, SESSION_ID);
-    expect(state?.toolWindowOpen).toBe(0);
+    expect(state?.toolWindows).toEqual([]);
   });
 });
