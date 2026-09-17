@@ -5613,6 +5613,57 @@ export const MUTATIONS: readonly Mutation[] = [
       "line claims an edit lost its bracket for every one of them",
   },
   {
+    // The loss the eviction count CANNOT see: an open the state lock refused
+    // writes no entry, so nothing is evicted for it and the cap's counter
+    // never moves. Measured through the real hooks on a loaded machine.
+    label: "brackets lost to a refused open are never summed",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "      windowMisses: total.windowMisses + state.toolWindowMisses,",
+    to: "      windowMisses: total.windowMisses,",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "SILENT: a machine losing brackets under parallel load reads exactly " +
+      "like one that is not, on both surfaces that print the order's health — " +
+      "and the cap's own counter stays 0 throughout, so nothing else says it",
+  },
+  {
+    // Silent at zero, like every count beside it.
+    label: "a machine that lost no bracket prints an unbracketed count",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "    cost.windowMisses === 0\n",
+    to: "    false\n",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "NOISE: every healthy install prints a zero it has no use for on every " +
+      "doctor run, which is how a line teaches people to stop reading it",
+  },
+  {
+    // ...and it reaches the reader at all.
+    label: "the unbracketed-edit count is never printed",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from:
+      "      : ` · ${String(cost.windowMisses)} edit(s) recorded with no " +
+      "window of their own (unbracketed: the hub refuses every " +
+      "\\`declared before\\` question against them)`;",
+    to: '      : "";',
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "SILENT: the count is kept and read by nobody, so the only number that " +
+      "can say whether this machine is losing brackets never reaches a reader",
+  },
+  {
+    // Where the count is TAKEN: the close, the one place every cause meets.
+    label: "an edit that lost its bracket is booked as a healthy one",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  const lostBracket = editFired && seq !== null && seq.after === undefined;",
+    to: "  const lostBracket = false;",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SILENT: a refused open, an evicted entry, a hook installed mid-tool " +
+      "and a host with no `tool_use_id` all leave an edit the hub cannot " +
+      "order, and the machine reports none of them",
+  },
+  {
     // ...and it is printed at all.
     label: "the tool-window eviction count is never printed",
     file: `${CORE}/src/state/seq-cost.ts`,

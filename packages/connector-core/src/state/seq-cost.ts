@@ -20,6 +20,15 @@
  *   correct and it is invisible: the claim lands, the intent lands, and only
  *   the order quietly stops being answerable. This is the count that says so.
  *
+ *   A LOST BRACKET. A PreToolUse that could not open its tool's window — the
+ *   state lock was busy, the hook was installed mid-tool, the host sends no
+ *   `tool_use_id` — leaves its edit to travel as the upper bound it is, and
+ *   the hub then refuses every happens-before question about that edit. It
+ *   used to be invisible: the only bracket number printed was the CAP's
+ *   eviction count, and a refused open writes no entry for the cap to evict,
+ *   so a machine losing brackets read exactly like one that was not.
+ *   `windowMisses` is the count that says so, taken where every cause meets.
+ *
  *   A BROKEN EPOCH. Two events that claimed one position, or one session
  *   holding two counters. Neither is visible from here at all — both are facts
  *   about rows the hub holds — so the hub's own answer is carried in beside
@@ -47,24 +56,47 @@ export interface SeqCost {
    */
   readonly ambiguousRoots: number;
   /**
-   * TOOL WINDOWS THE CAP EVICTED, summed across live sessions — an UPPER
-   * BOUND on the brackets lost, not a count of them. A call that was still
-   * running when its window went lost the floor its own PreToolUse paid for,
-   * so its edit reaches the hub as the upper bound it always was and every
-   * happens-before question against it is refused. A call that had already
-   * ended with no hook left to close its window — denied, or aborted — lost
-   * nothing, and nothing here can tell the two apart. Failed edits are not in
-   * either group: PostToolUseFailure closes their windows.
+   * TOOL WINDOWS THE CAP EVICTED, summed across live sessions — an upper bound
+   * on the brackets THE CAP cost, and on nothing else. It is NOT an upper
+   * bound on the brackets lost: see `windowMisses` below, which counts a
+   * dominant loss path this number is structurally blind to. A call that was
+   * still running when its window went lost the floor its own PreToolUse paid
+   * for, so its edit reaches the hub as the upper bound it always was and
+   * every happens-before question against it is refused. A call that had
+   * already ended with no hook left to close its window — denied, or aborted —
+   * lost nothing, and nothing here can tell the two apart. Failed edits are
+   * not in either group: PostToolUseFailure closes their windows.
    *
    * IT IS NOT A WARNING and it has no remedy a reader could act on:
    * MAX_TOOL_WINDOWS is a limit of this build, the eviction costs only
    * precision, and this tree's rule for a platform limit nobody can act on is
    * that it stays PASS and is stated. It is COUNTED because the cap is a
    * CHOSEN number and a real install reaching the ceiling is the only
-   * evidence that can say it is too small. A missing bracket on its own
-   * cannot say it: it looks identical to a call that opened no window.
+   * evidence that can say it is too small.
    */
   readonly windowEvictions: number;
+  /**
+   * EDITS THAT REACHED THE HUB WITH NO WINDOW OF THEIR OWN — the count of
+   * brackets actually LOST, summed across live sessions.
+   *
+   * WHY THE EVICTION COUNT ABOVE CANNOT STAND IN FOR IT. An open the busy
+   * state lock refuses writes no entry, so nothing is ever evicted for it and
+   * the cap's counter does not move. Measured through the real hooks on a
+   * loaded machine, that path lost brackets while `windowEvictions` stayed
+   * exactly 0 — and since the eviction clause is silent at zero, the line said
+   * nothing at all about a machine that was losing them. An install answering
+   * "is MAX_TOOL_WINDOWS = 32 enough?" from the eviction count alone was
+   * reading a number blind to the losses that were happening.
+   *
+   * COUNTED AT THE CLOSE, where every cause meets: a refused open, an evicted
+   * entry, a hook installed mid-tool, a state file older than the keyed list,
+   * and a host too old to send a `tool_use_id` all end as an edit whose
+   * PostToolUse took a position and found no window. NOT A WARN, for the same
+   * reason as the count above: no reader can act on load or on a host's age,
+   * and the direction is safe — a missing bracket makes the hub REFUSE, never
+   * answer `predeclared`.
+   */
+  readonly windowMisses: number;
 }
 
 const NO_COST: SeqCost = {
@@ -74,6 +106,7 @@ const NO_COST: SeqCost = {
   allocated: 0,
   ambiguousRoots: 0,
   windowEvictions: 0,
+  windowMisses: 0,
 };
 
 /**
@@ -101,6 +134,7 @@ export const summarizeSeqCost = (states: readonly SessionState[]): SeqCost => ({
       unsequenced: total.unsequenced + (state.seqEpoch === null ? 1 : 0),
       allocated: total.allocated + state.eventSeq,
       windowEvictions: total.windowEvictions + state.toolWindowEvictions,
+      windowMisses: total.windowMisses + state.toolWindowMisses,
     }),
     NO_COST,
   ),
@@ -196,6 +230,13 @@ export const formatSeqCost = (
     cost.windowEvictions === 0
       ? ""
       : ` · ${String(cost.windowEvictions)} tool window(s) evicted at the cap (an edit still running when its window went travels as an upper bound; a call that had already ended lost nothing)`;
+  // THE LOSS THE LINE ABOVE CANNOT SEE, and the one a reader should read
+  // first: an open the state lock refused writes no entry, so it is evicted by
+  // nothing and counted by nothing above. Silent at zero like its neighbours.
+  const unbracketed =
+    cost.windowMisses === 0
+      ? ""
+      : ` · ${String(cost.windowMisses)} edit(s) recorded with no window of their own (unbracketed: the hub refuses every \`declared before\` question against them)`;
   // ABSENT IS NOT ZERO. A hub too old for the route, or one that did not
   // answer, says nothing — and printing "0 broken" there would be an assertion
   // nobody made. The line stays silent about what it could not ask.
@@ -205,7 +246,7 @@ export const formatSeqCost = (
       : ` · ${plural(broken.length, "session")} on the hub cannot be ordered (${reasonsOf(broken)})`;
   return (
     `${String(cost.allocated)} position(s) allocated · ` +
-    `${String(cost.unsequenced)} with no position at all ${sessions}${ambiguous}${evicted}${hub}` +
+    `${String(cost.unsequenced)} with no position at all ${sessions}${ambiguous}${evicted}${unbracketed}${hub}` +
     " — order holds inside one session only: two sessions, two machines and a" +
     " CI run are not comparable by construction"
   );

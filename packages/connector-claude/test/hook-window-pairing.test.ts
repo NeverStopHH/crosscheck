@@ -233,6 +233,54 @@ describe("a window is paired to the tool call that opened it", () => {
     expect(row(target.seq).seqKind).toBe("observed");
   });
 
+  test("a bracket the busy lock refused is COUNTED, not merely absent", async () => {
+    // Arrange: the same refusal as the test above, asked as telemetry. The
+    // eviction counter cannot see this loss — a refused open writes NO entry,
+    // so nothing is ever evicted for it — and `toolWindowEvictions` was the
+    // only bracket-loss number `status` and `doctor` printed. Measured through
+    // the real hooks on a loaded machine, refusals ran at 0.4-1.7% of edits
+    // with the eviction count exactly 0 throughout, so the one question the
+    // cap's counter exists for ("is MAX_TOOL_WINDOWS = 32 enough?") was being
+    // answered by a number blind to the losses actually happening.
+    const fx = await fixture("pairing-counted");
+    const t1: Call = { file: "src/a.ts", id: "toolu_counted_1" };
+    await writeRepoFile(fx.repo, "src/a.ts", "export const x = 1;\n");
+
+    // Act
+    await preUnderHeldLock(fx, t1);
+    await writeRepoFile(fx.repo, "src/a.ts", "export const x = 100;\n");
+    await post(fx, t1);
+
+    // Assert: the edit is unbracketed AND the machine says so — one loss, and
+    // the cap's own counter still zero, which is exactly the pair that used to
+    // read as a healthy install.
+    const target = await targetFor(fx, "src/a.ts");
+    expect(target.seq.after).toBeUndefined();
+    const state = await readSessionState(fx.home, SESSION_ID);
+    expect(state?.toolWindowMisses).toBe(1);
+    expect(state?.toolWindowEvictions).toBe(0);
+  });
+
+  test("a bracketed edit counts no loss", async () => {
+    // Arrange: the counter must not simply count edits. A call whose own
+    // PreToolUse opened a window is bracketed, and a number that moved here
+    // too would make every healthy turn look like a machine losing brackets.
+    const fx = await fixture("pairing-counted-ok");
+    const t1: Call = { file: "src/a.ts", id: "toolu_ok_1" };
+    await writeRepoFile(fx.repo, "src/a.ts", "export const x = 1;\n");
+
+    // Act
+    await pre(fx, t1);
+    await writeRepoFile(fx.repo, "src/a.ts", "export const x = 100;\n");
+    await post(fx, t1);
+
+    // Assert
+    const target = await targetFor(fx, "src/a.ts");
+    expect(target.seq.after).toBeDefined();
+    const state = await readSessionState(fx.home, SESSION_ID);
+    expect(state?.toolWindowMisses).toBe(0);
+  });
+
   test("an edit whose explanation came later is never ordered predeclared", async () => {
     // Arrange: the measured defect. T1's PreToolUse is refused, the edit lands,
     // the explanation is published AFTER it, and only THEN does a parallel T2

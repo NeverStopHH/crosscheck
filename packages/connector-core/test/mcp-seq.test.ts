@@ -89,6 +89,7 @@ const stateOf = (overrides: Partial<SessionState>): SessionState =>
     // here rather than defended against in `summarizeSeqCost`, where a `?? 0`
     // would hide a field that really had gone missing.
     toolWindowEvictions: 0,
+    toolWindowMisses: 0,
     ...overrides,
   }) as SessionState;
 
@@ -236,6 +237,50 @@ describe("the ambiguity is countable and printed", () => {
     // Assert
     expect(cost.windowEvictions).toBe(0);
     expect(formatSeqCost(cost)).not.toContain("evicted");
+  });
+
+  test("an edit that reached the hub with no window is counted and printed", () => {
+    // Arrange: THE LOSS THE EVICTION COUNT CANNOT SEE. A PreToolUse whose
+    // `openToolWindow` the busy state lock refused writes no entry at all, so
+    // nothing is ever evicted for it and the cap's counter stays 0 — while the
+    // edit reaches the hub unbracketed and every happens-before question
+    // against it is refused. Measured through the real hooks under an ordinary
+    // parallel turn on a loaded machine: refusals at 0.4-1.7% of edits with
+    // `toolWindowEvictions` exactly 0 throughout. This counts the loss from
+    // the side that can SEE it — an edit tool's PostToolUse that took a
+    // position and found no window of its own — so the number covers a refused
+    // open, a hook installed mid-flight, a state file too old for the list, a
+    // host that sends no `tool_use_id` and an evicted entry alike.
+    const cost = summarizeSeqCost([
+      stateOf({ hostSessionKey: "a", seqEpoch: EPOCH, eventSeq: 9, toolWindowMisses: 2 }),
+      stateOf({
+        hostSessionKey: "b",
+        repoRoot: OTHER_ROOT,
+        seqEpoch: EPOCH,
+        eventSeq: 4,
+        toolWindowMisses: 3,
+      }),
+    ]);
+
+    // Assert: counted, printed, and NOT a WARN — the losses are load-driven
+    // and no reader can act on them, which is this tree's rule for a cost
+    // nobody chose.
+    expect(cost.windowMisses).toBe(5);
+    expect(formatSeqCost(cost)).toContain(
+      "5 edit(s) recorded with no window of their own (unbracketed: the hub refuses every `declared before` question against them)",
+    );
+    expect(seqWarning(cost)).toBeNull();
+  });
+
+  test("a machine that lost no bracket prints no unbracketed count", () => {
+    // Arrange: silent at zero, exactly like the two counts beside it.
+    const cost = summarizeSeqCost([
+      stateOf({ hostSessionKey: "a", seqEpoch: EPOCH, eventSeq: 7 }),
+    ]);
+
+    // Assert
+    expect(cost.windowMisses).toBe(0);
+    expect(formatSeqCost(cost)).not.toContain("no window of their own");
   });
 
   test("no live sessions says so rather than printing zeros", () => {

@@ -519,6 +519,31 @@ const SessionStateObjectSchema = z.looseObject({
     )
     .default([]),
   toolWindowEvictions: z.number().int().min(0).default(0),
+  /**
+   * EDIT POSITIONS THAT TRAVELLED WITH NO WINDOW — the count of brackets
+   * actually LOST, from the only side that can see them all.
+   *
+   * `toolWindowEvictions` counts what the CAP threw away, and that is not the
+   * same number: a PreToolUse whose `openToolWindow` the busy state lock
+   * refused writes no entry at all, so nothing is ever evicted for it and the
+   * cap's counter does not move. Measured through the real hooks under an
+   * ordinary parallel turn on a loaded machine, that path lost brackets while
+   * the eviction count stayed exactly 0 — so the one number both surfaces
+   * printed was blind to the losses that were happening.
+   *
+   * COUNTED AT THE CLOSE, because the close is where every cause meets. A
+   * PostToolUse that allocated a position for an EDIT and found no window
+   * under its own key has lost the bracket, whether its open was refused, its
+   * entry evicted, its hook installed mid-flight, its state file older than
+   * this list, or its host too old to send a `tool_use_id`. It costs no lock:
+   * the fold rides in the one mid-session write that hook already makes.
+   *
+   * IT IS NOT A WARN. Every cause above is either load or a host's age, none
+   * has a remedy the reader could apply, and the direction is safe — a missing
+   * bracket makes the hub REFUSE, never answer `predeclared`. It is printed so
+   * that a machine losing brackets stops reading exactly like one that is not.
+   */
+  toolWindowMisses: z.number().int().min(0).default(0),
 });
 
 /**
@@ -741,6 +766,10 @@ export const withCarriedCapture = (
         // the cap is the right size.
         toolWindows: previous.toolWindows,
         toolWindowEvictions: previous.toolWindowEvictions,
+        // ...and so does the count of brackets already lost, for the same
+        // reason: a number that restarts on every compact cannot say whether
+        // this machine is losing them.
+        toolWindowMisses: previous.toolWindowMisses,
       };
 
 /**
@@ -1389,5 +1418,6 @@ export const deriveSessionState = (
     eventSeq: 0,
     toolWindows: [],
     toolWindowEvictions: 0,
+    toolWindowMisses: 0,
   };
 };

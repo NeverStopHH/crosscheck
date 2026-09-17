@@ -79,6 +79,7 @@ const stateFor = (repoRoot: string): SessionStateInput => ({
   eventSeq: 0,
   toolWindows: [],
   toolWindowEvictions: 0,
+  toolWindowMisses: 0,
 });
 
 /**

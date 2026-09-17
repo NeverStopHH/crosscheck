@@ -346,6 +346,19 @@ export const handlePostToolUse = async (
   // own PostToolUse run. Applied to the freshest state under the lock, like
   // every other transform folded into this write.
   const closesWindow = seq === null;
+  // THE BRACKET THIS EDIT DID NOT GET, booked in the write that is already
+  // happening. An allocation that came back with no `after` found no window
+  // under this call's own key, and for an EDIT that is a bracket LOST: the
+  // position travels as the upper bound it is and the hub refuses every
+  // `declared before` question against it. Every cause lands here — an open
+  // the busy state lock refused (which writes no entry, so the cap's eviction
+  // counter never moves for it), an entry the cap evicted, a hook installed
+  // mid-tool, a state file older than the keyed list, a host that sends no
+  // `tool_use_id` — which is why the count is taken at the CLOSE rather than
+  // at each of them. `seq === null` is a different failure and is not counted
+  // here: nothing was positioned at all, and the record says
+  // `allocation_failed` for itself.
+  const lostBracket = editFired && seq !== null && seq.after === undefined;
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
     ...withCaptureBookkeeping(withSeenTargets(fresh, files), {
       resolution,
@@ -357,6 +370,7 @@ export const handlePostToolUse = async (
     }),
     ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
     ...(closesWindow ? closeOwnWindow(fresh) : {}),
+    ...(lostBracket ? { toolWindowMisses: fresh.toolWindowMisses + 1 } : {}),
   }));
   return "";
 };
