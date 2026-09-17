@@ -205,15 +205,23 @@ export const handlePostToolUse = async (
   // this session reports to. The count is what keeps the drop honest.
   const editFired = isEditTool(ctx.payload.tool_name);
   // THE WINDOW THIS CALL'S OWN PreToolUse OPENED, if it opened one. The host
-  // hands both hooks the same `tool_name` and `tool_input` and no tool id, so
-  // the digest of the two is the pairing key (core state/tool-window-key.ts).
-  // It is passed on EVERY path below, including the ones that emit nothing:
-  // a key with no entry closes nothing and brackets nothing, which is exactly
-  // the answer a Bash call, a hook installed mid-tool and an evicted entry all
-  // need. `isEditTool` no longer gates the close — it gated it before, and a
-  // tool whose own open had been refused closed a PARALLEL tool's window and
-  // took a floor recorded after its own edit.
-  const windowKey = toolWindowKey(ctx.payload.tool_name, ctx.payload.tool_input);
+  // hands both hooks of a call the same `tool_use_id` and no other call has
+  // it, so that id is the pairing key (core state/tool-window-key.ts). It is
+  // used on EVERY path below, including the ones that emit nothing: a key with
+  // no entry closes nothing and brackets nothing, which is exactly the answer
+  // a Bash call, a hook installed mid-tool, an evicted entry and a refused
+  // open all need. `isEditTool` no longer gates the close — it gated it
+  // before, and a tool whose own open had been refused closed a PARALLEL
+  // tool's window and took a floor recorded after its own edit. NULL when the
+  // payload carries no id: then no window was opened, and none is closed.
+  const windowKey = toolWindowKey(
+    ctx.payload.tool_name,
+    ctx.payload.tool_use_id,
+  );
+  const closeOwnWindow = (
+    fresh: SessionState,
+  ): Partial<Pick<SessionState, "toolWindows">> =>
+    windowKey === null ? {} : closedToolWindow(fresh, windowKey);
   if (state.repoId !== ctx.identity.repoId) {
     // Screened and bounded exactly as the capture path's own #18 write is
     // (connector-core/state/capture-bookkeeping.ts): this path comes from the
@@ -239,12 +247,12 @@ export const handlePostToolUse = async (
       ...(editFired && droppedPath !== null && fresh.lastEditedPath === null
         ? { lastEditedPath: droppedPath, lastEditedPathResolvedAgainst: null }
         : {}),
-      // ...and the window this tool's OWN PreToolUse opened is CLOSED even
-      // though nothing was captured. A window left open is safe — it only ever
-      // makes a later comparison refuse — but it stays open for the rest of the
-      // session, and a later call under the same key then brackets from a floor
-      // older than its own.
-      ...closedToolWindow(fresh, windowKey),
+      // ...and the window this call's OWN PreToolUse opened is CLOSED even
+      // though nothing was captured. A window left open brackets nothing — no
+      // later call carries its id — but it holds a slot in a capped list for
+      // the rest of the session, and its eviction would then be counted as a
+      // dropped bracket that dropped nothing.
+      ...closeOwnWindow(fresh),
     }));
     return "";
   }
@@ -329,13 +337,14 @@ export const handlePostToolUse = async (
   // tripwire marker inside this hook's window, and a stale whole-file write
   // here would erase it (test/state-race.test.ts). The #17 root cache and the
   // #18/#20 capture counters fold in here too — the ONE mid-session write.
-  // `closedToolWindow` here covers the exits where nothing was ALLOCATED, so
+  // `closeOwnWindow` here covers the exits where nothing was ALLOCATED, so
   // the call above closed nothing: an edit tool that resolved no path at all,
   // and an allocation the lock refused. Keyed on `seq === null` alone, because
   // that — not the tool's name — is what says whether the close already
-  // happened, and closing twice would drain a second entry from a colliding
-  // group. Applied to the freshest state under the lock, like every other
-  // transform folded into this write.
+  // happened, and closing twice would drain a second entry under this call's
+  // key: the one a double-wired install's other PreToolUse run left for its
+  // own PostToolUse run. Applied to the freshest state under the lock, like
+  // every other transform folded into this write.
   const closesWindow = seq === null;
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
     ...withCaptureBookkeeping(withSeenTargets(fresh, files), {
@@ -347,7 +356,7 @@ export const handlePostToolUse = async (
       now,
     }),
     ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
-    ...(closesWindow ? closedToolWindow(fresh, windowKey) : {}),
+    ...(closesWindow ? closeOwnWindow(fresh) : {}),
   }));
   return "";
 };

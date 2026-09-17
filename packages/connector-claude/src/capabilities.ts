@@ -45,7 +45,7 @@ export const CLAUDE_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       name: "event_seq",
       rung: "full",
       sentence:
-        "every emitting hook is handed the host session id on stdin, so each record this connector spools is positioned in that session's own sequence before it is written — including the Stop-time git lane, which no other host runs — and the PreToolUse/PostToolUse pair BRACKETS each edit tool, taking a position before the tool starts as well as after it returns, which is what lets an edit be ordered against an explanation at all",
+        "every emitting hook is handed the host session id on stdin, so each record this connector spools is positioned in that session's own sequence before it is written — including the Stop-time git lane, which no other host runs — and the PreToolUse/PostToolUse pair BRACKETS each edit tool call, taking a position before the tool starts as well as after it returns, which is what lets an edit be ordered against an explanation at all — paired by the host's tool_use_id, so a call whose own opening position was refused (a busy lock, a hook installed mid-flight) or that arrives without an id gets no bracket and is refused rather than ordered from another call's window",
     },
   ],
   refusals: [

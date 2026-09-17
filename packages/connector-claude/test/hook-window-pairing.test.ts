@@ -1,10 +1,10 @@
 /**
- * EVERY WINDOW BELONGS TO ITS OWN TOOL, and without that the exonerating
+ * EVERY WINDOW BELONGS TO ITS OWN TOOL CALL, and without that the exonerating
  * answer comes back from a foreign bracket.
  *
  * `openToolWindow` can be refused — a busy state lock, or a session whose
  * hooks were installed mid-flight and has no state file yet — and PostToolUse
- * cannot see that it was. Before this file the close was driven by
+ * cannot see that it was. Before the keyed list the close was driven by
  * `isEditTool(tool_name)` alone and the bracket was the OLDEST open window's
  * floor, so a tool whose own PreToolUse opened nothing closed a PARALLEL
  * tool's window and stamped its edit with a floor taken AFTER that edit
@@ -12,9 +12,15 @@
  * answered `predeclared` for an explanation written after the change, and the
  * parallel tool LOST its own bracket to the sibling's close.
  *
- * The pairing key is a digest of `tool_name` + canonical `tool_input`, the one
- * thing both hooks are handed for the same call. It lives in the session state
- * and nowhere else: no record, no renderer, no wire.
+ * THE KEY IS THE HOST'S OWN ID FOR THE CALL, `tool_use_id`. A digest of
+ * `tool_name` + `tool_input` was tried first and is not enough: two IDENTICAL
+ * calls — the same edit issued twice in one batch — digest to one key, so a
+ * twin whose open was refused still took its sibling's later floor and the hub
+ * still answered `predeclared` (measured through a real hub, and pinned below
+ * as "an identical twin call"). The id is what the host hands BOTH hooks of
+ * one call and no other call; a payload without one opens no window at all.
+ * The key lives in the session state and nowhere else: no record, no
+ * renderer, no wire.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
@@ -49,6 +55,15 @@ interface Stamp {
 interface Target {
   readonly value: string;
   readonly seq: Stamp;
+}
+
+/**
+ * ONE TOOL CALL: the file it edits and the id the host gives it. `id: null`
+ * is a payload with no `tool_use_id` at all — a host that does not send one.
+ */
+interface Call {
+  readonly file: string;
+  readonly id: string | null;
 }
 
 const paths: string[] = [];
@@ -92,27 +107,31 @@ const fixture = async (label: string): Promise<Fixture> => {
   return { home, repo };
 };
 
-/** The two hooks of ONE tool call see the same tool_name and tool_input. */
-const payload = (fx: Fixture, event: string, file: string): string =>
+/**
+ * The two hooks of ONE tool call see the same tool_name, tool_input and
+ * tool_use_id — the shape Claude Code's hooks reference documents for both.
+ */
+const payload = (fx: Fixture, event: string, call: Call): string =>
   JSON.stringify({
     session_id: SESSION_ID,
     cwd: fx.repo,
     hook_event_name: event,
     tool_name: "Edit",
-    tool_input: { file_path: join(fx.repo, file) },
+    tool_input: { file_path: join(fx.repo, call.file) },
+    ...(call.id === null ? {} : { tool_use_id: call.id }),
     tool_response: {},
   });
 
-const pre = async (fx: Fixture, file: string): Promise<void> => {
-  await runHook("pre-tool-use", payload(fx, "PreToolUse", file), env(fx.home));
+const pre = async (fx: Fixture, call: Call): Promise<void> => {
+  await runHook("pre-tool-use", payload(fx, "PreToolUse", call), env(fx.home));
 };
 
-const post = async (fx: Fixture, file: string): Promise<void> => {
-  await runHook("post-tool-use", payload(fx, "PostToolUse", file), env(fx.home));
+const post = async (fx: Fixture, call: Call): Promise<void> => {
+  await runHook("post-tool-use", payload(fx, "PostToolUse", call), env(fx.home));
 };
 
 /** A PreToolUse that meets a BUSY state lock, the way a sibling emitter makes one. */
-const preUnderHeldLock = async (fx: Fixture, file: string): Promise<void> => {
+const preUnderHeldLock = async (fx: Fixture, call: Call): Promise<void> => {
   let release: () => void = () => {};
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -126,7 +145,7 @@ const preUnderHeldLock = async (fx: Fixture, file: string): Promise<void> => {
     },
   );
   await Bun.sleep(20);
-  await pre(fx, file);
+  await pre(fx, call);
   release();
   await holder;
 };
@@ -190,25 +209,28 @@ const point = (n: number): OrderedEvent => ({
 const hubOrders = (explanation: number, edit: Stamp): -1 | 0 | 1 | null =>
   compareEvents(USABLE_ORDER, point(explanation), row(edit));
 
-describe("a window is paired to the tool that opened it", () => {
+describe("a window is paired to the tool call that opened it", () => {
   test("a tool whose PreToolUse could not open a window sends NO bracket", async () => {
     // Arrange: the state lock is held when T1's PreToolUse runs, so its
     // `openToolWindow` is refused. PostToolUse cannot see that, and the only
     // honest bracket is none — least of all the floor of the PARALLEL tool
     // whose window is the one actually open.
     const fx = await fixture("pairing-refused");
+    const t1: Call = { file: "src/a.ts", id: "toolu_refused_1" };
+    const t2: Call = { file: "src/b.ts", id: "toolu_refused_2" };
     await writeRepoFile(fx.repo, "src/a.ts", "export const x = 1;\n");
     await writeRepoFile(fx.repo, "src/b.ts", "export const y = 2;\n");
-    await pre(fx, "src/b.ts");
+    await pre(fx, t2);
 
     // Act
-    await preUnderHeldLock(fx, "src/a.ts");
+    await preUnderHeldLock(fx, t1);
     await writeRepoFile(fx.repo, "src/a.ts", "export const x = 100;\n");
-    await post(fx, "src/a.ts");
+    await post(fx, t1);
 
-    // Assert
+    // Assert: no bracket, and therefore the upper bound the hub refuses on.
     const target = await targetFor(fx, "src/a.ts");
     expect(target.seq.after).toBeUndefined();
+    expect(row(target.seq).seqKind).toBe("observed");
   });
 
   test("an edit whose explanation came later is never ordered predeclared", async () => {
@@ -218,17 +240,19 @@ describe("a window is paired to the tool that opened it", () => {
     // floor — a position later than the explanation — so the hub answered -1:
     // "the explanation preceded the edit", the value that exonerates.
     const fx = await fixture("pairing-predeclared");
+    const t1: Call = { file: "src/a.ts", id: "toolu_late_1" };
+    const t2: Call = { file: "src/b.ts", id: "toolu_late_2" };
     await writeRepoFile(fx.repo, "src/a.ts", "export const x = 1;\n");
     await writeRepoFile(fx.repo, "src/b.ts", "export const y = 2;\n");
 
     // Act
-    await preUnderHeldLock(fx, "src/a.ts");
+    await preUnderHeldLock(fx, t1);
     await writeRepoFile(fx.repo, "src/a.ts", "export const x = 100;\n");
     const explanation = await allocateSeq(fx.home, SESSION_ID, 1);
-    await pre(fx, "src/b.ts");
-    await post(fx, "src/a.ts");
+    await pre(fx, t2);
+    await post(fx, t1);
     await writeRepoFile(fx.repo, "src/b.ts", "export const y = 200;\n");
-    await post(fx, "src/b.ts");
+    await post(fx, t2);
 
     // Assert: on the hub's own comparison, not on the connector's.
     const edit = await targetFor(fx, "src/a.ts");
@@ -236,20 +260,55 @@ describe("a window is paired to the tool that opened it", () => {
     expect(hubOrders(explanation!.from, edit.seq)).not.toBe(-1);
   });
 
+  test("an identical twin call does not lend a refused tool its window", async () => {
+    // Arrange: the case a digest of tool_name + tool_input cannot see. The
+    // SAME edit issued twice in one batch — same tool, same input, two calls
+    // with two ids. T1's open is refused, its edit lands, the explanation is
+    // published, and only then does the twin T2 open. Keyed by the input, T1's
+    // close found T2's entry and took its floor: a position later than the
+    // explanation, so the hub answered -1. Measured through a real hub before
+    // this key existed. The twin's own target is deduplicated away (same
+    // file), so the foreign floor was the only bracket the edit ever had.
+    const fx = await fixture("pairing-twin");
+    const t1: Call = { file: "src/a.ts", id: "toolu_twin_1" };
+    const t2: Call = { file: "src/a.ts", id: "toolu_twin_2" };
+    await writeRepoFile(fx.repo, "src/a.ts", "export const x = 1;\n");
+
+    // Act
+    await preUnderHeldLock(fx, t1);
+    await writeRepoFile(fx.repo, "src/a.ts", "export const x = 100;\n");
+    const explanation = await allocateSeq(fx.home, SESSION_ID, 1);
+    await pre(fx, t2);
+    await post(fx, t1);
+    await post(fx, t2);
+
+    // Assert: T1 opened nothing, so it brackets nothing — and the hub refuses
+    // rather than exonerates.
+    const edit = await targetFor(fx, "src/a.ts");
+    expect(edit.seq.after).toBeUndefined();
+    expect(explanation).not.toBeNull();
+    expect(hubOrders(explanation!.from, edit.seq)).toBeNull();
+    // ...and T2's own close still drained T2's own entry: nothing leaks.
+    const state = await readSessionState(fx.home, SESSION_ID);
+    expect(state?.toolWindows).toEqual([]);
+  });
+
   test("a parallel tool keeps its OWN bracket rather than losing it to a sibling", async () => {
     // Arrange: the same interleaving, seen from T2. T1's close used to drain
     // the only open window — T2's — so T2's PostToolUse found none and stamped
     // the upper bound the bracket exists to replace.
     const fx = await fixture("pairing-sibling");
+    const t1: Call = { file: "src/a.ts", id: "toolu_sibling_1" };
+    const t2: Call = { file: "src/b.ts", id: "toolu_sibling_2" };
     await writeRepoFile(fx.repo, "src/a.ts", "export const x = 1;\n");
     await writeRepoFile(fx.repo, "src/b.ts", "export const y = 2;\n");
 
     // Act
-    await preUnderHeldLock(fx, "src/a.ts");
-    await pre(fx, "src/b.ts");
-    await post(fx, "src/a.ts");
+    await preUnderHeldLock(fx, t1);
+    await pre(fx, t2);
+    await post(fx, t1);
     await writeRepoFile(fx.repo, "src/b.ts", "export const y = 200;\n");
-    await post(fx, "src/b.ts");
+    await post(fx, t2);
 
     // Assert
     const kept = await targetFor(fx, "src/b.ts");
@@ -259,23 +318,25 @@ describe("a window is paired to the tool that opened it", () => {
 
   test("two parallel tools each keep their own floor, neither taking the other's", async () => {
     // Arrange: both PreToolUse hooks succeed, so both floors exist and each
-    // belongs to one tool. Sharing the oldest was safe but imprecise; taking
-    // the other tool's is what a key makes impossible.
+    // belongs to one call. Sharing the oldest was safe but imprecise; taking
+    // the other call's is what a key makes impossible.
     const fx = await fixture("pairing-both");
+    const one: Call = { file: "src/one.ts", id: "toolu_both_1" };
+    const two: Call = { file: "src/two.ts", id: "toolu_both_2" };
     await writeRepoFile(fx.repo, "src/one.ts", "export const x = 1;\n");
     await writeRepoFile(fx.repo, "src/two.ts", "export const y = 2;\n");
 
     // Act
-    await pre(fx, "src/one.ts");
-    await pre(fx, "src/two.ts");
-    await post(fx, "src/two.ts");
-    await post(fx, "src/one.ts");
+    await pre(fx, one);
+    await pre(fx, two);
+    await post(fx, two);
+    await post(fx, one);
 
-    // Assert: the second tool's floor is its own, which is the LATER of the two.
-    const one = await targetFor(fx, "src/one.ts");
-    const two = await targetFor(fx, "src/two.ts");
-    expect(one.seq.after).toBe(1);
-    expect(two.seq.after).toBe(2);
+    // Assert: the second call's floor is its own, which is the LATER of the two.
+    const first = await targetFor(fx, "src/one.ts");
+    const second = await targetFor(fx, "src/two.ts");
+    expect(first.seq.after).toBe(1);
+    expect(second.seq.after).toBe(2);
     const state = await readSessionState(fx.home, SESSION_ID);
     expect(state?.toolWindows).toEqual([]);
   });
@@ -288,13 +349,39 @@ describe("a window is paired to the tool that opened it", () => {
     const fx = await fixture("pairing-unopened");
     await writeRepoFile(fx.repo, "src/a.ts", "export const x = 1;\n");
     await writeRepoFile(fx.repo, "src/b.ts", "export const y = 2;\n");
-    await pre(fx, "src/b.ts");
+    await pre(fx, { file: "src/b.ts", id: "toolu_unopened_2" });
 
     // Act: no PreToolUse for THIS call.
-    await post(fx, "src/a.ts");
+    await post(fx, { file: "src/a.ts", id: "toolu_unopened_1" });
 
-    // Assert
+    // Assert: no bracket, stored `observed` by the hub's own mapping — and the
+    // sibling's window is still there for the sibling.
     const target = await targetFor(fx, "src/a.ts");
     expect(target.seq.after).toBeUndefined();
+    expect(row(target.seq).seqKind).toBe("observed");
+    const state = await readSessionState(fx.home, SESSION_ID);
+    expect(state?.toolWindows).toHaveLength(1);
+  });
+
+  test("a host that sends no tool_use_id opens no window and sends no bracket", async () => {
+    // Arrange: the documented refusal. Without the host's id there is no key
+    // that names ONE call, and a key that can name two is how a refused tool
+    // borrowed its twin's floor. So nothing is opened: the edit travels as
+    // the upper bound it is, and the hub refuses rather than guesses.
+    const fx = await fixture("pairing-no-id");
+    const call: Call = { file: "src/a.ts", id: null };
+    await writeRepoFile(fx.repo, "src/a.ts", "export const x = 1;\n");
+
+    // Act
+    await pre(fx, call);
+    const opened = await readSessionState(fx.home, SESSION_ID);
+    await writeRepoFile(fx.repo, "src/a.ts", "export const x = 100;\n");
+    await post(fx, call);
+
+    // Assert
+    expect(opened?.toolWindows).toEqual([]);
+    const target = await targetFor(fx, "src/a.ts");
+    expect(target.seq.after).toBeUndefined();
+    expect(row(target.seq).seqKind).toBe("observed");
   });
 });

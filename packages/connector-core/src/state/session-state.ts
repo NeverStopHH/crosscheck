@@ -477,9 +477,9 @@ const SessionStateObjectSchema = z.looseObject({
    * is an upper bound on an edit already on disk, and an emitter that
    * allocated inside that window holds a LOWER number than a change that came
    * first. `floor` is a position taken BEFORE the tool started and attached to
-   * nothing — a deliberate gap — and `key` is what says WHICH tool it belongs
-   * to: a digest of `tool_name` + canonical `tool_input`, the one thing both
-   * hooks of a call are handed (state/tool-window-key.ts).
+   * nothing — a deliberate gap — and `key` is what says WHICH call it belongs
+   * to: a digest of the host's `tool_use_id`, which both hooks of a call are
+   * handed and no other call is (state/tool-window-key.ts).
    *
    * WHY A LIST AND NOT A FLOOR AND A COUNT. That pair was this field, and it
    * could not name an owner: `openToolWindow` recorded the OLDEST open floor
@@ -491,7 +491,10 @@ const SessionStateObjectSchema = z.looseObject({
    * the hub answered `predeclared`, the value that exonerates, for an
    * explanation written after the change, and the parallel tool LOST its own
    * bracket to that close. Both are pinned in
-   * connector-claude/test/hook-window-pairing.test.ts.
+   * connector-claude/test/hook-window-pairing.test.ts, and so is the reason
+   * the key is the host's id rather than a digest of the call's name and
+   * input: two IDENTICAL calls share such a digest, and a twin whose open was
+   * refused took its sibling's later floor the same way.
    *
    * A STATE FILE FROM BEFORE THIS LIST carries the retired `toolWindowFloor`
    * and `toolWindowOpen` and no list, so its in-flight tools match no key and
@@ -500,13 +503,13 @@ const SessionStateObjectSchema = z.looseObject({
    * keys are DROPPED on read (the preprocess above), so a mid-flight write-back
    * leaves nothing on disk that looks like a window nobody reads.
    *
-   * A LEAKED WINDOW IS SAFE IN THE SAME DIRECTION. A PreToolUse whose
-   * PostToolUse never runs (a failed edit goes to PostToolUseFailure, which
-   * closes nothing) leaves its entry behind, and a later call with the SAME key
-   * then brackets from a floor older than its own — wider, so the hub refuses
-   * where it might have answered. Bounded by MAX_TOOL_WINDOWS, and the
-   * evictions that bound costs are COUNTED rather than inferred from a missing
-   * bracket. The defaults keep every older state file parsing.
+   * A LEAKED WINDOW BRACKETS NOTHING. A PreToolUse whose PostToolUse never
+   * runs (a denied or cancelled tool; a failed edit, which goes to
+   * PostToolUseFailure, which closes nothing) leaves its entry behind, and no
+   * later call carries its id, so it is never matched again. It costs a slot
+   * until MAX_TOOL_WINDOWS evicts it, and the evictions that bound costs are
+   * COUNTED rather than inferred from a missing bracket. The defaults keep
+   * every older state file parsing.
    */
   toolWindows: z
     .array(
@@ -836,14 +839,20 @@ export const openToolWindow = async (
  * the lock refused, or an entry the cap evicted. Null is what makes the
  * position travel as the upper bound it is.
  *
- * THE OLDEST MATCH, and that is not a detail. Two tool calls with the same name
- * and the same input digest to ONE key, and every closer in that group must get
- * the group's earliest floor. Handing the second closer the younger floor
- * resurrects the whole defect: a position allocated between the two opens sits
- * BELOW that floor, and the hub reads an explanation written while both tools
- * ran as preceding an edit that may have come first. Too early widens the
- * interval and makes the hub refuse; too late lets it answer wrongly, and a
- * position that might be wrong is worse than an absent one.
+ * THE OLDEST MATCH, and that is not a detail. The key names ONE call (the
+ * host's `tool_use_id`), so more than one entry under it means that one call
+ * opened more than once — a double-wired install runs PreToolUse once per
+ * wiring — and every entry is then that call's own floor: the oldest is the
+ * widest interval the call is entitled to, and the interval only ever widens.
+ * The younger floor would be the rule that failed when the key could name two
+ * calls: a position allocated between the two opens sits BELOW it, and the hub
+ * reads an explanation written while both tools ran as preceding an edit that
+ * may have come first. Too early widens the interval and makes the hub refuse;
+ * too late lets it answer wrongly, and a position that might be wrong is worse
+ * than an absent one. connector-core/test/tool-window-pairing.test.ts proves
+ * the rule over pairs — and pins the one thing no close-time rule survives,
+ * two DIFFERENT calls under one key with one open refused, which is why the key
+ * is the host's id and not a digest of the call.
  */
 export const toolWindowFloorFor = (
   state: SessionState,
@@ -856,13 +865,14 @@ export const toolWindowFloorFor = (
  * of PostToolUse's three exits fold this into an `updateSessionState` transform
  * that is already changing other counters, and a full-state spread there would
  * put every one of them back. Exported because those exits emit nothing and
- * must still drain the entry: a window left open only ever makes later
- * comparisons refuse, but it makes them refuse for the rest of the session.
+ * must still drain the entry: a window left open brackets nothing, since no
+ * later call carries its key, but it holds a slot in a capped list until the
+ * cap evicts it and counts a dropped bracket that dropped nothing.
  *
- * THE YOUNGEST MATCH IS THE ONE REMOVED, so a colliding group's earliest floor
- * survives until the group is empty and `toolWindowFloorFor` keeps answering
- * with it. No match removes nothing: a key this session never opened must not
- * drain a window belonging to something else.
+ * THE YOUNGEST MATCH IS THE ONE REMOVED, so the earliest floor under a key
+ * survives until every entry under it is closed and `toolWindowFloorFor` keeps
+ * answering with it. No match removes nothing: a key this session never opened
+ * must not drain a window belonging to something else.
  */
 export const closedToolWindow = (
   state: SessionState,
@@ -890,9 +900,10 @@ export const closedToolWindow = (
  *
  * The range comes back carrying the floor THIS tool's PreToolUse recorded, so
  * every record built from it says which window its edit happened in.
- * `windowKey` is null for an emitter that has no window by construction, and a
- * key with no matching entry behaves identically: no bracket, no removal, and
- * then this is `allocateSeq` with a different name.
+ * `windowKey` is null for an emitter that has no window by construction and
+ * for a call whose host sent no `tool_use_id`, and a key with no matching
+ * entry behaves identically: no bracket, no removal, and then this is
+ * `allocateSeq` with a different name.
  *
  * NOT THE MCP-SIDE `allocateToolSeq` (mcp/tools/shared.ts): that one takes a
  * tool context and three arguments, has no window, and is a different function

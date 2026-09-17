@@ -1,12 +1,12 @@
 /**
  * THE PAIRING RULE ITSELF, at the allocator rather than through the hooks.
  *
- * Two cases cannot be driven from PostToolUse and must still be pinned. The
- * first is a KEY COLLISION: two tool calls with the same `tool_name` and the
- * same `tool_input` digest to one key, and because they name the same file the
- * second one's target is deduplicated away before a bracket could be read off
- * the spool. The second is the CAP: the list is bounded, so an eviction has to
- * be observable and counted rather than inferred from a missing bracket.
+ * The hooks key a window by the host's `tool_use_id` (state/tool-window-key.ts),
+ * which names ONE call. This file pins what the allocator does with such keys —
+ * the cap, the legacy fields, a key nothing opened — and then proves over pairs
+ * that no close can be more certain than the call that made it: every answer the
+ * hub gives from a bracket the allocator handed out is the answer it would give
+ * with full information about which floor is whose, or a refusal.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFile, rm } from "node:fs/promises";
@@ -30,6 +30,9 @@ import { makeHome } from "./helpers.ts";
 const SESSION_ID = "tool-window-uuid";
 const HUB = "http://127.0.0.1:1";
 const EPOCH = "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+
+/** What PostToolUse reserves per call — any block size proves the same thing. */
+const CLOSE_BLOCK = 1;
 
 const paths: string[] = [];
 
@@ -58,23 +61,43 @@ const fixture = async (label: string): Promise<string> => {
   return home;
 };
 
-const KEY = toolWindowKey("Edit", { file_path: "/tmp/acme-api/src/a.ts" });
+/** The key a hook derives for one call — the host's id, never the input. */
+const keyOf = (toolUseId: string): string => {
+  const key = toolWindowKey("Edit", toolUseId);
+  if (key === null) {
+    throw new Error(`no key for ${toolUseId}`);
+  }
+  return key;
+};
 
-describe("a window is found by its own tool's key", () => {
-  test("two identical parallel calls both bracket from the OLDER floor", async () => {
-    // Arrange: T1 opens, a real position lands, T2 opens under the SAME key.
-    // Handing the second closer the YOUNGER floor puts the racing position
-    // BELOW its bracket, and the hub then reads an explanation written while
-    // both tools ran as preceding an edit that may have come first. Every
-    // closer in a colliding group therefore gets the group's oldest floor.
-    const home = await fixture("window-collide");
+const KEY = keyOf("toolu_01ALPHA");
+
+describe("a window is found by its own call's key", () => {
+  test("a call with no host id has no key, and twins with two ids have two", () => {
+    // The refusal and the fix in one place. No id → no key → no window, so the
+    // edit travels as the upper bound it is. Two IDENTICAL calls — same tool,
+    // same input — are two keys as long as the host gave them two ids, which
+    // is exactly what a digest of the input could not tell apart.
+    expect(toolWindowKey("Edit", undefined)).toBeNull();
+    expect(toolWindowKey("Edit", "")).toBeNull();
+    expect(keyOf("toolu_01TWIN_A")).not.toBe(keyOf("toolu_01TWIN_B"));
+    expect(keyOf("toolu_01TWIN_A")).toBe(keyOf("toolu_01TWIN_A"));
+    expect(keyOf("toolu_01TWIN_A")).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test("one call opened twice brackets both closes from its OLDER floor", async () => {
+    // Arrange: a double-wired install runs PreToolUse once per wiring, so ONE
+    // call opens twice under ONE key, with a real position landing between the
+    // two opens. Both floors are that call's own and both precede its edit;
+    // the older is the wider interval, and a wider interval can only refuse.
+    const home = await fixture("window-double-wired");
     const first = await openToolWindow(home, SESSION_ID, KEY);
     const raced = await allocateSeq(home, SESSION_ID, 1);
     const second = await openToolWindow(home, SESSION_ID, KEY);
 
-    // Act
-    const closedFirst = await allocateToolSeq(home, SESSION_ID, 1, KEY);
-    const closedSecond = await allocateToolSeq(home, SESSION_ID, 1, KEY);
+    // Act: the two PostToolUse runs of the same call.
+    const closedFirst = await allocateToolSeq(home, SESSION_ID, CLOSE_BLOCK, KEY);
+    const closedSecond = await allocateToolSeq(home, SESSION_ID, CLOSE_BLOCK, KEY);
 
     // Assert
     expect(first).toBe(1);
@@ -86,14 +109,13 @@ describe("a window is found by its own tool's key", () => {
   });
 
   test("a key nothing opened takes no bracket and removes no window", async () => {
-    // Arrange: Bash, a hook installed mid-tool, an evicted entry. The window
-    // that IS open belongs to someone else and must survive.
+    // Arrange: Bash, a hook installed mid-tool, a refused open, an evicted
+    // entry. The window that IS open belongs to another call and must survive.
     const home = await fixture("window-foreign-key");
     await openToolWindow(home, SESSION_ID, KEY);
-    const other = toolWindowKey("Write", { file_path: "/tmp/acme-api/src/b.ts" });
 
     // Act
-    const range = await allocateToolSeq(home, SESSION_ID, 1, other);
+    const range = await allocateToolSeq(home, SESSION_ID, CLOSE_BLOCK, keyOf("toolu_01OTHER"));
 
     // Assert
     expect(range?.after).toBeUndefined();
@@ -102,10 +124,11 @@ describe("a window is found by its own tool's key", () => {
 
   test("the cap evicts the OLDEST window and counts the eviction", async () => {
     // Arrange: a session whose PreToolUse hooks outnumber their PostToolUse
-    // ones — every failed edit leaks one entry — must cost bounded memory.
+    // ones — every denied, cancelled or failed edit leaves one entry — must
+    // cost bounded memory.
     const home = await fixture("window-cap");
     const keys = Array.from({ length: MAX_TOOL_WINDOWS + 1 }, (_, index) =>
-      toolWindowKey("Edit", { file_path: `/tmp/acme-api/src/${String(index)}.ts` }),
+      keyOf(`toolu_01CAP${String(index)}`),
     );
 
     // Act
@@ -118,7 +141,7 @@ describe("a window is found by its own tool's key", () => {
     const state = await readSessionState(home, SESSION_ID);
     expect(state?.toolWindows).toHaveLength(MAX_TOOL_WINDOWS);
     expect(state?.toolWindowEvictions).toBe(1);
-    const evicted = await allocateToolSeq(home, SESSION_ID, 1, keys[0]!);
+    const evicted = await allocateToolSeq(home, SESSION_ID, CLOSE_BLOCK, keys[0]!);
     expect(evicted?.after).toBeUndefined();
   });
 
@@ -135,7 +158,7 @@ describe("a window is found by its own tool's key", () => {
     } as SessionStateInput);
 
     // Act
-    const range = await allocateToolSeq(home, SESSION_ID, 1, KEY);
+    const range = await allocateToolSeq(home, SESSION_ID, CLOSE_BLOCK, KEY);
 
     // Assert
     expect(range?.after).toBeUndefined();
@@ -154,19 +177,15 @@ describe("a window is found by its own tool's key", () => {
  * operational form (docs/1.0/README.md): "Ambiguous or unmatched closure can
  * only reduce certainty. It can never increase it."
  *
- * The oldest-match rule above is a CHOICE made under ambiguity: two tool calls
- * with one key, and no way to tell which closer owns which floor. A choice
- * made under ambiguity is exactly where the defect this branch closes lived —
- * a foreign PostToolUse turned a state that was not provable at all into an
- * exonerating `predeclared` — so the rule is not allowed to rest on the
- * sentence that says it is conservative. It is proved over PAIRS: one arm
- * where the two calls are distinguishable, one arm where the SAME allocator
- * traffic collides on one key, and the hub asked the same question of both.
- *
- * WHAT COUNTS AS CONSERVATIVE, stated as the assertion and not as prose: for
- * every question, the ambiguous arm answers what the unambiguous arm answered,
- * or it REFUSES. There is no question it answers where the other refused, and
- * none it answers differently. `null` is the only value it may add.
+ * PROVED OVER PAIRS, NOT ASSERTED. Every script below runs the real allocator,
+ * and every answer the hub gives from the bracket it handed out is compared
+ * with the answer the hub gives from the ORACLE bracket for the same call: the
+ * floor that call's own open actually consumed (`openToolWindow`'s return
+ * value), or no bracket when its open never happened or was evicted. The
+ * oracle is sound by construction — its floor was taken before the edit and
+ * its closing position after it — so "equal to the oracle, or a refusal" is
+ * the definition of conservative, and it is checked for EVERY position the
+ * session handed out rather than for one hand-picked question.
  */
 const USABLE_ORDER: SessionCausalOrder = {
   sessionId: "s",
@@ -179,15 +198,15 @@ const USABLE_ORDER: SessionCausalOrder = {
 const PRECEDES: -1 = -1;
 
 /** A tool-lane row as the hub stores it — `seqKind` from the hub's own map. */
-const editRow = (range: SeqRange): OrderedEvent => ({
+const editRow = (range: SeqRange, after: number | undefined): OrderedEvent => ({
   sessionId: "s",
   seqEpoch: EPOCH,
   seqN: range.from + range.count - 1,
-  seqAfter: range.after ?? null,
+  seqAfter: after ?? null,
   seqKind: seqKindFor("tool_edit", {
     epoch: EPOCH,
     n: range.from,
-    ...(range.after === undefined ? {} : { after: range.after }),
+    ...(after === undefined ? {} : { after }),
   }),
   seqReason: "sequenced",
   observedAt: new Date(),
@@ -204,87 +223,244 @@ const pointRow = (n: number): OrderedEvent => ({
   observedAt: new Date(),
 });
 
-interface Arm {
-  /** The racing explanation's position — identical in both arms. */
-  readonly raced: number;
-  /** The two closers, in the order their PostToolUse ran. */
-  readonly closed: readonly SeqRange[];
+/** What happened to a call's PreToolUse. */
+type OpenFate = "opened" | "refused" | "evicted";
+
+const FATES: readonly OpenFate[] = ["opened", "refused", "evicted"];
+
+/** One step of a script: a call's open or close, or the explanation. */
+type Step = "openA" | "openB" | "closeA" | "closeB" | "explain";
+
+/**
+ * Every order of the five steps in which each call opens before it closes —
+ * thirty of them, the explanation landing everywhere it can.
+ */
+const interleavings = (): readonly (readonly Step[])[] => {
+  const steps: readonly Step[] = ["openA", "openB", "closeA", "closeB", "explain"];
+  const permute = (rest: readonly Step[]): readonly (readonly Step[])[] =>
+    rest.length === 0
+      ? [[]]
+      : rest.flatMap((step, index) =>
+          permute([...rest.slice(0, index), ...rest.slice(index + 1)]).map(
+            (tail) => [step, ...tail],
+          ),
+        );
+  return permute(steps).filter(
+    (order) =>
+      order.indexOf("openA") < order.indexOf("closeA") &&
+      order.indexOf("openB") < order.indexOf("closeB"),
+  );
+};
+
+interface Closed {
+  /** The range the allocator handed this call's close, bracket included. */
+  readonly range: SeqRange;
+  /** The floor this call's own open consumed, or none. */
+  readonly oracle: number | undefined;
+}
+
+interface Outcome {
+  readonly script: string;
+  readonly closed: readonly Closed[];
+  /** Every position the session handed out, each asked as a point. */
+  readonly highest: number;
+  /** Entries the cap pushed out during the script — anybody's. */
+  readonly evictions: number;
 }
 
 /**
- * ONE allocator script, run with whichever keys the caller hands it. The
- * traffic is identical in both arms — same opens, same racing allocation, same
- * closes, so every POSITION matches and only the brackets can differ.
+ * ONE SCRIPT against the real allocator. `keys` says what the hooks would
+ * derive for the two calls; `fates` what happened to each call's open. An
+ * eviction is a real one: the call opens, then MAX_TOOL_WINDOWS other calls
+ * open behind it and push it out before anything else happens.
  */
-const runArm = async (
-  label: string,
-  keys: readonly [string, string],
-): Promise<Arm> => {
-  const home = await fixture(label);
-  await openToolWindow(home, SESSION_ID, keys[0]);
-  const raced = await allocateSeq(home, SESSION_ID, 1);
-  await openToolWindow(home, SESSION_ID, keys[1]);
-  const second = await allocateToolSeq(home, SESSION_ID, 1, keys[1]);
-  const first = await allocateToolSeq(home, SESSION_ID, 1, keys[0]);
-  if (raced === null || second === null || first === null) {
-    throw new Error(`${label}: the allocator refused with no lock contention`);
+const runScript = async (
+  order: readonly Step[],
+  keys: { readonly A: string; readonly B: string },
+  fates: { readonly A: OpenFate; readonly B: OpenFate },
+): Promise<Outcome> => {
+  const home = await makeHome("window-pairs");
+  try {
+    await writeSessionState(home, stateFor());
+    const oracle: { A?: number; B?: number } = {};
+    const closed: Closed[] = [];
+    const open = async (call: "A" | "B"): Promise<void> => {
+      if (fates[call] === "refused") {
+        return;
+      }
+      const taken = await openToolWindow(home, SESSION_ID, keys[call]);
+      if (taken === null) {
+        throw new Error("the allocator refused with no lock contention");
+      }
+      if (fates[call] === "evicted") {
+        for (let index = 0; index < MAX_TOOL_WINDOWS; index += 1) {
+          await openToolWindow(home, SESSION_ID, keyOf(`toolu_01FILL${call}${String(index)}`));
+        }
+        return;
+      }
+      oracle[call] = taken;
+    };
+    const close = async (call: "A" | "B"): Promise<void> => {
+      const range = await allocateToolSeq(home, SESSION_ID, CLOSE_BLOCK, keys[call]);
+      if (range === null) {
+        throw new Error("the allocator refused with no lock contention");
+      }
+      closed.push({ range, oracle: oracle[call] });
+    };
+    for (const step of order) {
+      if (step === "openA") await open("A");
+      if (step === "openB") await open("B");
+      if (step === "closeA") await close("A");
+      if (step === "closeB") await close("B");
+      if (step === "explain") await allocateSeq(home, SESSION_ID, 1);
+    }
+    const state = await readSessionState(home, SESSION_ID);
+    return {
+      script: `${order.join(" ")} [A ${fates.A}, B ${fates.B}]`,
+      closed,
+      highest: state?.eventSeq ?? 0,
+      evictions: state?.toolWindowEvictions ?? 0,
+    };
+  } finally {
+    await rm(home, { recursive: true, force: true });
   }
-  return { raced: raced.from, closed: [second, first] };
 };
 
-describe("an ambiguous key can only cost certainty", () => {
-  test("a colliding key never answers where distinct keys refused", async () => {
-    // Arrange: the same session, the same allocations, the same questions —
-    // once with two tools the key can tell apart, once with two the key
-    // cannot.
-    const distinct = await runArm("conservative-distinct", [
-      toolWindowKey("Edit", { file_path: "/tmp/acme-api/src/a.ts" }),
-      toolWindowKey("Edit", { file_path: "/tmp/acme-api/src/b.ts" }),
-    ]);
-    const collided = await runArm("conservative-collided", [KEY, KEY]);
+interface Divergence {
+  readonly script: string;
+  readonly question: number;
+  readonly answer: number | null;
+  readonly oracle: number | null;
+}
 
-    // Act: ask the hub about every position the session handed out, for both
-    // closers, in both arms. A single hand-picked question could be the one
-    // the rule happens to be safe for.
-    const highest = Math.max(
-      ...distinct.closed.map((range) => range.from + range.count - 1),
-    );
-    const questions = Array.from({ length: highest }, (_, index) => index + 1);
-    const verdicts = (arm: Arm): readonly (number | null)[] =>
-      arm.closed.flatMap((range) =>
-        questions.map((n) => compareEvents(USABLE_ORDER, pointRow(n), editRow(range))),
-      );
-    const withoutAmbiguity = verdicts(distinct);
-    const withAmbiguity = verdicts(collided);
+/** Every question on which the allocator's answer is neither the oracle's nor a refusal. */
+const divergences = (outcome: Outcome): readonly Divergence[] =>
+  outcome.closed.flatMap((call) =>
+    Array.from({ length: outcome.highest }, (_, index) => index + 1).flatMap(
+      (question) => {
+        const answer = compareEvents(
+          USABLE_ORDER,
+          pointRow(question),
+          editRow(call.range, call.range.after),
+        );
+        const oracle = compareEvents(
+          USABLE_ORDER,
+          pointRow(question),
+          editRow(call.range, call.oracle),
+        );
+        return answer === null || answer === oracle
+          ? []
+          : [{ script: outcome.script, question, answer, oracle }];
+      },
+    ),
+  );
+
+const everyScript = async (
+  keys: { readonly A: string; readonly B: string },
+  fates: readonly OpenFate[],
+): Promise<readonly Outcome[]> => {
+  const outcomes: Outcome[] = [];
+  for (const order of interleavings()) {
+    for (const A of fates) {
+      for (const B of fates) {
+        outcomes.push(await runScript(order, keys, { A, B }));
+      }
+    }
+  }
+  return outcomes;
+};
+
+describe("an ambiguous or unmatched close can only cost certainty", () => {
+  test("one key per call: every close answers what the oracle answers, or refuses", async () => {
+    // Arrange: two calls, two host ids — including two IDENTICAL calls, which
+    // is what the ids are for. Each open succeeds, is refused, or is evicted,
+    // in every order the two calls and the explanation can take.
+    const keys = { A: keyOf("toolu_01PAIR_A"), B: keyOf("toolu_01PAIR_B") };
+
+    // Act
+    const outcomes = await everyScript(keys, FATES);
 
     // Assert, in three parts.
-    // 1. The arms asked the SAME questions of the same numbers, or the
-    //    comparison below would be between two different sessions.
-    expect(collided.raced).toBe(distinct.raced);
-    expect(collided.closed.map((range) => range.from)).toEqual(
-      distinct.closed.map((range) => range.from),
-    );
-    // 2. THE PROPERTY: every ambiguous answer is the unambiguous one or a
-    //    refusal. Never a different answer, never an answer where the other
-    //    refused — so no `predeclared` can be reached only by the ambiguity.
-    expect(withAmbiguity).toHaveLength(withoutAmbiguity.length);
-    for (const [index, answer] of withAmbiguity.entries()) {
-      expect([withoutAmbiguity[index], null]).toContain(answer);
+    // 1. The enumeration is what it says it is.
+    expect(interleavings()).toHaveLength(30);
+    expect(outcomes).toHaveLength(30 * FATES.length * FATES.length);
+    // 2. THE PROPERTY, for every position of every script.
+    expect(outcomes.flatMap(divergences)).toEqual([]);
+    // 3. With a key that names one call the allocator is not merely safe but
+    //    EXACT: a bracket it hands out is always the call's own floor, and
+    //    where the cap evicted nothing it hands out every floor there is. (An
+    //    eviction can push out a call that did open — a sibling's burst of
+    //    opens reaches back past it — and then the call gets none, which the
+    //    property above already allows.)
+    for (const outcome of outcomes) {
+      for (const call of outcome.closed) {
+        if (call.range.after !== undefined || outcome.evictions === 0) {
+          expect(call.range.after).toBe(call.oracle);
+        }
+      }
     }
-    // 3. NOT VACUOUS: the ambiguity really does cost something here, so a
-    //    future rule that quietly stopped widening could not pass part 2 by
-    //    changing nothing at all. The racing explanation is ordered BEFORE the
-    //    second tool's edit when the keys are distinct, and refused when they
-    //    collide — an exoneration withdrawn, which is the direction the fifth
-    //    principle demands.
+    expect(outcomes.some((outcome) => outcome.evictions === 0)).toBe(true);
+  });
+
+  test("one call opened twice: both closes answer as its own floor would, or refuse", async () => {
+    // Arrange: the one way a single key still holds two entries — a
+    // double-wired install — in every place the explanation can land. The
+    // oracle is the call's LATEST open, the narrowest floor that still
+    // precedes its edit; the allocator hands out the oldest.
+    const outcomes: Outcome[] = [];
+    for (let at = 0; at <= 4; at += 1) {
+      const home = await fixture(`window-twice-${String(at)}`);
+      const steps = ["open", "open", "close", "close"];
+      const script = [...steps.slice(0, at), "explain", ...steps.slice(at)];
+      let latest: number | undefined;
+      const closed: Closed[] = [];
+      for (const step of script) {
+        if (step === "explain") {
+          await allocateSeq(home, SESSION_ID, 1);
+        } else if (step === "open") {
+          latest = (await openToolWindow(home, SESSION_ID, KEY)) ?? undefined;
+        } else {
+          const range = await allocateToolSeq(home, SESSION_ID, CLOSE_BLOCK, KEY);
+          closed.push({ range: range!, oracle: latest });
+        }
+      }
+      const state = await readSessionState(home, SESSION_ID);
+      outcomes.push({
+        script: script.join(" "),
+        closed,
+        highest: state?.eventSeq ?? 0,
+        evictions: state?.toolWindowEvictions ?? 0,
+      });
+    }
+
+    // Assert
+    expect(outcomes.flatMap(divergences)).toEqual([]);
+  });
+
+  test("KNOWN LIMIT: a key shared by two calls answers where the oracle refused", async () => {
+    // Arrange: the assumption the key rests on, written down as a test rather
+    // than hoped for. If two DIFFERENT calls ever reached the allocator under
+    // one key — a digest of name and input did exactly that for identical
+    // calls, and a host reusing an id would — then a call whose own open was
+    // refused finds its twin's entry and takes a floor from after its edit.
+    // No close-time rule can repair that, because the close cannot see whose
+    // entry it found. Both opens succeeding stays safe; a refusal does not.
+    const shared = { A: KEY, B: KEY };
+
+    // Act
+    const bothOpened = await everyScript(shared, ["opened"]);
+    const withRefusals = await everyScript(shared, ["opened", "refused"]);
+
+    // Assert: safe while every call has its own entry...
+    expect(bothOpened.flatMap(divergences)).toEqual([]);
+    // ...and a stronger answer than the oracle's the moment one does not —
+    // the exonerating one among them, which is the defect this key closes.
+    const stronger = withRefusals.flatMap(divergences);
+    expect(stronger.length).toBeGreaterThan(0);
+    expect(stronger.every((entry) => entry.oracle === null)).toBe(true);
+    expect(stronger.some((entry) => entry.answer === PRECEDES)).toBe(true);
     expect(
-      compareEvents(USABLE_ORDER, pointRow(distinct.raced), editRow(distinct.closed[0]!)),
-    ).toBe(PRECEDES);
-    expect(
-      compareEvents(USABLE_ORDER, pointRow(collided.raced), editRow(collided.closed[0]!)),
-    ).toBeNull();
-    // ...and the bracket it did that with is the WIDER one: an ambiguous floor
-    // is never later than the floor the same closer would have had.
-    expect(collided.closed[0]?.after).toBeLessThan(distinct.closed[0]!.after!);
+      stronger.every((entry) => entry.script.includes("refused")),
+    ).toBe(true);
   });
 });

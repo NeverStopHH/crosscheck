@@ -24,7 +24,7 @@
  *   bun test packages/connector-claude/test/hook-contract.test.ts
  *
  *   field names published in bold rather than in backticks   4 observations flip
- *   every heading promoted one level (`###` → `####`)       33 observations flip
+ *   every heading promoted one level (`###` → `####`)       35 observations flip
  *
  * That direction is a false alarm, not a missed change, so it fails safe: the
  * job goes red, somebody reads the reference and re-records with --write. The
@@ -187,6 +187,20 @@ export const HOOK_PROBES: readonly FieldProbe[] = [
     key: "PostToolUse.input.file_path",
     section: "PostToolUse",
     field: "file_path",
+  },
+  // THE WINDOW PAIRING KEY, read by both halves of the bracket (core
+  // state/tool-window-key.ts). Without it no window is opened and every Claude
+  // edit travels as an upper bound the hub refuses to order — correct, and
+  // silent, which is why the field is watched on BOTH sides it is read from.
+  {
+    key: "PreToolUse.input.tool_use_id",
+    section: "PreToolUse",
+    field: "tool_use_id",
+  },
+  {
+    key: "PostToolUse.input.tool_use_id",
+    section: "PostToolUse",
+    field: "tool_use_id",
   },
   // PostToolUseFailure is where a FAILING tool arrives — PostToolUse fires
   // only on success. The connector reads `error` (the failure text it

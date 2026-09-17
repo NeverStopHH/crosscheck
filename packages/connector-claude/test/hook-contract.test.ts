@@ -57,6 +57,7 @@ import type { MockHub } from "./fixtures/slow-hub.ts";
 import {
   POST_TOOL_USE_INPUT,
   POST_TOOL_USE_INPUT_FAILURE,
+  PRE_TOOL_USE_INPUT,
   PRE_TOOL_USE_OUTPUT,
   SESSION_END_INPUT,
   SESSION_START_INPUT,
@@ -95,6 +96,7 @@ describe("recorded hook payloads are still accepted by our parsers", () => {
   test.each([
     ["SessionStart", SESSION_START_INPUT],
     ["SessionStart with a session title", SESSION_START_INPUT_WITH_TITLE],
+    ["PreToolUse", PRE_TOOL_USE_INPUT],
     ["PostToolUse", POST_TOOL_USE_INPUT],
     ["PostToolUse for a failed Bash call", POST_TOOL_USE_INPUT_FAILURE],
     ["SessionEnd", SESSION_END_INPUT],
@@ -113,6 +115,7 @@ describe("recorded hook payloads are still accepted by our parsers", () => {
   test("carries the event-specific fields each hook reads", () => {
     // Act
     const start = parseHookPayload(asJson(SESSION_START_INPUT_WITH_TITLE));
+    const pre = parseHookPayload(asJson(PRE_TOOL_USE_INPUT));
     const post = parseHookPayload(asJson(POST_TOOL_USE_INPUT));
     const end = parseHookPayload(asJson(SESSION_END_INPUT));
 
@@ -124,6 +127,10 @@ describe("recorded hook payloads are still accepted by our parsers", () => {
       "/home/dev/acme/api/src/rate-limit.ts",
     ]);
     expect(end?.reason).toBe("other");
+    // The tool-window pairing key, on BOTH hooks it is read from: dropped by a
+    // tightened parser, every Claude edit would lose its bracket in silence.
+    expect(pre?.tool_use_id).toBe("toolu_01ABC123");
+    expect(post?.tool_use_id).toBe("toolu_01ABC123");
   });
 
   test("reads success and failure out of a recorded tool_response", () => {
@@ -439,8 +446,9 @@ describe("the drift watcher itself", () => {
       // running extractContract over the merged fixture, never adjusted by
       // hand — 16 before M17, 26 after it, 20 on the other side of the merge,
       // 22 and 27 as the two sides pinned it, and none of those is the answer
-      // for the union of both.
-      33,
+      // for the union of both. 33 became 35 when the tool-window pairing key
+      // added a `tool_use_id` probe to the PreToolUse and PostToolUse sections.
+      35,
     ],
   ] as const)(
     "KNOWN LIMIT: a formatting-only rewrite reports drift (%s)",

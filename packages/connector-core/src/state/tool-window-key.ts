@@ -1,64 +1,60 @@
 /**
- * THE ONE THING BOTH HOOKS OF A TOOL CALL ARE HANDED — and therefore the only
- * way a window can be paired to the tool that opened it.
+ * THE ONE THING THAT NAMES A SINGLE TOOL CALL IN BOTH OF ITS HOOKS — and
+ * therefore the only way a window can be paired to the call that opened it.
  *
  * PreToolUse opens the window an edit will happen in and PostToolUse closes it
- * once the tool has returned, but the host gives the two hooks NO shared tool
- * id: the payload carries `session_id`, `cwd`, `tool_name` and `tool_input`
- * and nothing that identifies this invocation. Before this key the close was
- * driven by `isEditTool(tool_name)` alone and the bracket was the OLDEST open
- * window's floor, so a tool whose own PreToolUse was refused closed a PARALLEL
- * tool's window and stamped its edit with a floor taken AFTER that edit
- * happened — the hub then answered `predeclared`, the value that exonerates,
- * for an explanation written afterwards.
+ * once the tool has returned. The host hands BOTH hooks the same
+ * `tool_use_id`, and no other call carries it: Claude Code's hooks reference
+ * lists it among the PreToolUse input fields ("PreToolUse hooks receive
+ * `tool_name`, `tool_input`, and `tool_use_id`") and shows it in the
+ * PostToolUse and PostToolUseFailure examples (code.claude.com/docs/en/
+ * hooks.md, read 2026-09-17). Read from the installed Claude Code 2.1.258
+ * binary the same day: at both of its tool-execution call sites ONE variable
+ * is passed as `tool_use_id` to all three hook inputs. The weekly
+ * scripts/hook-contract-watch.ts job watches the field in both sections, so a
+ * reference that stops documenting it turns that job red rather than turning
+ * every bracket off in silence.
  *
- * SO THE KEY IS A DIGEST OF THE CALL: `tool_name`, a newline, and the tool
- * input serialised with OBJECT KEYS SORTED. The sort is what makes it survive
- * a re-serialisation — the two hooks are handed the same input, but nothing
- * promises the same byte order — and it is recursive, because a nested object
- * re-orders just as easily as a top-level one.
+ * WHY NOT A DIGEST OF `tool_name` + `tool_input`. That was the key first, on
+ * the premise that the hooks share no id, and it leaves the defect open: two
+ * IDENTICAL calls — the same edit issued twice in one batch — digest to ONE
+ * key. A twin whose own open was refused (a busy lock) then found its
+ * sibling's entry, took a floor recorded AFTER its own edit, and the hub
+ * answered `predeclared` for an explanation written after the change —
+ * measured through a real hub, and pinned in
+ * connector-claude/test/hook-window-pairing.test.ts. No rule applied at the
+ * close can repair a key that names two calls, because the close cannot tell
+ * whether the entry it found is its own. The id can: it names one call.
  *
- * WHAT A MISMATCH COSTS, and why that is the right failure. Two calls with the
- * same name and the same input collide on one key (handled where the window is
- * closed: every closer in a colliding group takes the group's OLDEST floor, so
- * the interval only ever widens). A host that hands PostToolUse an input
- * PreToolUse did not see produces NO match, and no match means no bracket —
- * the upper bound the hub already knows how to refuse, never a floor belonging
- * to something else.
+ * NO ID, NO KEY — AND NO WINDOW. A payload without `tool_use_id` (an older
+ * host, or one that dropped the field) returns null, and a null key opens
+ * nothing and closes nothing. Its edit travels as the upper bound it is and the
+ * hub refuses every happens-before question against it. That is the documented
+ * refusal: the alternative is a key that can name two calls, which is how the
+ * defect above came back.
+ *
+ * WHAT A SURVIVING COLLISION COSTS. One call can still produce two entries
+ * under one key — a double-wired install whose PreToolUse runs twice for the
+ * same call (cli/doctor-global.ts, "a differing spelling runs twice") — and
+ * both floors are then that call's own, so the close takes the OLDER one and
+ * the interval only widens (state/session-state.ts `toolWindowFloorFor`).
+ * Two DIFFERENT calls sharing an id would be a host that broke its own
+ * contract; tool-window-pairing.test.ts pins exactly what that would cost, so
+ * the assumption is written down rather than hoped for.
  *
  * IT IS INTERNAL. The digest lives in the session state and nowhere else: no
- * record carries it, no renderer prints it, nothing ships it to the hub. It is
- * derived from a tool input that may contain anything, so keeping it out of
- * every reader is a privacy rule as much as a design one — sha256 is one-way,
- * but a key nobody reads cannot leak what it was made of either.
+ * record carries it, no renderer prints it, nothing ships it to the hub.
+ * Hashed rather than stored raw so that a host-supplied string of any length
+ * costs one fixed-size entry in a list on the hook's hot path.
  */
 
-/**
- * JSON with every object's keys in sorted order. Arrays keep their order —
- * `["a","b"]` and `["b","a"]` are different inputs — and every non-object
- * value serialises as itself.
- */
-const canonicalJson = (value: unknown): string => {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (typeof value === "object" && value !== null) {
-    const record = value as Record<string, unknown>;
-    const pairs = Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`);
-    return `{${pairs.join(",")}}`;
-  }
-  // `undefined` has no JSON form and a missing `tool_input` is a real payload,
-  // so it is spelled rather than left to `JSON.stringify`'s `undefined`.
-  return value === undefined ? "null" : JSON.stringify(value);
-};
-
-/** The pairing key for one tool call, hex sha256, stable across hooks. */
+/** The pairing key for one tool call, hex sha256 — or null with no host id. */
 export const toolWindowKey = (
   toolName: string | undefined,
-  toolInput: unknown,
-): string =>
-  new Bun.CryptoHasher("sha256")
-    .update(`${toolName ?? ""}\n${canonicalJson(toolInput)}`)
-    .digest("hex");
+  toolUseId: string | undefined,
+): string | null =>
+  toolUseId === undefined || toolUseId.length === 0
+    ? null
+    : new Bun.CryptoHasher("sha256")
+        .update(`${toolName ?? ""}\n${toolUseId}`)
+        .digest("hex");

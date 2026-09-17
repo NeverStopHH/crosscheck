@@ -14,8 +14,8 @@
  * BETWEEN raced it and is refused. The bracket position itself is never
  * attached to a record — it is a deliberate gap, and gaps are legal.
  *
- * THE FLOOR IS THIS TOOL'S OWN, found by the key both of its hooks digest
- * from `tool_name` + `tool_input`. Claude Code runs tools in parallel, and the
+ * THE FLOOR IS THIS CALL'S OWN, found by the key both of its hooks derive
+ * from the host's `tool_use_id`. Claude Code runs tools in parallel, and the
  * earlier rule — the OLDEST open floor, drained by a count — could not name an
  * owner: a tool whose own `openToolWindow` was refused closed a PARALLEL
  * tool's window and took a floor recorded AFTER its own edit. That pairing is
@@ -91,6 +91,11 @@ const fixture = async (label: string): Promise<Fixture> => {
   return { home, repo };
 };
 
+/**
+ * Both hooks of ONE call, which in every test below is the one call that edits
+ * `file` — so the host's `tool_use_id`, the key that pairs the two hooks
+ * (core state/tool-window-key.ts), is derived from the file.
+ */
 const payload = (fx: Fixture, event: string, file: string): string =>
   JSON.stringify({
     session_id: SESSION_ID,
@@ -98,6 +103,7 @@ const payload = (fx: Fixture, event: string, file: string): string =>
     hook_event_name: event,
     tool_name: "Edit",
     tool_input: { file_path: join(fx.repo, file) },
+    tool_use_id: `toolu_${file}`,
     tool_response: {},
   });
 

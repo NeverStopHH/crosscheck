@@ -261,30 +261,40 @@ export const MAX_FIRED_TOOL_CALLS = 256;
 
 /**
  * Tool windows one session may hold OPEN at once (state/session-state.ts).
- * Each is one running tool's bracket — the position its PreToolUse took before
- * the tool started — and it is removed when that tool's PostToolUse closes it.
+ * Each is one running tool call's bracket — the position its PreToolUse took
+ * before the tool started, keyed by the host's `tool_use_id` — and it is
+ * removed when that call's PostToolUse closes it.
  *
  * WHY A CAP AT ALL. Not every open window is closed. A failed edit tool goes
- * to PostToolUseFailure, which closes nothing, and any hook the host drops
- * leaves its entry behind; an uncapped list on the hook's hot path grows for
- * the life of the session. FIFO like MAX_SEEN_TARGETS and MAX_FIRED_TOOL_CALLS.
+ * to PostToolUseFailure, which closes nothing, a denied or cancelled call runs
+ * no post hook at all, and any hook the host drops leaves its entry behind; an
+ * uncapped list on the hook's hot path grows for the life of the session. FIFO
+ * like MAX_SEEN_TARGETS and MAX_FIRED_TOOL_CALLS.
  *
- * IT IS A CAP, NOT A GUARANTEE, and the number it would take to make it one is
- * UNMEASURED: nothing in a hook payload says how many tool calls the host put
- * in this batch, and there is no trustworthy way to observe Claude's maximum
- * from here. So this is chosen from the two things that ARE known. Evicting the
- * oldest costs that tool its bracket and nothing else — its position stays the
- * upper bound it always was and the hub refuses rather than answers — so the
- * cap trades in the safe direction. And the scan it bounds is free at this
- * size: MEASURED 2026-09-17 (bun 1.3.13, M-series Mac) with the find + copy a
- * close performs, 0.21 us at 8 entries, 0.31 at 32, 0.48 at 64, 1.76 at 256,
- * against a 0.26 us digest per hook and a state-lock acquisition three orders
- * of magnitude above all of them. Thirty-two is far above every batch this
- * repo's own hooks and probes produce and still in the free part of that curve.
+ * WHAT THE HOST'S BATCHES DO, as far as it can be read from here. Read from the
+ * installed Claude Code 2.1.258 binary on 2026-09-17: a batch's consecutive
+ * concurrency-safe calls run in parallel, at most
+ * CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY at a time (default 10), and every other
+ * call runs alone. So one agent runs ten calls at once at most by default.
+ * That is not a bound on this list, and it is not claimed as one: PostToolUse
+ * is registered async, so a finished call's window can still be open while the
+ * next ones start; parallel subagents in one session add their own calls; and
+ * the variable is the user's to raise. Thirty-two is over three times the
+ * default, with room for leaked entries.
+ *
+ * IT IS A CAP, NOT A GUARANTEE. Evicting the oldest costs that call its bracket
+ * and nothing else — its position stays the upper bound it always was and the
+ * hub refuses rather than answers — so the cap trades in the safe direction.
+ * And the scan it bounds is free at this size. MEASURED 2026-09-17 (bun 1.3.13,
+ * Apple M4 Max, three runs of a scratch benchmark): the find + copy a close
+ * performs cost 0.12-0.14 us at 8 entries, 0.20-0.22 at 32, 0.34-0.37 at 64 and
+ * 1.41-1.59 at 256; the key digest 0.35 us per hook; and an open plus a close —
+ * two state-lock acquisitions — 867-935 us, several hundred times the list
+ * work both of them do together.
  *
  * WHICH IS WHY EVICTIONS ARE COUNTED (`toolWindowEvictions`) and printed by
- * `doctor`: the right number is unmeasured, and a real install reaching this
- * ceiling is the only thing that can say so.
+ * `doctor`: whether thirty-two is enough on a real install is unmeasured, and
+ * that install reaching this ceiling is the only thing that can say so.
  */
 export const MAX_TOOL_WINDOWS = 32;
 
