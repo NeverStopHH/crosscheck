@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 315
+    # PRINTS: 326
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -172,14 +172,16 @@ jobs:
     # PRINTS: flows/briefing.ts 1
     # PRINTS: flows/capture-targets.ts 1
     # PRINTS: flows/capture-touched-files.ts 1
+    # PRINTS: flows/claim-revalidation.ts 1
     # PRINTS: flows/hint.ts 2
     # PRINTS: flows/solved-hint.ts 4
+    # PRINTS: git/claim-drift.ts 2
     # PRINTS: git/pin-sweep.ts 2
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/delivery.ts 1
     # PRINTS: hints/precision.ts 2
     # PRINTS: hints/render.ts 3
-    # PRINTS: hints/select.ts 9
+    # PRINTS: hints/select.ts 12
     # PRINTS: http/client.ts 1
     # PRINTS: http/hub.ts 3
     # PRINTS: http/latency.ts 1
@@ -220,6 +222,8 @@ jobs:
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/routes/pins.ts 1
     # PRINTS: packages/server/src/routes/search.ts 1
+    # PRINTS: packages/server/src/services/claim-revalidations.ts 2
+    # PRINTS: packages/server/src/services/claim-validity.ts 2
     # PRINTS: packages/server/src/services/conference.ts 2
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
@@ -231,7 +235,7 @@ jobs:
     # PRINTS: packages/server/src/services/pins.ts 1
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
-    # PRINTS: packages/server/src/services/record-handlers.ts 1
+    # PRINTS: packages/server/src/services/record-handlers.ts 2
     # PRINTS: packages/server/src/services/records.ts 1
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/search-tokens.ts 4
@@ -252,6 +256,10 @@ jobs:
     # PRINTS: capture-health.ts 2
     # PRINTS: capture-targets.ts 1
     # PRINTS: capture-touched-files.ts 1
+    # PRINTS: claim-drift.ts 2
+    # PRINTS: claim-revalidation.ts 1
+    # PRINTS: claim-revalidations.ts 2
+    # PRINTS: claim-validity.ts 2
     # PRINTS: client.ts 1
     # PRINTS: conference-cost.ts 1
     # PRINTS: conference.ts 12
@@ -304,7 +312,7 @@ jobs:
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 1
-    # PRINTS: record-handlers.ts 1
+    # PRINTS: record-handlers.ts 2
     # PRINTS: records.ts 1
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
@@ -318,7 +326,7 @@ jobs:
     # PRINTS: search-tokens.ts 4
     # PRINTS: search.ts 11
     # PRINTS: secret-scan.ts 1
-    # PRINTS: select.ts 9
+    # PRINTS: select.ts 12
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 2
     # PRINTS: session-state.ts 2

@@ -4785,6 +4785,143 @@ export const MUTATIONS: readonly Mutation[] = [
       "52 pins are absent from the listing and nothing says so, which on a " +
       "five-year repo is the steady state rather than the edge case",
   },
+  {
+    // 1.0 spec 02 CCB-1. The code axis of the substance gate: a claim whose
+    // observation point is unknown may not be presented as a current cause.
+    label: "a claim bound to no commit is injected as substance again",
+    file: `${CORE}/src/hints/select.ts`,
+    from: '    validity.commitBinding !== "none" && !NON_CURRENT_STATES.has(validity.state)',
+    to: "    !NON_CURRENT_STATES.has(validity.state)",
+    test: `${CORE}/test/claim-substance-gate.test.ts`,
+    because:
+      "unknown fails OPEN on the code axis: a claim nobody can ever " +
+      "revalidate, because there is no commit to revalidate it against, " +
+      "enters a teammate's prompt as a full body under full trust labels",
+  },
+  {
+    // 1.0 spec 02 CCB-7. The hub's one authoritative verdict, dropped.
+    label: "the substance gate stops reading the hub's validity verdict",
+    file: `${CORE}/src/hints/select.ts`,
+    from: '    validity.commitBinding !== "none" && !NON_CURRENT_STATES.has(validity.state)',
+    to: '    validity.commitBinding !== "none"',
+    test: `${CORE}/test/claim-substance-gate.test.ts`,
+    because:
+      "a root cause recorded in April against a file rewritten in June is " +
+      "injected in July unqualified — AT-2's whole subject — and a hub " +
+      "forging a clean status past the superseding edge is believed",
+  },
+  {
+    // The connector-side status check spec 02 §5 asks to DELETE, kept as
+    // defence in depth. Anchored so "it changes nothing" stays testable.
+    label: "the forging-hub lock on a superseded status is deleted",
+    file: `${CORE}/src/hints/select.ts`,
+    from: '  claim.status !== "superseded" &&',
+    to: "",
+    test: `${CORE}/test/claim-substance-gate.test.ts`,
+    because:
+      "a hub asserting `status: superseded` beside a `current` validity is " +
+      "asserting two contradictory things, and the connector believes the " +
+      "half that puts a retracted claim back into the prompt lane",
+  },
+  {
+    // 1.0 spec 02 CCB-3. AT-2 requires the downgrade to NAME the commits.
+    label: "a downgrade says the code moved and names no commit",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "    touchingCommits: hashes.slice(0, MAX_CLAIM_TOUCHING_COMMITS),",
+    to: "    touchingCommits: [],",
+    test: `${CORE}/test/claim-drift.test.ts`,
+    because:
+      "AT-2 asks the downgrade to name the commits that caused it; a bare " +
+      "`changed` is the superstition it replaces, one axis over",
+  },
+  {
+    // 1.0 spec 02 CCB-5. A question git declined to answer is not an answer.
+    label: "a git call that failed is read as an untouched surface",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "  if (!listed.ok) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/claim-drift.test.ts`,
+    because:
+      "a shallow clone, a missing object or an exhausted deadline vouches " +
+      "`unchanged` for a surface nobody measured — the one direction §3.6 " +
+      "spends a second git call to avoid",
+  },
+  {
+    // 1.0 spec 02 CCB-9. A bound must not be spent at random.
+    label: "the revalidation bound is spent in whatever order the tree arrived",
+    file: `${CORE}/src/flows/claim-revalidation.ts`,
+    from: "  const ordered = [...byKey.values()].sort((a, b) => b.newestAt - a.newestAt);",
+    to: "  const ordered = [...byKey.values()];",
+    test: `${CORE}/test/claim-revalidation-pull.test.ts`,
+    because:
+      "capture-health's rule — a bound must not be spent at random — and a " +
+      "tree past the cap then measures whichever groups the hub happened to " +
+      "list first while reporting the same revalidated/total either way",
+  },
+  {
+    // 1.0 spec 02 CCB-10. The one rule without which AT-2's gate is an
+    // agent's to pull open: the UPSERT moves validity only toward less-current.
+    label: "a revalidation walks a stale claim back into the prompt lane",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "          setWhere: sql`${claimRevalidations.result} <> 'changed' OR excluded.result = 'changed'`,",
+    to: "          setWhere: sql`true`,",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "the developer bearer key sits in plaintext in ~/.crosscheck/config.json, " +
+      "so the agent that wrote a claim can report `unchanged` about its own " +
+      "claim, overwrite a `changed` reading and restore the substance lane",
+  },
+  {
+    // 1.0 spec 02 CCB-6. A verdict must not outlive the evidence it came from.
+    label: "a revalidation verdict outlives the reading it came from",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "      .where(lt(claimRevalidations.revalidatedAt, retentionCutoff))",
+    to: "      .where(lt(claimRevalidations.revalidatedAt, new Date(0)))",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a reading taken against a ref commit the repo left behind months ago " +
+      "keeps answering `current`, which is the stored-verdict defect derived " +
+      "state exists to prevent",
+  },
+  {
+    // 1.0 spec 02 CCB-4. The verdict comes from the measurement, not from
+    // the fact that one was taken.
+    label: "any reading at all is read as a downgrade",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: '  if (revalidation?.result === "changed") {',
+    to: "  if (revalidation !== undefined) {",
+    test: `${SERVER}/test/claim-validity.test.ts`,
+    because:
+      "an untouched surface reported `unchanged` reads `stale`, so the first " +
+      "pull of any tree demotes every claim in it and the gate everybody " +
+      "relies on stops distinguishing code that moved from code that did not",
+  },
+  {
+    // The kind carve-out behind `invalidated`. Without it every piece of
+    // negative knowledge is invalidated by its own natural status.
+    label: "a rejected approach is invalidated by its own status",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "  claim.kind !== REJECTION_IS_THE_FINDING_KIND;",
+    to: "  true;",
+    test: `${SERVER}/test/claim-validity.test.ts`,
+    because:
+      "`rejected` is a rejected_approach's natural status, so DESIGN.md §4's " +
+      "privileged negative lane reads `invalidated` from the moment it is " +
+      "written — never stale, never naming the commits that rewrote its code",
+  },
+  {
+    // 1.0 spec 02 §3.1's third branch. base_commit is `text NOT NULL` on the
+    // wire and this repo's own CLI stores a label in it.
+    label: "a session base commit that is not a sha is bound to anyway",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "  return isBindableCommit(baseCommit)",
+    to: "  return baseCommit.length > 0",
+    test: `${SERVER}/test/claim-binding-ingest.test.ts`,
+    because:
+      "`crosscheck conference` registers its session with the literal " +
+      "\"conference\", and the NO_COMMIT_SHA placeholder is seven hex " +
+      "characters, so both reach git as an object name and read as bound",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -4888,6 +5025,9 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 3
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
+ * PRINTS: packages/connector-core/test/claim-drift.test.ts 2
+ * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 1
+ * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
@@ -4931,6 +5071,9 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
+ * PRINTS: packages/server/test/claim-revalidations.test.ts 2
+ * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
