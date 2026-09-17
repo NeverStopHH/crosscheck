@@ -104,6 +104,43 @@ describe("SEQ-4 — a re-fire must not restart the counter", () => {
     }
   });
 
+  test("a re-fire carries the open windows and the evictions that bounded them", async () => {
+    // Arrange: a tool is running across the compact — its PreToolUse paid for
+    // a floor — and the cap has already pushed two windows out this session.
+    // The windows are what the next PostToolUse brackets from; the count is
+    // the only evidence that can ever say the cap is too small, and a counter
+    // that resets on every compact cannot say it.
+    const home = await makeHome("seq-carry-windows");
+    const open = [{ key: "a".repeat(64), floor: 3 }];
+    try {
+      await writeSessionState(
+        home,
+        stateInput({
+          seqEpoch: EPOCH,
+          eventSeq: 7,
+          toolWindows: open,
+          toolWindowEvictions: 2,
+        }),
+      );
+
+      // Act
+      await publishSessionState(
+        home,
+        stateInput({
+          seqEpoch: "11111111-2222-4333-8444-555555555555",
+          eventSeq: 0,
+        }),
+      );
+
+      // Assert
+      const after = await readSessionState(home, HOST_KEY);
+      expect(after?.toolWindows).toEqual(open);
+      expect(after?.toolWindowEvictions).toBe(2);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   test("a re-fire bound elsewhere keeps the new fire's own epoch and counter", async () => {
     // Arrange: a state file bound to ANOTHER repo is another session's, and
     // the first-wins rule decides those — carrying its counter would splice

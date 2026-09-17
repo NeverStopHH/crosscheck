@@ -5056,52 +5056,267 @@ export const MUTATIONS: readonly Mutation[] = [
     // window opens exactly where the block begins and holds nothing.
     label: "a window opens on a position the block then takes anyway",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "        eventSeq: taken,\n        toolWindowFloor: floor,",
-    to: "        toolWindowFloor: floor,",
+    from: "        eventSeq: taken,\n        toolWindows: appended.slice(evicted),",
+    to: "        toolWindows: appended.slice(evicted),",
     test: `${CONNECTOR}/test/hook-window.test.ts`,
     because:
-      "the edit's interval collapses onto the first position of its own " +
-      "block, so an MCP publish that raced the tool sits BELOW the window " +
+      "UNSAFE: the edit's interval collapses onto the first position of its " +
+      "own block, so an MCP publish that raced the tool sits BELOW the window " +
       "and is ordered before a change that came first",
   },
   {
-    // Parallel tools: the only floor safe for every open window is the OLDEST,
-    // because every tool running behind it started later.
-    label: "a second tool's window opens after the first tool's edit",
+    // The defect the keyed list exists for, put back: the close brackets from
+    // whichever window is OLDEST, whoever opened it. Measured on the real
+    // hooks with the state lock held: `predeclared` for an explanation
+    // written after the edit.
+    label: "a tool whose open was refused takes a parallel tool's floor",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "      const floor = fresh.toolWindowOpen === 0 ? taken : fresh.toolWindowFloor;",
-    to: "      const floor = taken;",
-    test: `${CONNECTOR}/test/hook-window.test.ts`,
+    from: "        windowKey === null ? null : toolWindowFloorFor(fresh, windowKey);",
+    to: "        windowKey === null ? null : (fresh.toolWindows[0]?.floor ?? null);",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
     because:
-      "an edit made by a tool that was already running is bracketed from a " +
-      "moment AFTER it, so a claim published between the two brackets is " +
-      "ordered before an edit that had already happened",
+      "UNSAFE: a call with no window of its own is bracketed from a moment " +
+      "AFTER its edit, so the hub answers `predeclared` — the value that " +
+      "exonerates — for an explanation written once the change was made",
   },
   {
-    // The floor must be released when the last window closes, or every later
-    // edit inherits a floor from a tool that finished long ago.
+    // Spec 01 §3.6: a close must remove what it closed.
     label: "a closed window keeps the floor it opened on",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "    toolWindowFloor: open === 0 ? null : state.toolWindowFloor,",
-    to: "    toolWindowFloor: state.toolWindowFloor,",
-    test: `${CONNECTOR}/test/hook-window.test.ts`,
-    because:
-      "one session-long window swallows every position after the first tool " +
-      "call, so nothing in the session can be ordered against any edit and " +
-      "AT-4 goes silent without saying it has",
-  },
-  {
-    // Spec 01 §3.4's carry rule, for the window pair. A SessionStart re-fire
-    // lands INSIDE a live session and a tool can be running across it.
-    label: "a re-fire closes a window the running tool still needs",
-    file: `${CORE}/src/state/session-state.ts`,
-    from: "        toolWindowFloor: previous.toolWindowFloor,\n        toolWindowOpen: previous.toolWindowOpen,",
+    from: "        ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),\n",
     to: "",
     test: `${CONNECTOR}/test/hook-window.test.ts`,
     because:
-      "a compact or resume mid-tool drops the floor its PreToolUse paid for, " +
-      "and the edit that follows is stamped with the upper bound the bracket " +
-      "exists to replace",
+      "SAFE BUT BLIND: every closed window stays in the capped list, so a " +
+      "busy session fills it with finished calls and the cap starts evicting " +
+      "the windows of calls that are still running",
+  },
+  {
+    // Spec 01 §3.4's carry rule, for the window list. A SessionStart re-fire
+    // lands INSIDE a live session and a tool can be running across it.
+    label: "a re-fire closes a window the running tool still needs",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        toolWindows: previous.toolWindows,\n",
+    to: "",
+    test: `${CONNECTOR}/test/hook-window.test.ts`,
+    because:
+      "SAFE BUT LOSSY: a compact or resume mid-tool drops the floor its " +
+      "PreToolUse paid for, and the edit that follows is stamped with the " +
+      "upper bound the bracket exists to replace",
+  },
+  {
+    // The count is the only evidence the cap's size can ever be judged by.
+    label: "a re-fire resets the tool-window eviction count",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        toolWindowEvictions: previous.toolWindowEvictions,\n",
+    to: "",
+    test: `${CORE}/test/session-seq.test.ts`,
+    because:
+      "SILENT: every compact zeroes the count, so a session that hit the cap " +
+      "before it compacted reports that it never did, and doctor stays quiet " +
+      "about the one limit this build chose rather than measured",
+  },
+  {
+    // A window's floor is the position ITS OWN open consumed — the rule the
+    // shared-oldest floor could not express.
+    label: "a window opens on another call's floor",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      const appended = [...fresh.toolWindows, { key: windowKey, floor: taken }];",
+    to: "      const appended = [...fresh.toolWindows, { key: windowKey, floor: fresh.toolWindows[0]?.floor ?? taken }];",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: every call opened while another runs is bracketed from " +
+      "the oldest open floor, so parallel edits never get their own window " +
+      "and refuse questions their own floor could have answered",
+  },
+  {
+    // MAX_TOOL_WINDOWS. An uncapped list on the hook's hot path grows for the
+    // life of the session.
+    label: "the tool-window list grows without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        toolWindows: appended.slice(evicted),",
+    to: "        toolWindows: appended,",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "COSTLY: every call nothing closes stays in the state file forever, and " +
+      "every hook that reads or writes it pays for all of them",
+  },
+  {
+    // Evictions are counted rather than inferred from a missing bracket.
+    label: "a tool-window eviction goes uncounted",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        toolWindowEvictions: fresh.toolWindowEvictions + evicted,",
+    to: "        toolWindowEvictions: fresh.toolWindowEvictions,",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "SILENT: the cap costs brackets and nothing says so — a missing bracket " +
+      "looks exactly like a call that opened no window, so the one number " +
+      "that could show MAX_TOOL_WINDOWS is too small is never written",
+  },
+  {
+    // Under one key the OLDEST floor is the widest interval; the pairs proof
+    // in tool-window-pairing.test.ts is what licenses the rule.
+    label: "a call opened twice brackets from its younger floor",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  state.toolWindows.find((window) => window.key === windowKey)?.floor ?? null;",
+    to: "  state.toolWindows.findLast((window) => window.key === windowKey)?.floor ?? null;",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "UNSAFE WHEREVER A KEY NAMES TWO CALLS: a position allocated between the " +
+      "two opens sits below the younger floor, so an explanation written " +
+      "while both calls ran is ordered before an edit that may have come first",
+  },
+  {
+    // The youngest entry is the one removed, so the oldest survives until
+    // every entry under the key is closed.
+    label: "a close removes the oldest window of its key",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    (found, window, index) => (window.key === windowKey ? index : found),",
+    to: "    (found, window, index) => (window.key === windowKey && found === -1 ? index : found),",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "UNSAFE WHEREVER A KEY NAMES TWO CALLS: the second close finds only the " +
+      "younger floor and brackets from after an edit that may have happened " +
+      "first — the rule above undone one close later",
+  },
+  {
+    // No match removes nothing.
+    label: "a close with no window of its own drains another call's",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      last === -1\n        ? state.toolWindows\n",
+    to: "      last === -1\n        ? state.toolWindows.slice(1)\n",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: every Bash call and every refused open takes a running " +
+      "edit's window away, and that edit then travels as an upper bound it " +
+      "had already paid to replace",
+  },
+  {
+    // The retired toolWindowFloor / toolWindowOpen are dropped on read.
+    label: "a state file from before the list keeps its dead fields",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  (value) => dropRetiredToolWindowKeys(foldLegacySessionKey(value)),",
+    to: "  (value) => foldLegacySessionKey(value),",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "SILENT: an upgraded session carries a floor and a count nothing reads " +
+      "for the rest of its life — the unread column AT-10 forbids",
+  },
+  {
+    // The key names ONE call only because it carries the host's id.
+    label: "every call of one tool shares one window key",
+    file: `${CORE}/src/state/tool-window-key.ts`,
+    from: "        .update(`${toolName ?? \"\"}\\n${toolUseId}`)",
+    to: "        .update(`${toolName ?? \"\"}\\n`)",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "UNSAFE: a call whose open was refused finds another call's entry — its " +
+      "identical twin's, or any edit's — and the hub answers `predeclared` " +
+      "for an explanation written after the change",
+  },
+  {
+    // No host id, no key, no window: the documented refusal.
+    label: "a call with no host id still opens a window",
+    file: `${CORE}/src/state/tool-window-key.ts`,
+    from: "  toolUseId === undefined || toolUseId.length === 0\n",
+    to: "  false\n",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "UNSAFE: every id-less call shares one key, so on a host that sends no " +
+      "tool_use_id a refused open borrows another call's floor exactly as " +
+      "the input digest let it",
+  },
+  {
+    // The bracket's first half.
+    label: "PreToolUse stops opening tool windows",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (windowKey !== null) {\n    await openToolWindow(",
+    to: "  if (false) {\n    await openToolWindow(",
+    test: `${CONNECTOR}/test/hook-window.test.ts`,
+    because:
+      "SAFE BUT BLIND: every Claude edit travels as an upper bound and the hub " +
+      "refuses every happens-before question about the tool lane, while " +
+      "doctor still prints this host's event_seq rung as full",
+  },
+  {
+    // The field the pairing key is made of.
+    label: "the hook parser drops the pairing key",
+    file: `${CONNECTOR}/src/capture/tool-events.ts`,
+    from: "  tool_use_id: z.string().optional().catch(undefined),",
+    to: "  tool_use_id: z.undefined().catch(undefined),",
+    test: `${CONNECTOR}/test/hook-contract.test.ts`,
+    because:
+      "SAFE BUT BLIND: no window is ever opened, so every Claude edit loses " +
+      "its bracket at once and nothing on any surface says why",
+  },
+  {
+    // PostToolUse's first-wins drop path closes the call's own window too.
+    label: "a call dropped as another repo's leaves its window open",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "      ...closeOwnWindow(fresh),\n    }));\n    return \"\";",
+    to: "    }));\n    return \"\";",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: every foreign-repo touch leaves an entry the cap " +
+      "later evicts, and a multi-repo workspace fills the list with them",
+  },
+  {
+    // The close that has no allocation to ride on.
+    label: "an edit that names no file leaves its window open",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  const closesWindow = seq === null;",
+    to: "  const closesWindow = false;",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: every edit call with no path, and every allocation a " +
+      "busy lock refused, leaves an entry the cap later evicts",
+  },
+  {
+    // ...and it closes exactly once.
+    label: "a PostToolUse run closes two windows of its call",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  const closesWindow = seq === null;",
+    to: "  const closesWindow = true;",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: on a double-wired install the first run takes the " +
+      "entry the second run brackets from, so the second run's close finds " +
+      "nothing",
+  },
+  {
+    // A failed edit's only close.
+    label: "a failed edit leaves its window open",
+    file: `${CONNECTOR}/src/hooks/post-tool-use-failure.ts`,
+    from: "    1,\n    windowKey,\n  );",
+    to: "    1,\n    null,\n  );",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "MISLEADING: the most common failure an edit tool has fills the capped " +
+      "list, and each eviction is counted as a lost bracket for an edit " +
+      "that never happened",
+  },
+  {
+    // The close must not change what the failure's own row claims.
+    label: "a failed edit's fingerprint takes its window as a bracket",
+    file: `${CONNECTOR}/src/hooks/post-tool-use-failure.ts`,
+    from: "      : { epoch: closed.epoch, from: closed.from, count: closed.count };",
+    to: "      : closed;",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "UNREVIEWED: every failed edit's tool.failed row turns from observed " +
+      "into an orderable event as a side effect of closing a window — a " +
+      "change to what the hub answers that nobody decided",
+  },
+  {
+    // PostToolUseFailure's drop path closes too.
+    label: "a failed call dropped as another repo's leaves its window open",
+    file: `${CONNECTOR}/src/hooks/post-tool-use-failure.ts`,
+    from: "      foreignRepoDrops: fresh.foreignRepoDrops + 1,\n      ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),\n",
+    to: "      foreignRepoDrops: fresh.foreignRepoDrops + 1,\n",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: a failing command in a sibling repo leaves an entry " +
+      "the cap later evicts and counts",
   },
   {
     // Spec 01 §3.4. One PostToolUse emits its file targets AND its error
@@ -5218,6 +5433,50 @@ export const MUTATIONS: readonly Mutation[] = [
       "doctor PASSes on the exact machine where every intent and claim is " +
       "landing without a position, so the one visible trace of D1's cost " +
       "disappears and the refusal looks like nothing happening",
+  },
+  {
+    // The eviction count, summed for doctor and status.
+    label: "tool-window evictions are never summed",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "      windowEvictions: total.windowEvictions + state.toolWindowEvictions,",
+    to: "      windowEvictions: total.windowEvictions,",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "SILENT: a machine whose sessions hit the cap reads exactly like one " +
+      "that never did, on both surfaces that print the order's health",
+  },
+  {
+    // Silent at zero, like the counts beside it.
+    label: "a machine that never hit the window cap prints an eviction count",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "    cost.windowEvictions === 0\n",
+    to: "    false\n",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "NOISE: every healthy install prints a zero it has no use for on every " +
+      "doctor run, which is how a line teaches people to stop reading it",
+  },
+  {
+    // An eviction is an UPPER BOUND on the brackets lost.
+    label: "an evicted tool window is reported as a lost bracket",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "      : ` · ${String(cost.windowEvictions)} tool window(s) evicted at the cap (an edit still running when its window went travels as an upper bound; a call that had already ended lost nothing)`;",
+    to: "      : ` · ${String(cost.windowEvictions)} bracket(s) dropped at the tool-window cap (those edits travel as upper bounds)`;",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "OVERSTATED: a denied or aborted call's eviction cost nothing, and the " +
+      "line claims an edit lost its bracket for every one of them",
+  },
+  {
+    // ...and it is printed at all.
+    label: "the tool-window eviction count is never printed",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "      : ` · ${String(cost.windowEvictions)} tool window(s) evicted at the cap (an edit still running when its window went travels as an upper bound; a call that had already ended lost nothing)`;",
+    to: "      : \"\";",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "SILENT: the count is kept and read by nobody, so the cap's one piece " +
+      "of evidence never reaches the only person who could act on it",
   },
   {
     // `collectCommitEvidence` is imported by exactly ONE module in the tree,
@@ -5464,8 +5723,10 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
+ * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
+ * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 10
  * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
@@ -5507,7 +5768,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 12
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
- * PRINTS: packages/connector-core/test/mcp-seq.test.ts 1
+ * PRINTS: packages/connector-core/test/mcp-seq.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
@@ -5521,11 +5782,12 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
- * PRINTS: packages/connector-core/test/session-seq.test.ts 4
+ * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
  * PRINTS: packages/connector-core/test/set-intent.test.ts 1
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
+ * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1

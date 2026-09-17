@@ -363,6 +363,88 @@ describe("a window is paired to the tool call that opened it", () => {
     expect(state?.toolWindows).toHaveLength(1);
   });
 
+  test("a call dropped as another repo's still closes its own window", async () => {
+    // Arrange: first-wins binding — this session reports to acme/api, and the
+    // call edits a file in acme/other. PreToolUse opens the window before it
+    // knows any of that; PostToolUse drops the capture and must still close
+    // it, or the entry sits in the capped list until an eviction counts a
+    // dropped bracket that dropped nothing.
+    const fx = await fixture("pairing-foreign");
+    const other = await makeRepo("pairing-foreign-other", {
+      remote: "git@github.com:acme/other.git",
+    });
+    paths.push(other);
+    await writeRepoFile(other, "src/x.ts", "export const x = 1;\n");
+    const foreign = (event: string): string =>
+      JSON.stringify({
+        session_id: SESSION_ID,
+        cwd: other,
+        hook_event_name: event,
+        tool_name: "Edit",
+        tool_input: { file_path: join(other, "src/x.ts") },
+        tool_use_id: "toolu_foreign_1",
+        tool_response: {},
+      });
+
+    // Act
+    await runHook("pre-tool-use", foreign("PreToolUse"), env(fx.home));
+    const opened = await readSessionState(fx.home, SESSION_ID);
+    await runHook("post-tool-use", foreign("PostToolUse"), env(fx.home));
+
+    // Assert: it WAS opened, and it is gone — through the drop path.
+    expect(opened?.toolWindows).toHaveLength(1);
+    const state = await readSessionState(fx.home, SESSION_ID);
+    expect(state?.foreignRepoDrops).toBe(1);
+    expect(state?.toolWindows).toEqual([]);
+  });
+
+  test("an edit call that names no file still closes its own window", async () => {
+    // Arrange: nothing to capture means nothing to allocate, so the close
+    // cannot ride the allocation — it has to happen in the hook's one
+    // bookkeeping write instead.
+    const fx = await fixture("pairing-no-path");
+    const noPath = (event: string): string =>
+      JSON.stringify({
+        session_id: SESSION_ID,
+        cwd: fx.repo,
+        hook_event_name: event,
+        tool_name: "Edit",
+        tool_input: {},
+        tool_use_id: "toolu_no_path_1",
+        tool_response: {},
+      });
+
+    // Act
+    await runHook("pre-tool-use", noPath("PreToolUse"), env(fx.home));
+    const opened = await readSessionState(fx.home, SESSION_ID);
+    await runHook("post-tool-use", noPath("PostToolUse"), env(fx.home));
+
+    // Assert
+    expect(opened?.toolWindows).toHaveLength(1);
+    expect((await readSessionState(fx.home, SESSION_ID))?.toolWindows).toEqual([]);
+  });
+
+  test("each PostToolUse run closes exactly one window of its call", async () => {
+    // Arrange: a double-wired install runs both hooks twice for ONE call, so
+    // the call holds two entries under one key. The run that allocates closes
+    // one of them there; closing a second in its bookkeeping write would take
+    // the entry the OTHER run is about to bracket from.
+    const fx = await fixture("pairing-exactly-once");
+    const call: Call = { file: "src/a.ts", id: "toolu_twice_1" };
+    await writeRepoFile(fx.repo, "src/a.ts", "export const x = 1;\n");
+    await pre(fx, call);
+    await pre(fx, call);
+
+    // Act: the first of the two PostToolUse runs.
+    await writeRepoFile(fx.repo, "src/a.ts", "export const x = 100;\n");
+    await post(fx, call);
+
+    // Assert
+    expect((await readSessionState(fx.home, SESSION_ID))?.toolWindows).toHaveLength(1);
+    const target = await targetFor(fx, "src/a.ts");
+    expect(target.seq.after).toBe(1);
+  });
+
   test("a failed edit closes its own window and nobody else's", async () => {
     // Arrange: a failed edit goes to PostToolUseFailure, never to
     // PostToolUse. With a key that names one call, no later call can match the

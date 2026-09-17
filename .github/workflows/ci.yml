@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 356
+    # PRINTS: 378
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -138,12 +138,12 @@ jobs:
     # PRINTS: packages/connector-acp/src/pump.ts 1
     # PRINTS: packages/connector-acp/src/report.ts 1
     # PRINTS: packages/connector-acp/src/wire/v1.ts 2
-    # PRINTS: capture/tool-events.ts 1
+    # PRINTS: capture/tool-events.ts 2
     # PRINTS: cli/settings-merge.ts 2
     # PRINTS: doctor.ts 1
-    # PRINTS: hooks/post-tool-use-failure.ts 2
-    # PRINTS: hooks/post-tool-use.ts 4
-    # PRINTS: hooks/pre-tool-use.ts 3
+    # PRINTS: hooks/post-tool-use-failure.ts 5
+    # PRINTS: hooks/post-tool-use.ts 7
+    # PRINTS: hooks/pre-tool-use.ts 4
     # PRINTS: hooks/runner.ts 2
     # PRINTS: hooks/session-start.ts 1
     # PRINTS: hooks/stop.ts 1
@@ -208,9 +208,10 @@ jobs:
     # PRINTS: state/capture-health.ts 2
     # PRINTS: state/conference-cost.ts 1
     # PRINTS: state/git-lane-cost.ts 2
-    # PRINTS: state/seq-cost.ts 1
+    # PRINTS: state/seq-cost.ts 5
     # PRINTS: state/session-scan.ts 2
-    # PRINTS: state/session-state.ts 10
+    # PRINTS: state/session-state.ts 18
+    # PRINTS: state/tool-window-key.ts 2
     # PRINTS: packages/connector-cursor/src/capabilities.ts 1
     # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
@@ -307,9 +308,9 @@ jobs:
     # PRINTS: pin-sweep.ts 2
     # PRINTS: pin.ts 1
     # PRINTS: pins.ts 2
-    # PRINTS: post-tool-use-failure.ts 2
-    # PRINTS: post-tool-use.ts 4
-    # PRINTS: pre-tool-use.ts 3
+    # PRINTS: post-tool-use-failure.ts 5
+    # PRINTS: post-tool-use.ts 7
+    # PRINTS: pre-tool-use.ts 4
     # PRINTS: precision.ts 2
     # PRINTS: presence.ts 1
     # PRINTS: probe.ts 1
@@ -335,12 +336,12 @@ jobs:
     # PRINTS: search.ts 11
     # PRINTS: secret-scan.ts 1
     # PRINTS: select.ts 9
-    # PRINTS: seq-cost.ts 1
+    # PRINTS: seq-cost.ts 5
     # PRINTS: session-events.ts 4
     # PRINTS: session-order.ts 9
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 3
-    # PRINTS: session-state.ts 10
+    # PRINTS: session-state.ts 18
     # PRINTS: session.ts 2
     # PRINTS: sessions.ts 4
     # PRINTS: set-intent.ts 2
@@ -356,8 +357,9 @@ jobs:
     # PRINTS: stop.ts 2
     # PRINTS: suspect.ts 2
     # PRINTS: time-window.ts 1
-    # PRINTS: tool-events.ts 1
+    # PRINTS: tool-events.ts 2
     # PRINTS: tool-failure.ts 3
+    # PRINTS: tool-window-key.ts 2
     # PRINTS: touched-root.ts 5
     # PRINTS: transcript.ts 4
     # PRINTS: triggers.ts 2
