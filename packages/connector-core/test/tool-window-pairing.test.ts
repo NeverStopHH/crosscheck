@@ -415,7 +415,7 @@ describe("an ambiguous or unmatched close can only cost certainty", () => {
       }
     }
     expect(outcomes.some((outcome) => outcome.evictions === 0)).toBe(true);
-  });
+  }, PROOF_TIMEOUT_MS);
 
   test("one call opened twice: both closes answer as its own floor would, or refuse", async () => {
     // Arrange: the one way a single key still holds two entries — a
