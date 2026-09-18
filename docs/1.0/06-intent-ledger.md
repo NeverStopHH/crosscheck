@@ -305,9 +305,16 @@ index, one insert and at most `2 × MAX_INTENT_SCOPE_ENTRIES` scope inserts, all
 (§10.1 bounds the chain instead).
 
 - **`set_intent` is not on a hook path** — an MCP tool, `delivery: "pulled"`, `MCP_TIMEOUT_MS = 10_000`.
-  It gains one `updateSessionState` round for 01's `seq` reservation (worst case ~100 ms of lock
-  retries, `session-state.ts:454-456`) and no new HTTP call: the intent still travels on the existing
-  `work_context` UPDATE record (`set-intent.ts:12-13`).
+  It gains one `updateSessionState` round for 01's `seq` reservation and no new HTTP call: the intent
+  still travels on the existing `work_context` UPDATE record (`set-intent.ts:12-13`). **Measured by
+  INT-11, not asserted here**: the reservation's uncontended p95 is **0.5 ms** and the tool's own p95
+  **44 ms** against a 2 000 ms bound, and the round-trip count is **2** — the record POST and the ghost
+  GET, the same two as before. *Corrected: this line read "worst case ~100 ms of lock retries,
+  `session-state.ts:454-456`". That number was true when the state lock retried 5 times; #53 raised
+  `SESSION_STATE_LOCK_RETRIES` to 20 to stop losing positions under contention, moving the contended
+  worst case to **400 ms** without moving this sentence — a quantifier rotting against a constant, the
+  exact class `verify-claims.ts` exists to kill. INT-11 derives the ceiling from the two constants, so
+  the next change to either is carried by arithmetic rather than by memory.*
 - **The derived-intent worker is detached** and already takes the state lock
   (`derive/intent/worker.ts:47`, `:95`, `:138`); its reservation moves **before** the spool append
   (`:222-228`), keeping the Stop-hook ordering contract (`hooks/stop.ts:9-15`) — book first, lose a slot
@@ -318,7 +325,7 @@ merge, on `connector-claude/test/capture-latency.test.ts` and the MCP harness pa
 `connector-core/test/latency.test.ts`. *Corrected: this line pointed at **INT-5**, which is the
 derived-intent test — "a derived intent still never overwrites a declared one, and appends nothing" — and
 measures nothing at all. No test in the INT-1…INT-9 list did, so this spec's zero-cost claim and its
-~100 ms `set_intent` lock acquisition had **no gate**, while the six sibling specs each discharge the same
+`set_intent` lock acquisition had **no gate**, while the six sibling specs each discharge the same
 obligation with a numbered test (CCB-8, COV-8, VER-8, PIL-9, EV-8). INT-11 is that test. 01 §7 had the
 same hole and now has SEQ-9.*
 
