@@ -330,8 +330,31 @@ export const appendIntentVersion = async (
     .returning({ version: workContextIntents.version });
   if (inserted[0] === undefined) {
     // A replay of this very version: same context, same author, same position,
-    // same sentence. The head is already this row's wire.
-    return { wire, version: head ?? version, capped: false };
+    // same sentence.
+    //
+    // THE STORED ROW'S WIRE IS RETURNED, NEVER THE RECOMPUTED ONE. `wire`
+    // above carries `amendsVersion: head`, and on a replay the head IS the row
+    // being replayed — so the recomputed wire says this sentence amended
+    // ITSELF, and the caller would copy that onto the head. The ledger would
+    // then hold `amends_version: null` on version 1 while `work_contexts`
+    // held `1`, from nothing more alarming than a redelivered spool line:
+    // head and ledger disagreeing is exactly what this table exists to make
+    // impossible, and counting rows never sees it.
+    const replayed = await deps.db
+      .select({
+        version: workContextIntents.version,
+        wire: workContextIntents.wire,
+      })
+      .from(workContextIntents)
+      .where(eq(workContextIntents.id, id))
+      .limit(1);
+    const row = replayed[0];
+    return row === undefined
+      ? // The conflict was on `(work_context_id, version)` rather than on the
+        // id — a concurrent writer took this version number. Nothing of ours
+        // is stored, so the head must not move.
+        { wire, version: head ?? version, capped: true }
+      : { wire: row.wire ?? wire, version: row.version, capped: false };
   }
   const scope = [
     ...scopeRows(input.intent, "expected"),

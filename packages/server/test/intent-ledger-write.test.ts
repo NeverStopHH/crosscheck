@@ -153,6 +153,14 @@ describe("INT-4 — the head cannot disagree with the ledger", () => {
     const chain = await chainOf(harness);
     expect(chain.length).toBe(1);
     expect(chain[0]?.version).toBe(1);
+    // AND THE HEAD IS STILL VERSION 1'S WIRE. Counting rows is not the
+    // invariant: `amends_version` is computed from the head that exists NOW,
+    // which on a replay is the very row being replayed, so a recomputed wire
+    // says this sentence amended ITSELF. A redelivered spool line — the one
+    // thing the id hash exists to survive — would then leave the head carrying
+    // a version no ledger row ever held, and every INT-4 assertion above would
+    // still pass.
+    expect(await headOf(harness)).toEqual(chain[0]?.wire ?? null);
   });
 
   test("the hub assigns amends_version; the connector never could", async () => {
