@@ -5908,6 +5908,154 @@ export const MUTATIONS: readonly Mutation[] = [
       "`position_indeterminate`, which points a reader at the two events " +
       "rather than at the install that never positioned anything",
   },
+  // ---------------------------------------------------------------------
+  // 06 — the intent ledger. Nine entries, one per acceptance test that names
+  // an anchor (INT-2, INT-3 x3, INT-4, INT-5, INT-6, INT-9, INT-10). Every
+  // one was applied and its guard watched go red before it was written here;
+  // INT-3a was NOT caught on the first pass, and the test that should have
+  // caught it gained the missing case rather than the anchor being dropped.
+  // ---------------------------------------------------------------------
+  {
+    // The whole point of the ledger is that it answers from POSITIONS. A
+    // clock answers too, plausibly, and wrongly: a spool flushed by a
+    // successor session gives an amendment a wall clock EARLIER than the edit
+    // it followed.
+    label: "the timing answer comes from a clock",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "    compareEvents(order, orderedEventOf(entry), edit.event) === -1;",
+    to: "    entry.capturedAt.getTime() < edit.event.observedAt.getTime();",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "AT-4's own failure condition — the answer depending on wall-clock " +
+      "timestamps from two processes rather than on a monotonic per-session " +
+      "sequence — reintroduced in the one function that exists to prevent it",
+  },
+  {
+    // Zero precedes every edit in the session, so a row whose position is
+    // MISSING becomes a row that was written first.
+    label: "a position nobody knows reads as position zero",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "  seqN: entry.seq,",
+    to: "  seqN: entry.seq ?? 0,",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "principle 5 inverted: the answer flips from `absent / not_comparable` " +
+      "to `predeclared / declared_before` — missing evidence STRENGTHENING a " +
+      "conclusion, and in the direction nobody reports, since a gap that " +
+      "exonerates is reported by nobody",
+  },
+  {
+    // There is no cross-session order to have. A subagent that sometimes
+    // inherits its parent's host key and sometimes mints its own makes the
+    // bare comparison silently wrong.
+    label: "an entry from another session is compared anyway",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from:
+      '  if (ownSession.length === 0) {\n' +
+      '    return answer("absent", "different_session");\n' +
+      '  }\n',
+    to: "",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "a foreign session's numbers are not smaller or larger than this " +
+      "session's, they are incomparable, and reporting them as an order is a " +
+      "verdict built on an arithmetic coincidence",
+  },
+  {
+    // 01 SEQ-5's epoch-split refusal, from this side. Two positions in
+    // different epochs are two rulers, and the numbers on them mean nothing
+    // to each other.
+    label: "an epoch mismatch is waved through as comparable",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "    refusals.push(outcome.reason);\n    return false;",
+    to:
+      '    if (outcome.reason === "epoch_mismatch") {\n' +
+      "      return true;\n" +
+      "    }\n" +
+      "    refusals.push(outcome.reason);\n" +
+      "    return false;",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "a re-registered session restarts the count, so an amendment at 5 in " +
+      "the new epoch reads as preceding an edit at 7 in the old one — the " +
+      "exoneration #53 removed from the hook lane, re-entering through the " +
+      "ledger",
+  },
+  {
+    // The head is a COPY of the newest version's wire. A head written
+    // without its row reads correctly on every surface and has no history
+    // behind it at all.
+    label: "the head moves without a ledger row behind it",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "  const appended =\n    changes.intent === undefined ||",
+    to: "  const appended =\n    true ||\n    changes.intent === undefined ||",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the overwrite this whole spec was written to kill, restored silently: " +
+      "the current sentence still renders, and every sentence it replaced is " +
+      "gone with nothing to show that one ever existed",
+  },
+  {
+    // An agent's guess may be SHOWN. It may not replace what an agent
+    // declared on its own account.
+    label: "a derived intent overwrites a declared one",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "    next.provenance !== DECLARED_PROVENANCE\n  ) {",
+    to: "    false\n  ) {",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the derivation worker runs unattended, so a declared sentence would " +
+      "be replaced by a model's summary of it minutes later, with the head " +
+      "still labelled confidence 1",
+  },
+  {
+    // A model's guess about what a session meant, used as evidence against
+    // that same session.
+    label: "a derived non-goal becomes evidence against its own session",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: '  const declared = chain.filter((entry) => entry.provenance === "declared");',
+    to: "  const declared = chain;",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "the connector's own derivation would author the accusation and the " +
+      "hub would then report it as the session's declared position — an " +
+      "agent certifying its own work, which AT-3 forbids in the other " +
+      "direction and this forbids in this one",
+  },
+  {
+    // The checkable half stays checkable, or it becomes a second prose
+    // sentence nobody can verify.
+    label: "an uncheckable scope kind reaches the wire",
+    file: `${SCHEMA}/src/session.ts`,
+    from: 'export const INTENT_SCOPE_KINDS = ["file"] as const;',
+    to: 'export const INTENT_SCOPE_KINDS = ["file", "symbol"] as const;',
+    test: `${SCHEMA}/test/intent-scope.test.ts`,
+    because:
+      "`symbol` has no resolver anywhere in 1.0, so a scope entry naming one " +
+      "would match no edit ever and answer `scope_not_named` forever — a " +
+      "declaration that silently cannot be checked, which is worse than one " +
+      "that is refused",
+  },
+  {
+    // "Do not touch b.ts", followed by touching b.ts, is the most post-hoc
+    // thing a session can do.
+    label: "a violated non-goal is reported as a reason declared beforehand",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from:
+      "  const nonGoal = earliest(\n" +
+      '    named.filter((entry) => namesPath(entry, "non_goal", edit)),\n' +
+      "  );\n" +
+      "  if (nonGoal !== undefined && before(nonGoal)) {\n" +
+      '    return answer("post_hoc", "declared_non_goal_edited", nonGoal.version);\n' +
+      "  }\n",
+    to: "",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "this was the first draft's actual behaviour: a sentence saying the " +
+      "OPPOSITE was reported `predeclared`, principle 3 answered backwards " +
+      "on the one input this ledger exists to capture, and `role` was left a " +
+      "column nothing in 1.0 read",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6070,12 +6218,15 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
+ * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/intent-ladder.test.ts 6
+ * PRINTS: packages/server/test/intent-ledger-write.test.ts 2
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1
