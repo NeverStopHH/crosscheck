@@ -55,6 +55,7 @@ interface IntentFixture {
   readonly expected?: readonly string[];
   readonly nonGoals?: readonly string[];
   readonly capturedAt?: Date;
+  readonly seqReason?: "sequenced" | "allocation_failed";
 }
 
 const intent = (fixture: IntentFixture = {}): IntentLedgerEntry => {
@@ -76,7 +77,10 @@ const intent = (fixture: IntentFixture = {}): IntentLedgerEntry => {
     // took, so the window is [n, n] and `seq_after` is null.
     seqAfter: null,
     seqKind: (fixture.provenance ?? "declared") === "derived" ? "observed" : "emitted",
-    seqReason: seq === null ? "allocation_failed" : "sequenced",
+    // Defaulted from the position, and OVERRIDABLE: a row whose reason
+    // disagrees with its own position is the shape case (a2) is about, and a
+    // fixture that cannot express it cannot guard against it.
+    seqReason: fixture.seqReason ?? (seq === null ? "allocation_failed" : "sequenced"),
     capturedAt: fixture.capturedAt ?? LATE,
     receivedAt: fixture.capturedAt ?? LATE,
     wire: {},
@@ -182,6 +186,30 @@ describe("INT-3 — an unorderable pair is never predeclared", () => {
     expect(answer.timing).toBe("absent");
     expect(answer.reason).toBe("not_comparable");
     expect(answer.indeterminacy).toBe("position_indeterminate");
+  });
+
+  test("(a2) a missing position does not become position zero, whatever the row's reason says", () => {
+    // Arrange: the case (a) does NOT reach. Its fixture ties `seq: null` to
+    // `seq_reason: "allocation_failed"`, so the gate refuses on the REASON and
+    // the number is never read — which leaves the number itself unguarded. A
+    // half-written row, or a connector that stamped the reason from the wrong
+    // branch, carries a null position beside a reason claiming it was
+    // sequenced. Read as zero, that row precedes every edit in the session.
+    //
+    // This is principle 5 in its sharpest form: missing evidence may weaken a
+    // conclusion, never strengthen one. Measured against this very fixture,
+    // `seqN: entry.seq ?? 0` answers `predeclared / declared_before` — the
+    // value that EXONERATES — for a sentence whose position nobody knows.
+    const answer = explanationTimingFor(
+      USABLE,
+      [intent({ seq: null, epoch: EPOCH, seqReason: "sequenced", expected: [PATH] })],
+      edit({ seq: 7 }),
+    );
+
+    // Assert
+    expect(answer.timing).toBe("absent");
+    expect(answer.timing).not.toBe("predeclared");
+    expect(answer.reason).toBe("not_comparable");
   });
 
   test("(b) an entry from another session answers different_session, whatever the numbers", () => {
