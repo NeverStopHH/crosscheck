@@ -235,6 +235,153 @@ describe("INT-4 — the head cannot disagree with the ledger", () => {
   });
 });
 
+describe("two declarations are never one row", () => {
+  test("a second declaration adding a non-goal is its own version", async () => {
+    // Arrange: a session whose position could not be allocated — two live
+    // agents in one worktree, which does not clear until one of them ends.
+    // Every call then carries `seq: null`, so the version key can no longer
+    // lean on a position to tell two declarations apart.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+
+    const summary = "Rewrite the matcher.";
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: declared(summary, {
+            expectedSurface: [{ kind: "file", value: "packages/a.ts" }],
+          }),
+        }),
+      ),
+    );
+
+    // Act: the same sentence, now with something it will NOT touch. Same
+    // goal, different declaration.
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: declared(summary, {
+            reason: "b.ts is off limits after all.",
+            expectedSurface: [{ kind: "file", value: "packages/a.ts" }],
+            nonGoals: [{ kind: "file", value: "packages/b.ts" }],
+          }),
+        }),
+      ),
+    );
+
+    // Assert: two rows, not one. Before the version key covered the scope,
+    // this collapsed — the insert hit the primary key, the replay branch
+    // handed back the STORED wire, and the caller answered `accepted` while
+    // the declared non-goal reached nothing at all. The half that goes
+    // missing is the ACCUSING half: an edit to b.ts would then answer from
+    // the surviving `expected` row rather than `declared_non_goal_edited`.
+    const chain = await chainOf(harness);
+    expect(chain.length).toBe(2);
+    expect(chain.map((row) => row.version)).toEqual([2, 1]);
+    expect(chain[0]?.reason).toBe("b.ts is off limits after all.");
+    expect(await headOf(harness)).toEqual(chain[0]?.wire ?? null);
+  });
+
+  test("scope alone separates two declarations", async () => {
+    // THE CASE ABOVE DOES NOT PROVE THE SCOPE TERM. It differs in the reason
+    // as well, so the key still separates the two rows with the scope term
+    // removed — measured by mutating the term away and watching that test
+    // stay green. Here the scope is the ONLY difference, which is what makes
+    // the term individually load-bearing.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+
+    for (const paths of [["packages/a.ts"], ["packages/a.ts", "packages/b.ts"]]) {
+      await postRecords(
+        harness,
+        developer,
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            intent: declared("Rewrite the matcher.", {
+              expectedSurface: paths.map((value) => ({ kind: "file", value })),
+            }),
+          }),
+        ),
+      );
+    }
+
+    // Widening a declared surface is a new declaration, and the widening is
+    // exactly what AT-4 asks about: did the session say so before or after.
+    expect((await chainOf(harness)).length).toBe(2);
+  });
+
+  test("a genuine replay of one declaration is still one row", async () => {
+    // The control, and the reason the key may not simply be a counter: the
+    // spool replays on any retry, and a replayed line must stay a duplicate.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+
+    const body = validWorkContextBody({
+      intent: declared("Rewrite the matcher.", {
+        expectedSurface: [
+          { kind: "file", value: "packages/b.ts" },
+          { kind: "file", value: "packages/a.ts" },
+        ],
+      }),
+    });
+    await postRecords(harness, developer, recordEnvelope("work_context", body));
+    await postRecords(harness, developer, recordEnvelope("work_context", body));
+
+    expect((await chainOf(harness)).length).toBe(1);
+  });
+
+  test("the same paths in a different order are the same declaration", async () => {
+    // A connector that emits its scope in another order has declared nothing
+    // new, so the key sorts before hashing. Without that, one replay would
+    // become two versions and the chain would grow on retries alone.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+
+    for (const paths of [
+      ["packages/a.ts", "packages/b.ts"],
+      ["packages/b.ts", "packages/a.ts"],
+    ]) {
+      await postRecords(
+        harness,
+        developer,
+        recordEnvelope(
+          "work_context",
+          validWorkContextBody({
+            intent: declared("Rewrite the matcher.", {
+              expectedSurface: paths.map((value) => ({ kind: "file", value })),
+            }),
+          }),
+        ),
+      );
+    }
+
+    expect((await chainOf(harness)).length).toBe(1);
+  });
+});
+
 describe("INT-5 — a refused derived merge appends nothing", () => {
   test("a derived intent behind a declared one leaves the chain at one row", async () => {
     // Arrange

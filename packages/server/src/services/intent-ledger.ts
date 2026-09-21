@@ -159,28 +159,55 @@ const ID_PREFIX = "iv_";
 const ID_HASH_CHARS = 32;
 
 /**
- * `iv_` + sha256(context, author session, position, summary) — the
- * `hint_deliveries` shape, so a replayed spool line is a `duplicate` rather
- * than a second version of the same sentence.
+ * `iv_` + sha256 over EVERYTHING THAT MAKES A DECLARATION THAT DECLARATION —
+ * the `hint_deliveries` shape, so a replayed spool line is a `duplicate`
+ * rather than a second version of the same sentence.
  *
- * THE POSITION IS INSIDE THE HASH AND SO IS THE SUMMARY, because neither alone
- * separates the rows that must stay separate: a session re-declaring the SAME
- * sentence takes a new position, and two DIFFERENT sentences can both be
- * written in a stretch where no position could be allocated at all.
+ * THE KEY IS THE WHOLE DECLARATION, not the sentence. An earlier version
+ * hashed only (context, session, position, summary), and two genuinely
+ * different declarations then collapsed onto one row: the insert hit the
+ * primary key, the replay branch handed back the STORED wire, and the caller
+ * answered `accepted` while the second declaration's scope, reason and
+ * `captured_at` were gone. `set_intent` told its author "Recorded your
+ * intent" over a sentence that reached nothing.
+ *
+ * IT WAS REACHABLE WITHOUT ANYTHING EXOTIC. `seq` is null for every call of a
+ * session whose position could not be allocated — two live agents in one
+ * worktree, which does not clear until one of them ends — so the key reduced
+ * to context + session + summary, and *"same goal, but b.ts is off limits"*
+ * was indistinguishable from a replay of *"same goal"*. The half it dropped is
+ * the NON-GOAL, which is the accusing half: `post_hoc /
+ * declared_non_goal_edited` would silently become `predeclared` — missing
+ * evidence removing an accusation, which principle 5 forbids. The epoch was
+ * missing for the same class of reason: a SessionStart re-fire mints a fresh
+ * epoch and restarts the count, so the same sentence at the same `n` under a
+ * new epoch collided too.
+ *
+ * SCOPE ENTRIES ARE SORTED before hashing, because a connector emitting the
+ * same two paths in a different order has not declared anything different,
+ * and a key that said otherwise would turn one replay into two rows.
  */
-export const intentVersionId = (
-  workContextId: string,
-  authorSessionId: string | null,
-  seq: number | null,
-  summary: string,
-): string =>
+export const intentVersionId = (input: {
+  readonly workContextId: string;
+  readonly authorSessionId: string | null;
+  readonly seqEpoch: string | null;
+  readonly seq: number | null;
+  readonly summary: string;
+  readonly reason: string | null;
+  readonly scope: readonly IntentScopeEntryRow[];
+}): string =>
   `${ID_PREFIX}${new Bun.CryptoHasher("sha256")
     .update(
       [
-        workContextId,
-        authorSessionId ?? "",
-        seq === null ? "null" : String(seq),
-        summary,
+        input.workContextId,
+        input.authorSessionId ?? "",
+        input.seqEpoch ?? "",
+        input.seq === null ? "null" : String(input.seq),
+        input.summary,
+        input.reason ?? "",
+        ...[...input.scope]
+          .map((entry) => `${entry.role}\t${entry.kind}\t${entry.value}`)
+          .sort(),
       ].join("\n"),
     )
     .digest("hex")
@@ -290,12 +317,22 @@ export const appendIntentVersion = async (
     return { wire, version: head, capped: true };
   }
   const version = (head ?? 0) + 1;
-  const id = intentVersionId(
-    input.workContextId,
-    input.authorSessionId,
+  // The scope is computed BEFORE the id, because it is part of what makes
+  // this declaration distinct from the last one.
+  const scope = [
+    ...scopeRows(input.intent, "expected"),
+    ...scopeRows(input.intent, "non_goal"),
+  ];
+  const reason = head === null ? null : reasonOf(input.intent);
+  const id = intentVersionId({
+    workContextId: input.workContextId,
+    authorSessionId: input.authorSessionId,
+    seqEpoch: stamp === null ? null : stamp.epoch,
     seq,
-    input.intent.summary,
-  );
+    summary: input.intent.summary,
+    reason,
+    scope,
+  });
   const provenance = input.intent.provenance;
   const inserted = await deps.db
     .insert(workContextIntents)
@@ -314,7 +351,9 @@ export const appendIntentVersion = async (
       summary: input.intent.summary,
       // A `reason` is only ever meaningful beside an amendment, and a first
       // declaration carrying one would trip the table's own amend CHECK.
-      reason: head === null ? null : reasonOf(input.intent),
+      // The SAME value the id hashed: two spellings here would be two answers
+      // to "is this the declaration we already have".
+      reason,
       // SENDER-CONTROLLED, so clamped to the hub clock plus skew. It orders
       // nothing — §3.5 reads no clock at all — and serves display only.
       capturedAt: new Date(
@@ -356,10 +395,6 @@ export const appendIntentVersion = async (
         { wire, version: head ?? version, capped: true }
       : { wire: row.wire ?? wire, version: row.version, capped: false };
   }
-  const scope = [
-    ...scopeRows(input.intent, "expected"),
-    ...scopeRows(input.intent, "non_goal"),
-  ];
   if (scope.length > 0) {
     await deps.db
       .insert(intentScope)

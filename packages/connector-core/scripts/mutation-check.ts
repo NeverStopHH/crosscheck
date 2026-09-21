@@ -6097,6 +6097,25 @@ export const MUTATIONS: readonly Mutation[] = [
       "\"Recorded your intent\" over an `ignored` outcome is a false sentence " +
       "on the one surface whose entire job is to record the sentence",
   },
+  {
+    // The version key covers the whole declaration. Dropping the scope from
+    // it reduces the key to context + session + position + sentence, and a
+    // session whose position could not be allocated carries `seq: null` on
+    // every call — so the key becomes context + session + sentence.
+    label: "two declarations collapse onto one ledger row",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from:
+      "        ...[...input.scope]\n" +
+      "          .map((entry) => `${entry.role}\\t${entry.kind}\\t${entry.value}`)\n" +
+      "          .sort(),\n",
+    to: "",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the second declaration is answered `accepted` while its scope reached " +
+      "nothing, and the half that goes missing is the ACCUSING one — a " +
+      "declared non-goal that is gone turns `declared_non_goal_edited` into " +
+      "`predeclared`, missing evidence removing an accusation",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6267,7 +6286,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 6
- * PRINTS: packages/server/test/intent-ledger-write.test.ts 4
+ * PRINTS: packages/server/test/intent-ledger-write.test.ts 5
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1
