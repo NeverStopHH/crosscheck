@@ -15,8 +15,15 @@ export const MAX_LANDED_COMMITS = 20;
  * A commit named on the wire must already look like an object name — the
  * same guard the connector's own git callers apply (COMMIT_SHA_PATTERN in
  * git/commit-drift.ts): nothing flag- or prose-shaped may reach git or SQL.
+ *
+ * EXPORTED so 05's CI wire reuses it instead of minting a third copy. The
+ * connector's copy cannot be imported here — `schema` sits below
+ * `connector-core`, not above it — so two copies is the floor, and its own
+ * header already says two copies are two things to widen. Adding a third
+ * because a new module could not see this one would be the drift that comment
+ * warns about.
  */
-const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;
+export const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;
 
 /** Longest ref label a connector may claim it checked against. */
 const MAX_DEFAULT_BRANCH_CHARS = 200;

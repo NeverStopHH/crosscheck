@@ -126,3 +126,20 @@ export {
   describeUnstorableText,
   unstorableTextPath,
 } from "./storable-text.ts";
+export {
+  CI_MAX_TEST_ROWS,
+  CI_PROVIDERS,
+  CI_RERUN_KINDS,
+  CI_RUN_OUTCOMES,
+  CI_TEST_STATUSES,
+  CiLaneSchema,
+  CiProviderSchema,
+  CiRerunKindSchema,
+  CiRunOutcomeSchema,
+  CiRunReportSchema,
+  CiTestResultSchema,
+  CiTestStatusSchema,
+  MAX_CI_LANE_FIELD_CHARS,
+  MAX_CI_TEST_ID_CHARS,
+} from "./ci-run.ts";
+export type { CiLane, CiRunReport, CiTestResult } from "./ci-run.ts";
