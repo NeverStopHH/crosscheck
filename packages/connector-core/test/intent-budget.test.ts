@@ -16,6 +16,17 @@
  * requests the hub serves during one `set_intent`, and the milliseconds below
  * it are measurements that print, bounded by budgets rather than by each other.
  *
+ * AND THE COUNT HAS A REACH, WHICH THIS SAYS OUT LOUD RATHER THAN IMPLYING.
+ * The counter runs across the tool call and for DEFERRED_SETTLE_MS after it
+ * returns, so a debounced or batched post is caught as well as a synchronous
+ * one. What it cannot see is a round trip booked onto a LATER HOOK — the shape
+ * `set_intent` already uses for the ghost check's model half, which it hands to
+ * the next UserPromptSubmit. No in-process counter can see that, and a test
+ * that quietly did not would be making the same over-claim this file exists to
+ * criticise. The first version of this test read the counter the instant the
+ * tool returned, measured ~50 ms of window, and said "a counter can, on every
+ * machine, under any load" anyway; an adversary reading this branch caught it.
+ *
  * THE RESERVATION IS TIMED ON ITS OWN. An end-to-end delta between two
  * `set_intent` calls is dominated by the hub round trips either way, so a
  * regression in the lock would hide inside the noise. `allocateSeq` is timed
@@ -85,6 +96,17 @@ const LOCK_CEILING_MS = SESSION_STATE_LOCK_RETRIES * SPOOL_LOCK_RETRY_DELAY_MS;
  * counted call, both in the first test, both on this same work context.
  */
 const SET_INTENT_CALLS_BEFORE_SAMPLING = 2;
+
+/**
+ * How long the request counter keeps running after the tool has returned.
+ *
+ * Long enough to catch a flush debounced by a few hundred milliseconds — the
+ * shape this path would most plausibly grow, since `set_intent` already books
+ * the ghost check's model half for a later turn. It is NOT long enough to
+ * catch work booked onto a later HOOK, and no in-process counter can be; that
+ * limit is stated in the file header rather than hidden behind a number.
+ */
+const DEFERRED_SETTLE_MS = 750;
 
 /**
  * Enough samples for a p95 to mean something, DERIVED FROM THE CAP rather than
@@ -248,11 +270,30 @@ describe("INT-11 — what this spec costs set_intent", () => {
 
     const before = hubRequests;
     expect(await callSetIntent("Make verifyToken refetch the JWKS")).toBe(true);
-    const spent = hubRequests - before;
+    const synchronous = hubRequests - before;
+
+    // AND THEN WAIT, because the first version of this test did not.
+    //
+    // Reading the counter the instant the tool returns measures only the
+    // tool's own duration — about 50 ms — so any round trip DEFERRED past
+    // that return went uncounted: a debounced flush, a batched post, work
+    // booked onto a later turn. This file's thesis is that a counter sees
+    // what a wall clock cannot; it only did so for SYNCHRONOUS work, which is
+    // the narrower claim it was not making.
+    //
+    // `set_intent` already books one such debt — the ghost check's model half
+    // is left for the next UserPromptSubmit — so a second deferred call is
+    // the most likely shape for this path to grow.
+    await Bun.sleep(DEFERRED_SETTLE_MS);
+    const settled = hubRequests - before;
 
     // eslint-disable-next-line no-console
-    console.log(`[intent-budget] set_intent hub requests: ${String(spent)}`);
-    expect(spent).toBe(SET_INTENT_HUB_REQUESTS);
+    console.log(
+      `[intent-budget] set_intent hub requests: ${String(synchronous)} ` +
+        `synchronous, ${String(settled)} after ${String(DEFERRED_SETTLE_MS)} ms`,
+    );
+    expect(synchronous).toBe(SET_INTENT_HUB_REQUESTS);
+    expect(settled).toBe(SET_INTENT_HUB_REQUESTS);
   });
 
   test("the seq reservation costs a bounded, printed amount of lock time", async () => {
