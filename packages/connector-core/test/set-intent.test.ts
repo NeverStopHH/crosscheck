@@ -410,3 +410,60 @@ describe("set_intent", () => {
     expect(await storedIntent(alice)).toEqual(before);
   });
 });
+
+describe("the checkable half reaches the wire", () => {
+  test("a declared surface, a non-goal and a reason all land", async () => {
+    // THEY HAD NO WRITER. Spec 06 makes the declared paths the field an edit
+    // is compared against — `explanationTimingFor` answers from them and from
+    // nothing else — and this tool could not send one, so every production
+    // row stored a sentence with an empty scope and `intent_scope` was
+    // written by nothing at all. The ledger existed and the checkable half
+    // was unreachable from the one writer agents have.
+    const first = await call(alice, {
+      summary: "Rewrite the provider matcher",
+      expectedSurface: ["packages/a.ts"],
+    });
+    expect(first.isError).toBe(false);
+
+    const amended = await call(alice, {
+      summary: "Rewrite the provider matcher and its fixture",
+      expectedSurface: ["packages/a.ts", "packages/fixture.ts"],
+      nonGoals: ["packages/b.ts"],
+      reason: "The fixture hid the gap.",
+    });
+    expect(amended.isError).toBe(false);
+
+    const intent = await storedIntent(alice);
+    expect(intent?.["reason"]).toBe("The fixture hid the gap.");
+    expect(intent?.["expectedSurface"]).toEqual([
+      { kind: "file", value: "packages/a.ts" },
+      { kind: "file", value: "packages/fixture.ts" },
+    ]);
+    expect(intent?.["nonGoals"]).toEqual([
+      { kind: "file", value: "packages/b.ts" },
+    ]);
+  });
+
+  test("an unscoped call still lands, unchanged", async () => {
+    // Back-compat, and the control: the three fields are optional, so a v0
+    // caller that knows none of them behaves exactly as before.
+    const result = await call(bob, { summary: "Look at the refresh path" });
+    expect(result.isError).toBe(false);
+    const intent = await storedIntent(bob);
+    expect(intent?.["summary"]).toBe("Look at the refresh path");
+    expect(intent?.["expectedSurface"]).toBeUndefined();
+    expect(intent?.["nonGoals"]).toBeUndefined();
+  });
+
+  test("a credential in a declared path is refused before the hub sees it", async () => {
+    // The hub screens these fields too (record-handlers.ts), but the tool is
+    // where a refusal can still tell the AUTHOR — a hub rejection reaches the
+    // spool, not the person.
+    const result = await call(alice, {
+      summary: "Rotate the key",
+      expectedSurface: ["packages/ghp_0123456789abcdefghijklmnopqrstuvwxyzAB.ts"],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("secret pattern");
+  });
+});

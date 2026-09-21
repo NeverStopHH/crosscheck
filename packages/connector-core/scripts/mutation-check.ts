@@ -6145,6 +6145,24 @@ export const MUTATIONS: readonly Mutation[] = [
       "developer's agent context — and the scope value lands there bare, " +
       "outside the frame that marks quoted data",
   },
+  {
+    // The tool's own screen, which is what stops the text leaving the machine
+    // and is the only refusal the AUTHOR ever sees — a hub rejection reaches
+    // the spool, not the person.
+    label: "set_intent screens only its summary for credentials",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from:
+      "      parsed.value.reason ?? \"\",\n" +
+      "      ...(parsed.value.expectedSurface ?? []),\n" +
+      "      ...(parsed.value.nonGoals ?? []),\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because:
+      "a token in a declared path then travels to the hub and is refused " +
+      "there instead, so the author is told nothing and the credential has " +
+      "already left the machine — which is the one thing the local scan " +
+      "exists to prevent",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6293,7 +6311,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
- * PRINTS: packages/connector-core/test/set-intent.test.ts 2
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 3
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
