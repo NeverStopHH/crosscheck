@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import {
+  MAX_CI_TEST_ID_CHARS,
   MAX_CLAIM_BODY_LENGTH,
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_SURFACE_CHARS,
@@ -16,8 +17,28 @@ const QUESTIONS_BODY_CHECK_PATTERN =
   /questions_body_length_check\s+CHECK \(char_length\(body\) <= (\d+)\)/;
 const PINS_SURFACE_CHECK_PATTERN =
   /pins_surface_length_check CHECK \(char_length\(surface\) <= (\d+)\)/;
+const CI_TEST_ID_CHECK_PATTERN =
+  /ci_test_results_test_id_length_check\s+CHECK \(char_length\(test_id\) <= (\d+)\)/;
 const PINS_CHECK_RECIPE_PATTERN =
   /pins_check_length_check\s+CHECK \(check_recipe IS NULL OR char_length\(check_recipe\) <= (\d+)\)/;
+
+/**
+ * The one guarded `DO $$ … $$;` block that mentions a given constraint.
+ *
+ * bootstrap.sql holds several, and it runs top to bottom on every hub start;
+ * picking one by its own name is the only extraction that stays correct as
+ * blocks are appended below it.
+ */
+const guardedBlockNamed = (sql: string, constraintName: string): string => {
+  const blocks = sql.match(/DO \$\$[\s\S]*?END\s*\n\$\$;/g) ?? [];
+  const matching = blocks.filter((block) => block.includes(constraintName));
+  if (matching.length !== 1) {
+    throw new Error(
+      `expected exactly 1 guarded block naming ${constraintName}, found ${String(matching.length)}`,
+    );
+  }
+  return matching[0] ?? "";
+};
 
 describe("bootstrap.sql DDL sync", () => {
   test("claims body CHECK matches MAX_CLAIM_BODY_LENGTH", async () => {
@@ -65,6 +86,43 @@ describe("bootstrap.sql DDL sync", () => {
     expect(Number(recipe?.[1])).toBe(MAX_PIN_CHECK_CHARS);
   });
 
+  test("ci_test_results test_id CHECK matches MAX_CI_TEST_ID_CHARS", async () => {
+    // Arrange: the wire bound and the column bound are two authorities over
+    // one value. A test id longer than the column accepts would be refused by
+    // the database AFTER the route said yes, so the run would land with its
+    // list one row shorter and nothing would say which row went missing —
+    // a silently shortened list, which is the absence this spec refuses.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const match = bootstrapSql.match(CI_TEST_ID_CHECK_PATTERN);
+
+    // Assert
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBe(MAX_CI_TEST_ID_CHARS);
+  });
+
+  test("the two CI tables exist in both authorities, with their indexes", async () => {
+    // drizzle is the migration authority and bootstrap.sql is what a real
+    // Postgres hub actually runs; a table in one and not the other is a hub
+    // that accepts a write on one deployment and 42P01s on the other.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    for (const name of [
+      "CREATE TABLE IF NOT EXISTS ci_runs",
+      "CREATE TABLE IF NOT EXISTS ci_test_results",
+      "ci_runs_repo_commit_idx",
+      "ci_runs_lane_started_idx",
+      "ci_runs_rerun_of_idx",
+      "ci_test_results_repo_test_idx",
+    ]) {
+      expect(bootstrapSql).toContain(name);
+    }
+
+    // And the cascade, which retention depends on: an orphan result row would
+    // assert a failure belonging to a run nobody can look up.
+    expect(bootstrapSql).toContain("REFERENCES ci_runs(id) ON DELETE CASCADE");
+  });
+
   test("a restart does not drop and revalidate the body-length constraint", async () => {
     // Arrange: bootstrap.sql runs in full on EVERY hub start (db/client.ts
     // reads and execs the whole file), and the body-length widener was an
@@ -83,7 +141,14 @@ describe("bootstrap.sql DDL sync", () => {
     // a single command.
     const harness = await createTestHarness();
     const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
-    const widener = bootstrapSql.slice(bootstrapSql.indexOf("DO $$"));
+    // THE BLOCK IS FOUND BY NAME, not by position. This read
+    // `slice(indexOf("DO $$"))` — everything from the first guarded block to
+    // the end of the file — which was correct only while the widener happened
+    // to be the LAST thing in bootstrap.sql. Spec 05 appended two tables and a
+    // guard of its own below it, and the slice then carried three statements
+    // into a `db.execute` that prepares exactly one. A test that breaks when
+    // unrelated SQL is appended was not testing what it said.
+    const widener = guardedBlockNamed(bootstrapSql, "claims_body_length_check");
     const oidOfCheck = async (): Promise<string> => {
       const result = (await harness.db.execute(
         sql`SELECT oid::text AS oid FROM pg_constraint WHERE conname = 'claims_body_length_check'`,

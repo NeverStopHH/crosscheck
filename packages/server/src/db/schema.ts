@@ -19,6 +19,10 @@ import {
 import {
   ARTIFACT_SENSITIVITIES,
   CAPTURE_MODES,
+  CI_PROVIDERS,
+  CI_RERUN_KINDS,
+  CI_RUN_OUTCOMES,
+  CI_TEST_STATUSES,
   CLAIM_KINDS,
   CLAIM_STATUSES,
   EDGE_KINDS,
@@ -681,3 +685,96 @@ export const teamSettings = pgTable("team_settings", {
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });
+
+/**
+ * ONE ROW PER LANE PER ATTEMPT (spec 05 §3.2).
+ *
+ * The id is deterministic — `cir_` + sha256 over the lane, the commit, the
+ * attempt and the re-run kind — mirroring `hint_deliveries`, so a retried POST
+ * from a flaky runner is a `duplicate` rather than a second row claiming the
+ * same job ran twice.
+ *
+ * NO `reported_by`. `commit_evidence.reported_by` is a developer foreign key,
+ * and a CI run has no author: inventing one would put a teammate in the graph
+ * who does not exist, which is the phantom-teammate trap the absence machinery
+ * must never fall into. Ownership of the write lives in the token, not in a row.
+ */
+export const ciRuns = pgTable(
+  "ci_runs",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    commitSha: text("commit_sha").notNull(),
+    provider: text("provider", { enum: CI_PROVIDERS }).notNull(),
+    workflow: text("workflow").notNull(),
+    job: text("job").notNull(),
+    /** `''` when the job has no matrix — a value, never a null. */
+    leg: text("leg").notNull(),
+    ref: text("ref").notNull(),
+    runAttempt: integer("run_attempt").notNull(),
+    /** Opaque provider handle, kept so a human can open the log. */
+    externalRunId: text("external_run_id").notNull(),
+    rerunKind: text("rerun_kind", { enum: CI_RERUN_KINDS }).notNull(),
+    /**
+     * Self-referential: the run this one re-ran. The ingest refuses a target
+     * whose lane or commit differs, because a re-run of a DIFFERENT commit is
+     * not a re-run and would let a green elsewhere clear a red here.
+     */
+    rerunOf: text("rerun_of"),
+    outcome: text("outcome", { enum: CI_RUN_OUTCOMES }).notNull(),
+    tests: integer("tests").notNull(),
+    failures: integer("failures").notNull(),
+    skipped: integer("skipped").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    /**
+     * How many ambiguous `(file, chain, name)` triples the reporter dropped.
+     * Stored rather than inferred: a silently shorter list is exactly the
+     * absence this project refuses, so the number travels and doctor prints it.
+     */
+    ambiguousDropped: integer("ambiguous_dropped").notNull(),
+    startedAt: timestamptz("started_at").notNull(),
+    collectedAt: timestamptz("collected_at").notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    // The join a session already carries: repo plus the commit it was based on.
+    index("ci_runs_repo_commit_idx").on(table.repo, table.commitSha),
+    // The base window, read newest-first within one lane and never across lanes.
+    index("ci_runs_lane_started_idx").on(
+      table.repo,
+      table.provider,
+      table.workflow,
+      table.job,
+      table.leg,
+      table.ref,
+      table.startedAt,
+    ),
+    index("ci_runs_rerun_of_idx").on(table.rerunOf),
+  ],
+);
+
+/**
+ * NON-GREEN ROWS ONLY (spec 05 §3.3), and that is a contract rather than an
+ * optimisation: a run row ASSERTS that these are all the non-green tests it
+ * ran, which is what lets a later reader conclude anything about a test that
+ * is absent. The assertion holds only when `outcome = 'completed'`.
+ *
+ * `repo` is denormalised the way `pin_files` denormalises it, for the
+ * (repo, test_id) lookup that asks "was this test ever non-green here".
+ */
+export const ciTestResults = pgTable(
+  "ci_test_results",
+  {
+    ciRunId: text("ci_run_id")
+      .notNull()
+      .references(() => ciRuns.id, { onDelete: "cascade" }),
+    testId: text("test_id").notNull(),
+    repo: text("repo").notNull(),
+    status: text("status", { enum: CI_TEST_STATUSES }).notNull(),
+    durationMs: integer("duration_ms").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.ciRunId, table.testId] }),
+    index("ci_test_results_repo_test_idx").on(table.repo, table.testId),
+  ],
+);
