@@ -250,7 +250,23 @@ const updateExistingWorkContext = async (
       ? null
       : await appendIntentVersion(deps, {
           workContextId: body.id,
-          authorSessionId: row.workContext.sessionId,
+          // THE SESSION THAT WROTE IT, NOT THE ONE THAT OPENED THE CONTEXT.
+          // This read `row.workContext.sessionId` — the CREATING session — so
+          // a second session of the same developer had its sentence filed
+          // under the first session's name. The ownership check above cannot
+          // catch that: it is developer-scoped and never asks which SESSION
+          // is writing.
+          //
+          // The direction is what makes it serious. Step 3 of the ladder
+          // keeps an entry only while `authorSessionId === edit.event
+          // .sessionId`, so a misfiled row becomes COMPARABLE with edits it
+          // has no relation to, and a comparable pair can answer
+          // `predeclared` — the value that exonerates. Filed honestly the
+          // same pair answers `absent / different_session`, which is the
+          // truth: there is no cross-session order to have. The create path
+          // one branch over already used `body.sessionId`; this is that rule,
+          // applied where it was missing.
+          authorSessionId: body.sessionId,
           intent: changes.intent as Intent,
           seq,
         });

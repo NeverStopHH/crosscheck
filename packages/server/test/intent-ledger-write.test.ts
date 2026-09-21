@@ -29,6 +29,7 @@ import {
   WORK_CONTEXT_ID,
   createHarnessWithSession,
   postRecords,
+  registerTestSession,
   recordEnvelope,
   validWorkContextBody,
 } from "./helpers.ts";
@@ -232,6 +233,47 @@ describe("INT-4 — the head cannot disagree with the ledger", () => {
       epoch: EPOCH,
       n: 4,
     });
+  });
+});
+
+describe("a sentence is filed under the session that wrote it", () => {
+  test("a second session of one developer is not the first session", async () => {
+    // Arrange: one developer, two live sessions — a second agent in another
+    // worktree, or a subagent that minted its own host key. Session 1 opens
+    // the work context.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+
+    const secondSessionId = "cc_second_session";
+    await registerTestSession(harness, developer.apiKey, {
+      id: secondSessionId,
+    });
+
+    // Act: session 2 declares on the context session 1 opened. The hub's
+    // ownership check passes — same DEVELOPER — and it never asks which
+    // session is writing.
+    const envelope = recordEnvelope(
+      "work_context",
+      validWorkContextBody({
+        sessionId: secondSessionId,
+        intent: declared("Session two's own plan."),
+      }),
+    );
+    await postRecords(harness, developer, envelope);
+
+    // Assert: the row names session 2. It used to name session 1, and the
+    // direction is what makes that serious: step 3 of the ladder keeps an
+    // entry only while its author matches the EDIT's session, so a misfiled
+    // row becomes comparable with edits it has no relation to — and a
+    // comparable pair can answer `predeclared`, the value that exonerates.
+    // Filed honestly the same pair answers `absent / different_session`.
+    const chain = await chainOf(harness);
+    expect(chain.length).toBe(1);
+    expect(chain[0]?.authorSessionId).toBe(secondSessionId);
   });
 });
 

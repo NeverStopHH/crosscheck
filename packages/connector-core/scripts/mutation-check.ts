@@ -6116,6 +6116,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "declared non-goal that is gone turns `declared_non_goal_edited` into " +
       "`predeclared`, missing evidence removing an accusation",
   },
+  {
+    // The hub's ownership check is developer-scoped and never asks which
+    // SESSION is writing, so the ledger's author has to come from the record.
+    label: "a sentence is filed under the session that did not write it",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "          authorSessionId: body.sessionId,\n          intent: changes.intent as Intent,",
+    to: "          authorSessionId: row.workContext.sessionId,\n          intent: changes.intent as Intent,",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "step 3 of the ladder keeps an entry only while its author matches the " +
+      "edit's session, so a misfiled row becomes COMPARABLE with edits it has " +
+      "no relation to — and a comparable pair can answer `predeclared`, the " +
+      "value that exonerates, where the truth is `different_session`",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6286,7 +6300,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 6
- * PRINTS: packages/server/test/intent-ledger-write.test.ts 5
+ * PRINTS: packages/server/test/intent-ledger-write.test.ts 6
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1
