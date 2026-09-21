@@ -47,6 +47,45 @@ const WORKSPACE_PACKAGES_ROOT = join(import.meta.dir, "..", "..");
 const LEDGER_IDENTIFIERS = new Set(["workContextIntents", "intentScope"]);
 
 /**
+ * THE LEDGER'S EXPORTED READERS — because guarding the table names guards a
+ * SPELLING, and the rule is about ACCESS.
+ *
+ * The first version of this file matched `workContextIntents` and
+ * `intentScope` only. A module that imports `readIntentChain` from the
+ * consumer reaches every summary, reason and scope entry without spelling
+ * either table once, so the walk saw nothing — and `services/diagnosis.ts`
+ * was already doing exactly that in the shipped tree. The test could not tell
+ * a renderer from a gate, which is the distinction INT-7 exists to make: a
+ * fence that consulted the ledger would have stayed green, and the wrong
+ * answer there is the permissive one.
+ *
+ * So the readers are named too, and every module that calls one has to be on
+ * the list below with its reason.
+ */
+const LEDGER_READERS = new Set([
+  "readIntentChain",
+  "explanationTimingFor",
+  "explanationTimingOf",
+  "countIntentPositions",
+]);
+
+/**
+ * Modules permitted to call a ledger reader, and what each is permitted FOR.
+ *
+ * Every entry is a render or report path. None of them decides anything: a
+ * renderer shows a reader the history, a doctor line counts rows. No verdict,
+ * fence or hint path appears here, and adding one is the decision INT-7
+ * exists to force into the open rather than let happen by import.
+ */
+const READER_CALLERS = new Map<string, string>([
+  [
+    "packages/server/src/services/diagnosis.ts",
+    "renders the chain onto the diagnosis document (§5) — it ships rows to a " +
+      "reader and gates nothing",
+  ],
+]);
+
+/**
  * The definition site and the one consumer, as repo-relative paths.
  *
  * `db/schema.ts` declares the tables; `services/intent-ledger.ts` is the only
@@ -124,6 +163,12 @@ const namesLedger = (clause: string): boolean =>
     (match) => match[0] !== undefined && LEDGER_IDENTIFIERS.has(match[0]),
   );
 
+/** Which ledger readers a clause imports, if any. */
+const readersIn = (clause: string): readonly string[] =>
+  [...clause.matchAll(/[A-Za-z_$][\w$]*/g)]
+    .map((match) => match[0])
+    .filter((name): name is string => name !== undefined && LEDGER_READERS.has(name));
+
 /**
  * Every way a module can reach the two tables, from one file's source.
  *
@@ -155,6 +200,12 @@ const referencesIn = (source: string): readonly string[] => {
       .join(",");
     if (namesLedger(valueNames)) {
       found.push(`static import from ${specifier}`);
+    }
+    // The second door, and the one the first version of this file could not
+    // see: importing a READER reaches every row the tables hold without
+    // spelling either table name.
+    for (const reader of readersIn(valueNames)) {
+      found.push(`reads the ledger via ${reader}()`);
     }
   }
 
@@ -214,7 +265,14 @@ describe("INT-7 — the ledger authorises nothing", () => {
         if (EXEMPT.has(file)) {
           continue;
         }
+        const permittedReader = READER_CALLERS.has(file);
         for (const how of referencesIn(await Bun.file(absolute).text())) {
+          // A module on READER_CALLERS may call a reader and nothing else:
+          // it is still forbidden to touch the tables directly, because that
+          // would be a second door under an exemption granted for the first.
+          if (permittedReader && how.startsWith("reads the ledger via ")) {
+            continue;
+          }
           violations.push({ file, how });
         }
       }
@@ -231,6 +289,22 @@ describe("INT-7 — the ledger authorises nothing", () => {
     expect(
       violations.map((violation) => `${violation.file}: ${violation.how}`),
     ).toEqual([]);
+  });
+
+  test("every reader exemption still covers something", async () => {
+    // AN EXEMPTION THAT HIDES NOTHING IS WORSE THAN NO EXEMPTION: it reads as
+    // a considered decision while guarding an import somebody removed months
+    // ago, and the next module to need one finds a list that looks permissive.
+    for (const [file, reason] of READER_CALLERS) {
+      const absolute = join(WORKSPACE_PACKAGES_ROOT, "..", file);
+      const source = await Bun.file(absolute).text();
+      const doors = referencesIn(source).filter((how) =>
+        how.startsWith("reads the ledger via "),
+      );
+      expect(doors).not.toEqual([]);
+      // And the reason is a sentence, not a shrug.
+      expect(reason.length).toBeGreaterThan(20);
+    }
   });
 
   test("the consumer itself is found by the walk it is exempt from", async () => {
