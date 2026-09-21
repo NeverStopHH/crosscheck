@@ -21,6 +21,7 @@ import {
   HINT_MIN_EVIDENCE_REFS,
   MAX_HINTS_PER_SESSION,
 } from "../constants.ts";
+import { isAssertableValidity } from "../claim-validity.ts";
 import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
 
 /**
@@ -122,70 +123,16 @@ const hasBody = (claim: HintClaimCandidate): boolean =>
   claim.body.trim().length > 0;
 
 /**
- * States that have stopped being a CURRENT statement about the code
- * (1.0 spec 02 §5, D3's default).
- *
- * `unknown` is deliberately absent. A claim nobody has revalidated is not a
- * claim somebody checked and found wrong, and refusing everything unmeasured
- * would silence a whole hub on the day this shipped — the same direction
- * §3.3 takes when a pruned row reads `unknown` again rather than keeping its
- * last verdict.
- *
- * `invalidated` IS PRESENT, and §5's set is taken verbatim — but only because
- * the DERIVATION behind the word was narrowed first, which is worth the
- * paragraph. Read as §3.5's table first wrote it (`status === "rejected"`,
- * whatever the kind), `invalidated` could reach this predicate through
- * exactly one door: `isNegativeKnowledge`, since `isSettled` admits only
- * `likely_root_cause` and `partially_confirmed`. The term could therefore
- * fire on NOTHING except an evidence-backed `rejected_approach` — the one
- * category DESIGN.md §4 privileges above all others, and the one whose
- * demotion hands the reader the settled POSITIVE in its place.
- *
- * The fix belongs where the word is minted, not here. The hub derives
- * `invalidated` only for kinds whose `rejected` status is a RETRACTION
- * (server services/claim-validity.ts); a rejected approach walks the code
- * axis like every other claim and goes `stale` when its files move, which is
- * exactly what has to happen to "raising the timeout does nothing" once the
- * reader is rebuilt.
- *
- * So the term stays as written, and what it refuses is a claim THE HUB calls
- * invalidated, whatever kind it carries. An older hub, or a forging one, that
- * hands that label to a rejected approach keeps it out of the substance lane
- * rather than in it — the same direction every other term here fails.
- */
-const NON_CURRENT_STATES: ReadonlySet<string> = new Set([
-  "stale",
-  "invalidated",
-  "superseded",
-]);
-
-/**
  * THE CODE AXIS OF THE SUBSTANCE GATE (1.0 spec 02 §5, CCB-1/CCB-7).
  *
- * Two terms, both failing closed toward the pointer lane:
- *
- *   1. `commitBinding !== "none"` — a claim whose observation point is
- *      unknown may not be presented as current at all. Non-negotiable #3 on
- *      the code axis: unknown provenance fails CLOSED.
- *   2. `state ∉ NON_CURRENT_STATES` — the hub's one authoritative verdict
- *      (server/src/services/claim-validity.ts), edge-derived for `superseded`
- *      and revalidation-derived for `stale`.
- *
- * ABSENT MEANS "THE HUB DID NOT ANSWER", NOT "REFUSE". A hub too old to send
- * the field keeps its team's claims in the substance lane; the alternative is
- * one connector upgrade silencing a whole hub, and `unknown` is injectable
- * anyway, so the two cases land in the same place. The residue is real and
- * doctor names it out loud rather than leaving a reader to notice.
+ * The predicate itself lives in src/claim-validity.ts, because the briefing's
+ * solved root-cause line asserts a claim body on exactly the same terms and
+ * two renderers each deciding "still current" for themselves is the
+ * two-silent-definitions defect spec 02 exists to prevent. Its header carries
+ * the reasoning for both terms and for why `unknown` is let through.
  */
-const isCodeCurrent = (claim: HintClaimCandidate): boolean => {
-  const validity = claim.validity;
-  if (validity === undefined) {
-    return true;
-  }
-  return (
-    validity.commitBinding !== "none" && !NON_CURRENT_STATES.has(validity.state)
-  );
-};
+const isCodeCurrent = (claim: HintClaimCandidate): boolean =>
+  isAssertableValidity(claim.validity);
 
 /**
  * The asymmetry, in one predicate: provenance and evidence first, then kind or

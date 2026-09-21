@@ -387,6 +387,20 @@ export const SolvedMatchEntrySchema = z.looseObject({
    * render because DESIGN.md §4's rule is about what reaches the reader.
    */
   rootCauseConfidence: z.number().min(0).max(1).nullable().optional(),
+  /**
+   * How much the claim `rootCause` quotes is still worth about the CODE
+   * (1.0 spec 02 §5, the `briefing solved` row of its table).
+   *
+   * THE SECOND UNSOLICITED SURFACE THAT ASSERTS A CLAIM BODY. `claim-hint` is
+   * the first, and it was gated; this row was not, so a root cause recorded
+   * against a file rewritten since was still handed to a reader at
+   * SessionStart as the answer — AT-2's subject exactly, one surface over.
+   *
+   * OPTIONAL and nullable for `validity`'s reason one field over: absence
+   * means "the hub did not answer", never "unknown". An older hub omits it
+   * and the line renders as it always did.
+   */
+  rootCauseValidity: ClaimValiditySchema.nullable().optional(),
 });
 
 export type SolvedMatchEntry = z.infer<typeof SolvedMatchEntrySchema>;

@@ -44,7 +44,8 @@ import {
   formatSolvedLine,
 } from "../briefing/render.ts";
 import { bareUntrusted as bare } from "../briefing/sanitize.ts";
-import { claimValidityWord, quoted, quotedBody, safeId } from "../mcp/render.ts";
+import { claimValidityWord } from "../briefing/render.ts";
+import { quoted, quotedBody, safeId } from "../mcp/render.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import type {
   AnsweredQuestion,

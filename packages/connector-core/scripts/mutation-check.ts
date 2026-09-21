@@ -4789,9 +4789,10 @@ export const MUTATIONS: readonly Mutation[] = [
     // 1.0 spec 02 CCB-1. The code axis of the substance gate: a claim whose
     // observation point is unknown may not be presented as a current cause.
     label: "a claim bound to no commit is injected as substance again",
-    file: `${CORE}/src/hints/select.ts`,
-    from: '    validity.commitBinding !== "none" && !NON_CURRENT_STATES.has(validity.state)',
-    to: "    !NON_CURRENT_STATES.has(validity.state)",
+    file: `${CORE}/src/claim-validity.ts`,
+    from: `    validity.commitBinding !== "none" &&
+    !NON_CURRENT_VALIDITY_STATES.has(validity.state)`,
+    to: "    !NON_CURRENT_VALIDITY_STATES.has(validity.state)",
     test: `${CORE}/test/claim-substance-gate.test.ts`,
     because:
       "unknown fails OPEN on the code axis: a claim nobody can ever " +
@@ -4801,8 +4802,9 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // 1.0 spec 02 CCB-7. The hub's one authoritative verdict, dropped.
     label: "the substance gate stops reading the hub's validity verdict",
-    file: `${CORE}/src/hints/select.ts`,
-    from: '    validity.commitBinding !== "none" && !NON_CURRENT_STATES.has(validity.state)',
+    file: `${CORE}/src/claim-validity.ts`,
+    from: `    validity.commitBinding !== "none" &&
+    !NON_CURRENT_VALIDITY_STATES.has(validity.state)`,
     to: '    validity.commitBinding !== "none"',
     test: `${CORE}/test/claim-substance-gate.test.ts`,
     because:
@@ -4960,6 +4962,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "renderer structure straight into the reader's terminal",
   },
   {
+    // 1.0 spec 02 §5, the `briefing solved` row of its table. The SECOND
+    // unsolicited surface that asserts a claim body, and the one AT-2's gate
+    // did not reach until this commit.
+    label: "a stale root cause is asserted unasked at SessionStart",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  if (!isAssertableValidity(entry.rootCauseValidity)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/briefing-solved.test.ts`,
+    because:
+      "a root cause recorded in April against a file rewritten in June is " +
+      "handed to a reader in July as the answer, under confidence and " +
+      "provenance labels, on the one surface nobody asked to see",
+  },
+  {
     // The two counts doctor prints on DIFFERENT lines because their remedies
     // are opposite.
     label: "a claim that can never be checked is counted as merely unchecked",
@@ -5074,7 +5090,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/absence-render.test.ts 1
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
- * PRINTS: packages/connector-core/test/briefing-solved.test.ts 3
+ * PRINTS: packages/connector-core/test/briefing-solved.test.ts 4
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 2
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 1

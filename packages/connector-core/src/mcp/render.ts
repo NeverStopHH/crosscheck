@@ -29,7 +29,6 @@ import type { ClaimValidity, ClaimValidityState } from "@crosscheck/schema";
 import {
   HUB_MAX_DIAGNOSIS_TARGETS,
   MAX_CLAIM_VALIDITY_LINE_CHARS,
-  MAX_CLAIM_VALIDITY_WORD_CHARS,
   MAX_DIAGNOSIS_CHARS,
   MAX_DIAGNOSIS_TARGETS_SHOWN,
   MAX_HUB_MESSAGE_CHARS,
@@ -399,22 +398,6 @@ export const claimValidityClause = (
     : `${clause.slice(0, MAX_CLAIM_VALIDITY_LINE_CHARS - 1)}…`;
 };
 
-/**
- * The state WORD alone, for an UNSOLICITED surface (§5a).
- *
- * Null for a hub that sent nothing — absence is "the hub did not answer",
- * which is a different statement from `unknown` and must not be rendered as
- * one (the `targetsReported` rule, one field over).
- */
-export const claimValidityWord = (
-  validity: ClaimValidity | undefined,
-): string | null => {
-  if (validity === undefined) {
-    return null;
-  }
-  const word = `validity ${bare(validity.state, MAX_CLAIM_VALIDITY_WORD_CHARS)}`;
-  return word.slice(0, MAX_CLAIM_VALIDITY_WORD_CHARS);
-};
 
 const validityFacts = (claim: DiagnosisClaim): readonly string[] => {
   const clause = claimValidityClause(claim.validity);

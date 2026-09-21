@@ -406,6 +406,24 @@ const solvedMatchWith = (payload: string): SolvedMatchEntry => ({
   // Required at render, so the corpus would stop covering the cause line
   // without it — the body is only sanitized when it is printed.
   rootCauseConfidence: 0.9,
+  // THE VALIDITY RECORD, PLANTED — and `unknown` rather than `stale` on
+  // purpose. A non-current verdict WITHHOLDS the body here (briefing/
+  // render.ts), so a downgraded record would quietly stop the corpus
+  // attacking the root-cause slot at all: the surface would render less than
+  // it exists to attack, which is how a corpus goes blind without failing.
+  // `unknown` keeps the body travelling AND still prints the state word, so
+  // both the framed body and the new label are under attack in one pass.
+  // The payload rides the two string-shaped slots a hostile hub controls.
+  rootCauseValidity: {
+    state: "unknown",
+    observedAtCommit: payload,
+    commitBinding: "session_base",
+    basis: null,
+    touchingCommits: [],
+    touchingTotal: null,
+    lastRevalidatedAt: null,
+    supersededByClaimId: payload,
+  },
 });
 
 const tripwireSessionWith = (payload: string): TripwireSession => ({

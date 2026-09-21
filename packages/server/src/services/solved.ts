@@ -187,6 +187,13 @@ export interface SolvedRootCause {
    * presenting a guess as a settled answer.
    */
   readonly confidence: number;
+  /**
+   * WHICH claim this body is, so a reader can ask what it is still worth
+   * about the code (1.0 spec 02 §5). The body is asserted unasked at
+   * SessionStart; every other surface that asserts one gets the hub's
+   * verdict beside it, and this one needs the id to derive it.
+   */
+  readonly claimId: string;
 }
 
 /**
@@ -210,6 +217,7 @@ export const listSolvedRootCauses = async (
   }
   const rows = await db
     .select({
+      id: claims.id,
       workContextId: claims.workContextId,
       body: claims.body,
       confidence: claims.confidence,
@@ -222,6 +230,7 @@ export const listSolvedRootCauses = async (
   for (const row of rows) {
     if (!newest.has(row.workContextId)) {
       newest.set(row.workContextId, {
+        claimId: row.id,
         body: row.body,
         confidence: row.confidence,
       });

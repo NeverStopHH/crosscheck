@@ -268,3 +268,33 @@ describe("the claim-hint corpus sees the state word, in every package", () => {
     }
   });
 });
+
+/**
+ * THE SAME OBLIGATION, ON THE BRIEFING'S SOLVED ROOT CAUSE.
+ *
+ * The lesson of the block above, applied before it could be repeated: a new
+ * label the corpus cannot see is a new label the corpus does not guard. This
+ * surface is registered in connector-core ALONE — the briefing's solved
+ * section has no Cursor or ACP mirror, because those adapters register their
+ * own `*-briefing` surfaces rather than wrapping this one — so one entry is
+ * the whole obligation here, and the count is asserted rather than assumed.
+ */
+describe("the briefing-solved corpus sees the state word", () => {
+  test("the registered surface renders it under the corpus payload", async () => {
+    // Arrange
+    const { ALL_REGISTERED_SURFACES } = await import(
+      "./fixtures/registry-packages.ts"
+    );
+    const solved = ALL_REGISTERED_SURFACES.filter(
+      (surface) => surface.kind === "corpus" && surface.name === "briefing-solved",
+    );
+
+    // Assert: one, and it carries both the framed body it exists to attack
+    // and the new label beside it.
+    expect(solved.length).toBe(1);
+    const rendered =
+      solved[0]?.kind === "corpus" ? solved[0].render("rate limit fix") : "";
+    expect(rendered).toContain("validity ");
+    expect(rendered).toContain("root cause · ");
+  });
+});
