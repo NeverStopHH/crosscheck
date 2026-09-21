@@ -27,7 +27,7 @@
  * other revision, a NEW claim (services/hints.ts), which is authored and
  * attributable.
  */
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, lt, ne, notExists, or, sql } from "drizzle-orm";
 import type { ClaimRevalidationReport, ClaimValidity } from "@crosscheck/schema";
 
 import { CLAIM_REVALIDATION_RETENTION_DAYS } from "../constants.ts";
@@ -97,10 +97,6 @@ export const ingestClaimRevalidations = async (
   // single-connection, so a transaction held open across an HTTP call would
   // block the whole hub (record-handlers.ts states the constraint).
   return deps.db.transaction(async (tx) => {
-    const pruned = await tx
-      .delete(claimRevalidations)
-      .where(lt(claimRevalidations.revalidatedAt, retentionCutoff))
-      .returning({ claimId: claimRevalidations.claimId });
     let recorded = 0;
     let refusedDowngrades = 0;
     for (const entry of report.entries) {
@@ -154,6 +150,48 @@ export const ingestClaimRevalidations = async (
         refusedDowngrades += 1;
       }
     }
+    // RETENTION RUNS LAST, AND NEVER OVER A MEASURED DOWNGRADE.
+    //
+    // It used to run FIRST, unconditionally, across the whole table — so the
+    // downgrade-only rule, which fires only on a CONFLICT, never fired at
+    // all once a `changed` row had aged past the cutoff. The prune deleted
+    // it, the entry landed as a plain INSERT, and a claim its own author had
+    // been refused on went from `stale` to `current` in one request. The
+    // response then reported `refusedDowngrades: 0`, so the counter that
+    // exists to make the refusal visible reported success, and the commits
+    // that justified the downgrade were deleted with the row.
+    //
+    // The ordering alone does not close it, and the deeper half is the
+    // reason this clause reads the way it does. A `changed` row is the
+    // POSITIVE PROOF that a claim stopped describing the code. Deleting it
+    // returns the claim to `unknown` — which §5's gate admits to the
+    // unsolicited substance lane — so the deletion STRENGTHENS the claim's
+    // standing. That is principle 5 inverted (missing evidence strengthening
+    // a conclusion) and principle 6 broken (deletion without positive proof
+    // to delete), on a timer, whatever the code actually did.
+    //
+    // So age retires an `unchanged` or an `unknown` reading — neither
+    // carries a downgrade, and a stale "we looked and nothing had moved" is
+    // exactly the kind of evidence that should expire. A `changed` reading
+    // is retired only by positive proof: its claim is gone, so nothing can
+    // reference the row any more.
+    const pruned = await tx
+      .delete(claimRevalidations)
+      .where(
+        and(
+          lt(claimRevalidations.revalidatedAt, retentionCutoff),
+          or(
+            ne(claimRevalidations.result, "changed"),
+            notExists(
+              tx
+                .select({ id: claims.id })
+                .from(claims)
+                .where(eq(claims.id, claimRevalidations.claimId)),
+            ),
+          ),
+        ),
+      )
+      .returning({ claimId: claimRevalidations.claimId });
     return {
       recorded,
       refusedDowngrades,

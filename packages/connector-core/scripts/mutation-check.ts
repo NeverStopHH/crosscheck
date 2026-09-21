@@ -5006,6 +5006,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "revalidation can ever reach — a remedy nobody can act on, which is " +
       "worse than naming no remedy at all",
   },
+  {
+    // 1.0 spec 02 CCB-10. The downgrade-only rule fires on a CONFLICT, so a
+    // prune that removes the row first disables it entirely.
+    label: "retention deletes the measurement that made a claim stale",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from:
+      "          or(\n" +
+      "            ne(claimRevalidations.result, \"changed\"),",
+    to: "          or(\n            sql`true`,",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a `changed` row is the positive proof that a claim stopped describing " +
+      "the code, and deleting it returns the claim to `unknown` — which the " +
+      "substance gate ADMITS — so the deletion strengthens the claim's " +
+      "standing on a timer, whatever the code did",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5158,7 +5174,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
- * PRINTS: packages/server/test/claim-revalidations.test.ts 3
+ * PRINTS: packages/server/test/claim-revalidations.test.ts 4
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 2

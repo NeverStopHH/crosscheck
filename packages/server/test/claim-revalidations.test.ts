@@ -166,10 +166,11 @@ describe("claim revalidations", () => {
     expect(second.recorded).toBe(1);
   });
 
-  test("a row past retention is pruned and the claim reads nothing again", async () => {
-    // Arrange: a verdict must not outlive the evidence it came from.
+  test("a reading that carries no downgrade is pruned past retention", async () => {
+    // Arrange: "we looked and nothing had moved" is exactly the kind of
+    // evidence that should expire — it asserts nothing about the code today.
     const { harness, developer } = await seed();
-    await report(harness, developer, [entry("changed")]);
+    await report(harness, developer, [entry("unchanged")]);
     harness.clock.advanceSeconds(
       ((CLAIM_REVALIDATION_RETENTION_DAYS + 1) * MS_PER_DAY) / 1000,
     );
@@ -184,6 +185,42 @@ describe("claim revalidations", () => {
 
     // Assert
     expect(await readRow(harness)).toBeUndefined();
+  });
+
+  test("a measured downgrade outlives retention while its claim exists", async () => {
+    // THE CASE THIS FILE USED TO ASSERT THE OTHER WAY, and it was the defect.
+    // It seeded a `changed` row, advanced past the cutoff and demanded the row
+    // be gone — under the comment "a verdict must not outlive the evidence it
+    // came from". The row IS the evidence. Deleting it returns the claim to
+    // `unknown`, which §5's gate admits to the unsolicited substance lane, so
+    // the deletion STRENGTHENS the claim's standing: principle 5 inverted and
+    // principle 6 broken, on a timer, whatever the code actually did.
+    //
+    // It was also the opening for a one-request walk-back. The prune ran
+    // FIRST, so the downgrade-only rule — which fires only on a CONFLICT —
+    // never fired once the row had aged, and a claim's own author could post
+    // `unchanged` and read back `current` with `refusedDowngrades: 0`.
+    const { harness, developer } = await seed();
+    await report(harness, developer, [entry("changed")]);
+    harness.clock.advanceSeconds(
+      ((CLAIM_REVALIDATION_RETENTION_DAYS + 1) * MS_PER_DAY) / 1000,
+    );
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("claim", validClaimBody({ id: "clm_03", body: "third" })),
+    );
+
+    // Act: a later report, which is what used to prune it away.
+    await report(harness, developer, [entry("unknown", { claimId: "clm_03" })]);
+
+    // Assert: still there, and still `changed`.
+    expect((await readRow(harness))?.result).toBe("changed");
+
+    // And the walk-back that prune used to enable is refused, loudly.
+    const outcome = await report(harness, developer, [entry("unchanged")]);
+    expect(outcome.refusedDowngrades).toBe(1);
+    expect((await readRow(harness))?.result).toBe("changed");
   });
 
   test("a report without a bearer key is refused", async () => {
