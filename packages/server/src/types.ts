@@ -23,6 +23,13 @@ export interface AppDeps {
   readonly db: Db;
   readonly now: Clock;
   readonly adminToken: string | null;
+  /**
+   * Writes CI runs, and nothing else. NOT the admin token: that one also
+   * flips `pin_policy` and `suspect_attribution`, and putting it in a CI
+   * secret widens its blast radius to every fork-adjacent workflow mistake.
+   * Null = no reporter is configured and the write route refuses.
+   */
+  readonly ciToken: string | null;
   /** Null = keyless install: the vector tier is silently absent (DESIGN.md §6). */
   readonly embedder: Embedder | null;
   /**
