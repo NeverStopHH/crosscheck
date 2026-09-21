@@ -5022,6 +5022,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "substance gate ADMITS — so the deletion strengthens the claim's " +
       "standing on a timer, whatever the code did",
   },
+  {
+    // 1.0 spec 02, AT-2's first "fails if". `context_targets` is the DEFAULT
+    // basis and the cut keeps the alphabetically first 30 of up to 100, so a
+    // rewrite past the cut is invisible to every pull.
+    label: "a surface cut by the cap vouches for files nobody looked at",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "    return present.ok && present.stdout.trim().length > 0 && complete",
+    to: "    return present.ok && present.stdout.trim().length > 0",
+    test: `${CORE}/test/claim-drift.test.ts`,
+    because:
+      "`unchanged` asserts that nothing under the claim moved, and the paths " +
+      "past the cap were never handed to git — so the claim goes from " +
+      "`unknown` to `current` on evidence that was never gathered, and keeps " +
+      "the unsolicited substance lane about a file that was rewritten",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5126,7 +5141,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 4
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
- * PRINTS: packages/connector-core/test/claim-drift.test.ts 2
+ * PRINTS: packages/connector-core/test/claim-drift.test.ts 3
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 1
  * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1

@@ -10,6 +10,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
+import { MAX_CLAIM_SURFACE_PATHS } from "@crosscheck/schema";
+
 import { checkClaimDrift } from "../src/git/claim-drift.ts";
 import { git, makeRepo, writeRepoFile } from "./helpers.ts";
 
@@ -180,5 +182,53 @@ describe("checkClaimDrift", () => {
     expect(drift.result).toBe("changed");
     expect(drift.touchingCommits.length).toBe(5);
     expect(drift.touchingTotal).toBe(8);
+  });
+  test("a surface cut by the cap can never vouch for the files it skipped", async () => {
+    // THE DEFAULT PATH, not an edge case. `contextTargets` slices a work
+    // context's file targets to MAX_CLAIM_SURFACE_PATHS while the hub serves
+    // up to DIAGNOSIS_MAX_TARGETS of them ordered by value, so a tree with 40
+    // targets always keeps the alphabetically FIRST 30 — and a rewrite past
+    // the cut is invisible to every pull. `context_targets` is the default
+    // basis: an agent that passes no `affectedPaths` lands here.
+    //
+    // Before the completeness guard this answered `unchanged`, the hub
+    // derived `current`, and the claim kept the unsolicited substance lane
+    // rendering "those files have not changed since" — about a file that had
+    // been rewritten. Missing evidence moving a claim from `unknown` to
+    // `current` is principle 5 inverted.
+    const root = await makeRepo("claim-drift-cut");
+    paths.push(root);
+    const surface = Array.from(
+      { length: MAX_CLAIM_SURFACE_PATHS + 10 },
+      (_unused, index) => `src/f${String(index).padStart(3, "0")}.ts`,
+    );
+    for (const file of surface) {
+      await writeRepoFile(root, file, "export const v = 0;\n");
+    }
+    await git(root, ["add", "-A"]);
+    await git(root, ["commit", "-m", "surface"]);
+    const base = await revParse(root, "HEAD");
+
+    // Only the LAST path moves — the one the cut drops.
+    const moved = surface[surface.length - 1] ?? "";
+    await writeRepoFile(root, moved, "export const v = 1;\n");
+    await git(root, ["add", "-A"]);
+    await git(root, ["commit", "-m", "rewrite past the cut"]);
+
+    // Act
+    const drift = await checkClaimDrift(root, "main", base, surface);
+
+    // Assert: withheld, and the narrowing is visible in the numbers.
+    expect(drift.result).toBe("unknown");
+    expect(drift.pathsChecked).toBe(MAX_CLAIM_SURFACE_PATHS);
+    expect(drift.pathsGiven).toBe(surface.length);
+
+    // The control, and the asymmetry principle 5 describes: a COMPLETE look
+    // at the same repo still answers, and a narrowed look that FINDS a change
+    // still answers — a subset can miss a change, never invent one.
+    const whole = await checkClaimDrift(root, "main", base, [moved]);
+    expect(whole.result).toBe("changed");
+    const untouched = await checkClaimDrift(root, "main", base, [surface[0] ?? ""]);
+    expect(untouched.result).toBe("unchanged");
   });
 });

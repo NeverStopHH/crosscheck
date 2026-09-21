@@ -182,7 +182,31 @@ export const checkClaimDrift = async (
       root,
       STALENESS_GIT_TIMEOUT_MS,
     );
-    return present.ok && present.stdout.trim().length > 0
+    // A NARROWED SURFACE MAY CONFIRM A CHANGE AND MAY NEVER CONFIRM ITS
+    // ABSENCE. `unchanged` asserts that nothing under this claim moved, and
+    // that assertion is only as wide as the paths git was actually handed:
+    // the ones past the cap were never looked at, so they cannot be vouched
+    // for.
+    //
+    // The cut is neither random nor rare. `contextTargets` slices a work
+    // context's file targets to MAX_CLAIM_SURFACE_PATHS while the hub serves
+    // up to DIAGNOSIS_MAX_TARGETS of them, ordered by value — so a tree with
+    // 40 targets always keeps the alphabetically first 30, and a rewrite of
+    // `src/f039.ts` is invisible to every pull. `context_targets` is the
+    // DEFAULT basis, so this is the ordinary path rather than an edge case.
+    //
+    // Measured before this guard existed: 40 targets, only `src/f039.ts`
+    // rewritten, and the pull answered `unchanged`. The claim then rendered
+    // "current: recorded at 81b092d; those files have not changed since" and
+    // kept the unsolicited substance lane — about a file that had been
+    // rewritten. Missing evidence moving a claim from `unknown` to `current`
+    // is principle 5 inverted, and AT-2's own first "fails if".
+    //
+    // `changed` above needs no such guard: finding a commit in a SUBSET is
+    // still finding one. A narrower look can only ever miss a change, never
+    // invent one — which is the whole asymmetry principle 5 describes.
+    const complete = safePaths.length === paths.length;
+    return present.ok && present.stdout.trim().length > 0 && complete
       ? {
           result: "unchanged",
           touchingCommits: [],
