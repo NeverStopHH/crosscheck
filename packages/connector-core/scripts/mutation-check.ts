@@ -4786,6 +4786,24 @@ export const MUTATIONS: readonly Mutation[] = [
       "five-year repo is the steady state rather than the edge case",
   },
   {
+    // 1.0 spec 02 CCB-2 — the load-bearing rule, and the ONLY one of
+    // CCB-1..CCB-10 that shipped with no anchor at all. A second staleness
+    // definition was live in the tree while every other CCB test stayed
+    // green, because it was spelled `checkSolvedFileDrift`, typed
+    // `SolvedFileDrift`, and never mentioned `stale_at` — the string the
+    // other guard greps for.
+    label: "a claim's currency is measured on a clock again",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "  const range = `${observedAtCommit}..${defaultRef}`;",
+    to: "  const range = `--since=${observedAtCommit}`;",
+    test: `${CORE}/test/staleness-axis.test.ts`,
+    because:
+      "a feature branch merged into the default branch keeps its original " +
+      "committer dates, so a clock filter cannot see commits that ancestry " +
+      "can — and the clock's answer is the REASSURING one, so the wrong axis " +
+      "strengthens the conclusion instead of weakening it",
+  },
+  {
     // 1.0 spec 02 CCB-1. The code axis of the substance gate: a claim whose
     // observation point is unknown may not be presented as a current cause.
     label: "a claim bound to no commit is injected as substance again",
@@ -5128,6 +5146,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/set-intent.test.ts 1
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
+ * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1

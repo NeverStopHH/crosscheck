@@ -27,10 +27,10 @@ import type { RevalidationPlan } from "../../flows/claim-revalidation.ts";
 import { resolveRefCommit } from "../../git/claim-drift.ts";
 import { resolveCommitDrift } from "../../git/commit-drift.ts";
 import { resolveDefaultBranchRef } from "../../git/default-branch.ts";
-import { checkSolvedFileDrift } from "../../git/solved-staleness.ts";
+import type { SolvedFileDrift } from "../../git/solved-staleness.ts";
 import { getDiagnosis, reportClaimRevalidations } from "../../http/hub.ts";
 import type { Diagnosis, HubResult } from "../../http/hub.ts";
-import type { ClaimValidity } from "@crosscheck/schema";
+import type { ClaimValidity, ClaimValidityState } from "@crosscheck/schema";
 import { hubFailure, idArg, parseArgs } from "./shared.ts";
 
 const HTTP_NOT_FOUND = 404;
@@ -118,38 +118,69 @@ export const isNotFound = (result: HubResult<unknown>): boolean =>
   !result.ok && result.status === HTTP_NOT_FOUND;
 
 /**
+ * THE SOLVED BLOCK'S FILE DRIFT, DERIVED FROM THE REVALIDATION RECORD — not
+ * measured a second time, and not measured on a different axis (spec 02 §5).
+ *
+ * This used to call `checkSolvedFileDrift`, which asks git
+ * `rev-list --count --since=<solvedAt>`: a WALL CLOCK over commit dates. The
+ * revalidation leg asks `observedAtCommit..<defaultRef>`: ANCESTRY. Both ran
+ * on one pull, over one clone, and both printed — four lines apart in one
+ * document, with no precedence rule between them.
+ *
+ * They disagree on the most ordinary git workflow there is. A feature branch
+ * merged into the default branch keeps its original committer dates, so
+ * `--since=<solvedAt>` never sees those commits while `X..origin/main` does.
+ * Measured on a purpose-built clone: `--since` answered 0, the range answered
+ * one commit, and one rendered document said both "have not changed" and
+ * "have changed" about the same file.
+ *
+ * AND THE CLOCK SENTENCE IS THE REASSURING ONE, which is what makes this
+ * principle 5 rather than a mere inconsistency: the wrong-axis measurement
+ * STRENGTHENS the conclusion, and a reader going top-down meets the calming
+ * half first.
+ *
+ * So there is one definition now, and it is the one spec 02 made
+ * authoritative. `stale` anywhere in the tree is `changed`; every claim that
+ * carries a validity reading `current` is `unchanged`; anything else — no
+ * bindable claim, a look that failed, a hub too old to send validity — is
+ * `unknown`, which is the honest answer and the safe direction.
+ */
+const fileDriftFromValidity = (diagnosis: Diagnosis): SolvedFileDrift => {
+  const states = diagnosis.claims
+    .map((claim) => claim.validity?.state)
+    .filter((state): state is ClaimValidityState => state !== undefined);
+  if (states.includes("stale")) {
+    return "changed";
+  }
+  // `current` is the only POSITIVE measurement that the code held still.
+  // `superseded` and `invalidated` are statements about the CLAIM, not about
+  // the code, so neither may vouch for a file.
+  const measured = states.filter((state) => state === "current");
+  return measured.length > 0 && measured.length === states.length
+    ? "unchanged"
+    : "unknown";
+};
+
+/**
  * The pull-time facts for a SOLVED tree (VISION.md §1 honest presentation):
  * drift of the tree's base commit against the reader's HEAD, and whether its
- * referenced files changed on the default branch since the diagnosis. At
- * most three bounded git calls after one bounded ref resolution (the
- * staleness leg spends a second call to prove its pathspecs resolve before
- * vouching "unchanged"), inside the MCP budget (not a hook path), every leg
- * fail-open — a repo that cannot answer renders "unknown", never a guess.
+ * referenced files changed on the default branch since the diagnosis.
+ *
+ * ONE bounded git call now, not three: the file-drift half is derived from
+ * the revalidation record this pull already computed, so the block costs
+ * nothing extra and cannot disagree with the claims printed beside it. Fail
+ * open as before — a repo that cannot answer renders "unknown", never a guess.
  */
 const solvedPresentationFor = async (
   ctx: McpContext,
   diagnosis: Diagnosis,
-  solvedAtMs: number,
-  defaultRef: string | null,
 ): Promise<SolvedPresentation> => {
   const root = ctx.identity.root;
-  const files = diagnosis.targets
-    .filter((target) => target.kind === "file")
-    .map((target) => target.value);
-  const [fileDrift, drift] = await Promise.all([
-    defaultRef === null
-      ? Promise.resolve("unknown" as const)
-      : checkSolvedFileDrift(
-          root,
-          defaultRef,
-          files,
-          new Date(solvedAtMs).toISOString(),
-        ),
+  const drift =
     diagnosis.workContext.baseCommit === undefined
-      ? Promise.resolve(null)
-      : resolveCommitDrift(root, diagnosis.workContext.baseCommit),
-  ]);
-  return { drift, fileDrift };
+      ? null
+      : await resolveCommitDrift(root, diagnosis.workContext.baseCommit);
+  return { drift, fileDrift: fileDriftFromValidity(diagnosis) };
 };
 
 /**
@@ -291,7 +322,7 @@ export const run = async (
   const presentation =
     solvedAtMs === null
       ? undefined
-      : await solvedPresentationFor(ctx, tree, solvedAtMs, defaultRef);
+      : await solvedPresentationFor(ctx, tree);
   // ONE clock for the whole document: the per-claim ages and the solved
   // block are read against the same instant, so two lines of one render can
   // never disagree about how old the tree is.
