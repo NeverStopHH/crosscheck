@@ -1,5 +1,9 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { MAX_INTENT_CHAIN_VERSIONS, isSeqStamp } from "@crosscheck/schema";
+import {
+  MAX_INTENT_CHAIN_VERSIONS,
+  containsSecret,
+  isSeqStamp,
+} from "@crosscheck/schema";
 import type {
   Claim,
   ClaimEdge,
@@ -90,6 +94,51 @@ const ignored = (id: string, issue: string): HandlerOutcome => ({
   id,
   issues: [issue],
 });
+
+/**
+ * THE HUB SCREENS WHAT ONLY THE HUB SEES EVERY WRITER OF.
+ *
+ * `set_intent` screens its `summary` before anything leaves the machine, and
+ * that is the right place for it — a hit means the record never travels. But
+ * spec 06 added two more agent-written text fields, an amendment `reason` and
+ * every `intent_scope.value`, and NEITHER the tool nor the hub looked at
+ * them. Measured against a real hub: a `reason` reading
+ * "ZQXMARK5 AKIA…" and a scope value carrying a `ghp_` token were both
+ * accepted, stored, and rendered into every reader of that work context —
+ * the scope value OUTSIDE the quoting frame.
+ *
+ * The repo's rule is "one helper, every writer" (capture-bookkeeping.ts). The
+ * connector is not every writer: anything posting to `/api/records` reaches
+ * these fields without passing a tool. So the screen is here as well, where
+ * every writer does pass, and the scanner moved to `schema` so both sides
+ * share one definition rather than two that can drift.
+ *
+ * REFUSED, NOT REDACTED. A redacted derivative still leaks structure, and the
+ * author has to learn that the sentence did not land — silently storing a
+ * blanked one would tell them it did.
+ */
+const INTENT_SECRET_ISSUE =
+  "intent: a credential-shaped value was found in the amendment reason or a " +
+  "declared path, so this intent was not recorded — an intent is pushed into " +
+  "every teammate's reader unasked, and a redacted copy still leaks structure";
+
+/** Every agent-written text field an intent carries, for the screen above. */
+const intentTexts = (intent: Intent): readonly string[] => {
+  const raw = intent as Record<string, unknown>;
+  const reason = typeof raw["reason"] === "string" ? [raw["reason"]] : [];
+  const scope = (["expectedSurface", "nonGoals"] as const).flatMap((key) => {
+    const declared = raw[key];
+    return Array.isArray(declared)
+      ? declared.flatMap((entry: unknown) => {
+          const value = (entry as Record<string, unknown> | null)?.["value"];
+          return typeof value === "string" ? [value] : [];
+        })
+      : [];
+  });
+  // The summary is screened at the tool and screened again here: a second
+  // writer that skips the tool is exactly the door this closes.
+  return [intent.summary, ...reason, ...scope];
+};
 
 /**
  * What the author reads when the chain is full. It names the bound, because
@@ -327,6 +376,16 @@ export const ingestWorkContext = async (
     );
     if (sessionIssue !== null) {
       return rejectedOutcome(sessionIssue);
+    }
+    // BEFORE ANYTHING IS STORED, and before either path branches: this is the
+    // one point both the create and the update pass through, so one check
+    // here cannot be bypassed by whichever path a record happens to take.
+    if (
+      body.intent !== undefined &&
+      body.intent !== null &&
+      intentTexts(body.intent).some((text) => containsSecret(text))
+    ) {
+      return rejectedOutcome(INTENT_SECRET_ISSUE);
     }
     const inserted = await tx
       .insert(workContexts)

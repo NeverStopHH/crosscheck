@@ -168,3 +168,5 @@ export {
   describeUnstorableText,
   unstorableTextPath,
 } from "./storable-text.ts";
+
+export { containsSecret } from "./secret-scan.ts";

@@ -236,6 +236,77 @@ describe("INT-4 — the head cannot disagree with the ledger", () => {
   });
 });
 
+describe("a credential never reaches a teammate's reader", () => {
+  // The two fields spec 06 added. `set_intent` screens its summary before
+  // anything leaves the machine; neither the tool nor the hub looked at these.
+  // Both were measured against a real hub: accepted, stored, and rendered into
+  // every reader of the work context — the scope value OUTSIDE the frame.
+  //
+  // The screen is at the HUB because the connector is not every writer:
+  // anything posting to /api/records reaches these fields without passing a
+  // tool. "One helper, every writer" is the repo's own rule.
+  const AWS_KEY = "AKIAIOSFODNN7EXAMPLE";
+  const GH_TOKEN = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB";
+
+  const refusal = async (intent: Record<string, unknown>): Promise<string[]> => {
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    const outcome = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody({ intent })),
+    );
+    return [
+      String(outcome.data?.results?.[0]?.status ?? ""),
+      String((await chainOf(harness)).length),
+    ];
+  };
+
+  test("a credential in the amendment reason is refused, not stored", async () => {
+    expect(
+      await refusal(
+        declared("Rotate the key.", { reason: `rotating because ${AWS_KEY}` }),
+      ),
+    ).toEqual(["rejected", "0"]);
+  });
+
+  test("a credential in a declared path is refused, not stored", async () => {
+    // The worse of the two: a scope value renders OUTSIDE the quoting frame,
+    // so it reaches the reader's context as bare text.
+    expect(
+      await refusal(
+        declared("Rewrite the matcher.", {
+          expectedSurface: [{ kind: "file", value: `packages/${GH_TOKEN}.ts` }],
+        }),
+      ),
+    ).toEqual(["rejected", "0"]);
+    expect(
+      await refusal(
+        declared("Rewrite the matcher.", {
+          nonGoals: [{ kind: "file", value: `packages/${GH_TOKEN}.ts` }],
+        }),
+      ),
+    ).toEqual(["rejected", "0"]);
+  });
+
+  test("an ordinary intent still lands", async () => {
+    // The control. A screen that refused everything would pass both cases
+    // above and break the feature.
+    expect(
+      await refusal(
+        declared("Rewrite the matcher.", {
+          reason: "The provider's id changed.",
+          expectedSurface: [{ kind: "file", value: "packages/a.ts" }],
+        }),
+      ),
+    ).toEqual(["accepted", "1"]);
+  });
+});
+
 describe("a sentence is filed under the session that wrote it", () => {
   test("a second session of one developer is not the first session", async () => {
     // Arrange: one developer, two live sessions — a second agent in another

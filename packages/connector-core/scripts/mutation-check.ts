@@ -6130,6 +6130,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "no relation to — and a comparable pair can answer `predeclared`, the " +
       "value that exonerates, where the truth is `different_session`",
   },
+  {
+    // Spec 06 added two agent-written text fields the connector is not the
+    // only writer of. `set_intent` screens the summary; nothing screened
+    // these, and a scope value renders OUTSIDE the quoting frame.
+    label: "a credential in a reason or a declared path reaches every reader",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "      intentTexts(body.intent).some((text) => containsSecret(text))",
+    to: "      containsSecret(body.intent.summary)",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "an intent is pushed into every teammate's reader unasked, so a token " +
+      "in an amendment reason or a declared path lands in another " +
+      "developer's agent context — and the scope value lands there bare, " +
+      "outside the frame that marks quoted data",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6300,7 +6315,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 6
- * PRINTS: packages/server/test/intent-ledger-write.test.ts 6
+ * PRINTS: packages/server/test/intent-ledger-write.test.ts 7
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1
