@@ -12,7 +12,7 @@ import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
-import { MAX_INTENT_SUMMARY_CHARS } from "@crosscheck/schema";
+import { MAX_INTENT_CHAIN_VERSIONS, MAX_INTENT_SUMMARY_CHARS } from "@crosscheck/schema";
 
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import { hintBodyHash } from "../src/hints/echo.ts";
@@ -21,7 +21,7 @@ import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
 import { NO_SESSION } from "../src/mcp/tools/publish-claim.ts";
 import { INTENT_ECHO_REFUSAL, INTENT_SECRET_REFUSAL, NO_TITLE } from "../src/mcp/tools/set-intent.ts";
-import { writeSessionState } from "../src/state/session-state.ts";
+import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
@@ -112,6 +112,12 @@ const setUpDeveloper = async (label: string, name: string, email: string): Promi
     seenTargets: [],
     workContextTitle: TITLE,
     workContextStatus: "analyzing",
+    // A LIVE SESSION HAS AN EPOCH. Without one `allocateSeq` refuses, every
+    // record here lands unpositioned, and the tests below would only ever
+    // exercise the branch where nothing can be ordered — which is the branch
+    // the ledger can say least about.
+    seqEpoch: crypto.randomUUID(),
+    eventSeq: 0,
   });
   return {
     ...developer,
@@ -214,6 +220,59 @@ describe("set_intent", () => {
     const second = await storedIntent(alice);
     expect(second?.["summary"]).toBe("Rotate the JWKS cache every minute");
     expect(String(second?.["capturedAt"]) > String(first?.["capturedAt"])).toBe(true);
+  });
+
+  test("with no position, the same sentence again is a replay, not a second version", async () => {
+    // Arrange: a session whose state carries NO epoch — a pre-sequence state
+    // file, or a lock that never cleared. `allocateSeq` refuses, so the record
+    // lands with no position at all.
+    const dave = await setUpDeveloper("si-dave", "Dave", "dave-intent@example.com");
+    await writeSessionState(dave.home, { ...(await readSessionState(dave.home, dave.hostSessionKey))!, seqEpoch: null });
+    await call(dave, { summary: "Rotate the JWKS cache every minute" });
+    const first = await storedIntent(dave);
+    expect(first?.["seq"]).toBeNull();
+
+    // Act
+    await Bun.sleep(5);
+    await call(dave, { summary: "Rotate the JWKS cache every minute" });
+
+    // Assert: THE HEAD DID NOT MOVE, and that is the conservative direction
+    // rather than a regression. With no positions, a sentence sent twice is
+    // indistinguishable from a sentence DELIVERED twice — the spool replays
+    // on any 5xx — so the id hash (context, author, position, sentence)
+    // collides by construction and the hub keeps one version. Refreshing the
+    // head's `capturedAt` here would leave `work_contexts.intent` carrying a
+    // timestamp no ledger row holds, which is the head/ledger disagreement
+    // this table exists to make impossible; `captured_at` orders nothing, so
+    // the cost is a display timestamp and the gain is the invariant.
+    const second = await storedIntent(dave);
+    expect(second).toEqual(first);
+  });
+
+  test("the chain's cap is printed, never swallowed", async () => {
+    // Arrange: a chain already AT the cap, filled over the record endpoint
+    // rather than by twenty MCP calls — the assertion is about the reply.
+    const carol = await setUpDeveloper("si-carol", "Carol", "carol-intent@example.com");
+    for (let n = 1; n <= MAX_INTENT_CHAIN_VERSIONS; n += 1) {
+      await post("/api/records", carol.apiKey, {
+        records: [
+          workContextRecordFor(carol, {
+            intent: { summary: `Sentence ${String(n)}`, provenance: "declared", confidence: 1, capturedAt: carol.startedAt },
+          }),
+        ],
+      });
+    }
+
+    // Act
+    const result = await call(carol, { summary: "One sentence too many" });
+
+    // Assert: the hub ignored the sentence, so a reply reading "Recorded your
+    // intent" would be this tool telling its author a thing that is not true
+    // — the silent drop non-negotiable #4 forbids, on the one surface whose
+    // whole job is to record the sentence.
+    expect(result.text).not.toContain("Recorded your intent");
+    expect(result.text).toContain(String(MAX_INTENT_CHAIN_VERSIONS));
+    expect((await storedIntent(carol))?.["summary"]).toBe(`Sentence ${String(MAX_INTENT_CHAIN_VERSIONS)}`);
   });
 
   test("a declared intent replaces a derived one, and a later derived one never overwrites it", async () => {

@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 407
+    # PRINTS: 410
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -197,7 +197,7 @@ jobs:
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
-    # PRINTS: mcp/tools/set-intent.ts 2
+    # PRINTS: mcp/tools/set-intent.ts 3
     # PRINTS: mcp/tools/shared.ts 2
     # PRINTS: model/gates.ts 1
     # PRINTS: model/parse.ts 2
@@ -246,7 +246,7 @@ jobs:
     # PRINTS: packages/server/src/services/pins.ts 1
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
-    # PRINTS: packages/server/src/services/record-handlers.ts 6
+    # PRINTS: packages/server/src/services/record-handlers.ts 8
     # PRINTS: packages/server/src/services/records.ts 1
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/search-tokens.ts 4
@@ -327,7 +327,7 @@ jobs:
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 1
-    # PRINTS: record-handlers.ts 6
+    # PRINTS: record-handlers.ts 8
     # PRINTS: records.ts 2
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
@@ -351,7 +351,7 @@ jobs:
     # PRINTS: session-state.ts 19
     # PRINTS: session.ts 3
     # PRINTS: sessions.ts 5
-    # PRINTS: set-intent.ts 2
+    # PRINTS: set-intent.ts 3
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
     # PRINTS: slice.ts 2

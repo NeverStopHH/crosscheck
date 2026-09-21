@@ -118,6 +118,20 @@ export const INTENT_SECRET_REFUSAL =
  * that arrived IN THIS SESSION as a teammate's hint is their finding, not
  * this session's goal, and declaring it would launder provenance.
  */
+/**
+ * WHAT THE AUTHOR READS WHEN THE CHAIN IS FULL (§10.1, taken on its default).
+ *
+ * The cap is what replaces a retention job — nothing sweeps the ledger — so
+ * the 20th amendment is a real boundary rather than a soft one, and the
+ * sentence that hits it is genuinely lost. Loudly is the whole point: the
+ * alternative decision 10.1 rejects is `rejected`, which would destroy the
+ * record AND everything behind it in the same spool batch.
+ */
+export const INTENT_CAP_REFUSAL =
+  "The hub did not record that intent: this work context already holds every " +
+  "intent version the ledger keeps, so its stored intent is unchanged. Start a " +
+  "new work context if the goal has genuinely moved on.";
+
 export const INTENT_ECHO_REFUSAL =
   "That text arrived in this session as a crosscheck hint — it is a teammate's " +
   "recorded claim, not a statement of this session's own goal, so declaring it as " +
@@ -218,6 +232,18 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
     return hubFailure(ctx, posted);
   }
   const outcome = resultAt(posted.data.results, 0);
+  // THE CAP IS AN ANSWER, NOT A SUCCESS. `ignored` is the hub's outcome for a
+  // record that survived while the change inside it did not, and it is what
+  // the 21st amendment gets: the ledger holds every version it keeps, so this
+  // sentence is nowhere. Replying "Recorded your intent" over that would tell
+  // the author a thing that is not true on the one surface whose whole job is
+  // to record the sentence — so it is a failure result, with the hub's own
+  // words beside it.
+  if (outcome?.status === "ignored") {
+    return toolFailure(
+      quotingText(INTENT_CAP_REFUSAL, explainRejection(issuesOf(outcome))),
+    );
+  }
   if (outcome?.status === "rejected") {
     return toolFailure(
       quotingText("The hub did not accept that intent.", explainRejection(issuesOf(outcome))),

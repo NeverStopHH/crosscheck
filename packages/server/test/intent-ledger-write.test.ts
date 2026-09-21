@@ -22,6 +22,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { desc, eq } from "drizzle-orm";
+import { MAX_INTENT_CHAIN_VERSIONS } from "@crosscheck/schema";
 
 import { workContextIntents, workContexts } from "../src/db/schema.ts";
 import {
@@ -308,5 +309,98 @@ describe("INT-5 — a refused derived merge appends nothing", () => {
     expect(chain.length).toBe(1);
     expect(chain[0]?.provenance).toBe("derived");
     expect(chain[0]?.seqKind).toBe("observed");
+  });
+});
+
+
+/**
+ * THE CAP IS WHAT REPLACES A RETENTION JOB (§10.1, taken on its default).
+ *
+ * Nothing sweeps this table, so the only thing bounding one work context's
+ * history is the cap — which makes the 20th amendment a RETENTION boundary as
+ * well as a correctness one, and its behaviour has to be all three of the
+ * things decision 10.1 names: append nothing, leave the head where it is, and
+ * say `ignored`.
+ *
+ * IGNORED, NEVER REJECTED. A rejected record is a DESTROYED record: the
+ * connector's flush advances its spool cursor on any 2xx, so a batch the hub
+ * refused is a batch the spool considers delivered (`services/records.ts`).
+ * Rejecting the 21st sentence would lose it AND every record behind it in that
+ * batch; ignoring it loses only the sentence, loudly.
+ */
+describe("the 20th amendment is the last one", () => {
+  test("the 21st sentence is ignored and the head stays on version 20", async () => {
+    // Arrange
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+
+    // Act: one sentence more than the chain may hold.
+    const statuses: (string | undefined)[] = [];
+    for (let n = 1; n <= MAX_INTENT_CHAIN_VERSIONS + 1; n += 1) {
+      const posted = await postRecords(harness, developer, {
+        ...recordEnvelope(
+          "work_context",
+          validWorkContextBody({ intent: declared(`Sentence ${String(n)}.`) }),
+        ),
+        seq: { epoch: EPOCH, n },
+      });
+      statuses.push(posted.data?.results[0]?.status);
+    }
+
+    // Assert
+    const chain = await chainOf(harness);
+    expect(chain.length).toBe(MAX_INTENT_CHAIN_VERSIONS);
+    expect(chain[0]?.version).toBe(MAX_INTENT_CHAIN_VERSIONS);
+    expect(chain[0]?.summary).toBe(
+      `Sentence ${String(MAX_INTENT_CHAIN_VERSIONS)}.`,
+    );
+    // THE HEAD DID NOT MOVE. A head carrying the 21st sentence is worse than
+    // an overwrite: it would hold a sentence with no version at all, and
+    // `max(version)` would name a different one — the disagreement the whole
+    // ledger exists to make impossible.
+    expect(await headOf(harness)).toEqual(chain[0]?.wire ?? null);
+    expect(statuses[MAX_INTENT_CHAIN_VERSIONS]).toBe("ignored");
+    expect(statuses.slice(0, MAX_INTENT_CHAIN_VERSIONS)).toEqual(
+      Array.from({ length: MAX_INTENT_CHAIN_VERSIONS }, () => "accepted"),
+    );
+  });
+
+  test("the cap says so, so the sentence is not silently gone", async () => {
+    // Arrange: a chain already at the cap.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    for (let n = 1; n <= MAX_INTENT_CHAIN_VERSIONS; n += 1) {
+      await postRecords(harness, developer, {
+        ...recordEnvelope(
+          "work_context",
+          validWorkContextBody({ intent: declared(`Sentence ${String(n)}.`) }),
+        ),
+        seq: { epoch: EPOCH, n },
+      });
+    }
+
+    // Act
+    const posted = await postRecords(harness, developer, {
+      ...recordEnvelope(
+        "work_context",
+        validWorkContextBody({ intent: declared("One sentence too many.") }),
+      ),
+      seq: { epoch: EPOCH, n: MAX_INTENT_CHAIN_VERSIONS + 1 },
+    });
+
+    // Assert: an outcome with no issue is a silent drop, which is
+    // non-negotiable #4 broken — the author has to be able to read WHY their
+    // sentence is not on their own work context.
+    const issues = posted.data?.results[0]?.issues ?? [];
+    expect(issues.length).toBe(1);
+    expect(issues[0]).toContain(String(MAX_INTENT_CHAIN_VERSIONS));
   });
 });

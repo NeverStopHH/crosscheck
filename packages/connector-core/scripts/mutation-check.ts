@@ -6056,6 +6056,47 @@ export const MUTATIONS: readonly Mutation[] = [
       "on the one input this ledger exists to capture, and `role` was left a " +
       "column nothing in 1.0 read",
   },
+  {
+    // 1.0 spec 06 §10.1. The cap is what replaces a retention job — nothing
+    // sweeps this table — so the boundary is real and the head must not cross
+    // it.
+    label: "a capped append moves the head to a sentence the ledger refused",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        ? { ...changes, intent: row.workContext.intent }",
+    to: "        ? changes",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "`max(version)` would name one sentence and `work_contexts.intent` " +
+      "would show another, and the head would lose the hub-stamped position " +
+      "and `amends_version` it had, because the body never carries either",
+  },
+  {
+    // The outcome the connector reads. `rejected` is not available here: a
+    // rejected batch is a DELIVERED batch as far as the spool is concerned.
+    label: "the 21st amendment is reported to its author as recorded",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from:
+      "  return appended !== null && appended.capped\n" +
+      "    ? ignored(body.id, INTENT_CAP_ISSUE)\n" +
+      "    : accepted(body.id);",
+    to: "  return accepted(body.id);",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the author is told their sentence landed while the ledger holds the " +
+      "previous one, so they go looking for it on their own work context and " +
+      "find something else with no explanation anywhere",
+  },
+  {
+    // The connector half of the same answer.
+    label: "set_intent prints success over the hub's refusal to record",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: '  if (outcome?.status === "ignored") {',
+    to: "  if (false) {",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because:
+      "\"Recorded your intent\" over an `ignored` outcome is a false sentence " +
+      "on the one surface whose entire job is to record the sentence",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6204,7 +6245,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
- * PRINTS: packages/connector-core/test/set-intent.test.ts 1
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 2
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
@@ -6226,7 +6267,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 6
- * PRINTS: packages/server/test/intent-ledger-write.test.ts 2
+ * PRINTS: packages/server/test/intent-ledger-write.test.ts 4
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1

@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { isSeqStamp } from "@crosscheck/schema";
+import { MAX_INTENT_CHAIN_VERSIONS, isSeqStamp } from "@crosscheck/schema";
 import type {
   Claim,
   ClaimEdge,
@@ -71,6 +71,34 @@ const duplicate = (id?: string): HandlerOutcome => ({
   status: "duplicate",
   ...(id === undefined ? {} : { id }),
 });
+
+/**
+ * THE RECORD SURVIVED; THE CHANGE INSIDE IT DID NOT.
+ *
+ * `ignored` has always been a first-class outcome of this endpoint and the
+ * work-context path had no constructor for it, so the only way to refuse a
+ * change here was `rejected` — which DESTROYS the record, because the
+ * connector's flush advances its spool cursor on any 2xx and a refused batch
+ * is a delivered batch as far as the spool is concerned.
+ *
+ * THE ISSUE IS NOT OPTIONAL. An ignored record with nothing to read is a
+ * silent drop, and the author would go looking for their sentence on their own
+ * work context and find the previous one with no explanation anywhere.
+ */
+const ignored = (id: string, issue: string): HandlerOutcome => ({
+  status: "ignored",
+  id,
+  issues: [issue],
+});
+
+/**
+ * What the author reads when the chain is full. It names the bound, because
+ * "not recorded" without a number reads like a failure rather than a limit.
+ */
+export const INTENT_CAP_ISSUE =
+  `intent: this work context already holds the ${String(MAX_INTENT_CHAIN_VERSIONS)} intent ` +
+  "versions the ledger keeps, so this sentence was not recorded and the stored " +
+  "intent is unchanged — open a new work context to state a new goal";
 
 const resolveSessionOwner = async (
   db: DbExecutor,
@@ -226,10 +254,19 @@ const updateExistingWorkContext = async (
           intent: changes.intent as Intent,
           seq,
         });
+  // A CAPPED APPEND LEAVES THE HEAD EXACTLY WHERE IT WAS, stated rather than
+  // implied: falling through to `changes` here would move the head to a
+  // sentence the ledger refused to store, so `max(version)` would name one
+  // sentence and `work_contexts.intent` would show another — and the head
+  // would lose the hub-stamped position and `amends_version` it had, since
+  // the body never carries either. Every other field on the record still
+  // lands; only the intent stays put.
   const stored =
-    appended === null || appended.capped
+    appended === null
       ? changes
-      : { ...changes, intent: appended.wire };
+      : appended.capped
+        ? { ...changes, intent: row.workContext.intent }
+        : { ...changes, intent: appended.wire };
   // session_id stays the creating session — updates never re-home a context.
   await deps.db
     .update(workContexts)
@@ -245,7 +282,13 @@ const updateExistingWorkContext = async (
       .filter(([field, value]) => value !== row.workContext[field as keyof WorkContextRow])
       .map(([field]) => field),
   });
-  return accepted(body.id);
+  // THE CAP IS REPORTED, NOT SWALLOWED. Every other field on this record did
+  // land — the title, the status, the description — so the record is not
+  // rejected; the one thing that did not land is named, and the outcome says
+  // `ignored` rather than `accepted` so a connector can tell its author.
+  return appended !== null && appended.capped
+    ? ignored(body.id, INTENT_CAP_ISSUE)
+    : accepted(body.id);
 };
 
 export const ingestWorkContext = async (
