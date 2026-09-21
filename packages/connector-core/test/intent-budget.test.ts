@@ -43,6 +43,8 @@ import { rm } from "node:fs/promises";
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
+import { MAX_INTENT_CHAIN_VERSIONS } from "@crosscheck/schema";
+
 import {
   MCP_TIMEOUT_MS,
   SESSION_STATE_LOCK_RETRIES,
@@ -78,8 +80,25 @@ const SET_INTENT_HUB_REQUESTS = 2;
 /** Worst case the state lock can cost a single acquisition, from §6's own two constants. */
 const LOCK_CEILING_MS = SESSION_STATE_LOCK_RETRIES * SPOOL_LOCK_RETRY_DELAY_MS;
 
-/** Enough samples for a p95 to mean something without making the file slow. */
-const SAMPLES = 20;
+/**
+ * THE CALLS THIS FILE MAKES BEFORE THE SAMPLING LOOP: one warm-up and one
+ * counted call, both in the first test, both on this same work context.
+ */
+const SET_INTENT_CALLS_BEFORE_SAMPLING = 2;
+
+/**
+ * Enough samples for a p95 to mean something, DERIVED FROM THE CAP rather than
+ * chosen.
+ *
+ * Every call in this file amends the SAME work context, and §10.1 caps a
+ * chain at MAX_INTENT_CHAIN_VERSIONS: past it the hub returns `ignored`, the
+ * head stays put and `set_intent` reports the refusal — correctly. A fixed 20
+ * here walked straight into that and the timing test failed on an outcome, not
+ * on a clock. The bound is arithmetic now, so raising the cap widens the
+ * sample and lowering it below the reserved calls fails loudly instead of
+ * quietly measuring refusals.
+ */
+const SAMPLES = MAX_INTENT_CHAIN_VERSIONS - SET_INTENT_CALLS_BEFORE_SAMPLING;
 
 /**
  * Room demanded below the tool's own timeout. `set_intent` is an MCP tool with
@@ -268,6 +287,9 @@ describe("INT-11 — what this spec costs set_intent", () => {
       const started = Bun.nanoseconds();
       const ok = await callSetIntent(`Measure the tool, sample ${String(index)}`);
       samples.push((Bun.nanoseconds() - started) / 1e6);
+      // A refused call is a CHEAPER call, so a p95 built from refusals would
+      // read better the more of them there were. This is the assertion that
+      // keeps the measurement a measurement.
       expect(ok).toBe(true);
     }
 
