@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 414
+    # PRINTS: 416
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -241,12 +241,12 @@ jobs:
     # PRINTS: packages/server/src/services/diagnosis.ts 3
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hints.ts 2
-    # PRINTS: packages/server/src/services/intent-ledger.ts 7
+    # PRINTS: packages/server/src/services/intent-ledger.ts 8
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/pins.ts 1
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
-    # PRINTS: packages/server/src/services/record-handlers.ts 10
+    # PRINTS: packages/server/src/services/record-handlers.ts 11
     # PRINTS: packages/server/src/services/records.ts 1
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/search-tokens.ts 4
@@ -302,7 +302,7 @@ jobs:
     # PRINTS: hook-budget.ts 1
     # PRINTS: hub.ts 5
     # PRINTS: injector.ts 3
-    # PRINTS: intent-ledger.ts 7
+    # PRINTS: intent-ledger.ts 8
     # PRINTS: intent.ts 1
     # PRINTS: kit.ts 1
     # PRINTS: latency.ts 1
@@ -327,7 +327,7 @@ jobs:
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 1
-    # PRINTS: record-handlers.ts 10
+    # PRINTS: record-handlers.ts 11
     # PRINTS: records.ts 2
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3

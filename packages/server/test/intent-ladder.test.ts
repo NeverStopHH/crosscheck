@@ -56,6 +56,7 @@ interface IntentFixture {
   readonly nonGoals?: readonly string[];
   readonly capturedAt?: Date;
   readonly seqReason?: "sequenced" | "allocation_failed";
+  readonly seqKind?: "emitted" | "observed";
 }
 
 const intent = (fixture: IntentFixture = {}): IntentLedgerEntry => {
@@ -76,7 +77,15 @@ const intent = (fixture: IntentFixture = {}): IntentLedgerEntry => {
     // A `set_intent` call is a POINT emitter: it publishes at the position it
     // took, so the window is [n, n] and `seq_after` is null.
     seqAfter: null,
-    seqKind: (fixture.provenance ?? "declared") === "derived" ? "observed" : "emitted",
+    // DEFAULTED FROM PROVENANCE, AND OVERRIDABLE. The two are coupled in the
+    // hub because `provenance` is the only signal it has, but the coupling is
+    // a DEFAULT rather than an invariant: the body chooses `provenance`, the
+    // spec's own column table concedes it is unverifiable, and a fixture that
+    // could not express the two apart could not test the ladder against a
+    // `declared` row carrying an `observed` position at all.
+    seqKind:
+      fixture.seqKind ??
+      ((fixture.provenance ?? "declared") === "derived" ? "observed" : "emitted"),
     // Defaulted from the position, and OVERRIDABLE: a row whose reason
     // disagrees with its own position is the shape case (a2) is about, and a
     // fixture that cannot express it cannot guard against it.
@@ -316,6 +325,44 @@ describe("an upper bound is never turned into a happens-before", () => {
     expect(answer.timing).not.toBe("predeclared");
     expect(answer.reason).toBe("not_comparable");
     expect(answer.indeterminacy).toBe("concurrent");
+  });
+});
+
+describe("an upper bound refuses whatever the row calls itself", () => {
+  test("a declared row carrying an observed position is still refused", async () => {
+    // THE COMBINATION NO TEST EXERCISED. The fixture used to derive `seqKind`
+    // from `provenance` with no override, exactly as the hub does, so the two
+    // could never be pulled apart — and the hub's coupling rests on a body
+    // field the spec's own table calls unverifiable.
+    //
+    // What this pins is the half that still holds when the label lies: an
+    // `observed` position is an UPPER BOUND, and the gate refuses it no
+    // matter what the row says about its own lane. The refusal names its own
+    // reason, so a reader is sent to the right remedy.
+    const answer = explanationTimingFor(
+      USABLE,
+      [intent({ seq: 5, provenance: "declared", seqKind: "observed", expected: [PATH] })],
+      edit({ seq: 7 }),
+    );
+
+    expect(answer.timing).toBe("absent");
+    expect(answer.reason).toBe("not_comparable");
+    expect(answer.indeterminacy).toBe("upper_bound_only");
+  });
+
+  test("the same row with an emitted position answers", () => {
+    // The control, and the measurement the finding reported: two rows
+    // identical but for the lane label answer predeclared vs a refusal. That
+    // asymmetry is exactly why the label matters and why the comment claiming
+    // the hub derives it was worth correcting.
+    const answer = explanationTimingFor(
+      USABLE,
+      [intent({ seq: 5, provenance: "declared", seqKind: "emitted", expected: [PATH] })],
+      edit({ seq: 7 }),
+    );
+
+    expect(answer.timing).toBe("predeclared");
+    expect(answer.reason).toBe("declared_before");
   });
 });
 

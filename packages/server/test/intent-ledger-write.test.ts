@@ -56,6 +56,30 @@ const chainOf = async (harness: TestHarness) =>
     .where(eq(workContextIntents.workContextId, WORK_CONTEXT_ID))
     .orderBy(desc(workContextIntents.version));
 
+/**
+ * The head PROJECTION of a ledger row — the sentence and its position, which
+ * is what §8.6 allows onto an unsolicited surface.
+ *
+ * INT-4 is "the head cannot disagree with the ledger", and that is still what
+ * these assertions check. What changed is the shape: the head used to be a
+ * copy of the whole wire, which carried the amendment reason and the declared
+ * scope into every presence and search payload. It is now the projection, and
+ * the invariant is that it matches the NEWEST row's projection exactly.
+ */
+const headProjectionOf = (
+  wire: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null =>
+  wire === null || wire === undefined
+    ? null
+    : {
+        summary: wire["summary"],
+        provenance: wire["provenance"],
+        confidence: wire["confidence"],
+        capturedAt: wire["capturedAt"],
+        seq: wire["seq"] ?? null,
+        amendsVersion: wire["amendsVersion"] ?? null,
+      };
+
 const headOf = async (
   harness: TestHarness,
 ): Promise<Record<string, unknown> | null> => {
@@ -104,7 +128,9 @@ describe("INT-4 — the head cannot disagree with the ledger", () => {
       "Rewrite the matcher; the id map was never the problem.",
     );
     // The head IS the newest row's wire, not a second opinion about it.
-    expect(await headOf(harness)).toEqual(chain[0]?.wire ?? null);
+    expect(await headOf(harness)).toEqual(
+      headProjectionOf(chain[0]?.wire),
+    );
   });
 
   test("an intent that arrives BEFORE the context exists is still version 1", async () => {
@@ -128,7 +154,9 @@ describe("INT-4 — the head cannot disagree with the ledger", () => {
     expect(chain[0]?.amendsVersion).toBeNull();
     expect(chain[0]?.seq).toBe(1);
     expect(chain[0]?.seqEpoch).toBe(EPOCH);
-    expect(await headOf(harness)).toEqual(chain[0]?.wire ?? null);
+    expect(await headOf(harness)).toEqual(
+      headProjectionOf(chain[0]?.wire),
+    );
   });
 
   test("a replayed spool line mints no second version", async () => {
@@ -162,7 +190,9 @@ describe("INT-4 — the head cannot disagree with the ledger", () => {
     // thing the id hash exists to survive — would then leave the head carrying
     // a version no ledger row ever held, and every INT-4 assertion above would
     // still pass.
-    expect(await headOf(harness)).toEqual(chain[0]?.wire ?? null);
+    expect(await headOf(harness)).toEqual(
+      headProjectionOf(chain[0]?.wire),
+    );
   });
 
   test("the hub assigns amends_version; the connector never could", async () => {
@@ -233,6 +263,67 @@ describe("INT-4 — the head cannot disagree with the ledger", () => {
       epoch: EPOCH,
       n: 4,
     });
+  });
+});
+
+describe("§8.6 — the chain never reaches an unsolicited surface", () => {
+  test("the head is a sentence, not the whole amendment record", async () => {
+    // `work_contexts.intent` is projected WHOLE — not `->> 'summary'` — into
+    // presence (the SessionStart briefing, delivery "unsolicited"), search,
+    // suspect, conference, hints and ghost-overlap. A head that copied the
+    // wire carried the amendment reason and the declared scope onto all of
+    // them in PAYLOAD, whether or not anything rendered it: the connector's
+    // IntentEntrySchema is a looseObject, so the field survived into every
+    // briefing and hint model object — one renderer away from being printed,
+    // one telemetry dump away from being published.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({ intent: declared("Rewrite the matcher.") }),
+      ),
+    );
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: declared("Rewrite the matcher and its fixture.", {
+            reason: "The fixture hid the gap.",
+            expectedSurface: [{ kind: "file", value: "packages/a.ts" }],
+            nonGoals: [{ kind: "file", value: "packages/b.ts" }],
+          }),
+        }),
+      ),
+    );
+
+    // The CHAIN keeps everything — that is what the chain is for.
+    const chain = await chainOf(harness);
+    expect(chain[0]?.reason).toBe("The fixture hid the gap.");
+    expect(chain[0]?.wire?.["nonGoals"]).toBeDefined();
+
+    // The HEAD keeps the sentence and its position, and nothing else.
+    const head = (await headOf(harness)) ?? {};
+    expect(Object.keys(head).sort()).toEqual([
+      "amendsVersion",
+      "capturedAt",
+      "confidence",
+      "provenance",
+      "seq",
+      "summary",
+    ]);
+    expect(head["summary"]).toBe("Rewrite the matcher and its fixture.");
+    expect(head["reason"]).toBeUndefined();
+    expect(head["expectedSurface"]).toBeUndefined();
+    expect(head["nonGoals"]).toBeUndefined();
   });
 });
 
@@ -402,7 +493,9 @@ describe("two declarations are never one row", () => {
     expect(chain.length).toBe(2);
     expect(chain.map((row) => row.version)).toEqual([2, 1]);
     expect(chain[0]?.reason).toBe("b.ts is off limits after all.");
-    expect(await headOf(harness)).toEqual(chain[0]?.wire ?? null);
+    expect(await headOf(harness)).toEqual(
+      headProjectionOf(chain[0]?.wire),
+    );
   });
 
   test("scope alone separates two declarations", async () => {
@@ -622,7 +715,9 @@ describe("the 20th amendment is the last one", () => {
     // an overwrite: it would hold a sentence with no version at all, and
     // `max(version)` would name a different one — the disagreement the whole
     // ledger exists to make impossible.
-    expect(await headOf(harness)).toEqual(chain[0]?.wire ?? null);
+    expect(await headOf(harness)).toEqual(
+      headProjectionOf(chain[0]?.wire),
+    );
     expect(statuses[MAX_INTENT_CHAIN_VERSIONS]).toBe("ignored");
     expect(statuses.slice(0, MAX_INTENT_CHAIN_VERSIONS)).toEqual(
       Array.from({ length: MAX_INTENT_CHAIN_VERSIONS }, () => "accepted"),

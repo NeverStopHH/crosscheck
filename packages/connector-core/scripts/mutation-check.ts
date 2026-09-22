@@ -6163,6 +6163,34 @@ export const MUTATIONS: readonly Mutation[] = [
       "already left the machine — which is the one thing the local scan " +
       "exists to prevent",
   },
+  {
+    // 1.0 spec 06 §8.6 — "the chain never reaches an unsolicited surface".
+    // The head jsonb is projected WHOLE into presence, search, suspect,
+    // conference, hints and ghost-overlap.
+    label: "the head carries the whole amendment onto every briefing",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        : { ...changes, intent: appended.headWire };",
+    to: "        : { ...changes, intent: appended.wire };",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "a teammate who never opened the work context receives the amendment " +
+      "reason and every declared path in the payload of GET /api/presence " +
+      "and GET /api/search — unrendered today, and one renderer or one " +
+      "telemetry dump away from being published",
+  },
+  {
+    // 1.0 spec 06. An `observed` position is an UPPER BOUND, and the gate has
+    // to refuse it whatever the row claims about its own lane.
+    label: "an upper bound is read as a happens-before",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: '  provenance === "derived" ? "observed" : "emitted";',
+    to: '  provenance === provenance ? "emitted" : "observed";',
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "a detached worker's position records when the ROW was written, not " +
+      "when the thing it describes happened, so reading it as a point " +
+      "answers `predeclared` — the exonerating value — from a bound",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6333,7 +6361,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 6
- * PRINTS: packages/server/test/intent-ledger-write.test.ts 7
+ * PRINTS: packages/server/test/intent-ledger-write.test.ts 9
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1

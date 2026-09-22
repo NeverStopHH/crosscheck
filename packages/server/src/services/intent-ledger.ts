@@ -155,6 +155,23 @@ export interface IntentLedgerEntry {
   readonly scope: readonly IntentScopeEntryRow[];
 }
 
+/**
+ * The head projection of a stored wire: the sentence and its position, never
+ * the amendment reason and never the declared scope.
+ *
+ * ONE FUNCTION, because the head is written from two places — a fresh append
+ * and a replay that adopts the stored row — and two spellings of "what a head
+ * carries" is how the narrow one quietly becomes the wide one again.
+ */
+const headOf = (wire: Record<string, unknown>): Record<string, unknown> => ({
+  summary: wire["summary"],
+  provenance: wire["provenance"],
+  confidence: wire["confidence"],
+  capturedAt: wire["capturedAt"],
+  seq: wire["seq"] ?? null,
+  amendsVersion: wire["amendsVersion"] ?? null,
+});
+
 const ID_PREFIX = "iv_";
 const ID_HASH_CHARS = 32;
 
@@ -214,10 +231,10 @@ export const intentVersionId = (input: {
     .slice(0, ID_HASH_CHARS)}`;
 
 /**
- * WHICH LANE WROTE THIS SENTENCE, derived here and never taken from the body —
- * the rule `seqKindFor` states for targets and the claim path already applies:
- * a connector that could choose its own `seq_kind` could promote an upper
- * bound to a happens-before.
+ * WHICH LANE WROTE THIS SENTENCE — as the body CLAIMS it, which is all the hub
+ * can know. See the note below this function for what that does and does not
+ * buy; this used to read "derived here and never taken from the body", which
+ * was the opposite of what the code does.
  *
  * A DERIVED INTENT IS A DETACHED WORKER'S. It summarises a slice from EARLIER
  * in the session, so the position it allocates records when the row was
@@ -227,6 +244,41 @@ export const intentVersionId = (input: {
  */
 const intentSeqKind = (provenance: Provenance): SeqKind =>
   provenance === "derived" ? "observed" : "emitted";
+
+/**
+ * WHAT THIS DOES NOT BUY, corrected — the comment above this function used to
+ * claim the opposite in as many words.
+ *
+ * It read "derived here and never taken from the body … a connector that
+ * could choose its own `seq_kind` could promote an upper bound to a
+ * happens-before". The INPUT is `provenance`, which is read straight off the
+ * body and which the spec's own column table concedes is "what the body
+ * claimed — unverifiable (§1.2, §8.1)". So the promotion the comment called
+ * impossible is one wire string, and the SAME string is what step 2 of the
+ * ladder rests on: a single body field moves a row from `derived / observed`
+ * to `declared / emitted` and flips both ledger-side defences of principle 4
+ * at once. Measured on two rows identical but for that label:
+ *
+ *   emitted  -> predeclared / declared_before
+ *   observed -> absent / not_comparable / upper_bound_only
+ *
+ * Both failures point the EXONERATING way, which §3.5 already names as the
+ * direction nobody reports.
+ *
+ * THERE IS NO HUB-SIDE FIX IN 1.0, and saying so is the point. The hub holds
+ * no repository, sees no process, and §8.1 already records the consequence:
+ * every 1.0 intent is `agent_derived` on the WHO axis, including the one the
+ * schema calls `declared`. A defence invented here would be a second
+ * unverifiable label guarding the first. What this function still buys is the
+ * HONEST DEFAULT — a connector that does not lie gets the weaker reading for
+ * its worker's positions — and what bounds the damage is that a lying
+ * connector is lying about its own session, whose edits are the only ones the
+ * answer concerns.
+ *
+ * `seq_kind` is therefore NOT derived from anything the hub can check, and
+ * `intent-ladder.test.ts` carries the case that proves the weaker reading
+ * still refuses when the two are decoupled.
+ */
 
 const SCOPE_WIRE_KEYS = {
   expected: "expectedSurface",
@@ -267,8 +319,18 @@ export interface AppendIntentInput {
 }
 
 export interface AppendIntentOutcome {
-  /** The wire as STORED, which is what the head becomes a copy of. */
+  /** The wire as STORED in the ledger row — the whole declaration. */
   readonly wire: Record<string, unknown>;
+  /**
+   * What `work_contexts.intent` becomes: the SENTENCE and its position, never
+   * the amendment reason and never the declared scope.
+   *
+   * §8.6 keeps the chain off every unsolicited surface, and the head jsonb is
+   * projected whole into presence, search, suspect, conference, hints and
+   * ghost-overlap. A head that is a copy of the wire carries the chain onto
+   * all of them in payload, whether or not anything renders it.
+   */
+  readonly headWire: Record<string, unknown>;
   readonly version: number;
   /** True when the cap refused the append and the head must not move. */
   readonly capped: boolean;
@@ -309,12 +371,33 @@ export const appendIntentVersion = async (
     seq: stamp === null ? null : { epoch: stamp.epoch, n: stamp.n },
     amendsVersion: head,
   };
+  // THE HEAD IS A SENTENCE, NOT THE WHOLE AMENDMENT RECORD — §8.6, which the
+  // head stopped honouring the moment it became a copy of the wire.
+  //
+  // `work_contexts.intent` is projected WHOLE — not `->> 'summary'` — into
+  // `presence` (the SessionStart briefing, delivery "unsolicited"), `search`,
+  // `suspect`, `conference`, `hints` and `ghost-overlap`. §8.6 refuses
+  // exactly that: "the chain never reaches an unsolicited surface … briefing,
+  // hints, tripwire and statusline show the head only".
+  //
+  // Measured before this: a teammate who had never opened the work context
+  // and asked for nothing received the full amendment reason in the payload
+  // of GET /api/presence and GET /api/search. Nothing RENDERED it — the
+  // briefing reads `.summary` — but the connector's `IntentEntrySchema` is a
+  // looseObject, so it survived parsing into every briefing and hint model
+  // object: one renderer away from being printed, one telemetry dump away
+  // from being published.
+  //
+  // So the head keeps the fields a head has always had and the CHAIN keeps
+  // everything, which is what the chain is for. Both are built here so they
+  // cannot drift apart.
+  const headWire = headOf(wire);
   if (head !== null && head >= MAX_INTENT_CHAIN_VERSIONS) {
     // THE CAP IS WHAT REPLACES A RETENTION JOB — there is no background pass
     // over this table, so nothing else bounds one context's history. The
     // record is ACCEPTED and the head stays where it is; the caller reports
     // the cap rather than reporting the sentence as recorded.
-    return { wire, version: head, capped: true };
+    return { wire, headWire, version: head, capped: true };
   }
   const version = (head ?? 0) + 1;
   // The scope is computed BEFORE the id, because it is part of what makes
@@ -392,8 +475,17 @@ export const appendIntentVersion = async (
       ? // The conflict was on `(work_context_id, version)` rather than on the
         // id — a concurrent writer took this version number. Nothing of ours
         // is stored, so the head must not move.
-        { wire, version: head ?? version, capped: true }
-      : { wire: row.wire ?? wire, version: row.version, capped: false };
+        { wire, headWire, version: head ?? version, capped: true }
+      : // A REPLAY: the head must become the STORED row's head, not this
+        // call's — recomputing it would let a redelivered line carry an
+        // `amends_version` no ledger row ever held. Narrowed the same way,
+        // from the stored wire.
+        {
+          wire: row.wire ?? wire,
+          headWire: headOf(row.wire ?? wire),
+          version: row.version,
+          capped: false,
+        };
   }
   if (scope.length > 0) {
     await deps.db
@@ -409,7 +501,7 @@ export const appendIntentVersion = async (
       )
       .onConflictDoNothing();
   }
-  return { wire, version, capped: false };
+  return { wire, headWire, version, capped: false };
 };
 
 /**

@@ -331,7 +331,12 @@ const updateExistingWorkContext = async (
       ? changes
       : appended.capped
         ? { ...changes, intent: row.workContext.intent }
-        : { ...changes, intent: appended.wire };
+        // THE HEAD, NOT THE WHOLE RECORD. §8.6 keeps the chain off every
+        // unsolicited surface, and this jsonb is projected WHOLE into
+        // presence, search, suspect, conference, hints and ghost-overlap —
+        // so a head that copied the wire carried the amendment reason and
+        // the declared scope onto all of them in payload.
+        : { ...changes, intent: appended.headWire };
   // session_id stays the creating session — updates never re-home a context.
   await deps.db
     .update(workContexts)
