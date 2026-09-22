@@ -431,10 +431,14 @@ describe("INT-10 — a declared non-goal that was then edited is post_hoc", () =
 });
 
 describe("the ladder's order is the contract", () => {
-  test("a comparable entry that names nothing does not borrow a naming entry's answer", () => {
-    // Arrange: step 5 runs AFTER step 4, so an entry that names the path but
-    // cannot be compared does not rescue one that can be compared and names
-    // nothing.
+  test("a comparable entry that names nothing answers `scope_not_named`", () => {
+    // ITS NAME AND ITS COMMENT BOTH OVERCLAIMED, and an independent refuter
+    // said so: the fixture holds ONE entry, so there is no "naming entry" for
+    // anything to borrow from, and the 4-against-5 swap left it green. What
+    // it really pins is the one thing a single comparable unnamed row can
+    // pin — that the answer is `scope_not_named` rather than a refusal about
+    // comparability. That is worth keeping; the ordering claim was not its to
+    // make, and the accusation block below carries it.
     const answer = explanationTimingFor(
       USABLE,
       [intent({ version: 1, seq: 3, expected: ["packages/other.ts"] })],
@@ -551,5 +555,74 @@ describe("an accusation nobody could order does not become an exoneration", () =
 
     expect(result.timing).toBe("predeclared");
     expect(result.reason).toBe("declared_before");
+  });
+});
+
+describe("the order of the rungs is the contract, and these are the swaps that prove it", () => {
+  /**
+   * A REFUTER GENERATED ALL FIVE ADJACENT SWAPS AND RAN THE WHOLE 645-TEST
+   * SERVER SUITE ON EACH. Three were caught. Two — 2 against 3, and 4 against
+   * 5 — changed the answer on constructed inputs while every test in the
+   * repository stayed green.
+   *
+   * A contract nothing enforces is a comment. These two cases are the
+   * enforcement: each builds a chain where the two rungs disagree, and each
+   * asserts the reason the CURRENT order produces. Swap the rungs in
+   * `intent-ledger.ts` and the reason changes, so the test goes red.
+   *
+   * Both answers are refusals, and that is the point rather than a weakness:
+   * the reason is what a reader acts on. "Your subagent's guess does not count
+   * against you" and "there is no order across two sessions" send somebody to
+   * different places.
+   */
+  test("2 before 3: a derived row of THIS session is excluded before session scope is asked", () => {
+    // The chain holds exactly two rows and each survives only one of the two
+    // rungs: a DERIVED row from this session, and a DECLARED row from
+    // another. Rung 2 (provenance) leaves the foreign-session row and rung 3
+    // answers `different_session`. Reverse them and rung 3 leaves the derived
+    // row, so rung 2 answers `derived_excluded`.
+    const result = explanationTimingFor(
+      USABLE,
+      [
+        intent({ version: 1, seq: 3, provenance: "derived", expected: [PATH] }),
+        intent({
+          version: 2,
+          seq: 5,
+          provenance: "declared",
+          sessionId: "cc_other_session",
+          expected: [PATH],
+        }),
+      ],
+      edit({ seq: 7 }),
+    );
+
+    expect(result.timing).toBe("absent");
+    expect(result.reason).toBe("different_session");
+  });
+
+  test("4 before 5 is carried by the accusation cases above, not by a case of its own", () => {
+    // I WROTE A DEDICATED FIXTURE HERE AND IT PROVED NOTHING. A comparable row
+    // naming another path plus an unorderable row naming this one answers
+    // `not_comparable` under BOTH orderings — step 4a refuses it one way, an
+    // empty `named` set refuses it the other. Same word, same indeterminacy.
+    //
+    // Only one shape separates the two orders: an unorderable NON-GOAL naming
+    // the path beside a comparable EXPECTED one naming it too. Ask
+    // comparability first and step 4a refuses; ask naming first and both rows
+    // survive step 5, the non-goal falls out of step 4, and step 6 answers
+    // `predeclared`. That shape is the describe block above, and swapping the
+    // two rungs turns three of its cases red — which is the enforcement.
+    //
+    // So this test asserts the one thing it can: that the ordering is pinned
+    // SOMEWHERE. Deleting the block above without replacing its guarantee
+    // leaves the rungs free to move.
+    const chain = [
+      intent({ version: 1, seq: 3, nonGoals: [PATH] }),
+      intent({ version: 2, seq: 5, expected: [PATH] }),
+    ];
+    const orderable = explanationTimingFor(USABLE, chain, edit({ seq: 7 }));
+
+    // A usable non-goal accuses — the state the swap would have to destroy.
+    expect(orderable.reason).toBe("declared_non_goal_edited");
   });
 });

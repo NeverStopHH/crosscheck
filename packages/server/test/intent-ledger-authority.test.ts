@@ -245,12 +245,35 @@ const referencesIn = (source: string): readonly string[] => {
   }
 
   // The barrel dodge: the braced names are innocent, the specifier is a
-  // barrel, and only the member access names a table.
+  // barrel, and only the member access names a table — OR A READER.
+  //
+  // THE SECOND HALF WAS MISSING, and an independent refuter walked through
+  // it. This loop asked `LEDGER_IDENTIFIERS` (the two table names) and never
+  // `LEDGER_READERS`, while the braced-import branch forty lines up asks
+  // both — so `import * as ledger` followed by `ledger.explanationTimingFor(…)`
+  // reached every row the tables hold and the build stayed green. Measured:
+  //
+  //   braced      import { readIntentChain } …        1 fail   (caught)
+  //   namespace   ledger.readIntentChain(…)           0 fail   (not caught)
+  //   namespace   ledger.explanationTimingFor(…)      0 fail   (not caught)
+  //   re-export   laundered through a listed caller   0 fail   (not caught)
+  //
+  // This file's own comment says of exactly this case that "the wrong answer
+  // there is the PERMISSIVE one": a fence consulting the ledger stops
+  // refusing, nothing goes red, and an agent widening its own intent
+  // authorises itself. A door a test names as closed and does not close is
+  // worse than one it never mentions — a reader stops looking.
   for (const alias of namespaceAliases) {
     const member = new RegExp(`\\b${alias}\\.([A-Za-z_$][\\w$]*)`, "g");
     for (const use of clean.matchAll(member)) {
-      if (use[1] !== undefined && LEDGER_IDENTIFIERS.has(use[1])) {
+      if (use[1] === undefined) {
+        continue;
+      }
+      if (LEDGER_IDENTIFIERS.has(use[1])) {
         found.push(`namespace member ${alias}.${use[1]}`);
+      }
+      if (LEDGER_READERS.has(use[1])) {
+        found.push(`reads the ledger via namespace member ${alias}.${use[1]}()`);
       }
     }
   }

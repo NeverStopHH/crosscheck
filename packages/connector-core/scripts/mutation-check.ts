@@ -6276,6 +6276,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "edit uses — and step 6 answers `predeclared` from whatever survived, " +
       "with `indeterminacy: null` so no reader can see what was dropped",
   },
+  {
+    // FOUND BY AN INDEPENDENT REFUTER. The braced-import branch asks both
+    // sets; this one asked only the table names.
+    label: "a namespace import reaches the ledger's readers unflagged",
+    file: `${SERVER}/test/intent-ledger-authority.test.ts`,
+    from: "      if (LEDGER_READERS.has(use[1])) {",
+    to: "      if (false) {",
+    test: `${SERVER}/test/intent-ledger-authority.test.ts`,
+    because:
+      "`import * as ledger` then `ledger.explanationTimingFor(…)` reaches " +
+      "every row the two tables hold, and INT-7's own comment says the wrong " +
+      "answer there is the PERMISSIVE one — a fence that consults the ledger " +
+      "stops refusing and nothing goes red",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6448,6 +6462,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
+ * PRINTS: packages/server/test/intent-ledger-authority.test.ts 1
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 3

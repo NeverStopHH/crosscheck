@@ -326,9 +326,21 @@ export interface AppendIntentOutcome {
    * the amendment reason and never the declared scope.
    *
    * §8.6 keeps the chain off every unsolicited surface, and the head jsonb is
-   * projected whole into presence, search, suspect, conference, hints and
-   * ghost-overlap. A head that is a copy of the wire carries the chain onto
-   * all of them in payload, whether or not anything renders it.
+   * projected WHOLE — never `->> 'summary'` — by every service below. A head
+   * that is a copy of the wire carries the chain onto all of them in payload,
+   * whether or not anything renders it.
+   *
+   * DERIVED, NOT LISTED. Three comments on this branch enumerated these
+   * surfaces by hand and all three were short: one named six, two named five,
+   * and `members.ts`, `normalized-doc.ts` and `solved-matches.ts` appeared in
+   * none of them. An independent refuter found it. A hand-kept list of
+   * readers drifts exactly the way the render-layer specifier drifted from
+   * the module list it mirrored, so this one is a command a reader can run:
+   *
+   * (This file is in its own answer because the comment names the column.)
+   *
+   * VERIFY: grep -rl "workContexts.intent" packages/server/src/services | xargs -n1 basename | sort | tr '\n' ' '
+   * PRINTS: conference.ts ghost-overlap.ts hints.ts intent-ledger.ts members.ts normalized-doc.ts presence.ts search.ts solved-matches.ts suspect.ts 
    */
   readonly headWire: Record<string, unknown>;
   readonly version: number;
