@@ -603,3 +603,23 @@ export const SUSPECT_TOP_CANDIDATES = 3;
  * dataset here could justify a second decimal.
  */
 export const SUSPECT_SEPARATION_RATIO = 1.5;
+
+// ── Coverage integrity (docs/1.0/03-coverage-integrity.md) ──────────────────
+
+/**
+ * How far back `readCoverage` looks for agent sessions when it answers "were
+ * we watching this repo".
+ *
+ * THE SAME 14 DAYS `crosscheck suspect` asks about, and that is not a
+ * coincidence to be maintained by hand: suspect's answer is only as honest as
+ * the coverage record beside it, so a coverage window SHORTER than the
+ * question's would report `complete` over days the verdict layer still reads,
+ * and a LONGER one would report a gap about time no answer covers. Both are
+ * the same bug — a qualifier measured about something other than the question
+ * (§3.2a). The two constants stay separate because they bound different
+ * things (a question vs. an observation) and equal because they must:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/server/src/constants.ts");console.log(c.COVERAGE_SESSION_WINDOW_DAYS === c.SUSPECT_WINDOW_DAYS)'
+ * PRINTS: true
+ */
+export const COVERAGE_SESSION_WINDOW_DAYS = 14;

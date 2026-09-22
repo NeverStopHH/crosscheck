@@ -20,6 +20,7 @@
  */
 import { formatAge, QUOTED_DATA_NOTICE } from "@crosscheck/connector-core/briefing/render.ts";
 import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
+import { coverageNote } from "@crosscheck/connector-core/coverage/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { quoted, quotedBody, safeId } from "@crosscheck/connector-core/mcp/render.ts";
 import {
@@ -223,6 +224,11 @@ const candidateLines = (
   ];
 };
 
+const coverageLines = (view: SuspectView, now: Date): readonly string[] => {
+  const note = coverageNote(view.coverage, now);
+  return note === null ? [] : [note];
+};
+
 export const renderSuspect = (view: SuspectView, now: Date): string => {
   const surface =
     view.scope.surface === null
@@ -233,6 +239,15 @@ export const renderSuspect = (view: SuspectView, now: Date): string => {
     QUOTED_DATA_NOTICE,
     ...falsifierLines(view, now),
     scopeLine(view),
+    // 03 §5.1's SOFT rule, above the outcome because it is the same kind of
+    // statement as the falsifier one line up: the premise the ranking below
+    // rests on. It renders only on a positively observed gap, scoped to the
+    // pinned files (§3.2a), and it NEVER blocks or withholds a row.
+    //
+    // The EMPTY-result rule on `no_touch` is deliberately NOT applied here:
+    // 03 refusal 5 hands `no_touch` to the verdict spec, which owns the
+    // ATTRIBUTED / UNATTRIBUTED / INDETERMINATE mapping this record decides.
+    ...coverageLines(view, now),
     outcomeLine(view),
     ...rewriteLines(view, now),
     ...deadScopeLines(view),

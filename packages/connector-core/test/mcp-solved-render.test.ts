@@ -13,6 +13,7 @@ import {
   solvedAtFromTree,
 } from "../src/mcp/render.ts";
 import type { Diagnosis, DiagnosisClaim, DiagnosisEdge } from "../src/http/hub.ts";
+import { UNKNOWN_COVERAGE } from "../src/http/coverage.ts";
 import type { SearchHit } from "../src/mcp/render.ts";
 
 const NOW = new Date("2026-08-10T10:00:00.000Z");
@@ -95,6 +96,7 @@ const diagnosis = (
   droppedTargets: 0,
   truncated: false,
   droppedRows: 0,
+  coverage: UNKNOWN_COVERAGE,
 });
 
 describe("solvedAtFromTree", () => {

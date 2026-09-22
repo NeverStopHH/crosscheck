@@ -36,6 +36,12 @@ import {
 } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
 import {
+  coverageClause,
+  mustQualifyEmptyAnswer,
+} from "../coverage/render.ts";
+import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
+import type { CoverageRecord } from "../http/coverage.ts";
+import {
   QUOTED_DATA_NOTICE,
   formatAge,
   formatSolvedAge,
@@ -611,6 +617,17 @@ const TARGETS_UNREPORTED =
   "This hub does not report captured targets.";
 const TARGETS_EMPTY =
   "No targets were captured for this work context.";
+/**
+ * §5.1's hard rule on NO_TARGETS. "No targets were captured" is a claim about
+ * the WORK — a reader concludes there is no overlap with the file they are
+ * about to edit — and it is only true if the session was being watched. Under
+ * a gap it narrows to a claim about the archive, exactly as the search
+ * sentence does.
+ */
+const TARGETS_EMPTY_OBSERVED =
+  "No targets for this work context are in what was observed.";
+const CLAIMS_EMPTY = "Claims: no claims recorded yet.";
+const CLAIMS_EMPTY_OBSERVED = "Claims: none in what was observed.";
 
 /**
  * The FOURTH state: the hub answered, and this client could not read what it
@@ -621,16 +638,26 @@ const TARGETS_EMPTY =
 const targetsUnreadable = (dropped: number): string =>
   `The hub sent ${String(dropped)} target row${dropped === 1 ? "" : "s"} this client could not read.`;
 
-const targetsStateLines = (diagnosis: Diagnosis): readonly string[] => {
+/** True exactly when `targetsStateLines` would emit the EMPTY phrasing. */
+const saysNoTargets = (diagnosis: Diagnosis): boolean =>
+  diagnosis.targetsReported &&
+  diagnosis.targets.length === 0 &&
+  diagnosis.droppedTargets === 0;
+
+const targetsStateLines = (
+  diagnosis: Diagnosis,
+  gapped: boolean,
+): readonly string[] => {
   if (!diagnosis.targetsReported) {
     return [TARGETS_UNREPORTED];
   }
   if (diagnosis.targets.length > 0) {
     return [];
   }
-  return diagnosis.droppedTargets > 0
-    ? [targetsUnreadable(diagnosis.droppedTargets)]
-    : [TARGETS_EMPTY];
+  if (diagnosis.droppedTargets > 0) {
+    return [targetsUnreadable(diagnosis.droppedTargets)];
+  }
+  return [gapped ? TARGETS_EMPTY_OBSERVED : TARGETS_EMPTY];
 };
 
 /** Same-author revision edge; its TARGET is the retracted claim. */
@@ -848,6 +875,15 @@ export const renderDiagnosis = (
   const solvedLines = solvedBlock(diagnosis, now, solvedPresentation);
   const claims = claimsOldestFirst(diagnosis.claims);
 
+  // AT-1 on this surface. Both empty phrasings narrow under a gap, and the
+  // clause is added ONCE for the document rather than beside each sentence —
+  // two copies of the same caveat in one answer read as two caveats.
+  const gapped = mustQualifyEmptyAnswer(diagnosis.coverage);
+  const targetLines = targetsStateLines(diagnosis, gapped);
+  const emitsEmptyPhrasing =
+    diagnosis.claims.length === 0 || saysNoTargets(diagnosis);
+  const qualifier =
+    emitsEmptyPhrasing && gapped ? [coverageClause(diagnosis.coverage, now)] : [];
   const opening =
     diagnosis.claims.length === 0
       ? [
@@ -855,10 +891,18 @@ export const renderDiagnosis = (
           contextLine,
           ...intentLines,
           ...solvedLines,
-          ...targetsStateLines(diagnosis),
-          "Claims: no claims recorded yet.",
+          ...targetLines,
+          gapped ? CLAIMS_EMPTY_OBSERVED : CLAIMS_EMPTY,
+          ...qualifier,
         ]
-      : [header, contextLine, ...intentLines, ...solvedLines, ...targetsStateLines(diagnosis)];
+      : [
+          header,
+          contextLine,
+          ...intentLines,
+          ...solvedLines,
+          ...targetLines,
+          ...qualifier,
+        ];
 
   const sections: readonly Section[] = [
     // WHERE, BEFORE WHAT. A reader who is about to edit the same file wants
@@ -1072,11 +1116,59 @@ export interface SearchFilterView {
   readonly sinceAgeMs?: number | undefined;
 }
 
+/**
+ * A coverage record and the instant it is read against — a PAIR, because a
+ * record with no clock cannot say how old the git evidence is, and a renderer
+ * that reached for the wall clock itself would make its own output untestable.
+ */
+export interface CoverageView {
+  readonly record: CoverageRecord;
+  readonly now: Date;
+}
+
 export interface SearchRenderOptions {
   /** The hub reported its vector tier ran for this search. */
   readonly semanticTier?: boolean;
   readonly filters?: SearchFilterView | undefined;
+  /** Omitted reads as "this client holds no record", never as "all clear". */
+  readonly coverage?: CoverageView | undefined;
 }
+
+/**
+ * Only the clock ever reads a stale-evidence AGE, and UNKNOWN_COVERAGE has no
+ * evidence row to be stale — every row is `hub_did_not_report`, which renders
+ * one clock-free sentence. So the epoch here cannot produce a wrong number,
+ * and coverage-empty-answers.test.ts pins that rather than trusting it.
+ */
+const EPOCH = new Date(0);
+
+/**
+ * §5.1's HARD rule, in the one place every empty answer passes through, AND
+ * EXACTLY AS WIDE AS THE RULE: it binds "while `agent_event` or `git` is
+ * anything but `complete`", which is `mustQualifyEmptyAnswer` and nothing
+ * else. An earlier shape rendered on `complete` too, on the argument that
+ * "nothing matched and we WERE watching" is the stronger answer. It is — but
+ * the sentence that carries it is the expensive one: zero-hit searches and
+ * claim-less trees are the ordinary case on any repo whose archive has not
+ * covered the topic yet, so on a healthy install every coverage line a person
+ * ever read said `complete`, and a caveat that always says the same thing is
+ * how the one that says `incomplete` gets skipped with the rest. The
+ * unqualified sentence already carries the good news: under `complete` it
+ * reads "No work context ON THIS REPO matched", a claim about the repository
+ * rather than about the archive, which the gapped branch may not make.
+ *
+ * An ABSENT record still renders — absent is `unknown`, never `complete`
+ * (§4) — so a caller that forgot the field shouts rather than passing for a
+ * watched repo. `crosscheck status` keeps its line unconditionally: every
+ * other line of that command prints its state whatever the state is, and
+ * AT-9 names it as the surface a person should not have to run doctor after.
+ */
+const coverageQualifier = (view: CoverageView | undefined): string | null => {
+  const record = view?.record ?? UNKNOWN_COVERAGE;
+  return mustQualifyEmptyAnswer(record)
+    ? coverageClause(record, view?.now ?? EPOCH)
+    : null;
+};
 
 const searchMethodLine = (options: SearchRenderOptions): string =>
   options.semanticTier === true
@@ -1154,11 +1246,23 @@ const noMatchLine = (options: SearchRenderOptions): string => {
     filters?.sinceAgeMs === undefined
       ? ""
       : ` in the last ${formatAge(filters.sinceAgeMs)}`;
-  const sentence = `No work context on this repo matched that query${from}${window}.`;
-  return from.length === 0 && window.length === 0
-    ? sentence
-    : `${sentence} Those filters are part of that answer: other words, a longer ` +
+  // AT-1, AND THE WORDING IS THE WHOLE POINT. "No work context matched" is a
+  // claim about the REPOSITORY; it is only true if the repository was being
+  // watched. Under any gap — `unknown` included, which is an un-upgraded or
+  // unreachable hub — the sentence narrows to a claim about the ARCHIVE, and
+  // the clause below says how far that archive reaches. Without this a model
+  // reads an empty answer as "nobody has worked on this" and redoes the work.
+  const record = options.coverage?.record ?? UNKNOWN_COVERAGE;
+  const sentence = mustQualifyEmptyAnswer(record)
+    ? `Nothing in what was observed on this repo matched that query${from}${window}.`
+    : `No work context on this repo matched that query${from}${window}.`;
+  const filtersNote =
+    from.length === 0 && window.length === 0
+      ? ""
+      : ` Those filters are part of that answer: other words, a longer ` +
         "window or another teammate may well match.";
+  const qualifier = coverageQualifier(options.coverage);
+  return `${sentence}${filtersNote}${qualifier === null ? "" : `\n${qualifier}`}`;
 };
 
 /**
@@ -1279,6 +1383,9 @@ export const renderSearchResults = (
     searchMethodLine(options),
   ];
   if (hits.length === 0) {
+    // AT-1. `noMatchLine` says these WORDS matched nothing; the clause says
+    // how much of the archive those words were matched against. Without it a
+    // model reads "no work context matched" as "nobody has worked on this".
     return [...opening, noMatchLine(options)].join("\n");
   }
   const lines = appendSection(

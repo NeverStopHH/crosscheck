@@ -40,6 +40,7 @@ import {
 } from "../src/briefing/sanitize.ts";
 import { formatQuestionEntry } from "../src/briefing/questions.ts";
 import { formatDraftLine } from "../src/briefing/render.ts";
+import { UNKNOWN_COVERAGE } from "../src/http/coverage.ts";
 import { successText as reviewDraftSuccessText } from "../src/mcp/tools/review-draft.ts";
 import { renderClaimHint } from "../src/hints/render.ts";
 import { renderDiagnosis } from "../src/mcp/render.ts";
@@ -97,6 +98,7 @@ const diagnosis = (overrides: Partial<Diagnosis> = {}): Diagnosis => ({
   droppedTargets: 0,
   truncated: false,
   droppedRows: 0,
+  coverage: UNKNOWN_COVERAGE,
   ...overrides,
 });
 

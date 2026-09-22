@@ -1815,3 +1815,21 @@ export const GIT_TOUCHES_TIMEOUT_MS = 250;
  * per-invocation cap (MAX_TARGETS_PER_INVOCATION) still applies afterwards.
  */
 export const MAX_GIT_TOUCH_CANDIDATES = 60;
+
+/**
+ * ── Coverage integrity (docs/1.0/03-coverage-integrity.md §5.3) ─────────────
+ *
+ * The coverage line's hard bound. One line, first in the briefing, and NEVER
+ * CUT — a caveat that can be dropped by a character budget is a caveat that
+ * lies, because the briefing it was dropped from still reads as complete.
+ *
+ * 160 is chosen against the briefing budget rather than against prose: it is
+ * what an uncuttable prefix may cost every SessionStart without crowding out
+ * the presence and related-work lines the briefing exists for. The bound is
+ * absolute, not a ratio, and it holds against every shape the coverage enums
+ * admit — 4096 of them, checked in test/coverage-render.test.ts.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_COVERAGE_LINE_CHARS < c.MAX_BRIEFING_CHARS, c.MAX_COVERAGE_LINE_CHARS)'
+ * PRINTS: true 160
+ */
+export const MAX_COVERAGE_LINE_CHARS = 160;

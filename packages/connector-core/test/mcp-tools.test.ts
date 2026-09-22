@@ -444,9 +444,11 @@ describe("search_related_work", () => {
       query: "quantum entanglement in the billing service",
     });
 
-    // Assert
+    // Assert: the sentence narrows to the ARCHIVE under any coverage gap —
+    // this fixture's hub has no commit evidence, so it is one (03 §5.1).
     expect(result.isError).toBe(false);
-    expect(result.text.toLowerCase()).toContain("no work context");
+    expect(result.text.toLowerCase()).toContain("nothing in what was observed");
+    expect(result.text.toLowerCase()).toContain("coverage");
     expect(result.text.toLowerCase()).toContain("lexical");
   });
 

@@ -86,6 +86,9 @@ import type {
   HubFailureKind,
   HubResult,
 } from "@crosscheck/connector-core/http/client.ts";
+import { COVERAGE_EXEMPT_SURFACES } from "@crosscheck/connector-core/coverage/exempt-surfaces.ts";
+import { COVERAGE_HUB_UNREACHABLE } from "@crosscheck/connector-core/coverage/render.ts";
+import type { CoverageSourceRecord } from "@crosscheck/connector-core/http/coverage.ts";
 import {
   describeConnectionFailure,
   refineRefusedCause,
@@ -108,7 +111,10 @@ import {
   getSolvedMatchCounts,
   getWorkContexts,
 } from "@crosscheck/connector-core/http/hub.ts";
-import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
+import type {
+  AbsencesOutcome,
+  GhostCheckEntry,
+} from "@crosscheck/connector-core/http/hub.ts";
 import {
   formatQuestionCounts,
   questionWarning,
@@ -1332,19 +1338,124 @@ const checkFlushLock = async (home: string, key: string): Promise<Check> => {
  * about THIS install's health, and a warning nobody can act on teaches people
  * to ignore doctor.
  */
-const checkAbsences = async (
-  ctx: HubContext,
-  repoId: string,
-): Promise<Check> => {
-  const result = await getAbsences(ctx, repoId);
+/**
+ * COV-5's printed refusals. A rung that CANNOT EXIST is only honest if
+ * somebody can read the refusal; one nobody sees is the silent absence AT-10
+ * forbids. The sentence is keyed off the enum reason the hub sent, so the two
+ * cannot drift into different explanations of the same word.
+ */
+const COVERAGE_REFUSALS: Readonly<Record<string, string>> = {
+  no_emitter:
+    "no CI connector reports to this hub — nothing in this product emits CI results yet, so the rung is refused rather than reported empty",
+  out_of_scope_1_0:
+    "runtime invariant mining is not in 1.0, so there is no rung to report",
+  no_platform_rung:
+    "no hook fires on a human keystroke on any platform crosscheck supports; human edits surface through the git rung instead",
+};
+
+/**
+ * AT-1's example sentence names "commits A..F". 1.0 cannot: `commit_evidence`
+ * is an aggregate keyed on (repo, author_email) with NO hash column, and the
+ * claim-binding spec refused a commits table. A field that would be null on
+ * every row of every 1.0 release is worse than an absent one — a reader who
+ * sees it concludes the range is sometimes populated — so the field is gone
+ * and the refusal is printed here, by name, where somebody can argue with it.
+ */
+const coverageRangeRefusal = (): Check =>
+  check(
+    "PASS",
+    "coverage range",
+    "not in 1.0: commit_evidence is an aggregate with no hash column and the claim-binding spec refuses a commits table. The qualifier names the instant observation stopped; it never names commits.",
+  );
+
+/**
+ * COV-9's exemptions, printed. An exemption a person can read is an exemption
+ * somebody will argue with; one nobody sees is the silent absence AT-10
+ * forbids by name — which is the whole difference between this list and the
+ * escape hatch the first draft of the rule shipped.
+ *
+ * Printed with or without a hub: it is a statement about this build, not
+ * about any install's data.
+ */
+const coverageExemptionChecks = (): readonly Check[] =>
+  COVERAGE_EXEMPT_SURFACES.map((surface) =>
+    check("PASS", `coverage exempt ${surface.name}`, surface.reason),
+  );
+
+const coverageSourceDetail = (row: CoverageSourceRecord): string => {
+  const since =
+    row.gapSince === null ? "" : `, since ${row.gapSince.slice(0, 16)}Z`;
+  return `${row.source} ${row.state} (${row.reason}${since})`;
+};
+
+/**
+ * The coverage check, on #50's ladder exactly: "not measured" is a PASS,
+ * "could not reach" is a WARN. The hub-side twin of `git evidence lane` one
+ * screen up, and the two must never describe the same install differently —
+ * that one reads session state, this one reads the hub's record.
+ *
+ * NO PERCENTAGE, EVER. The detail is one fragment per readable rung, each
+ * with its own state and its own named reason, because collapsing them is
+ * exactly the lie the record exists to stop.
+ */
+const coverageChecks = (
+  result: HubResult<AbsencesOutcome>,
+): readonly Check[] => {
+  if (!result.ok) {
+    return [
+      result.kind === "network"
+        ? check(
+            "WARN",
+            "coverage",
+            // The sentence is shared with `crosscheck status`
+            // (connector-core/src/coverage/render.ts), so one unreachable hub
+            // cannot be described two ways. The cause is appended here and
+            // only here: this is the surface with a remedy channel.
+            `${COVERAGE_HUB_UNREACHABLE} — ${result.message}`,
+          )
+        : check("PASS", "coverage", "not measured"),
+      coverageRangeRefusal(),
+    ];
+  }
+  const record = result.data.coverage;
+  if (record.sources.every((row) => row.reason === "hub_did_not_report")) {
+    return [check("PASS", "coverage", "not measured"), coverageRangeRefusal()];
+  }
+  const readable = record.sources.filter((row) => row.state !== "unavailable");
+  const detail = readable.map(coverageSourceDetail).join(" · ");
+  const refusals = record.sources
+    .filter((row) => row.state === "unavailable")
+    .map((row) =>
+      check(
+        "PASS",
+        `coverage ${row.source}`,
+        `unavailable (${row.reason}) — ${COVERAGE_REFUSALS[row.reason] ?? "this rung cannot exist on this platform"}`,
+      ),
+    );
+  const gapped = readable.some((row) => row.state === "incomplete");
+  return [
+    gapped
+      ? check(
+          "WARN",
+          "coverage",
+          `${detail} — answers about this repo rest on partial observation`,
+        )
+      : check("PASS", "coverage", detail),
+    ...refusals,
+    coverageRangeRefusal(),
+  ];
+};
+
+const checkAbsences = (result: HubResult<AbsencesOutcome>): Check => {
   if (!result.ok) {
     return check("PASS", "absence findings", "not measured");
   }
-  if (result.data.length === 0) {
+  const findings = result.data.absences;
+  if (findings.length === 0) {
     return check("PASS", "absence findings", "none");
   }
-  const inactive = result.data.filter((entry) => entry.kind === "inactive").length;
-  const unconnected = result.data.filter(
+  const inactive = findings.filter((entry) => entry.kind === "inactive").length;
+  const unconnected = findings.filter(
     (entry) => entry.kind === "unconnected",
   ).length;
   const parts = [
@@ -1358,9 +1469,28 @@ const checkAbsences = async (
   return check(
     "WARN",
     "absence findings",
-    `${result.data.length} recent commit author${result.data.length === 1 ? "" : "s"} ` +
+    `${findings.length} recent commit author${findings.length === 1 ? "" : "s"} ` +
       `with no matching reported session (${parts.join(", ")}) — crosscheck status has the lines`,
   );
+};
+
+/**
+ * ONE hub read, several checks. The findings and the coverage record travel
+ * on the same response (03 §3.5), so splitting this into two functions with
+ * two `getAbsences` calls would spend a second round trip on bytes already
+ * in hand — and could report an absence count and a coverage record read a
+ * moment apart from each other.
+ */
+const absenceAndCoverageChecks = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<readonly Check[]> => {
+  const result = await getAbsences(ctx, repoId);
+  return [
+    checkAbsences(result),
+    ...coverageChecks(result),
+    ...coverageExemptionChecks(),
+  ];
 };
 
 /**
@@ -2937,7 +3067,10 @@ export const runDoctor = async (
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),
-    await checkAbsences(hubCtx, identity.repoId),
+    // ONE GET for both: the absence findings and the coverage record ride
+    // the same response (03 §3.5), so reading them twice would be a second
+    // round trip for bytes already in hand.
+    ...(await absenceAndCoverageChecks(hubCtx, identity.repoId)),
     await checkQuestions(hubCtx, identity.repoId, now),
     await checkSolvedMatches(hubCtx, identity.repoId),
     ...(await checkPins(

@@ -442,6 +442,38 @@ describe("§4.4: unregistered render surfaces are a red build", () => {
     }
   });
 
+  test("every registered module is IN THE REPOSITORY, not just on this disk", () => {
+    // `exists()` above asks the author's own filesystem, which is the one
+    // place a module is guaranteed to be. A registered surface git never took
+    // is a surface that exists for nobody else: CI cannot resolve it, a fresh
+    // clone cannot build, and every check here stays green because the walk
+    // reads the working tree.
+    //
+    // Not hypothetical. `.gitignore`'s `coverage/` line — written for a
+    // test-coverage OUTPUT directory — matched `src/coverage/` and swallowed
+    // the whole module the `coverage-note` surface registers, while six
+    // packages imported it and every test passed.
+    const repoRoot = join(WORKSPACE_PACKAGES_ROOT, "..");
+    const listed = Bun.spawnSync(["git", "ls-files", "-z"], { cwd: repoRoot });
+    expect(listed.exitCode, "git ls-files failed").toBe(0);
+    const tracked = new Set(
+      listed.stdout
+        .toString()
+        .split("\0")
+        .filter((path) => path !== ""),
+    );
+    // A floor, so an empty listing cannot pass for a clean one.
+    expect(tracked.size).toBeGreaterThan(100);
+
+    const untracked = PACKAGES.flatMap((pkg) =>
+      pkg.surfaces
+        .map((surface) => relative(repoRoot, join(pkg.root, surface.module)))
+        .filter((path) => !tracked.has(path)),
+    );
+
+    expect(untracked).toEqual([]);
+  });
+
   test("every registered module really touches the render layer — no decorative rows", async () => {
     // The inverse guard: a registration whose module no longer renders keeps
     // the table honest by being removed, not by rotting in place.
