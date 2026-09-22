@@ -26,7 +26,10 @@ import {
   EdgeKindSchema,
 } from "@crosscheck/schema";
 
-import { resolveDeclaredSurface } from "../../flows/claim-surface.ts";
+import {
+  droppedSurfaceNote,
+  resolveDeclaredSurface,
+} from "../../flows/claim-surface.ts";
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
@@ -358,9 +361,13 @@ export const run = async (
     claimOutcome?.status === "duplicate"
       ? " (your claim was already there, so it was not added twice)"
       : "";
+  const narrowed = droppedSurfaceNote(surface);
   return toolText(
-    `Extended work context ${safeId(workContextId)}: your ${claim.kind} ${landedClaimId} is now ` +
-      `linked to ${safeId(targetClaimId)} by a ${edge.kind} edge${already}. Its author sees it the ` +
-      "next time they read their own diagnosis.",
+    [
+      `Extended work context ${safeId(workContextId)}: your ${claim.kind} ${landedClaimId} is now ` +
+        `linked to ${safeId(targetClaimId)} by a ${edge.kind} edge${already}. Its author sees it the ` +
+        "next time they read their own diagnosis.",
+      ...(narrowed === null ? [] : [narrowed]),
+    ].join("\n"),
   );
 };

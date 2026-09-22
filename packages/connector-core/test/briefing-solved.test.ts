@@ -471,6 +471,7 @@ describe("briefing solved-before validity", () => {
     commitBinding: "reported",
     basis: "declared",
     refCommit: null,
+    selfReported: false,
     touchingCommits: [],
     touchingTotal: 0,
     lastRevalidatedAt: NOW.toISOString(),

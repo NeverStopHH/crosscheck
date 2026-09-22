@@ -30,6 +30,7 @@ const validity = (overrides: Partial<ClaimValidity> = {}): ClaimValidity => ({
   commitBinding: "session_base",
   basis: "context_targets",
   refCommit: null,
+  selfReported: false,
   touchingCommits: [],
   touchingTotal: 0,
   lastRevalidatedAt: ISO,

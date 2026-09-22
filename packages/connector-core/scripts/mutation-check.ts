@@ -5134,6 +5134,32 @@ export const MUTATIONS: readonly Mutation[] = [
       "is told how many trees were measured and never that the rest were " +
       "skipped for time, so a partial walk reads as a complete one",
   },
+  {
+    // 1.0 spec 02 CCB-10's observability half. The counter lived on the
+    // response to the caller whose report was refused, and nothing else read
+    // it.
+    label: "a refused walk-back is visible only to the party refused",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "          .set({ refusedWalkBacks: sql`${claimRevalidations.refusedWalkBacks} + 1` })",
+    to: "          .set({ refusedWalkBacks: claimRevalidations.refusedWalkBacks })",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a team lead cannot tell a hub refusing forged upgrades every hour " +
+      "from one that has never seen one — which the service's own comment " +
+      "names as the thing the counter exists to prevent",
+  },
+  {
+    // 1.0 spec 02 refusal 6, whose premise the renderer contradicted.
+    label: "an author's own reading is indistinguishable from a teammate's",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "          selfReported: own.has(entry.claimId),",
+    to: "          selfReported: false,",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "`current` is the one positive certification the vocabulary has, and " +
+      "the refusal accepted the residue on the premise that the move changes " +
+      "nothing a reader sees — true of the substance gate, false of the label",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5288,7 +5314,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
- * PRINTS: packages/server/test/claim-revalidations.test.ts 7
+ * PRINTS: packages/server/test/claim-revalidations.test.ts 9
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 2

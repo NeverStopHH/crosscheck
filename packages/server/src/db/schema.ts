@@ -748,6 +748,37 @@ export const claimRevalidations = pgTable("claim_revalidations", {
   basis: text("basis", { enum: CLAIM_REVALIDATION_BASES }).notNull(),
   /** Which ref state the reading was taken against — context, not a key. */
   refCommit: text("ref_commit").notNull(),
+  /**
+   * How many times a report tried to walk THIS claim back toward `current`
+   * and the downgrade-only rule refused it.
+   *
+   * CCB-10 requires the refusal to be "counted and printed by doctor", and
+   * the counter existed only on the RESPONSE — handed back to the caller
+   * whose report was refused, and read by nobody else. A team lead running
+   * `crosscheck doctor` could not tell a hub refusing forged upgrades every
+   * hour from one that had never seen one, which is the exact condition the
+   * service's own comment says the counter exists to prevent.
+   *
+   * Stored per claim rather than as a global tally, because "which findings
+   * somebody keeps trying to resurrect" is the question a reader can act on.
+   */
+  refusedWalkBacks: integer("refused_walk_backs").notNull().default(0),
+  /**
+   * Was this reading taken by the claim's OWN author?
+   *
+   * Refusal 6 accepted one self-certification path — `unknown -> current` is
+   * a legal direction and nothing compared the reporter to the author — on
+   * the premise that "`unknown` is ALREADY injectable under §5's gate, so
+   * that move changes nothing a reader sees". True of the gate and false of
+   * the label: `claimValidityWord` maps every state with no exemption, so a
+   * teammate reads `validity current` — the strongest word the vocabulary
+   * has — on an assertion measured only by the person who made it.
+   *
+   * The residue stays, because a git reading IS reproducible from any clone
+   * and §3.7 rests on exactly that. What changes is that it stops being
+   * invisible.
+   */
+  selfReported: boolean("self_reported").notNull().default(false),
   touchingCommits: jsonb("touching_commits")
     .$type<readonly string[]>()
     .notNull()

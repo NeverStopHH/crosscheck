@@ -389,9 +389,22 @@ const validityDetail = (validity: ClaimValidity): string => {
     // landed and no surface rendered it.
     const against =
       validity.refCommit === null ? "" : safeId(validity.refCommit);
+    // WHO MEASURED IT, when the only measurement is the author's own.
+    //
+    // Refusal 6 accepted that residue on the premise that `unknown` and
+    // `current` are indistinguishable to a reader — true of §5's substance
+    // gate, false HERE: this is the one positive certification the vocabulary
+    // has, and the label flips to it on a reading the claim's own author
+    // produced, over a surface they chose, with no second party in the path.
+    //
+    // The residue stays: a git reading is reproducible from any clone, which
+    // is §3.7's whole trust argument, and refusing it would leave a solo
+    // developer's claims permanently uncertain. What changes is that a
+    // teammate can now see which kind of `current` they are reading.
+    const measured = validity.selfReported === true ? ", by its own author" : "";
     return against.length === 0
-      ? `${at}; unchanged as far as the default branch this clone holds`
-      : `${at}; unchanged up to ${against}, the default branch as this clone has it`;
+      ? `${at}; unchanged as far as the default branch this clone holds${measured}`
+      : `${at}; unchanged up to ${against}, the default branch as this clone has it${measured}`;
   }
   return `${at}; whether those files changed since is unknown`;
 };

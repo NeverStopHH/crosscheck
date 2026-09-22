@@ -215,6 +215,7 @@ const hintClaimWith = (payload: string): HintClaimCandidate => ({
     // Sha-shaped by schema, so this is NOT a slot the payload can ride —
     // a hostile hub sending prose here is refused at the wire.
     refCommit: "a1b2c3d",
+    selfReported: false,
     touchingCommits: [],
     touchingTotal: 1,
     lastRevalidatedAt: ISO,
@@ -423,6 +424,7 @@ const solvedMatchWith = (payload: string): SolvedMatchEntry => ({
     commitBinding: "session_base",
     basis: null,
     refCommit: payload,
+    selfReported: false,
     touchingCommits: [],
     touchingTotal: null,
     lastRevalidatedAt: null,

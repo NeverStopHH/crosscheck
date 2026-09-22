@@ -32,7 +32,7 @@ import type { ClaimRevalidationReport, ClaimValidity } from "@crosscheck/schema"
 
 import { CLAIM_REVALIDATION_RETENTION_DAYS } from "../constants.ts";
 import { agentSessions, claimRevalidations, claims } from "../db/schema.ts";
-import type { Db } from "../db/client.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import { loadClaimValidities } from "./claim-validity.ts";
 import type { Clock } from "../types.ts";
 
@@ -104,6 +104,48 @@ export const unknownClaimIds = async (
   return unique.filter((id) => !known.has(id));
 };
 
+/**
+ * Which of these claims the reporting developer wrote themselves.
+ *
+ * PRINCIPLE 4: an agent may not certify its own work. Refusal 6 knowingly
+ * left one self-certification path open — `unknown -> current` is a legal
+ * UPSERT direction and nothing compared `reported_by` to the author — and
+ * defended it with "`unknown` is ALREADY injectable under §5's gate, so the
+ * move changes nothing a reader sees".
+ *
+ * THAT IS TRUE OF THE GATE AND FALSE OF THE RENDER. `claimValidityWord` maps
+ * every state to a printed label with no exemption, so the label a teammate
+ * reads flips from `validity unknown` to `validity current` on both
+ * unsolicited surfaces — and `current` is the one POSITIVE certification the
+ * vocabulary has, which this module's own header calls "a positive
+ * measurement somebody took". Here the somebody is the claim's own author,
+ * holding a key any agent on that machine can read. The residue was accepted
+ * on a premise the implementation contradicts, so the decision was never made
+ * against its real cost.
+ *
+ * ONLY THE UPGRADE IS REFUSED. An author reporting `changed` about their own
+ * claim is weakening it, which needs no protection — principle 4 is about
+ * certifying, not about retracting.
+ */
+const ownClaimIds = async (
+  db: DbExecutor,
+  developerId: string,
+  claimIds: readonly string[],
+): Promise<ReadonlySet<string>> => {
+  const unique = [...new Set(claimIds)];
+  if (unique.length === 0) {
+    return new Set();
+  }
+  const rows = await db
+    .select({ id: claims.id })
+    .from(claims)
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(
+      and(inArray(claims.id, unique), eq(agentSessions.developerId, developerId)),
+    );
+  return new Set(rows.map((row) => row.id));
+};
+
 export const ingestClaimRevalidations = async (
   deps: Deps,
   developerId: string,
@@ -117,9 +159,15 @@ export const ingestClaimRevalidations = async (
   // single-connection, so a transaction held open across an HTTP call would
   // block the whole hub (record-handlers.ts states the constraint).
   return deps.db.transaction(async (tx) => {
+    const own = await ownClaimIds(
+      tx,
+      developerId,
+      report.entries.map((entry) => entry.claimId),
+    );
     let recorded = 0;
     let refusedDowngrades = 0;
     for (const entry of report.entries) {
+
       const written = await tx
         .insert(claimRevalidations)
         .values({
@@ -131,6 +179,14 @@ export const ingestClaimRevalidations = async (
           touchingTotal: entry.touchingTotal,
           revalidatedAt: now,
           reportedBy: developerId,
+          // Stored so the RENDER can say who measured it. Refusal 6 accepted
+          // the self-certification residue on the premise that `unknown` and
+          // `current` are indistinguishable to a reader — true of §5's gate
+          // and false of the label, which flips to the strongest word in the
+          // vocabulary. The residue stays (a git reading is reproducible from
+          // any clone, which is §3.7's whole trust argument); what changes is
+          // that it is no longer invisible.
+          selfReported: own.has(entry.claimId),
         })
         .onConflictDoUpdate({
           target: claimRevalidations.claimId,
@@ -168,6 +224,15 @@ export const ingestClaimRevalidations = async (
         .limit(1);
       if (blocked[0] !== undefined && entry.result !== "changed") {
         refusedDowngrades += 1;
+        // PERSISTED, because the response is read by exactly one audience:
+        // the caller whose report was refused. CCB-10 requires the refusal to
+        // be counted and printed by DOCTOR, so a team lead can tell a hub
+        // refusing forged upgrades every hour from one that has never seen
+        // one — which the response alone could never do.
+        await tx
+          .update(claimRevalidations)
+          .set({ refusedWalkBacks: sql`${claimRevalidations.refusedWalkBacks} + 1` })
+          .where(eq(claimRevalidations.claimId, entry.claimId));
       }
     }
     // RETENTION RUNS LAST, AND NEVER OVER A MEASURED DOWNGRADE.

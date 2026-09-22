@@ -22,7 +22,10 @@ import { z } from "zod";
 import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 import { CLAIM_ECHO_MAX_CHARS } from "../../constants.ts";
 
-import { resolveDeclaredSurface } from "../../flows/claim-surface.ts";
+import {
+  droppedSurfaceNote,
+  resolveDeclaredSurface,
+} from "../../flows/claim-surface.ts";
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
@@ -309,5 +312,11 @@ export const run = async (
         `so the draft may still be listed:\n${explainRejection(issuesOf(edgeOutcome))}`,
     );
   }
-  return toolText(successText(action, claim.id, draft.id, revision.body));
+  const narrowed = droppedSurfaceNote(surface);
+  return toolText(
+    [
+      successText(action, claim.id, draft.id, revision.body),
+      ...(narrowed === null ? [] : [narrowed]),
+    ].join("\n"),
+  );
 };

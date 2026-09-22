@@ -207,6 +207,16 @@ export const ClaimValiditySchema = z.looseObject({
    * is how a corpus goes blind without ever failing.
    */
   refCommit: commitSha.nullable().default(null),
+  /**
+   * Was this reading taken by the claim's own author?
+   *
+   * Refusal 6 accepted that residue on the premise that it "changes nothing a
+   * reader sees" — true of §5's gate, false of the label, which flips to
+   * `current`, the strongest word the vocabulary has. The residue stays,
+   * because a git reading is reproducible from any clone and §3.7 rests on
+   * that; this is what stops it being invisible.
+   */
+  selfReported: z.boolean().default(false),
   lastRevalidatedAt: z.string().nullable(),
   supersededByClaimId: z.string().nullable(),
 });

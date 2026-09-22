@@ -2156,6 +2156,13 @@ export const ClaimValiditySummarySchema = z.looseObject({
   total: z.number().int().min(0).default(0),
   unbound: z.number().int().min(0).default(0),
   neverRevalidated: z.number().int().min(0).default(0),
+  /**
+   * CCB-10's observability half. Absent from a hub too old to count it, which
+   * is why both default to 0 rather than being required: a missing number is
+   * not evidence that the gate never fired.
+   */
+  claimsWithRefusedWalkBacks: z.number().int().min(0).default(0),
+  refusedWalkBacks: z.number().int().min(0).default(0),
   states: z.record(z.string(), z.number().int().min(0)).default({}),
 });
 

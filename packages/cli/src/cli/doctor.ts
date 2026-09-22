@@ -1777,6 +1777,39 @@ const validityStateSentence = (summary: ClaimValiditySummary): string => {
   return named.length === 0 ? "none measured as non-current" : named.join(", ");
 };
 
+/**
+ * CCB-10's observability half: how often somebody has tried to walk a claim
+ * back toward `current` and been refused.
+ *
+ * THE COUNT EXISTED AND NOBODY COULD SEE IT. It was returned on the response
+ * to the caller whose report was refused, and read by nothing else — so a hub
+ * refusing forged upgrades every hour printed exactly what a hub that had
+ * never seen one printed. The service's own comment says why that is not
+ * acceptable: "a gate that silently drops writes is indistinguishable from
+ * one that is broken".
+ *
+ * WARN, NOT FAIL. A refusal is the gate WORKING; what a reader needs is to
+ * know it is firing, and how persistently. Zero prints nothing at all — a
+ * line that appears on every install is a line nobody reads.
+ */
+const refusedWalkBackCheck = (
+  summary: ClaimValiditySummary,
+): readonly Check[] => {
+  if (summary.refusedWalkBacks === 0) {
+    return [];
+  }
+  return [
+    check(
+      "WARN",
+      "claim walk-backs refused",
+      `${String(summary.refusedWalkBacks)} attempt(s) across ` +
+        `${String(summary.claimsWithRefusedWalkBacks)} claim(s) tried to move a stale ` +
+        "finding back to current and were refused — the gate held; read the " +
+        "diagnosis of those trees to see what is being re-asserted",
+    ),
+  ];
+};
+
 const claimCurrencyCheck = (summary: ClaimValiditySummary): Check =>
   check(
     "PASS",
@@ -1810,7 +1843,11 @@ const checkClaimValidity = async (
           ),
         ];
   }
-  return [claimBindingCheck(summary.data), claimCurrencyCheck(summary.data)];
+  return [
+    claimBindingCheck(summary.data),
+    claimCurrencyCheck(summary.data),
+    ...refusedWalkBackCheck(summary.data),
+  ];
 };
 
 /**

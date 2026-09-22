@@ -14,7 +14,10 @@ import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 
 import { CLAIM_REVALIDATION_RETENTION_DAYS } from "../src/constants.ts";
-import { loadClaimValidities } from "../src/services/claim-validity.ts";
+import {
+  loadClaimValidities,
+  summariseClaimValidity,
+} from "../src/services/claim-validity.ts";
 import {
   addTestDeveloperWithSession,
   createHarnessWithSession,
@@ -184,6 +187,87 @@ describe("claim revalidations", () => {
     // Assert
     expect(second.refusedDowngrades).toBe(0);
     expect(second.recorded).toBe(1);
+  });
+
+  test("a reading by the claim's own author says so", async () => {
+    // Refusal 6 accepted one self-certification path — `unknown -> current`
+    // is a legal direction and nothing compared the reporter to the author —
+    // on the premise that "`unknown` is ALREADY injectable under §5's gate,
+    // so that move changes nothing a reader sees". True of the gate, FALSE of
+    // the label: `current` is the one positive certification in the
+    // vocabulary, and a teammate read it on an assertion measured only by the
+    // person who made it.
+    //
+    // The residue stays — a git reading is reproducible from any clone, which
+    // is §3.7's whole trust argument, and refusing it would leave a solo
+    // developer's claims permanently uncertain. What changes is that the
+    // reader can now see which kind of `current` this is.
+    const { harness, developer } = await seed();
+    await report(harness, developer, [entry("unchanged")]);
+
+    const validities = await loadClaimValidities(
+      harness.db,
+      harness.clock.now(),
+      ["clm_01"],
+    );
+    expect(validities.get("clm_01")?.state).toBe("current");
+    expect(validities.get("clm_01")?.selfReported).toBe(true);
+  });
+
+  test("a reading by anyone else does not", async () => {
+    // The control. A flag that were always true would carry no information
+    // and the sentence built on it would be noise on every claim.
+    const { harness, developer } = await seed();
+    const other = await addTestDeveloperWithSession(
+      harness,
+      "Robin",
+      "robin@example.com",
+      { id: "ses_other", repo: REPO },
+    );
+    await report(harness, other, [entry("unchanged")]);
+
+    const validities = await loadClaimValidities(
+      harness.db,
+      harness.clock.now(),
+      ["clm_01"],
+    );
+    expect(validities.get("clm_01")?.state).toBe("current");
+    expect(validities.get("clm_01")?.selfReported).toBe(false);
+  });
+
+  test("a refused walk-back is counted where doctor can read it", async () => {
+    // CCB-10 requires the refusal to be "counted and printed by doctor", and
+    // the counter lived only on the RESPONSE — handed to the caller whose
+    // report was refused and read by nobody else. A team lead could not tell
+    // a hub refusing forged upgrades every hour from one that had never seen
+    // one, which is the condition the service's own comment says the counter
+    // exists to prevent.
+    const { harness, developer } = await seed();
+    await report(harness, developer, [entry("changed")]);
+    await report(harness, developer, [entry("unchanged")]);
+    await report(harness, developer, [entry("unchanged")]);
+
+    const summary = await summariseClaimValidity(
+      harness.db,
+      harness.clock.now(),
+      REPO,
+    );
+    expect(summary.refusedWalkBacks).toBe(2);
+    expect(summary.claimsWithRefusedWalkBacks).toBe(1);
+  });
+
+  test("a hub nobody has forged against counts nothing", async () => {
+    // The control: a number that fires on every install is a number nobody
+    // reads, and doctor prints this line only when it is non-zero.
+    const { harness, developer } = await seed();
+    await report(harness, developer, [entry("changed")]);
+
+    const summary = await summariseClaimValidity(
+      harness.db,
+      harness.clock.now(),
+      REPO,
+    );
+    expect(summary.refusedWalkBacks).toBe(0);
   });
 
   test("a stranger in another repo cannot downgrade this repo's claim", async () => {

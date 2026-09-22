@@ -19,7 +19,10 @@ import type { OwnWorkContext } from "../session.ts";
 import { checkClaim, explainRejection } from "../violations.ts";
 import { redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
-import { resolveDeclaredSurface } from "../../flows/claim-surface.ts";
+import {
+  droppedSurfaceNote,
+  resolveDeclaredSurface,
+} from "../../flows/claim-surface.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { readSessionState } from "../../state/session-state.ts";
 import { postRecords } from "../../http/hub.ts";
@@ -264,12 +267,14 @@ export const run = async (
   // sentence they just sent arrives with a hole in it. A note beside a stored
   // record, never a refusal — the text is legal and only its rendering changes.
   const note = redactionNote(claim.body);
+  const narrowed = droppedSurfaceNote(surface);
   return toolText(
     [
       `Recorded ${claim.id} as a ${claim.kind} on your work context ${own.workContextId} ` +
         `(status ${claim.status}, confidence ${claim.confidence.toFixed(CONFIDENCE_DECIMALS)}). ` +
         "Pass this id as an evidenceRefs entry when you publish what supports it.",
       ...(note === null ? [] : [note]),
+      ...(narrowed === null ? [] : [narrowed]),
     ].join("\n"),
   );
 };

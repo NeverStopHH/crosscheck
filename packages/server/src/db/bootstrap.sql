@@ -713,3 +713,14 @@ BEGIN
   END IF;
 END
 $$;
+
+-- CCB-10's observability half. The refusal counter lived on the response and
+-- was read by nobody, so a hub refusing forged upgrades every hour looked
+-- exactly like one that had never seen one.
+ALTER TABLE claim_revalidations
+  ADD COLUMN IF NOT EXISTS refused_walk_backs integer NOT NULL DEFAULT 0;
+
+-- Refusal 6's residue, made visible rather than invisible: a reading taken by
+-- the claim's own author still counts, and now says so.
+ALTER TABLE claim_revalidations
+  ADD COLUMN IF NOT EXISTS self_reported boolean NOT NULL DEFAULT false;

@@ -58,7 +58,7 @@
  * PRINTS: packages/schema/src/enums.ts
  * PRINTS: packages/server/src/services/claim-validity.ts
  */
-import { and, asc, count, desc, eq, gte, inArray, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, or, sql } from "drizzle-orm";
 import type {
   ClaimCommitBinding,
   ClaimRevalidationBasis,
@@ -103,6 +103,8 @@ export interface ClaimRevalidationReading {
    * claimed more than the reading supported — see ClaimValiditySchema.
    */
   readonly refCommit: string | null;
+  /** Was this reading taken by the claim's own author? See the column. */
+  readonly selfReported: boolean;
   readonly revalidatedAt: Date;
 }
 
@@ -165,6 +167,7 @@ export const claimValidity = (
     commitBinding: claim.commitBinding,
     basis: revalidation?.basis ?? null,
     refCommit: revalidation?.refCommit ?? null,
+    selfReported: revalidation?.selfReported ?? false,
     touchingCommits: [...(revalidation?.touchingCommits ?? [])],
     touchingTotal: revalidation?.touchingTotal ?? null,
     lastRevalidatedAt: revalidation?.revalidatedAt.toISOString() ?? null,
@@ -271,6 +274,7 @@ export const loadRevalidations = async (
         touchingCommits: row.touchingCommits,
         touchingTotal: row.touchingTotal,
         refCommit: row.refCommit,
+        selfReported: row.selfReported,
         revalidatedAt: row.revalidatedAt,
       },
     ]),
@@ -425,6 +429,17 @@ export interface ClaimValiditySummary {
    * pointer-only. A count doctor names rather than a silence it keeps.
    */
   readonly unbound: number;
+  /**
+   * Claims somebody has tried to walk back toward `current` and been refused,
+   * and how many attempts in total.
+   *
+   * CCB-10's observability half: the count existed only on the response to
+   * the refused caller, so nobody else could see the gate firing. Two numbers
+   * because they answer different questions — how WIDE the attempts are, and
+   * how PERSISTENT.
+   */
+  readonly claimsWithRefusedWalkBacks: number;
+  readonly refusedWalkBacks: number;
   /** Bound, but nobody has ever measured them against the code (§8.9). */
   readonly neverRevalidated: number;
   /** How many claims read as each state. */
@@ -482,5 +497,27 @@ export const summariseClaimValidity = async (
       neverRevalidated += 1;
     }
   }
-  return { counted: validities.size, total, unbound, neverRevalidated, states };
+  // CCB-10's observability half, counted where doctor can read it. Two
+  // numbers: how many findings somebody keeps trying to resurrect, and how
+  // many attempts in total.
+  const refusals = await db
+    .select({
+      claims: count(),
+      attempts: sql<number>`coalesce(sum(${claimRevalidations.refusedWalkBacks}), 0)::int`,
+    })
+    .from(claimRevalidations)
+    .innerJoin(claims, eq(claimRevalidations.claimId, claims.id))
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(
+      and(eq(agentSessions.repo, repo), gt(claimRevalidations.refusedWalkBacks, 0)),
+    );
+  return {
+    counted: validities.size,
+    total,
+    unbound,
+    neverRevalidated,
+    claimsWithRefusedWalkBacks: refusals[0]?.claims ?? 0,
+    refusedWalkBacks: refusals[0]?.attempts ?? 0,
+    states,
+  };
 };

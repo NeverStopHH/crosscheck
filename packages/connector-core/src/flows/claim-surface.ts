@@ -57,3 +57,28 @@ export const resolveDeclaredSurface = async (
   }
   return { paths: kept, dropped: input.paths.length - kept.length };
 };
+
+/**
+ * What the author is told when their declared surface came back narrower.
+ *
+ * `dropped` has carried the comment "never silent" since it was written and
+ * had NO READER anywhere: all three tools took `surface.paths` and discarded
+ * the count, so an author who declared four paths and got three back was told
+ * nothing at all.
+ *
+ * THE DIRECTION IS WHY IT MATTERS. A narrowed surface makes `unchanged` more
+ * likely, and the currency clause then asserts that the files have not moved
+ * — about a set the author never agreed to. It is the same shape as the cap
+ * that vouched for paths nobody looked at, one step earlier: there, the
+ * measurement was narrowed; here, the declaration is.
+ *
+ * A NOTE, NEVER A REFUSAL. The claim is legal and worth storing; what is not
+ * acceptable is storing it while the author believes it covers more.
+ */
+export const droppedSurfaceNote = (surface: DeclaredSurface): string | null =>
+  surface.dropped === 0
+    ? null
+    : `${String(surface.dropped)} of the ${String(surface.dropped + surface.paths.length)} paths you declared ` +
+      "were dropped before storing (outside the repo, denied by policy, or " +
+      "unreadable), so this claim's surface is the rest. A revalidation " +
+      "measures only what is stored.";
