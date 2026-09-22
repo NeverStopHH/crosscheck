@@ -29,6 +29,7 @@ import type { PinEntry as PinRow } from "@crosscheck/connector-core/http/hub.ts"
 import { runCli } from "../src/index.ts";
 import { renderPinList } from "../src/cli/pin-render.ts";
 import { renderSuspect } from "../src/cli/suspect-render.ts";
+import type { SuspectView } from "@crosscheck/connector-core/http/hub.ts";
 import {
   git,
   makeHome,
