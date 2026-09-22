@@ -45,6 +45,20 @@ import { COMMIT_SHA_PATTERN } from "./landed-evidence.ts";
 export const CI_PROVIDERS = ["github_actions"] as const;
 
 /**
+ * Providers a reader would expect to find here, SHIPPED OR NOT.
+ *
+ * `CI_PROVIDERS` is what this hub can ingest; this is what somebody looking
+ * for their platform would search for. The difference between the two lists
+ * is what `crosscheck doctor` prints as a documented refusal (spec 05 §8.1)
+ * rather than leaving as a silence a GitLab team reads as "not set up yet".
+ *
+ * DERIVED, NOT WRITTEN OUT: the day a second provider ships it moves into
+ * CI_PROVIDERS and the doctor line stops printing on its own, because the
+ * list grew — not because somebody remembered to delete a sentence.
+ */
+export const CI_KNOWN_PROVIDERS = ["github_actions", "gitlab_ci"] as const;
+
+/**
  * `same_job` is a second run of the failed files on the SAME runner;
  * `new_attempt` is the provider's re-run button on a fresh one. Both are
  * same-commit re-runs and both can confirm, but WHICH one is recorded, because

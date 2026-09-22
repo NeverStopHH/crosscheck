@@ -40,6 +40,8 @@
 import { lookup } from "node:dns/promises";
 
 import { DNS_REFINE_TIMEOUT_MS } from "../constants.ts";
+import { bareUntrusted } from "../briefing/sanitize.ts";
+import { MAX_HUB_MESSAGE_CHARS } from "../constants.ts";
 
 export type ConnectionCause =
   | "timeout"
@@ -228,6 +230,13 @@ export const describeConnectionFailure = (
         "an untrusted certificate"
       );
     case "unknown":
-      return `hub unreachable: ${hubUrl} (${rawMessage})`;
+      // THE ONE BRANCH THAT PRINTS SOMEBODY ELSE'S WORDS. Every case above is
+      // a renderer-owned sentence plus the hub URL the developer configured
+      // themselves; this one relays whatever the far side chose to say,
+      // unbounded and uninspected. It reaches `crosscheck doctor`, `login` and
+      // `conference` — three commands whose registrations say they interpolate
+      // nothing untrusted — so the cap and the control-strip belong HERE,
+      // where all three meet, rather than three times over.
+      return `hub unreachable: ${hubUrl} (${bareUntrusted(rawMessage, MAX_HUB_MESSAGE_CHARS)})`;
   }
 };

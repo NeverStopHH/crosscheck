@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 367
+    # PRINTS: 371
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -126,7 +126,7 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
-    # PRINTS: packages/cli/src/cli/doctor.ts 16
+    # PRINTS: packages/cli/src/cli/doctor.ts 20
     # PRINTS: packages/cli/src/cli/pin-render.ts 1
     # PRINTS: packages/cli/src/cli/status.ts 6
     # PRINTS: packages/connector-acp/src/capture/engine.ts 11
@@ -280,7 +280,7 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 7
     # PRINTS: diagnosis.ts 3
-    # PRINTS: doctor.ts 20
+    # PRINTS: doctor.ts 24
     # PRINTS: engine.ts 11
     # PRINTS: envelope.ts 1
     # PRINTS: exempt-surfaces.ts 2

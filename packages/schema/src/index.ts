@@ -128,6 +128,7 @@ export {
 } from "./storable-text.ts";
 export {
   CI_MAX_TEST_ROWS,
+  CI_KNOWN_PROVIDERS,
   CI_PROVIDERS,
   CI_RERUN_KINDS,
   CI_RUN_OUTCOMES,

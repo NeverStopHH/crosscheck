@@ -5568,6 +5568,58 @@ export const MUTATIONS: readonly Mutation[] = [
       "shorter than the failures it describes tells a reader their suite is " +
       "healthier than it is",
   },
+  {
+    // 1.0 spec 05 §8.1. A refusal a reader cannot see is a gap they wait on.
+    label: "a provider with no reporter is a silence rather than a refusal",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...(unservedProviders.length === 0",
+    to: "    ...(true",
+    test: `${CLI}/test/doctor-ci.test.ts`,
+    because:
+      "a GitLab team otherwise waits forever for rows no reporter exists to " +
+      "send, and the sentence is derived from the shipped provider list so " +
+      "it cannot outlive the fact it states",
+  },
+  {
+    label: "a repo with no CI reporter is nagged at",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '  unavailable: "PASS",',
+    to: '  unavailable: "WARN",',
+    test: `${CLI}/test/doctor-ci.test.ts`,
+    because:
+      "a repo with no reporter has nothing to be incomplete about — the " +
+      "remedy is a decision, not a fix, and a WARN there is a nag about a " +
+      "choice nobody made wrong, which is how a report stops being read",
+  },
+  {
+    label: "the two silent-reporter cases go unnamed",
+    file: `${CLI}/src/cli/doctor.ts`,
+    // The mutation drops the CLAIM, not the row: a first attempt renamed the
+    // check to "ci reporting gaps (unused)", which still contained the string
+    // the test looks for, so it was not caught. An anchor that survives its
+    // own mutation is a finding about the anchor.
+    from: "rather than as a green suite",
+    to: "",
+    test: `${CLI}/test/doctor-ci.test.ts`,
+    because:
+      "a local `bun test` and a fork pull request both produce NO rows, and " +
+      "no rows is exactly what a green suite produces — §8.2 and §8.3 are " +
+      "only refusals if somebody can read them",
+  },
+  {
+    // Found by the full suite: an answer this client cannot READ is not a hub
+    // reporting something wrong.
+    label: "a hub whose answer did not parse is reported as a broken hub",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      verdict.status >= HTTP_ERROR_FLOOR && verdict.status !== HTTP_NOT_FOUND",
+    to: "      verdict.status !== HTTP_NOT_FOUND",
+    test: `${CLI}/test/e2e/remote-login.e2e.test.ts`,
+    because:
+      "a hub too old for the route, one that could not be reached and one " +
+      "whose shape this client cannot read all mean 'nobody measured' — the " +
+      "distinction `plan overlap` already draws twenty lines up, and " +
+      "collapsing it puts a WARN on a healthy install's first login",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5619,12 +5671,14 @@ interface Outcome {
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 5
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
+ * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 1
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
+ * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 2
