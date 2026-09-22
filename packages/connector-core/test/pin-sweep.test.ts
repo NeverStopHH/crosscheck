@@ -12,7 +12,8 @@
  * parses its own fixture.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { GIT_TIMEOUT_MS } from "../src/constants.ts";
@@ -153,26 +154,35 @@ describe("sweepPinPaths", () => {
     // Arrange: a directory that is not a repository. "Missing" here would be
     // a lie that retires somebody's pin; "unknown" is a fact doctor prints.
     //
-    // THE PRECONDITION IS PINNED, NOT HOPED FOR. Deleting .git only stops git
-    // when nothing ABOVE the directory is a repository, and git walks upward —
-    // so on a host whose TMPDIR sits under one, this fixture quietly became a
-    // test about that other repository. It did: macos-latest reddened here
-    // while ubuntu and every developer Mac stayed green, and the fix for that
-    // walk (comparing --show-toplevel against the root) did not clear it,
-    // which says the runner's ambient state is something neither the fixture
-    // nor the assertion was stating. GIT_CEILING_DIRECTORIES stops the walk at
-    // the fixture's own parent, so "git cannot answer" becomes a fact this
-    // test CREATES rather than one it inherits from $TMPDIR.
-    const notARepo = await makeRepo("sweep-outside");
+    // THE PRECONDITION IS BUILT, NOT DELETED AND NOT HOPED FOR.
+    //
+    // This fixture used to `makeRepo` and then remove `.git`, and it reddened
+    // on macos-latest in three different ways across three attempts — green on
+    // ubuntu, green on every developer Mac, green on a sibling PR carrying the
+    // identical file in the same hour. Two ambient facts were doing it, and
+    // neither is something a test should be exposed to:
+    //
+    //   1. `makeRepo` ends with `git commit`, which may spawn `gc --auto` in
+    //      the BACKGROUND. On a loaded runner that child can recreate entries
+    //      under `.git` after the `rm` returned, so the directory is a
+    //      repository again by the time the assertion runs — which is exactly
+    //      what the last failure showed: `--show-toplevel` answered with this
+    //      fixture's own path.
+    //   2. `tmpdir()` on macOS is `/var/folders/...`, a symlink to
+    //      `/private/var/folders/...`. Git resolves its cwd and does NOT
+    //      resolve GIT_CEILING_DIRECTORIES entries, so a ceiling written from
+    //      the unresolved path never matches and the upward walk continues.
+    //
+    // A directory that was NEVER a repository has nothing to race and nothing
+    // to delete, and the ceiling is written from the resolved path so it can
+    // actually stop the walk. "Git cannot answer here" is now a fact this test
+    // constructs, not one it inherits from $TMPDIR and a background process.
+    const notARepo = await realpath(await mkdtemp(join(tmpdir(), "cx-sweep-outside-")));
     repos.push(notARepo);
-    await rm(`${notARepo}/.git`, { recursive: true, force: true });
 
     const ceilingBefore = process.env.GIT_CEILING_DIRECTORIES;
     process.env.GIT_CEILING_DIRECTORIES = dirname(notARepo);
     try {
-      // The precondition is asserted BEFORE the behaviour: if git can still
-      // answer here, this test measures something else, and a green result
-      // would mean nothing.
       const stillARepo = await runGit(
         ["rev-parse", "--show-toplevel"],
         notARepo,
