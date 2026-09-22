@@ -50,8 +50,12 @@ import {
   workContexts,
 } from "../db/schema.ts";
 import { readPin } from "./pins.ts";
+import { explanationTimingOf } from "./intent-ledger.ts";
+import type { ExplanationTimingAnswer } from "./intent-ledger.ts";
+import { readEditEvent } from "./session-events.ts";
+import { readSessionCausalOrder } from "./session-order.ts";
 import type { TeamSuspectAttribution } from "./team-settings.ts";
-import type { Db } from "../db/client.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -472,6 +476,44 @@ export interface SuspectInput {
  * and "the check was never run" are different facts, and a reader who cannot
  * tell them apart learns nothing from either.
  */
+/**
+ * The timing answer for each candidate, against the files the question is
+ * about — one ladder run per candidate, all of them refusals by default.
+ *
+ * ONE EDIT PER CANDIDATE, and it is the FIRST of the queried files that the
+ * candidate's own session actually recorded touching. Asking about a file it
+ * never touched would answer `absent / not_comparable` for a reason that has
+ * nothing to do with the question, and a refusal reported under another
+ * defect's reason sends its reader to the wrong remedy.
+ *
+ * Null whenever nothing can be said — an unpositioned session, a hub with no
+ * ledger row, a file this session never edited. Null renders NOTHING rather
+ * than a sentence about absence: this surface already carries its own
+ * coverage vocabulary, and a second one would be a second thing to read.
+ */
+const readIntentTimings = async (
+  db: DbExecutor,
+  rows: readonly CandidateRow[],
+  files: readonly string[],
+): Promise<ReadonlyMap<string, ExplanationTimingAnswer>> => {
+  const answers = new Map<string, ExplanationTimingAnswer>();
+  for (const row of rows) {
+    const order = await readSessionCausalOrder(db, row.sessionId);
+    for (const file of files) {
+      const edit = await readEditEvent(db, row.workContextId, "file", file);
+      if (edit === null) {
+        continue;
+      }
+      answers.set(
+        row.workContextId,
+        await explanationTimingOf(db, order, row.workContextId, edit),
+      );
+      break;
+    }
+  }
+  return answers;
+};
+
 export const suspectSessions = async (
   deps: Deps,
   readerDeveloperId: string,
@@ -524,6 +566,16 @@ export const suspectSessions = async (
   }
   const developerIds = [...new Set(rows.map((row) => row.developerId))];
   const muted = await readMutedAuthors(deps, readerDeveloperId, developerIds);
+  // WAS THE STATED PLAN WRITTEN BEFORE THE CHANGE? (spec 06 §5, decision
+  // 10.2.) This is the surface where the missing distinction costs most: it
+  // names sessions beside their declared intent, and a reader who cannot tell
+  // a plan from an excuse reads every intent as a plan.
+  //
+  // IT DESCRIBES, IT DOES NOT DECIDE. The clause changes no ranking, no
+  // gate and nobody's place in the list — the ledger authorises nothing, and
+  // INT-7's allowlist carries that reason in writing. Every refusal travels
+  // with its own word, so `absent` never prints alone.
+  const timings = await readIntentTimings(deps.db, rows, input.scope.files);
   const candidates: SuspectCandidate[] = rows
     .map((row) => {
       // The denominator the QUERY already ranked by: recomputing it here
@@ -541,6 +593,7 @@ export const suspectSessions = async (
         authorTouches,
         lift: row.overlap / authorTouches,
         sources: row.sources,
+        intentTiming: timings.get(row.workContextId) ?? null,
         readerMuted: muted.has(row.developerId),
         isSelf: row.developerId === readerDeveloperId,
       };

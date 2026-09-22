@@ -6219,6 +6219,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "a 7 748-character line, ahead of the claims and targets the reader " +
       "actually asked for and with nothing saying it was long",
   },
+  {
+    // 1.0 spec 06 §5, decision 10.2. The answer existed in the hub and
+    // reached no human at all.
+    label: "the timing answer never reaches the surface that needs it",
+    file: `${CLI}/src/cli/suspect-render.ts`,
+    from: "      : [`   ${intent}${timing === null ? \"\" : ` — ${timing}`}`]),",
+    to: "      : [`   ${intent}`]),",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "`suspect` names sessions beside their declared intent, so a reader " +
+      "who cannot tell a plan from an excuse reads every intent as a plan — " +
+      "which is principle 3 answered by omission on the surface where it " +
+      "costs most",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6277,7 +6291,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
- * PRINTS: packages/cli/test/pins-cli.test.ts 2
+ * PRINTS: packages/cli/test/pins-cli.test.ts 3
  * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 7
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2

@@ -201,12 +201,52 @@ const outcomeLine = (view: SuspectView): string => {
  * whose arithmetic is hidden cannot be argued with — and being argued with is
  * the point: the reader knows things the hub does not.
  */
+/**
+ * ONE CLAUSE ON THE INTENT LINE — was that plan written before this session
+ * touched the file, or after? (spec 06 §5, decision 10.2.)
+ *
+ * This is the surface where the missing distinction costs most: it names
+ * sessions beside their declared intent, and a reader who cannot tell a plan
+ * from an excuse reads every intent as a plan.
+ *
+ * THE VALUE NEVER TRAVELS WITHOUT ITS REASON, and `absent` is never printed
+ * as a bare word. "Absent" alone asserts that no explanation exists — which
+ * accuses a developer — while the reason says only that we cannot tell when
+ * one was written, which excuses them. Those are different claims, and the
+ * more damaging one must not be the default reading.
+ *
+ * EVERY WORD HERE IS RENDERER-OWNED. The hub sends two enum values; this maps
+ * them, so no hub-chosen prose reaches the terminal through this clause.
+ */
+const TIMING_CLAUSES: Readonly<Record<string, string>> = {
+  declared_before: "declared before this file was touched",
+  declared_after: "declared after this file was touched",
+  declared_non_goal_edited: "declared as OFF LIMITS, then touched",
+  no_intent: "timing unknown: no intent was recorded",
+  derived_excluded: "timing unknown: the only intent here was derived, not declared",
+  different_session: "timing unknown: the intent belongs to another session",
+  not_comparable: "timing unknown: these two cannot be ordered",
+  scope_not_named: "timing unknown: the intent named no files",
+};
+
+const timingClause = (candidate: SuspectCandidate): string | null => {
+  const timing = candidate.intentTiming;
+  if (timing === null || timing === undefined) {
+    return null;
+  }
+  // An unknown REASON prints nothing rather than a half-sentence: a hub newer
+  // than this binary may send a word this renderer has never heard of, and a
+  // clause it cannot spell is one it must not guess at.
+  return TIMING_CLAUSES[timing.reason] ?? null;
+};
+
 const candidateLines = (
   candidate: SuspectCandidate,
   index: number,
   now: Date,
 ): readonly string[] => {
   const intent = renderIntent(candidate.intent);
+  const timing = timingClause(candidate);
   const flags = [
     ...(candidate.isSelf ? ["your own session"] : []),
     ...(candidate.readerMuted
@@ -216,7 +256,9 @@ const candidateLines = (
   return [
     `${String(index + 1)}. session ${safeId(candidate.sessionId)} · ${bareUntrusted(candidate.agentKind)} · branch ${bareUntrusted(candidate.branch)} · last active ${ageOf(candidate.lastActiveAt, now)}`,
     `   ${quoted(candidate.workContextTitle, MAX_WORK_CONTEXT_TITLE_CHARS)}`,
-    ...(intent === null ? [] : [`   ${intent}`]),
+    ...(intent === null
+      ? []
+      : [`   ${intent}${timing === null ? "" : ` — ${timing}`}`]),
     `   score ${candidate.lift.toFixed(SCORE_DECIMALS)} = ${String(candidate.overlap)} pinned file(s) of ${String(candidate.authorTouches)} this author touched · evidence: ${candidate.sources.map((source) => bareUntrusted(source)).join(" + ")}`,
     ...flags.map((flag) => `   ${flag}`),
     `   read it: get_diagnosis ${safeId(candidate.workContextId)}`,

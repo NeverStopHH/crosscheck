@@ -83,6 +83,19 @@ const READER_CALLERS = new Map<string, string>([
     "renders the chain onto the diagnosis document (§5) — it ships rows to a " +
       "reader and gates nothing",
   ],
+  [
+    "packages/server/src/services/suspect.ts",
+    "renders the timing clause beside a candidate's declared intent (§5, " +
+      "decision 10.2) — it changes no ranking, no gate and nobody's place in " +
+      "the list, which is the distinction INT-7 exists to keep visible: this " +
+      "is the one entry where a reader should check that for themselves",
+  ],
+  [
+    "packages/server/src/routes/intent-ledger.ts",
+    "serves the doctor ratio (§5) — two integers about whether this hub can " +
+      "answer AT-4 at all, with no work context, no session and no sentence, " +
+      "and no predicate anywhere reads them",
+  ],
 ]);
 
 /**

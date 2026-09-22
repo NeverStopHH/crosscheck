@@ -1619,6 +1619,30 @@ export const getPrivacySettings = (
     schema: PrivacySettingsSchema,
   });
 
+/**
+ * Whether this hub can answer AT-4 at all: how many stored intent versions
+ * carry no position, out of how many there are.
+ *
+ * BOTH HALVES, because a numerator alone cannot tell a hub that never
+ * positions anything from a hub with nothing to position — the lesson
+ * `state/git-lane-cost.ts` states for its own lane.
+ */
+export const IntentPositionsSchema = z.looseObject({
+  total: z.number().int().min(0),
+  unpositioned: z.number().int().min(0),
+});
+
+export type IntentPositions = z.infer<typeof IntentPositionsSchema>;
+
+export const getIntentPositions = (
+  ctx: HubContext,
+): Promise<HubResult<IntentPositions>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/intent-ledger/positions",
+    schema: IntentPositionsSchema,
+  });
+
 export const putPresenceOptOut = (
   ctx: HubContext,
   optOut: boolean,
@@ -2055,6 +2079,23 @@ export const SuspectCandidateSchema = z.looseObject({
   authorTouches: z.number().int().min(0),
   lift: z.number().min(0),
   sources: z.array(z.string().min(1)).default([]),
+  /**
+   * Was this session's stated plan written before it touched the file, or
+   * after? (spec 06 §5, decision 10.2.)
+   *
+   * An ATOMIC answer: the value never travels without its reason, because
+   * `absent` alone asserts that no explanation exists — which accuses a
+   * developer — while the reason says only that we cannot tell when one was
+   * written, which excuses them. Absent entirely from a hub too old to send
+   * it, and null whenever nothing can be said.
+   */
+  intentTiming: z
+    .looseObject({
+      timing: z.enum(["predeclared", "post_hoc", "absent"]),
+      reason: z.string().min(1),
+    })
+    .nullable()
+    .default(null),
   readerMuted: z.boolean().default(false),
   isSelf: z.boolean().default(false),
 });

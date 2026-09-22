@@ -9,6 +9,7 @@ import { draftsRoutes } from "./routes/drafts.ts";
 import { eventsRoutes } from "./routes/events.ts";
 import { ghostChecksRoutes } from "./routes/ghost-checks.ts";
 import { hintsRoutes } from "./routes/hints.ts";
+import { intentLedgerRoutes } from "./routes/intent-ledger.ts";
 import { pinsRoutes } from "./routes/pins.ts";
 import { presenceRoutes } from "./routes/presence.ts";
 import { questionsRoutes } from "./routes/questions.ts";
@@ -57,6 +58,11 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // failed. It needs no hook, so it answers identically for Claude Code,
   // Cursor and ACP sessions alike.
   app.route("/api/suspect", suspectRoutes(deps));
+  // Whether this hub can answer AT-4 at all — two integers, read by any
+  // member, printed by doctor. A hub whose intents all carry `seq: null`
+  // renders every sentence exactly as before and reports healthy; this is
+  // the one instrument that makes that visible rather than quiet.
+  app.route("/api/intent-ledger", intentLedgerRoutes(deps));
   app.route("/api/settings", settingsRoutes(deps));
   // The regression guard's two TEAM decisions — who may pin, and whether
   // `suspect` names sessions. Read by any member (everybody affected has to
