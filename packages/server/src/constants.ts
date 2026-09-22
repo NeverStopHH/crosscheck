@@ -633,6 +633,19 @@ export const CI_FLAKE_BASE_RUNS = 5;
 export const CI_BASE_WINDOW_DAYS = 14;
 
 /**
+ * A day, in milliseconds — the one definition this package uses.
+ *
+ * It was written out twice: `services/absences.ts` derived its own from a
+ * local `MS_PER_HOUR`, and `services/ci-delta.ts` was about to do the same.
+ * Both bound a WINDOW measured in days against a `Date`, so both would move
+ * together or not at all, and two spellings of a unit is how the render-layer
+ * specifier drifted from the module list it mirrored. One definition, named
+ * where the day-valued constants above it live.
+ */
+export const MS_PER_HOUR = 60 * 60 * 1000;
+export const MS_PER_DAY = 24 * MS_PER_HOUR;
+
+/**
  * How many distinct commits a lane must appear in, consecutively, before it
  * counts as EXPECTED.
  *

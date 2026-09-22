@@ -1,11 +1,13 @@
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 
 import {
-  ABSENCE_COMMIT_MAX_AGE_DAYS,
   ABSENCE_EVIDENCE_MAX_AGE_DAYS,
   ABSENCE_MAX_EVIDENCE_ROWS,
   ABSENCE_MAX_FINDINGS,
   ABSENCE_MIN_GAP_HOURS,
+  MS_PER_DAY,
+  MS_PER_HOUR,
+ABSENCE_COMMIT_MAX_AGE_DAYS,
 } from "../constants.ts";
 import {
   agentSessions,
@@ -18,8 +20,6 @@ import type { SQL } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
-const MS_PER_HOUR = 3_600_000;
-const MS_PER_DAY = 24 * MS_PER_HOUR;
 
 /**
  * The evidence rows this repo's absence question is asked over: fresh enough

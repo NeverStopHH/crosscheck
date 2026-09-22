@@ -5450,6 +5450,89 @@ export const MUTATIONS: readonly Mutation[] = [
       "the walk still passes while reaching fewer surfaces every round, which " +
       "is the failure mode a green test cannot distinguish from success",
   },
+  {
+    // 1.0 spec 05 §3.5. The ladder's first rung, and the only one standing
+    // between an empty table and an accusation.
+    label: "an empty base window reads as a stably green history",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: "    if (window.runIds.length < CI_FLAKE_BASE_RUNS) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "a hub with no history finds no non-green run in a window that holds " +
+      "nothing, reads the absence as 'it was green before', and reaches " +
+      "`confirmed` — missing evidence strengthening a conclusion, in the one " +
+      "direction that names a developer",
+  },
+  {
+    // The same inversion read from the base side.
+    label: "a crashed run counts toward the base window",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: '        eq(ciRuns.outcome, "completed"),\n        ne(ciRuns.commitSha, excludeCommit),',
+    to: "        ne(ciRuns.commitSha, excludeCommit),",
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "only a completed run asserts that its non-green rows are all of them " +
+      "(§3.3); a crashed run's empty result set is the runner dying, and " +
+      "counting it fills the window that lets the next rung accuse",
+  },
+  {
+    label: "one commit measured five times fills a five-commit window",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: "    .selectDistinctOn([ciRuns.commitSha], {",
+    to: "    .select({",
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "a window that is really one commit cannot say whether a test is " +
+      "stably green ACROSS commits, which is the only question it is read for",
+  },
+  {
+    label: "a window borrowed from the default ref claims to be the lane's own",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: '    ? { runIds: fallback, source: "default_ref_fallback" }',
+    to: '    ? { runIds: fallback, source: "same_ref" }',
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "the hub holds no repository and cannot check that the branch descends " +
+      "from that ref, so the fallback is an assumption — and an assumption a " +
+      "reader cannot see is one they cannot reject",
+  },
+  {
+    // 1.0 spec 05 §3.6, found by its own test before this shipped: a lane's
+    // silence removed it from the set whose silence is what gets reported.
+    label: "the commit being judged votes on its own expectation",
+    file: `${SERVER}/src/services/ci-coverage.ts`,
+    from: "    if (row.commitSha === excludeCommit || seen.has(row.commitSha)) {",
+    to: "    if (seen.has(row.commitSha)) {",
+    test: `${SERVER}/test/ci-coverage.test.ts`,
+    because:
+      "expectation is an INTERSECTION, so a lane that stayed silent here is " +
+      "absent from this commit's own set and the intersection drops it — the " +
+      "gap erases the evidence of itself, and a missing lane can never be " +
+      "missing",
+  },
+  {
+    label: "a ref nobody has watched long enough reads as complete",
+    file: `${SERVER}/src/services/ci-coverage.ts`,
+    from: '  if (expected.size === 0) {\n    return { ...shared, state: "unknown" };\n  }',
+    to: "",
+    test: `${SERVER}/test/ci-coverage.test.ts`,
+    because:
+      "`lanesReported === expected.size` holds trivially when nothing is " +
+      "expected, so an empty set answers as a satisfied one and a hub with no " +
+      "idea what should have run reports that everything did",
+  },
+  {
+    label: "a repo with no reporter is indistinguishable from one awaiting a run",
+    file: `${SERVER}/src/services/ci-coverage.ts`,
+    from: '    return everReported.length === 0\n      ? UNAVAILABLE\n      : { ...UNAVAILABLE, state: "unknown" };',
+    to: '    return { ...UNAVAILABLE, state: "unknown" };',
+    test: `${SERVER}/test/ci-coverage.test.ts`,
+    because:
+      "the two send a reader to different remedies — one has a lane on the " +
+      "way, the other has nothing to wait for — and `unavailable` is the " +
+      "default this project keeps rather than a state it upgrades away from",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5603,6 +5686,8 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/server/test/ci-coverage.test.ts 3
+ * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
