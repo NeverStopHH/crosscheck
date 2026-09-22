@@ -6191,6 +6191,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "when the thing it describes happened, so reading it as a point " +
       "answers `predeclared` — the exonerating value — from a bound",
   },
+  {
+    // INT-11's own guard. The published budget could never be the assertion
+    // that failed: 18 sequential calls under bun's default 5 000 ms timeout
+    // tripped the TIMEOUT at ~278 ms per call against a printed 2 000 ms.
+    label: "the budget assertion cannot fire before the timeout does",
+    file: `${CORE}/test/intent-budget.test.ts`,
+    from: "const PER_CALL_BUDGET_MS = LOCK_CEILING_MS + 2 * HTTP_TIMEOUT_MS;",
+    to: "const PER_CALL_BUDGET_MS = MCP_TIMEOUT_MS * 20;",
+    test: `${CORE}/test/intent-budget.test.ts`,
+    because:
+      "a budget a reader believes in that the timeout enforces instead is a " +
+      "number that stopped guarding anything — and its failure then reads " +
+      "like flake on a loaded machine, which invites raising the timeout " +
+      "rather than investigating",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6316,6 +6331,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-render.test.ts 3
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
+ * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1

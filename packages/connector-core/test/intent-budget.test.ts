@@ -57,13 +57,18 @@ import type { Db } from "@crosscheck/server";
 import { MAX_INTENT_CHAIN_VERSIONS } from "@crosscheck/schema";
 
 import {
+  HTTP_TIMEOUT_MS,
   MCP_TIMEOUT_MS,
   SESSION_STATE_LOCK_RETRIES,
   SPOOL_LOCK_RETRY_DELAY_MS,
 } from "../src/constants.ts";
 import { prepareMcp } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
-import { allocateSeq, writeSessionState } from "../src/state/session-state.ts";
+import {
+  allocateSeq,
+  readSessionState,
+  writeSessionState,
+} from "../src/state/session-state.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
@@ -88,8 +93,25 @@ const SEQ_EPOCH = "3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
  */
 const SET_INTENT_HUB_REQUESTS = 2;
 
-/** Worst case the state lock can cost a single acquisition, from §6's own two constants. */
-const LOCK_CEILING_MS = SESSION_STATE_LOCK_RETRIES * SPOOL_LOCK_RETRY_DELAY_MS;
+/** Worst case ONE acquisition of the session-state lock can cost. */
+const ONE_ACQUISITION_MS = SESSION_STATE_LOCK_RETRIES * SPOOL_LOCK_RETRY_DELAY_MS;
+
+/**
+ * How many times `set_intent` takes that lock on the normal path.
+ *
+ * TWO, AND A THIRD WHEN A GHOST NOTICE IS SHOWN — `allocateToolSeq` on the
+ * way in, `updateSessionState` after the post, and `deliverGhostNotice`'s own
+ * write. §6 and the first version of this file both derived the arithmetic
+ * from the two constants correctly and then applied it to ONE acquisition.
+ *
+ * Measured against a concurrent holder of the lock file, three runs: 873.1,
+ * 891.8 and 895.9 ms — a mean of 887 ms, or 2.2x the single-acquisition
+ * ceiling this used to print, and consistent with 2 x 400 ms plus work.
+ */
+const ACQUISITIONS_PER_CALL = 2;
+
+/** The contended ceiling for one whole call, as the code actually spends it. */
+const LOCK_CEILING_MS = ONE_ACQUISITION_MS * ACQUISITIONS_PER_CALL;
 
 /**
  * THE CALLS THIS FILE MAKES BEFORE THE SAMPLING LOOP: one warm-up and one
@@ -123,11 +145,29 @@ const DEFERRED_SETTLE_MS = 750;
 const SAMPLES = MAX_INTENT_CHAIN_VERSIONS - SET_INTENT_CALLS_BEFORE_SAMPLING;
 
 /**
- * Room demanded below the tool's own timeout. `set_intent` is an MCP tool with
- * a 10 s ceiling and no hook budget; a measurement that merely fits inside 10 s
- * would pass on a machine in serious trouble, so the bound is a fraction of it.
+ * THE PER-CALL BUDGET, DERIVED FROM WHAT ONE CALL MAY ACTUALLY SPEND: its lock
+ * acquisitions at their contended ceiling, plus its two hub round trips at the
+ * HTTP timeout. Nothing here is tuned.
+ *
+ * It replaces `MCP_TIMEOUT_MS * 0.2`, which was 2 000 ms and could never be
+ * the assertion that failed. With SAMPLES sequential calls inside one `test()`
+ * under bun's default 5 000 ms timeout, a UNIFORM regression tripped the
+ * TIMEOUT at 5000/18 ~ 278 ms per call — 7.2x below the number the file
+ * printed to the reader. Measured: 200 ms of extra lock time per call gave
+ * p50 276.3 ms and 3 pass / 0 fail; 300 ms failed with "this test timed out",
+ * an outcome that reads like flake on a loaded machine and invites someone to
+ * raise the timeout rather than investigate.
  */
-const MCP_HEADROOM_RATIO = 0.2;
+const PER_CALL_BUDGET_MS = LOCK_CEILING_MS + 2 * HTTP_TIMEOUT_MS;
+
+/**
+ * The case's own timeout, set so the ASSERTION is always what fails first.
+ *
+ * Asserted below rather than trusted: a default that happens to be tighter
+ * than the budget turns every regression into a timeout, which is exactly how
+ * the published number stopped being the guard.
+ */
+const CASE_TIMEOUT_MS = 90_000;
 
 let db: Db;
 let server: ReturnType<typeof Bun.serve>;
@@ -152,6 +192,23 @@ const post = async (path: string, apiKey: string, body: unknown): Promise<Respon
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
+/**
+ * The session's current position, read straight from state.
+ *
+ * A reservation that failed leaves the row with `seq: null` and
+ * `seq_reason: allocation_failed` — a call that returns SUCCESS and costs
+ * less, which is exactly the cheapening the sampling loop must not measure.
+ */
+const readSeqStamp = async (
+  home: string,
+  hostSessionKey: string,
+): Promise<{ epoch: string; from: number } | null> => {
+  const state = await readSessionState(home, hostSessionKey);
+  return state === null || state.seqEpoch === null
+    ? null
+    : { epoch: state.seqEpoch, from: state.eventSeq };
+};
 
 const percentile = (values: readonly number[], fraction: number): number => {
   const sorted = [...values].sort((left, right) => left - right);
@@ -313,6 +370,7 @@ describe("INT-11 — what this spec costs set_intent", () => {
     console.log(
       `[intent-budget] allocateSeq p50 ${p50.toFixed(2)} ms, p95 ${p95.toFixed(2)} ms ` +
         `(uncontended; contended ceiling ${String(LOCK_CEILING_MS)} ms = ` +
+        `${String(ACQUISITIONS_PER_CALL)} acquisitions x ` +
         `${String(SESSION_STATE_LOCK_RETRIES)} retries x ${String(SPOOL_LOCK_RETRY_DELAY_MS)} ms)`,
     );
 
@@ -332,17 +390,30 @@ describe("INT-11 — what this spec costs set_intent", () => {
       // read better the more of them there were. This is the assertion that
       // keeps the measurement a measurement.
       expect(ok).toBe(true);
+      // AND A CALL THAT LOST ITS POSITION IS CHEAPER TOO, which `ok` does not
+      // see: an `allocation_failed` reservation still returns success. The
+      // comment above named the cheapening and the guard did not cover this
+      // half of it — a contended run would have posted 18 positionless rows,
+      // each unable to answer AT-4, and reported a healthy p95.
+      const stamp = await readSeqStamp(alice.home, alice.hostSessionKey);
+      expect(stamp).not.toBeNull();
     }
 
     const p50 = percentile(samples, 0.5);
     const p95 = percentile(samples, 0.95);
-    const budget = MCP_TIMEOUT_MS * MCP_HEADROOM_RATIO;
     // eslint-disable-next-line no-console
     console.log(
       `[intent-budget] set_intent p50 ${p50.toFixed(1)} ms, p95 ${p95.toFixed(1)} ms ` +
-        `(budget ${String(budget)} ms of MCP_TIMEOUT_MS ${String(MCP_TIMEOUT_MS)})`,
+        `(budget ${String(PER_CALL_BUDGET_MS)} ms = ${String(ACQUISITIONS_PER_CALL)} lock ` +
+        `acquisitions + 2 round trips; MCP ceiling ${String(MCP_TIMEOUT_MS)})`,
     );
 
-    expect(p95).toBeLessThan(budget);
-  });
+    // THE ASSERTION MUST BE ABLE TO FAIL BEFORE THE TIMEOUT DOES, asserted
+    // rather than assumed. Under bun's default 5 000 ms this loop tripped the
+    // TIMEOUT at about 278 ms per call while the file printed a 2 000 ms
+    // budget — so the guard a reader believed in was never the guard, and a
+    // 6.3x regression passed green.
+    expect(SAMPLES * PER_CALL_BUDGET_MS).toBeLessThan(CASE_TIMEOUT_MS);
+    expect(p95).toBeLessThan(PER_CALL_BUDGET_MS);
+  }, CASE_TIMEOUT_MS);
 });

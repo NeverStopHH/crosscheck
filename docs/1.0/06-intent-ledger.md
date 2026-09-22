@@ -307,14 +307,29 @@ index, one insert and at most `2 × MAX_INTENT_SCOPE_ENTRIES` scope inserts, all
 - **`set_intent` is not on a hook path** — an MCP tool, `delivery: "pulled"`, `MCP_TIMEOUT_MS = 10_000`.
   It gains one `updateSessionState` round for 01's `seq` reservation and no new HTTP call: the intent
   still travels on the existing `work_context` UPDATE record (`set-intent.ts:12-13`). **Measured by
-  INT-11, not asserted here**: the reservation's uncontended p95 is **0.5 ms** and the tool's own p95
-  **44 ms** against a 2 000 ms bound, and the round-trip count is **2** — the record POST and the ghost
-  GET, the same two as before. *Corrected: this line read "worst case ~100 ms of lock retries,
-  `session-state.ts:454-456`". That number was true when the state lock retried 5 times; #53 raised
-  `SESSION_STATE_LOCK_RETRIES` to 20 to stop losing positions under contention, moving the contended
-  worst case to **400 ms** without moving this sentence — a quantifier rotting against a constant, the
-  exact class `verify-claims.ts` exists to kill. INT-11 derives the ceiling from the two constants, so
-  the next change to either is carried by arithmetic rather than by memory.*
+  INT-11, not asserted here**: the reservation's uncontended p95 is **2.5 ms**, the tool's own p95
+  **58 ms** against a derived **1 600 ms** per-call budget, and the round-trip count is **2** — the
+  record POST and the ghost GET, the same two as before.
+
+  *This line has been corrected twice, and both corrections are the same class of defect.* It first
+  read *"worst case ~100 ms of lock retries"*, true when the state lock retried 5 times; #53 raised
+  `SESSION_STATE_LOCK_RETRIES` to 20 to stop losing positions under contention, and the sentence did
+  not move — a quantifier rotting against a constant, which is exactly what `verify-claims.ts` exists
+  to kill. The replacement said **400 ms**, which is the ceiling for ONE acquisition: `set_intent`
+  takes the session-state lock **twice** on the normal path (`allocateToolSeq`, then
+  `updateSessionState` after the post) and a **third** time when a ghost notice is shown. Measured
+  against a concurrent holder of the lock file, three runs gave 873.1, 891.8 and 895.9 ms — a mean of
+  **887 ms**, 2.2x the corrected number, consistent with 2 x 400 ms plus work. INT-11 now derives its
+  ceiling from the retry constants **and** the acquisition count, so neither can drift from it alone.
+
+  *And the budget INT-11 published could never be the assertion that failed.* It asserted
+  `MCP_TIMEOUT_MS x 0.2` = 2 000 ms per call while running 18 sequential calls inside one `test()`
+  under bun's default 5 000 ms timeout — so a uniform regression tripped the TIMEOUT at ~278 ms per
+  call, 7.2x below the number the file printed, and an outcome failure reading like flake. The budget
+  is derived from what one call may actually spend (its lock acquisitions plus its two round trips),
+  the case carries its own timeout, and the test asserts that `SAMPLES x budget` fits inside that
+  timeout — so the assertion is always what fails first.
+
 - **The derived-intent worker is detached** and already takes the state lock
   (`derive/intent/worker.ts:47`, `:95`, `:138`); its reservation moves **before** the spool append
   (`:222-228`), keeping the Stop-hook ordering contract (`hooks/stop.ts:9-15`) — book first, lose a slot
