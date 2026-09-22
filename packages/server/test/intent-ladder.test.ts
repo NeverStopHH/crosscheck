@@ -455,3 +455,101 @@ describe("the ladder's order is the contract", () => {
     expect(answer.version).toBeNull();
   });
 });
+
+describe("an accusation nobody could order does not become an exoneration", () => {
+  /**
+   * THE WORST THING THIS MODULE CAN DO, and it did it until an independent
+   * refuter constructed these five inputs.
+   *
+   * A session declares `b.ts` a NON-GOAL and edits it anyway. That is the most
+   * post-hoc thing a session can do, and step 6 answers
+   * `post_hoc / declared_non_goal_edited`. But step 4 first drops every row it
+   * cannot order — and when the dropped row was the accusing one, step 6
+   * answered from whatever survived: `predeclared / declared_before`, with
+   * `indeterminacy: null`, so no reader could see that anything had been
+   * dropped at all.
+   *
+   * Every case below differs from the control in exactly ONE way: whether the
+   * non-goal row's POSITION was usable. The session did the same thing in all
+   * six.
+   */
+  const control = { seq: 3, version: 1, nonGoals: [PATH] };
+  const excuse = { seq: 5, version: 2, expected: [PATH] };
+
+  test("the control accuses, so the cases below have something to lose", () => {
+    const result = explanationTimingFor(
+      USABLE,
+      [intent(control), intent(excuse)],
+      edit({ seq: 7 }),
+    );
+
+    expect(result.timing).toBe("post_hoc");
+    expect(result.reason).toBe("declared_non_goal_edited");
+  });
+
+  test.each([
+    ["a position that was never allocated", { ...control, seq: null }],
+    ["an observed position, which is an upper bound", { ...control, seqKind: "observed" as const }],
+    ["a position from another epoch", { ...control, epoch: "epoch-other" }],
+  ])("a non-goal with %s is refused, never excused", (_label, nonGoal) => {
+    // THE ANCHOR. Let step 4 drop the accusing row silently and this answers
+    // `predeclared / declared_before` — an exoneration assembled out of the
+    // row that survived, about a session that declared the path a non-goal
+    // and edited it.
+    const result = explanationTimingFor(
+      USABLE,
+      [intent(nonGoal), intent(excuse)],
+      edit({ seq: 7 }),
+    );
+
+    expect(result.timing).not.toBe("predeclared");
+    expect(result.timing).toBe("absent");
+    expect(result.reason).toBe("not_comparable");
+    // AND THE READER IS TOLD WHY. `indeterminacy: null` beside a refusal is
+    // the silence that made this invisible: a reader cannot ask about a row
+    // they were never told was dropped.
+    expect(result.indeterminacy).not.toBeNull();
+  });
+
+  test("a refused EXPECTED row is not reported as a path nobody declared", () => {
+    // The other direction, and it is a false statement rather than an
+    // inversion: `scope_not_named` says "this session never declared that
+    // path" about a session that did — the hub just could not order it.
+    //
+    // THE SECOND ROW IS WHAT MAKES THIS A TEST. With the refused row alone,
+    // step 4's own `comparable.length === 0` branch already answers
+    // `not_comparable` — so the fixture passed with the new rung removed and
+    // proved nothing. A comparable row that names a DIFFERENT path carries
+    // the ladder past step 4 and into the case this test is named for.
+    const result = explanationTimingFor(
+      USABLE,
+      [
+        intent({ seq: null, version: 1, expected: [PATH] }),
+        intent({ seq: 5, version: 2, expected: ["packages/elsewhere.ts"] }),
+      ],
+      edit({ seq: 7 }),
+    );
+
+    expect(result.reason).not.toBe("scope_not_named");
+    expect(result.reason).toBe("not_comparable");
+    expect(result.indeterminacy).not.toBeNull();
+  });
+
+  test("a refused row that names NOTHING changes no answer", () => {
+    // The control for the correction itself. Only rows naming the edited path
+    // can change what step 6 says, so only those may override it — otherwise
+    // any unorderable row anywhere in the chain would silence every answer,
+    // which is a refusal that costs a reader everything and protects nothing.
+    const result = explanationTimingFor(
+      USABLE,
+      [
+        intent({ seq: null, version: 1, expected: ["packages/elsewhere.ts"] }),
+        intent(excuse),
+      ],
+      edit({ seq: 7 }),
+    );
+
+    expect(result.timing).toBe("predeclared");
+    expect(result.reason).toBe("declared_before");
+  });
+});

@@ -696,17 +696,78 @@ export const explanationTimingFor = (
     return answer("absent", "different_session");
   }
   // 4
-  const refusals: CausalIndeterminacy[] = [];
+  //
+  // A REFUSED ROW IS SET ASIDE, NOT DISCARDED, and that is the correction an
+  // independent refuter had to make — the first version threw `refusals` away
+  // whenever anything survived, and nothing downstream could learn that a row
+  // had been refused.
+  //
+  // THE FAILURE IT PRODUCED IS THIS MODULE'S WORST. A session that declared
+  // `b.ts` a NON-GOAL and then edited it answers `post_hoc /
+  // declared_non_goal_edited` — the accusation. Let that row's position be
+  // unusable and it vanished here, step 6 answered from the surviving
+  // `expected` row, and the result was `predeclared / declared_before` with
+  // `indeterminacy: null`: missing evidence REMOVING an accusation, and
+  // saying nothing about it. Measured on five ordinary inputs, one session,
+  // same declared provenance, the only difference being whether the accusing
+  // row could be ordered:
+  //
+  //   non_goal seq=null            -> predeclared   (control, usable: post_hoc)
+  //   non_goal observed position   -> predeclared
+  //   non_goal overlapping window  -> predeclared
+  //   non_goal foreign epoch       -> predeclared
+  //
+  // `seq: null` is every call of a session whose position could not be
+  // allocated — two live agents in one worktree — and `observed` is the
+  // ordinary lane for a Stop-time git edit. Neither is exotic.
+  //
+  // The same conversion was found and fixed one level down, in the version-id
+  // hash, with two paragraphs about why it is the worst thing this module can
+  // do. It was not looked for one rung up, where the filter performs it for
+  // free.
+  const refused: { entry: IntentLedgerEntry; reason: CausalIndeterminacy }[] = [];
   const comparable = ownSession.filter((entry) => {
     const outcome = causalComparisonOf(order, orderedEventOf(entry), edit.event);
     if (outcome.outcome === "comparable") {
       return true;
     }
-    refusals.push(outcome.reason);
+    refused.push({ entry, reason: outcome.reason });
     return false;
   });
   if (comparable.length === 0) {
-    return answer("absent", "not_comparable", null, worstOf(refusals));
+    return answer(
+      "absent",
+      "not_comparable",
+      null,
+      worstOf(refused.map((row) => row.reason)),
+    );
+  }
+  // 4a — A REFUSED ROW THAT NAMES THIS PATH OUTRANKS EVERY ANSWER BELOW.
+  //
+  // Only the rows that NAME the edited path can change what step 6 says, so
+  // only those are asked about. If one of them could not be ordered, the
+  // honest answer is that this hub cannot place the declaration against the
+  // edit — not that some other row places it favourably. `absent /
+  // not_comparable` carries the reason, so a reader sees WHY rather than
+  // meeting a confident sentence assembled out of what survived.
+  //
+  // BOTH ROLES, and the reason differs per role. A refused NON-GOAL would
+  // have accused; dropping it exonerates, which principle 5 forbids outright.
+  // A refused EXPECTED would have excused; dropping it leaves step 5 saying
+  // `scope_not_named` — "this session never declared that path" — about a
+  // session that did. One is an inversion and the other is a false statement,
+  // and both are answered here rather than sorted into different silences.
+  const refusedNaming = refused.filter(
+    ({ entry }) =>
+      namesPath(entry, "non_goal", edit) || namesPath(entry, "expected", edit),
+  );
+  if (refusedNaming.length > 0) {
+    return answer(
+      "absent",
+      "not_comparable",
+      null,
+      worstOf(refusedNaming.map((row) => row.reason)),
+    );
   }
   // 5
   const named = comparable.filter(

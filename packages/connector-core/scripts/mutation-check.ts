@@ -5977,12 +5977,16 @@ export const MUTATIONS: readonly Mutation[] = [
     // to each other.
     label: "an epoch mismatch is waved through as comparable",
     file: `${SERVER}/src/services/intent-ledger.ts`,
-    from: "    refusals.push(outcome.reason);\n    return false;",
+    // MOVED WITH THE CODE. Step 4 now sets a refused row ASIDE rather than
+    // discarding its reason, so the push carries the entry as well. What the
+    // mutation proves is unchanged: an epoch mismatch waved through as
+    // comparable.
+    from: "    refused.push({ entry, reason: outcome.reason });\n    return false;",
     to:
       '    if (outcome.reason === "epoch_mismatch") {\n' +
       "      return true;\n" +
       "    }\n" +
-      "    refusals.push(outcome.reason);\n" +
+      "    refused.push({ entry, reason: outcome.reason });\n" +
       "    return false;",
     test: `${SERVER}/test/intent-ladder.test.ts`,
     because:
@@ -6257,6 +6261,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "suspect, hints and ghost-overlap, so the amendment reason and the " +
       "declared scope ride every unsolicited surface §8.6 exists to keep clean",
   },
+  {
+    // FOUND BY AN INDEPENDENT REFUTER, not by the author — the one class of
+    // defect an agent checking its own work is structurally unable to see.
+    label: "an accusation nobody could order becomes an exoneration",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "  if (refusedNaming.length > 0) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "a session that declared a path a NON-GOAL and edited it answers " +
+      "`post_hoc`; let that row's position be unusable — `seq: null` from two " +
+      "agents in one worktree, or the `observed` lane every Stop-time git " +
+      "edit uses — and step 6 answers `predeclared` from whatever survived, " +
+      "with `indeterminacy: null` so no reader can see what was dropped",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6428,7 +6447,7 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
- * PRINTS: packages/server/test/intent-ladder.test.ts 6
+ * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 3

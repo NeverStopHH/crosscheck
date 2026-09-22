@@ -198,6 +198,9 @@ test (INT-1's fixture says only *"amendment_v2 naming b.ts"*, with no role). An 
 silent absence AT-10 forbids.
 
 ```
+R_naming   = any entry step 4 REFUSED whose scope names the path, either role
+if R_naming -> absent / not_comparable          (indeterminacy = worst refusal)
+
 E_non_goal = earliest survivor whose scope names the path as non_goal
 E_expected = earliest survivor whose scope names it as expected
 
@@ -207,6 +210,24 @@ else if E_expected and E_expected.seq < edit.seq
       -> predeclared / declared_before          (version = E_expected.version)
 else  -> post_hoc / declared_after              (earliest survivor's version)
 ```
+
+**`R_naming` outranks everything below it, and this sentence was missing.** The block above read
+`E_non_goal = earliest **survivor**` and nothing else, so an entry step 4 could not order simply vanished
+— and the implementation, faithful to it, then answered from whatever remained. An independent refuter
+measured the result on five ordinary inputs: a session that declared `packages/b.ts` a `non_goal` and
+edited it answers `post_hoc / declared_non_goal_edited` when that row's position is usable, and
+**`predeclared / declared_before`** when it is not — `seq: null` (two live agents in one worktree),
+an `observed` position (the lane every Stop-time git edit uses), an overlapping window, or a foreign
+epoch. Same session, same declaration, same edit; the only difference is whether the ACCUSING row could
+be placed. `indeterminacy` came back `null`, so no reader was told anything had been dropped.
+
+That is **principle 5 inverted at the centre of this spec** — missing evidence removing an accusation —
+and it is the same conversion §3.3 already forbids one level down in the version-id hash. Only rows that
+NAME the edited path can change step 6's answer, so only those override it: an unorderable row about some
+other path silences nothing. The refusal covers both roles for different reasons. A refused `non_goal`
+would have accused, and dropping it exonerates. A refused `expected` would have excused, and dropping it
+leaves step 5 reporting `scope_not_named` — *"this session never declared that path"* — about a session
+that did.
 
 **Non-goal wins where both name the path**, because it is the stronger signal: *"a declared non-goal that
 was then edited"* is the most post-hoc thing a session can do, and a later `expected` entry naming the
