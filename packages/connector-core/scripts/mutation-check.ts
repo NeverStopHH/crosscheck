@@ -4895,8 +4895,12 @@ export const MUTATIONS: readonly Mutation[] = [
     // 1.0 spec 02 CCB-6. A verdict must not outlive the evidence it came from.
     label: "a revalidation verdict outlives the reading it came from",
     file: `${SERVER}/src/services/claim-revalidations.ts`,
-    from: "      .where(lt(claimRevalidations.revalidatedAt, retentionCutoff))",
-    to: "      .where(lt(claimRevalidations.revalidatedAt, new Date(0)))",
+    // MOVED WITH THE CODE. The prune used to be a bare `.where(lt(...))`;
+    // fixing the retention finding wrapped it in an `and(...)` that also
+    // refuses to delete a `changed` row whose claim still exists. The anchor
+    // follows the cutoff comparison, which is the half this guard is about.
+    from: "          lt(claimRevalidations.revalidatedAt, retentionCutoff),",
+    to: "          lt(claimRevalidations.revalidatedAt, new Date(0)),",
     test: `${SERVER}/test/claim-revalidations.test.ts`,
     because:
       "a reading taken against a ref commit the repo left behind months ago " +
@@ -5057,7 +5061,11 @@ export const MUTATIONS: readonly Mutation[] = [
     // default branch this clone holds, and nothing on that path fetches.
     label: "the currency sentence claims more than the reading measured",
     file: `${CORE}/src/mcp/render.ts`,
-    from: "      ? `${at}; unchanged as far as the default branch this clone holds`\n      : `${at}; unchanged up to ${against}, the default branch as this clone has it`;",
+    // MOVED WITH THE CODE. Both branches gained `${measured}`, the clause that
+    // says when the only reading is the author's own. The mutation is
+    // unchanged in what it proves: collapsing the sentence to a claim about
+    // the world rather than about what was measured.
+    from: "      ? `${at}; unchanged as far as the default branch this clone holds${measured}`\n      : `${at}; unchanged up to ${against}, the default branch as this clone has it${measured}`;",
     to: "      ? `${at}; those files have not changed since`\n      : `${at}; those files have not changed since`;",
     test: `${CORE}/test/claim-revalidation-pull.test.ts`,
     because:
