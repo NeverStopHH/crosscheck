@@ -58,7 +58,7 @@
  * PRINTS: packages/schema/src/enums.ts
  * PRINTS: packages/server/src/services/claim-validity.ts
  */
-import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, or } from "drizzle-orm";
 import type {
   ClaimCommitBinding,
   ClaimRevalidationBasis,
@@ -66,7 +66,12 @@ import type {
   ClaimValidityState,
 } from "@crosscheck/schema";
 
-import { CLAIM_VALIDITY_SUMMARY_MAX_CLAIMS } from "../constants.ts";
+import {
+  CLAIM_REVALIDATION_RETENTION_DAYS,
+  CLAIM_VALIDITY_SUMMARY_MAX_CLAIMS,
+} from "../constants.ts";
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 import {
   agentSessions,
   claimEdges,
@@ -218,16 +223,45 @@ export const isCurrent = (validity: ClaimValidity): boolean =>
  */
 export const loadRevalidations = async (
   db: DbExecutor,
+  now: Date,
   claimIds: readonly string[],
 ): Promise<ReadonlyMap<string, ClaimRevalidationReading>> => {
   const unique = [...new Set(claimIds)];
   if (unique.length === 0) {
     return new Map();
   }
+  // RETENTION IS PART OF THE DEFINITION, not a side effect of traffic.
+  //
+  // The module header justifies deriving the state on read with "a stored
+  // verdict outlives its evidence: the revalidation row it comes from is
+  // pruned at CLAIM_REVALIDATION_RETENTION_DAYS, and a claim must go back to
+  // `unknown` when that happens". The prune was reachable only from
+  // `ingestClaimRevalidations` — only when somebody POSTs — so a repo nobody
+  // revalidates again kept answering `current` indefinitely. Measured at 400
+  // days with no POST in between: still `current`, on a reading whose
+  // retention had expired thirteen times over.
+  //
+  // AGE RETIRES A READING THAT CARRIES NO DOWNGRADE, and nothing else. A
+  // `changed` row is the positive proof that a claim stopped describing the
+  // code; hiding it on a timer would return the claim to `unknown`, which the
+  // substance gate ADMITS — missing evidence strengthening a conclusion. The
+  // ingest prune follows the same rule, and the two have to agree or a row
+  // would be readable and unprunable, or the reverse.
+  const readableFrom = new Date(
+    now.getTime() - CLAIM_REVALIDATION_RETENTION_DAYS * MS_PER_DAY,
+  );
   const rows = await db
     .select()
     .from(claimRevalidations)
-    .where(inArray(claimRevalidations.claimId, unique));
+    .where(
+      and(
+        inArray(claimRevalidations.claimId, unique),
+        or(
+          eq(claimRevalidations.result, "changed"),
+          gte(claimRevalidations.revalidatedAt, readableFrom),
+        ),
+      ),
+    );
   return new Map(
     rows.map((row) => [
       row.claimId,
@@ -293,6 +327,7 @@ export const loadClaimSurfaces = async (
  */
 export const loadClaimValidities = async (
   db: DbExecutor,
+  now: Date,
   claimIds: readonly string[],
 ): Promise<ReadonlyMap<string, ClaimValidity>> => {
   const unique = [...new Set(claimIds)];
@@ -310,7 +345,7 @@ export const loadClaimValidities = async (
       })
       .from(claims)
       .where(inArray(claims.id, unique)),
-    loadRevalidations(db, unique),
+    loadRevalidations(db, now, unique),
     loadSupersededBy(db, unique),
   ]);
   return new Map(
@@ -406,6 +441,7 @@ const emptyStates = (): Record<ClaimValidityState, number> => ({
 
 export const summariseClaimValidity = async (
   db: DbExecutor,
+  now: Date,
   repo: string,
 ): Promise<ClaimValiditySummary> => {
   // The repo a claim belongs to is its AUTHOR SESSION'S repo — the same join
@@ -426,6 +462,7 @@ export const summariseClaimValidity = async (
   const total = counted[0]?.n ?? rows.length;
   const validities = await loadClaimValidities(
     db,
+    now,
     rows.map((row) => row.id),
   );
   const states = emptyStates();

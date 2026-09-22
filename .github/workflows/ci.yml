@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 336
+    # PRINTS: 338
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -225,8 +225,8 @@ jobs:
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/routes/pins.ts 1
     # PRINTS: packages/server/src/routes/search.ts 1
-    # PRINTS: packages/server/src/services/claim-revalidations.ts 3
-    # PRINTS: packages/server/src/services/claim-validity.ts 3
+    # PRINTS: packages/server/src/services/claim-revalidations.ts 4
+    # PRINTS: packages/server/src/services/claim-validity.ts 4
     # PRINTS: packages/server/src/services/conference.ts 2
     # PRINTS: packages/server/src/services/contradictions.ts 1
     # PRINTS: packages/server/src/services/developer-lookup.ts 2
@@ -261,8 +261,8 @@ jobs:
     # PRINTS: capture-touched-files.ts 1
     # PRINTS: claim-drift.ts 4
     # PRINTS: claim-revalidation.ts 2
-    # PRINTS: claim-revalidations.ts 3
-    # PRINTS: claim-validity.ts 5
+    # PRINTS: claim-revalidations.ts 4
+    # PRINTS: claim-validity.ts 6
     # PRINTS: client.ts 1
     # PRINTS: conference-cost.ts 1
     # PRINTS: conference.ts 12

@@ -444,6 +444,7 @@ const validityOf = (
  */
 const toMatchViews = async (
   db: Db,
+  now: Date,
   winners: readonly (MatchStrength & { id: string })[],
   solvedInfo: ReadonlyMap<string, Date>,
 ): Promise<readonly SolvedMatchView[]> => {
@@ -469,6 +470,7 @@ const toMatchViews = async (
   // briefing.
   const validities = await loadClaimValidities(
     db,
+    now,
     [...rootCauses.values()].map((cause) => cause.claimId),
   );
   return winners.flatMap((winner) => {
@@ -572,7 +574,7 @@ export const listSolvedByFingerprint = async (
     }))
     .sort((left, right) => right.solvedAtMs - left.solvedAtMs)
     .slice(0, SOLVED_MATCH_MAX_PROBE_FINDINGS);
-  return toMatchViews(deps.db, winners, solvedInfo);
+  return toMatchViews(deps.db, deps.now(), winners, solvedInfo);
 };
 
 /**
@@ -643,5 +645,5 @@ export const listSolvedMatches = async (
     )
     .slice(0, SOLVED_MATCH_MAX_FINDINGS);
 
-  return toMatchViews(deps.db, winners, solvedInfo);
+  return toMatchViews(deps.db, deps.now(), winners, solvedInfo);
 };

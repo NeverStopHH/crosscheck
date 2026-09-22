@@ -31,7 +31,7 @@ import { and, eq, inArray, lt, ne, notExists, or, sql } from "drizzle-orm";
 import type { ClaimRevalidationReport, ClaimValidity } from "@crosscheck/schema";
 
 import { CLAIM_REVALIDATION_RETENTION_DAYS } from "../constants.ts";
-import { claimRevalidations, claims } from "../db/schema.ts";
+import { agentSessions, claimRevalidations, claims } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
 import { loadClaimValidities } from "./claim-validity.ts";
 import type { Clock } from "../types.ts";
@@ -70,16 +70,36 @@ export interface ClaimRevalidationOutcome {
 /** Claim ids this hub does not have — reported, never silently dropped. */
 export const unknownClaimIds = async (
   db: Db,
+  repo: string,
   claimIds: readonly string[],
 ): Promise<readonly string[]> => {
   const unique = [...new Set(claimIds)];
   if (unique.length === 0) {
     return [];
   }
+  // SCOPED TO THE REPO THE REPORT IS ABOUT, which it was not.
+  //
+  // The wire has always required a `repo`, and the POST handler never read
+  // it: the lookup was by claim id alone, with no join to the authoring
+  // session's repo, and `reportedBy` was stamped from the bearer key without
+  // being compared to anything. So the hub accepted a git reading about repo
+  // A as authority over a claim in repo B, from a developer holding no clone
+  // of B at all.
+  //
+  // §3.7's trust argument is "any member may report, because the check is
+  // reproducible from any clone" — and that assumes the reporter is reporting
+  // about the repo they cloned. Nothing enforced it.
+  //
+  // The downgrade-only rule then makes it one-way. It bounds a forged UPGRADE
+  // and leaves a forged DOWNGRADE permanent: no honest `unchanged` can undo
+  // one, so a single request naming up to MAX_CLAIM_REVALIDATION_ENTRIES
+  // claims empties a team's substance lane, and doctor reports it as an
+  // ordinary `N stale` count with no reporter and no repo beside it.
   const rows = await db
     .select({ id: claims.id })
     .from(claims)
-    .where(inArray(claims.id, unique));
+    .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
+    .where(and(inArray(claims.id, unique), eq(agentSessions.repo, repo)));
   const known = new Set(rows.map((row) => row.id));
   return unique.filter((id) => !known.has(id));
 };
@@ -200,6 +220,7 @@ export const ingestClaimRevalidations = async (
       // second connection could reflect a write this one has not committed.
       validities: await loadClaimValidities(
         tx,
+        now,
         report.entries.map((entry) => entry.claimId),
       ),
     };

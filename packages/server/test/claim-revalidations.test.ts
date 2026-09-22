@@ -14,7 +14,9 @@ import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 
 import { CLAIM_REVALIDATION_RETENTION_DAYS } from "../src/constants.ts";
+import { loadClaimValidities } from "../src/services/claim-validity.ts";
 import {
+  addTestDeveloperWithSession,
   createHarnessWithSession,
   jsonRequest,
   postRecords,
@@ -75,6 +77,24 @@ const entry = (
   touchingTotal: result === "changed" ? 2 : 0,
   ...overrides,
 });
+
+/**
+ * The DERIVED state, read the way every surface reads it — through the hub's
+ * one authority rather than off the row. A test that asserted the row would
+ * pass while the read path answered something else, which is the exact gap
+ * the retention finding was about.
+ */
+const readState = async (
+  harness: TestHarness,
+  claimId = "clm_01",
+): Promise<string | undefined> => {
+  const validities = await loadClaimValidities(
+    harness.db,
+    harness.clock.now(),
+    [claimId],
+  );
+  return validities.get(claimId)?.state;
+};
 
 const readRow = async (
   harness: TestHarness,
@@ -164,6 +184,88 @@ describe("claim revalidations", () => {
     // Assert
     expect(second.refusedDowngrades).toBe(0);
     expect(second.recorded).toBe(1);
+  });
+
+  test("a stranger in another repo cannot downgrade this repo's claim", async () => {
+    // The wire has always required a `repo` and the POST handler never read
+    // it: the lookup was by claim id alone, with no join to the authoring
+    // session's repo. So a git reading about repo A was accepted as authority
+    // over a claim in repo B, from a developer holding no clone of B.
+    //
+    // The downgrade-only rule made it ONE-WAY. A forged UPGRADE is bounded; a
+    // forged DOWNGRADE is permanent, because no honest `unchanged` can undo
+    // it — so one request naming up to MAX_CLAIM_REVALIDATION_ENTRIES claims
+    // empties a team's substance lane, and doctor reports it as an ordinary
+    // `N stale` count with no reporter and no repo beside it.
+    const { harness, developer } = await seed();
+    const stranger = await addTestDeveloperWithSession(
+      harness,
+      "Mallory",
+      "mallory@example.com",
+      { id: "ses_99", repo: "github.com/other/unrelated" },
+    );
+
+    // Act: the stranger reports about their OWN repo, naming this repo's claim.
+    const response = await harness.app.request(
+      "/api/claim-revalidations",
+      jsonRequest("POST", stranger.apiKey, {
+        repo: "github.com/other/unrelated",
+        entries: [entry("changed")],
+        revalidated: 1,
+        total: 1,
+      }),
+    );
+
+    // Assert: refused, and the claim is untouched.
+    expect(response.status).toBe(400);
+    expect(await readRow(harness)).toBeUndefined();
+    expect(await readState(harness)).toBe("unknown");
+  });
+
+  test("the claim's own repo still reports normally", async () => {
+    // The control: scoping must not lock out the honest reporter it protects.
+    const { harness, developer } = await seed();
+    expect((await report(harness, developer, [entry("changed")])).recorded).toBe(1);
+  });
+
+  test("a verdict does not outlive its evidence when nobody posts again", async () => {
+    // The module header justifies deriving the state on READ with exactly
+    // this: "a stored verdict outlives its evidence … and a claim must go
+    // back to `unknown` when that happens". The prune was reachable only from
+    // the ingest, so retention was enforced by TRAFFIC rather than by the
+    // definition — and D5 names the repo that gets none ("a repo nobody pulls
+    // a diagnosis from is never revalidated"). Measured at 400 days with no
+    // POST in between, the claim still read `current`.
+    const { harness, developer } = await seed();
+    await report(harness, developer, [entry("unchanged")]);
+    expect(await readState(harness)).toBe("current");
+
+    // Act: time passes and nothing at all is posted.
+    harness.clock.advanceSeconds(
+      ((CLAIM_REVALIDATION_RETENTION_DAYS + 1) * MS_PER_DAY) / 1000,
+    );
+
+    // Assert: the reading is past retention, so it no longer answers.
+    expect(await readState(harness)).toBe("unknown");
+  });
+
+  test("a measured downgrade keeps answering past retention", async () => {
+    // The other half of the same rule, and the one that must NOT expire: a
+    // `changed` row is the positive proof the claim stopped describing the
+    // code, and letting age hide it would return the claim to `unknown` —
+    // which the substance gate admits. The read filter and the ingest prune
+    // agree on this, or a row would be readable and unprunable, or the
+    // reverse.
+    const { harness, developer } = await seed();
+    await report(harness, developer, [entry("changed")]);
+
+    harness.clock.advanceSeconds(
+      ((CLAIM_REVALIDATION_RETENTION_DAYS + 1) * MS_PER_DAY) / 1000,
+    );
+
+    expect(await readState(harness)).toBe(
+      "stale",
+    );
   });
 
   test("a downgrade that names no commit is refused at the wire", async () => {

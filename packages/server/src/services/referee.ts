@@ -361,6 +361,7 @@ const findSupersededBy = async (
  */
 const buildPosition = async (
   db: Db,
+  now: Date,
   side: CandidateSide,
   otherClaimId: string,
   workContextTitles: ReadonlyMap<string, string>,
@@ -374,7 +375,7 @@ const buildPosition = async (
       walkEvidence(db, loaded, [otherClaimId]),
       listRuledOut(db, loaded.view.workContextId, loaded.view.authorDeveloperId),
       findSupersededBy(db, side.id),
-      loadRevalidations(db, [side.id]),
+      loadRevalidations(db, now, [side.id]),
     ]);
   return {
     claim: loaded.view,
@@ -411,6 +412,7 @@ const loadWorkContextTitles = async (
  */
 export const getRefereeBrief = async (
   db: Db,
+  now: Date,
   contradictionId: string,
 ): Promise<RefereeBriefView | undefined> => {
   const pair: ContradictionView | undefined = await findContradictionById(
@@ -425,8 +427,8 @@ export const getRefereeBrief = async (
     pair.claimB.workContextId,
   ]);
   const [positionA, positionB, shared] = await Promise.all([
-    buildPosition(db, pair.claimA, pair.claimB.id, titles),
-    buildPosition(db, pair.claimB, pair.claimA.id, titles),
+    buildPosition(db, now, pair.claimA, pair.claimB.id, titles),
+    buildPosition(db, now, pair.claimB, pair.claimA.id, titles),
     listSharedTargets(db, pair.claimA.workContextId, pair.claimB.workContextId),
   ]);
   if (positionA === undefined || positionB === undefined) {

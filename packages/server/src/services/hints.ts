@@ -191,6 +191,7 @@ export const notSuperseded = (db: Db) =>
 
 const listClaimsForContext = async (
   db: Db,
+  now: Date,
   readerDeveloperId: string,
   workContextId: string,
 ): Promise<readonly HintClaimCandidate[]> => {
@@ -230,7 +231,11 @@ const listClaimsForContext = async (
   // above has already filtered retracted claims out of this list, so no edge
   // lookup is needed here — the selector's own superseded guard stays as
   // defence in depth against a hub that filters differently.
-  const revalidations = await loadRevalidations(db, rows.map((row) => row.claim.id));
+  const revalidations = await loadRevalidations(
+    db,
+    now,
+    rows.map((row) => row.claim.id),
+  );
   return [...rows]
     .sort(
       (a, b) => b.claim.createdAt.getTime() - a.claim.createdAt.getTime(),
@@ -277,12 +282,13 @@ const listClaimsForContext = async (
  */
 const listContextClaims = async (
   db: Db,
+  now: Date,
   readerDeveloperId: string,
   workContextIds: readonly string[],
 ): Promise<ReadonlyMap<string, readonly HintClaimCandidate[]>> => {
   const lists = await Promise.all(
     workContextIds.map((id) =>
-      listClaimsForContext(db, readerDeveloperId, id),
+      listClaimsForContext(db, now, readerDeveloperId, id),
     ),
   );
   return new Map(workContextIds.map((id, index) => [id, lists[index] ?? []]));
@@ -385,7 +391,7 @@ export const listHintCandidates = async (
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = eligible.map((row) => row.id);
   const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
-    listContextClaims(deps.db, callerDeveloperId, ids),
+    listContextClaims(deps.db, deps.now(), callerDeveloperId, ids),
     listBaseCommits(deps.db, ids),
     listMatchedTargets(deps.db, ids, exactTokens(input.query)),
   ]);

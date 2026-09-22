@@ -5065,6 +5065,33 @@ export const MUTATIONS: readonly Mutation[] = [
       "against a month-old ref, the reading is UPSERTed into the shared hub, " +
       "and every teammate is then told a rewritten file has not changed",
   },
+  {
+    // 1.0 spec 02 CCB-6. The module header justifies deriving the state on
+    // read because "a stored verdict outlives its evidence"; the prune was
+    // reachable only from the ingest, so retention was enforced by traffic.
+    label: "a verdict outlives its evidence on a hub nobody posts to",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "          gte(claimRevalidations.revalidatedAt, readableFrom),",
+    to: "          gte(claimRevalidations.revalidatedAt, new Date(0)),",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a repo nobody revalidates again keeps answering `current` for years " +
+      "on a reading whose retention expired, which is the stored-verdict " +
+      "defect derived state exists to prevent",
+  },
+  {
+    // 1.0 spec 02 §3.7. The wire has always required a repo and the handler
+    // never read it.
+    label: "a stranger in another repo downgrades a claim permanently",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "    .where(and(inArray(claims.id, unique), eq(agentSessions.repo, repo)));",
+    to: "    .where(inArray(claims.id, unique));",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "the downgrade-only rule bounds a forged UPGRADE and leaves a forged " +
+      "DOWNGRADE permanent, so one request naming 500 claims empties a " +
+      "team's substance lane with no reporter and no repo on any surface",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5217,7 +5244,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
- * PRINTS: packages/server/test/claim-revalidations.test.ts 5
+ * PRINTS: packages/server/test/claim-revalidations.test.ts 7
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 2

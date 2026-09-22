@@ -46,7 +46,7 @@ export const claimRevalidationsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (repo === undefined || repo.length === 0) {
       return fail(c, 400, "validation_failed", "repo is required");
     }
-    return ok(c, await summariseClaimValidity(deps.db, repo));
+    return ok(c, await summariseClaimValidity(deps.db, deps.now(), repo));
   });
 
   router.post("/", async (c) => {
@@ -57,8 +57,13 @@ export const claimRevalidationsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // Named rather than dropped: a report about claims this hub has never
     // heard of is a caller reading a different hub, and silently storing
     // nothing would look identical to success.
+    // SCOPED BY THE REPO THE REPORT NAMES. The body has always carried one
+    // and this handler never read it, so a reading about repo A was accepted
+    // as authority over a claim in repo B — and the downgrade-only rule made
+    // that one-way, since no honest `unchanged` can undo a forged `changed`.
     const unknown = await unknownClaimIds(
       deps.db,
+      parsed.data.repo,
       parsed.data.entries.map((entry) => entry.claimId),
     );
     if (unknown.length > 0) {
@@ -66,7 +71,7 @@ export const claimRevalidationsRoutes = (deps: AppDeps): Hono<AppEnv> => {
         c,
         400,
         "unknown_claims",
-        `this hub has no claim ${unknown.join(", ")} — a revalidation names claims read from this hub`,
+        `this hub has no claim ${unknown.join(", ")} in ${parsed.data.repo} — a revalidation names claims read from this hub, in the repo it was measured against`,
       );
     }
     const outcome = await ingestClaimRevalidations(

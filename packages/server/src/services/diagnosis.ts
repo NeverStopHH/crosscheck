@@ -437,6 +437,7 @@ const listExternalClaimRefs = async (
  */
 export const getDiagnosis = async (
   db: Db,
+  now: Date,
   workContextId: string,
   limits: DiagnosisLimits = DEFAULT_DIAGNOSIS_LIMITS,
 ): Promise<Diagnosis | undefined> => {
@@ -497,7 +498,7 @@ export const getDiagnosis = async (
       .map((edge) => [edge.toClaimId, edge.fromClaimId] as const),
   );
   const [revalidations, surfaces] = await Promise.all([
-    loadRevalidations(db, [...localClaimIds]),
+    loadRevalidations(db, now, [...localClaimIds]),
     loadClaimSurfaces(db, [...localClaimIds]),
   ]);
 
