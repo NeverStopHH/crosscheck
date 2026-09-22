@@ -6206,6 +6206,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "like flake on a loaded machine, which invites raising the timeout " +
       "rather than investigating",
   },
+  {
+    // The version count was capped from the start and the scope list was not.
+    label: "the chain prints every declared path a version carries",
+    file: `${CORE}/src/mcp/render-intent-chain.ts`,
+    from: "  const shown = scope.slice(0, INTENT_SCOPE_MAX_SHOWN);",
+    to: "  const shown = scope;",
+    test: `${CORE}/test/intent-chain-render.test.ts`,
+    because:
+      "the wire allows 30 expected paths plus 30 non-goals PER VERSION, so " +
+      "the measured wire-legal shape rendered a 39 162-character block with " +
+      "a 7 748-character line, ahead of the claims and targets the reader " +
+      "actually asked for and with nothing saying it was long",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6332,6 +6345,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
+ * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1

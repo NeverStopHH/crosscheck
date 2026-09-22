@@ -54,7 +54,10 @@ import { rm } from "node:fs/promises";
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
-import { MAX_INTENT_CHAIN_VERSIONS } from "@crosscheck/schema";
+import {
+  MAX_INTENT_CHAIN_VERSIONS,
+  MAX_INTENT_SCOPE_ENTRIES,
+} from "@crosscheck/schema";
 
 import {
   HTTP_TIMEOUT_MS,
@@ -287,6 +290,24 @@ const setUp = async (): Promise<Developer> => {
   };
 };
 
+/**
+ * The MOST EXPENSIVE documented shape of the operation, which this file used
+ * to measure none of.
+ *
+ * §6 states the hub cost per intent change as "one max(version) probe, one
+ * insert and at most 2 x MAX_INTENT_SCOPE_ENTRIES scope inserts, all inside
+ * the transaction" — and the sampling loop drove `{summary}` only, so it
+ * measured zero of the up-to-60 scope inserts and zero of the reason write.
+ * The clause §6 points at as its measurement measured the cheap path.
+ *
+ * Full on both roles, so the transaction is held for as long as the wire
+ * permits and a regression in that hold shows up in the p95 this file prints.
+ */
+const FULL_SCOPE = Array.from(
+  { length: MAX_INTENT_SCOPE_ENTRIES },
+  (_unused, index) => `packages/measured/path-${String(index)}.ts`,
+);
+
 const callSetIntent = async (summary: string): Promise<boolean> => {
   const tool = findTool("set_intent");
   if (tool === undefined) {
@@ -296,7 +317,15 @@ const callSetIntent = async (summary: string): Promise<boolean> => {
   if (!setup.ok) {
     throw new Error(`prepareMcp failed: ${setup.message}`);
   }
-  const result = await tool.run(setup.ctx, { summary });
+  const result = await tool.run(setup.ctx, {
+    summary,
+    // THE EXPENSIVE SHAPE, every sample. Measuring `{summary}` alone left
+    // §6's own cost claim — up to 60 scope inserts inside one transaction —
+    // with no measurement at all.
+    expectedSurface: FULL_SCOPE,
+    nonGoals: FULL_SCOPE,
+    reason: "Measuring the shape §6 actually costs.",
+  });
   return result.isError !== true;
 };
 

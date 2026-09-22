@@ -28,6 +28,7 @@ import { MAX_INTENT_AMEND_REASON_CHARS } from "@crosscheck/schema";
 
 import {
   INTENT_CHAIN_MAX_SHOWN,
+  INTENT_SCOPE_MAX_SHOWN,
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
@@ -99,12 +100,27 @@ const scopeLine = (version: IntentVersion): string | null => {
   // it could not render tells a reader the session declared fewer paths than
   // it did, and the missing one is a path `explanationTimingFor` compared by
   // equality and the reader never saw.
-  const rendered = scope.map((entry) => {
+  // THE LIST IS CAPPED, AND THE CUT IS SAID. The version count was capped
+  // from the start and the scope was not, which is the half that carries the
+  // volume: the wire allows MAX_INTENT_SCOPE_ENTRIES expected paths plus the
+  // same number of non-goals PER VERSION. Measured at that wire-legal shape,
+  // this renderer produced a 39 162-character block with a single 7 748-
+  // character line — ahead of the claims and targets the reader asked for,
+  // with nothing saying it was long. `mcp/render.ts` already does the right
+  // thing one renderer over, for the structurally identical target list.
+  const shown = scope.slice(0, INTENT_SCOPE_MAX_SHOWN);
+  const hidden = scope.length - shown.length;
+  const rendered = shown.map((entry) => {
     const value = scopeValue(entry.value);
     const role = entry.role === "non_goal" ? "not" : "expects";
     return `${role} ${value.length === 0 ? UNPRINTABLE_PATH : value}`;
   });
-  return `    scope: ${rendered.join(" · ")}`;
+  // A silently shorter list is the absence this project refuses, and the
+  // entries that fall off are the ones `explanationTimingFor` compares by
+  // equality — so a reader who cannot see them cannot check the answer.
+  return hidden > 0
+    ? `    scope: ${rendered.join(" · ")} (+${String(hidden)} more not shown)`
+    : `    scope: ${rendered.join(" · ")}`;
 };
 
 const versionLines = (version: IntentVersion): readonly string[] => {

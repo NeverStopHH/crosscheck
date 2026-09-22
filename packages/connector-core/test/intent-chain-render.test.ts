@@ -27,6 +27,8 @@ import {
   renderIntentChain,
 } from "../src/mcp/render-intent-chain.ts";
 import { renderDiagnosis } from "../src/mcp/render.ts";
+import { INTENT_SCOPE_MAX_SHOWN } from "../src/constants.ts";
+import { MAX_INTENT_SCOPE_ENTRIES } from "@crosscheck/schema";
 import type { Diagnosis, IntentVersion } from "../src/http/hub.ts";
 
 const CREATED = "2026-02-01T09:00:00.000Z";
@@ -357,5 +359,66 @@ describe("the intent chain block", () => {
 
     expect(head).toBeGreaterThan(-1);
     expect(history).toBe(head + 1);
+  });
+});
+
+describe("the scope list is bounded like every other list", () => {
+  test("a wire-legal scope is cut, and the cut is said", () => {
+    // MEASURED BEFORE THE CAP: the version count was bounded from the start
+    // and the scope was not, so the wire-legal shape — MAX_INTENT_SCOPE_ENTRIES
+    // expected paths plus the same number of non-goals, per version — rendered
+    // a 39 162-character block with a single 7 748-character line, ahead of
+    // the claims and targets the reader actually asked for.
+    const scope = Array.from({ length: MAX_INTENT_SCOPE_ENTRIES }, (_u, index) => ({
+      role: "expected" as const,
+      kind: "file",
+      value: `packages/some/rather/long/path/number-${String(index)}.ts`,
+    }));
+    const lines = renderIntentChain(
+      diagnosis({
+        intentChain: [
+          version({ version: 2, amendsVersion: 1, scope }),
+          version({ version: 1 }),
+        ],
+      }),
+    );
+
+    const scopeLine = lines.find((line) => line.includes("scope:")) ?? "";
+    const shown = scopeLine.split(" · ").length;
+    expect(shown).toBe(INTENT_SCOPE_MAX_SHOWN);
+    expect(scopeLine).toContain(
+      `(+${String(MAX_INTENT_SCOPE_ENTRIES - INTENT_SCOPE_MAX_SHOWN)} more not shown)`,
+    );
+
+    // And the block as a whole is bounded rather than merely shorter. The
+    // number is the point: a reader's context window is what this spends.
+    const chars = lines.join("\n").length;
+    expect(chars).toBeLessThan(4000);
+  });
+
+  test("a scope inside the cap prints whole, with no cut sentence", () => {
+    // The control. A "+N more" line that appeared on every render would be a
+    // line nobody reads, and a cap that hid entries silently would be the
+    // absence this project refuses.
+    const lines = renderIntentChain(
+      diagnosis({
+        intentChain: [
+          version({
+            version: 2,
+            amendsVersion: 1,
+            scope: [
+              { role: "expected", kind: "file", value: "packages/a.ts" },
+              { role: "non_goal", kind: "file", value: "packages/b.ts" },
+            ],
+          }),
+          version({ version: 1 }),
+        ],
+      }),
+    );
+
+    const scopeLine = lines.find((line) => line.includes("scope:")) ?? "";
+    expect(scopeLine).toContain("expects packages/a.ts");
+    expect(scopeLine).toContain("not packages/b.ts");
+    expect(scopeLine).not.toContain("not shown");
   });
 });
