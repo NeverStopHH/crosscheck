@@ -57,6 +57,15 @@ export interface RevalidationGroup {
   readonly observedAtCommit: string;
   /** The surface every claim in this group shares, already capped. */
   readonly paths: readonly string[];
+  /**
+   * How many paths the cap removed before this group existed.
+   *
+   * CARRIED SO THE GIT LEG CAN REFUSE. `checkClaimDrift` compares what it
+   * kept against what it was given, and the cut happens up here — so without
+   * this number the surface looks whole to the only code that could refuse an
+   * `unchanged` over it.
+   */
+  readonly droppedPaths: number;
   /** Where that surface came from: the author, or the whole work context. */
   readonly basis: "declared" | "context_targets";
   /** Claims answered by one check. */
@@ -73,11 +82,31 @@ export interface RevalidationPlan {
 }
 
 /** The work context's own file targets: the fallback surface, which over-fires. */
-const contextTargets = (diagnosis: Diagnosis): readonly string[] =>
-  diagnosis.targets
+/**
+ * The work context's file targets, capped — AND HOW MANY THE CAP DROPPED.
+ *
+ * THE COUNT IS THE WHOLE POINT. This cut used to be silent, and
+ * `checkClaimDrift`'s completeness guard could not see it: the slice happens
+ * HERE, so by the time the guard compared its own input against its own
+ * filtered output there was nothing left to notice. A work context with 40
+ * file targets lost ten of them and the answer came back `unchanged`, about a
+ * surface that had never been measured whole.
+ *
+ * `context_targets` is the DEFAULT basis — it is what every claim that did not
+ * declare its own paths falls back to — so this is the ordinary path rather
+ * than an edge case.
+ */
+const contextTargets = (
+  diagnosis: Diagnosis,
+): { readonly paths: readonly string[]; readonly dropped: number } => {
+  const all = diagnosis.targets
     .filter((target) => target.kind === "file")
-    .map((target) => target.value)
-    .slice(0, MAX_CLAIM_SURFACE_PATHS);
+    .map((target) => target.value);
+  return {
+    paths: all.slice(0, MAX_CLAIM_SURFACE_PATHS),
+    dropped: Math.max(0, all.length - MAX_CLAIM_SURFACE_PATHS),
+  };
+};
 
 /**
  * One key per (commit, path SET). JSON rather than a joined string, because a
@@ -113,10 +142,19 @@ export const planClaimRevalidation = (
       continue;
     }
     const declared = claim.affectedPaths ?? [];
+    // BOTH CUTS ARE COUNTED, not just the fallback's. A declared surface is
+    // capped at MAX_CLAIM_SURFACE_PATHS by the wire schema, so `declared`
+    // arrives already bounded and this slice is normally a no-op — but an
+    // older or hostile hub is not bound by our schema, and a silent slice
+    // here would be the same defect one field over.
     const paths =
       declared.length > 0
         ? declared.slice(0, MAX_CLAIM_SURFACE_PATHS)
-        : fallback;
+        : fallback.paths;
+    const dropped =
+      declared.length > 0
+        ? Math.max(0, declared.length - MAX_CLAIM_SURFACE_PATHS)
+        : fallback.dropped;
     if (paths.length === 0) {
       continue;
     }
@@ -127,6 +165,7 @@ export const planClaimRevalidation = (
       byKey.set(key, {
         observedAtCommit: commit,
         paths,
+        droppedPaths: dropped,
         basis: declared.length > 0 ? "declared" : "context_targets",
         claimIds: [claim.id],
         newestAt: at,
@@ -174,6 +213,9 @@ export const readClaimDrift = async (
       refCommit,
       group.observedAtCommit,
       group.paths,
+      // THE CUT TRAVELS WITH THE GROUP. Without it the git leg sees a whole
+      // surface and answers `unchanged` for files it never listed.
+      group.droppedPaths,
     );
     for (const claimId of group.claimIds) {
       entries.push({

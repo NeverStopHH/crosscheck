@@ -13,6 +13,11 @@ import { rm } from "node:fs/promises";
 import { MAX_CLAIM_SURFACE_PATHS } from "@crosscheck/schema";
 
 import { checkClaimDrift } from "../src/git/claim-drift.ts";
+import {
+  planClaimRevalidation,
+  readClaimDrift,
+} from "../src/flows/claim-revalidation.ts";
+import type { Diagnosis } from "../src/http/hub.ts";
 import { git, makeRepo, writeRepoFile } from "./helpers.ts";
 
 const paths: string[] = [];
@@ -230,5 +235,134 @@ describe("checkClaimDrift", () => {
     expect(whole.result).toBe("changed");
     const untouched = await checkClaimDrift(root, "main", base, [surface[0] ?? ""]);
     expect(untouched.result).toBe("unchanged");
+  });
+});
+
+describe("the production path, which is where the cut actually happens", () => {
+  /**
+   * THE TEST THAT DID NOT EXIST, and an independent refuter is why it does.
+   *
+   * The cap guard above hands 40 paths straight into `checkClaimDrift` — an
+   * input the production flow cannot produce. `planClaimRevalidation` slices
+   * a work context's file targets to MAX_CLAIM_SURFACE_PATHS *before* the
+   * check is called, so the guard compared 30 against 30, `complete` was
+   * always true, and the exact scenario the comment describes still answered
+   * `unchanged`. `grep -rn planClaimRevalidation` found no test file at all.
+   *
+   * This drives the two functions a real pull drives, in the order it drives
+   * them, and asserts the answer a teammate would receive.
+   */
+  const diagnosisWithTargets = (
+    fileTargets: readonly string[],
+    observedAtCommit: string,
+  ): Diagnosis => ({
+    workContext: {
+      id: "wc_01",
+      sessionId: "cc_01",
+      title: "Login 500s on staging",
+      status: "analyzing",
+      intent: null,
+      createdAt: "2026-09-15T09:00:00.000Z",
+    },
+    claims: [
+      {
+        id: "clm_01",
+        workContextId: "wc_01",
+        authorSessionId: "cc_01",
+        authorDeveloperName: "Mara",
+        kind: "root_cause",
+        body: "The refresh path never reloads the rotated key",
+        status: "likely_root_cause",
+        confidence: 0.8,
+        captureMode: "agent",
+        provenance: "declared",
+        dedupCount: 1,
+        evidenceRefs: [],
+        createdAt: "2026-09-15T09:00:00.000Z",
+        // NO `affectedPaths`: the claim declared none, so the work context's
+        // targets stand in. That is `context_targets`, the DEFAULT basis.
+        validity: {
+          state: "unknown",
+          observedAtCommit,
+          commitBinding: "session_base",
+          basis: "context_targets",
+          refCommit: null,
+          selfReported: false,
+          touchingCommits: [],
+          touchingTotal: null,
+          lastRevalidatedAt: null,
+          supersededByClaimId: null,
+        },
+      },
+    ],
+    edges: [],
+    externalClaims: [],
+    targets: fileTargets.map((value) => ({
+      kind: "file" as const,
+      value,
+      lastSeenAt: "2026-09-15T09:00:00.000Z",
+    })),
+    targetsReported: true,
+    droppedTargets: 0,
+    truncated: false,
+    droppedRows: 0,
+  });
+
+  test("a rewrite past the cap is not reported as unchanged", async () => {
+    // THE ANCHOR, and the scenario the guard's own comment claims to measure:
+    // 40 file targets, the alphabetically LAST one rewritten — the one the
+    // cap drops. Before the cut travelled to the git leg this answered
+    // `unchanged`, the hub UPSERTed `current`, and the claim kept rendering
+    // "unchanged" on a teammate's unsolicited surface about a file that had
+    // been rewritten.
+    const root = await makeRepo("claim-drift-production-cut");
+    paths.push(root);
+    const surface = Array.from(
+      { length: MAX_CLAIM_SURFACE_PATHS + 10 },
+      (_unused, index) => `src/f${String(index).padStart(3, "0")}.ts`,
+    );
+    for (const file of surface) {
+      await writeRepoFile(root, file, "export const v = 0;\n");
+    }
+    await git(root, ["add", "-A"]);
+    await git(root, ["commit", "-m", "surface"]);
+    const base = await revParse(root, "HEAD");
+
+    const moved = surface[surface.length - 1] ?? "";
+    await writeRepoFile(root, moved, "export const v = 1;\n");
+    await git(root, ["add", "-A"]);
+    await git(root, ["commit", "-m", "rewrite past the cut"]);
+
+    // Act: the two calls a real pull makes, in order.
+    const plan = planClaimRevalidation(diagnosisWithTargets(surface, base));
+    const readings = await readClaimDrift(root, "main", plan);
+
+    // Assert: the plan knows it cut, and the reading refuses to vouch.
+    expect(plan.groups[0]?.droppedPaths).toBe(10);
+    expect(readings.entries[0]?.result).toBe("unknown");
+  });
+
+  test("a surface the cap never touched still answers", async () => {
+    // The control. A guard that refused everything would be safe and useless:
+    // the ordinary case — a work context inside the cap — must still produce
+    // a reading, or `unchanged` disappears from the product entirely.
+    const root = await makeRepo("claim-drift-production-whole");
+    paths.push(root);
+    const surface = ["src/a.ts", "src/b.ts"];
+    for (const file of surface) {
+      await writeRepoFile(root, file, "export const v = 0;\n");
+    }
+    await git(root, ["add", "-A"]);
+    await git(root, ["commit", "-m", "surface"]);
+    const base = await revParse(root, "HEAD");
+    await writeRepoFile(root, "src/elsewhere.ts", "export const v = 1;\n");
+    await git(root, ["add", "-A"]);
+    await git(root, ["commit", "-m", "unrelated"]);
+
+    const plan = planClaimRevalidation(diagnosisWithTargets(surface, base));
+    const readings = await readClaimDrift(root, "main", plan);
+
+    expect(plan.groups[0]?.droppedPaths).toBe(0);
+    expect(readings.entries[0]?.result).toBe("unchanged");
   });
 });

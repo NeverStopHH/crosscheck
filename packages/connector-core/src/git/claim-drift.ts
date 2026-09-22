@@ -136,6 +136,25 @@ export const checkClaimDrift = async (
   defaultRef: string,
   observedAtCommit: string,
   paths: readonly string[],
+  /**
+   * HOW MANY PATHS THE CALLER ALREADY DROPPED before handing over the rest.
+   *
+   * THIS PARAMETER EXISTS BECAUSE THE GUARD BELOW COULD NOT SEE THE CUT IT
+   * GUARDS AGAINST, and an independent refuter measured it. The completeness
+   * test compared `safePaths.length` with `paths.length` — a cut this
+   * function makes ITSELF. The only production caller
+   * (`flows/claim-revalidation.ts`) slices the work context's file targets to
+   * MAX_CLAIM_SURFACE_PATHS *before* calling, so `paths.length` was already
+   * ≤ 30 on arrival, `complete` was always true, and the guard never fired.
+   * The test that vouched for it fed 40 paths straight in — an input the
+   * production flow cannot produce.
+   *
+   * Measured on the file's own scenario: a work context with 40 file targets
+   * whose `src/f039.ts` was rewritten answered `unchanged`, was UPSERTed to
+   * the hub, and reached a teammate's prompt as `current`. That is AT-2's
+   * first "fails if", surviving inside the commit that claimed to close it.
+   */
+  droppedBeforeCall = 0,
 ): Promise<ClaimDrift> => {
   const safePaths = [...new Set(paths)]
     .filter(isSafePath)
@@ -149,7 +168,7 @@ export const checkClaimDrift = async (
     !isBindableCommit(observedAtCommit) ||
     !isSafeRef(defaultRef)
   ) {
-    return unknownDrift(safePaths.length, paths.length);
+    return unknownDrift(safePaths.length, paths.length + droppedBeforeCall);
   }
   const range = `${observedAtCommit}..${defaultRef}`;
   const listed = await runGitOutcome(
@@ -165,7 +184,7 @@ export const checkClaimDrift = async (
     STALENESS_GIT_TIMEOUT_MS,
   );
   if (!listed.ok) {
-    return unknownDrift(safePaths.length, paths.length);
+    return unknownDrift(safePaths.length, paths.length + droppedBeforeCall);
   }
   const hashes = listed.stdout
     .split("\n")
@@ -205,7 +224,11 @@ export const checkClaimDrift = async (
     // `changed` above needs no such guard: finding a commit in a SUBSET is
     // still finding one. A narrower look can only ever miss a change, never
     // invent one — which is the whole asymmetry principle 5 describes.
-    const complete = safePaths.length === paths.length;
+    // COMPLETE MEANS NOTHING WAS LOST ANYWHERE, not just nothing was lost
+    // here. A surface narrowed by the caller is narrowed all the same, and
+    // `unchanged` over it vouches for files nobody looked at.
+    const complete =
+      safePaths.length === paths.length && droppedBeforeCall === 0;
     return present.ok && present.stdout.trim().length > 0 && complete
       ? {
           result: "unchanged",
@@ -214,7 +237,7 @@ export const checkClaimDrift = async (
           pathsChecked: safePaths.length,
           pathsGiven: paths.length,
         }
-      : unknownDrift(safePaths.length, paths.length);
+      : unknownDrift(safePaths.length, paths.length + droppedBeforeCall);
   }
   const truncated = hashes.length > MAX_CLAIM_TOUCHING_COMMITS;
   return {
