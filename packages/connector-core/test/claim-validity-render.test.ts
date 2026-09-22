@@ -300,3 +300,55 @@ describe("the briefing-solved corpus sees the state word", () => {
     expect(rendered).toContain("root cause · ");
   });
 });
+
+describe("a binding nobody stated does not read like one somebody did", () => {
+  test("the session-base fallback is named in the sentence", () => {
+    // THE ANCHOR. `reported` is the commit the agent said it was looking at;
+    // `session_base` is the hub reading the session's base commit because the
+    // claim named none — and that is an UPPER BOUND. A session that checks
+    // out a newer commit re-registers, `sessions.ts` overwrites base_commit
+    // by design, and a claim observed before the checkout is filed against
+    // the commit after it. The walk then starts too late and the commits in
+    // between — the ones most likely to have moved this code — are never
+    // looked at, so the claim reads `current` on a measurement that skipped
+    // them. Render both alike and a reader cannot tell which they hold.
+    const stated = claimValidityClause(
+      validity({ state: "current", commitBinding: "reported" }),
+    );
+    const inferred = claimValidityClause(
+      validity({ state: "current", commitBinding: "session_base" }),
+    );
+
+    expect(stated).toContain("recorded at a1b2c3d");
+    expect(stated).not.toContain("session's commit");
+    expect(inferred).toContain("its session's commit rather than a stated one");
+    expect(inferred).not.toBe(stated);
+  });
+
+  test("the longest current sentence keeps its qualifiers", () => {
+    // THE BOUND IS SPENT ON THE OPENER FIRST, so what a long sentence loses
+    // is its TAIL — and the tail is where both weakening qualifiers live: who
+    // measured it, and what the commit actually is. At 160 this exact
+    // sentence measured 160, fitting by one character; the next word anyone
+    // added would have dropped ", by its own author" and left the shorter,
+    // more confident reading standing.
+    const clause = claimValidityClause(
+      validity({
+        state: "current",
+        commitBinding: "session_base",
+        refCommit: "9876543",
+        selfReported: true,
+        touchingCommits: [],
+        touchingTotal: 0,
+      }),
+    );
+
+    expect(clause?.endsWith("…")).toBe(false);
+    expect(clause).toContain("its session's commit rather than a stated one");
+    expect(clause).toContain("by its own author");
+    expect(clause).toContain("9876543");
+    expect((clause ?? "").length).toBeLessThanOrEqual(
+      MAX_CLAIM_VALIDITY_LINE_CHARS,
+    );
+  });
+});

@@ -56,6 +56,7 @@ import type {
   TripwireSession,
   WorkContextEntry,
 } from "./http/hub.ts";
+import { describeConnectionFailure } from "./http/connection-error.ts";
 
 /**
  * How a surface's output is classed, which decides its corpus assertions:
@@ -919,6 +920,25 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // framed later on every teammate surface.
     render: (payload) =>
       composeDetachedTitle("detached@0badc0ffe", payload, "github.com/acme/api"),
+  },
+  {
+    kind: "corpus",
+    name: "hub-connection-failure",
+    delivery: "pulled",
+    module: "src/http/connection-error.ts",
+    framing: "sanitized",
+    // WHAT A HUB SAYS WHEN IT CANNOT BE REACHED, on its way into three CLI
+    // commands' stdout. Seven of the eight causes are renderer-owned
+    // sentences; `unknown` relays the far side's own words, and `doctor`,
+    // `login` and `conference` all print it. Their registrations each said
+    // they interpolate nothing untrusted, which was true of everything they
+    // WROTE and false of what they PASSED THROUGH.
+    render: (payload) =>
+      describeConnectionFailure(
+        "unknown",
+        { hubUrl: "http://hub.example:7100", timeoutMs: 5_000 },
+        payload,
+      ),
   },
   {
     kind: "composite",

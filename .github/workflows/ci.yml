@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 342
+    # PRINTS: 348
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -126,7 +126,7 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
-    # PRINTS: packages/cli/src/cli/doctor.ts 17
+    # PRINTS: packages/cli/src/cli/doctor.ts 19
     # PRINTS: packages/cli/src/cli/pin-render.ts 1
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
     # PRINTS: packages/connector-acp/src/capture/engine.ts 11
@@ -175,6 +175,7 @@ jobs:
     # PRINTS: flows/capture-targets.ts 1
     # PRINTS: flows/capture-touched-files.ts 1
     # PRINTS: flows/claim-revalidation.ts 2
+    # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/hint.ts 2
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/claim-drift.ts 4
@@ -189,7 +190,7 @@ jobs:
     # PRINTS: http/latency.ts 1
     # PRINTS: kit.ts 1
     # PRINTS: mcp/render-referee.ts 3
-    # PRINTS: mcp/render.ts 16
+    # PRINTS: mcp/render.ts 17
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
     # PRINTS: mcp/tools/publish-claim.ts 2
@@ -207,6 +208,7 @@ jobs:
     # PRINTS: state/git-lane-cost.ts 2
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 2
+    # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
     # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
     # PRINTS: packages/connector-cursor/src/doctor.ts 2
@@ -225,7 +227,7 @@ jobs:
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/routes/pins.ts 1
     # PRINTS: packages/server/src/routes/search.ts 1
-    # PRINTS: packages/server/src/services/claim-revalidations.ts 6
+    # PRINTS: packages/server/src/services/claim-revalidations.ts 7
     # PRINTS: packages/server/src/services/claim-validity.ts 4
     # PRINTS: packages/server/src/services/conference.ts 2
     # PRINTS: packages/server/src/services/contradictions.ts 1
@@ -261,7 +263,8 @@ jobs:
     # PRINTS: capture-touched-files.ts 1
     # PRINTS: claim-drift.ts 4
     # PRINTS: claim-revalidation.ts 3
-    # PRINTS: claim-revalidations.ts 6
+    # PRINTS: claim-revalidations.ts 7
+    # PRINTS: claim-surface.ts 1
     # PRINTS: claim-validity.ts 6
     # PRINTS: client.ts 1
     # PRINTS: conference-cost.ts 1
@@ -277,7 +280,7 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 7
     # PRINTS: diagnosis.ts 3
-    # PRINTS: doctor.ts 21
+    # PRINTS: doctor.ts 23
     # PRINTS: engine.ts 11
     # PRINTS: envelope.ts 1
     # PRINTS: fd-io.ts 1
@@ -320,7 +323,8 @@ jobs:
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: render-referee.ts 3
-    # PRINTS: render.ts 28
+    # PRINTS: render-surface-registry.test.ts 1
+    # PRINTS: render.ts 29
     # PRINTS: report.ts 2
     # PRINTS: revalidate.ts 2
     # PRINTS: review-draft.ts 1

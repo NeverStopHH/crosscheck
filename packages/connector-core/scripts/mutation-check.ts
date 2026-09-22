@@ -5160,6 +5160,84 @@ export const MUTATIONS: readonly Mutation[] = [
       "the refusal accepted the residue on the premise that the move changes " +
       "nothing a reader sees — true of the substance gate, false of the label",
   },
+  {
+    // Found by review: the keep cap bounds the ANSWER, never the walk, so a
+    // list none of whose entries survive is read to the end.
+    label: "a declared surface is walked past the point it can still keep anything",
+    file: `${CORE}/src/flows/claim-surface.ts`,
+    from: "    if (examined >= MAX_CLAIM_SURFACE_CANDIDATES) {",
+    to: "    if (examined >= Number.MAX_SAFE_INTEGER) {",
+    test: `${CORE}/test/claim-surface.test.ts`,
+    because:
+      "50 000 unresolvable paths spent 2 959 ms of the calling agent's own " +
+      "MCP turn, kept nothing and said nothing — the cost lands on the caller " +
+      "and no surface says where it went",
+  },
+  {
+    // Found by review: an import the meta-test cannot READ was counted as an
+    // import that does not reach the render layer.
+    label: "an unreadable import is read as a clean bill of health",
+    file: `${CORE}/test/render-surface-registry.test.ts`,
+    from: "  if (COMPUTED_IMPORT_PATTERNS.some((pattern) => pattern.test(source))) {",
+    to: "  if (COMPUTED_IMPORT_PATTERNS.some(() => false)) {",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "`import(join(dir, name))` is one line past the one meta-test §1.4 " +
+      "calls non-negotiable, and missing evidence must never strengthen a " +
+      "conclusion",
+  },
+  {
+    // Found by review: doctor is registered as interpolating nothing
+    // untrusted, and printed the hub's own sentence raw at three checks.
+    label: "the doctor lends its voice to whatever the hub says",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "const hubSaid = (message: string): string =>\n  bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);",
+    to: "const hubSaid = (message: string): string => message;",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "a hub choosing newlines forges PASS rows above the real ones, under " +
+      "the tool's own name — and `revalidate.ts` bounded the same string " +
+      "from the day it was written",
+  },
+  {
+    // 1.0 spec 02 §8.5: a claim with no commit binding can never be
+    // revalidated, and the hub stored a reading for it anyway.
+    label: "a claim that can never be revalidated gets a reading stored",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "      if (unbound.has(entry.claimId)) {",
+    to: "      if (false) {",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "the row's only defence was that the one current reader checks the " +
+      "binding above it — a row nobody reads, one refactor from a row " +
+      "somebody does",
+  },
+  {
+    // Found by review: `reported` and `session_base` rendered identically,
+    // and the fallback is an UPPER bound on the observation point.
+    label: "a binding nobody stated reads like one somebody did",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: '      ? `recorded at ${observed}, its session\'s commit rather than a stated one`',
+    to: "      ? `recorded at ${observed}`",
+    test: `${CORE}/test/claim-validity-render.test.ts`,
+    because:
+      "a session that checks out mid-session re-registers and base_commit " +
+      "moves forward by design, so the walk starts after the observation and " +
+      "the claim reads current on a range that was never looked at",
+  },
+  {
+    // The same gap on the other surface: doctor counted unbound claims and
+    // said nothing about inferred ones.
+    label: "doctor counts unbound claims and not inferred ones",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  summary.inferredBindings === 0",
+    to: "  true",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "a repo whose agents never name the commit they read looks exactly " +
+      "like one where every claim states its own, and the two have different " +
+      "remedies",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5209,7 +5287,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
- * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 2
+ * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
@@ -5269,6 +5347,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
  * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
+ * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
+ * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
@@ -5294,7 +5374,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
- * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 3
+ * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 4
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
@@ -5314,7 +5394,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
- * PRINTS: packages/server/test/claim-revalidations.test.ts 9
+ * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 2

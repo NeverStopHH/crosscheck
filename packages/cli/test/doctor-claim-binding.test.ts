@@ -24,6 +24,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
+import { MAX_HUB_MESSAGE_CHARS } from "@crosscheck/connector-core/constants.ts";
+
 import { runDoctor } from "../src/cli/doctor.ts";
 import { makeHome, makeRepo } from "../../connector-core/test/helpers.ts";
 
@@ -31,6 +33,18 @@ const paths: string[] = [];
 const servers: ReturnType<typeof Bun.serve>[] = [];
 const HTTP_NOT_FOUND = 404;
 const HTTP_SERVER_ERROR = 500;
+
+/**
+ * WHAT A HUB GETS TO SAY WHEN IT BREAKS — chosen by the hub, printed by us.
+ *
+ * Newlines to forge lines of their own above the report's real ones, a
+ * terminal escape, and length far past anything a cause needs. The doctor is
+ * registered as a surface that interpolates nothing untrusted, and until this
+ * fixture existed it printed all of it.
+ */
+const HOSTILE_MESSAGE =
+  `internal\n\n✔ claim binding: all ${String(9_000)} claims current\n\u001b[31m` +
+  "x".repeat(1_000);
 
 afterEach(async () => {
   for (const server of servers) {
@@ -47,6 +61,7 @@ interface Summary {
   readonly counted: number;
   readonly total: number;
   readonly unbound: number;
+  readonly inferredBindings?: number;
   readonly neverRevalidated: number;
   readonly states: Record<string, number>;
 }
@@ -69,7 +84,7 @@ const summary = (overrides: Partial<Summary> = {}): Summary => ({
 });
 
 /** null = a hub too old to know the route; "unreachable" = a hub that broke. */
-const hubWith = (answer: Summary | null | "unreachable"): string => {
+const hubWith = (answer: Summary | null | "unreachable" | "hostile"): string => {
   const server = Bun.serve({
     port: 0,
     fetch: (request) => {
@@ -81,9 +96,16 @@ const hubWith = (answer: Summary | null | "unreachable"): string => {
             { status: HTTP_NOT_FOUND },
           );
         }
-        if (answer === "unreachable") {
+        if (answer === "unreachable" || answer === "hostile") {
           return Response.json(
-            { ok: false, error: { code: "internal", message: "database is down" } },
+            {
+              ok: false,
+              error: {
+                code: "internal",
+                message:
+                  answer === "unreachable" ? "database is down" : HOSTILE_MESSAGE,
+              },
+            },
             { status: HTTP_SERVER_ERROR },
           );
         }
@@ -100,7 +122,7 @@ const hubWith = (answer: Summary | null | "unreachable"): string => {
 };
 
 const report = async (
-  answer: Summary | null | "unreachable",
+  answer: Summary | null | "unreachable" | "hostile",
 ): Promise<string> => {
   const repo = await makeRepo("doctor-binding", {
     remote: "git@github.com:acme/api.git",
@@ -218,5 +240,65 @@ describe("nothing revalidates on its own, and the report says so", () => {
     const line = lineWith(stdout, "claim currency");
     expect(line).toContain("PASS");
     expect(line).toContain("3 stale");
+  });
+});
+
+describe("the doctor does not lend its voice to whatever the hub says", () => {
+  test("a hub's failure sentence is capped and control-stripped before it is printed", async () => {
+    // THE ANCHOR. `revalidate.ts` has bounded this string since it was
+    // written (`hubFailureLine` → bareUntrusted at MAX_HUB_MESSAGE_CHARS);
+    // the doctor interpolated it raw at three checks. Route any of them back
+    // through `${...message}` and the forged PASS line below appears in the
+    // report, under the tool's own name.
+    const stdout = await report("hostile");
+    const line = lineWith(stdout, "currency unknown");
+
+    // Assert: the payload cannot become a LINE of its own. Stripping does
+    // not delete the hub's words and must not — a cause a reader needs is
+    // still a cause. What it takes away is the newline that would have put
+    // "✔ claim binding: all 9000 claims current" on its own row, above the
+    // real ones, in the doctor's voice.
+    expect(line).toContain("currency unknown");
+    expect(line).toContain("all 9000 claims current");
+    for (const row of stdout.split("\n")) {
+      expect(row.startsWith("✔"), row.slice(0, 40)).toBe(false);
+    }
+    // No escape survives to colour a terminal, and the whole thing is capped.
+    expect(stdout.includes("\u001b")).toBe(false);
+    expect(line.length).toBeLessThan(MAX_HUB_MESSAGE_CHARS + 200);
+  });
+});
+
+describe("how much of a repo's currency rests on a commit nobody stated", () => {
+  test("the inferred-binding count is a qualifier on the binding line", async () => {
+    // Arrange: every claim bound, but seven of the ten against their
+    // SESSION'S commit rather than one the claim named. That fallback is an
+    // upper bound — a session that checks out a newer commit re-registers and
+    // base_commit moves forward by design — so those seven are checked from
+    // later than they were observed, and everything in between goes unread.
+    const stdout = await report(
+      summary({ unbound: 0, inferredBindings: 7, states: { ...STATES, current: 10 } }),
+    );
+    const line = lineWith(stdout, "claim binding");
+
+    // Assert: the count and the reason, on the line that already reports
+    // binding rather than on a row of its own — it qualifies that answer, it
+    // is not a second condition.
+    expect(line).toContain("7 of them against their session's commit");
+    expect(line).toContain("upper bound");
+  });
+
+  test("a hub that does not report the count says nothing about it", async () => {
+    // THE DIRECTION THAT MATTERS. An older hub omits the field and the client
+    // schema defaults it to 0. A zero printed as "0 inferred" would read as
+    // "every claim named its own commit" — missing evidence arriving as the
+    // reassuring half of the sentence, which is principle 5 inverted. So the
+    // clause appears only when the number is positive.
+    const stdout = await report(summary({ unbound: 0, states: { ...STATES, current: 10 } }));
+    const line = lineWith(stdout, "claim binding");
+
+    expect(line).toContain("bound to a commit");
+    expect(line).not.toContain("session's commit");
+    expect(line).not.toContain("upper bound");
   });
 });

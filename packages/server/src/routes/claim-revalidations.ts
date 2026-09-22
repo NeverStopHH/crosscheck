@@ -85,6 +85,7 @@ export const claimRevalidationsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     return ok(c, {
       recorded: outcome.recorded,
       refusedDowngrades: outcome.refusedDowngrades,
+      refusedUnbound: outcome.refusedUnbound,
       pruned: outcome.pruned,
       validities: Object.fromEntries(outcome.validities),
     });

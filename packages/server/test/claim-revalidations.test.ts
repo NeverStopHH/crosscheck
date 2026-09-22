@@ -11,9 +11,12 @@
  * teammates' prompts. Legal directions still work; one direction does not.
  */
 import { describe, expect, test } from "bun:test";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+
+import { NO_COMMIT_SHA } from "@crosscheck/schema";
 
 import { CLAIM_REVALIDATION_RETENTION_DAYS } from "../src/constants.ts";
+import { claimRevalidations } from "../src/db/schema.ts";
 import {
   loadClaimValidities,
   summariseClaimValidity,
@@ -697,5 +700,54 @@ describe("the claim-validity summary", () => {
 
     // Assert
     expect(response.status).toBe(400);
+  });
+});
+
+describe("§8.5: a claim that can never be revalidated stores no reading", () => {
+  test("the hub refuses the row instead of filing one nothing may read", async () => {
+    // Arrange: a claim whose session reported the placeholder sha — a
+    // repository with no commits, or a `crosscheck conference` run. The
+    // binding lands as `none`, and §8.5 says that claim is permanently
+    // pointer-only: there is no commit for anything to be unchanged SINCE.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(harness, developer, {
+      records: [
+        recordEnvelope("work_context", validWorkContextBody()),
+        recordEnvelope(
+          "claim",
+          validClaimBody({ id: "clm_none", observedAtCommit: NO_COMMIT_SHA }),
+        ),
+      ],
+    });
+
+    // Act
+    const response = await harness.app.request(
+      "/api/claim-revalidations",
+      jsonRequest("POST", developer.apiKey, {
+        repo: REPO,
+        entries: [entry("unchanged", { claimId: "clm_none" })],
+        revalidated: 1,
+        total: 1,
+      }),
+    );
+    const body = (await response.json()) as {
+      data: { recorded: number; refusedUnbound: number };
+    };
+
+    // Assert: refused, counted, and no row behind it. The count is the half
+    // that matters — a caller whose reading was silently dropped cannot tell
+    // that from success, which is the same defect `refusedDowngrades` exists
+    // to close one rung up.
+    expect(response.status).toBe(200);
+    expect(body.data.recorded).toBe(0);
+    expect(body.data.refusedUnbound).toBe(1);
+    const stored = await harness.db
+      .select({ claimId: claimRevalidations.claimId })
+      .from(claimRevalidations)
+      .where(eq(claimRevalidations.claimId, "clm_none"));
+    expect(stored).toEqual([]);
+
+    // And the claim still reads exactly as it did: pointer-only, not current.
+    expect(await readState(harness, "clm_none")).not.toBe("current");
   });
 });

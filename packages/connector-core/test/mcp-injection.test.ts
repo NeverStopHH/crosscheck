@@ -324,6 +324,21 @@ const REFEREE_CAP_LINE = /^\(the hub capped .+\)$/;
  * safeId — so the shape can be pinned character for character, which is what
  * proves no payload reaches it.
  */
+/**
+ * THE TWO QUALIFIERS, as optional groups rather than as new alternatives.
+ *
+ * Both weaken a reading and both are renderer-owned words, and they COMPOSE:
+ * a `current` claim can be bound to its session's commit AND measured by its
+ * own author, so listing them as alternatives would need four shapes where
+ * two suffice — and the one nobody wrote out is the one that escapes the
+ * allowlist. Each is still pinned to its exact wording, so a renderer that
+ * invents a third qualifier is a red build here, which is what this list is
+ * for.
+ */
+const OBSERVED_AT =
+  "recorded at [\\w.:-]+(, its session's commit rather than a stated one)?";
+const BY_AUTHOR = "(, by its own author)?";
+
 const REFEREE_VALIDITY_LINE = new RegExp(
   "^Position [AB] is (current|no longer current|currency unknown): (" +
     [
@@ -335,10 +350,10 @@ const REFEREE_VALIDITY_LINE = new RegExp(
       // because the reading is taken on whatever copy of the default branch
       // this clone holds and nothing on that path fetches. Both shapes are
       // listed: the ref is null when it could not be resolved at all.
-      "recorded at [\\w.:-]+; unchanged up to [\\w.:-]+, the default branch as this clone has it",
-      "recorded at [\\w.:-]+; unchanged as far as the default branch this clone holds",
-      "recorded at [\\w.:-]+; whether those files changed since is unknown",
-      "recorded at [\\w.:-]+; commits have touched these files since" +
+      `${OBSERVED_AT}; unchanged up to [\\w.:-]+, the default branch as this clone has it${BY_AUTHOR}`,
+      `${OBSERVED_AT}; unchanged as far as the default branch this clone holds${BY_AUTHOR}`,
+      `${OBSERVED_AT}; whether those files changed since is unknown`,
+      `${OBSERVED_AT}; commits have touched these files since` +
         "( — [\\w.:-]+(, [\\w.:-]+)*( and (\\d+ )?more)?)?",
     ].join("|") +
     ")\u2026?$",

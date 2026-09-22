@@ -179,7 +179,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     name: "cli-doctor",
     delivery: "pulled",
     module: "src/cli/doctor.ts",
-    note: "formatAge only — renderer-built ages, no untrusted interpolation; the capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text",
+    note: "formatAge on renderer-built ages, and `hubSaid` (bareUntrusted at MAX_HUB_MESSAGE_CHARS) on the one thing this command does not write itself: the hub's own failure sentence, printed by the coverage, claim-currency and hub-reachable checks. That note used to read 'no untrusted interpolation', which was true of every sentence the command WRITES and false of the three it PASSES THROUGH. The capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text",
   },
   {
     kind: "composite",

@@ -366,7 +366,29 @@ const validityDetail = (validity: ClaimValidity): string => {
   if (observed.length === 0) {
     return "recorded against no commit, so it cannot be checked against the code";
   }
-  const at = `recorded at ${observed}`;
+  // WHICH COMMIT THIS IS, and the difference is not cosmetic.
+  //
+  // `reported` is the commit the agent NAMED as the one it was looking at.
+  // `session_base` is a fallback: the hub read the session's base commit at
+  // the moment the claim arrived, because the claim named none. Those are
+  // different facts and the sentence said the same thing for both.
+  //
+  // THE FALLBACK IS AN UPPER BOUND, never a lower one. A session that checks
+  // out a newer commit mid-session re-registers, and `sessions.ts` overwrites
+  // base_commit by design ("checkouts are normal"). A claim observed at X and
+  // filed after that checkout is bound to Y > X, so the drift walk runs
+  // `Y..<default>` and every commit in `X..Y` — the ones most likely to have
+  // moved the code the claim is about — is outside the window. The claim then
+  // reads `current` on a measurement that never looked where it mattered.
+  //
+  // The hub cannot know when the observation happened, so it cannot fix the
+  // binding; what it must not do is let the two read alike. Naming the
+  // fallback is the weakening principle 5 asks for — missing evidence may
+  // weaken a conclusion, and this conclusion rests on a commit nobody stated.
+  const at =
+    validity.commitBinding === "session_base"
+      ? `recorded at ${observed}, its session's commit rather than a stated one`
+      : `recorded at ${observed}`;
   if (validity.state === "stale") {
     return `${at}; ${touchingFragment(validity)}`;
   }

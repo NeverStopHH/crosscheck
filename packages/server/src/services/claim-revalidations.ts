@@ -52,6 +52,18 @@ export interface ClaimRevalidationOutcome {
    * that silently drops writes is indistinguishable from one that is broken.
    */
   readonly refusedDowngrades: number;
+  /**
+   * Readings refused because the claim can never be revalidated (§8.5).
+   *
+   * A claim whose `commit_binding` is `none` has no commit to measure FROM,
+   * so "unchanged since" has no since. The hub stored such rows anyway, and
+   * the only thing keeping that inert was `resolveState` testing the binding
+   * ABOVE the rows — a row nobody reads, one refactor away from a row
+   * somebody does. Counted rather than silent, for the same reason
+   * `refusedDowngrades` is: a caller whose reading was dropped otherwise
+   * cannot tell that from success.
+   */
+  readonly refusedUnbound: number;
   /** Rows deleted for age on this pass. */
   readonly pruned: number;
   /**
@@ -146,6 +158,29 @@ const ownClaimIds = async (
   return new Set(rows.map((row) => row.id));
 };
 
+/**
+ * Claims that can never carry a revalidation, by §8.5.
+ *
+ * `commit_binding = 'none'` means no `observed_at_commit` — the schema
+ * enforces the two move together — so there is no anchor for a drift walk to
+ * start at and no honest reading to store. The claim is permanently
+ * pointer-only; that is a documented refusal, not a temporary gap.
+ */
+const unboundClaimIds = async (
+  db: DbExecutor,
+  claimIds: readonly string[],
+): Promise<ReadonlySet<string>> => {
+  const unique = [...new Set(claimIds)];
+  if (unique.length === 0) {
+    return new Set();
+  }
+  const rows = await db
+    .select({ id: claims.id })
+    .from(claims)
+    .where(and(inArray(claims.id, unique), eq(claims.commitBinding, "none")));
+  return new Set(rows.map((row) => row.id));
+};
+
 export const ingestClaimRevalidations = async (
   deps: Deps,
   developerId: string,
@@ -164,9 +199,22 @@ export const ingestClaimRevalidations = async (
       developerId,
       report.entries.map((entry) => entry.claimId),
     );
+    const unbound = await unboundClaimIds(
+      tx,
+      report.entries.map((entry) => entry.claimId),
+    );
     let recorded = 0;
     let refusedDowngrades = 0;
+    let refusedUnbound = 0;
     for (const entry of report.entries) {
+      // §8.5 BEFORE THE WRITE, not above the read. A claim with no commit
+      // binding has nothing to be unchanged SINCE, so there is no reading to
+      // store — and storing one puts a row in the table whose only defence is
+      // that the one current reader happens to check the binding first.
+      if (unbound.has(entry.claimId)) {
+        refusedUnbound += 1;
+        continue;
+      }
 
       const written = await tx
         .insert(claimRevalidations)
@@ -280,6 +328,7 @@ export const ingestClaimRevalidations = async (
     return {
       recorded,
       refusedDowngrades,
+      refusedUnbound,
       pruned: pruned.length,
       // Read back INSIDE the same transaction: a validity derived from a
       // second connection could reflect a write this one has not committed.

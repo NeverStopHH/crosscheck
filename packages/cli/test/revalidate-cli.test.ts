@@ -338,6 +338,8 @@ describe("the walk's own budget", () => {
       contextsWalked: 25,
       walkWasCut: false,
       claimsRevalidated: 9,
+      claimsUnbound: 0,
+      claimsRefusedDowngrade: 0,
       groupsCut: 0,
       contextsUnwalked: 22,
       states: { current: 9 },
@@ -354,6 +356,8 @@ describe("the walk's own budget", () => {
       contextsWalked: 3,
       walkWasCut: false,
       claimsRevalidated: 9,
+      claimsUnbound: 0,
+      claimsRefusedDowngrade: 0,
       groupsCut: 0,
       contextsUnwalked: 0,
       states: { current: 9 },
@@ -372,4 +376,45 @@ describe("the walk's own budget", () => {
   // sentence appears when the count is non-zero and stays away when it is
   // not. Closing the rest needs a slow-walk fixture this file does not have,
   // and a test that pretended otherwise would be worse than the gap.
+});
+
+describe("a refusal the hub made is a refusal this run prints", () => {
+  test("the two refusals are named separately, and only when they happened", () => {
+    // BOTH WITHHOLD A RESULT AND THEY SEND A READER SOMEWHERE DIFFERENT — the
+    // rule `render-intent-chain.ts` states for its own pair. A claim with no
+    // commit binding can never be revalidated (§8.5), so re-running is
+    // pointless and the remedy is to publish claims bound to a commit; a
+    // refused downgrade means the hub holds a measured change that outranks
+    // this reading, and the claim really is stale.
+    const both = renderRevalidation({
+      contextsMeasured: 2,
+      contextsWalked: 2,
+      walkWasCut: false,
+      claimsRevalidated: 9,
+      claimsUnbound: 4,
+      claimsRefusedDowngrade: 2,
+      groupsCut: 0,
+      contextsUnwalked: 0,
+      states: { current: 7 },
+    });
+    expect(both).toContain("4 readings were not stored");
+    expect(both).toContain("carry no commit binding");
+    expect(both).toContain("2 readings were refused");
+    expect(both).toContain("already holds a measured change");
+
+    // The control: a line that prints on every run is a line nobody reads.
+    const neither = renderRevalidation({
+      contextsMeasured: 2,
+      contextsWalked: 2,
+      walkWasCut: false,
+      claimsRevalidated: 9,
+      claimsUnbound: 0,
+      claimsRefusedDowngrade: 0,
+      groupsCut: 0,
+      contextsUnwalked: 0,
+      states: { current: 9 },
+    });
+    expect(neither).not.toContain("were not stored");
+    expect(neither).not.toContain("were refused");
+  });
 });

@@ -2107,6 +2107,11 @@ export const getTeamSettings = (
 export const ClaimRevalidationOutcomeSchema = z.looseObject({
   recorded: z.number().int().min(0).default(0),
   refusedDowngrades: z.number().int().min(0).default(0),
+  // Entries the hub would not store because the claim can never be
+  // revalidated (§8.5: no commit binding, so no commit to be unchanged
+  // since). Defaulted like its neighbour, so a hub too old to count them
+  // reads as zero rather than as a parse failure.
+  refusedUnbound: z.number().int().min(0).default(0),
   pruned: z.number().int().min(0).default(0),
   validities: z.record(z.string(), ClaimValiditySchema).default({}),
 });
@@ -2155,6 +2160,16 @@ export const ClaimValiditySummarySchema = z.looseObject({
   counted: z.number().int().min(0).default(0),
   total: z.number().int().min(0).default(0),
   unbound: z.number().int().min(0).default(0),
+  /**
+   * Claims bound to their SESSION'S commit rather than one the claim stated.
+   *
+   * Defaulted to 0 like its neighbours, and for the sharper reason: a hub too
+   * old to count them answers the same as a hub where every claim names its
+   * own commit. The zero therefore means "not reported", and doctor prints
+   * the clause only when the number is positive — an absent count must not
+   * become the reassuring half of the sentence.
+   */
+  inferredBindings: z.number().int().min(0).default(0),
   neverRevalidated: z.number().int().min(0).default(0),
   /**
    * CCB-10's observability half. Absent from a hub too old to count it, which

@@ -672,6 +672,27 @@ export { MAX_CLAIM_TOUCHING_COMMITS } from "@crosscheck/schema";
 export const MAX_CLAIM_SURFACE_PATHS = 30;
 
 /**
+ * Most declared paths one claim's surface resolution will LOOK AT — as opposed
+ * to keep.
+ *
+ * THE CAP ABOVE BOUNDS THE ANSWER, NOT THE WORK. `resolveDeclaredSurface`
+ * stops when KEPT reaches `MAX_CLAIM_SURFACE_PATHS`, so a list whose entries
+ * are all dropped is walked end to end, and every entry outside the repo costs
+ * a `realpath` before it can be dropped. The three tools that take
+ * `affectedPaths` are MCP tools: the time comes out of the calling agent's own
+ * turn, and no surface says where it went.
+ *
+ * WHY A MULTIPLE AND NOT THE CAP ITSELF. An author who declares thirty real
+ * paths alongside a few that policy denies must still get thirty back, so the
+ * budget has to sit above the keep cap by enough room for ordinary attrition.
+ * Four times is the room; past it, the list stops being a declaration.
+ *
+ * VERIFY: bun -e 'const {resolveDeclaredSurface}=await import("./packages/connector-core/src/flows/claim-surface.ts");const r=process.cwd();const mk=(n)=>Array.from({length:n},(_,i)=>`../outside-${i}/x.ts`);const t=async(n)=>{const a=performance.now();await resolveDeclaredSurface({repoRoot:r,cwd:r,paths:mk(n)});return Math.round(performance.now()-a)};console.log(await t(120) < 100, await t(50000) < 100)'
+ * PRINTS: true true
+ */
+export const MAX_CLAIM_SURFACE_CANDIDATES = MAX_CLAIM_SURFACE_PATHS * 4;
+
+/**
  * Most DISTINCT (commit, path-set) groups one `get_diagnosis` pull
  * revalidates. Newest-commit-first before the cut, and the cut is REPORTED as
  * `revalidated / total` — a bound must not be spent at random and must not
@@ -725,13 +746,36 @@ export const REVALIDATE_WALK_BUDGET_MS = 30_000;
  * The validity clause on a PULLED surface — "no longer current: recorded at
  * abc1234; 3 commits have touched these files since — def5678, 9a1b2c3".
  *
- * 160, matching the coverage note's own bound so the two qualifiers that can
- * land on one row are budgeted the same. It is NOT MAX_HUB_MESSAGE_CHARS:
- * that constant's own comment scopes it to a string the HUB chose as a tool
- * prints it back, and this clause is renderer-built from enum values, small
- * integers and hex.
+ * It is NOT MAX_HUB_MESSAGE_CHARS: that constant's own comment scopes it to a
+ * string the HUB chose as a tool prints it back, and this clause is
+ * renderer-built from enum values, small integers and hex.
+ *
+ * RAISED FROM 160, which the longest `current` sentence hit EXACTLY — 160 of
+ * 160, fitting by one character. The bound is spent on the opener first, by
+ * design, so what a `current` sentence loses at the end is its qualifiers:
+ * ", by its own author" (who measured it) and "its session's commit rather
+ * than a stated one" (what the commit is). Both exist because a reader
+ * otherwise cannot tell a weaker `current` from a stronger one, and both
+ * would have been cut by the next word anyone added. A qualifier that
+ * silently falls off leaves the SHORTER, more confident sentence standing,
+ * which is the one direction this project refuses to fail in.
+ *
+ * 200 leaves the worst case 40 characters of room. `stale` still truncates —
+ * its commit list is unbounded in principle and the reader loses only later
+ * shas, each of which the row itself still carries.
+ *
+ * NOT A VERIFY BLOCK, deliberately: 200 is a decision with headroom, not a
+ * derived count, and the invariant it protects is not a number anyone can
+ * print. The guard is `test/claim-validity-render.test.ts`, "the longest
+ * current sentence keeps its qualifiers" — it builds the worst case and
+ * asserts nothing was cut, so lowering this constant below what that sentence
+ * needs is a red build rather than a silently shorter line.
+ *
+ * (A runnable VERIFY here would also have to name mcp/render.ts in a comment,
+ * which §4.4's meta-test reads as this module reaching the render layer —
+ * correctly, since it cannot tell a command from an import.)
  */
-export const MAX_CLAIM_VALIDITY_LINE_CHARS = 160;
+export const MAX_CLAIM_VALIDITY_LINE_CHARS = 200;
 
 /**
  * The state WORD alone, which is all an UNSOLICITED surface gets.

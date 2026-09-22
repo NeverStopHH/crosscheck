@@ -440,6 +440,23 @@ export interface ClaimValiditySummary {
    */
   readonly claimsWithRefusedWalkBacks: number;
   readonly refusedWalkBacks: number;
+  /**
+   * Bound to a commit NOBODY STATED — the hub's fallback to the session's
+   * base commit, because the claim named no observation point.
+   *
+   * SEPARATE FROM `unbound` BECAUSE IT IS NOT A REFUSAL BUT A WEAKER YES. The
+   * fallback is an UPPER bound on where the observation happened: a session
+   * that checks out a newer commit mid-session re-registers and its
+   * base_commit moves forward by design, so a claim observed at X and filed
+   * after the checkout is bound to Y > X. Every drift walk then starts at Y
+   * and the range X..Y is never looked at — which makes the claim read
+   * fresher than the evidence supports, in the one direction that exonerates.
+   *
+   * Counted so doctor can say how much of a repo's currency rests on a commit
+   * nobody stated. Nothing here can repair a binding; the remedy is on the
+   * publishing side, where an agent names the commit it read.
+   */
+  readonly inferredBindings: number;
   /** Bound, but nobody has ever measured them against the code (§8.9). */
   readonly neverRevalidated: number;
   /** How many claims read as each state. */
@@ -482,12 +499,16 @@ export const summariseClaimValidity = async (
   );
   const states = emptyStates();
   let unbound = 0;
+  let inferredBindings = 0;
   let neverRevalidated = 0;
   for (const validity of validities.values()) {
     states[validity.state] += 1;
     if (validity.commitBinding === "none") {
       unbound += 1;
       continue;
+    }
+    if (validity.commitBinding === "session_base") {
+      inferredBindings += 1;
     }
     // A claim with a binding and no reading. Counted apart from `unbound`
     // because the two have OPPOSITE remedies: one is waiting for somebody to
@@ -515,6 +536,7 @@ export const summariseClaimValidity = async (
     counted: validities.size,
     total,
     unbound,
+    inferredBindings,
     neverRevalidated,
     claimsWithRefusedWalkBacks: refusals[0]?.claims ?? 0,
     refusedWalkBacks: refusals[0]?.attempts ?? 0,

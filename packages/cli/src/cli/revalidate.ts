@@ -113,6 +113,20 @@ export interface RevalidationRun {
    * before these". A bound spent in silence is a coverage claim nobody made.
    */
   readonly contextsUnwalked: number;
+  /**
+   * Readings the hub refused as UNSTORABLE — the claim has no commit binding,
+   * so §8.5 says it can never be revalidated at all.
+   *
+   * Distinct from a refused downgrade, and kept distinct for the reason
+   * `render-intent-chain.ts` states for its own two refusals: both withhold a
+   * result, and they send a reader to different remedies. A downgrade was
+   * refused because the hub already holds a stronger measurement; this one
+   * because the claim was published without a commit to measure from, which
+   * no amount of re-running fixes.
+   */
+  readonly claimsUnbound: number;
+  /** Readings the hub refused because a stored `changed` outranks them. */
+  readonly claimsRefusedDowngrade: number;
   /** How many claims now read as each state, as the hub derived them. */
   readonly states: Readonly<Record<string, number>>;
 }
@@ -146,6 +160,16 @@ export const renderRevalidation = (run: RevalidationRun): string => {
       `${String(run.groupsCut)} commit/file groups were past this run's git budget and stay as they were`,
     );
   }
+  if (run.claimsUnbound > 0) {
+    lines.push(
+      `${String(run.claimsUnbound)} readings were not stored: those claims carry no commit binding, so there is nothing for them to be unchanged since — they stay pointer-only whatever this run measures`,
+    );
+  }
+  if (run.claimsRefusedDowngrade > 0) {
+    lines.push(
+      `${String(run.claimsRefusedDowngrade)} readings were refused: the hub already holds a measured change for those claims, and a downgrade is never undone by a later 'unchanged'`,
+    );
+  }
   if (run.contextsUnwalked > 0) {
     lines.push(
       `${String(run.contextsUnwalked)} work contexts were past this run's time budget and were not measured — run it again to reach them`,
@@ -157,6 +181,8 @@ export const renderRevalidation = (run: RevalidationRun): string => {
 interface Progress {
   contextsMeasured: number;
   claimsRevalidated: number;
+  claimsUnbound: number;
+  claimsRefusedDowngrade: number;
   groupsCut: number;
   readonly states: Record<string, number>;
 }
@@ -198,6 +224,13 @@ const revalidateOne = async (
   }
   progress.contextsMeasured += 1;
   progress.claimsRevalidated += readings.entries.length;
+  // THE HUB'S OWN REFUSAL COUNTS, carried to the one surface that can explain
+  // them while the reader is still looking. `claimsRevalidated` stays what
+  // this clone SENT — the hub reports no RETURNING row for a byte-identical
+  // re-report, so its `recorded` would read 0 on a second unchanged run and
+  // print "nothing was measured" over a run that measured everything.
+  progress.claimsUnbound += reported.data.refusedUnbound;
+  progress.claimsRefusedDowngrade += reported.data.refusedDowngrades;
   // The states are the HUB'S verdicts on the rows it just wrote, not a second
   // opinion derived here: a refused downgrade comes back `stale`, which is
   // the truth about the claim rather than the truth about the request.
@@ -250,6 +283,8 @@ export const runRevalidate = async (
   const progress: Progress = {
     contextsMeasured: 0,
     claimsRevalidated: 0,
+    claimsUnbound: 0,
+    claimsRefusedDowngrade: 0,
     groupsCut: 0,
     states: {},
   };
@@ -294,6 +329,8 @@ export const runRevalidate = async (
       contextsWalked: contexts.data.length,
       walkWasCut: contexts.data.length >= CLAIM_REVALIDATE_MAX_CONTEXTS,
       claimsRevalidated: progress.claimsRevalidated,
+      claimsUnbound: progress.claimsUnbound,
+      claimsRefusedDowngrade: progress.claimsRefusedDowngrade,
       groupsCut: progress.groupsCut,
       contextsUnwalked: unwalked,
       states: progress.states,
