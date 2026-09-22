@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 338
+    # PRINTS: 340
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -128,7 +128,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/conference.ts 10
     # PRINTS: packages/cli/src/cli/doctor.ts 17
     # PRINTS: packages/cli/src/cli/pin-render.ts 1
-    # PRINTS: packages/cli/src/cli/revalidate.ts 1
+    # PRINTS: packages/cli/src/cli/revalidate.ts 2
     # PRINTS: packages/connector-acp/src/capture/engine.ts 11
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
     # PRINTS: packages/connector-acp/src/doctor.ts 1
@@ -174,7 +174,7 @@ jobs:
     # PRINTS: flows/briefing.ts 1
     # PRINTS: flows/capture-targets.ts 1
     # PRINTS: flows/capture-touched-files.ts 1
-    # PRINTS: flows/claim-revalidation.ts 1
+    # PRINTS: flows/claim-revalidation.ts 2
     # PRINTS: flows/hint.ts 2
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/claim-drift.ts 4
@@ -260,7 +260,7 @@ jobs:
     # PRINTS: capture-targets.ts 1
     # PRINTS: capture-touched-files.ts 1
     # PRINTS: claim-drift.ts 4
-    # PRINTS: claim-revalidation.ts 2
+    # PRINTS: claim-revalidation.ts 3
     # PRINTS: claim-revalidations.ts 4
     # PRINTS: claim-validity.ts 6
     # PRINTS: client.ts 1
@@ -322,7 +322,7 @@ jobs:
     # PRINTS: render-referee.ts 3
     # PRINTS: render.ts 28
     # PRINTS: report.ts 2
-    # PRINTS: revalidate.ts 1
+    # PRINTS: revalidate.ts 2
     # PRINTS: review-draft.ts 1
     # PRINTS: runner.ts 7
     # PRINTS: sanitize.ts 10

@@ -29,6 +29,7 @@
  */
 import {
   CLAIM_REVALIDATE_MAX_CONTEXTS,
+  REVALIDATE_WALK_BUDGET_MS,
   EXIT_FAIL,
   EXIT_OK,
   EXIT_UNREACHABLE,
@@ -104,6 +105,14 @@ export interface RevalidationRun {
   readonly claimsRevalidated: number;
   /** (commit, path-set) groups a per-tree bound could not reach. */
   readonly groupsCut: number;
+  /**
+   * Work contexts the WALK's own time budget never reached.
+   *
+   * Separate from `walkWasCut`, which is about the 25-context listing bound:
+   * that one says "there are older trees", this one says "I ran out of time
+   * before these". A bound spent in silence is a coverage claim nobody made.
+   */
+  readonly contextsUnwalked: number;
   /** How many claims now read as each state, as the hub derived them. */
   readonly states: Readonly<Record<string, number>>;
 }
@@ -135,6 +144,11 @@ export const renderRevalidation = (run: RevalidationRun): string => {
   if (run.groupsCut > 0) {
     lines.push(
       `${String(run.groupsCut)} commit/file groups were past this run's git budget and stay as they were`,
+    );
+  }
+  if (run.contextsUnwalked > 0) {
+    lines.push(
+      `${String(run.contextsUnwalked)} work contexts were past this run's time budget and were not measured — run it again to reach them`,
     );
   }
   return `${lines.join("\n")}\n`;
@@ -239,7 +253,32 @@ export const runRevalidate = async (
     groupsCut: 0,
     states: {},
   };
-  for (const context of contexts.data) {
+  // A WALK-WIDE DEADLINE, because §6 budgets ONE leg and this spends up to
+  // CLAIM_REVALIDATE_MAX_CONTEXTS of them. The published per-leg bound is 24
+  // git processes at a 250 ms deadline; nothing bounded the walk that repeats
+  // it. Arithmetic ceiling from the code's own constants: 2 + 25 x 16 = 402
+  // git processes at 250 ms = 100.5 s, plus 51 hub round trips. Measured on a
+  // warm local 5 000-commit repo, git alone was about 11 s over three runs.
+  //
+  // CHECKED BETWEEN TREES, NEVER INSIDE ONE. A half-measured tree would
+  // report a partial reading as a whole one, and a partial reading that says
+  // `unchanged` is exactly the shape principle 5 forbids. So a tree either
+  // completes or is not walked at all, and the ones left are counted and
+  // printed rather than dropped.
+  const deadline = Date.now() + REVALIDATE_WALK_BUDGET_MS;
+  let unwalked = 0;
+  for (const [index, context] of contexts.data.entries()) {
+    if (Date.now() >= deadline) {
+      unwalked = contexts.data.length - index;
+      break;
+    }
+    // ONE LINE PER TREE, on stderr so it never enters the structured block a
+    // caller parses — the `login` command already reports this way. The whole
+    // output used to arrive only after the loop, which made a 100-second walk
+    // indistinguishable from a wedged one.
+    process.stderr.write(
+      `revalidating ${String(index + 1)}/${String(contexts.data.length)}\n`,
+    );
     await revalidateOne(
       ctx,
       identity.root,
@@ -256,6 +295,7 @@ export const runRevalidate = async (
       walkWasCut: contexts.data.length >= CLAIM_REVALIDATE_MAX_CONTEXTS,
       claimsRevalidated: progress.claimsRevalidated,
       groupsCut: progress.groupsCut,
+      contextsUnwalked: unwalked,
       states: progress.states,
     }),
     exitCode: EXIT_OK,

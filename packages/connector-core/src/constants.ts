@@ -702,6 +702,26 @@ export const CLAIM_REVALIDATION_MAX_GIT_CALLS = 24;
 export const CLAIM_REVALIDATE_MAX_CONTEXTS = 25;
 
 /**
+ * How long the whole `crosscheck revalidate` walk may spend before it stops
+ * and says how many trees it did not reach.
+ *
+ * §6 budgets ONE revalidation leg — CLAIM_REVALIDATION_MAX_GIT_CALLS
+ * processes at STALENESS_GIT_TIMEOUT_MS each — and CCB-8 measures exactly
+ * that. The WALK repeats that leg up to CLAIM_REVALIDATE_MAX_CONTEXTS times
+ * and nothing bounded it: the arithmetic ceiling from this file's own
+ * constants is 2 + 25 x 16 = 402 git processes at 250 ms, a hundred seconds,
+ * plus 51 hub round trips. Measured on a warm local 5 000-commit repo, the
+ * git half alone was about 11 seconds across three runs.
+ *
+ * THIRTY SECONDS IS A TYPED COMMAND'S PATIENCE, not a measurement. It is what
+ * a person will wait at a terminal before assuming the thing is stuck, and
+ * the walk now prints a line per tree so they never have to guess. Raising it
+ * is a decision about that patience; lowering it costs trees per run, and the
+ * output names how many.
+ */
+export const REVALIDATE_WALK_BUDGET_MS = 30_000;
+
+/**
  * The validity clause on a PULLED surface — "no longer current: recorded at
  * abc1234; 3 commits have touched these files since — def5678, 9a1b2c3".
  *

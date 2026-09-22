@@ -23,6 +23,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 
 import { runCli } from "../src/cli/index.ts";
+import { renderRevalidation } from "../src/cli/revalidate.ts";
 import {
   git,
   makeHome,
@@ -325,4 +326,50 @@ describe("a repo nobody pulls a diagnosis from can be revalidated by hand", () =
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout).toContain("repo");
   });
+});
+
+describe("the walk's own budget", () => {
+  test("trees the time budget did not reach are counted and printed", () => {
+    // A bound spent in silence is a coverage claim nobody made. This is
+    // separate from `walkWasCut`, which says "there are older trees"; this
+    // one says "I ran out of time before these", and the remedy differs.
+    const text = renderRevalidation({
+      contextsMeasured: 3,
+      contextsWalked: 25,
+      walkWasCut: false,
+      claimsRevalidated: 9,
+      groupsCut: 0,
+      contextsUnwalked: 22,
+      states: { current: 9 },
+    });
+
+    expect(text).toContain("22 work contexts were past this run's time budget");
+    expect(text).toContain("run it again to reach them");
+  });
+
+  test("a walk that finished says nothing about a budget", () => {
+    // The control: a line that printed on every run is a line nobody reads.
+    const text = renderRevalidation({
+      contextsMeasured: 3,
+      contextsWalked: 3,
+      walkWasCut: false,
+      claimsRevalidated: 9,
+      groupsCut: 0,
+      contextsUnwalked: 0,
+      states: { current: 9 },
+    });
+
+    expect(text).not.toContain("time budget");
+  });
+
+  // WHAT IS NOT GUARDED HERE, said out loud rather than implied by a green
+  // file. This harness stubs the hub, so a 25-tree walk finishes in
+  // milliseconds: REVALIDATE_WALK_BUDGET_MS is never reached, `unwalked`
+  // is always 0, and neither the deadline's firing nor the wiring that
+  // carries its count into the report is exercised. Proven rather than
+  // assumed — mutating `contextsUnwalked: unwalked` to a literal 0 leaves
+  // this file green. What these two cases DO guard is the renderer: the
+  // sentence appears when the count is non-zero and stays away when it is
+  // not. Closing the rest needs a slow-walk fixture this file does not have,
+  // and a test that pretended otherwise would be worse than the gap.
 });

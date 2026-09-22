@@ -192,11 +192,49 @@ const makeBusyRepo = async (groupCount: number): Promise<BusyRepo> => {
       observedAtCommit: commit,
       paths: [SURFACE],
       basis: "context_targets" as const,
-      claimIds: [`clm_${String(index)}`],
+      // THE FIRST GROUP CARRIES MANY CLAIMS, and that is the whole point of
+      // the count. This fixture gave every group exactly one claim, so "one
+      // process per CLAIM" and "one process per GROUP" were numerically
+      // identical in it — and the regression this file's header names
+      // ("a leg that spent one process per CLAIM instead of one per GROUP is
+      // invisible on a two-claim fixture and ruinous on a real one") could
+      // not make the assertion fail. Measured: moving `checkClaimDrift`
+      // inside the per-claim loop left the test at 3 pass / 0 fail.
+      //
+      // One fat group is also the COMMON shape, not an exotic one: claims
+      // written at one HEAD share an observation commit, so they land in one
+      // group, and MAX_CLAIM_REVALIDATION_ENTRIES = 500 is sized for exactly
+      // that.
+      claimIds:
+        index === 0
+          ? Array.from(
+              { length: CLAIMS_IN_THE_FAT_GROUP },
+              (_unused, claimIndex) => `clm_${String(index)}_${String(claimIndex)}`,
+            )
+          : [`clm_${String(index)}`],
       newestAt: index,
     })),
   };
 };
+
+/**
+ * How many claims the first group carries.
+ *
+ * Large enough that one-process-per-claim is unmistakable — it would cost
+ * 2 x 40 processes in that group alone, far past any bound — and small enough
+ * that the fixture stays a few seconds.
+ */
+const CLAIMS_IN_THE_FAT_GROUP = 40;
+
+/**
+ * The leg's OWN ceiling: one call to name the ref's commit, then at most two
+ * per group. `CLAIM_REVALIDATION_MAX_GIT_CALLS` is the budget the design
+ * publishes and it sits above this by construction, so asserting against it
+ * alone is an assertion that cannot fail. Both are asserted: the tight one
+ * catches the regression, the published one catches a design that outgrew its
+ * own budget.
+ */
+const LEG_CEILING = 1 + 2 * REVALIDATION_GROUPS_PER_PULL;
 
 /** Real git, real commits, a child process per case. */
 const CASE_TIMEOUT_MS = 120_000;
@@ -221,11 +259,23 @@ describe("the revalidation leg costs what the design says it costs", () => {
           `${report.elapsedMs.toFixed(0)} ms for ` +
           `${String(report.revalidated)}/${String(report.total)} groups\n`,
       );
+      // The TIGHT bound first: this is the one the regression moves. The
+      // published budget is asserted after it, and can only fail if the
+      // design itself outgrows what §6 promises.
+      expect(gitCalls.length).toBeLessThanOrEqual(LEG_CEILING);
       expect(gitCalls.length).toBeLessThanOrEqual(
         CLAIM_REVALIDATION_MAX_GIT_CALLS,
       );
       expect(report.refCommit).not.toBeNull();
-      expect(report.results).toHaveLength(groups.length);
+      // ONE RESULT PER CLAIM, not per group — which is the distinction this
+      // fixture exists to make and could not make while every group held one
+      // claim. The process count above stays at the group ceiling regardless.
+      const claimCount = groups.reduce(
+        (total, group) => total + group.claimIds.length,
+        0,
+      );
+      expect(claimCount).toBeGreaterThan(groups.length);
+      expect(report.results).toHaveLength(claimCount);
     },
     CASE_TIMEOUT_MS,
   );

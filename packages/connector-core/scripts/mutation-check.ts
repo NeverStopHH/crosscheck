@@ -5092,6 +5092,48 @@ export const MUTATIONS: readonly Mutation[] = [
       "DOWNGRADE permanent, so one request naming 500 claims empties a " +
       "team's substance lane with no reporter and no repo on any surface",
   },
+  {
+    // 1.0 spec 02 CCB-8. The named regression — one process per CLAIM rather
+    // than per GROUP — was invisible while every fixture group held exactly
+    // one claim.
+    label: "the revalidation leg spends a git process per claim",
+    file: `${CORE}/src/flows/claim-revalidation.ts`,
+    from:
+      "    const drift = await checkClaimDrift(\n" +
+      "      root,\n" +
+      "      refCommit,\n" +
+      "      group.observedAtCommit,\n" +
+      "      group.paths,\n" +
+      "    );\n" +
+      "    for (const claimId of group.claimIds) {",
+    to:
+      "    for (const claimId of group.claimIds) {\n" +
+      "      const drift = await checkClaimDrift(\n" +
+      "        root,\n" +
+      "        refCommit,\n" +
+      "        group.observedAtCommit,\n" +
+      "        group.paths,\n" +
+      "      );",
+    test: `${CORE}/test/claim-revalidation-budget.test.ts`,
+    because:
+      "a tree whose claims were written at one HEAD is one group holding all " +
+      "of them — the common shape MAX_CLAIM_REVALIDATION_ENTRIES is sized " +
+      "for — so one pull spends a process per claim: measured 12 -> 90 calls " +
+      "and 199 -> 1064 ms on the widened fixture",
+  },
+  {
+    // 1.0 spec 02 §6. The per-leg bound is published and measured; the walk
+    // that repeats it up to 25 times had no bound at all.
+    label: "the walk's time cut is spent in silence",
+    file: `${CLI}/src/cli/revalidate.ts`,
+    from: "  if (run.contextsUnwalked > 0) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/revalidate-cli.test.ts`,
+    because:
+      "a bound spent in silence is a coverage claim nobody made: the reader " +
+      "is told how many trees were measured and never that the rest were " +
+      "skipped for time, so a partial walk reads as a complete one",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5151,6 +5193,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 2
+ * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
@@ -5197,6 +5240,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 4
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 3
+ * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
  * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
