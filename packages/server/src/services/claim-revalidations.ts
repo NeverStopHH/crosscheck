@@ -98,15 +98,36 @@ export const unknownClaimIds = async (
   // A as authority over a claim in repo B, from a developer holding no clone
   // of B at all.
   //
-  // §3.7's trust argument is "any member may report, because the check is
-  // reproducible from any clone" — and that assumes the reporter is reporting
-  // about the repo they cloned. Nothing enforced it.
+  // WHAT THIS JOIN DOES AND DOES NOT DO — corrected after an independent
+  // refuter measured it, because the first version of this comment claimed
+  // more than the code delivers.
   //
-  // The downgrade-only rule then makes it one-way. It bounds a forged UPGRADE
-  // and leaves a forged DOWNGRADE permanent: no honest `unchanged` can undo
-  // one, so a single request naming up to MAX_CLAIM_REVALIDATION_ENTRIES
-  // claims empties a team's substance lane, and doctor reports it as an
-  // ordinary `N stale` count with no reporter and no repo beside it.
+  // It scopes the CLAIM to the named repo. It does NOT scope the CALLER:
+  // `repo` arrives in the request body and `developerAuth` resolves a bearer
+  // key to a developer row with no repo dimension at all. So a member whose
+  // only sessions are in repo X can name repo Y, pass Y's claim ids, and
+  // permanently demote them. Measured: change the one repo string in this
+  // module's own stranger test from the attacker's repo to the victim's and
+  // the request returns 200, the row reads `changed`, and the owner's honest
+  // `unchanged` afterwards is refused. What the join really prevents is an
+  // ACCIDENTAL cross-repo report — a real bug, and a smaller one.
+  //
+  // THE CALLER CANNOT BE SCOPED WITHOUT BREAKING A DOCUMENTED PATH. §3.7 says
+  // `crosscheck revalidate` "runs from a terminal with no session, and minting
+  // one is the phantom teammate of Q9", so requiring the reporter to hold a
+  // session in that repo would refuse the command this route exists for.
+  //
+  // AND §3.7'S TRUST ARGUMENT NO LONGER HOLDS AS WRITTEN. It permits any
+  // member to report because "the next honest report repairs it, the row being
+  // an UPSERT of a current reading rather than an accumulation". The
+  // downgrade-only rule removed exactly that property: a forged `changed`
+  // cannot be undone by any honest `unchanged`, so the repair the trust model
+  // rests on does not exist. The two are incompatible and the choice between
+  // them is a trust decision, not an implementation one — it is written up for
+  // Nick in the spec rather than settled here. What this module does in the
+  // meantime is store `reported_by` on every row and count refused walk-backs
+  // where doctor can print them, so a permanent downgrade is at least
+  // attributable and visible.
   const rows = await db
     .select({ id: claims.id })
     .from(claims)

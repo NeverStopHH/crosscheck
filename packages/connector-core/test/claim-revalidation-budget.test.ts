@@ -191,6 +191,7 @@ const makeBusyRepo = async (groupCount: number): Promise<BusyRepo> => {
     groups: observed.slice(0, groupCount).map((commit, index) => ({
       observedAtCommit: commit,
       paths: [SURFACE],
+      droppedPaths: 0,
       basis: "context_targets" as const,
       // THE FIRST GROUP CARRIES MANY CLAIMS, and that is the whole point of
       // the count. This fixture gave every group exactly one claim, so "one

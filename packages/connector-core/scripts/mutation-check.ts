@@ -6900,6 +6900,13 @@ export const MUTATIONS: readonly Mutation[] = [
       "      refCommit,\n" +
       "      group.observedAtCommit,\n" +
       "      group.paths,\n" +
+      // MOVED WITH THE CODE: the call now carries the caller's own cut, so
+      // the guard can refuse an `unchanged` over a narrowed surface. What the
+      // mutation proves is unchanged — one git process per CLAIM, not per
+      // group.
+      "      // THE CUT TRAVELS WITH THE GROUP. Without it the git leg sees a whole\n" +
+      "      // surface and answers `unchanged` for files it never listed.\n" +
+      "      group.droppedPaths,\n" +
       "    );\n" +
       "    for (const claimId of group.claimIds) {",
     to:
@@ -6909,6 +6916,7 @@ export const MUTATIONS: readonly Mutation[] = [
       "        refCommit,\n" +
       "        group.observedAtCommit,\n" +
       "        group.paths,\n" +
+      "        group.droppedPaths,\n" +
       "      );",
     test: `${CORE}/test/claim-revalidation-budget.test.ts`,
     because:
@@ -7034,6 +7042,21 @@ export const MUTATIONS: readonly Mutation[] = [
       "like one where every claim states its own, and the two have different " +
       "remedies",
   },
+  {
+    // FOUND BY AN INDEPENDENT REFUTER. The guard it replaces compared a cut
+    // this function makes itself, while the real cut happens in the caller.
+    label: "a surface cut before the check vouches for files nobody looked at",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "      safePaths.length === paths.length && droppedBeforeCall === 0;",
+    to: "      safePaths.length === paths.length;",
+    test: `${CORE}/test/claim-drift.test.ts`,
+    because:
+      "`planClaimRevalidation` slices a work context's file targets to 30 " +
+      "BEFORE calling, so the old comparison was always true and the guard " +
+      "never fired — a tree with 40 targets whose 40th file was rewritten " +
+      "answered `unchanged`, was UPSERTed as `current`, and reached a " +
+      "teammate's unsolicited surface saying the files had not changed",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7148,7 +7171,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 4
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
- * PRINTS: packages/connector-core/test/claim-drift.test.ts 3
+ * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
  * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
  * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
