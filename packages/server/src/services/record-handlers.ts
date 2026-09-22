@@ -427,7 +427,15 @@ export const ingestWorkContext = async (
       });
       await tx
         .update(workContexts)
-        .set({ intent: appended.wire })
+        // THE HEAD PROJECTION, on this path too. The update path was fixed to
+        // store `headWire` and this one still stored the whole wire record —
+        // the same §8.6 leak on the path that runs when `set_intent` beats the
+        // spool, which is the ORDINARY case for a session that declares its
+        // intent before its first flush. `work_contexts.intent` is projected
+        // whole to presence, search, suspect, hints and ghost-overlap, so the
+        // amendment reason and the declared scope travelled every unsolicited
+        // surface from here while the other path was clean.
+        .set({ intent: appended.headWire })
         .where(eq(workContexts.id, body.id));
     }
     await refreshNormalizedDoc(tx, body.id);

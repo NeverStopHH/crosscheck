@@ -759,3 +759,61 @@ describe("the 20th amendment is the last one", () => {
     expect(issues[0]).toContain(String(MAX_INTENT_CHAIN_VERSIONS));
   });
 });
+
+describe("§8.6 — the head is a projection on EVERY path that writes it", () => {
+  test("a context BORN carrying an intent stores the projection, not the wire", async () => {
+    // THE PATH THE FIRST FIX MISSED. `set_intent` posts directly over HTTP
+    // while the work-context create travels via the SPOOL, so a session that
+    // declares its intent before its first flush reaches the hub with the
+    // intent ALREADY ON the creating record. That is the ordinary case, not
+    // an edge one — and `record-handlers.ts` had two writers of
+    // `work_contexts.intent`: the update path, fixed, and this one, which
+    // still stored the whole wire.
+    //
+    // `work_contexts.intent` is projected WHOLE — not `->> 'summary'` — into
+    // presence, search, suspect, hints and ghost-overlap, so the amendment
+    // reason and the declared scope rode every unsolicited surface from here
+    // while the other path was clean.
+    const { harness, developer } = await createHarnessWithSession();
+
+    // Act: ONE record, which both creates the context and carries the intent.
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          intent: declared("Rewrite the matcher.", {
+            reason: "A credential lives in this sentence.",
+            expectedSurface: [
+              { kind: "file", value: "packages/server/src/services/matcher.ts" },
+            ],
+            nonGoals: [
+              { kind: "file", value: "packages/server/src/services/legacy.ts" },
+            ],
+          }),
+        }),
+      ),
+    );
+
+    // Assert: the ledger keeps everything, the head keeps six fields.
+    const chain = await chainOf(harness);
+    expect(chain.length).toBe(1);
+    const head = await headOf(harness);
+    expect(head).toEqual(headProjectionOf(chain[0]?.wire));
+
+    // Said explicitly, because "equals the projection" is only as strong as
+    // the projection: the three fields §8.6 keeps off the unsolicited path
+    // are absent from the head by name.
+    expect(Object.keys(head ?? {}).sort()).toEqual([
+      "amendsVersion",
+      "capturedAt",
+      "confidence",
+      "provenance",
+      "seq",
+      "summary",
+    ]);
+    expect(JSON.stringify(head)).not.toContain("A credential lives");
+    expect(JSON.stringify(head)).not.toContain("matcher.ts");
+  });
+});

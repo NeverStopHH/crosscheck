@@ -153,6 +153,29 @@ const storedIntent = async (developer: Developer): Promise<Record<string, unknow
   return body.data.workContext.intent;
 };
 
+/**
+ * THE LEDGER, which is where the checkable half actually lives.
+ *
+ * `storedIntent` above reads the HEAD, and §8.6 keeps the head to six fields
+ * precisely so the amendment reason and the declared scope never ride the
+ * unsolicited surfaces that project it whole (presence, search, suspect,
+ * hints, ghost-overlap). Asserting those fields on the head therefore asserts
+ * a leak. The chain is the pulled surface they belong to, and a reader who
+ * asks for a diagnosis is the reader §8.6 allows them to reach.
+ */
+const storedChain = async (
+  developer: Developer,
+): Promise<readonly Record<string, unknown>[]> => {
+  const response = await fetch(
+    `${hubUrl}/api/work-contexts/${developer.workContextId}/diagnosis`,
+    { headers: { Authorization: `Bearer ${developer.apiKey}` } },
+  );
+  const body = (await response.json()) as {
+    data: { intentChain?: readonly Record<string, unknown>[] };
+  };
+  return body.data.intentChain ?? [];
+};
+
 beforeAll(async () => {
   db = await createDb();
   server = Bun.serve({ port: 0, fetch: createServer({ db, adminToken: ADMIN_TOKEN }).fetch });
@@ -433,15 +456,31 @@ describe("the checkable half reaches the wire", () => {
     });
     expect(amended.isError).toBe(false);
 
+    // THE LEDGER CARRIES THEM, and that is the whole contract: the reason and
+    // both scope lists reached the hub and are readable by somebody who asked
+    // for a diagnosis.
+    const chain = await storedChain(alice);
+    const head = chain[0];
+    expect(head?.["reason"]).toBe("The fixture hid the gap.");
+    expect(head?.["scope"]).toEqual([
+      { role: "expected", kind: "file", value: "packages/a.ts" },
+      { role: "expected", kind: "file", value: "packages/fixture.ts" },
+      { role: "non_goal", kind: "file", value: "packages/b.ts" },
+    ]);
+
+    // AND THE HEAD DOES NOT — §8.6, checked here rather than assumed. This
+    // assertion used to read the other way round, and it passed only because
+    // `record-handlers.ts` had two writers of `work_contexts.intent` and the
+    // one that runs when `set_intent` beats the spool stored the whole wire.
+    // A test that reads the reason off the head is a test that requires the
+    // leak, so it would have kept the defect alive through any later fix.
     const intent = await storedIntent(alice);
-    expect(intent?.["reason"]).toBe("The fixture hid the gap.");
-    expect(intent?.["expectedSurface"]).toEqual([
-      { kind: "file", value: "packages/a.ts" },
-      { kind: "file", value: "packages/fixture.ts" },
-    ]);
-    expect(intent?.["nonGoals"]).toEqual([
-      { kind: "file", value: "packages/b.ts" },
-    ]);
+    expect(intent?.["summary"]).toBe(
+      "Rewrite the provider matcher and its fixture",
+    );
+    expect(intent?.["reason"]).toBeUndefined();
+    expect(intent?.["expectedSurface"]).toBeUndefined();
+    expect(intent?.["nonGoals"]).toBeUndefined();
   });
 
   test("an unscoped call still lands, unchanged", async () => {

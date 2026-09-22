@@ -6233,6 +6233,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "which is principle 3 answered by omission on the surface where it " +
       "costs most",
   },
+  {
+    // 1.0 spec 06 §8.6, second half. The update path was fixed to store the
+    // head projection and this one still stored the whole wire — the path
+    // that runs when `set_intent` beats the spool, which is ordinary.
+    label: "a context born carrying an intent stores the whole wire as its head",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        .set({ intent: appended.headWire })",
+    to: "        .set({ intent: appended.wire })",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "`work_contexts.intent` is projected WHOLE into presence, search, " +
+      "suspect, hints and ghost-overlap, so the amendment reason and the " +
+      "declared scope ride every unsolicited surface §8.6 exists to keep clean",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6405,7 +6419,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 6
- * PRINTS: packages/server/test/intent-ledger-write.test.ts 9
+ * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1
