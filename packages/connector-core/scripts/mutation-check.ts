@@ -2529,8 +2529,14 @@ export const MUTATIONS: readonly Mutation[] = [
     // a secret-like sentence, so this gate is the declared path's half.
     label: "a declared intent skips the secret scan",
     file: `${CORE}/src/mcp/tools/set-intent.ts`,
-    from: "  if (containsSecret(parsed.value.summary)) {\n    return toolFailure(INTENT_SECRET_REFUSAL);\n  }\n",
-    to: "",
+    // MOVED WITH THE CODE, not deleted. The gate used to screen the summary
+    // alone; spec 06 gave `set_intent` a reason and two scope lists, and the
+    // gate grew to cover all four in one `.some(...)`. The anchor follows the
+    // predicate rather than the old line, so what it proves is unchanged: an
+    // intent reaches every teammate's unsolicited surface, and a credential in
+    // one must never leave the machine that typed it.
+    from: "    ].some((text) => containsSecret(text))",
+    to: "    ].some(() => false)",
     test: `${CORE}/test/set-intent.test.ts`,
     because:
       "credential-shaped text reaches every teammate's context through the " +
@@ -4666,7 +4672,11 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // Cost, not correctness — but the cost lands on a keystroke path.
     label: "the secret scan goes quadratic on a near-miss body",
-    file: `${CORE}/src/capture/secret-scan.ts`,
+    // THE SCANNER MOVED TO @crosscheck/schema so the hub and the connector
+    // screen by ONE definition (spec 06: the hub had no screen at all on the
+    // intent path). `capture/secret-scan.ts` is now a one-line re-export, so
+    // the anchor points at the one place the pattern exists.
+    file: "packages/schema/src/secret-scan.ts",
     from: "  /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{5,}/,",
     to: "  /eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{5,}/,",
     test: `${CORE}/test/secret-scan.test.ts`,

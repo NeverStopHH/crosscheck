@@ -157,7 +157,6 @@ jobs:
     # PRINTS: briefing/render.ts 8
     # PRINTS: briefing/sanitize.ts 10
     # PRINTS: capture/records.ts 1
-    # PRINTS: capture/secret-scan.ts 1
     # PRINTS: capture/touched-root.ts 5
     # PRINTS: conference/report.ts 1
     # PRINTS: config/config.ts 3
@@ -230,6 +229,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/payload.ts 1
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/pin.ts 1
+    # PRINTS: packages/schema/src/secret-scan.ts 1
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/db/bootstrap.sql 1
