@@ -331,7 +331,12 @@ const REFEREE_VALIDITY_LINE = new RegExp(
       "a revision replaced it",
       "its author rejected it",
       "recorded against no commit, so it cannot be checked against the code",
-      "recorded at [\\w.:-]+; those files have not changed since",
+      // The `current` clause names the ref state it was measured against,
+      // because the reading is taken on whatever copy of the default branch
+      // this clone holds and nothing on that path fetches. Both shapes are
+      // listed: the ref is null when it could not be resolved at all.
+      "recorded at [\\w.:-]+; unchanged up to [\\w.:-]+, the default branch as this clone has it",
+      "recorded at [\\w.:-]+; unchanged as far as the default branch this clone holds",
       "recorded at [\\w.:-]+; whether those files changed since is unknown",
       "recorded at [\\w.:-]+; commits have touched these files since" +
         "( — [\\w.:-]+(, [\\w.:-]+)*( and (\\d+ )?more)?)?",

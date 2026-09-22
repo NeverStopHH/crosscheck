@@ -127,6 +127,39 @@ export const ClaimRevalidationReportSchema = z
           path: ["entries", index, "touchingCommits"],
         });
       }
+      // AND THE MIRROR, which the first draft left out. CCB-3's own text says
+      // the test fails if a downgrade "says `changed` naming nothing", because
+      // individual commit identity is the whole of AT-2 — the downgrade has to
+      // name the commits that caused it.
+      //
+      // Leaving it out is worse than a mislabel, because of the rule this spec
+      // is proudest of: once `changed` is stored, the downgrade-only `setWhere`
+      // refuses every honest `unchanged` FOREVER. An evidence-free downgrade
+      // therefore removes a claim from the unsolicited substance lane
+      // permanently, and the only way back is to author a new claim.
+      //
+      // It sits inside the spec's own stated threat model. This route is
+      // developerAuth, and §3.3 says that key "sits in plaintext in
+      // ~/.crosscheck/config.json" where "any agent on the machine can read"
+      // it. The whole downgrade-only rule was built around that adversary and
+      // the opposite direction was left open: one POST per claim is a silent
+      // denial-of-substance primitive against a teammate's whole knowledge
+      // base.
+      //
+      // The rendered sentence was dishonest too. With no names the renderer
+      // falls back to "commits have touched these files since" — asserting
+      // commits while naming none, and in the measured case while the report's
+      // own total said zero.
+      if (entry.result === "changed" && entry.touchingCommits.length === 0) {
+        ctx.issues.push({
+          code: "custom",
+          message:
+            "a changed result must name at least one commit — a downgrade " +
+            "that names nothing cannot be checked and cannot be undone",
+          input: entry.touchingCommits,
+          path: ["entries", index, "touchingCommits"],
+        });
+      }
     }
   });
 
@@ -148,6 +181,32 @@ export const ClaimValiditySchema = z.looseObject({
   basis: ClaimRevalidationBasisSchema.nullable(),
   touchingCommits: z.array(commitSha).max(MAX_CLAIM_TOUCHING_COMMITS).default([]),
   touchingTotal: z.number().int().min(0).nullable().default(null),
+  /**
+   * THE REF STATE THE READING WAS TAKEN AGAINST, and it has to travel because
+   * the sentence built from it would otherwise claim more than was measured.
+   *
+   * `unchanged` is measured as `<observedAt>..<default ref>` against the
+   * remote-tracking ref THIS CLONE HAPPENS TO HOLD. Nothing fetches on the
+   * revalidation path and no local signal can date that ref: a freshly cloned
+   * repository has neither a reflog for it nor a FETCH_HEAD, so "how stale is
+   * this copy" is a question with no honest local answer. Inventing one would
+   * be exactly the manufactured evidence principle 5 forbids.
+   *
+   * What CAN be stated is what was actually compared. The row has carried this
+   * column since the feature landed and no surface rendered it, so a reader
+   * was told "those files have not changed since" while a teammate's rewrite
+   * from this morning sat in a commit the clone had never fetched.
+   *
+   * Null on a reading whose ref could not be resolved at all.
+   *
+   * SHA-SHAPED ON THE WIRE, not free text, and the injection corpus is why.
+   * Its own note says the validity record's only free-text slot is the claim
+   * id — "every other field is an enum, a hex-shaped sha or a small integer,
+   * so the claim-id slot is where an attacker would aim". An unbounded string
+   * here would have opened a second slot the corpus does not plant in, which
+   * is how a corpus goes blind without ever failing.
+   */
+  refCommit: commitSha.nullable().default(null),
   lastRevalidatedAt: z.string().nullable(),
   supersededByClaimId: z.string().nullable(),
 });

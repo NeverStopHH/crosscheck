@@ -166,6 +166,47 @@ describe("claim revalidations", () => {
     expect(second.recorded).toBe(1);
   });
 
+  test("a downgrade that names no commit is refused at the wire", async () => {
+    // CCB-3's own failure condition: a downgrade "says `changed` naming
+    // nothing". The wire guarded only the opposite direction — a non-changed
+    // result carrying commits — so half the invariant was written down and
+    // half was not.
+    //
+    // The downgrade-only rule is what makes it permanent rather than a
+    // mislabel: once `changed` is stored, `setWhere` refuses every honest
+    // `unchanged` forever, so one evidence-free POST removes a claim from the
+    // unsolicited substance lane for good. The route is developerAuth and the
+    // key sits in plaintext in ~/.crosscheck/config.json — the adversary the
+    // downgrade-only rule was built around, arriving from the other side.
+    const { harness, developer } = await seed();
+
+    const response = await harness.app.request(
+      "/api/claim-revalidations",
+      jsonRequest("POST", developer.apiKey, {
+        repo: REPO,
+        entries: [
+          { ...entry("changed"), touchingCommits: [], touchingTotal: 0 },
+        ],
+        revalidated: 1,
+        total: 1,
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    // Nothing stored, so the honest reporter is not locked out.
+    expect(await readRow(harness)).toBeUndefined();
+  });
+
+  test("a downgrade that names a commit is accepted", async () => {
+    // The control. A rule that refused every `changed` would pass the case
+    // above while breaking the feature it guards.
+    const { harness, developer } = await seed();
+    const outcome = await report(harness, developer, [entry("changed")]);
+
+    expect(outcome.recorded).toBe(1);
+    expect((await readRow(harness))?.result).toBe("changed");
+  });
+
   test("a reading that carries no downgrade is pruned past retention", async () => {
     // Arrange: "we looked and nothing had moved" is exactly the kind of
     // evidence that should expire — it asserts nothing about the code today.

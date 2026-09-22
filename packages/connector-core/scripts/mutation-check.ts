@@ -5037,6 +5037,34 @@ export const MUTATIONS: readonly Mutation[] = [
       "`unknown` to `current` on evidence that was never gathered, and keeps " +
       "the unsolicited substance lane about a file that was rewritten",
   },
+  {
+    // 1.0 spec 02 CCB-3's mirror. The wire guarded only the direction a
+    // non-changed result naming commits; the reverse left an evidence-free
+    // downgrade permanent, because the downgrade-only rule refuses every
+    // honest `unchanged` after it.
+    label: "a downgrade naming no commit is accepted and cannot be undone",
+    file: `${SCHEMA}/src/claim-revalidation.ts`,
+    from: 'if (entry.result === "changed" && entry.touchingCommits.length === 0) {',
+    to: "if (false) {",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "one POST per claim permanently demotes a teammate's whole knowledge " +
+      "base out of the substance lane, under a sentence asserting commits it " +
+      "never names and that its own total says do not exist",
+  },
+  {
+    // 1.0 spec 02 CCB-5. `unchanged` is measured against whatever copy of the
+    // default branch this clone holds, and nothing on that path fetches.
+    label: "the currency sentence claims more than the reading measured",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "      ? `${at}; unchanged as far as the default branch this clone holds`\n      : `${at}; unchanged up to ${against}, the default branch as this clone has it`;",
+    to: "      ? `${at}; those files have not changed since`\n      : `${at}; those files have not changed since`;",
+    test: `${CORE}/test/claim-revalidation-pull.test.ts`,
+    because:
+      "a developer who has not fetched for a month measures an empty range " +
+      "against a month-old ref, the reading is UPSERTed into the shared hub, " +
+      "and every teammate is then told a rewritten file has not changed",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5142,7 +5170,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 4
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 3
- * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 1
+ * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
  * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
@@ -5189,7 +5217,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
- * PRINTS: packages/server/test/claim-revalidations.test.ts 4
+ * PRINTS: packages/server/test/claim-revalidations.test.ts 5
  * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/developer-emails.test.ts 2

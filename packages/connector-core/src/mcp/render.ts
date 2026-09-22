@@ -371,7 +371,27 @@ const validityDetail = (validity: ClaimValidity): string => {
     return `${at}; ${touchingFragment(validity)}`;
   }
   if (validity.state === "current") {
-    return `${at}; those files have not changed since`;
+    // THE SENTENCE NAMES WHAT WAS MEASURED, not what is true of the world.
+    //
+    // "those files have not changed since" asserts a fact about the default
+    // branch. The measurement is `<observedAt>..<default ref>` against the
+    // remote-tracking ref THIS CLONE HAPPENS TO HOLD, and nothing on the
+    // revalidation path fetches. A developer who has not fetched for a month —
+    // or a CI run on a cached checkout — measures against a month-old ref,
+    // finds an empty range, and the reading is UPSERTed into the shared hub as
+    // the answer every teammate then sees.
+    //
+    // No local signal can date that ref. A freshly cloned repository has
+    // neither a reflog for it nor a FETCH_HEAD, so "how stale is this copy"
+    // has no honest local answer, and manufacturing one would be the invented
+    // evidence principle 5 forbids. What CAN be stated is the ref state the
+    // reading was taken against — the row has carried it since the feature
+    // landed and no surface rendered it.
+    const against =
+      validity.refCommit === null ? "" : safeId(validity.refCommit);
+    return against.length === 0
+      ? `${at}; unchanged as far as the default branch this clone holds`
+      : `${at}; unchanged up to ${against}, the default branch as this clone has it`;
   }
   return `${at}; whether those files changed since is unknown`;
 };

@@ -92,6 +92,12 @@ export interface ClaimRevalidationReading {
   readonly basis: ClaimRevalidationBasis;
   readonly touchingCommits: readonly string[];
   readonly touchingTotal: number | null;
+  /**
+   * The ref state the reading was taken against. Stored since the feature
+   * landed and shipped by nothing, so the sentence built from the reading
+   * claimed more than the reading supported — see ClaimValiditySchema.
+   */
+  readonly refCommit: string | null;
   readonly revalidatedAt: Date;
 }
 
@@ -153,6 +159,7 @@ export const claimValidity = (
     observedAtCommit: claim.observedAtCommit,
     commitBinding: claim.commitBinding,
     basis: revalidation?.basis ?? null,
+    refCommit: revalidation?.refCommit ?? null,
     touchingCommits: [...(revalidation?.touchingCommits ?? [])],
     touchingTotal: revalidation?.touchingTotal ?? null,
     lastRevalidatedAt: revalidation?.revalidatedAt.toISOString() ?? null,
@@ -229,6 +236,7 @@ export const loadRevalidations = async (
         basis: row.basis,
         touchingCommits: row.touchingCommits,
         touchingTotal: row.touchingTotal,
+        refCommit: row.refCommit,
         revalidatedAt: row.revalidatedAt,
       },
     ]),

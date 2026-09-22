@@ -369,7 +369,12 @@ describe("a pull asks whether the code under its claims moved", () => {
 
     // Assert
     expect(text).toContain("current");
-    expect(text).toContain("those files have not changed since");
+    // The sentence names WHAT WAS MEASURED. It used to read "those files
+    // have not changed since" — a claim about the default branch, from a
+    // reading taken against whatever copy of it this clone holds, on a path
+    // that never fetches.
+    expect(text).toContain("unchanged up to");
+    expect(text).toContain("the default branch as this clone has it");
     expect(text).not.toContain("no longer current");
   }, CASE_TIMEOUT_MS);
 
@@ -486,7 +491,7 @@ describe("a pull that cannot measure says so, and vouches for nothing", () => {
     expect(text).toContain("no fetched default branch");
     expect(text).toContain("none of the 1 claim group was checked");
     expect(text).toContain("currency unknown");
-    expect(text).not.toContain("those files have not changed since");
+    expect(text).not.toContain("unchanged up to");
   }, CASE_TIMEOUT_MS);
 
   test("a tree recorded in another repository", async () => {

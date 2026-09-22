@@ -88,6 +88,8 @@ const hintClaimWith = (payload: string): HintClaimCandidate => ({
     observedAtCommit: payload,
     commitBinding: "session_base",
     basis: "context_targets",
+    // Sha-shaped by schema, so this is NOT a slot the payload can ride.
+    refCommit: "a1b2c3d",
     touchingCommits: [],
     touchingTotal: 1,
     lastRevalidatedAt: ISO,
