@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { ClaimValiditySchema } from "@crosscheck/schema";
+import type { ClaimRevalidationEntry } from "@crosscheck/schema";
+import type { ClaimValidity } from "@crosscheck/schema";
 import {
   MAX_PIN_SWEEP_UPDATES,
   PIN_PRESENCE_TERMINAL,
@@ -507,6 +510,20 @@ export const SolvedMatchEntrySchema = z.looseObject({
    * render because DESIGN.md §4's rule is about what reaches the reader.
    */
   rootCauseConfidence: z.number().min(0).max(1).nullable().optional(),
+  /**
+   * How much the claim `rootCause` quotes is still worth about the CODE
+   * (1.0 spec 02 §5, the `briefing solved` row of its table).
+   *
+   * THE SECOND UNSOLICITED SURFACE THAT ASSERTS A CLAIM BODY. `claim-hint` is
+   * the first, and it was gated; this row was not, so a root cause recorded
+   * against a file rewritten since was still handed to a reader at
+   * SessionStart as the answer — AT-2's subject exactly, one surface over.
+   *
+   * OPTIONAL and nullable for `validity`'s reason one field over: absence
+   * means "the hub did not answer", never "unknown". An older hub omits it
+   * and the line renders as it always did.
+   */
+  rootCauseValidity: ClaimValiditySchema.nullable().optional(),
 });
 
 export type SolvedMatchEntry = z.infer<typeof SolvedMatchEntrySchema>;
@@ -719,6 +736,24 @@ export const DiagnosisClaimSchema = z.looseObject({
    * older hub does not send the field at all.
    */
   lastSeenAt: z.string().nullable().optional(),
+  /**
+   * How much this claim is still worth about the CODE (1.0 spec 02).
+   *
+   * OPTIONAL, and the absence means "the hub did not answer", not "unknown" —
+   * the distinction `targetsReported` exists for, one field over. A hub too
+   * old to know about validity omits it, and the renderer then prints no
+   * clause at all rather than a state nobody measured. Doctor counts the
+   * residue out loud (cli doctor.ts), because a hub that simply omits the
+   * field keeps every claim in the substance lane — which changes nothing a
+   * reader sees, since `unknown` is injectable anyway, but is worth saying.
+   */
+  validity: ClaimValiditySchema.optional(),
+  /**
+   * The files this claim's AUTHOR declared it is about, for the revalidation
+   * leg's `declared` basis. Empty or absent means the reader falls back to the
+   * work context's own file targets, which over-fires by construction.
+   */
+  affectedPaths: z.array(z.string().min(1)).optional(),
 });
 
 export type DiagnosisClaim = z.infer<typeof DiagnosisClaimSchema>;
@@ -769,6 +804,16 @@ export const DiagnosisTargetSchema = z.looseObject({
 export type DiagnosisTarget = z.infer<typeof DiagnosisTargetSchema>;
 
 export interface Diagnosis {
+  /**
+   * The repository this tree was recorded in — the owning session's repo.
+   *
+   * Carried for the revalidation leg (spec 02 §3.6): get_diagnosis reads ANY
+   * tree on the hub, and a checkout of another repository can only answer
+   * "unknown" about commits it never held, so the leg asks git nothing for a
+   * foreign tree. OPTIONAL: an older hub omits it, and the leg then asks git
+   * anyway — which costs a few `unknown` readings, never a wrong verdict.
+   */
+  readonly repo?: string | undefined;
   readonly workContext: DiagnosisWorkContext;
   readonly claims: readonly DiagnosisClaim[];
   readonly edges: readonly DiagnosisEdge[];
@@ -859,6 +904,7 @@ const DiagnosisEnvelopeSchema = z
     targets: z.array(z.unknown()).optional(),
     truncated: z.boolean().default(false),
     coverage: z.unknown().optional(),
+    repo: z.string().min(1).optional(),
   })
   .transform((value): Diagnosis => {
     const claims = parseRows(value.claims, DiagnosisClaimSchema);
@@ -866,6 +912,7 @@ const DiagnosisEnvelopeSchema = z
     const external = parseRows(value.externalClaims, ExternalClaimRefSchema);
     const targets = parseRows(value.targets ?? [], DiagnosisTargetSchema);
     return {
+      repo: value.repo,
       workContext: value.workContext,
       claims: claims.rows,
       edges: edges.rows,
@@ -1062,6 +1109,18 @@ export const HintClaimCandidateSchema = z.looseObject({
   authorDeveloperId: z.string().min(1),
   authorDeveloperName: z.string().min(1).optional(),
   body: z.string(),
+  /**
+   * How much this claim is still worth about the CODE (1.0 spec 02).
+   *
+   * OPTIONAL, and the absence means "the hub did not answer", not "unknown" —
+   * the distinction `targetsReported` exists for, one field over. A hub too
+   * old to know about validity omits it, and the renderer then prints no
+   * clause at all rather than a state nobody measured. Doctor counts the
+   * residue out loud (cli doctor.ts), because a hub that simply omits the
+   * field keeps every claim in the substance lane — which changes nothing a
+   * reader sees, since `unknown` is injectable anyway, but is worth saying.
+   */
+  validity: ClaimValiditySchema.optional(),
   createdAt: z.string().min(1),
 });
 
@@ -1474,6 +1533,8 @@ export interface RefereePosition {
   readonly ruledOut: readonly RefereeClaim[];
   readonly ruledOutTruncated: boolean;
   readonly supersededByClaimId: string | null;
+  /** The validity record, or null from a hub too old to send one. */
+  readonly validity: ClaimValidity | null;
   /** Rows of THIS position the client could not parse and dropped. */
   readonly droppedRows: number;
 }
@@ -1487,6 +1548,7 @@ const RefereePositionSchema = z
     ruledOut: z.array(z.unknown()).default([]),
     ruledOutTruncated: z.boolean().default(false),
     supersededByClaimId: z.string().nullable().optional(),
+    validity: ClaimValiditySchema.optional(),
   })
   .transform((value): RefereePosition => {
     const evidence = parseRows(value.evidence, RefereeClaimSchema);
@@ -1499,6 +1561,7 @@ const RefereePositionSchema = z
       ruledOut: ruledOut.rows,
       ruledOutTruncated: value.ruledOutTruncated,
       supersededByClaimId: value.supersededByClaimId ?? null,
+      validity: value.validity ?? null,
       droppedRows: evidence.dropped + ruledOut.dropped,
     };
   });
@@ -2202,4 +2265,103 @@ export const getTeamSettings = (
     method: "GET",
     path: `/api/team-settings${encodeRepo(repo)}`,
     schema: TeamSettingsSchema,
+  });
+
+/**
+ * What the hub answers a revalidation report with (1.0 spec 02 §3.3, §3.7).
+ *
+ * `validities` is the reason this is a POST WITH A BODY WORTH READING rather
+ * than a fire-and-forget: the hub derives each named claim's state from the
+ * write it just accepted, so the reader who triggered the check sees the
+ * downgrade on THIS pull. It also makes the downgrade-only rule visible — a
+ * refused `unchanged` comes back as `stale`, which is the truth about the
+ * claim rather than the truth about the request.
+ */
+export const ClaimRevalidationOutcomeSchema = z.looseObject({
+  recorded: z.number().int().min(0).default(0),
+  refusedDowngrades: z.number().int().min(0).default(0),
+  // Entries the hub would not store because the claim can never be
+  // revalidated (§8.5: no commit binding, so no commit to be unchanged
+  // since). Defaulted like its neighbour, so a hub too old to count them
+  // reads as zero rather than as a parse failure.
+  refusedUnbound: z.number().int().min(0).default(0),
+  pruned: z.number().int().min(0).default(0),
+  validities: z.record(z.string(), ClaimValiditySchema).default({}),
+});
+
+export type ClaimRevalidationOutcome = z.infer<
+  typeof ClaimRevalidationOutcomeSchema
+>;
+
+/**
+ * Reports one clone's reading. Never throws and never blocks a render: the
+ * caller treats a failure as "nothing was revalidated this pull", which reads
+ * `unknown` rather than `current` on every claim it could not measure.
+ */
+export const reportClaimRevalidations = (
+  ctx: HubContext,
+  repo: string,
+  readings: {
+    readonly entries: readonly ClaimRevalidationEntry[];
+    readonly revalidated: number;
+    readonly total: number;
+  },
+): Promise<HubResult<ClaimRevalidationOutcome>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/claim-revalidations",
+    schema: ClaimRevalidationOutcomeSchema,
+    body: {
+      repo,
+      entries: readings.entries,
+      revalidated: readings.revalidated,
+      total: readings.total,
+    },
+  });
+
+/**
+ * HOW MUCH OF A REPO'S KNOWLEDGE CAN BE JUDGED AT ALL — counts, for doctor's
+ * two refusals (1.0 spec 02 §8.5, §8.9).
+ *
+ * `looseObject` and defaults on every field, for `targetsReported`'s reason
+ * (see its comment above): a hub too old to answer this route 404s, which the
+ * caller tells apart from a hub that answered with zeros. What must NEVER
+ * happen is a missing field parsing as a confident zero, so every count
+ * defaults to 0 only after the route itself answered.
+ */
+export const ClaimValiditySummarySchema = z.looseObject({
+  counted: z.number().int().min(0).default(0),
+  total: z.number().int().min(0).default(0),
+  unbound: z.number().int().min(0).default(0),
+  /**
+   * Claims bound to their SESSION'S commit rather than one the claim stated.
+   *
+   * Defaulted to 0 like its neighbours, and for the sharper reason: a hub too
+   * old to count them answers the same as a hub where every claim names its
+   * own commit. The zero therefore means "not reported", and doctor prints
+   * the clause only when the number is positive — an absent count must not
+   * become the reassuring half of the sentence.
+   */
+  inferredBindings: z.number().int().min(0).default(0),
+  neverRevalidated: z.number().int().min(0).default(0),
+  /**
+   * CCB-10's observability half. Absent from a hub too old to count it, which
+   * is why both default to 0 rather than being required: a missing number is
+   * not evidence that the gate never fired.
+   */
+  claimsWithRefusedWalkBacks: z.number().int().min(0).default(0),
+  refusedWalkBacks: z.number().int().min(0).default(0),
+  states: z.record(z.string(), z.number().int().min(0)).default({}),
+});
+
+export type ClaimValiditySummary = z.infer<typeof ClaimValiditySummarySchema>;
+
+export const getClaimValiditySummary = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<ClaimValiditySummary>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/claim-revalidations/summary${encodeRepo(repo)}`,
+    schema: ClaimValiditySummarySchema,
   });

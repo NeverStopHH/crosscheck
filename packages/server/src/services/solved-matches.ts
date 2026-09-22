@@ -44,7 +44,9 @@ import {
   listSolvedRootCauses,
   solvedCandidateCondition,
 } from "./solved.ts";
+import { loadClaimValidities } from "./claim-validity.ts";
 import { notMutedCondition } from "./visibility.ts";
+import type { ClaimValidity } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -107,6 +109,19 @@ export interface SolvedMatchView {
    * finding and only this number tells the two apart on the line.
    */
   readonly rootCauseConfidence: number | null;
+  /**
+   * How much the claim `rootCause` quotes is still worth about the CODE
+   * (1.0 spec 02 §5). Null when there is no body to judge, and when the
+   * claim's row is gone.
+   *
+   * IT TRAVELS BECAUSE THE BODY DOES. The briefing asserts this cause unasked
+   * at SessionStart, which is the same lane `claim-hint` occupies — and that
+   * lane was gated on validity while this one was not, so a root cause
+   * recorded against a file rewritten since was handed to a reader as the
+   * answer. The connector decides what to do with it; the hub's job is to
+   * make the decision possible.
+   */
+  readonly rootCauseValidity: ClaimValidity | null;
 }
 
 /** Why a tree matched, strongest reason first — fingerprint ≻ file ≻ intent. */
@@ -409,6 +424,19 @@ const hydrateMatches = async (
 };
 
 /**
+ * The verdict for a body that is travelling, or null when there is no body.
+ *
+ * A missing map entry is null rather than a manufactured `unknown`: the hub
+ * derives states, it does not invent them, and a claim row that vanished
+ * between the two reads is a fact about this hub, not about the code.
+ */
+const validityOf = (
+  cause: { readonly claimId: string } | undefined,
+  validities: ReadonlyMap<string, ClaimValidity>,
+): ClaimValidity | null =>
+  cause === undefined ? null : (validities.get(cause.claimId) ?? null);
+
+/**
  * Assembles the wire rows for a set of winning context ids — hydration, the
  * solved dates, and the root-cause bodies for the ones allowed to carry one.
  * Shared by the briefing listing and the fingerprint probe so the two cannot
@@ -416,6 +444,7 @@ const hydrateMatches = async (
  */
 const toMatchViews = async (
   db: Db,
+  now: Date,
   winners: readonly (MatchStrength & { id: string })[],
   solvedInfo: ReadonlyMap<string, Date>,
 ): Promise<readonly SolvedMatchView[]> => {
@@ -433,6 +462,17 @@ const toMatchViews = async (
         .map((winner) => winner.id),
     ),
   ]);
+  // ONE batched derivation for every body that will travel, and only for
+  // those: a file-matched tree has no claim on the wire, so it gets no
+  // verdict about one either. `loadClaimValidities` is the same function
+  // every other reader calls — a second derivation here would be the two
+  // silent definitions spec 02 exists to prevent, arriving through the
+  // briefing.
+  const validities = await loadClaimValidities(
+    db,
+    now,
+    [...rootCauses.values()].map((cause) => cause.claimId),
+  );
   return winners.flatMap((winner) => {
     const row = display.get(winner.id);
     const solvedAt = solvedInfo.get(winner.id);
@@ -450,6 +490,7 @@ const toMatchViews = async (
         matchedTargetKind: matchKindOf(winner),
         rootCause: rootCauses.get(winner.id)?.body ?? null,
         rootCauseConfidence: rootCauses.get(winner.id)?.confidence ?? null,
+        rootCauseValidity: validityOf(rootCauses.get(winner.id), validities),
       },
     ];
   });
@@ -533,7 +574,7 @@ export const listSolvedByFingerprint = async (
     }))
     .sort((left, right) => right.solvedAtMs - left.solvedAtMs)
     .slice(0, SOLVED_MATCH_MAX_PROBE_FINDINGS);
-  return toMatchViews(deps.db, winners, solvedInfo);
+  return toMatchViews(deps.db, deps.now(), winners, solvedInfo);
 };
 
 /**
@@ -604,5 +645,5 @@ export const listSolvedMatches = async (
     )
     .slice(0, SOLVED_MATCH_MAX_FINDINGS);
 
-  return toMatchViews(deps.db, winners, solvedInfo);
+  return toMatchViews(deps.db, deps.now(), winners, solvedInfo);
 };

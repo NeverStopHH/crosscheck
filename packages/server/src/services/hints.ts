@@ -34,6 +34,7 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
+import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import { presenceCutoff } from "./presence.ts";
 import {
   exactTargetTokenConditions,
@@ -42,6 +43,7 @@ import {
 } from "./search.ts";
 import { DECLARED_PROVENANCE } from "./similarity-gate.ts";
 import { notMutedCondition, visiblePresenceCondition } from "./visibility.ts";
+import type { ClaimValidity } from "@crosscheck/schema";
 import type { SearchResultKind, SearchTier } from "./search.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
@@ -106,6 +108,16 @@ export interface HintClaimCandidate {
   readonly authorDeveloperId: string;
   readonly authorDeveloperName: string;
   readonly body: string;
+  /**
+   * How much this claim is still worth about the CODE (1.0 spec 02). Shipped
+   * on the row so the selector's substance gate reads ONE authority instead of
+   * re-deriving a state from three fields across an HTTP boundary.
+   *
+   * `notSuperseded` above already keeps retracted rows OUT of this list, so
+   * `state === "superseded"` is unreachable here through an honest hub — which
+   * is exactly why the selector keeps its own check as defence in depth.
+   */
+  readonly validity: ClaimValidity;
   readonly createdAt: string;
 }
 
@@ -179,6 +191,7 @@ export const notSuperseded = (db: Db) =>
 
 const listClaimsForContext = async (
   db: Db,
+  now: Date,
   readerDeveloperId: string,
   workContextId: string,
 ): Promise<readonly HintClaimCandidate[]> => {
@@ -214,6 +227,15 @@ const listClaimsForContext = async (
       desc(claims.createdAt),
     )
     .limit(HINT_MAX_CLAIMS_PER_CONTEXT);
+  // ONE batched read for the whole page, not one per row. `notSuperseded`
+  // above has already filtered retracted claims out of this list, so no edge
+  // lookup is needed here — the selector's own superseded guard stays as
+  // defence in depth against a hub that filters differently.
+  const revalidations = await loadRevalidations(
+    db,
+    now,
+    rows.map((row) => row.claim.id),
+  );
   return [...rows]
     .sort(
       (a, b) => b.claim.createdAt.getTime() - a.claim.createdAt.getTime(),
@@ -247,6 +269,7 @@ const listClaimsForContext = async (
     // refuses: an unknown provenance is one nobody vouched for, and it fails
     // closed.
     body: row.claim.provenance === DECLARED_PROVENANCE ? row.claim.body : "",
+    validity: claimValidity(row.claim, revalidations.get(row.claim.id), null),
     createdAt: row.claim.createdAt.toISOString(),
   }));
 };
@@ -259,12 +282,13 @@ const listClaimsForContext = async (
  */
 const listContextClaims = async (
   db: Db,
+  now: Date,
   readerDeveloperId: string,
   workContextIds: readonly string[],
 ): Promise<ReadonlyMap<string, readonly HintClaimCandidate[]>> => {
   const lists = await Promise.all(
     workContextIds.map((id) =>
-      listClaimsForContext(db, readerDeveloperId, id),
+      listClaimsForContext(db, now, readerDeveloperId, id),
     ),
   );
   return new Map(workContextIds.map((id, index) => [id, lists[index] ?? []]));
@@ -367,7 +391,7 @@ export const listHintCandidates = async (
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = eligible.map((row) => row.id);
   const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
-    listContextClaims(deps.db, callerDeveloperId, ids),
+    listContextClaims(deps.db, deps.now(), callerDeveloperId, ids),
     listBaseCommits(deps.db, ids),
     listMatchedTargets(deps.db, ids, exactTokens(input.query)),
   ]);

@@ -18,6 +18,7 @@ import type {
 import { renderPinList } from "./cli/pin-render.ts";
 import { pinStatusLines } from "./cli/pin-observability.ts";
 import { renderSuspect } from "./cli/suspect-render.ts";
+import { hubFailureLine } from "./cli/revalidate.ts";
 
 const NOW = new Date("2026-08-25T12:00:00.000Z");
 const ISO = "2026-08-25T11:00:00.000Z";
@@ -212,7 +213,14 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // search-results-empty-filtered's closure is. It is driven instead by
     // named fixtures in test/coverage-cli.test.ts, which run the real command
     // against a hub serving a fixed incomplete record.
-    note: "formatAge and the coverage clause — renderer-built ages and enum-derived states, no untrusted interpolation; the capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text. Coverage states and printed refusals are exercised in test/coverage-cli.test.ts",
+    //
+    // BOTH BRANCHES CORRECTED THIS NOTE, and both corrections are kept. 03
+    // added the coverage clause and where it is attacked; 02 removed the words
+    // "no untrusted interpolation", which were true of every sentence this
+    // command WRITES and false of the three it PASSES THROUGH. Taking either
+    // side alone would have restored a claim the other branch had just proven
+    // false.
+    note: "formatAge on renderer-built ages, the coverage clause from enum-derived states, and `hubSaid` (bareUntrusted at MAX_HUB_MESSAGE_CHARS) on the one thing this command does not write itself: the hub's own failure sentence, printed by the coverage, claim-currency and hub-reachable checks. The capture check prints the developer's OWN local paths and host tool names, control-stripped and capped (DOCTOR_PATH_MAX_CHARS / DOCTOR_TOOL_NAME_MAX_CHARS), never teammate text. Coverage states and printed refusals are exercised in test/coverage-cli.test.ts",
   },
   {
     kind: "composite",
@@ -229,6 +237,24 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // COV-7, same shape as cli-doctor above: driven by named fixtures in
     // test/coverage-cli.test.ts rather than by a registry closure.
     note: "formatAbsenceLine, formatAge and the coverage clause from the core render layer, the clause exercised in test/coverage-cli.test.ts; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment). NO QUOTED_DATA_NOTICE, deliberately: the notice tells a MODEL that « » is data rather than instruction, and this command's stdout reaches a human terminal only — no hook and no MCP tool reads it (VERIFY below). The frame, the sanitizing and the bounds still apply, because they protect the reader's terminal rather than a context window",
+  },
+  {
+    kind: "corpus",
+    name: "cli-claim-revalidate",
+    delivery: "pulled",
+    module: "src/cli/revalidate.ts",
+    // BARE, for cli-pin-observability's reason: this command's stdout is
+    // counts, validity ENUM WORDS and one hub-chosen failure string, and
+    // none of them is another person's prose to frame. `crosscheck
+    // revalidate` prints no claim id, no claim body, no path, no teammate
+    // and not even the repo — which claims went stale, and the commits that
+    // did it, stay on the diagnosis surface where a reader pulled for them.
+    // So the corpus has exactly ONE slot to attack, and this adapter plants
+    // in it: the hub's error message, bounded by MAX_HUB_MESSAGE_CHARS, the
+    // constant written for precisely this ("a string THE HUB chose, as a
+    // tool prints it back").
+    framing: "bare",
+    render: (payload) => hubFailureLine(payload),
   },
 ];
 

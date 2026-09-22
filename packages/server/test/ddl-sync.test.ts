@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import {
+  COMMIT_SHA_PATTERN,
   MAX_CLAIM_BODY_LENGTH,
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
+  NO_COMMIT_SHA,
 } from "@crosscheck/schema";
 
 import { createTestHarness } from "./helpers.ts";
@@ -18,6 +20,23 @@ const PINS_SURFACE_CHECK_PATTERN =
   /pins_surface_length_check CHECK \(char_length\(surface\) <= (\d+)\)/;
 const PINS_CHECK_RECIPE_PATTERN =
   /pins_check_length_check\s+CHECK \(check_recipe IS NULL OR char_length\(check_recipe\) <= (\d+)\)/;
+/**
+ * One `DO $$ … END $$;` block of bootstrap.sql, picked by something inside it.
+ *
+ * bootstrap.sql now carries MORE THAN ONE guarded block, and the two tests
+ * that replay one of them must not replay the other by accident:
+ * `db.execute` prepares a SINGLE command, so a slice holding two statements
+ * fails for a reason that has nothing to do with what is under test. Named
+ * rather than sliced by index for the same reason — the next guarded block
+ * appended to that file must not silently re-point either test.
+ */
+const guardedBlockContaining = (
+  bootstrapSql: string,
+  needle: string,
+): string => {
+  const blocks = bootstrapSql.match(/DO \$\$\n[\s\S]*?\nEND\n\$\$;/g) ?? [];
+  return blocks.find((block) => block.includes(needle)) ?? "";
+};
 
 describe("bootstrap.sql DDL sync", () => {
   test("claims body CHECK matches MAX_CLAIM_BODY_LENGTH", async () => {
@@ -83,7 +102,10 @@ describe("bootstrap.sql DDL sync", () => {
     // a single command.
     const harness = await createTestHarness();
     const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
-    const widener = bootstrapSql.slice(bootstrapSql.indexOf("DO $$"));
+    const widener = guardedBlockContaining(
+      bootstrapSql,
+      "claims_body_length_check",
+    );
     const oidOfCheck = async (): Promise<string> => {
       const result = (await harness.db.execute(
         sql`SELECT oid::text AS oid FROM pg_constraint WHERE conname = 'claims_body_length_check'`,
@@ -137,6 +159,146 @@ describe("bootstrap.sql DDL sync", () => {
     expect(definition).toContain("seq_epoch");
     expect(definition).toContain("seq_n");
     expect(definition).toContain("WHERE (seq_epoch IS NOT NULL)");
+  });
+
+  test("claims.stale_at is retired and its drop cannot re-fire", async () => {
+    // Arrange: `stale_at` had five hits and no writer — a column every reader
+    // saw as a permanent null while `get_diagnosis` shipped it as a claim's
+    // currency. Retiring it rather than redefining it is the one-authority
+    // answer (02 §4): a timestamp beside a state invites the next reader to
+    // compute `now() - stale_at` and re-invent the clock definition.
+    //
+    // THE DROP IS GUARDED, and that is not decoration. bootstrap.sql runs in
+    // FULL on every hub start (db/client.ts execs the whole file), and
+    // `ALTER TABLE ... DROP COLUMN IF EXISTS` takes ACCESS EXCLUSIVE whether
+    // or not the column is there — the same defect the body-length widener
+    // above exists to prevent, on a different statement.
+    //
+    // CCB-2, the grep half: after this commit the only surviving hit is the
+    // FROZEN pre-search-block fixture, which is a snapshot of an older
+    // database and would become a different fixture if edited.
+    //
+    // The pattern dodges its own literal on purpose — this directive lives in
+    // a file the grep walks, and `stale[A]t` matches the identifier without
+    // matching the line that names it (verify-claims.ts's own header warns
+    // that an illustration written in the directive's syntax IS a directive).
+    // `stale_at timestamptz` is the COLUMN, so prose about the retirement —
+    // bootstrap.sql's guarded drop — is not a hit. Scoped to `src` plus the
+    // fixture directory: the claim is that no MODULE declares or reads the
+    // column, and this test file necessarily names it to assert that.
+    //
+    // VERIFY: grep -rlE 'stale[A]t|stale_at timestamptz' packages/*/src packages/server/test/fixtures
+    // PRINTS: packages/server/test/fixtures/pre-search-block-bootstrap.sql
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert: gone from the CREATE TABLE, and dropped only under a guard.
+    expect(bootstrapSql).not.toContain("  stale_at timestamptz,");
+    const drop = guardedBlockContaining(bootstrapSql, "stale_at");
+    expect(drop).toContain("IF EXISTS (");
+    expect(drop).toContain("ALTER TABLE claims DROP COLUMN stale_at;");
+    // And the guard has teeth: no top-level ALTER may name the column, which
+    // is what an unguarded retirement would look like.
+    expect(bootstrapSql).not.toMatch(/^ALTER TABLE claims DROP COLUMN/m);
+  });
+
+  test("dropping stale_at twice leaves the claims table alone", async () => {
+    // Arrange: a restart replays the guarded block against a database that
+    // already lost the column. It must be a no-op, not an error and not a
+    // second ALTER.
+    const harness = await createTestHarness();
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+    const drop = guardedBlockContaining(bootstrapSql, "stale_at");
+    const hasStaleAt = async (): Promise<boolean> => {
+      const result = (await harness.db.execute(
+        sql`SELECT count(*)::int AS n FROM information_schema.columns WHERE table_name = 'claims' AND column_name = 'stale_at'`,
+      )) as unknown as { readonly rows: readonly { readonly n: number }[] };
+      return (result.rows[0]?.n ?? 0) > 0;
+    };
+
+    // Act: the harness already ran the file once; this is the restart.
+    expect(drop).not.toBe("");
+    await harness.db.execute(sql.raw(drop));
+
+    // Assert
+    expect(await hasStaleAt()).toBe(false);
+  });
+
+  test("the claim commit-binding columns are added and their CHECK is guarded", async () => {
+    // Arrange: the drizzle schema declares both columns and the CHECK, so
+    // bootstrap.sql — the DDL a real-Postgres hub runs — must add exactly the
+    // same two, with the same NOT NULL default, and add the constraint under
+    // the ADD-CONSTRAINT guard rather than on every start.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    expect(bootstrapSql).toContain(
+      "ALTER TABLE claims ADD COLUMN IF NOT EXISTS observed_at_commit text;",
+    );
+    expect(bootstrapSql).toContain(
+      "ALTER TABLE claims ADD COLUMN IF NOT EXISTS commit_binding text NOT NULL DEFAULT 'none';",
+    );
+    const guard = guardedBlockContaining(
+      bootstrapSql,
+      "ADD CONSTRAINT claims_commit_binding_check",
+    );
+    expect(guard).toContain("IF NOT EXISTS (");
+    expect(guard).toContain(
+      "CHECK ((observed_at_commit IS NULL) = (commit_binding = 'none'));",
+    );
+    expect(bootstrapSql).not.toMatch(/^ALTER TABLE claims ADD CONSTRAINT/m);
+  });
+
+  test("the backfill's base-commit predicate matches isBindableCommit", async () => {
+    // Arrange: the migration cannot call TypeScript, so the "is this a commit
+    // we can bind to" rule exists twice — once in @crosscheck/schema and once
+    // as SQL in bootstrap.sql. Two copies of a rule drift; this is what stops
+    // them drifting SILENTLY, since a widened pattern that reached only one
+    // side would leave a hub binding claims to strings git never resolves.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    expect(bootstrapSql).toContain(
+      `s.base_commit ~* '${COMMIT_SHA_PATTERN.source}'`,
+    );
+    expect(bootstrapSql).toContain(`s.base_commit <> '${NO_COMMIT_SHA}'`);
+    expect(COMMIT_SHA_PATTERN.flags).toContain("i");
+  });
+
+  test("claim_revalidations exists in both DDL authorities", async () => {
+    // Arrange: bootstrap.sql is the DDL a real-Postgres hub runs and drizzle
+    // is the migration authority everywhere else. A table in one and not the
+    // other means the downgrade-only UPSERT has nowhere to land on exactly
+    // one deployment — and the failure surfaces as a 500 on a revalidation.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    expect(bootstrapSql).toContain("CREATE TABLE IF NOT EXISTS claim_revalidations (");
+    for (const column of [
+      "claim_id text PRIMARY KEY REFERENCES claims(id)",
+      "result text NOT NULL",
+      "basis text NOT NULL",
+      "ref_commit text NOT NULL",
+      "touching_commits jsonb NOT NULL DEFAULT '[]'::jsonb",
+      "touching_total integer",
+      "revalidated_at timestamptz NOT NULL",
+      "reported_by text NOT NULL REFERENCES developers(id)",
+    ]) {
+      expect(bootstrapSql).toContain(column);
+    }
+  });
+
+  test("claim_surfaces exists in both DDL authorities", async () => {
+    // Arrange
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert: repo is DENORMALISED on purpose — pin_files' reason, one table
+    // over — so the index that answers "which rows in this repo watch this
+    // path" must exist in both authorities too.
+    expect(bootstrapSql).toContain("CREATE TABLE IF NOT EXISTS claim_surfaces (");
+    expect(bootstrapSql).toContain("PRIMARY KEY (claim_id, path)");
+    expect(bootstrapSql).toContain(
+      "CREATE INDEX IF NOT EXISTS claim_surfaces_repo_path_idx",
+    );
   });
 
   test("work_context_targets.created_at is added for the #19 pointer age", async () => {

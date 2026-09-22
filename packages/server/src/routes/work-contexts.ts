@@ -71,7 +71,7 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
    * telemetry and its URL.
    */
   router.get("/:id", async (c) => {
-    const diagnosis = await getDiagnosis(deps.db, c.req.param("id"));
+    const diagnosis = await getDiagnosis(deps.db, deps.now(), c.req.param("id"));
     if (diagnosis === undefined) {
       return fail(c, 404, "not_found", "work context not found");
     }
@@ -79,7 +79,7 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.get("/:id/diagnosis", async (c) => {
-    const diagnosis = await getDiagnosis(deps.db, c.req.param("id"));
+    const diagnosis = await getDiagnosis(deps.db, deps.now(), c.req.param("id"));
     if (diagnosis === undefined) {
       return fail(c, 404, "not_found", "work context not found");
     }

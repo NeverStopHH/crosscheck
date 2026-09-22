@@ -235,7 +235,7 @@ describe("GET /api/work-contexts/:id/diagnosis", () => {
     await seedDiagnosisTree(setup);
 
     // Act: unit-level call with limits below the seeded tree size
-    const diagnosis = await getDiagnosis(setup.harness.db, WORK_CONTEXT_ID, {
+    const diagnosis = await getDiagnosis(setup.harness.db, setup.harness.clock.now(), WORK_CONTEXT_ID, {
       maxClaims: 1,
       maxEdges: 1,
     });

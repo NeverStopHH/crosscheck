@@ -19,7 +19,10 @@ import {
 import {
   ARTIFACT_SENSITIVITIES,
   CAPTURE_MODES,
+  CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
+  CLAIM_REVALIDATION_BASES,
+  CLAIM_REVALIDATION_RESULTS,
   CLAIM_STATUSES,
   EDGE_KINDS,
   MAX_CLAIM_BODY_LENGTH,
@@ -276,7 +279,28 @@ export const claims = pgTable(
     provenance: text("provenance", { enum: PROVENANCES }).notNull(),
     dedupCount: integer("dedup_count").notNull().default(1),
     lastSeenAt: timestamptz("last_seen_at"),
-    staleAt: timestamptz("stale_at"),
+    /**
+     * WHICH COMMIT THIS CLAIM WAS OBSERVED AT — the code state the assertion
+     * is about, not the clock it was written on (1.0 spec 02 §3.1).
+     *
+     * Written ONCE at INSERT and never updated, so the append-only property
+     * `services/hints.ts:68-70` relies on ("revision means a NEW claim")
+     * survives: the only columns ingest ever bumps on an existing claim are
+     * dedup_count and last_seen_at.
+     *
+     * NULL exactly when `commitBinding` is "none", enforced by
+     * claims_commit_binding_check below rather than promised by a service.
+     */
+    observedAtCommit: text("observed_at_commit"),
+    /**
+     * How precisely the commit above is known — CLAIM_COMMIT_BINDINGS. The
+     * default is the honest answer for every row written before this column
+     * existed and for every connector too old to send one: bound to nothing,
+     * which fails CLOSED (never unsolicited substance, never revalidatable).
+     */
+    commitBinding: text("commit_binding", { enum: CLAIM_COMMIT_BINDINGS })
+      .notNull()
+      .default("none"),
     // Persisted wire refs; materializing supports-edges from them is a
     // follow-up because referenced claims may arrive later in the same flush.
     evidenceRefs: jsonb("evidence_refs")
@@ -293,6 +317,15 @@ export const claims = pgTable(
     check(
       "claims_body_length_check",
       sql`char_length(${table.body}) <= ${sql.raw(String(MAX_CLAIM_BODY_LENGTH))}`,
+    ),
+    // "No commit means no binding" as a DATABASE fact, the shape
+    // questions_addressee_check uses. Without it the two columns can
+    // disagree, and a reader of claim_validity is told something nobody
+    // measured — a commit filed under "bound to nothing", or a binding
+    // claiming a commit that is not there.
+    check(
+      "claims_commit_binding_check",
+      sql`(${table.observedAtCommit} IS NULL) = (${table.commitBinding} = 'none')`,
     ),
     // `work_context_id` is a foreign key, which Postgres does NOT index on
     // its own, and three hot readers ask "the claims of THESE contexts,
@@ -755,3 +788,114 @@ export const teamSettings = pgTable("team_settings", {
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });
+
+/**
+ * ONE ROW PER REVALIDATED CLAIM — the latest reading a clone reported of
+ * whether the code under that claim moved (1.0 spec 02 §3.3).
+ *
+ * UPSERT-ONLY, never append-only: bounded by how many claims anybody actually
+ * revalidates rather than by reporting frequency, which is `commit_evidence`'s
+ * argument for the same shape. `revalidated_at` is stamped by the HUB and never
+ * taken from the body — a sender-controlled timestamp on a last-writer-wins row
+ * is a ratchet (services/commit-evidence.ts learned that one the hard way).
+ *
+ * THE UPSERT IS DOWNGRADE-ONLY, and the whole gate on the unsolicited
+ * substance lane rests on it. The only producer is a connector-computed report
+ * POSTed under `developerAuth`, and the developer bearer key sits in plaintext
+ * in ~/.crosscheck/config.json where any agent on the machine can read it. So
+ * an incoming `unchanged` may never overwrite a stored `changed`: returning a
+ * stale claim to the substance lane needs what the tree already requires for
+ * every other revision — a NEW claim, which is authored and attributable.
+ * Enforced in SQL by the UPSERT's setWhere, not by a service branch.
+ *
+ * NO PER-COMMIT TABLE. The hashes ride here, bounded, newest-first. A `commits`
+ * table is unbounded by construction — exactly the property `commit_evidence`
+ * was designed against — and would collide with retention and with data
+ * minimisation. What is stored is abbreviated hashes and nothing else: no
+ * author, no email, no message, no parents, no timestamps, no paths.
+ */
+export const claimRevalidations = pgTable("claim_revalidations", {
+  claimId: text("claim_id")
+    .primaryKey()
+    .references(() => claims.id),
+  result: text("result", { enum: CLAIM_REVALIDATION_RESULTS }).notNull(),
+  basis: text("basis", { enum: CLAIM_REVALIDATION_BASES }).notNull(),
+  /** Which ref state the reading was taken against — context, not a key. */
+  refCommit: text("ref_commit").notNull(),
+  /**
+   * How many times a report tried to walk THIS claim back toward `current`
+   * and the downgrade-only rule refused it.
+   *
+   * CCB-10 requires the refusal to be "counted and printed by doctor", and
+   * the counter existed only on the RESPONSE — handed back to the caller
+   * whose report was refused, and read by nobody else. A team lead running
+   * `crosscheck doctor` could not tell a hub refusing forged upgrades every
+   * hour from one that had never seen one, which is the exact condition the
+   * service's own comment says the counter exists to prevent.
+   *
+   * Stored per claim rather than as a global tally, because "which findings
+   * somebody keeps trying to resurrect" is the question a reader can act on.
+   */
+  refusedWalkBacks: integer("refused_walk_backs").notNull().default(0),
+  /**
+   * Was this reading taken by the claim's OWN author?
+   *
+   * Refusal 6 accepted one self-certification path — `unknown -> current` is
+   * a legal direction and nothing compared the reporter to the author — on
+   * the premise that "`unknown` is ALREADY injectable under §5's gate, so
+   * that move changes nothing a reader sees". True of the gate and false of
+   * the label: `claimValidityWord` maps every state with no exemption, so a
+   * teammate reads `validity current` — the strongest word the vocabulary
+   * has — on an assertion measured only by the person who made it.
+   *
+   * The residue stays, because a git reading IS reproducible from any clone
+   * and §3.7 rests on exactly that. What changes is that it stops being
+   * invisible.
+   */
+  selfReported: boolean("self_reported").notNull().default(false),
+  touchingCommits: jsonb("touching_commits")
+    .$type<readonly string[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  /**
+   * How many commits touched the surface in total. NULL means "more than the
+   * ones named, and the count could not be taken" — the renderer then says
+   * "and more" rather than inventing a number. Spec 02 §3.4 promises the
+   * downgrade can say "and 12 more"; the hashes alone cannot carry that.
+   */
+  touchingTotal: integer("touching_total"),
+  revalidatedAt: timestamptz("revalidated_at").notNull(),
+  /** Provenance, never a score: reported_by is not rendered as a ranking. */
+  reportedBy: text("reported_by")
+    .notNull()
+    .references(() => developers.id),
+});
+
+/**
+ * ONE ROW PER FILE A CLAIM'S AUTHOR DECLARED IT IS ABOUT (1.0 spec 02 §3.2).
+ *
+ * `repo` is DENORMALISED for pin_files' reason, stated there at length: the
+ * hot question is "which rows in THIS repo watch this path", asked with a path
+ * and no claim id, and reaching repo through a join to claims would read every
+ * matching row in every repo first.
+ *
+ * Rows exist ONLY where an author declared paths. With none, a claim's surface
+ * is the work context's `file` targets — the set `get_diagnosis` already hands
+ * the solved staleness check — and the two are told apart by
+ * `claim_revalidations.basis`, because the context-derived set OVER-FIRES:
+ * any file in the context changing marks every claim on it.
+ */
+export const claimSurfaces = pgTable(
+  "claim_surfaces",
+  {
+    claimId: text("claim_id")
+      .notNull()
+      .references(() => claims.id),
+    repo: text("repo").notNull(),
+    path: text("path").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.claimId, table.path] }),
+    index("claim_surfaces_repo_path_idx").on(table.repo, table.path),
+  ],
+);

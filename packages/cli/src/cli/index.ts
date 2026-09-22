@@ -34,6 +34,7 @@ import {
 import { PIN_FLAG_BROKE, PIN_FLAG_CHECK, PIN_FLAG_FILES, PIN_FLAG_SWEEP, PIN_USAGE, runPin } from "./pin.ts";
 import type { InteractiveProbe } from "./pin.ts";
 import { SUSPECT_USAGE, runSuspect } from "./suspect.ts";
+import { REVALIDATE_USAGE, runRevalidate } from "./revalidate.ts";
 import { runStatus } from "./status.ts";
 import { resolveVersion } from "./version.ts";
 
@@ -60,6 +61,8 @@ const USAGE = [
   "                            re-resolve pinned paths against git after renames",
   "  suspect <pin-id|path…>    which sessions touched a broken surface, and what",
   "                            they said they were doing",
+  "  revalidate                ask whether the code under this repo's recorded",
+  "                            claims has moved, and record what this clone saw",
   "  presence [off|on]         hide/show your live presence to teammates",
   "  mute <developer>          stop seeing hints/pointers about them (mute list to review)",
   "  unmute <developer>        see their hints/pointers again",
@@ -120,6 +123,7 @@ const SUBCOMMAND_HELP: Readonly<Record<string, HelpSpec>> = {
     booleanFlags: [PIN_FLAG_SWEEP],
   },
   suspect: { usage: SUSPECT_USAGE },
+  revalidate: { usage: REVALIDATE_USAGE },
   presence: { usage: PRESENCE_USAGE },
   mute: { usage: MUTE_USAGE },
   unmute: { usage: MUTE_USAGE },
@@ -210,6 +214,11 @@ export const runCli = async (
         : runPin(rest, env, cwd, options.isInteractive);
     case "suspect":
       return runSuspect(rest, env, cwd);
+    // D5's manual trigger: the same bounded check `get_diagnosis` runs, typed
+    // by a person, so a repo nobody pulls a diagnosis from stops reading
+    // `unknown` forever. A pull like the two above — no hook, no injection.
+    case "revalidate":
+      return runRevalidate(rest, env, cwd);
     case "presence":
       return runPresence(rest, env, cwd);
     case "mute":

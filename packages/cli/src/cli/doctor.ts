@@ -33,6 +33,7 @@ import {
   LATENCY_PROBE_TIMEOUT_MS,
   LATENCY_TIMEOUT_MAX_MS,
   MAX_CLOCK_SKEW_SECONDS,
+  MAX_HUB_MESSAGE_CHARS,
   MCP_CONFIG_FILE,
   MCP_SERVER_KEY,
   MINUTES_PER_HOUR,
@@ -70,6 +71,7 @@ import {
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
 import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
 import { hasGitEntry } from "@crosscheck/connector-core/config/connected-repo.ts";
 import { readRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
@@ -101,6 +103,7 @@ import {
 import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
 import {
   getAbsences,
+  getClaimValiditySummary,
   getGhostChecks,
   getSessionOrderReport,
   getHintStats,
@@ -113,6 +116,7 @@ import {
 } from "@crosscheck/connector-core/http/hub.ts";
 import type {
   AbsencesOutcome,
+  ClaimValiditySummary,
   GhostCheckEntry,
 } from "@crosscheck/connector-core/http/hub.ts";
 import {
@@ -214,6 +218,26 @@ export interface Check {
   readonly name: string;
   readonly detail: string;
 }
+
+/**
+ * A SENTENCE THE HUB CHOSE, on its way into this command's stdout.
+ *
+ * `crosscheck doctor` is registered as a surface that interpolates nothing
+ * untrusted, and that was true of every sentence it WRITES. Three of its
+ * checks pass one through instead: the coverage check, the claim-currency
+ * check and the hub-reachable check each end with `(${...message})` straight
+ * off the wire — unbounded, uninspected, and printed to a terminal. A hostile
+ * or merely broken hub gets to choose newlines, control characters and as
+ * many of them as it likes, above lines a developer is meant to read as the
+ * tool's own.
+ *
+ * `revalidate.ts` already does this correctly one command over
+ * (`hubFailureLine`), which is what made the omission a finding rather than a
+ * design choice: the two commands print the same kind of string, and only one
+ * of them bounded it.
+ */
+const hubSaid = (message: string): string =>
+  bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);
 
 const check = (level: CheckLevel, name: string, detail: string): Check => ({
   level,
@@ -1925,7 +1949,7 @@ const checkPins = async (
           check(
             "WARN",
             "pins",
-            `coverage unknown — the hub did not answer (${registry.message}); this says nothing about what is watched`,
+            `coverage unknown — the hub did not answer (${hubSaid(registry.message)}); this says nothing about what is watched`,
           ),
         ];
   }
@@ -1940,6 +1964,149 @@ const checkPins = async (
     shadows.length === 0
       ? check("PASS", "pin denylist", shadowLine)
       : check("WARN", "pin denylist", shadowLine),
+  ];
+};
+
+/**
+ * THE TWO REFUSALS SPEC 02 OWES THIS REPORT (§8.5, §8.9).
+ *
+ * A claim's currency is judged against the COMMIT it was observed at. Two
+ * things can stop that from happening, and they have OPPOSITE remedies —
+ * which is why they are two lines rather than one number:
+ *
+ *   · `commit_binding = 'none'` — no "from" commit, so the rung cannot exist
+ *     at all. Nothing anybody runs will ever change it, and the claim stays
+ *     pointer-only for life. AT-10's rule: a rung that genuinely cannot be
+ *     served appears as a DOCUMENTED REFUSAL with its count and its cause.
+ *   · bound but never measured — waiting for somebody to pull a diagnosis or
+ *     run `crosscheck revalidate`. Nothing revalidates on CI or at runtime in
+ *     1.0 (§8.9), so a repo nobody pulls from reads `unknown` forever, and
+ *     D5's cost is only paid honestly if this line says so every time.
+ *
+ * THE OLD-HUB SHAPE IS checkPins' VERBATIM: 404 is a hub that predates the
+ * route and says nothing about this install (PASS, "not measured"); any other
+ * failure is a WARN, because a green meaning "could not check" is worse than
+ * no check at all.
+ */
+/**
+ * How much of this repo's currency rests on a commit nobody stated.
+ *
+ * `session_base` is the hub's fallback when a claim names no observation
+ * point, and it is an UPPER BOUND: a session that checks out a newer commit
+ * mid-session re-registers, `base_commit` moves forward by design, and a
+ * claim observed before that checkout is filed against the commit AFTER it.
+ * Every drift walk then starts too late and the range in between — the
+ * commits most likely to have moved the code the claim is about — is never
+ * looked at. The claim reads `current` on a measurement that skipped it.
+ *
+ * Appended rather than given its own row: it is a QUALIFIER on the binding
+ * count above, not a separate condition, and a repo where every claim is
+ * inferred is not broken — it is a repo whose agents never name the commit
+ * they read, which is a different remedy from an unbound claim's.
+ */
+const inferredBindingClause = (summary: ClaimValiditySummary): string =>
+  summary.inferredBindings === 0
+    ? ""
+    : `; ${String(summary.inferredBindings)} of them against their session's commit rather than one the claim stated, which is an upper bound — anything the session checked out before publishing falls outside the check`;
+
+const claimBindingCheck = (summary: ClaimValiditySummary): Check => {
+  const scope = `${String(summary.counted)} of ${String(summary.total)} claims`;
+  const inferred = inferredBindingClause(summary);
+  if (summary.unbound === 0) {
+    return check(
+      "PASS",
+      "claim binding",
+      `${scope} are bound to a commit and can be judged against the code${inferred}`,
+    );
+  }
+  return check(
+    "WARN",
+    "claim binding",
+    `${String(summary.unbound)} of ${String(summary.counted)} claims are bound to no commit ` +
+      "and can never be revalidated — their session registered no usable commit, " +
+      `so they stay readable as pointers and never as current causes${inferred}`,
+  );
+};
+
+/** How many claims read as each state — the part that is working, counted. */
+const validityStateSentence = (summary: ClaimValiditySummary): string => {
+  const named = ["stale", "superseded", "invalidated"]
+    .map((state) => ({ state, n: summary.states[state] ?? 0 }))
+    .filter((entry) => entry.n > 0)
+    .map((entry) => `${String(entry.n)} ${entry.state}`);
+  return named.length === 0 ? "none measured as non-current" : named.join(", ");
+};
+
+/**
+ * CCB-10's observability half: how often somebody has tried to walk a claim
+ * back toward `current` and been refused.
+ *
+ * THE COUNT EXISTED AND NOBODY COULD SEE IT. It was returned on the response
+ * to the caller whose report was refused, and read by nothing else — so a hub
+ * refusing forged upgrades every hour printed exactly what a hub that had
+ * never seen one printed. The service's own comment says why that is not
+ * acceptable: "a gate that silently drops writes is indistinguishable from
+ * one that is broken".
+ *
+ * WARN, NOT FAIL. A refusal is the gate WORKING; what a reader needs is to
+ * know it is firing, and how persistently. Zero prints nothing at all — a
+ * line that appears on every install is a line nobody reads.
+ */
+const refusedWalkBackCheck = (
+  summary: ClaimValiditySummary,
+): readonly Check[] => {
+  if (summary.refusedWalkBacks === 0) {
+    return [];
+  }
+  return [
+    check(
+      "WARN",
+      "claim walk-backs refused",
+      `${String(summary.refusedWalkBacks)} attempt(s) across ` +
+        `${String(summary.claimsWithRefusedWalkBacks)} claim(s) tried to move a stale ` +
+        "finding back to current and were refused — the gate held; read the " +
+        "diagnosis of those trees to see what is being re-asserted",
+    ),
+  ];
+};
+
+const claimCurrencyCheck = (summary: ClaimValiditySummary): Check =>
+  check(
+    "PASS",
+    "claim currency",
+    `${String(summary.neverRevalidated)} of ${String(summary.counted)} claims have never been ` +
+      `checked against the code (${validityStateSentence(summary)}) — nothing ` +
+      "revalidates on CI or at runtime, so this moves when somebody pulls a " +
+      "diagnosis or runs `crosscheck revalidate`",
+  );
+
+const checkClaimValidity = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<readonly Check[]> => {
+  const summary = await getClaimValiditySummary(ctx, repoId);
+  if (!summary.ok) {
+    return summary.status === HTTP_NOT_FOUND
+      ? [
+          check(
+            "PASS",
+            "claim binding",
+            "not measured (this hub does not judge claims against commits)",
+          ),
+        ]
+      : [
+          check(
+            "WARN",
+            "claim binding",
+            `currency unknown — the hub did not answer (${hubSaid(summary.message)}); ` +
+              "this says nothing about whether your team's claims still hold",
+          ),
+        ];
+  }
+  return [
+    claimBindingCheck(summary.data),
+    claimCurrencyCheck(summary.data),
+    ...refusedWalkBackCheck(summary.data),
   ];
 };
 
@@ -2913,7 +3080,7 @@ export const runDoctor = async (
                 { hubUrl: config.hubUrl, timeoutMs: config.timeoutMs },
                 probe.message,
               )
-            : `${config.hubUrl}: ${probe.message}`,
+            : `${config.hubUrl}: ${hubSaid(probe.message)}`,
       );
 
   const skewCheck = ((): Check => {
@@ -3082,6 +3249,7 @@ export const runDoctor = async (
       resolveDenylist(config.denylist ?? undefined),
       now,
     )),
+    ...(await checkClaimValidity(hubCtx, identity.repoId)),
     await checkGhostOverlap(hubCtx, identity.repoId),
     await checkPrivacy(hubCtx),
     skewCheck,

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
+import { repoRelativePath } from "./repo-path.ts";
 import {
   CaptureModeSchema,
   ClaimKindSchema,
@@ -9,6 +11,16 @@ import {
 } from "./enums.ts";
 
 export const MAX_CLAIM_BODY_LENGTH = 10_000;
+
+/**
+ * Hard cap on the file set ONE CLAIM may declare as its affected surface
+ * (1.0 spec 02 §3.2). The same number MAX_PIN_FILES uses, and it is stated
+ * here rather than imported from pin.ts because claim.ts importing pin.ts
+ * closes a module cycle (pin → question → claim); ddl-sync keeps the two in
+ * step. Both answer "how big may a hand-declared surface be before it is an
+ * area", and an area-sized surface makes every commit in the area a downgrade.
+ */
+export const MAX_CLAIM_SURFACE_PATHS = 30;
 
 /** Machine-derived claims may never assert more confidence than this (DESIGN.md §3). */
 export const DERIVED_CONFIDENCE_CAP = 0.5;
@@ -27,6 +39,37 @@ export const ClaimSchema = z
     captureMode: CaptureModeSchema,
     provenance: ProvenanceSchema,
     evidenceRefs: z.array(nonEmptyId).default([]),
+    /**
+     * The author's HEAD at the moment the claim was made (1.0 spec 02 §3.1).
+     *
+     * OPTIONAL is the forward-compat seam, and it means exactly one thing
+     * here: an old connector sends nothing and ingest stamps `session_base`.
+     * It does NOT mean "keep what you have" — that is `IntentSchema`'s rule
+     * for a MUTABLE object, and a claim is INSERTed once and never updated,
+     * so absent means null forever on that row.
+     *
+     * Free to produce: every claim-writing tool path already holds
+     * `identity.baseCommit` (connector-core mcp/context.ts resolves a
+     * RepoIdentity per call), so this is bytes on a body already being built
+     * rather than a round trip or a git call.
+     */
+    observedAtCommit: z.string().regex(COMMIT_SHA_PATTERN).optional(),
+    /**
+     * WHICH FILES this claim is about, when the author said so (spec 02 §3.2).
+     *
+     * Absent or empty is the normal case and is NOT a statement that the claim
+     * touches nothing: the revalidation then falls back to the work context's
+     * own `file` targets, which over-fires by design. The two are told apart
+     * on the hub by `claim_revalidations.basis`.
+     *
+     * Same repo-relative POSIX rule and the same cap as a pin's file set,
+     * inherited by name — an area-sized surface makes every commit in the area
+     * a downgrade.
+     */
+    affectedPaths: z
+      .array(repoRelativePath)
+      .max(MAX_CLAIM_SURFACE_PATHS)
+      .default([]),
     createdAt: z.iso.datetime(),
   })
   .check((ctx) => {

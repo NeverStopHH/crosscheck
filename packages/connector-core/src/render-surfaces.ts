@@ -57,6 +57,7 @@ import type {
   TripwireSession,
   WorkContextEntry,
 } from "./http/hub.ts";
+import { describeConnectionFailure } from "./http/connection-error.ts";
 
 /**
  * How a surface's output is classed, which decides its corpus assertions:
@@ -233,6 +234,26 @@ const hintClaimWith = (payload: string): HintClaimCandidate => ({
   authorDeveloperId: "dev_other",
   authorDeveloperName: payload,
   body: payload,
+  // THE VALIDITY RECORD, PLANTED. Without it `claimValidityWord` returns null
+  // and the corpus renders this surface exactly as it did before spec 02 —
+  // a new line the corpus cannot see is a new line it does not guard. `stale`
+  // rather than `current`, because the downgrade is the case that changes
+  // what a reader should do; the payload rides the two string-shaped slots a
+  // hostile hub controls, even though the hint prints only the WORD.
+  validity: {
+    state: "stale",
+    observedAtCommit: payload,
+    commitBinding: "session_base",
+    basis: "context_targets",
+    // Sha-shaped by schema, so this is NOT a slot the payload can ride —
+    // a hostile hub sending prose here is refused at the wire.
+    refCommit: "a1b2c3d",
+    selfReported: false,
+    touchingCommits: [],
+    touchingTotal: 1,
+    lastRevalidatedAt: ISO,
+    supersededByClaimId: payload,
+  },
   createdAt: ISO,
 });
 
@@ -422,6 +443,26 @@ const solvedMatchWith = (payload: string): SolvedMatchEntry => ({
   // Required at render, so the corpus would stop covering the cause line
   // without it — the body is only sanitized when it is printed.
   rootCauseConfidence: 0.9,
+  // THE VALIDITY RECORD, PLANTED — and `unknown` rather than `stale` on
+  // purpose. A non-current verdict WITHHOLDS the body here (briefing/
+  // render.ts), so a downgraded record would quietly stop the corpus
+  // attacking the root-cause slot at all: the surface would render less than
+  // it exists to attack, which is how a corpus goes blind without failing.
+  // `unknown` keeps the body travelling AND still prints the state word, so
+  // both the framed body and the new label are under attack in one pass.
+  // The payload rides the two string-shaped slots a hostile hub controls.
+  rootCauseValidity: {
+    state: "unknown",
+    observedAtCommit: payload,
+    commitBinding: "session_base",
+    basis: null,
+    refCommit: payload,
+    selfReported: false,
+    touchingCommits: [],
+    touchingTotal: null,
+    lastRevalidatedAt: null,
+    supersededByClaimId: payload,
+  },
 });
 
 const tripwireSessionWith = (payload: string): TripwireSession => ({
@@ -497,6 +538,7 @@ const refereeBriefWith = (payload: string): RefereeBrief => ({
     evidenceTruncated: false,
     ruledOut: [],
     ruledOutTruncated: false,
+    validity: null,
     supersededByClaimId: null,
     droppedRows: 0,
   },
@@ -507,6 +549,7 @@ const refereeBriefWith = (payload: string): RefereeBrief => ({
     evidenceTruncated: false,
     ruledOut: [],
     ruledOutTruncated: false,
+    validity: null,
     supersededByClaimId: null,
     droppedRows: 0,
   },
@@ -936,6 +979,25 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/coverage/render.ts",
     note: "enum values, renderer-owned literals and ISO instants re-formatted from Date.parse; the two hub-sent strings (gapSince, observedAt) never print through",
     corpusCoveredBy: ["test/coverage-render.test.ts"],
+  },
+  {
+    kind: "corpus",
+    name: "hub-connection-failure",
+    delivery: "pulled",
+    module: "src/http/connection-error.ts",
+    framing: "sanitized",
+    // WHAT A HUB SAYS WHEN IT CANNOT BE REACHED, on its way into three CLI
+    // commands' stdout. Seven of the eight causes are renderer-owned
+    // sentences; `unknown` relays the far side's own words, and `doctor`,
+    // `login` and `conference` all print it. Their registrations each said
+    // they interpolate nothing untrusted, which was true of everything they
+    // WROTE and false of what they PASSED THROUGH.
+    render: (payload) =>
+      describeConnectionFailure(
+        "unknown",
+        { hubUrl: "http://hub.example:7100", timeoutMs: 5_000 },
+        payload,
+      ),
   },
   {
     kind: "composite",

@@ -6573,6 +6573,467 @@ export const MUTATIONS: readonly Mutation[] = [
       "the walk still passes while reaching fewer surfaces every round, which " +
       "is the failure mode a green test cannot distinguish from success",
   },
+  {
+    // 1.0 spec 02 CCB-2 — the load-bearing rule, and the ONLY one of
+    // CCB-1..CCB-10 that shipped with no anchor at all. A second staleness
+    // definition was live in the tree while every other CCB test stayed
+    // green, because it was spelled `checkSolvedFileDrift`, typed
+    // `SolvedFileDrift`, and never mentioned `stale_at` — the string the
+    // other guard greps for.
+    label: "a claim's currency is measured on a clock again",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "  const range = `${observedAtCommit}..${defaultRef}`;",
+    to: "  const range = `--since=${observedAtCommit}`;",
+    test: `${CORE}/test/staleness-axis.test.ts`,
+    because:
+      "a feature branch merged into the default branch keeps its original " +
+      "committer dates, so a clock filter cannot see commits that ancestry " +
+      "can — and the clock's answer is the REASSURING one, so the wrong axis " +
+      "strengthens the conclusion instead of weakening it",
+  },
+  {
+    // 1.0 spec 02 CCB-1. The code axis of the substance gate: a claim whose
+    // observation point is unknown may not be presented as a current cause.
+    label: "a claim bound to no commit is injected as substance again",
+    file: `${CORE}/src/claim-validity.ts`,
+    from: `    validity.commitBinding !== "none" &&
+    !NON_CURRENT_VALIDITY_STATES.has(validity.state)`,
+    to: "    !NON_CURRENT_VALIDITY_STATES.has(validity.state)",
+    test: `${CORE}/test/claim-substance-gate.test.ts`,
+    because:
+      "unknown fails OPEN on the code axis: a claim nobody can ever " +
+      "revalidate, because there is no commit to revalidate it against, " +
+      "enters a teammate's prompt as a full body under full trust labels",
+  },
+  {
+    // 1.0 spec 02 CCB-7. The hub's one authoritative verdict, dropped.
+    label: "the substance gate stops reading the hub's validity verdict",
+    file: `${CORE}/src/claim-validity.ts`,
+    from: `    validity.commitBinding !== "none" &&
+    !NON_CURRENT_VALIDITY_STATES.has(validity.state)`,
+    to: '    validity.commitBinding !== "none"',
+    test: `${CORE}/test/claim-substance-gate.test.ts`,
+    because:
+      "a root cause recorded in April against a file rewritten in June is " +
+      "injected in July unqualified — AT-2's whole subject — and a hub " +
+      "forging a clean status past the superseding edge is believed",
+  },
+  {
+    // The connector-side status check spec 02 §5 asks to DELETE, kept as
+    // defence in depth. Anchored so "it changes nothing" stays testable.
+    label: "the forging-hub lock on a superseded status is deleted",
+    file: `${CORE}/src/hints/select.ts`,
+    from: '  claim.status !== "superseded" &&',
+    to: "",
+    test: `${CORE}/test/claim-substance-gate.test.ts`,
+    because:
+      "a hub asserting `status: superseded` beside a `current` validity is " +
+      "asserting two contradictory things, and the connector believes the " +
+      "half that puts a retracted claim back into the prompt lane",
+  },
+  {
+    // 1.0 spec 02 CCB-3. AT-2 requires the downgrade to NAME the commits.
+    label: "a downgrade says the code moved and names no commit",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "    touchingCommits: hashes.slice(0, MAX_CLAIM_TOUCHING_COMMITS),",
+    to: "    touchingCommits: [],",
+    test: `${CORE}/test/claim-drift.test.ts`,
+    because:
+      "AT-2 asks the downgrade to name the commits that caused it; a bare " +
+      "`changed` is the superstition it replaces, one axis over",
+  },
+  {
+    // 1.0 spec 02 CCB-5. A question git declined to answer is not an answer.
+    label: "a git call that failed is read as an untouched surface",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "  if (!listed.ok) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/claim-drift.test.ts`,
+    because:
+      "a shallow clone, a missing object or an exhausted deadline vouches " +
+      "`unchanged` for a surface nobody measured — the one direction §3.6 " +
+      "spends a second git call to avoid",
+  },
+  {
+    // 1.0 spec 02 CCB-9. A bound must not be spent at random.
+    label: "the revalidation bound is spent in whatever order the tree arrived",
+    file: `${CORE}/src/flows/claim-revalidation.ts`,
+    from: "  const ordered = [...byKey.values()].sort((a, b) => b.newestAt - a.newestAt);",
+    to: "  const ordered = [...byKey.values()];",
+    test: `${CORE}/test/claim-revalidation-pull.test.ts`,
+    because:
+      "capture-health's rule — a bound must not be spent at random — and a " +
+      "tree past the cap then measures whichever groups the hub happened to " +
+      "list first while reporting the same revalidated/total either way",
+  },
+  {
+    // 1.0 spec 02 CCB-10. The one rule without which AT-2's gate is an
+    // agent's to pull open: the UPSERT moves validity only toward less-current.
+    label: "a revalidation walks a stale claim back into the prompt lane",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "          setWhere: sql`${claimRevalidations.result} <> 'changed' OR excluded.result = 'changed'`,",
+    to: "          setWhere: sql`true`,",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "the developer bearer key sits in plaintext in ~/.crosscheck/config.json, " +
+      "so the agent that wrote a claim can report `unchanged` about its own " +
+      "claim, overwrite a `changed` reading and restore the substance lane",
+  },
+  {
+    // 1.0 spec 02 CCB-6. A verdict must not outlive the evidence it came from.
+    label: "a revalidation verdict outlives the reading it came from",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    // MOVED WITH THE CODE. The prune used to be a bare `.where(lt(...))`;
+    // fixing the retention finding wrapped it in an `and(...)` that also
+    // refuses to delete a `changed` row whose claim still exists. The anchor
+    // follows the cutoff comparison, which is the half this guard is about.
+    from: "          lt(claimRevalidations.revalidatedAt, retentionCutoff),",
+    to: "          lt(claimRevalidations.revalidatedAt, new Date(0)),",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a reading taken against a ref commit the repo left behind months ago " +
+      "keeps answering `current`, which is the stored-verdict defect derived " +
+      "state exists to prevent",
+  },
+  {
+    // 1.0 spec 02 CCB-4. The verdict comes from the measurement, not from
+    // the fact that one was taken.
+    label: "any reading at all is read as a downgrade",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: '  if (revalidation?.result === "changed") {',
+    to: "  if (revalidation !== undefined) {",
+    test: `${SERVER}/test/claim-validity.test.ts`,
+    because:
+      "an untouched surface reported `unchanged` reads `stale`, so the first " +
+      "pull of any tree demotes every claim in it and the gate everybody " +
+      "relies on stops distinguishing code that moved from code that did not",
+  },
+  {
+    // The kind carve-out behind `invalidated`. Without it every piece of
+    // negative knowledge is invalidated by its own natural status.
+    label: "a rejected approach is invalidated by its own status",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "  claim.kind !== REJECTION_IS_THE_FINDING_KIND;",
+    to: "  true;",
+    test: `${SERVER}/test/claim-validity.test.ts`,
+    because:
+      "`rejected` is a rejected_approach's natural status, so DESIGN.md §4's " +
+      "privileged negative lane reads `invalidated` from the moment it is " +
+      "written — never stale, never naming the commits that rewrote its code",
+  },
+  {
+    // 1.0 spec 02 §3.1's third branch. base_commit is `text NOT NULL` on the
+    // wire and this repo's own CLI stores a label in it.
+    label: "a session base commit that is not a sha is bound to anyway",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "  return isBindableCommit(baseCommit)",
+    to: "  return baseCommit.length > 0",
+    test: `${SERVER}/test/claim-binding-ingest.test.ts`,
+    because:
+      "`crosscheck conference` registers its session with the literal " +
+      "\"conference\", and the NO_COMMIT_SHA placeholder is seven hex " +
+      "characters, so both reach git as an object name and read as bound",
+  },
+  {
+    // 1.0 spec 02 §8.5 as a doctor refusal: a rung the product genuinely
+    // cannot serve is NAMED, never left as a clean report.
+    label: "a claim nobody can ever revalidate reads as health",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  if (summary.unbound === 0) {",
+    to: "  if (true) {",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "a team whose sessions register no usable commit reads 24 green lines " +
+      "while not one thing they know can ever be judged current, which is " +
+      "AT-10's silent absence exactly",
+  },
+  {
+    // The old-hub / broken-hub split, which one branch would hide.
+    label: "a hub that broke is reported as a hub too old to know",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    return summary.status === HTTP_NOT_FOUND",
+    to: "    return true",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "\"not measured\" is a PASS, so a hub that is DOWN prints the sentence " +
+      "an older hub prints and a green meaning \"could not check\" is worse " +
+      "than no check at all (checkPins states the same rule)",
+  },
+  {
+    // The single untrusted slot on the new CLI surface.
+    label: "the hub's failure string reaches the terminal unsanitized",
+    file: `${CLI}/src/cli/revalidate.ts`,
+    from: "  `hub unreachable: ${bareUntrusted(message, MAX_HUB_MESSAGE_CHARS)} — ` +",
+    to: "  `hub unreachable: ${message} — ` +",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "`crosscheck revalidate` has exactly one slot a hub controls, and a " +
+      "hostile hub's error message then carries control characters and " +
+      "renderer structure straight into the reader's terminal",
+  },
+  {
+    // 1.0 spec 02 §5, the `briefing solved` row of its table. The SECOND
+    // unsolicited surface that asserts a claim body, and the one AT-2's gate
+    // did not reach until this commit.
+    label: "a stale root cause is asserted unasked at SessionStart",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  if (!isAssertableValidity(entry.rootCauseValidity)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/briefing-solved.test.ts`,
+    because:
+      "a root cause recorded in April against a file rewritten in June is " +
+      "handed to a reader in July as the answer, under confidence and " +
+      "provenance labels, on the one surface nobody asked to see",
+  },
+  {
+    // The two counts doctor prints on DIFFERENT lines because their remedies
+    // are opposite.
+    label: "a claim that can never be checked is counted as merely unchecked",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "      unbound += 1;\n      continue;",
+    to: "      unbound += 1;",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "doctor then tells a team to run `crosscheck revalidate` on claims no " +
+      "revalidation can ever reach — a remedy nobody can act on, which is " +
+      "worse than naming no remedy at all",
+  },
+  {
+    // 1.0 spec 02 CCB-10. The downgrade-only rule fires on a CONFLICT, so a
+    // prune that removes the row first disables it entirely.
+    label: "retention deletes the measurement that made a claim stale",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from:
+      "          or(\n" +
+      "            ne(claimRevalidations.result, \"changed\"),",
+    to: "          or(\n            sql`true`,",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a `changed` row is the positive proof that a claim stopped describing " +
+      "the code, and deleting it returns the claim to `unknown` — which the " +
+      "substance gate ADMITS — so the deletion strengthens the claim's " +
+      "standing on a timer, whatever the code did",
+  },
+  {
+    // 1.0 spec 02, AT-2's first "fails if". `context_targets` is the DEFAULT
+    // basis and the cut keeps the alphabetically first 30 of up to 100, so a
+    // rewrite past the cut is invisible to every pull.
+    label: "a surface cut by the cap vouches for files nobody looked at",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "    return present.ok && present.stdout.trim().length > 0 && complete",
+    to: "    return present.ok && present.stdout.trim().length > 0",
+    test: `${CORE}/test/claim-drift.test.ts`,
+    because:
+      "`unchanged` asserts that nothing under the claim moved, and the paths " +
+      "past the cap were never handed to git — so the claim goes from " +
+      "`unknown` to `current` on evidence that was never gathered, and keeps " +
+      "the unsolicited substance lane about a file that was rewritten",
+  },
+  {
+    // 1.0 spec 02 CCB-3's mirror. The wire guarded only the direction a
+    // non-changed result naming commits; the reverse left an evidence-free
+    // downgrade permanent, because the downgrade-only rule refuses every
+    // honest `unchanged` after it.
+    label: "a downgrade naming no commit is accepted and cannot be undone",
+    file: `${SCHEMA}/src/claim-revalidation.ts`,
+    from: 'if (entry.result === "changed" && entry.touchingCommits.length === 0) {',
+    to: "if (false) {",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "one POST per claim permanently demotes a teammate's whole knowledge " +
+      "base out of the substance lane, under a sentence asserting commits it " +
+      "never names and that its own total says do not exist",
+  },
+  {
+    // 1.0 spec 02 CCB-5. `unchanged` is measured against whatever copy of the
+    // default branch this clone holds, and nothing on that path fetches.
+    label: "the currency sentence claims more than the reading measured",
+    file: `${CORE}/src/mcp/render.ts`,
+    // MOVED WITH THE CODE. Both branches gained `${measured}`, the clause that
+    // says when the only reading is the author's own. The mutation is
+    // unchanged in what it proves: collapsing the sentence to a claim about
+    // the world rather than about what was measured.
+    from: "      ? `${at}; unchanged as far as the default branch this clone holds${measured}`\n      : `${at}; unchanged up to ${against}, the default branch as this clone has it${measured}`;",
+    to: "      ? `${at}; those files have not changed since`\n      : `${at}; those files have not changed since`;",
+    test: `${CORE}/test/claim-revalidation-pull.test.ts`,
+    because:
+      "a developer who has not fetched for a month measures an empty range " +
+      "against a month-old ref, the reading is UPSERTed into the shared hub, " +
+      "and every teammate is then told a rewritten file has not changed",
+  },
+  {
+    // 1.0 spec 02 CCB-6. The module header justifies deriving the state on
+    // read because "a stored verdict outlives its evidence"; the prune was
+    // reachable only from the ingest, so retention was enforced by traffic.
+    label: "a verdict outlives its evidence on a hub nobody posts to",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "          gte(claimRevalidations.revalidatedAt, readableFrom),",
+    to: "          gte(claimRevalidations.revalidatedAt, new Date(0)),",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a repo nobody revalidates again keeps answering `current` for years " +
+      "on a reading whose retention expired, which is the stored-verdict " +
+      "defect derived state exists to prevent",
+  },
+  {
+    // 1.0 spec 02 §3.7. The wire has always required a repo and the handler
+    // never read it.
+    label: "a stranger in another repo downgrades a claim permanently",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "    .where(and(inArray(claims.id, unique), eq(agentSessions.repo, repo)));",
+    to: "    .where(inArray(claims.id, unique));",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "the downgrade-only rule bounds a forged UPGRADE and leaves a forged " +
+      "DOWNGRADE permanent, so one request naming 500 claims empties a " +
+      "team's substance lane with no reporter and no repo on any surface",
+  },
+  {
+    // 1.0 spec 02 CCB-8. The named regression — one process per CLAIM rather
+    // than per GROUP — was invisible while every fixture group held exactly
+    // one claim.
+    label: "the revalidation leg spends a git process per claim",
+    file: `${CORE}/src/flows/claim-revalidation.ts`,
+    from:
+      "    const drift = await checkClaimDrift(\n" +
+      "      root,\n" +
+      "      refCommit,\n" +
+      "      group.observedAtCommit,\n" +
+      "      group.paths,\n" +
+      "    );\n" +
+      "    for (const claimId of group.claimIds) {",
+    to:
+      "    for (const claimId of group.claimIds) {\n" +
+      "      const drift = await checkClaimDrift(\n" +
+      "        root,\n" +
+      "        refCommit,\n" +
+      "        group.observedAtCommit,\n" +
+      "        group.paths,\n" +
+      "      );",
+    test: `${CORE}/test/claim-revalidation-budget.test.ts`,
+    because:
+      "a tree whose claims were written at one HEAD is one group holding all " +
+      "of them — the common shape MAX_CLAIM_REVALIDATION_ENTRIES is sized " +
+      "for — so one pull spends a process per claim: measured 12 -> 90 calls " +
+      "and 199 -> 1064 ms on the widened fixture",
+  },
+  {
+    // 1.0 spec 02 §6. The per-leg bound is published and measured; the walk
+    // that repeats it up to 25 times had no bound at all.
+    label: "the walk's time cut is spent in silence",
+    file: `${CLI}/src/cli/revalidate.ts`,
+    from: "  if (run.contextsUnwalked > 0) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/revalidate-cli.test.ts`,
+    because:
+      "a bound spent in silence is a coverage claim nobody made: the reader " +
+      "is told how many trees were measured and never that the rest were " +
+      "skipped for time, so a partial walk reads as a complete one",
+  },
+  {
+    // 1.0 spec 02 CCB-10's observability half. The counter lived on the
+    // response to the caller whose report was refused, and nothing else read
+    // it.
+    label: "a refused walk-back is visible only to the party refused",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "          .set({ refusedWalkBacks: sql`${claimRevalidations.refusedWalkBacks} + 1` })",
+    to: "          .set({ refusedWalkBacks: claimRevalidations.refusedWalkBacks })",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a team lead cannot tell a hub refusing forged upgrades every hour " +
+      "from one that has never seen one — which the service's own comment " +
+      "names as the thing the counter exists to prevent",
+  },
+  {
+    // 1.0 spec 02 refusal 6, whose premise the renderer contradicted.
+    label: "an author's own reading is indistinguishable from a teammate's",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "          selfReported: own.has(entry.claimId),",
+    to: "          selfReported: false,",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "`current` is the one positive certification the vocabulary has, and " +
+      "the refusal accepted the residue on the premise that the move changes " +
+      "nothing a reader sees — true of the substance gate, false of the label",
+  },
+  {
+    // Found by review: the keep cap bounds the ANSWER, never the walk, so a
+    // list none of whose entries survive is read to the end.
+    label: "a declared surface is walked past the point it can still keep anything",
+    file: `${CORE}/src/flows/claim-surface.ts`,
+    from: "    if (examined >= MAX_CLAIM_SURFACE_CANDIDATES) {",
+    to: "    if (examined >= Number.MAX_SAFE_INTEGER) {",
+    test: `${CORE}/test/claim-surface.test.ts`,
+    because:
+      "50 000 unresolvable paths spent 2 959 ms of the calling agent's own " +
+      "MCP turn, kept nothing and said nothing — the cost lands on the caller " +
+      "and no surface says where it went",
+  },
+  {
+    // Found by review: an import the meta-test cannot READ was counted as an
+    // import that does not reach the render layer.
+    label: "an unreadable import is read as a clean bill of health",
+    file: `${CORE}/test/render-surface-registry.test.ts`,
+    from: "  if (COMPUTED_IMPORT_PATTERNS.some((pattern) => pattern.test(source))) {",
+    to: "  if (COMPUTED_IMPORT_PATTERNS.some(() => false)) {",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "`import(join(dir, name))` is one line past the one meta-test §1.4 " +
+      "calls non-negotiable, and missing evidence must never strengthen a " +
+      "conclusion",
+  },
+  {
+    // Found by review: doctor is registered as interpolating nothing
+    // untrusted, and printed the hub's own sentence raw at three checks.
+    label: "the doctor lends its voice to whatever the hub says",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "const hubSaid = (message: string): string =>\n  bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);",
+    to: "const hubSaid = (message: string): string => message;",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "a hub choosing newlines forges PASS rows above the real ones, under " +
+      "the tool's own name — and `revalidate.ts` bounded the same string " +
+      "from the day it was written",
+  },
+  {
+    // 1.0 spec 02 §8.5: a claim with no commit binding can never be
+    // revalidated, and the hub stored a reading for it anyway.
+    label: "a claim that can never be revalidated gets a reading stored",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "      if (unbound.has(entry.claimId)) {",
+    to: "      if (false) {",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "the row's only defence was that the one current reader checks the " +
+      "binding above it — a row nobody reads, one refactor from a row " +
+      "somebody does",
+  },
+  {
+    // Found by review: `reported` and `session_base` rendered identically,
+    // and the fallback is an UPPER bound on the observation point.
+    label: "a binding nobody stated reads like one somebody did",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: '      ? `recorded at ${observed}, its session\'s commit rather than a stated one`',
+    to: "      ? `recorded at ${observed}`",
+    test: `${CORE}/test/claim-validity-render.test.ts`,
+    because:
+      "a session that checks out mid-session re-registers and base_commit " +
+      "moves forward by design, so the walk starts after the observation and " +
+      "the claim reads current on a range that was never looked at",
+  },
+  {
+    // The same gap on the other surface: doctor counted unbound claims and
+    // said nothing about inferred ones.
+    label: "doctor counts unbound claims and not inferred ones",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  summary.inferredBindings === 0",
+    to: "  true",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "a repo whose agents never name the commit they read looks exactly " +
+      "like one where every claim states its own, and the two have different " +
+      "remedies",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -6624,6 +7085,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/coverage-cli.test.ts 5
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
+ * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
@@ -6633,6 +7095,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 2
+ * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
  * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 7
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
@@ -6683,8 +7146,14 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/absence-render.test.ts 1
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
- * PRINTS: packages/connector-core/test/briefing-solved.test.ts 3
+ * PRINTS: packages/connector-core/test/briefing-solved.test.ts 4
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
+ * PRINTS: packages/connector-core/test/claim-drift.test.ts 3
+ * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
+ * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
+ * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
+ * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
+ * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
@@ -6721,7 +7190,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
- * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 2
+ * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 4
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
@@ -6732,6 +7201,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
+ * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
@@ -6743,6 +7213,9 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
+ * PRINTS: packages/server/test/claim-revalidations.test.ts 10
+ * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2

@@ -47,6 +47,7 @@ import {
   formatSolvedLine,
 } from "../briefing/render.ts";
 import { bareUntrusted as bare } from "../briefing/sanitize.ts";
+import { claimValidityWord } from "../briefing/render.ts";
 import { quoted, quotedBody, safeId } from "../mcp/render.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import type {
@@ -212,6 +213,13 @@ export interface ClaimHintInput {
   readonly now: Date;
 }
 
+const validityWordFact = (
+  claim: HintClaimCandidate,
+): readonly string[] => {
+  const word = claimValidityWord(claim.validity);
+  return word === null ? [] : [word];
+};
+
 /** Substance: one evidence-backed claim, under every trust label §4 names. */
 export const renderClaimHint = (input: ClaimHintInput): string => {
   const { claim, context, drift, now } = input;
@@ -222,6 +230,15 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     `confidence ${claim.confidence.toFixed(CONFIDENCE_DECIMALS)}`,
     `provenance ${bare(claim.provenance)}`,
     ageLabel(claim.createdAt, now),
+    // THE STATE WORD GOES HERE, NOT ON A LINE OF ITS OWN, and that placement
+    // is the whole point. `fitHint` below drops lines from the END and
+    // returns "" when fewer than two survive, so only CLAIM_HEADER and this
+    // line are guaranteed to reach the reader — an appended validity line is
+    // the first thing dropped, and a downgrade nobody sees is not a
+    // downgrade. The hashes stay off this surface entirely (spec 02 §5a): a
+    // hint is unsolicited, and three commit hashes anchor a session on a file
+    // history nobody asked about. They are one get_diagnosis away.
+    ...validityWordFact(claim),
   ];
   const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(claim.body, UNSOLICITED_CLAIM_BODY_MAX_CHARS)}`;
   const contextLine =

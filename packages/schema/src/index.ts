@@ -2,11 +2,19 @@ export {
   ARTIFACT_SENSITIVITIES,
   ArtifactSensitivitySchema,
   CAPTURE_MODES,
+  CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
+  CLAIM_REVALIDATION_BASES,
+  CLAIM_REVALIDATION_RESULTS,
   CLAIM_STATUSES,
+  CLAIM_VALIDITY_STATES,
   CaptureModeSchema,
+  ClaimCommitBindingSchema,
   ClaimKindSchema,
+  ClaimRevalidationBasisSchema,
+  ClaimRevalidationResultSchema,
   ClaimStatusSchema,
+  ClaimValidityStateSchema,
   EDGE_KINDS,
   EdgeKindSchema,
   PROVENANCES,
@@ -22,8 +30,12 @@ export {
 export type {
   ArtifactSensitivity,
   CaptureMode,
+  ClaimCommitBinding,
   ClaimKind,
+  ClaimRevalidationBasis,
+  ClaimRevalidationResult,
   ClaimStatus,
+  ClaimValidityState,
   EdgeKind,
   Provenance,
   SessionStatus,
@@ -33,11 +45,24 @@ export type {
 } from "./enums.ts";
 
 export {
+  COMMIT_SHA_PATTERN,
+  NO_COMMIT_SHA,
+  isBindableCommit,
+} from "./commit-sha.ts";
+
+export {
   ClaimEdgeSchema,
   ClaimSchema,
   DERIVED_CONFIDENCE_CAP,
   MAX_CLAIM_BODY_LENGTH,
+  MAX_CLAIM_SURFACE_PATHS,
 } from "./claim.ts";
+
+export {
+  MAX_REPO_PATH_CHARS,
+  REPO_RELATIVE_PATH,
+  repoRelativePath,
+} from "./repo-path.ts";
 export type { Claim, ClaimEdge } from "./claim.ts";
 
 export {
@@ -100,6 +125,19 @@ export type {
   CommitAuthorEvidence,
   CommitEvidence,
 } from "./commit-evidence.ts";
+
+export {
+  ClaimRevalidationEntrySchema,
+  ClaimRevalidationReportSchema,
+  ClaimValiditySchema,
+  MAX_CLAIM_REVALIDATION_ENTRIES,
+  MAX_CLAIM_TOUCHING_COMMITS,
+} from "./claim-revalidation.ts";
+export type {
+  ClaimRevalidationEntry,
+  ClaimRevalidationReport,
+  ClaimValidity,
+} from "./claim-revalidation.ts";
 
 export {
   LandedEvidenceSchema,

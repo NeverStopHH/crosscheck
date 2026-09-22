@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 440
+    # PRINTS: 473
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -126,8 +126,9 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
-    # PRINTS: packages/cli/src/cli/doctor.ts 21
+    # PRINTS: packages/cli/src/cli/doctor.ts 25
     # PRINTS: packages/cli/src/cli/pin-render.ts 1
+    # PRINTS: packages/cli/src/cli/revalidate.ts 2
     # PRINTS: packages/cli/src/cli/status.ts 3
     # PRINTS: packages/connector-acp/src/capabilities.ts 2
     # PRINTS: packages/connector-acp/src/capture/engine.ts 11
@@ -154,11 +155,12 @@ jobs:
     # PRINTS: briefing/ghost.ts 2
     # PRINTS: briefing/intent.ts 1
     # PRINTS: briefing/questions.ts 2
-    # PRINTS: briefing/render.ts 9
+    # PRINTS: briefing/render.ts 10
     # PRINTS: briefing/sanitize.ts 10
     # PRINTS: capture/records.ts 1
     # PRINTS: capture/secret-scan.ts 1
     # PRINTS: capture/touched-root.ts 5
+    # PRINTS: claim-validity.ts 2
     # PRINTS: conference/report.ts 1
     # PRINTS: config/config.ts 3
     # PRINTS: config/connected-repo.ts 2
@@ -178,23 +180,26 @@ jobs:
     # PRINTS: flows/briefing.ts 1
     # PRINTS: flows/capture-targets.ts 2
     # PRINTS: flows/capture-touched-files.ts 1
+    # PRINTS: flows/claim-revalidation.ts 2
+    # PRINTS: flows/claim-surface.ts 1
     # PRINTS: flows/end-session.ts 2
     # PRINTS: flows/hint.ts 2
     # PRINTS: flows/register-session.ts 2
     # PRINTS: flows/solved-hint.ts 4
+    # PRINTS: git/claim-drift.ts 4
     # PRINTS: git/pin-sweep.ts 2
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/delivery.ts 1
     # PRINTS: hints/precision.ts 2
     # PRINTS: hints/render.ts 5
-    # PRINTS: hints/select.ts 9
+    # PRINTS: hints/select.ts 10
     # PRINTS: http/client.ts 1
     # PRINTS: http/coverage.ts 1
     # PRINTS: http/hub.ts 5
     # PRINTS: http/latency.ts 1
     # PRINTS: kit.ts 1
     # PRINTS: mcp/render-referee.ts 3
-    # PRINTS: mcp/render.ts 20
+    # PRINTS: mcp/render.ts 22
     # PRINTS: mcp/session.ts 1
     # PRINTS: mcp/tools/answer-question.ts 1
     # PRINTS: mcp/tools/ask-teammate.ts 1
@@ -218,6 +223,7 @@ jobs:
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 19
     # PRINTS: state/tool-window-key.ts 2
+    # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
     # PRINTS: packages/connector-cursor/src/capabilities.ts 1
     # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
     # PRINTS: packages/connector-cursor/src/derive/triggers.ts 2
@@ -230,6 +236,7 @@ jobs:
     # PRINTS: packages/connector-cursor/src/handlers/tool-failure.ts 3
     # PRINTS: packages/connector-cursor/src/inject/output.ts 1
     # PRINTS: packages/connector-cursor/src/payload.ts 1
+    # PRINTS: packages/schema/src/claim-revalidation.ts 1
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/pin.ts 1
     # PRINTS: packages/schema/src/session.ts 1
@@ -240,6 +247,8 @@ jobs:
     # PRINTS: packages/server/src/routes/sessions.ts 1
     # PRINTS: packages/server/src/routes/suspect.ts 1
     # PRINTS: packages/server/src/services/absences.ts 4
+    # PRINTS: packages/server/src/services/claim-revalidations.ts 7
+    # PRINTS: packages/server/src/services/claim-validity.ts 4
     # PRINTS: packages/server/src/services/commit-evidence.ts 1
     # PRINTS: packages/server/src/services/conference.ts 2
     # PRINTS: packages/server/src/services/contradictions.ts 1
@@ -253,7 +262,7 @@ jobs:
     # PRINTS: packages/server/src/services/pins.ts 1
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
-    # PRINTS: packages/server/src/services/record-handlers.ts 4
+    # PRINTS: packages/server/src/services/record-handlers.ts 5
     # PRINTS: packages/server/src/services/records.ts 1
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/search-tokens.ts 4
@@ -279,6 +288,11 @@ jobs:
     # PRINTS: capture-health.ts 2
     # PRINTS: capture-targets.ts 2
     # PRINTS: capture-touched-files.ts 1
+    # PRINTS: claim-drift.ts 4
+    # PRINTS: claim-revalidation.ts 3
+    # PRINTS: claim-revalidations.ts 7
+    # PRINTS: claim-surface.ts 1
+    # PRINTS: claim-validity.ts 6
     # PRINTS: client.ts 1
     # PRINTS: commit-evidence.ts 1
     # PRINTS: conference-cost.ts 1
@@ -295,7 +309,7 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 7
     # PRINTS: diagnosis.ts 3
-    # PRINTS: doctor.ts 29
+    # PRINTS: doctor.ts 33
     # PRINTS: end-session.ts 2
     # PRINTS: engine.ts 11
     # PRINTS: envelope.ts 1
@@ -336,15 +350,17 @@ jobs:
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 1
-    # PRINTS: record-handlers.ts 4
+    # PRINTS: record-handlers.ts 5
     # PRINTS: records.ts 2
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: register-session.ts 2
     # PRINTS: render-referee.ts 3
+    # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
-    # PRINTS: render.ts 43
+    # PRINTS: render.ts 46
     # PRINTS: report.ts 2
+    # PRINTS: revalidate.ts 2
     # PRINTS: review-draft.ts 1
     # PRINTS: runner.ts 7
     # PRINTS: sanitize.ts 10
@@ -352,7 +368,7 @@ jobs:
     # PRINTS: search-tokens.ts 4
     # PRINTS: search.ts 11
     # PRINTS: secret-scan.ts 1
-    # PRINTS: select.ts 9
+    # PRINTS: select.ts 10
     # PRINTS: seq-cost.ts 8
     # PRINTS: session-events.ts 4
     # PRINTS: session-order.ts 9

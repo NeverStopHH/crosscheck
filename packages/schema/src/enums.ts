@@ -64,12 +64,81 @@ export const TARGET_SOURCES = ["tool_edit", "git_diff"] as const;
  */
 export const STORED_TARGET_SOURCES = [...TARGET_SOURCES, "both"] as const;
 
+/**
+ * HOW PRECISELY we know which commit a claim was observed at (1.0 spec 02).
+ *
+ * Not a lane and not a source — `work_context_targets.source` says WHICH
+ * OBSERVER saw a file, and folding the two into one enum is the defect spec
+ * 02 §9 names. This says how much the "when" is worth:
+ *
+ *   reported      — the emitter sent its own HEAD with the claim.
+ *   session_base  — ingest fell back to the author session's base_commit.
+ *                   An APPROXIMATION in BOTH directions, deliberately not
+ *                   called a lower bound: a session re-registers on recovery
+ *                   and on SessionStart re-fires, and each re-registration
+ *                   REWRITES base_commit (server services/sessions.ts), so the
+ *                   stored value can be later than the observation as easily
+ *                   as earlier.
+ *   none          — nothing usable reached the row, so the claim can never be
+ *                   revalidated and is never unsolicited substance. Unknown
+ *                   fails CLOSED on the code axis.
+ */
+export const CLAIM_COMMIT_BINDINGS = [
+  "reported",
+  "session_base",
+  "none",
+] as const;
+
+/** Where a revalidation's file set came from — declared by the author, or the
+ * whole work context's file targets, which OVER-fires by construction. */
+export const CLAIM_REVALIDATION_BASES = ["declared", "context_targets"] as const;
+
+/**
+ * What a revalidation found. `SolvedFileDrift`'s three states VERBATIM
+ * (connector-core git/solved-staleness.ts) — one vocabulary for "did the code
+ * move", with `unknown` first-class, and deliberately NOT `PinPathStatus`
+ * (present|missing|unknown), which is a different question about a different
+ * object.
+ */
+export const CLAIM_REVALIDATION_RESULTS = [
+  "changed",
+  "unchanged",
+  "unknown",
+] as const;
+
+/**
+ * HOW MUCH A RECORDED CLAIM IS STILL WORTH ABOUT THE CODE (1.0 spec 02 §3.5).
+ *
+ * Five states, derived on read by ONE function — server
+ * services/claim-validity.ts — and never stored. The vocabulary lives here so
+ * the hub and every connector spell it identically; the RESOLUTION lives there
+ * so there is one place that decides.
+ *
+ *   current      a revalidation looked and the surface had not moved
+ *   superseded   a `supersedes` edge points at this claim
+ *   invalidated  the author set status `rejected`
+ *   stale        a revalidation looked and the surface HAD moved
+ *   unknown      nobody looked, the look failed, or the claim is bound to
+ *                no commit at all
+ */
+export const CLAIM_VALIDITY_STATES = [
+  "current",
+  "superseded",
+  "invalidated",
+  "stale",
+  "unknown",
+] as const;
+
 export const ARTIFACT_SENSITIVITIES = [
   "team_visible",
   "needs_approval",
 ] as const;
 
 export const ClaimKindSchema = z.enum(CLAIM_KINDS);
+export const ClaimCommitBindingSchema = z.enum(CLAIM_COMMIT_BINDINGS);
+export const ClaimValidityStateSchema = z.enum(CLAIM_VALIDITY_STATES);
+export const ClaimRevalidationBasisSchema = z.enum(CLAIM_REVALIDATION_BASES);
+export const ClaimRevalidationResultSchema = z.enum(CLAIM_REVALIDATION_RESULTS);
 export const ClaimStatusSchema = z.enum(CLAIM_STATUSES);
 export const EdgeKindSchema = z.enum(EDGE_KINDS);
 export const SessionStatusSchema = z.enum(SESSION_STATUSES);
@@ -80,6 +149,10 @@ export const TargetSourceSchema = z.enum(TARGET_SOURCES);
 export const ArtifactSensitivitySchema = z.enum(ARTIFACT_SENSITIVITIES);
 
 export type ClaimKind = z.infer<typeof ClaimKindSchema>;
+export type ClaimCommitBinding = z.infer<typeof ClaimCommitBindingSchema>;
+export type ClaimValidityState = z.infer<typeof ClaimValidityStateSchema>;
+export type ClaimRevalidationBasis = z.infer<typeof ClaimRevalidationBasisSchema>;
+export type ClaimRevalidationResult = z.infer<typeof ClaimRevalidationResultSchema>;
 export type ClaimStatus = z.infer<typeof ClaimStatusSchema>;
 export type EdgeKind = z.infer<typeof EdgeKindSchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;

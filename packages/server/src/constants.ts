@@ -623,3 +623,29 @@ export const SUSPECT_SEPARATION_RATIO = 1.5;
  * PRINTS: true
  */
 export const COVERAGE_SESSION_WINDOW_DAYS = 14;
+// ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
+
+/**
+ * Revalidation rows older than this are pruned on the next report — the bound
+ * on claim_revalidations growth, matching COMMIT_EVIDENCE_RETENTION_DAYS
+ * because both answer "how long is a clone's reading still worth anything".
+ *
+ * A PRUNED ROW READS `unknown` AGAIN, and that is the point rather than a side
+ * effect: a stored verdict must not outlive the evidence it was derived from.
+ */
+export const CLAIM_REVALIDATION_RETENTION_DAYS = 30;
+
+/**
+ * How many of a repo's claims one validity summary derives (spec 02 §8.5's
+ * doctor refusal).
+ *
+ * BOUNDED, AND THE CUT IS REPORTED as `counted / total`. The summary derives
+ * each claim's state through `claimValidity()` rather than counting columns in
+ * SQL, because a second definition written as an aggregate is exactly the
+ * defect this spec exists to prevent — and derivation costs three batched
+ * queries over the rows it names, so the row set has to have a ceiling. 500
+ * is `CONFERENCE_MAX_COUNTED_CONTEXTS`' figure, chosen here for its reason:
+ * enough that a real team's repo is answered whole, small enough that a
+ * five-year archive cannot turn `crosscheck doctor` into a table scan.
+ */
+export const CLAIM_VALIDITY_SUMMARY_MAX_CLAIMS = 500;

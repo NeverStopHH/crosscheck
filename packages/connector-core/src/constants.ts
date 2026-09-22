@@ -726,6 +726,155 @@ export const MAX_LANDED_ANCESTRY_CHECKS = 10;
 export const STALENESS_GIT_TIMEOUT_MS = 250;
 /** Most referenced files one staleness probe hands git as pathspecs. */
 export const STALENESS_MAX_PATHS = 20;
+
+// ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
+
+/**
+ * How many commits a downgrade may NAME. Five (spec 02 D6, default): the
+ * sentence is "3 commits have touched these files since — <sha>, <sha>,
+ * <sha>", and past a handful the hashes stop being readable and start being a
+ * log. The count itself is not capped — "and N more" is measured — so raising
+ * this buys names, not truth, at the price of a jsonb column on a table
+ * bounded by claims.
+ *
+ * Re-exported rather than declared: it bounds a WIRE array and the stored
+ * jsonb column, so @crosscheck/schema owns it and there is one thing to move.
+ */
+export { MAX_CLAIM_TOUCHING_COMMITS } from "@crosscheck/schema";
+
+/**
+ * Most paths one claim's drift check hands git as pathspecs.
+ *
+ * INHERITED BY NAME from the pin registry's MAX_PIN_FILES, which is what
+ * `MAX_CLAIM_SURFACE_PATHS` in @crosscheck/schema already bounds a declared
+ * surface to. Deliberately NOT the older STALENESS_MAX_PATHS (20): that one
+ * bounds a WORK CONTEXT's target list, which the hub serves up to 100 of,
+ * while a claim's declared surface is already 30 at the schema. Slicing to 20
+ * here would drop a third of what an author declared and still print a
+ * verdict over the rest.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.MAX_CLAIM_SURFACE_PATHS === s.MAX_CLAIM_SURFACE_PATHS, c.MAX_CLAIM_SURFACE_PATHS === s.MAX_PIN_FILES)'
+ * PRINTS: true true
+ */
+export const MAX_CLAIM_SURFACE_PATHS = 30;
+
+/**
+ * Most declared paths one claim's surface resolution will LOOK AT — as opposed
+ * to keep.
+ *
+ * THE CAP ABOVE BOUNDS THE ANSWER, NOT THE WORK. `resolveDeclaredSurface`
+ * stops when KEPT reaches `MAX_CLAIM_SURFACE_PATHS`, so a list whose entries
+ * are all dropped is walked end to end, and every entry outside the repo costs
+ * a `realpath` before it can be dropped. The three tools that take
+ * `affectedPaths` are MCP tools: the time comes out of the calling agent's own
+ * turn, and no surface says where it went.
+ *
+ * WHY A MULTIPLE AND NOT THE CAP ITSELF. An author who declares thirty real
+ * paths alongside a few that policy denies must still get thirty back, so the
+ * budget has to sit above the keep cap by enough room for ordinary attrition.
+ * Four times is the room; past it, the list stops being a declaration.
+ *
+ * VERIFY: bun -e 'const {resolveDeclaredSurface}=await import("./packages/connector-core/src/flows/claim-surface.ts");const r=process.cwd();const mk=(n)=>Array.from({length:n},(_,i)=>`../outside-${i}/x.ts`);const t=async(n)=>{const a=performance.now();await resolveDeclaredSurface({repoRoot:r,cwd:r,paths:mk(n)});return Math.round(performance.now()-a)};console.log(await t(120) < 100, await t(50000) < 100)'
+ * PRINTS: true true
+ */
+export const MAX_CLAIM_SURFACE_CANDIDATES = MAX_CLAIM_SURFACE_PATHS * 4;
+
+/**
+ * Most DISTINCT (commit, path-set) groups one `get_diagnosis` pull
+ * revalidates. Newest-commit-first before the cut, and the cut is REPORTED as
+ * `revalidated / total` — a bound must not be spent at random and must not
+ * claim more than it measured (state/capture-health.ts).
+ */
+export const CLAIM_REVALIDATION_MAX_COMMITS = 8;
+
+/**
+ * Process cap for the whole revalidation leg, the way PIN_SWEEP_MAX_GIT_CALLS
+ * bounds the sweep. Each group costs at most two calls, so this is headroom
+ * rather than a working limit — and it is what stops a pathological tree from
+ * spending the MCP budget on git.
+ */
+export const CLAIM_REVALIDATION_MAX_GIT_CALLS = 24;
+
+/**
+ * How many of a repo's work contexts `crosscheck revalidate` reads in one run
+ * (1.0 spec 02 §10 D5).
+ *
+ * NEWEST FIRST, AND THE CUT IS PRINTED. The command walks trees the hub lists
+ * for this repo and spends the per-tree git bound on each, so the walk itself
+ * needs a ceiling or a five-year archive turns one typed command into an
+ * afternoon. 25 is a working set rather than an archive, and the run SAYS
+ * when it hit the bound rather than reporting the page as the whole repo —
+ * the shape `SESSION_STATE_REAP_MAX_PER_RUN` already uses, where draining
+ * over several runs beats making one of them pay for everything.
+ */
+export const CLAIM_REVALIDATE_MAX_CONTEXTS = 25;
+
+/**
+ * How long the whole `crosscheck revalidate` walk may spend before it stops
+ * and says how many trees it did not reach.
+ *
+ * §6 budgets ONE revalidation leg — CLAIM_REVALIDATION_MAX_GIT_CALLS
+ * processes at STALENESS_GIT_TIMEOUT_MS each — and CCB-8 measures exactly
+ * that. The WALK repeats that leg up to CLAIM_REVALIDATE_MAX_CONTEXTS times
+ * and nothing bounded it: the arithmetic ceiling from this file's own
+ * constants is 2 + 25 x 16 = 402 git processes at 250 ms, a hundred seconds,
+ * plus 51 hub round trips. Measured on a warm local 5 000-commit repo, the
+ * git half alone was about 11 seconds across three runs.
+ *
+ * THIRTY SECONDS IS A TYPED COMMAND'S PATIENCE, not a measurement. It is what
+ * a person will wait at a terminal before assuming the thing is stuck, and
+ * the walk now prints a line per tree so they never have to guess. Raising it
+ * is a decision about that patience; lowering it costs trees per run, and the
+ * output names how many.
+ */
+export const REVALIDATE_WALK_BUDGET_MS = 30_000;
+
+/**
+ * The validity clause on a PULLED surface — "no longer current: recorded at
+ * abc1234; 3 commits have touched these files since — def5678, 9a1b2c3".
+ *
+ * It is NOT MAX_HUB_MESSAGE_CHARS: that constant's own comment scopes it to a
+ * string the HUB chose as a tool prints it back, and this clause is
+ * renderer-built from enum values, small integers and hex.
+ *
+ * RAISED FROM 160, which the longest `current` sentence hit EXACTLY — 160 of
+ * 160, fitting by one character. The bound is spent on the opener first, by
+ * design, so what a `current` sentence loses at the end is its qualifiers:
+ * ", by its own author" (who measured it) and "its session's commit rather
+ * than a stated one" (what the commit is). Both exist because a reader
+ * otherwise cannot tell a weaker `current` from a stronger one, and both
+ * would have been cut by the next word anyone added. A qualifier that
+ * silently falls off leaves the SHORTER, more confident sentence standing,
+ * which is the one direction this project refuses to fail in.
+ *
+ * 200 leaves the worst case 40 characters of room. `stale` still truncates —
+ * its commit list is unbounded in principle and the reader loses only later
+ * shas, each of which the row itself still carries.
+ *
+ * NOT A VERIFY BLOCK, deliberately: 200 is a decision with headroom, not a
+ * derived count, and the invariant it protects is not a number anyone can
+ * print. The guard is `test/claim-validity-render.test.ts`, "the longest
+ * current sentence keeps its qualifiers" — it builds the worst case and
+ * asserts nothing was cut, so lowering this constant below what that sentence
+ * needs is a red build rather than a silently shorter line.
+ *
+ * (A runnable VERIFY here would also have to name mcp/render.ts in a comment,
+ * which §4.4's meta-test reads as this module reaching the render layer —
+ * correctly, since it cannot tell a command from an import.)
+ */
+export const MAX_CLAIM_VALIDITY_LINE_CHARS = 200;
+
+/**
+ * The state WORD alone, which is all an UNSOLICITED surface gets.
+ *
+ * The anchoring asymmetry the registry already encodes: a reader who pulled a
+ * diagnosis asked for it, while a hint arrives unasked — and spending its
+ * characters on three commit hashes anchors a session on a file history
+ * nobody asked about. Nothing is hidden: the word is the part that changes
+ * what a reader should DO with the sentence, and the hashes are one
+ * get_diagnosis away.
+ */
+export const MAX_CLAIM_VALIDITY_WORD_CHARS = 32;
 /**
  * "Solved before" entries one briefing may spend — title + id + age, and for
  * a fingerprint match one further line carrying the recorded cause.

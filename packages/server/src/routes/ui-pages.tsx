@@ -227,7 +227,7 @@ export const uiPagesRoutes = (deps: AppDeps): Hono<AppEnv> => {
 
   router.get("/work-contexts/:id", async (c) => {
     const workContextId = c.req.param("id");
-    const diagnosis = await getDiagnosis(deps.db, workContextId);
+    const diagnosis = await getDiagnosis(deps.db, deps.now(), workContextId);
     if (diagnosis === undefined) {
       return notFoundPage(c);
     }
@@ -257,7 +257,7 @@ export const uiPagesRoutes = (deps: AppDeps): Hono<AppEnv> => {
   });
 
   router.get("/contradictions/:id", async (c) => {
-    const brief = await getRefereeBrief(deps.db, c.req.param("id"));
+    const brief = await getRefereeBrief(deps.db, deps.now(), c.req.param("id"));
     if (brief === undefined) {
       return notFoundPage(c);
     }

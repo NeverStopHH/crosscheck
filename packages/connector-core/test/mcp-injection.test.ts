@@ -318,6 +318,46 @@ const REFEREE_POSITION_HEADER =
 const REFEREE_COUNT_LINE =
   /^Position [AB] (cites no evidence claims\.|cites \d+ evidence claims?:|ruled out \d+ approach(es)?:|has no ruled-out approaches recorded\.)$/;
 const REFEREE_CAP_LINE = /^\(the hub capped .+\)$/;
+/**
+ * The claim ↔ code binding's clause (1.0 spec 02 §5), one line per position.
+ * Renderer-owned throughout — enum openers, small integers and ids through
+ * safeId — so the shape can be pinned character for character, which is what
+ * proves no payload reaches it.
+ */
+/**
+ * THE TWO QUALIFIERS, as optional groups rather than as new alternatives.
+ *
+ * Both weaken a reading and both are renderer-owned words, and they COMPOSE:
+ * a `current` claim can be bound to its session's commit AND measured by its
+ * own author, so listing them as alternatives would need four shapes where
+ * two suffice — and the one nobody wrote out is the one that escapes the
+ * allowlist. Each is still pinned to its exact wording, so a renderer that
+ * invents a third qualifier is a red build here, which is what this list is
+ * for.
+ */
+const OBSERVED_AT =
+  "recorded at [\\w.:-]+(, its session's commit rather than a stated one)?";
+const BY_AUTHOR = "(, by its own author)?";
+
+const REFEREE_VALIDITY_LINE = new RegExp(
+  "^Position [AB] is (current|no longer current|currency unknown): (" +
+    [
+      "replaced by [\\w.:-]+",
+      "a revision replaced it",
+      "its author rejected it",
+      "recorded against no commit, so it cannot be checked against the code",
+      // The `current` clause names the ref state it was measured against,
+      // because the reading is taken on whatever copy of the default branch
+      // this clone holds and nothing on that path fetches. Both shapes are
+      // listed: the ref is null when it could not be resolved at all.
+      `${OBSERVED_AT}; unchanged up to [\\w.:-]+, the default branch as this clone has it${BY_AUTHOR}`,
+      `${OBSERVED_AT}; unchanged as far as the default branch this clone holds${BY_AUTHOR}`,
+      `${OBSERVED_AT}; whether those files changed since is unknown`,
+      `${OBSERVED_AT}; commits have touched these files since` +
+        "( — [\\w.:-]+(, [\\w.:-]+)*( and (\\d+ )?more)?)?",
+    ].join("|") +
+    ")\u2026?$",
+);
 const REFEREE_SHARED_HEADER =
   /^Shared ground — targets both work contexts touch \(\d+\):$/;
 const REFEREE_SHARED_LINE = /^- [^«»]* · [^«»]*$/;
@@ -333,6 +373,7 @@ const REFEREE_LINE_SHAPES = [
   REFEREE_POSITION_HEADER,
   REFEREE_COUNT_LINE,
   REFEREE_CAP_LINE,
+  REFEREE_VALIDITY_LINE,
   REFEREE_SHARED_HEADER,
   REFEREE_SHARED_LINE,
   REFEREE_NO_SHARED_LINE,
@@ -345,14 +386,18 @@ const REFEREE_LINE_SHAPES = [
 
 /**
  * The fixture's shape: opening (header, neutrality, detection, one
- * retirement note), the payload-carrying position (header, claim, two count
- * lines, one evidence, one ruled-out), the clean position (header, claim,
- * two empty-count lines), shared ground (header + one target), timeline
- * (header + four events). Which position renders first may flip with a
- * payload in `positionClaimId` — the renderer orders the pair canonically —
- * but the totals cannot.
+ * retirement note), the payload-carrying position (header, claim, VALIDITY,
+ * two count lines, one evidence, one ruled-out), the clean position (header,
+ * claim, VALIDITY, two empty-count lines), shared ground (header + one
+ * target), timeline (header + four events). Which position renders first may
+ * flip with a payload in `positionClaimId` — the renderer orders the pair
+ * canonically — but the totals cannot.
+ *
+ * 21 → 23: one validity clause per position (spec 02 §5). A downgrade that
+ * lives only in a column is not a downgrade, and a case file is the document
+ * a HUMAN decides from.
  */
-const EXPECTED_REFEREE_LINES = 21;
+const EXPECTED_REFEREE_LINES = 23;
 
 describe("referee brief invariants over the injection corpus", () => {
   test("hold for every payload in every untrusted field of a case file", () => {

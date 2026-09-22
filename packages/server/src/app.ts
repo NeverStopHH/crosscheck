@@ -2,6 +2,7 @@ import { Hono } from "hono";
 
 import { fail } from "./http/envelope.ts";
 import { absencesRoutes } from "./routes/absences.ts";
+import { claimRevalidationsRoutes } from "./routes/claim-revalidations.ts";
 import { conferenceRoutes } from "./routes/conference.ts";
 import { contradictionsRoutes } from "./routes/contradictions.ts";
 import { developersRoutes } from "./routes/developers.ts";
@@ -62,6 +63,10 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // `suspect` names sessions. Read by any member (everybody affected has to
   // be able to see what it is), written with the admin token.
   app.route("/api/team-settings", teamSettingsRoutes(deps));
+  // The claim ↔ code binding's recording half (1.0 spec 02). A route rather
+  // than a record kind: `crosscheck revalidate` runs from a terminal with no
+  // agent session, and minting one would be a phantom teammate in presence.
+  app.route("/api/claim-revalidations", claimRevalidationsRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.
   app.route("/ui", uiRoutes(deps));

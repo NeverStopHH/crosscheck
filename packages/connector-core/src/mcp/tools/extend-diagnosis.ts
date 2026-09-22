@@ -26,6 +26,10 @@ import {
   EdgeKindSchema,
 } from "@crosscheck/schema";
 
+import {
+  droppedSurfaceNote,
+  resolveDeclaredSurface,
+} from "../../flows/claim-surface.ts";
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
@@ -85,6 +89,16 @@ export const ArgsSchema = z.object({
     .array(z.string().min(1))
     .default([])
     .describe("Ids of claims that support yours — theirs count."),
+  affectedPaths: z
+    .array(z.string().min(1))
+    .default([])
+    .describe(
+      "Repo-relative files this finding is ABOUT, if you already know them. " +
+        "They scope the staleness check: once a later commit rewrites one of " +
+        "them, this claim stops being presented as a current cause and the " +
+        "downgrade names the commits. Omit rather than guess — with none, the " +
+        "whole work context's touched files stand in, which over-fires.",
+    ),
   note: z
     .string()
     .default("")
@@ -250,6 +264,12 @@ export const run = async (
     return toolFailure(SUPERSEDES_RULE);
   }
 
+  const surface = await resolveDeclaredSurface({
+    repoRoot: ctx.identity.root,
+    cwd: ctx.identity.root,
+    paths: parsed.value.affectedPaths,
+    denylist: ctx.config.denylist ?? undefined,
+  });
   const createdAt = ctx.now().toISOString();
   const claim = {
     id: mintClaimId(),
@@ -264,6 +284,14 @@ export const run = async (
     captureMode: "agent",
     provenance: "declared",
     evidenceRefs: parsed.value.evidenceRefs,
+    affectedPaths: surface.paths,
+    // THE EMITTER'S OWN HEAD, at zero marginal cost: prepareMcp already
+    // resolved a RepoIdentity for this call and resolveRepoIdentity ran
+    // `git rev-parse HEAD` inside it. Sending it makes the binding `reported`
+    // instead of leaving ingest to read the session's base_commit, which is
+    // rewritten on every re-registration and can therefore sit LATER than the
+    // observation — the direction that makes a claim read fresher than it is.
+    observedAtCommit: ctx.identity.baseCommit,
     createdAt,
   };
   const edge = {
@@ -340,9 +368,13 @@ export const run = async (
     claimOutcome?.status === "duplicate"
       ? " (your claim was already there, so it was not added twice)"
       : "";
+  const narrowed = droppedSurfaceNote(surface);
   return toolText(
-    `Extended work context ${safeId(workContextId)}: your ${claim.kind} ${landedClaimId} is now ` +
-      `linked to ${safeId(targetClaimId)} by a ${edge.kind} edge${already}. Its author sees it the ` +
-      "next time they read their own diagnosis.",
+    [
+      `Extended work context ${safeId(workContextId)}: your ${claim.kind} ${landedClaimId} is now ` +
+        `linked to ${safeId(targetClaimId)} by a ${edge.kind} edge${already}. Its author sees it the ` +
+        "next time they read their own diagnosis.",
+      ...(narrowed === null ? [] : [narrowed]),
+    ].join("\n"),
   );
 };
