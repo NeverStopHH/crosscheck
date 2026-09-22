@@ -1,5 +1,7 @@
 import { z } from "zod";
 import {
+  MAX_CI_LANE_FIELD_CHARS,
+  MAX_CI_TEST_ID_CHARS,
   MAX_PIN_SWEEP_UPDATES,
   PIN_PRESENCE_TERMINAL,
 } from "@crosscheck/schema";
@@ -460,6 +462,82 @@ const SolvedCountsResponseSchema = z
     // A counts block this client cannot read is treated as no counts at all:
     // a number the reader cannot trust is worse than no number.
     return counts.success ? counts.data : EMPTY_SOLVED_COUNTS;
+  });
+
+/**
+ * WHAT CI SAW AT THIS COMMIT, AND WHAT THE HUB MAKES OF IT (spec 05 §3.5-6).
+ *
+ * TWO FIELDS, ONE CALL, because they are read together and mislead apart: a
+ * `confirmed` delta beside `coverage: incomplete` means something different
+ * from the same delta beside `complete` — in the first, lanes the hub expected
+ * never reported, so the run that confirmed it may not be the whole story.
+ *
+ * `looseObject` AND EVERY COUNT DEFAULTED, for the reason the claim-validity
+ * summary states: a hub too old to know this route answers 404 and the caller
+ * sees a failure, but a hub that answers with a field missing must not have
+ * that read as a confident zero. The STATE has no default — an absent state is
+ * the one thing this client refuses to guess, because every value it could
+ * pick is a sentence about a repository it cannot see.
+ */
+export const CiCoverageSchema = z.looseObject({
+  state: z.enum(["complete", "incomplete", "unknown", "unavailable"]),
+  lanesExpected: z.number().int().min(0).default(0),
+  lanesReported: z.number().int().min(0).default(0),
+  truncatedLanes: z.number().int().min(0).default(0),
+  awaitingRerun: z.number().int().min(0).default(0),
+  collectedAt: z.string().nullable().default(null),
+});
+
+export const CiBehaviorDeltaSchema = z.looseObject({
+  // AUTHOR-WRITTEN TEXT FROM A REPOSITORY, and a fork PR can name a test
+  // anything. Bounded here and sanitized at every surface that prints one.
+  testId: z.string().max(MAX_CI_TEST_ID_CHARS),
+  delta: z.enum(["confirmed", "unconfirmed", "flaky"]),
+  reason: z.enum([
+    "insufficient_base",
+    "not_stably_green",
+    "awaiting_rerun",
+    "rerun_green",
+    "rerun_red",
+  ]),
+  baseRuns: z.number().int().min(0).default(0),
+  baseWindowSource: z
+    .enum(["same_ref", "default_ref_fallback"])
+    .default("same_ref"),
+  rerunKind: z.enum(["none", "same_job", "new_attempt"]).default("none"),
+  lane: z
+    .looseObject({
+      job: z.string().max(MAX_CI_LANE_FIELD_CHARS).default(""),
+      leg: z.string().max(MAX_CI_LANE_FIELD_CHARS).default(""),
+    })
+    .optional(),
+});
+
+const CiVerdictResponseSchema = z.looseObject({
+  coverage: CiCoverageSchema,
+  deltas: z.array(CiBehaviorDeltaSchema).default([]),
+});
+
+export type CiCoverage = z.infer<typeof CiCoverageSchema>;
+export type CiBehaviorDelta = z.infer<typeof CiBehaviorDeltaSchema>;
+export type CiVerdict = z.infer<typeof CiVerdictResponseSchema>;
+
+/**
+ * THE DEFAULT REF TRAVELS FROM THE CLONE, because the hub holds no repository
+ * and must not guess which branch is default. It is used only to borrow a base
+ * window when a feature branch has none of its own, and every delta says
+ * whether it borrowed — so a reader who disagrees can see that it was used.
+ */
+export const getCiVerdict = (
+  ctx: HubContext,
+  repo: string,
+  commitSha: string,
+  defaultRef: string,
+): Promise<HubResult<CiVerdict>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/ci-runs/verdict${encodeRepo(repo)}&commit=${encodeURIComponent(commitSha)}&defaultRef=${encodeURIComponent(defaultRef)}`,
+    schema: CiVerdictResponseSchema,
   });
 
 export const getSolvedMatchCounts = (

@@ -228,7 +228,8 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/cli/status.ts",
     // COV-7, same shape as cli-doctor above: driven by named fixtures in
     // test/coverage-cli.test.ts rather than by a registry closure.
-    note: "formatAbsenceLine, formatAge and the coverage clause from the core render layer, the clause exercised in test/coverage-cli.test.ts; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment). NO QUOTED_DATA_NOTICE, deliberately: the notice tells a MODEL that « » is data rather than instruction, and this command's stdout reaches a human terminal only — no hook and no MCP tool reads it (VERIFY below). The frame, the sanitizing and the bounds still apply, because they protect the reader's terminal rather than a context window",
+    note: "formatAbsenceLine, formatAge and the coverage clause from the core render layer, the clause exercised in test/coverage-cli.test.ts; absence names sanitized inside the renderer; teammate name/branch/status through bareUntrusted and the session intent through renderIntent (the one framed fragment). NO QUOTED_DATA_NOTICE, deliberately: the notice tells a MODEL that « » is data rather than instruction, and this command's stdout reaches a human terminal only — no hook and no MCP tool reads it (VERIFY below). The frame, the sanitizing and the bounds still apply, because they protect the reader's terminal rather than a context window. The CI block (spec 05 §5) adds the one slot on this surface whose text comes from ANOTHER REPOSITORY rather than from a teammate: a fork pull request can name a test anything, so every `test_id` goes through bareUntrusted at MAX_CI_TEST_ID_CHARS and the list is capped at CI_STATUS_MAX_LINES with the cut printed",
+    corpusCoveredBy: ["test/ci-status-render.test.ts"],
   },
 ];
 

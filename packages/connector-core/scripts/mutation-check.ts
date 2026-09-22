@@ -5533,6 +5533,41 @@ export const MUTATIONS: readonly Mutation[] = [
       "way, the other has nothing to wait for — and `unavailable` is the " +
       "default this project keeps rather than a state it upgrades away from",
   },
+  {
+    // 1.0 spec 05 §5, non-negotiable #2. A `test_id` is the one slot on
+    // `crosscheck status` whose text comes from ANOTHER repository.
+    label: "a test name from a fork PR reaches the terminal raw",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "      const name = bareUntrusted(delta.testId, MAX_CI_TEST_ID_CHARS);",
+    to: "      const name = delta.testId;",
+    test: `${CLI}/test/ci-status-render.test.ts`,
+    because:
+      "a fork pull request can name a test anything — a newline forging a " +
+      "line of this command's own, a frame character on a surface that " +
+      "carries no notice explaining one, or a thousand combining marks",
+  },
+  {
+    label: "a hub that did not answer prints as a passing suite",
+    file: `${CLI}/src/cli/status.ts`,
+    from: '    return ["ci: not measured — the hub did not answer"];',
+    to: "    return [];",
+    test: `${CLI}/test/ci-status-render.test.ts`,
+    because:
+      "a missing block reads exactly like a green suite, and a round trip " +
+      "that failed is not a fact about the code — the silent absence AT-10 " +
+      "refuses",
+  },
+  {
+    label: "the CI list is cut without saying so",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "    ...(hidden > 0 ? [`  (+${String(hidden)} more not shown)`] : []),",
+    to: "",
+    test: `${CLI}/test/ci-status-render.test.ts`,
+    because:
+      "a run may carry CI_MAX_TEST_ROWS non-green rows, and a list quietly " +
+      "shorter than the failures it describes tells a reader their suite is " +
+      "healthier than it is",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -5579,6 +5614,7 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
+ * PRINTS: packages/cli/test/ci-status-render.test.ts 3
  * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 5

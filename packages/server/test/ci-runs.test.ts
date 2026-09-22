@@ -351,3 +351,91 @@ describe("POST /api/ci-runs — the sender's clock", () => {
     expect((await readRuns(harness, apiKey, "beefcafe")).runs).toHaveLength(1);
   });
 });
+
+describe("the verdict route hands back the hub's answer, not the raw rows", () => {
+  /** The verdict endpoint, as a member reads it. */
+  const readVerdict = async (
+    harness: TestHarness,
+    apiKey: string | null,
+    commit: string = COMMIT,
+  ): Promise<{
+    status: number;
+    coverage?: { state: string; lanesExpected: number; awaitingRerun: number };
+    deltas?: readonly { testId: string; delta: string; reason: string }[];
+  }> => {
+    const response = await harness.app.request(
+      `/api/ci-runs/verdict?repo=${encodeURIComponent(REPO)}&commit=${commit}`,
+      jsonRequest("GET", apiKey),
+    );
+    if (response.status !== 200) {
+      return { status: response.status };
+    }
+    const body = (await response.json()) as {
+      data: {
+        coverage: { state: string; lanesExpected: number; awaitingRerun: number };
+        deltas: readonly { testId: string; delta: string; reason: string }[];
+      };
+    };
+    return { status: response.status, ...body.data };
+  };
+
+  test("a member may read it, and an unauthenticated caller may not", async () => {
+    // READ IS OPEN, WRITE IS A TOKEN — the same asymmetry the raw route has,
+    // for the same stated reason: a coverage qualifier nobody can look behind
+    // is a qualifier nobody can check.
+    const harness = await freshHarness();
+    await post(harness, report());
+    const apiKey = await createDeveloper(harness);
+
+    expect((await readVerdict(harness, apiKey)).status).toBe(200);
+    expect((await readVerdict(harness, null)).status).toBe(401);
+  });
+
+  test("the answer carries the reason, not only the verdict", async () => {
+    // A hub holding one red run and nothing else CANNOT say this commit broke
+    // anything. The route must hand back that refusal with its cause, or a
+    // caller has an unexplained `unconfirmed` and no idea what to do next.
+    const harness = await freshHarness();
+    await post(harness, report());
+    const apiKey = await createDeveloper(harness);
+
+    const verdict = await readVerdict(harness, apiKey);
+
+    expect(verdict.deltas).toHaveLength(1);
+    expect(verdict.deltas?.[0]?.delta).toBe("unconfirmed");
+    expect(verdict.deltas?.[0]?.reason).toBe("insufficient_base");
+    expect(verdict.deltas?.[0]?.testId).toBe(
+      "packages/a.test.ts::suite::red one",
+    );
+  });
+
+  test("coverage travels in the same answer as the deltas", async () => {
+    // BOTH OR NEITHER. A `confirmed` beside `incomplete` means something
+    // different from the same delta beside `complete`, and two calls would let
+    // a surface render one without the other.
+    const harness = await freshHarness();
+    await post(harness, report());
+    const apiKey = await createDeveloper(harness);
+
+    const verdict = await readVerdict(harness, apiKey);
+
+    expect(verdict.coverage).toBeDefined();
+    expect(["unknown", "incomplete", "complete"]).toContain(
+      verdict.coverage?.state ?? "",
+    );
+  });
+
+  test("a commit this hub has nothing for is answered, not refused", async () => {
+    // Silence is an answer here — `unknown` or `unavailable` — never a 404. A
+    // caller that got an error would have to decide for itself what the gap
+    // meant, which is the decision this state exists to make for them.
+    const harness = await freshHarness();
+    const apiKey = await createDeveloper(harness);
+
+    const verdict = await readVerdict(harness, apiKey, "0badc0f");
+
+    expect(verdict.status).toBe(200);
+    expect(verdict.coverage?.state).toBe("unavailable");
+    expect(verdict.deltas).toEqual([]);
+  });
+});
