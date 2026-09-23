@@ -7670,6 +7670,39 @@ export const MUTATIONS: readonly Mutation[] = [
       "rejects the row after the route said yes and the claim lands with no " +
       "pointer — a write failure wearing the face of an honest absence",
   },
+  {
+    // THE INVERSION THIS PROJECT EXISTS TO REFUSE, in one clause. A crashed or
+    // truncated run reports no non-green rows, so its empty list is
+    // indistinguishable from a pass unless `completed` is required. This drops
+    // that requirement from the GREEN half of the red/green pair.
+    label: "a crashed CI run can establish a green again",
+    file: "packages/server/src/services/evidence-axes.ts",
+    from:
+      "        eq(ciRuns.leg, red.leg),\n" +
+      '        eq(ciRuns.outcome, "completed"),\n' +
+      "        inArray(ciRuns.commitSha, laterCommits),",
+    to:
+      "        eq(ciRuns.leg, red.leg),\n" +
+      "        inArray(ciRuns.commitSha, laterCommits),",
+    test: "packages/server/test/evidence-axes.test.ts",
+    because:
+      "a run whose runner DIED reads as proof the test now passes, so a claim " +
+      "nobody verified is printed `repository_verified` — an absence promoted " +
+      "to the strongest evidence label the product has",
+  },
+  {
+    // Principle 5 as one line: a claim with nothing attached must resolve
+    // DOWNWARD. This makes the default rung the observed one instead.
+    label: "a claim with no verification ref reads as observed",
+    file: "packages/server/src/services/evidence-axes.ts",
+    from: '      axes.set(claim.id, unsupported("no_verification_ref"));',
+    to: '      axes.set(claim.id, toolObserved("ci_observed", null));',
+    test: "packages/server/test/evidence-axes.test.ts",
+    because:
+      "every claim ever written — including all of them from before 08, which " +
+      "attached nothing because nothing could — claims a machine observed it, " +
+      "so missing evidence STRENGTHENS the conclusion it is missing from",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7868,6 +7901,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ddl-sync.test.ts 1
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
+ * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 7

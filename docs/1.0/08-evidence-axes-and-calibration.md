@@ -223,9 +223,24 @@ All four, or the weaker rung with the reason naming the missing leg:
 2. ref kind is `ci_test`. An `error_fingerprint` can show a failure was observed, never that a fix landed — it stops at
    `tool_observed` / `observed_failure`.
 3. a `ci_runs` row in **one lane** (05 §3.1 — nothing is compared across lanes) where the test is **non-green at the bound
-   commit** or an ancestor inside that lane's base window.
+   commit** ~~or an ancestor inside that lane's base window~~ — **the ancestor half is NOT BUILT; see the narrowing below**.
 4. a later `outcome = "completed"` run **in the same lane** where the test is **absent from the non-green list**, at the commit
    where the affected surface landed. Only a `completed` run establishes a green.
+
+**NARROWED IN THE BUILD, AND THE REASON IS THE SAME ONE §3.2a HIT: the hub cannot do it.** Leg 3's "or an ancestor inside
+that lane's base window" needs a repository — deciding whether commit A is an ancestor of commit B is a git question, and this
+hub holds no repository, runs no commands and makes no outbound calls (05 §8.4). 05's own base window is not an ancestry
+window either: `baseRunsOn` selects by **lane, ref and recency** (`ci-delta.ts:112-140`), never by ancestry, so "the ancestor
+inside that window" names something that module does not compute and this one cannot.
+
+Accepting any OTHER commit in the window instead would be strictly worse than under-reporting: it would pair a failure from an
+unrelated branch with a green here and print `repository_verified`. **So the red must sit at the bound commit itself.** The
+built rule under-reports and never over-reports, which is the only direction principle 5 permits.
+
+**And "ordered by commit" is satisfied without comparing two shas**, which the hub equally cannot do. The red is at the claim's
+OWN `observed_at_commit` — an exact match, no ordering needed. The green is at a `claim_revalidations.ref_commit`, which spec 02
+writes when it re-checks that claim's surface at a newer HEAD, so it is later BY CONSTRUCTION rather than by comparison. No
+`started_at` enters the decision, which is what §2 was protecting.
 
 Ordering across 3 and 4 is **by commit, never by `started_at`** (§2). A red run pruned past `CI_RETENTION_DAYS = 30` →
 `pruned_by_retention` (§10 D1); `readCiCoverage` `unavailable`/`unknown` → `no_ci_coverage`. **`repository_verified` is
