@@ -7826,6 +7826,25 @@ export const MUTATIONS: readonly Mutation[] = [
       "could ever check them look identical on every surface, and a reader " +
       "concludes the second team's work does not hold up",
   },
+  // ── 1.0 spec 04 §3.3: the verdict may not name nobody out of a blind spot ─
+  {
+    // AT-5, AND IT IS THE DEFECT THAT SHIPS TODAY. `crosscheck suspect` already
+    // prints "whatever broke it is not in crosscheck's record" with no
+    // knowledge of whether anything was being recorded. This removes the
+    // coverage test again, so a gap reads as an answer.
+    label: "a coverage gap is reported as nobody having done it",
+    file: "packages/server/src/services/verdict.ts",
+    from:
+      "    return isJudgeable(coverage)\n" +
+      '      ? { attribution: "UNATTRIBUTED", basis: "no_touch_complete" }\n' +
+      '      : { attribution: "INDETERMINATE", basis: "coverage_gap" };',
+    to: '    return { attribution: "UNATTRIBUTED", basis: "no_touch_complete" };',
+    test: "packages/server/test/verdict.test.ts",
+    because:
+      "the product tells a team that nobody in the record touched a surface, " +
+      "while a lane was not recording — a false exoneration stated as a fact, " +
+      "which is the one thing principle 1 exists to prevent",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -8059,6 +8078,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
  * PRINTS: packages/server/test/suspect.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
+ * PRINTS: packages/server/test/verdict.test.ts 1
  * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */
 const greenGuards = new Map<string, boolean>();
