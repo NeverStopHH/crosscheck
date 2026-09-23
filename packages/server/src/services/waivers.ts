@@ -34,10 +34,20 @@ import { and, desc, eq } from "drizzle-orm";
 
 import { MAX_WAIVER_DAYS } from "../constants.ts";
 
-import { fenceWaivers, pins } from "../db/schema.ts";
+import { developers, fenceWaivers, pins } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
 
 const MS_PER_DAY = 86_400_000;
+
+/**
+ * How many waiver rows one listing returns.
+ *
+ * Bounded like every other listing in this product: the history is
+ * append-only, so a repo that waives often grows this table for ever, and an
+ * unbounded read would hand a terminal a year of decisions. Newest first, so
+ * the bound keeps the rows a reader came for.
+ */
+const MAX_WAIVERS_LISTED = 50;
 
 /**
  * What the hub stamps on a waiver, always. Never taken from a body: here that
@@ -63,12 +73,18 @@ export interface LiveWaiverInput {
 /**
  * The live waiver for one pin at one version, or null.
  *
- * ONE QUERY, NEWEST FIRST, over the index this table was given
- * (`repo, pin_id, pin_version, created_at DESC`). The rows are read in order
- * and the FIRST decision wins: a revoke newer than a grant closes the fence, a
- * grant newer than a revoke opens it again. Reading them any other way — say,
- * finding a grant and then asking whether it was ever revoked — gets the
- * re-grant case wrong, and the re-grant is the case a team actually hits.
+ * A REVOKE NAMES ITS GRANT, and that relationship — not the clock — is what
+ * decides. An earlier version of this read rows newest-first and let the first
+ * decision win, which is correct only while `created_at` orders them: a grant
+ * and its revocation written in the SAME millisecond sort arbitrarily, and the
+ * fence then reads open or closed depending on which row the planner returned
+ * first. That is not hypothetical — a test hit it immediately on a fixed
+ * clock, and a fast grant-then-revoke would hit it in production.
+ *
+ * So the superseded ids are collected first and the newest UNSUPERSEDED,
+ * unexpired grant wins. Order still decides between two live grants, where any
+ * answer is correct because both are open; it no longer decides whether a
+ * revocation took effect, where only one answer is.
  */
 export const readLiveWaiver = async (
   input: LiveWaiverInput,
@@ -91,11 +107,18 @@ export const readLiveWaiver = async (
     )
     .orderBy(desc(fenceWaivers.createdAt));
 
+  // Every grant somebody has closed, by id. Read from the rows already in
+  // hand rather than a second query.
+  const revoked = new Set(
+    rows
+      .filter((row) => row.kind === "revoke")
+      .map((row) => row.supersedes)
+      .filter((id): id is string => id !== null),
+  );
+
   for (const row of rows) {
-    if (row.kind === "revoke") {
-      // THE NEWEST DECISION WINS. A revoke closes the fence and the search
-      // stops: an older grant underneath it was already taken back.
-      return null;
+    if (row.kind !== "grant" || revoked.has(row.id)) {
+      continue;
     }
     if (row.expiresAt === null) {
       // Unreachable — the shape CHECK makes a grant without an expiry a
@@ -104,9 +127,8 @@ export const readLiveWaiver = async (
       continue;
     }
     if (row.expiresAt.getTime() <= input.now.getTime()) {
-      // EXPIRED. The loop keeps going rather than returning, so that an older
-      // grant is still examined — the shape that matters is a team who granted,
-      // let it lapse, and granted again.
+      // EXPIRED. The loop keeps going, so a team who granted, let it lapse and
+      // granted again still reads as open.
       continue;
     }
     return {
@@ -268,4 +290,102 @@ export const revokeWaiver = async (
     createdAt: input.now,
   });
   return { id };
+};
+
+/** One waiver as a reader sees it. */
+export interface WaiverView {
+  readonly id: string;
+  readonly pinId: string;
+  readonly pinVersion: number;
+  readonly kind: string;
+  readonly grantedByName: string;
+  readonly reason: string;
+  readonly expiresAt: string | null;
+  readonly supersedes: string | null;
+  readonly createdAt: string;
+  /** Derived, never stored: is THIS row the one holding a fence open now. */
+  readonly live: boolean;
+}
+
+export interface ListWaiversInput {
+  readonly db: DbExecutor;
+  readonly repo: string;
+  readonly pinId: string | null;
+  readonly now: Date;
+}
+
+/**
+ * THE RECORD, newest first — grants, revocations and expired rows alike.
+ *
+ * NOTHING IS FILTERED OUT. A list that showed only live waivers would answer
+ * "is this fence open" and silently drop the question a team actually asks
+ * later: who opened it, when, why, and who closed it again. That history is
+ * the whole reason the table is append-only, and hiding the dead rows would
+ * make the append-only-ness pointless.
+ *
+ * `live` IS DERIVED PER READ rather than stored, like every other judgement in
+ * this product: expiry is a comparison against now, so a stored flag would be
+ * wrong the moment it aged.
+ *
+ * THE GRANTER'S NAME, NOT THEIR ID. Author is a normative trust label, and a
+ * reader holding an opaque `dev_<uuid>` has no second endpoint that turns it
+ * into a person — the rule the work-context listing already follows.
+ */
+export const listWaivers = async (
+  input: ListWaiversInput,
+): Promise<readonly WaiverView[]> => {
+  const rows = await input.db
+    .select({
+      id: fenceWaivers.id,
+      pinId: fenceWaivers.pinId,
+      pinVersion: fenceWaivers.pinVersion,
+      kind: fenceWaivers.kind,
+      grantedByName: developers.name,
+      reason: fenceWaivers.reason,
+      expiresAt: fenceWaivers.expiresAt,
+      supersedes: fenceWaivers.supersedes,
+      createdAt: fenceWaivers.createdAt,
+    })
+    .from(fenceWaivers)
+    .innerJoin(developers, eq(fenceWaivers.grantedBy, developers.id))
+    .where(
+      input.pinId === null
+        ? eq(fenceWaivers.repo, input.repo)
+        : and(
+            eq(fenceWaivers.repo, input.repo),
+            eq(fenceWaivers.pinId, input.pinId),
+          ),
+    )
+    .orderBy(desc(fenceWaivers.createdAt))
+    .limit(MAX_WAIVERS_LISTED);
+
+  // The live row per (pin, version) is the one `readLiveWaiver` would return,
+  // asked once per distinct pair rather than once per row.
+  const livePairs = new Map<string, string | null>();
+  for (const row of rows) {
+    const key = `${row.pinId}@${String(row.pinVersion)}`;
+    if (!livePairs.has(key)) {
+      const current = await readLiveWaiver({
+        db: input.db,
+        repo: input.repo,
+        pinId: row.pinId,
+        pinVersion: row.pinVersion,
+        now: input.now,
+      });
+      livePairs.set(key, current?.id ?? null);
+    }
+  }
+
+  return rows.map((row) => ({
+    id: row.id,
+    pinId: row.pinId,
+    pinVersion: row.pinVersion,
+    kind: row.kind,
+    grantedByName: row.grantedByName,
+    reason: row.reason,
+    expiresAt: row.expiresAt === null ? null : row.expiresAt.toISOString(),
+    supersedes: row.supersedes,
+    createdAt: row.createdAt.toISOString(),
+    live: livePairs.get(`${row.pinId}@${String(row.pinVersion)}`) === row.id,
+  }));
 };

@@ -4,6 +4,7 @@ import { fail } from "./http/envelope.ts";
 import { absencesRoutes } from "./routes/absences.ts";
 import { claimRevalidationsRoutes } from "./routes/claim-revalidations.ts";
 import { ciRunsRoutes } from "./routes/ci-runs.ts";
+import { fenceWaiverRoutes } from "./routes/fence-waivers.ts";
 import { conferenceRoutes } from "./routes/conference.ts";
 import { contradictionsRoutes } from "./routes/contradictions.ts";
 import { developersRoutes } from "./routes/developers.ts";
@@ -79,6 +80,7 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // agent kind and a session — and CI has none of the three. Write is a
   // dedicated token, read is any member.
   app.route("/api/ci-runs", ciRunsRoutes(deps));
+  app.route("/api/fence-waivers", fenceWaiverRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.
   app.route("/ui", uiRoutes(deps));

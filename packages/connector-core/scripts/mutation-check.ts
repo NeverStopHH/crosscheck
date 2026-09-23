@@ -7871,12 +7871,13 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "a revoked fence waiver stops closing the fence",
     file: "packages/server/src/services/waivers.ts",
     from:
-      '    if (row.kind === "revoke") {\n' +
-      "      // THE NEWEST DECISION WINS. A revoke closes the fence and the search\n" +
-      "      // stops: an older grant underneath it was already taken back.\n" +
-      "      return null;\n" +
-      "    }",
-    to: '    if (row.kind === "revoke") {\n      continue;\n    }',
+      "  const revoked = new Set(\n" +
+      "    rows\n" +
+      '      .filter((row) => row.kind === "revoke")\n' +
+      "      .map((row) => row.supersedes)\n" +
+      "      .filter((id): id is string => id !== null),\n" +
+      "  );",
+    to: "  const revoked = new Set<string>();",
     test: "packages/server/test/waivers.test.ts",
     because:
       "a PROTECTED_CONFLICT stays lifted by a waiver somebody revoked, so the " +
