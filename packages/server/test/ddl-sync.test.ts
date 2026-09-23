@@ -9,6 +9,7 @@ import {
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
+  MAX_VERIFICATION_REF_CHARS,
   NO_COMMIT_SHA,
 } from "@crosscheck/schema";
 
@@ -41,6 +42,8 @@ const guardedBlockNamed = (sql: string, constraintName: string): string => {
   return matching[0] ?? "";
 };
 
+const VERIFICATION_REF_CHECK_PATTERN =
+  /claims_verification_ref_length_check\s+CHECK \(char_length\(verification_ref\) <= (\d+)\)/;
 const CI_TEST_ID_CHECK_PATTERN =
   /ci_test_results_test_id_length_check\s+CHECK \(char_length\(test_id\) <= (\d+)\)/;
 const INTENT_SUMMARY_CHECK_PATTERN =
@@ -407,6 +410,51 @@ describe("bootstrap.sql DDL sync", () => {
     // Assert
     expect(match).not.toBeNull();
     expect(Number(match?.[1])).toBe(MAX_CI_TEST_ID_CHARS);
+  });
+
+  test("claims verification_ref CHECK matches MAX_VERIFICATION_REF_CHARS", async () => {
+    // Arrange: the same two-authorities problem as the test id above, with one
+    // extra turn of the screw — this bound is DERIVED (05's test-id cap plus a
+    // kind plus a colon), so raising MAX_CI_TEST_ID_CHARS silently raises the
+    // TypeScript side and leaves this literal behind. A ref that fits the wire
+    // and not the column would be refused by the database after the route said
+    // yes, and the claim would land with its pointer missing — which reads as
+    // `no_verification_ref`, i.e. "nobody attached a check". A write error that
+    // presents itself as an honest absence is exactly what principle 5 forbids.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const match = bootstrapSql.match(VERIFICATION_REF_CHECK_PATTERN);
+
+    // Assert
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBe(MAX_VERIFICATION_REF_CHARS);
+  });
+
+  test("the verification_ref CHECK is added to hubs that predate the column", async () => {
+    // bootstrap.sql runs top to bottom on EVERY hub start, and the claims
+    // CREATE TABLE is IF NOT EXISTS — so on an existing hub the table is
+    // untouched and only the ALTERs below it apply. A column added to the
+    // CREATE alone would never reach a hub that already has the table, and the
+    // constraint would exist on fresh installs only.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const guarded = guardedBlockNamed(
+      bootstrapSql,
+      "claims_verification_ref_length_check",
+    );
+
+    // Assert — the column arrives idempotently, and the constraint is created
+    // only when it is absent or differs, so a restart is a no-op rather than a
+    // DROP/ADD churning a live table.
+    expect(bootstrapSql).toContain(
+      "ALTER TABLE claims ADD COLUMN IF NOT EXISTS verification_ref text;",
+    );
+    expect(guarded).toContain("IF NOT EXISTS (");
+    expect(guarded).toContain(
+      "ALTER TABLE claims ADD CONSTRAINT claims_verification_ref_length_check",
+    );
   });
 
   test("the two CI tables exist in both authorities, with their indexes", async () => {

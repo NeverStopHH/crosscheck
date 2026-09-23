@@ -928,3 +928,39 @@ BEGIN
   END IF;
 END
 $$;
+
+-- ── Evidence axes (1.0 spec 08) ─────────────────────────────────────────────
+
+-- ONE POINTER AT A MACHINE-PRODUCED OBSERVATION, and the only column 08 adds.
+-- "<kind>:<value>" — error_fingerprint:sha256:<hex>, or ci_test:<test_id>.
+--
+-- NO DEFAULT AND NO BACKFILL, unlike spec 02's commit_binding above, and the
+-- difference is deliberate. 02 could default because "bound to the author's
+-- base commit" is a defensible guess about an existing row. There is no
+-- defensible guess here: nothing in a historical claim names a check, and
+-- inferring one from its prose is intent inference from agent text, which 00
+-- §8.6 cuts. NULL is therefore the TRUTH about every pre-08 row — it resolves
+-- to unsupported / no_verification_ref — and not a placeholder standing in for
+-- a value somebody should later supply.
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS verification_ref text;
+
+-- The wire's bound reaching the store, the shape claims_body_length_check uses.
+-- 321 = MAX_CI_TEST_ID_CHARS (300) + MAX_VERIFICATION_REF_KIND_CHARS (20) + 1
+-- for the colon; the TypeScript side DERIVES it rather than repeating 300, and
+-- test/ddl-sync.test.ts reddens the build when this number and the constant
+-- disagree.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'claims_verification_ref_length_check'
+      AND conrelid = 'claims'::regclass
+      AND pg_get_constraintdef(oid) = 'CHECK ((char_length(verification_ref) <= 321))'
+  ) THEN
+    ALTER TABLE claims DROP CONSTRAINT IF EXISTS claims_verification_ref_length_check;
+    ALTER TABLE claims ADD CONSTRAINT claims_verification_ref_length_check
+      CHECK (char_length(verification_ref) <= 321);
+  END IF;
+END
+$$;

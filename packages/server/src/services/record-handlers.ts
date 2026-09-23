@@ -893,6 +893,17 @@ export const ingestClaimWithin = async (
       captureMode: body.captureMode,
       provenance: body.provenance,
       evidenceRefs: body.evidenceRefs,
+      // STORED WITHOUT BEING RESOLVED (1.0 spec 08 §3.4), for the reason
+      // evidenceRefs are: the row it points at — a work_context_targets
+      // fingerprint or a ci_test_results row — may arrive LATER IN THIS SAME
+      // FLUSH, so checking it here would reject correct records purely for the
+      // order their batch happened to be in. Whether it resolves is a read-time
+      // question that is allowed to answer no (`ref_unresolved`).
+      //
+      // `?? null` rather than leaving it undefined: absent on the wire means
+      // `no_verification_ref`, a real answer about this claim, and the column
+      // is where that answer lives.
+      verificationRef: body.verificationRef ?? null,
       observedAtCommit: binding.observedAtCommit,
       commitBinding: binding.commitBinding,
       embedding: claimVector === null ? null : [...claimVector],

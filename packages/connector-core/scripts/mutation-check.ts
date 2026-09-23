@@ -7641,6 +7641,35 @@ export const MUTATIONS: readonly Mutation[] = [
       "a claim labelled as a human's word, and every teammate's briefing then " +
       "reads a machine's sentence as something a person vouched for",
   },
+  {
+    // §3.4's whole point: the pointer is STORED, unresolved, at ingest. This
+    // drops it on the floor while still accepting the record — the claim lands
+    // looking exactly like one nobody attached a check to.
+    label: "ingest discards the verification ref it was sent",
+    file: "packages/server/src/services/record-handlers.ts",
+    from: "      verificationRef: body.verificationRef ?? null,",
+    to: "      verificationRef: null,",
+    test: "packages/server/test/records.test.ts",
+    because:
+      "every claim reads `unsupported` / `no_verification_ref` no matter what " +
+      "its author attached, so the one axis 08 exists to add is silently " +
+      "empty — and an absence is indistinguishable from an honest one",
+  },
+  {
+    // The cap is DERIVED from 05's test-id cap so the two cannot drift. This
+    // makes it a second literal, which is the drift.
+    label: "the verification ref cap becomes a literal again",
+    file: "packages/schema/src/evidence-axes.ts",
+    from:
+      "export const MAX_VERIFICATION_REF_CHARS =\n" +
+      "  MAX_CI_TEST_ID_CHARS + MAX_VERIFICATION_REF_KIND_CHARS + 1;",
+    to: "export const MAX_VERIFICATION_REF_CHARS = 400;",
+    test: "packages/server/test/ddl-sync.test.ts",
+    because:
+      "the wire accepts a ref the column's CHECK refuses, so the database " +
+      "rejects the row after the route said yes and the claim lands with no " +
+      "pointer — a write failure wearing the face of an honest absence",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7836,6 +7865,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage.test.ts 12
+ * PRINTS: packages/server/test/ddl-sync.test.ts 1
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
@@ -7847,7 +7877,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
- * PRINTS: packages/server/test/records.test.ts 1
+ * PRINTS: packages/server/test/records.test.ts 2
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3

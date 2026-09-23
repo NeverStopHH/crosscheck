@@ -39,6 +39,7 @@ import {
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
+  MAX_VERIFICATION_REF_CHARS,
   PIN_FILE_STATUSES,
   PROVENANCES,
   QUESTION_STATUSES,
@@ -328,12 +329,37 @@ export const claims = pgTable(
     /** Null until an embedder is configured; written once at ingest (append-only). */
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     embeddingModel: text("embedding_model"),
+    /**
+     * ONE POINTER AT A MACHINE-PRODUCED OBSERVATION (1.0 spec 08 §3.4) —
+     * `"<kind>:<value>"`, and the ONLY column 08 adds.
+     *
+     * NULLABLE, and null is a real answer rather than a gap: it resolves to
+     * `unsupported` / `no_verification_ref`. Every claim written before 08
+     * has it, which is why §4 needs no backfill — "nobody attached a check"
+     * is the truth about those rows, not a default standing in for one.
+     *
+     * WRITTEN ONCE AT INGEST AND NEVER UPDATED, so append-only survives
+     * (`hints.ts:68-70`). What changes over months is the DERIVATION in front
+     * of it: the same pointer reads `repository_verified` today and
+     * `tool_observed` / `pruned_by_retention` after CI_RETENTION_DAYS, because
+     * the axes are derived fresh per read and the world around the check moved.
+     */
+    verificationRef: text("verification_ref"),
     createdAt: timestamptz("created_at").notNull(),
   },
   (table) => [
     check(
       "claims_body_length_check",
       sql`char_length(${table.body}) <= ${sql.raw(String(MAX_CLAIM_BODY_LENGTH))}`,
+    ),
+    // The bound is the WIRE's bound, reaching the store — the shape
+    // claims_body_length_check uses. It matters here for the same reason it
+    // does there: the schema cap alone is a promise about one code path, and
+    // a row can reach this table from a replay, a migration or a future
+    // writer that never passed through it.
+    check(
+      "claims_verification_ref_length_check",
+      sql`char_length(${table.verificationRef}) <= ${sql.raw(String(MAX_VERIFICATION_REF_CHARS))}`,
     ),
     // "No commit means no binding" as a DATABASE fact, the shape
     // questions_addressee_check uses. Without it the two columns can

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
+import { MAX_VERIFICATION_REF_CHARS } from "./evidence-axes.ts";
 import { repoRelativePath } from "./repo-path.ts";
 import {
   ClaimCaptureModeSchema,
@@ -76,6 +77,35 @@ export const ClaimSchema = z
       .array(repoRelativePath)
       .max(MAX_CLAIM_SURFACE_PATHS)
       .default([]),
+    /**
+     * ONE POINTER AT A MACHINE-PRODUCED OBSERVATION (1.0 spec 08 §3.4).
+     *
+     * `"<kind>:<value>"`, kind from `VERIFICATION_REF_KINDS`. This is the only
+     * new byte 08 stores, and it is a POINTER rather than content: no tool
+     * output, no stack trace, no failure message (non-negotiable #6). It
+     * resolves against rows the hub already holds — a `work_context_targets`
+     * error fingerprint, or a `ci_test_results` row.
+     *
+     * ABSENT MEANS `unsupported` / `no_verification_ref`, NEVER "unknown,
+     * assume good". That is principle 5 as a field default: missing evidence
+     * may weaken a conclusion, it must never strengthen one.
+     *
+     * STORED WITHOUT BEING RESOLVED, for the same reason `evidenceRefs` are:
+     * the row it names may arrive later in the same spool flush, so refusing an
+     * unresolvable ref at ingest would reject the correct records of anyone
+     * whose batch happens to be ordered the other way. Resolution is a
+     * READ-time question, and it is allowed to answer "no" — that is what
+     * `ref_unresolved` is for.
+     *
+     * ONE REF PER CLAIM. A second verification is a second CLAIM: claims are
+     * append-only and a revision means a new row (`services/hints.ts:68-70`).
+     * REFUSED — widening `evidenceRefs` to carry these instead, which would
+     * give one live `jsonb` array two different meanings.
+     *
+     * Bounded by a constant DERIVED from 05's test-id cap, never a second
+     * literal (`MAX_VERIFICATION_REF_CHARS`).
+     */
+    verificationRef: z.string().max(MAX_VERIFICATION_REF_CHARS).optional(),
     createdAt: z.iso.datetime(),
   })
   .check((ctx) => {

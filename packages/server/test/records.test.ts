@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+import { eq } from "drizzle-orm";
+
+import {
+  MAX_CLAIM_BODY_LENGTH,
+  MAX_VERIFICATION_REF_CHARS,
+} from "@crosscheck/schema";
+
+import { claims } from "../src/db/schema.ts";
 
 import {
   addTestDeveloperWithSession,
@@ -34,6 +41,17 @@ const readDedupCount = async (
     data: { claims: { id: string; dedupCount: number }[] };
   };
   return body.data.claims.find((claim) => claim.id === claimId)?.dedupCount;
+};
+
+const readVerificationRef = async (
+  harness: TestHarness,
+  claimId: string,
+): Promise<string | null> => {
+  const rows = await harness.db
+    .select({ ref: claims.verificationRef })
+    .from(claims)
+    .where(eq(claims.id, claimId));
+  return rows[0]?.ref ?? null;
 };
 
 interface CrossAuthorSetup {
@@ -630,6 +648,89 @@ describe("POST /api/records", () => {
     // its assertions the hub would not take.
     expect(data?.results[0]?.status).toBe("rejected");
     expect(data?.results[0]?.issues?.join(" ")).toContain("captureMode");
+  });
+
+  /**
+   * 1.0 spec 08 §3.4 — the one pointer 08 stores, and the property that makes
+   * it safe to store: it is written WITHOUT being resolved.
+   */
+  test("stores a verification ref that names a row the hub does not have", async () => {
+    // Arrange — the ordering case this exists for. A batch may carry the claim
+    // BEFORE the ci_test_results row or the error fingerprint it points at, and
+    // the spool decides that order, not the author. Resolving at ingest would
+    // reject a correct claim for arriving first.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+    const ref =
+      "ci_test:packages/server/test/auth.test.ts::jwt::rejects an expired token";
+
+    // Act
+    const { data } = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("claim", validClaimBody({ verificationRef: ref })),
+    );
+
+    // Assert — accepted and kept verbatim. Whether it resolves is a READ-time
+    // question, and it is allowed to answer `ref_unresolved` then.
+    expect(data?.results[0]?.status).toBe("accepted");
+    expect(await readVerificationRef(harness, "clm_01")).toBe(ref);
+  });
+
+  test("a claim with no verification ref stores null, which is an answer", async () => {
+    // Arrange — every claim written before 08 is this claim, which is why §4
+    // needs no backfill.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+
+    // Act
+    const { data } = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("claim", validClaimBody()),
+    );
+
+    // Assert — null, not undefined and not a placeholder: it resolves to
+    // `unsupported` / `no_verification_ref`, which is the truth about the row.
+    expect(data?.results[0]?.status).toBe("accepted");
+    expect(await readVerificationRef(harness, "clm_01")).toBeNull();
+  });
+
+  test("rejects a verification ref past the column's own bound", async () => {
+    // Arrange — the wire cap and the column cap are two authorities over one
+    // value. If the wire let through what the column refuses, the database
+    // would reject the row AFTER the route said yes and the claim would land
+    // with no pointer — indistinguishable from "nobody attached a check".
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+
+    // Act
+    const { data } = await postRecords(
+      harness,
+      developer,
+      recordEnvelope(
+        "claim",
+        validClaimBody({
+          verificationRef: `ci_test:${"x".repeat(MAX_VERIFICATION_REF_CHARS)}`,
+        }),
+      ),
+    );
+
+    // Assert
+    expect(data?.results[0]?.status).toBe("rejected");
+    expect(data?.results[0]?.issues?.join(" ")).toContain("verificationRef");
   });
 
   test("refuses it rather than storing it under a downgraded label", async () => {

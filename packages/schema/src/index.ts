@@ -229,3 +229,18 @@ export {
   MAX_CI_TEST_ID_CHARS,
 } from "./ci-run.ts";
 export type { CiLane, CiRunReport, CiTestResult } from "./ci-run.ts";
+export {
+  EVIDENCE_SUPPORT,
+  EVIDENCE_SUPPORT_REASONS,
+  EVIDENCE_WHO,
+  MAX_VERIFICATION_REF_CHARS,
+  MAX_VERIFICATION_REF_KIND_CHARS,
+  VERIFICATION_REF_KINDS,
+} from "./evidence-axes.ts";
+export type {
+  EvidenceAxes,
+  EvidenceSupport,
+  EvidenceSupportReason,
+  EvidenceWho,
+  VerificationRefKind,
+} from "./evidence-axes.ts";

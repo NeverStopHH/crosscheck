@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 514
+    # PRINTS: 516
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -241,6 +241,7 @@ jobs:
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
     # PRINTS: packages/schema/src/enums.ts 1
     # PRINTS: packages/schema/src/envelope.ts 1
+    # PRINTS: packages/schema/src/evidence-axes.ts 1
     # PRINTS: packages/schema/src/pin.ts 1
     # PRINTS: packages/schema/src/secret-scan.ts 1
     # PRINTS: packages/schema/src/session.ts 2
@@ -269,7 +270,7 @@ jobs:
     # PRINTS: packages/server/src/services/pins.ts 1
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
-    # PRINTS: packages/server/src/services/record-handlers.ts 13
+    # PRINTS: packages/server/src/services/record-handlers.ts 14
     # PRINTS: packages/server/src/services/records.ts 1
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/search-tokens.ts 4
@@ -324,6 +325,7 @@ jobs:
     # PRINTS: engine.ts 11
     # PRINTS: enums.ts 1
     # PRINTS: envelope.ts 1
+    # PRINTS: evidence-axes.ts 1
     # PRINTS: exempt-surfaces.ts 2
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 3
@@ -364,7 +366,7 @@ jobs:
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 1
-    # PRINTS: record-handlers.ts 13
+    # PRINTS: record-handlers.ts 14
     # PRINTS: records.ts 2
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
