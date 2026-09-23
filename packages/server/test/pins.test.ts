@@ -14,6 +14,9 @@
  *      be read as protection of the other 8,400 files.
  */
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
+
+import { pins } from "../src/db/schema.ts";
 
 import { PIN_PRESENCE_TERMINAL } from "@crosscheck/schema";
 
@@ -660,5 +663,142 @@ describe("POST /api/pins/sweep", () => {
     expect(pin.renamedPaths).toBe(1);
     expect(pin.renamedByName).toBe("Ken");
     expect(pin.renamedAt).not.toBeNull();
+  });
+});
+
+describe("the invariant's version (04 §3.5)", () => {
+  const versionOf = async (
+    harness: Awaited<ReturnType<typeof createTestHarness>>,
+    pinId: string,
+  ): Promise<number> => {
+    const rows = await harness.db
+      .select({ version: pins.version })
+      .from(pins)
+      .where(eq(pins.id, pinId));
+    return rows[0]?.version ?? 0;
+  };
+
+  const sweep = async (
+    harness: Awaited<ReturnType<typeof createTestHarness>>,
+    apiKey: string,
+    updates: readonly Record<string, unknown>[],
+  ): Promise<number> => {
+    const response = await harness.app.request(
+      "/api/pins/sweep",
+      jsonRequest("POST", apiKey, { repo: REPO, updates }),
+    );
+    return response.status;
+  };
+
+  test("a fresh pin starts at version 1", async () => {
+    // Arrange — the default is the truth about every pin that predates
+    // versions: nobody has swept it, so it is still its first invariant.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-v1@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+
+    // Assert
+    expect(await versionOf(harness, body["id"] as string)).toBe(1);
+  });
+
+  test("a sweep that renames a path bumps the version ONCE", async () => {
+    // Arrange — two renames on ONE pin in ONE request. The bump counts sweeps,
+    // not renames: a waiver is granted against the invariant a human looked
+    // at, and that invariant changed once.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-v2@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+
+    // Act
+    const status = await sweep(harness, nick.apiKey, [
+      {
+        pinId: body["id"],
+        path: "src/workbench/usePlayback.ts",
+        newPath: "src/workbench/usePlaybackState.ts",
+      },
+      {
+        pinId: body["id"],
+        path: "src/workbench/PlaybackControls.tsx",
+        newPath: "src/workbench/Controls.tsx",
+      },
+    ]);
+
+    // Assert
+    expect(status).toBe(200);
+    expect(await versionOf(harness, body["id"] as string)).toBe(2);
+  });
+
+  test("a sweep that renames NOTHING leaves the version alone", async () => {
+    // Arrange — marking a path missing is not a new invariant. The pin still
+    // watches what a human verified; one of its files is simply gone, which is
+    // what `missingPaths` already says.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-v3@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+
+    // Act
+    const status = await sweep(harness, nick.apiKey, [
+      {
+        pinId: body["id"],
+        path: "src/workbench/usePlayback.ts",
+        newPath: null,
+      },
+    ]);
+
+    // Assert
+    expect(status).toBe(200);
+    expect(await versionOf(harness, body["id"] as string)).toBe(1);
+  });
+
+  test("a rename to the SAME path is not a new invariant either", async () => {
+    // Arrange — a no-op update. Counting it would hand a team a re-grant for
+    // a fence nobody moved.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-v4@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+
+    // Act
+    const status = await sweep(harness, nick.apiKey, [
+      {
+        pinId: body["id"],
+        path: "src/workbench/usePlayback.ts",
+        newPath: "src/workbench/usePlayback.ts",
+      },
+    ]);
+
+    // Assert
+    expect(status).toBe(200);
+    expect(await versionOf(harness, body["id"] as string)).toBe(1);
+  });
+
+  test("a rename the loop later REJECTS still costs a bump — named, not hidden", async () => {
+    // Arrange — the pin does not hold this path at all, so the loop ignores
+    // the update. The pre-pass cannot see that without a per-row read, and the
+    // spec takes the spurious bump on purpose: a re-grant is a nuisance
+    // somebody notices, while the alternative ordering leaves moved paths
+    // under an old waiver, which nobody does.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-v5@example.com");
+    const body = pinBody();
+    await createPin(harness, nick.apiKey, body);
+
+    // Act
+    const status = await sweep(harness, nick.apiKey, [
+      {
+        pinId: body["id"],
+        path: "src/workbench/never-watched.ts",
+        newPath: "src/workbench/still-not.ts",
+      },
+    ]);
+
+    // Assert — nothing moved, and the version moved anyway. This is the cost,
+    // asserted so it cannot be "fixed" into the dangerous ordering by somebody
+    // who reads it as a bug.
+    expect(status).toBe(200);
+    expect(await versionOf(harness, body["id"] as string)).toBe(2);
   });
 });

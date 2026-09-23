@@ -7845,6 +7845,25 @@ export const MUTATIONS: readonly Mutation[] = [
       "while a lane was not recording — a false exoneration stated as a fact, " +
       "which is the one thing principle 1 exists to prevent",
   },
+  {
+    // §3.5: a waiver is granted against a VERSION. Without the bump a sweep
+    // moves the paths a pin watches while old waivers go on covering them —
+    // a silent widening of what a human agreed to, and one an agent can cause
+    // on purpose by renaming a file.
+    label: "a pin sweep no longer versions the invariant",
+    file: "packages/server/src/services/pins.ts",
+    from:
+      "      await deps.db\n" +
+      "        .update(pins)\n" +
+      "        .set({ version: sql`${pins.version} + 1` })\n" +
+      "        .where(inArray(pins.id, ids));",
+    to: "      // the bump no longer happens",
+    test: "packages/server/test/pins.test.ts",
+    because:
+      "a human's waiver keeps covering a fence whose watched paths somebody " +
+      "else moved, so consent granted for one invariant silently travels to " +
+      "another — which is the exact shape principle 4 exists to stop",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -8054,7 +8073,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 1
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
- * PRINTS: packages/server/test/pins.test.ts 3
+ * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
  * PRINTS: packages/server/test/records.test.ts 2

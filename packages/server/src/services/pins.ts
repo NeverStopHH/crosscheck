@@ -541,6 +541,52 @@ export const applyPinSweep = async (
     settings.pinPolicy === "touched_files"
       ? new Set(await untouchedByDeveloper(deps, developerId, repo, proposed))
       : new Set<string>();
+  // THE VERSION BUMP, ONCE PER PIN, BEFORE THE FIRST PATH MOVES (04 §3.5).
+  //
+  // A waiver is granted against a VERSION. This loop is not transactional, so
+  // the honest question is which failure costs the smaller lie:
+  //
+  //   bump first — a crash here orphans that pin's waivers, the verdict falls
+  //                back to PROTECTED_CONFLICT, and a human re-grants;
+  //   bump last  — a crash leaves paths MOVED while old waivers still cover
+  //                them, which is a silent widening of what a human agreed to
+  //                and one an agent could cause on purpose by renaming a file.
+  //
+  // The first is a nuisance somebody notices. The second is the failure this
+  // whole spec exists to prevent, so the bump goes first.
+  //
+  // THE PRE-PASS IS DELIBERATELY NOT PERFECT, and the cost is named rather than
+  // hidden: it can see ownership, the policy denial and whether a path actually
+  // moves, but not whether the pin still holds the old path — that read happens
+  // per row inside the loop. A rename rejected there still costs a spurious
+  // bump and a re-grant. Paying that is the same trade as above, one rung down.
+  const renaming = [
+    ...new Set(
+      updates
+        .filter(
+          (update) =>
+            update.newPath !== null &&
+            update.newPath !== update.path &&
+            !forbidden.has(update.newPath),
+        )
+        .map((update) => update.pinId),
+    ),
+  ];
+  if (renaming.length > 0) {
+    const owned = await deps.db
+      .select({ id: pins.id })
+      .from(pins)
+      .where(and(eq(pins.repo, repo), inArray(pins.id, renaming)));
+    const ids = owned.map((row) => row.id);
+    if (ids.length > 0) {
+      // ONE statement for the whole request: the spec says once per sweep per
+      // pin, and a bump inside the loop would count renames rather than sweeps.
+      await deps.db
+        .update(pins)
+        .set({ version: sql`${pins.version} + 1` })
+        .where(inArray(pins.id, ids));
+    }
+  }
   let applied = 0;
   let ignored = 0;
   let renamed = 0;
