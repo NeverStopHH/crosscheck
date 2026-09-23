@@ -7743,6 +7743,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "teammate's chosen bytes into the tree unquoted — and the corpus shows " +
       "it also SPLITS lines, which is how a payload invents a section",
   },
+  // ── 1.0 spec 08 §3.6 / EV-4: the invented number decides nothing ─────────
+  {
+    // THE MUTATION EV-4 EXISTS FOR, and the one a comparison grep cannot see.
+    // Hints are ordered newest-first; this orders them by the confidence a
+    // model made up. Measured: the comparison directive stays at 2 while the
+    // operation directive goes red — which is why EV-4 needs two.
+    label: "hints are ranked by the confidence a model invented",
+    file: "packages/server/src/services/hints.ts",
+    from: "      (a, b) => b.claim.createdAt.getTime() - a.claim.createdAt.getTime(),",
+    to: "      (a, b) => b.claim.confidence - a.claim.confidence,",
+    test: `${CORE}/test/confidence-gates-nothing.test.ts`,
+    because:
+      "a number nothing measured decides WHICH findings a teammate is shown " +
+      "and in what order — the moment the invented figure becomes " +
+      "load-bearing, and it would read as a ranking somebody earned",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7868,6 +7884,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
+ * PRINTS: packages/connector-core/test/confidence-gates-nothing.test.ts 1
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
  * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 5

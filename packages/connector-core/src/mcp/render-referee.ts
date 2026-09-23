@@ -206,7 +206,13 @@ const timelineEntry = (
   const age = formatAge(now.getTime() - createdMs);
   return {
     line: `- ${age} ago · ${authorOf(claim)} · ${role} position ${label} · ${bare(claim.kind)} ${safeId(claim.id)}`,
-    sortKey: [claim.createdAt, claim.id, role, label].join(" "),
+    // JSON.stringify of the parts, not a separator character. A separator is
+    // a guess about what the parts cannot contain, and the guess here was a
+    // literal NUL — which made this whole MODULE grep as binary, so every
+    // `grep -r … packages/*/src` in the tree silently skipped it, including
+    // the guards that count render sites. A sort key needs to be unambiguous,
+    // not exotic.
+    sortKey: JSON.stringify([claim.createdAt, claim.id, role, label]),
   };
 };
 
