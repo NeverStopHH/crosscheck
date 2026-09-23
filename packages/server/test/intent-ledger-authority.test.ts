@@ -390,3 +390,57 @@ describe("INT-7 — the ledger authorises nothing", () => {
     );
   });
 });
+
+describe("the detector is tested on its own, not only on the tree", () => {
+  /**
+   * AN ANCHOR THAT NEEDS A FILE THAT DOES NOT EXIST PROVES NOTHING, and mine
+   * did. The namespace-door guard was registered in `mutation-check.ts` and
+   * proven by PLANTING a dodging module in the worktree — a scaffold the
+   * anchor itself does not carry. On a clean tree there is no namespace
+   * import of a ledger reader, so flipping the guard off changed no answer
+   * and CI reported NOT CAUGHT on two branches.
+   *
+   * `referencesIn` takes a source STRING, so the detector can be held to
+   * synthetic modules that exist only here. Then the anchor bites on any
+   * tree, which is what an anchor is for — the same shape
+   * `render-surface-registry.test.ts` uses for `touchesRenderLayer`.
+   */
+  test.each([
+    [
+      "a braced import of a reader",
+      'import { readIntentChain } from "../services/intent-ledger.ts";\nreadIntentChain(db, id);',
+    ],
+    [
+      "a namespace import, then a reader off the alias",
+      'import * as ledger from "../services/intent-ledger.ts";\nledger.readIntentChain(db, id);',
+    ],
+    [
+      "a namespace import, then the timing ladder off the alias",
+      'import * as ledger from "../services/intent-ledger.ts";\nledger.explanationTimingFor(order, chain, edit);',
+    ],
+    [
+      "a namespace import of the schema, then a table off the alias",
+      'import * as tables from "../db/schema.ts";\ntables.workContextIntents;',
+    ],
+  ])("%s is reported", (_label, source) => {
+    // THE PERMISSIVE DIRECTION IS THE DANGEROUS ONE, in this file's own
+    // words: a fence that consults the ledger stops refusing, and nothing
+    // reddens. So every door is asserted to be SEEN, one synthetic module
+    // per door.
+    expect(referencesIn(source).length).toBeGreaterThan(0);
+  });
+
+  test.each([
+    ["a type-only import", 'import type { IntentLedgerEntry } from "../services/intent-ledger.ts";'],
+    ["an unrelated namespace import", 'import * as z from "zod";\nz.string();'],
+    [
+      "a namespace alias whose member is not a reader",
+      'import * as ledger from "../services/intent-ledger.ts";\nledger.somethingElse();',
+    ],
+  ])("%s is not reported", (_label, source) => {
+    // The other half, and it is not decoration: a detector that flagged
+    // everything would make the exemption list the real rule, and the list is
+    // the part nobody re-reads. A type cannot consult a ledger at runtime.
+    expect(referencesIn(source)).toEqual([]);
+  });
+});
