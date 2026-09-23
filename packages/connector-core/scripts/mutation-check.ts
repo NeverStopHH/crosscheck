@@ -7788,6 +7788,30 @@ export const MUTATIONS: readonly Mutation[] = [
       "confidence 0.90, with nothing saying whether a single check was ever " +
       "run behind it",
   },
+  // ── 1.0 spec 08 §3.7: the calibration measurement ────────────────────────
+  {
+    // THE RAN-DENOMINATOR DEFECT, in #50's own words about CI lanes: "a lane
+    // that never runs looks exactly like a quiet one". This stops counting the
+    // claims that named no check, so the verified count is measured against
+    // only the claims that could ever have been verified.
+    label: "calibration hides the claims that could never be verified",
+    file: "packages/server/src/services/calibration.ts",
+    from:
+      "    if (row.claim.verificationRef === null) {\n" +
+      "      tally.withoutVerificationRef += 1;\n" +
+      "    } else {\n" +
+      "      tally.withVerificationRef += 1;\n" +
+      "    }",
+    to:
+      "    if (row.claim.verificationRef !== null) {\n" +
+      "      tally.withVerificationRef += 1;\n" +
+      "    }",
+    test: "packages/server/test/calibration.test.ts",
+    because:
+      "the one measurement that decides whether a model's confidence is worth " +
+      "printing becomes a flattering hit rate over a denominator chosen by " +
+      "omission — and it would read as the provider doing well",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7976,6 +8000,7 @@ interface Outcome {
  * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/server/test/calibration.test.ts 1
  * PRINTS: packages/server/test/ci-coverage.test.ts 3
  * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1

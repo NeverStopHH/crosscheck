@@ -721,3 +721,38 @@ export const CI_LANE_QUORUM_COMMITS = 3;
  * PRINTS: true
  */
 export const CI_RETENTION_DAYS = 30;
+
+/**
+ * HOW FAR BACK THE CALIBRATION MEASUREMENT LOOKS (1.0 spec 08 §3.7).
+ *
+ * A DELIBERATE NON-TUNING, in `SUSPECT_SEPARATION_RATIO`'s sense: the brief
+ * says "months", and no dataset in this project justifies a second number. It
+ * will be worth tuning once there is data to tune it against — which is the
+ * whole point of the measurement, and the reason a number picked now would be
+ * picked from nothing.
+ */
+export const CALIBRATION_WINDOW_DAYS = 90;
+
+/**
+ * How many provider cells one report may carry.
+ *
+ * A cell is an `agent_kind`, and the field is one this hub does not control:
+ * a connector states it. So the cap is a bound on somebody else's vocabulary
+ * rather than on a list this project maintains — eight is far above the four
+ * kinds that exist, and a report that hits it says so through `claimsRead`
+ * against `claimsTotal` rather than quietly showing the first eight.
+ */
+export const CALIBRATION_MAX_CELLS = 8;
+
+/**
+ * How many claims one report reads.
+ *
+ * MATCHED TO `DIAGNOSIS_MAX_CLAIMS` by name and by argument: both bound "how
+ * many claims may one answer be built from", and two different numbers would
+ * be two different answers to that question. Newest-first before the cap, so
+ * the bound is never spent at random:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/server/src/constants.ts");const d=await import("./packages/server/src/services/diagnosis.ts");console.log(c.CALIBRATION_MAX_CLAIMS === d.DIAGNOSIS_MAX_CLAIMS)'
+ * PRINTS: true
+ */
+export const CALIBRATION_MAX_CLAIMS = 500;
