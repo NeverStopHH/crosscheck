@@ -7864,6 +7864,25 @@ export const MUTATIONS: readonly Mutation[] = [
       "else moved, so consent granted for one invariant silently travels to " +
       "another — which is the exact shape principle 4 exists to stop",
   },
+  {
+    // §3.6: a revoke closes the fence and the search STOPS. Skipping it lets an
+    // older grant underneath a revocation answer as live — a permission a human
+    // explicitly took back, still in force.
+    label: "a revoked fence waiver stops closing the fence",
+    file: "packages/server/src/services/waivers.ts",
+    from:
+      '    if (row.kind === "revoke") {\n' +
+      "      // THE NEWEST DECISION WINS. A revoke closes the fence and the search\n" +
+      "      // stops: an older grant underneath it was already taken back.\n" +
+      "      return null;\n" +
+      "    }",
+    to: '    if (row.kind === "revoke") {\n      continue;\n    }',
+    test: "packages/server/test/waivers.test.ts",
+    because:
+      "a PROTECTED_CONFLICT stays lifted by a waiver somebody revoked, so the " +
+      "product reports a human-verified invariant as acceptably broken on the " +
+      "strength of permission that was withdrawn",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -8098,6 +8117,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 1
+ * PRINTS: packages/server/test/waivers.test.ts 1
  * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */
 const greenGuards = new Map<string, boolean>();

@@ -188,35 +188,3 @@ export const TEAM_SUSPECT_ATTRIBUTIONS = ["sessions", "counts_only"] as const;
 
 export type TeamSuspectAttribution = (typeof TEAM_SUSPECT_ATTRIBUTIONS)[number];
 
-/**
- * A FENCE WAIVER'S TWO KINDS (1.0 spec 04 §3.6).
- *
- * `grant` lifts a `PROTECTED_CONFLICT` for a bounded time; `revoke` takes that
- * back and names the grant it supersedes. Append-only in both directions — a
- * waiver is a HUMAN DECISION about a human-verified invariant, and the record
- * of who lifted a fence and why is the thing that makes the fence mean
- * anything. Editing one in place would leave the team with a permission and no
- * account of how it got there.
- */
-export const WAIVER_KINDS = ["grant", "revoke"] as const;
-
-/**
- * How long a waiver's reason may be.
- *
- * REQUIRED ON A REVOKE TOO, which is the unusual half: it is easy to argue that
- * taking a permission back needs no justification, and that is exactly the
- * asymmetry that makes a revocation feel like an accusation. Both directions
- * carry a sentence, and both sentences are AUTHOR-WRITTEN TEXT — one of only
- * two untrusted slots a verdict line may carry (04 §3.1), so every surface that
- * prints it frames it.
- *
- * Matched to `MAX_PIN_CHECK_CHARS` by name and by argument: both bound one
- * human sentence about one pin, and two different limits for the same class of
- * text would be two different answers to "how much may a person write here".
- *
- * VERIFY: bun -e 'const p=await import("./packages/schema/src/pin.ts");console.log(p.MAX_WAIVER_REASON_CHARS === p.MAX_PIN_CHECK_CHARS)'
- * PRINTS: true
- */
-export const MAX_WAIVER_REASON_CHARS = MAX_PIN_CHECK_CHARS;
-
-export type WaiverKind = (typeof WAIVER_KINDS)[number];

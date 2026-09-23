@@ -99,14 +99,12 @@ export {
   MAX_PIN_PATH_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_PIN_SWEEP_UPDATES,
-  MAX_WAIVER_REASON_CHARS,
   MAX_SPEAKING_PIN_FILES,
   PIN_FILE_STATUSES,
   PIN_PRESENCE_TERMINAL,
   PinSchema,
   TEAM_PIN_POLICIES,
   TEAM_SUSPECT_ATTRIBUTIONS,
-  WAIVER_KINDS,
   isSpeakingPin,
 } from "./pin.ts";
 export type {
@@ -114,8 +112,13 @@ export type {
   PinFileStatus,
   TeamPinPolicy,
   TeamSuspectAttribution,
-  WaiverKind,
 } from "./pin.ts";
+
+export {
+  MAX_WAIVER_REASON_CHARS,
+  WAIVER_KINDS,
+} from "./waiver.ts";
+export type { WaiverKind } from "./waiver.ts";
 
 export {
   MAX_QUESTION_BODY_LENGTH,

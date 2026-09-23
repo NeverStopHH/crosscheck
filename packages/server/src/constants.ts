@@ -604,6 +604,25 @@ export const SUSPECT_TOP_CANDIDATES = 3;
  */
 export const SUSPECT_SEPARATION_RATIO = 1.5;
 
+/**
+ * HOW LONG A FENCE MAY STAY OPEN (1.0 spec 04 §3.6).
+ *
+ * PINNED EQUAL TO `SUSPECT_WINDOW_DAYS`, and the equality is the argument: a
+ * waiver silences a `PROTECTED_CONFLICT`, and `suspect` looks back exactly that
+ * far. A waiver allowed to outlive the window would silence a conflict for
+ * longer than anybody could still see the sessions that caused it — permission
+ * outliving the evidence it was granted against.
+ *
+ * IT ADOPTS THE CORPORA'S FLOOR RULE IN A MAXIMUM'S DIRECTION: never raised to
+ * make a case pass. If fourteen days turns out to be too short for a real team,
+ * the answer is a second grant with a second reason, which leaves a record;
+ * raising the ceiling leaves none.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/server/src/constants.ts");console.log(c.MAX_WAIVER_DAYS === c.SUSPECT_WINDOW_DAYS)'
+ * PRINTS: true
+ */
+export const MAX_WAIVER_DAYS = 14;
+
 // ── Coverage integrity (docs/1.0/03-coverage-integrity.md) ──────────────────
 
 /**
