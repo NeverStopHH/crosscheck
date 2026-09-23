@@ -8001,6 +8001,49 @@ export const MUTATIONS: readonly Mutation[] = [
       "denominator",
   },
   {
+    // 07 §3.3 and §3.6 together. Enrolment is CONSENT, not a display flag:
+    // a hub running for a team that never agreed stores nothing at all.
+    label: "a hub measures teams that never agreed to be measured",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (!settings.pilotEnrolled) {\n    return;\n  }",
+    to: "  if (false) {\n    return;\n  }",
+    test: `${SERVER}/test/pilot-attributions.test.ts`,
+    because:
+      "every repo on the hub starts accumulating attribution rows, so a " +
+      "works-council question about what this tool records is answered " +
+      "wrongly by the product itself — and the off-by-default flag that was " +
+      "the whole answer becomes decoration",
+  },
+  {
+    // §3.3. `no_separation` prints rows and names NOBODY on purpose.
+    label: "an answer that named nobody records the first row as the suspect",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: '  const named = input.view.outcome === "ranked";',
+    to: "  const named = true;",
+    test: `${SERVER}/test/pilot-attributions.test.ts`,
+    because:
+      "proof 3 scores this product against attributions it explicitly " +
+      "declined to make, so the accuracy figure is computed over answers " +
+      "nobody was ever given — and the one outcome that exists to say " +
+      "\"too close to call\" is recorded as a name",
+  },
+  {
+    // §3.3's other refusal. NOT catchable through the route: the call is
+    // wrapped so instrumentation can never cost a reader their answer, so a
+    // route test cannot tell "gated out" from "threw and was swallowed".
+    // Measured; the guard is a direct service call.
+    label: "an answer with no invariant to be wrong about is recorded anyway",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (input.pinId === null) {\n    return;\n  }",
+    to: "  if (false) {\n    return;\n  }",
+    test: `${SERVER}/test/pilot-attributions.test.ts`,
+    because:
+      "proof 3's denominator grows with reader-named answers that no repair " +
+      "can ever confirm or refute, so the accuracy figure falls toward zero " +
+      "the more the product is used — and the fall reads as the product " +
+      "getting worse",
+  },
+  {
     // 07 §3.2. The unique key is what keeps a noise FIGURE from being a
     // keystroke count — and the anchor sits on the SQL, not on drizzle:
     // measured, the harness builds from bootstrap.sql, so weakening the
@@ -8484,6 +8527,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
+ * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8

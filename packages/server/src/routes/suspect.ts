@@ -25,6 +25,7 @@ import { readCoverage } from "../services/coverage.ts";
 import { resolveSuspectScope, suspectSessions } from "../services/suspect.ts";
 import { readTeamSettings } from "../services/team-settings.ts";
 import { computeVerdict } from "../services/verdict.ts";
+import { recordAttribution } from "../services/pilot.ts";
 import { readLiveWaiver } from "../services/waivers.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
@@ -151,6 +152,27 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
       liveWaiver,
       now: deps.now(),
     });
+    // 07 §3.3: the answer, kept as it was given. AWAITED, not detached — a
+    // fire-and-forget insert on a request-scoped connection is a write racing
+    // the response that closes it, and the failure mode is a row that
+    // sometimes exists. It does nothing at all for a repo that did not enrol,
+    // so the cost on an un-enrolled hub is one settings read.
+    //
+    // IT MUST NEVER COST A READER THEIR ANSWER. The verdict is computed
+    // above; an instrumentation write that threw here would turn a question
+    // somebody asked into a 500 because the hub could not count.
+    try {
+      await recordAttribution(deps, {
+        repo: parsed.data.repo,
+        pinId: scope.scope.pinId,
+        view,
+        coverage,
+      });
+    } catch {
+      // Deliberately swallowed, and deliberately NOT reported as a failure of
+      // this request: `doctor` reports the pilot's own health (§5), which is
+      // where a hub that cannot store its measurements belongs.
+    }
     return ok(c, { ...view, coverage, verdict });
   });
 
