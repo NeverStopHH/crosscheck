@@ -134,6 +134,11 @@ export const ingestHintDelivery = async (
       sessionId: body.sessionId,
       refKind: body.refKind,
       refId: body.refId,
+      // WHICH SURFACE handed it over (07 §3.1). The schema defaults an absent
+      // field to `unknown`, so a connector older than the column stores the
+      // honest word rather than being refused — and the pilot report prints
+      // that bucket as itself instead of folding it into a guess.
+      channel: body.channel,
       deliveredAt: new Date(body.deliveredAt),
     })
     .onConflictDoNothing()

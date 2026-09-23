@@ -2,6 +2,7 @@ import { PROTOCOL_VERSION } from "@crosscheck/schema";
 import type { Envelope, Intent } from "@crosscheck/schema";
 
 import { FOREIGN_SESSION_DELIVERY } from "./seq.ts";
+import type { DeliveryChannel } from "@crosscheck/schema";
 
 export interface Producer {
   readonly developerId: string;
@@ -83,11 +84,21 @@ export const hintDeliveryId = (
     .digest("hex")
     .slice(0, HINT_DELIVERY_ID_HASH_CHARS)}`;
 
-/** Delivery telemetry (DESIGN.md §4): refs only, never the rendered text. */
+/**
+ * Delivery telemetry (DESIGN.md §4): refs only, never the rendered text.
+ *
+ * `channel` IS REQUIRED, AND THAT IS THE POINT (07 §3.1). The wire schema
+ * defaults it to `unknown` so a connector older than the column still parses
+ * — but a default HERE would let the next writer added to this codebase book
+ * its deliveries into the bucket that means "nobody can tell", silently, on
+ * the one surface whose whole purpose is being counted. Required makes the
+ * compiler ask.
+ */
 export const hintDeliveryRecord = (
   receiverSessionId: string,
   refKind: HintRefKind,
   refId: string,
+  channel: DeliveryChannel,
   producer: Producer,
   now: Date,
 ): Envelope =>
@@ -98,6 +109,7 @@ export const hintDeliveryRecord = (
       sessionId: receiverSessionId,
       refKind,
       refId,
+      channel,
       deliveredAt: now.toISOString(),
     },
     producer,

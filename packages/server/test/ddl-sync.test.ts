@@ -450,6 +450,38 @@ describe("bootstrap.sql DDL sync", () => {
     }
   });
 
+  test("hint_deliveries.channel reaches an EXISTING hub, not only a fresh one", async () => {
+    // The trap this case exists for: a column added only to the CREATE TABLE
+    // is a column no hub that already has the table will ever get, because
+    // the CREATE is IF NOT EXISTS. The pilot report would then read `unknown`
+    // for ever on exactly the installs with history worth counting — and it
+    // would look like an honest default rather than a missing migration.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert — both halves, because either alone is a deployment that differs
+    // from the other.
+    expect(bootstrapSql).toContain(
+      "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown'",
+    );
+    expect(bootstrapSql).toContain("channel text NOT NULL DEFAULT 'unknown',");
+  });
+
+  test("the channel column really exists after a bootstrap", async () => {
+    // Arrange — the assertions above read SQL as text. This one asks the
+    // database, which is the only authority that settles whether the two
+    // statements above actually ran.
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT column_default AS d FROM information_schema.columns WHERE table_name = 'hint_deliveries' AND column_name = 'channel'`,
+    );
+
+    // Assert
+    expect(rows.rows.length).toBe(1);
+    expect(String(rows.rows[0]?.d ?? "")).toContain("unknown");
+  });
+
   test("a waiver's two kinds have a shape the DATABASE enforces", async () => {
     // Arrange — a grant expires and supersedes nothing; a revoke supersedes a
     // grant and never expires. Left to a service, a grant with no expiry is a

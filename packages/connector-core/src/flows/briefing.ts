@@ -273,6 +273,10 @@ export const recordBriefingDeliveries = async (
           input.crosscheckSessionId,
           "work_context",
           workContextId,
+          // THE BRIEFING, and it is the channel whose pull rate means the
+          // least on its own: it arrives unasked, at SessionStart, into a
+          // budget every teammate shares.
+          "briefing",
           input.producer,
           input.now,
         ),

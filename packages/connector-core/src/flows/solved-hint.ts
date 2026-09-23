@@ -152,6 +152,9 @@ export const selectAndRenderSolvedHint = async (
     refKind: "work_context",
     refId: match.workContextId,
     bodyHash: null,
+    // A solved pointer reaches this reader mid-prompt, not at SessionStart —
+    // the briefing has its own solved block and its own channel.
+    channel: "prompt_hint",
   });
   return remembered ? text : "";
 };

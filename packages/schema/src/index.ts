@@ -3,6 +3,8 @@ export {
   ArtifactSensitivitySchema,
   CAPTURE_MODES,
   CLAIM_CAPTURE_MODES,
+  DELIVERY_CHANNELS,
+  DeliveryChannelSchema,
   CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
   CLAIM_REVALIDATION_BASES,
@@ -32,6 +34,7 @@ export {
 export type {
   ArtifactSensitivity,
   CaptureMode,
+  DeliveryChannel,
   ClaimCaptureMode,
   ClaimCommitBinding,
   ClaimKind,

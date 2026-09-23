@@ -101,6 +101,36 @@ export const TARGET_KINDS = [
 export const TARGET_SOURCES = ["tool_edit", "git_diff"] as const;
 
 /**
+ * WHICH SURFACE HANDED A REF TO A READER (1.0 spec 07 §3.1).
+ *
+ * `hint_deliveries` counts `delivered / pulled` as one number over channels
+ * that are not comparable. A briefing arrives at SessionStart, unasked, into
+ * a budget every teammate shares; a mid-prompt hint interrupts a turn already
+ * under way. A pull rate that mixes them answers no question about either —
+ * and every one of the five pilot proofs needs the split, which is why it
+ * lives here rather than being derived by whichever reader happens to care.
+ *
+ * `unknown` IS THE HONEST DEFAULT, NEVER A PLACEHOLDER. Two writers exist
+ * today and a stored row cannot be attributed to either, so no back-fill is
+ * possible and none is attempted: the report prints `unknown` as its own
+ * bucket, the way the absence listing keeps `inactive` and `unconnected`
+ * apart rather than guessing between them. A back-fill here would be this
+ * spec inventing the very measurement it exists to take.
+ *
+ * `suspect` is listed although nothing writes it yet. The channel exists the
+ * moment an attribution answer can hand somebody a ref, and adding the value
+ * later would leave every row written before it indistinguishable from
+ * `unknown` — the exact trap the two existing writers are already in.
+ */
+export const DELIVERY_CHANNELS = [
+  "unknown",
+  "briefing",
+  "prompt_hint",
+  "tripwire",
+  "suspect",
+] as const;
+
+/**
  * What the HUB may hold. "both" is derived on ingest — never sent — when the
  * same (context, kind, value) arrives from the other lane: the primary key
  * collapses the two rows into one, and without this third value whichever
@@ -187,6 +217,7 @@ export const ClaimStatusSchema = z.enum(CLAIM_STATUSES);
 export const EdgeKindSchema = z.enum(EDGE_KINDS);
 export const SessionStatusSchema = z.enum(SESSION_STATUSES);
 export const CaptureModeSchema = z.enum(CAPTURE_MODES);
+export const DeliveryChannelSchema = z.enum(DELIVERY_CHANNELS);
 export const ClaimCaptureModeSchema = z.enum(CLAIM_CAPTURE_MODES);
 export const ProvenanceSchema = z.enum(PROVENANCES);
 export const TargetKindSchema = z.enum(TARGET_KINDS);
@@ -208,3 +239,5 @@ export type TargetKind = z.infer<typeof TargetKindSchema>;
 export type TargetSource = z.infer<typeof TargetSourceSchema>;
 export type StoredTargetSource = (typeof STORED_TARGET_SOURCES)[number];
 export type ArtifactSensitivity = z.infer<typeof ArtifactSensitivitySchema>;
+
+export type DeliveryChannel = (typeof DELIVERY_CHANNELS)[number];

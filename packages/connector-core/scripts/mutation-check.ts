@@ -7987,6 +7987,63 @@ export const MUTATIONS: readonly Mutation[] = [
       "injection needs on a surface an agent runs through Bash",
   },
   {
+    // The last hop nothing else covers. The compiler forces every writer to
+    // NAME a channel; only this says it named the right one.
+    label: "the briefing books its deliveries as somebody else's channel",
+    file: `${CORE}/src/flows/briefing.ts`,
+    from: '          "briefing",',
+    to: '          "prompt_hint",',
+    test: `${CORE}/test/briefing-flow.test.ts`,
+    because:
+      "SessionStart deliveries are counted against the mid-prompt budget, so " +
+      "both pull rates stay plausible and neither measures anything — the " +
+      "unsolicited channel's whole cost argument is computed from the wrong " +
+      "denominator",
+  },
+  {
+    // 07 §3.1. A column added only to the CREATE TABLE never reaches a hub
+    // that already has the table, and the report then reads `unknown` for
+    // ever on exactly the installs with history worth counting — looking
+    // like an honest default rather than a missing migration.
+    label: "a new column reaches only hubs that do not exist yet",
+    file: "packages/server/src/db/bootstrap.sql",
+    from:
+      "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text " +
+      "NOT NULL DEFAULT 'unknown';",
+    to: "-- (migration removed)",
+    test: "packages/server/test/ddl-sync.test.ts",
+    because:
+      "every hub that has ever run keeps a hint_deliveries table with no " +
+      "channel, so the pilot report counts five proofs out of one bucket " +
+      "that means nobody can tell — and nothing anywhere says the column is " +
+      "missing rather than merely unset",
+  },
+  {
+    // The writer's half. A channel the connector chose and the hub discards
+    // is worse than no column: the report looks measured and is not.
+    label: "the channel a writer chose is replaced by the bucket for not knowing",
+    file: `${SERVER}/src/services/hint-deliveries.ts`,
+    from: "      channel: body.channel,",
+    to: '      channel: "unknown",',
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "the briefing and the mid-prompt hint both land in `unknown`, so the " +
+      "one split every pilot proof rests on is silently undone at the last " +
+      "hop — and the connector, the wire and the column all still say it works",
+  },
+  {
+    // An enum that accepts anything is a text column with a comment on it.
+    label: "the delivery channel stops being a closed vocabulary",
+    file: `${SCHEMA}/src/enums.ts`,
+    from: "export const DeliveryChannelSchema = z.enum(DELIVERY_CHANNELS);",
+    to: "export const DeliveryChannelSchema = z.string();",
+    test: `${SERVER}/test/hint-deliveries.test.ts`,
+    because:
+      "any word a caller invents becomes a bucket in the pilot report, so " +
+      "the five proofs are counted over categories nobody defined and a " +
+      "typo silently splits a channel in two",
+  },
+  {
     // VER-8's measurement, and the failure mode a latency test dies of:
     // `percentile([])` is 0, and 0 is under every ceiling anybody will ever
     // write. INT-11's anchor guards the same class from the other side — a
@@ -8287,6 +8344,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/absence-render.test.ts 1
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
+ * PRINTS: packages/connector-core/test/briefing-flow.test.ts 1
  * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
@@ -8371,11 +8429,12 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage.test.ts 12
- * PRINTS: packages/server/test/ddl-sync.test.ts 1
+ * PRINTS: packages/server/test/ddl-sync.test.ts 2
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
+ * PRINTS: packages/server/test/hint-deliveries.test.ts 2
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
  * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2

@@ -113,6 +113,72 @@ describe("hint_delivery ingest", () => {
   });
 });
 
+/**
+ * WHICH SURFACE HANDED IT OVER (07 §3.1).
+ *
+ * `delivered / pulled` was one number over two channels that are not
+ * comparable: a briefing arrives unasked at SessionStart, a hint interrupts a
+ * turn already under way. Every pilot proof needs them apart.
+ *
+ * THE THREE CASES ARE THE WHOLE CONTRACT. An absent channel is `unknown` and
+ * is STORED — refusing it would drop the deliveries of every install nobody
+ * has upgraded, which is exactly the history worth counting. A named channel
+ * is stored as named. And a word this hub does not know is REFUSED at the
+ * boundary: an enum that quietly accepts anything is a text column with a
+ * comment, and the report built on it would count buckets nobody defined.
+ */
+describe("the delivery channel (07 §3.1)", () => {
+  test("a connector older than the column stores `unknown`, not a refusal", async () => {
+    // Arrange — no `channel` key at all, which is every connector today
+    const { harness, developer } = await seedContextWithClaim();
+
+    // Act
+    const result = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("hint_delivery", deliveryBody()),
+    );
+
+    // Assert
+    expect(result.data?.accepted).toBe(1);
+    expect((await listDeliveryRows(harness))[0]?.channel).toBe("unknown");
+  });
+
+  test("a named channel is stored as named", async () => {
+    // Arrange
+    const { harness, developer } = await seedContextWithClaim();
+
+    // Act
+    const result = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("hint_delivery", deliveryBody({ channel: "briefing" })),
+    );
+
+    // Assert
+    expect(result.data?.accepted).toBe(1);
+    expect((await listDeliveryRows(harness))[0]?.channel).toBe("briefing");
+  });
+
+  test("a channel this hub does not know is REFUSED, never stored", async () => {
+    // Arrange — the case that decides whether this is an enum or a text
+    // column with a comment on it.
+    const { harness, developer } = await seedContextWithClaim();
+
+    // Act
+    const result = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("hint_delivery", deliveryBody({ channel: "telepathy" })),
+    );
+
+    // Assert
+    expect(result.data?.accepted).toBe(0);
+    expect(result.data?.rejected).toBe(1);
+    expect(await listDeliveryRows(harness)).toHaveLength(0);
+  });
+});
+
 describe("get_diagnosis marks deliveries pulled (the precision loop)", () => {
   test("the receiving developer's claim- and context-refs are marked", async () => {
     // Arrange — one claim ref and one work-context ref delivered to ses_01

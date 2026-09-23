@@ -134,6 +134,11 @@ CREATE TABLE IF NOT EXISTS hint_deliveries (
   session_id text NOT NULL REFERENCES agent_sessions(id),
   ref_kind text NOT NULL,
   ref_id text NOT NULL,
+  -- WHICH SURFACE handed this ref over (07 3.1). DEFAULT 'unknown' and never
+  -- back-filled: two writers existed before this column and a stored row
+  -- cannot be attributed to either, so guessing would manufacture the
+  -- measurement the pilot report exists to take.
+  channel text NOT NULL DEFAULT 'unknown',
   delivered_at timestamptz NOT NULL,
   pulled_at timestamptz
 );
@@ -975,6 +980,17 @@ $$;
 -- DEFAULT 1, and the default is the truth about every existing row: nobody has
 -- swept them since versions existed, so they are all still their first version.
 ALTER TABLE pins ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+
+-- WHICH SURFACE HANDED A REF OVER (07 3.1). The CREATE TABLE above carries
+-- this column for a fresh hub; every hub that already exists needs the ALTER,
+-- and without it the pilot report reads `unknown` for ever on exactly the
+-- installs that have the history worth counting.
+--
+-- DEFAULT 'unknown' IS THE TRUTH ABOUT EVERY EXISTING ROW, not a placeholder:
+-- two writers existed before this column and a stored row cannot be
+-- attributed to either. Nothing is back-filled, and the report prints
+-- 'unknown' as its own bucket rather than folding it into a guess.
+ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown';
 
 -- WHO LIFTED A FENCE, WHEN, WHY, AND UNTIL WHEN (§3.6).
 --

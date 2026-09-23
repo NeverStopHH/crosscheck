@@ -40,6 +40,7 @@ import {
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
+  DELIVERY_CHANNELS,
   PIN_FILE_STATUSES,
   PROVENANCES,
   QUESTION_STATUSES,
@@ -507,6 +508,18 @@ export const hintDeliveries = pgTable("hint_deliveries", {
     .references(() => agentSessions.id),
   refKind: text("ref_kind", { enum: ["claim", "work_context"] }).notNull(),
   refId: text("ref_id").notNull(),
+  /**
+   * WHICH SURFACE handed this ref over (07 §3.1) — the split every pilot
+   * proof needs, because `delivered / pulled` over a briefing and a
+   * mid-prompt hint is one number about two incomparable things.
+   *
+   * DEFAULT 'unknown' AND NEVER BACK-FILLED. Two writers existed before this
+   * column and a stored row cannot be attributed to either; guessing would
+   * manufacture the measurement this table exists to take.
+   */
+  channel: text("channel", { enum: DELIVERY_CHANNELS })
+    .notNull()
+    .default("unknown"),
   deliveredAt: timestamptz("delivered_at").notNull(),
   pulledAt: timestamptz("pulled_at"),
 }, (table) => [

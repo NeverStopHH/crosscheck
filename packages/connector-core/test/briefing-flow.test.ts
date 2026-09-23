@@ -319,12 +319,20 @@ describe("recordBriefingDeliveries (delivery telemetry, replay-idempotent)", () 
     // Assert: the replay appended rows with the SAME deterministic primary
     // keys — the hub answers `duplicate`, never a second telemetry row.
     const spool = await readSessionSpool(home, key, sessionSlug(HOST_KEY));
-    const ids = spool.lines
-      .map((line) => JSON.parse(line) as { body: { id: string } })
-      .map((record) => record.body.id);
+    const bodies = spool.lines.map(
+      (line) =>
+        (JSON.parse(line) as { body: { id: string; channel: string } }).body,
+    );
+    const ids = bodies.map((body) => body.id);
     expect(ids).toHaveLength(4);
     expect(new Set(ids).size).toBe(2);
     expect(ids).toContain(hintDeliveryId(crosscheckSessionId, "wc_solved_1"));
+
+    // 07 §3.1: THE CHANNEL IS THE BRIEFING'S, and the word matters. The
+    // compiler already forces every writer to name one; nothing but this
+    // says it named the RIGHT one, and a briefing booked as `prompt_hint`
+    // would leave the pull rates looking plausible and measuring nothing.
+    expect(bodies.every((body) => body.channel === "briefing")).toBe(true);
 
     // State merged as a set — replay does not grow it.
     const state = await readSessionState(home, HOST_KEY);
