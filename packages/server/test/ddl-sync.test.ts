@@ -10,6 +10,7 @@ import {
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
+  MAX_WAIVER_REASON_CHARS,
   NO_COMMIT_SHA,
 } from "@crosscheck/schema";
 
@@ -42,6 +43,8 @@ const guardedBlockNamed = (sql: string, constraintName: string): string => {
   return matching[0] ?? "";
 };
 
+const WAIVER_REASON_CHECK_PATTERN =
+  /fence_waivers_reason_length_check CHECK \(char_length\(reason\) <= (\d+)\)/;
 const VERIFICATION_REF_CHECK_PATTERN =
   /claims_verification_ref_length_check\s+CHECK \(char_length\(verification_ref\) <= (\d+)\)/;
 const CI_TEST_ID_CHECK_PATTERN =
@@ -410,6 +413,58 @@ describe("bootstrap.sql DDL sync", () => {
     // Assert
     expect(match).not.toBeNull();
     expect(Number(match?.[1])).toBe(MAX_CI_TEST_ID_CHARS);
+  });
+
+  test("fence_waivers reason CHECK matches MAX_WAIVER_REASON_CHARS", async () => {
+    // Arrange: a waiver's reason is AUTHOR-WRITTEN TEXT and one of only two
+    // untrusted slots a verdict line may carry. A cap that drifts between the
+    // two authorities lets one deployment store a sentence the other refuses —
+    // and the refusal would land on a person trying to lift a fence, at the
+    // moment they are least able to guess what went wrong.
+    //
+    // This case exists because the drift happened WHILE IT WAS BEING WRITTEN:
+    // the SQL said 400, the constant says 200.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const match = bootstrapSql.match(WAIVER_REASON_CHECK_PATTERN);
+
+    // Assert
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBe(MAX_WAIVER_REASON_CHARS);
+  });
+
+  test("the fence table and the pin version exist in both authorities", async () => {
+    // drizzle is the migration authority and bootstrap.sql is what a real
+    // Postgres hub runs; a table in one and not the other is a hub that
+    // accepts a write on one deployment and 42P01s on the other.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    for (const fragment of [
+      "CREATE TABLE IF NOT EXISTS fence_waivers",
+      "fence_waivers_pin_idx",
+      "ALTER TABLE pins ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+  });
+
+  test("a waiver's two kinds have a shape the DATABASE enforces", async () => {
+    // Arrange — a grant expires and supersedes nothing; a revoke supersedes a
+    // grant and never expires. Left to a service, a grant with no expiry is a
+    // permanent permission nobody agreed to, and a revoke with an expiry is a
+    // permission that comes BACK on its own.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Act
+    const guarded = guardedBlockNamed(bootstrapSql, "fence_waivers_shape_check");
+
+    // Assert
+    expect(guarded).toContain("kind = 'grant'");
+    expect(guarded).toContain("expires_at IS NOT NULL AND supersedes IS NULL");
+    expect(guarded).toContain("kind = 'revoke'");
+    expect(guarded).toContain("expires_at IS NULL AND supersedes IS NOT NULL");
   });
 
   test("claims verification_ref CHECK matches MAX_VERIFICATION_REF_CHARS", async () => {

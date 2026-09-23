@@ -50,7 +50,9 @@ import {
   STORED_TARGET_SOURCES,
   TARGET_KINDS,
   TEAM_PIN_POLICIES,
+  MAX_WAIVER_REASON_CHARS,
   TEAM_SUSPECT_ATTRIBUTIONS,
+  WAIVER_KINDS,
 } from "@crosscheck/schema";
 
 const timestamptz = (name: string) =>
@@ -693,6 +695,23 @@ export const pins = pgTable(
     renamedPaths: integer("renamed_paths").notNull().default(0),
     renamedAt: timestamptz("renamed_at"),
     renamedBy: text("renamed_by").references(() => developers.id),
+    /**
+     * WHICH VERSION OF THIS INVARIANT (1.0 spec 04 §3.5) — the one field the
+     * cut line names that #50's tables did not already carry.
+     *
+     * A waiver is granted against a VERSION, not against a pin. Without this
+     * column a sweep could move the paths a pin watches while old waivers went
+     * on covering them: a silent widening of what a human agreed to, which an
+     * agent could cause on purpose by renaming a file.
+     *
+     * `applyPinSweep` bumps it ONCE PER SWEEP, BEFORE the first path moves.
+     * The sweep is not transactional, so the question is which failure costs
+     * the smaller lie. Bump-first: a crash orphans that pin's waivers, the
+     * verdict falls back to PROTECTED_CONFLICT and a human re-grants.
+     * Bump-last: a crash leaves paths moved while old waivers still cover
+     * them. The first is a nuisance, the second is the silent widening.
+     */
+    version: integer("version").notNull().default(1),
     createdAt: timestamptz("created_at").notNull(),
   },
   (table) => [
@@ -831,6 +850,82 @@ export const teamSettings = pgTable("team_settings", {
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });
+
+/**
+ * WHO LIFTED A FENCE, WHEN, WHY, AND UNTIL WHEN (1.0 spec 04 §3.6).
+ *
+ * The only thing that turns a `PROTECTED_CONFLICT` into `protected_ok`. A
+ * protected conflict says a human-verified invariant is broken; a waiver says
+ * a human decided that is acceptable for now. Nothing an agent can reach
+ * writes here — `capture_mode` is HUB-STAMPED "human" and never taken from a
+ * body, which is #50's pin rule applied to the one other place a human's word
+ * is the whole point.
+ *
+ * APPEND-ONLY IN BOTH DIRECTIONS. A revoke is a new row naming the grant it
+ * supersedes, never an edit or a delete. A team that can only see the current
+ * permission has no account of how it got there, and "who opened this fence
+ * and why" is the question this table exists to answer months later.
+ *
+ * A REASON IS REQUIRED ON A REVOKE TOO. It is easy to argue that taking a
+ * permission back needs no justification — and that asymmetry is exactly what
+ * makes a revocation read as an accusation. Both directions carry a sentence.
+ *
+ * PER FENCE, PER REPO, PER VERSION. A waiver granted against version 3 says
+ * nothing about version 4: a sweep that moved the watched paths produced a
+ * different invariant, and consent does not travel across that boundary.
+ */
+export const fenceWaivers = pgTable(
+  "fence_waivers",
+  {
+    id: text("id").primaryKey(),
+    /** Denormalised for `pin_files.repo`'s reason: every read is repo-scoped. */
+    repo: text("repo").notNull(),
+    pinId: text("pin_id")
+      .notNull()
+      .references(() => pins.id),
+    pinVersion: integer("pin_version").notNull(),
+    kind: text("kind", { enum: WAIVER_KINDS }).notNull(),
+    grantedBy: text("granted_by")
+      .notNull()
+      .references(() => developers.id),
+    /**
+     * HUB-STAMPED, never on the body. The same rule #50 applied to pins, for
+     * the same reason: a body that could say "human" is a caller asserting
+     * something about itself that only the hub may decide, and here that
+     * assertion would be a permission.
+     */
+    captureMode: text("capture_mode", { enum: CAPTURE_MODES }).notNull(),
+    reason: text("reason").notNull(),
+    expiresAt: timestamptz("expires_at"),
+    supersedes: text("supersedes"),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    check(
+      "fence_waivers_reason_length_check",
+      sql`char_length(${table.reason}) <= ${sql.raw(String(MAX_WAIVER_REASON_CHARS))}`,
+    ),
+    // THE SHAPE OF THE TWO KINDS, AS A DATABASE FACT rather than a service
+    // promise. A grant EXPIRES and supersedes nothing; a revoke supersedes a
+    // grant and never expires. Without this a grant with no expiry is a
+    // permanent permission nobody agreed to, and a revoke with an expiry is a
+    // permission that comes BACK on its own.
+    check(
+      "fence_waivers_shape_check",
+      sql`(${table.kind} = 'grant' AND ${table.expiresAt} IS NOT NULL AND ${table.supersedes} IS NULL)
+   OR (${table.kind} = 'revoke' AND ${table.expiresAt} IS NULL AND ${table.supersedes} IS NOT NULL)`,
+    ),
+    // The one read this table has: "the live waiver for this pin at this
+    // version", newest first. `pin_id` is a foreign key, which Postgres does
+    // not index on its own.
+    index("fence_waivers_pin_idx").on(
+      table.repo,
+      table.pinId,
+      table.pinVersion,
+      table.createdAt.desc(),
+    ),
+  ],
+);
 
 /**
  * ONE ROW PER REVALIDATED CLAIM — the latest reading a clone reported of

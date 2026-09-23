@@ -964,3 +964,59 @@ BEGIN
   END IF;
 END
 $$;
+
+-- ── Verdict semantics and fence authority (1.0 spec 04) ─────────────────────
+
+-- WHICH VERSION OF THIS INVARIANT (§3.5). A waiver is granted against a
+-- version, not against a pin: without this column a sweep could move the paths
+-- a pin watches while old waivers went on covering them, which is a silent
+-- widening of what a human agreed to.
+--
+-- DEFAULT 1, and the default is the truth about every existing row: nobody has
+-- swept them since versions existed, so they are all still their first version.
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+
+-- WHO LIFTED A FENCE, WHEN, WHY, AND UNTIL WHEN (§3.6).
+--
+-- Append-only in both directions: a revoke is a new row naming the grant it
+-- supersedes, never an edit. A team that can only see the current permission
+-- has no account of how it got there.
+CREATE TABLE IF NOT EXISTS fence_waivers (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  pin_id text NOT NULL REFERENCES pins(id),
+  pin_version integer NOT NULL,
+  kind text NOT NULL,
+  granted_by text NOT NULL REFERENCES developers(id),
+  -- Hub-stamped "human", never taken from a body: here that assertion would
+  -- be a permission.
+  capture_mode text NOT NULL,
+  -- keep in sync with MAX_WAIVER_REASON_CHARS in @crosscheck/schema
+  reason text NOT NULL CONSTRAINT fence_waivers_reason_length_check CHECK (char_length(reason) <= 200),
+  expires_at timestamptz,
+  supersedes text,
+  created_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS fence_waivers_pin_idx
+  ON fence_waivers (repo, pin_id, pin_version, created_at DESC);
+
+-- THE SHAPE OF THE TWO KINDS, as a database fact rather than a service promise.
+-- A grant expires and supersedes nothing; a revoke supersedes a grant and never
+-- expires. Without it a grant with no expiry is a permanent permission nobody
+-- agreed to, and a revoke with an expiry is a permission that comes BACK on its
+-- own.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'fence_waivers_shape_check'
+      AND conrelid = 'fence_waivers'::regclass
+  ) THEN
+    ALTER TABLE fence_waivers ADD CONSTRAINT fence_waivers_shape_check
+      CHECK ((kind = 'grant' AND expires_at IS NOT NULL AND supersedes IS NULL)
+          OR (kind = 'revoke' AND expires_at IS NULL AND supersedes IS NOT NULL));
+  END IF;
+END
+$$;
