@@ -7439,6 +7439,190 @@ export const MUTATIONS: readonly Mutation[] = [
       "answer there is the PERMISSIVE one — a fence that consults the ledger " +
       "stops refusing and nothing goes red",
   },
+  {
+    // 1.0 spec 05 §3.5. The ladder's first rung, and the only one standing
+    // between an empty table and an accusation.
+    label: "an empty base window reads as a stably green history",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: "    if (window.runIds.length < CI_FLAKE_BASE_RUNS) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "a hub with no history finds no non-green run in a window that holds " +
+      "nothing, reads the absence as 'it was green before', and reaches " +
+      "`confirmed` — missing evidence strengthening a conclusion, in the one " +
+      "direction that names a developer",
+  },
+  {
+    // The same inversion read from the base side.
+    label: "a crashed run counts toward the base window",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: '        eq(ciRuns.outcome, "completed"),\n        ne(ciRuns.commitSha, excludeCommit),',
+    to: "        ne(ciRuns.commitSha, excludeCommit),",
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "only a completed run asserts that its non-green rows are all of them " +
+      "(§3.3); a crashed run's empty result set is the runner dying, and " +
+      "counting it fills the window that lets the next rung accuse",
+  },
+  {
+    label: "one commit measured five times fills a five-commit window",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: "    .selectDistinctOn([ciRuns.commitSha], {",
+    to: "    .select({",
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "a window that is really one commit cannot say whether a test is " +
+      "stably green ACROSS commits, which is the only question it is read for",
+  },
+  {
+    label: "a window borrowed from the default ref claims to be the lane's own",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: '    ? { runIds: fallback, source: "default_ref_fallback" }',
+    to: '    ? { runIds: fallback, source: "same_ref" }',
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "the hub holds no repository and cannot check that the branch descends " +
+      "from that ref, so the fallback is an assumption — and an assumption a " +
+      "reader cannot see is one they cannot reject",
+  },
+  {
+    // 1.0 spec 05 §3.6, found by its own test before this shipped: a lane's
+    // silence removed it from the set whose silence is what gets reported.
+    label: "the commit being judged votes on its own expectation",
+    file: `${SERVER}/src/services/ci-coverage.ts`,
+    from: "    if (row.commitSha === excludeCommit || seen.has(row.commitSha)) {",
+    to: "    if (seen.has(row.commitSha)) {",
+    test: `${SERVER}/test/ci-coverage.test.ts`,
+    because:
+      "expectation is an INTERSECTION, so a lane that stayed silent here is " +
+      "absent from this commit's own set and the intersection drops it — the " +
+      "gap erases the evidence of itself, and a missing lane can never be " +
+      "missing",
+  },
+  {
+    label: "a ref nobody has watched long enough reads as complete",
+    file: `${SERVER}/src/services/ci-coverage.ts`,
+    from: '  if (expected.size === 0) {\n    return { ...shared, state: "unknown" };\n  }',
+    to: "",
+    test: `${SERVER}/test/ci-coverage.test.ts`,
+    because:
+      "`lanesReported === expected.size` holds trivially when nothing is " +
+      "expected, so an empty set answers as a satisfied one and a hub with no " +
+      "idea what should have run reports that everything did",
+  },
+  {
+    label: "a repo with no reporter is indistinguishable from one awaiting a run",
+    file: `${SERVER}/src/services/ci-coverage.ts`,
+    from: '    return everReported.length === 0\n      ? UNAVAILABLE\n      : { ...UNAVAILABLE, state: "unknown" };',
+    to: '    return { ...UNAVAILABLE, state: "unknown" };',
+    test: `${SERVER}/test/ci-coverage.test.ts`,
+    because:
+      "the two send a reader to different remedies — one has a lane on the " +
+      "way, the other has nothing to wait for — and `unavailable` is the " +
+      "default this project keeps rather than a state it upgrades away from",
+  },
+  {
+    // 1.0 spec 05 §5, non-negotiable #2. A `test_id` is the one slot on
+    // `crosscheck status` whose text comes from ANOTHER repository.
+    label: "a test name from a fork PR reaches the terminal raw",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "      const name = bareUntrusted(delta.testId, MAX_CI_TEST_ID_CHARS);",
+    to: "      const name = delta.testId;",
+    test: `${CLI}/test/ci-status-render.test.ts`,
+    because:
+      "a fork pull request can name a test anything — a newline forging a " +
+      "line of this command's own, a frame character on a surface that " +
+      "carries no notice explaining one, or a thousand combining marks",
+  },
+  {
+    label: "a hub that did not answer prints as a passing suite",
+    file: `${CLI}/src/cli/status.ts`,
+    from: '    return ["ci: not measured — the hub did not answer"];',
+    to: "    return [];",
+    test: `${CLI}/test/ci-status-render.test.ts`,
+    because:
+      "a missing block reads exactly like a green suite, and a round trip " +
+      "that failed is not a fact about the code — the silent absence AT-10 " +
+      "refuses",
+  },
+  {
+    label: "the CI list is cut without saying so",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "    ...(hidden > 0 ? [`  (+${String(hidden)} more not shown)`] : []),",
+    to: "",
+    test: `${CLI}/test/ci-status-render.test.ts`,
+    because:
+      "a run may carry CI_MAX_TEST_ROWS non-green rows, and a list quietly " +
+      "shorter than the failures it describes tells a reader their suite is " +
+      "healthier than it is",
+  },
+  {
+    // 1.0 spec 05 §8.1. A refusal a reader cannot see is a gap they wait on.
+    label: "a provider with no reporter is a silence rather than a refusal",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...(unservedProviders.length === 0",
+    to: "    ...(true",
+    test: `${CLI}/test/doctor-ci.test.ts`,
+    because:
+      "a GitLab team otherwise waits forever for rows no reporter exists to " +
+      "send, and the sentence is derived from the shipped provider list so " +
+      "it cannot outlive the fact it states",
+  },
+  {
+    label: "a repo with no CI reporter is nagged at",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '  unavailable: "PASS",',
+    to: '  unavailable: "WARN",',
+    test: `${CLI}/test/doctor-ci.test.ts`,
+    because:
+      "a repo with no reporter has nothing to be incomplete about — the " +
+      "remedy is a decision, not a fix, and a WARN there is a nag about a " +
+      "choice nobody made wrong, which is how a report stops being read",
+  },
+  {
+    label: "the two silent-reporter cases go unnamed",
+    file: `${CLI}/src/cli/doctor.ts`,
+    // The mutation drops the CLAIM, not the row: a first attempt renamed the
+    // check to "ci reporting gaps (unused)", which still contained the string
+    // the test looks for, so it was not caught. An anchor that survives its
+    // own mutation is a finding about the anchor.
+    from: "rather than as a green suite",
+    to: "",
+    test: `${CLI}/test/doctor-ci.test.ts`,
+    because:
+      "a local `bun test` and a fork pull request both produce NO rows, and " +
+      "no rows is exactly what a green suite produces — §8.2 and §8.3 are " +
+      "only refusals if somebody can read them",
+  },
+  {
+    // Found by the full suite: an answer this client cannot READ is not a hub
+    // reporting something wrong.
+    label: "a hub whose answer did not parse is reported as a broken hub",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      verdict.status >= HTTP_ERROR_FLOOR && verdict.status !== HTTP_NOT_FOUND",
+    to: "      verdict.status !== HTTP_NOT_FOUND",
+    test: `${CLI}/test/e2e/remote-login.e2e.test.ts`,
+    because:
+      "a hub too old for the route, one that could not be reached and one " +
+      "whose shape this client cannot read all mean 'nobody measured' — the " +
+      "distinction `plan overlap` already draws twenty lines up, and " +
+      "collapsing it puts a WARN on a healthy install's first login",
+  },
+  {
+    // FOUND ON THE 1.0 INTEGRATION BRANCH. Five specs each added a hub-backed
+    // doctor check; sequentially, a hub that never answers cost N timeouts.
+    label: "doctor waits one timeout per check instead of one in total",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  ] = await Promise.all([",
+    to: "  ] = await sequentially([",
+    test: `${CLI}/test/doctor-latency.test.ts`,
+    because:
+      "the nine hub reads are independent, so awaiting them in turn makes " +
+      "doctor's own runtime N x the effective timeout against an unreachable " +
+      "hub — and N grows with every spec that adds a check, which is how 05 " +
+      "pushed the latency case past its bound without touching it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7485,18 +7669,21 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
+ * PRINTS: packages/cli/test/ci-status-render.test.ts 3
  * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
  * PRINTS: packages/cli/test/coverage-cli.test.ts 5
  * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
+ * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
- * PRINTS: packages/cli/test/doctor-latency.test.ts 1
+ * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
+ * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 3
@@ -7621,6 +7808,8 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/server/test/ci-coverage.test.ts 3
+ * PRINTS: packages/server/test/ci-delta.test.ts 4
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
  * PRINTS: packages/server/test/claim-validity.test.ts 2

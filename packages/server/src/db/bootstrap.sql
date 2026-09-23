@@ -857,3 +857,74 @@ ALTER TABLE claim_revalidations
 -- the claim's own author still counts, and now says so.
 ALTER TABLE claim_revalidations
   ADD COLUMN IF NOT EXISTS self_reported boolean NOT NULL DEFAULT false;
+
+-- ── CI ingestion, keyed to a commit (spec 05) ───────────────────────────────
+
+-- ONE ROW PER LANE PER ATTEMPT. The id is deterministic over the lane, the
+-- commit, the attempt and the re-run kind, so a retried POST is a duplicate
+-- rather than a second row claiming the same job ran twice.
+--
+-- No reported_by: a CI run has no author, and inventing one would put a
+-- teammate in the graph who does not exist. Ownership lives in the token.
+CREATE TABLE IF NOT EXISTS ci_runs (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  commit_sha text NOT NULL,
+  provider text NOT NULL,
+  workflow text NOT NULL,
+  job text NOT NULL,
+  leg text NOT NULL,
+  ref text NOT NULL,
+  run_attempt integer NOT NULL,
+  external_run_id text NOT NULL,
+  rerun_kind text NOT NULL,
+  rerun_of text REFERENCES ci_runs(id),
+  outcome text NOT NULL,
+  tests integer NOT NULL,
+  failures integer NOT NULL,
+  skipped integer NOT NULL,
+  duration_ms integer NOT NULL,
+  ambiguous_dropped integer NOT NULL,
+  started_at timestamptz NOT NULL,
+  collected_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ci_runs_repo_commit_idx ON ci_runs (repo, commit_sha);
+CREATE INDEX IF NOT EXISTS ci_runs_lane_started_idx
+  ON ci_runs (repo, provider, workflow, job, leg, ref, started_at DESC);
+CREATE INDEX IF NOT EXISTS ci_runs_rerun_of_idx ON ci_runs (rerun_of);
+
+-- NON-GREEN ROWS ONLY. ON DELETE CASCADE because retention prunes ci_runs and
+-- an orphan result row would assert a failure belonging to a run nobody can
+-- look up — a red test with no lane and no log is an accusation with no address.
+CREATE TABLE IF NOT EXISTS ci_test_results (
+  ci_run_id text NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
+  test_id text NOT NULL,
+  repo text NOT NULL,
+  status text NOT NULL,
+  duration_ms integer NOT NULL,
+  PRIMARY KEY (ci_run_id, test_id)
+);
+
+CREATE INDEX IF NOT EXISTS ci_test_results_repo_test_idx
+  ON ci_test_results (repo, test_id);
+
+-- The wire bound, restated where the data lives. Guarded the way the body
+-- length constraints above are guarded: an unconditional DROP + ADD takes
+-- ACCESS EXCLUSIVE on every hub start and revalidates the whole table.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'ci_test_results_test_id_length_check'
+      AND conrelid = 'ci_test_results'::regclass
+      AND pg_get_constraintdef(oid) = 'CHECK ((char_length(test_id) <= 300))'
+  ) THEN
+    ALTER TABLE ci_test_results DROP CONSTRAINT IF EXISTS ci_test_results_test_id_length_check;
+    ALTER TABLE ci_test_results ADD CONSTRAINT ci_test_results_test_id_length_check
+      CHECK (char_length(test_id) <= 300);
+  END IF;
+END
+$$;

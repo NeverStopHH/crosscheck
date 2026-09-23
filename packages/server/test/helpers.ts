@@ -27,8 +27,17 @@ export interface TestHarness {
   readonly db: Db;
 }
 
+export const TEST_CI_TOKEN = "test-ci-token";
+
 export interface TestHarnessOptions {
   readonly adminToken?: string | null;
+  /**
+   * Omitted = the harness configures a CI reporter, because almost every test
+   * that touches CI wants one. Pass `null` for the OTHER install — no reporter
+   * at all — which is the default in the world and the one whose coverage
+   * answer must be `unavailable` rather than `unknown`.
+   */
+  readonly ciToken?: string | null;
   /** Omitted = keyless harness, the default install (DESIGN.md §6). */
   readonly embedder?: Embedder | null;
   /** Omitted = the production embed deadline (SearchDeps says why it exists). */
@@ -46,6 +55,7 @@ export const createTestHarness = async (
     db,
     now: clock.now,
     adminToken,
+    ciToken: options.ciToken === undefined ? TEST_CI_TOKEN : options.ciToken,
     embedder: options.embedder ?? null,
     ...(options.embedDeadlineMs === undefined
       ? {}

@@ -1825,6 +1825,18 @@ export const MAX_ID_CHARS = 64;
  */
 export const MAX_HUB_MESSAGE_CHARS = 200;
 
+/**
+ * Most non-green tests `crosscheck status` prints before saying it cut.
+ *
+ * A wire-legal run may carry CI_MAX_TEST_ROWS (200) non-green rows, and a
+ * suite that broke wholesale carries all of them. Two hundred lines ahead of
+ * the spool, teammate and cost blocks is a status output nobody reads to the
+ * end — and the lines that scroll away are the ones a reader would act on.
+ * The cut is REPORTED, which is what separates a bound from a silent
+ * shortening.
+ */
+export const CI_STATUS_MAX_LINES = 8;
+
 // ── Agent conferences (VISION.md §2) ────────────────────────────────────────
 
 /**

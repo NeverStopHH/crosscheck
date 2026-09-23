@@ -80,6 +80,12 @@ export interface CreateServerOptions {
   readonly db: Db;
   readonly now?: Clock;
   readonly adminToken?: string | null;
+  /**
+   * Omitted/null = no CI reporter: `POST /api/ci-runs` refuses with
+   * `ci_disabled` and `coverage.ci` reads `unavailable`, which is a real
+   * answer rather than a placeholder.
+   */
+  readonly ciToken?: string | null;
   /** Omitted/null = keyless: the vector tier is silently absent (DESIGN.md §6). */
   readonly embedder?: Embedder | null;
   /** Test seam only — services/search.ts SearchDeps says why. Omit in production. */
@@ -118,6 +124,7 @@ export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
     db: options.db,
     now: options.now ?? (() => new Date()),
     adminToken: options.adminToken ?? null,
+    ciToken: options.ciToken ?? null,
     embedder: options.embedder ?? null,
     ...(options.embedDeadlineMs === undefined
       ? {}
@@ -200,6 +207,7 @@ export const startServer = async (): Promise<void> => {
   const app = createServer({
     db,
     adminToken: process.env["ADMIN_TOKEN"] ?? null,
+    ciToken: process.env["CROSSCHECK_CI_TOKEN"] ?? null,
     embedder,
     ...(uiSessionSecret === undefined ? {} : { uiSessionSecret }),
   });

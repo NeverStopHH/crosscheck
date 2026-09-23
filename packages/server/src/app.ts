@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { fail } from "./http/envelope.ts";
 import { absencesRoutes } from "./routes/absences.ts";
 import { claimRevalidationsRoutes } from "./routes/claim-revalidations.ts";
+import { ciRunsRoutes } from "./routes/ci-runs.ts";
 import { conferenceRoutes } from "./routes/conference.ts";
 import { contradictionsRoutes } from "./routes/contradictions.ts";
 import { developersRoutes } from "./routes/developers.ts";
@@ -73,6 +74,11 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // than a record kind: `crosscheck revalidate` runs from a terminal with no
   // agent session, and minting one would be a phantom teammate in presence.
   app.route("/api/claim-revalidations", claimRevalidationsRoutes(deps));
+  // What CI saw, keyed to a commit (spec 05). Its own route rather than a
+  // record kind, because an envelope requires a producer — a developer, an
+  // agent kind and a session — and CI has none of the three. Write is a
+  // dedicated token, read is any member.
+  app.route("/api/ci-runs", ciRunsRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.
   app.route("/ui", uiRoutes(deps));

@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 498
+    # PRINTS: 513
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -126,10 +126,10 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
-    # PRINTS: packages/cli/src/cli/doctor.ts 25
+    # PRINTS: packages/cli/src/cli/doctor.ts 30
     # PRINTS: packages/cli/src/cli/pin-render.ts 1
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
-    # PRINTS: packages/cli/src/cli/status.ts 3
+    # PRINTS: packages/cli/src/cli/status.ts 6
     # PRINTS: packages/cli/src/cli/suspect-render.ts 1
     # PRINTS: packages/connector-acp/src/capabilities.ts 2
     # PRINTS: packages/connector-acp/src/capture/engine.ts 11
@@ -250,6 +250,8 @@ jobs:
     # PRINTS: packages/server/src/routes/sessions.ts 1
     # PRINTS: packages/server/src/routes/suspect.ts 1
     # PRINTS: packages/server/src/services/absences.ts 4
+    # PRINTS: packages/server/src/services/ci-coverage.ts 3
+    # PRINTS: packages/server/src/services/ci-delta.ts 4
     # PRINTS: packages/server/src/services/claim-revalidations.ts 7
     # PRINTS: packages/server/src/services/claim-validity.ts 4
     # PRINTS: packages/server/src/services/commit-evidence.ts 1
@@ -293,6 +295,8 @@ jobs:
     # PRINTS: capture-health.ts 2
     # PRINTS: capture-targets.ts 2
     # PRINTS: capture-touched-files.ts 1
+    # PRINTS: ci-coverage.ts 3
+    # PRINTS: ci-delta.ts 4
     # PRINTS: claim-drift.ts 5
     # PRINTS: claim-revalidation.ts 3
     # PRINTS: claim-revalidations.ts 7
@@ -314,7 +318,7 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 7
     # PRINTS: diagnosis.ts 3
-    # PRINTS: doctor.ts 33
+    # PRINTS: doctor.ts 38
     # PRINTS: end-session.ts 2
     # PRINTS: engine.ts 11
     # PRINTS: envelope.ts 1
@@ -396,7 +400,7 @@ jobs:
     # PRINTS: solved.ts 1
     # PRINTS: spawn.ts 2
     # PRINTS: ssh-hostname.ts 2
-    # PRINTS: status.ts 3
+    # PRINTS: status.ts 6
     # PRINTS: stop.ts 2
     # PRINTS: suspect-render.ts 1
     # PRINTS: suspect.ts 3

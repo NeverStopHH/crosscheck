@@ -72,6 +72,9 @@ import {
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
+import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
+import type { CiCoverage } from "@crosscheck/connector-core/http/hub.ts";
+import { CI_PROVIDERS, CI_KNOWN_PROVIDERS } from "@crosscheck/schema";
 import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
 import { hasGitEntry } from "@crosscheck/connector-core/config/connected-repo.ts";
 import { readRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
@@ -236,6 +239,16 @@ export interface Check {
  * (`hubFailureLine`), which is what made the omission a finding rather than a
  * design choice: the two commands print the same kind of string, and only one
  * of them bounded it.
+ * untrusted, and that was true of every sentence it WRITES. Several of its
+ * checks pass one through instead: the coverage check, the pins check and the
+ * hub-reachable check each end with `(${...message})` straight off the wire —
+ * unbounded, uninspected, and printed to a terminal. A hostile or merely
+ * broken hub gets to choose newlines, control characters and as many of them
+ * as it likes, above lines a developer is meant to read as the tool's own.
+ *
+ * `revalidate.ts` already does this correctly one command over, which is what
+ * makes the omission a defect rather than a design choice: the two commands
+ * print the same kind of string and only one of them bounded it.
  */
 const hubSaid = (message: string): string =>
   bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);
@@ -249,6 +262,8 @@ const check = (level: CheckLevel, name: string, detail: string): Check => ({
 const MS_PER_MINUTE = MS_PER_SECOND * SECONDS_PER_MINUTE;
 const MS_PER_HOUR = MS_PER_MINUTE * MINUTES_PER_HOUR;
 const HTTP_UNAUTHORIZED = 401;
+/** The floor of "the hub answered, and the answer was an error". */
+const HTTP_ERROR_FLOOR = 400;
 
 const checkConfig = async (home: string): Promise<Check> => {
   const path = configPath(home);
@@ -1436,7 +1451,7 @@ const coverageChecks = (
             // (connector-core/src/coverage/render.ts), so one unreachable hub
             // cannot be described two ways. The cause is appended here and
             // only here: this is the surface with a remedy channel.
-            `${COVERAGE_HUB_UNREACHABLE} — ${result.message}`,
+            `${COVERAGE_HUB_UNREACHABLE} — ${hubSaid(result.message)}`,
           )
         : check("PASS", "coverage", "not measured"),
       coverageRangeRefusal(),
@@ -1971,6 +1986,119 @@ const checkSessionEventRetention = (
  * and is a WARN: coverage unknown is not coverage fine, and a green meaning
  * "could not check" is worse than no check at all.
  */
+/**
+ * WHAT CI CAN AND CANNOT ANSWER HERE (spec 05 §8).
+ *
+ * EVERY REFUSAL IS A LINE, never a silent absence. §8 lists nine things this
+ * spec will not do, and the ones a reader could mistake for a working feature
+ * are the ones that must appear: a repo whose CI reports nothing looks exactly
+ * like a repo whose CI is green, and a GitLab team would otherwise wait
+ * forever for rows that no reporter exists to send.
+ *
+ * THE COUNTS COME FROM THE HUB, THE REFUSALS FROM THE BUILD. `coverage.state`
+ * is measured; "GitLab has no reporter" is a fact about what shipped, and it
+ * is stated from `CI_PROVIDERS` rather than from a sentence somebody has to
+ * remember to update — the day a second provider ships, this line stops
+ * printing because the list grew, not because anybody edited prose.
+ */
+const CI_STATE_LEVEL: Readonly<Record<string, "PASS" | "WARN">> = {
+  unavailable: "PASS",
+  unknown: "PASS",
+  complete: "PASS",
+  incomplete: "WARN",
+};
+
+const ciCoverageDetail = (coverage: CiCoverage): string => {
+  if (coverage.state === "unavailable") {
+    // NOT A FAILURE. A repo with no reporter has nothing to be incomplete
+    // about, and the remedy is a decision rather than a fix.
+    return "not measured (no CI reporter is configured for this repo — `coverage.ci` stays unavailable, which is the default and says nothing about your tests)";
+  }
+  if (coverage.state === "unknown") {
+    return "nothing has arrived for this commit yet; whether CI passed here is unknown";
+  }
+  const lanes = `${String(coverage.lanesReported)} of ${String(coverage.lanesExpected)} expected lanes reported`;
+  const truncated =
+    coverage.truncatedLanes === 0
+      ? ""
+      : `, ${String(coverage.truncatedLanes)} of them truncated or crashed (a run that filled the row cap cannot establish that any test was green)`;
+  const pending =
+    coverage.awaitingRerun === 0
+      ? ""
+      : `, ${String(coverage.awaitingRerun)} non-green test(s) waiting on a re-run of this same commit before anything can be concluded`;
+  return `${lanes}${truncated}${pending}`;
+};
+
+const checkCi = async (
+  ctx: HubContext,
+  repoId: string,
+  commitSha: string,
+  defaultRef: string,
+): Promise<readonly Check[]> => {
+  const verdict = await getCiVerdict(ctx, repoId, commitSha, defaultRef);
+  if (!verdict.ok) {
+    // FOUR FAILURES, THREE OF THEM NOT THIS HUB'S FAULT — the shape
+    // `plan overlap` already uses twenty lines up, and the distinction is the
+    // point rather than the tidiness. A hub too old for the route, a hub this
+    // client cannot reach, and a hub whose answer this client cannot READ all
+    // mean "nobody measured", which is a PASS that names its cause. Only a
+    // hub that answered with an ERROR is a hub reporting something wrong, and
+    // a green there would be a check that says "could not check".
+    return [
+      verdict.status >= HTTP_ERROR_FLOOR && verdict.status !== HTTP_NOT_FOUND
+        ? check(
+            "WARN",
+            "ci coverage",
+            `not measured — the hub did not answer (${hubSaid(verdict.message)}); this says nothing about whether your tests passed`,
+          )
+        : check(
+            "PASS",
+            "ci coverage",
+            verdict.status === HTTP_NOT_FOUND
+              ? "not measured (this hub does not ingest CI)"
+              : verdict.kind === "network"
+                ? "not measured (the hub could not be reached)"
+                : "not measured (this hub's answer did not parse)",
+          ),
+    ];
+  }
+  const coverage = verdict.data.coverage;
+  // §8.1: GitLab is `unavailable` and that is a DESIGN REFUSAL, not a gap
+  // waiting to be filled. Derived from the shipped provider list so the
+  // sentence cannot outlive the fact — the rung that decides the design is
+  // whether a retried GitLab job carries a verifiable attempt number on the
+  // same commit, and nobody has measured that against a real instance.
+  // Widened deliberately: `CI_PROVIDERS` is a one-member tuple today, so a
+  // typed `.includes` would refuse the very comparison this line exists to
+  // make — and narrowing the KNOWN list to match would delete the difference
+  // the doctor reports.
+  const served: readonly string[] = CI_PROVIDERS;
+  const unservedProviders = CI_KNOWN_PROVIDERS.filter(
+    (provider) => !served.includes(provider),
+  );
+  return [
+    check(CI_STATE_LEVEL[coverage.state] ?? "WARN", "ci coverage", ciCoverageDetail(coverage)),
+    ...(unservedProviders.length === 0
+      ? []
+      : [
+          check(
+            "PASS",
+            "ci provider",
+            `${unservedProviders.join(", ")} has no reporter; ci coverage is unavailable there (spec 05 §8.1 — designing a re-run rung against a platform nobody measured is the pretending this project refuses)`,
+          ),
+        ]),
+    // §8.2 and §8.3, stated because a reader would otherwise read their
+    // absence as a bug. A laptop run happens at an unknown sha in a dirty
+    // worktree; a fork pull request gets no repository secrets, so its
+    // reporter has no hub token, prints one line and exits 0.
+    check(
+      "PASS",
+      "ci reporting gaps",
+      "a local `bun test` is never recorded as CI (unknown sha, dirty worktree), and a fork pull request reports nothing because it has no hub token — both read as `unknown` at that commit rather than as a green suite",
+    ),
+  ];
+};
+
 const checkPins = async (
   ctx: HubContext,
   repoId: string,
@@ -3119,6 +3247,72 @@ export const runDoctor = async (
             : `${config.hubUrl}: ${hubSaid(probe.message)}`,
       );
 
+  // EVERY HUB READ AT ONCE, and the wall clock is why.
+  //
+  // These nine checks are INDEPENDENT — none reads another's answer — and
+  // they used to be awaited one after another inside the array literal. That
+  // is free while the hub answers and linear while it does not: against a hub
+  // that never replies each call costs the full effective timeout, so doctor's
+  // own runtime was N x timeout, and N grew by one with every spec that added
+  // a check. Measured on the integration branch: 05's CI check was the ninth,
+  // and `doctor-latency.test.ts` — which points doctor at a hub that never
+  // answers — went from just inside bun's 5 s case bound to just outside it.
+  // The test found a real regression rather than a tight budget.
+  //
+  // Concurrent, the cost is ONE timeout however many checks there are. Order
+  // is preserved because `Promise.all` resolves positionally, so the report
+  // reads exactly as before. `Promise.all` and not `allSettled`: every one of
+  // these already fails open on its own — a hub that cannot answer costs its
+  // check a line, never the command — so a rejection here would be a defect
+  // worth surfacing rather than swallowing.
+  const [
+    absenceAndCoverage,
+    questionsCheck,
+    solvedMatchesCheck,
+    pinChecks,
+    claimValidityChecks,
+    ciChecks,
+    ghostOverlapCheck,
+    privacyCheck,
+    intentLedgerCheck,
+  ] = await Promise.all([
+    // ONE GET for both: the absence findings and the coverage record ride
+    // the same response (03 §3.5), so reading them twice would be a second
+    // round trip for bytes already in hand.
+    absenceAndCoverageChecks(hubCtx, identity.repoId),
+    checkQuestions(hubCtx, identity.repoId, now),
+    checkSolvedMatches(hubCtx, identity.repoId),
+    checkPins(
+      hubCtx,
+      identity.repoId,
+      // The EFFECTIVE list, defaults included: the shadowing question is
+      // about what actually suppresses capture, not about what this
+      // developer added on top of it.
+      resolveDenylist(config.denylist ?? undefined),
+      now,
+    ),
+    checkClaimValidity(hubCtx, identity.repoId),
+    // SPEC 05 §8: every refusal a reader could mistake for a working feature
+    // gets a line. `identity.baseCommit` is this checkout's HEAD — the commit
+    // somebody standing here would ask about — and the default branch travels
+    // from the same clone because the hub holds no repository.
+    checkCi(hubCtx, identity.repoId, identity.baseCommit, identity.branch ?? "main"),
+    checkGhostOverlap(hubCtx, identity.repoId),
+    checkPrivacy(hubCtx),
+    checkIntentLedger(hubCtx),
+  ]);
+  const hubChecks: readonly Check[] = [
+    ...absenceAndCoverage,
+    questionsCheck,
+    solvedMatchesCheck,
+    ...pinChecks,
+    ...claimValidityChecks,
+    ...ciChecks,
+    ghostOverlapCheck,
+    privacyCheck,
+    intentLedgerCheck,
+  ];
+
   const skewCheck = ((): Check => {
     if (!probe.ok || probe.dateHeader === null) {
       return check("PASS", "clock skew", "not measured");
@@ -3270,25 +3464,7 @@ export const runDoctor = async (
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),
-    // ONE GET for both: the absence findings and the coverage record ride
-    // the same response (03 §3.5), so reading them twice would be a second
-    // round trip for bytes already in hand.
-    ...(await absenceAndCoverageChecks(hubCtx, identity.repoId)),
-    await checkQuestions(hubCtx, identity.repoId, now),
-    await checkSolvedMatches(hubCtx, identity.repoId),
-    ...(await checkPins(
-      hubCtx,
-      identity.repoId,
-      // The EFFECTIVE list, defaults included: the shadowing question is
-      // about what actually suppresses capture, not about what this
-      // developer added on top of it.
-      resolveDenylist(config.denylist ?? undefined),
-      now,
-    )),
-    ...(await checkClaimValidity(hubCtx, identity.repoId)),
-    await checkGhostOverlap(hubCtx, identity.repoId),
-    await checkPrivacy(hubCtx),
-    await checkIntentLedger(hubCtx),
+    ...hubChecks,
     skewCheck,
     bunfigCheck,
     ...checkClaudeDerive(),

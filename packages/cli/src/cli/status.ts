@@ -20,6 +20,13 @@ import {
 } from "@crosscheck/connector-core/coverage/render.ts";
 import { UNKNOWN_COVERAGE } from "@crosscheck/connector-core/http/coverage.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
+import { CI_STATUS_MAX_LINES } from "@crosscheck/connector-core/constants.ts";
+import { MAX_CI_TEST_ID_CHARS } from "@crosscheck/schema";
+import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
+import type {
+  CiBehaviorDelta,
+  CiCoverage,
+} from "@crosscheck/connector-core/http/hub.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import {
   getAbsences,
@@ -151,6 +158,75 @@ const tripwireLine = (env: Env): string => {
     : `tripwire: ${mode}`;
 };
 
+
+/**
+ * WHAT CI SAID ABOUT THE COMMIT THIS CLONE IS ON (spec 05 §5).
+ *
+ * ONE LINE PER NON-GREEN TEST, and each carries its REASON rather than only
+ * its verdict. "3 tests failing" is a number a reader can do nothing with:
+ * whether to look at their own commit, at a flaky test, or at nothing yet is
+ * the entire question, and the ladder already answered it.
+ *
+ * THE TEST NAME IS SOMEBODY ELSE'S TEXT. It comes out of a repository, and a
+ * fork pull request can name a test anything at all — so it travels through
+ * `bareUntrusted` like a teammate's branch name two blocks down, bounded and
+ * control-stripped, before it reaches a terminal.
+ *
+ * SILENCE IS SAID, NOT SKIPPED. A repo whose CI never reports prints the
+ * `unavailable` sentence rather than nothing: a missing line reads exactly
+ * like a green suite, which is the absence AT-10 refuses.
+ */
+const CI_STATE_CLAUSES: Readonly<Record<string, string>> = {
+  unavailable: "not reported here — no CI reporter is configured for this repo",
+  unknown: "nothing has arrived for this commit yet",
+  incomplete: "some expected lanes have not reported, or a verdict is pending",
+  complete: "every expected lane reported",
+};
+
+/** Renderer-owned words. A reason a reader cannot act on is a reason wasted. */
+const CI_REASON_CLAUSES: Readonly<Record<string, string>> = {
+  insufficient_base:
+    "this hub has not seen enough of that lane yet to tell a break from a flake",
+  not_stably_green: "it was already failing before this commit",
+  awaiting_rerun: "nobody has re-run it on this commit yet",
+  rerun_green: "it passed on a re-run of this same commit — flaky, not this commit",
+  rerun_red: "it failed again on a re-run of this same commit",
+};
+
+export const ciLines = (
+  verdict: { coverage: CiCoverage; deltas: readonly CiBehaviorDelta[] } | null,
+): readonly string[] => {
+  if (verdict === null) {
+    // THE HUB DID NOT ANSWER, which is not the same as CI having nothing to
+    // say. Naming the difference keeps a round trip that failed from reading
+    // as a suite that passed.
+    return ["ci: not measured — the hub did not answer"];
+  }
+  const { coverage, deltas } = verdict;
+  const head = `ci: ${CI_STATE_CLAUSES[coverage.state] ?? "state not reported"}`;
+  const counted =
+    coverage.state === "complete" || coverage.state === "incomplete"
+      ? `${head} (${String(coverage.lanesReported)}/${String(coverage.lanesExpected)} lanes)`
+      : head;
+  if (deltas.length === 0) {
+    return [counted];
+  }
+  const shown = deltas.slice(0, CI_STATUS_MAX_LINES);
+  const hidden = deltas.length - shown.length;
+  return [
+    counted,
+    ...shown.map((delta) => {
+      const name = bareUntrusted(delta.testId, MAX_CI_TEST_ID_CHARS);
+      const reason = CI_REASON_CLAUSES[delta.reason] ?? "reason not reported";
+      return `  - ${name.length === 0 ? "(a test name with nothing printable in it)" : name} — ${delta.delta}: ${reason}`;
+    }),
+    // A SILENTLY SHORTER LIST IS THE ABSENCE THIS PROJECT REFUSES, and the
+    // ones that fall off are the ones a reader would act on last — so the cut
+    // is said rather than hidden behind a tidy list.
+    ...(hidden > 0 ? [`  (+${String(hidden)} more not shown)`] : []),
+  ];
+};
+
 export const runStatus = async (
   env: Env,
   cwd: string,
@@ -240,6 +316,19 @@ export const runStatus = async (
     now: () => now,
   };
   const presence = await getPresence(hubCtx, identity.repoId);
+  // WHAT CI SAID ABOUT THE COMMIT THIS CLONE IS ON. `identity.baseCommit` is
+  // this checkout's HEAD — the commit a developer standing here would ask
+  // about — and the default-branch answer travels from the same clone,
+  // because the hub holds no repository and must not guess which ref is
+  // default. FAIL-OPEN like every hub read here: a hub that cannot answer
+  // costs this block its lines and never the command.
+  const ciVerdict = await getCiVerdict(
+    hubCtx,
+    identity.repoId,
+    identity.baseCommit,
+    identity.branch ?? "main",
+  );
+  const ciStatusLines = ciLines(ciVerdict.ok ? ciVerdict.data : null);
   // The hub's delivered/pulled window and this repo's claim count (#20/M1) —
   // fail-open like every hub read: a hub that cannot answer costs the hub half
   // of the hints line, never the local half.
@@ -379,6 +468,7 @@ export const runStatus = async (
       ...questionLines,
       ...solvedLines,
       ...pinLines,
+      ...ciStatusLines,
       targetsLine(captureHealth, now),
       hintsLine(captureHealth, hintStats),
       tripwireLine(env),

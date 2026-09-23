@@ -13,6 +13,20 @@ import { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
  */
 export const MAX_LANDED_COMMITS = 20;
 
+/**
+ * A commit named on the wire must already look like an object name — nothing
+ * flag- or prose-shaped may reach git or SQL.
+ *
+ * RE-EXPORTED, NOT REDECLARED, and the merge is why. 05 defined the pattern
+ * here so its CI wire could reuse it "instead of minting a third copy"; 02
+ * had meanwhile moved the pattern into `commit-sha.ts` as one authority.
+ * Union the two and there are two declarations of one name — the very drift
+ * 05's own comment warned about, produced by the fix for it. The definition
+ * lives in `commit-sha.ts`; this line keeps 05's importers working without a
+ * second copy to widen.
+ */
+export { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
+
 /** Longest ref label a connector may claim it checked against. */
 const MAX_DEFAULT_BRANCH_CHARS = 200;
 
