@@ -491,6 +491,33 @@ write: one INSERT. **No background pass, no retention job, no new scan.**
 **Measurement refusal:** I ran no benchmark, so no millisecond figure appears here;
 VER-8 requires one before merge.
 
+*Discharged at build time, and the figure lives in a test rather than in this
+paragraph — a number written down once is a number that stops being true.*
+`server/test/verdict-latency.test.ts` seeds six sessions against a two-file pin
+on embedded PGlite and prints, on the machine that ran it:
+
+```
+GET /api/suspect        p50 2.76 ms   p95 3.33 ms
+the verdict's own share p50 0.20 ms   p95 0.27 ms   (8.1% of the route's p95)
+```
+
+**The allowance is derived, not picked: 10 ms = one indexed lookup.** This spec
+adds exactly two things to the route — `readLiveWaiver`, one indexed read on
+`(repo, pin_id, pin_version)`, and `computeVerdict`, which is pure and touches no
+database. So the ceiling is the cost of one extra round trip with an order of
+magnitude of headroom, and a p95 above it does not mean *slow*, it means the added
+work stopped being one indexed read. **The ceiling is on the ADDED work, never on
+the route's total**, because a regression somewhere else in `suspect` would
+otherwise read as a verdict problem and send the next person to the wrong file.
+
+**Baseline in the same process, not against a git checkout.** Timing this branch
+against the parent commit would compare two machines' moods as much as two code
+paths; the route is timed whole, then the addition alone on the same seeded data,
+seconds apart. And the benchmark asserts that it MEASURED something before it
+asserts the ceiling: `percentile([])` is 0, 0 is under every ceiling anybody will
+ever write, and a loop that never ran would discharge this refusal with a number
+nobody measured. That failure has its own anchor.
+
 ## 7. Acceptance tests
 
 Each must be able to fail; the mutation named is the one-line edit in

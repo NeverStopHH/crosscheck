@@ -7987,6 +7987,27 @@ export const MUTATIONS: readonly Mutation[] = [
       "injection needs on a surface an agent runs through Bash",
   },
   {
+    // VER-8's measurement, and the failure mode a latency test dies of:
+    // `percentile([])` is 0, and 0 is under every ceiling anybody will ever
+    // write. INT-11's anchor guards the same class from the other side — a
+    // budget the timeout pre-empts.
+    label: "a benchmark measures nothing and reports itself green",
+    file: "packages/server/test/verdict-latency.test.ts",
+    from:
+      "      for (let index = 0; index < SAMPLES; index += 1) {\n" +
+      "        const started = performance.now();\n" +
+      "        const waiver =",
+    to:
+      "      for (let index = 0; index < 0; index += 1) {\n" +
+      "        const started = performance.now();\n" +
+      "        const waiver =",
+    test: "packages/server/test/verdict-latency.test.ts",
+    because:
+      "the one figure this spec owes before merge is produced by a loop that " +
+      "never ran, so the allowance passes on an empty sample and §6's " +
+      "measurement refusal is discharged by a number nobody measured",
+  },
+  {
     // VER-8's OTHER half. Failing closed is only half of non-negotiable #4:
     // a downgrade nobody is told about hides the bug that caused it, and the
     // only remaining trace reads exactly like an ordinary blind spot.
@@ -8384,6 +8405,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
  * PRINTS: packages/server/test/suspect.test.ts 3
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
+ * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/work-context-listing.test.ts 3
