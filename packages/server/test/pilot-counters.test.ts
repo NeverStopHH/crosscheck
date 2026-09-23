@@ -22,7 +22,10 @@ import { describe, expect, test } from "bun:test";
 
 import { pilotCounters } from "../src/db/schema.ts";
 import { COVERAGE_SOURCES } from "../src/services/coverage.ts";
-import { countCoverageAnswer } from "../src/services/pilot.ts";
+import {
+  PILOT_ANSWER_SURFACES,
+  countCoverageAnswer,
+} from "../src/services/pilot.ts";
 import type { CoverageRecord } from "../src/services/coverage.ts";
 import {
   TEST_ADMIN_TOKEN,
@@ -170,6 +173,28 @@ describe("proof 5 counts what 03 made mandatory", () => {
       key.startsWith("coverage_"),
     );
     expect(perSource).toHaveLength(COVERAGE_SOURCES.length);
+  });
+
+  test("EVERY declared surface is reachable from a route", async () => {
+    // A vocabulary with a name nothing writes is a report line that reads
+    // zero for ever and looks like a finding. Each of these is grepped for
+    // in the routes rather than assumed: the declaration and the call site
+    // are in different files, and nothing else holds them together.
+    const routes = await Promise.all(
+      [
+        "packages/server/src/routes/suspect.ts",
+        "packages/server/src/routes/absences.ts",
+        "packages/server/src/routes/hints.ts",
+        "packages/server/src/routes/search.ts",
+        "packages/server/src/routes/work-contexts.ts",
+      ].map(async (path) => Bun.file(`${import.meta.dir}/../../../${path}`).text()),
+    );
+    const source = routes.join("\n");
+
+    // Assert
+    for (const surface of PILOT_ANSWER_SURFACES) {
+      expect(source, surface).toContain(`surface: "${surface}"`);
+    }
   });
 
   test("a second answer the same day INCREMENTS — it does not append", async () => {

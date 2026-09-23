@@ -125,9 +125,14 @@ export const recordAttribution = async (
 export const PILOT_ANSWER_SURFACES = [
   "api-suspect",
   "api-absences",
-  "api-hints",
+  // TWO ANSWERS, NOT ONE. `/candidates` and `/tripwire` are different
+  // questions with different readers, and a shared name would count them as
+  // one surface — which is the same collapse the channel split exists to
+  // undo one layer up.
+  "api-hints-candidates",
+  "api-hints-tripwire",
   "api-search",
-  "api-work-contexts",
+  "api-work-context-diagnosis",
 ] as const;
 
 export type PilotAnswerSurface = (typeof PILOT_ANSWER_SURFACES)[number];

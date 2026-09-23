@@ -6,6 +6,7 @@ import { RepoQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { listAbsences } from "../services/absences.ts";
 import { readCoverage } from "../services/coverage.ts";
+import { countCoverageAnswer } from "../services/pilot.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 /**
@@ -41,6 +42,13 @@ export const absencesRoutes = (deps: AppDeps): Hono<AppEnv> => {
       c.get("developer").id,
       parsed.data.repo,
     );
+    // 07 §3.5, proof 5: this answer carried a coverage record, and
+    // whether it did is what 03 made mandatory and nobody counted.
+    await countCoverageAnswer(deps, {
+      repo: parsed.data.repo,
+      surface: "api-absences",
+      coverage,
+    });
     return ok(c, { absences, coverage });
   });
 

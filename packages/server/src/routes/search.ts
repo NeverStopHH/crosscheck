@@ -35,6 +35,7 @@ import {
   searchWorkContexts,
 } from "../services/search.ts";
 import { readCoverage } from "../services/coverage.ts";
+import { countCoverageAnswer } from "../services/pilot.ts";
 import { sharedNameEmail } from "../services/developer-settings.ts";
 import { parseSinceWindow } from "../services/time-window.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -190,6 +191,18 @@ export const searchRoutes = (deps: AppDeps): Hono<AppEnv> => {
               ? {}
               : { scope: { sinceIso: since.toISOString() } }),
           });
+    // 07 §3.5, proof 5 — and ONLY where there was an archive to state the
+    // reach of. A repo-less search carries no coverage by design (refusal
+    // 4), so counting it as an answer that failed to qualify would report a
+    // deliberate omission as a missed obligation. The denominator has to be
+    // answers that COULD have qualified.
+    if (query.repo !== undefined && coverage !== undefined) {
+      await countCoverageAnswer(deps, {
+        repo: query.repo,
+        surface: "api-search",
+        coverage,
+      });
+    }
     return ok(c, {
       ...response,
       filters,

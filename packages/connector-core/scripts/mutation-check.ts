@@ -8075,6 +8075,34 @@ export const MUTATIONS: readonly Mutation[] = [
       "answer becomes decoration",
   },
   {
+    // 07 §3.5. A declared surface nothing writes is a report line that reads
+    // zero for ever and looks like a finding — the declaration and the call
+    // site sit in different files, and nothing else holds them together.
+    label: "a report line reads zero because nothing ever wrote it",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: '  "api-search",',
+    to: '  "api-search",\n  "api-contradictions",',
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "proof 5 prints a surface that emitted no answers as though it had " +
+      "emitted none — a zero that means \"not measured\" rendered as a zero " +
+      "that means \"nothing happened\", which is AT-9's exact confusion on " +
+      "the proof about honest qualification",
+  },
+  {
+    // The other direction: a route that stops naming its own answer.
+    label: "one answer surface is counted under another's name",
+    file: `${SERVER}/src/routes/absences.ts`,
+    from: '      surface: "api-absences",',
+    to: '      surface: "api-suspect",',
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "two surfaces with different readers and different obligations are " +
+      "added together, so a qualifier missing on one is hidden by an answer " +
+      "that carried it on the other — the same collapse the delivery channel " +
+      "exists to undo one layer up",
+  },
+  {
     // 07 §3.5. Two conditions that look alike and are not: a qualifier is
     // required on a positively OBSERVED gap; judgeability also demands that
     // agent_event and git be complete.
@@ -8643,7 +8671,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
- * PRINTS: packages/server/test/pilot-counters.test.ts 3
+ * PRINTS: packages/server/test/pilot-counters.test.ts 5
  * PRINTS: packages/server/test/pilot-sessions.test.ts 4
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1

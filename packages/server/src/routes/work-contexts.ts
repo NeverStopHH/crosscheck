@@ -5,6 +5,7 @@ import { formatIssues } from "../http/request.ts";
 import { WorkContextsQuerySchema } from "../http/schemas.ts";
 import { developerAuth } from "../middleware/auth.ts";
 import { readCoverage } from "../services/coverage.ts";
+import { countCoverageAnswer } from "../services/pilot.ts";
 import { getDiagnosis, listWorkContextsByRepo } from "../services/diagnosis.ts";
 import { markHintsPulled } from "../services/hint-deliveries.ts";
 import { parseSinceWindow } from "../services/time-window.ts";
@@ -105,6 +106,13 @@ export const workContextsRoutes = (deps: AppDeps): Hono<AppEnv> => {
       c.get("developer").id,
       diagnosis.repo,
     );
+    // 07 §3.5, proof 5: this answer carried a coverage record, and
+    // whether it did is what 03 made mandatory and nobody counted.
+    await countCoverageAnswer(deps, {
+      repo: diagnosis.repo,
+      surface: "api-work-context-diagnosis",
+      coverage,
+    });
     return ok(c, { ...diagnosis, coverage });
   });
 

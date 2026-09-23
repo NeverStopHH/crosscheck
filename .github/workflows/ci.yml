@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 563
+    # PRINTS: 565
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -251,6 +251,7 @@ jobs:
     # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/db/bootstrap.sql 4
+    # PRINTS: packages/server/src/routes/absences.ts 1
     # PRINTS: packages/server/src/routes/pins.ts 1
     # PRINTS: packages/server/src/routes/search.ts 1
     # PRINTS: packages/server/src/routes/sessions.ts 1
@@ -274,7 +275,7 @@ jobs:
     # PRINTS: packages/server/src/services/hints.ts 3
     # PRINTS: packages/server/src/services/intent-ledger.ts 9
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
-    # PRINTS: packages/server/src/services/pilot.ts 10
+    # PRINTS: packages/server/src/services/pilot.ts 11
     # PRINTS: packages/server/src/services/pins.ts 2
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
@@ -298,7 +299,7 @@ jobs:
     # PRINTS: packages/server/test/verdict-latency.test.ts 1
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
-    # PRINTS: absences.ts 4
+    # PRINTS: absences.ts 5
     # PRINTS: answer-question.ts 1
     # PRINTS: ask-teammate.ts 1
     # PRINTS: before-submit-prompt.ts 1
@@ -364,7 +365,7 @@ jobs:
     # PRINTS: output.ts 1
     # PRINTS: parse.ts 2
     # PRINTS: payload.ts 1
-    # PRINTS: pilot.ts 10
+    # PRINTS: pilot.ts 11
     # PRINTS: pin-observability.ts 1
     # PRINTS: pin-render.ts 3
     # PRINTS: pin-sweep.ts 2
