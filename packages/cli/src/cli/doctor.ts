@@ -109,6 +109,7 @@ import {
   getHintStats,
   getOpenSessions,
   getPins,
+  getIntentPositions,
   getPrivacySettings,
   getQuestions,
   getSolvedMatchCounts,
@@ -1525,6 +1526,41 @@ const absenceAndCoverageChecks = async (
  * measured" (an older hub, or unreachable) is a PASS for the same reason
  * the absence check's is.
  */
+/**
+ * Can this hub answer AT-4 at all? (spec 06 §5.)
+ *
+ * A ledger row with no position cannot be compared with anything, so the
+ * question the whole spec exists for — was the reason written before the
+ * change — is unanswerable for it. Nothing else shows that: every surface
+ * renders the sentence exactly as it did before, and the hub looks healthy.
+ *
+ * BOTH HALVES, ALWAYS, and that is the whole reason this line exists rather
+ * than a warning threshold. `state/git-lane-cost.ts` states the rule for its
+ * own lane: "a lane that never runs looks exactly like a quiet one". A hub
+ * with no intents at all and a hub whose every intent lost its position are
+ * the same number until the denominator is printed beside it.
+ *
+ * WARN ABOVE HALF is decision 10.5's default, with the denominator printed
+ * either way. The cost is named there: a WARN on every install until 01
+ * lands, against a hub that cannot answer AT-4 and says nothing.
+ */
+const checkIntentLedger = async (ctx: HubContext): Promise<Check> => {
+  const result = await getIntentPositions(ctx);
+  if (!result.ok) {
+    return check("PASS", "intent ledger", "not measured");
+  }
+  const { total, unpositioned } = result.data;
+  if (total === 0) {
+    return check("PASS", "intent ledger", "no intent versions recorded yet");
+  }
+  const detail = `${String(unpositioned)} of ${String(total)} intent versions carry no sequence`;
+  return check(
+    unpositioned * 2 > total ? "WARN" : "PASS",
+    "intent ledger",
+    detail,
+  );
+};
+
 const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
   const result = await getPrivacySettings(ctx);
   if (!result.ok) {
@@ -3252,6 +3288,7 @@ export const runDoctor = async (
     ...(await checkClaimValidity(hubCtx, identity.repoId)),
     await checkGhostOverlap(hubCtx, identity.repoId),
     await checkPrivacy(hubCtx),
+    await checkIntentLedger(hubCtx),
     skewCheck,
     bunfigCheck,
     ...checkClaudeDerive(),

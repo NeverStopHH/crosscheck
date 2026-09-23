@@ -1721,6 +1721,41 @@ export const HUB_MAX_DIAGNOSIS_TARGETS = 100;
 export const MAX_DIAGNOSIS_TARGETS_SHOWN = 20;
 
 /**
+ * HOW MANY INTENT VERSIONS THE DIAGNOSIS PRINTS, newest first.
+ *
+ * Below the hub's own chain cap on purpose: the cap is what bounds the TABLE
+ * (there is no retention job over the ledger), and this bounds one rendered
+ * answer. A reader arriving at a twenty-version context wants the recent
+ * amendments and a count of the rest, not twenty framed sentences ahead of the
+ * claims.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.INTENT_CHAIN_MAX_SHOWN < s.MAX_INTENT_CHAIN_VERSIONS)'
+ * PRINTS: true
+ */
+export const INTENT_CHAIN_MAX_SHOWN = 5;
+
+/**
+ * How many declared paths one version of the chain may print.
+ *
+ * THE VERSION COUNT WAS CAPPED AND THE SCOPE WAS NOT, which is the half that
+ * carries the volume: the wire legitimately allows MAX_INTENT_SCOPE_ENTRIES
+ * expected paths plus the same number of non-goals PER VERSION, each up to
+ * MAX_WORK_CONTEXT_TITLE_CHARS after redaction. Measured through the renderer
+ * at that wire-legal shape: a 39 162-character block with a single 7 748-
+ * character line, injected ahead of the claims and targets the reader
+ * actually asked for, and nothing saying it was long.
+ *
+ * Matched to MAX_DIAGNOSIS_TARGETS_SHOWN, because it is the same question one
+ * renderer over — how many rows of a list a reader can use before the list
+ * stops being read — and two answers to it would be two numbers to keep in
+ * step:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.INTENT_SCOPE_MAX_SHOWN === c.MAX_DIAGNOSIS_TARGETS_SHOWN, c.INTENT_SCOPE_MAX_SHOWN < s.MAX_INTENT_SCOPE_ENTRIES)'
+ * PRINTS: true true
+ */
+export const INTENT_SCOPE_MAX_SHOWN = 20;
+
+/**
  * Rendering caps for `get_referee_brief` — PER SECTION, not one document cap,
  * and that is the neutrality mechanism: a single document budget spends itself
  * on whichever position renders first, so the later side would truncate

@@ -70,6 +70,11 @@ const diagnosisWith = (claimValidity: ClaimValidity | undefined): Diagnosis => (
   targetsReported: true,
   droppedTargets: 0,
   coverage: UNKNOWN_COVERAGE,
+  // 06 makes the intent chain required on a Diagnosis. This fixture measured
+  // none, and `chainReported: false` is the honest value: "this hub does not
+  // report it", never the exonerating "nobody amended it".
+  intentChain: [],
+  chainReported: false,
   truncated: false,
   droppedRows: 0,
 });

@@ -310,6 +310,11 @@ describe("the production path, which is where the cut actually happens", () => {
     // about drift over a cut surface and measured no coverage, so the unknown
     // record is the honest value rather than an invented one.
     coverage: UNKNOWN_COVERAGE,
+    // 06 makes the intent chain required on a Diagnosis. This fixture measured
+    // none, and `chainReported: false` is the honest value: "this hub does not
+    // report it", never the exonerating "nobody amended it".
+    intentChain: [],
+    chainReported: false,
     truncated: false,
     droppedRows: 0,
   });

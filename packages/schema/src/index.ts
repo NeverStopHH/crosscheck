@@ -67,12 +67,28 @@ export type { Claim, ClaimEdge } from "./claim.ts";
 
 export {
   AgentSessionSchema,
+  INTENT_SCOPE_KINDS,
+  INTENT_SCOPE_ROLES,
   IntentSchema,
+  IntentScopeEntrySchema,
+  IntentScopeKindSchema,
+  IntentScopeRoleSchema,
+  MAX_INTENT_AMEND_REASON_CHARS,
+  MAX_INTENT_CHAIN_VERSIONS,
+  MAX_INTENT_SCOPE_ENTRIES,
   MAX_INTENT_SUMMARY_CHARS,
   TargetSchema,
   WorkContextSchema,
 } from "./session.ts";
-export type { AgentSession, Intent, Target, WorkContext } from "./session.ts";
+export type {
+  AgentSession,
+  Intent,
+  IntentScopeEntry,
+  IntentScopeKind,
+  IntentScopeRole,
+  Target,
+  WorkContext,
+} from "./session.ts";
 
 export {
   MAX_PIN_CHECK_CHARS,
@@ -190,3 +206,5 @@ export {
   describeUnstorableText,
   unstorableTextPath,
 } from "./storable-text.ts";
+
+export { containsSecret } from "./secret-scan.ts";

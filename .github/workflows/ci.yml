@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 474
+    # PRINTS: 498
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -130,6 +130,7 @@ jobs:
     # PRINTS: packages/cli/src/cli/pin-render.ts 1
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
     # PRINTS: packages/cli/src/cli/status.ts 3
+    # PRINTS: packages/cli/src/cli/suspect-render.ts 1
     # PRINTS: packages/connector-acp/src/capabilities.ts 2
     # PRINTS: packages/connector-acp/src/capture/engine.ts 11
     # PRINTS: packages/connector-acp/src/derive/slice.ts 2
@@ -158,7 +159,6 @@ jobs:
     # PRINTS: briefing/render.ts 10
     # PRINTS: briefing/sanitize.ts 10
     # PRINTS: capture/records.ts 1
-    # PRINTS: capture/secret-scan.ts 1
     # PRINTS: capture/touched-root.ts 5
     # PRINTS: claim-validity.ts 2
     # PRINTS: conference/report.ts 1
@@ -198,6 +198,7 @@ jobs:
     # PRINTS: http/hub.ts 5
     # PRINTS: http/latency.ts 1
     # PRINTS: kit.ts 1
+    # PRINTS: mcp/render-intent-chain.ts 1
     # PRINTS: mcp/render-referee.ts 3
     # PRINTS: mcp/render.ts 22
     # PRINTS: mcp/session.ts 1
@@ -206,7 +207,7 @@ jobs:
     # PRINTS: mcp/tools/publish-claim.ts 2
     # PRINTS: mcp/tools/review-draft.ts 1
     # PRINTS: mcp/tools/search-related-work.ts 1
-    # PRINTS: mcp/tools/set-intent.ts 2
+    # PRINTS: mcp/tools/set-intent.ts 4
     # PRINTS: mcp/tools/shared.ts 2
     # PRINTS: model/gates.ts 1
     # PRINTS: model/parse.ts 2
@@ -223,6 +224,7 @@ jobs:
     # PRINTS: state/session-scan.ts 2
     # PRINTS: state/session-state.ts 19
     # PRINTS: state/tool-window-key.ts 2
+    # PRINTS: packages/connector-core/test/intent-budget.test.ts 1
     # PRINTS: packages/connector-core/test/render-surface-registry.test.ts 1
     # PRINTS: packages/connector-cursor/src/capabilities.ts 1
     # PRINTS: packages/connector-cursor/src/derive/transcript.ts 1
@@ -239,7 +241,8 @@ jobs:
     # PRINTS: packages/schema/src/claim-revalidation.ts 1
     # PRINTS: packages/schema/src/envelope.ts 1
     # PRINTS: packages/schema/src/pin.ts 1
-    # PRINTS: packages/schema/src/session.ts 1
+    # PRINTS: packages/schema/src/secret-scan.ts 1
+    # PRINTS: packages/schema/src/session.ts 2
     # PRINTS: packages/server/src/constants.ts 1
     # PRINTS: packages/server/src/db/bootstrap.sql 1
     # PRINTS: packages/server/src/routes/pins.ts 1
@@ -258,11 +261,12 @@ jobs:
     # PRINTS: packages/server/src/services/diagnosis.ts 3
     # PRINTS: packages/server/src/services/ghost-overlap.ts 4
     # PRINTS: packages/server/src/services/hints.ts 2
+    # PRINTS: packages/server/src/services/intent-ledger.ts 9
     # PRINTS: packages/server/src/services/normalized-doc.ts 2
     # PRINTS: packages/server/src/services/pins.ts 1
     # PRINTS: packages/server/src/services/presence.ts 1
     # PRINTS: packages/server/src/services/questions.ts 8
-    # PRINTS: packages/server/src/services/record-handlers.ts 5
+    # PRINTS: packages/server/src/services/record-handlers.ts 13
     # PRINTS: packages/server/src/services/records.ts 1
     # PRINTS: packages/server/src/services/refusal.ts 3
     # PRINTS: packages/server/src/services/search-tokens.ts 4
@@ -275,6 +279,7 @@ jobs:
     # PRINTS: packages/server/src/services/solved.ts 1
     # PRINTS: packages/server/src/services/suspect.ts 2
     # PRINTS: packages/server/src/services/time-window.ts 1
+    # PRINTS: packages/server/test/intent-ledger-authority.test.ts 1
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file.split("/").pop(),(m.get(x.file.split("/").pop())??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
     # PRINTS: absences.ts 4
@@ -326,6 +331,9 @@ jobs:
     # PRINTS: hook-budget.ts 1
     # PRINTS: hub.ts 5
     # PRINTS: injector.ts 3
+    # PRINTS: intent-budget.test.ts 1
+    # PRINTS: intent-ledger-authority.test.ts 1
+    # PRINTS: intent-ledger.ts 9
     # PRINTS: intent.ts 1
     # PRINTS: kit.ts 1
     # PRINTS: latency.ts 1
@@ -350,11 +358,12 @@ jobs:
     # PRINTS: pump.ts 1
     # PRINTS: questions.ts 10
     # PRINTS: reap.ts 1
-    # PRINTS: record-handlers.ts 5
+    # PRINTS: record-handlers.ts 13
     # PRINTS: records.ts 2
     # PRINTS: recover.ts 4
     # PRINTS: refusal.ts 3
     # PRINTS: register-session.ts 2
+    # PRINTS: render-intent-chain.ts 1
     # PRINTS: render-referee.ts 3
     # PRINTS: render-surface-registry.test.ts 1
     # PRINTS: render-surfaces.ts 1
@@ -375,9 +384,9 @@ jobs:
     # PRINTS: session-scan.ts 2
     # PRINTS: session-start.ts 3
     # PRINTS: session-state.ts 19
-    # PRINTS: session.ts 2
+    # PRINTS: session.ts 3
     # PRINTS: sessions.ts 5
-    # PRINTS: set-intent.ts 2
+    # PRINTS: set-intent.ts 4
     # PRINTS: settings-merge.ts 2
     # PRINTS: shared.ts 2
     # PRINTS: slice.ts 2
@@ -389,6 +398,7 @@ jobs:
     # PRINTS: ssh-hostname.ts 2
     # PRINTS: status.ts 3
     # PRINTS: stop.ts 2
+    # PRINTS: suspect-render.ts 1
     # PRINTS: suspect.ts 3
     # PRINTS: time-window.ts 1
     # PRINTS: tool-events.ts 2

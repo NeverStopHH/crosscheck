@@ -1,0 +1,817 @@
+/**
+ * THE APPEND-ONLY INTENT LEDGER, AND THE ONE FUNCTION ALLOWED TO READ IT
+ * (spec 06).
+ *
+ * THE PRINCIPLE, verbatim: "A reason written after a change is not evidence
+ * that the reason existed before the change." Answering that needs two things,
+ * and until this module only one of them existed. 01 supplies WHETHER two
+ * things may be compared — `session-order.ts` is that gate. This supplies WHAT
+ * is compared: the sentence, the paths it declared, and where in its own
+ * session it was written.
+ *
+ * IT RECORDS INTENT EVOLUTION, IT DOES NOT AUTHORISE IT. An agent widening its
+ * own intent authorises itself, so the value of this table is the CLOCK, not
+ * the row. No predicate anywhere reads "the current intent covers X, therefore
+ * X is fine": `explanationTimingFor` is the only consumer of the two tables, an
+ * amendment can neither clear a protected conflict nor satisfy a human waiver
+ * nor change an emitted verdict, and a meta-test fails the build on a second
+ * consumer (INT-7).
+ *
+ * APPEND-ONLY MEANS APPEND-ONLY: there is no UPDATE and no DELETE path in this
+ * file, and the unique `(work_context_id, version)` index is what makes that a
+ * statement about the TABLE rather than about this module's discipline.
+ */
+import { desc, eq, inArray, sql } from "drizzle-orm";
+import {
+  MAX_COMMIT_CLOCK_SKEW_MS,
+  MAX_INTENT_CHAIN_VERSIONS,
+  isSeqStamp,
+} from "@crosscheck/schema";
+import type {
+  Intent,
+  IntentScopeRole,
+  Provenance,
+  SeqField,
+  SeqKind,
+  SeqReason,
+} from "@crosscheck/schema";
+
+import { intentScope, workContextIntents } from "../db/schema.ts";
+import { causalComparisonOf, compareEvents } from "./session-order.ts";
+import { seqReasonOf, windowFloorOf } from "./session-events.ts";
+import type { DbExecutor } from "../db/client.ts";
+import type {
+  CausalIndeterminacy,
+  OrderedEvent,
+  SessionCausalOrder,
+} from "./session-order.ts";
+import type { OrderedEdit } from "./session-events.ts";
+import type { Clock } from "../types.ts";
+
+/**
+ * THE VERSION OF THE LADDER THAT PRODUCED AN ANSWER.
+ *
+ * Exported for 01a, whose attestations store it on every row they write: a
+ * stored judgment is only interpretable beside the rules that produced it, and
+ * step 6's first draft answered a violated non-goal `predeclared`. A row older
+ * than the current value was computed by a ladder that no longer exists, and
+ * that is a fact about the ROW, not something a later reader may assume away.
+ *
+ * BUMP IT WHENEVER AN EARLY RETURN MOVES, IS ADDED OR IS DELETED. The order of
+ * the returns IS the contract; a reordered ladder is a different function.
+ */
+export const EXPLANATION_LADDER_VERSION = 1;
+
+/**
+ * IS AN AMENDED-AWAY VERSION STILL LIVE? YES — 01a registers this table's
+ * `author_session_id` as a retention root with the liveness question left to
+ * this spec, and the answer is the one principle 6 forces: retention requires
+ * positive proof to DELETE, not positive proof to keep. An amended-away
+ * version is precisely the sentence this ledger exists to preserve; treating
+ * it as dead would restore the overwrite the whole design was written to kill,
+ * and it would do so silently, because the head would still read correctly.
+ *
+ * Declared as a VALUE rather than left `undefined_pending_spec`, because a
+ * registry that reads "nobody decided" keeps the rows for a different reason,
+ * and 01a's doctor line would report an open question where there is an answer.
+ */
+export const INTENT_VERSION_LIVENESS = "every_version_live" as const;
+
+export const EXPLANATION_TIMINGS = [
+  "predeclared",
+  "post_hoc",
+  "absent",
+] as const;
+
+export type ExplanationTiming = (typeof EXPLANATION_TIMINGS)[number];
+
+/**
+ * THE WORD THAT TRAVELS WITH THE TIMING, and never travels without it.
+ *
+ * `absent` alone asserts that no explanation exists, which is a different and
+ * far more damaging claim than "we cannot tell when this one was written": the
+ * first accuses a developer, the second excuses one. So the value and its
+ * reason are ONE ATOMIC ANSWER and no surface prints the value without the
+ * reason — the discipline `attribution: INDETERMINATE` already follows with
+ * its basis, and a coverage state with its coverage reason.
+ *
+ * THREE OF THESE ARE ORDER-DERIVED — `declared_before`, `declared_after` and
+ * `declared_non_goal_edited` — and the rest are refusals. 01a's attestation
+ * rows store the order-derived three only.
+ */
+export const TIMING_REASONS = [
+  "declared_before",
+  "declared_after",
+  "declared_non_goal_edited",
+  "no_intent",
+  "derived_excluded",
+  "different_session",
+  "not_comparable",
+  "scope_not_named",
+] as const;
+
+export type TimingReason = (typeof TIMING_REASONS)[number];
+
+/**
+ * ONE ATOMIC ANSWER, and it carries the refusal's own name beside it.
+ *
+ * `indeterminacy` is 01's vocabulary, not a second enum of ours. The order gate
+ * distinguishes six ways a pair cannot be compared and says why that matters:
+ * "a refusal reported under another defect's reason sends its reader to the
+ * wrong remedy". `not_comparable` is the word a HUMAN reads on a rendered line;
+ * this is the word a doctor line, an attestation or a bug report needs. Null
+ * whenever the answer did not come from the gate.
+ */
+export interface ExplanationTimingAnswer {
+  readonly timing: ExplanationTiming;
+  readonly reason: TimingReason;
+  readonly version: number | null;
+  readonly indeterminacy: CausalIndeterminacy | null;
+}
+
+export interface IntentScopeEntryRow {
+  readonly role: IntentScopeRole;
+  readonly kind: string;
+  readonly value: string;
+}
+
+export interface IntentLedgerEntry {
+  readonly id: string;
+  readonly workContextId: string;
+  readonly version: number;
+  readonly amendsVersion: number | null;
+  readonly authorSessionId: string | null;
+  readonly provenance: Provenance;
+  readonly summary: string;
+  readonly reason: string | null;
+  readonly seqEpoch: string | null;
+  readonly seq: number | null;
+  readonly seqAfter: number | null;
+  readonly seqKind: SeqKind;
+  readonly seqReason: SeqReason;
+  readonly capturedAt: Date;
+  readonly receivedAt: Date | null;
+  readonly wire: Record<string, unknown>;
+  readonly scope: readonly IntentScopeEntryRow[];
+}
+
+/**
+ * The head projection of a stored wire: the sentence and its position, never
+ * the amendment reason and never the declared scope.
+ *
+ * ONE FUNCTION, because the head is written from two places — a fresh append
+ * and a replay that adopts the stored row — and two spellings of "what a head
+ * carries" is how the narrow one quietly becomes the wide one again.
+ */
+const headOf = (wire: Record<string, unknown>): Record<string, unknown> => ({
+  summary: wire["summary"],
+  provenance: wire["provenance"],
+  confidence: wire["confidence"],
+  capturedAt: wire["capturedAt"],
+  seq: wire["seq"] ?? null,
+  amendsVersion: wire["amendsVersion"] ?? null,
+});
+
+const ID_PREFIX = "iv_";
+const ID_HASH_CHARS = 32;
+
+/**
+ * `iv_` + sha256 over EVERYTHING THAT MAKES A DECLARATION THAT DECLARATION —
+ * the `hint_deliveries` shape, so a replayed spool line is a `duplicate`
+ * rather than a second version of the same sentence.
+ *
+ * THE KEY IS THE WHOLE DECLARATION, not the sentence. An earlier version
+ * hashed only (context, session, position, summary), and two genuinely
+ * different declarations then collapsed onto one row: the insert hit the
+ * primary key, the replay branch handed back the STORED wire, and the caller
+ * answered `accepted` while the second declaration's scope, reason and
+ * `captured_at` were gone. `set_intent` told its author "Recorded your
+ * intent" over a sentence that reached nothing.
+ *
+ * IT WAS REACHABLE WITHOUT ANYTHING EXOTIC. `seq` is null for every call of a
+ * session whose position could not be allocated — two live agents in one
+ * worktree, which does not clear until one of them ends — so the key reduced
+ * to context + session + summary, and *"same goal, but b.ts is off limits"*
+ * was indistinguishable from a replay of *"same goal"*. The half it dropped is
+ * the NON-GOAL, which is the accusing half: `post_hoc /
+ * declared_non_goal_edited` would silently become `predeclared` — missing
+ * evidence removing an accusation, which principle 5 forbids. The epoch was
+ * missing for the same class of reason: a SessionStart re-fire mints a fresh
+ * epoch and restarts the count, so the same sentence at the same `n` under a
+ * new epoch collided too.
+ *
+ * SCOPE ENTRIES ARE SORTED before hashing, because a connector emitting the
+ * same two paths in a different order has not declared anything different,
+ * and a key that said otherwise would turn one replay into two rows.
+ */
+export const intentVersionId = (input: {
+  readonly workContextId: string;
+  readonly authorSessionId: string | null;
+  readonly seqEpoch: string | null;
+  readonly seq: number | null;
+  readonly summary: string;
+  readonly reason: string | null;
+  readonly scope: readonly IntentScopeEntryRow[];
+}): string =>
+  `${ID_PREFIX}${new Bun.CryptoHasher("sha256")
+    .update(
+      [
+        input.workContextId,
+        input.authorSessionId ?? "",
+        input.seqEpoch ?? "",
+        input.seq === null ? "null" : String(input.seq),
+        input.summary,
+        input.reason ?? "",
+        ...[...input.scope]
+          .map((entry) => `${entry.role}\t${entry.kind}\t${entry.value}`)
+          .sort(),
+      ].join("\n"),
+    )
+    .digest("hex")
+    .slice(0, ID_HASH_CHARS)}`;
+
+/**
+ * WHICH LANE WROTE THIS SENTENCE — as the body CLAIMS it, which is all the hub
+ * can know. See the note below this function for what that does and does not
+ * buy; this used to read "derived here and never taken from the body", which
+ * was the opposite of what the code does.
+ *
+ * A DERIVED INTENT IS A DETACHED WORKER'S. It summarises a slice from EARLIER
+ * in the session, so the position it allocates records when the row was
+ * written, not when the thing it describes happened — an upper bound. An agent
+ * calling `set_intent` is declaring on its own account, synchronously, and
+ * that position is emitted.
+ */
+const intentSeqKind = (provenance: Provenance): SeqKind =>
+  provenance === "derived" ? "observed" : "emitted";
+
+/**
+ * WHAT THIS DOES NOT BUY, corrected — the comment above this function used to
+ * claim the opposite in as many words.
+ *
+ * It read "derived here and never taken from the body … a connector that
+ * could choose its own `seq_kind` could promote an upper bound to a
+ * happens-before". The INPUT is `provenance`, which is read straight off the
+ * body and which the spec's own column table concedes is "what the body
+ * claimed — unverifiable (§1.2, §8.1)". So the promotion the comment called
+ * impossible is one wire string, and the SAME string is what step 2 of the
+ * ladder rests on: a single body field moves a row from `derived / observed`
+ * to `declared / emitted` and flips both ledger-side defences of principle 4
+ * at once. Measured on two rows identical but for that label:
+ *
+ *   emitted  -> predeclared / declared_before
+ *   observed -> absent / not_comparable / upper_bound_only
+ *
+ * Both failures point the EXONERATING way, which §3.5 already names as the
+ * direction nobody reports.
+ *
+ * THERE IS NO HUB-SIDE FIX IN 1.0, and saying so is the point. The hub holds
+ * no repository, sees no process, and §8.1 already records the consequence:
+ * every 1.0 intent is `agent_derived` on the WHO axis, including the one the
+ * schema calls `declared`. A defence invented here would be a second
+ * unverifiable label guarding the first. What this function still buys is the
+ * HONEST DEFAULT — a connector that does not lie gets the weaker reading for
+ * its worker's positions — and what bounds the damage is that a lying
+ * connector is lying about its own session, whose edits are the only ones the
+ * answer concerns.
+ *
+ * `seq_kind` is therefore NOT derived from anything the hub can check, and
+ * `intent-ladder.test.ts` carries the case that proves the weaker reading
+ * still refuses when the two are decoupled.
+ */
+
+const SCOPE_WIRE_KEYS = {
+  expected: "expectedSurface",
+  non_goal: "nonGoals",
+} as const;
+
+const scopeRows = (
+  intent: Intent,
+  role: IntentScopeRole,
+): readonly IntentScopeEntryRow[] => {
+  const declared = (intent as Record<string, unknown>)[SCOPE_WIRE_KEYS[role]];
+  if (!Array.isArray(declared)) {
+    return [];
+  }
+  return declared.flatMap((entry: unknown) => {
+    if (typeof entry !== "object" || entry === null) {
+      return [];
+    }
+    const kind = (entry as Record<string, unknown>)["kind"];
+    const value = (entry as Record<string, unknown>)["value"];
+    return typeof kind === "string" && typeof value === "string"
+      ? [{ role, kind, value }]
+      : [];
+  });
+};
+
+const reasonOf = (intent: Intent): string | null => {
+  const reason = (intent as Record<string, unknown>)["reason"];
+  return typeof reason === "string" && reason.length > 0 ? reason : null;
+};
+
+export interface AppendIntentInput {
+  readonly workContextId: string;
+  readonly authorSessionId: string;
+  readonly intent: Intent;
+  /** The ENVELOPE's position — never the body's; a body may not carry one. */
+  readonly seq: SeqField | undefined;
+}
+
+export interface AppendIntentOutcome {
+  /** The wire as STORED in the ledger row — the whole declaration. */
+  readonly wire: Record<string, unknown>;
+  /**
+   * What `work_contexts.intent` becomes: the SENTENCE and its position, never
+   * the amendment reason and never the declared scope.
+   *
+   * §8.6 keeps the chain off every unsolicited surface, and the head jsonb is
+   * projected WHOLE — never `->> 'summary'` — by every service below. A head
+   * that is a copy of the wire carries the chain onto all of them in payload,
+   * whether or not anything renders it.
+   *
+   * DERIVED, NOT LISTED. Three comments on this branch enumerated these
+   * surfaces by hand and all three were short: one named six, two named five,
+   * and `members.ts`, `normalized-doc.ts` and `solved-matches.ts` appeared in
+   * none of them. An independent refuter found it. A hand-kept list of
+   * readers drifts exactly the way the render-layer specifier drifted from
+   * the module list it mirrored, so this one is a command a reader can run:
+   *
+   * (This file is in its own answer because the comment names the column.)
+   *
+   * VERIFY: grep -rl "workContexts.intent" packages/server/src/services | xargs -n1 basename | sort | tr '\n' ' '
+   * PRINTS: conference.ts ghost-overlap.ts hints.ts intent-ledger.ts members.ts normalized-doc.ts presence.ts search.ts solved-matches.ts suspect.ts 
+   */
+  readonly headWire: Record<string, unknown>;
+  readonly version: number;
+  /** True when the cap refused the append and the head must not move. */
+  readonly capped: boolean;
+}
+
+/**
+ * APPENDS ONE VERSION, inside the transaction the caller already opened.
+ *
+ * THE HUB ASSIGNS `version`, `amends_version` and `received_at`, and clamps
+ * `captured_at`. Two writers exist per work context — `set_intent` and the
+ * derived worker — so a connector-assigned version would let both claim v2;
+ * and `amends_version` is the number a connector structurally CANNOT learn,
+ * since its own work-context handle carries no version and reading one would
+ * be the HTTP call §6 forbids. The connector supplies the sentence, the scope
+ * and the `reason`, which are the things only it knows.
+ *
+ * THE POSITION COMES FROM THE ENVELOPE. A body-carried position would be a
+ * connector choosing its own answer to AT-4 — worse than the body-carried
+ * `provenance` §1.2 already calls a defect — so the stored `wire` has the
+ * envelope's position written INTO it and a body-sent `seq` is discarded.
+ */
+export const appendIntentVersion = async (
+  deps: { readonly db: DbExecutor; readonly now: Clock },
+  input: AppendIntentInput,
+): Promise<AppendIntentOutcome> => {
+  const now = deps.now();
+  const previous = await deps.db
+    .select({ version: workContextIntents.version })
+    .from(workContextIntents)
+    .where(eq(workContextIntents.workContextId, input.workContextId))
+    .orderBy(desc(workContextIntents.version))
+    .limit(1);
+  const head = previous[0]?.version ?? null;
+  const stamp = isSeqStamp(input.seq) ? input.seq : null;
+  const seq = stamp === null ? null : stamp.n;
+  const wire: Record<string, unknown> = {
+    ...(input.intent as Record<string, unknown>),
+    seq: stamp === null ? null : { epoch: stamp.epoch, n: stamp.n },
+    amendsVersion: head,
+  };
+  // THE HEAD IS A SENTENCE, NOT THE WHOLE AMENDMENT RECORD — §8.6, which the
+  // head stopped honouring the moment it became a copy of the wire.
+  //
+  // `work_contexts.intent` is projected WHOLE — not `->> 'summary'` — into
+  // `presence` (the SessionStart briefing, delivery "unsolicited"), `search`,
+  // `suspect`, `conference`, `hints` and `ghost-overlap`. §8.6 refuses
+  // exactly that: "the chain never reaches an unsolicited surface … briefing,
+  // hints, tripwire and statusline show the head only".
+  //
+  // Measured before this: a teammate who had never opened the work context
+  // and asked for nothing received the full amendment reason in the payload
+  // of GET /api/presence and GET /api/search. Nothing RENDERED it — the
+  // briefing reads `.summary` — but the connector's `IntentEntrySchema` is a
+  // looseObject, so it survived parsing into every briefing and hint model
+  // object: one renderer away from being printed, one telemetry dump away
+  // from being published.
+  //
+  // So the head keeps the fields a head has always had and the CHAIN keeps
+  // everything, which is what the chain is for. Both are built here so they
+  // cannot drift apart.
+  const headWire = headOf(wire);
+  if (head !== null && head >= MAX_INTENT_CHAIN_VERSIONS) {
+    // THE CAP IS WHAT REPLACES A RETENTION JOB — there is no background pass
+    // over this table, so nothing else bounds one context's history. The
+    // record is ACCEPTED and the head stays where it is; the caller reports
+    // the cap rather than reporting the sentence as recorded.
+    return { wire, headWire, version: head, capped: true };
+  }
+  const version = (head ?? 0) + 1;
+  // The scope is computed BEFORE the id, because it is part of what makes
+  // this declaration distinct from the last one.
+  const scope = [
+    ...scopeRows(input.intent, "expected"),
+    ...scopeRows(input.intent, "non_goal"),
+  ];
+  const reason = head === null ? null : reasonOf(input.intent);
+  const id = intentVersionId({
+    workContextId: input.workContextId,
+    authorSessionId: input.authorSessionId,
+    seqEpoch: stamp === null ? null : stamp.epoch,
+    seq,
+    summary: input.intent.summary,
+    reason,
+    scope,
+  });
+  const provenance = input.intent.provenance;
+  const inserted = await deps.db
+    .insert(workContextIntents)
+    .values({
+      id,
+      workContextId: input.workContextId,
+      version,
+      amendsVersion: head,
+      authorSessionId: input.authorSessionId,
+      seqEpoch: stamp === null ? null : stamp.epoch,
+      seq,
+      seqAfter: stamp === null ? null : windowFloorOf(stamp),
+      seqKind: intentSeqKind(provenance),
+      seqReason: seqReasonOf(input.seq),
+      provenance,
+      summary: input.intent.summary,
+      // A `reason` is only ever meaningful beside an amendment, and a first
+      // declaration carrying one would trip the table's own amend CHECK.
+      // The SAME value the id hashed: two spellings here would be two answers
+      // to "is this the declaration we already have".
+      reason,
+      // SENDER-CONTROLLED, so clamped to the hub clock plus skew. It orders
+      // nothing — §3.5 reads no clock at all — and serves display only.
+      capturedAt: new Date(
+        Math.min(
+          Date.parse(input.intent.capturedAt),
+          now.getTime() + MAX_COMMIT_CLOCK_SKEW_MS,
+        ),
+      ),
+      receivedAt: now,
+      wire,
+    })
+    .onConflictDoNothing()
+    .returning({ version: workContextIntents.version });
+  if (inserted[0] === undefined) {
+    // A replay of this very version: same context, same author, same position,
+    // same sentence.
+    //
+    // THE STORED ROW'S WIRE IS RETURNED, NEVER THE RECOMPUTED ONE. `wire`
+    // above carries `amendsVersion: head`, and on a replay the head IS the row
+    // being replayed — so the recomputed wire says this sentence amended
+    // ITSELF, and the caller would copy that onto the head. The ledger would
+    // then hold `amends_version: null` on version 1 while `work_contexts`
+    // held `1`, from nothing more alarming than a redelivered spool line:
+    // head and ledger disagreeing is exactly what this table exists to make
+    // impossible, and counting rows never sees it.
+    const replayed = await deps.db
+      .select({
+        version: workContextIntents.version,
+        wire: workContextIntents.wire,
+      })
+      .from(workContextIntents)
+      .where(eq(workContextIntents.id, id))
+      .limit(1);
+    const row = replayed[0];
+    return row === undefined
+      ? // The conflict was on `(work_context_id, version)` rather than on the
+        // id — a concurrent writer took this version number. Nothing of ours
+        // is stored, so the head must not move.
+        { wire, headWire, version: head ?? version, capped: true }
+      : // A REPLAY: the head must become the STORED row's head, not this
+        // call's — recomputing it would let a redelivered line carry an
+        // `amends_version` no ledger row ever held. Narrowed the same way,
+        // from the stored wire.
+        {
+          wire: row.wire ?? wire,
+          headWire: headOf(row.wire ?? wire),
+          version: row.version,
+          capped: false,
+        };
+  }
+  if (scope.length > 0) {
+    await deps.db
+      .insert(intentScope)
+      .values(
+        scope.map((entry) => ({
+          intentId: id,
+          workContextId: input.workContextId,
+          role: entry.role,
+          kind: entry.kind as "file",
+          value: entry.value,
+        })),
+      )
+      .onConflictDoNothing();
+  }
+  return { wire, headWire, version, capped: false };
+};
+
+/**
+ * THE WHOLE CHAIN OF ONE WORK CONTEXT, newest first, with its scope attached.
+ *
+ * Bounded by the cap rather than by a `limit` here: a chain truncated on READ
+ * would make the ladder's "earliest survivor" the earliest of what it happened
+ * to see, which is a different function on a long chain than on a short one.
+ */
+export const readIntentChain = async (
+  db: DbExecutor,
+  workContextId: string,
+): Promise<readonly IntentLedgerEntry[]> => {
+  const rows = await db
+    .select()
+    .from(workContextIntents)
+    .where(eq(workContextIntents.workContextId, workContextId))
+    .orderBy(desc(workContextIntents.version));
+  if (rows.length === 0) {
+    return [];
+  }
+  const scope = await db
+    .select()
+    .from(intentScope)
+    .where(
+      inArray(
+        intentScope.intentId,
+        rows.map((row) => row.id),
+      ),
+    );
+  const byIntent = new Map<string, IntentScopeEntryRow[]>();
+  for (const entry of scope) {
+    byIntent.set(entry.intentId, [
+      ...(byIntent.get(entry.intentId) ?? []),
+      { role: entry.role, kind: entry.kind, value: entry.value },
+    ]);
+  }
+  return rows.map((row) => ({
+    ...row,
+    wire: row.wire ?? {},
+    scope: byIntent.get(row.id) ?? [],
+  }));
+};
+
+export interface IntentPositionCounts {
+  readonly total: number;
+  readonly unpositioned: number;
+}
+
+/** Both halves, always — a hub with no rows at all is not a hub with no gaps. */
+export const countIntentPositions = async (
+  db: DbExecutor,
+): Promise<IntentPositionCounts> => {
+  const rows = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      unpositioned: sql<number>`count(*) filter (where ${workContextIntents.seq} is null)::int`,
+    })
+    .from(workContextIntents);
+  return rows[0] ?? { total: 0, unpositioned: 0 };
+};
+
+/** A ledger row as the order gate is asked about it. */
+const orderedEventOf = (entry: IntentLedgerEntry): OrderedEvent => ({
+  sessionId: entry.authorSessionId ?? "",
+  seqEpoch: entry.seqEpoch,
+  seqN: entry.seq,
+  seqAfter: entry.seqAfter,
+  seqKind: entry.seqKind,
+  seqReason: entry.seqReason,
+  // Carried because the gate's shape has it, and read by nothing: this whole
+  // function answers from positions, never from a clock.
+  observedAt: entry.receivedAt ?? entry.capturedAt,
+});
+
+/**
+ * WHICH REFUSAL TO REPORT when several survivors are refused for several
+ * reasons — ordered by how much the reason tells a reader to DO, the
+ * `ABSENCE_PRIORITY` discipline one file over.
+ */
+const INDETERMINACY_PRIORITY: readonly CausalIndeterminacy[] = [
+  "session_order_unusable",
+  "epoch_mismatch",
+  "upper_bound_only",
+  "concurrent",
+  "position_indeterminate",
+  "different_session",
+];
+
+const worstOf = (
+  reasons: readonly CausalIndeterminacy[],
+): CausalIndeterminacy | null =>
+  INDETERMINACY_PRIORITY.find((candidate) => reasons.includes(candidate)) ??
+  reasons[0] ??
+  null;
+
+const namesPath = (
+  entry: IntentLedgerEntry,
+  role: IntentScopeRole,
+  edit: OrderedEdit,
+): boolean =>
+  entry.scope.some(
+    (scope) =>
+      scope.role === role &&
+      scope.kind === edit.kind &&
+      scope.value === edit.value,
+  );
+
+/** The open end of a declaration's window; a point emitter is its own window. */
+const floorOf = (entry: IntentLedgerEntry): number =>
+  entry.seqAfter ?? entry.seq ?? 0;
+
+const earliest = (
+  entries: readonly IntentLedgerEntry[],
+): IntentLedgerEntry | undefined =>
+  entries.reduce<IntentLedgerEntry | undefined>(
+    (best, entry) =>
+      best === undefined ||
+      floorOf(entry) < floorOf(best) ||
+      (floorOf(entry) === floorOf(best) && entry.version < best.version)
+        ? entry
+        : best,
+    undefined,
+  );
+
+const answer = (
+  timing: ExplanationTiming,
+  reason: TimingReason,
+  version: number | null = null,
+  indeterminacy: CausalIndeterminacy | null = null,
+): ExplanationTimingAnswer => ({ timing, reason, version, indeterminacy });
+
+/**
+ * WAS THE REASON WRITTEN BEFORE THE CHANGE? — a ladder of early returns, and
+ * THE ORDER OF THE RETURNS IS THE CONTRACT. Changing which one fires first
+ * changes the answer, so each is numbered here and in the spec.
+ *
+ *   1. no chain at all                    -> absent / no_intent
+ *   2. nothing DECLARED survives          -> absent / derived_excluded
+ *   3. nothing from the EDIT'S session    -> absent / different_session
+ *   4. nothing COMPARABLE with the edit   -> absent / not_comparable
+ *   5. nothing NAMING the edited path     -> absent / scope_not_named
+ *   6. answer by role, non-goal first
+ *
+ * STEP 4 IS THE ORDER GATE ITSELF, NOT A REIMPLEMENTATION OF PART OF IT, and
+ * this is the one place this implementation departs from the letter of §3.5.
+ * The spec's step 4 drops `seq === null` and a mismatched epoch and stops
+ * there — two of the gate's six conditions. The four it omits are the ones
+ * that matter most here: an `observed` position is an UPPER BOUND, which every
+ * Stop-time git-lane edit and every unbracketed tool-lane edit carries, and two
+ * events whose WINDOWS OVERLAP are concurrent. Comparing the bare numbers in
+ * either case answers `predeclared` — the value that exonerates — from what
+ * `session-order.ts` measured as a coin flip inverting 10 trials out of 10.
+ * That is the defect this whole spec exists to prevent, reintroduced in the one
+ * direction nobody reports: a gap producing an ACCUSATION is reported by the
+ * person accused, and a gap producing an EXONERATION is reported by nobody. So
+ * the gate is CALLED.
+ *
+ * STEP 6 ANSWERS BY ROLE, AND NON-GOAL WINS. A session that declared
+ * "do not touch b.ts" and then touched it is the most post-hoc thing a session
+ * can do; folding it into the expectation branch reports a sentence that said
+ * the OPPOSITE as a reason declared before the change — principle 3 answered
+ * backwards on the one input this ledger exists to capture.
+ *
+ * NOTHING HERE READS A CLOCK. `captured_at`, `received_at` and the envelope
+ * `ts` appear nowhere in this function, and a mutation anchor exists to keep it
+ * that way.
+ */
+export const explanationTimingFor = (
+  order: SessionCausalOrder,
+  chain: readonly IntentLedgerEntry[],
+  edit: OrderedEdit,
+): ExplanationTimingAnswer => {
+  // 1
+  if (chain.length === 0) {
+    return answer("absent", "no_intent");
+  }
+  // 2 — A DERIVED NON-GOAL IS A SUGGESTION TO A HUMAN, NEVER EVIDENCE AGAINST
+  // THE SAME AGENT. A model's guess about what a session meant may be shown;
+  // it may not enter a timing answer about the session that produced it.
+  const declared = chain.filter((entry) => entry.provenance === "declared");
+  if (declared.length === 0) {
+    return answer("absent", "derived_excluded");
+  }
+  // 3 — there is no cross-session order. A subagent that sometimes inherits
+  // its parent's host key and sometimes mints its own makes a bare comparison
+  // SILENTLY wrong; refusing makes it something a reader can see.
+  const ownSession = declared.filter(
+    (entry) => entry.authorSessionId === edit.event.sessionId,
+  );
+  if (ownSession.length === 0) {
+    return answer("absent", "different_session");
+  }
+  // 4
+  //
+  // A REFUSED ROW IS SET ASIDE, NOT DISCARDED, and that is the correction an
+  // independent refuter had to make — the first version threw `refusals` away
+  // whenever anything survived, and nothing downstream could learn that a row
+  // had been refused.
+  //
+  // THE FAILURE IT PRODUCED IS THIS MODULE'S WORST. A session that declared
+  // `b.ts` a NON-GOAL and then edited it answers `post_hoc /
+  // declared_non_goal_edited` — the accusation. Let that row's position be
+  // unusable and it vanished here, step 6 answered from the surviving
+  // `expected` row, and the result was `predeclared / declared_before` with
+  // `indeterminacy: null`: missing evidence REMOVING an accusation, and
+  // saying nothing about it. Measured on five ordinary inputs, one session,
+  // same declared provenance, the only difference being whether the accusing
+  // row could be ordered:
+  //
+  //   non_goal seq=null            -> predeclared   (control, usable: post_hoc)
+  //   non_goal observed position   -> predeclared
+  //   non_goal overlapping window  -> predeclared
+  //   non_goal foreign epoch       -> predeclared
+  //
+  // `seq: null` is every call of a session whose position could not be
+  // allocated — two live agents in one worktree — and `observed` is the
+  // ordinary lane for a Stop-time git edit. Neither is exotic.
+  //
+  // The same conversion was found and fixed one level down, in the version-id
+  // hash, with two paragraphs about why it is the worst thing this module can
+  // do. It was not looked for one rung up, where the filter performs it for
+  // free.
+  const refused: { entry: IntentLedgerEntry; reason: CausalIndeterminacy }[] = [];
+  const comparable = ownSession.filter((entry) => {
+    const outcome = causalComparisonOf(order, orderedEventOf(entry), edit.event);
+    if (outcome.outcome === "comparable") {
+      return true;
+    }
+    refused.push({ entry, reason: outcome.reason });
+    return false;
+  });
+  if (comparable.length === 0) {
+    return answer(
+      "absent",
+      "not_comparable",
+      null,
+      worstOf(refused.map((row) => row.reason)),
+    );
+  }
+  // 4a — A REFUSED ROW THAT NAMES THIS PATH OUTRANKS EVERY ANSWER BELOW.
+  //
+  // Only the rows that NAME the edited path can change what step 6 says, so
+  // only those are asked about. If one of them could not be ordered, the
+  // honest answer is that this hub cannot place the declaration against the
+  // edit — not that some other row places it favourably. `absent /
+  // not_comparable` carries the reason, so a reader sees WHY rather than
+  // meeting a confident sentence assembled out of what survived.
+  //
+  // BOTH ROLES, and the reason differs per role. A refused NON-GOAL would
+  // have accused; dropping it exonerates, which principle 5 forbids outright.
+  // A refused EXPECTED would have excused; dropping it leaves step 5 saying
+  // `scope_not_named` — "this session never declared that path" — about a
+  // session that did. One is an inversion and the other is a false statement,
+  // and both are answered here rather than sorted into different silences.
+  const refusedNaming = refused.filter(
+    ({ entry }) =>
+      namesPath(entry, "non_goal", edit) || namesPath(entry, "expected", edit),
+  );
+  if (refusedNaming.length > 0) {
+    return answer(
+      "absent",
+      "not_comparable",
+      null,
+      worstOf(refusedNaming.map((row) => row.reason)),
+    );
+  }
+  // 5
+  const named = comparable.filter(
+    (entry) =>
+      namesPath(entry, "expected", edit) || namesPath(entry, "non_goal", edit),
+  );
+  if (named.length === 0) {
+    return answer("absent", "scope_not_named");
+  }
+  // 6
+  const before = (entry: IntentLedgerEntry): boolean =>
+    compareEvents(order, orderedEventOf(entry), edit.event) === -1;
+  const nonGoal = earliest(
+    named.filter((entry) => namesPath(entry, "non_goal", edit)),
+  );
+  if (nonGoal !== undefined && before(nonGoal)) {
+    return answer("post_hoc", "declared_non_goal_edited", nonGoal.version);
+  }
+  const expected = earliest(
+    named.filter((entry) => namesPath(entry, "expected", edit)),
+  );
+  if (expected !== undefined && before(expected)) {
+    return answer("predeclared", "declared_before", expected.version);
+  }
+  return answer("post_hoc", "declared_after", earliest(named)?.version ?? null);
+};
+
+/** The read half, for a caller holding ids rather than a chain. */
+export const explanationTimingOf = async (
+  db: DbExecutor,
+  order: SessionCausalOrder,
+  workContextId: string,
+  edit: OrderedEdit,
+): Promise<ExplanationTimingAnswer> =>
+  explanationTimingFor(order, await readIntentChain(db, workContextId), edit);

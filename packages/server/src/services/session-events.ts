@@ -29,6 +29,7 @@ import type {
 import { SESSION_EVENT_RETENTION_DAYS } from "../constants.ts";
 import { sessionEvents } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
+import type { OrderedEvent } from "./session-order.ts";
 import type { Clock } from "../types.ts";
 
 interface Deps {
@@ -135,12 +136,26 @@ export interface RecordSessionEventInput {
 export const windowFloorOf = (stamp: SeqStamp): number | null =>
   stamp.after === undefined || stamp.after > stamp.n ? null : stamp.after;
 
-const reasonFor = (input: RecordSessionEventInput): SeqReason => {
-  if (input.seq === undefined) {
-    return input.absentReason ?? "pre_seq_connector";
+/**
+ * WHY THIS RECORD HAS THE POSITION IT HAS, read off the envelope field alone.
+ *
+ * EXPORTED because the intent ledger stores the same three facts on its own
+ * rows and must not restate the rule: a second copy that drifted would let one
+ * table call a withheld position `pre_seq_connector` while the other called it
+ * `allocation_failed`, and those two send a reader to different remedies.
+ */
+export const seqReasonOf = (
+  seq: SeqField | undefined,
+  absentReason?: SeqReason,
+): SeqReason => {
+  if (seq === undefined) {
+    return absentReason ?? "pre_seq_connector";
   }
-  return isSeqStamp(input.seq) ? "sequenced" : input.seq.reason;
+  return isSeqStamp(seq) ? "sequenced" : seq.reason;
 };
+
+const reasonFor = (input: RecordSessionEventInput): SeqReason =>
+  seqReasonOf(input.seq, input.absentReason);
 
 export interface SessionEventOutcome {
   readonly id: string;
@@ -300,4 +315,123 @@ export const countSessionEvents = async (
     .from(sessionEvents)
     .where(eq(sessionEvents.sessionId, sessionId));
   return rows[0] ?? { total: 0, positioned: 0, epochs: 0 };
+};
+
+/**
+ * AN EDIT, READ BACK AS SOMETHING THE ORDER GATE CAN BE ASKED ABOUT
+ * (spec 06 §3.5, step one of the ladder).
+ *
+ * The ladder is handed a path and a chain and must decide whether the reason
+ * predated the change. That needs the EDIT as an `OrderedEvent`, and nothing
+ * in the tree produced one: `session-order.ts`'s readers select `seq_epoch`
+ * and `seq_reason` for the SESSION's health, and a target's own identity —
+ * the author-written path — never appears on this table at all. The join is
+ * `targetDigest`, which lives here because this is the file that decides how
+ * a target is addressed.
+ *
+ * WHY THE PICK IS THE MOST CONSERVATIVE SIGHTING AND NOT THE NEWEST. One file
+ * can be sighted more than once: the tool lane reports the edit, the Stop-time
+ * git lane sights the same file again, a replayed spool line arrives late.
+ * Each sighting is its own row with its own position. The question being asked
+ * is about the CHANGE, so:
+ *
+ *   1. a sighting with NO position outranks every positioned one. It is a
+ *      sighting of this same edit that says nothing about when, and answering
+ *      from a later positioned row would report an order that sighting does
+ *      not support;
+ *   2. otherwise the EARLIEST window wins. A file edited at 3 and touched
+ *      again at 9 was changed at 3, and an intent at 5 did not precede it.
+ *
+ * Both rules point the same way, and the direction is the one the asymmetry of
+ * this whole system demands: an over-refusal costs certainty, which principle
+ * 5 permits, while picking the generous sighting produces `predeclared` — the
+ * answer that exonerates, and the one nobody reports when it is wrong.
+ */
+export interface OrderedEdit {
+  readonly event: OrderedEvent;
+  readonly kind: string;
+  readonly value: string;
+}
+
+interface PositionedSighting {
+  readonly seqAfter: number | null;
+  readonly seqN: number;
+}
+
+/**
+ * The open end of this sighting's interval; a point is its own window.
+ *
+ * IT TAKES A POSITIONED ROW ONLY, and that is load-bearing rather than tidy.
+ * A version of this defaulting an absent position to 0 makes an unpositioned
+ * sighting compare as the earliest one by accident — so rule (1) above would
+ * hold for a reason no test could break, and deleting it would change nothing
+ * until the day somebody changed the default.
+ */
+const sightingFloor = (row: PositionedSighting): number =>
+  row.seqAfter ?? row.seqN;
+
+const earliestSighting = <T extends PositionedSighting>(
+  rows: readonly T[],
+): T | undefined =>
+  rows.reduce<T | undefined>(
+    (earliest, row) =>
+      earliest === undefined ||
+      sightingFloor(row) < sightingFloor(earliest) ||
+      (sightingFloor(row) === sightingFloor(earliest) &&
+        row.seqN < earliest.seqN)
+        ? row
+        : earliest,
+    undefined,
+  );
+
+export const readEditEvent = async (
+  db: DbExecutor,
+  workContextId: string,
+  kind: string,
+  value: string,
+): Promise<OrderedEdit | null> => {
+  const rows = await db
+    .select({
+      sessionId: sessionEvents.sessionId,
+      seqEpoch: sessionEvents.seqEpoch,
+      seqN: sessionEvents.seqN,
+      seqAfter: sessionEvents.seqAfter,
+      seqKind: sessionEvents.seqKind,
+      seqReason: sessionEvents.seqReason,
+      observedAt: sessionEvents.observedAt,
+    })
+    .from(sessionEvents)
+    .where(
+      and(
+        eq(sessionEvents.refKind, "target_digest"),
+        eq(sessionEvents.refId, targetDigest(workContextId, kind, value)),
+      ),
+    );
+  if (rows.length === 0) {
+    return null;
+  }
+  const withheld = rows.find((row) => row.seqN === null);
+  const chosen =
+    withheld ??
+    earliestSighting(
+      rows.filter(
+        (row): row is typeof row & PositionedSighting => row.seqN !== null,
+      ),
+    );
+  if (chosen === undefined) {
+    return null;
+  }
+  return {
+    event: {
+      sessionId: chosen.sessionId,
+      seqEpoch: chosen.seqEpoch,
+      seqN: chosen.seqN,
+      seqAfter: chosen.seqAfter,
+      seqKind: chosen.seqKind,
+      seqReason: chosen.seqReason,
+      observedAt: chosen.observedAt,
+    },
+    kind,
+    value,
+  };
 };

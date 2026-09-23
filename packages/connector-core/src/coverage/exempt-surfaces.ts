@@ -19,7 +19,7 @@
  * between a boundary and a hole.
  *
  * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/coverage/exempt-surfaces.ts");console.log(c.COVERAGE_BEARING_RESPONSES.length, c.COVERAGE_EXEMPT_SURFACES.length, c.COVERAGE_EXEMPT_SURFACES_MAX)'
- * PRINTS: 12 2 3
+ * PRINTS: 12 3 3
  */
 
 /**
@@ -74,12 +74,23 @@ export interface CoverageExemptSurface {
 export const COVERAGE_EXEMPT_SURFACES_MAX = 3;
 
 /**
- * Both entries are the same shape and it is the only shape that earns one: a
- * tool wrapper that hands the WHOLE response object to a registered renderer
- * which consumes the record. The wrapper never reads coverage because it
- * never reads any field — it passes the tree on — and making it name the
- * field to satisfy a regex would be the prose claim this rule exists to
- * refuse.
+ * TWO SHAPES EARN AN EXEMPTION, and the second one arrived when specs 03 and
+ * 06 met on the integration branch — neither could see it alone.
+ *
+ * The first: a tool wrapper that hands the WHOLE response object to a
+ * registered renderer which consumes the record. The wrapper never reads
+ * coverage because it never reads any field — it passes the tree on — and
+ * making it name the field to satisfy a regex would be the prose claim this
+ * rule exists to refuse.
+ *
+ * The second: a BLOCK that travels inside a surface which already consumes
+ * the record. `mcp-intent-chain` is spread into `renderDiagnosis`'s own
+ * output, under `renderDiagnosis`'s coverage clause, and its registration in
+ * `render-surfaces.ts` says so in its own words. A block cannot carry a
+ * second, narrower coverage sentence without contradicting the one above it.
+ *
+ * THIS IS THE THIRD OF THREE, so the escape hatch is now full. A fourth costs
+ * an argument, which is what the cap is for.
  */
 export const COVERAGE_EXEMPT_SURFACES: readonly CoverageExemptSurface[] = [
   {
@@ -91,5 +102,10 @@ export const COVERAGE_EXEMPT_SURFACES: readonly CoverageExemptSurface[] = [
     name: "mcp-tool-extend-diagnosis",
     reason:
       "reads a Diagnosis only to confirm the tree exists before writing to it; the answer it renders is the write's own receipt, not a statement about what the team knows",
+  },
+  {
+    name: "mcp-intent-chain",
+    reason:
+      "a block spread into renderDiagnosis, under that surface's own coverage clause; it also refuses on its own terms — it prints `never amended` only when the hub said so, and `this hub does not report it` otherwise",
   },
 ];

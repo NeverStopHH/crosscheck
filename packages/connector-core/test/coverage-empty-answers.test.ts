@@ -143,6 +143,11 @@ const tree = (
   coverage: CoverageRecord,
   overrides: Partial<Diagnosis> = {},
 ): Diagnosis => ({
+  // 06 makes the intent chain required on a Diagnosis. This fixture measured
+  // none, and `chainReported: false` is the honest value — "this hub does not
+  // report it", never the exonerating "nobody amended it".
+  intentChain: [],
+  chainReported: false,
   workContext: {
     id: "wc_01",
     sessionId: "cc_a-uuid",

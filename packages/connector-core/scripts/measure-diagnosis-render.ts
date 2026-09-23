@@ -108,6 +108,8 @@ const TREE: Diagnosis = {
   externalClaims: [],
   targets: [],
   targetsReported: true,
+  intentChain: [],
+  chainReported: true,
   droppedTargets: 0,
   truncated: false,
   droppedRows: 0,

@@ -220,7 +220,7 @@ const dispatchRecord = (
   // Bodies were validated by parseRecord against the kind's schema.
   switch (kind) {
     case "work_context":
-      return ingestWorkContext(deps, developerId, body as WorkContext);
+      return ingestWorkContext(deps, developerId, body as WorkContext, seq);
     case "target":
       return ingestTarget(deps, developerId, body as Target, seq);
     case "claim":

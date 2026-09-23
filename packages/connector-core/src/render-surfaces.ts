@@ -32,12 +32,14 @@ import {
 } from "./hints/render.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
 import {
+  quotingText,
   renderDiagnosis,
   renderSearchFilterRefusal,
   renderSearchResults,
   renderUnappliedFilters,
   renderUnusableQuery,
 } from "./mcp/render.ts";
+import { renderIntentChain } from "./mcp/render-intent-chain.ts";
 import { renderRefereeBrief } from "./mcp/render-referee.ts";
 import { composeDetachedTitle } from "./flows/work-context-title.ts";
 import type {
@@ -510,6 +512,28 @@ const diagnosisWith = (payload: string): Diagnosis => ({
   targets: [{ kind: payload, value: payload }],
   targetsReported: true,
   droppedTargets: 0,
+  // THE CHAIN SLOTS (spec 06 §5): an amendment's `reason` and a declared
+  // scope `value` are both agent-written and both now reach the reader, so
+  // the corpus has to plant in them too.
+  intentChain: [
+    {
+      version: 2,
+      amendsVersion: 1,
+      provenance: "declared",
+      summary: payload,
+      reason: payload,
+      scope: [{ role: "expected", kind: "file", value: payload }],
+    },
+    {
+      version: 1,
+      amendsVersion: null,
+      provenance: "declared",
+      summary: payload,
+      reason: null,
+      scope: [{ role: "non_goal", kind: "file", value: payload }],
+    },
+  ],
+  chainReported: true,
   truncated: false,
   droppedRows: 0,
   coverage: CORPUS_COVERAGE,
@@ -842,6 +866,23 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     module: "src/mcp/render.ts",
     framing: "framed",
     render: (payload) => renderDiagnosis(diagnosisWith(payload), NOW),
+  },
+  {
+    // A SURFACE, NOT A PRIMITIVE. It composes `renderIntent` and the
+    // sanitizer rather than adding a spelling of its own, so
+    // RENDER_LAYER_MODULES is untouched — registering here is what the §4.4
+    // meta-test asks of it, and the meta-test was RED until this entry
+    // existed.
+    kind: "corpus",
+    name: "mcp-intent-chain",
+    delivery: "pulled",
+    module: "src/mcp/render-intent-chain.ts",
+    framing: "framed",
+    // The chain is a BLOCK inside the diagnosis, which carries the notice in
+    // its own header — so the adapter supplies it here, exactly as the hint
+    // headers do for fragments that travel inside a larger answer.
+    render: (payload) =>
+      quotingText(...renderIntentChain(diagnosisWith(payload))),
   },
   {
     kind: "corpus",

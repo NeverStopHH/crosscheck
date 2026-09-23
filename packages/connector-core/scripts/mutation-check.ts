@@ -2529,8 +2529,14 @@ export const MUTATIONS: readonly Mutation[] = [
     // a secret-like sentence, so this gate is the declared path's half.
     label: "a declared intent skips the secret scan",
     file: `${CORE}/src/mcp/tools/set-intent.ts`,
-    from: "  if (containsSecret(parsed.value.summary)) {\n    return toolFailure(INTENT_SECRET_REFUSAL);\n  }\n",
-    to: "",
+    // MOVED WITH THE CODE, not deleted. The gate used to screen the summary
+    // alone; spec 06 gave `set_intent` a reason and two scope lists, and the
+    // gate grew to cover all four in one `.some(...)`. The anchor follows the
+    // predicate rather than the old line, so what it proves is unchanged: an
+    // intent reaches every teammate's unsolicited surface, and a credential in
+    // one must never leave the machine that typed it.
+    from: "    ].some((text) => containsSecret(text))",
+    to: "    ].some(() => false)",
     test: `${CORE}/test/set-intent.test.ts`,
     because:
       "credential-shaped text reaches every teammate's context through the " +
@@ -4666,7 +4672,11 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // Cost, not correctness — but the cost lands on a keystroke path.
     label: "the secret scan goes quadratic on a near-miss body",
-    file: `${CORE}/src/capture/secret-scan.ts`,
+    // THE SCANNER MOVED TO @crosscheck/schema so the hub and the connector
+    // screen by ONE definition (spec 06: the hub had no screen at all on the
+    // intent path). `capture/secret-scan.ts` is now a one-line re-export, so
+    // the anchor points at the one place the pattern exists.
+    file: "packages/schema/src/secret-scan.ts",
     from: "  /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{5,}/,",
     to: "  /eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{5,}/,",
     test: `${CORE}/test/secret-scan.test.ts`,
@@ -7057,6 +7067,378 @@ export const MUTATIONS: readonly Mutation[] = [
       "answered `unchanged`, was UPSERTed as `current`, and reached a " +
       "teammate's unsolicited surface saying the files had not changed",
   },
+  // ---------------------------------------------------------------------
+  // 06 — the intent ledger. Nine entries, one per acceptance test that names
+  // an anchor (INT-2, INT-3 x3, INT-4, INT-5, INT-6, INT-9, INT-10). Every
+  // one was applied and its guard watched go red before it was written here;
+  // INT-3a was NOT caught on the first pass, and the test that should have
+  // caught it gained the missing case rather than the anchor being dropped.
+  // ---------------------------------------------------------------------
+  {
+    // The whole point of the ledger is that it answers from POSITIONS. A
+    // clock answers too, plausibly, and wrongly: a spool flushed by a
+    // successor session gives an amendment a wall clock EARLIER than the edit
+    // it followed.
+    label: "the timing answer comes from a clock",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "    compareEvents(order, orderedEventOf(entry), edit.event) === -1;",
+    to: "    entry.capturedAt.getTime() < edit.event.observedAt.getTime();",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "AT-4's own failure condition — the answer depending on wall-clock " +
+      "timestamps from two processes rather than on a monotonic per-session " +
+      "sequence — reintroduced in the one function that exists to prevent it",
+  },
+  {
+    // Zero precedes every edit in the session, so a row whose position is
+    // MISSING becomes a row that was written first.
+    label: "a position nobody knows reads as position zero",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "  seqN: entry.seq,",
+    to: "  seqN: entry.seq ?? 0,",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "principle 5 inverted: the answer flips from `absent / not_comparable` " +
+      "to `predeclared / declared_before` — missing evidence STRENGTHENING a " +
+      "conclusion, and in the direction nobody reports, since a gap that " +
+      "exonerates is reported by nobody",
+  },
+  {
+    // There is no cross-session order to have. A subagent that sometimes
+    // inherits its parent's host key and sometimes mints its own makes the
+    // bare comparison silently wrong.
+    label: "an entry from another session is compared anyway",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from:
+      '  if (ownSession.length === 0) {\n' +
+      '    return answer("absent", "different_session");\n' +
+      '  }\n',
+    to: "",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "a foreign session's numbers are not smaller or larger than this " +
+      "session's, they are incomparable, and reporting them as an order is a " +
+      "verdict built on an arithmetic coincidence",
+  },
+  {
+    // 01 SEQ-5's epoch-split refusal, from this side. Two positions in
+    // different epochs are two rulers, and the numbers on them mean nothing
+    // to each other.
+    label: "an epoch mismatch is waved through as comparable",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    // MOVED WITH THE CODE. Step 4 now sets a refused row ASIDE rather than
+    // discarding its reason, so the push carries the entry as well. What the
+    // mutation proves is unchanged: an epoch mismatch waved through as
+    // comparable.
+    from: "    refused.push({ entry, reason: outcome.reason });\n    return false;",
+    to:
+      '    if (outcome.reason === "epoch_mismatch") {\n' +
+      "      return true;\n" +
+      "    }\n" +
+      "    refused.push({ entry, reason: outcome.reason });\n" +
+      "    return false;",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "a re-registered session restarts the count, so an amendment at 5 in " +
+      "the new epoch reads as preceding an edit at 7 in the old one — the " +
+      "exoneration #53 removed from the hook lane, re-entering through the " +
+      "ledger",
+  },
+  {
+    // The head is a COPY of the newest version's wire. A head written
+    // without its row reads correctly on every surface and has no history
+    // behind it at all.
+    label: "the head moves without a ledger row behind it",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "  const appended =\n    changes.intent === undefined ||",
+    to: "  const appended =\n    true ||\n    changes.intent === undefined ||",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the overwrite this whole spec was written to kill, restored silently: " +
+      "the current sentence still renders, and every sentence it replaced is " +
+      "gone with nothing to show that one ever existed",
+  },
+  {
+    // An agent's guess may be SHOWN. It may not replace what an agent
+    // declared on its own account.
+    label: "a derived intent overwrites a declared one",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "    next.provenance !== DECLARED_PROVENANCE\n  ) {",
+    to: "    false\n  ) {",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the derivation worker runs unattended, so a declared sentence would " +
+      "be replaced by a model's summary of it minutes later, with the head " +
+      "still labelled confidence 1",
+  },
+  {
+    // A model's guess about what a session meant, used as evidence against
+    // that same session.
+    label: "a derived non-goal becomes evidence against its own session",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: '  const declared = chain.filter((entry) => entry.provenance === "declared");',
+    to: "  const declared = chain;",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "the connector's own derivation would author the accusation and the " +
+      "hub would then report it as the session's declared position — an " +
+      "agent certifying its own work, which AT-3 forbids in the other " +
+      "direction and this forbids in this one",
+  },
+  {
+    // The checkable half stays checkable, or it becomes a second prose
+    // sentence nobody can verify.
+    label: "an uncheckable scope kind reaches the wire",
+    file: `${SCHEMA}/src/session.ts`,
+    from: 'export const INTENT_SCOPE_KINDS = ["file"] as const;',
+    to: 'export const INTENT_SCOPE_KINDS = ["file", "symbol"] as const;',
+    test: `${SCHEMA}/test/intent-scope.test.ts`,
+    because:
+      "`symbol` has no resolver anywhere in 1.0, so a scope entry naming one " +
+      "would match no edit ever and answer `scope_not_named` forever — a " +
+      "declaration that silently cannot be checked, which is worse than one " +
+      "that is refused",
+  },
+  {
+    // "Do not touch b.ts", followed by touching b.ts, is the most post-hoc
+    // thing a session can do.
+    label: "a violated non-goal is reported as a reason declared beforehand",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from:
+      "  const nonGoal = earliest(\n" +
+      '    named.filter((entry) => namesPath(entry, "non_goal", edit)),\n' +
+      "  );\n" +
+      "  if (nonGoal !== undefined && before(nonGoal)) {\n" +
+      '    return answer("post_hoc", "declared_non_goal_edited", nonGoal.version);\n' +
+      "  }\n",
+    to: "",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "this was the first draft's actual behaviour: a sentence saying the " +
+      "OPPOSITE was reported `predeclared`, principle 3 answered backwards " +
+      "on the one input this ledger exists to capture, and `role` was left a " +
+      "column nothing in 1.0 read",
+  },
+  {
+    // 1.0 spec 06 §10.1. The cap is what replaces a retention job — nothing
+    // sweeps this table — so the boundary is real and the head must not cross
+    // it.
+    label: "a capped append moves the head to a sentence the ledger refused",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        ? { ...changes, intent: row.workContext.intent }",
+    to: "        ? changes",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "`max(version)` would name one sentence and `work_contexts.intent` " +
+      "would show another, and the head would lose the hub-stamped position " +
+      "and `amends_version` it had, because the body never carries either",
+  },
+  {
+    // The outcome the connector reads. `rejected` is not available here: a
+    // rejected batch is a DELIVERED batch as far as the spool is concerned.
+    label: "the 21st amendment is reported to its author as recorded",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from:
+      "  return appended !== null && appended.capped\n" +
+      "    ? ignored(body.id, INTENT_CAP_ISSUE)\n" +
+      "    : accepted(body.id);",
+    to: "  return accepted(body.id);",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the author is told their sentence landed while the ledger holds the " +
+      "previous one, so they go looking for it on their own work context and " +
+      "find something else with no explanation anywhere",
+  },
+  {
+    // The connector half of the same answer.
+    label: "set_intent prints success over the hub's refusal to record",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: '  if (outcome?.status === "ignored") {',
+    to: "  if (false) {",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because:
+      "\"Recorded your intent\" over an `ignored` outcome is a false sentence " +
+      "on the one surface whose entire job is to record the sentence",
+  },
+  {
+    // The version key covers the whole declaration. Dropping the scope from
+    // it reduces the key to context + session + position + sentence, and a
+    // session whose position could not be allocated carries `seq: null` on
+    // every call — so the key becomes context + session + sentence.
+    label: "two declarations collapse onto one ledger row",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from:
+      "        ...[...input.scope]\n" +
+      "          .map((entry) => `${entry.role}\\t${entry.kind}\\t${entry.value}`)\n" +
+      "          .sort(),\n",
+    to: "",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the second declaration is answered `accepted` while its scope reached " +
+      "nothing, and the half that goes missing is the ACCUSING one — a " +
+      "declared non-goal that is gone turns `declared_non_goal_edited` into " +
+      "`predeclared`, missing evidence removing an accusation",
+  },
+  {
+    // The hub's ownership check is developer-scoped and never asks which
+    // SESSION is writing, so the ledger's author has to come from the record.
+    label: "a sentence is filed under the session that did not write it",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "          authorSessionId: body.sessionId,\n          intent: changes.intent as Intent,",
+    to: "          authorSessionId: row.workContext.sessionId,\n          intent: changes.intent as Intent,",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "step 3 of the ladder keeps an entry only while its author matches the " +
+      "edit's session, so a misfiled row becomes COMPARABLE with edits it has " +
+      "no relation to — and a comparable pair can answer `predeclared`, the " +
+      "value that exonerates, where the truth is `different_session`",
+  },
+  {
+    // Spec 06 added two agent-written text fields the connector is not the
+    // only writer of. `set_intent` screens the summary; nothing screened
+    // these, and a scope value renders OUTSIDE the quoting frame.
+    label: "a credential in a reason or a declared path reaches every reader",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "      intentTexts(body.intent).some((text) => containsSecret(text))",
+    to: "      containsSecret(body.intent.summary)",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "an intent is pushed into every teammate's reader unasked, so a token " +
+      "in an amendment reason or a declared path lands in another " +
+      "developer's agent context — and the scope value lands there bare, " +
+      "outside the frame that marks quoted data",
+  },
+  {
+    // The tool's own screen, which is what stops the text leaving the machine
+    // and is the only refusal the AUTHOR ever sees — a hub rejection reaches
+    // the spool, not the person.
+    label: "set_intent screens only its summary for credentials",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from:
+      "      parsed.value.reason ?? \"\",\n" +
+      "      ...(parsed.value.expectedSurface ?? []),\n" +
+      "      ...(parsed.value.nonGoals ?? []),\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because:
+      "a token in a declared path then travels to the hub and is refused " +
+      "there instead, so the author is told nothing and the credential has " +
+      "already left the machine — which is the one thing the local scan " +
+      "exists to prevent",
+  },
+  {
+    // 1.0 spec 06 §8.6 — "the chain never reaches an unsolicited surface".
+    // The head jsonb is projected WHOLE into presence, search, suspect,
+    // conference, hints and ghost-overlap.
+    label: "the head carries the whole amendment onto every briefing",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        : { ...changes, intent: appended.headWire };",
+    to: "        : { ...changes, intent: appended.wire };",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "a teammate who never opened the work context receives the amendment " +
+      "reason and every declared path in the payload of GET /api/presence " +
+      "and GET /api/search — unrendered today, and one renderer or one " +
+      "telemetry dump away from being published",
+  },
+  {
+    // 1.0 spec 06. An `observed` position is an UPPER BOUND, and the gate has
+    // to refuse it whatever the row claims about its own lane.
+    label: "an upper bound is read as a happens-before",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: '  provenance === "derived" ? "observed" : "emitted";',
+    to: '  provenance === provenance ? "emitted" : "observed";',
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "a detached worker's position records when the ROW was written, not " +
+      "when the thing it describes happened, so reading it as a point " +
+      "answers `predeclared` — the exonerating value — from a bound",
+  },
+  {
+    // INT-11's own guard. The published budget could never be the assertion
+    // that failed: 18 sequential calls under bun's default 5 000 ms timeout
+    // tripped the TIMEOUT at ~278 ms per call against a printed 2 000 ms.
+    label: "the budget assertion cannot fire before the timeout does",
+    file: `${CORE}/test/intent-budget.test.ts`,
+    from: "const PER_CALL_BUDGET_MS = LOCK_CEILING_MS + 2 * HTTP_TIMEOUT_MS;",
+    to: "const PER_CALL_BUDGET_MS = MCP_TIMEOUT_MS * 20;",
+    test: `${CORE}/test/intent-budget.test.ts`,
+    because:
+      "a budget a reader believes in that the timeout enforces instead is a " +
+      "number that stopped guarding anything — and its failure then reads " +
+      "like flake on a loaded machine, which invites raising the timeout " +
+      "rather than investigating",
+  },
+  {
+    // The version count was capped from the start and the scope list was not.
+    label: "the chain prints every declared path a version carries",
+    file: `${CORE}/src/mcp/render-intent-chain.ts`,
+    from: "  const shown = scope.slice(0, INTENT_SCOPE_MAX_SHOWN);",
+    to: "  const shown = scope;",
+    test: `${CORE}/test/intent-chain-render.test.ts`,
+    because:
+      "the wire allows 30 expected paths plus 30 non-goals PER VERSION, so " +
+      "the measured wire-legal shape rendered a 39 162-character block with " +
+      "a 7 748-character line, ahead of the claims and targets the reader " +
+      "actually asked for and with nothing saying it was long",
+  },
+  {
+    // 1.0 spec 06 §5, decision 10.2. The answer existed in the hub and
+    // reached no human at all.
+    label: "the timing answer never reaches the surface that needs it",
+    file: `${CLI}/src/cli/suspect-render.ts`,
+    from: "      : [`   ${intent}${timing === null ? \"\" : ` — ${timing}`}`]),",
+    to: "      : [`   ${intent}`]),",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "`suspect` names sessions beside their declared intent, so a reader " +
+      "who cannot tell a plan from an excuse reads every intent as a plan — " +
+      "which is principle 3 answered by omission on the surface where it " +
+      "costs most",
+  },
+  {
+    // 1.0 spec 06 §8.6, second half. The update path was fixed to store the
+    // head projection and this one still stored the whole wire — the path
+    // that runs when `set_intent` beats the spool, which is ordinary.
+    label: "a context born carrying an intent stores the whole wire as its head",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        .set({ intent: appended.headWire })",
+    to: "        .set({ intent: appended.wire })",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "`work_contexts.intent` is projected WHOLE into presence, search, " +
+      "suspect, hints and ghost-overlap, so the amendment reason and the " +
+      "declared scope ride every unsolicited surface §8.6 exists to keep clean",
+  },
+  {
+    // FOUND BY AN INDEPENDENT REFUTER, not by the author — the one class of
+    // defect an agent checking its own work is structurally unable to see.
+    label: "an accusation nobody could order becomes an exoneration",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "  if (refusedNaming.length > 0) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "a session that declared a path a NON-GOAL and edited it answers " +
+      "`post_hoc`; let that row's position be unusable — `seq: null` from two " +
+      "agents in one worktree, or the `observed` lane every Stop-time git " +
+      "edit uses — and step 6 answers `predeclared` from whatever survived, " +
+      "with `indeterminacy: null` so no reader can see what was dropped",
+  },
+  {
+    // FOUND BY AN INDEPENDENT REFUTER. The braced-import branch asks both
+    // sets; this one asked only the table names.
+    label: "a namespace import reaches the ledger's readers unflagged",
+    file: `${SERVER}/test/intent-ledger-authority.test.ts`,
+    from: "      if (LEDGER_READERS.has(use[1])) {",
+    to: "      if (false) {",
+    test: `${SERVER}/test/intent-ledger-authority.test.ts`,
+    because:
+      "`import * as ledger` then `ledger.explanationTimingFor(…)` reaches " +
+      "every row the two tables hold, and INT-7's own comment says the wrong " +
+      "answer there is the PERMISSIVE one — a fence that consults the ledger " +
+      "stops refusing and nothing goes red",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7117,7 +7499,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
- * PRINTS: packages/cli/test/pins-cli.test.ts 2
+ * PRINTS: packages/cli/test/pins-cli.test.ts 3
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
  * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 7
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
@@ -7197,6 +7579,8 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-render.test.ts 3
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
+ * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
+ * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
@@ -7220,7 +7604,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
  * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
- * PRINTS: packages/connector-core/test/set-intent.test.ts 1
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 3
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
  * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
@@ -7235,6 +7619,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
+ * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
  * PRINTS: packages/server/test/claim-revalidations.test.ts 10
@@ -7247,6 +7632,9 @@ interface Outcome {
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/intent-ladder.test.ts 7
+ * PRINTS: packages/server/test/intent-ledger-authority.test.ts 1
+ * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1

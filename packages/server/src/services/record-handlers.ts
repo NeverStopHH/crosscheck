@@ -1,5 +1,10 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { isBindableCommit, isSeqStamp } from "@crosscheck/schema";
+import {
+  MAX_INTENT_CHAIN_VERSIONS,
+  containsSecret,
+  isBindableCommit,
+  isSeqStamp,
+} from "@crosscheck/schema";
 import type {
   Claim,
   ClaimCommitBinding,
@@ -21,6 +26,7 @@ import {
   workContextTargets,
 } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
+import { appendIntentVersion } from "./intent-ledger.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
 import {
   recordSessionEvent,
@@ -72,6 +78,79 @@ const duplicate = (id?: string): HandlerOutcome => ({
   status: "duplicate",
   ...(id === undefined ? {} : { id }),
 });
+
+/**
+ * THE RECORD SURVIVED; THE CHANGE INSIDE IT DID NOT.
+ *
+ * `ignored` has always been a first-class outcome of this endpoint and the
+ * work-context path had no constructor for it, so the only way to refuse a
+ * change here was `rejected` — which DESTROYS the record, because the
+ * connector's flush advances its spool cursor on any 2xx and a refused batch
+ * is a delivered batch as far as the spool is concerned.
+ *
+ * THE ISSUE IS NOT OPTIONAL. An ignored record with nothing to read is a
+ * silent drop, and the author would go looking for their sentence on their own
+ * work context and find the previous one with no explanation anywhere.
+ */
+const ignored = (id: string, issue: string): HandlerOutcome => ({
+  status: "ignored",
+  id,
+  issues: [issue],
+});
+
+/**
+ * THE HUB SCREENS WHAT ONLY THE HUB SEES EVERY WRITER OF.
+ *
+ * `set_intent` screens its `summary` before anything leaves the machine, and
+ * that is the right place for it — a hit means the record never travels. But
+ * spec 06 added two more agent-written text fields, an amendment `reason` and
+ * every `intent_scope.value`, and NEITHER the tool nor the hub looked at
+ * them. Measured against a real hub: a `reason` reading
+ * "ZQXMARK5 AKIA…" and a scope value carrying a `ghp_` token were both
+ * accepted, stored, and rendered into every reader of that work context —
+ * the scope value OUTSIDE the quoting frame.
+ *
+ * The repo's rule is "one helper, every writer" (capture-bookkeeping.ts). The
+ * connector is not every writer: anything posting to `/api/records` reaches
+ * these fields without passing a tool. So the screen is here as well, where
+ * every writer does pass, and the scanner moved to `schema` so both sides
+ * share one definition rather than two that can drift.
+ *
+ * REFUSED, NOT REDACTED. A redacted derivative still leaks structure, and the
+ * author has to learn that the sentence did not land — silently storing a
+ * blanked one would tell them it did.
+ */
+const INTENT_SECRET_ISSUE =
+  "intent: a credential-shaped value was found in the amendment reason or a " +
+  "declared path, so this intent was not recorded — an intent is pushed into " +
+  "every teammate's reader unasked, and a redacted copy still leaks structure";
+
+/** Every agent-written text field an intent carries, for the screen above. */
+const intentTexts = (intent: Intent): readonly string[] => {
+  const raw = intent as Record<string, unknown>;
+  const reason = typeof raw["reason"] === "string" ? [raw["reason"]] : [];
+  const scope = (["expectedSurface", "nonGoals"] as const).flatMap((key) => {
+    const declared = raw[key];
+    return Array.isArray(declared)
+      ? declared.flatMap((entry: unknown) => {
+          const value = (entry as Record<string, unknown> | null)?.["value"];
+          return typeof value === "string" ? [value] : [];
+        })
+      : [];
+  });
+  // The summary is screened at the tool and screened again here: a second
+  // writer that skips the tool is exactly the door this closes.
+  return [intent.summary, ...reason, ...scope];
+};
+
+/**
+ * What the author reads when the chain is full. It names the bound, because
+ * "not recorded" without a number reads like a failure rather than a limit.
+ */
+export const INTENT_CAP_ISSUE =
+  `intent: this work context already holds the ${String(MAX_INTENT_CHAIN_VERSIONS)} intent ` +
+  "versions the ledger keeps, so this sentence was not recorded and the stored " +
+  "intent is unchanged — open a new work context to state a new goal";
 
 const resolveSessionOwner = async (
   db: DbExecutor,
@@ -254,6 +333,7 @@ const updateExistingWorkContext = async (
   deps: ExecutorDeps,
   developerId: string,
   body: WorkContext,
+  seq: SeqField | undefined,
 ): Promise<HandlerOutcome> => {
   const rows = await deps.db
     .select({ workContext: workContexts, ownerId: agentSessions.developerId })
@@ -272,10 +352,64 @@ const updateExistingWorkContext = async (
   if (changes === null) {
     return duplicate(body.id);
   }
+  // THE LEDGER IS WRITTEN BEFORE THE HEAD, AND THE HEAD BECOMES A COPY OF WHAT
+  // THE LEDGER STORED. Writing the head from `changes` instead would let the
+  // two disagree the moment the hub stamps anything the body did not carry —
+  // which it now does, for the position and for `amends_version`.
+  //
+  // `mergeIntent` DECIDES WHETHER THERE IS AN INTENT CHANGE AT ALL, and a
+  // refused merge appends nothing: a derived intent arriving behind a declared
+  // one is not intent evolution, and recording it would put a model sentence
+  // nobody accepted within reach of every renderer.
+  const appended =
+    changes.intent === undefined ||
+    changes.intent === null ||
+    JSON.stringify(changes.intent) === JSON.stringify(row.workContext.intent)
+      ? null
+      : await appendIntentVersion(deps, {
+          workContextId: body.id,
+          // THE SESSION THAT WROTE IT, NOT THE ONE THAT OPENED THE CONTEXT.
+          // This read `row.workContext.sessionId` — the CREATING session — so
+          // a second session of the same developer had its sentence filed
+          // under the first session's name. The ownership check above cannot
+          // catch that: it is developer-scoped and never asks which SESSION
+          // is writing.
+          //
+          // The direction is what makes it serious. Step 3 of the ladder
+          // keeps an entry only while `authorSessionId === edit.event
+          // .sessionId`, so a misfiled row becomes COMPARABLE with edits it
+          // has no relation to, and a comparable pair can answer
+          // `predeclared` — the value that exonerates. Filed honestly the
+          // same pair answers `absent / different_session`, which is the
+          // truth: there is no cross-session order to have. The create path
+          // one branch over already used `body.sessionId`; this is that rule,
+          // applied where it was missing.
+          authorSessionId: body.sessionId,
+          intent: changes.intent as Intent,
+          seq,
+        });
+  // A CAPPED APPEND LEAVES THE HEAD EXACTLY WHERE IT WAS, stated rather than
+  // implied: falling through to `changes` here would move the head to a
+  // sentence the ledger refused to store, so `max(version)` would name one
+  // sentence and `work_contexts.intent` would show another — and the head
+  // would lose the hub-stamped position and `amends_version` it had, since
+  // the body never carries either. Every other field on the record still
+  // lands; only the intent stays put.
+  const stored =
+    appended === null
+      ? changes
+      : appended.capped
+        ? { ...changes, intent: row.workContext.intent }
+        // THE HEAD, NOT THE WHOLE RECORD. §8.6 keeps the chain off every
+        // unsolicited surface, and this jsonb is projected WHOLE into
+        // presence, search, suspect, conference, hints and ghost-overlap —
+        // so a head that copied the wire carried the amendment reason and
+        // the declared scope onto all of them in payload.
+        : { ...changes, intent: appended.headWire };
   // session_id stays the creating session — updates never re-home a context.
   await deps.db
     .update(workContexts)
-    .set({ ...changes, updatedAt: deps.now() })
+    .set({ ...stored, updatedAt: deps.now() })
     .where(eq(workContexts.id, body.id));
   await refreshNormalizedDoc(deps.db, body.id);
   // Outbox discipline: ids and metadata only — WHICH fields changed, never
@@ -283,17 +417,24 @@ const updateExistingWorkContext = async (
   await appendEvent(deps, EVENT_KINDS.WORK_CONTEXT_UPDATED, {
     workContextId: body.id,
     developerId,
-    changed: Object.entries(changes)
+    changed: Object.entries(stored)
       .filter(([field, value]) => value !== row.workContext[field as keyof WorkContextRow])
       .map(([field]) => field),
   });
-  return accepted(body.id);
+  // THE CAP IS REPORTED, NOT SWALLOWED. Every other field on this record did
+  // land — the title, the status, the description — so the record is not
+  // rejected; the one thing that did not land is named, and the outcome says
+  // `ignored` rather than `accepted` so a connector can tell its author.
+  return appended !== null && appended.capped
+    ? ignored(body.id, INTENT_CAP_ISSUE)
+    : accepted(body.id);
 };
 
 export const ingestWorkContext = async (
   deps: Deps,
   developerId: string,
   body: WorkContext,
+  seq?: SeqField,
 ): Promise<HandlerOutcome> => {
   // One transaction so the conflict probe, the ownership check, and the
   // update all act on the same snapshot — no TOCTOU between them.
@@ -309,6 +450,16 @@ export const ingestWorkContext = async (
     );
     if (sessionIssue !== null) {
       return rejectedOutcome(sessionIssue);
+    }
+    // BEFORE ANYTHING IS STORED, and before either path branches: this is the
+    // one point both the create and the update pass through, so one check
+    // here cannot be bypassed by whichever path a record happens to take.
+    if (
+      body.intent !== undefined &&
+      body.intent !== null &&
+      intentTexts(body.intent).some((text) => containsSecret(text))
+    ) {
+      return rejectedOutcome(INTENT_SECRET_ISSUE);
     }
     const inserted = await tx
       .insert(workContexts)
@@ -326,7 +477,35 @@ export const ingestWorkContext = async (
       .onConflictDoNothing()
       .returning({ id: workContexts.id });
     if (inserted[0] === undefined) {
-      return updateExistingWorkContext(txDeps, developerId, body);
+      return updateExistingWorkContext(txDeps, developerId, body, seq);
+    }
+    // THE FIRST VERSION CAN BE BORN ON THIS PATH, and an UPDATE-only ledger
+    // would miss it. `set_intent` posts DIRECTLY over HTTP while the
+    // work-context create travels via the SPOOL, so a set_intent issued before
+    // the session's first flush reaches the hub first and CREATES the context
+    // already carrying an intent. `workContextChanges` never runs on that
+    // record, so appending only where it reports a change leaves that sentence
+    // outside the ledger entirely: the head reads v1 and max(version) says
+    // nothing at all.
+    if (body.intent !== undefined) {
+      const appended = await appendIntentVersion(txDeps, {
+        workContextId: body.id,
+        authorSessionId: body.sessionId,
+        intent: body.intent,
+        seq,
+      });
+      await tx
+        .update(workContexts)
+        // THE HEAD PROJECTION, on this path too. The update path was fixed to
+        // store `headWire` and this one still stored the whole wire record —
+        // the same §8.6 leak on the path that runs when `set_intent` beats the
+        // spool, which is the ORDINARY case for a session that declares its
+        // intent before its first flush. `work_contexts.intent` is projected
+        // whole to presence, search, suspect, hints and ghost-overlap, so the
+        // amendment reason and the declared scope travelled every unsolicited
+        // surface from here while the other path was clean.
+        .set({ intent: appended.headWire })
+        .where(eq(workContexts.id, body.id));
     }
     await refreshNormalizedDoc(tx, body.id);
     await appendEvent(txDeps, EVENT_KINDS.WORK_CONTEXT_CREATED, {

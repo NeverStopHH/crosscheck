@@ -99,6 +99,7 @@ const candidateWith = (payload: string): SuspectCandidate => ({
   authorTouches: 3,
   lift: 0.67,
   sources: [payload],
+  intentTiming: null,
   readerMuted: true,
   isSelf: false,
 });

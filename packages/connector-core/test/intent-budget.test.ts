@@ -1,0 +1,448 @@
+/**
+ * INT-11 — THE BUDGET IS MEASURED, NOT ASSERTED.
+ *
+ * §6 claims two things about `set_intent` after this spec: that it adds NO new
+ * hub round trip, and that the `seq` reservation it gained costs a bounded
+ * amount of lock time. Both were prose. Every sibling spec discharges the same
+ * obligation with a numbered test (CCB-8, COV-8, VER-8, PIL-9, EV-8); INT-5 was
+ * pointed at here by mistake and measures nothing at all.
+ *
+ * THE LOAD-BEARING HALF IS A COUNT, NOT A CLOCK. `capture-latency.test.ts`
+ * learned this the expensive way: an assertion that a warm path is no slower
+ * than a cold one still passed with the cache switched off, because a broken
+ * cache makes warm resemble cold rather than exceed it. A wall clock cannot see
+ * a round trip that was added; a request counter can, on every machine, under
+ * any load. So the "no new HTTP call" claim is asserted as the NUMBER of
+ * requests the hub serves during one `set_intent`, and the milliseconds below
+ * it are measurements that print, bounded by budgets rather than by each other.
+ *
+ * AND THE COUNT HAS A REACH, WHICH THIS SAYS OUT LOUD RATHER THAN IMPLYING.
+ * The counter runs across the tool call and for DEFERRED_SETTLE_MS after it
+ * returns, so a debounced or batched post is caught as well as a synchronous
+ * one. What it cannot see is a round trip booked onto a LATER HOOK — the shape
+ * `set_intent` already uses for the ghost check's model half, which it hands to
+ * the next UserPromptSubmit. No in-process counter can see that, and a test
+ * that quietly did not would be making the same over-claim this file exists to
+ * criticise. The first version of this test read the counter the instant the
+ * tool returned, measured ~50 ms of window, and said "a counter can, on every
+ * machine, under any load" anyway; an adversary reading this branch caught it.
+ *
+ * THE RESERVATION IS TIMED ON ITS OWN. An end-to-end delta between two
+ * `set_intent` calls is dominated by the hub round trips either way, so a
+ * regression in the lock would hide inside the noise. `allocateSeq` is timed
+ * directly instead: it is the whole of what this spec added to the tool.
+ *
+ * THE HOOK HALF IS NOT DUPLICATED HERE. §6 also claims the 800 ms hook pair is
+ * untouched, and `connector-claude/test/hook-time-budget.test.ts` already drives
+ * SessionStart, SessionEnd and PostToolUse through the real binary against
+ * ceilings derived from their own ratio constants. A second copy of that
+ * measurement in this file would be a second thing to keep in step, and the
+ * copy is exactly where a hook would go quietly unmeasured. What this spec owes
+ * beyond it is the structural claim that nothing REACHES a hook path at all,
+ * and INT-7 proves that one by walking every module rather than by timing it.
+ *
+ * THE CONTENDED CEILING IS DERIVED, NOT QUOTED. §6 was written when the state
+ * lock retried 5 times and said "~100 ms"; #53 raised
+ * SESSION_STATE_LOCK_RETRIES to 20 to stop losing positions under contention,
+ * which moved the worst case to 400 ms without moving the sentence. The ceiling
+ * here is computed from the two constants, so the next change to either is
+ * carried into this bound by arithmetic rather than by somebody remembering.
+ */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { rm } from "node:fs/promises";
+
+import { createDb, createServer } from "@crosscheck/server";
+import type { Db } from "@crosscheck/server";
+
+import {
+  MAX_INTENT_CHAIN_VERSIONS,
+  MAX_INTENT_SCOPE_ENTRIES,
+} from "@crosscheck/schema";
+
+import {
+  HTTP_TIMEOUT_MS,
+  MCP_TIMEOUT_MS,
+  SESSION_STATE_LOCK_RETRIES,
+  SPOOL_LOCK_RETRY_DELAY_MS,
+} from "../src/constants.ts";
+import { prepareMcp } from "../src/mcp/context.ts";
+import { findTool } from "../src/mcp/tools/index.ts";
+import {
+  allocateSeq,
+  readSessionState,
+  writeSessionState,
+} from "../src/state/session-state.ts";
+import type { Env } from "../src/index.ts";
+import { makeHome, makeRepo } from "./helpers.ts";
+
+const ADMIN_TOKEN = "intent-budget-admin";
+const REPO_ID = "github.com/acme/api";
+const TITLE = "detached@0badc0f · fix: refresh 500s @ api";
+
+/**
+ * The epoch is a UUID by schema (`SeqStampSchema`), not a readable label: a
+ * fixture spelling it `ep_…` is refused by the hub, which is how this test
+ * found out. Fixed here so the shape is the production shape.
+ */
+const SEQ_EPOCH = "3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+
+/**
+ * The requests one `set_intent` makes: the `POST /api/records` carrying the
+ * work-context UPDATE, and the bounded ghost-overlap `GET`. This spec adds
+ * NEITHER — the intent still travels on the existing record — and that is what
+ * this number is here to keep true. A third request appearing is the defect;
+ * the count going DOWN is also a defect, and also caught, because a dropped
+ * ghost check would be a silent loss of the overlap notice.
+ */
+const SET_INTENT_HUB_REQUESTS = 2;
+
+/** Worst case ONE acquisition of the session-state lock can cost. */
+const ONE_ACQUISITION_MS = SESSION_STATE_LOCK_RETRIES * SPOOL_LOCK_RETRY_DELAY_MS;
+
+/**
+ * How many times `set_intent` takes that lock on the normal path.
+ *
+ * TWO, AND A THIRD WHEN A GHOST NOTICE IS SHOWN — `allocateToolSeq` on the
+ * way in, `updateSessionState` after the post, and `deliverGhostNotice`'s own
+ * write. §6 and the first version of this file both derived the arithmetic
+ * from the two constants correctly and then applied it to ONE acquisition.
+ *
+ * Measured against a concurrent holder of the lock file, three runs: 873.1,
+ * 891.8 and 895.9 ms — a mean of 887 ms, or 2.2x the single-acquisition
+ * ceiling this used to print, and consistent with 2 x 400 ms plus work.
+ */
+const ACQUISITIONS_PER_CALL = 2;
+
+/** The contended ceiling for one whole call, as the code actually spends it. */
+const LOCK_CEILING_MS = ONE_ACQUISITION_MS * ACQUISITIONS_PER_CALL;
+
+/**
+ * THE CALLS THIS FILE MAKES BEFORE THE SAMPLING LOOP: one warm-up and one
+ * counted call, both in the first test, both on this same work context.
+ */
+const SET_INTENT_CALLS_BEFORE_SAMPLING = 2;
+
+/**
+ * How long the request counter keeps running after the tool has returned.
+ *
+ * Long enough to catch a flush debounced by a few hundred milliseconds — the
+ * shape this path would most plausibly grow, since `set_intent` already books
+ * the ghost check's model half for a later turn. It is NOT long enough to
+ * catch work booked onto a later HOOK, and no in-process counter can be; that
+ * limit is stated in the file header rather than hidden behind a number.
+ */
+const DEFERRED_SETTLE_MS = 750;
+
+/**
+ * Enough samples for a p95 to mean something, DERIVED FROM THE CAP rather than
+ * chosen.
+ *
+ * Every call in this file amends the SAME work context, and §10.1 caps a
+ * chain at MAX_INTENT_CHAIN_VERSIONS: past it the hub returns `ignored`, the
+ * head stays put and `set_intent` reports the refusal — correctly. A fixed 20
+ * here walked straight into that and the timing test failed on an outcome, not
+ * on a clock. The bound is arithmetic now, so raising the cap widens the
+ * sample and lowering it below the reserved calls fails loudly instead of
+ * quietly measuring refusals.
+ */
+const SAMPLES = MAX_INTENT_CHAIN_VERSIONS - SET_INTENT_CALLS_BEFORE_SAMPLING;
+
+/**
+ * THE PER-CALL BUDGET, DERIVED FROM WHAT ONE CALL MAY ACTUALLY SPEND: its lock
+ * acquisitions at their contended ceiling, plus its two hub round trips at the
+ * HTTP timeout. Nothing here is tuned.
+ *
+ * It replaces `MCP_TIMEOUT_MS * 0.2`, which was 2 000 ms and could never be
+ * the assertion that failed. With SAMPLES sequential calls inside one `test()`
+ * under bun's default 5 000 ms timeout, a UNIFORM regression tripped the
+ * TIMEOUT at 5000/18 ~ 278 ms per call — 7.2x below the number the file
+ * printed to the reader. Measured: 200 ms of extra lock time per call gave
+ * p50 276.3 ms and 3 pass / 0 fail; 300 ms failed with "this test timed out",
+ * an outcome that reads like flake on a loaded machine and invites someone to
+ * raise the timeout rather than investigate.
+ */
+const PER_CALL_BUDGET_MS = LOCK_CEILING_MS + 2 * HTTP_TIMEOUT_MS;
+
+/**
+ * The case's own timeout, set so the ASSERTION is always what fails first.
+ *
+ * Asserted below rather than trusted: a default that happens to be tighter
+ * than the budget turns every regression into a timeout, which is exactly how
+ * the published number stopped being the guard.
+ */
+const CASE_TIMEOUT_MS = 90_000;
+
+let db: Db;
+let server: ReturnType<typeof Bun.serve>;
+let hubUrl: string;
+let hubRequests = 0;
+const cleanups: string[] = [];
+
+interface Developer {
+  readonly apiKey: string;
+  readonly home: string;
+  readonly repo: string;
+  readonly env: Env;
+  readonly hostSessionKey: string;
+  readonly workContextId: string;
+}
+
+let alice: Developer;
+
+const post = async (path: string, apiKey: string, body: unknown): Promise<Response> =>
+  fetch(`${hubUrl}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+/**
+ * The session's current position, read straight from state.
+ *
+ * A reservation that failed leaves the row with `seq: null` and
+ * `seq_reason: allocation_failed` — a call that returns SUCCESS and costs
+ * less, which is exactly the cheapening the sampling loop must not measure.
+ */
+const readSeqStamp = async (
+  home: string,
+  hostSessionKey: string,
+): Promise<{ epoch: string; from: number } | null> => {
+  const state = await readSessionState(home, hostSessionKey);
+  return state === null || state.seqEpoch === null
+    ? null
+    : { epoch: state.seqEpoch, from: state.eventSeq };
+};
+
+const percentile = (values: readonly number[], fraction: number): number => {
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.ceil(fraction * sorted.length) - 1,
+  );
+  return sorted[Math.max(0, index)] ?? 0;
+};
+
+const setUp = async (): Promise<Developer> => {
+  const created = await post("/api/developers", ADMIN_TOKEN, {
+    name: "Alice",
+    email: "alice-budget@example.com",
+  });
+  const account = (await created.json()) as {
+    data: { developer: { id: string }; apiKey: string };
+  };
+  const apiKey = account.data.apiKey;
+  const home = await makeHome("ib-alice");
+  const repo = await makeRepo("ib-alice", { remote: "git@github.com:acme/api.git" });
+  cleanups.push(home, repo);
+  const hostSessionKey = "ib-alice-uuid";
+  const sessionId = `cc_${hostSessionKey}`;
+  const workContextId = `wc_${sessionId}`;
+  const startedAt = new Date().toISOString();
+  await post("/api/sessions", apiKey, {
+    id: sessionId,
+    agentKind: "claude-code",
+    repo: REPO_ID,
+    branch: "detached@0badc0f",
+    baseCommit: "a1b2c3d4",
+    status: "analyzing",
+  });
+  await post("/api/records", apiKey, {
+    records: [
+      {
+        kind: "work_context",
+        op: "update",
+        id: workContextId,
+        sessionId,
+        repo: REPO_ID,
+        title: TITLE,
+        status: "analyzing",
+        capturedAt: startedAt,
+      },
+    ],
+  });
+  await writeSessionState(home, {
+    hostSessionKey,
+    crosscheckSessionId: sessionId,
+    workContextId,
+    repoId: REPO_ID,
+    repoRoot: repo,
+    hubUrl,
+    developerId: account.data.developer.id,
+    startedAt,
+    lastHeartbeatAt: startedAt,
+    seenTargets: [],
+    workContextTitle: TITLE,
+    workContextStatus: "analyzing",
+    seqEpoch: SEQ_EPOCH,
+    eventSeq: 0,
+  });
+  return {
+    apiKey,
+    home,
+    repo,
+    hostSessionKey,
+    workContextId,
+    env: {
+      CROSSCHECK_HOME: home,
+      CROSSCHECK_HUB_URL: hubUrl,
+      CROSSCHECK_API_KEY: apiKey,
+    },
+  };
+};
+
+/**
+ * The MOST EXPENSIVE documented shape of the operation, which this file used
+ * to measure none of.
+ *
+ * §6 states the hub cost per intent change as "one max(version) probe, one
+ * insert and at most 2 x MAX_INTENT_SCOPE_ENTRIES scope inserts, all inside
+ * the transaction" — and the sampling loop drove `{summary}` only, so it
+ * measured zero of the up-to-60 scope inserts and zero of the reason write.
+ * The clause §6 points at as its measurement measured the cheap path.
+ *
+ * Full on both roles, so the transaction is held for as long as the wire
+ * permits and a regression in that hold shows up in the p95 this file prints.
+ */
+const FULL_SCOPE = Array.from(
+  { length: MAX_INTENT_SCOPE_ENTRIES },
+  (_unused, index) => `packages/measured/path-${String(index)}.ts`,
+);
+
+const callSetIntent = async (summary: string): Promise<boolean> => {
+  const tool = findTool("set_intent");
+  if (tool === undefined) {
+    throw new Error("no tool set_intent");
+  }
+  const setup = await prepareMcp(alice.env, alice.repo);
+  if (!setup.ok) {
+    throw new Error(`prepareMcp failed: ${setup.message}`);
+  }
+  const result = await tool.run(setup.ctx, {
+    summary,
+    // THE EXPENSIVE SHAPE, every sample. Measuring `{summary}` alone left
+    // §6's own cost claim — up to 60 scope inserts inside one transaction —
+    // with no measurement at all.
+    expectedSurface: FULL_SCOPE,
+    nonGoals: FULL_SCOPE,
+    reason: "Measuring the shape §6 actually costs.",
+  });
+  return result.isError !== true;
+};
+
+beforeAll(async () => {
+  db = await createDb();
+  const app = createServer({ db, adminToken: ADMIN_TOKEN });
+  server = Bun.serve({
+    port: 0,
+    fetch: (request, srv) => {
+      hubRequests += 1;
+      return app.fetch(request, srv);
+    },
+  });
+  hubUrl = `http://127.0.0.1:${String(server.port)}`;
+  alice = await setUp();
+});
+
+afterAll(async () => {
+  server.stop(true);
+  await Promise.all(cleanups.map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe("INT-11 — what this spec costs set_intent", () => {
+  test("no hub round trip is added: the request count is the one a count can see", async () => {
+    // One warm-up outside the count: `prepareMcp` and the first connection
+    // are not what this number is about.
+    expect(await callSetIntent("warm up the path")).toBe(true);
+
+    const before = hubRequests;
+    expect(await callSetIntent("Make verifyToken refetch the JWKS")).toBe(true);
+    const synchronous = hubRequests - before;
+
+    // AND THEN WAIT, because the first version of this test did not.
+    //
+    // Reading the counter the instant the tool returns measures only the
+    // tool's own duration — about 50 ms — so any round trip DEFERRED past
+    // that return went uncounted: a debounced flush, a batched post, work
+    // booked onto a later turn. This file's thesis is that a counter sees
+    // what a wall clock cannot; it only did so for SYNCHRONOUS work, which is
+    // the narrower claim it was not making.
+    //
+    // `set_intent` already books one such debt — the ghost check's model half
+    // is left for the next UserPromptSubmit — so a second deferred call is
+    // the most likely shape for this path to grow.
+    await Bun.sleep(DEFERRED_SETTLE_MS);
+    const settled = hubRequests - before;
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `[intent-budget] set_intent hub requests: ${String(synchronous)} ` +
+        `synchronous, ${String(settled)} after ${String(DEFERRED_SETTLE_MS)} ms`,
+    );
+    expect(synchronous).toBe(SET_INTENT_HUB_REQUESTS);
+    expect(settled).toBe(SET_INTENT_HUB_REQUESTS);
+  });
+
+  test("the seq reservation costs a bounded, printed amount of lock time", async () => {
+    const samples: number[] = [];
+    for (let index = 0; index < SAMPLES; index += 1) {
+      const started = Bun.nanoseconds();
+      const range = await allocateSeq(alice.home, alice.hostSessionKey, 1);
+      samples.push((Bun.nanoseconds() - started) / 1e6);
+      // The measurement is worthless if the allocator refused: a null answer
+      // skips the write and would time the cheap path.
+      expect(range).not.toBeNull();
+    }
+
+    const p50 = percentile(samples, 0.5);
+    const p95 = percentile(samples, 0.95);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[intent-budget] allocateSeq p50 ${p50.toFixed(2)} ms, p95 ${p95.toFixed(2)} ms ` +
+        `(uncontended; contended ceiling ${String(LOCK_CEILING_MS)} ms = ` +
+        `${String(ACQUISITIONS_PER_CALL)} acquisitions x ` +
+        `${String(SESSION_STATE_LOCK_RETRIES)} retries x ${String(SPOOL_LOCK_RETRY_DELAY_MS)} ms)`,
+    );
+
+    // Uncontended, this is a read-transform-write of one small file. The bound
+    // is the CONTENDED ceiling because that is the number §6 owes a reader:
+    // an uncontended p95 anywhere near it means the lock is being taken twice.
+    expect(p95).toBeLessThan(LOCK_CEILING_MS);
+  });
+
+  test("set_intent end to end stays far inside the MCP ceiling", async () => {
+    const samples: number[] = [];
+    for (let index = 0; index < SAMPLES; index += 1) {
+      const started = Bun.nanoseconds();
+      const ok = await callSetIntent(`Measure the tool, sample ${String(index)}`);
+      samples.push((Bun.nanoseconds() - started) / 1e6);
+      // A refused call is a CHEAPER call, so a p95 built from refusals would
+      // read better the more of them there were. This is the assertion that
+      // keeps the measurement a measurement.
+      expect(ok).toBe(true);
+      // AND A CALL THAT LOST ITS POSITION IS CHEAPER TOO, which `ok` does not
+      // see: an `allocation_failed` reservation still returns success. The
+      // comment above named the cheapening and the guard did not cover this
+      // half of it — a contended run would have posted 18 positionless rows,
+      // each unable to answer AT-4, and reported a healthy p95.
+      const stamp = await readSeqStamp(alice.home, alice.hostSessionKey);
+      expect(stamp).not.toBeNull();
+    }
+
+    const p50 = percentile(samples, 0.5);
+    const p95 = percentile(samples, 0.95);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[intent-budget] set_intent p50 ${p50.toFixed(1)} ms, p95 ${p95.toFixed(1)} ms ` +
+        `(budget ${String(PER_CALL_BUDGET_MS)} ms = ${String(ACQUISITIONS_PER_CALL)} lock ` +
+        `acquisitions + 2 round trips; MCP ceiling ${String(MCP_TIMEOUT_MS)})`,
+    );
+
+    // THE ASSERTION MUST BE ABLE TO FAIL BEFORE THE TIMEOUT DOES, asserted
+    // rather than assumed. Under bun's default 5 000 ms this loop tripped the
+    // TIMEOUT at about 278 ms per call while the file printed a 2 000 ms
+    // budget — so the guard a reader believed in was never the guard, and a
+    // 6.3x regression passed green.
+    expect(SAMPLES * PER_CALL_BUDGET_MS).toBeLessThan(CASE_TIMEOUT_MS);
+    expect(p95).toBeLessThan(PER_CALL_BUDGET_MS);
+  }, CASE_TIMEOUT_MS);
+});
