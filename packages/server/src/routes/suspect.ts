@@ -25,7 +25,7 @@ import { readCoverage } from "../services/coverage.ts";
 import { resolveSuspectScope, suspectSessions } from "../services/suspect.ts";
 import { readTeamSettings } from "../services/team-settings.ts";
 import { computeVerdict } from "../services/verdict.ts";
-import { recordAttribution } from "../services/pilot.ts";
+import { countCoverageAnswer, recordAttribution } from "../services/pilot.ts";
 import { readLiveWaiver } from "../services/waivers.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
@@ -166,6 +166,13 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
         repo: parsed.data.repo,
         pinId: scope.scope.pinId,
         view,
+        coverage,
+      });
+      // 07 §3.5, proof 5: this answer carried a coverage record, and whether
+      // it did is the one thing 03 made mandatory and nobody counted.
+      await countCoverageAnswer(deps, {
+        repo: parsed.data.repo,
+        surface: "api-suspect",
         coverage,
       });
     } catch {

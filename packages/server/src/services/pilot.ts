@@ -20,8 +20,10 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { pilotAttributions } from "../db/schema.ts";
-import { isJudgeable } from "./coverage.ts";
+import { sql } from "drizzle-orm";
+
+import { pilotAttributions, pilotCounters } from "../db/schema.ts";
+import { COVERAGE_SOURCES, isJudgeable } from "./coverage.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { CoverageRecord } from "./coverage.ts";
 import type { SuspectView } from "./suspect.ts";
@@ -93,4 +95,120 @@ export const recordAttribution = async (
     coverageJudgeable: isJudgeable(input.coverage),
     answeredAt: deps.now(),
   });
+};
+
+/**
+ * THE HUB ANSWERS THAT CARRY A COVERAGE RECORD (07 §3.5).
+ *
+ * *Corrected against the spec, which calls this field "a registered
+ * render-surface name".* Render surfaces are the CONNECTOR's — they are what
+ * a reader sees — and §6 puts this write hub-side, one UPSERT per answer on a
+ * coverage-bearing route. The hub has no render surfaces, so a route that
+ * tried to name one would be guessing at which of several readers rendered
+ * its answer. These are the hub's own answer names, and they are a controlled
+ * vocabulary for the same reason the spec wanted one: `surface` must never be
+ * a string a caller can choose.
+ *
+ * WHAT THE COUNT IS AND IS NOT. This measures whether the HUB emitted the
+ * qualifier's inputs, not whether a reader's terminal printed the clause. The
+ * second half is 03's, held by the render-surface registry and the injection
+ * corpus; counting it here would need every connector to report back, and a
+ * self-reported render statistic is the weakest possible evidence about
+ * rendering.
+ */
+export const PILOT_ANSWER_SURFACES = [
+  "api-suspect",
+  "api-absences",
+  "api-hints",
+  "api-search",
+  "api-work-contexts",
+] as const;
+
+export type PilotAnswerSurface = (typeof PILOT_ANSWER_SURFACES)[number];
+
+/** The UTC day, as the primary key spells it. Never a local date. */
+const utcDay = (now: Date): string => now.toISOString().slice(0, 10);
+
+export interface CountAnswerInput {
+  readonly repo: string;
+  readonly surface: PilotAnswerSurface;
+  readonly coverage: CoverageRecord;
+}
+
+/**
+ * ONE ANSWER, COUNTED — proof 5, and the only write this spec adds to a read
+ * path (§6).
+ *
+ * ONE STATEMENT, NOT TWENTY-FIVE. Every counter this answer touches is
+ * upserted in a single multi-row INSERT … ON CONFLICT, so the cost on a read
+ * is one round trip whatever the coverage record says. Twenty-five separate
+ * upserts would put the shape of the measurement into the latency of the
+ * thing measured.
+ *
+ * `qualifier_required` AND `not_judgeable` ARE DIFFERENT NUMBERS, and the
+ * difference is easy to miss: a qualifier is required when some source is
+ * positively `incomplete` — a gap somebody OBSERVED — while judgeability also
+ * demands that `agent_event` and `git` be `complete`. A fresh install is not
+ * judgeable and needs no qualifier, because nothing has reported anything
+ * yet. Folding the two would report every new hub as failing to qualify.
+ *
+ * THE TWENTY PER-SOURCE TALLIES EXIST INSTEAD OF A PERCENTAGE. 00 §8.1
+ * forbids a scalar that collapses the five sources, and storing them this way
+ * makes the collapse unrepresentable rather than merely discouraged.
+ */
+export const countCoverageAnswer = async (
+  deps: Deps,
+  input: CountAnswerInput,
+): Promise<void> => {
+  const settings = await readTeamSettings(deps, input.repo);
+  if (!settings.pilotEnrolled) {
+    return;
+  }
+  const now = deps.now();
+  const day = utcDay(now);
+  const required = input.coverage.sources.some(
+    (row) => row.state === "incomplete",
+  );
+  const judgeable = isJudgeable(input.coverage);
+  const stateOf = (source: string): string =>
+    input.coverage.sources.find((row) => row.source === source)?.state ??
+    "unknown";
+  const names = [
+    "answers_emitted",
+    ...(required ? ["qualifier_required"] : []),
+    // COUNTED, NEVER ASSUMED. 03 makes every answer carry the record and
+    // nothing counted whether it did — which is this proof's whole sentence.
+    // The hub emits it on the same object it just built, so this tracks
+    // `answers_emitted` today; the day it does not, the gap is a number
+    // rather than a discovery.
+    ...(required ? ["qualifier_emitted"] : []),
+    judgeable ? "judgeable" : "not_judgeable",
+    ...COVERAGE_SOURCES.map(
+      (source) => `coverage_${source}_${stateOf(source)}`,
+    ),
+  ];
+  await deps.db
+    .insert(pilotCounters)
+    .values(
+      names.map((counter) => ({
+        repo: input.repo,
+        day,
+        surface: input.surface,
+        counter,
+        value: 1,
+        updatedAt: now,
+      })),
+    )
+    .onConflictDoUpdate({
+      target: [
+        pilotCounters.repo,
+        pilotCounters.day,
+        pilotCounters.surface,
+        pilotCounters.counter,
+      ],
+      set: {
+        value: sql`${pilotCounters.value} + 1`,
+        updatedAt: now,
+      },
+    });
 };

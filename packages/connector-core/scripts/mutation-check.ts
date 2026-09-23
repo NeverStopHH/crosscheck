@@ -8001,12 +8001,69 @@ export const MUTATIONS: readonly Mutation[] = [
       "denominator",
   },
   {
+    // The SAME consent gate on the other writer. Two writers, two gates,
+    // each removable on its own — so each carries its own anchor.
+    label: "a hub counts answers for teams that never agreed",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "  if (!settings.pilotEnrolled) {\n    return;\n  }\n" +
+      "  const now = deps.now();",
+    to: "  const now = deps.now();",
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "every repo on the hub starts accumulating coverage tallies, so the " +
+      "answer to \"what does this tool record about us\" is wrong for every " +
+      "team that declined — and the off-by-default flag that was the whole " +
+      "answer becomes decoration",
+  },
+  {
+    // 07 §3.5. Two conditions that look alike and are not: a qualifier is
+    // required on a positively OBSERVED gap; judgeability also demands that
+    // agent_event and git be complete.
+    label: "a fresh install is reported as failing to qualify its answers",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "  const required = input.coverage.sources.some(\n" +
+      '    (row) => row.state === "incomplete",\n' +
+      "  );",
+    to: "  const required = !isJudgeable(input.coverage);",
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "every hub that has reported nothing yet counts a qualifier as " +
+      "REQUIRED and unemitted, so proof 5 opens by accusing the product of " +
+      "the exact failure it exists to detect — on precisely the installs " +
+      "with no evidence either way",
+  },
+  {
+    // 00 §8.1 forbids a scalar over the five sources, and this storage is
+    // what makes the collapse unrepresentable rather than discouraged.
+    label: "the five evidence sources collapse into one number",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "    ...COVERAGE_SOURCES.map(\n" +
+      "      (source) => `coverage_${source}_${stateOf(source)}`,\n" +
+      "    ),",
+    to: '    `coverage_overall_${judgeable ? "complete" : "incomplete"}`,',
+    test: `${SERVER}/test/pilot-counters.test.ts`,
+    because:
+      "the one storage decision that made a five-source collapse impossible " +
+      "is undone, so a repo with a blind git lane and a reporting agent lane " +
+      "is indistinguishable from the reverse — and every argument this " +
+      "product makes about WHICH lane was watching loses its evidence",
+  },
+  {
     // 07 §3.3 and §3.6 together. Enrolment is CONSENT, not a display flag:
     // a hub running for a team that never agreed stores nothing at all.
-    label: "a hub measures teams that never agreed to be measured",
+    label: "a hub records attributions for teams that never agreed",
     file: `${SERVER}/src/services/pilot.ts`,
-    from: "  if (!settings.pilotEnrolled) {\n    return;\n  }",
-    to: "  if (false) {\n    return;\n  }",
+    // THE FOLLOWING LINE DISAMBIGUATES. Both pilot writers carry the same
+    // gate, so the bare `if` matched twice and the registry scan refused it —
+    // which is the scan doing its job: an anchor that could mutate either of
+    // two places proves nothing about which one it guarded.
+    from:
+      "  if (!settings.pilotEnrolled) {\n    return;\n  }\n" +
+      "  const top = input.view.candidates[0];",
+    to: "  const top = input.view.candidates[0];",
     test: `${SERVER}/test/pilot-attributions.test.ts`,
     because:
       "every repo on the hub starts accumulating attribution rows, so a " +
@@ -8528,6 +8585,7 @@ interface Outcome {
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
+ * PRINTS: packages/server/test/pilot-counters.test.ts 3
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
