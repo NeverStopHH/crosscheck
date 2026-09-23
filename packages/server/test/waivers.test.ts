@@ -15,7 +15,11 @@
 import { describe, expect, test } from "bun:test";
 
 import { fenceWaivers, pins } from "../src/db/schema.ts";
-import { readLiveWaiver } from "../src/services/waivers.ts";
+import {
+  grantWaiver,
+  readLiveWaiver,
+  revokeWaiver,
+} from "../src/services/waivers.ts";
 import { createTestDeveloper, createTestHarness } from "./helpers.ts";
 import type { TestHarness } from "./helpers.ts";
 
@@ -246,5 +250,205 @@ describe("readLiveWaiver", () => {
 
     // Assert
     await expect(write).rejects.toThrow();
+  });
+});
+
+describe("granting and revoking (04 §3.6)", () => {
+  test("a grant inside the ceiling is written, and stamped human by the HUB", async () => {
+    // Arrange
+    const { harness, developerId } = await setup();
+
+    // Act
+    const result = await grantWaiver({
+      db: harness.db,
+      repo: REPO,
+      pinId: PIN,
+      pinVersion: 1,
+      grantedBy: developerId,
+      reason: "Rollout is blocked; the fix lands Monday",
+      expiresAt: hourAfter,
+      now: NOW,
+    });
+
+    // Assert — the body never said "human"; the hub did.
+    expect("id" in result).toBe(true);
+    const stored = await harness.db
+      .select({ captureMode: fenceWaivers.captureMode })
+      .from(fenceWaivers);
+    expect(stored[0]?.captureMode).toBe("human");
+    expect((await live(harness))?.pinVersion).toBe(1);
+  });
+
+  test("an expiry beyond the ceiling is REFUSED, not quietly shortened", async () => {
+    // Arrange — ninety days, against a fourteen-day ceiling. Clamping silently
+    // would tell somebody they had ninety and let them find out otherwise when
+    // the fence closed.
+    const { harness, developerId } = await setup();
+
+    // Act
+    const result = await grantWaiver({
+      db: harness.db,
+      repo: REPO,
+      pinId: PIN,
+      pinVersion: 1,
+      grantedBy: developerId,
+      reason: "Long rollout",
+      expiresAt: new Date(NOW.getTime() + 90 * 24 * HOUR),
+      now: NOW,
+    });
+
+    // Assert
+    expect(result).toEqual({ refusal: "expiry_beyond_ceiling" });
+    expect(await live(harness)).toBeNull();
+  });
+
+  test("an expiry in the PAST is its own refusal", async () => {
+    // Arrange — a different mistake from the one above, and a different
+    // sentence: this one would be closed on arrival.
+    const { harness, developerId } = await setup();
+
+    // Act
+    const result = await grantWaiver({
+      db: harness.db,
+      repo: REPO,
+      pinId: PIN,
+      pinVersion: 1,
+      grantedBy: developerId,
+      reason: "Typo in the date",
+      expiresAt: hourBefore,
+      now: NOW,
+    });
+
+    // Assert
+    expect(result).toEqual({ refusal: "expiry_in_the_past" });
+  });
+
+  test("a fence in ANOTHER repo cannot be opened from this one", async () => {
+    // Arrange — a waiver names one behaviour in one repo. Without this a key
+    // with access to one repo opens a fence in another.
+    const { harness, developerId } = await setup();
+
+    // Act
+    const result = await grantWaiver({
+      db: harness.db,
+      repo: "github.com/acme/other",
+      pinId: PIN,
+      pinVersion: 1,
+      grantedBy: developerId,
+      reason: "Not mine to grant",
+      expiresAt: hourAfter,
+      now: NOW,
+    });
+
+    // Assert
+    expect(result).toEqual({ refusal: "wrong_repo" });
+  });
+
+  test("a revoke closes the fence and leaves the grant standing", async () => {
+    // Arrange
+    const { harness, developerId } = await setup();
+    const granted = await grantWaiver({
+      db: harness.db,
+      repo: REPO,
+      pinId: PIN,
+      pinVersion: 1,
+      grantedBy: developerId,
+      reason: "Rollout is blocked",
+      expiresAt: hourAfter,
+      now: NOW,
+    });
+    const grantId = "id" in granted ? granted.id : "";
+
+    // Act
+    const revoked = await revokeWaiver({
+      db: harness.db,
+      repo: REPO,
+      waiverId: grantId,
+      grantedBy: developerId,
+      reason: "The fix landed early",
+      now: new Date(NOW.getTime() + 60_000),
+    });
+
+    // Assert — append-only: two rows, and the fence is closed.
+    expect("id" in revoked).toBe(true);
+    const all = await harness.db.select({ id: fenceWaivers.id }).from(fenceWaivers);
+    expect(all).toHaveLength(2);
+    expect(
+      await readLiveWaiver({
+        db: harness.db,
+        repo: REPO,
+        pinId: PIN,
+        pinVersion: 1,
+        now: new Date(NOW.getTime() + 120_000),
+      }),
+    ).toBeNull();
+  });
+
+  test("revoking twice is refused rather than accepted as a no-op", async () => {
+    // Arrange — two closures of one grant would leave a team unable to tell
+    // which was the real decision.
+    const { harness, developerId } = await setup();
+    const granted = await grantWaiver({
+      db: harness.db,
+      repo: REPO,
+      pinId: PIN,
+      pinVersion: 1,
+      grantedBy: developerId,
+      reason: "Rollout is blocked",
+      expiresAt: hourAfter,
+      now: NOW,
+    });
+    const grantId = "id" in granted ? granted.id : "";
+    await revokeWaiver({
+      db: harness.db,
+      repo: REPO,
+      waiverId: grantId,
+      grantedBy: developerId,
+      reason: "The fix landed",
+      now: NOW,
+    });
+
+    // Act
+    const second = await revokeWaiver({
+      db: harness.db,
+      repo: REPO,
+      waiverId: grantId,
+      grantedBy: developerId,
+      reason: "Again",
+      now: NOW,
+    });
+
+    // Assert
+    expect(second).toEqual({ refusal: "already_revoked" });
+  });
+
+  test("a waiver in another repo is 'unknown', not 'forbidden'", async () => {
+    // Arrange — telling a caller that a waiver EXISTS in a repo they cannot
+    // see is itself a disclosure, so both cases answer the same way.
+    const { harness, developerId } = await setup();
+    const granted = await grantWaiver({
+      db: harness.db,
+      repo: REPO,
+      pinId: PIN,
+      pinVersion: 1,
+      grantedBy: developerId,
+      reason: "Rollout is blocked",
+      expiresAt: hourAfter,
+      now: NOW,
+    });
+    const grantId = "id" in granted ? granted.id : "";
+
+    // Act
+    const result = await revokeWaiver({
+      db: harness.db,
+      repo: "github.com/acme/other",
+      waiverId: grantId,
+      grantedBy: developerId,
+      reason: "Reaching across",
+      now: NOW,
+    });
+
+    // Assert
+    expect(result).toEqual({ refusal: "unknown_waiver" });
   });
 });

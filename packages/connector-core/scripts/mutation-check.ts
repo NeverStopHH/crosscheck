@@ -7883,6 +7883,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "product reports a human-verified invariant as acceptably broken on the " +
       "strength of permission that was withdrawn",
   },
+  {
+    // §3.6: expires_at is SENDER-SUPPLIED, so it is clamped. Without the
+    // ceiling a date far enough out is a permanent permission wearing an
+    // expiry, and nothing would ever look at it again.
+    label: "a fence waiver may be granted for any length of time",
+    file: "packages/server/src/services/waivers.ts",
+    from: "  if (input.expiresAt.getTime() > ceiling) {",
+    to: "  if (false) {",
+    test: "packages/server/test/waivers.test.ts",
+    because:
+      "a PROTECTED_CONFLICT can be silenced for a decade by one request, and " +
+      "the waiver outlives the attribution window that would have shown " +
+      "anybody the sessions it was granted against",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -8117,7 +8131,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 2
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 1
- * PRINTS: packages/server/test/waivers.test.ts 1
+ * PRINTS: packages/server/test/waivers.test.ts 2
  * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */
 const greenGuards = new Map<string, boolean>();

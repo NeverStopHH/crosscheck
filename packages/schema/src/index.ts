@@ -117,8 +117,10 @@ export type {
 export {
   MAX_WAIVER_REASON_CHARS,
   WAIVER_KINDS,
+  WaiverGrantSchema,
+  WaiverRevokeSchema,
 } from "./waiver.ts";
-export type { WaiverKind } from "./waiver.ts";
+export type { WaiverGrant, WaiverKind, WaiverRevoke } from "./waiver.ts";
 
 export {
   MAX_QUESTION_BODY_LENGTH,
