@@ -1022,6 +1022,29 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     corpusCoveredBy: ["test/coverage-render.test.ts"],
   },
   {
+    // THE TWO EVIDENCE AXES BESIDE EVERY CONFIDENCE (1.0 spec 08 §5).
+    //
+    // The same no-untrusted-slot claim `coverage-note` makes, and attacked the
+    // same way rather than asserted: the named test plants the whole injection
+    // corpus in `observedAt` and `verifiedAtCommit`, the two hub-sent strings,
+    // and holds the output to the shared invariants. `verifiedAtCommit` is the
+    // only one printed at all, and only after a hex character class.
+    //
+    // THE REF ITSELF NEVER REACHES THIS MODULE. A `ci_test` id is
+    // author-written text up to 300 characters; §5 confines it to
+    // `get_diagnosis`, the one surface a reader asked for.
+    //
+    // `unsolicited` even though the clause also lands on a `pulled` surface:
+    // one module, one classification, and the tighter of the two is the safe
+    // one to be held to.
+    kind: "composite",
+    name: "evidence-axes-clause",
+    delivery: "unsolicited",
+    module: "src/evidence/render.ts",
+    note: "enum values, renderer-owned literals, an ISO day re-formatted from Date.parse and a hex-checked short sha; the two hub-sent strings (observedAt, verifiedAtCommit) never print through unchecked",
+    corpusCoveredBy: ["test/evidence-axes-render.test.ts"],
+  },
+  {
     kind: "corpus",
     name: "hub-connection-failure",
     delivery: "pulled",

@@ -7703,6 +7703,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "attached nothing because nothing could — claims a machine observed it, " +
       "so missing evidence STRENGTHENS the conclusion it is missing from",
   },
+  {
+    // The ONE place hub bytes reach this clause's output, and therefore the
+    // one place that has to be checked. This prints the field unchecked.
+    label: "the axes clause prints an unchecked commit field",
+    file: `${CORE}/src/evidence/render.ts`,
+    from: "  return HEX.test(candidate) ? candidate.slice(0, SHORT_SHA_CHARS) : null;",
+    to: "  return candidate.slice(0, SHORT_SHA_CHARS);",
+    test: `${CORE}/test/evidence-axes-render.test.ts`,
+    because:
+      "the clause lands beside every confidence the product prints, so a hub " +
+      "that puts text where a sha belongs gets seven characters of its own " +
+      "choosing onto every answer surface, including an agent's context",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7838,6 +7851,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
+ * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
