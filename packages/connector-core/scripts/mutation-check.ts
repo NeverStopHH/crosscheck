@@ -7987,6 +7987,92 @@ export const MUTATIONS: readonly Mutation[] = [
       "injection needs on a surface an agent runs through Bash",
   },
   {
+    // VER-8's OTHER half. Failing closed is only half of non-negotiable #4:
+    // a downgrade nobody is told about hides the bug that caused it, and the
+    // only remaining trace reads exactly like an ordinary blind spot.
+    label: "a hub bug degrades every verdict and nothing says so",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '  return verdict.basis === "legality_violation"',
+    to: "  return false",
+    test: `${CLI}/test/doctor-verdict-legality.test.ts`,
+    because:
+      "a hub producing impossible verdicts answers `cannot tell` for ever " +
+      "while `doctor` reports it healthy, so the defect is indistinguishable " +
+      "from a repo that is genuinely hard to attribute — and nobody goes " +
+      "looking",
+  },
+  {
+    // #50's ladder on this rung: *could not reach* is WARN, never PASS.
+    label: "an unreachable verdict reads as a verdict that was checked",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from:
+      "      `could not reach a verdict — the hub did not answer " +
+      "(${hubSaid(suspect.message)}); this says nothing about whether " +
+      "verdicts here are legal`,",
+    to: '      "not measured (the hub did not answer)",',
+    test: `${CLI}/test/doctor-verdict-legality.test.ts`,
+    because:
+      "a green meaning \"could not check\" is worse than no check at all — " +
+      "it is the fail-silent shape #50's ladder exists to remove, on the one " +
+      "line that reports defects in the hub itself",
+  },
+  {
+    // VER-8. Legality is what stops the nine impossible combinations from
+    // being SHOWN to somebody — a verdict that says UNATTRIBUTED under a gap
+    // is an exoneration the record cannot support.
+    label: "an illegal verdict is shown rather than withheld",
+    file: "packages/server/src/services/verdict.ts",
+    from:
+      '  if (verdict.attribution === "UNATTRIBUTED" && ' +
+      "!isJudgeable(verdict.coverage)) {",
+    to: "  if (false) {",
+    test: "packages/server/test/verdict.test.ts",
+    because:
+      "AT-5 stops being a type rule and becomes a mapping convention, so any " +
+      "path that reaches UNATTRIBUTED some other way prints \"nobody did " +
+      "this\" over an archive that was not watching",
+  },
+  {
+    // The table's own completeness. A rule with no fixture is a branch
+    // nobody ever reached, and it would ship looking enforced.
+    label: "a legality rule ships with no fixture behind it",
+    file: "packages/server/src/services/verdict.ts",
+    from:
+      '  "protection asserted where no pin exists",\n' +
+      "] as const;",
+    to:
+      '  "protection asserted where no pin exists",\n' +
+      '  "a tenth rule nobody wrote a fixture for",\n' +
+      "] as const;",
+    test: "packages/server/test/verdict.test.ts",
+    because:
+      "the expected set is derived from this list, so a rule added without a " +
+      "case beside it would otherwise be enforced only where somebody " +
+      "happened to hit it — which is how §7 came to ask for ten rules where " +
+      "§3.7 lists nine",
+  },
+  {
+    // VER-4 / AT-6, and the guard is 06's INT-7 rather than a second walker.
+    // MEASURED: this exact edit reddens intent-ledger-authority.test.ts today,
+    // and so do the same edits to services/waivers.ts and
+    // routes/fence-waivers.ts — the walk discovers every src module of every
+    // package, so it already covers 04's ground. A second walker would be a
+    // second copy of a subtle rule, with the weaker copy the one nobody
+    // re-reads, which is the shape INT-7's own header refuses.
+    label: "a verdict path reaches the intent ledger",
+    file: "packages/server/src/services/verdict.ts",
+    from: 'import { isJudgeable } from "./coverage.ts";',
+    to:
+      'import { isJudgeable } from "./coverage.ts";\n' +
+      'import { workContextIntents } from "../db/schema.ts";',
+    test: "packages/server/test/intent-ledger-authority.test.ts",
+    because:
+      "an agent that widens its own intent would be one predicate away from " +
+      "waiving a human-verified invariant, and the wrong answer there is the " +
+      "PERMISSIVE one — the fence stops firing, nothing goes red, and the " +
+      "surface that would have told you is the one that stopped telling you",
+  },
+  {
     // §3.5 on the BATCHED reader. The single reader gets version scoping from
     // its WHERE clause; this one re-applies it in memory, so it is a second
     // place the rule can be lost.
@@ -8121,6 +8207,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
  * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
+ * PRINTS: packages/cli/test/doctor-verdict-legality.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
@@ -8270,7 +8357,7 @@ interface Outcome {
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
  * PRINTS: packages/server/test/intent-ladder.test.ts 7
- * PRINTS: packages/server/test/intent-ledger-authority.test.ts 1
+ * PRINTS: packages/server/test/intent-ledger-authority.test.ts 2
  * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 4
@@ -8297,7 +8384,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
  * PRINTS: packages/server/test/suspect.test.ts 3
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
- * PRINTS: packages/server/test/verdict.test.ts 1
+ * PRINTS: packages/server/test/verdict.test.ts 3
  * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */

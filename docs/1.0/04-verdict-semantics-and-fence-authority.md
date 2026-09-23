@@ -545,6 +545,20 @@ names the pinned path, pin recorded broken, no waiver row → `PROTECTED_CONFLIC
 but it is documentation of intent, and the meta-test is the guard. Paired with 06's
 INT-7 from the other side.
 
+*Corrected at build time: **06's INT-7 IS that meta-test, already**, so this spec
+writes an anchor and not a second walker.* `server/test/intent-ledger-authority.test.ts`
+walks every `src` module of every workspace package and fails on any module
+outside its two-entry exempt set that reaches `workContextIntents` or
+`workContexts.intent` — a rule strictly wider than "any verdict or fence module",
+so 04's ground is inside it. **Measured, not assumed:** this paragraph's own
+mutation reddens that file today, and so do the identical edits to
+`services/waivers.ts` and `routes/fence-waivers.ts`. Building a second walker here
+would be a second copy of a subtle rule, with the weaker copy the one nobody
+re-reads — the exact shape INT-7's own header refuses, and the shape 00 §9.6
+forbids unless something checks it. VER-4 is therefore satisfied by one
+`MUTATIONS` entry naming `intent-ledger-authority.test.ts` as its guard, and the
+two specs meet at one mechanism rather than at two that must agree.
+
 **VER-5 — a waiver without an expiry cannot be stored. (AT-6.)** A grant body
 with no `expires_at`, and a direct INSERT bypassing zod, are both refused — the
 second by `fence_waivers_shape_check`; a `revoke` row makes the grant stop

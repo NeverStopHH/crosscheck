@@ -23,11 +23,16 @@ import { COVERAGE_SOURCES } from "../src/services/coverage.ts";
 import type { CoverageRecord } from "../src/services/coverage.ts";
 import type { SuspectCandidate, SuspectView } from "../src/services/suspect.ts";
 import {
+  VERDICT_LEGALITY_VIOLATIONS,
   computeProtection,
   computeVerdict,
   verdictLegalityViolation,
 } from "../src/services/verdict.ts";
-import type { VerdictInput } from "../src/services/verdict.ts";
+import type {
+  Verdict,
+  VerdictInput,
+  VerdictLegalityViolation,
+} from "../src/services/verdict.ts";
 
 const REPO = "github.com/acme/api";
 const NOW = new Date("2026-09-23T14:00:00.000Z");
@@ -483,5 +488,137 @@ describe("what the type refuses to let through", () => {
     expect(absent.basis).toBe("falsifier_absent");
     expect(noRecipe.basis).toBe("no_check_recipe");
     expect(byTeam.basis).toBe("attribution_withheld_by_team");
+  });
+});
+
+/**
+ * VER-8 — legality is ENFORCED, not documented.
+ *
+ * One fixture per rule, and the expected SET is derived from
+ * `VERDICT_LEGALITY_VIOLATIONS` rather than written here. That is the point of
+ * the table: a tenth rule added to the service with no fixture beside it turns
+ * this red, instead of shipping as a branch nobody ever reached. §7 asked for
+ * "all ten" where §3.7 lists nine — a hand-kept count had already drifted by
+ * one before any of this was built.
+ *
+ * BOTH HALVES OF THE CONSEQUENCE are asserted, because non-negotiable #4 is
+ * "fail, never silently": an illegal verdict must fall to `INDETERMINATE` /
+ * `legality_violation` AND drop its candidates. A downgrade that kept the rows
+ * would withhold the verdict while still naming the people.
+ */
+describe("VER-8 — every illegal combination, and nothing else", () => {
+  /** A legal verdict, as the thing each case below breaks in exactly one way. */
+  const legal = (): Verdict => computeVerdict(input());
+
+  const CASES: readonly (readonly [VerdictLegalityViolation, Verdict])[] = [
+    [
+      "UNATTRIBUTED under incomplete coverage",
+      {
+        ...legal(),
+        attribution: "UNATTRIBUTED",
+        coverage: gappedCoverage(),
+        candidates: [],
+      },
+    ],
+    [
+      "ATTRIBUTED with no candidates",
+      { ...legal(), attribution: "ATTRIBUTED", candidates: [] },
+    ],
+    [
+      "candidates listed without ATTRIBUTED",
+      { ...legal(), attribution: "INDETERMINATE", candidates: [candidate] },
+    ],
+    [
+      "a flaky delta attributed anyway",
+      {
+        ...legal(),
+        behaviorDelta: "flaky",
+        attribution: "ATTRIBUTED",
+        candidates: [candidate],
+        falsifier: "recorded_break",
+      },
+    ],
+    [
+      "protected_ok without a waiver",
+      { ...legal(), protection: "protected_ok", waiver: null },
+    ],
+    [
+      "PROTECTED_CONFLICT without a recorded break",
+      {
+        ...legal(),
+        protection: "PROTECTED_CONFLICT",
+        falsifier: "not_recorded_broken",
+      },
+    ],
+    [
+      "a pinned invariant attributed without a recorded break",
+      {
+        ...legal(),
+        attribution: "ATTRIBUTED",
+        candidates: [candidate],
+        invariant: { pinId: "pin_1", version: 1 },
+        falsifier: "no_check_recipe",
+        // UNPROTECTED, so this case breaks rule 7 and ONLY rule 7. The base
+        // verdict is a PROTECTED_CONFLICT — a recorded break on a pin with no
+        // waiver — so dropping the falsifier alone trips rule 6 first and the
+        // fixture would assert the wrong rule while looking correct.
+        protection: "unprotected",
+      },
+    ],
+    [
+      "coverage did not carry its five rows",
+      {
+        ...legal(),
+        coverage: {
+          ...completeCoverage(),
+          sources: completeCoverage().sources.slice(0, 4),
+        },
+      },
+    ],
+    [
+      "protection asserted where no pin exists",
+      {
+        ...legal(),
+        protection: "PROTECTED_CONFLICT",
+        falsifier: "recorded_break",
+        invariant: null,
+      },
+    ],
+  ];
+
+  test.each(CASES)("%s is refused", (expected, verdict) => {
+    // Act & Assert
+    expect(verdictLegalityViolation(verdict)).toBe(expected);
+  });
+
+  test("the fixture table covers every rule the service can report", () => {
+    // Assert — derived, never written down. A rule with no fixture fails here.
+    expect(CASES.map(([name]) => name).sort()).toEqual(
+      [...VERDICT_LEGALITY_VIOLATIONS].sort(),
+    );
+  });
+
+  test("a legal verdict reports no violation at all", () => {
+    // Arrange — otherwise every case above would pass on a function that
+    // returned a violation unconditionally.
+    expect(verdictLegalityViolation(legal())).toBeNull();
+  });
+
+  test("an illegal verdict is WITHHELD and drops its rows", () => {
+    // Arrange: attribute a pinned invariant with no recorded break behind it
+    const verdict = computeVerdict(
+      input({
+        suspect: suspectView({
+          outcome: "ranked",
+          falsifier: { kind: "no_check_recipe", at: null, check: null },
+          candidates: [candidate],
+        }),
+      }),
+    );
+
+    // Assert — both halves of "fail, never silently"
+    expect(verdict.attribution).toBe("INDETERMINATE");
+    expect(verdict.basis).toBe("legality_violation");
+    expect(verdict.candidates).toEqual([]);
   });
 });

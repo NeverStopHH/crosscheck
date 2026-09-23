@@ -35,6 +35,16 @@ export const WAIVER_KINDS = ["grant", "revoke"] as const;
  *
  * VERIFY: bun -e 'const w=await import("./packages/schema/src/waiver.ts");const p=await import("./packages/schema/src/pin.ts");console.log(w.MAX_WAIVER_REASON_CHARS === p.MAX_PIN_CHECK_CHARS)'
  * PRINTS: true
+ *
+ * AND THE THIRD AUTHORITY, which is the one that can refuse a write nobody
+ * validated: `bootstrap.sql` spells the bound as a SQL literal, because a
+ * CHECK cannot import a TypeScript constant. `ddl-sync.test.ts` reddens on
+ * drift; this states the agreement HERE, where the number is decided, so the
+ * prose beside the constant cannot go stale while the test stays green on a
+ * branch nobody ran:
+ *
+ * VERIFY: bun -e 'const w=await import("./packages/schema/src/waiver.ts");const sql=await Bun.file("./packages/server/src/db/bootstrap.sql").text();const m=/fence_waivers_reason_length_check CHECK \(char_length\(reason\) <= (\d+)\)/.exec(sql);console.log(m===null?"NO CHECK IN bootstrap.sql":String(Number(m[1])===w.MAX_WAIVER_REASON_CHARS))'
+ * PRINTS: true
  */
 export const MAX_WAIVER_REASON_CHARS = MAX_PIN_CHECK_CHARS;
 

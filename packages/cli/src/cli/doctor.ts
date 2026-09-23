@@ -112,6 +112,7 @@ import {
   getHintStats,
   getOpenSessions,
   getPins,
+  getSuspect,
   getIntentPositions,
   getPrivacySettings,
   getQuestions,
@@ -123,6 +124,7 @@ import type {
   CiVerdict,
   ClaimValiditySummary,
   GhostCheckEntry,
+  PinRegistry,
 } from "@crosscheck/connector-core/http/hub.ts";
 import {
   formatQuestionCounts,
@@ -133,6 +135,7 @@ import {
   solvedPrecisionWarning,
 } from "@crosscheck/connector-core/hints/precision.ts";
 import { resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
+import { safeId } from "@crosscheck/connector-core/mcp/render.ts";
 import {
   formatGitLaneCost,
   gitLaneWarning,
@@ -2094,13 +2097,17 @@ const checkCi = (verdict: HubResult<CiVerdict>): readonly Check[] => {
   ];
 };
 
-const checkPins = async (
-  ctx: HubContext,
-  repoId: string,
+/**
+ * PURE OVER A REGISTRY ALREADY IN HAND, the shape 08 gave `checkCi` and
+ * `checkClaimValidity`. Two lines read this answer now — the pin coverage
+ * lines here and 04's verdict-legality rung below — and fetching it twice
+ * would be a second round trip for bytes already fetched.
+ */
+const checkPins = (
+  registry: HubResult<PinRegistry>,
   patterns: readonly string[],
   now: Date,
-): Promise<readonly Check[]> => {
-  const registry = await getPins(ctx, repoId);
+): readonly Check[] => {
   if (!registry.ok) {
     return registry.status === HTTP_NOT_FOUND
       ? [check("PASS", "pins", "not measured (this hub has no pin registry)")]
@@ -2124,6 +2131,88 @@ const checkPins = async (
       ? check("PASS", "pin denylist", shadowLine)
       : check("WARN", "pin denylist", shadowLine),
   ];
+};
+
+
+/**
+ * DID THIS HUB PRODUCE AN IMPOSSIBLE VERDICT (04 §3.7, VER-8).
+ *
+ * A legality violation is a BUG IN THE HUB, not a fact about this repo: nine
+ * combinations are forbidden because each would say something the record
+ * cannot support — `UNATTRIBUTED` where a lane was blind, candidates listed
+ * under a verdict that names nobody. `computeVerdict` fails closed to
+ * `INDETERMINATE` / `legality_violation` when it meets one, and non-negotiable
+ * #4 is *fail, never silently*: a downgrade nobody is told about hides the bug
+ * that caused it, and the surface that would have reported it is the one that
+ * stopped reporting.
+ *
+ * MEASURED AGAINST A REAL PIN, not a synthetic verdict. A self-check the hub
+ * runs on a fixture it built proves the fixture legal and nothing about the
+ * verdicts it actually serves. So this asks `suspect` about one pin the
+ * registry really holds and reads the answer that a person would have read.
+ *
+ * ONE PIN, AND THE LINE SAYS SO. A sweep over every pin would put the registry
+ * size into the latency of `doctor`, which every session runs. One is a smoke
+ * test, and a smoke test that claims to be a sweep is worse than no check —
+ * the detail names the pin it asked about.
+ *
+ * #50's LADDER, unchanged: *not measured* is PASS, *could not reach* is WARN.
+ * A repo with no pins has no verdict to be wrong about; a hub that did not
+ * answer has told us nothing, and a green meaning "could not check" is worse
+ * than no check at all.
+ */
+const checkVerdictLegality = async (
+  ctx: HubContext,
+  repoId: string,
+  registry: HubResult<PinRegistry>,
+): Promise<Check> => {
+  if (!registry.ok) {
+    // The pins line already carries this outage. Repeating it here would
+    // report one failure twice.
+    return check(
+      "PASS",
+      "verdict legality",
+      "not measured (the pin registry did not answer; see the pins line)",
+    );
+  }
+  const pin = registry.data.pins[0];
+  if (pin === undefined) {
+    return check(
+      "PASS",
+      "verdict legality",
+      "not measured (no pins on this repo, so there is no verdict to check)",
+    );
+  }
+  const suspect = await getSuspect(ctx, { repo: repoId, pinId: pin.id });
+  if (!suspect.ok) {
+    return check(
+      "WARN",
+      "verdict legality",
+      `could not reach a verdict — the hub did not answer (${hubSaid(suspect.message)}); this says nothing about whether verdicts here are legal`,
+    );
+  }
+  const verdict = suspect.data.verdict;
+  if (verdict === null) {
+    // An older 1.0 hub. NOT a failure of this repo, and not a pass either:
+    // saying PASS would report "verdicts here are legal" about a hub that
+    // computes none.
+    return check(
+      "PASS",
+      "verdict legality",
+      "not measured (this hub reports no verdict, so `suspect` answers a ranking without one)",
+    );
+  }
+  return verdict.basis === "legality_violation"
+    ? check(
+        "FAIL",
+        "verdict legality",
+        `the hub withheld a verdict it could not legally state, on pin ${safeId(pin.id)} — this is a defect in the hub, not in this repo; the answer degraded to ${verdict.attribution} rather than showing an impossible combination`,
+      )
+    : check(
+        "PASS",
+        "verdict legality",
+        `checked 1 of ${String(registry.data.pins.length)} pin(s): the verdict on ${safeId(pin.id)} states a legal combination (${verdict.attribution} · ${verdict.protection})`,
+      );
 };
 
 /**
@@ -3345,7 +3434,7 @@ export const runDoctor = async (
     absenceAndCoverage,
     questionsCheck,
     solvedMatchesCheck,
-    pinChecks,
+    pinRegistry,
     claimValiditySummary,
     ciVerdict,
     ghostOverlapCheck,
@@ -3358,15 +3447,9 @@ export const runDoctor = async (
     absenceAndCoverageChecks(hubCtx, identity.repoId),
     checkQuestions(hubCtx, identity.repoId, now),
     checkSolvedMatches(hubCtx, identity.repoId),
-    checkPins(
-      hubCtx,
-      identity.repoId,
-      // The EFFECTIVE list, defaults included: the shadowing question is
-      // about what actually suppresses capture, not about what this
-      // developer added on top of it.
-      resolveDenylist(config.denylist ?? undefined),
-      now,
-    ),
+    // FETCHED, NOT CHECKED, for the reason the two reads below give: the pin
+    // coverage lines and 04's verdict-legality rung both read this registry.
+    getPins(hubCtx, identity.repoId),
     // FETCHED, NOT CHECKED, because THREE lines read these two answers: the
     // claim-binding line, the CI line, and 08's evidence-axes line, which is a
     // statement about whether the other two can combine. Calling the endpoints
@@ -3387,11 +3470,30 @@ export const runDoctor = async (
     checkPrivacy(hubCtx),
     checkIntentLedger(hubCtx),
   ]);
+  // SEQUENTIAL, and it has to be: this asks `suspect` about a pin whose id is
+  // only known once the registry above has answered, so it cannot join the
+  // concurrent block. One extra round trip on a command that already makes a
+  // dozen, and the alternative — fetching the registry twice — costs the same
+  // trip and reads worse.
+  const verdictLegalityCheck = await checkVerdictLegality(
+    hubCtx,
+    identity.repoId,
+    pinRegistry,
+  );
+
   const hubChecks: readonly Check[] = [
     ...absenceAndCoverage,
     questionsCheck,
     solvedMatchesCheck,
-    ...pinChecks,
+    ...checkPins(
+      pinRegistry,
+      // The EFFECTIVE list, defaults included: the shadowing question is
+      // about what actually suppresses capture, not about what this
+      // developer added on top of it.
+      resolveDenylist(config.denylist ?? undefined),
+      now,
+    ),
+    verdictLegalityCheck,
     ...checkClaimValidity(claimValiditySummary),
     ...checkCi(ciVerdict),
     ...checkEvidenceAxes(ciVerdict, claimValiditySummary),

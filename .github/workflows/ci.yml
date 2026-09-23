@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 540
+    # PRINTS: 545
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -126,7 +126,7 @@ jobs:
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
-    # PRINTS: packages/cli/src/cli/doctor.ts 31
+    # PRINTS: packages/cli/src/cli/doctor.ts 33
     # PRINTS: packages/cli/src/cli/pin-observability.ts 1
     # PRINTS: packages/cli/src/cli/pin-render.ts 3
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
@@ -289,7 +289,7 @@ jobs:
     # PRINTS: packages/server/src/services/solved.ts 1
     # PRINTS: packages/server/src/services/suspect.ts 2
     # PRINTS: packages/server/src/services/time-window.ts 1
-    # PRINTS: packages/server/src/services/verdict.ts 1
+    # PRINTS: packages/server/src/services/verdict.ts 4
     # PRINTS: packages/server/src/services/waivers.ts 3
     # PRINTS: packages/server/test/intent-ledger-authority.test.ts 1
     #
@@ -329,7 +329,7 @@ jobs:
     # PRINTS: developer-lookup.ts 2
     # PRINTS: developers.ts 7
     # PRINTS: diagnosis.ts 3
-    # PRINTS: doctor.ts 39
+    # PRINTS: doctor.ts 41
     # PRINTS: end-session.ts 2
     # PRINTS: engine.ts 11
     # PRINTS: enums.ts 1
@@ -427,7 +427,7 @@ jobs:
     # PRINTS: triggers.ts 2
     # PRINTS: v1.ts 2
     # PRINTS: verdict-render.ts 2
-    # PRINTS: verdict.ts 2
+    # PRINTS: verdict.ts 5
     # PRINTS: waivers.ts 3
     # PRINTS: worker-env.ts 1
     # PRINTS: worker.ts 7

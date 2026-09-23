@@ -282,7 +282,59 @@ const attributionFor = (
  * non-negotiable #4 is *fail, never silently*, and a silent downgrade would
  * hide the bug that caused it.
  */
-export const verdictLegalityViolation = (verdict: Verdict): string | null => {
+/**
+ * EVERY WAY A VERDICT CAN BE ILLEGAL, as data rather than only as branches.
+ *
+ * §3.7 lists the rules in prose and §7's VER-8 asks for a fixture per rule.
+ * Written as nine `if`s alone, "one fixture per rule" is a claim a reader has
+ * to re-count by hand — and VER-8 counted TEN where §3.7 lists nine, which is
+ * exactly the drift a hand-kept number produces. So the sentences are a list,
+ * the function returns members of it, and the test derives its expected set
+ * from here. A tenth rule added without a fixture is then a red build rather
+ * than a paragraph somebody has to notice.
+ *
+ * ORDER IS THE CHECKING ORDER, because the first violation found is the one
+ * reported and a reader tracing a downgrade needs to know which rule won.
+ */
+/**
+ * ATTRIBUTION AND PROTECTION ARE ORTHOGONAL, and this is the directive that
+ * keeps them so.
+ *
+ * §3.7 names three combinations as explicitly legal — `ATTRIBUTED` +
+ * `PROTECTED_CONFLICT`, `UNATTRIBUTED` + `PROTECTED_CONFLICT`, `ATTRIBUTED`
+ * with unsupported evidence — because each reads like a contradiction and is
+ * not. Attribution answers "may anybody be named"; protection answers "is a
+ * human-verified invariant broken". Neither constrains the other, so ALL NINE
+ * cells of the grid are legal, and a rule added later that forbids one is a
+ * change to the model rather than a tightening of a check.
+ *
+ * *§7 asked for `ATTRIBUTIONS.length × PROTECTIONS.length` printed beside the
+ * count of combinations the legality table covers. Both are 9 — and they are
+ * not the same nine: one is the grid, the other is the rule list, and printing
+ * them side by side would invite exactly the reading that the nine rules are
+ * the nine cells. This prints the fact the spec was reaching for instead.*
+ *
+ * VERIFY: bun -e 'const v=await import("./packages/server/src/services/verdict.ts");const s=await import("./packages/server/src/services/coverage.ts");const cov={repo:"r",computedAt:"2026-09-23T12:00:00.000Z",scope:{sinceIso:"2026-09-09T12:00:00.000Z"},sources:s.COVERAGE_SOURCES.map(source=>({source,state:"complete",reason:"sessions_reported",gapSince:null,observedAt:"2026-09-23T12:00:00.000Z"}))};const base={repo:"r",invariant:{pinId:"p",version:1},behaviorDelta:"unconfirmed",deltaLane:"pin",deltaReason:"human_recheck_unrepeated",coverage:cov,explanationTiming:"absent",timingReason:"no_intent",falsifier:"recorded_break",evidence:{who:"agent_derived",support:"unsupported",supportReason:"no_verification_ref",observedAt:null,verifiedAtCommit:null},basis:"separated",computedAt:"2026-09-23T12:00:00.000Z"};let n=0;for(const attribution of v.ATTRIBUTIONS)for(const protection of v.PROTECTIONS){const waiver=protection==="protected_ok"?{id:"w",pinVersion:1,expiresAt:"2026-09-24T12:00:00.000Z",reason:"r",grantedByName:"n"}:null;const candidates=attribution==="ATTRIBUTED"?[{sessionId:"s"}]:[];if(v.verdictLegalityViolation({...base,attribution,protection,waiver,candidates})===null)n++;}console.log(n,"of",v.ATTRIBUTIONS.length*v.PROTECTIONS.length)'
+ * PRINTS: 9 of 9
+ */
+export const VERDICT_LEGALITY_VIOLATIONS = [
+  "UNATTRIBUTED under incomplete coverage",
+  "ATTRIBUTED with no candidates",
+  "candidates listed without ATTRIBUTED",
+  "a flaky delta attributed anyway",
+  "protected_ok without a waiver",
+  "PROTECTED_CONFLICT without a recorded break",
+  "a pinned invariant attributed without a recorded break",
+  "coverage did not carry its five rows",
+  "protection asserted where no pin exists",
+] as const;
+
+export type VerdictLegalityViolation =
+  (typeof VERDICT_LEGALITY_VIOLATIONS)[number];
+
+export const verdictLegalityViolation = (
+  verdict: Verdict,
+): VerdictLegalityViolation | null => {
   if (verdict.attribution === "UNATTRIBUTED" && !isJudgeable(verdict.coverage)) {
     // AT-5 as a type rule, not only as a mapping.
     return "UNATTRIBUTED under incomplete coverage";
