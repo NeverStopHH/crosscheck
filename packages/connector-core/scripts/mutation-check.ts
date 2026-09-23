@@ -8075,6 +8075,50 @@ export const MUTATIONS: readonly Mutation[] = [
       "answer becomes decoration",
   },
   {
+    // 07 §3.2. The noise FIGURE has to count people, not keystrokes — and
+    // the unique key is the database's, but the service is what turns a
+    // second attempt into an answer rather than a second row.
+    label: "one person's second keystroke becomes a second complaint",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "    .onConflictDoNothing()\n" +
+      "    .returning({ id: pilotMarks.id });",
+    to: "    .returning({ id: pilotMarks.id });",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "the one figure that says whether this product is worth installing is " +
+      "inflated by the gesture designed to make complaining cheap, so a " +
+      "single frustrated person reads as a team — and the target it is " +
+      "measured against was set before anybody could know that",
+  },
+  {
+    // AT-3 on the pilot's own surface. A mark IS the measurement of whether
+    // this product is useful.
+    label: "an agent gets to grade its own homework",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "      captureMode: HUMAN_CAPTURE_MODE,\n      createdAt: deps.now(),",
+    to: '      captureMode: "auto",\n      createdAt: deps.now(),',
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "the trust label on the pilot's only human input stops saying a human " +
+      "made it, so proof 4's proactive-precision figure is computed over " +
+      "marks nobody can attribute to a person — measuring the product with " +
+      "the product's own word",
+  },
+  {
+    // A gesture that appears to do nothing is one a team stops making.
+    label: "a typed gesture answers as though it had worked",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: '    return { refusal: "not_enrolled" };',
+    to: "    return { id: input.refId, repeated: true };",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "somebody marks an intervention off-target on a repo nobody enrolled " +
+      "and is told it was already recorded, so they stop marking — and the " +
+      "pilot's only human signal dries up for a reason nobody can see",
+  },
+  {
     // 07 §3.5. A declared surface nothing writes is a report line that reads
     // zero for ever and looks like a finding — the declaration and the call
     // site sit in different files, and nothing else holds them together.
@@ -8672,6 +8716,7 @@ interface Outcome {
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 5
+ * PRINTS: packages/server/test/pilot-marks.test.ts 3
  * PRINTS: packages/server/test/pilot-sessions.test.ts 4
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1

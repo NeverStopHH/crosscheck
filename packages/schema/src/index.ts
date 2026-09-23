@@ -134,6 +134,8 @@ export {
   WaiverRevokeSchema,
 } from "./waiver.ts";
 export type { WaiverGrant, WaiverKind, WaiverRevoke } from "./waiver.ts";
+export { PilotMarkSchema } from "./pilot-mark.ts";
+export type { PilotMarkInput } from "./pilot-mark.ts";
 
 export {
   MAX_QUESTION_BODY_LENGTH,

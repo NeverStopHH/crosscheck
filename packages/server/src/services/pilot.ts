@@ -23,9 +23,13 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
 
 import {
+  agentSessions,
+  hintDeliveries,
   pilotAttributions,
   pilotCounters,
+  pilotMarks,
   pilotSessions,
+  pins,
   sessionEvents,
 } from "../db/schema.ts";
 import { PILOT_MAX_SESSIONS } from "../constants.ts";
@@ -35,6 +39,7 @@ import type { CoverageRecord } from "./coverage.ts";
 import type { SuspectView } from "./suspect.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
+import type { PilotMark, PilotMarkRefKind } from "@crosscheck/schema";
 
 interface Deps {
   readonly db: Db;
@@ -409,4 +414,97 @@ export const recordPilotSession = async (
         seqEpochs: seq.epochs,
       },
     });
+};
+
+/**
+ * What a hub stamps on a mark, always. Never taken from a body: here the
+ * assertion would be the very thing being measured.
+ */
+const HUMAN_CAPTURE_MODE = "human" as const;
+
+/** Why a mark was refused — an enum, so a route never invents prose. */
+export type MarkRefusal = "not_enrolled" | "unknown_ref" | "wrong_repo";
+
+export interface WriteMarkInput {
+  readonly repo: string;
+  readonly refKind: PilotMarkRefKind;
+  readonly refId: string;
+  readonly mark: PilotMark;
+  readonly markedBy: string;
+}
+
+export type WriteMarkOutcome =
+  | { readonly id: string; readonly repeated: boolean }
+  | { readonly refusal: MarkRefusal };
+
+/**
+ * ONE PERSON'S ONE MARK ABOUT ONE THING (§3.2).
+ *
+ * REPEATING IS NOT A SECOND COMPLAINT. Somebody who types `crosscheck noise`
+ * twice has said one thing twice; counting both would make the noise figure a
+ * keystroke count, and the figure's whole job is to say how many PEOPLE found
+ * this product noisy. The unique key is the database's, not this function's —
+ * but the answer a person reads has to distinguish "recorded" from "you had
+ * already said that", or the second attempt looks like it did nothing.
+ *
+ * THE REF IS CHECKED, and refusing an unknown one is not pedantry: a mark on
+ * an id that does not exist is a row that can never join to anything, and
+ * proof 4's denominator would grow with marks about nothing. It also catches
+ * the ordinary case — a mistyped id — with a sentence instead of silence.
+ *
+ * REPO-SCOPED, like every other answer in this product. A mark on another
+ * repo's delivery would count somebody else's noise against this team.
+ */
+export const writePilotMark = async (
+  deps: Deps,
+  input: WriteMarkInput,
+): Promise<WriteMarkOutcome> => {
+  const settings = await readTeamSettings(deps, input.repo);
+  if (!settings.pilotEnrolled) {
+    // NOT silence: a person typed this, and "nothing happened" is the one
+    // answer a gesture must never get.
+    return { refusal: "not_enrolled" };
+  }
+  const known = await (input.refKind === "pin"
+    ? deps.db
+        .select({ repo: pins.repo })
+        .from(pins)
+        .where(eq(pins.id, input.refId))
+        .limit(1)
+    : deps.db
+        .select({ repo: agentSessions.repo })
+        .from(hintDeliveries)
+        .innerJoin(
+          agentSessions,
+          eq(hintDeliveries.sessionId, agentSessions.id),
+        )
+        .where(eq(hintDeliveries.id, input.refId))
+        .limit(1));
+  const row = known[0];
+  if (row === undefined) {
+    return { refusal: "unknown_ref" };
+  }
+  if (row.repo !== input.repo) {
+    return { refusal: "wrong_repo" };
+  }
+  const id = `pm_${randomUUID()}`;
+  const inserted = await deps.db
+    .insert(pilotMarks)
+    .values({
+      id,
+      repo: input.repo,
+      refKind: input.refKind,
+      refId: input.refId,
+      mark: input.mark,
+      markedBy: input.markedBy,
+      // STAMPED BY THE HUB. The body said what it OBSERVED; only the hub says
+      // what that observation is worth.
+      captureMode: HUMAN_CAPTURE_MODE,
+      createdAt: deps.now(),
+    })
+    .onConflictDoNothing()
+    .returning({ id: pilotMarks.id });
+  return inserted[0] === undefined
+    ? { id: input.refId, repeated: true }
+    : { id, repeated: false };
 };
