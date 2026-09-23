@@ -27,17 +27,10 @@
  * surface a reader ASKED for. Spending an unsolicited hint's characters on
  * somebody's test name anchors a session on a file path it never chose.
  */
-import type {
-  EvidenceAxes,
-  EvidenceSupportReason,
-  EvidenceWho,
-} from "@crosscheck/schema";
+import { axesLabel } from "@crosscheck/schema";
+import type { EvidenceAxes } from "@crosscheck/schema";
 
-import {
-  NO_AXES_READABLE,
-  axesLabel,
-  formatAge,
-} from "../briefing/render.ts";
+import { formatAge } from "../briefing/render.ts";
 
 /**
  * How much of a sha is printed. Seven, the length git itself abbreviates to,

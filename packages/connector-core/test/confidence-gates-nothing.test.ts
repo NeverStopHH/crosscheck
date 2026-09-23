@@ -99,6 +99,27 @@ const PRINTING_SITES = [
   "packages/server/src/ui/pages/referee.tsx",
 ] as const;
 
+/**
+ * THE ONE PRINTER THAT CARRIES NO LABEL, and why.
+ *
+ * `publish-claim.ts` is the AUTHOR ECHO: it prints the confidence back to the
+ * agent that just chose it, in the same tool result. Every other site on the
+ * census shows one person's number to somebody ELSE, which is the whole of
+ * §3.6's argument — two decimals read as a measurement when the reader cannot
+ * know that nothing measured them. An author reading their own number back
+ * one line after typing it is not that reader, and a hedge there would be the
+ * tool explaining an agent to itself.
+ *
+ * NOT A GAP BUT NOT NOTHING EITHER. There IS something worth echoing here and
+ * it is not the label: whether the `verificationRef` the author attached
+ * actually RESOLVED. "You named a ci_test this hub holds no row for" is the
+ * feedback that would stop a ref rotting silently, and the author is exactly
+ * the right person to hear it. It needs the publish RESPONSE to carry the
+ * derived axes, which it does not today — so it is named here rather than
+ * left as an absence somebody later reads as a decision.
+ */
+const AUTHOR_ECHO = "packages/connector-core/src/mcp/tools/publish-claim.ts";
+
 const COMPARISON_PATTERN = String.raw`confidence\s*(>|<|>=|<=)`;
 const OPERATION_PATTERN = [
   String.raw`Math\.(min|max)\([^;\n]*[Cc]onfidence`,
@@ -191,6 +212,35 @@ describe("EV-5 — the census of printers, corrected", () => {
     // printers somebody enumerated.
     for (const file of filesOf(hits)) {
       expect(PRINTING_SITES as readonly string[], file).toContain(file);
+    }
+  });
+
+  test("EVERY printer on the census carries an evidence label", async () => {
+    // Arrange — the census tells us WHERE a confidence is printed; this asks
+    // the stronger question EV-5 actually poses: does each of those places
+    // also print the labels? A file on the census that never mentions the
+    // vocabulary is a surface printing a bare number.
+    //
+    // Matching on the shared vocabulary rather than on rendered output,
+    // because these eight print through four different mechanisms (template
+    // literals, a facts array, JSX children, a markdown line) and a test that
+    // tried to render all four would be testing its own harness.
+    const usesVocabulary = async (file: string): Promise<boolean> => {
+      const source = await Bun.file(`${ROOT}${file}`).text();
+      return (
+        source.includes("axesLabel") ||
+        source.includes("axesClause") ||
+        source.includes("axesFact") ||
+        source.includes("axesFacts")
+      );
+    };
+
+    // Assert — every printer except the author echo, whose exemption is
+    // stated above and is asserted rather than assumed: if it ever starts
+    // carrying the vocabulary, this test says so and the note goes.
+    for (const file of PRINTING_SITES) {
+      const expected = file !== AUTHOR_ECHO;
+      expect(await usesVocabulary(file), file).toBe(expected);
     }
   });
 

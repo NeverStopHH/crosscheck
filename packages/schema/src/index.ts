@@ -230,16 +230,21 @@ export {
 } from "./ci-run.ts";
 export type { CiLane, CiRunReport, CiTestResult } from "./ci-run.ts";
 export {
+  EVIDENCE_REASON_SENTENCE,
   EVIDENCE_SUPPORT,
   EVIDENCE_SUPPORT_REASONS,
   EVIDENCE_WHO,
+  EVIDENCE_WHO_SENTENCE,
   EvidenceAxesSchema,
   EvidenceSupportReasonSchema,
   EvidenceSupportSchema,
   EvidenceWhoSchema,
   MAX_VERIFICATION_REF_CHARS,
   MAX_VERIFICATION_REF_KIND_CHARS,
+  NO_AXES_FROM_HUB,
+  NO_AXES_READABLE,
   VERIFICATION_REF_KINDS,
+  axesLabel,
 } from "./evidence-axes.ts";
 export type {
   EvidenceAxes,

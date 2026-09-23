@@ -1707,6 +1707,16 @@ export const RefereeClaimSchema = z.looseObject({
   // (DESIGN.md §4), and a hub that will not state it does not get the row
   // rendered — a derived draft must never pass for a vouched claim.
   provenance: z.string().min(1),
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this claim (1.0 spec 08 §3.1).
+   *
+   * Optional, like every other surface's: absent means this hub does not
+   * report one, which the renderer says out loud rather than passing over.
+   * The brief exists to let a reader CHECK a position instead of believing
+   * it, so a confidence with no evidence label is precisely the thing it must
+   * not hand somebody.
+   */
+  axes: EvidenceAxesSchema.optional(),
   authorDeveloperName: z.string().min(1).optional(),
   createdAt: z.string().min(1),
 });
@@ -2010,6 +2020,16 @@ export const ConferenceClaimSchema = z.looseObject({
   confidence: z.number().min(0).max(1),
   provenance: z.string().min(1),
   body: z.string(),
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this claim (1.0 spec 08 §3.1).
+   *
+   * A conference report is read AT STANDUP, and VISION §2 calls this the
+   * riskiest of the four capabilities for exactly that reason: a confidently
+   * wrong finding delivered to a room is worse than three honest ones. A
+   * confidence with no evidence label is the most persuasive version of that
+   * failure, so the labels travel with the number here too.
+   */
+  axes: EvidenceAxesSchema.optional(),
   authorDeveloperName: z.string().min(1).optional(),
   createdAt: z.string().min(1),
 });

@@ -26,12 +26,12 @@ import {
 } from "../constants.ts";
 import { isAssertableValidity } from "../claim-validity.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
-import type {
-  ClaimValidity,
-  EvidenceAxes,
-  EvidenceSupportReason,
-  EvidenceWho,
+import {
+  NO_AXES_FROM_HUB,
+  NO_AXES_READABLE,
+  axesLabel,
 } from "@crosscheck/schema";
+import type { ClaimValidity } from "@crosscheck/schema";
 import type {
   ContradictionEntry,
   ContradictionSide,
@@ -584,71 +584,6 @@ export const SUBSTANCE_MATCH_KIND = "error_fingerprint";
  * briefing/sanitize.ts.
  */
 const CONFIDENCE_DECIMALS = 2;
-
-/**
- * THE EVIDENCE-AXIS SENTENCES (1.0 spec 08 §3.1), and the SHORT label built
- * from them for unsolicited surfaces.
- *
- * THEY LIVE HERE FOR `claimValidityWord`'S REASON, one block down: both
- * unsolicited surfaces need them — the claim hint and the solved root cause —
- * and `evidence/render.ts` already imports this module, so the full clause's
- * home cannot also be the sentences' without a cycle. The FULL clause, with
- * its commit hash and its age, stays on the pulled surfaces, exactly as 02's
- * full validity clause does.
- *
- * NO COMMIT HASH ON AN UNSOLICITED SURFACE. That is 02's rule, not a new one:
- * a sha spends characters a hint does not have and anchors a session on a
- * commit nobody asked about. The unsolicited form answers "how much is this
- * worth" and stops there.
- *
- * Every sentence is a renderer-owned literal chosen by an enum, so neither
- * form carries an untrusted slot.
- */
-export const EVIDENCE_WHO_SENTENCE: Record<EvidenceWho, string> = {
-  human_declared: "a person declared this",
-  agent_derived: "an agent recorded this",
-};
-
-/**
- * `Record`, not a switch with a default: a new reason without a sentence is a
- * TYPE ERROR. A default arm would print a vague fallback for the new rung,
- * which is this project's recurring defect — a gap that reads like an answer.
- *
- * The weak rungs are worded to SOUND weak. "No check was attached to it" must
- * not read like a clean bill of health, because that is what a reader in a
- * hurry takes it for.
- */
-export const EVIDENCE_REASON_SENTENCE: Record<EvidenceSupportReason, string> = {
-  no_verification_ref: "no check was attached to it",
-  ref_malformed: "the attached check could not be read",
-  ref_unresolved: "the attached check names nothing this hub holds",
-  observed_failure: "a failure was observed; no fix was shown to land",
-  ci_observed: "CI has seen this test, but no red-then-green pair",
-  red_then_green: "it failed before and passes now",
-  no_binding: "the claim names no commit, so nothing can be checked against it",
-  no_ci_coverage: "this repository reports no CI",
-  pruned_by_retention: "the earlier run has aged out; the pair is gone",
-  no_platform_rung: "nothing here can verify a check of this kind",
-};
-
-/** The two absences, told apart because the remedies differ. */
-export const NO_AXES_FROM_HUB = "no evidence label (this hub does not report one)";
-export const NO_AXES_READABLE =
-  "no evidence label (this crosscheck cannot read the one sent)";
-
-/**
- * The unsolicited form: who, and what was run. No age, no commit.
- *
- * Empty for a member this build cannot name — an unnamed trust label is worse
- * than none, and the callers turn that into `NO_AXES_READABLE`.
- */
-export const axesLabel = (axes: EvidenceAxes): string => {
-  const who = EVIDENCE_WHO_SENTENCE[axes.who] as string | undefined;
-  const reason = EVIDENCE_REASON_SENTENCE[axes.supportReason] as
-    | string
-    | undefined;
-  return who === undefined || reason === undefined ? "" : `${who} — ${reason}`;
-};
 
 /**
  * The state WORD alone, for an UNSOLICITED surface (1.0 spec 02 §5a).

@@ -182,6 +182,76 @@ export type VerificationRefKind = (typeof VERIFICATION_REF_KINDS)[number];
  * `work_context_targets.created_at` is nullable by design, and collapsing those
  * two meanings is how "we do not know when" becomes "it never happened".
  */
+/**
+ * THE ONE ENGLISH RENDERING OF EACH AXIS MEMBER.
+ *
+ * IN THE SCHEMA PACKAGE, and that placement is forced rather than chosen.
+ * `connector-core` depends on `server`; `server` depends only on this package.
+ * So the hub's two pages and the connector's four renderers cannot share a
+ * vocabulary that lives in either of them — and two vocabularies describing
+ * the same trust label is worse than the layering smudge of putting display
+ * strings beside a wire enum: a reader comparing the hub page with their
+ * agent's context would see two different products disagreeing about one
+ * claim.
+ *
+ * WHAT STAYS RENDERER-OWNED is everything above the label: the AGE and the
+ * COMMIT HASH, which only a pulled surface may carry (02's rule), and the
+ * framing, capping and fitting each surface does. This is the sentence, not
+ * the presentation. `CONFIDENCE_DECIMALS` is deliberately a local constant per
+ * render module and stays that way; a ten-member vocabulary is a different
+ * thing from a number.
+ */
+export const EVIDENCE_WHO_SENTENCE: Record<EvidenceWho, string> = {
+  human_declared: "a person declared this",
+  agent_derived: "an agent recorded this",
+};
+
+/**
+ * `Record`, not a switch with a default: a new reason without a sentence is a
+ * TYPE ERROR. A default arm would print a vague fallback for the new rung,
+ * which is this project's recurring defect — a gap that reads like an answer.
+ *
+ * The weak rungs are worded to SOUND weak. "No check was attached to it" must
+ * not read like a clean bill of health, because that is what a reader in a
+ * hurry takes it for.
+ */
+export const EVIDENCE_REASON_SENTENCE: Record<EvidenceSupportReason, string> = {
+  no_verification_ref: "no check was attached to it",
+  ref_malformed: "the attached check could not be read",
+  ref_unresolved: "the attached check names nothing this hub holds",
+  observed_failure: "a failure was observed; no fix was shown to land",
+  ci_observed: "CI has seen this test, but no red-then-green pair",
+  red_then_green: "it failed before and passes now",
+  no_binding: "the claim names no commit, so nothing can be checked against it",
+  no_ci_coverage: "this repository reports no CI",
+  pruned_by_retention: "the earlier run has aged out; the pair is gone",
+  no_platform_rung: "nothing here can verify a check of this kind",
+};
+
+/**
+ * The two absences, told apart because the REMEDIES differ: one is a hub to
+ * upgrade, the other a client. A single "no label" would send a reader to the
+ * wrong one.
+ */
+export const NO_AXES_FROM_HUB =
+  "no evidence label (this hub does not report one)";
+export const NO_AXES_READABLE =
+  "no evidence label (this crosscheck cannot read the one sent)";
+
+/**
+ * Who, and what was run. Nothing else — no age, no commit.
+ *
+ * Empty for a member this build cannot name: an unnamed trust label is worse
+ * than none, and every caller turns that into `NO_AXES_READABLE`.
+ */
+export const axesLabel = (axes: EvidenceAxes): string => {
+  const who = EVIDENCE_WHO_SENTENCE[axes.who] as string | undefined;
+  const reason = EVIDENCE_REASON_SENTENCE[axes.supportReason] as
+    | string
+    | undefined;
+  return who === undefined || reason === undefined ? "" : `${who} — ${reason}`;
+};
+
 export interface EvidenceAxes {
   readonly who: EvidenceWho;
   readonly support: EvidenceSupport;

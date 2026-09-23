@@ -35,12 +35,13 @@ import {
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
+
+import type { EvidenceAxes } from "@crosscheck/schema";
 import {
   NO_AXES_FROM_HUB,
   NO_AXES_READABLE,
   axesLabel,
-} from "../briefing/render.ts";
-import type { EvidenceAxes } from "@crosscheck/schema";
+} from "@crosscheck/schema";
 
 import { coverageNote } from "../coverage/render.ts";
 import { UNKNOWN_COVERAGE } from "../http/coverage.ts";

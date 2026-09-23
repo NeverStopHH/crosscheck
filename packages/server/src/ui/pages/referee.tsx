@@ -5,6 +5,7 @@
  * and author. Same escaping + capping discipline as the work-context page.
  */
 import type { FC } from "hono/jsx";
+import { NO_AXES_READABLE, axesLabel } from "@crosscheck/schema";
 
 import {
   UI_MAX_BODY_CHARS,
@@ -48,6 +49,10 @@ const Position: FC<{
         {capped(position.workContextTitle, UI_MAX_TITLE_CHARS)}
       </a>{" "}
       · confidence {position.claim.confidence.toFixed(CONFIDENCE_DECIMALS)}
+      {/* The brief exists to let a reader CHECK a position rather than
+          believe it, so the number never stands here without its labels. */}
+      {" · "}
+      {axesLabel(position.claim.axes) || NO_AXES_READABLE}
       {position.supersededByClaimId === null
         ? ""
         : " · superseded by its own author"}
