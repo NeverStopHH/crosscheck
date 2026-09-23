@@ -353,7 +353,7 @@ describe("search_related_work with a developer filter", () => {
 
     // Assert
     expect(result.isError).toBe(false);
-    expect(result.text.toLowerCase()).toContain("no work context");
+    expect(result.text.toLowerCase()).toContain("matched that query");
     expect(result.text).toContain("Alice");
     expect(result.text.toLowerCase()).toContain("part of that answer");
   });

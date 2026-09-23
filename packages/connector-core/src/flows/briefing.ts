@@ -31,6 +31,8 @@ import {
   WORK_CONTEXT_LIST_LIMIT,
 } from "../constants.ts";
 import { formatGhostLine } from "../briefing/ghost.ts";
+import { coverageNote } from "../coverage/render.ts";
+import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
 import {
   formatSolvedLine,
   groupTeammates,
@@ -154,7 +156,16 @@ export const assembleBriefing = async (
   ]);
   const presence = presenceResult.ok ? presenceResult.data : [];
   const workContexts = contextsResult.ok ? contextsResult.data : [];
-  const absences = absencesResult.ok ? absencesResult.data : [];
+  const absences = absencesResult.ok ? absencesResult.data.absences : [];
+  // §5.3. The qualifier is rendered HERE, not inside renderBriefing: the
+  // briefing renderer owns `formatAge`, which coverage/render.ts imports, so
+  // the reverse import would be a cycle. `coverageNote` returns null unless a
+  // rung is positively `incomplete`, so an un-upgraded or unreachable hub —
+  // five `unknown` rows — leaves the briefing byte-identical to before.
+  const coverage = absencesResult.ok
+    ? absencesResult.data.coverage
+    : UNKNOWN_COVERAGE;
+  const coverageLine = coverageNote(coverage, now);
   const contradictions = contradictionsResult.ok
     ? contradictionsResult.data
     : [];
@@ -187,6 +198,7 @@ export const assembleBriefing = async (
     drafts,
     questions,
     ghostChecks,
+    ...(coverageLine === null ? {} : { coverageLine }),
   });
 
   const shownSolvedIds = solvedMatches

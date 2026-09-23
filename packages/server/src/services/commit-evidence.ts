@@ -2,8 +2,11 @@ import { and, eq, gt, lt, or, sql } from "drizzle-orm";
 import { MAX_COMMIT_CLOCK_SKEW_MS } from "@crosscheck/schema";
 import type { CommitEvidence } from "@crosscheck/schema";
 
+import type { SeqField } from "@crosscheck/schema";
+
 import { COMMIT_EVIDENCE_RETENTION_DAYS } from "../constants.ts";
 import { commitEvidence } from "../db/schema.ts";
+import { recordSessionEvent } from "./session-events.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 import type { HandlerOutcome } from "./record-handlers.ts";
@@ -52,6 +55,8 @@ export const ingestCommitEvidence = async (
   deps: Deps,
   developerId: string,
   body: CommitEvidence,
+  seq?: SeqField,
+  producerSessionId?: string,
 ): Promise<HandlerOutcome> => {
   const now = deps.now();
   const retentionCutoff = new Date(
@@ -103,6 +108,50 @@ export const ingestCommitEvidence = async (
           },
           setWhere: sql`${commitEvidence.collectedAt} <= excluded.collected_at`,
         });
+    }
+    // `commit.observed` — the ONE canonical event whose session cannot come
+    // from a body or a join. The aggregate's own key is (repo, author_email),
+    // and author_email NEVER LEAVES THE HUB: hashing it would make the
+    // referent a content-derived pseudonymous identifier of a person, which
+    // data minimisation forbids outright. So the event refs the SESSION whose
+    // SessionStart ran the collection, which is all a position can honestly
+    // assert about an aggregate — that a collection happened, here in the
+    // order.
+    //
+    // That session is the PRODUCER, and a producer is rewritten by whichever
+    // session drains the spool. `withProducer` therefore strips the position
+    // from exactly this class of record when it rewrites one, so a foreign
+    // drain arrives unsequenced instead of filing A's position under B.
+    //
+    // `observed`, NOT `emitted` — SessionStart's collection is spec 01 §3.6's
+    // third producer of an upper bound, beside the git_diff lane and the
+    // detached workers. The position is allocated when the aggregate is
+    // WRITTEN DOWN, and what it describes is older: commits authored up to
+    // COMMIT_EVIDENCE_WINDOW_DAYS before the session existed. §3.6's own
+    // sentence about the workers is the argument verbatim — "the position it
+    // allocates records when the row was written, not when the fact it
+    // describes was seen".
+    //
+    // WHY THE "IT ONLY ASSERTS THAT A COLLECTION HAPPENED" READING DOES NOT
+    // SURVIVE. A SessionStart RE-FIRE collects the SAME aggregate again, so
+    // one set of commits holds two positions in one usable epoch; measured on
+    // the hub's own readers, a claim between them was answered +1 against the
+    // first row and -1 against the second. -1 is `predeclared` — the value
+    // that CLEARS the agent — about commits authored days before the session
+    // opened. An upper bound makes both of those a refusal, which is the
+    // answer an aggregate of older facts can honestly support.
+    if (producerSessionId !== undefined) {
+      await recordSessionEvent(
+        { db: tx, now: deps.now },
+        {
+          sessionId: producerSessionId,
+          kind: "commit.observed",
+          seq,
+          seqKind: "observed",
+          refKind: "session",
+          refId: producerSessionId,
+        },
+      );
     }
     return { status: "accepted" };
   });

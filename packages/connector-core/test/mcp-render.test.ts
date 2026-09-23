@@ -36,6 +36,7 @@ import {
   safeId,
 } from "../src/mcp/render.ts";
 import type { SearchHit } from "../src/mcp/render.ts";
+import { UNKNOWN_COVERAGE } from "../src/http/coverage.ts";
 import type {
   Diagnosis,
   DiagnosisClaim,
@@ -88,10 +89,16 @@ const diagnosis = (overrides: Partial<Diagnosis> = {}): Diagnosis => ({
   edges: [],
   externalClaims: [],
   targets: [],
+  intentChain: [],
+  chainReported: true,
   targetsReported: true,
   droppedTargets: 0,
   truncated: false,
   droppedRows: 0,
+  // The hub-silent record: these fixtures predate coverage and assert the
+  // shapes that do NOT depend on it. The branches that do are in
+  // test/coverage-empty-answers.test.ts.
+  coverage: UNKNOWN_COVERAGE,
   ...overrides,
 });
 
@@ -955,9 +962,12 @@ describe("renderDiagnosis", () => {
       NOW,
     );
 
-    // Assert
+    // Assert: the fixture's record is the hub-silent one, so the sentence is
+    // the one narrowed to the archive (03 §5.1). The distinction this test
+    // exists for — "the hub answered none" vs "the hub does not answer" —
+    // is unchanged.
     expect(rendered).toContain(
-      "No targets were captured for this work context.",
+      "No targets for this work context are in what was observed.",
     );
     expect(rendered).not.toContain("does not report captured targets");
   });
@@ -1017,7 +1027,7 @@ describe("renderDiagnosis", () => {
 
     // Assert
     expect(rendered).toContain("«Login 500s on staging»");
-    expect(rendered).toContain("no claims");
+    expect(rendered).toContain("Claims: none in what was observed.");
   });
 });
 
@@ -1041,12 +1051,15 @@ describe("renderSearchResults", () => {
   });
 
   test("says it found nothing rather than returning an empty string", () => {
-    // Act
+    // Act: no coverage passed, which is what an un-upgraded hub yields — so
+    // the sentence is the one narrowed to the ARCHIVE rather than the claim
+    // about the repository (03 §5.1, test/coverage-empty-answers.test.ts).
     const rendered = renderSearchResults([], "nothing matches this");
 
     // Assert
     expect(rendered.length).toBeGreaterThan(0);
-    expect(rendered.toLowerCase()).toContain("no work context");
+    expect(rendered.toLowerCase()).toContain("matched that query");
+    expect(rendered.toLowerCase()).toContain("nothing in what was observed");
   });
 
   test("distinguishes a query that could not be searched from one that missed", () => {
@@ -1118,7 +1131,7 @@ describe("the session's intent on the MCP reading tools (trial finding #16)", ()
     );
   });
 
-  test("a diagnosis without an intent keeps its exact shape — one line shorter", () => {
+  test("a diagnosis without an intent keeps its exact shape — two lines shorter", () => {
     const withIntent = renderDiagnosis(
       diagnosis({
         workContext: {
@@ -1131,25 +1144,58 @@ describe("the session's intent on the MCP reading tools (trial finding #16)", ()
           createdAt: CREATED,
           updatedAt: null,
         },
+        // What a hub that knows about the ledger sends for a context declared
+        // once and never amended. The count below is TWO, not one, because an
+        // intent now costs the sentence AND its history: the chain is what
+        // separates a plan stated up front from one widened after the break,
+        // and a diagnosis printing the sentence without it is the surface this
+        // spec exists to fix.
+        intentChain: [
+          {
+            version: 1,
+            amendsVersion: null,
+            provenance: "declared",
+            summary: INTENT.summary,
+            reason: null,
+            scope: [],
+          },
+        ],
+        chainReported: true,
       }),
       NOW,
     );
     const rendered = renderDiagnosis(diagnosis(), NOW);
 
-    // The control: the intent costs exactly one line, and it is line 2
-    expect(withIntent.split("\n").length - rendered.split("\n").length).toBe(1);
+    expect(withIntent.split("\n").length - rendered.split("\n").length).toBe(2);
     expect(withIntent.split("\n")[2]?.startsWith("Session intent")).toBe(true);
+    expect(withIntent.split("\n")[3]?.startsWith("Intent history")).toBe(true);
 
     // Line 2 of an intent-less tree is the TARGETS state, not the claims
     // header: the targets block sits between the opening and the claims by
     // design (a reader about to edit the same file wants the overlap first),
-    // and this fixture's context has none captured. The intent's one-line
-    // cost — what this test is about — is unchanged by that.
+    // and this fixture's context has none captured. The intent's cost — what
+    // this test is about — is unchanged by that.
     expect(rendered.split("\n")[2]).toBe(
-      "No targets were captured for this work context.",
+      "No targets for this work context are in what was observed.",
     );
-    expect(rendered.split("\n")[3]?.startsWith("Claims (")).toBe(true);
+    // BY NAME, NOT BY INDEX. Both branches asserted a line NUMBER here and
+    // both were right on their own tree: 03 inserts a coverage clause and 06
+    // an intent-chain block, so each shifted the other's index and the merge
+    // could only have been resolved by re-counting — a number that will shift
+    // again for the next spec that adds a line. What the test is about is the
+    // ORDER of two named sections, so it now says that.
+    const lines = rendered.split("\n");
+    const coverageAt = lines.findIndex((line) => line.startsWith("Coverage "));
+    const claimsAt = lines.findIndex((line) => line.startsWith("Claims ("));
+    // An empty TARGETS state is an empty-result phrasing and §5.1 binds
+    // NO_TARGETS by name, so the tree says how far the archive reached even
+    // though it has claims to show — and it says it ABOVE them.
+    expect(coverageAt).toBeGreaterThanOrEqual(0);
+    expect(claimsAt).toBeGreaterThan(coverageAt);
+    // AND THE HISTORY DOES NOT OUTLIVE THE SENTENCE. A tree with no intent
+    // says nothing about intent at all — not even that nobody amended one.
     expect(rendered).not.toContain("intent");
+    expect(rendered).not.toContain("Intent");
   });
 
   test("search_related_work prints a hit's intent on an indented second line", () => {
@@ -1261,7 +1307,7 @@ describe("renderSearchResults names the filters that ran", () => {
     });
 
     // Assert
-    expect(rendered.toLowerCase()).toContain("no work context");
+    expect(rendered.toLowerCase()).toContain("matched that query");
     expect(rendered).toContain("from Ken");
     expect(rendered).toContain("in the last 14d");
     expect(rendered.toLowerCase()).toContain("part of that answer");

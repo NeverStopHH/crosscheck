@@ -22,6 +22,7 @@ import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
 
 import { sweepPins } from "@crosscheck/connector-core/http/hub.ts";
+import { UNKNOWN_COVERAGE } from "@crosscheck/connector-core/http/coverage.ts";
 import { MAX_PIN_SWEEP_UPDATES } from "@crosscheck/schema";
 import type { HubContext } from "@crosscheck/connector-core/http/client.ts";
 import type { PinEntry as PinRow } from "@crosscheck/connector-core/http/hub.ts";
@@ -29,6 +30,7 @@ import type { PinEntry as PinRow } from "@crosscheck/connector-core/http/hub.ts"
 import { runCli } from "../src/index.ts";
 import { renderPinList } from "../src/cli/pin-render.ts";
 import { renderSuspect } from "../src/cli/suspect-render.ts";
+import type { SuspectView } from "@crosscheck/connector-core/http/hub.ts";
 import {
   git,
   makeHome,
@@ -478,6 +480,7 @@ describe("crosscheck suspect at scale", () => {
       authorTouches: 8,
       lift: 0.25,
       sources: ["tool_edit"],
+      intentTiming: null,
       readerMuted: false,
       isSelf: false,
     };
@@ -495,6 +498,7 @@ describe("crosscheck suspect at scale", () => {
       },
       totals: { sessionsTouching: 305, sessionsScored: 50, windowDays: 14 },
       attribution: "sessions",
+      coverage: UNKNOWN_COVERAGE,
       candidates: [candidate],
     };
 
@@ -504,6 +508,96 @@ describe("crosscheck suspect at scale", () => {
     // Assert
     expect(rendered).toContain("305 session(s) touched this surface");
     expect(rendered).toContain("scored 50 of 305");
+  });
+
+  test("the intent line says whether the plan preceded the change", () => {
+    // Spec 06 §5, decision 10.2. This is the surface where the missing
+    // distinction costs most: it names sessions beside their declared intent,
+    // and a reader who cannot tell a plan from an excuse reads every intent
+    // as a plan. Before this the answer existed in the hub and reached no
+    // human at all.
+    const now = new Date();
+    const viewWith = (
+      intentTiming: { timing: string; reason: string } | null,
+    ): SuspectView =>
+      ({
+        outcome: "ranked",
+        // THE FIXTURE BUILDS THE VIEW DIRECTLY, so it has to supply what the
+        // PARSER would. `parseCoverage` never returns undefined — it answers
+        // UNKNOWN_COVERAGE when a hub sends nothing — so this gap cannot
+        // happen at runtime; it exists only because the cast skips the parse.
+        // Unknown is what an older hub's answer becomes, which is what this
+        // fixture is standing in for.
+        coverage: UNKNOWN_COVERAGE,
+        falsifier: { kind: "recorded_break", at: now.toISOString(), check: null },
+        scope: {
+          kind: "pin",
+          pinId: "pin_01",
+          surface: "the refresh path",
+          files: ["src/auth/refresh.ts"],
+          missingFiles: [],
+          rewrittenPaths: 0,
+          rewrittenAt: null,
+        },
+        totals: { sessionsTouching: 1, sessionsScored: 1, windowDays: 14 },
+        attribution: "sessions",
+        candidates: [
+          {
+            sessionId: "cc_one",
+            agentKind: "claude-code",
+            branch: "main",
+            workContextId: "wc_one",
+            workContextTitle: "Playback transport rework",
+            // A REAL intent, because the clause hangs off that line: a
+            // candidate with none has nothing for the timing to qualify.
+            intent: {
+              summary: "Rework the transport",
+              provenance: "declared",
+              confidence: 1,
+              capturedAt: now.toISOString(),
+            },
+            lastActiveAt: now.toISOString(),
+            overlap: 2,
+            authorTouches: 8,
+            lift: 0.25,
+            sources: ["tool_edit"],
+            intentTiming,
+            readerMuted: false,
+            isSelf: false,
+          },
+        ],
+      }) as unknown as SuspectView;
+
+    // A plan stated beforehand, and the same plan stated afterwards.
+    expect(
+      renderSuspect(
+        viewWith({ timing: "predeclared", reason: "declared_before" }),
+        now,
+      ),
+    ).toContain("declared before this file was touched");
+    expect(
+      renderSuspect(
+        viewWith({ timing: "post_hoc", reason: "declared_after" }),
+        now,
+      ),
+    ).toContain("declared after this file was touched");
+
+    // A REFUSAL NEVER PRINTS AS THE BARE WORD. "Absent" alone asserts that no
+    // explanation exists, which accuses a developer; the reason says only
+    // that we cannot tell when one was written, which excuses them.
+    const refused = renderSuspect(
+      viewWith({ timing: "absent", reason: "not_comparable" }),
+      now,
+    );
+    expect(refused).toContain("timing unknown: these two cannot be ordered");
+    expect(refused).not.toMatch(/—\s*absent/);
+
+    // And a hub that says nothing adds no clause at all — this surface has
+    // its own coverage vocabulary, and a second one would be a second thing
+    // to read.
+    const silent = renderSuspect(viewWith(null), now);
+    expect(silent).not.toContain("timing unknown");
+    expect(silent).not.toContain("declared before");
   });
 
   test("says the pin's file set was rewritten by a sweep, and when", () => {
@@ -527,6 +621,7 @@ describe("crosscheck suspect at scale", () => {
       },
       totals: { sessionsTouching: 0, sessionsScored: 0, windowDays: 14 },
       attribution: "sessions",
+      coverage: UNKNOWN_COVERAGE,
       candidates: [],
     };
 
@@ -557,6 +652,7 @@ describe("crosscheck suspect at scale", () => {
       },
       totals: { sessionsTouching: 0, sessionsScored: 0, windowDays: 14 },
       attribution: "sessions",
+      coverage: UNKNOWN_COVERAGE,
       candidates: [],
     };
 

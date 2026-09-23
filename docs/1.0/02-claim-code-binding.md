@@ -295,6 +295,32 @@ the existing **`developerAuth`** (`middleware/auth.ts:38+`); it does **not** nee
 reproducible from any clone. A forged report changes one claim's presentation
 label — never a body, an edge or any ranking — and the next honest report repairs
 it, the row being an UPSERT of a current reading rather than an accumulation.
+
+> **D6 — this paragraph and the downgrade-only rule are incompatible, and the
+> choice is Nick's.** The trust argument above permits any member to report
+> *because* a forged report is repairable. CCB-3's downgrade-only UPSERT removed
+> that: a stored `changed` is only ever replaced by another `changed`, so no
+> honest `unchanged` can undo a forged one. An independent refuter measured the
+> consequence — a member whose only sessions are in another repo names this one
+> in the request body, demotes its claims, and the owner's correction comes back
+> `refusedDowngrades: 1`. The caller cannot be scoped without refusing
+> `crosscheck revalidate`, which §3.7 itself says runs with no session. Three
+> ways out, none of them free:
+>
+> 1. **Keep permanence, add disclosure.** `reported_by` is stored and refused
+>    walk-backs are counted; render WHO demoted a claim, and whether they have
+>    ever worked in this repo. Blocks nothing, and a reader can judge.
+> 2. **Keep repairability, bound the upgrade.** Allow `changed -> unchanged`
+>    only from the claim's own author, or only with a newer `ref_commit`. The
+>    forged downgrade becomes temporary; a forged UPGRADE becomes possible again
+>    for exactly one party.
+> 3. **Scope the caller and give `revalidate` a session.** Closes it properly
+>    and costs the phantom-teammate refusal Q9 makes.
+>
+> Nothing is implemented beyond the disclosure half of (1) — `reported_by` and
+> `self_reported` are stored, and doctor prints the refusal counts. The
+> paragraph above is left standing rather than quietly edited, because the
+> contradiction is the finding.
 `Diagnosis.claims[]`, the hint candidate rows and the referee position each gain
 one `validity: ClaimValidity` sibling.
 

@@ -18,6 +18,7 @@
  * package trees, not the workspace root.
  */
 import type { CommitDrift } from "./git/commit-drift.ts";
+import type { CoverageRecord } from "./http/coverage.ts";
 import { renderBriefing } from "./briefing/render.ts";
 import { renderConferenceReport } from "./conference/report.ts";
 import { formatSummarizerFailure } from "./model/runner.ts";
@@ -31,12 +32,14 @@ import {
 } from "./hints/render.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
 import {
+  quotingText,
   renderDiagnosis,
   renderSearchFilterRefusal,
   renderSearchResults,
   renderUnappliedFilters,
   renderUnusableQuery,
 } from "./mcp/render.ts";
+import { renderIntentChain } from "./mcp/render-intent-chain.ts";
 import { renderRefereeBrief } from "./mcp/render-referee.ts";
 import { composeDetachedTitle } from "./flows/work-context-title.ts";
 import type {
@@ -56,6 +59,7 @@ import type {
   TripwireSession,
   WorkContextEntry,
 } from "./http/hub.ts";
+import { describeConnectionFailure } from "./http/connection-error.ts";
 
 /**
  * How a surface's output is classed, which decides its corpus assertions:
@@ -158,6 +162,37 @@ const ISO = "2026-08-18T11:55:00.000Z";
 const NO_DRIFT: CommitDrift | null = null;
 
 /**
+ * A FIXED `incomplete` coverage record for the surfaces whose closures render
+ * the qualifier (03 COV-7). `incomplete` because it is the state that carries
+ * the most renderer-owned text and the only one that carries an instant —
+ * the shape most worth holding to the framing invariants.
+ */
+const CORPUS_COVERAGE: CoverageRecord = {
+  repo: "github.com/acme/api",
+  computedAt: NOW.toISOString(),
+  scope: { sinceIso: "2026-08-04T12:00:00.000Z" },
+  sources: [
+    {
+      source: "agent_event",
+      state: "incomplete",
+      reason: "session_reaped",
+      gapSince: ISO,
+      observedAt: ISO,
+    },
+    {
+      source: "git",
+      state: "incomplete",
+      reason: "evidence_stale",
+      gapSince: ISO,
+      observedAt: ISO,
+    },
+    { source: "ci", state: "unavailable", reason: "no_emitter", gapSince: null, observedAt: null },
+    { source: "runtime", state: "unavailable", reason: "out_of_scope_1_0", gapSince: null, observedAt: null },
+    { source: "human_edit", state: "unavailable", reason: "no_platform_rung", gapSince: null, observedAt: null },
+  ],
+};
+
+/**
  * The payload in the INTENT slot too (trial finding #16): a derived intent is
  * model text, a declared one a teammate's — both land on every surface below
  * through briefing/intent.ts, so every adapter plants it.
@@ -201,6 +236,26 @@ const hintClaimWith = (payload: string): HintClaimCandidate => ({
   authorDeveloperId: "dev_other",
   authorDeveloperName: payload,
   body: payload,
+  // THE VALIDITY RECORD, PLANTED. Without it `claimValidityWord` returns null
+  // and the corpus renders this surface exactly as it did before spec 02 —
+  // a new line the corpus cannot see is a new line it does not guard. `stale`
+  // rather than `current`, because the downgrade is the case that changes
+  // what a reader should do; the payload rides the two string-shaped slots a
+  // hostile hub controls, even though the hint prints only the WORD.
+  validity: {
+    state: "stale",
+    observedAtCommit: payload,
+    commitBinding: "session_base",
+    basis: "context_targets",
+    // Sha-shaped by schema, so this is NOT a slot the payload can ride —
+    // a hostile hub sending prose here is refused at the wire.
+    refCommit: "a1b2c3d",
+    selfReported: false,
+    touchingCommits: [],
+    touchingTotal: 1,
+    lastRevalidatedAt: ISO,
+    supersededByClaimId: payload,
+  },
   createdAt: ISO,
 });
 
@@ -390,6 +445,26 @@ const solvedMatchWith = (payload: string): SolvedMatchEntry => ({
   // Required at render, so the corpus would stop covering the cause line
   // without it — the body is only sanitized when it is printed.
   rootCauseConfidence: 0.9,
+  // THE VALIDITY RECORD, PLANTED — and `unknown` rather than `stale` on
+  // purpose. A non-current verdict WITHHOLDS the body here (briefing/
+  // render.ts), so a downgraded record would quietly stop the corpus
+  // attacking the root-cause slot at all: the surface would render less than
+  // it exists to attack, which is how a corpus goes blind without failing.
+  // `unknown` keeps the body travelling AND still prints the state word, so
+  // both the framed body and the new label are under attack in one pass.
+  // The payload rides the two string-shaped slots a hostile hub controls.
+  rootCauseValidity: {
+    state: "unknown",
+    observedAtCommit: payload,
+    commitBinding: "session_base",
+    basis: null,
+    refCommit: payload,
+    selfReported: false,
+    touchingCommits: [],
+    touchingTotal: null,
+    lastRevalidatedAt: null,
+    supersededByClaimId: payload,
+  },
 });
 
 const tripwireSessionWith = (payload: string): TripwireSession => ({
@@ -437,8 +512,31 @@ const diagnosisWith = (payload: string): Diagnosis => ({
   targets: [{ kind: payload, value: payload }],
   targetsReported: true,
   droppedTargets: 0,
+  // THE CHAIN SLOTS (spec 06 §5): an amendment's `reason` and a declared
+  // scope `value` are both agent-written and both now reach the reader, so
+  // the corpus has to plant in them too.
+  intentChain: [
+    {
+      version: 2,
+      amendsVersion: 1,
+      provenance: "declared",
+      summary: payload,
+      reason: payload,
+      scope: [{ role: "expected", kind: "file", value: payload }],
+    },
+    {
+      version: 1,
+      amendsVersion: null,
+      provenance: "declared",
+      summary: payload,
+      reason: null,
+      scope: [{ role: "non_goal", kind: "file", value: payload }],
+    },
+  ],
+  chainReported: true,
   truncated: false,
   droppedRows: 0,
+  coverage: CORPUS_COVERAGE,
 });
 
 const refereeClaimWith = (payload: string, id: string): RefereeClaim => ({
@@ -464,6 +562,7 @@ const refereeBriefWith = (payload: string): RefereeBrief => ({
     evidenceTruncated: false,
     ruledOut: [],
     ruledOutTruncated: false,
+    validity: null,
     supersededByClaimId: null,
     droppedRows: 0,
   },
@@ -474,6 +573,7 @@ const refereeBriefWith = (payload: string): RefereeBrief => ({
     evidenceTruncated: false,
     ruledOut: [],
     ruledOutTruncated: false,
+    validity: null,
     supersededByClaimId: null,
     droppedRows: 0,
   },
@@ -768,6 +868,23 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     render: (payload) => renderDiagnosis(diagnosisWith(payload), NOW),
   },
   {
+    // A SURFACE, NOT A PRIMITIVE. It composes `renderIntent` and the
+    // sanitizer rather than adding a spelling of its own, so
+    // RENDER_LAYER_MODULES is untouched — registering here is what the §4.4
+    // meta-test asks of it, and the meta-test was RED until this entry
+    // existed.
+    kind: "corpus",
+    name: "mcp-intent-chain",
+    delivery: "pulled",
+    module: "src/mcp/render-intent-chain.ts",
+    framing: "framed",
+    // The chain is a BLOCK inside the diagnosis, which carries the notice in
+    // its own header — so the adapter supplies it here, exactly as the hint
+    // headers do for fragments that travel inside a larger answer.
+    render: (payload) =>
+      quotingText(...renderIntentChain(diagnosisWith(payload))),
+  },
+  {
     kind: "corpus",
     name: "search-results",
     delivery: "pulled",
@@ -828,6 +945,12 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // `isSelf` false ON PURPOSE: the self branch substitutes the renderer's
     // own word "you" for the name, so it would render one fewer copy of the
     // payload than this surface exists to attack.
+    //
+    // AND THE COVERAGE CLAUSE (COV-7). The empty branch is the one place the
+    // qualifier is UNCONDITIONAL, so without a record here the registry would
+    // count this surface while the clause it now carries went unattacked. The
+    // record is fixed and `incomplete` on purpose: that is the state with the
+    // most renderer-owned text and the only one carrying an instant.
     render: (payload) =>
       renderSearchResults([], payload, {
         filters: {
@@ -836,6 +959,7 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
           isSelf: false,
           sinceAgeMs: 14 * 24 * 3_600_000,
         },
+        coverage: { record: CORPUS_COVERAGE, now: NOW },
       }),
   },
   {
@@ -877,6 +1001,44 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // framed later on every teammate surface.
     render: (payload) =>
       composeDetachedTitle("detached@0badc0ffe", payload, "github.com/acme/api"),
+  },
+  {
+    // §3.3's consequence, registered so it is a row a reviewer can see: the
+    // coverage line carries no author-written string — enum values, ISO
+    // instants re-formatted from the parsed value, and renderer-owned
+    // literals — so it adds no untrusted slot to any surface it lands on.
+    // That claim is attacked rather than asserted: the named test plants the
+    // whole injection corpus in `gapSince` and `observedAt`, the two strings
+    // the HUB sends, and holds the output to the shared invariants.
+    //
+    // `unsolicited` even though the same text also lands on `pulled`
+    // surfaces: one module, one classification, and the tighter of the two is
+    // the safe one to be held to.
+    kind: "composite",
+    name: "coverage-note",
+    delivery: "unsolicited",
+    module: "src/coverage/render.ts",
+    note: "enum values, renderer-owned literals and ISO instants re-formatted from Date.parse; the two hub-sent strings (gapSince, observedAt) never print through",
+    corpusCoveredBy: ["test/coverage-render.test.ts"],
+  },
+  {
+    kind: "corpus",
+    name: "hub-connection-failure",
+    delivery: "pulled",
+    module: "src/http/connection-error.ts",
+    framing: "sanitized",
+    // WHAT A HUB SAYS WHEN IT CANNOT BE REACHED, on its way into three CLI
+    // commands' stdout. Seven of the eight causes are renderer-owned
+    // sentences; `unknown` relays the far side's own words, and `doctor`,
+    // `login` and `conference` all print it. Their registrations each said
+    // they interpolate nothing untrusted, which was true of everything they
+    // WROTE and false of what they PASSED THROUGH.
+    render: (payload) =>
+      describeConnectionFailure(
+        "unknown",
+        { hubUrl: "http://hub.example:7100", timeoutMs: 5_000 },
+        payload,
+      ),
   },
   {
     kind: "composite",

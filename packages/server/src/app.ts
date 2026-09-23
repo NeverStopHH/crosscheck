@@ -2,6 +2,8 @@ import { Hono } from "hono";
 
 import { fail } from "./http/envelope.ts";
 import { absencesRoutes } from "./routes/absences.ts";
+import { claimRevalidationsRoutes } from "./routes/claim-revalidations.ts";
+import { ciRunsRoutes } from "./routes/ci-runs.ts";
 import { conferenceRoutes } from "./routes/conference.ts";
 import { contradictionsRoutes } from "./routes/contradictions.ts";
 import { developersRoutes } from "./routes/developers.ts";
@@ -9,6 +11,7 @@ import { draftsRoutes } from "./routes/drafts.ts";
 import { eventsRoutes } from "./routes/events.ts";
 import { ghostChecksRoutes } from "./routes/ghost-checks.ts";
 import { hintsRoutes } from "./routes/hints.ts";
+import { intentLedgerRoutes } from "./routes/intent-ledger.ts";
 import { pinsRoutes } from "./routes/pins.ts";
 import { presenceRoutes } from "./routes/presence.ts";
 import { questionsRoutes } from "./routes/questions.ts";
@@ -57,11 +60,25 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   // failed. It needs no hook, so it answers identically for Claude Code,
   // Cursor and ACP sessions alike.
   app.route("/api/suspect", suspectRoutes(deps));
+  // Whether this hub can answer AT-4 at all — two integers, read by any
+  // member, printed by doctor. A hub whose intents all carry `seq: null`
+  // renders every sentence exactly as before and reports healthy; this is
+  // the one instrument that makes that visible rather than quiet.
+  app.route("/api/intent-ledger", intentLedgerRoutes(deps));
   app.route("/api/settings", settingsRoutes(deps));
   // The regression guard's two TEAM decisions — who may pin, and whether
   // `suspect` names sessions. Read by any member (everybody affected has to
   // be able to see what it is), written with the admin token.
   app.route("/api/team-settings", teamSettingsRoutes(deps));
+  // The claim ↔ code binding's recording half (1.0 spec 02). A route rather
+  // than a record kind: `crosscheck revalidate` runs from a terminal with no
+  // agent session, and minting one would be a phantom teammate in presence.
+  app.route("/api/claim-revalidations", claimRevalidationsRoutes(deps));
+  // What CI saw, keyed to a commit (spec 05). Its own route rather than a
+  // record kind, because an envelope requires a producer — a developer, an
+  // agent kind and a session — and CI has none of the three. Write is a
+  // dedicated token, read is any member.
+  app.route("/api/ci-runs", ciRunsRoutes(deps));
   // The human-facing web surface (DESIGN.md §2.1 v0.5) — same hub, same
   // visibility rules, session-cookie auth instead of bearer keys.
   app.route("/ui", uiRoutes(deps));

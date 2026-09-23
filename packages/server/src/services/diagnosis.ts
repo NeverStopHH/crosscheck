@@ -10,8 +10,19 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
+import {
+  claimValidity,
+  loadClaimSurfaces,
+  loadRevalidations,
+} from "./claim-validity.ts";
+import { readIntentChain } from "./intent-ledger.ts";
 import { notMutedCondition } from "./visibility.ts";
+import type { ClaimRevalidationReading } from "./claim-validity.ts";
+import type { ClaimValidity } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
+
+/** Same-author revision edge; its TARGET is the retracted claim (DESIGN.md §5). */
+const SUPERSEDES_EDGE_KIND = "supersedes";
 
 /** Upper bound on claims returned per diagnosis tree; excess sets `truncated`. */
 export const DIAGNOSIS_MAX_CLAIMS = 500;
@@ -125,7 +136,18 @@ export interface ClaimView {
   readonly dedupCount: number;
   readonly evidenceRefs: readonly string[];
   readonly lastSeenAt: string | null;
-  readonly staleAt: string | null;
+  /**
+   * How much this claim is still worth about the CODE (1.0 spec 02). Derived
+   * on read by services/claim-validity.ts — the one authority — and shipped
+   * rather than left for a connector to recompute from three fields.
+   */
+  readonly validity: ClaimValidity;
+  /**
+   * The files this claim's AUTHOR declared it is about (spec 02 §3.2), or an
+   * empty list when they declared none — in which case a reader revalidates
+   * against the tree's own `file` targets and labels the basis accordingly.
+   */
+  readonly affectedPaths: readonly string[];
   readonly createdAt: string;
 }
 
@@ -152,7 +174,42 @@ export interface DiagnosisTargetView {
   readonly value: string;
 }
 
+/**
+ * ONE VERSION OF A WORK CONTEXT'S INTENT, as a reader sees it (spec 06 §5).
+ *
+ * THE POSITION IS NOT SENT. `seq` and `seq_epoch` are how the hub ANSWERS a
+ * timing question; a rendered chain is a history a person reads. Sending the
+ * numbers would invite a connector to compare them itself, and a connector
+ * comparing positions is a second implementation of §3.5 with none of its
+ * refusals — the upper-bound and overlap conditions live on the hub.
+ */
+export interface IntentVersionView {
+  readonly version: number;
+  readonly amendsVersion: number | null;
+  readonly provenance: string;
+  readonly summary: string;
+  readonly reason: string | null;
+  readonly scope: readonly IntentScopeView[];
+}
+
+export interface IntentScopeView {
+  readonly role: string;
+  readonly kind: string;
+  readonly value: string;
+}
+
 export interface Diagnosis {
+  /**
+   * The repo this tree belongs to, off the session the context hangs from.
+   * TWO SPECS NEED THE SAME COLUMN, for two reasons that are both true.
+   * Coverage is per repo by definition (03 refusal 4), so the route answering
+   * this tree has to state how far its archive reaches. And a claim's code
+   * binding is a commit in THIS repo's history (02 §3.6), so a reader checked
+   * out elsewhere must know not to ask its own git about it. Either reason
+   * alone justifies the field; the column is on a join this query already
+   * makes, so neither pays for it twice.
+   */
+  readonly repo: string;
   readonly workContext: WorkContextView;
   readonly claims: readonly ClaimView[];
   readonly edges: readonly ClaimEdgeView[];
@@ -162,6 +219,12 @@ export interface Diagnosis {
    * staleness check reads at pull time (which files this diagnosis was about).
    */
   readonly targets: readonly DiagnosisTargetView[];
+  /**
+   * EVERY VERSION OF THE INTENT, NEWEST FIRST — the history
+   * `work_contexts.intent` never had, bounded by the chain cap rather than by
+   * a second limit here.
+   */
+  readonly intentChain: readonly IntentVersionView[];
   /** True when the claims or edges query hit its limit — the tree is partial. */
   readonly truncated: boolean;
 }
@@ -189,11 +252,12 @@ interface AttributedClaimRow {
   readonly authorDeveloperName: string;
 }
 
-const toClaimView = ({
-  claim: row,
-  authorDeveloperId,
-  authorDeveloperName,
-}: AttributedClaimRow): ClaimView => ({
+const toClaimView = (
+  { claim: row, authorDeveloperId, authorDeveloperName }: AttributedClaimRow,
+  revalidation: ClaimRevalidationReading | undefined,
+  supersededByClaimId: string | null,
+  affectedPaths: readonly string[],
+): ClaimView => ({
   id: row.id,
   workContextId: row.workContextId,
   authorSessionId: row.authorSessionId,
@@ -208,7 +272,8 @@ const toClaimView = ({
   dedupCount: row.dedupCount,
   evidenceRefs: row.evidenceRefs,
   lastSeenAt: toIsoOrNull(row.lastSeenAt),
-  staleAt: toIsoOrNull(row.staleAt),
+  validity: claimValidity(row, revalidation, supersededByClaimId),
+  affectedPaths,
   createdAt: row.createdAt.toISOString(),
 });
 
@@ -407,6 +472,7 @@ const listExternalClaimRefs = async (
  */
 export const getDiagnosis = async (
   db: Db,
+  now: Date,
   workContextId: string,
   limits: DiagnosisLimits = DEFAULT_DIAGNOSIS_LIMITS,
 ): Promise<Diagnosis | undefined> => {
@@ -416,6 +482,7 @@ export const getDiagnosis = async (
     .select({
       workContext: workContexts,
       baseCommit: agentSessions.baseCommit,
+      repo: agentSessions.repo,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -452,13 +519,51 @@ export const getDiagnosis = async (
     limits,
   );
   const targets = await listDiagnosisTargets(db, workContextId);
+  const chain = await readIntentChain(db, workContextId);
+
+  // THE SUPERSEDED LEG COSTS NOTHING HERE. Every edge touching the tree's
+  // claims is already loaded above, so the "is this claim a supersedes
+  // target" question is answered from memory — only hints and referee, which
+  // hold one page of claims and no edges, need the batched IN (…).
+  const supersededBy = new Map(
+    edgeRows
+      .filter(
+        (edge) =>
+          edge.kind === SUPERSEDES_EDGE_KIND && localClaimIds.has(edge.toClaimId),
+      )
+      .map((edge) => [edge.toClaimId, edge.fromClaimId] as const),
+  );
+  const [revalidations, surfaces] = await Promise.all([
+    loadRevalidations(db, now, [...localClaimIds]),
+    loadClaimSurfaces(db, [...localClaimIds]),
+  ]);
 
   return {
+    repo: contextRow.repo,
     workContext: toWorkContextView(contextRow.workContext, contextRow.baseCommit),
-    claims: claimRows.map(toClaimView),
+    claims: claimRows.map((row) =>
+      toClaimView(
+        row,
+        revalidations.get(row.claim.id),
+        supersededBy.get(row.claim.id) ?? null,
+        surfaces.get(row.claim.id) ?? [],
+      ),
+    ),
     edges: edgeRows.map(toClaimEdgeView),
     externalClaims,
     targets,
+    intentChain: chain.map((entry) => ({
+      version: entry.version,
+      amendsVersion: entry.amendsVersion,
+      provenance: entry.provenance,
+      summary: entry.summary,
+      reason: entry.reason,
+      scope: entry.scope.map((scope) => ({
+        role: scope.role,
+        kind: scope.kind,
+        value: scope.value,
+      })),
+    })),
     truncated:
       claimRows.length >= limits.maxClaims ||
       edgeRows.length >= limits.maxEdges,

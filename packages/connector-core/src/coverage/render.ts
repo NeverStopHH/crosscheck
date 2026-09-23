@@ -1,0 +1,383 @@
+/**
+ * The coverage qualifier as one line (03 §3.3, §3.4, §5.3).
+ *
+ * NO AUTHOR-WRITTEN STRING REACHES THIS OUTPUT, which is what lets the line
+ * land on every answer surface without adding an untrusted slot to any of
+ * them. `state` and `reason` are enums; `gapSince` and `observedAt` are
+ * strings the HUB sent and are therefore never printed through — each is
+ * parsed and re-formatted from the parsed instant, so a hub that sends prose
+ * where an ISO belongs loses the instant and never the sentence. The whole
+ * injection corpus is planted in both fields in test/coverage-render.test.ts,
+ * because a claim of "no untrusted slot here" is exactly the claim that
+ * should not be taken on trust.
+ *
+ * TWO FUNCTIONS, BECAUSE §5.1 HAS TWO RULES.
+ *
+ *   `coverageClause` — the HARD empty-result rule (AT-1). An empty answer may
+ *   not stand alone while `agent_event` or `git` is anything but `complete`,
+ *   `unknown` included. It always returns A SENTENCE, for any record it is
+ *   handed; WHEN an empty answer carries one is `mustQualifyEmptyAnswer`'s
+ *   call at the bottom of this file, and the answer surfaces ask it (see
+ *   mcp/render.ts `coverageQualifier`). Under `complete` they print nothing,
+ *   because the unqualified sentence has already said it: "No work context ON
+ *   THIS REPO matched" is a claim about the repository, which the gapped
+ *   branch may not make. `crosscheck status` is the exception and prints on
+ *   every state — every other line of that command does too, and AT-9 names
+ *   it as the surface nobody should have to run doctor after.
+ *
+ *   `coverageNote` — the SOFT annotation rule (AT-9, Nick's decision 4). On a
+ *   NON-EMPTY answer it renders only on `incomplete`, a positively observed
+ *   gap, and returns null otherwise. Not on `unknown`: that is the ordinary
+ *   state of a fresh install, and a caveat on every answer is the noise that
+ *   teaches people to ignore caveats (cli/src/cli/doctor.ts:1322-1325).
+ *   `unknown` still reaches doctor and `crosscheck status` every time, so no
+ *   state is invisible.
+ *
+ * PHRASING INHERITED VERBATIM from server/src/services/absences.ts:89-99: a
+ * factual observation, never an inference about what somebody did. We see
+ * agent sessions, not keystrokes.
+ */
+import { MAX_COVERAGE_LINE_CHARS } from "../constants.ts";
+import { formatAge } from "../briefing/render.ts";
+import { coverageStateOf } from "../http/coverage.ts";
+import type {
+  CoverageRecord,
+  CoverageSourceRecord,
+} from "../http/coverage.ts";
+
+/**
+ * Minute precision, and the seconds are dropped on purpose: AT-1's own
+ * sentence names "Friday 08:13", nobody acts on the second a heartbeat
+ * stopped, and every character here is spent against a 160-char bound that
+ * makes this line uncuttable in the briefing.
+ */
+const instant = (iso: string | null): string | null => {
+  if (iso === null) {
+    return null;
+  }
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) {
+    return null;
+  }
+  return `${new Date(ms).toISOString().slice(0, 16)}Z`;
+};
+
+/**
+ * Trailing qualifiers, joined once: `(10d ago, reaped)` rather than one
+ * parenthetical per fact.
+ *
+ * THE INSTANT AND ITS AGE, BECAUSE EVERY LINE BESIDE IT IS AN AGE. This is
+ * the only line in the briefing that prints a machine timestamp, and it
+ * printed BOTH conventions inside one sentence: an ISO for the rung that went
+ * quiet and "9d ago" for the rung beside it. A reader comparing the two had
+ * to convert one by hand, on the line §5.3 makes uncuttable because it says
+ * how far everything under it can be trusted.
+ *
+ * The instant is NOT dropped — COV-1 requires `2026-09-05T08:13Z` in the
+ * output, and an absolute instant is what somebody greps a log for. The age
+ * is ADDED beside it, in the parenthetical that already carried the reason,
+ * so one sentence answers "when" and "how long ago" in one reading. Empty in,
+ * nothing out: an unparseable instant costs the age, never the sentence.
+ */
+const parenthetical = (parts: readonly (string | null)[]): string => {
+  const kept = parts.filter((part): part is string => part !== null);
+  return kept.length === 0 ? "" : ` (${kept.join(", ")})`;
+};
+
+const ageSince = (iso: string | null, now: Date): string | null => {
+  if (iso === null) {
+    return null;
+  }
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) {
+    return null;
+  }
+  return formatAge(Math.max(0, now.getTime() - ms));
+};
+
+const agedSince = (iso: string | null, now: Date): string | null => {
+  const age = ageSince(iso, now);
+  return age === null ? null : `${age} ago`;
+};
+
+const rowOf = (
+  record: CoverageRecord,
+  source: "agent_event" | "git",
+): CoverageSourceRecord | undefined =>
+  record.sources.find((entry) => entry.source === source);
+
+/**
+ * WHAT THE RECORD IS ABOUT, in the sentence rather than only in the data.
+ *
+ * §3.2a lets a caller narrow the question: `/api/search` passes the caller's
+ * own `since` and the pin lane passes a file set. The hub's record is honest
+ * about it — the reason says `no_session_in_window` and `scope` carries both
+ * — and a renderer that dropped the scope said "no agent session reported on
+ * this repo" about a busy, fully-watched repo somebody had asked a one-hour
+ * question about. Fail-safe direction, still a statement nobody observed, and
+ * it fires "Coverage unknown" on ordinary short-window searches.
+ *
+ * An UNSCOPED record reads exactly as it did: the briefing and doctor pass
+ * nothing and get the repo-wide answer (§3.2a).
+ */
+const scopeSubject = (record: CoverageRecord): string =>
+  (record.scope?.paths?.length ?? 0) > 0
+    ? "on these files"
+    : "on this repo";
+
+const scopeWindow = (record: CoverageRecord, now: Date): string | null => {
+  const since = record.scope?.sinceIso;
+  return since === undefined ? null : ageSince(since, now);
+};
+
+/**
+ * The two `incomplete` reasons the sentence names in a word. A reason with no
+ * word here still renders its instant and its age — the parenthetical simply
+ * carries one fact instead of two.
+ */
+const INCOMPLETE_LABELS: Record<string, string> = {
+  session_reaped: "reaped",
+  session_silent: "unclosed",
+};
+
+const agentEventFragment = (
+  record: CoverageRecord,
+  row: CoverageSourceRecord | undefined,
+  now: Date,
+  ages: boolean,
+): string | null => {
+  if (row === undefined) {
+    return null;
+  }
+  const when = instant(row.gapSince);
+  const subject = scopeSubject(record);
+  const quiet =
+    when === null
+      ? `agent sessions ${subject} went quiet`
+      : `agent sessions ${subject} went quiet ${when}`;
+  switch (row.state) {
+    case "complete":
+      return "agent sessions reported";
+    case "incomplete":
+      // The age first, the reason second: a reader scanning fourteen days of
+      // briefings after ONE over-fired reap sees the same instant every day,
+      // and only the age says the fact is ageing rather than recurring.
+      return `${quiet}${parenthetical([
+        ages ? agedSince(row.gapSince, now) : null,
+        INCOMPLETE_LABELS[row.reason] ?? null,
+      ])}`;
+    case "unknown": {
+      if (row.reason === "hub_did_not_report") {
+        return null;
+      }
+      // The window is the other half of "nothing matched": a caller who asked
+      // about the last hour is told about the last hour.
+      const age = scopeWindow(record, now);
+      return age === null
+        ? `no agent session reported ${subject}`
+        : `no agent session reported ${subject} in the last ${age}`;
+    }
+    default:
+      return null;
+  }
+};
+
+const gitFragment = (
+  row: CoverageSourceRecord | undefined,
+  now: Date,
+  ages: boolean,
+): string | null => {
+  if (row === undefined) {
+    return null;
+  }
+  switch (row.state) {
+    case "complete":
+      return "git evidence reported";
+    case "incomplete": {
+      if (row.reason === "evidence_stale") {
+        // An age with no instant to pair with. It is still an age, so the
+        // reduced sentence drops it too: either every time in this sentence
+        // is a relative age, or none is — never one of each.
+        const age = ages ? ageSince(row.observedAt, now) : null;
+        return age === null
+          ? "git evidence is stale"
+          : `git evidence last collected ${age} ago`;
+      }
+      const since = instant(row.gapSince);
+      // Same rule as the rung above it: the instant, and the age beside it,
+      // so the two halves of one sentence can be compared without arithmetic.
+      return since === null
+        ? "commit authors with no reported session"
+        : `commit authors with no reported session since ${since}${parenthetical([ages ? agedSince(row.gapSince, now) : null])}`;
+    }
+    case "unknown":
+      return row.reason === "hub_did_not_report"
+        ? null
+        : "no commit evidence on this repo";
+    default:
+      return null;
+  }
+};
+
+/**
+ * THE RUNGS 05 AND LATER OWN, so that a rung which can set the head word can
+ * also appear in the sentence. `headOf` reads all five; the body read two, so
+ * `ci`, `runtime` and `human_edit` could each turn the head to "incomplete"
+ * over a body that said nothing was missing — and by decision 2 that sentence
+ * is the first, uncuttable line of every SessionStart briefing for as long as
+ * the gap lasts. A caveat a reader cannot reconcile reads as a crosscheck
+ * bug, which is how the next real one gets skipped.
+ *
+ * Only a rung that can DRAG the head is rendered: `complete` and `unavailable`
+ * say nothing the head does not already say, and every character here is spent
+ * against the 160 the briefing seat rests on.
+ */
+const RESERVED_NOUNS: Record<string, string> = {
+  ci: "ci lanes",
+  runtime: "runtime signals",
+  human_edit: "human edits",
+};
+
+const RESERVED_REASONS: Record<string, string> = {
+  ci_lanes_missing: "ci lanes did not all report",
+  ci_awaiting_rerun: "ci lanes awaiting rerun",
+  ci_not_reported_yet: "ci has not reported yet",
+};
+
+const reservedFragment = (row: CoverageSourceRecord): string | null => {
+  if (row.state === "complete" || row.state === "unavailable") {
+    return null;
+  }
+  const named = RESERVED_REASONS[row.reason];
+  if (named !== undefined) {
+    return named;
+  }
+  const noun = RESERVED_NOUNS[row.source] ?? row.source;
+  return row.state === "incomplete"
+    ? `${noun} did not all report`
+    : `${noun} not reported`;
+};
+
+/**
+ * The head word is the WORST state among the rungs that can be read. A rung
+ * that cannot exist never drags the head: with `runtime` permanently
+ * `unavailable`, an "unavailable" head would be the permanent state of every
+ * answer and would say nothing. The three refused rungs are printed by name
+ * in `crosscheck doctor` instead, once, where somebody can act on them.
+ *
+ * AND AN EMPTY READABLE SET IS `unknown`, NEVER `complete`. Filtering
+ * `unavailable` out and then asking `.some()` twice answers false twice over
+ * nothing, and falling through to "Coverage complete" is a pass produced from
+ * zero evidence — AT-10's "no fake pass" in one line, and the state on which
+ * `mustQualifyEmptyAnswer` says the opposite.
+ */
+const headOf = (record: CoverageRecord): string => {
+  const readable = record.sources.filter((row) => row.state !== "unavailable");
+  if (readable.length === 0) {
+    return "Coverage unknown";
+  }
+  if (readable.some((row) => row.state === "incomplete")) {
+    return "Coverage incomplete";
+  }
+  return readable.some((row) => row.state === "unknown")
+    ? "Coverage unknown"
+    : "Coverage complete";
+};
+
+/**
+ * WHAT THIS CLIENT HOLDS, NOT WHAT THE HUB IS. A record whose every row reads
+ * `hub_did_not_report` is reached four ways: a hub too old to send coverage, a
+ * hub NEWER than this client whose `reason` values its enum does not know, a
+ * body that failed to parse, and an HTTP error. "This hub does not report
+ * coverage" named only the first — a claim about the hub's VERSION produced
+ * from this client's own failure to read an answer, which sends a reader to
+ * upgrade something that may be perfectly current.
+ */
+const HUB_SILENT = "Coverage unknown: no coverage report this client can read.";
+
+/**
+ * The fifth way, and the one that must never wear the sentence above: the hub
+ * was not reached at all. That is a statement about the NETWORK, and the
+ * caller knows which it has — `HubResult` carries `kind: "network"`. Shared
+ * between `crosscheck status` and `crosscheck doctor` so the two cannot
+ * describe one unreachable hub in two ways; doctor appends the connection
+ * cause, which is the remedy channel status does not have.
+ */
+export const COVERAGE_HUB_UNREACHABLE =
+  "could not reach the hub, so nothing here says what was watched";
+
+export const HUB_UNREACHABLE_CLAUSE = `Coverage unknown: ${COVERAGE_HUB_UNREACHABLE}.`;
+
+/**
+ * The bound the briefing's uncuttable seat rests on, spent in PRIORITY ORDER.
+ * Fragments are added while they fit and dropped whole once they do not, so a
+ * long sentence loses a trailing clause rather than half a word — and the two
+ * rungs that decide judging are first in the list, so they are the last to go.
+ * The head word survives every cut, because it is the part a reader acts on.
+ */
+const fit = (head: string, fragments: readonly string[]): string => {
+  const kept: string[] = [];
+  for (const fragment of fragments) {
+    const candidate = `${head}: ${[...kept, fragment].join("; ")}.`;
+    if (candidate.length > MAX_COVERAGE_LINE_CHARS) {
+      break;
+    }
+    kept.push(fragment);
+  }
+  const line = kept.length === 0 ? `${head}.` : `${head}: ${kept.join("; ")}.`;
+  return line.length <= MAX_COVERAGE_LINE_CHARS
+    ? line
+    : `${line.slice(0, MAX_COVERAGE_LINE_CHARS - 1)}.`;
+};
+
+const fragmentsOf = (
+  record: CoverageRecord,
+  now: Date,
+  ages: boolean,
+): readonly string[] => {
+  const reserved = record.sources
+    .filter((row) => row.source !== "agent_event" && row.source !== "git")
+    .map(reservedFragment);
+  return [
+    agentEventFragment(record, rowOf(record, "agent_event"), now, ages),
+    gitFragment(rowOf(record, "git"), now, ages),
+    ...reserved,
+  ].filter((fragment): fragment is string => fragment !== null);
+};
+
+const holdsEvery = (head: string, fragments: readonly string[]): boolean =>
+  `${head}: ${fragments.join("; ")}.`.length <= MAX_COVERAGE_LINE_CHARS;
+
+/**
+ * THE AGE IS DECORATION; THE RUNG IS THE CAVEAT. Both rungs gapped with an
+ * instant each is the longest shape this sentence carries, and two ages cost
+ * 20 characters against the 160 the briefing seat rests on — one over, in the
+ * shape that matters most. `fit` drops a whole fragment rather than half a
+ * word, so the age would have bought its own readability with somebody else's
+ * gap. It is therefore spent last: the sentence is built with ages, and if
+ * that will not hold every fragment it is rebuilt without them.
+ */
+export const coverageClause = (record: CoverageRecord, now: Date): string => {
+  if (
+    record.sources.length > 0 &&
+    record.sources.every((row) => row.reason === "hub_did_not_report")
+  ) {
+    return HUB_SILENT;
+  }
+  const head = headOf(record);
+  const aged = fragmentsOf(record, now, true);
+  return fit(head, holdsEvery(head, aged) ? aged : fragmentsOf(record, now, false));
+};
+
+export const coverageNote = (
+  record: CoverageRecord,
+  now: Date,
+): string | null =>
+  record.sources.some((row) => row.state === "incomplete")
+    ? coverageClause(record, now)
+    : null;
+
+/** True when §5.1's HARD rule binds: an empty answer may not stand alone. */
+export const mustQualifyEmptyAnswer = (record: CoverageRecord): boolean =>
+  coverageStateOf(record, "agent_event") !== "complete" ||
+  coverageStateOf(record, "git") !== "complete";

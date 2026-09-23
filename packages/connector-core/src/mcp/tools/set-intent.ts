@@ -28,7 +28,13 @@
  * agent waiting on a tool result must not wait on a model call either.
  */
 import { z } from "zod";
-import { MAX_INTENT_SUMMARY_CHARS, SessionStatusSchema } from "@crosscheck/schema";
+import {
+  MAX_INTENT_AMEND_REASON_CHARS,
+  MAX_INTENT_SCOPE_ENTRIES,
+  MAX_INTENT_SUMMARY_CHARS,
+  MAX_PIN_PATH_CHARS,
+  SessionStatusSchema,
+} from "@crosscheck/schema";
 
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
@@ -48,7 +54,15 @@ import {
   withRecordedIntent,
 } from "../../state/session-state.ts";
 import { NO_SESSION, contractFailure, requireOwnContext } from "./publish-claim.ts";
-import { envelopeFor, hubFailure, issuesOf, parseArgs, resultAt } from "./shared.ts";
+import {
+  allocateToolSeq,
+  envelopeFor,
+  hubFailure,
+  issuesOf,
+  parseArgs,
+  resultAt,
+} from "./shared.ts";
+import { seqAt } from "../../capture/seq.ts";
 
 /** A declared intent is the session's own statement — full confidence, by definition. */
 const DECLARED_CONFIDENCE = 1;
@@ -67,6 +81,50 @@ export const ArgsSchema = z.object({
     "Optionally move the work context's status at the same time " +
       "(analyzing, planning, implementing, testing, blocked, done).",
   ),
+  /**
+   * THE CHECKABLE HALF, which this tool had no way to send.
+   *
+   * Spec 06 makes the declared surface and the declared non-goals the fields
+   * an edit is actually compared against — `explanationTimingFor` answers
+   * from them and from nothing else. Neither reached the wire from here, so
+   * every production row stored a sentence and an empty scope, `intent_scope`
+   * was written by nothing, and the column that turns a stated plan into a
+   * checkable one had no writer at all.
+   *
+   * PATHS ONLY, and that is decision 10.4 rather than an omission: the
+   * checkable field stays checkable, or it becomes a second prose sentence
+   * nobody can verify.
+   */
+  expectedSurface: z
+    .array(z.string().min(1).max(MAX_PIN_PATH_CHARS))
+    .max(MAX_INTENT_SCOPE_ENTRIES)
+    .optional()
+    .describe(
+      "Repo-relative file paths this session expects to touch. Used to tell " +
+        "whether a change was declared before or after it happened; never a " +
+        "permission, and never enforced.",
+    ),
+  nonGoals: z
+    .array(z.string().min(1).max(MAX_PIN_PATH_CHARS))
+    .max(MAX_INTENT_SCOPE_ENTRIES)
+    .optional()
+    .describe(
+      "Repo-relative file paths this session deliberately will NOT touch. " +
+        "Editing one afterwards is recorded as declared-then-edited.",
+    ),
+  /**
+   * Why the goal moved. Only meaningful beside an amendment, which is why the
+   * hub drops it on a first declaration rather than refusing the record.
+   */
+  reason: z
+    .string()
+    .min(1)
+    .max(MAX_INTENT_AMEND_REASON_CHARS)
+    .optional()
+    .describe(
+      "When re-declaring: one sentence on why the goal changed. Teammates' " +
+        "agents read it beside the sentence it replaced.",
+    ),
 });
 
 export const definition = {
@@ -110,6 +168,20 @@ export const INTENT_SECRET_REFUSAL =
  * that arrived IN THIS SESSION as a teammate's hint is their finding, not
  * this session's goal, and declaring it would launder provenance.
  */
+/**
+ * WHAT THE AUTHOR READS WHEN THE CHAIN IS FULL (§10.1, taken on its default).
+ *
+ * The cap is what replaces a retention job — nothing sweeps the ledger — so
+ * the 20th amendment is a real boundary rather than a soft one, and the
+ * sentence that hits it is genuinely lost. Loudly is the whole point: the
+ * alternative decision 10.1 rejects is `rejected`, which would destroy the
+ * record AND everything behind it in the same spool batch.
+ */
+export const INTENT_CAP_REFUSAL =
+  "The hub did not record that intent: this work context already holds every " +
+  "intent version the ledger keeps, so its stored intent is unchanged. Start a " +
+  "new work context if the goal has genuinely moved on.";
+
 export const INTENT_ECHO_REFUSAL =
   "That text arrived in this session as a crosscheck hint — it is a teammate's " +
   "recorded claim, not a statement of this session's own goal, so declaring it as " +
@@ -168,18 +240,50 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
   }
   // Before the echo check and before any hub call: nothing credential-shaped
   // is worth a round trip, and the refusal must not quote it back.
-  if (containsSecret(parsed.value.summary)) {
+  //
+  // ALL THREE TEXT FIELDS, not just the summary. The hub screens these too —
+  // it is the one place every writer passes — but a hub rejection reaches the
+  // SPOOL, not the person, and the whole point of screening here is that the
+  // author learns it and the text never leaves the machine.
+  if (
+    [
+      parsed.value.summary,
+      parsed.value.reason ?? "",
+      ...(parsed.value.expectedSurface ?? []),
+      ...(parsed.value.nonGoals ?? []),
+    ].some((text) => containsSecret(text))
+  ) {
     return toolFailure(INTENT_SECRET_REFUSAL);
   }
   if (await isDeliveredHintEcho(ctx, own, parsed.value.summary)) {
     return toolFailure(INTENT_ECHO_REFUSAL);
   }
 
+  // A path is author-controlled text that renders and that the hub compares by
+  // equality, so it goes through the SAME normalisation a captured target
+  // does. A declared `./src/a.ts` and a captured `src/a.ts` that do not match
+  // would leave the scope silently naming a file no edit can ever equal — a
+  // declaration that cannot be checked, which is the one shape §3.3 refuses.
+  const scopeOf = (
+    values: readonly string[] | undefined,
+  ): readonly { kind: "file"; value: string }[] =>
+    (values ?? []).map((value) => ({ kind: "file" as const, value }));
+
   const intent = {
     summary: parsed.value.summary,
     provenance: DECLARED_PROVENANCE,
     confidence: DECLARED_CONFIDENCE,
     capturedAt: ctx.now().toISOString(),
+    ...(parsed.value.expectedSurface === undefined
+      ? {}
+      : { expectedSurface: scopeOf(parsed.value.expectedSurface) }),
+    ...(parsed.value.nonGoals === undefined
+      ? {}
+      : { nonGoals: scopeOf(parsed.value.nonGoals) }),
+    // Dropped by the hub on a first declaration — a reason with nothing to
+    // amend would trip the table's own CHECK — so it travels unconditionally
+    // and the hub decides whether it means anything.
+    ...(parsed.value.reason === undefined ? {} : { reason: parsed.value.reason }),
   };
   // The shared contract, stated locally: the agent gets a sentence, not a
   // rejection count, and the hub never sees a record it must refuse.
@@ -197,13 +301,31 @@ export const run = async (ctx: McpContext, args: unknown): Promise<ToolResult> =
     createdAt: own.startedAt,
   };
   const producer = { sessionId: own.crosscheckSessionId, developerId: own.developerId };
+  // BEFORE the envelope, never after the post: this tool writes state at the
+  // end of the call, and spec 01 §3.6's "fold it into the updateSessionState it
+  // already calls" would stamp a position on a record the hub has already
+  // stored. Under an ambiguous session no lock is taken at all and the record
+  // carries `allocation_failed` — the intent lands, its POSITION does not.
+  const seq = await allocateToolSeq(ctx, own, 1);
   const posted = await postRecords(ctx.hub, [
-    envelopeFor(ctx, producer, "work_context", body),
+    envelopeFor(ctx, producer, "work_context", body, seqAt(seq, 0)),
   ]);
   if (!posted.ok) {
     return hubFailure(ctx, posted);
   }
   const outcome = resultAt(posted.data.results, 0);
+  // THE CAP IS AN ANSWER, NOT A SUCCESS. `ignored` is the hub's outcome for a
+  // record that survived while the change inside it did not, and it is what
+  // the 21st amendment gets: the ledger holds every version it keeps, so this
+  // sentence is nowhere. Replying "Recorded your intent" over that would tell
+  // the author a thing that is not true on the one surface whose whole job is
+  // to record the sentence — so it is a failure result, with the hub's own
+  // words beside it.
+  if (outcome?.status === "ignored") {
+    return toolFailure(
+      quotingText(INTENT_CAP_REFUSAL, explainRejection(issuesOf(outcome))),
+    );
+  }
   if (outcome?.status === "rejected") {
     return toolFailure(
       quotingText("The hub did not accept that intent.", explainRejection(issuesOf(outcome))),

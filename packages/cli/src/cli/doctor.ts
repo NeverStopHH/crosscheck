@@ -2,6 +2,7 @@ import { readdir, readlink, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { z } from "zod";
+import type { SessionEventRetentionMode } from "@crosscheck/schema";
 
 import {
   CLAUDE_SETTINGS_DIR,
@@ -32,6 +33,7 @@ import {
   LATENCY_PROBE_TIMEOUT_MS,
   LATENCY_TIMEOUT_MAX_MS,
   MAX_CLOCK_SKEW_SECONDS,
+  MAX_HUB_MESSAGE_CHARS,
   MCP_CONFIG_FILE,
   MCP_SERVER_KEY,
   MINUTES_PER_HOUR,
@@ -69,6 +71,10 @@ import {
 } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
 import { formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
+import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
+import type { CiCoverage } from "@crosscheck/connector-core/http/hub.ts";
+import { CI_PROVIDERS, CI_KNOWN_PROVIDERS } from "@crosscheck/schema";
 import { realpathBestEffort } from "@crosscheck/connector-core/config/paths.ts";
 import { hasGitEntry } from "@crosscheck/connector-core/config/connected-repo.ts";
 import { readRepoConfig } from "@crosscheck/connector-core/config/repo-config.ts";
@@ -85,6 +91,9 @@ import type {
   HubFailureKind,
   HubResult,
 } from "@crosscheck/connector-core/http/client.ts";
+import { COVERAGE_EXEMPT_SURFACES } from "@crosscheck/connector-core/coverage/exempt-surfaces.ts";
+import { COVERAGE_HUB_UNREACHABLE } from "@crosscheck/connector-core/coverage/render.ts";
+import type { CoverageSourceRecord } from "@crosscheck/connector-core/http/coverage.ts";
 import {
   describeConnectionFailure,
   refineRefusedCause,
@@ -97,16 +106,23 @@ import {
 import type { LatencyMeasurement } from "@crosscheck/connector-core/http/latency.ts";
 import {
   getAbsences,
+  getClaimValiditySummary,
   getGhostChecks,
+  getSessionOrderReport,
   getHintStats,
   getOpenSessions,
   getPins,
+  getIntentPositions,
   getPrivacySettings,
   getQuestions,
   getSolvedMatchCounts,
   getWorkContexts,
 } from "@crosscheck/connector-core/http/hub.ts";
-import type { GhostCheckEntry } from "@crosscheck/connector-core/http/hub.ts";
+import type {
+  AbsencesOutcome,
+  ClaimValiditySummary,
+  GhostCheckEntry,
+} from "@crosscheck/connector-core/http/hub.ts";
 import {
   formatQuestionCounts,
   questionWarning,
@@ -121,6 +137,12 @@ import {
   gitLaneWarning,
   summarizeGitLaneCost,
 } from "@crosscheck/connector-core/state/git-lane-cost.ts";
+import {
+  formatSeqCost,
+  seqWarning,
+  summarizeSeqCost,
+} from "@crosscheck/connector-core/state/seq-cost.ts";
+import type { BrokenOrder } from "@crosscheck/connector-core/state/seq-cost.ts";
 import {
   orphanSentence,
   orphanedPins,
@@ -201,6 +223,36 @@ export interface Check {
   readonly detail: string;
 }
 
+/**
+ * A SENTENCE THE HUB CHOSE, on its way into this command's stdout.
+ *
+ * `crosscheck doctor` is registered as a surface that interpolates nothing
+ * untrusted, and that was true of every sentence it WRITES. Three of its
+ * checks pass one through instead: the coverage check, the claim-currency
+ * check and the hub-reachable check each end with `(${...message})` straight
+ * off the wire — unbounded, uninspected, and printed to a terminal. A hostile
+ * or merely broken hub gets to choose newlines, control characters and as
+ * many of them as it likes, above lines a developer is meant to read as the
+ * tool's own.
+ *
+ * `revalidate.ts` already does this correctly one command over
+ * (`hubFailureLine`), which is what made the omission a finding rather than a
+ * design choice: the two commands print the same kind of string, and only one
+ * of them bounded it.
+ * untrusted, and that was true of every sentence it WRITES. Several of its
+ * checks pass one through instead: the coverage check, the pins check and the
+ * hub-reachable check each end with `(${...message})` straight off the wire —
+ * unbounded, uninspected, and printed to a terminal. A hostile or merely
+ * broken hub gets to choose newlines, control characters and as many of them
+ * as it likes, above lines a developer is meant to read as the tool's own.
+ *
+ * `revalidate.ts` already does this correctly one command over, which is what
+ * makes the omission a defect rather than a design choice: the two commands
+ * print the same kind of string and only one of them bounded it.
+ */
+const hubSaid = (message: string): string =>
+  bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);
+
 const check = (level: CheckLevel, name: string, detail: string): Check => ({
   level,
   name,
@@ -210,6 +262,8 @@ const check = (level: CheckLevel, name: string, detail: string): Check => ({
 const MS_PER_MINUTE = MS_PER_SECOND * SECONDS_PER_MINUTE;
 const MS_PER_HOUR = MS_PER_MINUTE * MINUTES_PER_HOUR;
 const HTTP_UNAUTHORIZED = 401;
+/** The floor of "the hub answered, and the answer was an error". */
+const HTTP_ERROR_FLOOR = 400;
 
 const checkConfig = async (home: string): Promise<Check> => {
   const path = configPath(home);
@@ -1324,19 +1378,124 @@ const checkFlushLock = async (home: string, key: string): Promise<Check> => {
  * about THIS install's health, and a warning nobody can act on teaches people
  * to ignore doctor.
  */
-const checkAbsences = async (
-  ctx: HubContext,
-  repoId: string,
-): Promise<Check> => {
-  const result = await getAbsences(ctx, repoId);
+/**
+ * COV-5's printed refusals. A rung that CANNOT EXIST is only honest if
+ * somebody can read the refusal; one nobody sees is the silent absence AT-10
+ * forbids. The sentence is keyed off the enum reason the hub sent, so the two
+ * cannot drift into different explanations of the same word.
+ */
+const COVERAGE_REFUSALS: Readonly<Record<string, string>> = {
+  no_emitter:
+    "no CI connector reports to this hub — nothing in this product emits CI results yet, so the rung is refused rather than reported empty",
+  out_of_scope_1_0:
+    "runtime invariant mining is not in 1.0, so there is no rung to report",
+  no_platform_rung:
+    "no hook fires on a human keystroke on any platform crosscheck supports; human edits surface through the git rung instead",
+};
+
+/**
+ * AT-1's example sentence names "commits A..F". 1.0 cannot: `commit_evidence`
+ * is an aggregate keyed on (repo, author_email) with NO hash column, and the
+ * claim-binding spec refused a commits table. A field that would be null on
+ * every row of every 1.0 release is worse than an absent one — a reader who
+ * sees it concludes the range is sometimes populated — so the field is gone
+ * and the refusal is printed here, by name, where somebody can argue with it.
+ */
+const coverageRangeRefusal = (): Check =>
+  check(
+    "PASS",
+    "coverage range",
+    "not in 1.0: commit_evidence is an aggregate with no hash column and the claim-binding spec refuses a commits table. The qualifier names the instant observation stopped; it never names commits.",
+  );
+
+/**
+ * COV-9's exemptions, printed. An exemption a person can read is an exemption
+ * somebody will argue with; one nobody sees is the silent absence AT-10
+ * forbids by name — which is the whole difference between this list and the
+ * escape hatch the first draft of the rule shipped.
+ *
+ * Printed with or without a hub: it is a statement about this build, not
+ * about any install's data.
+ */
+const coverageExemptionChecks = (): readonly Check[] =>
+  COVERAGE_EXEMPT_SURFACES.map((surface) =>
+    check("PASS", `coverage exempt ${surface.name}`, surface.reason),
+  );
+
+const coverageSourceDetail = (row: CoverageSourceRecord): string => {
+  const since =
+    row.gapSince === null ? "" : `, since ${row.gapSince.slice(0, 16)}Z`;
+  return `${row.source} ${row.state} (${row.reason}${since})`;
+};
+
+/**
+ * The coverage check, on #50's ladder exactly: "not measured" is a PASS,
+ * "could not reach" is a WARN. The hub-side twin of `git evidence lane` one
+ * screen up, and the two must never describe the same install differently —
+ * that one reads session state, this one reads the hub's record.
+ *
+ * NO PERCENTAGE, EVER. The detail is one fragment per readable rung, each
+ * with its own state and its own named reason, because collapsing them is
+ * exactly the lie the record exists to stop.
+ */
+const coverageChecks = (
+  result: HubResult<AbsencesOutcome>,
+): readonly Check[] => {
+  if (!result.ok) {
+    return [
+      result.kind === "network"
+        ? check(
+            "WARN",
+            "coverage",
+            // The sentence is shared with `crosscheck status`
+            // (connector-core/src/coverage/render.ts), so one unreachable hub
+            // cannot be described two ways. The cause is appended here and
+            // only here: this is the surface with a remedy channel.
+            `${COVERAGE_HUB_UNREACHABLE} — ${hubSaid(result.message)}`,
+          )
+        : check("PASS", "coverage", "not measured"),
+      coverageRangeRefusal(),
+    ];
+  }
+  const record = result.data.coverage;
+  if (record.sources.every((row) => row.reason === "hub_did_not_report")) {
+    return [check("PASS", "coverage", "not measured"), coverageRangeRefusal()];
+  }
+  const readable = record.sources.filter((row) => row.state !== "unavailable");
+  const detail = readable.map(coverageSourceDetail).join(" · ");
+  const refusals = record.sources
+    .filter((row) => row.state === "unavailable")
+    .map((row) =>
+      check(
+        "PASS",
+        `coverage ${row.source}`,
+        `unavailable (${row.reason}) — ${COVERAGE_REFUSALS[row.reason] ?? "this rung cannot exist on this platform"}`,
+      ),
+    );
+  const gapped = readable.some((row) => row.state === "incomplete");
+  return [
+    gapped
+      ? check(
+          "WARN",
+          "coverage",
+          `${detail} — answers about this repo rest on partial observation`,
+        )
+      : check("PASS", "coverage", detail),
+    ...refusals,
+    coverageRangeRefusal(),
+  ];
+};
+
+const checkAbsences = (result: HubResult<AbsencesOutcome>): Check => {
   if (!result.ok) {
     return check("PASS", "absence findings", "not measured");
   }
-  if (result.data.length === 0) {
+  const findings = result.data.absences;
+  if (findings.length === 0) {
     return check("PASS", "absence findings", "none");
   }
-  const inactive = result.data.filter((entry) => entry.kind === "inactive").length;
-  const unconnected = result.data.filter(
+  const inactive = findings.filter((entry) => entry.kind === "inactive").length;
+  const unconnected = findings.filter(
     (entry) => entry.kind === "unconnected",
   ).length;
   const parts = [
@@ -1350,9 +1509,28 @@ const checkAbsences = async (
   return check(
     "WARN",
     "absence findings",
-    `${result.data.length} recent commit author${result.data.length === 1 ? "" : "s"} ` +
+    `${findings.length} recent commit author${findings.length === 1 ? "" : "s"} ` +
       `with no matching reported session (${parts.join(", ")}) — crosscheck status has the lines`,
   );
+};
+
+/**
+ * ONE hub read, several checks. The findings and the coverage record travel
+ * on the same response (03 §3.5), so splitting this into two functions with
+ * two `getAbsences` calls would spend a second round trip on bytes already
+ * in hand — and could report an absence count and a coverage record read a
+ * moment apart from each other.
+ */
+const absenceAndCoverageChecks = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<readonly Check[]> => {
+  const result = await getAbsences(ctx, repoId);
+  return [
+    checkAbsences(result),
+    ...coverageChecks(result),
+    ...coverageExemptionChecks(),
+  ];
 };
 
 /**
@@ -1363,6 +1541,41 @@ const checkAbsences = async (
  * measured" (an older hub, or unreachable) is a PASS for the same reason
  * the absence check's is.
  */
+/**
+ * Can this hub answer AT-4 at all? (spec 06 §5.)
+ *
+ * A ledger row with no position cannot be compared with anything, so the
+ * question the whole spec exists for — was the reason written before the
+ * change — is unanswerable for it. Nothing else shows that: every surface
+ * renders the sentence exactly as it did before, and the hub looks healthy.
+ *
+ * BOTH HALVES, ALWAYS, and that is the whole reason this line exists rather
+ * than a warning threshold. `state/git-lane-cost.ts` states the rule for its
+ * own lane: "a lane that never runs looks exactly like a quiet one". A hub
+ * with no intents at all and a hub whose every intent lost its position are
+ * the same number until the denominator is printed beside it.
+ *
+ * WARN ABOVE HALF is decision 10.5's default, with the denominator printed
+ * either way. The cost is named there: a WARN on every install until 01
+ * lands, against a hub that cannot answer AT-4 and says nothing.
+ */
+const checkIntentLedger = async (ctx: HubContext): Promise<Check> => {
+  const result = await getIntentPositions(ctx);
+  if (!result.ok) {
+    return check("PASS", "intent ledger", "not measured");
+  }
+  const { total, unpositioned } = result.data;
+  if (total === 0) {
+    return check("PASS", "intent ledger", "no intent versions recorded yet");
+  }
+  const detail = `${String(unpositioned)} of ${String(total)} intent versions carry no sequence`;
+  return check(
+    unpositioned * 2 > total ? "WARN" : "PASS",
+    "intent ledger",
+    detail,
+  );
+};
+
 const checkPrivacy = async (ctx: HubContext): Promise<Check> => {
   const result = await getPrivacySettings(ctx);
   if (!result.ok) {
@@ -1667,6 +1880,86 @@ const checkGitLane = (states: readonly SessionState[]): Check => {
 };
 
 /**
+ * THE CAUSAL ORDER, whose failure mode is also SILENCE.
+ *
+ * A session that cannot position its records keeps working perfectly in every
+ * other respect: the claims land, the intents land, the targets land. What
+ * quietly stops being answerable is *whether the reason predated the change* —
+ * and nothing else in this product would ever mention it. Two conditions
+ * produce that silence and both are printed:
+ *
+ *   - a live session with NO epoch, whose state file predates the sequence;
+ *   - a worktree with TWO live sessions, where an MCP tool cannot tell which
+ *     one is calling it and therefore refuses to stamp a position rather than
+ *     guessing at one (spec 01 §10 D1).
+ *
+ * AND A THIRD THIS SIDE CANNOT SEE AT ALL. `epoch_conflict` and `epoch_split`
+ * are computed from rows the HUB holds — two events that claimed one position,
+ * or one session that minted a second counter — and no local state file knows
+ * about either. That one costs the whole session rather than a record, so it
+ * is asked for and printed first. The hub's answer rides in as data: a hub too
+ * old for the route says nothing, and nothing is NOT "none broken".
+ *
+ * NEVER PASS-ONLY, for the finding-#14 reason: a machine in any of the three
+ * states reads exactly like a healthy one everywhere else.
+ */
+const checkEventSeq = (
+  states: readonly SessionState[],
+  broken: readonly BrokenOrder[] | null,
+): Check => {
+  const cost = summarizeSeqCost(states);
+  const line = formatSeqCost(cost, broken);
+  const warning = seqWarning(cost, broken);
+  return warning === null
+    ? check("PASS", "event sequence", line)
+    : check("WARN", "event sequence", `${line} — ${warning}`);
+};
+
+/**
+ * THE HUB'S RETENTION FOR ITS CAUSAL-ORDER TABLE, as the hub declares it
+ * (CSK-14). `off` is a DOCUMENTED REFUSAL rather than a defect: the age-based
+ * sweep was withdrawn before its first deploy (Nick's D-D, 2026-09-17) and the
+ * table grows without bound on purpose, so this is a PASS that says so — the
+ * same rule as every other deliberate choice in this report. An operator who
+ * never reads it discovers the growth as a surprise; one who does knows it
+ * was decided, and what will end it.
+ *
+ * SO THE SENTENCE HAS TO SAY WHAT IS KEPT. It read "off — the age-based sweep
+ * is withdrawn; spec 01a's referential predicate replaces it", and that
+ * sentence never said the rows are kept, never said nothing removes them, and
+ * described a mechanism that exists nowhere in this tree in the PRESENT tense:
+ * `pruneSessionEvents` is defined and called from nowhere, and no referential
+ * sweep is implemented. A reader took "replaces it" as "something else is
+ * handling retention" — the opposite of the fact, and exactly the surprise the
+ * paragraph above claims this line prevents, on the one axis where being wrong
+ * is expensive: a per-developer, per-second activity trail that nothing
+ * deletes. Measured end to end: one 500-edit session leaves 501 rows and
+ * 327,680 bytes of relation, and `reapStaleSessions` over rows backdated 900
+ * days removes none of them.
+ *
+ * THE SENTENCE IS THIS CONNECTOR'S; the hub sends only the mode. A hub that
+ * sent none is "not measured", exactly as for the order failures beside it,
+ * and one that sent a mode this connector cannot name says so rather than
+ * guessing what that mode keeps.
+ */
+const RETENTION_SENTENCES: Readonly<Record<SessionEventRetentionMode, string>> = {
+  off: "off — nothing deletes session events: every row is kept and the table grows without bound, by decision. The age-based sweep was withdrawn; spec 01a's referential predicate is meant to replace it and is not running here",
+};
+
+const checkSessionEventRetention = (
+  mode: SessionEventRetentionMode | "unknown" | null,
+): Check =>
+  check(
+    "PASS",
+    "session-event retention",
+    mode === null
+      ? "not measured"
+      : mode === "unknown"
+        ? "the hub declares a retention mode this crosscheck cannot name — upgrade the CLI to read what it keeps"
+        : RETENTION_SENTENCES[mode],
+  );
+
+/**
  * The regression guard's two checks (Stage 1, part C). Both exist because
  * their failure mode is SILENCE, which is the only failure a post-hoc guard
  * can have: nothing crashes, nothing is slow, and the answer is simply wrong
@@ -1693,6 +1986,119 @@ const checkGitLane = (states: readonly SessionState[]): Check => {
  * and is a WARN: coverage unknown is not coverage fine, and a green meaning
  * "could not check" is worse than no check at all.
  */
+/**
+ * WHAT CI CAN AND CANNOT ANSWER HERE (spec 05 §8).
+ *
+ * EVERY REFUSAL IS A LINE, never a silent absence. §8 lists nine things this
+ * spec will not do, and the ones a reader could mistake for a working feature
+ * are the ones that must appear: a repo whose CI reports nothing looks exactly
+ * like a repo whose CI is green, and a GitLab team would otherwise wait
+ * forever for rows that no reporter exists to send.
+ *
+ * THE COUNTS COME FROM THE HUB, THE REFUSALS FROM THE BUILD. `coverage.state`
+ * is measured; "GitLab has no reporter" is a fact about what shipped, and it
+ * is stated from `CI_PROVIDERS` rather than from a sentence somebody has to
+ * remember to update — the day a second provider ships, this line stops
+ * printing because the list grew, not because anybody edited prose.
+ */
+const CI_STATE_LEVEL: Readonly<Record<string, "PASS" | "WARN">> = {
+  unavailable: "PASS",
+  unknown: "PASS",
+  complete: "PASS",
+  incomplete: "WARN",
+};
+
+const ciCoverageDetail = (coverage: CiCoverage): string => {
+  if (coverage.state === "unavailable") {
+    // NOT A FAILURE. A repo with no reporter has nothing to be incomplete
+    // about, and the remedy is a decision rather than a fix.
+    return "not measured (no CI reporter is configured for this repo — `coverage.ci` stays unavailable, which is the default and says nothing about your tests)";
+  }
+  if (coverage.state === "unknown") {
+    return "nothing has arrived for this commit yet; whether CI passed here is unknown";
+  }
+  const lanes = `${String(coverage.lanesReported)} of ${String(coverage.lanesExpected)} expected lanes reported`;
+  const truncated =
+    coverage.truncatedLanes === 0
+      ? ""
+      : `, ${String(coverage.truncatedLanes)} of them truncated or crashed (a run that filled the row cap cannot establish that any test was green)`;
+  const pending =
+    coverage.awaitingRerun === 0
+      ? ""
+      : `, ${String(coverage.awaitingRerun)} non-green test(s) waiting on a re-run of this same commit before anything can be concluded`;
+  return `${lanes}${truncated}${pending}`;
+};
+
+const checkCi = async (
+  ctx: HubContext,
+  repoId: string,
+  commitSha: string,
+  defaultRef: string,
+): Promise<readonly Check[]> => {
+  const verdict = await getCiVerdict(ctx, repoId, commitSha, defaultRef);
+  if (!verdict.ok) {
+    // FOUR FAILURES, THREE OF THEM NOT THIS HUB'S FAULT — the shape
+    // `plan overlap` already uses twenty lines up, and the distinction is the
+    // point rather than the tidiness. A hub too old for the route, a hub this
+    // client cannot reach, and a hub whose answer this client cannot READ all
+    // mean "nobody measured", which is a PASS that names its cause. Only a
+    // hub that answered with an ERROR is a hub reporting something wrong, and
+    // a green there would be a check that says "could not check".
+    return [
+      verdict.status >= HTTP_ERROR_FLOOR && verdict.status !== HTTP_NOT_FOUND
+        ? check(
+            "WARN",
+            "ci coverage",
+            `not measured — the hub did not answer (${hubSaid(verdict.message)}); this says nothing about whether your tests passed`,
+          )
+        : check(
+            "PASS",
+            "ci coverage",
+            verdict.status === HTTP_NOT_FOUND
+              ? "not measured (this hub does not ingest CI)"
+              : verdict.kind === "network"
+                ? "not measured (the hub could not be reached)"
+                : "not measured (this hub's answer did not parse)",
+          ),
+    ];
+  }
+  const coverage = verdict.data.coverage;
+  // §8.1: GitLab is `unavailable` and that is a DESIGN REFUSAL, not a gap
+  // waiting to be filled. Derived from the shipped provider list so the
+  // sentence cannot outlive the fact — the rung that decides the design is
+  // whether a retried GitLab job carries a verifiable attempt number on the
+  // same commit, and nobody has measured that against a real instance.
+  // Widened deliberately: `CI_PROVIDERS` is a one-member tuple today, so a
+  // typed `.includes` would refuse the very comparison this line exists to
+  // make — and narrowing the KNOWN list to match would delete the difference
+  // the doctor reports.
+  const served: readonly string[] = CI_PROVIDERS;
+  const unservedProviders = CI_KNOWN_PROVIDERS.filter(
+    (provider) => !served.includes(provider),
+  );
+  return [
+    check(CI_STATE_LEVEL[coverage.state] ?? "WARN", "ci coverage", ciCoverageDetail(coverage)),
+    ...(unservedProviders.length === 0
+      ? []
+      : [
+          check(
+            "PASS",
+            "ci provider",
+            `${unservedProviders.join(", ")} has no reporter; ci coverage is unavailable there (spec 05 §8.1 — designing a re-run rung against a platform nobody measured is the pretending this project refuses)`,
+          ),
+        ]),
+    // §8.2 and §8.3, stated because a reader would otherwise read their
+    // absence as a bug. A laptop run happens at an unknown sha in a dirty
+    // worktree; a fork pull request gets no repository secrets, so its
+    // reporter has no hub token, prints one line and exits 0.
+    check(
+      "PASS",
+      "ci reporting gaps",
+      "a local `bun test` is never recorded as CI (unknown sha, dirty worktree), and a fork pull request reports nothing because it has no hub token — both read as `unknown` at that commit rather than as a green suite",
+    ),
+  ];
+};
+
 const checkPins = async (
   ctx: HubContext,
   repoId: string,
@@ -1707,7 +2113,7 @@ const checkPins = async (
           check(
             "WARN",
             "pins",
-            `coverage unknown — the hub did not answer (${registry.message}); this says nothing about what is watched`,
+            `coverage unknown — the hub did not answer (${hubSaid(registry.message)}); this says nothing about what is watched`,
           ),
         ];
   }
@@ -1722,6 +2128,149 @@ const checkPins = async (
     shadows.length === 0
       ? check("PASS", "pin denylist", shadowLine)
       : check("WARN", "pin denylist", shadowLine),
+  ];
+};
+
+/**
+ * THE TWO REFUSALS SPEC 02 OWES THIS REPORT (§8.5, §8.9).
+ *
+ * A claim's currency is judged against the COMMIT it was observed at. Two
+ * things can stop that from happening, and they have OPPOSITE remedies —
+ * which is why they are two lines rather than one number:
+ *
+ *   · `commit_binding = 'none'` — no "from" commit, so the rung cannot exist
+ *     at all. Nothing anybody runs will ever change it, and the claim stays
+ *     pointer-only for life. AT-10's rule: a rung that genuinely cannot be
+ *     served appears as a DOCUMENTED REFUSAL with its count and its cause.
+ *   · bound but never measured — waiting for somebody to pull a diagnosis or
+ *     run `crosscheck revalidate`. Nothing revalidates on CI or at runtime in
+ *     1.0 (§8.9), so a repo nobody pulls from reads `unknown` forever, and
+ *     D5's cost is only paid honestly if this line says so every time.
+ *
+ * THE OLD-HUB SHAPE IS checkPins' VERBATIM: 404 is a hub that predates the
+ * route and says nothing about this install (PASS, "not measured"); any other
+ * failure is a WARN, because a green meaning "could not check" is worse than
+ * no check at all.
+ */
+/**
+ * How much of this repo's currency rests on a commit nobody stated.
+ *
+ * `session_base` is the hub's fallback when a claim names no observation
+ * point, and it is an UPPER BOUND: a session that checks out a newer commit
+ * mid-session re-registers, `base_commit` moves forward by design, and a
+ * claim observed before that checkout is filed against the commit AFTER it.
+ * Every drift walk then starts too late and the range in between — the
+ * commits most likely to have moved the code the claim is about — is never
+ * looked at. The claim reads `current` on a measurement that skipped it.
+ *
+ * Appended rather than given its own row: it is a QUALIFIER on the binding
+ * count above, not a separate condition, and a repo where every claim is
+ * inferred is not broken — it is a repo whose agents never name the commit
+ * they read, which is a different remedy from an unbound claim's.
+ */
+const inferredBindingClause = (summary: ClaimValiditySummary): string =>
+  summary.inferredBindings === 0
+    ? ""
+    : `; ${String(summary.inferredBindings)} of them against their session's commit rather than one the claim stated, which is an upper bound — anything the session checked out before publishing falls outside the check`;
+
+const claimBindingCheck = (summary: ClaimValiditySummary): Check => {
+  const scope = `${String(summary.counted)} of ${String(summary.total)} claims`;
+  const inferred = inferredBindingClause(summary);
+  if (summary.unbound === 0) {
+    return check(
+      "PASS",
+      "claim binding",
+      `${scope} are bound to a commit and can be judged against the code${inferred}`,
+    );
+  }
+  return check(
+    "WARN",
+    "claim binding",
+    `${String(summary.unbound)} of ${String(summary.counted)} claims are bound to no commit ` +
+      "and can never be revalidated — their session registered no usable commit, " +
+      `so they stay readable as pointers and never as current causes${inferred}`,
+  );
+};
+
+/** How many claims read as each state — the part that is working, counted. */
+const validityStateSentence = (summary: ClaimValiditySummary): string => {
+  const named = ["stale", "superseded", "invalidated"]
+    .map((state) => ({ state, n: summary.states[state] ?? 0 }))
+    .filter((entry) => entry.n > 0)
+    .map((entry) => `${String(entry.n)} ${entry.state}`);
+  return named.length === 0 ? "none measured as non-current" : named.join(", ");
+};
+
+/**
+ * CCB-10's observability half: how often somebody has tried to walk a claim
+ * back toward `current` and been refused.
+ *
+ * THE COUNT EXISTED AND NOBODY COULD SEE IT. It was returned on the response
+ * to the caller whose report was refused, and read by nothing else — so a hub
+ * refusing forged upgrades every hour printed exactly what a hub that had
+ * never seen one printed. The service's own comment says why that is not
+ * acceptable: "a gate that silently drops writes is indistinguishable from
+ * one that is broken".
+ *
+ * WARN, NOT FAIL. A refusal is the gate WORKING; what a reader needs is to
+ * know it is firing, and how persistently. Zero prints nothing at all — a
+ * line that appears on every install is a line nobody reads.
+ */
+const refusedWalkBackCheck = (
+  summary: ClaimValiditySummary,
+): readonly Check[] => {
+  if (summary.refusedWalkBacks === 0) {
+    return [];
+  }
+  return [
+    check(
+      "WARN",
+      "claim walk-backs refused",
+      `${String(summary.refusedWalkBacks)} attempt(s) across ` +
+        `${String(summary.claimsWithRefusedWalkBacks)} claim(s) tried to move a stale ` +
+        "finding back to current and were refused — the gate held; read the " +
+        "diagnosis of those trees to see what is being re-asserted",
+    ),
+  ];
+};
+
+const claimCurrencyCheck = (summary: ClaimValiditySummary): Check =>
+  check(
+    "PASS",
+    "claim currency",
+    `${String(summary.neverRevalidated)} of ${String(summary.counted)} claims have never been ` +
+      `checked against the code (${validityStateSentence(summary)}) — nothing ` +
+      "revalidates on CI or at runtime, so this moves when somebody pulls a " +
+      "diagnosis or runs `crosscheck revalidate`",
+  );
+
+const checkClaimValidity = async (
+  ctx: HubContext,
+  repoId: string,
+): Promise<readonly Check[]> => {
+  const summary = await getClaimValiditySummary(ctx, repoId);
+  if (!summary.ok) {
+    return summary.status === HTTP_NOT_FOUND
+      ? [
+          check(
+            "PASS",
+            "claim binding",
+            "not measured (this hub does not judge claims against commits)",
+          ),
+        ]
+      : [
+          check(
+            "WARN",
+            "claim binding",
+            `currency unknown — the hub did not answer (${hubSaid(summary.message)}); ` +
+              "this says nothing about whether your team's claims still hold",
+          ),
+        ];
+  }
+  return [
+    claimBindingCheck(summary.data),
+    claimCurrencyCheck(summary.data),
+    ...refusedWalkBackCheck(summary.data),
   ];
 };
 
@@ -2695,8 +3244,74 @@ export const runDoctor = async (
                 { hubUrl: config.hubUrl, timeoutMs: config.timeoutMs },
                 probe.message,
               )
-            : `${config.hubUrl}: ${probe.message}`,
+            : `${config.hubUrl}: ${hubSaid(probe.message)}`,
       );
+
+  // EVERY HUB READ AT ONCE, and the wall clock is why.
+  //
+  // These nine checks are INDEPENDENT — none reads another's answer — and
+  // they used to be awaited one after another inside the array literal. That
+  // is free while the hub answers and linear while it does not: against a hub
+  // that never replies each call costs the full effective timeout, so doctor's
+  // own runtime was N x timeout, and N grew by one with every spec that added
+  // a check. Measured on the integration branch: 05's CI check was the ninth,
+  // and `doctor-latency.test.ts` — which points doctor at a hub that never
+  // answers — went from just inside bun's 5 s case bound to just outside it.
+  // The test found a real regression rather than a tight budget.
+  //
+  // Concurrent, the cost is ONE timeout however many checks there are. Order
+  // is preserved because `Promise.all` resolves positionally, so the report
+  // reads exactly as before. `Promise.all` and not `allSettled`: every one of
+  // these already fails open on its own — a hub that cannot answer costs its
+  // check a line, never the command — so a rejection here would be a defect
+  // worth surfacing rather than swallowing.
+  const [
+    absenceAndCoverage,
+    questionsCheck,
+    solvedMatchesCheck,
+    pinChecks,
+    claimValidityChecks,
+    ciChecks,
+    ghostOverlapCheck,
+    privacyCheck,
+    intentLedgerCheck,
+  ] = await Promise.all([
+    // ONE GET for both: the absence findings and the coverage record ride
+    // the same response (03 §3.5), so reading them twice would be a second
+    // round trip for bytes already in hand.
+    absenceAndCoverageChecks(hubCtx, identity.repoId),
+    checkQuestions(hubCtx, identity.repoId, now),
+    checkSolvedMatches(hubCtx, identity.repoId),
+    checkPins(
+      hubCtx,
+      identity.repoId,
+      // The EFFECTIVE list, defaults included: the shadowing question is
+      // about what actually suppresses capture, not about what this
+      // developer added on top of it.
+      resolveDenylist(config.denylist ?? undefined),
+      now,
+    ),
+    checkClaimValidity(hubCtx, identity.repoId),
+    // SPEC 05 §8: every refusal a reader could mistake for a working feature
+    // gets a line. `identity.baseCommit` is this checkout's HEAD — the commit
+    // somebody standing here would ask about — and the default branch travels
+    // from the same clone because the hub holds no repository.
+    checkCi(hubCtx, identity.repoId, identity.baseCommit, identity.branch ?? "main"),
+    checkGhostOverlap(hubCtx, identity.repoId),
+    checkPrivacy(hubCtx),
+    checkIntentLedger(hubCtx),
+  ]);
+  const hubChecks: readonly Check[] = [
+    ...absenceAndCoverage,
+    questionsCheck,
+    solvedMatchesCheck,
+    ...pinChecks,
+    ...claimValidityChecks,
+    ...ciChecks,
+    ghostOverlapCheck,
+    privacyCheck,
+    intentLedgerCheck,
+  ];
 
   const skewCheck = ((): Check => {
     if (!probe.ok || probe.dateHeader === null) {
@@ -2738,6 +3353,18 @@ export const runDoctor = async (
   // it: an older hub 404s and the count degrades to null (§R6).
   const openSessions = await getOpenSessions(hubCtx);
   const openOnHub = openSessions.ok ? openSessions.data.length : null;
+  // The two order failures only the hub can see, and the hub's retention for
+  // that table — ONE read. NULL when it could not be asked — an older hub 404s
+  // the route — because "not measured" and "none broken" are different
+  // answers and the line must not print the second when it got the first.
+  const orderReport = await getSessionOrderReport(hubCtx);
+  const brokenOrders = orderReport.ok
+    ? orderReport.data.broken.map((order) => ({
+        sessionId: order.sessionId,
+        reason: order.reason,
+      }))
+    : null;
+  const eventRetention = orderReport.ok ? orderReport.data.retention : null;
   // Whether the two PROJECT files this repo's advice keeps recommending can
   // actually reach a teammate (trial finding M11). Resolved once, passed as
   // data, so `globalInstallChecks` stays pure and testable.
@@ -2832,23 +3459,12 @@ export const runDoctor = async (
     checkIntentCost(liveStates.states),
     checkGhostCost(liveStates.states),
     checkGitLane(liveStates.states),
+    checkEventSeq(liveStates.states, brokenOrders),
+    checkSessionEventRetention(eventRetention),
     checkConferenceCost(conferenceCost, now),
     await checkSummarizerRunner(env, config.home),
     await checkLastSync(config.home, key, now, liveSessions),
-    await checkAbsences(hubCtx, identity.repoId),
-    await checkQuestions(hubCtx, identity.repoId, now),
-    await checkSolvedMatches(hubCtx, identity.repoId),
-    ...(await checkPins(
-      hubCtx,
-      identity.repoId,
-      // The EFFECTIVE list, defaults included: the shadowing question is
-      // about what actually suppresses capture, not about what this
-      // developer added on top of it.
-      resolveDenylist(config.denylist ?? undefined),
-      now,
-    )),
-    await checkGhostOverlap(hubCtx, identity.repoId),
-    await checkPrivacy(hubCtx),
+    ...hubChecks,
     skewCheck,
     bunfigCheck,
     ...checkClaudeDerive(),

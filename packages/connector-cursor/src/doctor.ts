@@ -17,7 +17,18 @@
  * "Not installed" is a PASS, not a warning: the Cursor connector is
  * optional per repo, and a warning nobody can act on teaches people to
  * ignore doctor (the absence-check lesson).
+ *
+ * TWO INSTALLS, ONE SECTION. `crosscheck init --cursor` writes the repo's
+ * `.cursor/hooks.json`; `crosscheck init --global --cursor` writes the user's
+ * `~/.cursor/hooks.json`. The section used to read only the first, so a
+ * globally installed developer was told "not installed" and never saw the
+ * rung and refusal lines — including that no Cursor edit can be ordered
+ * against an explanation — while the same page counted their Cursor
+ * sessions' positions. The repo's file wins when it carries our entries (it
+ * is the one a cloud agent loads); otherwise the user's is the install
+ * described, and the hooks line says which file it read.
  */
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { checkLauncherCommand } from "@crosscheck/connector-core/config/launcher-check.ts";
@@ -397,14 +408,35 @@ const refusalChecks = (): readonly CursorCheck[] =>
     check("PASS", `${refusal.name} (cursor)`, refusal.sentence),
   );
 
-const mcpCheck = async (repoRoot: string): Promise<CursorCheck> => {
-  const path = join(repoRoot, CURSOR_DIR, CURSOR_MCP_FILE);
+/** Where each install lives, and the command that writes it. */
+type InstallScope = "project" | "user";
+
+const INIT_COMMAND: Readonly<Record<InstallScope, string>> = {
+  project: "crosscheck init --cursor",
+  user: "crosscheck init --global --cursor",
+};
+
+/**
+ * Cursor's user-level configuration directory — the one `init --global
+ * --cursor` writes (cli/init-global.ts resolves it the same way). HOME comes
+ * from the environment doctor was run with, like every other user-level path
+ * in this tree.
+ */
+const cursorUserDir = (env: Env): string =>
+  join(env["HOME"] ?? homedir(), CURSOR_DIR);
+
+const mcpCheck = async (
+  cursorDir: string,
+  scope: InstallScope,
+): Promise<CursorCheck> => {
+  const path = join(cursorDir, CURSOR_MCP_FILE);
+  const init = INIT_COMMAND[scope];
   const raw = await readTextOrNull(path);
   if (raw === null) {
     return check(
       "FAIL",
       "cursor mcp tools",
-      `${path} not found — run crosscheck init --cursor`,
+      `${path} not found — run ${init}`,
     );
   }
   let parsed: unknown;
@@ -414,7 +446,7 @@ const mcpCheck = async (repoRoot: string): Promise<CursorCheck> => {
     return check(
       "WARN",
       "cursor mcp tools",
-      `${path} is not valid json — init --cursor will refuse to touch it until that is fixed`,
+      `${path} is not valid json — ${init} will refuse to touch it until that is fixed`,
     );
   }
   const servers =
@@ -428,7 +460,7 @@ const mcpCheck = async (repoRoot: string): Promise<CursorCheck> => {
     return check(
       "FAIL",
       "cursor mcp tools",
-      `${path} has no "${MCP_SERVER_KEY}" server — run crosscheck init --cursor`,
+      `${path} has no "${MCP_SERVER_KEY}" server — run ${init}`,
     );
   }
   return isOwnedMcpEntry(entry)
@@ -436,8 +468,67 @@ const mcpCheck = async (repoRoot: string): Promise<CursorCheck> => {
     : check(
         "FAIL",
         "cursor mcp tools",
-        `${path} has a "${MCP_SERVER_KEY}" server, but not the one init --cursor writes — rerun crosscheck init --cursor`,
+        `${path} has a "${MCP_SERVER_KEY}" server, but not the one ${init} writes — rerun ${init}`,
       );
+};
+
+/** One hooks file, read as far as this section needs it. */
+type HooksRead =
+  | { readonly kind: "absent"; readonly path: string }
+  | { readonly kind: "unparseable"; readonly path: string }
+  | { readonly kind: "unowned"; readonly path: string }
+  | {
+      readonly kind: "installed";
+      readonly path: string;
+      readonly cursorDir: string;
+      readonly scope: InstallScope;
+      readonly owned: readonly OwnedEntry[];
+    };
+
+const readHooks = async (
+  cursorDir: string,
+  scope: InstallScope,
+): Promise<HooksRead> => {
+  const path = join(cursorDir, CURSOR_HOOKS_FILE);
+  const raw = await readTextOrNull(path);
+  if (raw === null) {
+    return { kind: "absent", path };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    return { kind: "unparseable", path };
+  }
+  const hooks =
+    typeof parsed === "object" && parsed !== null
+      ? ((parsed as Record<string, unknown>)["hooks"] as
+          | Record<string, unknown>
+          | undefined) ?? {}
+      : {};
+  const owned = collectOwnedEntries(hooks);
+  return owned.length === 0
+    ? { kind: "unowned", path }
+    : { kind: "installed", path, cursorDir, scope, owned };
+};
+
+/**
+ * The install this section describes: the repo's when it carries our
+ * entries, else the user's. A repo file that cannot be parsed is reported as
+ * it always was, before the user's is consulted — it is what Cursor loads for
+ * this repo, and nothing about a user-level install makes it readable.
+ */
+const resolveInstall = async (
+  input: CursorDoctorInput,
+): Promise<HooksRead> => {
+  const project = await readHooks(join(input.repoRoot, CURSOR_DIR), "project");
+  if (project.kind === "installed" || project.kind === "unparseable") {
+    return project;
+  }
+  const user = await readHooks(cursorUserDir(input.env), "user");
+  return user.kind === "installed" || user.kind === "unparseable"
+    ? user
+    : project;
 };
 
 /**
@@ -448,9 +539,8 @@ const mcpCheck = async (repoRoot: string): Promise<CursorCheck> => {
 export const cursorDoctorChecks = async (
   input: CursorDoctorInput,
 ): Promise<readonly CursorCheck[]> => {
-  const hooksPath = join(input.repoRoot, CURSOR_DIR, CURSOR_HOOKS_FILE);
-  const raw = await readTextOrNull(hooksPath);
-  if (raw === null) {
+  const install = await resolveInstall(input);
+  if (install.kind === "absent") {
     return [
       check(
         "PASS",
@@ -459,49 +549,45 @@ export const cursorDoctorChecks = async (
       ),
     ];
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw) as unknown;
-  } catch {
+  if (install.kind === "unparseable") {
     return [
-      check("FAIL", "cursor hooks", `${hooksPath} is not valid json`),
+      check("FAIL", "cursor hooks", `${install.path} is not valid json`),
     ];
   }
-  const hooks =
-    typeof parsed === "object" && parsed !== null
-      ? ((parsed as Record<string, unknown>)["hooks"] as
-          | Record<string, unknown>
-          | undefined) ?? {}
-      : {};
-  const owned = collectOwnedEntries(hooks);
-  if (owned.length === 0) {
+  if (install.kind === "unowned") {
     return [
       check(
         "PASS",
         "cursor hooks",
-        `${hooksPath} has no crosscheck entries — crosscheck init --cursor adds them`,
+        `${install.path} has no crosscheck entries — crosscheck init --cursor adds them`,
       ),
     ];
   }
+  const { owned, scope } = install;
+  const init = INIT_COMMAND[scope];
 
   const missing = CURSOR_HOOK_EVENTS.filter(
     (event) => !owned.some((entry) => entry.event === event),
   );
   const failClosed = owned.filter((entry) => entry.failClosed);
+  // WHICH FILE, when it is not the repo's: a user-level install covers local
+  // sessions only (the cloud-agent refusal below says so), and a reader
+  // comparing two machines needs to see that this one is wired per user.
+  const where = scope === "user" ? `user level (${install.path}): ` : "";
   const hooksCheck =
     missing.length > 0
       ? check(
           "FAIL",
           "cursor hooks",
-          `missing: ${missing.join(", ")} — rerun crosscheck init --cursor`,
+          `${where}missing: ${missing.join(", ")} — rerun ${init}`,
         )
       : failClosed.length > 0
         ? check(
             "FAIL",
             "cursor hooks",
-            `failClosed on ${failClosed.map((entry) => entry.event).join(", ")} — crosscheck hooks must fail OPEN; a dead hub would block the session`,
+            `${where}failClosed on ${failClosed.map((entry) => entry.event).join(", ")} — crosscheck hooks must fail OPEN; a dead hub would block the session`,
           )
-        : check("PASS", "cursor hooks", CURSOR_HOOK_EVENTS.join(", "));
+        : check("PASS", "cursor hooks", `${where}${CURSOR_HOOK_EVENTS.join(", ")}`);
 
   // THIS SECTION'S SESSIONS AND NOBODY ELSE'S. The caller hands every section
   // ONE scan of the session directory, and that scan filters on hub + repo
@@ -533,7 +619,7 @@ export const cursorDoctorChecks = async (
     ...(launcher === null
       ? []
       : [check(launcher.level, "cursor hook launcher", launcher.detail)]),
-    await mcpCheck(input.repoRoot),
+    await mcpCheck(install.cursorDir, scope),
     versionCheck(sync.cursorVersion),
     await driftCheck(input.home),
     await injectionCheck(input.home),

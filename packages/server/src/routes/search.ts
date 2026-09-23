@@ -34,6 +34,7 @@ import {
   SEARCH_MAX_QUERY_CHARS,
   searchWorkContexts,
 } from "../services/search.ts";
+import { readCoverage } from "../services/coverage.ts";
 import { sharedNameEmail } from "../services/developer-settings.ts";
 import { parseSinceWindow } from "../services/time-window.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
@@ -169,7 +170,31 @@ export const searchRoutes = (deps: AppDeps): Hono<AppEnv> => {
       ...(developerId === undefined ? {} : { developerId }),
       ...(since === undefined ? {} : { since }),
     });
-    return ok(c, { ...response, filters });
+    // AT-1. An empty result is a claim about the archive, so the archive's
+    // own reach travels with it. SCOPED TO THE SEARCH'S OWN WINDOW (§3.2a):
+    // a caller asking about the last three days is told whether we were
+    // watching for the last three days, not whether we were watching for a
+    // fortnight — a gap measured about something other than the question is
+    // the noise §5.1 was written to avoid.
+    //
+    // `repo` IS OPTIONAL ON THIS ROUTE ALONE, and coverage is per repo by
+    // definition (refusal 4). A search with no repo has no archive to state
+    // the reach of, so the field is OMITTED rather than faked — which the
+    // client reads as five `unknown` rows, the honest answer, instead of
+    // letting a cross-repo empty result read as "we looked everywhere".
+    const coverage =
+      query.repo === undefined
+        ? undefined
+        : await readCoverage(deps, c.get("developer").id, query.repo, {
+            ...(since === undefined
+              ? {}
+              : { scope: { sinceIso: since.toISOString() } }),
+          });
+    return ok(c, {
+      ...response,
+      filters,
+      ...(coverage === undefined ? {} : { coverage }),
+    });
   });
 
   return router;

@@ -12,8 +12,12 @@
  * parses its own fixture.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { GIT_TIMEOUT_MS } from "../src/constants.ts";
+import { runGit } from "../src/git/git.ts";
 
 import { sweepPinPaths } from "../src/git/pin-sweep.ts";
 import { git, makeRepo, writeRepoFile } from "./helpers.ts";
@@ -147,14 +151,40 @@ describe("sweepPinPaths", () => {
   });
 
   test("reports UNKNOWN rather than missing when git cannot answer", async () => {
-    // Arrange: a directory that is not a repository. "Missing" here would be
+    // Arrange: a root git cannot answer about at all. "Missing" here would be
     // a lie that retires somebody's pin; "unknown" is a fact doctor prints.
-    const notARepo = await makeRepo("sweep-outside");
-    repos.push(notARepo);
-    await rm(`${notARepo}/.git`, { recursive: true, force: true });
+    //
+    // THE PRECONDITION IS CONSTRUCTED, AND TWO WEAKER FIXTURES FAILED FIRST.
+    // Deleting `.git` only stops git while nothing ABOVE the directory is a
+    // repository, and git walks upward — so on a host whose TMPDIR sits under
+    // one, the fixture quietly became a test about that other repository, and
+    // macos-latest reddened while ubuntu and every developer Mac stayed green.
+    // Comparing `--show-toplevel` against the root did not clear it, and
+    // neither did GIT_CEILING_DIRECTORIES: on 2026-09-17 that runner answered
+    // `--show-toplevel` with the fixture's OWN path, so something there was a
+    // repository after the removal — and no assertion in this file can make a
+    // host's filesystem behave.
+    //
+    // A DIRECTORY THAT DOES NOT EXIST cannot be a repository on any machine,
+    // under any TMPDIR, with any ambient git configuration: `Bun.spawn` cannot
+    // enter it, so `runGit` answers null through the path git.ts documents.
+    // That is also the answer a deleted or unreadable checkout produces, which
+    // is the case this module must never read as "the file is gone".
+    const gone = await mkdtemp(join(tmpdir(), "cx-sweep-gone-"));
+    await rm(gone, { recursive: true, force: true });
+
+    // The precondition is asserted BEFORE the behaviour: if git can still
+    // answer here, this test measures something else and a green result would
+    // mean nothing.
+    const answered = await runGit(
+      ["rev-parse", "--show-toplevel"],
+      gone,
+      GIT_TIMEOUT_MS,
+    );
+    expect(answered).toBeNull();
 
     // Act
-    const swept = await sweepPinPaths(notARepo, ["src/workbench/usePlayback.ts"]);
+    const swept = await sweepPinPaths(gone, ["src/workbench/usePlayback.ts"]);
 
     // Assert
     expect(swept[0]?.status).toBe("unknown");

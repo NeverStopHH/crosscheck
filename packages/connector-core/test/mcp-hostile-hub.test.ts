@@ -499,6 +499,80 @@ describe("the caller's own argument is not re-emitted as crosscheck's text", () 
   });
 });
 
+describe("a hub too old to report the intent chain is not read as innocent", () => {
+  /** The same tree, with an intent on the head so a history is possible. */
+  const treeWithIntent = (chain?: readonly unknown[]): unknown => {
+    const base = tree() as Record<string, unknown>;
+    const context = base["workContext"] as Record<string, unknown>;
+    return {
+      ...base,
+      workContext: {
+        ...context,
+        intent: {
+          summary: "Make verifyToken refetch the JWKS on an unknown kid",
+          provenance: "declared",
+          confidence: 1,
+          capturedAt: CREATED,
+        },
+      },
+      ...(chain === undefined ? {} : { intentChain: chain }),
+    };
+  };
+
+  const ONE_VERSION = [
+    {
+      version: 1,
+      amendsVersion: null,
+      provenance: "declared",
+      summary: "Make verifyToken refetch the JWKS on an unknown kid",
+      reason: null,
+      scope: [],
+    },
+  ];
+
+  test("a hub that sends no chain says so, rather than 'never amended'", async () => {
+    // Arrange: an OLD hub — it knows nothing about the ledger, so the field is
+    // absent rather than empty.
+    respond = (): Response => ok(treeWithIntent());
+
+    // Act
+    const text = await call("get_diagnosis", { workContextId: WORK_CONTEXT_ID });
+
+    // Assert: the honest sentence, and NOT the exonerating one. Without the
+    // companion flag these two hub answers are the same bytes to the reader,
+    // so this is the assertion the flag exists to make possible.
+    expect(text).toContain("this hub does not report it");
+    expect(text).not.toContain("never amended");
+  });
+
+  test("a hub that sends one version says nobody amended it", async () => {
+    // Arrange: a CURRENT hub, answering the question — the same absence of
+    // amendments, with the opposite epistemic status.
+    respond = (): Response => ok(treeWithIntent(ONE_VERSION));
+
+    // Act
+    const text = await call("get_diagnosis", { workContextId: WORK_CONTEXT_ID });
+
+    // Assert
+    expect(text).toContain("never amended");
+    expect(text).not.toContain("this hub does not report it");
+  });
+
+  test("a version this client cannot read is counted, not quietly skipped", async () => {
+    // A row the client fails to parse is a DROPPED row and says so, rather
+    // than a version that silently never existed — a chain one shorter than it
+    // was is the same unearned exoneration one level down.
+    respond = (): Response => ok(treeWithIntent([...ONE_VERSION, { version: 0 }]));
+
+    // Act
+    const text = await call("get_diagnosis", { workContextId: WORK_CONTEXT_ID });
+
+    // Assert
+    assertSafeResponse(text, "diagnosis with an unreadable intent version");
+    expect(text).toContain("could not be read");
+  });
+});
+
 describe("extend_diagnosis on a tree that came back partial", () => {
   test("does not claim a claim does not exist when the tree was truncated", async () => {
     // Arrange: the hub stopped at its own 500-claim bound, so the target may be

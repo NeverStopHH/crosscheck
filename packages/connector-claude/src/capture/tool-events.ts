@@ -33,6 +33,15 @@ export const HookPayloadSchema = z.looseObject({
   tool_input: z.unknown().optional(),
   tool_response: z.unknown().optional(),
   /**
+   * PreToolUse, PostToolUse and PostToolUseFailure: the host's id for ONE
+   * tool call, handed to every hook of that call and to no other call. It is
+   * the only thing that pairs a PreToolUse window with its own PostToolUse
+   * (core state/tool-window-key.ts). Tolerant like every field here — absent
+   * or renamed upstream, no window is opened and every edit travels as the
+   * upper bound it is, which the hub refuses rather than orders.
+   */
+  tool_use_id: z.string().optional().catch(undefined),
+  /**
    * PostToolUseFailure only. `error` is the failure text — the same string
    * Claude receives as the failed tool's result — and it arrives as a
    * TOP-LEVEL field rather than inside `tool_response`, which is why the

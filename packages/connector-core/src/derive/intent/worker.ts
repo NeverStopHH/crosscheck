@@ -38,11 +38,13 @@ import {
   UNKNOWN_DEVELOPER_ID,
   workContextRecord,
 } from "../../capture/records.ts";
+import { seqAt, withSeq } from "../../capture/seq.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
 import { readDeliveredHintHashes } from "../../hints/delivered-store.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { appendRecords } from "../../spool/append.ts";
 import {
+  allocateSeq,
   readSessionState,
   updateSessionState,
   withRecordedIntent,
@@ -219,11 +221,18 @@ const appendIntent = async (
     await bookFailure(home, claudeSessionId, DROPPED_CONTRACT);
     return;
   }
+  // OFF THE HOOK PATH, so a new lock acquisition costs nobody's keystroke —
+  // and it is a real one: this worker is a detached process and the state
+  // write below happens AFTER the record is on disk. A null block means the
+  // state file is gone (this worker outlived SessionEnd's delete), which is
+  // the same condition the abandon branch already books; the draft still
+  // lands, carrying `allocation_failed`.
+  const seq = await allocateSeq(home, claudeSessionId, 1);
   await appendRecords(
     home,
     repoKey(fresh.hubUrl, fresh.repoId),
     claudeSessionId,
-    [envelope],
+    [withSeq(envelope, seqAt(seq, 0))],
     now,
   );
   // Booked AFTER the spool append: "intent set" means the record exists on

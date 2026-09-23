@@ -14,7 +14,19 @@ import { renderIntent } from "@crosscheck/connector-core/briefing/intent.ts";
 import { formatQuestionCounts } from "@crosscheck/connector-core/briefing/questions.ts";
 import { formatSolvedCounts } from "@crosscheck/connector-core/hints/precision.ts";
 import { formatAbsenceLine, formatAge } from "@crosscheck/connector-core/briefing/render.ts";
+import {
+  HUB_UNREACHABLE_CLAUSE,
+  coverageClause,
+} from "@crosscheck/connector-core/coverage/render.ts";
+import { UNKNOWN_COVERAGE } from "@crosscheck/connector-core/http/coverage.ts";
 import { bareUntrusted } from "@crosscheck/connector-core/briefing/sanitize.ts";
+import { CI_STATUS_MAX_LINES } from "@crosscheck/connector-core/constants.ts";
+import { MAX_CI_TEST_ID_CHARS } from "@crosscheck/schema";
+import { getCiVerdict } from "@crosscheck/connector-core/http/hub.ts";
+import type {
+  CiBehaviorDelta,
+  CiCoverage,
+} from "@crosscheck/connector-core/http/hub.ts";
 import { resolveRepoIdentity } from "@crosscheck/connector-core/git/repo-identity.ts";
 import {
   getAbsences,
@@ -48,6 +60,7 @@ import {
   formatGitLaneCost,
   summarizeGitLaneCost,
 } from "@crosscheck/connector-core/state/git-lane-cost.ts";
+import { formatSeqCost, summarizeSeqCost } from "@crosscheck/connector-core/state/seq-cost.ts";
 import {
   formatGhostCost,
   formatIntentCost,
@@ -145,6 +158,75 @@ const tripwireLine = (env: Env): string => {
     : `tripwire: ${mode}`;
 };
 
+
+/**
+ * WHAT CI SAID ABOUT THE COMMIT THIS CLONE IS ON (spec 05 §5).
+ *
+ * ONE LINE PER NON-GREEN TEST, and each carries its REASON rather than only
+ * its verdict. "3 tests failing" is a number a reader can do nothing with:
+ * whether to look at their own commit, at a flaky test, or at nothing yet is
+ * the entire question, and the ladder already answered it.
+ *
+ * THE TEST NAME IS SOMEBODY ELSE'S TEXT. It comes out of a repository, and a
+ * fork pull request can name a test anything at all — so it travels through
+ * `bareUntrusted` like a teammate's branch name two blocks down, bounded and
+ * control-stripped, before it reaches a terminal.
+ *
+ * SILENCE IS SAID, NOT SKIPPED. A repo whose CI never reports prints the
+ * `unavailable` sentence rather than nothing: a missing line reads exactly
+ * like a green suite, which is the absence AT-10 refuses.
+ */
+const CI_STATE_CLAUSES: Readonly<Record<string, string>> = {
+  unavailable: "not reported here — no CI reporter is configured for this repo",
+  unknown: "nothing has arrived for this commit yet",
+  incomplete: "some expected lanes have not reported, or a verdict is pending",
+  complete: "every expected lane reported",
+};
+
+/** Renderer-owned words. A reason a reader cannot act on is a reason wasted. */
+const CI_REASON_CLAUSES: Readonly<Record<string, string>> = {
+  insufficient_base:
+    "this hub has not seen enough of that lane yet to tell a break from a flake",
+  not_stably_green: "it was already failing before this commit",
+  awaiting_rerun: "nobody has re-run it on this commit yet",
+  rerun_green: "it passed on a re-run of this same commit — flaky, not this commit",
+  rerun_red: "it failed again on a re-run of this same commit",
+};
+
+export const ciLines = (
+  verdict: { coverage: CiCoverage; deltas: readonly CiBehaviorDelta[] } | null,
+): readonly string[] => {
+  if (verdict === null) {
+    // THE HUB DID NOT ANSWER, which is not the same as CI having nothing to
+    // say. Naming the difference keeps a round trip that failed from reading
+    // as a suite that passed.
+    return ["ci: not measured — the hub did not answer"];
+  }
+  const { coverage, deltas } = verdict;
+  const head = `ci: ${CI_STATE_CLAUSES[coverage.state] ?? "state not reported"}`;
+  const counted =
+    coverage.state === "complete" || coverage.state === "incomplete"
+      ? `${head} (${String(coverage.lanesReported)}/${String(coverage.lanesExpected)} lanes)`
+      : head;
+  if (deltas.length === 0) {
+    return [counted];
+  }
+  const shown = deltas.slice(0, CI_STATUS_MAX_LINES);
+  const hidden = deltas.length - shown.length;
+  return [
+    counted,
+    ...shown.map((delta) => {
+      const name = bareUntrusted(delta.testId, MAX_CI_TEST_ID_CHARS);
+      const reason = CI_REASON_CLAUSES[delta.reason] ?? "reason not reported";
+      return `  - ${name.length === 0 ? "(a test name with nothing printable in it)" : name} — ${delta.delta}: ${reason}`;
+    }),
+    // A SILENTLY SHORTER LIST IS THE ABSENCE THIS PROJECT REFUSES, and the
+    // ones that fall off are the ones a reader would act on last — so the cut
+    // is said rather than hidden behind a tidy list.
+    ...(hidden > 0 ? [`  (+${String(hidden)} more not shown)`] : []),
+  ];
+};
+
 export const runStatus = async (
   env: Env,
   cwd: string,
@@ -194,6 +276,7 @@ export const runStatus = async (
   // other per-session counters and out of the same one scan: a lane whose
   // skips are never shown is a blind spot `suspect` answers out of.
   const gitLaneCost = summarizeGitLaneCost(liveStates.states);
+  const seqCost = summarizeSeqCost(liveStates.states);
   // The conference counters (VISION.md §2). A LOCAL file rather than session
   // state: a conference is a command, often run from a scheduler at 03:00,
   // and its numbers must survive on a machine with no live session at all.
@@ -233,6 +316,19 @@ export const runStatus = async (
     now: () => now,
   };
   const presence = await getPresence(hubCtx, identity.repoId);
+  // WHAT CI SAID ABOUT THE COMMIT THIS CLONE IS ON. `identity.baseCommit` is
+  // this checkout's HEAD — the commit a developer standing here would ask
+  // about — and the default-branch answer travels from the same clone,
+  // because the hub holds no repository and must not guess which ref is
+  // default. FAIL-OPEN like every hub read here: a hub that cannot answer
+  // costs this block its lines and never the command.
+  const ciVerdict = await getCiVerdict(
+    hubCtx,
+    identity.repoId,
+    identity.baseCommit,
+    identity.branch ?? "main",
+  );
+  const ciStatusLines = ciLines(ciVerdict.ok ? ciVerdict.data : null);
   // The hub's delivered/pulled window and this repo's claim count (#20/M1) —
   // fail-open like every hub read: a hub that cannot answer costs the hub half
   // of the hints line, never the local half.
@@ -304,7 +400,7 @@ export const runStatus = async (
             .join(", ")}`,
         ]
       : [];
-  const absenceLines = (absences.ok ? absences.data : [])
+  const absenceLines = (absences.ok ? absences.data.absences : [])
     .slice(0, STATUS_MAX_ABSENCE_LINES)
     .flatMap((entry) => {
       const line = formatAbsenceLine(entry, now);
@@ -336,6 +432,30 @@ export const runStatus = async (
       `hub: ${config.hubUrl}`,
       `repo: ${identity.repoId} (${identity.branch})`,
       `developer: ${config.developerName ?? "unknown"} (${config.developerId ?? "unknown"})`,
+      // AT-9, and it renders UNCONDITIONALLY — including "Coverage unknown"
+      // from a hub that reports none. A person ran this command and is
+      // reading every line below it; an omitted qualifier is the one thing
+      // that would read as "all clear". It sits above every fact about the
+      // team for the same reason the briefing's does: it says how far the
+      // rest can be trusted. `coverageClause`, not `coverageNote`, because
+      // the soft annotation rule governs answers nobody asked for.
+      //
+      // AND A REFUSED CONNECTION IS NOT AN OLD HUB. The failure kind is in
+      // hand here (http/client.ts), the pins line below already uses it, and
+      // doctor branches on it — collapsing it into the record would print a
+      // sentence about what this hub reports beside "(hub unreachable)", and
+      // name a cause the reader cannot act on.
+      //
+      // NO `coverage:` KEY. The clause is a SENTENCE that names its own
+      // subject — "Coverage incomplete: …" — so a key in front of it made
+      // this the only line in the command to say its subject twice and the
+      // only one carrying two colons. The briefing prints the same sentence
+      // unprefixed; one fact spelled one way on both surfaces.
+      absences.ok
+        ? coverageClause(absences.data.coverage, now)
+        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),
       ...emailLines,
       ...privacyLines,
       "teammates:",
@@ -348,6 +468,7 @@ export const runStatus = async (
       ...questionLines,
       ...solvedLines,
       ...pinLines,
+      ...ciStatusLines,
       targetsLine(captureHealth, now),
       hintsLine(captureHealth, hintStats),
       tripwireLine(env),
@@ -355,6 +476,9 @@ export const runStatus = async (
       `intent: ${formatIntentCost(intentCost)}`,
       `ghost checks: ${formatGhostCost(ghostCost)}`,
       `git evidence lane: ${formatGitLaneCost(gitLaneCost)}`,
+      // Beside the lane it is measured with: both answer "what can this
+      // machine still tell you", and both fail by going quiet.
+      `event sequence: ${formatSeqCost(seqCost)}`,
       `conference: ${formatConferenceCost(conferenceCost, now)}`,
       // The CAPTURE stamp, not `lastOkAt`: only register/heartbeat/records/end
       // move it, so this age is the hook path's and not this command's (H5).

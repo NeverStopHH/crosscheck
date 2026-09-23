@@ -5,6 +5,7 @@ import { CommitEvidenceSchema } from "./commit-evidence.ts";
 import { HintDeliverySchema, HintSchema } from "./hint.ts";
 import { LandedEvidenceSchema } from "./landed-evidence.ts";
 import { QuestionAnswerSchema, QuestionSchema } from "./question.ts";
+import { SeqFieldSchema } from "./seq.ts";
 import {
   AgentSessionSchema,
   TargetSchema,
@@ -22,6 +23,7 @@ export const ProducerSchema = z.looseObject({
   sessionId: z.string().min(1),
 });
 
+
 /**
  * Wire envelope for every crosscheck record (DESIGN.md §5).
  * Consumers MUST ignore unknown fields and unknown kinds — forward compatibility
@@ -34,10 +36,35 @@ export const EnvelopeSchema = z.looseObject({
   producer: ProducerSchema,
   kind: z.string().min(1),
   body: z.unknown(),
+  /**
+   * OPTIONAL FOREVER. An envelope with no `seq` stays legal — the forward
+   * compatibility rule above is what keeps a pre-`seq` connector working
+   * against a new hub, and a new connector's `seq` is simply ignored by an
+   * older one (this is a loose object).
+   */
+  seq: SeqFieldSchema.optional(),
 });
 
 export type Producer = z.infer<typeof ProducerSchema>;
 export type Envelope = z.infer<typeof EnvelopeSchema>;
+
+// The position primitive moved to `seq.ts` so a record BODY can carry one
+// (spec 06 §3.1) without closing an import loop through this file. Re-exported
+// here because `envelope.ts` is where every consumer already looks for it.
+export {
+  SEQ_EPOCH_PATTERN,
+  SEQ_REFUSAL_REASONS,
+  SeqFieldSchema,
+  SeqRefusalSchema,
+  SeqStampSchema,
+  isSeqStamp,
+} from "./seq.ts";
+export type {
+  SeqField,
+  SeqRefusal,
+  SeqRefusalReason,
+  SeqStamp,
+} from "./seq.ts";
 
 const RECORD_BODY_SCHEMAS = {
   claim: ClaimSchema,

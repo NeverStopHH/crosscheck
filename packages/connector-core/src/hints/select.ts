@@ -21,6 +21,7 @@ import {
   HINT_MIN_EVIDENCE_REFS,
   MAX_HINTS_PER_SESSION,
 } from "../constants.ts";
+import { isAssertableValidity } from "../claim-validity.ts";
 import type { HintClaimCandidate, HintContextCandidate } from "../http/hub.ts";
 
 /**
@@ -121,12 +122,39 @@ const isDeclared = (claim: HintClaimCandidate): boolean =>
 const hasBody = (claim: HintClaimCandidate): boolean =>
   claim.body.trim().length > 0;
 
-/** The asymmetry, in one predicate: provenance and evidence first, then kind or status. */
+/**
+ * THE CODE AXIS OF THE SUBSTANCE GATE (1.0 spec 02 §5, CCB-1/CCB-7).
+ *
+ * The predicate itself lives in src/claim-validity.ts, because the briefing's
+ * solved root-cause line asserts a claim body on exactly the same terms and
+ * two renderers each deciding "still current" for themselves is the
+ * two-silent-definitions defect spec 02 exists to prevent. Its header carries
+ * the reasoning for both terms and for why `unknown` is let through.
+ */
+const isCodeCurrent = (claim: HintClaimCandidate): boolean =>
+  isAssertableValidity(claim.validity);
+
+/**
+ * The asymmetry, in one predicate: provenance and evidence first, then kind or
+ * status, then whether the code it is about has moved.
+ *
+ * `status !== "superseded"` STAYS beside the edge-derived term above, and §5
+ * is wrong to call the latter its replacement. §3.5's "the edge is
+ * authoritative" settles which definition DECIDES when the two disagree — the
+ * hub derives `validity.state` from the edge and the status never enters that
+ * derivation. But the hub ALREADY drops superseded rows from the candidate
+ * list by edge (notSuperseded, packages/server/src/services/hints.ts), so
+ * deleting this line changes nothing against an honest hub while removing a
+ * defence against a forging one, which is the reason it was written. A hub
+ * reporting `status: "superseded"` beside a `current` validity asserts two
+ * contradictory things; the connector believes neither.
+ */
 const isInjectable = (claim: HintClaimCandidate): boolean =>
   isDeclared(claim) &&
   hasBody(claim) &&
   hasEvidence(claim) &&
   claim.status !== "superseded" &&
+  isCodeCurrent(claim) &&
   (isNegativeKnowledge(claim) || isSettled(claim));
 
 const isEligibleContext = (context: HintContextCandidate): boolean =>

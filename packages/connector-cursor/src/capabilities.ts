@@ -10,6 +10,7 @@
  * cursor.com/docs/hooks on 2026-08-28; the offline copy is
  * test/fixtures/cursor-contract/docs-excerpt-cursor-hooks.md.
  */
+import { UNPROJECTED_LEDGER_KINDS_REFUSAL } from "@crosscheck/connector-core/derive/capabilities.ts";
 import type { DeriveCapabilityManifest } from "@crosscheck/connector-core/derive/capabilities.ts";
 import { CURSOR_AGENT_KIND } from "@crosscheck/connector-core/state/host-session-key.ts";
 
@@ -40,8 +41,28 @@ export const CURSOR_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       sentence:
         "`crosscheck conference` is a command a human runs, not a hook, so it needs nothing from Cursor at all — only a working model runner (see the summarizer runner check)",
     },
+    {
+      name: "event_seq",
+      rung: "reduced",
+      sentence:
+        "Cursor's handlers position every record they emit through the same allocator, but two sources are missing: Cursor runs no Stop-time `git diff` lane, so a file changed by `sed -i`, a codemod or a generator produces no file.modified here to order at all; and this connector registers no pre-tool handler, so an edit's position is taken only AFTER the tool returned and is an upper bound — the hub stores those `observed` and refuses a happens-before question against them rather than answering one from a race",
+    },
   ],
   refusals: [
+    // The two canonical kinds nothing projects, on any host — one sentence
+    // for the whole product, shared by reference so the three manifests
+    // cannot drift apart while it is true.
+    UNPROJECTED_LEDGER_KINDS_REFUSAL,
+    {
+      name: "commit collection",
+      sentence:
+        "no `commit.observed` event exists on this host: the git authorship scan runs only in Claude Code's SessionStart, so absence detection here is fed by whatever teammates on that host report, and this connector's sessions contribute none of it",
+    },
+    {
+      name: "second evidence lane",
+      sentence:
+        "the Stop-time `git diff --name-only HEAD` lane is registered only by Claude Code's Stop hook, so a file this host changed through `sed -i`, a codemod or a generator raises no edit event and produces no file.modified to order or to attribute — `crosscheck suspect` will name the session that used an edit tool and never this one",
+    },
     {
       name: "pre-edit ask",
       sentence:

@@ -43,8 +43,23 @@ const SHUTDOWN_TIMEOUT_MS = 5_000;
  * so the packed size is our own source plus licenses and nothing else. The
  * cap is generous headroom over the measured size, not a target — it exists
  * to catch the day node_modules, docs or fixtures leak into the whitelist.
+ *
+ * RAISED FROM 1 000 000 ON THE 1.0 INTEGRATION BRANCH, and only after asking
+ * the question the cap exists to ask. Three specs' source pushed the packed
+ * tarball to 1 057 189 bytes, and the first move was to check for a leak
+ * rather than to move the number: the packed tarball holds 352 files and
+ * ZERO under `test/`, `docs/` or `fixtures/`, with `connector-core` (1.4 MB
+ * unpacked) and `server` (866 KB) accounting for the growth. That is source
+ * this package is meant to ship.
+ *
+ * A leak is categorical, not marginal — `node_modules` is tens of megabytes
+ * and `docs/1.0` is half a megabyte of markdown — so headroom at 1.5 MB still
+ * catches every shape this cap was written for, and `mustNotShip` below
+ * catches them by NAME, which is the check that does not need a number at
+ * all. The measured size is printed on every run so the next raise is a
+ * decision somebody makes rather than a surprise.
  */
-const TARBALL_SIZE_CAP_BYTES = 1_000_000;
+const TARBALL_SIZE_CAP_BYTES = 1_500_000;
 
 const nodeExe = Bun.which("node");
 const npmExe = Bun.which("npm");
@@ -263,6 +278,12 @@ describe("packed npm tarball", () => {
       expect(await exists(join(packageDir, relative)), relative).toBe(false);
     }
     const tarball = await stat(tarballPath);
+    // Printed, not only asserted: a budget nobody sees until it breaks is a
+    // budget that gets raised in a hurry. This is the shape the pin-sweep and
+    // derive-budget guards already use.
+    console.log(
+      `[npm-package] packed ${String(tarball.size)} bytes (cap ${String(TARBALL_SIZE_CAP_BYTES)})`,
+    );
     expect(tarball.size).toBeLessThan(TARBALL_SIZE_CAP_BYTES);
     // npm pack names the tarball after the manifest's `name` — pinning the
     // basename pins the PUBLISHED name (e.g. crosscheck-hub-0.5.0.tgz).

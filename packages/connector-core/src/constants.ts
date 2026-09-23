@@ -260,6 +260,46 @@ export const MAX_KNOWN_WORKTREE_ROOTS = 8;
 export const MAX_FIRED_TOOL_CALLS = 256;
 
 /**
+ * Tool windows one session may hold OPEN at once (state/session-state.ts).
+ * Each is one running tool call's bracket — the position its PreToolUse took
+ * before the tool started, keyed by the host's `tool_use_id` — and it is
+ * removed when that call's PostToolUse closes it.
+ *
+ * WHY A CAP AT ALL. Not every open window is closed. PostToolUse closes a
+ * call that returned and PostToolUseFailure one that failed, but a denied call
+ * runs neither, an aborted one returns before its close, a busy lock can
+ * refuse a close, and any hook the host drops leaves its entry behind; an
+ * uncapped list on the hook's hot path grows for the life of the session. FIFO
+ * like MAX_SEEN_TARGETS and MAX_FIRED_TOOL_CALLS.
+ *
+ * WHAT THE HOST'S BATCHES DO, as far as it can be read from here. Read from the
+ * installed Claude Code 2.1.258 binary on 2026-09-17: a batch's consecutive
+ * concurrency-safe calls run in parallel, at most
+ * CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY at a time (default 10), and every other
+ * call runs alone. So one agent runs ten calls at once at most by default.
+ * That is not a bound on this list, and it is not claimed as one: PostToolUse
+ * is registered async, so a finished call's window can still be open while the
+ * next ones start; parallel subagents in one session add their own calls; and
+ * the variable is the user's to raise. Thirty-two is over three times the
+ * default, with room for leaked entries.
+ *
+ * IT IS A CAP, NOT A GUARANTEE. Evicting the oldest costs that call its bracket
+ * and nothing else — its position stays the upper bound it always was and the
+ * hub refuses rather than answers — so the cap trades in the safe direction.
+ * And the scan it bounds is free at this size. MEASURED 2026-09-17 (bun 1.3.13,
+ * Apple M4 Max, three runs of a scratch benchmark): the find + copy a close
+ * performs cost 0.12-0.14 us at 8 entries, 0.20-0.22 at 32, 0.34-0.37 at 64 and
+ * 1.41-1.59 at 256; the key digest 0.35 us per hook; and an open plus a close —
+ * two state-lock acquisitions — 867-935 us, several hundred times the list
+ * work both of them do together.
+ *
+ * WHICH IS WHY EVICTIONS ARE COUNTED (`toolWindowEvictions`) and printed by
+ * `doctor`: whether thirty-two is enough on a real install is unmeasured, and
+ * that install reaching this ceiling is the only thing that can say so.
+ */
+export const MAX_TOOL_WINDOWS = 32;
+
+/**
  * How many identity resolutions ONE unresolvable worktree root may cost a
  * session before its null is taken as final (trial finding #17).
  *
@@ -370,18 +410,65 @@ export const MAX_INGEST_BATCH = 100;
 export const MAX_FLUSH_BATCHES_PER_HOOK = 20;
 export const SPOOL_LOCK_STALE_MS = 5000;
 /**
- * The lock guards flush and reap only — appends are lock-free — so a busy lock
- * costs a deferred flush that the next hook retries, never a record. Retries ×
- * delay stays far below the smallest hook budget.
+ * THE SPOOL's patience, and only the spool's. A busy flush or reap lock costs a
+ * deferred flush that the next hook retries, never a record, so five attempts is
+ * all that failure is worth and retries × delay stays far below the smallest
+ * hook budget.
  *
  * That accounting covers a BUSY lock, which is the only way an acquisition may
  * fail. A STOLEN lock was never in it: two holders inside the section at once
  * cost concurrent rewrites of the per-repo aggregates and a reap deleting a
  * file the flush was mid-delivery of. Stealing from a live holder is what
  * spool/lock.ts now refuses, which is what makes the sentence above complete.
+ *
+ * WHAT THIS NUMBER MUST NOT BE SPENT ON is below: the session state took the
+ * same primitive and does not have the same failure cost.
  */
 export const SPOOL_LOCK_RETRIES = 5;
 export const SPOOL_LOCK_RETRY_DELAY_MS = 20;
+
+/**
+ * THE SESSION STATE's patience, which is a different number because a busy
+ * session-state lock costs a POSITION.
+ *
+ * The sentence above — a busy lock costs a deferred flush, never a record — was
+ * the whole justification for five attempts, and this branch made it false:
+ * `allocateSeq`, `openToolWindow` and `allocateToolSeq` took the same lock
+ * primitive, and there a refusal is an event carrying `allocation_failed`
+ * instead of a place in the causal order. That refusal is honest — capture/seq.ts
+ * makes it a value rather than an omission — and it is not a correctness bug.
+ * It is a hole in the order, and five attempts bought far more of them than
+ * anybody chose to buy.
+ *
+ * MEASURED 2026-09-16 (bun 1.3.13, M-series Mac, idle), emitters each
+ * allocating one position in a loop; refusals out of the total asked for:
+ *
+ *              retries=5    retries=20   retries=60
+ *   4 emitters   1/400        0/400        0/400
+ *   8 emitters   7/800        0/800        0/800
+ *  16 emitters  41/1600       4/1600       0/1600
+ *
+ * The counter equalled "asked minus refused" in EVERY run: mutual exclusion was
+ * never what failed, patience was. The extra attempts are also close to free —
+ * 8 emitters took 321 ms at five and 324 ms at twenty — because only an emitter
+ * that WOULD have been refused ever spends them, and an uncontended acquire
+ * returns on its first `createLock` without reaching the delay at all. CI is
+ * the loaded machine this idle one stands in for: two emitters refuse nothing
+ * here, and two on a loaded runner is what reddened SEQ-3 on both platforms.
+ *
+ * A jittered retry delay was tried first and REFUTED by the same measurement
+ * (8 emitters 7 → 8 refusals, 16 emitters 41 → 41): the losers were not
+ * colliding in lockstep, they were simply running out of attempts.
+ *
+ * WHY WAITING THIS LONG IS SAFE. The ceiling is the smallest hook budget minus
+ * the one HTTP request that budget must still afford, and `withBudget` races
+ * the whole hook against it regardless — so this cannot hold a developer's
+ * session open even if the arithmetic below were ever wrong.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.SESSION_STATE_LOCK_RETRIES*c.SPOOL_LOCK_RETRY_DELAY_MS <= c.PRE_TOOL_USE_BUDGET_RATIO*c.HTTP_TIMEOUT_MS - c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true
+ */
+export const SESSION_STATE_LOCK_RETRIES = 20;
 
 /** ~550 tokens at 4 chars/token, under the ≤600 token briefing budget (§4). */
 export const MAX_BRIEFING_CHARS = 2200;
@@ -639,6 +726,155 @@ export const MAX_LANDED_ANCESTRY_CHECKS = 10;
 export const STALENESS_GIT_TIMEOUT_MS = 250;
 /** Most referenced files one staleness probe hands git as pathspecs. */
 export const STALENESS_MAX_PATHS = 20;
+
+// ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
+
+/**
+ * How many commits a downgrade may NAME. Five (spec 02 D6, default): the
+ * sentence is "3 commits have touched these files since — <sha>, <sha>,
+ * <sha>", and past a handful the hashes stop being readable and start being a
+ * log. The count itself is not capped — "and N more" is measured — so raising
+ * this buys names, not truth, at the price of a jsonb column on a table
+ * bounded by claims.
+ *
+ * Re-exported rather than declared: it bounds a WIRE array and the stored
+ * jsonb column, so @crosscheck/schema owns it and there is one thing to move.
+ */
+export { MAX_CLAIM_TOUCHING_COMMITS } from "@crosscheck/schema";
+
+/**
+ * Most paths one claim's drift check hands git as pathspecs.
+ *
+ * INHERITED BY NAME from the pin registry's MAX_PIN_FILES, which is what
+ * `MAX_CLAIM_SURFACE_PATHS` in @crosscheck/schema already bounds a declared
+ * surface to. Deliberately NOT the older STALENESS_MAX_PATHS (20): that one
+ * bounds a WORK CONTEXT's target list, which the hub serves up to 100 of,
+ * while a claim's declared surface is already 30 at the schema. Slicing to 20
+ * here would drop a third of what an author declared and still print a
+ * verdict over the rest.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.MAX_CLAIM_SURFACE_PATHS === s.MAX_CLAIM_SURFACE_PATHS, c.MAX_CLAIM_SURFACE_PATHS === s.MAX_PIN_FILES)'
+ * PRINTS: true true
+ */
+export const MAX_CLAIM_SURFACE_PATHS = 30;
+
+/**
+ * Most declared paths one claim's surface resolution will LOOK AT — as opposed
+ * to keep.
+ *
+ * THE CAP ABOVE BOUNDS THE ANSWER, NOT THE WORK. `resolveDeclaredSurface`
+ * stops when KEPT reaches `MAX_CLAIM_SURFACE_PATHS`, so a list whose entries
+ * are all dropped is walked end to end, and every entry outside the repo costs
+ * a `realpath` before it can be dropped. The three tools that take
+ * `affectedPaths` are MCP tools: the time comes out of the calling agent's own
+ * turn, and no surface says where it went.
+ *
+ * WHY A MULTIPLE AND NOT THE CAP ITSELF. An author who declares thirty real
+ * paths alongside a few that policy denies must still get thirty back, so the
+ * budget has to sit above the keep cap by enough room for ordinary attrition.
+ * Four times is the room; past it, the list stops being a declaration.
+ *
+ * VERIFY: bun -e 'const {resolveDeclaredSurface}=await import("./packages/connector-core/src/flows/claim-surface.ts");const r=process.cwd();const mk=(n)=>Array.from({length:n},(_,i)=>`../outside-${i}/x.ts`);const t=async(n)=>{const a=performance.now();await resolveDeclaredSurface({repoRoot:r,cwd:r,paths:mk(n)});return Math.round(performance.now()-a)};console.log(await t(120) < 100, await t(50000) < 100)'
+ * PRINTS: true true
+ */
+export const MAX_CLAIM_SURFACE_CANDIDATES = MAX_CLAIM_SURFACE_PATHS * 4;
+
+/**
+ * Most DISTINCT (commit, path-set) groups one `get_diagnosis` pull
+ * revalidates. Newest-commit-first before the cut, and the cut is REPORTED as
+ * `revalidated / total` — a bound must not be spent at random and must not
+ * claim more than it measured (state/capture-health.ts).
+ */
+export const CLAIM_REVALIDATION_MAX_COMMITS = 8;
+
+/**
+ * Process cap for the whole revalidation leg, the way PIN_SWEEP_MAX_GIT_CALLS
+ * bounds the sweep. Each group costs at most two calls, so this is headroom
+ * rather than a working limit — and it is what stops a pathological tree from
+ * spending the MCP budget on git.
+ */
+export const CLAIM_REVALIDATION_MAX_GIT_CALLS = 24;
+
+/**
+ * How many of a repo's work contexts `crosscheck revalidate` reads in one run
+ * (1.0 spec 02 §10 D5).
+ *
+ * NEWEST FIRST, AND THE CUT IS PRINTED. The command walks trees the hub lists
+ * for this repo and spends the per-tree git bound on each, so the walk itself
+ * needs a ceiling or a five-year archive turns one typed command into an
+ * afternoon. 25 is a working set rather than an archive, and the run SAYS
+ * when it hit the bound rather than reporting the page as the whole repo —
+ * the shape `SESSION_STATE_REAP_MAX_PER_RUN` already uses, where draining
+ * over several runs beats making one of them pay for everything.
+ */
+export const CLAIM_REVALIDATE_MAX_CONTEXTS = 25;
+
+/**
+ * How long the whole `crosscheck revalidate` walk may spend before it stops
+ * and says how many trees it did not reach.
+ *
+ * §6 budgets ONE revalidation leg — CLAIM_REVALIDATION_MAX_GIT_CALLS
+ * processes at STALENESS_GIT_TIMEOUT_MS each — and CCB-8 measures exactly
+ * that. The WALK repeats that leg up to CLAIM_REVALIDATE_MAX_CONTEXTS times
+ * and nothing bounded it: the arithmetic ceiling from this file's own
+ * constants is 2 + 25 x 16 = 402 git processes at 250 ms, a hundred seconds,
+ * plus 51 hub round trips. Measured on a warm local 5 000-commit repo, the
+ * git half alone was about 11 seconds across three runs.
+ *
+ * THIRTY SECONDS IS A TYPED COMMAND'S PATIENCE, not a measurement. It is what
+ * a person will wait at a terminal before assuming the thing is stuck, and
+ * the walk now prints a line per tree so they never have to guess. Raising it
+ * is a decision about that patience; lowering it costs trees per run, and the
+ * output names how many.
+ */
+export const REVALIDATE_WALK_BUDGET_MS = 30_000;
+
+/**
+ * The validity clause on a PULLED surface — "no longer current: recorded at
+ * abc1234; 3 commits have touched these files since — def5678, 9a1b2c3".
+ *
+ * It is NOT MAX_HUB_MESSAGE_CHARS: that constant's own comment scopes it to a
+ * string the HUB chose as a tool prints it back, and this clause is
+ * renderer-built from enum values, small integers and hex.
+ *
+ * RAISED FROM 160, which the longest `current` sentence hit EXACTLY — 160 of
+ * 160, fitting by one character. The bound is spent on the opener first, by
+ * design, so what a `current` sentence loses at the end is its qualifiers:
+ * ", by its own author" (who measured it) and "its session's commit rather
+ * than a stated one" (what the commit is). Both exist because a reader
+ * otherwise cannot tell a weaker `current` from a stronger one, and both
+ * would have been cut by the next word anyone added. A qualifier that
+ * silently falls off leaves the SHORTER, more confident sentence standing,
+ * which is the one direction this project refuses to fail in.
+ *
+ * 200 leaves the worst case 40 characters of room. `stale` still truncates —
+ * its commit list is unbounded in principle and the reader loses only later
+ * shas, each of which the row itself still carries.
+ *
+ * NOT A VERIFY BLOCK, deliberately: 200 is a decision with headroom, not a
+ * derived count, and the invariant it protects is not a number anyone can
+ * print. The guard is `test/claim-validity-render.test.ts`, "the longest
+ * current sentence keeps its qualifiers" — it builds the worst case and
+ * asserts nothing was cut, so lowering this constant below what that sentence
+ * needs is a red build rather than a silently shorter line.
+ *
+ * (A runnable VERIFY here would also have to name mcp/render.ts in a comment,
+ * which §4.4's meta-test reads as this module reaching the render layer —
+ * correctly, since it cannot tell a command from an import.)
+ */
+export const MAX_CLAIM_VALIDITY_LINE_CHARS = 200;
+
+/**
+ * The state WORD alone, which is all an UNSOLICITED surface gets.
+ *
+ * The anchoring asymmetry the registry already encodes: a reader who pulled a
+ * diagnosis asked for it, while a hint arrives unasked — and spending its
+ * characters on three commit hashes anchors a session on a file history
+ * nobody asked about. Nothing is hidden: the word is the part that changes
+ * what a reader should DO with the sentence, and the hashes are one
+ * get_diagnosis away.
+ */
+export const MAX_CLAIM_VALIDITY_WORD_CHARS = 32;
 /**
  * "Solved before" entries one briefing may spend — title + id + age, and for
  * a fingerprint match one further line carrying the recorded cause.
@@ -1485,6 +1721,41 @@ export const HUB_MAX_DIAGNOSIS_TARGETS = 100;
 export const MAX_DIAGNOSIS_TARGETS_SHOWN = 20;
 
 /**
+ * HOW MANY INTENT VERSIONS THE DIAGNOSIS PRINTS, newest first.
+ *
+ * Below the hub's own chain cap on purpose: the cap is what bounds the TABLE
+ * (there is no retention job over the ledger), and this bounds one rendered
+ * answer. A reader arriving at a twenty-version context wants the recent
+ * amendments and a count of the rest, not twenty framed sentences ahead of the
+ * claims.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.INTENT_CHAIN_MAX_SHOWN < s.MAX_INTENT_CHAIN_VERSIONS)'
+ * PRINTS: true
+ */
+export const INTENT_CHAIN_MAX_SHOWN = 5;
+
+/**
+ * How many declared paths one version of the chain may print.
+ *
+ * THE VERSION COUNT WAS CAPPED AND THE SCOPE WAS NOT, which is the half that
+ * carries the volume: the wire legitimately allows MAX_INTENT_SCOPE_ENTRIES
+ * expected paths plus the same number of non-goals PER VERSION, each up to
+ * MAX_WORK_CONTEXT_TITLE_CHARS after redaction. Measured through the renderer
+ * at that wire-legal shape: a 39 162-character block with a single 7 748-
+ * character line, injected ahead of the claims and targets the reader
+ * actually asked for, and nothing saying it was long.
+ *
+ * Matched to MAX_DIAGNOSIS_TARGETS_SHOWN, because it is the same question one
+ * renderer over — how many rows of a list a reader can use before the list
+ * stops being read — and two answers to it would be two numbers to keep in
+ * step:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");const s=await import("./packages/schema/src/index.ts");console.log(c.INTENT_SCOPE_MAX_SHOWN === c.MAX_DIAGNOSIS_TARGETS_SHOWN, c.INTENT_SCOPE_MAX_SHOWN < s.MAX_INTENT_SCOPE_ENTRIES)'
+ * PRINTS: true true
+ */
+export const INTENT_SCOPE_MAX_SHOWN = 20;
+
+/**
  * Rendering caps for `get_referee_brief` — PER SECTION, not one document cap,
  * and that is the neutrality mechanism: a single document budget spends itself
  * on whichever position renders first, so the later side would truncate
@@ -1553,6 +1824,18 @@ export const MAX_ID_CHARS = 64;
  * refused record needs a paragraph.
  */
 export const MAX_HUB_MESSAGE_CHARS = 200;
+
+/**
+ * Most non-green tests `crosscheck status` prints before saying it cut.
+ *
+ * A wire-legal run may carry CI_MAX_TEST_ROWS (200) non-green rows, and a
+ * suite that broke wholesale carries all of them. Two hundred lines ahead of
+ * the spool, teammate and cost blocks is a status output nobody reads to the
+ * end — and the lines that scroll away are the ones a reader would act on.
+ * The cut is REPORTED, which is what separates a bound from a silent
+ * shortening.
+ */
+export const CI_STATUS_MAX_LINES = 8;
 
 // ── Agent conferences (VISION.md §2) ────────────────────────────────────────
 
@@ -1728,3 +2011,21 @@ export const GIT_TOUCHES_TIMEOUT_MS = 250;
  * per-invocation cap (MAX_TARGETS_PER_INVOCATION) still applies afterwards.
  */
 export const MAX_GIT_TOUCH_CANDIDATES = 60;
+
+/**
+ * ── Coverage integrity (docs/1.0/03-coverage-integrity.md §5.3) ─────────────
+ *
+ * The coverage line's hard bound. One line, first in the briefing, and NEVER
+ * CUT — a caveat that can be dropped by a character budget is a caveat that
+ * lies, because the briefing it was dropped from still reads as complete.
+ *
+ * 160 is chosen against the briefing budget rather than against prose: it is
+ * what an uncuttable prefix may cost every SessionStart without crowding out
+ * the presence and related-work lines the briefing exists for. The bound is
+ * absolute, not a ratio, and it holds against every shape the coverage enums
+ * admit — 4096 of them, checked in test/coverage-render.test.ts.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.MAX_COVERAGE_LINE_CHARS < c.MAX_BRIEFING_CHARS, c.MAX_COVERAGE_LINE_CHARS)'
+ * PRINTS: true 160
+ */
+export const MAX_COVERAGE_LINE_CHARS = 160;

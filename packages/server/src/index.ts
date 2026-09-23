@@ -13,8 +13,53 @@ import type { AppEnv, Clock } from "./types.ts";
 export { createApp } from "./app.ts";
 export { createDb } from "./db/client.ts";
 export type { Db } from "./db/client.ts";
+/** The causal-order table, so a connector test can assert what the hub stored. */
+export { sessionEvents } from "./db/schema.ts";
+export {
+  CAUSAL_INDETERMINACIES,
+  CAUSAL_ORDER_REASONS,
+  CAUSAL_ORDER_STATES,
+  CAUSAL_POSITION_STATUSES,
+  causalComparisonOf,
+  causalOrderOf,
+  causalPositionOf,
+  compareEvents,
+  isOrderable,
+  readBrokenCausalOrders,
+  readSessionCausalOrder,
+} from "./services/session-order.ts";
+export type {
+  CausalComparison,
+  CausalIndeterminacy,
+  CausalOrderReason,
+  CausalOrderState,
+  CausalPosition,
+  CausalPositionStatus,
+  OrderedEvent,
+  SessionCausalOrder,
+} from "./services/session-order.ts";
+export { seqKindFor } from "./services/record-handlers.ts";
 export { createEmbedderFromEnv } from "./services/embedder.ts";
 export type { Embedder } from "./services/embedder.ts";
+// 03's ground, exported because 04's verdict layer and 07's instrumentation
+// both CONSUME `isJudgeable` rather than recomputing it, and because the
+// connector's wire vocabulary is pinned against these three enums in
+// connector-core/test/coverage-wire.test.ts.
+export {
+  COVERAGE_REASONS,
+  COVERAGE_SOURCES,
+  COVERAGE_STATES,
+  isJudgeable,
+  readCoverage,
+} from "./services/coverage.ts";
+export type {
+  CoverageRecord,
+  CoverageReason,
+  CoverageScope,
+  CoverageSource,
+  CoverageSourceRecord,
+  CoverageState,
+} from "./services/coverage.ts";
 export {
   SEARCH_DEFAULT_LIMIT,
   SEARCH_MAX_LIMIT,
@@ -35,6 +80,12 @@ export interface CreateServerOptions {
   readonly db: Db;
   readonly now?: Clock;
   readonly adminToken?: string | null;
+  /**
+   * Omitted/null = no CI reporter: `POST /api/ci-runs` refuses with
+   * `ci_disabled` and `coverage.ci` reads `unavailable`, which is a real
+   * answer rather than a placeholder.
+   */
+  readonly ciToken?: string | null;
   /** Omitted/null = keyless: the vector tier is silently absent (DESIGN.md §6). */
   readonly embedder?: Embedder | null;
   /** Test seam only — services/search.ts SearchDeps says why. Omit in production. */
@@ -73,6 +124,7 @@ export const createServer = (options: CreateServerOptions): Hono<AppEnv> =>
     db: options.db,
     now: options.now ?? (() => new Date()),
     adminToken: options.adminToken ?? null,
+    ciToken: options.ciToken ?? null,
     embedder: options.embedder ?? null,
     ...(options.embedDeadlineMs === undefined
       ? {}
@@ -155,6 +207,7 @@ export const startServer = async (): Promise<void> => {
   const app = createServer({
     db,
     adminToken: process.env["ADMIN_TOKEN"] ?? null,
+    ciToken: process.env["CROSSCHECK_CI_TOKEN"] ?? null,
     embedder,
     ...(uiSessionSecret === undefined ? {} : { uiSessionSecret }),
   });

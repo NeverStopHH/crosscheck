@@ -141,6 +141,9 @@ export const run = async (
     // the derived cap is about machine inference nobody confirmed.
     provenance: "declared",
     evidenceRefs: [],
+    // The emitter's own HEAD, free: prepareMcp already resolved it. An answer
+    // is a claim like any other, so it is bound to code like any other.
+    observedAtCommit: ctx.identity.baseCommit,
     createdAt: ctx.now().toISOString(),
   };
   // The shared contract, checked locally: the caller gets a sentence about

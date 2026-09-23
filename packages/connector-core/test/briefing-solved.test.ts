@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+import type { ClaimValidity } from "@crosscheck/schema";
 
 import { MAX_SOLVED_POINTERS } from "../src/constants.ts";
 import { renderBriefing } from "../src/briefing/render.ts";
@@ -437,5 +438,137 @@ describe("briefing solved-before section", () => {
 
     // Assert
     expect(briefing).toBe("");
+  });
+});
+
+/**
+ * THE SECOND UNSOLICITED SURFACE THAT ASSERTS A CLAIM BODY (1.0 spec 02 §5,
+ * its `briefing solved` row) — and the one AT-2's gate did not reach.
+ *
+ * `claim-hint` was gated: a claim whose surface moved drops to a pointer
+ * there. This line was not, and it prints the same thing — a teammate's root
+ * cause, unasked, under confidence and provenance labels, at SessionStart.
+ * A cause recorded in April against a file rewritten in June was handed to a
+ * reader in July as the answer, which is AT-2's subject verbatim.
+ *
+ * THE RULE IS THE HINT'S, NOT A SECOND ONE. The same predicate decides both
+ * (src/claim-validity.ts), so the two surfaces cannot drift into two silent
+ * definitions of "still current" — which is the defect this whole spec
+ * exists to prevent, one level up.
+ *
+ * WHAT A DOWNGRADE COSTS HERE: the BODY, never the pointer. The line keeps
+ * `get_diagnosis <id>`, which is where the full clause and the commit hashes
+ * render for a reader who asked — the same "keeps its pointer and loses its
+ * body" rule this renderer already follows for a cause arriving without its
+ * confidence.
+ */
+describe("briefing solved-before validity", () => {
+  const CAUSE = "The ingestion mapping drops the key id on rotation";
+
+  const validity = (overrides: Partial<ClaimValidity> = {}): ClaimValidity => ({
+    state: "current",
+    observedAtCommit: "abc1234",
+    commitBinding: "reported",
+    basis: "declared",
+    refCommit: null,
+    selfReported: false,
+    touchingCommits: [],
+    touchingTotal: 0,
+    lastRevalidatedAt: NOW.toISOString(),
+    supersededByClaimId: null,
+    ...overrides,
+  });
+
+  test("a root cause whose surface moved keeps its pointer and loses its body", async () => {
+    // Arrange: the downgrade AT-2 asks for, on the surface that asserts.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          rootCause: CAUSE,
+          rootCauseValidity: validity({
+            state: "stale",
+            touchingCommits: ["deadbee", "f00dfac"],
+            touchingTotal: 2,
+          }),
+        }),
+      ]),
+    );
+
+    // Assert: readable, still findable, no longer asserted.
+    expect(briefing).toContain("get_diagnosis wc_solved");
+    expect(briefing).not.toContain(CAUSE);
+    expect(briefing).toContain("validity stale");
+    // And never the hashes: a hint-shaped surface does not spend its
+    // characters anchoring a session on a file history nobody asked about.
+    expect(briefing).not.toContain("deadbee");
+  });
+
+  test("a root cause bound to no commit is never asserted either", async () => {
+    // Arrange: CCB-1's rule on this surface. Nothing can ever revalidate it,
+    // so it can never be shown to be current.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          rootCause: CAUSE,
+          rootCauseValidity: validity({
+            state: "unknown",
+            commitBinding: "none",
+            observedAtCommit: null,
+          }),
+        }),
+      ]),
+    );
+
+    // Assert: withheld, and the reason is READABLE. The hub derives
+    // `unknown` for a claim nobody revalidated too — whose body IS asserted
+    // below — so the word alone cannot tell the two apart and the line says
+    // the binding out loud.
+    expect(briefing).not.toContain(CAUSE);
+    expect(briefing).toContain("get_diagnosis wc_solved");
+    expect(briefing).toContain("validity unknown · bound to no commit");
+    expect(briefing).toContain("withheld");
+  });
+
+  test("a measured-current root cause is asserted, and says so", async () => {
+    // Arrange: the positive case — the body is the answer and it is earned.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({ rootCause: CAUSE, rootCauseValidity: validity() }),
+      ]),
+    );
+
+    // Assert
+    expect(briefing).toContain(CAUSE);
+    expect(briefing).toContain("validity current");
+  });
+
+  test("an unrevalidated root cause is still the answer", async () => {
+    // Arrange: `unknown` stays assertable here for the reason it does on the
+    // hint — refusing everything unmeasured would empty this section on the
+    // day this shipped — and the word says which it is.
+    const briefing = renderBriefing(
+      baseInput([
+        solvedMatch({
+          rootCause: CAUSE,
+          rootCauseValidity: validity({ state: "unknown" }),
+        }),
+      ]),
+    );
+
+    // Assert
+    expect(briefing).toContain(CAUSE);
+    expect(briefing).toContain("validity unknown");
+  });
+
+  test("a hub too old to send validity renders the line as it always did", async () => {
+    // Arrange: absence is "the hub did not answer", never "unknown" — one
+    // connector upgrade must not empty an older hub's whole section.
+    const briefing = renderBriefing(
+      baseInput([solvedMatch({ rootCause: CAUSE })]),
+    );
+
+    // Assert
+    expect(briefing).toContain(CAUSE);
+    expect(briefing).not.toContain("validity");
   });
 });

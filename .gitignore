@@ -1,6 +1,16 @@
 node_modules/
 dist/
+# Test-coverage OUTPUT, wherever a runner drops it — and never a source tree
+# that happens to carry the same name. Unqualified, this line matched
+# packages/connector-core/src/coverage/ and kept the whole module every
+# answer surface imports out of the repository: `git add -A` skipped it, a
+# fresh clone could not resolve it, and every test stayed green because they
+# all read the working tree. The negation has to name the DIRECTORY — git
+# never descends into an excluded one, so re-including a file inside it does
+# nothing. render-surface-registry.test.ts fails the build if a registered
+# module goes untracked again.
 coverage/
+!packages/*/src/coverage/
 *.log
 .DS_Store
 .env

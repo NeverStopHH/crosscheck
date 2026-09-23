@@ -1,16 +1,38 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import type { Claim, ClaimEdge, Intent, Target, WorkContext } from "@crosscheck/schema";
+import {
+  MAX_INTENT_CHAIN_VERSIONS,
+  containsSecret,
+  isBindableCommit,
+  isSeqStamp,
+} from "@crosscheck/schema";
+import type {
+  Claim,
+  ClaimCommitBinding,
+  ClaimEdge,
+  Intent,
+  SeqField,
+  SeqKind,
+  Target,
+  WorkContext,
+} from "@crosscheck/schema";
 
 import { EVENT_KINDS } from "../constants.ts";
 import {
   agentSessions,
   claimEdges,
+  claimSurfaces,
   claims,
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
+import { appendIntentVersion } from "./intent-ledger.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
+import {
+  recordSessionEvent,
+  targetDigest,
+  windowFloorOf,
+} from "./session-events.ts";
 import {
   DECLARED_PROVENANCE,
   applyCrossSimilarity,
@@ -57,6 +79,79 @@ const duplicate = (id?: string): HandlerOutcome => ({
   ...(id === undefined ? {} : { id }),
 });
 
+/**
+ * THE RECORD SURVIVED; THE CHANGE INSIDE IT DID NOT.
+ *
+ * `ignored` has always been a first-class outcome of this endpoint and the
+ * work-context path had no constructor for it, so the only way to refuse a
+ * change here was `rejected` — which DESTROYS the record, because the
+ * connector's flush advances its spool cursor on any 2xx and a refused batch
+ * is a delivered batch as far as the spool is concerned.
+ *
+ * THE ISSUE IS NOT OPTIONAL. An ignored record with nothing to read is a
+ * silent drop, and the author would go looking for their sentence on their own
+ * work context and find the previous one with no explanation anywhere.
+ */
+const ignored = (id: string, issue: string): HandlerOutcome => ({
+  status: "ignored",
+  id,
+  issues: [issue],
+});
+
+/**
+ * THE HUB SCREENS WHAT ONLY THE HUB SEES EVERY WRITER OF.
+ *
+ * `set_intent` screens its `summary` before anything leaves the machine, and
+ * that is the right place for it — a hit means the record never travels. But
+ * spec 06 added two more agent-written text fields, an amendment `reason` and
+ * every `intent_scope.value`, and NEITHER the tool nor the hub looked at
+ * them. Measured against a real hub: a `reason` reading
+ * "ZQXMARK5 AKIA…" and a scope value carrying a `ghp_` token were both
+ * accepted, stored, and rendered into every reader of that work context —
+ * the scope value OUTSIDE the quoting frame.
+ *
+ * The repo's rule is "one helper, every writer" (capture-bookkeeping.ts). The
+ * connector is not every writer: anything posting to `/api/records` reaches
+ * these fields without passing a tool. So the screen is here as well, where
+ * every writer does pass, and the scanner moved to `schema` so both sides
+ * share one definition rather than two that can drift.
+ *
+ * REFUSED, NOT REDACTED. A redacted derivative still leaks structure, and the
+ * author has to learn that the sentence did not land — silently storing a
+ * blanked one would tell them it did.
+ */
+const INTENT_SECRET_ISSUE =
+  "intent: a credential-shaped value was found in the amendment reason or a " +
+  "declared path, so this intent was not recorded — an intent is pushed into " +
+  "every teammate's reader unasked, and a redacted copy still leaks structure";
+
+/** Every agent-written text field an intent carries, for the screen above. */
+const intentTexts = (intent: Intent): readonly string[] => {
+  const raw = intent as Record<string, unknown>;
+  const reason = typeof raw["reason"] === "string" ? [raw["reason"]] : [];
+  const scope = (["expectedSurface", "nonGoals"] as const).flatMap((key) => {
+    const declared = raw[key];
+    return Array.isArray(declared)
+      ? declared.flatMap((entry: unknown) => {
+          const value = (entry as Record<string, unknown> | null)?.["value"];
+          return typeof value === "string" ? [value] : [];
+        })
+      : [];
+  });
+  // The summary is screened at the tool and screened again here: a second
+  // writer that skips the tool is exactly the door this closes.
+  return [intent.summary, ...reason, ...scope];
+};
+
+/**
+ * What the author reads when the chain is full. It names the bound, because
+ * "not recorded" without a number reads like a failure rather than a limit.
+ */
+export const INTENT_CAP_ISSUE =
+  `intent: this work context already holds the ${String(MAX_INTENT_CHAIN_VERSIONS)} intent ` +
+  "versions the ledger keeps, so this sentence was not recorded and the stored " +
+  "intent is unchanged — open a new work context to state a new goal";
+
 const resolveSessionOwner = async (
   db: DbExecutor,
   sessionId: string,
@@ -69,17 +164,30 @@ const resolveSessionOwner = async (
   return rows[0]?.developerId;
 };
 
+/**
+ * The owner AND the session of a work context in one lookup.
+ *
+ * The session half is what keeps a position out of the wrong sequence: a
+ * `target` body carries only a workContextId, and `producer.sessionId` is
+ * rewritten to the FLUSHING session by every spool drain, so the context's own
+ * session is the only honest answer to "whose order does this edit belong to".
+ */
 const resolveWorkContextOwner = async (
   db: DbExecutor,
   workContextId: string,
-): Promise<string | undefined> => {
+): Promise<
+  { readonly developerId: string; readonly sessionId: string } | undefined
+> => {
   const rows = await db
-    .select({ developerId: agentSessions.developerId })
+    .select({
+      developerId: agentSessions.developerId,
+      sessionId: workContexts.sessionId,
+    })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
     .where(eq(workContexts.id, workContextId))
     .limit(1);
-  return rows[0]?.developerId;
+  return rows[0];
 };
 
 // Deliberately does not check endedAt: author sessions MAY already be ended —
@@ -101,6 +209,72 @@ export const checkOwnedSession = async (
     return `${field}: session belongs to another developer`;
   }
   return null;
+};
+
+/**
+ * WHICH COMMIT A CLAIM IS BOUND TO, decided at INSERT and never revisited
+ * (1.0 spec 02 §3.1). Three outcomes, in this order:
+ *
+ *   reported      — the emitter sent its own HEAD. The wire schema has already
+ *                   held it to COMMIT_SHA_PATTERN.
+ *   session_base  — nothing on the wire, so the author session's base_commit
+ *                   stands in.
+ *   none          — that base_commit is not an object name.
+ *
+ * THE PATTERN TEST ON THE FALLBACK IS LOAD-BEARING, and it is not paranoia
+ * about a hostile caller. `agent_sessions.base_commit` is `text NOT NULL` and
+ * `SessionSchema.baseCommit` is `z.string().min(1)`, so any non-empty string
+ * is stored — and one is, by this repo's own CLI: `crosscheck conference`
+ * registers with the literal "conference" (cli/src/cli/conference.ts), and
+ * resolveRepoIdentity falls back to NO_COMMIT_SHA when git cannot name HEAD.
+ * The placeholder is SEVEN HEX CHARACTERS, so the pattern alone accepts it —
+ * `isBindableCommit` is the predicate that refuses both, in one place.
+ *
+ * `session_base` IS AN APPROXIMATION IN BOTH DIRECTIONS, stated here because
+ * the tempting sentence — "a lower bound, so the claim goes stale early, the
+ * safe direction" — is measurably false. registerSession UPDATEs base_commit
+ * on every re-registration (services/sessions.ts, under its own comment
+ * "Branch and base commit may still move — checkouts are normal"), and a
+ * PostToolUse recovery or a SessionStart re-fire re-registers mid-session with
+ * the CURRENT HEAD. This function reads the row at FLUSH time, so the value
+ * can be a commit LATER than the observation, which NARROWS the revalidation
+ * window and makes the claim read fresher than it is. That is why
+ * `commit_binding` is stored beside the sha rather than thrown away: a reader
+ * can tell an emitter's own answer from ingest's guess.
+ */
+const resolveCommitBinding = async (
+  db: DbExecutor,
+  body: Claim,
+): Promise<{
+  readonly observedAtCommit: string | null;
+  readonly commitBinding: ClaimCommitBinding;
+  /** The author session's repo — what claim_surfaces rows are keyed by. */
+  readonly repo: string;
+}> => {
+  // ONE lookup whatever the branch: the repo is needed for claim_surfaces
+  // even when the commit came in on the wire.
+  const rows = await db
+    .select({ baseCommit: agentSessions.baseCommit, repo: agentSessions.repo })
+    .from(agentSessions)
+    .where(eq(agentSessions.id, body.authorSessionId))
+    .limit(1);
+  const repo = rows[0]?.repo ?? "";
+  // THE REPORTED VALUE IS HELD TO THE SAME PREDICATE AS THE FALLBACK. The wire
+  // schema only proves it looks like an object name, and NO_COMMIT_SHA is
+  // seven hex characters — so a connector in a repository with no commits
+  // reports the placeholder and it would otherwise be filed as a precise
+  // observation point that git can never resolve.
+  const reported = body.observedAtCommit;
+  if (reported !== undefined && isBindableCommit(reported)) {
+    return { observedAtCommit: reported, commitBinding: "reported", repo };
+  }
+  if (reported !== undefined) {
+    return { observedAtCommit: null, commitBinding: "none", repo };
+  }
+  const baseCommit = rows[0]?.baseCommit ?? "";
+  return isBindableCommit(baseCommit)
+    ? { observedAtCommit: baseCommit, commitBinding: "session_base", repo }
+    : { observedAtCommit: null, commitBinding: "none", repo };
 };
 
 type WorkContextRow = typeof workContexts.$inferSelect;
@@ -159,6 +333,7 @@ const updateExistingWorkContext = async (
   deps: ExecutorDeps,
   developerId: string,
   body: WorkContext,
+  seq: SeqField | undefined,
 ): Promise<HandlerOutcome> => {
   const rows = await deps.db
     .select({ workContext: workContexts, ownerId: agentSessions.developerId })
@@ -177,10 +352,64 @@ const updateExistingWorkContext = async (
   if (changes === null) {
     return duplicate(body.id);
   }
+  // THE LEDGER IS WRITTEN BEFORE THE HEAD, AND THE HEAD BECOMES A COPY OF WHAT
+  // THE LEDGER STORED. Writing the head from `changes` instead would let the
+  // two disagree the moment the hub stamps anything the body did not carry —
+  // which it now does, for the position and for `amends_version`.
+  //
+  // `mergeIntent` DECIDES WHETHER THERE IS AN INTENT CHANGE AT ALL, and a
+  // refused merge appends nothing: a derived intent arriving behind a declared
+  // one is not intent evolution, and recording it would put a model sentence
+  // nobody accepted within reach of every renderer.
+  const appended =
+    changes.intent === undefined ||
+    changes.intent === null ||
+    JSON.stringify(changes.intent) === JSON.stringify(row.workContext.intent)
+      ? null
+      : await appendIntentVersion(deps, {
+          workContextId: body.id,
+          // THE SESSION THAT WROTE IT, NOT THE ONE THAT OPENED THE CONTEXT.
+          // This read `row.workContext.sessionId` — the CREATING session — so
+          // a second session of the same developer had its sentence filed
+          // under the first session's name. The ownership check above cannot
+          // catch that: it is developer-scoped and never asks which SESSION
+          // is writing.
+          //
+          // The direction is what makes it serious. Step 3 of the ladder
+          // keeps an entry only while `authorSessionId === edit.event
+          // .sessionId`, so a misfiled row becomes COMPARABLE with edits it
+          // has no relation to, and a comparable pair can answer
+          // `predeclared` — the value that exonerates. Filed honestly the
+          // same pair answers `absent / different_session`, which is the
+          // truth: there is no cross-session order to have. The create path
+          // one branch over already used `body.sessionId`; this is that rule,
+          // applied where it was missing.
+          authorSessionId: body.sessionId,
+          intent: changes.intent as Intent,
+          seq,
+        });
+  // A CAPPED APPEND LEAVES THE HEAD EXACTLY WHERE IT WAS, stated rather than
+  // implied: falling through to `changes` here would move the head to a
+  // sentence the ledger refused to store, so `max(version)` would name one
+  // sentence and `work_contexts.intent` would show another — and the head
+  // would lose the hub-stamped position and `amends_version` it had, since
+  // the body never carries either. Every other field on the record still
+  // lands; only the intent stays put.
+  const stored =
+    appended === null
+      ? changes
+      : appended.capped
+        ? { ...changes, intent: row.workContext.intent }
+        // THE HEAD, NOT THE WHOLE RECORD. §8.6 keeps the chain off every
+        // unsolicited surface, and this jsonb is projected WHOLE into
+        // presence, search, suspect, conference, hints and ghost-overlap —
+        // so a head that copied the wire carried the amendment reason and
+        // the declared scope onto all of them in payload.
+        : { ...changes, intent: appended.headWire };
   // session_id stays the creating session — updates never re-home a context.
   await deps.db
     .update(workContexts)
-    .set({ ...changes, updatedAt: deps.now() })
+    .set({ ...stored, updatedAt: deps.now() })
     .where(eq(workContexts.id, body.id));
   await refreshNormalizedDoc(deps.db, body.id);
   // Outbox discipline: ids and metadata only — WHICH fields changed, never
@@ -188,17 +417,24 @@ const updateExistingWorkContext = async (
   await appendEvent(deps, EVENT_KINDS.WORK_CONTEXT_UPDATED, {
     workContextId: body.id,
     developerId,
-    changed: Object.entries(changes)
+    changed: Object.entries(stored)
       .filter(([field, value]) => value !== row.workContext[field as keyof WorkContextRow])
       .map(([field]) => field),
   });
-  return accepted(body.id);
+  // THE CAP IS REPORTED, NOT SWALLOWED. Every other field on this record did
+  // land — the title, the status, the description — so the record is not
+  // rejected; the one thing that did not land is named, and the outcome says
+  // `ignored` rather than `accepted` so a connector can tell its author.
+  return appended !== null && appended.capped
+    ? ignored(body.id, INTENT_CAP_ISSUE)
+    : accepted(body.id);
 };
 
 export const ingestWorkContext = async (
   deps: Deps,
   developerId: string,
   body: WorkContext,
+  seq?: SeqField,
 ): Promise<HandlerOutcome> => {
   // One transaction so the conflict probe, the ownership check, and the
   // update all act on the same snapshot — no TOCTOU between them.
@@ -214,6 +450,16 @@ export const ingestWorkContext = async (
     );
     if (sessionIssue !== null) {
       return rejectedOutcome(sessionIssue);
+    }
+    // BEFORE ANYTHING IS STORED, and before either path branches: this is the
+    // one point both the create and the update pass through, so one check
+    // here cannot be bypassed by whichever path a record happens to take.
+    if (
+      body.intent !== undefined &&
+      body.intent !== null &&
+      intentTexts(body.intent).some((text) => containsSecret(text))
+    ) {
+      return rejectedOutcome(INTENT_SECRET_ISSUE);
     }
     const inserted = await tx
       .insert(workContexts)
@@ -231,7 +477,35 @@ export const ingestWorkContext = async (
       .onConflictDoNothing()
       .returning({ id: workContexts.id });
     if (inserted[0] === undefined) {
-      return updateExistingWorkContext(txDeps, developerId, body);
+      return updateExistingWorkContext(txDeps, developerId, body, seq);
+    }
+    // THE FIRST VERSION CAN BE BORN ON THIS PATH, and an UPDATE-only ledger
+    // would miss it. `set_intent` posts DIRECTLY over HTTP while the
+    // work-context create travels via the SPOOL, so a set_intent issued before
+    // the session's first flush reaches the hub first and CREATES the context
+    // already carrying an intent. `workContextChanges` never runs on that
+    // record, so appending only where it reports a change leaves that sentence
+    // outside the ledger entirely: the head reads v1 and max(version) says
+    // nothing at all.
+    if (body.intent !== undefined) {
+      const appended = await appendIntentVersion(txDeps, {
+        workContextId: body.id,
+        authorSessionId: body.sessionId,
+        intent: body.intent,
+        seq,
+      });
+      await tx
+        .update(workContexts)
+        // THE HEAD PROJECTION, on this path too. The update path was fixed to
+        // store `headWire` and this one still stored the whole wire record —
+        // the same §8.6 leak on the path that runs when `set_intent` beats the
+        // spool, which is the ORDINARY case for a session that declares its
+        // intent before its first flush. `work_contexts.intent` is projected
+        // whole to presence, search, suspect, hints and ghost-overlap, so the
+        // amendment reason and the declared scope travelled every unsolicited
+        // surface from here while the other path was clean.
+        .set({ intent: appended.headWire })
+        .where(eq(workContexts.id, body.id));
     }
     await refreshNormalizedDoc(tx, body.id);
     await appendEvent(txDeps, EVENT_KINDS.WORK_CONTEXT_CREATED, {
@@ -243,23 +517,115 @@ export const ingestWorkContext = async (
   });
 };
 
+/**
+ * THE TWO CANONICAL NAMES A TARGET PROJECTS TO, and the two it does not.
+ * `symbol` and `component` are target kinds no 1.0 event name covers, and
+ * inventing one for them would put a word in the shared vocabulary that means
+ * nothing on any host.
+ */
+const TARGET_EVENT_KINDS = {
+  file: "file.modified",
+  error_fingerprint: "tool.failed",
+} as const;
+
+/**
+ * WHICH LANE'S POSITION THIS IS (spec 01 §3.2), derived here and never sent —
+ * a connector that could choose its own `seq_kind` could promote an upper
+ * bound to a happens-before.
+ *
+ * `tool_edit` is EMITTED ONLY WHEN THE EMITTER BRACKETED ITS TOOL, and the
+ * first draft of this map got that wrong in the one direction that matters.
+ * The host reports the edit, but the position is taken AFTERWARDS, in the hook
+ * that runs once the tool has returned — so on its own it is an upper bound on
+ * a change that already happened, and any emitter that allocated inside that
+ * window holds a LOWER position than the edit. Comparing the numbers then
+ * reports the explanation as predeclared, the value that exonerates, in the
+ * one shape AT-4 exists to detect. Measured: an Edit and an MCP publish issued
+ * in ONE parallel tool batch inverted 10 trials out of 10.
+ * A bracketing emitter sends the position it took BEFORE starting the tool
+ * (`seq.after`), which turns the upper bound back into an interval a
+ * happens-before question may be asked of. An emitter that cannot send one —
+ * a host with no pre-tool signal, a hook installed mid-tool — gets `observed`,
+ * the upper bound it actually has, and the refusal that goes with it. THE
+ * CONNECTOR STILL CHOOSES NOTHING: omitting the bracket can only downgrade.
+ * `git_diff` is OBSERVED: the Stop-time lane sees the working tree at the end
+ * of a turn and cannot say when inside it `sed -i`, a codemod or a generator
+ * touched the file — and it cannot see work COMMITTED during the turn or
+ * UNTRACKED new files at all.
+ * `both` is EMITTED and is a STORED label only — no connector sends it
+ * (STORED_TARGET_SOURCES), so this entry exists for completeness. The mapping
+ * is read off THIS RECORD's source rather than off the stored row's upgraded
+ * label, because each event is ONE OBSERVATION: when the git lane later sights
+ * a file the tool lane already reported, the row becomes "both" while that
+ * second event is still an upper bound, and stamping it emitted would let a
+ * happens-before question answer from a position that cannot support one.
+ */
+const SEQ_KIND_BY_SOURCE = {
+  tool_edit: "emitted",
+  git_diff: "observed",
+  both: "emitted",
+} as const;
+
+/**
+ * The lane's own answer, downgraded to the upper bound it really is when the
+ * emitter sent no usable bracket. `git_diff` is `observed` either way — that
+ * lane sees a working tree at the end of a turn and has no window at all.
+ *
+ * EXPORTED for the connector tests that assert on `compareEvents`: an
+ * unbracketed tool-lane position is refused because it is stored `observed`,
+ * and a test that restated that rule instead of asking THIS function could
+ * pass while the hub's own answer changed underneath it.
+ */
+export const seqKindFor = (
+  source: keyof typeof SEQ_KIND_BY_SOURCE,
+  seq: SeqField | undefined,
+): SeqKind =>
+  SEQ_KIND_BY_SOURCE[source] === "emitted" &&
+  isSeqStamp(seq) &&
+  windowFloorOf(seq) !== null
+    ? "emitted"
+    : "observed";
+
 export const ingestTarget = async (
   deps: Deps,
   developerId: string,
   body: Target,
+  seq?: SeqField,
 ): Promise<HandlerOutcome> => {
-  const ownerId = await resolveWorkContextOwner(deps.db, body.workContextId);
-  if (ownerId === undefined) {
+  const owner = await resolveWorkContextOwner(deps.db, body.workContextId);
+  if (owner === undefined) {
     return rejectedOutcome(
       `workContextId: work context "${body.workContextId}" not found`,
     );
   }
-  if (ownerId !== developerId) {
+  if (owner.developerId !== developerId) {
     return rejectedOutcome(
       "workContextId: work context belongs to another developer",
     );
   }
   const source = body.source;
+  const eventKind = TARGET_EVENT_KINDS[body.kind as keyof typeof TARGET_EVENT_KINDS];
+  /**
+   * PROJECTED ON BOTH BRANCHES, accepted AND duplicate. The git lane's
+   * `file.modified` for a file the tool lane already saw arrives on the
+   * duplicate branch below — the primary key collapses the two observations
+   * into one target row — and that second observation is exactly the one a
+   * happens-before question cares about. Writing the event only on `accepted`
+   * would leave `seq_kind = observed` a value no real row ever carries.
+   */
+  const project = async (): Promise<void> => {
+    if (eventKind === undefined) {
+      return;
+    }
+    await recordSessionEvent(deps, {
+      sessionId: owner.sessionId,
+      kind: eventKind,
+      seq,
+      seqKind: seqKindFor(source, seq),
+      refKind: "target_digest",
+      refId: targetDigest(body.workContextId, body.kind, body.value),
+    });
+  };
   const inserted = await deps.db
     .insert(workContextTargets)
     .values({
@@ -291,6 +657,7 @@ export const ingestTarget = async (
           sql`${workContextTargets.source} NOT IN (${source}, 'both')`,
         ),
       );
+    await project();
     return duplicate();
   }
   // The doc regenerates so the new target value is searchable. Not wrapped in
@@ -298,6 +665,7 @@ export const ingestTarget = async (
   // target short until the next ingest touches the context — self-healing,
   // and the record itself is already durable.
   await refreshNormalizedDoc(deps.db, body.workContextId);
+  await project();
   // No per-target event: a busy session emits dozens of targets and would
   // flood the outbox, drowning the signals SSE consumers care about.
   return accepted();
@@ -438,6 +806,7 @@ export const ingestClaimWithin = async (
   developerId: string,
   body: Claim,
   claimVector: readonly number[] | null,
+  seq?: SeqField,
 ): Promise<HandlerOutcome> => {
   const embedder = deps.embedder ?? null;
   const txDeps: ExecutorDeps = { db: tx, now: deps.now };
@@ -505,6 +874,10 @@ export const ingestClaimWithin = async (
   }
 
   const createdAt = new Date(body.createdAt);
+  // AFTER the dedup gates, so a re-observation never costs the lookup: a
+  // duplicate keeps the binding the first INSERT stamped, which is the honest
+  // one — the second observation is the same claim, not a new assertion.
+  const binding = await resolveCommitBinding(tx, body);
   // evidenceRefs are persisted as-is; materializing supports-edges from them
   // is a follow-up — referenced claims may arrive later in the same flush.
   const inserted = await tx
@@ -520,6 +893,8 @@ export const ingestClaimWithin = async (
       captureMode: body.captureMode,
       provenance: body.provenance,
       evidenceRefs: body.evidenceRefs,
+      observedAtCommit: binding.observedAtCommit,
+      commitBinding: binding.commitBinding,
       embedding: claimVector === null ? null : [...claimVector],
       embeddingModel:
         claimVector === null || embedder === null ? null : embedder.model,
@@ -530,6 +905,22 @@ export const ingestClaimWithin = async (
     .returning({ id: claims.id });
   if (inserted[0] === undefined) {
     return classifyClaimIdConflict(tx, developerId, body.id);
+  }
+  // The DECLARED half of the affected surface (spec 02 §3.2), written with
+  // the claim and never after: like the two binding columns, it is part of
+  // what the author asserted, not a later annotation. onConflictDoNothing
+  // because a spool replay of the same claim id is a retransmission.
+  if (body.affectedPaths.length > 0) {
+    await tx
+      .insert(claimSurfaces)
+      .values(
+        body.affectedPaths.map((path) => ({
+          claimId: body.id,
+          repo: binding.repo,
+          path,
+        })),
+      )
+      .onConflictDoNothing();
   }
   // Cross-session similarity: relates_to edge or contradiction candidate
   // (similarity-gate.ts). After the insert so both edge endpoints exist.
@@ -553,6 +944,25 @@ export const ingestClaimWithin = async (
     kind: body.kind,
     status: body.status,
   });
+  // IN THE SAME TRANSACTION as the row it projects — one pipeline, not two.
+  // The session is the claim's OWN author, never the producer: a spool drained
+  // by a successor session rewrites the producer, and A's positions inside B's
+  // sequence would break B's whole order for a reason that is not B's.
+  // A DERIVED CLAIM IS A WORKER'S, AND A WORKER'S POSITION IS OBSERVED. The
+  // summarizer, ghost and intent workers run detached and summarise a slice
+  // from EARLIER in the session, so the position they allocate records when
+  // the row was written, not when the fact it describes was seen. Sorting such
+  // a claim after edits it actually predates would be a confident wrong
+  // answer. An agent calling `publish_claim` is DECLARING on its own account,
+  // synchronously, and that position is emitted.
+  await recordSessionEvent(txDeps, {
+    sessionId: body.authorSessionId,
+    kind: "claim.created",
+    seq,
+    seqKind: body.provenance === "derived" ? "observed" : "emitted",
+    refKind: "claim",
+    refId: body.id,
+  });
   return accepted(body.id);
 };
 
@@ -560,15 +970,28 @@ export const ingestClaim = async (
   deps: Deps,
   developerId: string,
   body: Claim,
+  seq?: SeqField,
 ): Promise<HandlerOutcome> => {
   const claimVector = await prepareClaimVector(deps, developerId, body);
   // One transaction so dedup match, INSERT, and dedup_count bump are atomic —
   // two concurrent flushes cannot both miss the match and double-insert.
   // Context-doc embedding happens once per flush in ingestRecords.
   return deps.db.transaction((tx) =>
-    ingestClaimWithin(tx, deps, developerId, body, claimVector),
+    ingestClaimWithin(tx, deps, developerId, body, claimVector, seq),
   );
 };
+
+/**
+ * WHICH EDGE KINDS INVALIDATE A CLAIM. `contradicts` says the target is wrong;
+ * `supersedes` says a revision replaces it. `supports`, `relates_to` and
+ * `deeper_cause_of` add to a tree without taking anything away from it, and
+ * projecting them as `claim.invalidated` would make the name a lie on every
+ * `extend_diagnosis` call that merely connected two findings.
+ */
+const INVALIDATING_EDGE_KINDS: ReadonlySet<string> = new Set([
+  "contradicts",
+  "supersedes",
+]);
 
 const findEdgeIdByTriple = async (
   db: DbExecutor,
@@ -619,6 +1042,7 @@ export const ingestClaimEdge = async (
   deps: Deps,
   developerId: string,
   body: ClaimEdge,
+  seq?: SeqField,
 ): Promise<HandlerOutcome> => {
   const authorIssue = await checkOwnedSession(
     deps.db,
@@ -675,5 +1099,15 @@ export const ingestClaimEdge = async (
     kind: body.kind,
     developerId,
   });
+  if (INVALIDATING_EDGE_KINDS.has(body.kind)) {
+    await recordSessionEvent(deps, {
+      sessionId: body.authorSessionId,
+      kind: "claim.invalidated",
+      seq,
+      seqKind: "emitted",
+      refKind: "claim_edge",
+      refId: body.id,
+    });
+  }
   return accepted(body.id);
 };

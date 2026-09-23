@@ -19,21 +19,36 @@ import {
 import {
   ARTIFACT_SENSITIVITIES,
   CAPTURE_MODES,
+  CI_PROVIDERS,
+  CI_RERUN_KINDS,
+  CI_RUN_OUTCOMES,
+  CI_TEST_STATUSES,
+  CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
+  CLAIM_REVALIDATION_BASES,
+  CLAIM_REVALIDATION_RESULTS,
   CLAIM_STATUSES,
   EDGE_KINDS,
+  EVENT_REF_KINDS,
+  INTENT_SCOPE_KINDS,
+  INTENT_SCOPE_ROLES,
   MAX_CLAIM_BODY_LENGTH,
+  MAX_INTENT_AMEND_REASON_CHARS,
+  MAX_INTENT_SUMMARY_CHARS,
   MAX_PIN_CHECK_CHARS,
   MAX_PIN_SURFACE_CHARS,
   MAX_QUESTION_BODY_LENGTH,
   PIN_FILE_STATUSES,
   PROVENANCES,
   QUESTION_STATUSES,
+  SEQ_KINDS,
+  SEQ_REASONS,
+  SESSION_EVENT_KINDS,
   SESSION_STATUSES,
   STORED_TARGET_SOURCES,
+  TARGET_KINDS,
   TEAM_PIN_POLICIES,
   TEAM_SUSPECT_ATTRIBUTIONS,
-  TARGET_KINDS,
 } from "@crosscheck/schema";
 
 const timestamptz = (name: string) =>
@@ -272,7 +287,28 @@ export const claims = pgTable(
     provenance: text("provenance", { enum: PROVENANCES }).notNull(),
     dedupCount: integer("dedup_count").notNull().default(1),
     lastSeenAt: timestamptz("last_seen_at"),
-    staleAt: timestamptz("stale_at"),
+    /**
+     * WHICH COMMIT THIS CLAIM WAS OBSERVED AT — the code state the assertion
+     * is about, not the clock it was written on (1.0 spec 02 §3.1).
+     *
+     * Written ONCE at INSERT and never updated, so the append-only property
+     * `services/hints.ts:68-70` relies on ("revision means a NEW claim")
+     * survives: the only columns ingest ever bumps on an existing claim are
+     * dedup_count and last_seen_at.
+     *
+     * NULL exactly when `commitBinding` is "none", enforced by
+     * claims_commit_binding_check below rather than promised by a service.
+     */
+    observedAtCommit: text("observed_at_commit"),
+    /**
+     * How precisely the commit above is known — CLAIM_COMMIT_BINDINGS. The
+     * default is the honest answer for every row written before this column
+     * existed and for every connector too old to send one: bound to nothing,
+     * which fails CLOSED (never unsolicited substance, never revalidatable).
+     */
+    commitBinding: text("commit_binding", { enum: CLAIM_COMMIT_BINDINGS })
+      .notNull()
+      .default("none"),
     // Persisted wire refs; materializing supports-edges from them is a
     // follow-up because referenced claims may arrive later in the same flush.
     evidenceRefs: jsonb("evidence_refs")
@@ -289,6 +325,15 @@ export const claims = pgTable(
     check(
       "claims_body_length_check",
       sql`char_length(${table.body}) <= ${sql.raw(String(MAX_CLAIM_BODY_LENGTH))}`,
+    ),
+    // "No commit means no binding" as a DATABASE fact, the shape
+    // questions_addressee_check uses. Without it the two columns can
+    // disagree, and a reader of claim_validity is told something nobody
+    // measured — a commit filed under "bound to nothing", or a binding
+    // claiming a commit that is not there.
+    check(
+      "claims_commit_binding_check",
+      sql`(${table.observedAtCommit} IS NULL) = (${table.commitBinding} = 'none')`,
     ),
     // `work_context_id` is a foreign key, which Postgres does NOT index on
     // its own, and three hot readers ask "the claims of THESE contexts,
@@ -672,6 +717,76 @@ export const pinFiles = pgTable(
  * preferences a person holds (those live on `developers` and
  * `developer_mutes`).
  */
+/**
+ * THE PER-SESSION CAUSAL ORDER (spec 01 §3.5) — append-only and CONTENT-FREE.
+ *
+ * `work_contexts.intent` is overwritten in place, so an amendment has no row
+ * of its own to carry a position; that is what makes a table necessary rather
+ * than three new columns on the rows this projects.
+ *
+ * NO BODY, NO PROSE, NO PATH. `ref_id` points at the row that already holds
+ * the content, exactly as `hint_deliveries` carries refs and never rendered
+ * text. A file target's referent is a HASH of (context, kind, value), because
+ * that row's only identity contains the author-written file path; commit
+ * evidence refs the SESSION that collected it, because its own key contains an
+ * author's email, and a hash of that would be a content-derived pseudonymous
+ * identifier of a person. Everything a human ever sees from this table is an
+ * integer, a uuid, or a value from an enum in our own source — so it adds no
+ * untrusted slot to any render surface.
+ *
+ * `observed_at` is the HUB's clock and is for retention and display ONLY.
+ * Nothing may order two events by it: that is the wall-clock answer this whole
+ * table exists to replace, and a mutation anchor pins the distinction.
+ */
+export const sessionEvents = pgTable(
+  "session_events",
+  {
+    /** se_ + sha256(session, kind, epoch, n, ref_kind, ref_id) — deterministic. */
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => agentSessions.id),
+    /** NULL = not comparable. The pair is null together or set together. */
+    seqEpoch: text("seq_epoch"),
+    seqN: integer("seq_n"),
+    /**
+     * THE POSITION THIS EVENT IS KNOWN TO FOLLOW — the open end of an
+     * interval whose closed end is `seq_n`. A hook's position is taken once
+     * its tool has RETURNED, so on a lane like that `seq_n` alone is an upper
+     * bound and anything that allocated inside the window holds a lower
+     * position than work that already happened. NULL means the emitter sent
+     * no bracket, and an unbracketed lane is stored `observed`.
+     */
+    seqAfter: integer("seq_after"),
+    kind: text("kind", { enum: SESSION_EVENT_KINDS }).notNull(),
+    seqKind: text("seq_kind", { enum: SEQ_KINDS }).notNull(),
+    /** Why there is no position, or `sequenced` when there is one. */
+    seqReason: text("seq_reason", { enum: SEQ_REASONS }).notNull(),
+    refKind: text("ref_kind", { enum: EVENT_REF_KINDS }).notNull(),
+    refId: text("ref_id").notNull(),
+    observedAt: timestamptz("observed_at").notNull(),
+  },
+  (table) => [
+    // A POSITION IS TAKEN ONCE. A second event claiming a position this
+    // session already handed out is a restarted counter, a second home, or a
+    // broken connector — and it must be caught here rather than compared
+    // later, because two events at one position answer "which came first"
+    // with a coin flip. PARTIAL, because unsequenced rows are legitimately
+    // many per session and must not collide with each other.
+    uniqueIndex("session_events_position_idx")
+      .on(table.sessionId, table.seqEpoch, table.seqN)
+      .where(sql`${table.seqEpoch} IS NOT NULL`),
+    index("session_events_session_kind_idx").on(table.sessionId, table.kind),
+    // RETENTION READS THIS AND NOTHING ELSE — once there is retention again.
+    // The age sweep is withdrawn (services/sessions.ts says why) and nothing
+    // reads this index today. It stays because spec 01a's referential sweep
+    // still ranges by AGE first — a session is terminal, so nothing ever
+    // revisits its key — and without this index that sweep would scan every
+    // event on the hub every pass.
+    index("session_events_observed_at_idx").on(table.observedAt),
+  ],
+);
+
 export const teamSettings = pgTable("team_settings", {
   repo: text("repo").primaryKey(),
   pinPolicy: text("pin_policy", { enum: TEAM_PIN_POLICIES }).notNull(),
@@ -681,3 +796,359 @@ export const teamSettings = pgTable("team_settings", {
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });
+
+/**
+ * ONE ROW PER REVALIDATED CLAIM — the latest reading a clone reported of
+ * whether the code under that claim moved (1.0 spec 02 §3.3).
+ *
+ * UPSERT-ONLY, never append-only: bounded by how many claims anybody actually
+ * revalidates rather than by reporting frequency, which is `commit_evidence`'s
+ * argument for the same shape. `revalidated_at` is stamped by the HUB and never
+ * taken from the body — a sender-controlled timestamp on a last-writer-wins row
+ * is a ratchet (services/commit-evidence.ts learned that one the hard way).
+ *
+ * THE UPSERT IS DOWNGRADE-ONLY, and the whole gate on the unsolicited
+ * substance lane rests on it. The only producer is a connector-computed report
+ * POSTed under `developerAuth`, and the developer bearer key sits in plaintext
+ * in ~/.crosscheck/config.json where any agent on the machine can read it. So
+ * an incoming `unchanged` may never overwrite a stored `changed`: returning a
+ * stale claim to the substance lane needs what the tree already requires for
+ * every other revision — a NEW claim, which is authored and attributable.
+ * Enforced in SQL by the UPSERT's setWhere, not by a service branch.
+ *
+ * NO PER-COMMIT TABLE. The hashes ride here, bounded, newest-first. A `commits`
+ * table is unbounded by construction — exactly the property `commit_evidence`
+ * was designed against — and would collide with retention and with data
+ * minimisation. What is stored is abbreviated hashes and nothing else: no
+ * author, no email, no message, no parents, no timestamps, no paths.
+ */
+export const claimRevalidations = pgTable("claim_revalidations", {
+  claimId: text("claim_id")
+    .primaryKey()
+    .references(() => claims.id),
+  result: text("result", { enum: CLAIM_REVALIDATION_RESULTS }).notNull(),
+  basis: text("basis", { enum: CLAIM_REVALIDATION_BASES }).notNull(),
+  /** Which ref state the reading was taken against — context, not a key. */
+  refCommit: text("ref_commit").notNull(),
+  /**
+   * How many times a report tried to walk THIS claim back toward `current`
+   * and the downgrade-only rule refused it.
+   *
+   * CCB-10 requires the refusal to be "counted and printed by doctor", and
+   * the counter existed only on the RESPONSE — handed back to the caller
+   * whose report was refused, and read by nobody else. A team lead running
+   * `crosscheck doctor` could not tell a hub refusing forged upgrades every
+   * hour from one that had never seen one, which is the exact condition the
+   * service's own comment says the counter exists to prevent.
+   *
+   * Stored per claim rather than as a global tally, because "which findings
+   * somebody keeps trying to resurrect" is the question a reader can act on.
+   */
+  refusedWalkBacks: integer("refused_walk_backs").notNull().default(0),
+  /**
+   * Was this reading taken by the claim's OWN author?
+   *
+   * Refusal 6 accepted one self-certification path — `unknown -> current` is
+   * a legal direction and nothing compared the reporter to the author — on
+   * the premise that "`unknown` is ALREADY injectable under §5's gate, so
+   * that move changes nothing a reader sees". True of the gate and false of
+   * the label: `claimValidityWord` maps every state with no exemption, so a
+   * teammate reads `validity current` — the strongest word the vocabulary
+   * has — on an assertion measured only by the person who made it.
+   *
+   * The residue stays, because a git reading IS reproducible from any clone
+   * and §3.7 rests on exactly that. What changes is that it stops being
+   * invisible.
+   */
+  selfReported: boolean("self_reported").notNull().default(false),
+  touchingCommits: jsonb("touching_commits")
+    .$type<readonly string[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
+  /**
+   * How many commits touched the surface in total. NULL means "more than the
+   * ones named, and the count could not be taken" — the renderer then says
+   * "and more" rather than inventing a number. Spec 02 §3.4 promises the
+   * downgrade can say "and 12 more"; the hashes alone cannot carry that.
+   */
+  touchingTotal: integer("touching_total"),
+  revalidatedAt: timestamptz("revalidated_at").notNull(),
+  /** Provenance, never a score: reported_by is not rendered as a ranking. */
+  reportedBy: text("reported_by")
+    .notNull()
+    .references(() => developers.id),
+});
+
+/**
+ * ONE ROW PER FILE A CLAIM'S AUTHOR DECLARED IT IS ABOUT (1.0 spec 02 §3.2).
+ *
+ * `repo` is DENORMALISED for pin_files' reason, stated there at length: the
+ * hot question is "which rows in THIS repo watch this path", asked with a path
+ * and no claim id, and reaching repo through a join to claims would read every
+ * matching row in every repo first.
+ *
+ * Rows exist ONLY where an author declared paths. With none, a claim's surface
+ * is the work context's `file` targets — the set `get_diagnosis` already hands
+ * the solved staleness check — and the two are told apart by
+ * `claim_revalidations.basis`, because the context-derived set OVER-FIRES:
+ * any file in the context changing marks every claim on it.
+ */
+export const claimSurfaces = pgTable(
+  "claim_surfaces",
+  {
+    claimId: text("claim_id")
+      .notNull()
+      .references(() => claims.id),
+    repo: text("repo").notNull(),
+    path: text("path").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.claimId, table.path] }),
+    index("claim_surfaces_repo_path_idx").on(table.repo, table.path),
+  ],
+);
+
+/**
+ * THE INTENT LEDGER — APPEND-ONLY, ONE ROW PER VERSION (spec 06 §3.2).
+ *
+ * `work_contexts.intent` is a single mutable cell, so every `set_intent` call
+ * DESTROYS the sentence it replaces: an amendment leaves no trace but an
+ * outbox row carrying the string "intent", and nothing in the tree can say
+ * whether a reason was written before or after the change it explains. This
+ * table is the history that cell never had. The cell stays, as a denormalised
+ * copy of the newest row's `wire` — eleven server-side readers depend on its
+ * shape — and the ledger is authoritative.
+ *
+ * APPEND-ONLY MEANS APPEND-ONLY. A revision is a NEW ROW;
+ * `services/intent-ledger.ts` exposes no UPDATE and no DELETE path, and the
+ * unique `(work_context_id, version)` below is what makes that a statement
+ * about the TABLE rather than about one file.
+ *
+ * IT CARRIES A WHOLE POSITION, not just a number. `seq_epoch` and `seq` alone
+ * cannot be turned back into the shape the order gate is asked about: its
+ * fifth condition reads `seq_kind` (an `observed` position is an upper bound)
+ * and its sixth reads the bracket (`seq_after`, the open end of the window).
+ * A ledger row missing either compares as an unbracketed point of unknown
+ * lane, which is how an upper bound gets promoted to a happens-before and the
+ * exonerating answer gets produced from a coin flip.
+ *
+ * `captured_at` IS A WALL CLOCK AND ORDERS NOTHING. It is sender-controlled,
+ * so it is clamped to the hub clock on write (the `commit-evidence.ts`
+ * precedent) and serves display and retention only.
+ *
+ * `provenance` IS WHAT THE BODY CLAIMED and the hub cannot verify it (§8.1).
+ * On the two evidence axes every 1.0 intent is agent-written, INCLUDING the
+ * one this column calls `declared`: that word means an agent called an MCP
+ * tool, never that a human declared anything. 00 §8.3 maps `claims.provenance`
+ * onto the WHO axis; for intents that mapping is wrong, and this is the only
+ * place it is corrected. Claims are untouched.
+ */
+export const workContextIntents = pgTable(
+  "work_context_intents",
+  {
+    /** iv_ + sha256(context, author session, seq, summary) — a replay is a duplicate. */
+    id: text("id").primaryKey(),
+    workContextId: text("work_context_id")
+      .notNull()
+      .references(() => workContexts.id),
+    /** Hub-assigned max(version)+1; two writers exist per context. */
+    version: integer("version").notNull(),
+    /** Null on the first intent; hub-assigned on every amendment. */
+    amendsVersion: integer("amends_version"),
+    /**
+     * NULL ONLY ON BACKFILL. The declaring session was never stored on
+     * `work_contexts` — updates never re-home a context — so a pre-ledger
+     * intent has no author to name, and guessing the creating session would
+     * put a name on a row nobody recorded. The surface says `unknown`; the
+     * `work_context_targets.created_at` precedent.
+     */
+    authorSessionId: text("author_session_id").references(() => agentSessions.id),
+    /** 01's epoch. NULL = not causally comparable; null together with `seq`. */
+    seqEpoch: text("seq_epoch"),
+    seq: integer("seq"),
+    /** The open end of this declaration's window; null for a point emitter. */
+    seqAfter: integer("seq_after"),
+    seqKind: text("seq_kind", { enum: SEQ_KINDS }).notNull(),
+    seqReason: text("seq_reason", { enum: SEQ_REASONS }).notNull(),
+    provenance: text("provenance", { enum: PROVENANCES }).notNull(),
+    summary: text("summary").notNull(),
+    reason: text("reason"),
+    capturedAt: timestamptz("captured_at").notNull(),
+    /** Hub clock; NULL on backfill, where no hub ever received the row. */
+    receivedAt: timestamptz("received_at"),
+    wire: jsonb("wire").$type<Record<string, unknown>>().notNull(),
+  },
+  (table) => [
+    check(
+      "work_context_intents_summary_length_check",
+      sql`char_length(${table.summary}) <= ${sql.raw(String(MAX_INTENT_SUMMARY_CHARS))}`,
+    ),
+    check(
+      "work_context_intents_reason_length_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) <= ${sql.raw(String(MAX_INTENT_AMEND_REASON_CHARS))}`,
+    ),
+    // A REASON WITH NOTHING TO AMEND EXPLAINS NOTHING. The rule runs in this
+    // direction because `amends_version` is HUB-ASSIGNED: the other direction
+    // would reject every re-declaration from every connector shipped before
+    // `reason` existed, and a hub that 500s on a legacy record is worse than
+    // one that stores it honestly incomplete. That an amendment SAY why is
+    // enforced in `set_intent`, where the author can still be told.
+    check(
+      "work_context_intents_amend_reason_check",
+      sql`${table.reason} IS NULL OR ${table.amendsVersion} IS NOT NULL`,
+    ),
+    // THE PAIR IS NULL TOGETHER OR SET TOGETHER. A bare `seq` with no epoch is
+    // a number from an unnamed counter, and comparing two of those answers
+    // confidently from unrelated integers.
+    check(
+      "work_context_intents_seq_pair_check",
+      sql`(${table.seqEpoch} IS NULL) = (${table.seq} IS NULL)`,
+    ),
+    check(
+      "work_context_intents_seq_nonnegative_check",
+      sql`${table.seq} IS NULL OR ${table.seq} >= 0`,
+    ),
+    // The chain read and the max(version) probe are one index, DESC because
+    // both want the newest first.
+    uniqueIndex("work_context_intents_context_version_idx").on(
+      table.workContextId,
+      table.version.desc(),
+    ),
+    index("work_context_intents_session_idx").on(table.authorSessionId, table.seq),
+  ],
+);
+
+/**
+ * THE CHECKABLE HALF OF A DECLARED INTENT (spec 06 §3.3).
+ *
+ * A declared `(kind, value)` set in the vocabulary the capture lane already
+ * writes, compared by EQUALITY — not the dead "intent covers pin" predicate,
+ * which was 200 characters of prose against a name plus paths and failed both
+ * directions on our own examples. And never a gate: `explanationTimingFor` is
+ * the only consumer, and an amendment authorises nothing (§3.6).
+ *
+ * `work_context_id` IS DENORMALISED (the `pin_files.repo` precedent), and the
+ * `(kind, value)` index is deliberately the shape of
+ * `work_context_targets_kind_value_idx` — the one the suspect intersection
+ * already rides — so "did any intent name this path" is one index lookup
+ * rather than a text predicate.
+ *
+ * `role` IS READ. §3.5 step 6 answers differently for the two, because a
+ * declared non-goal that was then edited is the most post-hoc thing a session
+ * can do; a stored column nothing decides on is the silent absence AT-10
+ * forbids.
+ */
+export const intentScope = pgTable(
+  "intent_scope",
+  {
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => workContextIntents.id),
+    workContextId: text("work_context_id")
+      .notNull()
+      .references(() => workContexts.id),
+    role: text("role", { enum: INTENT_SCOPE_ROLES }).notNull(),
+    kind: text("kind", { enum: INTENT_SCOPE_KINDS }).notNull(),
+    value: text("value").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.intentId, table.role, table.kind, table.value],
+    }),
+    index("intent_scope_kind_value_idx").on(table.kind, table.value),
+    index("intent_scope_context_idx").on(table.workContextId),
+  ],
+);
+
+/**
+ * ONE ROW PER LANE PER ATTEMPT (spec 05 §3.2).
+ *
+ * The id is deterministic — `cir_` + sha256 over the lane, the commit, the
+ * attempt and the re-run kind — mirroring `hint_deliveries`, so a retried POST
+ * from a flaky runner is a `duplicate` rather than a second row claiming the
+ * same job ran twice.
+ *
+ * NO `reported_by`. `commit_evidence.reported_by` is a developer foreign key,
+ * and a CI run has no author: inventing one would put a teammate in the graph
+ * who does not exist, which is the phantom-teammate trap the absence machinery
+ * must never fall into. Ownership of the write lives in the token, not in a row.
+ */
+export const ciRuns = pgTable(
+  "ci_runs",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    commitSha: text("commit_sha").notNull(),
+    provider: text("provider", { enum: CI_PROVIDERS }).notNull(),
+    workflow: text("workflow").notNull(),
+    job: text("job").notNull(),
+    /** `''` when the job has no matrix — a value, never a null. */
+    leg: text("leg").notNull(),
+    ref: text("ref").notNull(),
+    runAttempt: integer("run_attempt").notNull(),
+    /** Opaque provider handle, kept so a human can open the log. */
+    externalRunId: text("external_run_id").notNull(),
+    rerunKind: text("rerun_kind", { enum: CI_RERUN_KINDS }).notNull(),
+    /**
+     * Self-referential: the run this one re-ran. The ingest refuses a target
+     * whose lane or commit differs, because a re-run of a DIFFERENT commit is
+     * not a re-run and would let a green elsewhere clear a red here.
+     */
+    rerunOf: text("rerun_of"),
+    outcome: text("outcome", { enum: CI_RUN_OUTCOMES }).notNull(),
+    tests: integer("tests").notNull(),
+    failures: integer("failures").notNull(),
+    skipped: integer("skipped").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    /**
+     * How many ambiguous `(file, chain, name)` triples the reporter dropped.
+     * Stored rather than inferred: a silently shorter list is exactly the
+     * absence this project refuses, so the number travels and doctor prints it.
+     */
+    ambiguousDropped: integer("ambiguous_dropped").notNull(),
+    startedAt: timestamptz("started_at").notNull(),
+    collectedAt: timestamptz("collected_at").notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    // The join a session already carries: repo plus the commit it was based on.
+    index("ci_runs_repo_commit_idx").on(table.repo, table.commitSha),
+    // The base window, read newest-first within one lane and never across lanes.
+    index("ci_runs_lane_started_idx").on(
+      table.repo,
+      table.provider,
+      table.workflow,
+      table.job,
+      table.leg,
+      table.ref,
+      table.startedAt,
+    ),
+    index("ci_runs_rerun_of_idx").on(table.rerunOf),
+  ],
+);
+
+/**
+ * NON-GREEN ROWS ONLY (spec 05 §3.3), and that is a contract rather than an
+ * optimisation: a run row ASSERTS that these are all the non-green tests it
+ * ran, which is what lets a later reader conclude anything about a test that
+ * is absent. The assertion holds only when `outcome = 'completed'`.
+ *
+ * `repo` is denormalised the way `pin_files` denormalises it, for the
+ * (repo, test_id) lookup that asks "was this test ever non-green here".
+ */
+export const ciTestResults = pgTable(
+  "ci_test_results",
+  {
+    ciRunId: text("ci_run_id")
+      .notNull()
+      .references(() => ciRuns.id, { onDelete: "cascade" }),
+    testId: text("test_id").notNull(),
+    repo: text("repo").notNull(),
+    status: text("status", { enum: CI_TEST_STATUSES }).notNull(),
+    durationMs: integer("duration_ms").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.ciRunId, table.testId] }),
+    index("ci_test_results_repo_test_idx").on(table.repo, table.testId),
+  ],
+);

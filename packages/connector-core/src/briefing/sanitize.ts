@@ -371,6 +371,7 @@ const INJECTION_SPAN_PATTERN = new RegExp(
  * PRINTS: packages/connector-core/src/briefing/render.ts
  * PRINTS: packages/connector-core/src/briefing/sanitize.ts
  * PRINTS: packages/connector-core/src/conference/report.ts
+ * PRINTS: packages/connector-core/src/mcp/render-intent-chain.ts
  * PRINTS: packages/connector-core/src/mcp/render.ts
  */
 export const spanRedactedUntrusted = (

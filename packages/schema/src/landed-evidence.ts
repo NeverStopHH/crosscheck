@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
+
 /**
  * One connector's bounded git reading of which commits are ancestors of the
  * repo's default branch (DESIGN.md §5 merged-branch detection). Like commit
@@ -12,11 +14,18 @@ import { z } from "zod";
 export const MAX_LANDED_COMMITS = 20;
 
 /**
- * A commit named on the wire must already look like an object name — the
- * same guard the connector's own git callers apply (COMMIT_SHA_PATTERN in
- * git/commit-drift.ts): nothing flag- or prose-shaped may reach git or SQL.
+ * A commit named on the wire must already look like an object name — nothing
+ * flag- or prose-shaped may reach git or SQL.
+ *
+ * RE-EXPORTED, NOT REDECLARED, and the merge is why. 05 defined the pattern
+ * here so its CI wire could reuse it "instead of minting a third copy"; 02
+ * had meanwhile moved the pattern into `commit-sha.ts` as one authority.
+ * Union the two and there are two declarations of one name — the very drift
+ * 05's own comment warned about, produced by the fix for it. The definition
+ * lives in `commit-sha.ts`; this line keeps 05's importers working without a
+ * second copy to widen.
  */
-const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,64}$/i;
+export { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
 
 /** Longest ref label a connector may claim it checked against. */
 const MAX_DEFAULT_BRANCH_CHARS = 200;

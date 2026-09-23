@@ -79,53 +79,50 @@ const RENDER_LAYER_SPECIFIER = new RegExp(
 );
 
 /**
- * The render layer's value exports. An import of any of these names flags
- * the importer even when it dodges the specifier match by importing through
- * a barrel. Names, not paths, are what a barrel import carries.
+ * The render layer's value exports. An import of any of these names flags the
+ * importer even when it dodges the specifier match by importing through a
+ * barrel. Names, not paths, are what a barrel import carries.
+ *
+ * DERIVED FROM THE RENDER LAYER, never written out again — the same fix
+ * `RENDER_LAYER_SPECIFIER` got above, for the same failure. Kept by hand it
+ * listed 37 names while the eight render modules exported 57, and the missing
+ * twenty were not obscure: `claimValidityClause`, `renderSolvedHint`,
+ * `renderUnappliedFilters`, `formatQuestionCounts`. A module reaching any of
+ * them through a barrel was flagged by NOTHING, and the barrel guard below
+ * could not see it either — that guard reports names a barrel re-exports, so
+ * it only ever fires for a name already on a barrel, never for the day the
+ * barrel gains one. Derivation makes the set complete by construction: the
+ * render layer cannot grow an export this set does not know about.
  */
-const RENDER_IDENTIFIERS: ReadonlySet<string> = new Set([
-  "sanitizeUntrusted",
-  "bareUntrusted",
-  "safeId",
-  "quoted",
-  "quotedBody",
-  "spanRedactedUntrusted",
-  "redactionNote",
-  "REDACTED_TITLE",
-  "REDACTED_SPAN",
-  "quotingText",
-  "renderBriefing",
-  "renderClaimHint",
-  "renderPointerHint",
-  "renderTripwireReason",
-  "renderDiagnosis",
-  "renderSearchResults",
-  "renderUnusableQuery",
-  "renderRefereeBrief",
-  "QUOTED_DATA_NOTICE",
-  "formatSolvedLine",
-  "formatAbsenceLine",
-  "formatContradictionLine",
-  "formatDraftLine",
-  "groupTeammates",
-  "formatAge",
-  "formatSolvedAge",
-  "formatIntentLabel",
-  "intentFragment",
-  "renderIntent",
-  "formatGhostLine",
-  "formatGhostAge",
-  "renderGhostNotice",
-  "ghostAttribution",
-  "ghostDraftBody",
-  "formatQuestionEntry",
-  "fitQuestionEntries",
+const EXTRA_RENDER_IDENTIFIERS: readonly string[] = [
   // The model layer's one door onto the render layer (model/runner.ts wraps
   // bareUntrusted). It is here because a module that prints what a model
   // BINARY said is a render surface whoever imports it: the cursor doctor's
   // capability line and the Claude probe's answer line both do, and before
-  // this name was listed the meta-test could see neither.
+  // this name was listed the meta-test could see neither. It is NOT a render
+  // layer export, so derivation alone would drop it.
   "bareSummarizerLine",
+];
+
+/** Every value export of every render-layer module, read at test time. */
+const renderLayerValues = async (): Promise<ReadonlySet<string>> => {
+  const values = new Set<string>();
+  for (const module of RENDER_LAYER_MODULES) {
+    const loaded: Record<string, unknown> = await import(join(CORE_ROOT, module));
+    for (const [name, value] of Object.entries(loaded)) {
+      if (typeof value === "function" || typeof value === "string") {
+        values.add(name);
+      }
+    }
+  }
+  return values;
+};
+
+const RENDER_LAYER_VALUES = await renderLayerValues();
+
+const RENDER_IDENTIFIERS: ReadonlySet<string> = new Set([
+  ...RENDER_LAYER_VALUES,
+  ...EXTRA_RENDER_IDENTIFIERS,
 ]);
 
 /** import/export-from statements: clause + specifier. */
@@ -135,6 +132,38 @@ const IMPORT_PATTERN =
 /** Dynamic `import("…")` / `require("…")` — no `from`, still a reach. */
 const DYNAMIC_IMPORT_PATTERN =
   /\b(?:import|require)\s*\(\s*["'`]([^"'`]+)["'`]/g;
+
+/**
+ * `import(someExpression)` — a reach whose destination this walk cannot read.
+ *
+ * WHY IT FLAGS RATHER THAN PASSES. Every other pattern here answers "does this
+ * module reach the render layer" with yes or no from the text. A computed
+ * specifier answers neither: `import(join(dir, name))` and
+ * `import(`../briefing/${part}.ts`)` resolve at runtime, and the walk reading
+ * them as "no render import found" turns an unreadable line into a clean bill
+ * of health. That is principle 5 exactly — missing evidence may weaken a
+ * conclusion, never strengthen one — and it is the cheapest way through the
+ * one meta-test §1.4 calls non-negotiable.
+ *
+ * No src module in the workspace does this today, which is the point: the
+ * guard is written while the hole is still empty, not after something walked
+ * through it. A module that needs one registers, and says why in its note.
+ */
+const COMPUTED_IMPORT_PATTERNS: readonly RegExp[] = [
+  // The whitespace lives INSIDE each lookahead, never before it: written as
+  // `\s*(?!["'`])` the quantifier backtracks to zero and the lookahead lands
+  // on the newline Prettier inserts before a long specifier, flagging the two
+  // literal `await import(\n  "@crosscheck/connector-cursor"\n)` calls in the
+  // CLI's cursor branches as unreadable.
+  /(?<![\w$.])(?:import|require)\s*\((?!\s*["'`])(?!\s*\))/,
+  // A TEMPLATE WITH A HOLE IN IT is computed too, and it is the shape that
+  // reads most like a literal: `import(`../briefing/${part}.ts`)` satisfies
+  // the quote lookahead above, and DYNAMIC_IMPORT_PATTERN captures
+  // "../briefing/${part}.ts" as a specifier — which matches no render module
+  // and so passes. The interpolation is the whole point: `part` decides the
+  // destination at runtime.
+  /(?<![\w$.])(?:import|require)\s*\(\s*`[^`]*\$\{/,
+];
 
 /** `* as alias` inside an import clause. */
 const NAMESPACE_CLAUSE = /\*\s+as\s+([A-Za-z_$][\w$]*)/;
@@ -185,6 +214,10 @@ const touchesRenderLayer = (source: string): boolean => {
     if (specifier !== undefined && RENDER_LAYER_SPECIFIER.test(specifier)) {
       return true;
     }
+  }
+  // An import nobody can read is not an import nobody made.
+  if (COMPUTED_IMPORT_PATTERNS.some((pattern) => pattern.test(source))) {
+    return true;
   }
   // `import * as core from "./index.ts"; core.sanitizeUntrusted(…)` — the
   // barrel dodge: the specifier is a barrel, the braced names are empty, and
@@ -337,48 +370,66 @@ describe("§4.4: unregistered render surfaces are a red build", () => {
     expect(RENDER_LAYER_SPECIFIER.test("../briefing/cut.ts")).toBe(false);
   });
 
-  test("every render name a BARREL re-exports is one the meta-test flags", async () => {
-    // RENDER_IDENTIFIERS is the whole coverage of the barrel route. A module
-    // reaching the render layer through a relative or cross-package path is
-    // caught by RENDER_LAYER_SPECIFIER, but src/index.ts and src/kit.ts are
-    // themselves RENDER_BARREL_MODULES and therefore exempt from the specifier
-    // rule — so an import through them is caught by NAME or by nothing.
-    //
-    // Hand-kept, that set drifts the moment a barrel re-exports a new render
-    // value, exactly as RENDER_LAYER_SPECIFIER drifted from RENDER_LAYER_MODULES
-    // before it was derived. Derived here for the same reason: the barrels and
-    // the render layer are both read, and their intersection is the rule.
-    const layerValues = new Set<string>();
-    for (const module of RENDER_LAYER_MODULES) {
-      const loaded: Record<string, unknown> = await import(
-        join(CORE_ROOT, module)
-      );
-      for (const [name, value] of Object.entries(loaded)) {
-        if (typeof value === "function" || typeof value === "string") {
-          layerValues.add(name);
-        }
-      }
-    }
-    // A render layer with no value exports would make this test vacuous.
-    expect(layerValues.size).toBeGreaterThan(0);
+  test("the derived identifier set covers the render layer, and cannot quietly empty", () => {
+    // RENDER_IDENTIFIERS is now derived, so the old assertion here — "every
+    // name a barrel re-exports is in the set" — is true by construction and
+    // could never fail again. What CAN still fail is the derivation itself:
+    // a render module that throws on import, a RENDER_LAYER_MODULES gone
+    // empty, or an export-shape change that makes `typeof` miss everything.
+    // Each of those would hand the walk an empty set, and an empty set flags
+    // nothing while every test in this file stays green.
+    expect(RENDER_LAYER_VALUES.size).toBeGreaterThanOrEqual(50);
 
-    const unflagged: string[] = [];
-    for (const barrel of RENDER_BARREL_MODULES) {
-      const loaded: Record<string, unknown> = await import(
-        join(CORE_ROOT, barrel)
-      );
-      for (const name of Object.keys(loaded)) {
-        if (layerValues.has(name) && !RENDER_IDENTIFIERS.has(name)) {
-          unflagged.push(`${barrel} re-exports ${name}`);
-        }
-      }
+    // The named floor is the twenty the hand-kept set was missing, the ones
+    // that made this a finding rather than a tidy-up: each is a render-layer
+    // value an importer could reach by name with nothing to flag it.
+    for (const name of [
+      "claimValidityClause",
+      "claimValidityWord",
+      "renderSolvedHint",
+      "renderAnswerHint",
+      "renderUnappliedFilters",
+      "renderSearchFilterRefusal",
+      "formatQuestionCounts",
+      "cleanUntrusted",
+    ]) {
+      expect(RENDER_IDENTIFIERS.has(name), name).toBe(true);
     }
 
+    // And the one name derivation cannot reach, because it is not a render
+    // layer export: the model layer's door.
+    expect(RENDER_IDENTIFIERS.has("bareSummarizerLine")).toBe(true);
+  });
+
+  test("an import this walk cannot read is flagged, not waved through", () => {
+    // THE HOLE: the walk answers "does this module reach the render layer"
+    // from the text, and a computed specifier has no text to read. Left
+    // unflagged, `import(RENDER + "/sanitize.ts")` is the one line that gets a
+    // module past the meta-test §1.4 calls non-negotiable — and it reads as a
+    // clean bill of health, which is missing evidence strengthening a
+    // conclusion.
     expect(
-      unflagged.sort(),
-      `render value(s) reachable through a barrel but absent from RENDER_IDENTIFIERS: ${unflagged.join(", ")} — ` +
-        "add the name, or the barrel route into the render layer is unguarded",
-    ).toEqual([]);
+      touchesRenderLayer('const m = await import(join(dir, "sanitize.ts"));'),
+    ).toBe(true);
+    expect(touchesRenderLayer("const m = await import(`../briefing/${part}.ts`);")).toBe(
+      true,
+    );
+    expect(touchesRenderLayer("const m = require(specifier);")).toBe(true);
+
+    // A LITERAL specifier is still read, not flagged — including the shape
+    // Prettier writes when the specifier is long enough to wrap, which is how
+    // the CLI's two cursor branches are written and which a whitespace-greedy
+    // lookahead misreads as computed.
+    expect(touchesRenderLayer('await import("@crosscheck/connector-cursor");')).toBe(
+      false,
+    );
+    expect(
+      touchesRenderLayer(
+        'await import(\n  "@crosscheck/connector-cursor"\n);',
+      ),
+    ).toBe(false);
+    // ...and the literal that DOES name the render layer still flags.
+    expect(touchesRenderLayer('await import("../briefing/sanitize.ts");')).toBe(true);
   });
 
   test("the ACP and Cursor injection surfaces stay registered by NAME — module cover is not surface cover", () => {
@@ -440,6 +491,38 @@ describe("§4.4: unregistered render surfaces are a red build", () => {
         ).toBe(true);
       }
     }
+  });
+
+  test("every registered module is IN THE REPOSITORY, not just on this disk", () => {
+    // `exists()` above asks the author's own filesystem, which is the one
+    // place a module is guaranteed to be. A registered surface git never took
+    // is a surface that exists for nobody else: CI cannot resolve it, a fresh
+    // clone cannot build, and every check here stays green because the walk
+    // reads the working tree.
+    //
+    // Not hypothetical. `.gitignore`'s `coverage/` line — written for a
+    // test-coverage OUTPUT directory — matched `src/coverage/` and swallowed
+    // the whole module the `coverage-note` surface registers, while six
+    // packages imported it and every test passed.
+    const repoRoot = join(WORKSPACE_PACKAGES_ROOT, "..");
+    const listed = Bun.spawnSync(["git", "ls-files", "-z"], { cwd: repoRoot });
+    expect(listed.exitCode, "git ls-files failed").toBe(0);
+    const tracked = new Set(
+      listed.stdout
+        .toString()
+        .split("\0")
+        .filter((path) => path !== ""),
+    );
+    // A floor, so an empty listing cannot pass for a clean one.
+    expect(tracked.size).toBeGreaterThan(100);
+
+    const untracked = PACKAGES.flatMap((pkg) =>
+      pkg.surfaces
+        .map((surface) => relative(repoRoot, join(pkg.root, surface.module)))
+        .filter((path) => !tracked.has(path)),
+    );
+
+    expect(untracked).toEqual([]);
   });
 
   test("every registered module really touches the render layer — no decorative rows", async () => {

@@ -41,6 +41,8 @@
  * builds.
  */
 import { captureTouchedFiles } from "@crosscheck/connector-core/flows/capture-touched-files.ts";
+import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
+import { allocateSeq } from "@crosscheck/connector-core/state/session-state.ts";
 import { heartbeatMaybe } from "@crosscheck/connector-core/flows/heartbeat.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
@@ -91,7 +93,20 @@ export const handleAfterFileEdit = async (
   };
   const filePath = ctx.payload.file_path;
   const paths = filePath === undefined ? [] : [filePath];
+  // ONE block, taken before the records are serialized — Cursor splits the
+  // event, and the locked state write at the end of this handler happens after
+  // `captureTouchedFiles` has already spooled. A block rather than a position
+  // because one event can name several paths; the unused slots are legal gaps.
+  const seq =
+    paths.length === 0
+      ? null
+      : await allocateSeq(
+          ctx.config.home,
+          ctx.hostSessionKey,
+          MAX_TARGETS_PER_INVOCATION,
+        );
   const { captured: files, resolution } = await captureTouchedFiles({
+    seq,
     home: ctx.config.home,
     repoKey: ctx.repoKey,
     hostSessionKey: ctx.hostSessionKey,

@@ -116,6 +116,57 @@ export const MUTATIONS: readonly Mutation[] = [
       "for it — the exact install this parity work exists for",
   },
   {
+    // Found by review: `crosscheck init --global --cursor` writes
+    // ~/.cursor/hooks.json, and the section read only the repo's file.
+    label: "a user-level Cursor install reads as not installed",
+    file: `${CURSOR}/src/doctor.ts`,
+    from:
+      "  const user = await readHooks(cursorUserDir(input.env), \"user\");\n" +
+      "  return user.kind === \"installed\" || user.kind === \"unparseable\"\n" +
+      "    ? user\n" +
+      "    : project;",
+    to: "  return project;",
+    test: `${CLI}/test/cursor-doctor.test.ts`,
+    because:
+      "SILENT: a globally installed developer is told Cursor capture is not " +
+      "installed and never reads that no Cursor edit can be ordered against " +
+      "an explanation, while the same page counts those sessions' positions",
+  },
+  {
+    // The repo's file is the one a cloud agent loads, so it is the install
+    // described whenever it carries our entries.
+    label: "a user-level Cursor install is preferred over the repo's",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "  if (project.kind === \"installed\" || project.kind === \"unparseable\") {",
+    to: "  if (false) {",
+    test: `${CLI}/test/cursor-doctor.test.ts`,
+    because:
+      "MISLEADING: a repo whose committed hooks are what every cloud agent " +
+      "runs is described by one developer's personal file instead",
+  },
+  {
+    // Which file was read is part of the line.
+    label: "a user-level Cursor install is described as the repo's",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "  const where = scope === \"user\" ? `user level (${install.path}): ` : \"\";",
+    to: "  const where = \"\";",
+    test: `${CLI}/test/cursor-doctor.test.ts`,
+    because:
+      "MISLEADING: the reader cannot tell a per-user wiring, which a cloud " +
+      "agent never loads, from the committed one",
+  },
+  {
+    // ...and the mcp line reads the same install's file.
+    label: "a user-level Cursor install checks the repo's mcp file",
+    file: `${CURSOR}/src/doctor.ts`,
+    from: "    await mcpCheck(install.cursorDir, scope),",
+    to: "    await mcpCheck(join(input.repoRoot, CURSOR_DIR), scope),",
+    test: `${CLI}/test/cursor-doctor.test.ts`,
+    because:
+      "FALSE ALARM: a working global install FAILs its mcp line for a file " +
+      "it never wrote, and the remedy sends the developer to install twice",
+  },
+  {
     label: "the ACP backend line goes quiet when there is no model",
     file: `${ACP}/src/doctor.ts`,
     from: '    backend.kind === "absent" ? "WARN" : "PASS",',
@@ -2478,8 +2529,14 @@ export const MUTATIONS: readonly Mutation[] = [
     // a secret-like sentence, so this gate is the declared path's half.
     label: "a declared intent skips the secret scan",
     file: `${CORE}/src/mcp/tools/set-intent.ts`,
-    from: "  if (containsSecret(parsed.value.summary)) {\n    return toolFailure(INTENT_SECRET_REFUSAL);\n  }\n",
-    to: "",
+    // MOVED WITH THE CODE, not deleted. The gate used to screen the summary
+    // alone; spec 06 gave `set_intent` a reason and two scope lists, and the
+    // gate grew to cover all four in one `.some(...)`. The anchor follows the
+    // predicate rather than the old line, so what it proves is unchanged: an
+    // intent reaches every teammate's unsolicited surface, and a credential in
+    // one must never leave the machine that typed it.
+    from: "    ].some((text) => containsSecret(text))",
+    to: "    ].some(() => false)",
     test: `${CORE}/test/set-intent.test.ts`,
     because:
       "credential-shaped text reaches every teammate's context through the " +
@@ -2730,10 +2787,10 @@ export const MUTATIONS: readonly Mutation[] = [
     label: "a filtered empty result reads as a fact about the teammate",
     file: `${CORE}/src/mcp/render.ts`,
     from:
-      "  return from.length === 0 && window.length === 0\n    ? sentence\n" +
-      "    : `${sentence} Those filters are part of that answer: other words, a longer ` +\n" +
+      "  const filtersNote =\n    from.length === 0 && window.length === 0\n      ? \"\"\n" +
+      "      : ` Those filters are part of that answer: other words, a longer ` +\n" +
       '        "window or another teammate may well match.";',
-    to: "  return sentence;",
+    to: '  const filtersNote = "";',
     test: `${CORE}/test/mcp-render.test.ts`,
     because:
       "`developer: Ken` with no hits renders the same sentence an unfiltered " +
@@ -4420,8 +4477,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // counters the diagnosis line exists to print.
     label: "a SessionStart re-fire zeroes the capture counters",
     file: `${CORE}/src/state/session-state.ts`,
-    from: "  previous === null ||",
-    to: "  true ||",
+    from: "  !isSameBinding(previous, state)",
+    to: "  true",
     test: `${CONNECTOR}/test/session-refire.test.ts`,
     because:
       "a session that fired 40 edit tools into nothing and then auto-compacted " +
@@ -4592,8 +4649,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // failure was the hole one layer down.
     label: "unreadable target rows render as no targets captured",
     file: `${CORE}/src/mcp/render.ts`,
-    from: "  return diagnosis.droppedTargets > 0\n    ? [targetsUnreadable(diagnosis.droppedTargets)]\n    : [TARGETS_EMPTY];",
-    to: "  return [TARGETS_EMPTY];",
+    from: "  if (diagnosis.droppedTargets > 0) {\n    return [targetsUnreadable(diagnosis.droppedTargets)];\n  }",
+    to: "  if (false) {\n    return [targetsUnreadable(diagnosis.droppedTargets)];\n  }",
     test: `${CORE}/test/mcp-render.test.ts`,
     because:
       "a hub one field ahead of this connector makes the page state that " +
@@ -4615,7 +4672,11 @@ export const MUTATIONS: readonly Mutation[] = [
   {
     // Cost, not correctness — but the cost lands on a keystroke path.
     label: "the secret scan goes quadratic on a near-miss body",
-    file: `${CORE}/src/capture/secret-scan.ts`,
+    // THE SCANNER MOVED TO @crosscheck/schema so the hub and the connector
+    // screen by ONE definition (spec 06: the hub had no screen at all on the
+    // intent path). `capture/secret-scan.ts` is now a one-line re-export, so
+    // the anchor points at the one place the pattern exists.
+    file: "packages/schema/src/secret-scan.ts",
     from: "  /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{5,}/,",
     to: "  /eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{5,}/,",
     test: `${CORE}/test/secret-scan.test.ts`,
@@ -4785,6 +4846,2783 @@ export const MUTATIONS: readonly Mutation[] = [
       "52 pins are absent from the listing and nothing says so, which on a " +
       "five-year repo is the steady state rather than the edge case",
   },
+  {
+    // Spec 01 §3.4. #50 added three counters to the state tail and did NOT
+    // add them to withCarriedCapture's carried list; the causal-order pair
+    // cannot afford that omission, because a counter reset under a carried
+    // epoch re-issues positions the session has already handed out.
+    label: "a SessionStart re-fire restarts the position counter",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        seqEpoch: previous.seqEpoch,\n        eventSeq: previous.eventSeq,\n",
+    to: "        seqEpoch: previous.seqEpoch,\n",
+    test: `${CORE}/test/session-seq.test.ts`,
+    because:
+      "a compact re-fire sends the second half of the session back to n = 0 " +
+      "under the same epoch, so two distinct events share one (session, " +
+      "epoch, n) and the hub cannot tell the second from a spool replay",
+  },
+  {
+    // The other half of the same pair, and the one that fails SAFE if it is
+    // ever dropped — a fresh epoch beside a carried counter is merely not
+    // comparable. It is anchored because a reviewer cannot tell which half is
+    // which by reading the list, and the pair must move together.
+    label: "a re-fire mints a second epoch inside one session",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        seqEpoch: previous.seqEpoch,\n        eventSeq: previous.eventSeq,\n",
+    to: "        eventSeq: previous.eventSeq,\n",
+    test: `${CORE}/test/session-seq.test.ts`,
+    because:
+      "every compact splits the session's order in two, so a fence verdict " +
+      "on a compacted session refuses to say whether the reason predated the " +
+      "change — and nothing in the session's own telemetry explains why",
+  },
+  {
+    // Spec 01 §3.3. The allocator's whole job is the WRITE-BACK inside the
+    // lock; reading and returning is the read-then-write this design exists
+    // to refuse. Measured against the unwritten-back version: 200 allocations
+    // across two emitters, 1 distinct position.
+    label: "the allocator hands two emitters the same position",
+    file: `${CORE}/src/state/session-state.ts`,
+    from:
+      "      const from = fresh.eventSeq + 1;\n" +
+      "      await writeSessionState(home, { ...fresh, eventSeq: from + count - 1 });\n" +
+      "      return { epoch: fresh.seqEpoch, from, count };",
+    to:
+      "      const from = fresh.eventSeq + 1;\n" +
+      "      return { epoch: fresh.seqEpoch, from, count };",
+    test: `${CORE}/test/session-seq.test.ts`,
+    because:
+      "every record in the session claims position 1, the hub answers " +
+      "`conflict` to all but the first, and a session whose events all sit " +
+      "at one point has no order at all while every emitter reports success",
+  },
+  {
+    // The allocator's PATIENCE, which SEQ-3 turned out to be about. The lock
+    // is the spool's primitive, and its default retry count is sized by what a
+    // busy FLUSH costs. Dropping the argument compiles, passes every test that
+    // only races emitters on an idle machine, and was measured to refuse 7 of
+    // 800 positions under eight emitters — green on every developer Mac, red
+    // on both CI runners. The guard holds the lock for longer than the spool's
+    // patience on purpose, so it is red on any machine at any load.
+    label: "the session state's lock gives up at the spool's patience",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "): Promise<T> => withLock(path, fallback, action, SESSION_STATE_LOCK_RETRIES);",
+    to: "): Promise<T> => withLock(path, fallback, action);",
+    test: `${CORE}/test/session-seq.test.ts`,
+    because:
+      "any two hooks of one session that overlap for longer than 100 ms turn " +
+      "one of their events into `allocation_failed` — honest, and a hole in " +
+      "the causal order on exactly the busy turns an investigator reads",
+  },
+  {
+    // Spec 01 §3.5. The hint-delivery id shape — sha256(session, ref) — is the
+    // obvious one and it SILENTLY DELETES EVENTS here, because three kinds
+    // share one referent: session.started, commit.observed and session.ended
+    // all point at the session.
+    label: "two kinds on one referent collapse into one event row",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "        input.sessionId,\n        input.kind,\n        input.seqEpoch ?? \"null\",",
+    to: "        input.sessionId,\n        input.seqEpoch ?? \"null\",",
+    test: `${SERVER}/test/session-events.test.ts`,
+    because:
+      "on every connector from before this protocol field both session events " +
+      "are unsequenced, so the position cannot tell them apart and the end is " +
+      "answered duplicate — the session's history stops at its start",
+  },
+  {
+    // The other half of the same id. A SessionStart re-fire collects commit
+    // evidence a second time against the same session referent.
+    label: "a re-fire's second collection takes the first one's row",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: '        input.seqN === null ? "null" : String(input.seqN),\n',
+    to: "",
+    test: `${SERVER}/test/session-events.test.ts`,
+    because:
+      "the second commit.observed of a compacted session is answered " +
+      "duplicate and receives no position, so the half of the session after " +
+      "the compact has one fewer event than it had",
+  },
+  {
+    // Spec 01 §3.5. A POSITION IS TAKEN ONCE. The partial unique index is what
+    // turns a restarted counter or a second home into a counted conflict; a
+    // plain index lets two events sit at one point and the order answers
+    // "which came first" with a coin flip. bootstrap.sql is the DDL the test
+    // harness actually runs, so mutating it alone reddens the guard.
+    label: "two events may sit at one position in a session",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE UNIQUE INDEX IF NOT EXISTS session_events_position_idx",
+    to: "CREATE INDEX IF NOT EXISTS session_events_position_idx",
+    test: `${SERVER}/test/session-event-conflict.test.ts`,
+    because:
+      "a connector whose counter restarted files its whole second half over " +
+      "its first, and every comparison inside that session answers " +
+      "confidently from two events that both claim position 4",
+  },
+  {
+    // Spec 01 §3.2. The git lane sees a working tree at the END of a turn and
+    // cannot say when inside it the change happened, so its position is an
+    // UPPER BOUND. Promoting it to `emitted` makes it a happens-before.
+    label: "a git-lane sighting claims it happened after the last event",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '  git_diff: "observed",',
+    to: '  git_diff: "emitted",',
+    test: `${SERVER}/test/session-event-seq-kind.test.ts`,
+    because:
+      "a file rewritten by `sed -i` at any point in the turn is ordered after " +
+      "an intent amendment written at the end of it, so `post_hoc` is " +
+      "answered for a change that may well have predated the sentence",
+  },
+  {
+    // Spec 01 §3.6, the half a reader would not guess. The detached workers
+    // summarise a slice from EARLIER in the session, so their position records
+    // when the row was written, not when the fact was seen.
+    label: "a detached worker's claim claims the moment it was written",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '    seqKind: body.provenance === "derived" ? "observed" : "emitted",',
+    to: '    seqKind: "emitted",',
+    test: `${SERVER}/test/session-event-seq-kind.test.ts`,
+    because:
+      "every summarizer draft sorts after edits it actually predates, and a " +
+      "verdict built on that order names the wrong change with full " +
+      "confidence — the one outcome the causal order exists to prevent",
+  },
+  {
+    // AT-4's OWN "fails if", as a single edit: order by the hub clock sitting
+    // beside the positions instead of by the positions. The happy path still
+    // passes — which is the whole reason SEQ-2 exists beside SEQ-1.
+    label: "the causal order is answered from a wall clock",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: "  return (a.seqN ?? 0) < windowStart(b) ? -1 : 1;",
+    to: "  return a.observedAt.getTime() < b.observedAt.getTime() ? -1 : 1;",
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "two processes, an offline connector and a batch sync all reorder the " +
+      "clock without reordering the work, so `declared before` and `declared " +
+      "after` swap places and the verdict states the opposite of what happened",
+  },
+  {
+    // Spec 01 §3.4: happens-before needs a SHARED epoch. The session-level
+    // state cannot supply this term for a row it never counted — the intent
+    // ledger's versions live in their own table — so the per-pair check is
+    // load-bearing rather than defensive.
+    label: "two counters are compared as though they were one",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '  if (a.seqEpoch !== b.seqEpoch) {\n    return indeterminate("epoch_mismatch");\n  }\n',
+    to: "",
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "an intent version from a session's SECOND epoch is compared against an " +
+      "edit from its first, and n = 2 against n = 5 answers `predeclared` for " +
+      "a sentence written after the change",
+  },
+  {
+    // Spec 01 §3.2 mapped `tool_edit → emitted` flatly, and that is the one
+    // direction that matters: the position is taken in the hook that runs once
+    // the tool RETURNED, so an emitter that allocated inside the window holds
+    // a lower number than a change that already happened. Measured — an Edit
+    // and an MCP publish in one parallel tool batch inverted 10 trials of 10.
+    label: "a position taken after the edit answers as if taken at it",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "  windowFloorOf(seq) !== null",
+    to: "  true",
+    test: `${SERVER}/test/session-order-window.test.ts`,
+    because:
+      "an unbracketed tool-lane position is promoted back to a " +
+      "happens-before, and an explanation published while the edit's hook was " +
+      "still starting is reported as PREDECLARED for a change that came first",
+  },
+  {
+    // The same defect from the reading side. Two events whose windows overlap
+    // are CONCURRENT, and concurrent is not an order.
+    label: "two events that raced are given an order anyway",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '  if (overlaps(a, b)) {\n    return indeterminate("concurrent");\n  }\n',
+    to: "",
+    test: `${SERVER}/test/session-order-window.test.ts`,
+    because:
+      "a claim allocated while a tool was still running is ordered against " +
+      "that tool's edit from the numbers alone, which is the coin flip the " +
+      "bracket exists to refuse",
+  },
+  {
+    // `after` is taken BEFORE the work, so it cannot sit above the position it
+    // brackets. Trusting one that does inverts the interval.
+    label: "a window that opens after it closes is believed",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "  stamp.after === undefined || stamp.after > stamp.n ? null : stamp.after;",
+    to: "  stamp.after ?? null;",
+    test: `${SERVER}/test/session-order-window.test.ts`,
+    because:
+      "a broken emitter's inverted bracket makes the window swallow every " +
+      "position below it, so events that plainly preceded the edit are " +
+      "reported as concurrent with it and AT-4 goes quiet for the session",
+  },
+  {
+    // Spec 01 §3.2. An `observed` position is an upper bound: the git lane and
+    // the detached workers both record when a fact was WRITTEN DOWN.
+    label: "an upper bound is compared as a happens-before",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '  if (a.seqKind !== "emitted" || b.seqKind !== "emitted") {\n    return indeterminate("upper_bound_only");\n  }\n',
+    to: "",
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "a codemod's file.modified and a summarizer's claim both answer " +
+      "questions they cannot support, and the refusal SEQ-7 requires becomes " +
+      "a confident sentence about an ordering nobody observed",
+  },
+  {
+    // CSK-14 (Nick's D-D, 2026-09-17): the age sweep D2 shipped is WITHDRAWN
+    // before its first deploy, because the rows it deletes are very nearly the
+    // causal skeleton. This puts the call back where it ran.
+    label: "the withdrawn age sweep runs again",
+    file: `${SERVER}/src/services/sessions.ts`,
+    from: "  // Candidates first, then one UPDATE by id",
+    to:
+      "  await (await import(\"./session-events.ts\")).pruneSessionEvents(deps);\n" +
+      "  // Candidates first, then one UPDATE by id",
+    test: `${SERVER}/test/session-event-retention.test.ts`,
+    because:
+      "DATA LOSS: every position older than thirty days is deleted on the " +
+      "next reaper pass — ids, kind, epoch and position, which later causal " +
+      "statements are ordered against — while the hub still declares its " +
+      "retention `off` and doctor prints that it keeps everything",
+  },
+  {
+    // The cutoff is the half of the dormant sweep spec 01a keeps. Zero retires
+    // a position the moment it is written, which reads as a working sweep in
+    // every count; the retention test calls the sweep directly to hold it.
+    label: "a position is retired the moment it is written",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "    deps.now().getTime() - SESSION_EVENT_RETENTION_DAYS * MS_PER_DAY,",
+    to: "    deps.now().getTime(),",
+    test: `${SERVER}/test/session-event-retention.test.ts`,
+    because:
+      "DATA LOSS ONCE 01a CALLS IT: a live session's own order is swept out " +
+      "from under it on the next pass, so AT-4 is unanswerable for work in " +
+      "progress — and 01a would inherit a cutoff nobody had tested",
+  },
+  {
+    // CSK-14's other half: the refusal is only a refusal if doctor prints it.
+    label: "doctor goes quiet about the withdrawn retention",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    checkSessionEventRetention(eventRetention),\n",
+    to: "",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "SILENT: an operator discovers a table growing without bound as a " +
+      "surprise, with nothing saying it was decided or what will end it",
+  },
+  {
+    // The hub is the only one who can state its retention.
+    label: "the hub stops declaring its retention",
+    file: `${SERVER}/src/routes/sessions.ts`,
+    from: "    return ok(c, { sessions: orders, retention: SESSION_EVENT_RETENTION });",
+    to: "    return ok(c, { sessions: orders });",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "SILENT: every doctor against the one hub that did decide reads `not " +
+      "measured`, and the refusal is never read by anybody",
+  },
+  {
+    // ABSENT IS NOT OFF.
+    label: "an older hub's silence is printed as a retention",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "      value.retention === undefined\n        ? null\n",
+    to: "      value.retention === undefined\n        ? \"off\"\n",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "FALSE ASSURANCE: a hub that made no promise about its rows is " +
+      "reported as keeping every one of them",
+  },
+  {
+    // UNKNOWN IS NOT OFF either.
+    label: "an unknown retention mode is printed as a known one",
+    file: `${CORE}/src/http/hub.ts`,
+    from: "          ? value.retention\n          : \"unknown\",",
+    to: "          ? value.retention\n          : \"off\",",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "FALSE ASSURANCE: a newer hub that may be retiring rows under a " +
+      "predicate this CLI cannot name is reported as retiring none",
+  },
+  {
+    // The sentence this line USED to print. It named a replacement in the
+    // present tense for a sweep that exists nowhere in this tree —
+    // `pruneSessionEvents` is defined and called from nowhere — and it never
+    // said the rows are kept at all.
+    label: "an unbounded table is reported as somebody else's problem",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  off: \"off — nothing deletes session events: every row is kept and the table grows without bound, by decision. The age-based sweep was withdrawn; spec 01a's referential predicate is meant to replace it and is not running here\",",
+    to: "  off: \"off — the age-based sweep is withdrawn; spec 01a's referential predicate replaces it\",",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "FALSE ASSURANCE: an operator reads a PASS naming a replacement and " +
+      "ships, and the hub then holds a per-developer, per-second activity " +
+      "trail nothing deletes — a decision the line said somebody else had made",
+  },
+  {
+    // ...and NOT MEASURED is not a decision.
+    label: "an unmeasured retention is printed as a decision",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    mode === null\n      ? \"not measured\"\n",
+    to: "    mode === null\n      ? RETENTION_SENTENCES.off\n",
+    test: `${CLI}/test/seq-doctor.test.ts`,
+    because:
+      "FALSE ASSURANCE: a hub nobody could reach is reported as keeping " +
+      "every row it holds",
+  },
+  {
+    // Spec 01 §3.2 row 1. `session.started` is the ONE position nothing
+    // allocates — the counter is minted at 0 and hands out from 1 — so the
+    // register call is the only place it can be sent from.
+    label: "a session start is filed as a connector too old for the field",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from: "      seq: { epoch, n: 0 },\n",
+    to: "",
+    test: `${CORE}/test/register-seq.test.ts`,
+    because:
+      "the one row every session is guaranteed to have goes back to reading " +
+      "`pre_seq_connector` — a statement that this machine predates the " +
+      "protocol field — on every session on every host, forever",
+  },
+  {
+    // The re-fire half of the same row. SessionStart fires again inside a live
+    // session, `withCarriedCapture` keeps the PREVIOUS epoch, and a body that
+    // minted a fresh one anyway named an epoch nothing else in the session
+    // uses.
+    label: "a re-fire registers under an epoch the session does not use",
+    file: `${CORE}/src/flows/register-session.ts`,
+    from:
+      "  const seqEpoch = carriedSeqEpoch(\n" +
+      "    await readSessionState(input.home, input.hostSessionKey),\n" +
+      "    input,\n" +
+      "    mintedEpoch,\n" +
+      "  );",
+    to: "  const seqEpoch = mintedEpoch;",
+    test: `${CORE}/test/register-seq.test.ts`,
+    because:
+      "UNSAFE: a session whose FIRST register never landed has " +
+      "`session.started` stored under the foreign epoch by the CREATE branch, " +
+      "so the hub answers `broken / epoch_split` and refuses every " +
+      "happens-before question in that session for the rest of its life — " +
+      "append-only rows and retention `off` mean nothing repairs it",
+  },
+  {
+    // The BINDING half: the register body and the state file have to answer
+    // "is this the same session's state" with the SAME predicate, or the two
+    // halves disagree again with the roles swapped.
+    label: "a foreign repo's state file lends the register its epoch",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  isSameBinding(previous, binding) && previous.seqEpoch !== null",
+    to: "  previous !== null && previous.seqEpoch !== null",
+    test: `${CORE}/test/register-seq.test.ts`,
+    because:
+      "UNSAFE: `withCarriedCapture` refuses to carry across a re-home, so the " +
+      "wire announces an epoch the publication then replaces with a fresh " +
+      "mint — the same split, with the halves swapped",
+  },
+  {
+    // A hook killed by its own budget race (`bin/crosscheck.ts` emitAndExit)
+    // dies inside the section, and this branch put that section on EVERY
+    // edit-tool hook. Measured before the release: eleven refused
+    // acquisitions and the first success 5013 ms later.
+    label: "a hook killed inside the lock orphans its claim for five seconds",
+    file: `${CORE}/src/spool/lock.ts`,
+    from: "  rememberHeldLock(path, token);\n",
+    to: "",
+    test: `${CORE}/test/spool-lock.test.ts`,
+    because:
+      "SILENT STALL: every position and every bracket in that session is " +
+      "refused until the claim ages past SPOOL_LOCK_STALE_MS, and nothing " +
+      "counts the refusals — `stealableToken` cannot shorten it, because a " +
+      "dead holder may only VETO a steal, never authorise one",
+  },
+  {
+    // ...and the release on the way out obeys the SAME rule as `releaseLock`.
+    label: "an exiting holder deletes a lock that is no longer its own",
+    file: `${CORE}/src/spool/lock.ts`,
+    from: '      if (readFileSync(path, "utf8") === token) {',
+    to: "      if (true) {",
+    test: `${CORE}/test/spool-lock.test.ts`,
+    because:
+      "UNSAFE: a claim this process was robbed of belongs to whoever holds " +
+      "it now, and deleting it on the way out puts two writers in the " +
+      "critical section — the collision the holder-identified token exists " +
+      "to prevent",
+  },
+  {
+    // The bracket must consume a position of its own. If it does not, the
+    // window opens exactly where the block begins and holds nothing.
+    label: "a window opens on a position the block then takes anyway",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        eventSeq: taken,\n        toolWindows: appended.slice(evicted),",
+    to: "        toolWindows: appended.slice(evicted),",
+    test: `${CONNECTOR}/test/hook-window.test.ts`,
+    because:
+      "UNSAFE: the edit's interval collapses onto the first position of its " +
+      "own block, so an MCP publish that raced the tool sits BELOW the window " +
+      "and is ordered before a change that came first",
+  },
+  {
+    // The defect the keyed list exists for, put back: the close brackets from
+    // whichever window is OLDEST, whoever opened it. Measured on the real
+    // hooks with the state lock held: `predeclared` for an explanation
+    // written after the edit.
+    label: "a tool whose open was refused takes a parallel tool's floor",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        windowKey === null ? null : toolWindowFloorFor(fresh, windowKey);",
+    to: "        windowKey === null ? null : (fresh.toolWindows[0]?.floor ?? null);",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "UNSAFE: a call with no window of its own is bracketed from a moment " +
+      "AFTER its edit, so the hub answers `predeclared` — the value that " +
+      "exonerates — for an explanation written once the change was made",
+  },
+  {
+    // Spec 01 §3.6: a close must remove what it closed.
+    label: "a closed window keeps the floor it opened on",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),\n",
+    to: "",
+    test: `${CONNECTOR}/test/hook-window.test.ts`,
+    because:
+      "SAFE BUT BLIND: every closed window stays in the capped list, so a " +
+      "busy session fills it with finished calls and the cap starts evicting " +
+      "the windows of calls that are still running",
+  },
+  {
+    // Spec 01 §3.4's carry rule, for the window list. A SessionStart re-fire
+    // lands INSIDE a live session and a tool can be running across it.
+    label: "a re-fire closes a window the running tool still needs",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        toolWindows: previous.toolWindows,\n",
+    to: "",
+    test: `${CONNECTOR}/test/hook-window.test.ts`,
+    because:
+      "SAFE BUT LOSSY: a compact or resume mid-tool drops the floor its " +
+      "PreToolUse paid for, and the edit that follows is stamped with the " +
+      "upper bound the bracket exists to replace",
+  },
+  {
+    // The count is the only evidence the cap's size can ever be judged by.
+    label: "a re-fire resets the tool-window eviction count",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        toolWindowEvictions: previous.toolWindowEvictions,\n",
+    to: "",
+    test: `${CORE}/test/session-seq.test.ts`,
+    because:
+      "SILENT: every compact zeroes the count, so a session that hit the cap " +
+      "before it compacted reports that it never did, and doctor stays quiet " +
+      "about the one limit this build chose rather than measured",
+  },
+  {
+    // A window's floor is the position ITS OWN open consumed — the rule the
+    // shared-oldest floor could not express.
+    label: "a window opens on another call's floor",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      const appended = [...fresh.toolWindows, { key: windowKey, floor: taken }];",
+    to: "      const appended = [...fresh.toolWindows, { key: windowKey, floor: fresh.toolWindows[0]?.floor ?? taken }];",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: every call opened while another runs is bracketed from " +
+      "the oldest open floor, so parallel edits never get their own window " +
+      "and refuse questions their own floor could have answered",
+  },
+  {
+    // MAX_TOOL_WINDOWS. An uncapped list on the hook's hot path grows for the
+    // life of the session.
+    label: "the tool-window list grows without bound",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        toolWindows: appended.slice(evicted),",
+    to: "        toolWindows: appended,",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "COSTLY: every call nothing closes stays in the state file forever, and " +
+      "every hook that reads or writes it pays for all of them",
+  },
+  {
+    // Evictions are counted rather than inferred from a missing bracket.
+    label: "a tool-window eviction goes uncounted",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "        toolWindowEvictions: fresh.toolWindowEvictions + evicted,",
+    to: "        toolWindowEvictions: fresh.toolWindowEvictions,",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "SILENT: the cap costs brackets and nothing says so — a missing bracket " +
+      "looks exactly like a call that opened no window, so the one number " +
+      "that could show MAX_TOOL_WINDOWS is too small is never written",
+  },
+  {
+    // Under one key the OLDEST floor is the widest interval; the pairs proof
+    // in tool-window-pairing.test.ts is what licenses the rule.
+    label: "a call opened twice brackets from its younger floor",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  state.toolWindows.find((window) => window.key === windowKey)?.floor ?? null;",
+    to: "  state.toolWindows.findLast((window) => window.key === windowKey)?.floor ?? null;",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "UNSAFE WHEREVER A KEY NAMES TWO CALLS: a position allocated between the " +
+      "two opens sits below the younger floor, so an explanation written " +
+      "while both calls ran is ordered before an edit that may have come first",
+  },
+  {
+    // The youngest entry is the one removed, so the oldest survives until
+    // every entry under the key is closed.
+    label: "a close removes the oldest window of its key",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "    (found, window, index) => (window.key === windowKey ? index : found),",
+    to: "    (found, window, index) => (window.key === windowKey && found === -1 ? index : found),",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "UNSAFE WHEREVER A KEY NAMES TWO CALLS: the second close finds only the " +
+      "younger floor and brackets from after an edit that may have happened " +
+      "first — the rule above undone one close later",
+  },
+  {
+    // No match removes nothing.
+    label: "a close with no window of its own drains another call's",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "      last === -1\n        ? state.toolWindows\n",
+    to: "      last === -1\n        ? state.toolWindows.slice(1)\n",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: every Bash call and every refused open takes a running " +
+      "edit's window away, and that edit then travels as an upper bound it " +
+      "had already paid to replace",
+  },
+  {
+    // The retired toolWindowFloor / toolWindowOpen are dropped on read.
+    label: "a state file from before the list keeps its dead fields",
+    file: `${CORE}/src/state/session-state.ts`,
+    from: "  (value) => dropRetiredToolWindowKeys(foldLegacySessionKey(value)),",
+    to: "  (value) => foldLegacySessionKey(value),",
+    test: `${CORE}/test/tool-window-pairing.test.ts`,
+    because:
+      "SILENT: an upgraded session carries a floor and a count nothing reads " +
+      "for the rest of its life — the unread column AT-10 forbids",
+  },
+  {
+    // The key names ONE call only because it carries the host's id.
+    label: "every call of one tool shares one window key",
+    file: `${CORE}/src/state/tool-window-key.ts`,
+    from: "        .update(`${toolName ?? \"\"}\\n${toolUseId}`)",
+    to: "        .update(`${toolName ?? \"\"}\\n`)",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "UNSAFE: a call whose open was refused finds another call's entry — its " +
+      "identical twin's, or any edit's — and the hub answers `predeclared` " +
+      "for an explanation written after the change",
+  },
+  {
+    // No host id, no key, no window: the documented refusal.
+    label: "a call with no host id still opens a window",
+    file: `${CORE}/src/state/tool-window-key.ts`,
+    from: "  toolUseId === undefined || toolUseId.length === 0\n",
+    to: "  false\n",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "UNSAFE: every id-less call shares one key, so on a host that sends no " +
+      "tool_use_id a refused open borrows another call's floor exactly as " +
+      "the input digest let it",
+  },
+  {
+    // The bracket's first half.
+    label: "PreToolUse stops opening tool windows",
+    file: `${CONNECTOR}/src/hooks/pre-tool-use.ts`,
+    from: "  if (windowKey !== null) {\n    await openToolWindow(",
+    to: "  if (false) {\n    await openToolWindow(",
+    test: `${CONNECTOR}/test/hook-window.test.ts`,
+    because:
+      "SAFE BUT BLIND: every Claude edit travels as an upper bound and the hub " +
+      "refuses every happens-before question about the tool lane, while " +
+      "doctor still prints this host's event_seq rung as full",
+  },
+  {
+    // The field the pairing key is made of.
+    label: "the hook parser drops the pairing key",
+    file: `${CONNECTOR}/src/capture/tool-events.ts`,
+    from: "  tool_use_id: z.string().optional().catch(undefined),",
+    to: "  tool_use_id: z.undefined().catch(undefined),",
+    test: `${CONNECTOR}/test/hook-contract.test.ts`,
+    because:
+      "SAFE BUT BLIND: no window is ever opened, so every Claude edit loses " +
+      "its bracket at once and nothing on any surface says why",
+  },
+  {
+    // PostToolUse's first-wins drop path closes the call's own window too.
+    label: "a call dropped as another repo's leaves its window open",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "      ...closeOwnWindow(fresh),\n    }));\n    return \"\";",
+    to: "    }));\n    return \"\";",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: every foreign-repo touch leaves an entry the cap " +
+      "later evicts, and a multi-repo workspace fills the list with them",
+  },
+  {
+    // The close that has no allocation to ride on.
+    label: "an edit that names no file leaves its window open",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  const closesWindow = seq === null;",
+    to: "  const closesWindow = false;",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: every edit call with no path, and every allocation a " +
+      "busy lock refused, leaves an entry the cap later evicts",
+  },
+  {
+    // ...and it closes exactly once.
+    label: "a PostToolUse run closes two windows of its call",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  const closesWindow = seq === null;",
+    to: "  const closesWindow = true;",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: on a double-wired install the first run takes the " +
+      "entry the second run brackets from, so the second run's close finds " +
+      "nothing",
+  },
+  {
+    // A failed edit's only close.
+    label: "a failed edit leaves its window open",
+    file: `${CONNECTOR}/src/hooks/post-tool-use-failure.ts`,
+    from: "    1,\n    windowKey,\n  );",
+    to: "    1,\n    null,\n  );",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "MISLEADING: the most common failure an edit tool has fills the capped " +
+      "list, and each eviction is counted as a lost bracket for an edit " +
+      "that never happened",
+  },
+  {
+    // The close must not change what the failure's own row claims.
+    label: "a failed edit's fingerprint takes its window as a bracket",
+    file: `${CONNECTOR}/src/hooks/post-tool-use-failure.ts`,
+    from: "      : { epoch: closed.epoch, from: closed.from, count: closed.count };",
+    to: "      : closed;",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "UNREVIEWED: every failed edit's tool.failed row turns from observed " +
+      "into an orderable event as a side effect of closing a window — a " +
+      "change to what the hub answers that nobody decided",
+  },
+  {
+    // PostToolUseFailure's drop path closes too.
+    label: "a failed call dropped as another repo's leaves its window open",
+    file: `${CONNECTOR}/src/hooks/post-tool-use-failure.ts`,
+    from: "      foreignRepoDrops: fresh.foreignRepoDrops + 1,\n      ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),\n",
+    to: "      foreignRepoDrops: fresh.foreignRepoDrops + 1,\n",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SAFE BUT LOSSY: a failing command in a sibling repo leaves an entry " +
+      "the cap later evicts and counts",
+  },
+  {
+    // Spec 01 §3.4. One PostToolUse emits its file targets AND its error
+    // fingerprint from ONE reserved block, and the fingerprint's slot is the
+    // one past every target's. Pointing it at slot 0 puts it on top of the
+    // first file the same invocation recorded.
+    label: "a fingerprint takes the position of the file beside it",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "const FINGERPRINT_SEQ_OFFSET = MAX_TARGETS_PER_INVOCATION;",
+    to: "const FINGERPRINT_SEQ_OFFSET = 0;",
+    test: `${CONNECTOR}/test/hook-seq.test.ts`,
+    because:
+      "the hub answers `conflict` to whichever of the two arrives second, so " +
+      "a failing edit loses either its file or its fingerprint from the " +
+      "order — on exactly the turns a reader most wants ordered",
+  },
+  {
+    // The same collision one level down: every record of a block on slot 0.
+    label: "every target in one invocation takes one position",
+    file: `${CORE}/src/flows/capture-targets.ts`,
+    from: "          seqAt(input.seq, index),",
+    to: "          seqAt(input.seq, 0),",
+    test: `${CONNECTOR}/test/hook-seq.test.ts`,
+    because:
+      "a tool call touching two files files both at one position, and the " +
+      "second is stored with no position at all — the git lane, which passes " +
+      "the same flow, loses a whole codemod's worth of order this way",
+  },
+  {
+    // Spec 01 §10 D1, Nick's decision. An MCP server is never told which
+    // session is calling it; the picker returns its best guess, and stamping
+    // that guess files an amendment into ANOTHER session's causal order.
+    label: "an MCP tool stamps the session it guessed at",
+    file: `${CORE}/src/mcp/tools/shared.ts`,
+    from:
+      "  own.sessionAmbiguous\n" +
+      "    ? AMBIGUOUS_SESSION\n" +
+      "    : allocateSeq(ctx.config.home, own.hostSessionKey, count);",
+    to: "  allocateSeq(ctx.config.home, own.hostSessionKey, count);",
+    test: `${CORE}/test/mcp-seq-e2e.test.ts`,
+    because:
+      "in a two-agent worktree `set_intent` bumps the OTHER session's counter " +
+      "and files the amendment in its order, so AT-4 answers `declared " +
+      "before` or `declared after` from a coin flip — with full confidence",
+  },
+  {
+    // The detection half. A boolean that is never true is the same silence.
+    label: "the session picker never admits it guessed",
+    file: `${CORE}/src/mcp/session.ts`,
+    from: "    rootMatches > 1 || (rootMatches === 0 && eligible.length > 1);",
+    to: "    false;",
+    test: `${CORE}/test/mcp-seq-e2e.test.ts`,
+    because:
+      "every MCP position is stamped as though the pick were evidence, and " +
+      "doctor's count of ambiguous worktrees stays at zero on the very " +
+      "machines where it should be raising its hand",
+  },
+  {
+    // Spec 01 §3.6 says SessionEnd takes "the last n, READ in the acquisition
+    // that reads state before deletion". That acquisition does not exist —
+    // handleSessionEnd reads unlocked and endSessionFlow deletes unlocked —
+    // and a read is stale whenever Stop's git lane or a detached worker
+    // allocates in the same window.
+    label: "the end reads a position something else already owns",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "  const seq = seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0);",
+    to: "  const seq = seqAt(await allocateSeq(input.home, input.hostSessionKey, 0), 0);",
+    test: `${CORE}/test/end-session-seq.test.ts`,
+    because:
+      "`session.ended` lands on a position the session already issued, so the " +
+      "hub answers conflict and the session's last word has no place in its " +
+      "own order — on every session that ended while a worker was still writing",
+  },
+  {
+    // The deferred half. The marker is the ONLY carrier once the state file is
+    // deleted, and reap's DeferredEnder runs in a later process.
+    label: "a deferred end is silently unsequenced",
+    file: `${CORE}/src/flows/end-session.ts`,
+    from: "      seq,\n    })}\\n`,",
+    to: "    })}\\n`,",
+    test: `${CORE}/test/end-session-seq.test.ts`,
+    because:
+      "every session that ended with a backlog on disk — an offline " +
+      "afternoon, a slow hub — loses its end from the order, and the sessions " +
+      "that deferred are exactly the ones that had the most left to say",
+  },
+  {
+    // Non-negotiable 4 on this surface. A session that cannot position its
+    // records works perfectly in every other respect — the claims land, the
+    // intents land — and only "did the reason predate the change" quietly
+    // stops being answerable. Nothing else in this product would say so.
+    label: "doctor goes quiet about a session with no order",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from:
+      "    checkGitLane(liveStates.states),\n" +
+      "    checkEventSeq(liveStates.states, brokenOrders),",
+    to: "    checkGitLane(liveStates.states),",
+    test: `${CLI}/test/seq-doctor.test.ts`,
+    because:
+      "a machine whose every position is refused reads exactly like a healthy " +
+      "one, and the remedy — close one of the two sessions — is never named " +
+      "to the only person who can apply it",
+  },
+  {
+    // The count behind that line. Nick's D1 decision is only honest if the
+    // refusals it causes are visible: two sessions in one worktree is the one
+    // case an MCP tool cannot see its way out of.
+    label: "the ambiguous-worktree count is structurally zero",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "  return [...perRoot.values()].filter((count) => count > 1).length;",
+    to: "  return 0;",
+    test: `${CLI}/test/seq-doctor.test.ts`,
+    because:
+      "doctor PASSes on the exact machine where every intent and claim is " +
+      "landing without a position, so the one visible trace of D1's cost " +
+      "disappears and the refusal looks like nothing happening",
+  },
+  {
+    // The eviction count, summed for doctor and status.
+    label: "tool-window evictions are never summed",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "      windowEvictions: total.windowEvictions + state.toolWindowEvictions,",
+    to: "      windowEvictions: total.windowEvictions,",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "SILENT: a machine whose sessions hit the cap reads exactly like one " +
+      "that never did, on both surfaces that print the order's health",
+  },
+  {
+    // Silent at zero, like the counts beside it.
+    label: "a machine that never hit the window cap prints an eviction count",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "    cost.windowEvictions === 0\n",
+    to: "    false\n",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "NOISE: every healthy install prints a zero it has no use for on every " +
+      "doctor run, which is how a line teaches people to stop reading it",
+  },
+  {
+    // An eviction is an UPPER BOUND on the brackets lost.
+    label: "an evicted tool window is reported as a lost bracket",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "      : ` · ${String(cost.windowEvictions)} tool window(s) evicted at the cap (an edit still running when its window went travels as an upper bound; a call that had already ended lost nothing)`;",
+    to: "      : ` · ${String(cost.windowEvictions)} bracket(s) dropped at the tool-window cap (those edits travel as upper bounds)`;",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "OVERSTATED: a denied or aborted call's eviction cost nothing, and the " +
+      "line claims an edit lost its bracket for every one of them",
+  },
+  {
+    // The loss the eviction count CANNOT see: an open the state lock refused
+    // writes no entry, so nothing is evicted for it and the cap's counter
+    // never moves. Measured through the real hooks on a loaded machine.
+    label: "brackets lost to a refused open are never summed",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "      windowMisses: total.windowMisses + state.toolWindowMisses,",
+    to: "      windowMisses: total.windowMisses,",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "SILENT: a machine losing brackets under parallel load reads exactly " +
+      "like one that is not, on both surfaces that print the order's health — " +
+      "and the cap's own counter stays 0 throughout, so nothing else says it",
+  },
+  {
+    // Silent at zero, like every count beside it.
+    label: "a machine that lost no bracket prints an unbracketed count",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "    cost.windowMisses === 0\n",
+    to: "    false\n",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "NOISE: every healthy install prints a zero it has no use for on every " +
+      "doctor run, which is how a line teaches people to stop reading it",
+  },
+  {
+    // ...and it reaches the reader at all.
+    label: "the unbracketed-edit count is never printed",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from:
+      "      : ` · ${String(cost.windowMisses)} edit(s) recorded with no " +
+      "window of their own (unbracketed: the hub refuses every " +
+      "\\`declared before\\` question against them)`;",
+    to: '      : "";',
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "SILENT: the count is kept and read by nobody, so the only number that " +
+      "can say whether this machine is losing brackets never reaches a reader",
+  },
+  {
+    // Where the count is TAKEN: the close, the one place every cause meets.
+    label: "an edit that lost its bracket is booked as a healthy one",
+    file: `${CONNECTOR}/src/hooks/post-tool-use.ts`,
+    from: "  const lostBracket = editFired && seq !== null && seq.after === undefined;",
+    to: "  const lostBracket = false;",
+    test: `${CONNECTOR}/test/hook-window-pairing.test.ts`,
+    because:
+      "SILENT: a refused open, an evicted entry, a hook installed mid-tool " +
+      "and a host with no `tool_use_id` all leave an edit the hub cannot " +
+      "order, and the machine reports none of them",
+  },
+  {
+    // ...and it is printed at all.
+    label: "the tool-window eviction count is never printed",
+    file: `${CORE}/src/state/seq-cost.ts`,
+    from: "      : ` · ${String(cost.windowEvictions)} tool window(s) evicted at the cap (an edit still running when its window went travels as an upper bound; a call that had already ended lost nothing)`;",
+    to: "      : \"\";",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "SILENT: the count is kept and read by nobody, so the cap's one piece " +
+      "of evidence never reaches the only person who could act on it",
+  },
+  {
+    // The THIRD producer of an upper bound (§3.6), beside the git_diff lane
+    // and the detached workers: the position is taken at the collection, and
+    // what it describes is up to COMMIT_EVIDENCE_WINDOW_DAYS older.
+    label: "a commit collection is positioned as if it were the commits",
+    file: `${SERVER}/src/services/commit-evidence.ts`,
+    from: '          seqKind: "observed",',
+    to: '          seqKind: "emitted",',
+    test: `${SERVER}/test/session-event-seq-kind.test.ts`,
+    because:
+      "UNSAFE: an explanation written today sorts BEFORE commits authored " +
+      "last week — `compareEvents` answers -1, which is `predeclared`, the " +
+      "value that clears the agent — and a re-fire's second collection " +
+      "answers the opposite about exactly the same commits",
+  },
+  {
+    // `collectCommitEvidence` is imported by exactly ONE module in the tree,
+    // so this is the only host that emits `commit.observed` at all — and spec
+    // 01 §3.6's table of emitters does not list it.
+    label: "the one host that collects commits emits it unpositioned",
+    file: `${CONNECTOR}/src/hooks/session-start.ts`,
+    from:
+      "          seqAt(\n" +
+      "            await allocateSeq(ctx.config.home, ctx.payload.session_id, 1),\n" +
+      "            0,\n" +
+      "          ),",
+    to: "          seqAt(null, 0),",
+    test: `${CONNECTOR}/test/hook-seq.test.ts`,
+    because:
+      "every commit.observed on every host lands with no position, and the " +
+      "reason it carries names a connector too old for the field — about the " +
+      "one connector that has it",
+  },
+  {
+    // Found by review: the sentence said the engine positions an edit "never
+    // from the pending row that announces it", and the engine does exactly
+    // that — test/announce-position.test.ts pins what it really does.
+    label: "the ACP manifest claims a position the engine never takes",
+    file: `${ACP}/src/capabilities.ts`,
+    from:
+      "and the engine positions an edit on the first wire row that names its file — usually the tool_call row that announces it, while the tool is still pending — so that position can come BEFORE the edit and bounds it in neither direction",
+    to: "and the engine positions an edit only from the tool_call UPDATE that reports it, never from the pending row that announces it, so an edit's position is an upper bound",
+    test: `${ACP}/test/announce-position.test.ts`,
+    because:
+      "FALSE ASSURANCE: doctor tells an ACP user their edit positions are " +
+      "upper bounds, the one reading under which a one-sided happens-before " +
+      "answer would be sound — about positions taken before the edit existed",
+  },
+  {
+    // A refusal may only send a reader to a surface that can answer it.
+    // Doctor's ACP gate reads the log directory for file NAMES and never a
+    // byte of their content, so it cannot name a skip reason and never could.
+    label: "a refusal names a surface that cannot answer it",
+    file: `${ACP}/src/capabilities.ts`,
+    from:
+      "the proxy's own log for that run (`~/.crosscheck/logs/acp-<pid>.log`) carries an `inject skip why=<reason>` line",
+    to: "`crosscheck doctor` names which of the documented skip reasons applied and the proxy log carries an inject skip why=<reason> line",
+    test: `${ACP}/test/derive-doctor.test.ts`,
+    because:
+      "a user whose client sent mcpServers as an OBJECT is sent to the one " +
+      "surface that cannot tell a client-shape problem from a broken " +
+      "install, from --no-inject, or from a launcher refusal",
+  },
+  {
+    // Two of the nine canonical kinds are projected by nobody, and they are
+    // the two AT-4 is about. Rule 2 of the capability registry: an absent
+    // capability is a SENTENCE, not an omitted field.
+    label: "two kinds are missing on every host and named on one",
+    file: `${CURSOR}/src/capabilities.ts`,
+    from: "    UNPROJECTED_LEDGER_KINDS_REFUSAL,\n",
+    to: "",
+    test: `${CORE}/test/derive-capability-registry.test.ts`,
+    because:
+      "a Cursor developer's set_intent and its amendment reach no event row " +
+      "on any host, `doctor` says nothing about it, and the silence reads " +
+      "exactly like an install that works",
+  },
+  {
+    // The two refusals have OPPOSITE remedies — wait, versus close one of the
+    // two sessions — and only this call site knows which one it is refusing.
+    label: "two refusals with opposite remedies share one word",
+    file: `${CORE}/src/mcp/tools/shared.ts`,
+    from: "    ? AMBIGUOUS_SESSION\n",
+    to: "    ? ALLOCATION_FAILED\n",
+    test: `${CORE}/test/mcp-seq.test.ts`,
+    because:
+      "a developer whose worktree holds two live agents is told this machine " +
+      "tried and could not, whose remedy is to wait for a busy lock to clear " +
+      "— and nothing clears until one of the two sessions ends",
+  },
+  {
+    // ABSENCE_PRIORITY is ordered by how much a reason tells a reader to DO,
+    // and the ambiguous one names a person and an action where the other one
+    // names nothing, because it resolves itself.
+    label: "the refusal a person must act on is printed last",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '  "ambiguous_session_assignment",\n  "allocation_failed",',
+    to: '  "allocation_failed",',
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "a session holding both refusals reports the one that clears on its " +
+      "own, so the worktree with two live agents reads as a transient lock " +
+      "and nobody is ever told to close one of them",
+  },
+  {
+    // D1's refinement: the withheld state is a VALUE, not a missing field.
+    // A caller gating on `known` must never be handed a null that says it is.
+    label: "a withheld position reports itself as known",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '    ? { seq: null, status: "indeterminate", reason: event.seqReason }',
+    to: '    ? { seq: null, status: "known", reason: event.seqReason }',
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "every consumer that asks whether a position is known is told yes about " +
+      "a null, so an explanation whose position was withheld because two " +
+      "agents share a worktree is compared as though it had one",
+  },
+  {
+    // The gate is only ever asked about two events that EXIST, so it is given
+    // no vocabulary for absence. "We cannot tell when it was written" excuses
+    // a developer; "nothing was ever written" accuses one.
+    label: "the order gate gains a word that accuses",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '\n  "position_indeterminate",',
+    to: '\n  "absent",',
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "a consumer handed the one refusal that means a position was WITHHELD " +
+      "reads a word that means no explanation was ever written, and D1's " +
+      "whole cost — a refused position rather than a guessed one — buys a " +
+      "false accusation instead of a silence",
+  },
+  {
+    // An ABSENT seq and a REFUSED one are different facts, and the wire enum's
+    // own header forbids confounding them. This line was producing the
+    // confound the header sits above.
+    label: "a position withheld by design is reported as an old connector",
+    file: `${CORE}/src/capture/records.ts`,
+    from: "    ...(losesItsPosition ? { seq: FOREIGN_SESSION_DELIVERY } : {}),",
+    to: "    ...(losesItsPosition ? { seq: undefined } : {}),",
+    test: `${CORE}/test/seq-flush-rewrite.test.ts`,
+    because:
+      "every record an offline backlog delivers through a successor session " +
+      "is filed as a connector too old to carry a position, so the one " +
+      "instrumentation number that says how much of the fleet predates the " +
+      "field counts machines that are running the current build",
+  },
+  {
+    // The two order failures a connector cannot see from where it stands.
+    // Non-negotiable #4: every error path is visible in status or doctor.
+    label: "the hub counts a broken epoch and prints it nowhere",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    checkEventSeq(liveStates.states, brokenOrders),",
+    to: "    checkEventSeq(liveStates.states, null),",
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "a session whose whole causal order is broken — every `declared " +
+      "before` question about it refused, including the half that was " +
+      "ordered correctly — reads as a healthy machine on the one surface " +
+      "that describes this machine",
+  },
+  {
+    // The hub half of the same line: only the BROKEN orders travel, so the
+    // response says nothing about healthy work and a reader is told only what
+    // needs acting on.
+    label: "the order route answers about the sessions that are fine",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '    .filter((order) => order.state === "broken");',
+    to: '    .filter((order) => order.state === "usable");',
+    test: `${CLI}/test/seq-doctor-hub.test.ts`,
+    because:
+      "doctor is handed every healthy session and no broken one, so the line " +
+      "WARNs on machines that are fine and stays silent on the one whose " +
+      "whole causal order is gone",
+  },
+  {
+    // The gate's first question is about the SESSION, and a session with no
+    // positions at all is unusable for the same reason a broken one is —
+    // which is why one name covers both and the session's own reason, carried
+    // beside it, is what tells them apart.
+    label: "a session with no order is judged event by event",
+    file: `${SERVER}/src/services/session-order.ts`,
+    from: '  if (order.state !== "usable") {\n    return indeterminate("session_order_unusable");',
+    to: '  if (order.state === "broken") {\n    return indeterminate("session_order_unusable");',
+    test: `${SERVER}/test/session-order.test.ts`,
+    because:
+      "a connector from before this field has every comparison refused for " +
+      "`position_indeterminate`, which points a reader at the two events " +
+      "rather than at the install that never positioned anything",
+  },
+  {
+    // Coverage is FIVE ROWS, always. Dropping the rungs that cannot exist
+    // reads as tidying — the rows carry no data — and it is the one edit that
+    // turns "this rung cannot exist here" back into the silent absence AT-10
+    // forbids: a reader seeing four rows cannot tell a refusal from an
+    // oversight.
+    label: "a rung that cannot exist is dropped instead of refused",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    sources: [agentEvent, git, ...REFUSED_RUNGS],",
+    to: '    sources: [agentEvent, git, ...REFUSED_RUNGS].filter((s) => s.state !== "unavailable"),',
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the record stops being five rows, every renderer that walks it by " +
+      "source finds nothing where CI should be, and an absent row is exactly " +
+      "the state the enum exists to make impossible",
+  },
+  {
+    // The difference between "we have no CI rung" and "we have one and it
+    // said nothing" is the difference between a refusal and a pending answer.
+    // `unknown` reads as the second, so a reader waits for data no code path
+    // on main will ever produce.
+    label: "a rung that cannot exist reads as one that might",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: '  sourceRecord("ci", "unavailable", "no_emitter"),',
+    to: '  sourceRecord("ci", "unknown", "no_emitter"),',
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "doctor stops printing the CI refusal as a refusal, and the verdict " +
+      "layer treats a rung nobody built as a rung that has not reported yet",
+  },
+  {
+    // A SessionEnd is a fact the session reported; a reap is the hub's guess
+    // after six hours of silence, and db/schema.ts:145-152 keeps the two
+    // apart precisely because "an inference has to be revocable". Read as one
+    // thing, a killed terminal becomes a session watched to its end.
+    label: "a reaped end is read as a clean end",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  sql`(${table.reapedAt} is not null or (${table.endedAt} is null and ${table.lastHeartbeatAt} <= ${cutoff}))`;",
+    to: "  sql`((${table.endedAt} is null and ${table.lastHeartbeatAt} <= ${cutoff}))`;",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "every repo whose sessions the reaper closed reports agent_event " +
+      "complete, and the verdict layer names people over a window nobody " +
+      "was reporting through",
+  },
+  {
+    // services/absences.ts:148 filters stale evidence out of its OWN query,
+    // so a windowed aggregate collapses "the archive stopped being refreshed"
+    // and "there is no archive" into one zero-row answer. The git rung needs
+    // the unwindowed one to tell them apart.
+    label: "stale commit evidence is read as no evidence at all",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "    .where(eq(commitEvidence.repo, repo));",
+    to: "    .where(and(eq(commitEvidence.repo, repo), gt(commitEvidence.collectedAt, new Date(now.getTime() - ABSENCE_EVIDENCE_MAX_AGE_DAYS * MS_PER_DAY))));",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "a repo nobody has collected evidence for and a repo whose evidence is " +
+      "a week stale report the same thing, and the second one silently loses " +
+      "the gap it is the whole point of this rung to name",
+  },
+  {
+    // PR #50's word collision, as a guard rather than a comment.
+    // GitTouchesOutcome.unavailable means "git did not answer", which is
+    // coverage `unknown`. Coverage `unavailable` means the rung cannot exist,
+    // which is never true of git.
+    label: "a git rung nobody reported reads as a rung that cannot exist",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: '    return sourceRecord("git", "unknown", "no_commit_evidence");',
+    to: '    return sourceRecord("git", "unavailable", "no_commit_evidence");',
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "`unavailable` does not block judging by design, so a repo with no " +
+      "commit evidence at all becomes judgeable — the exact shape of AT-5's " +
+      "false accusation",
+  },
+  {
+    // `listAbsences` returns at most ABSENCE_MAX_EVIDENCE_ROWS rows ordered
+    // `latest_commit_at DESC`, so the rows it drops are the STALEST
+    // committers — the population the absence check exists to find. This
+    // mutation hands the census the listing's own cut back, which is the
+    // shape the git rung shipped with until it was measured.
+    label: "a cut listing of absentees is read as proof nobody is absent",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "      gaps: sql`count(*) filter (where ${isGap})`,",
+    to: "      gaps: sql`count(*) filter (where ${isGap} and ${commitEvidence.latestCommitAt} >= (select min(bounded.latest_commit_at) from (select latest_commit_at from commit_evidence where repo = ${repo} order by latest_commit_at desc limit ${ABSENCE_MAX_EVIDENCE_ROWS}) bounded))`,",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "a repo with more committing addresses than the evidence bound reads " +
+      "git complete and isJudgeable true while authors nobody matched sit " +
+      "past the cut — AT-5's failure condition reached by team size",
+  },
+  {
+    // "Observation has been unreliable since at least here" is a LOWER
+    // BOUND. Naming the newest absentee instead of the earliest keeps the
+    // sentence and moves the instant days later, always in the reassuring
+    // direction, which is the one direction a lower bound may not move.
+    label: "the gap instant names the newest absentee, not the earliest",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "      earliestCommitAt: sql`min(${commitEvidence.latestCommitAt}) filter (where ${isGap})`,",
+    to: "      earliestCommitAt: sql`max(${commitEvidence.latestCommitAt}) filter (where ${isGap})`,",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the briefing's one uncuttable line tells a reader the archive has " +
+      "been unreliable since hours ago when it has been unreliable for days, " +
+      "and that instant is the whole actionable payload of AT-1's sentence",
+  },
+  {
+    // The gap predicate is spelled twice now — JS over the bounded listing,
+    // SQL over the unbounded census — and the grace window is the half a
+    // reader is least likely to keep in step. Under both caps the listing IS
+    // a census, so the two must be the same answer or one has drifted.
+    label: "the grace the listing keeps silent is not the gap coverage counts",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "* 1000) > ${graceMs})`;",
+    to: "* 1000) > 0)`;",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "every ordinary commit-after-session becomes a coverage gap, so git " +
+      "reads incomplete on a healthy repo and the caveat fires on answers " +
+      "the absence listing itself is silent about",
+  },
+  {
+    // A subquery correlated to the outer session row is re-executed once per
+    // session in the window, and PGlite has no background workers, so
+    // autovacuum never fires, nothing runs ANALYZE, and `reltuples` stays -1
+    // for the life of the hub: the nested loop is the PERMANENT plan, not a
+    // cold-start artefact.
+    label: "a scoped read rescans every session once per session",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "  return sql`(${inArray(agentSessions.id, touched)} or ${inArray(agentSessions.id, unreported)})`;",
+    to: "  return sql`(exists (select 1 from ${workContexts} join ${workContextTargets} on ${workContextTargets.workContextId} = ${workContexts.id} where ${workContexts.sessionId} = ${agentSessions.id} and ${workContextTargets.kind} = 'file' and ${inArray(workContextTargets.value, [...paths])}) or (${gapCondition(agentSessions, cutoff)} and not ${reportedAnyFileTarget(agentSessions.id)}))`;",
+    test: `${SERVER}/test/coverage-measurement.test.ts`,
+    because:
+      "measured on a 200-developer corpus the scoped read goes from 10 ms " +
+      "to 536 ms, past the connector's 400 ms per-request timeout — and a " +
+      "timed-out GET reaches the connector as nothing, which §4 then renders " +
+      "as `Coverage unknown` about a hub that answered",
+  },
+  {
+    // The opposite choice for the opposite reason: the census correlates on
+    // (developer_id, repo) because an index serves exactly that shape in one
+    // probe per evidence row. A grouped subquery joined in is re-evaluated
+    // per row with no statistics to stop it.
+    label: "the git census joins a grouped scan instead of probing the index",
+    file: `${SERVER}/src/services/absences.ts`,
+    from: "  const lastSessionAt = sql`(select max(${agentSessions.lastHeartbeatAt}) from ${agentSessions} where ${agentSessions.developerId} = ${developers.id} and ${agentSessions.repo} = ${repo})`;",
+    to: '  const grouped = deps.db.select({ developerId: agentSessions.developerId, lastAt: sql`max(${agentSessions.lastHeartbeatAt})`.as("last_at") }).from(agentSessions).where(eq(agentSessions.repo, repo)).groupBy(agentSessions.developerId).as("last_session");\n  const lastSessionAt = sql`(select ${grouped.lastAt} from ${grouped} where ${grouped.developerId} = ${developers.id})`;',
+    test: `${SERVER}/test/coverage-measurement.test.ts`,
+    because:
+      "every unscoped coverage read — the SessionStart briefing's and " +
+      "`crosscheck status`' — goes from 8 ms to 226 ms on the same corpus, " +
+      "for a rung that answers one question about 260 rows",
+  },
+  {
+    // A scope may narrow by what was OBSERVED and never by what was not. A
+    // session reaped before it reported a work context has no target row, so
+    // a bare EXISTS answers "it did not touch these files" to a question the
+    // database cannot answer at all.
+    label: "a session that reported nothing is scoped out of every question",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: "        sql`not ${reportedAnyFileTarget(scopeSessions.id)}`,",
+    to: "        sql`${reportedAnyFileTarget(scopeSessions.id)}`,",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the sessions whose observation failed hardest vanish from the scoped " +
+      "read, so agent_event reads complete and isJudgeable true on a repo " +
+      "full of reaped sessions — measured at the trial's shape, 23 of 40 " +
+      "pinned surfaces judgeable where none should be",
+  },
+  {
+    // The over-correction on the same arm: admit every session with no file
+    // target, not only the ones whose report was cut short. A clean end IS a
+    // complete report, so a session that touched nothing must still leave
+    // the scope or `unknown` collapses into `complete`.
+    label: "a session that reported its end is read as one that reported nothing",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from:
+      "        gapCondition(scopeSessions, cutoff),\n" +
+      "        sql`not ${reportedAnyFileTarget(scopeSessions.id)}`,",
+    to: "        sql`not ${reportedAnyFileTarget(scopeSessions.id)}`,",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "a surface nobody ever worked on reads `complete` instead of " +
+      "`unknown`, so judging becomes reachable over files no session was " +
+      "ever observed touching",
+  },
+  {
+    // The term this spec's own first draft was missing. Without it a verdict
+    // is reachable while a lane the system watches is still mid-flight.
+    label: "a verdict is reachable while a watched lane is mid-flight",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: `  stateOf(record, "git") === "complete" &&
+  record.sources.every((row) => row.state !== "incomplete");`,
+    to: '  stateOf(record, "git") === "complete";',
+    test: `${SERVER}/test/coverage-judgeable.test.ts`,
+    because:
+      "the moment CI ingestion lands, a repo with a half-reported lane is " +
+      "judgeable again and `no_touch` becomes UNATTRIBUTED over a gap the " +
+      "hub can see — AT-5's failure condition, word for word",
+  },
+  {
+    // The opposite over-correction: treat a rung that CANNOT EXIST as a gap
+    // and no verdict is ever reachable, which makes the predicate useless and
+    // invites the next author to delete it.
+    label: "a rung nobody built blocks every verdict for ever",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: 'record.sources.every((row) => row.state !== "incomplete");',
+    to: 'record.sources.every((row) => row.state === "complete");',
+    test: `${SERVER}/test/coverage-judgeable.test.ts`,
+    because:
+      "runtime is unavailable for the whole of 1.0, so every record on every " +
+      "repo becomes unjudgeable and INDETERMINATE stops meaning anything",
+  },
+  {
+    // The parse rule that INVERTS the tree's tolerant-parse convention. Every
+    // other optional block means "nothing is claimed"; for coverage, silence
+    // reads as "everything was observed", which is the lie the record exists
+    // to stop. An older or unreachable hub must read as five unknowns.
+    label: "an unanswered hub is read as a hub that watched everything",
+    file: `${CORE}/src/http/coverage.ts`,
+    from: `const unknownRow = (source: CoverageSource): CoverageSourceRecord => ({
+  source,
+  state: "unknown",`,
+    to: `const unknownRow = (source: CoverageSource): CoverageSourceRecord => ({
+  source,
+  state: "complete",`,
+    test: `${CORE}/test/coverage-wire.test.ts`,
+    because:
+      "every install pointed at a hub that predates coverage reports five " +
+      "complete rungs, isJudgeable says yes, and the verdict layer names " +
+      "people on the strength of a field the hub never sent",
+  },
+  {
+    // A caveat that can be cut is a caveat that lies: the briefing it was cut
+    // from still reads as complete. Sections are cuttable by construction —
+    // appendSection drops a whole one when the budget is spent — so the line
+    // is spliced beside the header where the fitter cannot reach it.
+    label: "a briefing says what the team knows, not how far it saw",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: `  const lines = sections.reduce<readonly string[]>(appendSection, [
+    header,
+    ...coverageLines,
+  ]);`,
+    to: "  const lines = sections.reduce<readonly string[]>(appendSection, [header]);",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "the one SessionStart line that says how far the rest can be trusted " +
+      "disappears exactly when the briefing is busiest, which is when a " +
+      "reader is least likely to notice it is gone",
+  },
+  {
+    // 00 §8.5 bans it by name and this is the shape it would arrive in: a
+    // ratio of complete rungs, printed beside the head word, collapsing five
+    // different answers into one reassuring figure.
+    label: "a percentage collapses the five rows on the way to a reader",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  const head = headOf(record);",
+    to: '  const head = `${headOf(record)} (${String(Math.round((100 * record.sources.filter((row) => row.state === "complete").length) / record.sources.length))}%)`;',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "`coverage = 87%` is the exact lie the per-source record exists to " +
+      "stop, and a ratio on a surface is how it gets back in",
+  },
+  {
+    // Nick's decision 4, which is the ONE place this spec bends an AT — so
+    // the bend has a guard rather than a comment. Annotating on `unknown`
+    // puts a caveat on every answer of every fresh install, which is how
+    // caveats get ignored.
+    label: "a caveat on every answer teaches people to ignore caveats",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: '  record.sources.some((row) => row.state === "incomplete")',
+    to: '  record.sources.some((row) => row.state !== "complete")',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "runtime is unavailable on every install for the whole of 1.0, so the " +
+      "note would render on literally every briefing and stop being read",
+  },
+  {
+    // The defect 03 §1 names at one line. This file already knows "nothing
+    // matched" is the expensive direction to be wrong in — renderUnusableQuery
+    // says so — and drew the distinction for a query it could not tokenise
+    // and a filter it could not resolve, but not for an archive it could not
+    // see.
+    label: "an empty search answers under a gap as if it had looked",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: `  const qualifier = coverageQualifier(options.coverage);
+  return \`\${sentence}\${filtersNote}\${qualifier === null ? "" : \`\\n\${qualifier}\`}\`;`,
+    to: "  return `${sentence}${filtersNote}`;",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "an empty result carries no statement of how far the archive reached, " +
+      "so a model reads it as `nobody has worked on this` and goes off to " +
+      "redo the work — AT-1's failure condition, live on main",
+  },
+  {
+    // The rule is as WIDE as §5.1 and no wider. Rendering on `complete` too
+    // puts a 66-character sentence on every zero-hit search of every healthy
+    // repo, and a caveat that always says the same thing is how the one that
+    // says `incomplete` gets skipped with the rest.
+    label: "a caveat on every empty answer teaches people to ignore caveats",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: `  return mustQualifyEmptyAnswer(record)
+    ? coverageClause(record, view?.now ?? EPOCH)
+    : null;`,
+    to: "  return coverageClause(record, view?.now ?? EPOCH);",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "zero-hit searches are the ordinary case on any repo whose archive has " +
+      "not covered the topic yet, so on a healthy install every coverage " +
+      "line a person ever reads states the default",
+  },
+  {
+    // The diagnosis half of the same rule: a claim-less tree is the ordinary
+    // state of a work context nobody has published to yet.
+    label: "a watched tree is caveated for having no claims yet",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: `  const qualifier =
+    emitsEmptyPhrasing && gapped ? [coverageClause(diagnosis.coverage, now)] : [];`,
+    to: `  const qualifier = emitsEmptyPhrasing
+    ? [coverageClause(diagnosis.coverage, now)]
+    : [];`,
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "every `get_diagnosis` on a tree with no claims carries a caveat whose " +
+      "body says nothing is missing, on a repo where nothing is",
+  },
+  {
+    // The other half of the same sentence. "No work context matched" is a
+    // claim about the REPOSITORY and is only true if the repository was
+    // watched; under a gap it has to narrow to a claim about the ARCHIVE.
+    label: "an empty answer claims the repository, not the archive",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  const sentence = mustQualifyEmptyAnswer(record)",
+    to: "  const sentence = false && mustQualifyEmptyAnswer(record)",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "the unqualified sentence comes back over a known gap and the clause " +
+      "beside it reads as a footnote rather than as the correction it is",
+  },
+  {
+    // The diagnosis carries TWO empty-result phrasings §5.1 binds by name,
+    // and NO_TARGETS is the expensive one: a reader told "no targets were
+    // captured" concludes there is no overlap with the file they are about
+    // to edit, and acts on it.
+    label: "a tree says nothing was captured when nothing was watched",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  const gapped = mustQualifyEmptyAnswer(diagnosis.coverage);",
+    to: "  const gapped = false;",
+    test: `${CORE}/test/coverage-empty-answers.test.ts`,
+    because:
+      "both empty sentences go back to claiming the WORK rather than the " +
+      "archive, so an unwatched session reads as a session that touched " +
+      "nothing and recorded nothing",
+  },
+  {
+    // AT-9's "fails if" is that a person has to run doctor to learn an answer
+    // rested on partial observation. `crosscheck status` is the command they
+    // run instead, and an omitted line there reads as all clear.
+    label: "status states the team and not how far it was watched",
+    file: `${CLI}/src/cli/status.ts`,
+    // Same anchor text as the `says the word coverage twice` mutation below,
+    // and a different defect: that one puts a key back, this one takes the
+    // whole line away unless something is already known to be wrong.
+    from: `      absences.ok
+        ? coverageClause(absences.data.coverage, now)
+        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),`,
+    to: `      ...(absences.ok && absences.data.coverage.sources.some((row) => row.state === "incomplete")
+        ? [coverageClause(absences.data.coverage, now)]
+        : []),`,
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "every install pointed at a hub that reports no coverage prints no " +
+      "coverage line at all, which is the one state a reader would read as " +
+      "`nothing to report` rather than `we cannot tell`",
+  },
+  {
+    // The failure kind is in hand at the call site and the same command's
+    // pins line and doctor's own check both branch on it. Collapsed, a
+    // refused connection wears a sentence about what this HUB reports —
+    // a claim about its version produced from a network error.
+    label: "an unreachable hub reads as a hub that reports no coverage",
+    file: `${CLI}/src/cli/status.ts`,
+    from: `        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),`,
+    to: "        : coverageClause(UNKNOWN_COVERAGE, now),",
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "status tells a person to upgrade a hub that is simply down, two " +
+      "lines above its own `(hub unreachable)`, on the one surface AT-9 " +
+      "exists to make self-sufficient",
+  },
+  {
+    // The clause is a SENTENCE that names its own subject. A key in front of
+    // it made this the only line in `crosscheck status` to say its subject
+    // twice, and the only one carrying two colons.
+    label: "the status line says the word coverage twice",
+    file: `${CLI}/src/cli/status.ts`,
+    from: `      absences.ok
+        ? coverageClause(absences.data.coverage, now)
+        : absences.kind === "network"
+          ? HUB_UNREACHABLE_CLAUSE
+          : coverageClause(UNKNOWN_COVERAGE, now),`,
+    to: '      `coverage: ${absences.ok ? coverageClause(absences.data.coverage, now) : absences.kind === "network" ? HUB_UNREACHABLE_CLAUSE : coverageClause(UNKNOWN_COVERAGE, now)}`,',
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "the briefing prints this sentence unprefixed and status printed it " +
+      "with a key, so one fact had two spellings on the two surfaces a " +
+      "person reads side by side",
+  },
+  {
+    // §3.2a lets a caller narrow the question; the hub's record says so in
+    // `scope` and in `no_session_in_window`. A renderer that drops the scope
+    // reports a narrow question's answer as a repo-wide fact.
+    label: "a scoped record is read out as a repo-wide one",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `const scopeSubject = (record: CoverageRecord): string =>
+  (record.scope?.paths?.length ?? 0) > 0
+    ? "on these files"
+    : "on this repo";`,
+    to: 'const scopeSubject = (_record: CoverageRecord): string => "on this repo";',
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "a pin-lane answer about one file says `no agent session reported on " +
+      "this repo`, so a model concludes the archive is empty and re-derives " +
+      "work that is recorded and hours old",
+  },
+  {
+    // The window half of the same defect: a one-hour search whose answer is
+    // stated about all fourteen days.
+    label: "a one-hour question is answered about the whole window",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `      const age = scopeWindow(record, now);
+      return age === null
+        ? \`no agent session reported \${subject}\`
+        : \`no agent session reported \${subject} in the last \${age}\`;`,
+    to: "      return `no agent session reported ${subject}`;",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "`search_related_work({since: \"1h\"})` on a watched repo renders " +
+      "`Coverage unknown` with no window in the sentence, which is the " +
+      "caveat-on-every-answer noise §5.1 exists to prevent",
+  },
+  {
+    // `headOf` reads all five rungs; the body read two. So ci, runtime and
+    // human_edit could each turn the head to "incomplete" over a body saying
+    // nothing was missing — as the FIRST, uncuttable line of every
+    // SessionStart briefing, for as long as the gap lasted.
+    label: "a gap on a lane the sentence cannot name reads as no gap",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `  const reserved = record.sources
+    .filter((row) => row.source !== "agent_event" && row.source !== "git")
+    .map(reservedFragment);`,
+    to: "  const reserved: (string | null)[] = [];",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "a CI lane mid-flight renders `Coverage incomplete: agent sessions " +
+      "reported; git evidence reported.` — a caveat a reader cannot " +
+      "reconcile, which is how the next real one gets skipped",
+  },
+  {
+    // Filter `unavailable` out, then ask `.some()` twice over what is left:
+    // over an EMPTY set both answer false and the fall-through says
+    // "Coverage complete" on the strength of no evidence at all.
+    label: "a record with no readable rung at all reports a pass",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: `  if (readable.length === 0) {
+    return "Coverage unknown";
+  }
+`,
+    to: "",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "the empty-answer rule fires on that same record, so one answer " +
+      "carries `Coverage complete.` beside a sentence saying observation " +
+      "was partial — AT-10's fake pass, in two adjacent lines",
+  },
+  {
+    // The only line in the briefing that prints a machine timestamp, beside
+    // four relative ages — and it printed both conventions inside one
+    // sentence, so the reader converted by hand to compare them.
+    label: "an instant is printed with no way to tell how old it is",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "        ages ? agedSince(row.gapSince, now) : null,",
+    to: "        null,",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "fourteen days of briefings after ONE over-fired reap carry the same " +
+      "instant, and only the age says the fact is ageing rather than " +
+      "recurring",
+  },
+  {
+    // The age is decoration; the rung is the caveat. Both rungs gapped with
+    // an instant each is the longest shape this sentence carries, and two
+    // ages cost 20 characters against a 160 bound.
+    label: "an age is bought with somebody else's gap",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: "  return fit(head, holdsEvery(head, aged) ? aged : fragmentsOf(record, now, false));",
+    to: "  return fit(head, aged);",
+    test: `${CORE}/test/coverage-render.test.ts`,
+    because:
+      "`fit` drops a whole fragment rather than half a word, so the git gap " +
+      "vanishes from a sentence whose head still says incomplete — on GET " +
+      "/api/suspect, the answer that names a person",
+  },
+  {
+    // The sentence for a record this client cannot READ must not name the
+    // hub's VERSION: the same five `hub_did_not_report` rows come from a hub
+    // too old to send coverage, a hub NEWER than this client, a body that
+    // failed to parse, and an HTTP error.
+    label: "a report this client cannot read is blamed on the hub's age",
+    file: `${CORE}/src/coverage/render.ts`,
+    from: 'const HUB_SILENT = "Coverage unknown: no coverage report this client can read.";',
+    to: 'const HUB_SILENT = "Coverage unknown: this hub does not report coverage.";',
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "a hub one version AHEAD of this client — whose reasons its enum does " +
+      "not know yet — is reported as one that predates coverage, and the " +
+      "reader upgrades the wrong end",
+  },
+  {
+    // COV-5. A rung that cannot exist is only honest if somebody can read the
+    // refusal; one nobody sees is the silent absence AT-10 forbids by name.
+    label: "the rungs that cannot exist are refused where nobody looks",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: `  const refusals = record.sources
+    .filter((row) => row.state === "unavailable")`,
+    to: `  const refusals = record.sources
+    .filter(() => false)`,
+    test: `${CLI}/test/coverage-cli.test.ts`,
+    because:
+      "CI, runtime and human_edit vanish from doctor entirely, so a reader " +
+      "cannot tell a rung this product refuses to build from one that is " +
+      "merely broken on their machine",
+  },
+  {
+    // §3.2a. Unscoped, `complete` needs every session on the whole repo over
+    // the whole window to have reported cleanly, and the tree's own
+    // measurement says that is the normal state rather than the exception —
+    // 104 of 127 trial sessions never closed. One abandoned session anywhere
+    // in a fortnight would make every verdict INDETERMINATE for ever.
+    label: "a gap somewhere else is read as a gap about this surface",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: `        ...(paths.length === 0
+          ? []
+          : [touchedScope(deps, repo, since, cutoff, paths)]),`,
+    to: "        ...[],",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "every scoped question answers repo-wide, so a pin nobody stopped " +
+      "watching still reads incomplete and UNATTRIBUTED becomes unreachable " +
+      "in the field — which is the outcome the scope exists to prevent",
+  },
+  {
+    // The caveat's LIFETIME. A reap is revocable only by a record from the
+    // session it closed (services/records.ts reviveReapedSession), and that
+    // record never arrives for a terminal that went away — so the window is
+    // the only thing that ever ends the sentence it produces.
+    label: "a gap nobody can act on is reported for ever",
+    file: `${SERVER}/src/services/coverage.ts`,
+    from: `  const ceiling = new Date(
+    now.getTime() - COVERAGE_SESSION_WINDOW_DAYS * MS_PER_DAY,
+  );`,
+    to: "  const ceiling = new Date(0);",
+    test: `${CORE}/test/coverage-fire-rate.test.ts`,
+    because:
+      "one afternoon of reading and planning puts the FIRST, UNCUTTABLE line " +
+      "of every SessionStart briefing in `incomplete` permanently, which is " +
+      "how a caveat stops being read",
+  },
+  {
+    // The surface where an unqualified answer costs a name. 04 renders this
+    // record on the suspect verdict and gates UNATTRIBUTED on it.
+    label: "a ranking names a session with no statement of what was watched",
+    file: `${SERVER}/src/routes/suspect.ts`,
+    from: "    return ok(c, { ...view, coverage });",
+    to: "    return ok(c, { ...view });",
+    test: `${SERVER}/test/coverage.test.ts`,
+    because:
+      "the one surface whose answer is a person carries no coverage block, " +
+      "so the verdict layer reads five unknowns and every suspect answer " +
+      "becomes either silent or unjudgeable",
+  },
+  {
+    // fitHint drops from the TAIL and returns "" below two kept lines, so a
+    // clause appended blindly either goes first (harmless) or takes the hint
+    // with it — a silence nobody asked for, on the one surface whose whole
+    // job is to say something.
+    label: "the coverage caveat costs the hint it was meant to qualify",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "  return joined.length <= MAX_HINT_TEXT_LENGTH ? joined : hint;",
+    to: "  return joined;",
+    test: `${CORE}/test/coverage-hints.test.ts`,
+    because:
+      "a full-length hint plus the clause exceeds the wire cap, and the " +
+      "delivery the reader needed is truncated or dropped for a caveat that " +
+      "doctor and status already carry",
+  },
+  {
+    // The PreToolUse ask states what a teammate is doing; the note states how
+    // far the archive that claim came from reaches. Dropped, the ask reads as
+    // a complete picture of who is in the file.
+    label: "the ask reason states a teammate and not what was watched",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    ...(note === null ? [] : [note]),",
+    to: "    ...[],",
+    test: `${CORE}/test/coverage-hints.test.ts`,
+    because:
+      "the one surface that interrupts a tool call says nothing about the " +
+      "window it rests on, so a gap that hid a second teammate is invisible " +
+      "at exactly the moment somebody is deciding whether to edit",
+  },
+  {
+    // COV-9's own mutation, verbatim: register a surface that answers about
+    // what the team knows and consumes no record, WITHOUT touching the
+    // exempt list.
+    label: "a new answer surface skips the coverage record unnoticed",
+    file: `${CORE}/src/render-surfaces.ts`,
+    from: `  {
+    kind: "composite",
+    name: "mcp-tool-get-referee-brief",`,
+    to: `  {
+    kind: "composite",
+    name: "smuggled-answer-surface",
+    delivery: "pulled",
+    module: "src/mcp/tools/get-diagnosis.ts",
+    note: "answers about what the team knows and consumes no coverage record",
+  },
+  {
+    kind: "composite",
+    name: "mcp-tool-get-referee-brief",`,
+    test: `${CORE}/test/coverage-registry-walk.test.ts`,
+    because:
+      "AT-9's failure condition arrives one surface at a time, and nothing " +
+      "but this walk would notice a renderer that states what the team knows " +
+      "with no statement of how far it saw",
+  },
+  {
+    // The escape hatch may not be wider than the rule. Raising the cap is how
+    // every exemption list dies, so the cap is pinned by its own test rather
+    // than by a comment asking nicely.
+    label: "the exempt list grows wider than the rule it escapes",
+    file: `${CORE}/src/coverage/exempt-surfaces.ts`,
+    from: "export const COVERAGE_EXEMPT_SURFACES_MAX = 3;",
+    to: "export const COVERAGE_EXEMPT_SURFACES_MAX = 10;",
+    test: `${CORE}/test/coverage-registry-walk.test.ts`,
+    because:
+      "a cap raised to fit the next case is not a cap, and the walk becomes " +
+      "a list of surfaces somebody once exempted rather than a rule",
+  },
+  {
+    // The other way this rule dies: hollow out what it reaches. An empty
+    // response list means every surface is out of scope and the walk passes
+    // over a tree with no coverage anywhere.
+    label: "the walk is hollowed out until it reaches nothing",
+    file: `${CORE}/src/coverage/exempt-surfaces.ts`,
+    from: '  "SuspectView",\n];',
+    to: "];",
+    test: `${CORE}/test/coverage-registry-walk.test.ts`,
+    because:
+      "the walk still passes while reaching fewer surfaces every round, which " +
+      "is the failure mode a green test cannot distinguish from success",
+  },
+  {
+    // 1.0 spec 02 CCB-2 — the load-bearing rule, and the ONLY one of
+    // CCB-1..CCB-10 that shipped with no anchor at all. A second staleness
+    // definition was live in the tree while every other CCB test stayed
+    // green, because it was spelled `checkSolvedFileDrift`, typed
+    // `SolvedFileDrift`, and never mentioned `stale_at` — the string the
+    // other guard greps for.
+    label: "a claim's currency is measured on a clock again",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "  const range = `${observedAtCommit}..${defaultRef}`;",
+    to: "  const range = `--since=${observedAtCommit}`;",
+    test: `${CORE}/test/staleness-axis.test.ts`,
+    because:
+      "a feature branch merged into the default branch keeps its original " +
+      "committer dates, so a clock filter cannot see commits that ancestry " +
+      "can — and the clock's answer is the REASSURING one, so the wrong axis " +
+      "strengthens the conclusion instead of weakening it",
+  },
+  {
+    // 1.0 spec 02 CCB-1. The code axis of the substance gate: a claim whose
+    // observation point is unknown may not be presented as a current cause.
+    label: "a claim bound to no commit is injected as substance again",
+    file: `${CORE}/src/claim-validity.ts`,
+    from: `    validity.commitBinding !== "none" &&
+    !NON_CURRENT_VALIDITY_STATES.has(validity.state)`,
+    to: "    !NON_CURRENT_VALIDITY_STATES.has(validity.state)",
+    test: `${CORE}/test/claim-substance-gate.test.ts`,
+    because:
+      "unknown fails OPEN on the code axis: a claim nobody can ever " +
+      "revalidate, because there is no commit to revalidate it against, " +
+      "enters a teammate's prompt as a full body under full trust labels",
+  },
+  {
+    // 1.0 spec 02 CCB-7. The hub's one authoritative verdict, dropped.
+    label: "the substance gate stops reading the hub's validity verdict",
+    file: `${CORE}/src/claim-validity.ts`,
+    from: `    validity.commitBinding !== "none" &&
+    !NON_CURRENT_VALIDITY_STATES.has(validity.state)`,
+    to: '    validity.commitBinding !== "none"',
+    test: `${CORE}/test/claim-substance-gate.test.ts`,
+    because:
+      "a root cause recorded in April against a file rewritten in June is " +
+      "injected in July unqualified — AT-2's whole subject — and a hub " +
+      "forging a clean status past the superseding edge is believed",
+  },
+  {
+    // The connector-side status check spec 02 §5 asks to DELETE, kept as
+    // defence in depth. Anchored so "it changes nothing" stays testable.
+    label: "the forging-hub lock on a superseded status is deleted",
+    file: `${CORE}/src/hints/select.ts`,
+    from: '  claim.status !== "superseded" &&',
+    to: "",
+    test: `${CORE}/test/claim-substance-gate.test.ts`,
+    because:
+      "a hub asserting `status: superseded` beside a `current` validity is " +
+      "asserting two contradictory things, and the connector believes the " +
+      "half that puts a retracted claim back into the prompt lane",
+  },
+  {
+    // 1.0 spec 02 CCB-3. AT-2 requires the downgrade to NAME the commits.
+    label: "a downgrade says the code moved and names no commit",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "    touchingCommits: hashes.slice(0, MAX_CLAIM_TOUCHING_COMMITS),",
+    to: "    touchingCommits: [],",
+    test: `${CORE}/test/claim-drift.test.ts`,
+    because:
+      "AT-2 asks the downgrade to name the commits that caused it; a bare " +
+      "`changed` is the superstition it replaces, one axis over",
+  },
+  {
+    // 1.0 spec 02 CCB-5. A question git declined to answer is not an answer.
+    label: "a git call that failed is read as an untouched surface",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "  if (!listed.ok) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/claim-drift.test.ts`,
+    because:
+      "a shallow clone, a missing object or an exhausted deadline vouches " +
+      "`unchanged` for a surface nobody measured — the one direction §3.6 " +
+      "spends a second git call to avoid",
+  },
+  {
+    // 1.0 spec 02 CCB-9. A bound must not be spent at random.
+    label: "the revalidation bound is spent in whatever order the tree arrived",
+    file: `${CORE}/src/flows/claim-revalidation.ts`,
+    from: "  const ordered = [...byKey.values()].sort((a, b) => b.newestAt - a.newestAt);",
+    to: "  const ordered = [...byKey.values()];",
+    test: `${CORE}/test/claim-revalidation-pull.test.ts`,
+    because:
+      "capture-health's rule — a bound must not be spent at random — and a " +
+      "tree past the cap then measures whichever groups the hub happened to " +
+      "list first while reporting the same revalidated/total either way",
+  },
+  {
+    // 1.0 spec 02 CCB-10. The one rule without which AT-2's gate is an
+    // agent's to pull open: the UPSERT moves validity only toward less-current.
+    label: "a revalidation walks a stale claim back into the prompt lane",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "          setWhere: sql`${claimRevalidations.result} <> 'changed' OR excluded.result = 'changed'`,",
+    to: "          setWhere: sql`true`,",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "the developer bearer key sits in plaintext in ~/.crosscheck/config.json, " +
+      "so the agent that wrote a claim can report `unchanged` about its own " +
+      "claim, overwrite a `changed` reading and restore the substance lane",
+  },
+  {
+    // 1.0 spec 02 CCB-6. A verdict must not outlive the evidence it came from.
+    label: "a revalidation verdict outlives the reading it came from",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    // MOVED WITH THE CODE. The prune used to be a bare `.where(lt(...))`;
+    // fixing the retention finding wrapped it in an `and(...)` that also
+    // refuses to delete a `changed` row whose claim still exists. The anchor
+    // follows the cutoff comparison, which is the half this guard is about.
+    from: "          lt(claimRevalidations.revalidatedAt, retentionCutoff),",
+    to: "          lt(claimRevalidations.revalidatedAt, new Date(0)),",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a reading taken against a ref commit the repo left behind months ago " +
+      "keeps answering `current`, which is the stored-verdict defect derived " +
+      "state exists to prevent",
+  },
+  {
+    // 1.0 spec 02 CCB-4. The verdict comes from the measurement, not from
+    // the fact that one was taken.
+    label: "any reading at all is read as a downgrade",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: '  if (revalidation?.result === "changed") {',
+    to: "  if (revalidation !== undefined) {",
+    test: `${SERVER}/test/claim-validity.test.ts`,
+    because:
+      "an untouched surface reported `unchanged` reads `stale`, so the first " +
+      "pull of any tree demotes every claim in it and the gate everybody " +
+      "relies on stops distinguishing code that moved from code that did not",
+  },
+  {
+    // The kind carve-out behind `invalidated`. Without it every piece of
+    // negative knowledge is invalidated by its own natural status.
+    label: "a rejected approach is invalidated by its own status",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "  claim.kind !== REJECTION_IS_THE_FINDING_KIND;",
+    to: "  true;",
+    test: `${SERVER}/test/claim-validity.test.ts`,
+    because:
+      "`rejected` is a rejected_approach's natural status, so DESIGN.md §4's " +
+      "privileged negative lane reads `invalidated` from the moment it is " +
+      "written — never stale, never naming the commits that rewrote its code",
+  },
+  {
+    // 1.0 spec 02 §3.1's third branch. base_commit is `text NOT NULL` on the
+    // wire and this repo's own CLI stores a label in it.
+    label: "a session base commit that is not a sha is bound to anyway",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "  return isBindableCommit(baseCommit)",
+    to: "  return baseCommit.length > 0",
+    test: `${SERVER}/test/claim-binding-ingest.test.ts`,
+    because:
+      "`crosscheck conference` registers its session with the literal " +
+      "\"conference\", and the NO_COMMIT_SHA placeholder is seven hex " +
+      "characters, so both reach git as an object name and read as bound",
+  },
+  {
+    // 1.0 spec 02 §8.5 as a doctor refusal: a rung the product genuinely
+    // cannot serve is NAMED, never left as a clean report.
+    label: "a claim nobody can ever revalidate reads as health",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  if (summary.unbound === 0) {",
+    to: "  if (true) {",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "a team whose sessions register no usable commit reads 24 green lines " +
+      "while not one thing they know can ever be judged current, which is " +
+      "AT-10's silent absence exactly",
+  },
+  {
+    // The old-hub / broken-hub split, which one branch would hide.
+    label: "a hub that broke is reported as a hub too old to know",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    return summary.status === HTTP_NOT_FOUND",
+    to: "    return true",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "\"not measured\" is a PASS, so a hub that is DOWN prints the sentence " +
+      "an older hub prints and a green meaning \"could not check\" is worse " +
+      "than no check at all (checkPins states the same rule)",
+  },
+  {
+    // The single untrusted slot on the new CLI surface.
+    label: "the hub's failure string reaches the terminal unsanitized",
+    file: `${CLI}/src/cli/revalidate.ts`,
+    from: "  `hub unreachable: ${bareUntrusted(message, MAX_HUB_MESSAGE_CHARS)} — ` +",
+    to: "  `hub unreachable: ${message} — ` +",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "`crosscheck revalidate` has exactly one slot a hub controls, and a " +
+      "hostile hub's error message then carries control characters and " +
+      "renderer structure straight into the reader's terminal",
+  },
+  {
+    // 1.0 spec 02 §5, the `briefing solved` row of its table. The SECOND
+    // unsolicited surface that asserts a claim body, and the one AT-2's gate
+    // did not reach until this commit.
+    label: "a stale root cause is asserted unasked at SessionStart",
+    file: `${CORE}/src/briefing/render.ts`,
+    from: "  if (!isAssertableValidity(entry.rootCauseValidity)) {",
+    to: "  if (false) {",
+    test: `${CORE}/test/briefing-solved.test.ts`,
+    because:
+      "a root cause recorded in April against a file rewritten in June is " +
+      "handed to a reader in July as the answer, under confidence and " +
+      "provenance labels, on the one surface nobody asked to see",
+  },
+  {
+    // The two counts doctor prints on DIFFERENT lines because their remedies
+    // are opposite.
+    label: "a claim that can never be checked is counted as merely unchecked",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "      unbound += 1;\n      continue;",
+    to: "      unbound += 1;",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "doctor then tells a team to run `crosscheck revalidate` on claims no " +
+      "revalidation can ever reach — a remedy nobody can act on, which is " +
+      "worse than naming no remedy at all",
+  },
+  {
+    // 1.0 spec 02 CCB-10. The downgrade-only rule fires on a CONFLICT, so a
+    // prune that removes the row first disables it entirely.
+    label: "retention deletes the measurement that made a claim stale",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from:
+      "          or(\n" +
+      "            ne(claimRevalidations.result, \"changed\"),",
+    to: "          or(\n            sql`true`,",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a `changed` row is the positive proof that a claim stopped describing " +
+      "the code, and deleting it returns the claim to `unknown` — which the " +
+      "substance gate ADMITS — so the deletion strengthens the claim's " +
+      "standing on a timer, whatever the code did",
+  },
+  {
+    // 1.0 spec 02, AT-2's first "fails if". `context_targets` is the DEFAULT
+    // basis and the cut keeps the alphabetically first 30 of up to 100, so a
+    // rewrite past the cut is invisible to every pull.
+    label: "a surface cut by the cap vouches for files nobody looked at",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "    return present.ok && present.stdout.trim().length > 0 && complete",
+    to: "    return present.ok && present.stdout.trim().length > 0",
+    test: `${CORE}/test/claim-drift.test.ts`,
+    because:
+      "`unchanged` asserts that nothing under the claim moved, and the paths " +
+      "past the cap were never handed to git — so the claim goes from " +
+      "`unknown` to `current` on evidence that was never gathered, and keeps " +
+      "the unsolicited substance lane about a file that was rewritten",
+  },
+  {
+    // 1.0 spec 02 CCB-3's mirror. The wire guarded only the direction a
+    // non-changed result naming commits; the reverse left an evidence-free
+    // downgrade permanent, because the downgrade-only rule refuses every
+    // honest `unchanged` after it.
+    label: "a downgrade naming no commit is accepted and cannot be undone",
+    file: `${SCHEMA}/src/claim-revalidation.ts`,
+    from: 'if (entry.result === "changed" && entry.touchingCommits.length === 0) {',
+    to: "if (false) {",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "one POST per claim permanently demotes a teammate's whole knowledge " +
+      "base out of the substance lane, under a sentence asserting commits it " +
+      "never names and that its own total says do not exist",
+  },
+  {
+    // 1.0 spec 02 CCB-5. `unchanged` is measured against whatever copy of the
+    // default branch this clone holds, and nothing on that path fetches.
+    label: "the currency sentence claims more than the reading measured",
+    file: `${CORE}/src/mcp/render.ts`,
+    // MOVED WITH THE CODE. Both branches gained `${measured}`, the clause that
+    // says when the only reading is the author's own. The mutation is
+    // unchanged in what it proves: collapsing the sentence to a claim about
+    // the world rather than about what was measured.
+    from: "      ? `${at}; unchanged as far as the default branch this clone holds${measured}`\n      : `${at}; unchanged up to ${against}, the default branch as this clone has it${measured}`;",
+    to: "      ? `${at}; those files have not changed since`\n      : `${at}; those files have not changed since`;",
+    test: `${CORE}/test/claim-revalidation-pull.test.ts`,
+    because:
+      "a developer who has not fetched for a month measures an empty range " +
+      "against a month-old ref, the reading is UPSERTed into the shared hub, " +
+      "and every teammate is then told a rewritten file has not changed",
+  },
+  {
+    // 1.0 spec 02 CCB-6. The module header justifies deriving the state on
+    // read because "a stored verdict outlives its evidence"; the prune was
+    // reachable only from the ingest, so retention was enforced by traffic.
+    label: "a verdict outlives its evidence on a hub nobody posts to",
+    file: `${SERVER}/src/services/claim-validity.ts`,
+    from: "          gte(claimRevalidations.revalidatedAt, readableFrom),",
+    to: "          gte(claimRevalidations.revalidatedAt, new Date(0)),",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a repo nobody revalidates again keeps answering `current` for years " +
+      "on a reading whose retention expired, which is the stored-verdict " +
+      "defect derived state exists to prevent",
+  },
+  {
+    // 1.0 spec 02 §3.7. The wire has always required a repo and the handler
+    // never read it.
+    label: "a stranger in another repo downgrades a claim permanently",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "    .where(and(inArray(claims.id, unique), eq(agentSessions.repo, repo)));",
+    to: "    .where(inArray(claims.id, unique));",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "the downgrade-only rule bounds a forged UPGRADE and leaves a forged " +
+      "DOWNGRADE permanent, so one request naming 500 claims empties a " +
+      "team's substance lane with no reporter and no repo on any surface",
+  },
+  {
+    // 1.0 spec 02 CCB-8. The named regression — one process per CLAIM rather
+    // than per GROUP — was invisible while every fixture group held exactly
+    // one claim.
+    label: "the revalidation leg spends a git process per claim",
+    file: `${CORE}/src/flows/claim-revalidation.ts`,
+    from:
+      "    const drift = await checkClaimDrift(\n" +
+      "      root,\n" +
+      "      refCommit,\n" +
+      "      group.observedAtCommit,\n" +
+      "      group.paths,\n" +
+      // MOVED WITH THE CODE: the call now carries the caller's own cut, so
+      // the guard can refuse an `unchanged` over a narrowed surface. What the
+      // mutation proves is unchanged — one git process per CLAIM, not per
+      // group.
+      "      // THE CUT TRAVELS WITH THE GROUP. Without it the git leg sees a whole\n" +
+      "      // surface and answers `unchanged` for files it never listed.\n" +
+      "      group.droppedPaths,\n" +
+      "    );\n" +
+      "    for (const claimId of group.claimIds) {",
+    to:
+      "    for (const claimId of group.claimIds) {\n" +
+      "      const drift = await checkClaimDrift(\n" +
+      "        root,\n" +
+      "        refCommit,\n" +
+      "        group.observedAtCommit,\n" +
+      "        group.paths,\n" +
+      "        group.droppedPaths,\n" +
+      "      );",
+    test: `${CORE}/test/claim-revalidation-budget.test.ts`,
+    because:
+      "a tree whose claims were written at one HEAD is one group holding all " +
+      "of them — the common shape MAX_CLAIM_REVALIDATION_ENTRIES is sized " +
+      "for — so one pull spends a process per claim: measured 12 -> 90 calls " +
+      "and 199 -> 1064 ms on the widened fixture",
+  },
+  {
+    // 1.0 spec 02 §6. The per-leg bound is published and measured; the walk
+    // that repeats it up to 25 times had no bound at all.
+    label: "the walk's time cut is spent in silence",
+    file: `${CLI}/src/cli/revalidate.ts`,
+    from: "  if (run.contextsUnwalked > 0) {",
+    to: "  if (false) {",
+    test: `${CLI}/test/revalidate-cli.test.ts`,
+    because:
+      "a bound spent in silence is a coverage claim nobody made: the reader " +
+      "is told how many trees were measured and never that the rest were " +
+      "skipped for time, so a partial walk reads as a complete one",
+  },
+  {
+    // 1.0 spec 02 CCB-10's observability half. The counter lived on the
+    // response to the caller whose report was refused, and nothing else read
+    // it.
+    label: "a refused walk-back is visible only to the party refused",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "          .set({ refusedWalkBacks: sql`${claimRevalidations.refusedWalkBacks} + 1` })",
+    to: "          .set({ refusedWalkBacks: claimRevalidations.refusedWalkBacks })",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "a team lead cannot tell a hub refusing forged upgrades every hour " +
+      "from one that has never seen one — which the service's own comment " +
+      "names as the thing the counter exists to prevent",
+  },
+  {
+    // 1.0 spec 02 refusal 6, whose premise the renderer contradicted.
+    label: "an author's own reading is indistinguishable from a teammate's",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "          selfReported: own.has(entry.claimId),",
+    to: "          selfReported: false,",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "`current` is the one positive certification the vocabulary has, and " +
+      "the refusal accepted the residue on the premise that the move changes " +
+      "nothing a reader sees — true of the substance gate, false of the label",
+  },
+  {
+    // Found by review: the keep cap bounds the ANSWER, never the walk, so a
+    // list none of whose entries survive is read to the end.
+    label: "a declared surface is walked past the point it can still keep anything",
+    file: `${CORE}/src/flows/claim-surface.ts`,
+    from: "    if (examined >= MAX_CLAIM_SURFACE_CANDIDATES) {",
+    to: "    if (examined >= Number.MAX_SAFE_INTEGER) {",
+    test: `${CORE}/test/claim-surface.test.ts`,
+    because:
+      "50 000 unresolvable paths spent 2 959 ms of the calling agent's own " +
+      "MCP turn, kept nothing and said nothing — the cost lands on the caller " +
+      "and no surface says where it went",
+  },
+  {
+    // Found by review: an import the meta-test cannot READ was counted as an
+    // import that does not reach the render layer.
+    label: "an unreadable import is read as a clean bill of health",
+    file: `${CORE}/test/render-surface-registry.test.ts`,
+    from: "  if (COMPUTED_IMPORT_PATTERNS.some((pattern) => pattern.test(source))) {",
+    to: "  if (COMPUTED_IMPORT_PATTERNS.some(() => false)) {",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "`import(join(dir, name))` is one line past the one meta-test §1.4 " +
+      "calls non-negotiable, and missing evidence must never strengthen a " +
+      "conclusion",
+  },
+  {
+    // Found by review: doctor is registered as interpolating nothing
+    // untrusted, and printed the hub's own sentence raw at three checks.
+    label: "the doctor lends its voice to whatever the hub says",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "const hubSaid = (message: string): string =>\n  bareUntrusted(message, MAX_HUB_MESSAGE_CHARS);",
+    to: "const hubSaid = (message: string): string => message;",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "a hub choosing newlines forges PASS rows above the real ones, under " +
+      "the tool's own name — and `revalidate.ts` bounded the same string " +
+      "from the day it was written",
+  },
+  {
+    // 1.0 spec 02 §8.5: a claim with no commit binding can never be
+    // revalidated, and the hub stored a reading for it anyway.
+    label: "a claim that can never be revalidated gets a reading stored",
+    file: `${SERVER}/src/services/claim-revalidations.ts`,
+    from: "      if (unbound.has(entry.claimId)) {",
+    to: "      if (false) {",
+    test: `${SERVER}/test/claim-revalidations.test.ts`,
+    because:
+      "the row's only defence was that the one current reader checks the " +
+      "binding above it — a row nobody reads, one refactor from a row " +
+      "somebody does",
+  },
+  {
+    // Found by review: `reported` and `session_base` rendered identically,
+    // and the fallback is an UPPER bound on the observation point.
+    label: "a binding nobody stated reads like one somebody did",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: '      ? `recorded at ${observed}, its session\'s commit rather than a stated one`',
+    to: "      ? `recorded at ${observed}`",
+    test: `${CORE}/test/claim-validity-render.test.ts`,
+    because:
+      "a session that checks out mid-session re-registers and base_commit " +
+      "moves forward by design, so the walk starts after the observation and " +
+      "the claim reads current on a range that was never looked at",
+  },
+  {
+    // The same gap on the other surface: doctor counted unbound claims and
+    // said nothing about inferred ones.
+    label: "doctor counts unbound claims and not inferred ones",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  summary.inferredBindings === 0",
+    to: "  true",
+    test: `${CLI}/test/doctor-claim-binding.test.ts`,
+    because:
+      "a repo whose agents never name the commit they read looks exactly " +
+      "like one where every claim states its own, and the two have different " +
+      "remedies",
+  },
+  {
+    // FOUND BY AN INDEPENDENT REFUTER. The guard it replaces compared a cut
+    // this function makes itself, while the real cut happens in the caller.
+    label: "a surface cut before the check vouches for files nobody looked at",
+    file: `${CORE}/src/git/claim-drift.ts`,
+    from: "      safePaths.length === paths.length && droppedBeforeCall === 0;",
+    to: "      safePaths.length === paths.length;",
+    test: `${CORE}/test/claim-drift.test.ts`,
+    because:
+      "`planClaimRevalidation` slices a work context's file targets to 30 " +
+      "BEFORE calling, so the old comparison was always true and the guard " +
+      "never fired — a tree with 40 targets whose 40th file was rewritten " +
+      "answered `unchanged`, was UPSERTed as `current`, and reached a " +
+      "teammate's unsolicited surface saying the files had not changed",
+  },
+  // ---------------------------------------------------------------------
+  // 06 — the intent ledger. Nine entries, one per acceptance test that names
+  // an anchor (INT-2, INT-3 x3, INT-4, INT-5, INT-6, INT-9, INT-10). Every
+  // one was applied and its guard watched go red before it was written here;
+  // INT-3a was NOT caught on the first pass, and the test that should have
+  // caught it gained the missing case rather than the anchor being dropped.
+  // ---------------------------------------------------------------------
+  {
+    // The whole point of the ledger is that it answers from POSITIONS. A
+    // clock answers too, plausibly, and wrongly: a spool flushed by a
+    // successor session gives an amendment a wall clock EARLIER than the edit
+    // it followed.
+    label: "the timing answer comes from a clock",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "    compareEvents(order, orderedEventOf(entry), edit.event) === -1;",
+    to: "    entry.capturedAt.getTime() < edit.event.observedAt.getTime();",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "AT-4's own failure condition — the answer depending on wall-clock " +
+      "timestamps from two processes rather than on a monotonic per-session " +
+      "sequence — reintroduced in the one function that exists to prevent it",
+  },
+  {
+    // Zero precedes every edit in the session, so a row whose position is
+    // MISSING becomes a row that was written first.
+    label: "a position nobody knows reads as position zero",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "  seqN: entry.seq,",
+    to: "  seqN: entry.seq ?? 0,",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "principle 5 inverted: the answer flips from `absent / not_comparable` " +
+      "to `predeclared / declared_before` — missing evidence STRENGTHENING a " +
+      "conclusion, and in the direction nobody reports, since a gap that " +
+      "exonerates is reported by nobody",
+  },
+  {
+    // There is no cross-session order to have. A subagent that sometimes
+    // inherits its parent's host key and sometimes mints its own makes the
+    // bare comparison silently wrong.
+    label: "an entry from another session is compared anyway",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from:
+      '  if (ownSession.length === 0) {\n' +
+      '    return answer("absent", "different_session");\n' +
+      '  }\n',
+    to: "",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "a foreign session's numbers are not smaller or larger than this " +
+      "session's, they are incomparable, and reporting them as an order is a " +
+      "verdict built on an arithmetic coincidence",
+  },
+  {
+    // 01 SEQ-5's epoch-split refusal, from this side. Two positions in
+    // different epochs are two rulers, and the numbers on them mean nothing
+    // to each other.
+    label: "an epoch mismatch is waved through as comparable",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    // MOVED WITH THE CODE. Step 4 now sets a refused row ASIDE rather than
+    // discarding its reason, so the push carries the entry as well. What the
+    // mutation proves is unchanged: an epoch mismatch waved through as
+    // comparable.
+    from: "    refused.push({ entry, reason: outcome.reason });\n    return false;",
+    to:
+      '    if (outcome.reason === "epoch_mismatch") {\n' +
+      "      return true;\n" +
+      "    }\n" +
+      "    refused.push({ entry, reason: outcome.reason });\n" +
+      "    return false;",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "a re-registered session restarts the count, so an amendment at 5 in " +
+      "the new epoch reads as preceding an edit at 7 in the old one — the " +
+      "exoneration #53 removed from the hook lane, re-entering through the " +
+      "ledger",
+  },
+  {
+    // The head is a COPY of the newest version's wire. A head written
+    // without its row reads correctly on every surface and has no history
+    // behind it at all.
+    label: "the head moves without a ledger row behind it",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "  const appended =\n    changes.intent === undefined ||",
+    to: "  const appended =\n    true ||\n    changes.intent === undefined ||",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the overwrite this whole spec was written to kill, restored silently: " +
+      "the current sentence still renders, and every sentence it replaced is " +
+      "gone with nothing to show that one ever existed",
+  },
+  {
+    // An agent's guess may be SHOWN. It may not replace what an agent
+    // declared on its own account.
+    label: "a derived intent overwrites a declared one",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "    next.provenance !== DECLARED_PROVENANCE\n  ) {",
+    to: "    false\n  ) {",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the derivation worker runs unattended, so a declared sentence would " +
+      "be replaced by a model's summary of it minutes later, with the head " +
+      "still labelled confidence 1",
+  },
+  {
+    // A model's guess about what a session meant, used as evidence against
+    // that same session.
+    label: "a derived non-goal becomes evidence against its own session",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: '  const declared = chain.filter((entry) => entry.provenance === "declared");',
+    to: "  const declared = chain;",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "the connector's own derivation would author the accusation and the " +
+      "hub would then report it as the session's declared position — an " +
+      "agent certifying its own work, which AT-3 forbids in the other " +
+      "direction and this forbids in this one",
+  },
+  {
+    // The checkable half stays checkable, or it becomes a second prose
+    // sentence nobody can verify.
+    label: "an uncheckable scope kind reaches the wire",
+    file: `${SCHEMA}/src/session.ts`,
+    from: 'export const INTENT_SCOPE_KINDS = ["file"] as const;',
+    to: 'export const INTENT_SCOPE_KINDS = ["file", "symbol"] as const;',
+    test: `${SCHEMA}/test/intent-scope.test.ts`,
+    because:
+      "`symbol` has no resolver anywhere in 1.0, so a scope entry naming one " +
+      "would match no edit ever and answer `scope_not_named` forever — a " +
+      "declaration that silently cannot be checked, which is worse than one " +
+      "that is refused",
+  },
+  {
+    // "Do not touch b.ts", followed by touching b.ts, is the most post-hoc
+    // thing a session can do.
+    label: "a violated non-goal is reported as a reason declared beforehand",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from:
+      "  const nonGoal = earliest(\n" +
+      '    named.filter((entry) => namesPath(entry, "non_goal", edit)),\n' +
+      "  );\n" +
+      "  if (nonGoal !== undefined && before(nonGoal)) {\n" +
+      '    return answer("post_hoc", "declared_non_goal_edited", nonGoal.version);\n' +
+      "  }\n",
+    to: "",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "this was the first draft's actual behaviour: a sentence saying the " +
+      "OPPOSITE was reported `predeclared`, principle 3 answered backwards " +
+      "on the one input this ledger exists to capture, and `role` was left a " +
+      "column nothing in 1.0 read",
+  },
+  {
+    // 1.0 spec 06 §10.1. The cap is what replaces a retention job — nothing
+    // sweeps this table — so the boundary is real and the head must not cross
+    // it.
+    label: "a capped append moves the head to a sentence the ledger refused",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        ? { ...changes, intent: row.workContext.intent }",
+    to: "        ? changes",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "`max(version)` would name one sentence and `work_contexts.intent` " +
+      "would show another, and the head would lose the hub-stamped position " +
+      "and `amends_version` it had, because the body never carries either",
+  },
+  {
+    // The outcome the connector reads. `rejected` is not available here: a
+    // rejected batch is a DELIVERED batch as far as the spool is concerned.
+    label: "the 21st amendment is reported to its author as recorded",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from:
+      "  return appended !== null && appended.capped\n" +
+      "    ? ignored(body.id, INTENT_CAP_ISSUE)\n" +
+      "    : accepted(body.id);",
+    to: "  return accepted(body.id);",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the author is told their sentence landed while the ledger holds the " +
+      "previous one, so they go looking for it on their own work context and " +
+      "find something else with no explanation anywhere",
+  },
+  {
+    // The connector half of the same answer.
+    label: "set_intent prints success over the hub's refusal to record",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from: '  if (outcome?.status === "ignored") {',
+    to: "  if (false) {",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because:
+      "\"Recorded your intent\" over an `ignored` outcome is a false sentence " +
+      "on the one surface whose entire job is to record the sentence",
+  },
+  {
+    // The version key covers the whole declaration. Dropping the scope from
+    // it reduces the key to context + session + position + sentence, and a
+    // session whose position could not be allocated carries `seq: null` on
+    // every call — so the key becomes context + session + sentence.
+    label: "two declarations collapse onto one ledger row",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from:
+      "        ...[...input.scope]\n" +
+      "          .map((entry) => `${entry.role}\\t${entry.kind}\\t${entry.value}`)\n" +
+      "          .sort(),\n",
+    to: "",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "the second declaration is answered `accepted` while its scope reached " +
+      "nothing, and the half that goes missing is the ACCUSING one — a " +
+      "declared non-goal that is gone turns `declared_non_goal_edited` into " +
+      "`predeclared`, missing evidence removing an accusation",
+  },
+  {
+    // The hub's ownership check is developer-scoped and never asks which
+    // SESSION is writing, so the ledger's author has to come from the record.
+    label: "a sentence is filed under the session that did not write it",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "          authorSessionId: body.sessionId,\n          intent: changes.intent as Intent,",
+    to: "          authorSessionId: row.workContext.sessionId,\n          intent: changes.intent as Intent,",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "step 3 of the ladder keeps an entry only while its author matches the " +
+      "edit's session, so a misfiled row becomes COMPARABLE with edits it has " +
+      "no relation to — and a comparable pair can answer `predeclared`, the " +
+      "value that exonerates, where the truth is `different_session`",
+  },
+  {
+    // Spec 06 added two agent-written text fields the connector is not the
+    // only writer of. `set_intent` screens the summary; nothing screened
+    // these, and a scope value renders OUTSIDE the quoting frame.
+    label: "a credential in a reason or a declared path reaches every reader",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "      intentTexts(body.intent).some((text) => containsSecret(text))",
+    to: "      containsSecret(body.intent.summary)",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "an intent is pushed into every teammate's reader unasked, so a token " +
+      "in an amendment reason or a declared path lands in another " +
+      "developer's agent context — and the scope value lands there bare, " +
+      "outside the frame that marks quoted data",
+  },
+  {
+    // The tool's own screen, which is what stops the text leaving the machine
+    // and is the only refusal the AUTHOR ever sees — a hub rejection reaches
+    // the spool, not the person.
+    label: "set_intent screens only its summary for credentials",
+    file: `${CORE}/src/mcp/tools/set-intent.ts`,
+    from:
+      "      parsed.value.reason ?? \"\",\n" +
+      "      ...(parsed.value.expectedSurface ?? []),\n" +
+      "      ...(parsed.value.nonGoals ?? []),\n",
+    to: "",
+    test: `${CORE}/test/set-intent.test.ts`,
+    because:
+      "a token in a declared path then travels to the hub and is refused " +
+      "there instead, so the author is told nothing and the credential has " +
+      "already left the machine — which is the one thing the local scan " +
+      "exists to prevent",
+  },
+  {
+    // 1.0 spec 06 §8.6 — "the chain never reaches an unsolicited surface".
+    // The head jsonb is projected WHOLE into presence, search, suspect,
+    // conference, hints and ghost-overlap.
+    label: "the head carries the whole amendment onto every briefing",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        : { ...changes, intent: appended.headWire };",
+    to: "        : { ...changes, intent: appended.wire };",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "a teammate who never opened the work context receives the amendment " +
+      "reason and every declared path in the payload of GET /api/presence " +
+      "and GET /api/search — unrendered today, and one renderer or one " +
+      "telemetry dump away from being published",
+  },
+  {
+    // 1.0 spec 06. An `observed` position is an UPPER BOUND, and the gate has
+    // to refuse it whatever the row claims about its own lane.
+    label: "an upper bound is read as a happens-before",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: '  provenance === "derived" ? "observed" : "emitted";',
+    to: '  provenance === provenance ? "emitted" : "observed";',
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "a detached worker's position records when the ROW was written, not " +
+      "when the thing it describes happened, so reading it as a point " +
+      "answers `predeclared` — the exonerating value — from a bound",
+  },
+  {
+    // INT-11's own guard. The published budget could never be the assertion
+    // that failed: 18 sequential calls under bun's default 5 000 ms timeout
+    // tripped the TIMEOUT at ~278 ms per call against a printed 2 000 ms.
+    label: "the budget assertion cannot fire before the timeout does",
+    file: `${CORE}/test/intent-budget.test.ts`,
+    from: "const PER_CALL_BUDGET_MS = LOCK_CEILING_MS + 2 * HTTP_TIMEOUT_MS;",
+    to: "const PER_CALL_BUDGET_MS = MCP_TIMEOUT_MS * 20;",
+    test: `${CORE}/test/intent-budget.test.ts`,
+    because:
+      "a budget a reader believes in that the timeout enforces instead is a " +
+      "number that stopped guarding anything — and its failure then reads " +
+      "like flake on a loaded machine, which invites raising the timeout " +
+      "rather than investigating",
+  },
+  {
+    // The version count was capped from the start and the scope list was not.
+    label: "the chain prints every declared path a version carries",
+    file: `${CORE}/src/mcp/render-intent-chain.ts`,
+    from: "  const shown = scope.slice(0, INTENT_SCOPE_MAX_SHOWN);",
+    to: "  const shown = scope;",
+    test: `${CORE}/test/intent-chain-render.test.ts`,
+    because:
+      "the wire allows 30 expected paths plus 30 non-goals PER VERSION, so " +
+      "the measured wire-legal shape rendered a 39 162-character block with " +
+      "a 7 748-character line, ahead of the claims and targets the reader " +
+      "actually asked for and with nothing saying it was long",
+  },
+  {
+    // 1.0 spec 06 §5, decision 10.2. The answer existed in the hub and
+    // reached no human at all.
+    label: "the timing answer never reaches the surface that needs it",
+    file: `${CLI}/src/cli/suspect-render.ts`,
+    from: "      : [`   ${intent}${timing === null ? \"\" : ` — ${timing}`}`]),",
+    to: "      : [`   ${intent}`]),",
+    test: `${CLI}/test/pins-cli.test.ts`,
+    because:
+      "`suspect` names sessions beside their declared intent, so a reader " +
+      "who cannot tell a plan from an excuse reads every intent as a plan — " +
+      "which is principle 3 answered by omission on the surface where it " +
+      "costs most",
+  },
+  {
+    // 1.0 spec 06 §8.6, second half. The update path was fixed to store the
+    // head projection and this one still stored the whole wire — the path
+    // that runs when `set_intent` beats the spool, which is ordinary.
+    label: "a context born carrying an intent stores the whole wire as its head",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "        .set({ intent: appended.headWire })",
+    to: "        .set({ intent: appended.wire })",
+    test: `${SERVER}/test/intent-ledger-write.test.ts`,
+    because:
+      "`work_contexts.intent` is projected WHOLE into presence, search, " +
+      "suspect, hints and ghost-overlap, so the amendment reason and the " +
+      "declared scope ride every unsolicited surface §8.6 exists to keep clean",
+  },
+  {
+    // FOUND BY AN INDEPENDENT REFUTER, not by the author — the one class of
+    // defect an agent checking its own work is structurally unable to see.
+    label: "an accusation nobody could order becomes an exoneration",
+    file: `${SERVER}/src/services/intent-ledger.ts`,
+    from: "  if (refusedNaming.length > 0) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/intent-ladder.test.ts`,
+    because:
+      "a session that declared a path a NON-GOAL and edited it answers " +
+      "`post_hoc`; let that row's position be unusable — `seq: null` from two " +
+      "agents in one worktree, or the `observed` lane every Stop-time git " +
+      "edit uses — and step 6 answers `predeclared` from whatever survived, " +
+      "with `indeterminacy: null` so no reader can see what was dropped",
+  },
+  {
+    // FOUND BY AN INDEPENDENT REFUTER. The braced-import branch asks both
+    // sets; this one asked only the table names.
+    label: "a namespace import reaches the ledger's readers unflagged",
+    file: `${SERVER}/test/intent-ledger-authority.test.ts`,
+    from: "      if (LEDGER_READERS.has(use[1])) {",
+    to: "      if (false) {",
+    test: `${SERVER}/test/intent-ledger-authority.test.ts`,
+    because:
+      "`import * as ledger` then `ledger.explanationTimingFor(…)` reaches " +
+      "every row the two tables hold, and INT-7's own comment says the wrong " +
+      "answer there is the PERMISSIVE one — a fence that consults the ledger " +
+      "stops refusing and nothing goes red",
+  },
+  {
+    // 1.0 spec 05 §3.5. The ladder's first rung, and the only one standing
+    // between an empty table and an accusation.
+    label: "an empty base window reads as a stably green history",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: "    if (window.runIds.length < CI_FLAKE_BASE_RUNS) {",
+    to: "    if (false) {",
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "a hub with no history finds no non-green run in a window that holds " +
+      "nothing, reads the absence as 'it was green before', and reaches " +
+      "`confirmed` — missing evidence strengthening a conclusion, in the one " +
+      "direction that names a developer",
+  },
+  {
+    // The same inversion read from the base side.
+    label: "a crashed run counts toward the base window",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: '        eq(ciRuns.outcome, "completed"),\n        ne(ciRuns.commitSha, excludeCommit),',
+    to: "        ne(ciRuns.commitSha, excludeCommit),",
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "only a completed run asserts that its non-green rows are all of them " +
+      "(§3.3); a crashed run's empty result set is the runner dying, and " +
+      "counting it fills the window that lets the next rung accuse",
+  },
+  {
+    label: "one commit measured five times fills a five-commit window",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: "    .selectDistinctOn([ciRuns.commitSha], {",
+    to: "    .select({",
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "a window that is really one commit cannot say whether a test is " +
+      "stably green ACROSS commits, which is the only question it is read for",
+  },
+  {
+    label: "a window borrowed from the default ref claims to be the lane's own",
+    file: `${SERVER}/src/services/ci-delta.ts`,
+    from: '    ? { runIds: fallback, source: "default_ref_fallback" }',
+    to: '    ? { runIds: fallback, source: "same_ref" }',
+    test: `${SERVER}/test/ci-delta.test.ts`,
+    because:
+      "the hub holds no repository and cannot check that the branch descends " +
+      "from that ref, so the fallback is an assumption — and an assumption a " +
+      "reader cannot see is one they cannot reject",
+  },
+  {
+    // 1.0 spec 05 §3.6, found by its own test before this shipped: a lane's
+    // silence removed it from the set whose silence is what gets reported.
+    label: "the commit being judged votes on its own expectation",
+    file: `${SERVER}/src/services/ci-coverage.ts`,
+    from: "    if (row.commitSha === excludeCommit || seen.has(row.commitSha)) {",
+    to: "    if (seen.has(row.commitSha)) {",
+    test: `${SERVER}/test/ci-coverage.test.ts`,
+    because:
+      "expectation is an INTERSECTION, so a lane that stayed silent here is " +
+      "absent from this commit's own set and the intersection drops it — the " +
+      "gap erases the evidence of itself, and a missing lane can never be " +
+      "missing",
+  },
+  {
+    label: "a ref nobody has watched long enough reads as complete",
+    file: `${SERVER}/src/services/ci-coverage.ts`,
+    from: '  if (expected.size === 0) {\n    return { ...shared, state: "unknown" };\n  }',
+    to: "",
+    test: `${SERVER}/test/ci-coverage.test.ts`,
+    because:
+      "`lanesReported === expected.size` holds trivially when nothing is " +
+      "expected, so an empty set answers as a satisfied one and a hub with no " +
+      "idea what should have run reports that everything did",
+  },
+  {
+    label: "a repo with no reporter is indistinguishable from one awaiting a run",
+    file: `${SERVER}/src/services/ci-coverage.ts`,
+    from: '    return everReported.length === 0\n      ? UNAVAILABLE\n      : { ...UNAVAILABLE, state: "unknown" };',
+    to: '    return { ...UNAVAILABLE, state: "unknown" };',
+    test: `${SERVER}/test/ci-coverage.test.ts`,
+    because:
+      "the two send a reader to different remedies — one has a lane on the " +
+      "way, the other has nothing to wait for — and `unavailable` is the " +
+      "default this project keeps rather than a state it upgrades away from",
+  },
+  {
+    // 1.0 spec 05 §5, non-negotiable #2. A `test_id` is the one slot on
+    // `crosscheck status` whose text comes from ANOTHER repository.
+    label: "a test name from a fork PR reaches the terminal raw",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "      const name = bareUntrusted(delta.testId, MAX_CI_TEST_ID_CHARS);",
+    to: "      const name = delta.testId;",
+    test: `${CLI}/test/ci-status-render.test.ts`,
+    because:
+      "a fork pull request can name a test anything — a newline forging a " +
+      "line of this command's own, a frame character on a surface that " +
+      "carries no notice explaining one, or a thousand combining marks",
+  },
+  {
+    label: "a hub that did not answer prints as a passing suite",
+    file: `${CLI}/src/cli/status.ts`,
+    from: '    return ["ci: not measured — the hub did not answer"];',
+    to: "    return [];",
+    test: `${CLI}/test/ci-status-render.test.ts`,
+    because:
+      "a missing block reads exactly like a green suite, and a round trip " +
+      "that failed is not a fact about the code — the silent absence AT-10 " +
+      "refuses",
+  },
+  {
+    label: "the CI list is cut without saying so",
+    file: `${CLI}/src/cli/status.ts`,
+    from: "    ...(hidden > 0 ? [`  (+${String(hidden)} more not shown)`] : []),",
+    to: "",
+    test: `${CLI}/test/ci-status-render.test.ts`,
+    because:
+      "a run may carry CI_MAX_TEST_ROWS non-green rows, and a list quietly " +
+      "shorter than the failures it describes tells a reader their suite is " +
+      "healthier than it is",
+  },
+  {
+    // 1.0 spec 05 §8.1. A refusal a reader cannot see is a gap they wait on.
+    label: "a provider with no reporter is a silence rather than a refusal",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "    ...(unservedProviders.length === 0",
+    to: "    ...(true",
+    test: `${CLI}/test/doctor-ci.test.ts`,
+    because:
+      "a GitLab team otherwise waits forever for rows no reporter exists to " +
+      "send, and the sentence is derived from the shipped provider list so " +
+      "it cannot outlive the fact it states",
+  },
+  {
+    label: "a repo with no CI reporter is nagged at",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '  unavailable: "PASS",',
+    to: '  unavailable: "WARN",',
+    test: `${CLI}/test/doctor-ci.test.ts`,
+    because:
+      "a repo with no reporter has nothing to be incomplete about — the " +
+      "remedy is a decision, not a fix, and a WARN there is a nag about a " +
+      "choice nobody made wrong, which is how a report stops being read",
+  },
+  {
+    label: "the two silent-reporter cases go unnamed",
+    file: `${CLI}/src/cli/doctor.ts`,
+    // The mutation drops the CLAIM, not the row: a first attempt renamed the
+    // check to "ci reporting gaps (unused)", which still contained the string
+    // the test looks for, so it was not caught. An anchor that survives its
+    // own mutation is a finding about the anchor.
+    from: "rather than as a green suite",
+    to: "",
+    test: `${CLI}/test/doctor-ci.test.ts`,
+    because:
+      "a local `bun test` and a fork pull request both produce NO rows, and " +
+      "no rows is exactly what a green suite produces — §8.2 and §8.3 are " +
+      "only refusals if somebody can read them",
+  },
+  {
+    // Found by the full suite: an answer this client cannot READ is not a hub
+    // reporting something wrong.
+    label: "a hub whose answer did not parse is reported as a broken hub",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "      verdict.status >= HTTP_ERROR_FLOOR && verdict.status !== HTTP_NOT_FOUND",
+    to: "      verdict.status !== HTTP_NOT_FOUND",
+    test: `${CLI}/test/e2e/remote-login.e2e.test.ts`,
+    because:
+      "a hub too old for the route, one that could not be reached and one " +
+      "whose shape this client cannot read all mean 'nobody measured' — the " +
+      "distinction `plan overlap` already draws twenty lines up, and " +
+      "collapsing it puts a WARN on a healthy install's first login",
+  },
+  {
+    // FOUND ON THE 1.0 INTEGRATION BRANCH. Five specs each added a hub-backed
+    // doctor check; sequentially, a hub that never answers cost N timeouts.
+    label: "doctor waits one timeout per check instead of one in total",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: "  ] = await Promise.all([",
+    to: "  ] = await sequentially([",
+    test: `${CLI}/test/doctor-latency.test.ts`,
+    because:
+      "the nine hub reads are independent, so awaiting them in turn makes " +
+      "doctor's own runtime N x the effective timeout against an unreachable " +
+      "hub — and N grows with every spec that adds a check, which is how 05 " +
+      "pushed the latency case past its bound without touching it",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -4831,23 +7669,33 @@ interface Outcome {
  * VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.test,(m.get(x.test)??0)+1);for(const [k,v] of [...m].sort())console.log(k,v)'
  * PRINTS: packages/cli/test/agent-restart.test.ts 3
  * PRINTS: packages/cli/test/capture-health.test.ts 2
+ * PRINTS: packages/cli/test/ci-status-render.test.ts 3
  * PRINTS: packages/cli/test/conference-cli.test.ts 10
  * PRINTS: packages/cli/test/connector-capture-health.test.ts 3
+ * PRINTS: packages/cli/test/coverage-cli.test.ts 5
+ * PRINTS: packages/cli/test/cursor-doctor.test.ts 4
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
+ * PRINTS: packages/cli/test/doctor-ci.test.ts 3
+ * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1
- * PRINTS: packages/cli/test/doctor-latency.test.ts 1
+ * PRINTS: packages/cli/test/doctor-latency.test.ts 2
  * PRINTS: packages/cli/test/doctor-summarizer-runner.test.ts 2
  * PRINTS: packages/cli/test/doctor.test.ts 1
+ * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
- * PRINTS: packages/cli/test/pins-cli.test.ts 2
+ * PRINTS: packages/cli/test/pins-cli.test.ts 3
+ * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
+ * PRINTS: packages/cli/test/seq-doctor-hub.test.ts 7
+ * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
+ * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
- * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 1
+ * PRINTS: packages/connector-acp/test/derive-doctor.test.ts 2
  * PRINTS: packages/connector-acp/test/derive-gap.test.ts 1
  * PRINTS: packages/connector-acp/test/derive.test.ts 6
  * PRINTS: packages/connector-acp/test/injector.test.ts 4
@@ -4868,7 +7716,11 @@ interface Outcome {
  * PRINTS: packages/connector-claude/test/global-wiring-silence.test.ts 2
  * PRINTS: packages/connector-claude/test/hint-hook.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-budget.test.ts 2
+ * PRINTS: packages/connector-claude/test/hook-contract.test.ts 1
  * PRINTS: packages/connector-claude/test/hook-reserve.test.ts 1
+ * PRINTS: packages/connector-claude/test/hook-seq.test.ts 3
+ * PRINTS: packages/connector-claude/test/hook-window-pairing.test.ts 11
+ * PRINTS: packages/connector-claude/test/hook-window.test.ts 4
  * PRINTS: packages/connector-claude/test/hooks-fired-marker.test.ts 1
  * PRINTS: packages/connector-claude/test/intent-worker.test.ts 2
  * PRINTS: packages/connector-claude/test/recovery-race.test.ts 1
@@ -4886,12 +7738,26 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/absence-render.test.ts 1
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
- * PRINTS: packages/connector-core/test/briefing-solved.test.ts 3
+ * PRINTS: packages/connector-core/test/briefing-solved.test.ts 4
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
+ * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
+ * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1
+ * PRINTS: packages/connector-core/test/claim-revalidation-pull.test.ts 2
+ * PRINTS: packages/connector-core/test/claim-substance-gate.test.ts 3
+ * PRINTS: packages/connector-core/test/claim-surface.test.ts 1
+ * PRINTS: packages/connector-core/test/claim-validity-render.test.ts 1
  * PRINTS: packages/connector-core/test/conference-cost.test.ts 1
  * PRINTS: packages/connector-core/test/conference-report.test.ts 2
  * PRINTS: packages/connector-core/test/config-parse.test.ts 1
  * PRINTS: packages/connector-core/test/connected-repo.test.ts 2
+ * PRINTS: packages/connector-core/test/coverage-empty-answers.test.ts 5
+ * PRINTS: packages/connector-core/test/coverage-fire-rate.test.ts 1
+ * PRINTS: packages/connector-core/test/coverage-hints.test.ts 2
+ * PRINTS: packages/connector-core/test/coverage-registry-walk.test.ts 3
+ * PRINTS: packages/connector-core/test/coverage-render.test.ts 9
+ * PRINTS: packages/connector-core/test/coverage-wire.test.ts 1
+ * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
+ * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
@@ -4900,12 +7766,16 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/hint-render.test.ts 3
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
+ * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
+ * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 4
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 12
+ * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
+ * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
@@ -4913,14 +7783,20 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
- * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 2
+ * PRINTS: packages/connector-core/test/register-seq.test.ts 3
+ * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 4
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1
+ * PRINTS: packages/connector-core/test/seq-flush-rewrite.test.ts 1
+ * PRINTS: packages/connector-core/test/session-seq.test.ts 5
  * PRINTS: packages/connector-core/test/session-state-transforms.test.ts 2
- * PRINTS: packages/connector-core/test/set-intent.test.ts 1
+ * PRINTS: packages/connector-core/test/set-intent.test.ts 3
  * PRINTS: packages/connector-core/test/solved-hint-flow.test.ts 4
  * PRINTS: packages/connector-core/test/spool-durability.test.ts 1
+ * PRINTS: packages/connector-core/test/spool-lock.test.ts 2
+ * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
+ * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
@@ -4930,12 +7806,24 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
+ * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
+ * PRINTS: packages/server/test/ci-coverage.test.ts 3
+ * PRINTS: packages/server/test/ci-delta.test.ts 4
+ * PRINTS: packages/server/test/claim-binding-ingest.test.ts 1
+ * PRINTS: packages/server/test/claim-revalidations.test.ts 10
+ * PRINTS: packages/server/test/claim-validity.test.ts 2
  * PRINTS: packages/server/test/conference.test.ts 3
+ * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
+ * PRINTS: packages/server/test/coverage-measurement.test.ts 2
+ * PRINTS: packages/server/test/coverage.test.ts 12
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/ghost-overlap.test.ts 4
  * PRINTS: packages/server/test/hints.test.ts 3
+ * PRINTS: packages/server/test/intent-ladder.test.ts 7
+ * PRINTS: packages/server/test/intent-ledger-authority.test.ts 1
+ * PRINTS: packages/server/test/intent-ledger-write.test.ts 10
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pins.test.ts 3
  * PRINTS: packages/server/test/presence.test.ts 1
@@ -4944,6 +7832,12 @@ interface Outcome {
  * PRINTS: packages/server/test/search-filters.test.ts 10
  * PRINTS: packages/server/test/search-tokens.test.ts 5
  * PRINTS: packages/server/test/search.test.ts 3
+ * PRINTS: packages/server/test/session-event-conflict.test.ts 1
+ * PRINTS: packages/server/test/session-event-retention.test.ts 2
+ * PRINTS: packages/server/test/session-event-seq-kind.test.ts 3
+ * PRINTS: packages/server/test/session-events.test.ts 2
+ * PRINTS: packages/server/test/session-order-window.test.ts 3
+ * PRINTS: packages/server/test/session-order.test.ts 7
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1

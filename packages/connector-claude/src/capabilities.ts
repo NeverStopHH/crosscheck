@@ -11,6 +11,7 @@
  * undeclared trigger and an undelivered declaration are both red.
  */
 import { DEFAULT_AGENT_KIND } from "@crosscheck/connector-core/constants.ts";
+import { UNPROJECTED_LEDGER_KINDS_REFUSAL } from "@crosscheck/connector-core/derive/capabilities.ts";
 import type { DeriveCapabilityManifest } from "@crosscheck/connector-core/derive/capabilities.ts";
 
 export const CLAUDE_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
@@ -40,6 +41,22 @@ export const CLAUDE_CAPABILITY_MANIFEST: DeriveCapabilityManifest = {
       sentence:
         "`crosscheck conference` is a command a human runs, not a hook, so it needs nothing from the host — only a working model runner (see the summarizer runner check)",
     },
+    {
+      name: "event_seq",
+      rung: "full",
+      sentence:
+        "every emitting hook is handed the host session id on stdin, so each record this connector spools is positioned in that session's own sequence before it is written — including the Stop-time git lane, which no other host runs — and the PreToolUse/PostToolUse pair BRACKETS each edit tool call, taking a position before the tool starts as well as after it returns, which is what lets an edit be ordered against an explanation at all — paired by the host's tool_use_id, so a call whose own opening position was refused (a busy lock, a hook installed mid-flight) or that arrives without an id gets no bracket and is refused rather than ordered from another call's window",
+    },
   ],
-  refusals: [],
+  refusals: [
+    // The two canonical kinds nothing projects, on any host — one sentence
+    // for the whole product, shared by reference so the three manifests
+    // cannot drift apart while it is true.
+    UNPROJECTED_LEDGER_KINDS_REFUSAL,
+    {
+      name: "git lane blind spots",
+      sentence:
+        "the Stop-time lane reads UNCOMMITTED changes only, so work committed during the turn and untracked new files are invisible to it — and every position it does record is `observed` rather than `emitted`, an upper bound that refuses a happens-before question instead of answering one it cannot support",
+    },
+  ],
 };

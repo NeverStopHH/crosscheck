@@ -1,3 +1,5 @@
+import type { SessionEventRetentionMode } from "@crosscheck/schema";
+
 /** Sessions with a heartbeat older than this are no longer present (DESIGN.md §5). */
 export const PRESENCE_TTL_SECONDS = 90;
 
@@ -105,6 +107,30 @@ export const DEFAULT_PORT = 7100;
  * the next ingest for their repo — the bound on commit_evidence table growth.
  */
 export const COMMIT_EVIDENCE_RETENTION_DAYS = 30;
+/**
+ * DORMANT: how old a canonical event must be before a sweep may even consider
+ * retiring it (spec 01 §10 D2). NOTHING READS THIS ON A RUNNING HUB. D2's
+ * sweep retired every row past this age, and a row in `session_events` is very
+ * nearly the causal skeleton itself — ids, kind, epoch, position — so the call
+ * was withdrawn before its first deploy (Nick's D-D, 2026-09-17; the refusal
+ * sits where the call was, in services/sessions.ts `reapStaleSessions`).
+ *
+ * WHAT WILL USE IT: spec 01a's referential predicate, which keeps this value
+ * and narrows the sweep to rows past this age that nothing references any
+ * more. Until that lands `SESSION_EVENT_RETENTION` below says `off`, and
+ * `pruneSessionEvents` — which still applies this cutoff when called
+ * directly, and is tested that way — is called by nobody.
+ */
+export const SESSION_EVENT_RETENTION_DAYS = 30;
+
+/**
+ * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
+ * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
+ * rather than a connector's assumption about it (schema session-event.ts says
+ * why the hub is the one that must say it). `off`: no row is ever retired, and
+ * the table grows without bound by decision rather than by oversight.
+ */
+export const SESSION_EVENT_RETENTION: SessionEventRetentionMode = "off";
 /**
  * Evidence older than this never fires a finding. Every SessionStart of every
  * connected teammate refreshes collection, so evidence this stale means nobody
@@ -577,3 +603,121 @@ export const SUSPECT_TOP_CANDIDATES = 3;
  * dataset here could justify a second decimal.
  */
 export const SUSPECT_SEPARATION_RATIO = 1.5;
+
+// ── Coverage integrity (docs/1.0/03-coverage-integrity.md) ──────────────────
+
+/**
+ * How far back `readCoverage` looks for agent sessions when it answers "were
+ * we watching this repo".
+ *
+ * THE SAME 14 DAYS `crosscheck suspect` asks about, and that is not a
+ * coincidence to be maintained by hand: suspect's answer is only as honest as
+ * the coverage record beside it, so a coverage window SHORTER than the
+ * question's would report `complete` over days the verdict layer still reads,
+ * and a LONGER one would report a gap about time no answer covers. Both are
+ * the same bug — a qualifier measured about something other than the question
+ * (§3.2a). The two constants stay separate because they bound different
+ * things (a question vs. an observation) and equal because they must:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/server/src/constants.ts");console.log(c.COVERAGE_SESSION_WINDOW_DAYS === c.SUSPECT_WINDOW_DAYS)'
+ * PRINTS: true
+ */
+export const COVERAGE_SESSION_WINDOW_DAYS = 14;
+// ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
+
+/**
+ * Revalidation rows older than this are pruned on the next report — the bound
+ * on claim_revalidations growth, matching COMMIT_EVIDENCE_RETENTION_DAYS
+ * because both answer "how long is a clone's reading still worth anything".
+ *
+ * A PRUNED ROW READS `unknown` AGAIN, and that is the point rather than a side
+ * effect: a stored verdict must not outlive the evidence it was derived from.
+ */
+export const CLAIM_REVALIDATION_RETENTION_DAYS = 30;
+
+/**
+ * How many of a repo's claims one validity summary derives (spec 02 §8.5's
+ * doctor refusal).
+ *
+ * BOUNDED, AND THE CUT IS REPORTED as `counted / total`. The summary derives
+ * each claim's state through `claimValidity()` rather than counting columns in
+ * SQL, because a second definition written as an aggregate is exactly the
+ * defect this spec exists to prevent — and derivation costs three batched
+ * queries over the rows it names, so the row set has to have a ceiling. 500
+ * is `CONFERENCE_MAX_COUNTED_CONTEXTS`' figure, chosen here for its reason:
+ * enough that a real team's repo is answered whole, small enough that a
+ * five-year archive cannot turn `crosscheck doctor` into a table scan.
+ */
+export const CLAIM_VALIDITY_SUMMARY_MAX_CLAIMS = 500;
+
+// ── CI ingestion (docs/1.0/05-ci-ingestion.md §3.8) ────────────────────────
+//
+// Four hub-side constants. The three WIRE bounds this spec also owns live in
+// `@crosscheck/schema`'s ci-run.ts, because a wire bound has to be
+// enforceable by a sender that never loads this file: MAX_CI_TEST_ID_CHARS,
+// MAX_CI_LANE_FIELD_CHARS and CI_MAX_TEST_ROWS. The spec names all seven in
+// one place, because a constant another spec cannot find is one it re-mints.
+
+/**
+ * How many prior runs of a lane must be stably green before a red one can be
+ * called a regression rather than a thing that was always broken.
+ *
+ * A DELIBERATE NON-TUNING, adopting the corpora floor rule: a floor encodes
+ * today's INTENT rather than measured truth, so a number below it is a
+ * regression against declared intent and is never lowered to make a case
+ * pass. Five is what "stably green" is worth here; if that is wrong it moves
+ * with an argument, not with a failing fixture.
+ */
+export const CI_FLAKE_BASE_RUNS = 5;
+
+/**
+ * How far back a base window may reach.
+ *
+ * THE SAME 14 DAYS `crosscheck suspect` asks about, and equal ON PURPOSE: the
+ * attribution window and the evidence window must not drift apart, or a
+ * confirmed regression would rest on green runs from outside the period the
+ * verdict layer is willing to reason about. Kept as its own constant because
+ * it bounds a different thing — a base of runs, not a question about people:
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/server/src/constants.ts");console.log(c.CI_BASE_WINDOW_DAYS === c.SUSPECT_WINDOW_DAYS)'
+ * PRINTS: true
+ */
+export const CI_BASE_WINDOW_DAYS = 14;
+
+/**
+ * A day, in milliseconds — the one definition this package uses.
+ *
+ * It was written out twice: `services/absences.ts` derived its own from a
+ * local `MS_PER_HOUR`, and `services/ci-delta.ts` was about to do the same.
+ * Both bound a WINDOW measured in days against a `Date`, so both would move
+ * together or not at all, and two spellings of a unit is how the render-layer
+ * specifier drifted from the module list it mirrored. One definition, named
+ * where the day-valued constants above it live.
+ */
+export const MS_PER_HOUR = 60 * 60 * 1000;
+export const MS_PER_DAY = 24 * MS_PER_HOUR;
+
+/**
+ * How many distinct commits a lane must appear in, consecutively, before it
+ * counts as EXPECTED.
+ *
+ * `lanesExpected` is DERIVED rather than declared, so a job added yesterday is
+ * not yet expected and a job deleted yesterday stops being expected once the
+ * quorum rolls past it. Nobody maintains a list and nobody has to remember to
+ * delete from one: a declared list of lanes goes stale silently, and a stale
+ * expectation reports `incomplete` forever for a job that no longer exists.
+ */
+export const CI_LANE_QUORUM_COMMITS = 3;
+
+/**
+ * How long a CI run is kept.
+ *
+ * MATCHED TO `COMMIT_EVIDENCE_RETENTION_DAYS` by name and by argument: both
+ * are machine-collected facts about a repo that nobody authored, and two
+ * different retention answers for one class of row would be two different
+ * answers to "how far back can this hub see":
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/server/src/constants.ts");console.log(c.CI_RETENTION_DAYS === c.COMMIT_EVIDENCE_RETENTION_DAYS)'
+ * PRINTS: true
+ */
+export const CI_RETENTION_DAYS = 30;

@@ -13,6 +13,7 @@ import {
   MAX_QUESTION_POINTERS,
   MAX_SOLVED_POINTERS,
   MAX_TEAMMATES,
+  MAX_CLAIM_VALIDITY_WORD_CHARS,
   MAX_TITLE_CHARS,
   MINUTES_PER_HOUR,
   MONTHS_PER_YEAR,
@@ -23,7 +24,9 @@ import {
   SOLVED_AGE_YEARS_THRESHOLD_MONTHS,
   SOLVED_ROOT_CAUSE_MAX_CHARS,
 } from "../constants.ts";
+import { isAssertableValidity } from "../claim-validity.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
+import type { ClaimValidity } from "@crosscheck/schema";
 import type {
   ContradictionEntry,
   ContradictionSide,
@@ -114,6 +117,18 @@ export interface BriefingInput {
   readonly questions?: readonly InboxQuestion[] | undefined;
   /** Teammates whose live plan overlaps the reader's; empty renders none. */
   readonly ghostChecks?: readonly GhostCheckEntry[] | undefined;
+  /**
+   * The coverage qualifier (03 §5.3), ALREADY RENDERED by coverage/render.ts
+   * and passed in rather than computed here — one direction only, because a
+   * briefing that imported the coverage renderer and a coverage renderer that
+   * imports `formatAge` from this file would be a cycle.
+   *
+   * It is not a Section and must never become one: Sections are cuttable by
+   * construction (`appendSection` drops a whole one when the budget is spent),
+   * and this line states how far everything below it can be trusted. So it is
+   * spliced in beside the header, where the fitter cannot reach it.
+   */
+  readonly coverageLine?: string | undefined;
 }
 
 interface Section {
@@ -566,6 +581,59 @@ export const SUBSTANCE_MATCH_KIND = "error_fingerprint";
 const CONFIDENCE_DECIMALS = 2;
 
 /**
+ * The state WORD alone, for an UNSOLICITED surface (1.0 spec 02 §5a).
+ *
+ * Null for a hub that sent nothing — absence is "the hub did not answer",
+ * which is a different statement from `unknown` and must not be rendered as
+ * one (the `targetsReported` rule, one field over).
+ *
+ * IT LIVES HERE, not beside the full clause in mcp/render.ts, because BOTH
+ * unsolicited surfaces need it — the claim hint and the solved root cause
+ * below — and mcp/render.ts already imports this module, so the clause's home
+ * cannot also be the word's without a cycle. The full clause of §5, with its
+ * commit hashes, stays on the pulled surfaces only.
+ */
+export const claimValidityWord = (
+  validity: ClaimValidity | null | undefined,
+): string | null => {
+  if (validity === null || validity === undefined) {
+    return null;
+  }
+  const word = `validity ${bareUntrusted(validity.state, MAX_CLAIM_VALIDITY_WORD_CHARS)}`;
+  return word.slice(0, MAX_CLAIM_VALIDITY_WORD_CHARS);
+};
+
+/**
+ * WHAT A WITHHELD CAUSE SAYS, because a body that silently disappears is the
+ * silent absence AT-10 forbids.
+ *
+ * A reader who saw this line yesterday and sees nothing today learns nothing;
+ * a reader who sees "validity stale · withheld" knows the answer still exists,
+ * knows why it is not being asserted, and knows the one call that reads it.
+ *
+ * THE BINDING FACT IS PRINTED ONLY WHEN IT IS `none`, and that is not
+ * decoration: the hub derives `unknown` both for a claim nobody revalidated —
+ * whose body IS asserted here — and for a claim bound to no commit, whose
+ * body is not. Same word, opposite outcome, so the one case the word cannot
+ * distinguish says the extra fact out loud.
+ *
+ * EVERY CHARACTER IS RENDERER-OWNED: an enum value through the BARE class and
+ * literals. No body, no path, no hash — the hashes are on the pulled surface
+ * where a reader asked for them (§5a).
+ */
+const solvedRootCauseWithheldLine = (
+  validity: ClaimValidity | null | undefined,
+): string => {
+  const word = claimValidityWord(validity);
+  if (word === null) {
+    return "";
+  }
+  const unbound =
+    validity?.commitBinding === "none" ? " · bound to no commit" : "";
+  return `\n  root cause · ${word}${unbound}: withheld — the tree above reads it in full`;
+};
+
+/**
  * The recorded cause as its OWN indented line, or "" — one « » pair per
  * line is the rule, and the pointer line already spends its pair on the
  * title. Same shape as the work-context intent line.
@@ -617,6 +685,18 @@ const solvedRootCauseLine = (entry: SolvedMatchEntry): string => {
   ) {
     return "";
   }
+  // AT-2's teeth on THIS surface (1.0 spec 02 §5). A cause whose files were
+  // rewritten since it was recorded, or that is bound to no commit at all, is
+  // not asserted here — the same predicate the claim hint spends, so the two
+  // unsolicited surfaces cannot drift into two definitions of "current".
+  // What is lost is the BODY; the pointer above survives untouched and
+  // `get_diagnosis` renders the full clause and the commits for a reader who
+  // asked. The rule is this renderer's own, already applied one condition up
+  // to a cause arriving without its confidence: keep the pointer, lose the
+  // body, never the whole line.
+  if (!isAssertableValidity(entry.rootCauseValidity)) {
+    return solvedRootCauseWithheldLine(entry.rootCauseValidity);
+  }
   const body = spanRedactedUntrusted(
     entry.rootCause,
     SOLVED_ROOT_CAUSE_MAX_CHARS,
@@ -625,8 +705,13 @@ const solvedRootCauseLine = (entry: SolvedMatchEntry): string => {
     return "";
   }
   // U+00B7-separated facts then a colon then the framed body — the
-  // renderClaimHint shape, so one reader reads both the same way.
-  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · provenance declared`;
+  // renderClaimHint shape, so one reader reads both the same way. The state
+  // word rides these labels for renderClaimHint's reason too: it is the part
+  // that changes what a reader should DO with the sentence, so it belongs
+  // beside confidence and provenance rather than on a line of its own.
+  const word = claimValidityWord(entry.rootCauseValidity);
+  const validityLabel = word === null ? "" : ` · ${word}`;
+  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · provenance declared${validityLabel}`;
   return `\n  root cause · ${labels}: «${body}»`;
 };
 
@@ -908,11 +993,27 @@ export const renderBriefing = (input: BriefingInput): string => {
     renderDraftSection(input),
     renderAbsenceSection(input),
   ];
-  if (sections.every((section) => section.lines.length === 0)) {
+  // A briefing with nothing to say still says it when we know we were NOT
+  // watching: "no news" and "no news, and nobody was looking" are different
+  // answers, and the second one is the whole point of this record. The line
+  // only exists on a positively observed gap (coverageNote returns null on
+  // `unknown`), so a quiet repo behind a healthy hub stays silent exactly as
+  // it did before.
+  const coverageLines =
+    input.coverageLine === undefined || input.coverageLine.length === 0
+      ? []
+      : [input.coverageLine];
+  if (
+    coverageLines.length === 0 &&
+    sections.every((section) => section.lines.length === 0)
+  ) {
     return "";
   }
   const repoLabel = sanitizeUntrusted(input.repoId);
   const header = `crosscheck facts about ${repoLabel.length === 0 ? UNKNOWN_REPO : repoLabel}. ${QUOTED_DATA_NOTICE}`;
-  const lines = sections.reduce<readonly string[]>(appendSection, [header]);
+  const lines = sections.reduce<readonly string[]>(appendSection, [
+    header,
+    ...coverageLines,
+  ]);
   return lines.length <= 1 ? "" : lines.join("\n");
 };

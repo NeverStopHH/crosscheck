@@ -24,9 +24,11 @@
  * sanitizer rather than a second, weaker copy of it.
  */
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
+import type { ClaimValidity, ClaimValidityState } from "@crosscheck/schema";
 
 import {
   HUB_MAX_DIAGNOSIS_TARGETS,
+  MAX_CLAIM_VALIDITY_LINE_CHARS,
   MAX_DIAGNOSIS_CHARS,
   MAX_DIAGNOSIS_TARGETS_SHOWN,
   MAX_HUB_MESSAGE_CHARS,
@@ -35,6 +37,13 @@ import {
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
+import { renderIntentChain } from "./render-intent-chain.ts";
+import {
+  coverageClause,
+  mustQualifyEmptyAnswer,
+} from "../coverage/render.ts";
+import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
+import type { CoverageRecord } from "../http/coverage.ts";
 import {
   QUOTED_DATA_NOTICE,
   formatAge,
@@ -281,6 +290,182 @@ const claimsOldestFirst = (
     return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
   });
 
+// ── The claim ↔ code binding's one rendered sentence (1.0 spec 02 §5) ───────
+
+/**
+ * WHAT A STATE MEANS, as a sentence opener. An exhaustive Record rather than a
+ * switch, the shape FILE_DRIFT_SENTENCES already has: adding a sixth state is
+ * then a type error here instead of a silently missing case.
+ *
+ * "no longer current" for the three downgrades, because that is AT-2's own
+ * wording and it is what a reader has to act on. Nothing says "ignore this" —
+ * the claim stays readable, the body still renders, only its standing changed.
+ */
+const VALIDITY_OPENERS: Readonly<Record<ClaimValidityState, string>> = {
+  current: "current",
+  stale: "no longer current",
+  superseded: "no longer current",
+  invalidated: "no longer current",
+  unknown: "currency unknown",
+};
+
+/** How many commits were NOT named, or null when the total was unmeasurable. */
+const unnamedCommits = (validity: ClaimValidity): number | null =>
+  validity.touchingTotal === null
+    ? null
+    : validity.touchingTotal - validity.touchingCommits.length;
+
+/**
+ * The tail of a `stale` clause: the commits that caused the downgrade, newest
+ * first, then how many more there were.
+ *
+ * A COUNT THAT COULD NOT BE TAKEN SAYS "more", NOT A NUMBER. `checkClaimDrift`
+ * returns null when the range was too big to count inside its budget, and
+ * printing `touchingCommits.length` there would claim more than it measured.
+ */
+const touchingFragment = (validity: ClaimValidity): string => {
+  const named = validity.touchingCommits
+    .map((commit) => safeId(commit))
+    .filter((commit) => commit.length > 0);
+  if (named.length === 0) {
+    return "commits have touched these files since";
+  }
+  const unnamed = unnamedCommits(validity);
+  const more =
+    unnamed === null
+      ? " and more"
+      : unnamed > 0
+        ? ` and ${String(unnamed)} more`
+        : "";
+  return `commits have touched these files since — ${named.join(", ")}${more}`;
+};
+
+/** The body of the clause after its opener, per state. */
+const validityDetail = (validity: ClaimValidity): string => {
+  if (validity.state === "superseded") {
+    // An id that survives NOTHING of the allowlist renders as the id-less
+    // sentence rather than "replaced by " with a hole where the id was —
+    // the same rule the briefing's solved line follows. The corpus found
+    // this: a payload of pure frame characters reduces to "".
+    const revision =
+      validity.supersededByClaimId === null
+        ? ""
+        : safeId(validity.supersededByClaimId);
+    return revision.length === 0
+      ? "a revision replaced it"
+      : `replaced by ${revision}`;
+  }
+  if (validity.state === "invalidated") {
+    return "its author rejected it";
+  }
+  if (validity.commitBinding === "none" || validity.observedAtCommit === null) {
+    // The §8.5 refusal, said where the reader is rather than only in doctor:
+    // a claim with no observation point can never be revalidated at all.
+    //
+    // The null test is not redundant with the binding test. The hub's CHECK
+    // makes the two agree in ITS database; this renderer reads a looseObject
+    // off the wire, and without the second half a hub sending
+    // `commitBinding: "reported"` beside a null commit produced a sentence
+    // beginning "; " — a rendering nobody wrote.
+    return "recorded against no commit, so it cannot be checked against the code";
+  }
+  const observed = safeId(validity.observedAtCommit);
+  if (observed.length === 0) {
+    return "recorded against no commit, so it cannot be checked against the code";
+  }
+  // WHICH COMMIT THIS IS, and the difference is not cosmetic.
+  //
+  // `reported` is the commit the agent NAMED as the one it was looking at.
+  // `session_base` is a fallback: the hub read the session's base commit at
+  // the moment the claim arrived, because the claim named none. Those are
+  // different facts and the sentence said the same thing for both.
+  //
+  // THE FALLBACK IS AN UPPER BOUND, never a lower one. A session that checks
+  // out a newer commit mid-session re-registers, and `sessions.ts` overwrites
+  // base_commit by design ("checkouts are normal"). A claim observed at X and
+  // filed after that checkout is bound to Y > X, so the drift walk runs
+  // `Y..<default>` and every commit in `X..Y` — the ones most likely to have
+  // moved the code the claim is about — is outside the window. The claim then
+  // reads `current` on a measurement that never looked where it mattered.
+  //
+  // The hub cannot know when the observation happened, so it cannot fix the
+  // binding; what it must not do is let the two read alike. Naming the
+  // fallback is the weakening principle 5 asks for — missing evidence may
+  // weaken a conclusion, and this conclusion rests on a commit nobody stated.
+  const at =
+    validity.commitBinding === "session_base"
+      ? `recorded at ${observed}, its session's commit rather than a stated one`
+      : `recorded at ${observed}`;
+  if (validity.state === "stale") {
+    return `${at}; ${touchingFragment(validity)}`;
+  }
+  if (validity.state === "current") {
+    // THE SENTENCE NAMES WHAT WAS MEASURED, not what is true of the world.
+    //
+    // "those files have not changed since" asserts a fact about the default
+    // branch. The measurement is `<observedAt>..<default ref>` against the
+    // remote-tracking ref THIS CLONE HAPPENS TO HOLD, and nothing on the
+    // revalidation path fetches. A developer who has not fetched for a month —
+    // or a CI run on a cached checkout — measures against a month-old ref,
+    // finds an empty range, and the reading is UPSERTed into the shared hub as
+    // the answer every teammate then sees.
+    //
+    // No local signal can date that ref. A freshly cloned repository has
+    // neither a reflog for it nor a FETCH_HEAD, so "how stale is this copy"
+    // has no honest local answer, and manufacturing one would be the invented
+    // evidence principle 5 forbids. What CAN be stated is the ref state the
+    // reading was taken against — the row has carried it since the feature
+    // landed and no surface rendered it.
+    const against =
+      validity.refCommit === null ? "" : safeId(validity.refCommit);
+    // WHO MEASURED IT, when the only measurement is the author's own.
+    //
+    // Refusal 6 accepted that residue on the premise that `unknown` and
+    // `current` are indistinguishable to a reader — true of §5's substance
+    // gate, false HERE: this is the one positive certification the vocabulary
+    // has, and the label flips to it on a reading the claim's own author
+    // produced, over a surface they chose, with no second party in the path.
+    //
+    // The residue stays: a git reading is reproducible from any clone, which
+    // is §3.7's whole trust argument, and refusing it would leave a solo
+    // developer's claims permanently uncertain. What changes is that a
+    // teammate can now see which kind of `current` they are reading.
+    const measured = validity.selfReported === true ? ", by its own author" : "";
+    return against.length === 0
+      ? `${at}; unchanged as far as the default branch this clone holds${measured}`
+      : `${at}; unchanged up to ${against}, the default branch as this clone has it${measured}`;
+  }
+  return `${at}; whether those files changed since is unknown`;
+};
+
+/**
+ * The full clause, for a PULLED surface only.
+ *
+ * EVERY CHARACTER IS RENDERER-OWNED — enum values, small integers and hex
+ * through `safeId`. It never renders a PATH: paths are author-written and
+ * already reach surfaces through the existing target rendering, so this opens
+ * NO new untrusted slot. Bounded by MAX_CLAIM_VALIDITY_LINE_CHARS, and the
+ * bound is spent on the opener first: a truncated sentence that still says
+ * "no longer current" is worth more than a complete one nobody sees.
+ */
+export const claimValidityClause = (
+  validity: ClaimValidity | undefined,
+): string | null => {
+  if (validity === undefined) {
+    return null;
+  }
+  const clause = `${VALIDITY_OPENERS[validity.state]}: ${validityDetail(validity)}`;
+  return clause.length <= MAX_CLAIM_VALIDITY_LINE_CHARS
+    ? clause
+    : `${clause.slice(0, MAX_CLAIM_VALIDITY_LINE_CHARS - 1)}…`;
+};
+
+
+const validityFacts = (claim: DiagnosisClaim): readonly string[] => {
+  const clause = claimValidityClause(claim.validity);
+  return clause === null ? [] : [clause];
+};
+
 const claimLine = (
   claim: DiagnosisClaim,
   index: ReadonlyMap<string, string>,
@@ -320,6 +505,12 @@ const claimLine = (
     authorLabel(index, claim.authorSessionId),
     ...age,
     ...lastSeen,
+    // AT-2's visible half. In the FACTS array rather than on a line of its
+    // own: this section is fitted by dropping claim lines whole, so a clause
+    // on the claim's own line can never be separated from the body it
+    // qualifies — which is the only arrangement where "stays readable but is
+    // no longer presented as a current cause" is one sentence.
+    ...validityFacts(claim),
   ];
   return `${facts.join(" · ")}${evidence}${seen}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
 };
@@ -611,6 +802,17 @@ const TARGETS_UNREPORTED =
   "This hub does not report captured targets.";
 const TARGETS_EMPTY =
   "No targets were captured for this work context.";
+/**
+ * §5.1's hard rule on NO_TARGETS. "No targets were captured" is a claim about
+ * the WORK — a reader concludes there is no overlap with the file they are
+ * about to edit — and it is only true if the session was being watched. Under
+ * a gap it narrows to a claim about the archive, exactly as the search
+ * sentence does.
+ */
+const TARGETS_EMPTY_OBSERVED =
+  "No targets for this work context are in what was observed.";
+const CLAIMS_EMPTY = "Claims: no claims recorded yet.";
+const CLAIMS_EMPTY_OBSERVED = "Claims: none in what was observed.";
 
 /**
  * The FOURTH state: the hub answered, and this client could not read what it
@@ -621,16 +823,113 @@ const TARGETS_EMPTY =
 const targetsUnreadable = (dropped: number): string =>
   `The hub sent ${String(dropped)} target row${dropped === 1 ? "" : "s"} this client could not read.`;
 
-const targetsStateLines = (diagnosis: Diagnosis): readonly string[] => {
+/** True exactly when `targetsStateLines` would emit the EMPTY phrasing. */
+const saysNoTargets = (diagnosis: Diagnosis): boolean =>
+  diagnosis.targetsReported &&
+  diagnosis.targets.length === 0 &&
+  diagnosis.droppedTargets === 0;
+
+const targetsStateLines = (
+  diagnosis: Diagnosis,
+  gapped: boolean,
+): readonly string[] => {
   if (!diagnosis.targetsReported) {
     return [TARGETS_UNREPORTED];
   }
   if (diagnosis.targets.length > 0) {
     return [];
   }
-  return diagnosis.droppedTargets > 0
-    ? [targetsUnreadable(diagnosis.droppedTargets)]
-    : [TARGETS_EMPTY];
+  if (diagnosis.droppedTargets > 0) {
+    return [targetsUnreadable(diagnosis.droppedTargets)];
+  }
+  return [gapped ? TARGETS_EMPTY_OBSERVED : TARGETS_EMPTY];
+};
+
+/**
+ * WHAT THIS PULL MEASURED ABOUT ITS CLAIMS' CODE, AND WHAT IT DID NOT
+ * (spec 02 CCB-5, CCB-9).
+ *
+ * The revalidation leg (mcp/tools/get-diagnosis.ts) checks claims per GROUP —
+ * the claims sharing one recorded commit and one file set — at most
+ * REVALIDATION_GROUPS_PER_PULL of them, newest first. Every way it can end is
+ * named here, because each leaves the per-claim clauses reading something the
+ * clauses alone cannot explain: a group past the cut, or a pull that could not
+ * ask git at all, shows the hub's LAST recorded reading rather than this
+ * pull's. A bound spent silently is a measurement claiming more than it made
+ * (state/capture-health.ts).
+ *
+ * `total` counts only claims that CAN be revalidated. A claim bound to no
+ * commit is not a group at all — its own clause says why (§8.5).
+ */
+export type RevalidationSummary =
+  | {
+      /** The hub recorded this pull's reading. */
+      readonly kind: "recorded";
+      readonly revalidated: number;
+      readonly total: number;
+    }
+  | {
+      /** git answered, the hub did not record it: stored readings stand. */
+      readonly kind: "unrecorded";
+      readonly revalidated: number;
+      readonly total: number;
+    }
+  | {
+      /** This checkout has no fetched default branch to compare against. */
+      readonly kind: "no_default_ref";
+      readonly total: number;
+    }
+  | {
+      /** The tree was recorded in a different repository than this clone. */
+      readonly kind: "foreign_repo";
+      readonly total: number;
+    };
+
+/** The shared tail: what a claim the leg did not reach shows instead. */
+const STORED_READING_TAIL =
+  "claims show their last recorded reading, or unknown where there is none.";
+
+const groupsLabel = (count: number): string =>
+  `${String(count)} claim group${count === 1 ? "" : "s"}`;
+
+/**
+ * SILENT WHEN THERE IS NOTHING TO SAY. A pull that measured and recorded every
+ * group it had needs no sentence: the claim lines carry the verdicts, and a
+ * caveat on every answer teaches people to ignore caveats (03 §5.1's rule,
+ * borrowed). Every other outcome is one renderer-owned sentence.
+ */
+const revalidationLines = (
+  summary: RevalidationSummary | undefined,
+): readonly string[] => {
+  if (summary === undefined) {
+    return [];
+  }
+  switch (summary.kind) {
+    case "recorded":
+      return summary.revalidated >= summary.total
+        ? []
+        : [
+            `Claim currency: revalidated ${String(summary.revalidated)} of ${groupsLabel(summary.total)} ` +
+              "(claims sharing a recorded commit and file set) against the default branch on this pull, " +
+              `newest first — the per-pull bound; in the other ${String(summary.total - summary.revalidated)}, ` +
+              STORED_READING_TAIL,
+          ];
+    case "unrecorded":
+      return [
+        `Claim currency: revalidated ${String(summary.revalidated)} of ${groupsLabel(summary.total)} ` +
+          `against the default branch, but the hub did not record the reading, so ${STORED_READING_TAIL}`,
+      ];
+    case "no_default_ref":
+      return [
+        `Claim currency: not revalidated on this pull — this checkout has no fetched default branch ` +
+          `to compare against, so none of the ${groupsLabel(summary.total)} was checked and ${STORED_READING_TAIL}`,
+      ];
+    case "foreign_repo":
+      return [
+        "Claim currency: not revalidated on this pull — this tree was recorded in a different " +
+          `repository than this checkout, whose history cannot speak for it, so ${STORED_READING_TAIL}`,
+      ];
+  }
 };
 
 /** Same-author revision edge; its TARGET is the retracted claim. */
@@ -836,6 +1135,7 @@ export const renderDiagnosis = (
   diagnosis: Diagnosis,
   now: Date,
   solvedPresentation?: SolvedPresentation,
+  revalidation?: RevalidationSummary,
 ): string => {
   const index = authorIndex(diagnosis.claims);
   const context = diagnosis.workContext;
@@ -845,20 +1145,46 @@ export const renderDiagnosis = (
   // framed value per line, the one fragment every surface spells.
   const intentFragment = renderIntent(context.intent);
   const intentLines = intentFragment === null ? [] : [`Session ${intentFragment}`];
+  // THE HISTORY THE HEAD DESTROYS, beneath the head it replaced. It sits with
+  // the intent rather than in a section of its own because it IS the intent —
+  // a reader asking what this session said it was doing is the same reader
+  // asking whether that sentence was always the sentence.
+  const chainLines = renderIntentChain(diagnosis);
   const solvedLines = solvedBlock(diagnosis, now, solvedPresentation);
   const claims = claimsOldestFirst(diagnosis.claims);
 
+  // AT-1 on this surface. Both empty phrasings narrow under a gap, and the
+  // clause is added ONCE for the document rather than beside each sentence —
+  // two copies of the same caveat in one answer read as two caveats.
+  const gapped = mustQualifyEmptyAnswer(diagnosis.coverage);
+  const targetLines = targetsStateLines(diagnosis, gapped);
+  const emitsEmptyPhrasing =
+    diagnosis.claims.length === 0 || saysNoTargets(diagnosis);
+  const qualifier =
+    emitsEmptyPhrasing && gapped ? [coverageClause(diagnosis.coverage, now)] : [];
   const opening =
     diagnosis.claims.length === 0
       ? [
           header,
           contextLine,
           ...intentLines,
+          ...chainLines,
           ...solvedLines,
-          ...targetsStateLines(diagnosis),
-          "Claims: no claims recorded yet.",
+          ...targetLines,
+          ...revalidationLines(revalidation),
+          gapped ? CLAIMS_EMPTY_OBSERVED : CLAIMS_EMPTY,
+          ...qualifier,
         ]
-      : [header, contextLine, ...intentLines, ...solvedLines, ...targetsStateLines(diagnosis)];
+      : [
+          header,
+          contextLine,
+          ...intentLines,
+          ...chainLines,
+          ...solvedLines,
+          ...targetLines,
+          ...revalidationLines(revalidation),
+          ...qualifier,
+        ];
 
   const sections: readonly Section[] = [
     // WHERE, BEFORE WHAT. A reader who is about to edit the same file wants
@@ -1072,11 +1398,59 @@ export interface SearchFilterView {
   readonly sinceAgeMs?: number | undefined;
 }
 
+/**
+ * A coverage record and the instant it is read against — a PAIR, because a
+ * record with no clock cannot say how old the git evidence is, and a renderer
+ * that reached for the wall clock itself would make its own output untestable.
+ */
+export interface CoverageView {
+  readonly record: CoverageRecord;
+  readonly now: Date;
+}
+
 export interface SearchRenderOptions {
   /** The hub reported its vector tier ran for this search. */
   readonly semanticTier?: boolean;
   readonly filters?: SearchFilterView | undefined;
+  /** Omitted reads as "this client holds no record", never as "all clear". */
+  readonly coverage?: CoverageView | undefined;
 }
+
+/**
+ * Only the clock ever reads a stale-evidence AGE, and UNKNOWN_COVERAGE has no
+ * evidence row to be stale — every row is `hub_did_not_report`, which renders
+ * one clock-free sentence. So the epoch here cannot produce a wrong number,
+ * and coverage-empty-answers.test.ts pins that rather than trusting it.
+ */
+const EPOCH = new Date(0);
+
+/**
+ * §5.1's HARD rule, in the one place every empty answer passes through, AND
+ * EXACTLY AS WIDE AS THE RULE: it binds "while `agent_event` or `git` is
+ * anything but `complete`", which is `mustQualifyEmptyAnswer` and nothing
+ * else. An earlier shape rendered on `complete` too, on the argument that
+ * "nothing matched and we WERE watching" is the stronger answer. It is — but
+ * the sentence that carries it is the expensive one: zero-hit searches and
+ * claim-less trees are the ordinary case on any repo whose archive has not
+ * covered the topic yet, so on a healthy install every coverage line a person
+ * ever read said `complete`, and a caveat that always says the same thing is
+ * how the one that says `incomplete` gets skipped with the rest. The
+ * unqualified sentence already carries the good news: under `complete` it
+ * reads "No work context ON THIS REPO matched", a claim about the repository
+ * rather than about the archive, which the gapped branch may not make.
+ *
+ * An ABSENT record still renders — absent is `unknown`, never `complete`
+ * (§4) — so a caller that forgot the field shouts rather than passing for a
+ * watched repo. `crosscheck status` keeps its line unconditionally: every
+ * other line of that command prints its state whatever the state is, and
+ * AT-9 names it as the surface a person should not have to run doctor after.
+ */
+const coverageQualifier = (view: CoverageView | undefined): string | null => {
+  const record = view?.record ?? UNKNOWN_COVERAGE;
+  return mustQualifyEmptyAnswer(record)
+    ? coverageClause(record, view?.now ?? EPOCH)
+    : null;
+};
 
 const searchMethodLine = (options: SearchRenderOptions): string =>
   options.semanticTier === true
@@ -1154,11 +1528,23 @@ const noMatchLine = (options: SearchRenderOptions): string => {
     filters?.sinceAgeMs === undefined
       ? ""
       : ` in the last ${formatAge(filters.sinceAgeMs)}`;
-  const sentence = `No work context on this repo matched that query${from}${window}.`;
-  return from.length === 0 && window.length === 0
-    ? sentence
-    : `${sentence} Those filters are part of that answer: other words, a longer ` +
+  // AT-1, AND THE WORDING IS THE WHOLE POINT. "No work context matched" is a
+  // claim about the REPOSITORY; it is only true if the repository was being
+  // watched. Under any gap — `unknown` included, which is an un-upgraded or
+  // unreachable hub — the sentence narrows to a claim about the ARCHIVE, and
+  // the clause below says how far that archive reaches. Without this a model
+  // reads an empty answer as "nobody has worked on this" and redoes the work.
+  const record = options.coverage?.record ?? UNKNOWN_COVERAGE;
+  const sentence = mustQualifyEmptyAnswer(record)
+    ? `Nothing in what was observed on this repo matched that query${from}${window}.`
+    : `No work context on this repo matched that query${from}${window}.`;
+  const filtersNote =
+    from.length === 0 && window.length === 0
+      ? ""
+      : ` Those filters are part of that answer: other words, a longer ` +
         "window or another teammate may well match.";
+  const qualifier = coverageQualifier(options.coverage);
+  return `${sentence}${filtersNote}${qualifier === null ? "" : `\n${qualifier}`}`;
 };
 
 /**
@@ -1279,6 +1665,9 @@ export const renderSearchResults = (
     searchMethodLine(options),
   ];
   if (hits.length === 0) {
+    // AT-1. `noMatchLine` says these WORDS matched nothing; the clause says
+    // how much of the archive those words were matched against. Without it a
+    // model reads "no work context matched" as "nobody has worked on this".
     return [...opening, noMatchLine(options)].join("\n");
   }
   const lines = appendSection(

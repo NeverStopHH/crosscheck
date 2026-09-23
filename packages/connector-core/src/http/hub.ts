@@ -1,12 +1,21 @@
 import { z } from "zod";
+import { ClaimValiditySchema } from "@crosscheck/schema";
+import type { ClaimRevalidationEntry } from "@crosscheck/schema";
+import type { ClaimValidity } from "@crosscheck/schema";
 import {
+  MAX_CI_LANE_FIELD_CHARS,
+  MAX_CI_TEST_ID_CHARS,
   MAX_PIN_SWEEP_UPDATES,
   PIN_PRESENCE_TERMINAL,
+  SESSION_EVENT_RETENTION_MODES,
 } from "@crosscheck/schema";
+import type { SeqField, SessionEventRetentionMode } from "@crosscheck/schema";
 
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
+import { parseCoverage } from "./coverage.ts";
 import type { HubContext, HubResult } from "./client.ts";
+import type { CoverageRecord } from "./coverage.ts";
 
 /**
  * Re-exported, because they are part of THIS module's signature.
@@ -176,6 +185,15 @@ export interface RegisterSessionInput {
   readonly branch: string;
   readonly baseCommit: string;
   readonly status: string;
+  /**
+   * `session.started`'s own position — `n = 0`, minted with the epoch rather
+   * than allocated, because the allocator hands out from 1. Optional on the
+   * type only so a caller with no session state (`crosscheck conference`) can
+   * send the refusal instead; a caller that sends NOTHING is read by the hub
+   * as a connector from before this field, which is a different fact about a
+   * different machine.
+   */
+  readonly seq?: SeqField;
 }
 
 const encodeRepo = (repo: string): string =>
@@ -206,15 +224,22 @@ export const heartbeatSession = (
     capture: true,
   });
 
+/**
+ * `session.ended` does not travel an envelope, so its POSITION rides this body.
+ * The hub's SessionStatusBodySchema is a STRICT object and declares the field
+ * for exactly that reason. Omitted, the end is stored unsequenced with its
+ * reason — which is what a reap-closed end and a pre-seq connector both are.
+ */
 export const endSession = (
   ctx: HubContext,
   sessionId: string,
+  seq?: SeqField,
 ): Promise<HubResult<unknown>> =>
   hubRequest(ctx, {
     method: "POST",
     path: `/api/sessions/${encodeURIComponent(sessionId)}/end`,
     schema: z.unknown(),
-    body: { status: "done" },
+    body: seq === undefined ? { status: "done" } : { status: "done", seq },
     capture: true,
   });
 
@@ -262,6 +287,78 @@ export const getOpenSessions = (
     method: "GET",
     path: "/api/sessions?open=1&mine=1",
     schema: tolerantList("sessions", OpenSessionEntrySchema),
+  });
+
+/**
+ * THE TWO ORDER FAILURES ONLY THE HUB CAN SEE (spec 01 §3.7).
+ *
+ * `epoch_conflict` — two events claimed one position — and `epoch_split` — one
+ * session holding two counters — are computed from rows the hub holds, and no
+ * local state file knows about either. A session in either state looks healthy
+ * from here, and every happens-before question about it is refused.
+ *
+ * `reason` is REQUIRED and never defaulted: a state with no reason beside it is
+ * the bare word every surface in this product forbids, and there is nothing
+ * sensible to invent when a hub does not say.
+ */
+export const SessionOrderEntrySchema = z.looseObject({
+  sessionId: z.string().min(1),
+  state: z.string().min(1),
+  reason: z.string().min(1),
+  epochs: z.number().int().min(0),
+});
+
+export type SessionOrderEntry = z.infer<typeof SessionOrderEntrySchema>;
+
+/**
+ * WHAT THE HUB SAYS ABOUT ITS CAUSAL-ORDER TABLE, from ONE read: the sessions
+ * it cannot order, and how it retires that table's rows (CSK-14 — the hub is
+ * the only one who can state the second, schema session-event.ts says why).
+ *
+ * `retention` is null when the hub sent none — a hub from before the field —
+ * and "unknown" when it sent a mode this connector cannot name, a newer hub.
+ * The two are different sentences and neither may be printed as the other.
+ * The mode itself is never echoed: it is an enum on the hub's side, and a
+ * value this connector does not know is a reason to say so, not text to print.
+ */
+export interface SessionOrderReport {
+  readonly broken: readonly SessionOrderEntry[];
+  readonly retention: SessionEventRetentionMode | "unknown" | null;
+}
+
+const isRetentionMode = (value: unknown): value is SessionEventRetentionMode =>
+  (SESSION_EVENT_RETENTION_MODES as readonly unknown[]).includes(value);
+
+const SessionOrderReportSchema: z.ZodType<SessionOrderReport> = z
+  .looseObject({
+    sessions: z.array(z.unknown()),
+    retention: z.unknown().optional(),
+  })
+  .transform((value) => ({
+    broken: value.sessions
+      .map((item) => SessionOrderEntrySchema.safeParse(item))
+      .filter((parsed) => parsed.success)
+      .map((parsed) => parsed.data),
+    retention:
+      value.retention === undefined
+        ? null
+        : isRetentionMode(value.retention)
+          ? value.retention
+          : "unknown",
+  }));
+
+/**
+ * An older hub has no such route and answers 404 — a plain HubResult failure,
+ * which the caller reports as "not measured" rather than as "none broken" or
+ * as any retention at all.
+ */
+export const getSessionOrderReport = (
+  ctx: HubContext,
+): Promise<HubResult<SessionOrderReport>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/sessions/order",
+    schema: SessionOrderReportSchema,
   });
 
 export const getPresence = (
@@ -332,14 +429,45 @@ export const AbsenceEntrySchema = z.looseObject({
 
 export type AbsenceEntry = z.infer<typeof AbsenceEntrySchema>;
 
+/**
+ * The endpoint named "absences" answers findings AND how far they can be
+ * trusted (03 §3.5). It stopped being a bare list on purpose: coverage rides
+ * inside a response that already exists because PGlite is single-connection
+ * (server/src/services/search.ts:59-67), so a ninth parallel GET at
+ * SessionStart would serialise on the hub inside the 1000 ms budget while
+ * looking free in wall clock.
+ */
+export interface AbsencesOutcome {
+  readonly absences: readonly AbsenceEntry[];
+  /** Never absent: a hub that reported none yields UNKNOWN_COVERAGE. */
+  readonly coverage: CoverageRecord;
+}
+
+const AbsencesResponseSchema = z
+  .looseObject({
+    absences: z.array(z.unknown()).default([]),
+    // Tolerant like every other optional block on the wire — and then read
+    // the OPPOSITE way: http/coverage.ts turns absent or malformed into five
+    // `unknown` rows rather than into silence, because an answer that says
+    // nothing about what was observed reads as one that observed everything.
+    coverage: z.unknown().optional(),
+  })
+  .transform(
+    (value): AbsencesOutcome => ({
+      // Tolerant rows, silent drop — a listing, like tolerantList above.
+      absences: parseRows(value.absences, AbsenceEntrySchema).rows,
+      coverage: parseCoverage(value.coverage),
+    }),
+  );
+
 export const getAbsences = (
   ctx: HubContext,
   repo: string,
-): Promise<HubResult<readonly AbsenceEntry[]>> =>
+): Promise<HubResult<AbsencesOutcome>> =>
   hubRequest(ctx, {
     method: "GET",
     path: `/api/absences${encodeRepo(repo)}`,
-    schema: tolerantList("absences", AbsenceEntrySchema),
+    schema: AbsencesResponseSchema,
   });
 
 /**
@@ -384,6 +512,20 @@ export const SolvedMatchEntrySchema = z.looseObject({
    * render because DESIGN.md §4's rule is about what reaches the reader.
    */
   rootCauseConfidence: z.number().min(0).max(1).nullable().optional(),
+  /**
+   * How much the claim `rootCause` quotes is still worth about the CODE
+   * (1.0 spec 02 §5, the `briefing solved` row of its table).
+   *
+   * THE SECOND UNSOLICITED SURFACE THAT ASSERTS A CLAIM BODY. `claim-hint` is
+   * the first, and it was gated; this row was not, so a root cause recorded
+   * against a file rewritten since was still handed to a reader at
+   * SessionStart as the answer — AT-2's subject exactly, one surface over.
+   *
+   * OPTIONAL and nullable for `validity`'s reason one field over: absence
+   * means "the hub did not answer", never "unknown". An older hub omits it
+   * and the line renders as it always did.
+   */
+  rootCauseValidity: ClaimValiditySchema.nullable().optional(),
 });
 
 export type SolvedMatchEntry = z.infer<typeof SolvedMatchEntrySchema>;
@@ -427,6 +569,82 @@ const SolvedCountsResponseSchema = z
     // A counts block this client cannot read is treated as no counts at all:
     // a number the reader cannot trust is worse than no number.
     return counts.success ? counts.data : EMPTY_SOLVED_COUNTS;
+  });
+
+/**
+ * WHAT CI SAW AT THIS COMMIT, AND WHAT THE HUB MAKES OF IT (spec 05 §3.5-6).
+ *
+ * TWO FIELDS, ONE CALL, because they are read together and mislead apart: a
+ * `confirmed` delta beside `coverage: incomplete` means something different
+ * from the same delta beside `complete` — in the first, lanes the hub expected
+ * never reported, so the run that confirmed it may not be the whole story.
+ *
+ * `looseObject` AND EVERY COUNT DEFAULTED, for the reason the claim-validity
+ * summary states: a hub too old to know this route answers 404 and the caller
+ * sees a failure, but a hub that answers with a field missing must not have
+ * that read as a confident zero. The STATE has no default — an absent state is
+ * the one thing this client refuses to guess, because every value it could
+ * pick is a sentence about a repository it cannot see.
+ */
+export const CiCoverageSchema = z.looseObject({
+  state: z.enum(["complete", "incomplete", "unknown", "unavailable"]),
+  lanesExpected: z.number().int().min(0).default(0),
+  lanesReported: z.number().int().min(0).default(0),
+  truncatedLanes: z.number().int().min(0).default(0),
+  awaitingRerun: z.number().int().min(0).default(0),
+  collectedAt: z.string().nullable().default(null),
+});
+
+export const CiBehaviorDeltaSchema = z.looseObject({
+  // AUTHOR-WRITTEN TEXT FROM A REPOSITORY, and a fork PR can name a test
+  // anything. Bounded here and sanitized at every surface that prints one.
+  testId: z.string().max(MAX_CI_TEST_ID_CHARS),
+  delta: z.enum(["confirmed", "unconfirmed", "flaky"]),
+  reason: z.enum([
+    "insufficient_base",
+    "not_stably_green",
+    "awaiting_rerun",
+    "rerun_green",
+    "rerun_red",
+  ]),
+  baseRuns: z.number().int().min(0).default(0),
+  baseWindowSource: z
+    .enum(["same_ref", "default_ref_fallback"])
+    .default("same_ref"),
+  rerunKind: z.enum(["none", "same_job", "new_attempt"]).default("none"),
+  lane: z
+    .looseObject({
+      job: z.string().max(MAX_CI_LANE_FIELD_CHARS).default(""),
+      leg: z.string().max(MAX_CI_LANE_FIELD_CHARS).default(""),
+    })
+    .optional(),
+});
+
+const CiVerdictResponseSchema = z.looseObject({
+  coverage: CiCoverageSchema,
+  deltas: z.array(CiBehaviorDeltaSchema).default([]),
+});
+
+export type CiCoverage = z.infer<typeof CiCoverageSchema>;
+export type CiBehaviorDelta = z.infer<typeof CiBehaviorDeltaSchema>;
+export type CiVerdict = z.infer<typeof CiVerdictResponseSchema>;
+
+/**
+ * THE DEFAULT REF TRAVELS FROM THE CLONE, because the hub holds no repository
+ * and must not guess which branch is default. It is used only to borrow a base
+ * window when a feature branch has none of its own, and every delta says
+ * whether it borrowed — so a reader who disagrees can see that it was used.
+ */
+export const getCiVerdict = (
+  ctx: HubContext,
+  repo: string,
+  commitSha: string,
+  defaultRef: string,
+): Promise<HubResult<CiVerdict>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/ci-runs/verdict${encodeRepo(repo)}&commit=${encodeURIComponent(commitSha)}&defaultRef=${encodeURIComponent(defaultRef)}`,
+    schema: CiVerdictResponseSchema,
   });
 
 export const getSolvedMatchCounts = (
@@ -596,6 +814,24 @@ export const DiagnosisClaimSchema = z.looseObject({
    * older hub does not send the field at all.
    */
   lastSeenAt: z.string().nullable().optional(),
+  /**
+   * How much this claim is still worth about the CODE (1.0 spec 02).
+   *
+   * OPTIONAL, and the absence means "the hub did not answer", not "unknown" —
+   * the distinction `targetsReported` exists for, one field over. A hub too
+   * old to know about validity omits it, and the renderer then prints no
+   * clause at all rather than a state nobody measured. Doctor counts the
+   * residue out loud (cli doctor.ts), because a hub that simply omits the
+   * field keeps every claim in the substance lane — which changes nothing a
+   * reader sees, since `unknown` is injectable anyway, but is worth saying.
+   */
+  validity: ClaimValiditySchema.optional(),
+  /**
+   * The files this claim's AUTHOR declared it is about, for the revalidation
+   * leg's `declared` basis. Empty or absent means the reader falls back to the
+   * work context's own file targets, which over-fires by construction.
+   */
+  affectedPaths: z.array(z.string().min(1)).optional(),
 });
 
 export type DiagnosisClaim = z.infer<typeof DiagnosisClaimSchema>;
@@ -645,7 +881,45 @@ export const DiagnosisTargetSchema = z.looseObject({
 
 export type DiagnosisTarget = z.infer<typeof DiagnosisTargetSchema>;
 
+/** One declared path of one intent version — `role` is what decides a timing. */
+export const IntentScopeViewSchema = z.looseObject({
+  role: z.string().min(1),
+  kind: z.string().min(1),
+  value: z.string().min(1),
+});
+
+/**
+ * ONE VERSION OF THE INTENT. `summary` and `reason` are both AGENT-WRITTEN and
+ * both land on a rendered surface, so both are untrusted slots with corpus
+ * cases of their own; `scope[].value` is an author-written path and is a third.
+ *
+ * NO POSITION CROSSES. The hub answers timing questions; a connector holding
+ * two integers would be a second implementation of the ladder with none of its
+ * refusals.
+ */
+export const IntentVersionSchema = z.looseObject({
+  version: z.number().int().min(1),
+  amendsVersion: z.number().int().min(1).nullable().optional(),
+  provenance: z.string().min(1),
+  summary: z.string().min(1),
+  reason: z.string().nullable().optional(),
+  scope: z.array(IntentScopeViewSchema).optional(),
+});
+
+export type IntentVersion = z.infer<typeof IntentVersionSchema>;
+export type IntentScopeView = z.infer<typeof IntentScopeViewSchema>;
+
 export interface Diagnosis {
+  /**
+   * The repository this tree was recorded in — the owning session's repo.
+   *
+   * Carried for the revalidation leg (spec 02 §3.6): get_diagnosis reads ANY
+   * tree on the hub, and a checkout of another repository can only answer
+   * "unknown" about commits it never held, so the leg asks git nothing for a
+   * foreign tree. OPTIONAL: an older hub omits it, and the leg then asks git
+   * anyway — which costs a few `unknown` readings, never a wrong verdict.
+   */
+  readonly repo?: string | undefined;
   readonly workContext: DiagnosisWorkContext;
   readonly claims: readonly DiagnosisClaim[];
   readonly edges: readonly DiagnosisEdge[];
@@ -666,6 +940,24 @@ export interface Diagnosis {
    * no overlap — and it is a claim nobody made.
    */
   readonly targetsReported: boolean;
+  /**
+   * Every version of this context's intent, newest first.
+   *
+   * ITS OWN COMPANION FLAG IS BELOW, for the reason `targetsReported` states
+   * one field up: an empty array is what a hub sends for a context nobody ever
+   * amended AND what a hub too old to know about the field leaves behind.
+   */
+  readonly intentChain: readonly IntentVersion[];
+  /**
+   * Whether the hub ANSWERED the chain question at all.
+   *
+   * "This session never amended its intent" is a claim a reader ACTS on — it
+   * is the sentence that makes a stated plan look like the plan all along —
+   * and against an older hub it is a claim nobody made. Reporting it from an
+   * empty array would be an unearned exoneration, which is the one direction
+   * this whole spec refuses to be wrong in.
+   */
+  readonly chainReported: boolean;
   /**
    * Target rows the hub sent that this client could not parse, kept SEPARATE
    * from the aggregate `droppedRows` below.
@@ -696,6 +988,14 @@ export interface Diagnosis {
    * how many went missing (rule: a degraded state always has a surface).
    */
   readonly droppedRows: number;
+  /**
+   * How far the archive this tree was read from reaches (03 §3.5). REQUIRED,
+   * not optional: this surface carries two empty-result phrasings a reader
+   * acts on — "no claims recorded yet" and "no targets were captured" — and
+   * an optional field would let both be emitted with nothing said. A hub
+   * that sends none yields UNKNOWN_COVERAGE.
+   */
+  readonly coverage: CoverageRecord;
 }
 
 /**
@@ -726,14 +1026,21 @@ const DiagnosisEnvelopeSchema = z
     // a default erases "the hub said nothing" into "the hub said none", and
     // the renderer would then print an absence as a finding.
     targets: z.array(z.unknown()).optional(),
+    // OPTIONAL for the same reason `targets` is: a default would erase "this
+    // hub does not report the chain" into "this session never amended".
+    intentChain: z.array(z.unknown()).optional(),
     truncated: z.boolean().default(false),
+    coverage: z.unknown().optional(),
+    repo: z.string().min(1).optional(),
   })
   .transform((value): Diagnosis => {
     const claims = parseRows(value.claims, DiagnosisClaimSchema);
     const edges = parseRows(value.edges, DiagnosisEdgeSchema);
     const external = parseRows(value.externalClaims, ExternalClaimRefSchema);
     const targets = parseRows(value.targets ?? [], DiagnosisTargetSchema);
+    const chain = parseRows(value.intentChain ?? [], IntentVersionSchema);
     return {
+      repo: value.repo,
       workContext: value.workContext,
       claims: claims.rows,
       edges: edges.rows,
@@ -741,9 +1048,16 @@ const DiagnosisEnvelopeSchema = z
       targets: targets.rows,
       targetsReported: value.targets !== undefined,
       droppedTargets: targets.dropped,
+      intentChain: chain.rows,
+      chainReported: value.intentChain !== undefined,
       truncated: value.truncated,
       droppedRows:
-        claims.dropped + edges.dropped + external.dropped + targets.dropped,
+        claims.dropped +
+        edges.dropped +
+        external.dropped +
+        targets.dropped +
+        chain.dropped,
+      coverage: parseCoverage(value.coverage),
     };
   });
 
@@ -827,6 +1141,13 @@ export interface SearchOutcome {
   readonly vectorTierActive: boolean;
   /** Null from a hub that predates the filters — then nothing is claimed. */
   readonly filters: SearchFilters | null;
+  /**
+   * NOT null from a hub that predates it, unlike `filters` one line up, and
+   * the asymmetry is deliberate (03 §4): an unclaimed filter costs a line of
+   * context, an unclaimed coverage record would let an empty result read as
+   * "we looked everywhere". Absent becomes five `unknown` rows.
+   */
+  readonly coverage: CoverageRecord;
 }
 
 const SearchFiltersSchema = z.looseObject({
@@ -852,10 +1173,12 @@ const SearchResponseSchema = z
     // and a malformed one is treated as nothing — a filter line the reader
     // cannot trust is worse than no filter line at all.
     filters: z.unknown().optional(),
+    coverage: z.unknown().optional(),
   })
   .transform((value): SearchOutcome => {
     const filters = SearchFiltersSchema.safeParse(value.filters);
     return {
+      coverage: parseCoverage(value.coverage),
       // Tolerant rows, silent drop — a listing, like tolerantList above; the
       // diagnosis path counts its drops because a TREE must not silently
       // shrink, a search result list is advisory by nature.
@@ -920,6 +1243,18 @@ export const HintClaimCandidateSchema = z.looseObject({
   authorDeveloperId: z.string().min(1),
   authorDeveloperName: z.string().min(1).optional(),
   body: z.string(),
+  /**
+   * How much this claim is still worth about the CODE (1.0 spec 02).
+   *
+   * OPTIONAL, and the absence means "the hub did not answer", not "unknown" —
+   * the distinction `targetsReported` exists for, one field over. A hub too
+   * old to know about validity omits it, and the renderer then prints no
+   * clause at all rather than a state nobody measured. Doctor counts the
+   * residue out loud (cli doctor.ts), because a hub that simply omits the
+   * field keeps every claim in the substance lane — which changes nothing a
+   * reader sees, since `unknown` is injectable anyway, but is worth saying.
+   */
+  validity: ClaimValiditySchema.optional(),
   createdAt: z.string().min(1),
 });
 
@@ -1028,18 +1363,22 @@ export interface HintCandidatesResult {
    * then behaves exactly as it did before R2.
    */
   readonly answers: readonly AnsweredQuestion[];
+  /** How far the archive behind a delivered hint reaches (03 §3.5). */
+  readonly coverage: CoverageRecord;
 }
 
 const HintCandidatesResponseSchema = z
   .looseObject({
     candidates: z.array(z.unknown()).default([]),
     answers: z.array(z.unknown()).default([]),
+    coverage: z.unknown().optional(),
   })
   .transform(
     (value): HintCandidatesResult => ({
       // Tolerant rows, silent drop — a candidate list is advisory by nature.
       candidates: parseRows(value.candidates, HintContextCandidateSchema).rows,
       answers: parseRows(value.answers, AnsweredQuestionSchema).rows,
+      coverage: parseCoverage(value.coverage),
     }),
   );
 
@@ -1328,6 +1667,8 @@ export interface RefereePosition {
   readonly ruledOut: readonly RefereeClaim[];
   readonly ruledOutTruncated: boolean;
   readonly supersededByClaimId: string | null;
+  /** The validity record, or null from a hub too old to send one. */
+  readonly validity: ClaimValidity | null;
   /** Rows of THIS position the client could not parse and dropped. */
   readonly droppedRows: number;
 }
@@ -1341,6 +1682,7 @@ const RefereePositionSchema = z
     ruledOut: z.array(z.unknown()).default([]),
     ruledOutTruncated: z.boolean().default(false),
     supersededByClaimId: z.string().nullable().optional(),
+    validity: ClaimValiditySchema.optional(),
   })
   .transform((value): RefereePosition => {
     const evidence = parseRows(value.evidence, RefereeClaimSchema);
@@ -1353,6 +1695,7 @@ const RefereePositionSchema = z
       ruledOut: ruledOut.rows,
       ruledOutTruncated: value.ruledOutTruncated,
       supersededByClaimId: value.supersededByClaimId ?? null,
+      validity: value.validity ?? null,
       droppedRows: evidence.dropped + ruledOut.dropped,
     };
   });
@@ -1473,6 +1816,30 @@ export const getPrivacySettings = (
     schema: PrivacySettingsSchema,
   });
 
+/**
+ * Whether this hub can answer AT-4 at all: how many stored intent versions
+ * carry no position, out of how many there are.
+ *
+ * BOTH HALVES, because a numerator alone cannot tell a hub that never
+ * positions anything from a hub with nothing to position — the lesson
+ * `state/git-lane-cost.ts` states for its own lane.
+ */
+export const IntentPositionsSchema = z.looseObject({
+  total: z.number().int().min(0),
+  unpositioned: z.number().int().min(0),
+});
+
+export type IntentPositions = z.infer<typeof IntentPositionsSchema>;
+
+export const getIntentPositions = (
+  ctx: HubContext,
+): Promise<HubResult<IntentPositions>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: "/api/intent-ledger/positions",
+    schema: IntentPositionsSchema,
+  });
+
 export const putPresenceOptOut = (
   ctx: HubContext,
   optOut: boolean,
@@ -1534,17 +1901,35 @@ export const TripwireSessionSchema = z.looseObject({
 
 export type TripwireSession = z.infer<typeof TripwireSessionSchema>;
 
+export interface TripwireOutcome {
+  readonly sessions: readonly TripwireSession[];
+  /** Never absent: a hub that reported none yields UNKNOWN_COVERAGE. */
+  readonly coverage: CoverageRecord;
+}
+
+const TripwireResponseSchema = z
+  .looseObject({
+    sessions: z.array(z.unknown()).default([]),
+    coverage: z.unknown().optional(),
+  })
+  .transform(
+    (value): TripwireOutcome => ({
+      sessions: parseRows(value.sessions, TripwireSessionSchema).rows,
+      coverage: parseCoverage(value.coverage),
+    }),
+  );
+
 /** The PreToolUse tripwire's ONE bounded hub call (DESIGN.md §4). */
 export const getTripwireSessions = (
   ctx: HubContext,
   repo: string,
   value: string,
-): Promise<HubResult<readonly TripwireSession[]>> => {
+): Promise<HubResult<TripwireOutcome>> => {
   const params = new URLSearchParams({ repo, value });
   return hubRequest(ctx, {
     method: "GET",
     path: `/api/hints/tripwire?${params.toString()}`,
-    schema: tolerantList("sessions", TripwireSessionSchema),
+    schema: TripwireResponseSchema,
   });
 };
 
@@ -1909,6 +2294,23 @@ export const SuspectCandidateSchema = z.looseObject({
   authorTouches: z.number().int().min(0),
   lift: z.number().min(0),
   sources: z.array(z.string().min(1)).default([]),
+  /**
+   * Was this session's stated plan written before it touched the file, or
+   * after? (spec 06 §5, decision 10.2.)
+   *
+   * An ATOMIC answer: the value never travels without its reason, because
+   * `absent` alone asserts that no explanation exists — which accuses a
+   * developer — while the reason says only that we cannot tell when one was
+   * written, which excuses them. Absent entirely from a hub too old to send
+   * it, and null whenever nothing can be said.
+   */
+  intentTiming: z
+    .looseObject({
+      timing: z.enum(["predeclared", "post_hoc", "absent"]),
+      reason: z.string().min(1),
+    })
+    .nullable()
+    .default(null),
   readerMuted: z.boolean().default(false),
   isSelf: z.boolean().default(false),
 });
@@ -1940,6 +2342,13 @@ export interface SuspectView {
   };
   readonly attribution: string;
   readonly candidates: readonly SuspectCandidate[];
+  /**
+   * How far the archive this verdict was read from reaches (03 §3.5), scoped
+   * to the PIN'S FILE SET (§3.2a) — "were we watching the thing you asked
+   * about", not "were we watching this repo for a fortnight". This is the
+   * surface where an unqualified answer costs the most: a name.
+   */
+  readonly coverage: CoverageRecord;
 }
 
 const SuspectViewSchema = z
@@ -1968,6 +2377,7 @@ const SuspectViewSchema = z
     }),
     attribution: z.string().min(1).default("sessions"),
     candidates: z.array(z.unknown()).default([]),
+    coverage: z.unknown().optional(),
   })
   .transform(
     (value): SuspectView => ({
@@ -1976,6 +2386,7 @@ const SuspectViewSchema = z
       scope: value.scope,
       totals: value.totals,
       attribution: value.attribution,
+      coverage: parseCoverage(value.coverage),
       candidates: value.candidates
         .map((row) => SuspectCandidateSchema.safeParse(row))
         .filter((parsed) => parsed.success)
@@ -2029,4 +2440,103 @@ export const getTeamSettings = (
     method: "GET",
     path: `/api/team-settings${encodeRepo(repo)}`,
     schema: TeamSettingsSchema,
+  });
+
+/**
+ * What the hub answers a revalidation report with (1.0 spec 02 §3.3, §3.7).
+ *
+ * `validities` is the reason this is a POST WITH A BODY WORTH READING rather
+ * than a fire-and-forget: the hub derives each named claim's state from the
+ * write it just accepted, so the reader who triggered the check sees the
+ * downgrade on THIS pull. It also makes the downgrade-only rule visible — a
+ * refused `unchanged` comes back as `stale`, which is the truth about the
+ * claim rather than the truth about the request.
+ */
+export const ClaimRevalidationOutcomeSchema = z.looseObject({
+  recorded: z.number().int().min(0).default(0),
+  refusedDowngrades: z.number().int().min(0).default(0),
+  // Entries the hub would not store because the claim can never be
+  // revalidated (§8.5: no commit binding, so no commit to be unchanged
+  // since). Defaulted like its neighbour, so a hub too old to count them
+  // reads as zero rather than as a parse failure.
+  refusedUnbound: z.number().int().min(0).default(0),
+  pruned: z.number().int().min(0).default(0),
+  validities: z.record(z.string(), ClaimValiditySchema).default({}),
+});
+
+export type ClaimRevalidationOutcome = z.infer<
+  typeof ClaimRevalidationOutcomeSchema
+>;
+
+/**
+ * Reports one clone's reading. Never throws and never blocks a render: the
+ * caller treats a failure as "nothing was revalidated this pull", which reads
+ * `unknown` rather than `current` on every claim it could not measure.
+ */
+export const reportClaimRevalidations = (
+  ctx: HubContext,
+  repo: string,
+  readings: {
+    readonly entries: readonly ClaimRevalidationEntry[];
+    readonly revalidated: number;
+    readonly total: number;
+  },
+): Promise<HubResult<ClaimRevalidationOutcome>> =>
+  hubRequest(ctx, {
+    method: "POST",
+    path: "/api/claim-revalidations",
+    schema: ClaimRevalidationOutcomeSchema,
+    body: {
+      repo,
+      entries: readings.entries,
+      revalidated: readings.revalidated,
+      total: readings.total,
+    },
+  });
+
+/**
+ * HOW MUCH OF A REPO'S KNOWLEDGE CAN BE JUDGED AT ALL — counts, for doctor's
+ * two refusals (1.0 spec 02 §8.5, §8.9).
+ *
+ * `looseObject` and defaults on every field, for `targetsReported`'s reason
+ * (see its comment above): a hub too old to answer this route 404s, which the
+ * caller tells apart from a hub that answered with zeros. What must NEVER
+ * happen is a missing field parsing as a confident zero, so every count
+ * defaults to 0 only after the route itself answered.
+ */
+export const ClaimValiditySummarySchema = z.looseObject({
+  counted: z.number().int().min(0).default(0),
+  total: z.number().int().min(0).default(0),
+  unbound: z.number().int().min(0).default(0),
+  /**
+   * Claims bound to their SESSION'S commit rather than one the claim stated.
+   *
+   * Defaulted to 0 like its neighbours, and for the sharper reason: a hub too
+   * old to count them answers the same as a hub where every claim names its
+   * own commit. The zero therefore means "not reported", and doctor prints
+   * the clause only when the number is positive — an absent count must not
+   * become the reassuring half of the sentence.
+   */
+  inferredBindings: z.number().int().min(0).default(0),
+  neverRevalidated: z.number().int().min(0).default(0),
+  /**
+   * CCB-10's observability half. Absent from a hub too old to count it, which
+   * is why both default to 0 rather than being required: a missing number is
+   * not evidence that the gate never fired.
+   */
+  claimsWithRefusedWalkBacks: z.number().int().min(0).default(0),
+  refusedWalkBacks: z.number().int().min(0).default(0),
+  states: z.record(z.string(), z.number().int().min(0)).default({}),
+});
+
+export type ClaimValiditySummary = z.infer<typeof ClaimValiditySummarySchema>;
+
+export const getClaimValiditySummary = (
+  ctx: HubContext,
+  repo: string,
+): Promise<HubResult<ClaimValiditySummary>> =>
+  hubRequest(ctx, {
+    method: "GET",
+    path: `/api/claim-revalidations/summary${encodeRepo(repo)}`,
+    schema: ClaimValiditySummarySchema,
   });

@@ -9,6 +9,7 @@ import type {
   LandedEvidence,
   Question,
   QuestionAnswer,
+  SeqField,
   Target,
   WorkContext,
 } from "@crosscheck/schema";
@@ -195,24 +196,45 @@ const touchProducerHeartbeats = async (
     );
 };
 
+/**
+ * THE POSITION TRAVELS WITH THE RECORD (spec 01 §3.5). The envelope is parsed
+ * here and the handlers store the rows, so this is the one seam where the two
+ * meet — dropping `seq` at this boundary would leave every canonical event
+ * unsequenced while every connector believed it had sent a position.
+ *
+ * `producerSessionId` is passed for `commit_evidence` ALONE, and only because
+ * that body names no session and no join reaches one: its aggregate is keyed
+ * by (repo, author_email), and the event records that a COLLECTION happened
+ * here in the order. Every other kind resolves its session from the body, for
+ * the reason spelled out in record-handlers.ts — the producer is rewritten by
+ * whichever session drains the spool.
+ */
 const dispatchRecord = (
   deps: Deps,
   developerId: string,
   kind: IngestableKind,
   body: unknown,
+  seq: SeqField | undefined,
+  producerSessionId: string,
 ): Promise<HandlerOutcome> => {
   // Bodies were validated by parseRecord against the kind's schema.
   switch (kind) {
     case "work_context":
-      return ingestWorkContext(deps, developerId, body as WorkContext);
+      return ingestWorkContext(deps, developerId, body as WorkContext, seq);
     case "target":
-      return ingestTarget(deps, developerId, body as Target);
+      return ingestTarget(deps, developerId, body as Target, seq);
     case "claim":
-      return ingestClaim(deps, developerId, body as Claim);
+      return ingestClaim(deps, developerId, body as Claim, seq);
     case "claim_edge":
-      return ingestClaimEdge(deps, developerId, body as ClaimEdge);
+      return ingestClaimEdge(deps, developerId, body as ClaimEdge, seq);
     case "commit_evidence":
-      return ingestCommitEvidence(deps, developerId, body as CommitEvidence);
+      return ingestCommitEvidence(
+        deps,
+        developerId,
+        body as CommitEvidence,
+        seq,
+        producerSessionId,
+      );
     case "landed_evidence":
       return ingestLandedEvidence(deps, developerId, body as LandedEvidence);
     case "hint_delivery":
@@ -307,6 +329,8 @@ const ingestOne = async (
     developerId,
     ingestableKind,
     parsed.body,
+    parsed.envelope.seq,
+    liveProducer,
   );
   if (outcome.status !== "accepted") {
     return { outcome, liveProducer };

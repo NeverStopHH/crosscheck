@@ -35,6 +35,9 @@ import {
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
+import { coverageNote } from "../coverage/render.ts";
+import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
+import type { CoverageRecord } from "../http/coverage.ts";
 import {
   QUOTED_DATA_NOTICE,
   SUBSTANCE_MATCH_KIND,
@@ -44,6 +47,7 @@ import {
   formatSolvedLine,
 } from "../briefing/render.ts";
 import { bareUntrusted as bare } from "../briefing/sanitize.ts";
+import { claimValidityWord } from "../briefing/render.ts";
 import { quoted, quotedBody, safeId } from "../mcp/render.ts";
 import type { CommitDrift } from "../git/commit-drift.ts";
 import type {
@@ -169,12 +173,52 @@ const fitHint = (lines: readonly string[]): string => {
   return kept.length < 2 ? "" : kept.join("\n");
 };
 
+/**
+ * §5.1's SOFT rule on a hint, with one priority that is not negotiable: THE
+ * CLAUSE NEVER COSTS THE HINT.
+ *
+ * `fitHint` above drops from the TAIL and returns "" below two kept lines, so
+ * a clause appended blindly is either the first casualty (harmless) or pushes
+ * the hint itself under the floor — a silence nobody asked for, on the one
+ * surface whose whole job is to say something. So it is appended only when
+ * the whole thing still fits, and dropped otherwise. `crosscheck status` and
+ * `doctor` carry the state every time, so nothing is invisible.
+ *
+ * A SILENT PATH STAYS SILENT. §5.1 forbids EMITTING an empty-result phrasing
+ * over a gap; it does not compel speech where there was none. Turning the
+ * hint flow's eight silent branches into a coverage line would put an
+ * unsolicited sentence on every prompt of every repo with a gap, inside an
+ * 800 ms budget, which is the noise §5.1 itself argues against.
+ */
+export const withCoverageNote = (
+  hint: string,
+  coverage: CoverageRecord,
+  now: Date,
+): string => {
+  if (hint.length === 0) {
+    return hint;
+  }
+  const note = coverageNote(coverage, now);
+  if (note === null) {
+    return hint;
+  }
+  const joined = `${hint}\n${note}`;
+  return joined.length <= MAX_HINT_TEXT_LENGTH ? joined : hint;
+};
+
 export interface ClaimHintInput {
   readonly claim: HintClaimCandidate;
   readonly context: HintContext;
   readonly drift: CommitDrift | null;
   readonly now: Date;
 }
+
+const validityWordFact = (
+  claim: HintClaimCandidate,
+): readonly string[] => {
+  const word = claimValidityWord(claim.validity);
+  return word === null ? [] : [word];
+};
 
 /** Substance: one evidence-backed claim, under every trust label §4 names. */
 export const renderClaimHint = (input: ClaimHintInput): string => {
@@ -186,6 +230,15 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     `confidence ${claim.confidence.toFixed(CONFIDENCE_DECIMALS)}`,
     `provenance ${bare(claim.provenance)}`,
     ageLabel(claim.createdAt, now),
+    // THE STATE WORD GOES HERE, NOT ON A LINE OF ITS OWN, and that placement
+    // is the whole point. `fitHint` below drops lines from the END and
+    // returns "" when fewer than two survive, so only CLAIM_HEADER and this
+    // line are guaranteed to reach the reader — an appended validity line is
+    // the first thing dropped, and a downgrade nobody sees is not a
+    // downgrade. The hashes stay off this surface entirely (spec 02 §5a): a
+    // hint is unsolicited, and three commit hashes anchor a session on a file
+    // history nobody asked about. They are one get_diagnosis away.
+    ...validityWordFact(claim),
   ];
   const factsLine = `${facts.join(" · ")}${driftLabel(drift)}${solvedLabel(context, now)}: ${quotedBody(claim.body, UNSOLICITED_CLAIM_BODY_MAX_CHARS)}`;
   const contextLine =
@@ -373,6 +426,12 @@ export const renderTripwireReason = (
   session: TripwireSession,
   repoRelativeFile: string,
   now: Date,
+  /**
+   * How far the archive behind this ask reaches (03 §3.5). No cap applies to
+   * this surface — it is three or four short lines on a PreToolUse ask — so
+   * the note is appended outright rather than fitted.
+   */
+  coverage: CoverageRecord = UNKNOWN_COVERAGE,
 ): string => {
   const who = authorLabel(session.developerName);
   const overlapLine =
@@ -380,10 +439,12 @@ export const renderTripwireReason = (
     `(status ${bare(session.status)}, heartbeat ${ageLabel(session.lastHeartbeatAt, now)}) ` +
     `whose work context targeted ${bare(repoRelativeFile, MAX_WORK_CONTEXT_TITLE_CHARS)}.`;
   const contextLine = `Their work context ${quoted(session.workContextTitle, MAX_WORK_CONTEXT_TITLE_CHARS)} is readable with get_diagnosis ${safeId(session.workContextId)}.`;
+  const note = coverageNote(coverage, now);
   return [
     overlapLine,
     contextLine,
     ...intentLines(session.workContextIntent),
+    ...(note === null ? [] : [note]),
     QUOTED_DATA_NOTICE,
   ].join("\n");
 };

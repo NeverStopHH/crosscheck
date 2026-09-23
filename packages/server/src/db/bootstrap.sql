@@ -89,7 +89,6 @@ CREATE TABLE IF NOT EXISTS claims (
   provenance text NOT NULL,
   dedup_count integer NOT NULL DEFAULT 1,
   last_seen_at timestamptz,
-  stale_at timestamptz,
   evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL
 );
@@ -499,6 +498,56 @@ ALTER TABLE pins
 ALTER TABLE work_context_targets
   ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'tool_edit';
 
+-- THE PER-SESSION CAUSAL ORDER (spec 01 §3.5): append-only, content-free, one
+-- row per canonical event. `ref_id` names the row that already holds the
+-- content — a claim id, a session id, or a HASH of a target's (context, kind,
+-- value), because that row's only identity contains the author-written file
+-- path. No body, no prose, no path text ever lands here.
+--
+-- observed_at is the HUB clock and serves retention and display ONLY. Nothing
+-- orders two events by it; that is the wall-clock answer this table replaces.
+CREATE TABLE IF NOT EXISTS session_events (
+  id text PRIMARY KEY,
+  session_id text NOT NULL REFERENCES agent_sessions(id),
+  seq_epoch text,
+  seq_n integer,
+  -- The open end of the interval this event happened in. A hook's position is
+  -- taken once its tool RETURNED, so seq_n alone is an upper bound there and
+  -- an emitter that raced the tool holds a lower position than work that
+  -- already happened. NULL = the emitter sent no bracket, and an unbracketed
+  -- lane is stored `observed` rather than promoted to a happens-before.
+  seq_after integer,
+  kind text NOT NULL,
+  seq_kind text NOT NULL,
+  seq_reason text NOT NULL,
+  ref_kind text NOT NULL,
+  ref_id text NOT NULL,
+  observed_at timestamptz NOT NULL
+);
+
+-- A hub bootstrapped before the bracket existed has the table already, and
+-- CREATE TABLE IF NOT EXISTS adds nothing to it. Its rows keep a null bracket,
+-- which is exactly right: they were written by an emitter that did not take
+-- one, so their tool-lane positions are upper bounds and say so.
+ALTER TABLE session_events ADD COLUMN IF NOT EXISTS seq_after integer;
+
+-- A POSITION IS TAKEN ONCE. PARTIAL, because unsequenced rows are legitimately
+-- many per session and must not collide with one another — only real
+-- positions are unique. A write whose position is already held by a DIFFERENT
+-- id is stored with a null position and counted, never rejected: a connector's
+-- flush advances its cursor on any 2xx, so a rejected record is a lost one.
+CREATE UNIQUE INDEX IF NOT EXISTS session_events_position_idx
+  ON session_events (session_id, seq_epoch, seq_n)
+  WHERE seq_epoch IS NOT NULL;
+CREATE INDEX IF NOT EXISTS session_events_session_kind_idx
+  ON session_events (session_id, kind);
+-- Retention sweeps by AGE, because a session is terminal and nothing ever
+-- revisits its key. Without this the sweep scans every event on the hub. The
+-- age sweep is WITHDRAWN until spec 01a's referential predicate lands
+-- (services/sessions.ts says why); the index is kept for that sweep.
+CREATE INDEX IF NOT EXISTS session_events_observed_at_idx
+  ON session_events (observed_at);
+
 -- TEAM-level settings for the regression guard, one row per repo. ABSENT
 -- MEANS DEFAULTS ("anyone" may pin; `suspect` names sessions) — nothing
 -- bootstraps rows here, so a hub that was never configured behaves exactly
@@ -512,6 +561,89 @@ CREATE TABLE IF NOT EXISTS team_settings (
   updated_at timestamptz NOT NULL,
   updated_by text REFERENCES developers(id)
 );
+
+-- THE INTENT LEDGER (spec 06 §3.2): append-only, one row per version. The
+-- `work_contexts.intent` cell is a single mutable value, so every set_intent
+-- call DESTROYS the sentence it replaces and nothing can say whether a reason
+-- was written before or after the change it explains. That cell stays as a
+-- denormalised copy of the newest row's `wire`; this table is authoritative.
+--
+-- IT CARRIES A WHOLE POSITION. seq_epoch + seq alone cannot be turned back
+-- into the shape the order gate is asked about — its fifth condition reads
+-- seq_kind (an `observed` position is an upper bound) and its sixth reads the
+-- bracket seq_after. A row missing either compares as an unbracketed point of
+-- unknown lane, and that is how an upper bound becomes a happens-before.
+--
+-- captured_at is SENDER-CONTROLLED and orders nothing: clamped to the hub
+-- clock on write, display and retention only.
+CREATE TABLE IF NOT EXISTS work_context_intents (
+  id text PRIMARY KEY,
+  work_context_id text NOT NULL REFERENCES work_contexts(id),
+  version integer NOT NULL,
+  amends_version integer,
+  -- NULL only on backfill: the declaring session was never stored, and naming
+  -- the creating session would put a name on a row nobody recorded.
+  author_session_id text REFERENCES agent_sessions(id),
+  seq_epoch text,
+  seq integer,
+  seq_after integer,
+  seq_kind text NOT NULL,
+  seq_reason text NOT NULL,
+  provenance text NOT NULL,
+  summary text NOT NULL,
+  reason text,
+  captured_at timestamptz NOT NULL,
+  received_at timestamptz,
+  wire jsonb NOT NULL,
+  CONSTRAINT work_context_intents_summary_length_check CHECK (char_length(summary) <= 200),
+  CONSTRAINT work_context_intents_reason_length_check
+    CHECK (reason IS NULL OR char_length(reason) <= 200),
+  -- A reason with nothing to amend explains nothing. The rule runs in THIS
+  -- direction because amends_version is hub-assigned: the other direction
+  -- would reject every re-declaration from every connector shipped before
+  -- `reason` existed. That an amendment SAY why is enforced in set_intent,
+  -- where the author can still be told.
+  CONSTRAINT work_context_intents_amend_reason_check
+    CHECK (reason IS NULL OR amends_version IS NOT NULL),
+  -- The pair is null together or set together: a bare seq with no epoch is a
+  -- number from an unnamed counter.
+  CONSTRAINT work_context_intents_seq_pair_check
+    CHECK ((seq_epoch IS NULL) = (seq IS NULL)),
+  CONSTRAINT work_context_intents_seq_nonnegative_check
+    CHECK (seq IS NULL OR seq >= 0)
+);
+
+-- UNIQUE, because append-only is a claim about the TABLE and not about one
+-- service file: a second row claiming a version an amendment already holds is
+-- refused here rather than merged.
+CREATE UNIQUE INDEX IF NOT EXISTS work_context_intents_context_version_idx
+  ON work_context_intents (work_context_id, version DESC);
+CREATE INDEX IF NOT EXISTS work_context_intents_session_idx
+  ON work_context_intents (author_session_id, seq);
+
+-- THE CHECKABLE HALF (spec 06 §3.3). A declared (kind, value) set in the
+-- vocabulary the capture lane already writes, compared by EQUALITY and never
+-- a gate. work_context_id is denormalised (the pin_files.repo precedent), and
+-- the (kind, value) index deliberately mirrors
+-- work_context_targets_kind_value_idx so "did any intent name this path" is
+-- one index lookup rather than a text predicate.
+--
+-- `role` IS READ: a declared non-goal that was then edited answers differently
+-- from a declared expectation, and a stored column nothing decides on is a
+-- silent absence.
+CREATE TABLE IF NOT EXISTS intent_scope (
+  intent_id text NOT NULL REFERENCES work_context_intents(id),
+  work_context_id text NOT NULL REFERENCES work_contexts(id),
+  role text NOT NULL,
+  kind text NOT NULL,
+  value text NOT NULL,
+  PRIMARY KEY (intent_id, role, kind, value)
+);
+
+CREATE INDEX IF NOT EXISTS intent_scope_kind_value_idx
+  ON intent_scope (kind, value);
+CREATE INDEX IF NOT EXISTS intent_scope_context_idx
+  ON intent_scope (work_context_id);
 
 -- ── Room for a long finding (Nick's gap 3) ──────────────────────────────────
 
@@ -549,6 +681,250 @@ BEGIN
     ALTER TABLE claims DROP CONSTRAINT IF EXISTS claims_body_length_check;
     ALTER TABLE claims ADD CONSTRAINT claims_body_length_check
       CHECK (char_length(body) <= 10000);
+  END IF;
+END
+$$;
+
+-- ── Claim ↔ code binding (1.0 spec 02) ──────────────────────────────────────
+
+-- WHICH COMMIT A CLAIM WAS OBSERVED AT, and how precisely we know it. Written
+-- once at INSERT and never updated, so `claims` stays append-only apart from
+-- the two telemetry columns ingest already bumps (dedup_count, last_seen_at).
+--
+--   reported      — the emitter sent its own HEAD with the claim
+--   session_base  — no commit on the wire, so ingest read the author
+--                   session's base_commit. An APPROXIMATION, not a bound:
+--                   base_commit is re-written on every re-registration
+--                   (services/sessions.ts), so it can sit either side of the
+--                   real observation point.
+--   none          — nothing usable: the NO_COMMIT_SHA placeholder, a session
+--                   registered with a label rather than a sha, or a hub row
+--                   that predates these columns. Never revalidated, never
+--                   substance (spec 02 §8.5).
+--
+-- ALTER with a DEFAULT so one statement covers a fresh database and one
+-- created before the columns existed, and the default is what every existing
+-- row actually is: bound to nothing.
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS observed_at_commit text;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS commit_binding text NOT NULL DEFAULT 'none';
+
+-- EVERY CLAIM THAT EXISTS TODAY WAS WRITTEN WITH NO COMMIT. D2's default is to
+-- bind them to their author session's base commit rather than leave a whole
+-- hub's history permanently pointer-only. The cost is stated rather than
+-- hidden: base_commit MOVES (registerSession rewrites it on every
+-- re-registration), so this binding can sit either side of the real
+-- observation point — which is exactly why the row also records
+-- `commit_binding = 'session_base'` instead of pretending to be `reported`.
+--
+-- IT MUST NOT RE-FIRE, AND IT MUST NOT WALK OVER A STRONGER BINDING. This file
+-- runs in FULL on every hub start, so an unguarded UPDATE is a full-table
+-- write per restart AND would replace an emitter's own reported commit with
+-- the session's moving base. Two guards, doing different jobs:
+--
+--   1. The CHECK constraint added below is the MIGRATION MARKER. Its absence
+--      is what "this hub has not run the claim-binding migration yet" means,
+--      and asking pg_constraint is an O(1) catalog lookup rather than a scan
+--      of the claims table. A hub that crashed between the two simply runs
+--      this again, which is harmless: the UPDATE is idempotent.
+--   2. `c.commit_binding = 'none'` in the UPDATE itself, so a `reported` or
+--      an already-backfilled row is never touched even during that re-run.
+--
+-- The base-commit predicate mirrors isBindableCommit in @crosscheck/schema —
+-- a label like `crosscheck conference`'s "conference" and the NO_COMMIT_SHA
+-- placeholder both stay bound to nothing rather than reaching git as an
+-- object name. test/ddl-sync.test.ts pins the two spellings together.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'claims_commit_binding_check'
+      AND conrelid = 'claims'::regclass
+  ) THEN
+    UPDATE claims c
+      SET observed_at_commit = s.base_commit,
+          commit_binding = 'session_base'
+      FROM agent_sessions s
+      WHERE s.id = c.author_session_id
+        AND c.commit_binding = 'none'
+        AND s.base_commit ~* '^[0-9a-f]{7,64}$'
+        AND s.base_commit <> '0000000';
+  END IF;
+END
+$$;
+
+-- ONE ROW PER FILE A CLAIM'S AUTHOR DECLARED IT IS ABOUT. repo is
+-- denormalised for pin_files' reason: the hot question is "which rows in this
+-- repo watch this path", asked with a path and no claim id. Rows exist only
+-- where an author declared paths — nothing is inferred from agent prose — and
+-- a claim with none falls back to its work context's file targets, which
+-- over-fires by construction (claim_revalidations.basis says which was used).
+CREATE TABLE IF NOT EXISTS claim_surfaces (
+  claim_id text NOT NULL REFERENCES claims(id),
+  repo text NOT NULL,
+  path text NOT NULL,
+  PRIMARY KEY (claim_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS claim_surfaces_repo_path_idx
+  ON claim_surfaces (repo, path);
+
+-- ONE ROW PER REVALIDATED CLAIM: the latest reading a clone reported of
+-- whether the code under that claim moved. UPSERT-only, so the table is
+-- bounded by how many claims anybody revalidates rather than by reporting
+-- frequency — commit_evidence's argument for the same shape. revalidated_at is
+-- stamped by the HUB, never taken from the body, because a sender-controlled
+-- timestamp on a last-writer-wins row is a ratchet.
+--
+-- touching_commits holds ABBREVIATED HASHES AND NOTHING ELSE — no author, no
+-- email, no message, no parents, no paths. A commit hash is already-shared git
+-- history every clone can re-derive, which is landed_evidence's trust
+-- argument verbatim; no identity is attached to a hash here at all.
+--
+-- There is deliberately NO `commits` table: unbounded by construction, which
+-- is the property commit_evidence was designed against.
+CREATE TABLE IF NOT EXISTS claim_revalidations (
+  claim_id text PRIMARY KEY REFERENCES claims(id),
+  result text NOT NULL,
+  basis text NOT NULL,
+  ref_commit text NOT NULL,
+  touching_commits jsonb NOT NULL DEFAULT '[]'::jsonb,
+  touching_total integer,
+  revalidated_at timestamptz NOT NULL,
+  reported_by text NOT NULL REFERENCES developers(id)
+);
+
+-- `stale_at` IS RETIRED, NOT REDEFINED. It had one declaration and no writer:
+-- no INSERT, no UPDATE, no service, no job, and it was not on the wire, so
+-- every reader got a permanent NULL that `get_diagnosis` shipped as a claim's
+-- currency. A claim's currency is now DERIVED from its commit binding and its
+-- latest revalidation (services/claim-validity.ts), and that is the one
+-- authority. Redefining this column would have put a timestamp beside a state
+-- and invited the next reader to compute `now() - stale_at`, which is the
+-- clock axis this design refuses: a claim being OLD is not evidence the CODE
+-- moved.
+--
+-- GUARDED, for the reason the body-length widener below carries at length:
+-- this file runs in FULL on every hub start, and `ALTER TABLE ... DROP COLUMN
+-- IF EXISTS` takes ACCESS EXCLUSIVE whether or not the column is there. So the
+-- ALTER only runs on a database that still has it — once, ever.
+--
+-- The frozen test/fixtures/pre-search-block-bootstrap.sql keeps its own
+-- `stale_at`: it is a snapshot of an older database, and editing it would make
+-- it a fixture of something that never existed.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'claims'
+      AND column_name = 'stale_at'
+  ) THEN
+    ALTER TABLE claims DROP COLUMN stale_at;
+  END IF;
+END
+$$;
+
+-- THE TWO COLUMNS MAY NOT DISAGREE, and that is a database fact rather than a
+-- service promise — the shape questions_addressee_check uses. A commit stored
+-- under 'none' would read as unbindable while carrying a bindable commit; a
+-- NULL under 'session_base' would read as bound to nothing at all. Either way
+-- a reader of `claim_validity` is told something nobody measured.
+--
+-- GUARDED for the body-length widener's reason: ADD CONSTRAINT takes ACCESS
+-- EXCLUSIVE and revalidates every row, and this file runs on every hub start.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'claims_commit_binding_check'
+      AND conrelid = 'claims'::regclass
+  ) THEN
+    ALTER TABLE claims ADD CONSTRAINT claims_commit_binding_check
+      CHECK ((observed_at_commit IS NULL) = (commit_binding = 'none'));
+  END IF;
+END
+$$;
+
+-- CCB-10's observability half. The refusal counter lived on the response and
+-- was read by nobody, so a hub refusing forged upgrades every hour looked
+-- exactly like one that had never seen one.
+ALTER TABLE claim_revalidations
+  ADD COLUMN IF NOT EXISTS refused_walk_backs integer NOT NULL DEFAULT 0;
+
+-- Refusal 6's residue, made visible rather than invisible: a reading taken by
+-- the claim's own author still counts, and now says so.
+ALTER TABLE claim_revalidations
+  ADD COLUMN IF NOT EXISTS self_reported boolean NOT NULL DEFAULT false;
+
+-- ── CI ingestion, keyed to a commit (spec 05) ───────────────────────────────
+
+-- ONE ROW PER LANE PER ATTEMPT. The id is deterministic over the lane, the
+-- commit, the attempt and the re-run kind, so a retried POST is a duplicate
+-- rather than a second row claiming the same job ran twice.
+--
+-- No reported_by: a CI run has no author, and inventing one would put a
+-- teammate in the graph who does not exist. Ownership lives in the token.
+CREATE TABLE IF NOT EXISTS ci_runs (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  commit_sha text NOT NULL,
+  provider text NOT NULL,
+  workflow text NOT NULL,
+  job text NOT NULL,
+  leg text NOT NULL,
+  ref text NOT NULL,
+  run_attempt integer NOT NULL,
+  external_run_id text NOT NULL,
+  rerun_kind text NOT NULL,
+  rerun_of text REFERENCES ci_runs(id),
+  outcome text NOT NULL,
+  tests integer NOT NULL,
+  failures integer NOT NULL,
+  skipped integer NOT NULL,
+  duration_ms integer NOT NULL,
+  ambiguous_dropped integer NOT NULL,
+  started_at timestamptz NOT NULL,
+  collected_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ci_runs_repo_commit_idx ON ci_runs (repo, commit_sha);
+CREATE INDEX IF NOT EXISTS ci_runs_lane_started_idx
+  ON ci_runs (repo, provider, workflow, job, leg, ref, started_at DESC);
+CREATE INDEX IF NOT EXISTS ci_runs_rerun_of_idx ON ci_runs (rerun_of);
+
+-- NON-GREEN ROWS ONLY. ON DELETE CASCADE because retention prunes ci_runs and
+-- an orphan result row would assert a failure belonging to a run nobody can
+-- look up — a red test with no lane and no log is an accusation with no address.
+CREATE TABLE IF NOT EXISTS ci_test_results (
+  ci_run_id text NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
+  test_id text NOT NULL,
+  repo text NOT NULL,
+  status text NOT NULL,
+  duration_ms integer NOT NULL,
+  PRIMARY KEY (ci_run_id, test_id)
+);
+
+CREATE INDEX IF NOT EXISTS ci_test_results_repo_test_idx
+  ON ci_test_results (repo, test_id);
+
+-- The wire bound, restated where the data lives. Guarded the way the body
+-- length constraints above are guarded: an unconditional DROP + ADD takes
+-- ACCESS EXCLUSIVE on every hub start and revalidates the whole table.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'ci_test_results_test_id_length_check'
+      AND conrelid = 'ci_test_results'::regclass
+      AND pg_get_constraintdef(oid) = 'CHECK ((char_length(test_id) <= 300))'
+  ) THEN
+    ALTER TABLE ci_test_results DROP CONSTRAINT IF EXISTS ci_test_results_test_id_length_check;
+    ALTER TABLE ci_test_results ADD CONSTRAINT ci_test_results_test_id_length_check
+      CHECK (char_length(test_id) <= 300);
   END IF;
 END
 $$;

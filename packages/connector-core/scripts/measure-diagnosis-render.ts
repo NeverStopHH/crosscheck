@@ -40,6 +40,7 @@
 import { MAX_CLAIM_BODY_LENGTH } from "@crosscheck/schema";
 
 import type { Diagnosis, DiagnosisClaim } from "../src/http/hub.ts";
+import { UNKNOWN_COVERAGE } from "../src/http/coverage.ts";
 import { quotedBody, renderDiagnosis } from "../src/mcp/render.ts";
 
 /**
@@ -107,9 +108,12 @@ const TREE: Diagnosis = {
   externalClaims: [],
   targets: [],
   targetsReported: true,
+  intentChain: [],
+  chainReported: true,
   droppedTargets: 0,
   truncated: false,
   droppedRows: 0,
+  coverage: UNKNOWN_COVERAGE,
 };
 
 const lazyRender = (): unknown => renderDiagnosis(TREE, NOW);

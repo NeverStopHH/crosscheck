@@ -21,6 +21,8 @@
   "PostToolUse.input.tool_input": true,
   "PostToolUse.input.tool_response": true,
   "PostToolUse.input.file_path": true,
+  "PreToolUse.input.tool_use_id": true,
+  "PostToolUse.input.tool_use_id": true,
   "PostToolUseFailure.input.error": true,
   "PostToolUseFailure.input.is_interrupt": true,
   "PostToolUseFailure.output.hookSpecificOutput": true,

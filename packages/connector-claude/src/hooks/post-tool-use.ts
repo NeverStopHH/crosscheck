@@ -21,18 +21,41 @@ import {
   withCaptureBookkeeping,
 } from "@crosscheck/connector-core/state/capture-bookkeeping.ts";
 import {
+  allocateToolSeq,
   claimSessionState,
+  closedToolWindow,
   deriveSessionState,
   readSessionState,
   updateSessionState,
   withSeenTargets,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
+import { ALLOCATION_FAILED, seqAt } from "@crosscheck/connector-core/capture/seq.ts";
+import { MAX_TARGETS_PER_INVOCATION } from "@crosscheck/connector-core/constants.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
 import { resolveSessionWorkContextTitle } from "./session-start.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 const IMPLEMENTING_STATUS = "implementing";
 const HTTP_CONFLICT = 409;
+
+/**
+ * THE WORST CASE ONE INVOCATION CAN EMIT: every file target it may capture
+ * (capped at MAX_TARGETS_PER_INVOCATION) plus one error fingerprint. Reserved
+ * as a BLOCK, once, before the first record is built.
+ *
+ * WHY A BLOCK AND NOT A POSITION PER RECORD. The records are serialized inside
+ * `captureTouchedFiles` and `captureFailure` and are FLUSHED to the hub before
+ * this hook's single locked state write — so there is nothing to fold the
+ * allocation into, and one acquisition per record would put the state lock on
+ * the path once per touched file. One acquisition per invocation is the whole
+ * of the added cost. The positions this invocation does not use are GAPS, and
+ * gaps are legal by design (spec 01 §3.4).
+ */
+const CAPTURE_SEQ_BLOCK = MAX_TARGETS_PER_INVOCATION + 1;
+
+/** The slot inside that block reserved for the failure fingerprint. */
+const FINGERPRINT_SEQ_OFFSET = MAX_TARGETS_PER_INVOCATION;
 
 /**
  * A hook installed mid-session has no state file. The ids are deterministic, so
@@ -58,6 +81,17 @@ const recoverState = async (ctx: HookContext): Promise<SessionState | null> => {
     branch: ctx.identity.branch,
     baseCommit: ctx.identity.baseCommit,
     status: IMPLEMENTING_STATUS,
+    // A RECOVERY IS A CREATE, so it mints an epoch like SessionStart does and
+    // `session.started` takes position 0 under it. Sending nothing would file
+    // a current connector under `pre_seq_connector` — "a connector from
+    // before this field" — on the one row every session is guaranteed to
+    // have. `derived.seqEpoch` is minted by `deriveSessionState` and is never
+    // null in practice; the refusal is what an impossible null becomes,
+    // because an omitted field is a sentence about a different machine.
+    seq:
+      derived.seqEpoch === null
+        ? ALLOCATION_FAILED
+        : { epoch: derived.seqEpoch, n: 0 },
   });
   // A conflict means the id belongs to somebody else, OR to a live session
   // this developer already bound to ANOTHER repo (the hub's repo_mismatch,
@@ -170,6 +204,24 @@ export const handlePostToolUse = async (
   // flush all belong to the repo this hook resolved, which is not the one
   // this session reports to. The count is what keeps the drop honest.
   const editFired = isEditTool(ctx.payload.tool_name);
+  // THE WINDOW THIS CALL'S OWN PreToolUse OPENED, if it opened one. The host
+  // hands both hooks of a call the same `tool_use_id` and no other call has
+  // it, so that id is the pairing key (core state/tool-window-key.ts). It is
+  // used on EVERY path below, including the ones that emit nothing: a key with
+  // no entry closes nothing and brackets nothing, which is exactly the answer
+  // a Bash call, a hook installed mid-tool, an evicted entry and a refused
+  // open all need. `isEditTool` no longer gates the close — it gated it
+  // before, and a tool whose own open had been refused closed a PARALLEL
+  // tool's window and took a floor recorded after its own edit. NULL when the
+  // payload carries no id: then no window was opened, and none is closed.
+  const windowKey = toolWindowKey(
+    ctx.payload.tool_name,
+    ctx.payload.tool_use_id,
+  );
+  const closeOwnWindow = (
+    fresh: SessionState,
+  ): Partial<Pick<SessionState, "toolWindows">> =>
+    windowKey === null ? {} : closedToolWindow(fresh, windowKey);
   if (state.repoId !== ctx.identity.repoId) {
     // Screened and bounded exactly as the capture path's own #18 write is
     // (connector-core/state/capture-bookkeeping.ts): this path comes from the
@@ -195,6 +247,12 @@ export const handlePostToolUse = async (
       ...(editFired && droppedPath !== null && fresh.lastEditedPath === null
         ? { lastEditedPath: droppedPath, lastEditedPathResolvedAgainst: null }
         : {}),
+      // ...and the window this call's OWN PreToolUse opened is CLOSED even
+      // though nothing was captured. A window left open brackets nothing — no
+      // later call carries its id — but it holds a slot in a capped list for
+      // the rest of the session, and its eviction would then be counted as a
+      // dropped bracket that dropped nothing.
+      ...closeOwnWindow(fresh),
     }));
     return "";
   }
@@ -211,10 +269,25 @@ export const handlePostToolUse = async (
   // resolvable root of this repo. ONE pre-pass, so the git cost is paid at
   // most once per NEW worktree root per session (the cache), never per tool.
   const paths = extractFilePaths(ctx.payload.tool_input);
+  const failed = isFailureResponse(ctx.payload.tool_response);
+  // ONE allocation, BEFORE the first record is serialized, and only when this
+  // invocation will actually emit something. A read-only tool call emits no
+  // record, and paying a lock acquisition plus a block on every one of them
+  // would spend the budget on silence — most tool calls in a session are that.
+  const seq =
+    paths.length === 0 && !failed
+      ? null
+      : await allocateToolSeq(
+          ctx.config.home,
+          ctx.payload.session_id,
+          CAPTURE_SEQ_BLOCK,
+          windowKey,
+        );
   // The §1.3 flows: targets first, then the fingerprint — the same spool order
   // the combined batch used to produce. Claude-side stays exactly the payload
   // parsing: which fields carry paths, what counts as a failure response.
   const { captured: files, resolution } = await captureTouchedFiles({
+    seq,
     home: ctx.config.home,
     repoKey: ctx.repoKey,
     hostSessionKey: ctx.payload.session_id,
@@ -231,7 +304,7 @@ export const handlePostToolUse = async (
     identityRepoId: ctx.identity.repoId,
     knownWorktreeRoots: state.knownWorktreeRoots,
   });
-  if (isFailureResponse(ctx.payload.tool_response)) {
+  if (failed) {
     await captureFailure({
       home: ctx.config.home,
       repoKey: ctx.repoKey,
@@ -240,6 +313,11 @@ export const handlePostToolUse = async (
       producer,
       failureText: extractFailureText(ctx.payload.tool_response),
       now,
+      // The LAST slot of the same block. Reserved rather than taken next,
+      // because the targets above may have used anywhere from none of their
+      // slots to all of them and neither this hook nor that flow knows which
+      // until after the records are written.
+      seq: seqAt(seq, FINGERPRINT_SEQ_OFFSET),
     });
   }
   // `spareMs`, not the whole remainder: the heartbeat below is another hub call
@@ -259,6 +337,28 @@ export const handlePostToolUse = async (
   // tripwire marker inside this hook's window, and a stale whole-file write
   // here would erase it (test/state-race.test.ts). The #17 root cache and the
   // #18/#20 capture counters fold in here too — the ONE mid-session write.
+  // `closeOwnWindow` here covers the exits where nothing was ALLOCATED, so
+  // the call above closed nothing: an edit tool that resolved no path at all,
+  // and an allocation the lock refused. Keyed on `seq === null` alone, because
+  // that — not the tool's name — is what says whether the close already
+  // happened, and closing twice would drain a second entry under this call's
+  // key: the one a double-wired install's other PreToolUse run left for its
+  // own PostToolUse run. Applied to the freshest state under the lock, like
+  // every other transform folded into this write.
+  const closesWindow = seq === null;
+  // THE BRACKET THIS EDIT DID NOT GET, booked in the write that is already
+  // happening. An allocation that came back with no `after` found no window
+  // under this call's own key, and for an EDIT that is a bracket LOST: the
+  // position travels as the upper bound it is and the hub refuses every
+  // `declared before` question against it. Every cause lands here — an open
+  // the busy state lock refused (which writes no entry, so the cap's eviction
+  // counter never moves for it), an entry the cap evicted, a hook installed
+  // mid-tool, a state file older than the keyed list, a host that sends no
+  // `tool_use_id` — which is why the count is taken at the CLOSE rather than
+  // at each of them. `seq === null` is a different failure and is not counted
+  // here: nothing was positioned at all, and the record says
+  // `allocation_failed` for itself.
+  const lostBracket = editFired && seq !== null && seq.after === undefined;
   await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
     ...withCaptureBookkeeping(withSeenTargets(fresh, files), {
       resolution,
@@ -269,6 +369,8 @@ export const handlePostToolUse = async (
       now,
     }),
     ...(didHeartbeat ? { lastHeartbeatAt: now.toISOString() } : {}),
+    ...(closesWindow ? closeOwnWindow(fresh) : {}),
+    ...(lostBracket ? { toolWindowMisses: fresh.toolWindowMisses + 1 } : {}),
   }));
   return "";
 };

@@ -20,10 +20,14 @@ import {
   HINT_STATS_MAX_WINDOW_DAYS,
   readHintStats,
 } from "../services/hint-deliveries.ts";
+import { COVERAGE_SESSION_WINDOW_DAYS } from "../constants.ts";
+import { readCoverage } from "../services/coverage.ts";
 import { listHintCandidates, listTargetSessions } from "../services/hints.ts";
 import { listUndeliveredAnswers } from "../services/questions.ts";
 import { SEARCH_MAX_QUERY_CHARS } from "../services/search.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
  * `repo` is required on both routes: hints and tripwires are relevance-scoped
@@ -66,14 +70,18 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     // SUBSTANCE (DESIGN.md §4, solicited exception), and a hint path that had
     // to choose between them and a teammate pointer needs both in hand.
     // Both queries are bounded and indexed; they run in parallel.
-    const [candidates, answers] = await Promise.all([
+    // THREE reads, ONE round trip, for the reason above plus one more: the
+    // coverage record (03 §3.5) is bytes on a response the hook already
+    // waits for, never a second request inside the 800 ms budget.
+    const [candidates, answers, coverage] = await Promise.all([
       listHintCandidates(deps, c.get("developer").id, parsed.data),
       // `repo` on BOTH: the answers are scoped exactly like the candidates
       // beside them, so solicited substance from another codebase cannot land
       // in a session that never asked it (services/questions.ts says why).
       listUndeliveredAnswers(deps, c.get("developer").id, parsed.data.repo),
+      readCoverage(deps, c.get("developer").id, parsed.data.repo),
     ]);
-    return ok(c, { candidates, answers });
+    return ok(c, { candidates, answers, coverage });
   });
 
   router.get("/tripwire", async (c) => {
@@ -84,13 +92,26 @@ export const hintsRoutes = (deps: AppDeps): Hono<AppEnv> => {
     if (!parsed.success) {
       return fail(c, 400, "validation_failed", formatIssues(parsed.error));
     }
-    const sessions = await listTargetSessions(
-      deps,
-      c.get("developer").id,
-      parsed.data.repo,
-      parsed.data.value,
-    );
-    return ok(c, { sessions });
+    const [sessions, coverage] = await Promise.all([
+      listTargetSessions(
+        deps,
+        c.get("developer").id,
+        parsed.data.repo,
+        parsed.data.value,
+      ),
+      // SCOPED TO THE FILE the tripwire is about (§3.2a): the question is
+      // "was anybody watching THIS path", not "was anybody watching this
+      // repo for a fortnight".
+      readCoverage(deps, c.get("developer").id, parsed.data.repo, {
+        scope: {
+          sinceIso: new Date(
+            deps.now().getTime() - COVERAGE_SESSION_WINDOW_DAYS * MS_PER_DAY,
+          ).toISOString(),
+          paths: [parsed.data.value],
+        },
+      }),
+    ]);
+    return ok(c, { sessions, coverage });
   });
 
   /**

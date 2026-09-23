@@ -22,6 +22,7 @@ import {
 } from "../src/constants.ts";
 import {
   agentSessions,
+  claimRevalidations,
   claims,
   workContextTargets,
   workContexts,
@@ -190,4 +191,117 @@ describe("the failure-time fingerprint probe", () => {
     },
     30_000,
   );
+});
+
+/**
+ * THE VALIDITY THE BRIEFING NEEDS TO REFUSE A STALE ANSWER (1.0 spec 02 §5).
+ *
+ * The row carries a claim BODY, which the briefing asserts unasked at
+ * SessionStart. Every other surface that asserts a body was given the hub's
+ * one authoritative verdict; this one was not, so the connector had nothing
+ * to gate on and a root cause recorded against rewritten code was handed to
+ * a reader as the answer.
+ *
+ * DERIVED THROUGH `claimValidity()` like every other reader, never recomputed
+ * here: a second derivation on this route would be AT-2's second "fails if"
+ * arriving through the briefing.
+ */
+describe("the probe's root cause carries its validity", () => {
+  test("a cause whose surface moved is reported stale, not merely reported", async () => {
+    // Arrange: one solved tree whose solving claim is bound to a commit and
+    // has a revalidation saying the files it names have changed since.
+    const harness = await createTestHarness();
+    const developer = await createTestDeveloper(harness, "Ken", "ken@acme.dev");
+    await harness.db
+      .insert(agentSessions)
+      .values([session("ses_a", REPO, developer.developerId)]);
+    await harness.db.insert(workContexts).values([context("wc_here", "ses_a", 200)]);
+    await harness.db.insert(claims).values([
+      {
+        ...solvingClaim("wc_here", "ses_a"),
+        observedAtCommit: "abc1234",
+        commitBinding: "reported" as const,
+      },
+    ]);
+    await harness.db.insert(workContextTargets).values([fingerprintTarget("wc_here")]);
+    await harness.db.insert(claimRevalidations).values([
+      {
+        claimId: "clm_wc_here",
+        result: "changed" as const,
+        basis: "declared" as const,
+        refCommit: "f00dfac",
+        touchingCommits: ["deadbee"],
+        touchingTotal: 1,
+        revalidatedAt: daysAgo(1),
+        reportedBy: developer.developerId,
+      },
+    ]);
+
+    // Act
+    const rows = await listSolvedByFingerprint(
+      { db: harness.db, now: () => NOW },
+      developer.developerId,
+      FINGERPRINT,
+    );
+
+    // Assert: the body still travels — the connector decides what to do with
+    // it — and the verdict travels beside it so it CAN decide.
+    expect(rows[0]?.rootCause).toBe(ROOT_CAUSE);
+    expect(rows[0]?.rootCauseValidity?.state).toBe("stale");
+    expect(rows[0]?.rootCauseValidity?.touchingCommits).toEqual(["deadbee"]);
+    expect(rows[0]?.rootCauseValidity?.commitBinding).toBe("reported");
+  });
+
+  test("a cause nobody revalidated is unknown, never silently current", async () => {
+    // Arrange: the same tree with no revalidation row at all.
+    const harness = await createTestHarness();
+    const developer = await createTestDeveloper(harness, "Ken", "ken@acme.dev");
+    await harness.db
+      .insert(agentSessions)
+      .values([session("ses_a", REPO, developer.developerId)]);
+    await harness.db.insert(workContexts).values([context("wc_here", "ses_a", 200)]);
+    await harness.db.insert(claims).values([
+      {
+        ...solvingClaim("wc_here", "ses_a"),
+        observedAtCommit: "abc1234",
+        commitBinding: "reported" as const,
+      },
+    ]);
+    await harness.db.insert(workContextTargets).values([fingerprintTarget("wc_here")]);
+
+    // Act
+    const rows = await listSolvedByFingerprint(
+      { db: harness.db, now: () => NOW },
+      developer.developerId,
+      FINGERPRINT,
+    );
+
+    // Assert
+    expect(rows[0]?.rootCauseValidity?.state).toBe("unknown");
+  });
+
+  test("a tree with no cause to assert carries no validity to assert it with", async () => {
+    // Arrange: a solved tree matched on a FILE rather than a fingerprint, so
+    // the body never leaves the hub — and neither should a verdict about it.
+    const harness = await createTestHarness();
+    const developer = await createTestDeveloper(harness, "Ken", "ken@acme.dev");
+    await harness.db
+      .insert(agentSessions)
+      .values([session("ses_a", REPO, developer.developerId)]);
+    await harness.db.insert(workContexts).values([context("wc_here", "ses_a", 200)]);
+    await harness.db
+      .insert(claims)
+      .values([solvingClaim("wc_here", "ses_a")]);
+    await harness.db.insert(workContextTargets).values([fingerprintTarget("wc_here")]);
+
+    // Act
+    const rows = await listSolvedByFingerprint(
+      { db: harness.db, now: () => NOW },
+      developer.developerId,
+      "sha256:9999888877776666555544443333222211110000",
+    );
+
+    // Assert: no row at all, so nothing to leak either.
+    expect(rows).toEqual([]);
+  });
 });

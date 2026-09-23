@@ -198,6 +198,9 @@ test (INT-1's fixture says only *"amendment_v2 naming b.ts"*, with no role). An 
 silent absence AT-10 forbids.
 
 ```
+R_naming   = any entry step 4 REFUSED whose scope names the path, either role
+if R_naming -> absent / not_comparable          (indeterminacy = worst refusal)
+
 E_non_goal = earliest survivor whose scope names the path as non_goal
 E_expected = earliest survivor whose scope names it as expected
 
@@ -207,6 +210,24 @@ else if E_expected and E_expected.seq < edit.seq
       -> predeclared / declared_before          (version = E_expected.version)
 else  -> post_hoc / declared_after              (earliest survivor's version)
 ```
+
+**`R_naming` outranks everything below it, and this sentence was missing.** The block above read
+`E_non_goal = earliest **survivor**` and nothing else, so an entry step 4 could not order simply vanished
+— and the implementation, faithful to it, then answered from whatever remained. An independent refuter
+measured the result on five ordinary inputs: a session that declared `packages/b.ts` a `non_goal` and
+edited it answers `post_hoc / declared_non_goal_edited` when that row's position is usable, and
+**`predeclared / declared_before`** when it is not — `seq: null` (two live agents in one worktree),
+an `observed` position (the lane every Stop-time git edit uses), an overlapping window, or a foreign
+epoch. Same session, same declaration, same edit; the only difference is whether the ACCUSING row could
+be placed. `indeterminacy` came back `null`, so no reader was told anything had been dropped.
+
+That is **principle 5 inverted at the centre of this spec** — missing evidence removing an accusation —
+and it is the same conversion §3.3 already forbids one level down in the version-id hash. Only rows that
+NAME the edited path can change step 6's answer, so only those override it: an unorderable row about some
+other path silences nothing. The refusal covers both roles for different reasons. A refused `non_goal`
+would have accused, and dropping it exonerates. A refused `expected` would have excused, and dropping it
+leaves step 5 reporting `scope_not_named` — *"this session never declared that path"* — about a session
+that did.
 
 **Non-goal wins where both name the path**, because it is the stronger signal: *"a declared non-goal that
 was then edited"* is the most post-hoc thing a session can do, and a later `expected` entry naming the
@@ -305,9 +326,31 @@ index, one insert and at most `2 × MAX_INTENT_SCOPE_ENTRIES` scope inserts, all
 (§10.1 bounds the chain instead).
 
 - **`set_intent` is not on a hook path** — an MCP tool, `delivery: "pulled"`, `MCP_TIMEOUT_MS = 10_000`.
-  It gains one `updateSessionState` round for 01's `seq` reservation (worst case ~100 ms of lock
-  retries, `session-state.ts:454-456`) and no new HTTP call: the intent still travels on the existing
-  `work_context` UPDATE record (`set-intent.ts:12-13`).
+  It gains one `updateSessionState` round for 01's `seq` reservation and no new HTTP call: the intent
+  still travels on the existing `work_context` UPDATE record (`set-intent.ts:12-13`). **Measured by
+  INT-11, not asserted here**: the reservation's uncontended p95 is **2.5 ms**, the tool's own p95
+  **58 ms** against a derived **1 600 ms** per-call budget, and the round-trip count is **2** — the
+  record POST and the ghost GET, the same two as before.
+
+  *This line has been corrected twice, and both corrections are the same class of defect.* It first
+  read *"worst case ~100 ms of lock retries"*, true when the state lock retried 5 times; #53 raised
+  `SESSION_STATE_LOCK_RETRIES` to 20 to stop losing positions under contention, and the sentence did
+  not move — a quantifier rotting against a constant, which is exactly what `verify-claims.ts` exists
+  to kill. The replacement said **400 ms**, which is the ceiling for ONE acquisition: `set_intent`
+  takes the session-state lock **twice** on the normal path (`allocateToolSeq`, then
+  `updateSessionState` after the post) and a **third** time when a ghost notice is shown. Measured
+  against a concurrent holder of the lock file, three runs gave 873.1, 891.8 and 895.9 ms — a mean of
+  **887 ms**, 2.2x the corrected number, consistent with 2 x 400 ms plus work. INT-11 now derives its
+  ceiling from the retry constants **and** the acquisition count, so neither can drift from it alone.
+
+  *And the budget INT-11 published could never be the assertion that failed.* It asserted
+  `MCP_TIMEOUT_MS x 0.2` = 2 000 ms per call while running 18 sequential calls inside one `test()`
+  under bun's default 5 000 ms timeout — so a uniform regression tripped the TIMEOUT at ~278 ms per
+  call, 7.2x below the number the file printed, and an outcome failure reading like flake. The budget
+  is derived from what one call may actually spend (its lock acquisitions plus its two round trips),
+  the case carries its own timeout, and the test asserts that `SAMPLES x budget` fits inside that
+  timeout — so the assertion is always what fails first.
+
 - **The derived-intent worker is detached** and already takes the state lock
   (`derive/intent/worker.ts:47`, `:95`, `:138`); its reservation moves **before** the spool append
   (`:222-228`), keeping the Stop-hook ordering contract (`hooks/stop.ts:9-15`) — book first, lose a slot
@@ -318,7 +361,7 @@ merge, on `connector-claude/test/capture-latency.test.ts` and the MCP harness pa
 `connector-core/test/latency.test.ts`. *Corrected: this line pointed at **INT-5**, which is the
 derived-intent test — "a derived intent still never overwrites a declared one, and appends nothing" — and
 measures nothing at all. No test in the INT-1…INT-9 list did, so this spec's zero-cost claim and its
-~100 ms `set_intent` lock acquisition had **no gate**, while the six sibling specs each discharge the same
+`set_intent` lock acquisition had **no gate**, while the six sibling specs each discharge the same
 obligation with a numbered test (CCB-8, COV-8, VER-8, PIL-9, EV-8). INT-11 is that test. 01 §7 had the
 same hole and now has SEQ-9.*
 

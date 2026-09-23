@@ -17,13 +17,16 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { MAX_PIN_PATH_CHARS, MAX_RECORD_ID_LENGTH, SAFE_ID_PATTERN } from "@crosscheck/schema";
 
-import { SUSPECT_MAX_PATHS } from "../constants.ts";
+import { SUSPECT_MAX_PATHS, SUSPECT_WINDOW_DAYS } from "../constants.ts";
 import { fail, ok } from "../http/envelope.ts";
 import { formatIssues } from "../http/request.ts";
 import { developerAuth } from "../middleware/auth.ts";
+import { readCoverage } from "../services/coverage.ts";
 import { resolveSuspectScope, suspectSessions } from "../services/suspect.ts";
 import { readTeamSettings } from "../services/team-settings.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const QuerySchema = z.object({
   repo: z.string().min(1),
@@ -74,14 +77,26 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
           );
     }
     const settings = await readTeamSettings(deps, parsed.data.repo);
-    return ok(
-      c,
-      await suspectSessions(deps, c.get("developer").id, {
+    // 03 §3.5 and §3.2a. The verdict layer reads this record, and it is
+    // SCOPED TO THE FILES THE QUESTION IS ABOUT: "were we watching this
+    // surface" is the question principle 1 actually asks, and a repo-wide
+    // gap would make every answer here INDETERMINATE for ever.
+    const [view, coverage] = await Promise.all([
+      suspectSessions(deps, c.get("developer").id, {
         repo: parsed.data.repo,
         scope: scope.scope,
         attribution: settings.suspectAttribution,
       }),
-    );
+      readCoverage(deps, c.get("developer").id, parsed.data.repo, {
+        scope: {
+          sinceIso: new Date(
+            deps.now().getTime() - SUSPECT_WINDOW_DAYS * MS_PER_DAY,
+          ).toISOString(),
+          paths: scope.scope.files,
+        },
+      }),
+    ]);
+    return ok(c, { ...view, coverage });
   });
 
   return router;

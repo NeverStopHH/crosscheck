@@ -10,6 +10,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createDb, createServer } from "@crosscheck/server";
+import type { Db } from "@crosscheck/server";
 
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -29,6 +30,8 @@ export interface CaptureHub {
   readonly server: ReturnType<typeof Bun.serve>;
   readonly hubUrl: string;
   readonly apiKey: string;
+  /** The hub's own rows, for a suite that asserts what the hub STORED. */
+  readonly db: Db;
 }
 
 /** One in-process hub per test file; the label keeps tokens/emails distinct. */
@@ -47,7 +50,7 @@ export const bootCaptureHub = async (label: string): Promise<CaptureHub> => {
     body: JSON.stringify({ name: "Acp Dev", email: `${label}@example.com` }),
   });
   const body = (await response.json()) as { data: { apiKey: string } };
-  return { server, hubUrl, apiKey: body.data.apiKey };
+  return { server, hubUrl, apiKey: body.data.apiKey, db };
 };
 
 /** In-memory AcpLogger: capture must not need a real log file to be tested. */

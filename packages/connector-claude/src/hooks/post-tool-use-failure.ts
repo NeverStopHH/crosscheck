@@ -30,6 +30,15 @@
  * ORDER: capture first, inject second. The fingerprint is spooled before the
  * probe, so a hub that is down or slow costs the hint, never the capture —
  * and the capture is what makes THIS failure findable for the next person.
+ *
+ * AND IT CLOSES THE CALL'S OWN TOOL WINDOW, which nothing else will. A failed
+ * edit never reaches PostToolUse, so the window its PreToolUse opened would
+ * otherwise sit in the capped list until the cap evicted it and counted a lost
+ * bracket for an edit that never happened. The key is the host's
+ * `tool_use_id` (core state/tool-window-key.ts), so the close can only ever
+ * take this call's own entry. An ABORT still returns before any of this and
+ * leaves its entry to the cap: that path takes no lock today, and an
+ * eviction there costs nothing but a slot.
  */
 import { captureFailure } from "@crosscheck/connector-core/flows/capture-targets.ts";
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
@@ -38,9 +47,13 @@ import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { selectAndRenderSolvedHint } from "@crosscheck/connector-core/flows/solved-hint.ts";
 import { flushSpool } from "@crosscheck/connector-core/spool/flush.ts";
 import {
+  allocateToolSeq,
+  closedToolWindow,
   readSessionState,
   updateSessionState,
 } from "@crosscheck/connector-core/state/session-state.ts";
+import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.ts";
+import { seqAt } from "@crosscheck/connector-core/capture/seq.ts";
 import type { HookBudget, HookContext } from "./runner.ts";
 
 export const handlePostToolUseFailure = async (
@@ -61,13 +74,19 @@ export const handlePostToolUseFailure = async (
   if (state === null) {
     return "";
   }
+  const windowKey = toolWindowKey(
+    ctx.payload.tool_name,
+    ctx.payload.tool_use_id,
+  );
   // FIRST WINS across connected repos, the PostToolUse rule verbatim: a
   // failure resolving to a DIFFERENT repo belongs to a session bound
-  // elsewhere, so it is dropped and COUNTED rather than captured here.
+  // elsewhere, so it is dropped and COUNTED rather than captured here — and
+  // its window is closed in the same write, as PostToolUse's drop path does.
   if (state.repoId !== ctx.identity.repoId) {
     await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => ({
       ...fresh,
       foreignRepoDrops: fresh.foreignRepoDrops + 1,
+      ...(windowKey === null ? {} : closedToolWindow(fresh, windowKey)),
     }));
     return "";
   }
@@ -81,6 +100,31 @@ export const handlePostToolUseFailure = async (
   // `extractFailureText` reads a bare string as itself — so a Claude failure
   // and an ACP or Cursor one carrying the same bytes fingerprint
   // identically, which is the whole cross-agent match story.
+  // A NEW LOCK ACQUISITION, and the one place in this connector where that is
+  // unavoidable: on the CAPTURE path this hook takes the session-state lock
+  // zero times today — its only locked write is the foreign-repo drop above,
+  // on an early return. The acquisition is inside this hook's own budget
+  // (POST_TOOL_USE_FAILURE_BUDGET_RATIO, the 800 ms keystroke class) and its
+  // worst case is the spool lock's own retries.
+  //
+  // ONE position: this hook spools exactly one fingerprint, or none. The SAME
+  // acquisition closes this call's window, so closing it costs no second
+  // lock. A busy lock refuses both, and the window then waits for the cap.
+  //
+  // THE POSITION ONLY, never the bracket the close hands back. The window's
+  // floor would bracket this fingerprint soundly — the failure happened while
+  // the call ran — but that would change what a failed edit's `tool.failed`
+  // row claims, which is a decision of its own and not this close's.
+  const closed = await allocateToolSeq(
+    ctx.config.home,
+    ctx.payload.session_id,
+    1,
+    windowKey,
+  );
+  const seq =
+    closed === null
+      ? null
+      : { epoch: closed.epoch, from: closed.from, count: closed.count };
   const fingerprint = await captureFailure({
     home: ctx.config.home,
     repoKey: ctx.repoKey,
@@ -89,6 +133,7 @@ export const handlePostToolUseFailure = async (
     producer,
     failureText: extractFailureText(ctx.payload.error),
     now,
+    seq: seqAt(seq, 0),
   });
   // Null means `fingerprint()` refused the text — no signal, or a secret in
   // it (drop, never a redacted derivative). Nothing was spooled and there is

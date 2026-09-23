@@ -29,7 +29,12 @@ import { describe, expect, test } from "bun:test";
 import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 
-import { DERIVE_CAPABILITIES } from "../src/derive/capabilities.ts";
+import { LEDGER_EVENT_KINDS, SESSION_EVENT_KINDS } from "@crosscheck/schema";
+
+import {
+  DERIVE_CAPABILITIES,
+  UNPROJECTED_LEDGER_KINDS_REFUSAL,
+} from "../src/derive/capabilities.ts";
 import type {
   DeriveCapabilityManifest,
   DeriveCapabilityName,
@@ -54,6 +59,15 @@ const TRIGGER_IDENTIFIERS: Readonly<
     "withSummarizerNoSlice",
   ],
   conference: [],
+  /**
+   * `allocateSeq` is the one entry point into the causal order, and every host
+   * that positions a record imports it DIRECTLY — the hooks and handlers do,
+   * because the allocation has to happen before their records are serialized
+   * and no core flow can take it for them. So the trigger is real evidence
+   * here rather than an exemption: a connector that declares `event_seq` and
+   * imports nothing goes red, exactly like the four above it.
+   */
+  event_seq: ["allocateSeq"],
 };
 
 /** Barrels re-export names without using them — the render registry's rule. */
@@ -304,6 +318,47 @@ describe("the derive rungs are declared, and the declaration is true", () => {
         expect(refusal.name.length, pkg.label).toBeGreaterThan(3);
         expect(refusal.sentence.length, refusal.name).toBeGreaterThan(40);
       }
+    }
+  });
+
+  /**
+   * TWO OF THE NINE CANONICAL KINDS ARE PROJECTED BY NOBODY — and they are the
+   * two AT-4 is actually about. `work_contexts.intent` is overwritten in
+   * place, so an amendment has no row of its own to carry a position, and
+   * until the versioned ledger lands the two kinds are deliberately NOT
+   * PROJECTED rather than projected wrongly. The schema's own header says
+   * "and doctor says so".
+   *
+   * It did not say so. Two manifests named the kinds nowhere at all — a pure
+   * silent absence, the thing this registry exists to make impossible — and
+   * the third scoped the absence to `--no-inject`, which is NOT the default,
+   * so the one sentence in the product that mentioned `intent.declared` told
+   * a default-mode reader the kinds worked for them.
+   *
+   * ONE SENTENCE, SHARED BY REFERENCE. The fact is about the model, not about
+   * any host, so three copies would be three things to forget to change on the
+   * day the ledger lands.
+   */
+  test("every host names the two kinds nothing projects", () => {
+    for (const pkg of PACKAGES) {
+      if (pkg.manifest === null) {
+        continue;
+      }
+      const refusals = pkg.manifest.refusals;
+      expect(
+        refusals.includes(UNPROJECTED_LEDGER_KINDS_REFUSAL),
+        `${pkg.label} must carry the shared unprojected-kinds refusal`,
+      ).toBe(true);
+    }
+    // ...and it names both kinds by their canonical names, so a reader
+    // arriving from the vocabulary finds the one line that explains them.
+    for (const kind of LEDGER_EVENT_KINDS) {
+      expect(UNPROJECTED_LEDGER_KINDS_REFUSAL.sentence).toContain(kind);
+    }
+    // ...and they really are absent from what the hub can store, which is
+    // what makes the refusal true rather than merely present.
+    for (const kind of LEDGER_EVENT_KINDS) {
+      expect(SESSION_EVENT_KINDS as readonly string[]).not.toContain(kind);
     }
   });
 });

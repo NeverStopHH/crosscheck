@@ -29,7 +29,9 @@ import { endSession } from "../http/hub.ts";
 import type { HubContext } from "../http/client.ts";
 import { readSessionSpool } from "../spool/files.ts";
 import { flushSpool } from "../spool/flush.ts";
-import { deleteSessionState } from "../state/session-state.ts";
+import { seqAt } from "../capture/seq.ts";
+import { allocateSeq, deleteSessionState } from "../state/session-state.ts";
+import type { SeqField } from "@crosscheck/schema";
 
 export interface EndSessionFlowInput {
   readonly home: string;
@@ -48,6 +50,8 @@ export interface EndSessionFlowResult {
   readonly undelivered: number;
   /** True when the hub acknowledged the `end` (marker removed again). */
   readonly ended: boolean;
+  /** The position this end took, or the refusal that travels instead. */
+  readonly seq: SeqField;
 }
 
 export const endSessionFlow = async (
@@ -69,11 +73,26 @@ export const endSessionFlow = async (
   const undelivered = (
     await readSessionSpool(input.home, input.repoKey, slug)
   ).lines.length;
+  // ALLOCATED, NEVER READ, and taken BEFORE the state file is deleted. The
+  // counter this session has been handing out lives only in that file, and a
+  // Stop-time git lane or a detached worker can allocate inside this very
+  // window — so a read yields a position that is not last, and `session.ended`
+  // then sorts before events that preceded it. Allocating puts the end
+  // strictly past everything the session has issued, which is the one thing
+  // its position has to mean. A null block (no state file, or a state file
+  // from before this field) becomes `allocation_failed`: no position, and a
+  // reason rather than a silence.
+  const seq = seqAt(await allocateSeq(input.home, input.hostSessionKey, 1), 0);
   await writePrivateFile(
     spoolPendingEndPath(input.home, input.repoKey, slug),
     `${JSON.stringify({
       crosscheckSessionId: input.crosscheckSessionId,
       at: input.now().toISOString(),
+      // THE MARKER IS THE ONLY CARRIER LEFT. It is written after the state
+      // delete below, and reap's DeferredEnder runs in a later process with
+      // no state file to consult — so a deferred end without this is
+      // permanently unsequenced, and nothing would say why.
+      seq,
     })}\n`,
   );
   await deleteSessionState(input.home, input.hostSessionKey);
@@ -86,11 +105,11 @@ export const endSessionFlow = async (
     // Telling the hub "done" now would publish a finished session while
     // records it produced are still on disk. The marker hands the end to
     // reap's DeferredEnder; the records stay deliverable either way.
-    return { undelivered, ended: false };
+    return { undelivered, ended: false, seq };
   }
-  const result = await endSession(input.hub, input.crosscheckSessionId);
+  const result = await endSession(input.hub, input.crosscheckSessionId, seq);
   if (result.ok) {
     await removeFile(spoolPendingEndPath(input.home, input.repoKey, slug));
   }
-  return { undelivered, ended: result.ok };
+  return { undelivered, ended: result.ok, seq };
 };

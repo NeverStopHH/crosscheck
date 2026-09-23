@@ -12,7 +12,7 @@ import { rm } from "node:fs/promises";
 
 import { createDb, createServer } from "@crosscheck/server";
 import type { Db } from "@crosscheck/server";
-import { MAX_INTENT_SUMMARY_CHARS } from "@crosscheck/schema";
+import { MAX_INTENT_CHAIN_VERSIONS, MAX_INTENT_SUMMARY_CHARS } from "@crosscheck/schema";
 
 import { QUOTED_DATA_NOTICE } from "../src/briefing/render.ts";
 import { hintBodyHash } from "../src/hints/echo.ts";
@@ -21,7 +21,7 @@ import type { McpContext } from "../src/mcp/context.ts";
 import { findTool } from "../src/mcp/tools/index.ts";
 import { NO_SESSION } from "../src/mcp/tools/publish-claim.ts";
 import { INTENT_ECHO_REFUSAL, INTENT_SECRET_REFUSAL, NO_TITLE } from "../src/mcp/tools/set-intent.ts";
-import { writeSessionState } from "../src/state/session-state.ts";
+import { readSessionState, writeSessionState } from "../src/state/session-state.ts";
 import type { Env } from "../src/index.ts";
 import { makeHome, makeRepo } from "./helpers.ts";
 
@@ -112,6 +112,12 @@ const setUpDeveloper = async (label: string, name: string, email: string): Promi
     seenTargets: [],
     workContextTitle: TITLE,
     workContextStatus: "analyzing",
+    // A LIVE SESSION HAS AN EPOCH. Without one `allocateSeq` refuses, every
+    // record here lands unpositioned, and the tests below would only ever
+    // exercise the branch where nothing can be ordered — which is the branch
+    // the ledger can say least about.
+    seqEpoch: crypto.randomUUID(),
+    eventSeq: 0,
   });
   return {
     ...developer,
@@ -145,6 +151,29 @@ const storedIntent = async (developer: Developer): Promise<Record<string, unknow
   });
   const body = (await response.json()) as { data: { workContext: { intent: Record<string, unknown> | null; status: string } } };
   return body.data.workContext.intent;
+};
+
+/**
+ * THE LEDGER, which is where the checkable half actually lives.
+ *
+ * `storedIntent` above reads the HEAD, and §8.6 keeps the head to six fields
+ * precisely so the amendment reason and the declared scope never ride the
+ * unsolicited surfaces that project it whole (presence, search, suspect,
+ * hints, ghost-overlap). Asserting those fields on the head therefore asserts
+ * a leak. The chain is the pulled surface they belong to, and a reader who
+ * asks for a diagnosis is the reader §8.6 allows them to reach.
+ */
+const storedChain = async (
+  developer: Developer,
+): Promise<readonly Record<string, unknown>[]> => {
+  const response = await fetch(
+    `${hubUrl}/api/work-contexts/${developer.workContextId}/diagnosis`,
+    { headers: { Authorization: `Bearer ${developer.apiKey}` } },
+  );
+  const body = (await response.json()) as {
+    data: { intentChain?: readonly Record<string, unknown>[] };
+  };
+  return body.data.intentChain ?? [];
 };
 
 beforeAll(async () => {
@@ -214,6 +243,59 @@ describe("set_intent", () => {
     const second = await storedIntent(alice);
     expect(second?.["summary"]).toBe("Rotate the JWKS cache every minute");
     expect(String(second?.["capturedAt"]) > String(first?.["capturedAt"])).toBe(true);
+  });
+
+  test("with no position, the same sentence again is a replay, not a second version", async () => {
+    // Arrange: a session whose state carries NO epoch — a pre-sequence state
+    // file, or a lock that never cleared. `allocateSeq` refuses, so the record
+    // lands with no position at all.
+    const dave = await setUpDeveloper("si-dave", "Dave", "dave-intent@example.com");
+    await writeSessionState(dave.home, { ...(await readSessionState(dave.home, dave.hostSessionKey))!, seqEpoch: null });
+    await call(dave, { summary: "Rotate the JWKS cache every minute" });
+    const first = await storedIntent(dave);
+    expect(first?.["seq"]).toBeNull();
+
+    // Act
+    await Bun.sleep(5);
+    await call(dave, { summary: "Rotate the JWKS cache every minute" });
+
+    // Assert: THE HEAD DID NOT MOVE, and that is the conservative direction
+    // rather than a regression. With no positions, a sentence sent twice is
+    // indistinguishable from a sentence DELIVERED twice — the spool replays
+    // on any 5xx — so the id hash (context, author, position, sentence)
+    // collides by construction and the hub keeps one version. Refreshing the
+    // head's `capturedAt` here would leave `work_contexts.intent` carrying a
+    // timestamp no ledger row holds, which is the head/ledger disagreement
+    // this table exists to make impossible; `captured_at` orders nothing, so
+    // the cost is a display timestamp and the gain is the invariant.
+    const second = await storedIntent(dave);
+    expect(second).toEqual(first);
+  });
+
+  test("the chain's cap is printed, never swallowed", async () => {
+    // Arrange: a chain already AT the cap, filled over the record endpoint
+    // rather than by twenty MCP calls — the assertion is about the reply.
+    const carol = await setUpDeveloper("si-carol", "Carol", "carol-intent@example.com");
+    for (let n = 1; n <= MAX_INTENT_CHAIN_VERSIONS; n += 1) {
+      await post("/api/records", carol.apiKey, {
+        records: [
+          workContextRecordFor(carol, {
+            intent: { summary: `Sentence ${String(n)}`, provenance: "declared", confidence: 1, capturedAt: carol.startedAt },
+          }),
+        ],
+      });
+    }
+
+    // Act
+    const result = await call(carol, { summary: "One sentence too many" });
+
+    // Assert: the hub ignored the sentence, so a reply reading "Recorded your
+    // intent" would be this tool telling its author a thing that is not true
+    // — the silent drop non-negotiable #4 forbids, on the one surface whose
+    // whole job is to record the sentence.
+    expect(result.text).not.toContain("Recorded your intent");
+    expect(result.text).toContain(String(MAX_INTENT_CHAIN_VERSIONS));
+    expect((await storedIntent(carol))?.["summary"]).toBe(`Sentence ${String(MAX_INTENT_CHAIN_VERSIONS)}`);
   });
 
   test("a declared intent replaces a derived one, and a later derived one never overwrites it", async () => {
@@ -349,5 +431,78 @@ describe("set_intent", () => {
     expect(result.text).toBe(INTENT_SECRET_REFUSAL);
     expect(result.text).not.toContain(fake);
     expect(await storedIntent(alice)).toEqual(before);
+  });
+});
+
+describe("the checkable half reaches the wire", () => {
+  test("a declared surface, a non-goal and a reason all land", async () => {
+    // THEY HAD NO WRITER. Spec 06 makes the declared paths the field an edit
+    // is compared against — `explanationTimingFor` answers from them and from
+    // nothing else — and this tool could not send one, so every production
+    // row stored a sentence with an empty scope and `intent_scope` was
+    // written by nothing at all. The ledger existed and the checkable half
+    // was unreachable from the one writer agents have.
+    const first = await call(alice, {
+      summary: "Rewrite the provider matcher",
+      expectedSurface: ["packages/a.ts"],
+    });
+    expect(first.isError).toBe(false);
+
+    const amended = await call(alice, {
+      summary: "Rewrite the provider matcher and its fixture",
+      expectedSurface: ["packages/a.ts", "packages/fixture.ts"],
+      nonGoals: ["packages/b.ts"],
+      reason: "The fixture hid the gap.",
+    });
+    expect(amended.isError).toBe(false);
+
+    // THE LEDGER CARRIES THEM, and that is the whole contract: the reason and
+    // both scope lists reached the hub and are readable by somebody who asked
+    // for a diagnosis.
+    const chain = await storedChain(alice);
+    const head = chain[0];
+    expect(head?.["reason"]).toBe("The fixture hid the gap.");
+    expect(head?.["scope"]).toEqual([
+      { role: "expected", kind: "file", value: "packages/a.ts" },
+      { role: "expected", kind: "file", value: "packages/fixture.ts" },
+      { role: "non_goal", kind: "file", value: "packages/b.ts" },
+    ]);
+
+    // AND THE HEAD DOES NOT — §8.6, checked here rather than assumed. This
+    // assertion used to read the other way round, and it passed only because
+    // `record-handlers.ts` had two writers of `work_contexts.intent` and the
+    // one that runs when `set_intent` beats the spool stored the whole wire.
+    // A test that reads the reason off the head is a test that requires the
+    // leak, so it would have kept the defect alive through any later fix.
+    const intent = await storedIntent(alice);
+    expect(intent?.["summary"]).toBe(
+      "Rewrite the provider matcher and its fixture",
+    );
+    expect(intent?.["reason"]).toBeUndefined();
+    expect(intent?.["expectedSurface"]).toBeUndefined();
+    expect(intent?.["nonGoals"]).toBeUndefined();
+  });
+
+  test("an unscoped call still lands, unchanged", async () => {
+    // Back-compat, and the control: the three fields are optional, so a v0
+    // caller that knows none of them behaves exactly as before.
+    const result = await call(bob, { summary: "Look at the refresh path" });
+    expect(result.isError).toBe(false);
+    const intent = await storedIntent(bob);
+    expect(intent?.["summary"]).toBe("Look at the refresh path");
+    expect(intent?.["expectedSurface"]).toBeUndefined();
+    expect(intent?.["nonGoals"]).toBeUndefined();
+  });
+
+  test("a credential in a declared path is refused before the hub sees it", async () => {
+    // The hub screens these fields too (record-handlers.ts), but the tool is
+    // where a refusal can still tell the AUTHOR — a hub rejection reaches the
+    // spool, not the person.
+    const result = await call(alice, {
+      summary: "Rotate the key",
+      expectedSurface: ["packages/ghp_0123456789abcdefghijklmnopqrstuvwxyzAB.ts"],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.text).toContain("secret pattern");
   });
 });

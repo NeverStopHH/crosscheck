@@ -19,10 +19,15 @@ import type { OwnWorkContext } from "../session.ts";
 import { checkClaim, explainRejection } from "../violations.ts";
 import { redactionNote } from "../../briefing/sanitize.ts";
 import { containsSecret } from "../../capture/secret-scan.ts";
+import {
+  droppedSurfaceNote,
+  resolveDeclaredSurface,
+} from "../../flows/claim-surface.ts";
 import { isEchoOfDeliveredHint } from "../../hints/echo.ts";
 import { readSessionState } from "../../state/session-state.ts";
 import { postRecords } from "../../http/hub.ts";
 import {
+  allocateToolSeq,
   envelopeFor,
   hubFailure,
   issuesOf,
@@ -30,6 +35,7 @@ import {
   parseArgs,
   resultAt,
 } from "./shared.ts";
+import { seqAt } from "../../capture/seq.ts";
 
 /**
  * Neither confident nor dismissive. A model that omits `confidence` is not
@@ -64,6 +70,16 @@ export const ArgsSchema = z.object({
     .default([])
     .describe(
       "Ids of claims that support this one. Get them from get_diagnosis.",
+    ),
+  affectedPaths: z
+    .array(z.string().min(1))
+    .default([])
+    .describe(
+      "Repo-relative files this finding is ABOUT, if you already know them. " +
+        "They scope the staleness check: once a later commit rewrites one of " +
+        "them, this claim stops being presented as a current cause and the " +
+        "downgrade names the commits. Omit rather than guess — with none, the " +
+        "whole work context's touched files stand in, which over-fires.",
     ),
 });
 
@@ -172,6 +188,16 @@ export const run = async (
     return toolFailure(ECHO_REFUSAL);
   }
 
+  // The author's declared surface, through the SAME pipeline a captured file
+  // target passes — toRepoRelative, the denylist, the secret scan. A path
+  // that fails any of them is dropped, never redacted.
+  const surface = await resolveDeclaredSurface({
+    repoRoot: ctx.identity.root,
+    cwd: ctx.identity.root,
+    paths: parsed.value.affectedPaths,
+    denylist: ctx.config.denylist ?? undefined,
+  });
+
   const claim = {
     id: mintClaimId(),
     workContextId: own.workContextId,
@@ -186,6 +212,14 @@ export const run = async (
     // does not apply — and must not be quietly borrowed to escape it either.
     provenance: "declared",
     evidenceRefs: parsed.value.evidenceRefs,
+    affectedPaths: surface.paths,
+    // THE EMITTER'S OWN HEAD, at zero marginal cost: prepareMcp already
+    // resolved a RepoIdentity for this call and resolveRepoIdentity ran
+    // `git rev-parse HEAD` inside it. Sending it makes the binding `reported`
+    // instead of leaving ingest to read the session's base_commit, which is
+    // rewritten on every re-registration and can therefore sit LATER than the
+    // observation — the direction that makes a claim read fresher than it is.
+    observedAtCommit: ctx.identity.baseCommit,
     createdAt: ctx.now().toISOString(),
   };
 
@@ -201,8 +235,11 @@ export const run = async (
     sessionId: own.crosscheckSessionId,
     developerId: own.developerId,
   };
+  // One position, taken before the envelope: this tool posts DIRECTLY, so the
+  // record is on the wire the moment it is built.
+  const seq = await allocateToolSeq(ctx, own, 1);
   const posted = await postRecords(ctx.hub, [
-    envelopeFor(ctx, producer, "claim", claim),
+    envelopeFor(ctx, producer, "claim", claim, seqAt(seq, 0)),
   ]);
   if (!posted.ok) {
     return hubFailure(ctx, posted);
@@ -235,12 +272,14 @@ export const run = async (
   // sentence they just sent arrives with a hole in it. A note beside a stored
   // record, never a refusal — the text is legal and only its rendering changes.
   const note = redactionNote(claim.body);
+  const narrowed = droppedSurfaceNote(surface);
   return toolText(
     [
       `Recorded ${claim.id} as a ${claim.kind} on your work context ${own.workContextId} ` +
         `(status ${claim.status}, confidence ${claim.confidence.toFixed(CONFIDENCE_DECIMALS)}). ` +
         "Pass this id as an evidenceRefs entry when you publish what supports it.",
       ...(note === null ? [] : [note]),
+      ...(narrowed === null ? [] : [narrowed]),
     ].join("\n"),
   );
 };

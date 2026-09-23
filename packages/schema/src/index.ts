@@ -2,11 +2,19 @@ export {
   ARTIFACT_SENSITIVITIES,
   ArtifactSensitivitySchema,
   CAPTURE_MODES,
+  CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
+  CLAIM_REVALIDATION_BASES,
+  CLAIM_REVALIDATION_RESULTS,
   CLAIM_STATUSES,
+  CLAIM_VALIDITY_STATES,
   CaptureModeSchema,
+  ClaimCommitBindingSchema,
   ClaimKindSchema,
+  ClaimRevalidationBasisSchema,
+  ClaimRevalidationResultSchema,
   ClaimStatusSchema,
+  ClaimValidityStateSchema,
   EDGE_KINDS,
   EdgeKindSchema,
   PROVENANCES,
@@ -22,8 +30,12 @@ export {
 export type {
   ArtifactSensitivity,
   CaptureMode,
+  ClaimCommitBinding,
   ClaimKind,
+  ClaimRevalidationBasis,
+  ClaimRevalidationResult,
   ClaimStatus,
+  ClaimValidityState,
   EdgeKind,
   Provenance,
   SessionStatus,
@@ -33,21 +45,50 @@ export type {
 } from "./enums.ts";
 
 export {
+  COMMIT_SHA_PATTERN,
+  NO_COMMIT_SHA,
+  isBindableCommit,
+} from "./commit-sha.ts";
+
+export {
   ClaimEdgeSchema,
   ClaimSchema,
   DERIVED_CONFIDENCE_CAP,
   MAX_CLAIM_BODY_LENGTH,
+  MAX_CLAIM_SURFACE_PATHS,
 } from "./claim.ts";
+
+export {
+  MAX_REPO_PATH_CHARS,
+  REPO_RELATIVE_PATH,
+  repoRelativePath,
+} from "./repo-path.ts";
 export type { Claim, ClaimEdge } from "./claim.ts";
 
 export {
   AgentSessionSchema,
+  INTENT_SCOPE_KINDS,
+  INTENT_SCOPE_ROLES,
   IntentSchema,
+  IntentScopeEntrySchema,
+  IntentScopeKindSchema,
+  IntentScopeRoleSchema,
+  MAX_INTENT_AMEND_REASON_CHARS,
+  MAX_INTENT_CHAIN_VERSIONS,
+  MAX_INTENT_SCOPE_ENTRIES,
   MAX_INTENT_SUMMARY_CHARS,
   TargetSchema,
   WorkContextSchema,
 } from "./session.ts";
-export type { AgentSession, Intent, Target, WorkContext } from "./session.ts";
+export type {
+  AgentSession,
+  Intent,
+  IntentScopeEntry,
+  IntentScopeKind,
+  IntentScopeRole,
+  Target,
+  WorkContext,
+} from "./session.ts";
 
 export {
   MAX_PIN_CHECK_CHARS,
@@ -102,6 +143,19 @@ export type {
 } from "./commit-evidence.ts";
 
 export {
+  ClaimRevalidationEntrySchema,
+  ClaimRevalidationReportSchema,
+  ClaimValiditySchema,
+  MAX_CLAIM_REVALIDATION_ENTRIES,
+  MAX_CLAIM_TOUCHING_COMMITS,
+} from "./claim-revalidation.ts";
+export type {
+  ClaimRevalidationEntry,
+  ClaimRevalidationReport,
+  ClaimValidity,
+} from "./claim-revalidation.ts";
+
+export {
   LandedEvidenceSchema,
   MAX_LANDED_COMMITS,
 } from "./landed-evidence.ts";
@@ -112,7 +166,13 @@ export {
   KNOWN_RECORD_KINDS,
   PROTOCOL_VERSION,
   ProducerSchema,
+  SEQ_EPOCH_PATTERN,
+  SEQ_REFUSAL_REASONS,
+  SeqFieldSchema,
+  SeqRefusalSchema,
+  SeqStampSchema,
   isCompatibleVersion,
+  isSeqStamp,
   parseRecord,
 } from "./envelope.ts";
 export type {
@@ -120,9 +180,49 @@ export type {
   KnownRecordKind,
   ParseRecordResult,
   Producer,
+  SeqField,
+  SeqRefusal,
+  SeqRefusalReason,
+  SeqStamp,
 } from "./envelope.ts";
+
+export {
+  EVENT_REF_KINDS,
+  LEDGER_EVENT_KINDS,
+  SEQ_KINDS,
+  SEQ_REASONS,
+  SESSION_EVENT_KINDS,
+  SESSION_EVENT_RETENTION_MODES,
+} from "./session-event.ts";
+export type {
+  EventRefKind,
+  SeqKind,
+  SeqReason,
+  SessionEventKind,
+  SessionEventRetentionMode,
+} from "./session-event.ts";
 
 export {
   describeUnstorableText,
   unstorableTextPath,
 } from "./storable-text.ts";
+
+export { containsSecret } from "./secret-scan.ts";
+export {
+  CI_MAX_TEST_ROWS,
+  CI_KNOWN_PROVIDERS,
+  CI_PROVIDERS,
+  CI_RERUN_KINDS,
+  CI_RUN_OUTCOMES,
+  CI_TEST_STATUSES,
+  CiLaneSchema,
+  CiProviderSchema,
+  CiRerunKindSchema,
+  CiRunOutcomeSchema,
+  CiRunReportSchema,
+  CiTestResultSchema,
+  CiTestStatusSchema,
+  MAX_CI_LANE_FIELD_CHARS,
+  MAX_CI_TEST_ID_CHARS,
+} from "./ci-run.ts";
+export type { CiLane, CiRunReport, CiTestResult } from "./ci-run.ts";

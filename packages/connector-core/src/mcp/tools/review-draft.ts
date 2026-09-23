@@ -22,6 +22,10 @@ import { z } from "zod";
 import { DERIVED_CONFIDENCE_CAP } from "@crosscheck/schema";
 import { CLAIM_ECHO_MAX_CHARS } from "../../constants.ts";
 
+import {
+  droppedSurfaceNote,
+  resolveDeclaredSurface,
+} from "../../flows/claim-surface.ts";
 import { toolFailure, toolText } from "../protocol.ts";
 import type { ToolResult } from "../protocol.ts";
 import type { McpContext } from "../context.ts";
@@ -39,6 +43,7 @@ import {
   requireOwnContext,
 } from "./publish-claim.ts";
 import {
+  allocateToolSeq,
   envelopeFor,
   hubFailure,
   idArg,
@@ -48,6 +53,7 @@ import {
   parseArgs,
   resultAt,
 } from "./shared.ts";
+import { seqAt } from "../../capture/seq.ts";
 
 const ACTIONS = ["confirm", "edit", "discard"] as const;
 
@@ -77,6 +83,16 @@ export const ArgsSchema = z.object({
     .describe(
       "confirm/edit only: your confidence in the promoted claim. " +
         "Defaults to the draft's own.",
+    ),
+  affectedPaths: z
+    .array(z.string().min(1))
+    .default([])
+    .describe(
+      "Repo-relative files this finding is ABOUT, if you already know them. " +
+        "They scope the staleness check: once a later commit rewrites one of " +
+        "them, this claim stops being presented as a current cause and the " +
+        "downgrade names the commits. Omit rather than guess — with none, the " +
+        "whole work context's touched files stand in, which over-fires.",
     ),
 });
 
@@ -227,6 +243,12 @@ export const run = async (
   }
 
   const revision = buildRevision(action, draft, body, confidence);
+  const surface = await resolveDeclaredSurface({
+    repoRoot: ctx.identity.root,
+    cwd: ctx.identity.root,
+    paths: parsed.value.affectedPaths,
+    denylist: ctx.config.denylist ?? undefined,
+  });
   const now = ctx.now().toISOString();
   const claim = {
     id: mintClaimId(),
@@ -239,6 +261,14 @@ export const run = async (
     captureMode: "agent",
     provenance: revision.provenance,
     evidenceRefs: [],
+    affectedPaths: surface.paths,
+    // THE EMITTER'S OWN HEAD, at zero marginal cost: prepareMcp already
+    // resolved a RepoIdentity for this call and resolveRepoIdentity ran
+    // `git rev-parse HEAD` inside it. Sending it makes the binding `reported`
+    // instead of leaving ingest to read the session's base_commit, which is
+    // rewritten on every re-registration and can therefore sit LATER than the
+    // observation — the direction that makes a claim read fresher than it is.
+    observedAtCommit: ctx.identity.baseCommit,
     createdAt: now,
   };
   const rules = checkClaim(claim);
@@ -260,9 +290,13 @@ export const run = async (
   };
   // One batch, claim before edge: ingest processes records in order, so the
   // edge finds both endpoints (services/records.ts).
+  // TWO positions in ONE block, claim then edge — the revision and the
+  // supersedes edge that retires the draft are one act, and an order that
+  // separated them would let a reader ask which came first.
+  const seq = await allocateToolSeq(ctx, own, 2);
   const posted = await postRecords(ctx.hub, [
-    envelopeFor(ctx, producer, "claim", claim),
-    envelopeFor(ctx, producer, "claim_edge", edge),
+    envelopeFor(ctx, producer, "claim", claim, seqAt(seq, 0)),
+    envelopeFor(ctx, producer, "claim_edge", edge, seqAt(seq, 1)),
   ]);
   if (!posted.ok) {
     return hubFailure(ctx, posted);
@@ -284,5 +318,11 @@ export const run = async (
         `so the draft may still be listed:\n${explainRejection(issuesOf(edgeOutcome))}`,
     );
   }
-  return toolText(successText(action, claim.id, draft.id, revision.body));
+  const narrowed = droppedSurfaceNote(surface);
+  return toolText(
+    [
+      successText(action, claim.id, draft.id, revision.body),
+      ...(narrowed === null ? [] : [narrowed]),
+    ].join("\n"),
+  );
 };
