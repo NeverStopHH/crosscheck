@@ -7729,6 +7729,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "a reader gets `confidence 0.80` and no evidence label at all, which is " +
       "the state 08 exists to end — and they fill the gap themselves, upward",
   },
+  {
+    // The ONE author-written field 08 adds, and the only thing standing
+    // between it and the reader is this frame. Unframed, a ci_test id — 300
+    // characters somebody else chose — lands raw in an agent's context.
+    label: "the check pointer is printed unframed",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "  return `\\n  check ${quotedBody(ref, MAX_VERIFICATION_REF_CHARS)}`;",
+    to: "  return `\\n  check ${ref}`;",
+    test: `${CORE}/test/mcp-injection.test.ts`,
+    because:
+      "a claim's check pointer is author text, so an unframed one puts a " +
+      "teammate's chosen bytes into the tree unquoted — and the corpus shows " +
+      "it also SPLITS lines, which is how a payload invents a section",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7878,7 +7892,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/kit.test.ts 1
  * PRINTS: packages/connector-core/test/latency.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
- * PRINTS: packages/connector-core/test/mcp-injection.test.ts 4
+ * PRINTS: packages/connector-core/test/mcp-injection.test.ts 5
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
  * PRINTS: packages/connector-core/test/mcp-render.test.ts 13
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2

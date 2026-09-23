@@ -1437,17 +1437,21 @@ describe("the evidence axes on a rendered tree (08 §5)", () => {
     expect(line).toContain("e4f5a6b");
   });
 
-  test("a hub that sends no axes gets no clause, not an invented one", () => {
+  test("a hub that sends no axes says so, rather than going quiet", () => {
     // Arrange — a hub older than 08 omits the field entirely.
     const tree = diagnosis({ claims: [claim()] });
 
     // Act
     const rendered = renderDiagnosis(tree, NOW);
 
-    // Assert — the absence means "this hub did not answer", and a reader is
-    // told nothing rather than told a rung nobody measured.
+    // Assert — SILENCE WOULD BE THE BUG. 08 §3.6 names `confidence 0.80`
+    // standing alone as the failure mode: two decimals read as a measurement,
+    // and the clause is what lets a reader discount them. So the missing
+    // hedge is announced, never merely omitted — and the sentence names the
+    // remedy, which is upgrading the hub.
     expect(rendered).toContain("clm_01");
     expect(rendered).not.toContain("an agent recorded this");
+    expect(rendered).toContain("no evidence label (this hub does not report one)");
   });
 
   test("a claim with nothing behind it says so, out loud", () => {
@@ -1498,8 +1502,14 @@ describe("the evidence axes on a rendered tree (08 §5)", () => {
     // Act
     const rendered = renderDiagnosis(tree, NOW);
 
-    // Assert — the claim still renders; only the label it cannot name is gone.
+    // Assert — the claim still renders, the unknown member's bytes never do,
+    // and the reader is told which upgrade fixes it. A DIFFERENT sentence
+    // from the old-hub one on purpose: one is a hub to upgrade, the other a
+    // CLI, and a single "no label" would send the reader to the wrong one.
     expect(rendered).toContain("clm_01");
     expect(rendered).not.toContain("quantum_verified");
+    expect(rendered).toContain(
+      "no evidence label (this crosscheck cannot read the one sent)",
+    );
   });
 });
