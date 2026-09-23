@@ -18,7 +18,10 @@ import type {
 import { renderPinList } from "./cli/pin-render.ts";
 import { pinStatusLines } from "./cli/pin-observability.ts";
 import { renderSuspect } from "./cli/suspect-render.ts";
+import { verdictLines } from "./cli/verdict-render.ts";
 import { hubFailureLine } from "./cli/revalidate.ts";
+import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
+import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
 const NOW = new Date("2026-08-25T12:00:00.000Z");
 const ISO = "2026-08-25T11:00:00.000Z";
@@ -44,6 +47,17 @@ const pinWith = (payload: string): PinEntry => ({
   renamedPaths: 1,
   renamedAt: ISO,
   renamedByName: payload,
+  // 04 §5: `cli-pin-list`'s fixture gains the reason slot too. The waiver line
+  // interpolates a granter's name and a teammate's sentence, and a corpus that
+  // planted only in the surface label would leave both unattacked while the
+  // registry counted this surface green.
+  liveWaiver: {
+    id: "fw_11111111-2222-4333-8444-555555555555",
+    pinVersion: 1,
+    expiresAt: ISO,
+    reason: payload,
+    grantedByName: payload,
+  },
 });
 
 /**
@@ -104,6 +118,39 @@ const candidateWith = (payload: string): SuspectCandidate => ({
   isSelf: false,
 });
 
+/**
+ * A verdict with the payload in EVERY slot a renderer of this type reads —
+ * and the one that matters is `waiver.reason`.
+ *
+ * 04 §5 names this explicitly, and 03's COV-7 is why: reusing the suspect
+ * fixture without a waiver leaves the new clause unattacked while the registry
+ * still counts the surface green. The reason is the only author-written string
+ * on a verdict; a corpus that plants only in the surface label never reaches
+ * it. `protected_ok` because that is the ONE protection value that renders a
+ * waiver at all — a `PROTECTED_CONFLICT` fixture has no live fence, so its
+ * reason slot does not exist to attack.
+ */
+const verdictWith = (payload: string): VerdictView => ({
+  attribution: payload,
+  protection: "protected_ok",
+  basis: payload,
+  falsifier: payload,
+  behaviorDelta: payload,
+  deltaLane: payload,
+  deltaReason: payload,
+  explanationTiming: payload,
+  timingReason: payload,
+  invariant: { pinId: "pin_11111111-2222-4333-8444-555555555555", version: 1 },
+  waiver: {
+    id: "fw_11111111-2222-4333-8444-555555555555",
+    pinVersion: 1,
+    expiresAt: ISO,
+    reason: payload,
+    grantedByName: payload,
+  },
+  computedAt: ISO,
+});
+
 const suspectWith = (payload: string): SuspectView => ({
   outcome: "ranked",
   falsifier: { kind: "recorded_break", at: ISO, check: payload },
@@ -151,6 +198,10 @@ const suspectWith = (payload: string): SuspectView => ({
       { source: "human_edit", state: "unavailable", reason: "no_platform_rung", gapSince: null, observedAt: null },
     ],
   },
+  // The suspect surface renders the verdict block too, so its own fixture
+  // carries one — otherwise `cli-suspect` would attack every slot on the
+  // document EXCEPT the block this spec added to it.
+  verdict: verdictWith(payload),
 });
 
 export const RENDER_SURFACES: readonly RenderSurface[] = [
@@ -257,6 +308,26 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // tool prints it back").
     framing: "bare",
     render: (payload) => hubFailureLine(payload),
+  },
+  {
+    kind: "corpus",
+    name: "cli-verdict",
+    delivery: "pulled",
+    module: "src/cli/verdict-render.ts",
+    framing: "framed",
+    // THE ARRAY TAIL, per 00 §9.1a — appended after `cli-claim-revalidate`
+    // (02), which is where 05's `cli-ci-report` would have gone had 05 added
+    // one. It did not: 05 rendered its CI block inside `cli/status.ts`, an
+    // already-registered module, and covered it with a probe in
+    // test/ci-status-render.test.ts. So this is the next tail slot, and 07's
+    // `cli-pilot` follows it.
+    //
+    // THE PAYLOAD IS PLANTED IN THE WAIVER REASON, not only in the labels.
+    // That slot is the whole point of this registration: a verdict is enum
+    // words the renderer maps to its own sentences, and `waiver.reason` is
+    // the single span on the surface that a teammate wrote.
+    render: (payload) =>
+      quotingText(...verdictLines(verdictWith(payload), NOW)),
   },
 ];
 

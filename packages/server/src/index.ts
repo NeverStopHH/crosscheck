@@ -60,6 +60,29 @@ export type {
   CoverageSourceRecord,
   CoverageState,
 } from "./services/coverage.ts";
+// 04 §5's verdict vocabulary, exported for ONE reason: the connector cannot
+// import the hub, so `connector-core/src/http/verdict.ts` re-declares these
+// five enums and `connector-core/test/verdict-wire.test.ts` pins them against
+// these — the shape coverage already uses, four lines up. Nothing in the CLI's
+// render path imports this module: a static import of the hub would pull
+// PGlite, drizzle and hono into a renderer and into the published package.
+export {
+  ATTRIBUTIONS,
+  BEHAVIOR_DELTAS,
+  PROTECTIONS,
+  VERDICT_BASES,
+  VERDICT_FALSIFIERS,
+} from "./services/verdict.ts";
+export type {
+  Attribution,
+  BehaviorDelta,
+  InvariantRef,
+  Protection,
+  Verdict,
+  VerdictBasis,
+  VerdictFalsifier,
+  WaiverRef,
+} from "./services/verdict.ts";
 export {
   SEARCH_DEFAULT_LIMIT,
   SEARCH_MAX_LIMIT,

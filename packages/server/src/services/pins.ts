@@ -38,6 +38,8 @@ import {
   workContexts,
 } from "../db/schema.ts";
 import { readTeamSettings } from "./team-settings.ts";
+import { readLiveWaiver, readLiveWaivers } from "./waivers.ts";
+import type { LiveWaiver } from "./waivers.ts";
 import type { Db } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
@@ -80,6 +82,15 @@ export interface PinView {
   readonly renamedPaths: number;
   readonly renamedAt: string | null;
   readonly renamedByName: string | null;
+  /**
+   * The open fence on THIS pin at THIS version, or null (04 §5).
+   *
+   * On the listing rather than behind a second call, for the reason the
+   * coverage denominator travels with the registry: "4 pins, 1 broken"
+   * printed without "and one of them is waived until Friday" is a listing
+   * that hides the decision a reader most needs to see.
+   */
+  readonly liveWaiver: LiveWaiver | null;
   /** Small enough to speak AND falsifiable — Stage 2's eligibility, printed now. */
   readonly speaking: boolean;
   /** Paths the sweep could not find at HEAD; > 0 means the pin is rotting. */
@@ -312,6 +323,7 @@ const toPinView = (
   files: readonly PinFileView[],
   brokeByName: string | null,
   renamedByName: string | null,
+  liveWaiver: LiveWaiver | null,
 ): PinView => ({
   id: row.id,
   repo: row.repo,
@@ -329,6 +341,7 @@ const toPinView = (
   renamedPaths: Number(row.renamedPaths),
   renamedAt: iso(row.renamedAt),
   renamedByName,
+  liveWaiver,
   speaking: isSpeakingPin({
     files: files.map((file) => file.path),
     check: row.checkRecipe ?? undefined,
@@ -411,6 +424,15 @@ export const listPins = async (
     bucket.push({ path: file.path, status: file.status });
     filesByPin.set(file.pinId, bucket);
   }
+  // ONE query for every open fence on this page, scoped to the version each
+  // pin is at right now (04 §3.5) — a waiver granted before a sweep does not
+  // reach across the version the sweep produced.
+  const waivers = await readLiveWaivers({
+    db: deps.db,
+    repo,
+    pins: rows.map((row) => ({ id: row.id, version: row.version })),
+    now: deps.now(),
+  });
   return {
     pins: rows.map((row) =>
       toPinView(
@@ -418,6 +440,7 @@ export const listPins = async (
         filesByPin.get(row.id) ?? [],
         row.brokeBy === null ? null : breakerNames.get(row.brokeBy) ?? null,
         row.renamedBy === null ? null : breakerNames.get(row.renamedBy) ?? null,
+        waivers.get(row.id) ?? null,
       ),
     ),
     coverage: await readCoverage(deps, repo),
@@ -476,6 +499,16 @@ export const readPin = async (
     files.map((file) => ({ path: file.path, status: file.status })),
     await nameOf(row.brokeBy),
     await nameOf(row.renamedBy),
+    // ONE pin, so the single read rather than the batched one — and at THIS
+    // pin's current version, which is what a verdict computed from this view
+    // is entitled to treat as consent.
+    await readLiveWaiver({
+      db: deps.db,
+      repo: row.repo,
+      pinId: row.id,
+      pinVersion: row.version,
+      now: deps.now(),
+    }),
   );
 };
 

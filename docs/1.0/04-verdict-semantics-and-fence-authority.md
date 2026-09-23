@@ -407,6 +407,57 @@ tell which was meant. #50 **prepended** its three surfaces, so `cli-suspect` is 
 four now append at the tail, in build order, which makes each a one-line addition
 at a different offset instead of a three-way conflict on one line.*
 
+*Corrected again, at build time, by measurement. The tail is no longer
+`cli-status`: `cli-claim-revalidate` (02) landed on 2026-09-17, three days after
+this paragraph was written, and it took that slot. **And 05 never added
+`cli-ci-report` at all** — it rendered its CI block inside `cli/status.ts`, an
+already-registered module, and covered it with a probe in
+`cli/test/ci-status-render.test.ts`, which is the alternative 05 §5's own
+preceding sentence permits. So 05 §5's* "the new `cli-ci-report` entry must be
+added … or the meta-test reddens the build" *is **false as measured**: the build
+is green with no such entry, because the meta-test walks MODULES and 05 added
+none. Two sentences of one paragraph contradict each other, and the build says
+which is operative. **Consequence for 00 §9.1a:** the tail chain is
+`cli-claim-revalidate` (02) → `cli-verdict` (04) → `cli-pilot` (07); the
+`cli-ci-report` link in it names a surface that does not exist, and 07 must not
+wait for it. `cli-verdict` is therefore surface **8**, appended after
+`cli-claim-revalidate`.*
+
+*And one thing this paragraph assumes that the corpus does not deliver.*
+Planting the payload in the reason slot buys the **character** invariants over
+that slot — invisible categories, zero-width marks, plane 14, the bounds, the
+notice, at most one `« »` pair per line. It does **not** prove the reason is
+inside a frame at all: the corpus reads the finished string and cannot know
+which span was untrusted. **Measured by doing it** — replacing `quotedBody` with
+a bare sanitize in `verdict-render.ts` leaves all **99** registry assertions
+green. So `framing: "framed"` is a document-class claim, not a per-span one, and
+the frame on the reason is pinned by `cli/test/verdict-render.test.ts` with its
+own mutation anchor. A reader who takes the registration as proof that each
+untrusted value sits in guillemets is reading more than it says.
+
+**The reason slot had to be built before it could be attacked.** §3.6 defines
+`readLiveWaiver` and this spec's `WaiverRef` as `{id, pinVersion, expiresAt}` —
+no `reason` and no granter — so the obligation two paragraphs up was
+unsatisfiable as written: there was no reason slot on a verdict to plant in.
+Both now carry `reason` and `grantedByName`, and `readLiveWaiver` reaches the
+name by the same join `listWaivers` already uses — **a LEFT join, not an inner
+one**, because that query also reads the `revoke` rows: under an inner join a
+revocation whose author is no longer on this hub drops out of the result and the
+grant it closed reads as live again, which is a fence somebody shut reopening
+itself.
+
+**An absent verdict is the client-side Principle 5 case, and §5 did not name
+it.** A 1.0 hub that predates this spec answers `suspect` with a ranking and no
+`verdict` key. This tree's convention would read a missing optional block as
+"nothing claimed" and print nothing — which leaves the pre-04 answer standing
+and reads as a fully qualified one. So `http/verdict.ts` inherits **coverage's
+inverted rule** (03 §4) rather than the default: `parseVerdict` returns `null`,
+and the renderer is required to say so out loud. It must equally not fabricate
+an `INDETERMINATE`: a verdict this client invented is indistinguishable,
+downstream, from one the hub computed. The `no_touch` suppression is gated on a
+**present** verdict for the same reason — withholding the outcome sentence on
+top of a missing verdict would make the surface say less than the hub knows.
+
 **Wire.** `GET /api/suspect` returns `{ ...suspect, coverage, verdict }` — sibling
 fields, 03 §3.5's pattern. **03 §3.5 now lists `/api/suspect` among the responses
 that gain `coverage`**; its first draft named five and omitted #50's route, while

@@ -368,6 +368,8 @@ describe("protection is orthogonal, and its input has no intent in it", () => {
           id: "wv_1",
           pinVersion: 1,
           expiresAt: "2026-10-01T00:00:00.000Z",
+          reason: "Rollout is blocked; the fix lands Monday",
+          grantedByName: "Nick",
         },
       }),
     ).toBe("protected_ok");
@@ -398,6 +400,8 @@ describe("protection is orthogonal, and its input has no intent in it", () => {
         id: "wv_1",
         pinVersion: 1,
         expiresAt: "2026-10-01T00:00:00.000Z",
+        reason: "Rollout is blocked; the fix lands Monday",
+        grantedByName: "Nick",
       },
     };
 

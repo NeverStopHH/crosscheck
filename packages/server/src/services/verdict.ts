@@ -108,11 +108,20 @@ export interface InvariantRef {
   readonly version: number;
 }
 
-/** A live waiver lifting a protected conflict (§3.6). */
+/**
+ * A live waiver lifting a protected conflict (§3.6).
+ *
+ * CARRIES THE REASON AND THE GRANTER, so §5's block can say who opened the
+ * fence and why. `reason` is the one author-written string this type admits —
+ * the header above names it and the pin surface as the only two untrusted
+ * slots a renderer of a verdict must cover.
+ */
 export interface WaiverRef {
   readonly id: string;
   readonly pinVersion: number;
   readonly expiresAt: string;
+  readonly reason: string;
+  readonly grantedByName: string;
 }
 
 export interface Verdict {

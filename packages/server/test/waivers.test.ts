@@ -18,6 +18,7 @@ import { fenceWaivers, pins } from "../src/db/schema.ts";
 import {
   grantWaiver,
   readLiveWaiver,
+  readLiveWaivers,
   revokeWaiver,
 } from "../src/services/waivers.ts";
 import { createTestDeveloper, createTestHarness } from "./helpers.ts";
@@ -450,5 +451,114 @@ describe("granting and revoking (04 §3.6)", () => {
 
     // Assert
     expect(result).toEqual({ refusal: "unknown_waiver" });
+  });
+});
+
+/**
+ * THE BATCHED READER — `pin list`'s, and it must answer exactly what the
+ * single reader answers (04 §5).
+ *
+ * A second implementation of "is this fence open" is the drift 00 §9.6
+ * forbids, so both callers run the same extracted rule. These cases exist
+ * because the BATCHING is new: the grouping by pin and the per-pin version
+ * filter are code the single reader does not have, and each can fail in the
+ * direction that reopens a closed fence.
+ */
+describe("readLiveWaivers — many pins, one query", () => {
+  const batched = async (harness: TestHarness, version = 1) =>
+    readLiveWaivers({
+      db: harness.db,
+      repo: REPO,
+      pins: [{ id: PIN, version }],
+      now: NOW,
+    });
+
+  test("agrees with the single reader on a live grant", async () => {
+    // Arrange
+    const { harness, developerId } = await setup();
+    await seedWaiver(harness, developerId, {
+      id: "fw_grant",
+      kind: "grant",
+      expiresAt: hourAfter,
+      supersedes: null,
+      createdAt: hourBefore,
+    });
+
+    // Act
+    const one = await live(harness);
+    const many = await batched(harness);
+
+    // Assert — the same ROW and the same fields, not merely both truthy:
+    // the point of the extraction is that neither caller has its own answer.
+    expect(one).not.toBeNull();
+    expect(many.get(PIN)?.id).toBe("fw_grant");
+    expect(many.get(PIN)).toEqual(one ?? undefined);
+  });
+
+  test("a REVOKE closes the fence here too", async () => {
+    // Arrange — the case the grouping could lose: if a revoke row were
+    // dropped or bucketed under another pin, its grant would read live again.
+    const { harness, developerId } = await setup();
+    await seedWaiver(harness, developerId, {
+      id: "fw_grant",
+      kind: "grant",
+      expiresAt: hourAfter,
+      supersedes: null,
+      createdAt: hourBefore,
+    });
+    await seedWaiver(harness, developerId, {
+      id: "fw_revoke",
+      kind: "revoke",
+      expiresAt: null,
+      supersedes: "fw_grant",
+      createdAt: NOW,
+    });
+
+    // Act & Assert
+    expect((await batched(harness)).has(PIN)).toBe(false);
+  });
+
+  test("a waiver does NOT travel to the next version of the invariant", async () => {
+    // Arrange — a sweep moved the watched paths, so the pin is at version 2.
+    // The grant was consent to a DIFFERENT invariant.
+    const { harness, developerId } = await setup();
+    await seedWaiver(harness, developerId, {
+      id: "fw_grant",
+      kind: "grant",
+      expiresAt: hourAfter,
+      supersedes: null,
+      createdAt: hourBefore,
+      pinVersion: 1,
+    });
+
+    // Act & Assert
+    expect((await batched(harness, 1)).has(PIN)).toBe(true);
+    expect((await batched(harness, 2)).has(PIN)).toBe(false);
+  });
+
+  test("a pin nobody waived is absent from the map, not null in it", async () => {
+    // Arrange
+    const { harness } = await setup();
+
+    // Act & Assert — `pin list` reads `map.get(id) ?? null`, so both spellings
+    // render the same; the map stays the size of the answer rather than the
+    // size of the page.
+    expect((await batched(harness)).size).toBe(0);
+  });
+
+  test("no pins means no query and an empty map", async () => {
+    // Arrange
+    const { harness } = await setup();
+
+    // Act
+    const many = await readLiveWaivers({
+      db: harness.db,
+      repo: REPO,
+      pins: [],
+      now: NOW,
+    });
+
+    // Assert
+    expect(many.size).toBe(0);
   });
 });

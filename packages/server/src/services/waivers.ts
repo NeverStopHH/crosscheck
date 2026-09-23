@@ -30,7 +30,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { MAX_WAIVER_DAYS } from "../constants.ts";
 
@@ -55,11 +55,34 @@ const MAX_WAIVERS_LISTED = 50;
  */
 const HUMAN_CAPTURE_MODE = "human" as const;
 
-/** What the verdict needs to know about an open fence. */
+/**
+ * What a granter's name reads as when the hub cannot resolve one.
+ *
+ * NOT an empty string and not the id: a blank reads as "nobody granted this",
+ * which is the one thing a live waiver proves false, and a `dev_<uuid>` is a
+ * token no reader has a second endpoint to turn into a person.
+ */
+const UNRESOLVED_GRANTER = "a developer this hub can no longer name";
+
+/**
+ * What the verdict needs to know about an open fence.
+ *
+ * THE REASON AND THE GRANTER TRAVEL WITH IT, because §5 renders them: a reader
+ * told a protected conflict is waived and not told BY WHOM or WHY has been
+ * handed the permission without the accountability, which is the half of this
+ * record that makes a forged waiver at least an attributable one.
+ *
+ * `reason` is the one AUTHOR-WRITTEN string on the verdict — the module header
+ * of `verdict.ts` names it and the pin surface as the only two untrusted slots
+ * a renderer of this type must cover, and §5 requires the corpus to attack it
+ * in this slot rather than only in a surface label.
+ */
 export interface LiveWaiver {
   readonly id: string;
   readonly pinVersion: number;
   readonly expiresAt: string;
+  readonly reason: string;
+  readonly grantedByName: string;
 }
 
 export interface LiveWaiverInput {
@@ -70,8 +93,19 @@ export interface LiveWaiverInput {
   readonly now: Date;
 }
 
+/** One `fence_waivers` row as every reader of this rule needs it. */
+interface WaiverRow {
+  readonly id: string;
+  readonly kind: string;
+  readonly pinVersion: number;
+  readonly expiresAt: Date | null;
+  readonly supersedes: string | null;
+  readonly reason: string;
+  readonly grantedByName: string | null;
+}
+
 /**
- * The live waiver for one pin at one version, or null.
+ * IS THIS FENCE OPEN — the whole rule, in one place, over rows already read.
  *
  * A REVOKE NAMES ITS GRANT, and that relationship — not the clock — is what
  * decides. An earlier version of this read rows newest-first and let the first
@@ -85,28 +119,16 @@ export interface LiveWaiverInput {
  * unexpired grant wins. Order still decides between two live grants, where any
  * answer is correct because both are open; it no longer decides whether a
  * revocation took effect, where only one answer is.
+ *
+ * EXTRACTED RATHER THAN COPIED. Two callers ask this question — one pin at one
+ * version for a verdict, and every pin on a repo for `pin list` — and a second
+ * copy of a rule this subtle is a second thing to weaken, with the weaker copy
+ * the one nobody re-reads. `rows` must already be ordered newest-first.
  */
-export const readLiveWaiver = async (
-  input: LiveWaiverInput,
-): Promise<LiveWaiver | null> => {
-  const rows = await input.db
-    .select({
-      id: fenceWaivers.id,
-      kind: fenceWaivers.kind,
-      pinVersion: fenceWaivers.pinVersion,
-      expiresAt: fenceWaivers.expiresAt,
-      supersedes: fenceWaivers.supersedes,
-    })
-    .from(fenceWaivers)
-    .where(
-      and(
-        eq(fenceWaivers.repo, input.repo),
-        eq(fenceWaivers.pinId, input.pinId),
-        eq(fenceWaivers.pinVersion, input.pinVersion),
-      ),
-    )
-    .orderBy(desc(fenceWaivers.createdAt));
-
+const pickLiveWaiver = (
+  rows: readonly WaiverRow[],
+  now: Date,
+): LiveWaiver | null => {
   // Every grant somebody has closed, by id. Read from the rows already in
   // hand rather than a second query.
   const revoked = new Set(
@@ -126,7 +148,7 @@ export const readLiveWaiver = async (
       // the alternative is treating an impossible row as an OPEN fence.
       continue;
     }
-    if (row.expiresAt.getTime() <= input.now.getTime()) {
+    if (row.expiresAt.getTime() <= now.getTime()) {
       // EXPIRED. The loop keeps going, so a team who granted, let it lapse and
       // granted again still reads as open.
       continue;
@@ -135,9 +157,128 @@ export const readLiveWaiver = async (
       id: row.id,
       pinVersion: row.pinVersion,
       expiresAt: row.expiresAt.toISOString(),
+      reason: row.reason,
+      // The left join's null, spelled. A reader who cannot be given a name
+      // must be told that rather than shown a blank where a person belongs.
+      grantedByName: row.grantedByName ?? UNRESOLVED_GRANTER,
     };
   }
   return null;
+};
+
+/** The live waiver for one pin at one version, or null. */
+export const readLiveWaiver = async (
+  input: LiveWaiverInput,
+): Promise<LiveWaiver | null> => {
+  const rows = await input.db
+    .select({
+      id: fenceWaivers.id,
+      kind: fenceWaivers.kind,
+      pinVersion: fenceWaivers.pinVersion,
+      expiresAt: fenceWaivers.expiresAt,
+      supersedes: fenceWaivers.supersedes,
+      reason: fenceWaivers.reason,
+      grantedByName: developers.name,
+    })
+    .from(fenceWaivers)
+    // A LEFT JOIN, NOT THE INNER ONE THE LISTING USES, and the difference is
+    // load-bearing. This query reads the REVOKE rows too, to learn which
+    // grants were closed. Under an inner join a revocation whose author is no
+    // longer on this hub drops out of the result — and the grant it closed
+    // reads as live again. That is a fence somebody shut reopening itself,
+    // the exact defect the `revoked` set exists to prevent.
+    //
+    // So no row is ever filtered out by who wrote it, and an unresolvable
+    // name is rendered as one rather than costing the row. Same reasoning as
+    // the `expiresAt === null` branch below: the alternative is treating a
+    // row we cannot fully read as an OPEN fence.
+    .leftJoin(developers, eq(fenceWaivers.grantedBy, developers.id))
+    .where(
+      and(
+        eq(fenceWaivers.repo, input.repo),
+        eq(fenceWaivers.pinId, input.pinId),
+        eq(fenceWaivers.pinVersion, input.pinVersion),
+      ),
+    )
+    .orderBy(desc(fenceWaivers.createdAt));
+
+  return pickLiveWaiver(rows, input.now);
+};
+
+export interface LiveWaiversInput {
+  readonly db: DbExecutor;
+  readonly repo: string;
+  /** The pins being listed, with the version each is at RIGHT NOW. */
+  readonly pins: readonly { readonly id: string; readonly version: number }[];
+  readonly now: Date;
+}
+
+/**
+ * The live waiver for MANY pins, by pin id — `pin list`'s reader (04 §5).
+ *
+ * ONE QUERY, not one per pin. `listPins` already batches its file rows with
+ * `inArray` for the same reason, and a per-pin read here would put the pin
+ * count into the latency of the command a person types most often.
+ *
+ * SCOPED TO EACH PIN'S CURRENT VERSION. A waiver granted against version 1 of
+ * an invariant does not hold a fence open on version 2 — that is §3.5's whole
+ * point, and the sweep that bumps the version is exactly the event after which
+ * the old permission must stop applying. Rows for superseded versions are
+ * still READ (a revoke on an old version must not be lost) and then dropped by
+ * the version filter below, so this answers the same question
+ * `readLiveWaiver` would, pin by pin.
+ */
+export const readLiveWaivers = async (
+  input: LiveWaiversInput,
+): Promise<ReadonlyMap<string, LiveWaiver>> => {
+  const ids = input.pins.map((pin) => pin.id);
+  if (ids.length === 0) {
+    return new Map();
+  }
+  const rows = await input.db
+    .select({
+      id: fenceWaivers.id,
+      pinId: fenceWaivers.pinId,
+      kind: fenceWaivers.kind,
+      pinVersion: fenceWaivers.pinVersion,
+      expiresAt: fenceWaivers.expiresAt,
+      supersedes: fenceWaivers.supersedes,
+      reason: fenceWaivers.reason,
+      grantedByName: developers.name,
+    })
+    .from(fenceWaivers)
+    // The left join, for `readLiveWaiver`'s reason: a revocation whose author
+    // is gone must not drop out and reopen the grant it closed.
+    .leftJoin(developers, eq(fenceWaivers.grantedBy, developers.id))
+    .where(
+      and(
+        eq(fenceWaivers.repo, input.repo),
+        inArray(fenceWaivers.pinId, ids),
+      ),
+    )
+    .orderBy(desc(fenceWaivers.createdAt));
+
+  const byPin = new Map<string, WaiverRow[]>();
+  for (const row of rows) {
+    const bucket = byPin.get(row.pinId);
+    if (bucket === undefined) {
+      byPin.set(row.pinId, [row]);
+      continue;
+    }
+    bucket.push(row);
+  }
+
+  const live = new Map<string, LiveWaiver>();
+  for (const pin of input.pins) {
+    const forPin = (byPin.get(pin.id) ?? []).filter(
+      (row) => row.pinVersion === pin.version,
+    );
+    const waiver = pickLiveWaiver(forPin, input.now);
+    if (waiver !== null) {
+      live.set(pin.id, waiver);
+    }
+  }
+  return live;
 };
 
 /** Why a write was refused — an enum, so a route never invents prose. */

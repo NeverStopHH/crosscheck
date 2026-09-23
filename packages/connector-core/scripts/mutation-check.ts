@@ -7919,6 +7919,148 @@ export const MUTATIONS: readonly Mutation[] = [
       "is the unqualified naming this spec exists to refuse, and it silently " +
       "drops the one field that says a human-protected invariant is in play",
   },
+  {
+    // VER-1. 03 §5.1's empty-result rule applied to suspect-render.ts's
+    // `no_touch` sentence — the surface 03's list does not name and its
+    // refusal 8 hands here. The pair with VER-2 is the guard: both fixtures
+    // name nobody, and only one is entitled to say nobody is there.
+    label: "a hole in the archive is printed as an exoneration",
+    file: `${CLI}/src/cli/suspect-render.ts`,
+    from:
+      'const UNSUPPORTED_NO_TOUCH_BASES: readonly string[] = [\n' +
+      '  "coverage_gap",\n' +
+      '  "pin_paths_missing",\n' +
+      "];",
+    to: "const UNSUPPORTED_NO_TOUCH_BASES: readonly string[] = [];",
+    test: `${CLI}/test/verdict-render.test.ts`,
+    because:
+      "\"whatever broke it is not in crosscheck's record\" is printed over a " +
+      "gap we know about, so one reaped session exonerates every agent " +
+      "session on the repo and the reader is told the opposite of what the " +
+      "verdict two lines up computed",
+  },
+  {
+    // The Principle-5 case on the CLIENT side. An old hub sends no verdict;
+    // falling silent leaves the ranking looking fully qualified, which is the
+    // pre-04 defect wearing a post-04 build number.
+    label: "a hub that reports no verdict is read as having no objection",
+    file: `${CLI}/src/cli/verdict-render.ts`,
+    from: "    ? [NO_VERDICT_FROM_HUB]",
+    to: "    ? []",
+    test: `${CLI}/test/verdict-render.test.ts`,
+    because:
+      "a 1.0 hub that predates this spec answers `suspect` with a bare " +
+      "ranking, and a reader who is told nothing about whether anybody may " +
+      "be named reads the rows as the answer — missing evidence strengthening " +
+      "a conclusion, which is the one thing it may never do",
+  },
+  {
+    // §5: ABOVE the falsifier lines. Not cosmetic — the verdict is the
+    // licence the document is read under, not a conclusion drawn from it.
+    label: "the qualification arrives after the reader has read the accusation",
+    file: `${CLI}/src/cli/suspect-render.ts`,
+    from:
+      "    ...verdictLines(view.verdict, now),\n" +
+      "    ...falsifierLines(view, now),",
+    to:
+      "    ...falsifierLines(view, now),\n" +
+      "    ...verdictLines(view.verdict, now),",
+    test: `${CLI}/test/verdict-render.test.ts`,
+    because:
+      "a ranking whose qualification is printed underneath it is an " +
+      "accusation with the exoneration in a footnote, and the reader has " +
+      "already named somebody in their head by the time they reach it",
+  },
+  {
+    // The one author-written span on a verdict. NOT guarded by the corpus:
+    // the registry proves the character invariants over this slot and stays
+    // green with the frame removed — measured, see the module header.
+    label: "a teammate's waiver reason reaches a terminal unframed",
+    file: `${CLI}/src/cli/verdict-render.ts`,
+    from: "      : quotedBody(waiver.reason, MAX_WAIVER_REASON_CHARS);",
+    to: "      : bareUntrusted(waiver.reason);",
+    test: `${CLI}/test/verdict-render.test.ts`,
+    because:
+      "the guillemets are what tell a model that a sentence is quoted data " +
+      "rather than instruction, and this is the one span on the surface a " +
+      "person wrote — sanitized text with no frame is exactly the shape an " +
+      "injection needs on a surface an agent runs through Bash",
+  },
+  {
+    // §3.5 on the BATCHED reader. The single reader gets version scoping from
+    // its WHERE clause; this one re-applies it in memory, so it is a second
+    // place the rule can be lost.
+    label: "a sweep's new invariant inherits the old one's permission",
+    file: "packages/server/src/services/waivers.ts",
+    from:
+      "    const forPin = (byPin.get(pin.id) ?? []).filter(\n" +
+      "      (row) => row.pinVersion === pin.version,\n" +
+      "    );",
+    to: "    const forPin = byPin.get(pin.id) ?? [];",
+    test: "packages/server/test/waivers.test.ts",
+    because:
+      "a waiver granted against the paths a pin watched BEFORE a sweep keeps " +
+      "holding the fence open over the paths it watches after, so consent to " +
+      "one broken behaviour silently becomes consent to a different one",
+  },
+  {
+    // §5: `pin list` carries the guard AND its exception. A registry that
+    // prints "verified by Nick, watching" over a fence somebody opened is
+    // telling a reader the opposite of the operative fact.
+    label: "the registry prints the guard and hides the exception",
+    file: `${CLI}/src/cli/pin-render.ts`,
+    from: "    fileLine(pin),\n    ...waiverLines(pin, now),",
+    to: "    fileLine(pin),",
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because:
+      "a pin under a live waiver reads exactly like one nobody has waived, " +
+      "so the reader plans around a guard that is not currently guarding " +
+      "anything and finds out when the surface breaks",
+  },
+  {
+    // The one instant on a pin row that points FORWARD. Every other stamp is
+    // an age, and reusing the age helper is the natural mistake.
+    label: "an open fence is dated as though it had already lapsed",
+    file: `${CLI}/src/cli/pin-render.ts`,
+    from: "until ${waiver.expiresAt} (${untilOf(waiver.expiresAt, now)})",
+    to: "until ${waiver.expiresAt} (${ageOf(waiver.expiresAt, now)})",
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because:
+      "the deadline a person has to plan against renders as a negative age " +
+      "labelled \"ago\", so a fence with two days left reads as one that " +
+      "closed two days ago and nobody goes looking for it",
+  },
+  {
+    // The bare class is a PROMISE, and the corpus cannot keep it: a sanitized
+    // reason carries none of the character classes the corpus forbids.
+    label: "a teammate's prose reaches the one surface that promised not to print it",
+    file: `${CLI}/src/cli/pin-observability.ts`,
+    from:
+      "  return `${String(expiries.length)} live waiver(s) — next expires " +
+      "${next}; run crosscheck pin list to see who opened which, and why`;",
+    to:
+      "  return `${String(expiries.length)} live waiver(s) — next expires " +
+      '${next}: ${registry.pins[0]?.liveWaiver?.reason ?? ""}`;',
+    test: `${CLI}/test/waiver-render.test.ts`,
+    because:
+      "`status` and `doctor` are registered bare — no frame, no notice — so " +
+      "author-written text printed there reaches a model as instruction " +
+      "rather than as quoted data, on the two commands every session runs",
+  },
+  {
+    // The inverted parse rule, on the axis that matters: a verdict this
+    // client invented is indistinguishable downstream from one the hub
+    // computed.
+    label: "an unreadable verdict is completed from the client's own defaults",
+    file: `${CORE}/src/http/verdict.ts`,
+    from: "    basis: z.string().min(1),",
+    to: '    basis: z.string().min(1).default("coverage_gap"),',
+    test: `${CORE}/test/verdict-wire.test.ts`,
+    because:
+      "a response that cannot say what its basis is parses into a verdict " +
+      "carrying this build's guess, and every reader downstream reads that " +
+      "guess on the hub's authority",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7989,6 +8131,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/seq-doctor.test.ts 3
  * PRINTS: packages/cli/test/solved-cli.test.ts 2
  * PRINTS: packages/cli/test/summarizer-cost.test.ts 3
+ * PRINTS: packages/cli/test/verdict-render.test.ts 4
+ * PRINTS: packages/cli/test/waiver-render.test.ts 3
  * PRINTS: packages/connector-acp/test/acp-report.test.ts 1
  * PRINTS: packages/connector-acp/test/announce-position.test.ts 1
  * PRINTS: packages/connector-acp/test/capture-hardening.test.ts 2
@@ -8097,6 +8241,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/staleness-axis.test.ts 1
  * PRINTS: packages/connector-core/test/tool-window-pairing.test.ts 6
  * PRINTS: packages/connector-core/test/touched-root.test.ts 3
+ * PRINTS: packages/connector-core/test/verdict-wire.test.ts 1
  * PRINTS: packages/connector-cursor/test/briefing-parity.test.ts 1
  * PRINTS: packages/connector-cursor/test/budget.test.ts 1
  * PRINTS: packages/connector-cursor/test/derive-doctor.test.ts 2
@@ -8153,7 +8298,7 @@ interface Outcome {
  * PRINTS: packages/server/test/suspect.test.ts 3
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 1
- * PRINTS: packages/server/test/waivers.test.ts 2
+ * PRINTS: packages/server/test/waivers.test.ts 3
  * PRINTS: packages/server/test/work-context-listing.test.ts 3
  */
 const greenGuards = new Map<string, boolean>();

@@ -15,6 +15,8 @@ import type { SeqField, SessionEventRetentionMode } from "@crosscheck/schema";
 import { CONFERENCE_ACTIVE_WINDOW_DAYS } from "../constants.ts";
 import { hubRequest } from "./client.ts";
 import { parseCoverage } from "./coverage.ts";
+import { parseVerdict, WaiverRefSchema } from "./verdict.ts";
+import type { VerdictView } from "./verdict.ts";
 import type { HubContext, HubResult } from "./client.ts";
 import type { CoverageRecord } from "./coverage.ts";
 
@@ -2188,6 +2190,15 @@ export const PinEntrySchema = z.looseObject({
   renamedPaths: z.number().int().min(0).default(0),
   renamedAt: z.string().nullable().default(null),
   renamedByName: z.string().nullable().default(null),
+  /**
+   * The open fence on this pin, if one is live (04 §5).
+   *
+   * The SAME shape the verdict carries, so a waiver cannot mean two things
+   * depending on which command a reader typed. Nullish, so a hub that predates
+   * the table reads as "no fence is open" — which is the safe direction here:
+   * the absent reading UNDERSTATES permission rather than inventing it.
+   */
+  liveWaiver: WaiverRefSchema.nullish().transform((value) => value ?? null),
 });
 
 export type PinEntry = z.infer<typeof PinEntrySchema>;
@@ -2430,6 +2441,17 @@ export interface SuspectView {
    * surface where an unqualified answer costs the most: a name.
    */
   readonly coverage: CoverageRecord;
+  /**
+   * Whether anybody may be named at all, and on what basis (04 §3).
+   *
+   * `null` MEANS THE HUB DID NOT REPORT ONE, and the renderer says so out
+   * loud — it does not fall silent and it does not invent one. A ranking with
+   * no verdict beside it reads as a fully qualified answer, which is the
+   * unqualified naming 04 exists to refuse; see http/verdict.ts for why this
+   * block inherits coverage's inverted parse rule rather than this file's
+   * usual tolerant one.
+   */
+  readonly verdict: VerdictView | null;
 }
 
 const SuspectViewSchema = z
@@ -2459,6 +2481,7 @@ const SuspectViewSchema = z
     attribution: z.string().min(1).default("sessions"),
     candidates: z.array(z.unknown()).default([]),
     coverage: z.unknown().optional(),
+    verdict: z.unknown().optional(),
   })
   .transform(
     (value): SuspectView => ({
@@ -2468,6 +2491,7 @@ const SuspectViewSchema = z
       totals: value.totals,
       attribution: value.attribution,
       coverage: parseCoverage(value.coverage),
+      verdict: parseVerdict(value.verdict),
       candidates: value.candidates
         .map((row) => SuspectCandidateSchema.safeParse(row))
         .filter((parsed) => parsed.success)

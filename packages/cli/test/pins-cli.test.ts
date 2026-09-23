@@ -347,6 +347,7 @@ describe("crosscheck pin list at scale", () => {
           renamedPaths: 0,
           renamedAt: null,
           renamedByName: null,
+          liveWaiver: null,
         },
       ],
       coverage: {
@@ -396,6 +397,7 @@ describe("crosscheck pin list at scale", () => {
       renamedPaths: 0,
       renamedAt: null,
       renamedByName: null,
+      liveWaiver: null,
     });
     const registry = {
       pins: Array.from({ length: 200 }, (_unused, index) => row(index)),
@@ -442,6 +444,7 @@ describe("crosscheck pin list at scale", () => {
           renamedPaths: 1,
           renamedAt: new Date(now.getTime() - 120_000).toISOString(),
           renamedByName: "Ken",
+          liveWaiver: null,
         },
       ],
       coverage: {
@@ -499,6 +502,7 @@ describe("crosscheck suspect at scale", () => {
       totals: { sessionsTouching: 305, sessionsScored: 50, windowDays: 14 },
       attribution: "sessions",
       coverage: UNKNOWN_COVERAGE,
+      verdict: null,
       candidates: [candidate],
     };
 
@@ -529,6 +533,7 @@ describe("crosscheck suspect at scale", () => {
         // Unknown is what an older hub's answer becomes, which is what this
         // fixture is standing in for.
         coverage: UNKNOWN_COVERAGE,
+        verdict: null,
         falsifier: { kind: "recorded_break", at: now.toISOString(), check: null },
         scope: {
           kind: "pin",
@@ -622,6 +627,7 @@ describe("crosscheck suspect at scale", () => {
       totals: { sessionsTouching: 0, sessionsScored: 0, windowDays: 14 },
       attribution: "sessions",
       coverage: UNKNOWN_COVERAGE,
+      verdict: null,
       candidates: [],
     };
 
@@ -653,6 +659,7 @@ describe("crosscheck suspect at scale", () => {
       totals: { sessionsTouching: 0, sessionsScored: 0, windowDays: 14 },
       attribution: "sessions",
       coverage: UNKNOWN_COVERAGE,
+      verdict: null,
       candidates: [],
     };
 
