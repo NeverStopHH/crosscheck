@@ -3,7 +3,7 @@ import { z } from "zod";
 import { COMMIT_SHA_PATTERN } from "./commit-sha.ts";
 import { repoRelativePath } from "./repo-path.ts";
 import {
-  CaptureModeSchema,
+  ClaimCaptureModeSchema,
   ClaimKindSchema,
   ClaimStatusSchema,
   EdgeKindSchema,
@@ -36,7 +36,13 @@ export const ClaimSchema = z
     body: z.string().min(1).max(MAX_CLAIM_BODY_LENGTH),
     status: ClaimStatusSchema,
     confidence: z.number().min(0).max(1),
-    captureMode: CaptureModeSchema,
+    /**
+     * WHO captured this claim, from a vocabulary that cannot say `human`
+     * (1.0 spec 08 §3.2a). `CLAIM_CAPTURE_MODES` carries the reasoning,
+     * including why this is a narrower enum rather than the hub stamp the
+     * spec asks for — the hub cannot tell the two lanes apart.
+     */
+    captureMode: ClaimCaptureModeSchema,
     provenance: ProvenanceSchema,
     evidenceRefs: z.array(nonEmptyId).default([]),
     /**

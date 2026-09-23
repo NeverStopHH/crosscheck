@@ -23,6 +23,7 @@ import {
   CI_RERUN_KINDS,
   CI_RUN_OUTCOMES,
   CI_TEST_STATUSES,
+  CLAIM_CAPTURE_MODES,
   CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
   CLAIM_REVALIDATION_BASES,
@@ -283,7 +284,15 @@ export const claims = pgTable(
     body: text("body").notNull(),
     status: text("status", { enum: CLAIM_STATUSES }).notNull(),
     confidence: doublePrecision("confidence").notNull(),
-    captureMode: text("capture_mode", { enum: CAPTURE_MODES }).notNull(),
+    /**
+     * `CLAIM_CAPTURE_MODES`, not `CAPTURE_MODES`: a claim's vocabulary cannot
+     * say `human` (1.0 spec 08 §3.2a), while a PIN's can say nothing else
+     * (`:647` below keeps the full set). Narrowing the stored type as well as
+     * the wire one is not belt-and-braces — it is what stops a reader of this
+     * table from writing a branch for a value the boundary can no longer
+     * deliver. The column stays `text` with no SQL CHECK, so this emits no DDL.
+     */
+    captureMode: text("capture_mode", { enum: CLAIM_CAPTURE_MODES }).notNull(),
     provenance: text("provenance", { enum: PROVENANCES }).notNull(),
     dedupCount: integer("dedup_count").notNull().default(1),
     lastSeenAt: timestamptz("last_seen_at"),

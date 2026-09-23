@@ -36,6 +36,50 @@ export const SESSION_STATUSES = [
 
 export const CAPTURE_MODES = ["auto", "agent", "human"] as const;
 
+/**
+ * The capture modes a CLAIM may carry (1.0 spec 08 §3.2a, AT-3's write path).
+ *
+ * `human` IS ABSENT, AND ITS ABSENCE IS THE POINT. `capture_mode` is a TRUST
+ * LABEL: a reader meeting `human` reads the sentence as a person's word. No
+ * writer in this tree has ever produced it on a claim — seven stamp a mode,
+ * four `agent` and three `auto`, and zero `human` (08 §1.3) — but the field
+ * rode the wire verbatim into the row (`record-handlers.ts`), so a hand-rolled
+ * POST under a developer bearer key could mint one, and that key sits in
+ * plaintext in `~/.crosscheck/config.json` where any agent on the machine can
+ * read it. Narrowing the vocabulary makes the forgery UNSAYABLE rather than
+ * merely unsaid: a body naming it fails at the boundary with the field named.
+ *
+ * REFUSED, NOT DOWNGRADED — the second half of AT-3's sentence. A claim body
+ * is parsed by `ClaimSchema` before ingest, so `human` is a parse failure and
+ * never reaches a row. It is NOT quietly rewritten to `agent`, which would
+ * leave the caller believing a human's word had been recorded.
+ *
+ * WHY THIS IS A NARROWER ENUM AND NOT THE HUB STAMP 08 §3.2a ASKS FOR.
+ * The spec says the hub should stamp the mode "from the route and the
+ * producer", modelled on #50's pins, where the hub stamps `human` and the body
+ * may never carry it. That does not transfer, and the difference is measurable
+ * rather than a matter of taste. A pin has ONE legal value, so a stamp needs no
+ * information. A claim has two, and nothing at the boundary separates them:
+ * both lanes land on the same route — the MCP tools post to `/api/records`
+ * through `postRecords`, the derived writers reach the same handler through the
+ * spool flush — and both carry the identical `producer` block, because the same
+ * session runs both. A hub stamping this field would be guessing.
+ *
+ * Nor is it derivable from `provenance`, which is the obvious next idea: six of
+ * the seven writers do pair `derived→auto` and `declared→agent`, but
+ * `review-draft.ts` breaks it deliberately. A DISCARDED draft is `agent` +
+ * `derived` — the agent ACTED on it but did not VOUCH for it — and that pairing
+ * is the record of a real event. Deriving the label from provenance would
+ * relabel every discard as `auto` and erase the agent from it.
+ *
+ * So the two values stay sender-chosen, and the honest statement of what that
+ * buys is narrow: this stops the forgery of a HUMAN's word, which is the trust
+ * escalation, and it does not stop a lying agent from writing `auto` on its own
+ * declaration. That second one is a step DOWN in authority, and it is the WHO
+ * axis of 08 §3.1 — derived fresh per read — that answers it, not this enum.
+ */
+export const CLAIM_CAPTURE_MODES = ["auto", "agent"] as const;
+
 export const PROVENANCES = ["declared", "derived"] as const;
 
 export const TARGET_KINDS = [
@@ -143,6 +187,7 @@ export const ClaimStatusSchema = z.enum(CLAIM_STATUSES);
 export const EdgeKindSchema = z.enum(EDGE_KINDS);
 export const SessionStatusSchema = z.enum(SESSION_STATUSES);
 export const CaptureModeSchema = z.enum(CAPTURE_MODES);
+export const ClaimCaptureModeSchema = z.enum(CLAIM_CAPTURE_MODES);
 export const ProvenanceSchema = z.enum(PROVENANCES);
 export const TargetKindSchema = z.enum(TARGET_KINDS);
 export const TargetSourceSchema = z.enum(TARGET_SOURCES);
@@ -157,6 +202,7 @@ export type ClaimStatus = z.infer<typeof ClaimStatusSchema>;
 export type EdgeKind = z.infer<typeof EdgeKindSchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 export type CaptureMode = z.infer<typeof CaptureModeSchema>;
+export type ClaimCaptureMode = z.infer<typeof ClaimCaptureModeSchema>;
 export type Provenance = z.infer<typeof ProvenanceSchema>;
 export type TargetKind = z.infer<typeof TargetKindSchema>;
 export type TargetSource = z.infer<typeof TargetSourceSchema>;

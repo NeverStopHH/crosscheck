@@ -604,6 +604,63 @@ describe("POST /api/records", () => {
     expect(data?.results[0]?.issues?.join(" ")).toContain("confidence");
   });
 
+  /**
+   * 1.0 spec 08 §3.2a — AT-3 at the route, where the forgery would actually be
+   * attempted. The schema test proves the vocabulary; these two prove the hub
+   * in front of it behaves, because a refusal that still 2xx'd the batch would
+   * destroy the record on the spool without storing it (00 §4.5).
+   */
+  test("rejects a claim that calls itself human-captured", async () => {
+    // Arrange — what a hand-rolled POST under the plaintext bearer key sends.
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+
+    // Act
+    const { data } = await postRecords(
+      harness,
+      developer,
+      recordEnvelope("claim", validClaimBody({ captureMode: "human" })),
+    );
+
+    // Assert — and the issue NAMES the field, so the caller learns which of
+    // its assertions the hub would not take.
+    expect(data?.results[0]?.status).toBe("rejected");
+    expect(data?.results[0]?.issues?.join(" ")).toContain("captureMode");
+  });
+
+  test("refuses it rather than storing it under a downgraded label", async () => {
+    // Arrange
+    const { harness, developer } = await createHarnessWithSession();
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("work_context", validWorkContextBody()),
+    );
+
+    // Act
+    await postRecords(
+      harness,
+      developer,
+      recordEnvelope("claim", validClaimBody({ captureMode: "human" })),
+    );
+    const response = await harness.app.request(
+      `/api/work-contexts/${WORK_CONTEXT_ID}/diagnosis`,
+      jsonRequest("GET", developer.apiKey),
+    );
+    const body = (await response.json()) as {
+      data: { claims: { id: string }[] };
+    };
+
+    // Assert — the second half of AT-3's sentence. A downgrade would leave a
+    // row here reading `agent`, and the sentence would still be on the hub
+    // under a label its author never chose. Nothing is stored at all.
+    expect(body.data.claims.map((claim) => claim.id)).not.toContain("clm_01");
+  });
+
   test("does not bump dedupCount on a byte-identical claim replay", async () => {
     // Arrange
     const { harness, developer } = await createHarnessWithSession();

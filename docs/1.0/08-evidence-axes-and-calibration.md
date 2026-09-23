@@ -98,7 +98,7 @@ what AT-3 exists to refuse. **In 1.0 every claim is `agent_derived`** — not a 
 two halves — *"`publish_claim` or any agent surface can produce human capture mode, **or** the attempt is silently downgraded
 instead of refused"* — and the first half is a **write-path** defect, live on main, that no read-model closes.
 
-### 3.2a AT-3's write path — the hub stamps `capture_mode`, and the wire stops carrying it
+### 3.2a AT-3's write path — the wire cannot say `human`
 
 **The defect, measured.** `ClaimSchema` (`packages/schema/src/claim.ts:18-31`) carries
 `captureMode: CaptureModeSchema` **on the wire**, and `record-handlers.ts:501` (`crosscheck-pins:520`)
@@ -107,33 +107,81 @@ in the product does this today — but nothing stops a hand-rolled POST under a 
 doing it, and the key sits in plaintext in `~/.crosscheck/config.json`. A claim stored
 `capture_mode: "human"` renders to every teammate as a human's word.
 
-**The fix is #50's, copied rather than invented.** #50 solved exactly this for pins by **removing the field
-from the wire**: `PinSchema` no longer carries `captureMode` at all, it carries `presence` — *"what the
+**The fix BORROWS #50's reasoning and not its mechanism**, and the difference is the deviation note below —
+the first draft of this section said *"copied rather than invented"*, tried to copy it, and found the copy
+does not fit. #50 solved this for pins by **removing the field from the wire**: `PinSchema` no longer carries
+`captureMode` at all, it carries `presence` — *"what the
 client OBSERVED"* — and the hub stamps the stored mode from it (`crosscheck-pins:schema/src/pin.ts:24-33`,
 `:70-89`; `services/pins.ts:112`, `:189`). Its own comment names the reason: `captureMode: "human"` was
 *"the caller's own conclusion ABOUT ITSELF, which the hub then printed as 'verified by Nick (a human, at a
 terminal)' … a sentence a model could write about Nick"*. Applied to claims:
 
-1. **`ClaimSchema` drops `captureMode`.** The agent tools already hard-code it (`publish-claim.ts:183` and
-   three siblings), so no tool call changes; what disappears is the *ability* to send it.
-2. **The hub stamps it from the route and the producer.** `/api/records` is an agent path: a `claim` record
-   is stamped `agent` where the producer is an MCP tool or hook and `auto` where it is a derived worker —
-   the same seven writers, the same seven values, now decided hub-side where a caller cannot reach them.
-3. **A body carrying `captureMode` is a REFUSAL, not a downgrade.** It fails `ClaimSchema` at the schema
+1. **`ClaimSchema` narrows `captureMode` instead of dropping it.** The field stays on the wire, typed
+   `ClaimCaptureModeSchema` — `["auto", "agent"]`, `CLAIM_CAPTURE_MODES` — so `human` is not a value a
+   sender can express. The agent tools already hard-code what they send (`publish-claim.ts:183` and three
+   siblings), so no tool call changes; what disappears is the *ability* to say `human`.
+2. ~~**The hub stamps it from the route and the producer.**~~ **NOT BUILT — the hub cannot tell the two
+   lanes apart.** See the deviation note below; this is the one point of §3.2a that did not survive
+   contact with the tree.
+3. **A body naming `captureMode: "human"` is a REFUSAL, not a downgrade.** It fails `ClaimSchema` at the schema
    boundary and returns a validation error naming the field. This is the half AT-3's second clause is about,
    and the distinction matters against 00 §4.5's rule that *"a 1.0 route that rejects a well-formed record
-   for a policy reason destroys it"*: **a record carrying a field the schema does not define is not
-   well-formed**, so it never reaches the ingest path, the spool never advances its cursor on a 2xx, and
+   for a policy reason destroys it"*: **a record whose field carries a value outside that field's declared
+   vocabulary is not well-formed** — the same class as an unknown `status` or `kind`, refused by the same
+   enum machinery — so it never reaches the ingest path, the spool never advances its cursor on a 2xx, and
    nothing is destroyed. A *policy* rejection of a valid record would be the trap; a *schema* refusal is the
    boundary the tree already refuses at, and #50 chose it deliberately — *"the literal makes the gate fail
    CLOSED — an absent or unknown value is a parse failure, never a default"*.
-4. **`CAPTURE_MODES.human` becomes unreachable on claims in 1.0, and doctor says so** rather than leaving a
-   silent absence (AT-10, 03's rule): `PASS "human authority" — "no human claim route in 1.0: every claim is
-   agent_derived; capture_mode is hub-stamped and the wire cannot carry it"`. **This is the honest scope
-   line.** #50's `presence: PIN_PRESENCE_TERMINAL` gate is buildable for claims and 1.0 does not build one:
-   a human typing a claim at a terminal is a product surface nobody has asked for, and inventing it to fill
-   a table would be the fake design this set forbids. What 1.0 owes AT-3 is that **no agent surface can
-   produce human capture mode**, and that is what §3.2a delivers.
+4. **`human` becomes unreachable on claims in 1.0, and the STORED type says so too.** `claims.capture_mode`
+   is declared `CLAIM_CAPTURE_MODES` in `db/schema.ts` as well as on the wire — the column stays `text` with
+   no SQL `CHECK`, so this emits no DDL, and what it buys is that no reader of that table can write a branch
+   for a value the boundary can no longer deliver. **This is the honest scope line.** #50's
+   `presence: PIN_PRESENCE_TERMINAL` gate is buildable for claims and 1.0 does not build one: a human typing
+   a claim at a terminal is a product surface nobody has asked for, and inventing it to fill a table would be
+   the fake design this set forbids. What 1.0 owes AT-3 is that **no agent surface can produce human capture
+   mode**, and that is what §3.2a delivers.
+
+   **No doctor check, deliberately.** The first draft of this point specified
+   `PASS "human authority" — "no human claim route in 1.0…"`. It is not built, because after the narrowing
+   it is a check that cannot fail: the property is static in the type, so the line would print PASS on every
+   install for ever and measure nothing. That is the "decoration" `mutation-check.ts` exits 1 over, and
+   AT-10's rule — *a rung that cannot exist is a doctor refusal, never a silent absence* — is about a rung
+   whose ABSENCE would otherwise be invisible, not about announcing a constant. The absence here is neither
+   silent nor invisible: it is a parse error naming the field, and widening the vocabulary back to the
+   three-value `CAPTURE_MODES` turns **six** tests red — four in `schema/test/claim.test.ts` and both
+   route-level ones in `server/test/records.test.ts`, each watched go red on the tree as it stands.
+
+**DEVIATION FROM THIS SPEC, RECORDED BECAUSE IT WAS ATTEMPTED FIRST AND FAILED.** Point 2 above — *the hub
+stamps it from the route and the producer* — was built, and then taken out again. It cannot work, and the
+reason is a measurement rather than a preference:
+
+- **There is one route, not two.** The MCP tools post to `/api/records` through `postRecords`
+  (`publish-claim.ts:28`, `:241`); the derived writers reach the **same handler** through the spool flush.
+  `records.ts:226` and `:259` are the only two places a `claim` record is dispatched, and both lanes arrive
+  at them. **The `producer` block is identical** — same `developerId`, same `agentKind`, same `sessionId` —
+  because the same session runs both. A hub stamping this field would be guessing.
+- **Nor is it derivable from `provenance`**, which is the obvious fallback: six of the seven writers do pair
+  `derived→auto` and `declared→agent`, but `review-draft.ts:261-262` breaks it **deliberately**. A DISCARDED
+  draft is `captureMode: "agent"` with `provenance: "derived"` — its own header says why at `:17`,
+  *"provenance stays DERIVED, because the agent did not vouch for it"*. The agent ACTED on the draft without
+  VOUCHING for it, and that pairing is the record of a real event. Deriving the mode from provenance would
+  relabel every discard `auto` and erase the agent from it.
+- **Removing the field outright — #50's actual move — costs a documented property.** DESIGN.md §75 states
+  *"Drafts get `capture_mode='auto'`, `provenance='derived'`, confidence hard-capped at 0.5"*, and twelve
+  assertions across **four** connectors (`connector-acp`, `connector-cursor`, `connector-claude`,
+  `connector-core`) pin `auto` on a produced draft. #50 could remove the field because a PIN has exactly one
+  legal value; a claim has two that the product genuinely writes.
+
+**AT-3 is discharged in full regardless**, and that is the test that matters. Its "fails if" clause has two
+halves — *"`publish_claim` or any agent surface can produce human capture mode, **or** the attempt is
+silently downgraded instead of refused"*. After the narrowing, no agent surface **can** express `human`, and
+an attempt is refused at the schema boundary with the field named. What changed is the mechanism, not the
+property.
+
+**What this does NOT buy, stated plainly.** The two remaining values stay sender-chosen, so a lying agent can
+still write `auto` on its own declaration. That is a step **down** in authority, not an escalation, and it is
+§3.1's WHO axis — derived fresh per read, `agent_derived` for everything in 1.0 — that answers it. This
+narrowing closes the escalation only.
 
 **`HumanAuthorityProbe` stays as the seam**, now with a named future occupant rather than an uncommissioned
 spec: when a human claim route lands, `wasStampedByHumanRoute` asks the hub which route stamped the row.
@@ -266,6 +314,14 @@ no dataset here justifies a second number.
   the CHECK matches `MAX_VERIFICATION_REF_CHARS`, following its two body-length cases (`:17-42`).
 - **No backfill, and none is possible.** No historical claim named a check, and inferring one from a body is heavy intent
   inference from agent prose — cut (00 §8.6).
+- **The `capture_mode` narrowing (§3.2a) is forward-only, and that is stated rather than papered over.** It stops a `human`
+  from being WRITTEN; it does not touch a row that already carries one. §1.3 measured zero writers in the product, so on any
+  hub whose only clients were this tree there are none — but the wire carried the field verbatim until now, so a hub that took
+  a hand-rolled POST already holds what it holds, and nothing here deletes it. **The read-model is what covers those rows**:
+  §3.2's probe returns `agent_derived` for every claim in 1.0 regardless of the stored value, which is why EV-1 tests the two
+  locks separately and why the read half writes its row directly to the table. Narrowing the stored TYPE (`db/schema.ts`)
+  changes no data — the column stays `text` with no `CHECK` — so an old row still reads back; it is the derivation in front of
+  it that refuses to promote it, not the column.
 
 ---
 
@@ -344,9 +400,15 @@ requires one before merge, on `connector-claude/test/capture-latency.test.ts`.
 Each `EV-n` can fail, and names the mutation that must turn its guard red in `connector-core/scripts/mutation-check.ts`
 (`{label, file, from, to, test, because}` at `:38-47`). Counts are `VERIFY:` directives, never sentences (00 §7.1).
 
-**EV-1 — an agent cannot read as human. (AT-3, WHO half.)** A `claim` record posted to `/api/records` with `captureMode:
-"human"` is stored as sent and still yields `who: "agent_derived"` on every surface. *Fails if* any wire-supplied capture mode
-produces `human_declared` under the default probe.
+**EV-1 — an agent cannot read as human. (AT-3, both halves.)** Two locks, and each is tested on its own, because either alone
+would leave the other unmeasured:
+(a) **WRITE.** A `claim` record posted to `/api/records` with `captureMode: "human"` is **refused**, with the issue naming
+`captureMode`, and nothing is stored — not a downgraded row reading `agent` (`schema/test/claim.test.ts`,
+`server/test/records.test.ts`). *Fails if* the record is accepted, or accepted under a relabelled mode.
+(b) **READ.** A claim row carrying `capture_mode = 'human'` — which the wire can no longer produce, so the test writes it
+**directly to the table** — still yields `who: "agent_derived"` on every surface. This is not a hypothetical: the field rode the
+wire verbatim until this spec, so a hub upgraded from an earlier build can already hold such a row, and §4's "no backfill" means
+it keeps it. *Fails if* any stored capture mode produces `human_declared` under the default probe.
 
 **EV-2 — support fails closed.** A ref that is malformed, carries an unknown kind, or names a row that does not exist yields
 `unsupported` / `ref_malformed` or `ref_unresolved`. *Fails if* an unresolvable ref counts as support.

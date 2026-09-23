@@ -7623,6 +7623,24 @@ export const MUTATIONS: readonly Mutation[] = [
       "hub — and N grows with every spec that adds a check, which is how 05 " +
       "pushed the latency case past its bound without touching it",
   },
+  // ── 1.0 spec 08 §3.2a: the WHO axis cannot be forged ─────────────────────
+  {
+    // AT-3's write path. A claim's capture mode is a TRUST LABEL, and `human`
+    // is the one value that makes a reader treat the sentence as a person's
+    // word. Seven writers stamp a mode and none has ever written it (08 §1.3),
+    // but the field rode the wire verbatim into the row, so a hand-rolled POST
+    // under a developer bearer key could mint one. This widens the claim's
+    // vocabulary back to the pins' three-value set.
+    label: "a claim body may call itself human-captured again",
+    file: "packages/schema/src/enums.ts",
+    from: 'export const CLAIM_CAPTURE_MODES = ["auto", "agent"] as const;',
+    to: 'export const CLAIM_CAPTURE_MODES = ["auto", "agent", "human"] as const;',
+    test: "packages/schema/test/claim.test.ts",
+    because:
+      "any process holding the plaintext bearer key in ~/.crosscheck can post " +
+      "a claim labelled as a human's word, and every teammate's briefing then " +
+      "reads a machine's sentence as something a person vouched for",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7806,6 +7824,7 @@ interface Outcome {
  * PRINTS: packages/connector-cursor/test/handlers.test.ts 4
  * PRINTS: packages/connector-cursor/test/injection.test.ts 3
  * PRINTS: packages/connector-cursor/test/worktree-capture.test.ts 7
+ * PRINTS: packages/schema/test/claim.test.ts 1
  * PRINTS: packages/schema/test/intent-scope.test.ts 1
  * PRINTS: packages/schema/test/session.test.ts 1
  * PRINTS: packages/server/test/ci-coverage.test.ts 3

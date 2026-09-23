@@ -2,6 +2,7 @@ export {
   ARTIFACT_SENSITIVITIES,
   ArtifactSensitivitySchema,
   CAPTURE_MODES,
+  CLAIM_CAPTURE_MODES,
   CLAIM_COMMIT_BINDINGS,
   CLAIM_KINDS,
   CLAIM_REVALIDATION_BASES,
@@ -9,6 +10,7 @@ export {
   CLAIM_STATUSES,
   CLAIM_VALIDITY_STATES,
   CaptureModeSchema,
+  ClaimCaptureModeSchema,
   ClaimCommitBindingSchema,
   ClaimKindSchema,
   ClaimRevalidationBasisSchema,
@@ -30,6 +32,7 @@ export {
 export type {
   ArtifactSensitivity,
   CaptureMode,
+  ClaimCaptureMode,
   ClaimCommitBinding,
   ClaimKind,
   ClaimRevalidationBasis,
