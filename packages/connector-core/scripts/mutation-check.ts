@@ -8001,14 +8001,72 @@ export const MUTATIONS: readonly Mutation[] = [
       "denominator",
   },
   {
+    // The consent gate on the THIRD writer. Three writers, three gates, and
+    // the registry scan refused a shared `from` twice before this — each
+    // anchor carries enough of its own context to name one place.
+    label: "a hub records session residue for teams that never agreed",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from:
+      "  if (!settings.pilotEnrolled) {\n    return;\n  }\n" +
+      "  const now = deps.now();\n  const taken = await deps.db",
+    to: "  const now = deps.now();\n  const taken = await deps.db",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "every session on the hub leaves a stored residue — its coverage " +
+      "snapshot and its sequence statistic — for teams that declined to be " +
+      "measured, which is the most surveillance-shaped of the three writes " +
+      "and the one a works-council question would find first",
+  },
+  {
+    // 07 §3.6 and 01 §3.1 together. `seq` is a PAIR, and across two epochs
+    // first..last is two unrelated counters subtracted from each other.
+    label: "a restarted counter is handed a span it does not have",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if (epochs.size > 1) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "the pilot report prints a confident span for exactly the sessions " +
+      "whose order is broken — a SessionStart re-fire, a busy-lock fallback, " +
+      "two homes on one host key — and 01's epoch-split refusal stops at the " +
+      "counting layer instead of reaching it",
+  },
+  {
+    // The other half of the same honesty: a session with half its events
+    // unordered must not read like one with all of them ordered.
+    label: "records with no place in the order are not counted as missing",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  const nullRecords = rows.length - positioned.length;",
+    to: "  const nullRecords = 0;",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "a session whose emitter could not allocate a single position reports " +
+      "a clean sequence, so the one number that says how much of this " +
+      "session's order is unusable reads zero on the sessions where it is " +
+      "everything",
+  },
+  {
+    // §3.6's cap. A measurement that hit its own ceiling and said nothing
+    // reports fifty sessions as though that were the population.
+    label: "a measurement hits its own cap and says nothing",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "  if ((taken[0]?.n ?? 0) >= PILOT_MAX_SESSIONS) {",
+    to: "  if (false) {",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "the fifty-session set silently becomes unbounded, so the cost of " +
+      "measuring scales with the thing measured — and the refusal count that " +
+      "was the only way to know the ceiling had been reached never exists",
+  },
+  {
     // The SAME consent gate on the other writer. Two writers, two gates,
     // each removable on its own — so each carries its own anchor.
     label: "a hub counts answers for teams that never agreed",
     file: `${SERVER}/src/services/pilot.ts`,
     from:
       "  if (!settings.pilotEnrolled) {\n    return;\n  }\n" +
-      "  const now = deps.now();",
-    to: "  const now = deps.now();",
+      "  const now = deps.now();\n  const day = utcDay(now);",
+    to: "  const now = deps.now();\n  const day = utcDay(now);",
     test: `${SERVER}/test/pilot-counters.test.ts`,
     because:
       "every repo on the hub starts accumulating coverage tallies, so the " +
@@ -8586,6 +8644,7 @@ interface Outcome {
  * PRINTS: packages/server/test/normalized-doc.test.ts 1
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 3
+ * PRINTS: packages/server/test/pilot-sessions.test.ts 4
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8

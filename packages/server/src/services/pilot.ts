@@ -20,10 +20,16 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 
-import { pilotAttributions, pilotCounters } from "../db/schema.ts";
-import { COVERAGE_SOURCES, isJudgeable } from "./coverage.ts";
+import {
+  pilotAttributions,
+  pilotCounters,
+  pilotSessions,
+  sessionEvents,
+} from "../db/schema.ts";
+import { PILOT_MAX_SESSIONS } from "../constants.ts";
+import { COVERAGE_SOURCES, isJudgeable, readCoverage } from "./coverage.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import type { CoverageRecord } from "./coverage.ts";
 import type { SuspectView } from "./suspect.ts";
@@ -209,6 +215,193 @@ export const countCoverageAnswer = async (
       set: {
         value: sql`${pilotCounters.value} + 1`,
         updatedAt: now,
+      },
+    });
+};
+
+/**
+ * WHAT ONE SESSION'S SEQUENCE LOOKED LIKE, and whether it can be read at all.
+ *
+ * `seq` IS A PAIR — an epoch and a number (01 §3.1) — and everything here
+ * turns on that. A session whose counter restarted holds more than one epoch,
+ * and `first .. last` ACROSS two epochs is not a span: it is two unrelated
+ * counters subtracted from each other, which would print as a confident
+ * number about work nobody can order. So the epoch count is measured, and the
+ * report refuses the span when it is greater than one.
+ *
+ * NULL-POSITIONED RECORDS ARE COUNTED, NOT SKIPPED. An event with no position
+ * is a fact about this session's instrumentation — a lane that sent no
+ * bracket, a refusal the emitter recorded — and dropping it would make a
+ * session with half its events unordered look exactly like one with all of
+ * them ordered.
+ */
+interface SeqResidue {
+  readonly epoch: string | null;
+  readonly first: number | null;
+  readonly last: number | null;
+  readonly gaps: number | null;
+  readonly nullRecords: number;
+  readonly epochs: number;
+}
+
+const readSeqResidue = async (
+  deps: Deps,
+  sessionId: string,
+): Promise<SeqResidue> => {
+  const rows = await deps.db
+    .select({ epoch: sessionEvents.seqEpoch, n: sessionEvents.seqN })
+    .from(sessionEvents)
+    .where(eq(sessionEvents.sessionId, sessionId))
+    .orderBy(asc(sessionEvents.seqN));
+  const positioned = rows.filter(
+    (row): row is { epoch: string; n: number } =>
+      row.epoch !== null && row.n !== null,
+  );
+  const epochs = new Set(positioned.map((row) => row.epoch));
+  const nullRecords = rows.length - positioned.length;
+  if (positioned.length === 0) {
+    return {
+      epoch: null,
+      first: null,
+      last: null,
+      gaps: null,
+      nullRecords,
+      epochs: 0,
+    };
+  }
+  // ONE EPOCH OR NONE. Across two, `first` and `last` belong to different
+  // counters and the span is refused rather than computed — the report says
+  // "sequence restarted" and prints no numbers, which is 01's epoch-split
+  // refusal arriving at the counting layer instead of being re-argued here.
+  if (epochs.size > 1) {
+    return {
+      epoch: null,
+      first: null,
+      last: null,
+      gaps: null,
+      nullRecords,
+      epochs: epochs.size,
+    };
+  }
+  const numbers = positioned.map((row) => row.n).sort((a, b) => a - b);
+  const first = numbers[0] ?? null;
+  const last = numbers[numbers.length - 1] ?? null;
+  return {
+    epoch: positioned[0]?.epoch ?? null,
+    first,
+    last,
+    // A GAP IS A MISSING POSITION, not a missing record: the span is what the
+    // counter reached, and the difference between that and what arrived is
+    // how much this session's order is missing.
+    gaps:
+      first === null || last === null ? null : last - first + 1 - numbers.length,
+    nullRecords,
+    epochs: 1,
+  };
+};
+
+export interface RecordPilotSessionInput {
+  readonly sessionId: string;
+  readonly repo: string;
+  readonly developerId: string;
+  readonly endReason: "reported" | "reaped";
+}
+
+/**
+ * ONE SESSION'S RESIDUE, at the moment it ended (§3.6).
+ *
+ * WRITTEN HUB-SIDE, FROM WHAT THE HUB ALREADY HAS. §6 budgets zero new round
+ * trips at SessionStart and SessionEnd, and this keeps that: nothing is asked
+ * of a connector, and nothing runs on a hook path.
+ *
+ * `coverage` IS A SNAPSHOT AND SAYS SO. 03 §3.2 refuses a coverage TABLE
+ * because a stored verdict outlives its evidence — `reaped_at` is revocable,
+ * so the same question answered tomorrow can answer differently. This stores
+ * five triples anyway, bounded exactly as §9 promises: at most fifty sessions
+ * on an enrolled repo, never read by an answer surface, never a fallback for
+ * `readCoverage`. It is what the hub SAID at this instant, which is the only
+ * proof-5 input that cannot be recomputed.
+ *
+ * THE 51st IS REFUSED AND COUNTED, never dropped silently. A measurement that
+ * hit its own cap and said nothing would report fifty sessions as though that
+ * were the population — non-negotiable 4 applied to this project's own
+ * instrumentation.
+ */
+export const recordPilotSession = async (
+  deps: Deps,
+  input: RecordPilotSessionInput,
+): Promise<void> => {
+  const settings = await readTeamSettings(deps, input.repo);
+  if (!settings.pilotEnrolled) {
+    return;
+  }
+  const now = deps.now();
+  const taken = await deps.db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(pilotSessions)
+    .where(eq(pilotSessions.repo, input.repo));
+  if ((taken[0]?.n ?? 0) >= PILOT_MAX_SESSIONS) {
+    await deps.db
+      .insert(pilotCounters)
+      .values({
+        repo: input.repo,
+        day: utcDay(now),
+        surface: "pilot-sessions",
+        counter: "pilot_sessions_refused",
+        value: 1,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [
+          pilotCounters.repo,
+          pilotCounters.day,
+          pilotCounters.surface,
+          pilotCounters.counter,
+        ],
+        set: { value: sql`${pilotCounters.value} + 1`, updatedAt: now },
+      });
+    return;
+  }
+  const [coverage, seq] = await Promise.all([
+    readCoverage(deps, input.developerId, input.repo),
+    readSeqResidue(deps, input.sessionId),
+  ]);
+  await deps.db
+    .insert(pilotSessions)
+    .values({
+      sessionId: input.sessionId,
+      repo: input.repo,
+      observedAt: now,
+      endReason: input.endReason,
+      // ENUMS ONLY. The record carries no instants and no free text — the
+      // reason and the state are words this hub chose, and `gapSince` would
+      // be an instant about a session that has ended.
+      coverage: coverage.sources.map((row) => ({
+        source: row.source,
+        state: row.state,
+        reason: row.reason,
+      })),
+      seqEpoch: seq.epoch,
+      seqFirst: seq.first,
+      seqLast: seq.last,
+      seqGaps: seq.gaps,
+      seqNullRecords: seq.nullRecords,
+      seqEpochs: seq.epochs,
+    })
+    // A REVIVED SESSION CAN END TWICE. `reviveReapedSession` undoes an
+    // inferred end when a record arrives from that session, so the same id
+    // reaches this function again — and the SECOND end is the true one.
+    .onConflictDoUpdate({
+      target: pilotSessions.sessionId,
+      set: {
+        observedAt: now,
+        endReason: input.endReason,
+        seqEpoch: seq.epoch,
+        seqFirst: seq.first,
+        seqLast: seq.last,
+        seqGaps: seq.gaps,
+        seqNullRecords: seq.nullRecords,
+        seqEpochs: seq.epochs,
       },
     });
 };

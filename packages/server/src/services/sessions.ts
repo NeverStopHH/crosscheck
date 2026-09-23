@@ -7,6 +7,7 @@ import {
   SESSION_REAP_MAX_PER_PASS,
   SESSION_REAP_STALE_HOURS,
 } from "../constants.ts";
+import { recordPilotSession } from "./pilot.ts";
 import { agentSessions } from "../db/schema.ts";
 import { appendEvent } from "./events.ts";
 import { recordSessionEvent } from "./session-events.ts";
@@ -250,6 +251,25 @@ export const endSession = async (
     refKind: "session",
     refId: row.id,
   });
+  // 07 §3.6: this session's residue, at the moment it ended. HUB-SIDE and
+  // AFTER the ledger write, so the sequence statistic includes the position
+  // this end just allocated — reading it first would report every session as
+  // one event short of its own ending.
+  //
+  // Wrapped: a measurement must never turn somebody's SessionEnd into an
+  // error. A connector that cannot end its session leaks an open session into
+  // every teammate's presence list, which is a far worse failure than a
+  // missing pilot row.
+  try {
+    await recordPilotSession(deps, {
+      sessionId: row.id,
+      repo: row.repo,
+      developerId,
+      endReason: "reported",
+    });
+  } catch {
+    // `doctor` reports the pilot's own health; a request does not.
+  }
   return { outcome: "ended", session: toSessionView(row) };
 };
 
@@ -385,6 +405,21 @@ export const reapStaleSessions = async (
       refKind: "session",
       refId: row.id,
     });
+    // 07 §3.6, the other half. `end_reason` keeps this apart from a reported
+    // end because the trial found 104 of 127 sessions never closed: a
+    // measurement that folded the two together would be counting mostly this
+    // one and calling it the other.
+    try {
+      await recordPilotSession(deps, {
+        sessionId: row.id,
+        repo: row.repo,
+        developerId: row.developerId,
+        endReason: "reaped",
+      });
+    } catch {
+      // A reap pass must finish. One unstorable measurement must not leave
+      // the remaining stale sessions open.
+    }
   }
   return { ended: updated.map(toSessionView) };
 };
