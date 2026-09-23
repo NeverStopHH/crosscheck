@@ -8001,10 +8001,24 @@ export const MUTATIONS: readonly Mutation[] = [
       "denominator",
   },
   {
-    // 07 §3.1. A column added only to the CREATE TABLE never reaches a hub
-    // that already has the table, and the report then reads `unknown` for
-    // ever on exactly the installs with history worth counting — looking
-    // like an honest default rather than a missing migration.
+    // 07 §3.6. The one default a shipped change may never flip: a team is
+    // measured because it agreed to be, not because a release said so.
+    label: "a release enrols every team in the pilot",
+    file: `${SERVER}/src/services/team-settings.ts`,
+    from: "  pilotEnrolled: false,",
+    to: "  pilotEnrolled: true,",
+    test: `${SERVER}/test/team-settings.test.ts`,
+    because:
+      "every repo that has never configured anything starts reporting pilot " +
+      "numbers, so the measurement is collected from teams that never opted " +
+      "in — and the absent-row and column-default paths, which exist to " +
+      "agree, now disagree with each other as well",
+  },
+  {
+    // 07 §3.1 and §3.6, one anchor. A column added only to the CREATE TABLE
+    // never reaches a hub that already has the table — and NO harness test
+    // can catch it, because every harness builds a fresh database where the
+    // CREATE carries the column and the ALTER never runs.
     label: "a new column reaches only hubs that do not exist yet",
     file: "packages/server/src/db/bootstrap.sql",
     from:
@@ -8463,6 +8477,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
  * PRINTS: packages/server/test/suspect.test.ts 3
+ * PRINTS: packages/server/test/team-settings.test.ts 1
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/verdict-latency.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 3

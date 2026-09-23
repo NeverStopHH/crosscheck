@@ -41,6 +41,8 @@ interface SettingsView {
   readonly repo: string;
   readonly pinPolicy: string;
   readonly suspectAttribution: string;
+  /** 07 §3.6 — the third team decision. */
+  readonly pilotEnrolled: boolean;
   readonly updatedAt: string | null;
 }
 
@@ -185,6 +187,92 @@ describe("PUT /api/team-settings", () => {
 
     // Assert
     expect(response.status).toBe(400);
+  });
+});
+
+/**
+ * ENROLMENT (07 §3.6) — off unless a team says otherwise, and the two ways of
+ * being off must agree.
+ *
+ * The spec found this column missing entirely: §4's migration list named four
+ * tables and one `pins` column and no `team_settings` alteration, while 04 §4
+ * separately recorded this table as untouched in 1.0 — two contradictory
+ * accounts of whether it grows. It grows by one, and the default story is the
+ * load-bearing part: a repo nobody has configured and a repo configured
+ * before this column existed must both read NOT enrolled, or the pilot would
+ * collect numbers from teams that never agreed to be in it.
+ */
+describe("pilot enrolment", () => {
+  test("a repo nobody configured is not enrolled", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-pe1@example.com");
+
+    // Act & Assert — the absent-row path
+    expect((await readSettings(harness, nick.apiKey)).pilotEnrolled).toBe(false);
+  });
+
+  test("a repo configured for something ELSE is still not enrolled", async () => {
+    // Arrange — the column-default path, which must agree with the one above.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-pe2@example.com");
+    await writeSettings(harness, TEST_ADMIN_TOKEN, {
+      pinPolicy: "touched_files",
+    });
+
+    // Act & Assert
+    expect((await readSettings(harness, nick.apiKey)).pilotEnrolled).toBe(false);
+  });
+
+  test("enrolling needs the admin token — being measured is a team decision", async () => {
+    // Arrange
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-pe3@example.com");
+
+    // Act — a developer key, not the admin one
+    const response = await writeSettings(harness, nick.apiKey, {
+      pilotEnrolled: true,
+    });
+
+    // Assert
+    expect(response.status).toBe(401);
+    expect((await readSettings(harness, nick.apiKey)).pilotEnrolled).toBe(false);
+  });
+
+  test("enrolling leaves the other two settings alone", async () => {
+    // Arrange — the partial-upsert rule, which the new field must not break.
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-pe4@example.com");
+    await writeSettings(harness, TEST_ADMIN_TOKEN, {
+      pinPolicy: "touched_files",
+      suspectAttribution: "counts_only",
+    });
+
+    // Act
+    const response = await writeSettings(harness, TEST_ADMIN_TOKEN, {
+      pilotEnrolled: true,
+    });
+
+    // Assert
+    expect(response.status).toBe(200);
+    const settings = await readSettings(harness, nick.apiKey);
+    expect(settings.pilotEnrolled).toBe(true);
+    expect(settings.pinPolicy).toBe("touched_files");
+    expect(settings.suspectAttribution).toBe("counts_only");
+  });
+
+  test("a team can leave the pilot again", async () => {
+    // Arrange — enrolment is MUTABLE, which is the whole reason it lives in
+    // this table and a fence waiver does not (04 §3.6).
+    const harness = await createTestHarness();
+    const nick = await createTestDeveloper(harness, "Nick", "nick-pe5@example.com");
+    await writeSettings(harness, TEST_ADMIN_TOKEN, { pilotEnrolled: true });
+
+    // Act
+    await writeSettings(harness, TEST_ADMIN_TOKEN, { pilotEnrolled: false });
+
+    // Assert
+    expect((await readSettings(harness, nick.apiKey)).pilotEnrolled).toBe(false);
   });
 });
 

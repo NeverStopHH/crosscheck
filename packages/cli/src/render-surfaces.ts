@@ -225,6 +225,9 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
           repo: payload,
           pinPolicy: payload,
           suspectAttribution: payload,
+          // A BOOLEAN, so there is no payload slot here — and that is the
+          // fact worth keeping: enrolment is a switch, never author text.
+          pilotEnrolled: true,
           updatedAt: ISO,
         },
         NOW,

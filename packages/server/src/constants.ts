@@ -775,3 +775,82 @@ export const CALIBRATION_MAX_CELLS = 8;
  * PRINTS: true
  */
 export const CALIBRATION_MAX_CLAIMS = 500;
+
+/**
+ * THE 50-SESSION SET (1.0 spec 07 §3.6).
+ *
+ * The pilot's per-session residue is bounded because it is a MEASUREMENT, not
+ * a log: fifty sessions is the size the handover asked for, and a table that
+ * grew with traffic would make the cost of measuring scale with the thing
+ * being measured.
+ *
+ * THE 51st WRITE IS REFUSED AND COUNTED, never dropped silently — the cap is
+ * a fact the report states about itself, which is non-negotiable #4 applied
+ * to this project's own instrumentation.
+ */
+export const PILOT_MAX_SESSIONS = 50;
+
+/**
+ * How long a pilot row survives.
+ *
+ * MATCHED TO `HINT_STATS_MAX_WINDOW_DAYS` by name, not by coincidence: the
+ * hint statistics and the pilot proofs are read over the same history, and
+ * two different horizons would let a proof be computed over rows its own
+ * inputs had already lost.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/server/src/constants.ts");const h=await import("./packages/server/src/services/hint-deliveries.ts");console.log(c.PILOT_RETENTION_DAYS === h.HINT_STATS_MAX_WINDOW_DAYS)'
+ * PRINTS: true
+ */
+export const PILOT_RETENTION_DAYS = 90;
+
+/**
+ * The report's default window: eight weeks.
+ *
+ * Shorter than retention on purpose. A default equal to the horizon would
+ * make every report include the oldest rows the hub still holds, so the day
+ * retention pruned one the numbers would move for a reason nobody changed —
+ * and a reader would read that as a product effect.
+ */
+export const PILOT_REPORT_DEFAULT_WINDOW_DAYS = 56;
+
+/**
+ * How long after a pointer is opened a second investigation still counts as
+ * having CONVERGED on it rather than having started independently.
+ *
+ * Two days, and the direction of the error is stated: too long over-counts
+ * convergence, which flatters this product. It is bounded rather than open
+ * for exactly that reason.
+ */
+export const PILOT_CONVERGENCE_WINDOW_HOURS = 48;
+
+/**
+ * DECLARED INTENT, SET BEFORE ANY MEASUREMENT — the injection corpus's floor
+ * rule verbatim: *"the floors encode today's intent, not measured truth"*.
+ *
+ * Eight helpful interventions per hundred sessions is about one session in
+ * twelve receiving something it opened, against ceilings of five hints per
+ * session and one per prompt. Twenty off-target marks per hundred is the
+ * most noise this product may make while still being worth installing.
+ *
+ * NEITHER IS LOWERED TO MAKE A MEASUREMENT PASS. A target moved after the
+ * fact is not a target, and the report prints both the figure and the target
+ * so a reader can see the gap rather than be told it closed.
+ */
+export const PILOT_TARGET_HELPFUL_PER_100_SESSIONS = 8;
+export const PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100 = 20;
+
+/**
+ * How many files one repair's diff may name.
+ *
+ * MATCHED TO `PIN_SWEEP_MAX_PATHS` by name: both bound "how much of a
+ * repository one answer may walk", and the sweep already settled what that
+ * costs. The diff runs in the CLI — the hub holds no repository and never
+ * runs git.
+ *
+ * The match is CHECKED, not asserted in prose. The two constants live in
+ * different packages, so nothing but this notices the day one of them moves:
+ *
+ * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(s.PILOT_FIX_DIFF_MAX_FILES === c.PIN_SWEEP_MAX_PATHS)'
+ * PRINTS: true
+ */
+export const PILOT_FIX_DIFF_MAX_FILES = 200;

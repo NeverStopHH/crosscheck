@@ -563,6 +563,10 @@ CREATE TABLE IF NOT EXISTS team_settings (
   repo text PRIMARY KEY,
   pin_policy text NOT NULL,
   suspect_attribution text NOT NULL,
+  -- IS THIS REPO IN THE PILOT (07 3.6). Off unless somebody says otherwise,
+  -- and an absent row means the same thing: this table's rule is that a
+  -- missing row is defaults, so the two paths into "not enrolled" agree.
+  pilot_enrolled boolean NOT NULL DEFAULT false,
   updated_at timestamptz NOT NULL,
   updated_by text REFERENCES developers(id)
 );
@@ -991,6 +995,12 @@ ALTER TABLE pins ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
 -- attributed to either. Nothing is back-filled, and the report prints
 -- 'unknown' as its own bucket rather than folding it into a guess.
 ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown';
+
+-- The same column for a hub that already has the table. 07 3.6 found this
+-- missing: the spec's migration list named four new tables and one pins
+-- column and no team_settings alteration at all, so the flag the whole
+-- section depends on had no way to reach an existing hub.
+ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_enrolled boolean NOT NULL DEFAULT false;
 
 -- WHO LIFTED A FENCE, WHEN, WHY, AND UNTIL WHEN (§3.6).
 --

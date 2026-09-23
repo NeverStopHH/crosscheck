@@ -860,6 +860,22 @@ export const teamSettings = pgTable("team_settings", {
   suspectAttribution: text("suspect_attribution", {
     enum: TEAM_SUSPECT_ATTRIBUTIONS,
   }).notNull(),
+  /**
+   * IS THIS REPO IN THE PILOT (1.0 spec 07 §3.6) — off unless somebody says
+   * otherwise.
+   *
+   * A MUTABLE TEAM DECISION, which is what this table is for, and precisely
+   * why 04 §3.6 refuses to put a fence WAIVER here: a waiver is a permission
+   * with a deadline and an audit trail, and a row somebody can overwrite is
+   * the wrong shape for one. Enrolment is the opposite — a switch a team
+   * flips, with no history worth keeping.
+   *
+   * `DEFAULT false` AND AN ABSENT ROW AGREE. This table's own rule is that a
+   * missing row means defaults, so the two paths into "not enrolled" cannot
+   * disagree: a repo nobody has configured is not in the pilot, and neither
+   * is one configured before this column existed.
+   */
+  pilotEnrolled: boolean("pilot_enrolled").notNull().default(false),
   updatedAt: timestamptz("updated_at").notNull(),
   updatedBy: text("updated_by").references(() => developers.id),
 });

@@ -47,6 +47,12 @@ export interface TeamSettingsView {
   readonly repo: string;
   readonly pinPolicy: TeamPinPolicy;
   readonly suspectAttribution: TeamSuspectAttribution;
+  /**
+   * IS THIS REPO IN THE PILOT (07 §3.6). False unless somebody enrolled it,
+   * and false for a repo nobody has configured at all — the absent row and
+   * the column default are the same answer on purpose.
+   */
+  readonly pilotEnrolled: boolean;
   /** Null while the repo has never been configured — the defaults are in use. */
   readonly updatedAt: string | null;
 }
@@ -55,9 +61,15 @@ export interface TeamSettingsView {
 export const DEFAULT_TEAM_SETTINGS = {
   pinPolicy: "anyone",
   suspectAttribution: "sessions",
+  // OFF, and it is the one default that must never be flipped by a shipped
+  // change: enrolling a repo is a team's decision to be measured, and a
+  // product that enrolled people by default would be collecting the pilot's
+  // numbers from teams that never agreed to be in it.
+  pilotEnrolled: false,
 } as const satisfies {
   readonly pinPolicy: TeamPinPolicy;
   readonly suspectAttribution: TeamSuspectAttribution;
+  readonly pilotEnrolled: boolean;
 };
 
 interface Deps {
@@ -73,6 +85,7 @@ export const readTeamSettings = async (
     .select({
       pinPolicy: teamSettings.pinPolicy,
       suspectAttribution: teamSettings.suspectAttribution,
+      pilotEnrolled: teamSettings.pilotEnrolled,
       updatedAt: teamSettings.updatedAt,
     })
     .from(teamSettings)
@@ -84,6 +97,7 @@ export const readTeamSettings = async (
       repo,
       pinPolicy: DEFAULT_TEAM_SETTINGS.pinPolicy,
       suspectAttribution: DEFAULT_TEAM_SETTINGS.suspectAttribution,
+      pilotEnrolled: DEFAULT_TEAM_SETTINGS.pilotEnrolled,
       updatedAt: null,
     };
   }
@@ -91,6 +105,7 @@ export const readTeamSettings = async (
     repo,
     pinPolicy: row.pinPolicy,
     suspectAttribution: row.suspectAttribution,
+    pilotEnrolled: row.pilotEnrolled,
     updatedAt: row.updatedAt.toISOString(),
   };
 };
@@ -99,6 +114,7 @@ export interface WriteTeamSettingsInput {
   readonly repo: string;
   readonly pinPolicy?: TeamPinPolicy;
   readonly suspectAttribution?: TeamSuspectAttribution;
+  readonly pilotEnrolled?: boolean;
 }
 
 /**
@@ -115,6 +131,7 @@ export const writeTeamSettings = async (
     repo: input.repo,
     pinPolicy: input.pinPolicy ?? current.pinPolicy,
     suspectAttribution: input.suspectAttribution ?? current.suspectAttribution,
+    pilotEnrolled: input.pilotEnrolled ?? current.pilotEnrolled,
     updatedAt: deps.now(),
   };
   await deps.db
@@ -125,6 +142,7 @@ export const writeTeamSettings = async (
       set: {
         pinPolicy: next.pinPolicy,
         suspectAttribution: next.suspectAttribution,
+        pilotEnrolled: next.pilotEnrolled,
         updatedAt: next.updatedAt,
       },
     });

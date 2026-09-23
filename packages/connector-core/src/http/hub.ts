@@ -2532,6 +2532,10 @@ export const TeamSettingsSchema = z.looseObject({
   repo: z.string().min(1),
   pinPolicy: z.string().min(1),
   suspectAttribution: z.string().min(1),
+  // 07 §3.6. Defaulted, so a hub that predates the column reads as NOT
+  // enrolled — the safe direction: a client must never report a team as
+  // being measured because the hub could not say.
+  pilotEnrolled: z.boolean().default(false),
   updatedAt: z.string().nullable().default(null),
 });
 

@@ -450,20 +450,28 @@ describe("bootstrap.sql DDL sync", () => {
     }
   });
 
-  test("hint_deliveries.channel reaches an EXISTING hub, not only a fresh one", async () => {
+  test("07's two new columns reach an EXISTING hub, not only a fresh one", async () => {
     // The trap this case exists for: a column added only to the CREATE TABLE
     // is a column no hub that already has the table will ever get, because
-    // the CREATE is IF NOT EXISTS. The pilot report would then read `unknown`
-    // for ever on exactly the installs with history worth counting — and it
-    // would look like an honest default rather than a missing migration.
+    // the CREATE is IF NOT EXISTS. And no harness test can catch it — every
+    // harness builds a FRESH database, where the CREATE carries the column
+    // and the ALTER never runs. So the SQL is read as text, here, on purpose.
+    //
+    // The cost of missing one is not a crash: `hint_deliveries.channel` would
+    // read `unknown` for ever and `team_settings.pilot_enrolled` would be a
+    // flag nobody can set, both looking like honest defaults.
     const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
 
-    // Assert — both halves, because either alone is a deployment that differs
-    // from the other.
-    expect(bootstrapSql).toContain(
+    // Assert — both halves of each, because either alone is a deployment that
+    // differs from the other.
+    for (const fragment of [
       "ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'unknown'",
-    );
-    expect(bootstrapSql).toContain("channel text NOT NULL DEFAULT 'unknown',");
+      "channel text NOT NULL DEFAULT 'unknown',",
+      "ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_enrolled boolean NOT NULL DEFAULT false",
+      "pilot_enrolled boolean NOT NULL DEFAULT false,",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
   });
 
   test("the channel column really exists after a bootstrap", async () => {
