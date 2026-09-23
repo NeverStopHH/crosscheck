@@ -7812,6 +7812,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "printing becomes a flattering hit rate over a denominator chosen by " +
       "omission — and it would read as the provider doing well",
   },
+  {
+    // AT-10: a rung that CANNOT exist is a doctor refusal, never a silence.
+    // This makes the CI leg permanently false, so a repo with no reporter is
+    // told nothing — and its claims sit at tool_observed for ever.
+    label: "doctor stops saying repository_verified is unreachable",
+    file: `${CLI}/src/cli/doctor.ts`,
+    from: '  const noCi = ciVerdict.data.coverage.state === "unavailable";',
+    to: "  const noCi = false;",
+    test: `${CLI}/test/doctor-evidence-axes.test.ts`,
+    because:
+      "a repo whose findings all failed verification and a repo where nothing " +
+      "could ever check them look identical on every surface, and a reader " +
+      "concludes the second team's work does not hold up",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7866,6 +7880,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor-capture.test.ts 7
  * PRINTS: packages/cli/test/doctor-ci.test.ts 3
  * PRINTS: packages/cli/test/doctor-claim-binding.test.ts 4
+ * PRINTS: packages/cli/test/doctor-evidence-axes.test.ts 1
  * PRINTS: packages/cli/test/doctor-global.test.ts 3
  * PRINTS: packages/cli/test/doctor-hooks-firing.test.ts 1
  * PRINTS: packages/cli/test/doctor-last-sync.test.ts 1

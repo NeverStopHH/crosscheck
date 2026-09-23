@@ -120,6 +120,7 @@ import {
 } from "@crosscheck/connector-core/http/hub.ts";
 import type {
   AbsencesOutcome,
+  CiVerdict,
   ClaimValiditySummary,
   GhostCheckEntry,
 } from "@crosscheck/connector-core/http/hub.ts";
@@ -2029,13 +2030,7 @@ const ciCoverageDetail = (coverage: CiCoverage): string => {
   return `${lanes}${truncated}${pending}`;
 };
 
-const checkCi = async (
-  ctx: HubContext,
-  repoId: string,
-  commitSha: string,
-  defaultRef: string,
-): Promise<readonly Check[]> => {
-  const verdict = await getCiVerdict(ctx, repoId, commitSha, defaultRef);
+const checkCi = (verdict: HubResult<CiVerdict>): readonly Check[] => {
   if (!verdict.ok) {
     // FOUR FAILURES, THREE OF THEM NOT THIS HUB'S FAULT — the shape
     // `plan overlap` already uses twenty lines up, and the distinction is the
@@ -2244,11 +2239,92 @@ const claimCurrencyCheck = (summary: ClaimValiditySummary): Check =>
       "diagnosis or runs `crosscheck revalidate`",
   );
 
-const checkClaimValidity = async (
-  ctx: HubContext,
-  repoId: string,
-): Promise<readonly Check[]> => {
-  const summary = await getClaimValiditySummary(ctx, repoId);
+/**
+ * CAN `repository_verified` BE REACHED HERE AT ALL (1.0 spec 08 §3.5, §8.5).
+ *
+ * AT-10'S RULE: a rung that CANNOT EXIST is a doctor refusal, never a silent
+ * absence. Without it, a repo with no CI reporter and a repo whose every claim
+ * failed verification look identical on every surface — both print
+ * `tool_observed` for ever — and a reader concludes the team's findings do not
+ * hold up, when the truth is that nothing here could ever have checked them.
+ * That is this project's defect in one line: an absence reading as a finding.
+ *
+ * TWO LEGS, REPORTED SEPARATELY, because the remedies are different people's
+ * work. No CI coverage is a reporter somebody has to stand up (05); no claim
+ * commit binding is a connector too old to send one (02). A single "evidence
+ * axes unavailable" would send both readers to the wrong place.
+ *
+ * DERIVED FROM ANSWERS ALREADY IN HAND — the same two responses the CI and
+ * claim-binding lines read. This line asks a question neither of them asks:
+ * not "is CI reporting" and not "are claims bound", but "can the two ever
+ * COMBINE into a red-then-green pair here".
+ *
+ * A HUB THAT DID NOT ANSWER GETS NO LINE. Silence about CI is already a line
+ * of its own twenty lines up, and repeating it here as an evidence-axes
+ * failure would report one hub outage twice and imply a second thing is wrong.
+ */
+const checkEvidenceAxes = (
+  ciVerdict: HubResult<CiVerdict>,
+  claimValidity: HubResult<ClaimValiditySummary>,
+): readonly Check[] => {
+  // §8.5, stated rather than left absent: a profiler trace, a flame graph and
+  // a benchmark have NO RUNG in 1.0. Somebody who attaches one gets
+  // `ref_malformed` from the ladder, and without this line they would read
+  // that as a bug in their ref rather than as a capability that does not
+  // exist.
+  const runtime = check(
+    "PASS",
+    "evidence axes",
+    "runtime tool evidence: no_platform_rung (a profiler trace, flame graph " +
+      "or benchmark cannot be verified by this hub in 1.0)",
+  );
+  if (!ciVerdict.ok || !claimValidity.ok) {
+    // Both outages already have their own lines. Saying nothing HERE is not a
+    // silent absence — it is declining to report one failure twice.
+    return [runtime];
+  }
+  // `unavailable` and not `incomplete`: a repo with no reporter has nothing to
+  // be incomplete ABOUT, and an incomplete lane can still produce a pair.
+  const noCi = ciVerdict.data.coverage.state === "unavailable";
+  // EVERY claim unbound, not "some". A single bound claim makes the rung
+  // reachable, and warning while one exists would be crying wolf at a repo
+  // that is working.
+  //
+  // `total > 0` guards the empty repo: with no claims at all this says nothing
+  // about binding, and `unbound === total` would be trivially true — a WARN
+  // about a limitation nobody has met yet.
+  const summary = claimValidity.data;
+  const noBinding = summary.total > 0 && summary.unbound === summary.total;
+  if (!noCi && !noBinding) {
+    return [
+      check(
+        "PASS",
+        "evidence axes",
+        "repository_verified is reachable: this repo reports CI and binds claims to commits",
+      ),
+      runtime,
+    ];
+  }
+  // NAMED IN THE ORDER SOMEBODY WOULD FIX THEM: without CI there is nothing to
+  // pair at all, so it is the first sentence even when both are missing.
+  const reason = noCi
+    ? "no ci coverage"
+    : "no claim commit binding";
+  return [
+    check(
+      "WARN",
+      "evidence axes",
+      `repository_verified unreachable: ${reason} — every claim on this repo ` +
+        "stops at tool_observed, which is a limit of this setup rather than a " +
+        "judgement about the findings",
+    ),
+    runtime,
+  ];
+};
+
+const checkClaimValidity = (
+  summary: HubResult<ClaimValiditySummary>,
+): readonly Check[] => {
   if (!summary.ok) {
     return summary.status === HTTP_NOT_FOUND
       ? [
@@ -3270,8 +3346,8 @@ export const runDoctor = async (
     questionsCheck,
     solvedMatchesCheck,
     pinChecks,
-    claimValidityChecks,
-    ciChecks,
+    claimValiditySummary,
+    ciVerdict,
     ghostOverlapCheck,
     privacyCheck,
     intentLedgerCheck,
@@ -3291,12 +3367,22 @@ export const runDoctor = async (
       resolveDenylist(config.denylist ?? undefined),
       now,
     ),
-    checkClaimValidity(hubCtx, identity.repoId),
+    // FETCHED, NOT CHECKED, because THREE lines read these two answers: the
+    // claim-binding line, the CI line, and 08's evidence-axes line, which is a
+    // statement about whether the other two can combine. Calling the endpoints
+    // again for it would be a second round trip for bytes already in hand —
+    // the rule the absence-and-coverage read above already follows.
+    getClaimValiditySummary(hubCtx, identity.repoId),
     // SPEC 05 §8: every refusal a reader could mistake for a working feature
     // gets a line. `identity.baseCommit` is this checkout's HEAD — the commit
     // somebody standing here would ask about — and the default branch travels
     // from the same clone because the hub holds no repository.
-    checkCi(hubCtx, identity.repoId, identity.baseCommit, identity.branch ?? "main"),
+    getCiVerdict(
+      hubCtx,
+      identity.repoId,
+      identity.baseCommit,
+      identity.branch ?? "main",
+    ),
     checkGhostOverlap(hubCtx, identity.repoId),
     checkPrivacy(hubCtx),
     checkIntentLedger(hubCtx),
@@ -3306,8 +3392,9 @@ export const runDoctor = async (
     questionsCheck,
     solvedMatchesCheck,
     ...pinChecks,
-    ...claimValidityChecks,
-    ...ciChecks,
+    ...checkClaimValidity(claimValiditySummary),
+    ...checkCi(ciVerdict),
+    ...checkEvidenceAxes(ciVerdict, claimValiditySummary),
     ghostOverlapCheck,
     privacyCheck,
     intentLedgerCheck,
