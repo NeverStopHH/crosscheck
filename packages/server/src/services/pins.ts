@@ -40,7 +40,7 @@ import {
 import { readTeamSettings } from "./team-settings.ts";
 import { readLiveWaiver, readLiveWaivers } from "./waivers.ts";
 import type { LiveWaiver } from "./waivers.ts";
-import type { Db } from "../db/client.ts";
+import type { Db, DbExecutor } from "../db/client.ts";
 import type { Clock } from "../types.ts";
 
 /**
@@ -178,6 +178,51 @@ export const untouchedByDeveloper = async (
  * existing id is either a replayed request or somebody overwriting another
  * person's pin, and both want the 409 rather than a silent rewrite.
  */
+/**
+ * WHICH BROKEN PIN A NEW ONE REPAIRS, if any (07 §3.4).
+ *
+ * THE MOST RECENTLY BROKEN, NOT-YET-REPAIRED PIN ON THE SAME SURFACE. A pin
+ * that broke, was repaired, and broke again is repaired by the NEXT pin, not
+ * this one — so "not yet repaired" is what keeps one fix from being counted
+ * against two breaks.
+ *
+ * AN EXACT SURFACE MATCH, and the direction of the error is stated. The
+ * surface is a sentence somebody typed, so a re-pin worded differently does
+ * not link. That UNDER-links: proof 3 prints the break as "no repair pin yet",
+ * which is true of what the record says. Fuzzy matching would OVER-link —
+ * scoring an attribution against a fix for a different surface — and a
+ * wrong hit is worse than a missing one, because it cannot be seen.
+ *
+ * THE VERSION IS READ NOW, at the moment the lookup resolves, because that is
+ * the invariant being repaired. A sweep after this point produces a different
+ * one, and the repair must not silently follow it.
+ *
+ * NO FOREIGN KEY on the column, deliberately: pins are never deleted in this
+ * product — a retraction is `broke_at`, not a DELETE — and this lookup only
+ * ever writes an id it just read, so integrity holds by construction without
+ * a constraint an existing hub would need a guarded ALTER to acquire.
+ */
+const findRepairedPin = async (
+  db: DbExecutor,
+  repo: string,
+  surface: string,
+): Promise<{ readonly id: string; readonly version: number } | null> => {
+  const rows = await db
+    .select({ id: pins.id, version: pins.version })
+    .from(pins)
+    .where(
+      and(
+        eq(pins.repo, repo),
+        eq(pins.surface, surface),
+        sql`${pins.brokeAt} IS NOT NULL`,
+        sql`NOT EXISTS (SELECT 1 FROM pins AS repair WHERE repair.repairs_pin_id = ${pins.id})`,
+      ),
+    )
+    .orderBy(desc(pins.brokeAt), asc(pins.id))
+    .limit(1);
+  return rows[0] ?? null;
+};
+
 export const createPin = async (
   deps: Deps,
   developerId: string,
@@ -185,6 +230,7 @@ export const createPin = async (
 ): Promise<CreatePinOutcome> => {
   const now = deps.now();
   return deps.db.transaction(async (tx) => {
+    const repaired = await findRepairedPin(tx, input.repo, input.surface);
     const inserted = await tx
       .insert(pins)
       .values({
@@ -202,6 +248,11 @@ export const createPin = async (
         captureMode: HUMAN_CAPTURE_MODE,
         brokeAt: null,
         brokeBy: null,
+        // 07 §3.4: LOOKED UP, NEVER ASKED. Re-pinning a surface somebody
+        // recorded broken is the repair, and the person typing it is not asked
+        // to say so — a question here would be the survey §8.3 refuses.
+        repairsPinId: repaired?.id ?? null,
+        repairsPinVersion: repaired?.version ?? null,
         createdAt: now,
       })
       .onConflictDoNothing({ target: pins.id })

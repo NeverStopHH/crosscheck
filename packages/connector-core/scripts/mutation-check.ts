@@ -8075,6 +8075,47 @@ export const MUTATIONS: readonly Mutation[] = [
       "answer becomes decoration",
   },
   {
+    // 07 §3.4. The invisible direction of error: one fix counted against
+    // two breaks hands proof 3 a hit it never earned.
+    label: "one fix is counted against a break that already has one",
+    file: `${SERVER}/src/services/pins.ts`,
+    from:
+      "        sql`NOT EXISTS (SELECT 1 FROM pins AS repair WHERE " +
+      "repair.repairs_pin_id = ${pins.id})`,",
+    to: "        sql`TRUE`,",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "a surface re-pinned twice after one break scores the same fix " +
+      "against the same attribution twice, so proof 3's accuracy rises with " +
+      "how often somebody re-pins rather than with whether the answer was " +
+      "right",
+  },
+  {
+    // A repair is a repair OF A BREAK. Without the break filter every re-pin
+    // of any surface becomes one.
+    label: "every re-pin is read as a repair, broken or not",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "        sql`${pins.brokeAt} IS NOT NULL`,",
+    to: "        sql`TRUE`,",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "a second pin on a surface nobody recorded broken is linked as its fix, " +
+      "so proof 3 grows a denominator of repairs to breaks that never " +
+      "happened and scores attributions nobody ever gave",
+  },
+  {
+    // The whole link. Without it proof 3 has nothing to measure.
+    label: "a repair is looked up and then thrown away",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "        repairsPinId: repaired?.id ?? null,",
+    to: "        repairsPinId: null,",
+    test: `${SERVER}/test/pilot-repairs.test.ts`,
+    because:
+      "every break reads \"no repair pin yet\" for ever, so proof 3 can " +
+      "never produce a hit or a miss — and the report says so in words that " +
+      "sound like a fact about the team rather than about the hub",
+  },
+  {
     // 07 §3.2. The noise FIGURE has to count people, not keystrokes — and
     // the unique key is the database's, but the service is what turns a
     // second attempt into an answer rather than a second row.
@@ -8717,6 +8758,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 5
  * PRINTS: packages/server/test/pilot-marks.test.ts 3
+ * PRINTS: packages/server/test/pilot-repairs.test.ts 3
  * PRINTS: packages/server/test/pilot-sessions.test.ts 4
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
