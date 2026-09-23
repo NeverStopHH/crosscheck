@@ -194,6 +194,17 @@ export interface SolvedRootCause {
    * verdict beside it, and this one needs the id to derive it.
    */
   readonly claimId: string;
+  /**
+   * What the evidence ladder needs to answer "was anything RUN behind this"
+   * (1.0 spec 08 §3.1), carried off the same row rather than re-queried.
+   *
+   * The briefing asserts this body UNASKED with a confidence beside it, which
+   * is the shape 08 §3.6 calls the failure mode — so the labels have to travel
+   * with it, and they cannot be derived without these three.
+   */
+  readonly verificationRef: string | null;
+  readonly commitBinding: string;
+  readonly observedAtCommit: string | null;
 }
 
 /**
@@ -221,6 +232,9 @@ export const listSolvedRootCauses = async (
       workContextId: claims.workContextId,
       body: claims.body,
       confidence: claims.confidence,
+      verificationRef: claims.verificationRef,
+      commitBinding: claims.commitBinding,
+      observedAtCommit: claims.observedAtCommit,
     })
     .from(claims)
     .where(solvedClaimCondition(contextIds))
@@ -233,6 +247,9 @@ export const listSolvedRootCauses = async (
         claimId: row.id,
         body: row.body,
         confidence: row.confidence,
+        verificationRef: row.verificationRef,
+        commitBinding: row.commitBinding,
+        observedAtCommit: row.observedAtCommit,
       });
     }
   }

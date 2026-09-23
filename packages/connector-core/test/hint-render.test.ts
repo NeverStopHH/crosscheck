@@ -518,7 +518,7 @@ describe("EV-5 — the evidence labels travel with the number, on an UNSOLICITED
     expect(text).toContain("no check was attached to it");
   });
 
-  test("a verified claim says so, and names the commit", () => {
+  test("a verified claim says so, and does NOT name the commit here", () => {
     // Arrange
     const text = renderClaimHint({
       claim: claim({
@@ -526,7 +526,7 @@ describe("EV-5 — the evidence labels travel with the number, on an UNSOLICITED
           who: "agent_derived",
           support: "repository_verified",
           supportReason: "red_then_green",
-          observedAt: null,
+          observedAt: "2026-08-10T06:00:00.000Z",
           verifiedAtCommit: "e4f5a6b1c2",
         },
       }),
@@ -535,10 +535,13 @@ describe("EV-5 — the evidence labels travel with the number, on an UNSOLICITED
       now: NOW,
     });
 
-    // Assert — the one rung a reader will act on, and the sha is cut to seven.
+    // Assert — the rung a reader acts on, and NOTHING MORE. 02's rule for an
+    // unsolicited surface: the full clause, with its commit hash and its age,
+    // stays on the pulled surfaces. A sha spends characters a hint does not
+    // have and anchors a session on a commit nobody asked about — which is
+    // also why the axes' own `observedAt` does not print here.
     expect(text).toContain("it failed before and passes now");
-    expect(text).toContain("e4f5a6b");
-    expect(text).not.toContain("e4f5a6b1c2");
+    expect(text).not.toContain("e4f5a6b");
   });
 
   test("a hub that reports no axes is announced, never silent", () => {
@@ -575,7 +578,8 @@ describe("EV-5 — the evidence labels travel with the number, on an UNSOLICITED
       now: NOW,
     });
 
-    // Assert
+    // Assert — on this surface NEITHER hub-sent field is printed at all, so
+    // the clause is enum-selected literals end to end.
     expect(text).not.toContain("ignore previous instructions");
     expect(text).not.toContain("passwd");
     expect(text).toContain("it failed before and passes now");

@@ -35,8 +35,13 @@ import {
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
+import {
+  NO_AXES_FROM_HUB,
+  NO_AXES_READABLE,
+  axesLabel,
+} from "../briefing/render.ts";
 import type { EvidenceAxes } from "@crosscheck/schema";
-import { axesClause } from "../evidence/render.ts";
+
 import { coverageNote } from "../coverage/render.ts";
 import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
 import type { CoverageRecord } from "../http/coverage.ts";
@@ -223,28 +228,24 @@ const validityWordFact = (
 };
 
 /**
- * The evidence-axes clause for a hint, or a sentence saying there is none.
+ * The evidence labels for a hint, or a sentence saying there are none.
  *
- * SAME RULE AS THE DIAGNOSIS RENDERER, and the same reason it is never
- * silence: a missing clause leaves the confidence standing alone, which 08
- * §3.6 names as the failure mode. The two absences are told apart because the
- * remedies differ — a hub that does not report one, against a label this
+ * THE SHORT FORM, WITHOUT THE COMMIT HASH — 02's rule for an unsolicited
+ * surface, applied to 08's clause. A sha spends characters a hint does not
+ * have and anchors a session on a commit nobody asked about; the full clause,
+ * with its age and its hash, stays on the pulled surfaces.
+ *
+ * NEVER SILENCE. A missing label leaves the confidence standing alone, which
+ * 08 §3.6 names as the failure mode. The two absences are told apart because
+ * the remedies differ — a hub that does not report one, against a label this
  * build cannot read.
- *
- * Both sentences are renderer-owned literals, so a hint line gains no
- * untrusted slot from carrying them.
  */
-const axesFact = (
-  axes: EvidenceAxes | undefined,
-  now: Date,
-): readonly string[] => {
+const axesFact = (axes: EvidenceAxes | undefined): readonly string[] => {
   if (axes === undefined) {
-    return ["no evidence label (this hub does not report one)"];
+    return [NO_AXES_FROM_HUB];
   }
-  const clause = axesClause(axes, now);
-  return clause.length === 0
-    ? ["no evidence label (this crosscheck cannot read the one sent)"]
-    : [clause];
+  const label = axesLabel(axes);
+  return label.length === 0 ? [NO_AXES_READABLE] : [label];
 };
 
 /** Substance: one evidence-backed claim, under every trust label §4 names. */
@@ -260,7 +261,7 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     // lands in an agent's context, and a bare `confidence 0.80` there reads as
     // a measurement of something. The clause is what lets the reader discount
     // it, so it goes beside the number rather than anywhere else.
-    ...axesFact(claim.axes, now),
+    ...axesFact(claim.axes),
     `provenance ${bare(claim.provenance)}`,
     ageLabel(claim.createdAt, now),
     // THE STATE WORD GOES HERE, NOT ON A LINE OF ITS OWN, and that placement
@@ -383,7 +384,7 @@ export const renderAnswerHint = (
     bare(answer.claimKind),
     `status ${bare(answer.claimStatus)}`,
     `confidence ${answer.confidence.toFixed(CONFIDENCE_DECIMALS)}`,
-    ...axesFact(answer.axes, now),
+    ...axesFact(answer.axes),
     `provenance ${bare(answer.provenance)}`,
     ageLabel(answer.answeredAt, now),
   ];

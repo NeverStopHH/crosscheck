@@ -7765,13 +7765,28 @@ export const MUTATIONS: readonly Mutation[] = [
     // leaving the confidence in place.
     label: "an unsolicited hint prints a bare confidence again",
     file: `${CORE}/src/hints/render.ts`,
-    from: "    ...axesFact(claim.axes, now),",
+    from: "    ...axesFact(claim.axes),",
     to: "    ...[],",
     test: `${CORE}/test/hint-render.test.ts`,
     because:
       "two decimals nobody measured arrive in a teammate's context with " +
       "nothing beside them saying whether anything was run — and a number " +
       "without a hedge is read as a measurement",
+  },
+  {
+    // The briefing asserts a root cause at SessionStart that nobody asked
+    // for, with a confidence beside it. This drops the hedge and leaves the
+    // number — 08 §3.6's failure mode, on the surface a session opens with.
+    label: "the briefing's solved root cause prints a bare confidence",
+    file: `${CORE}/src/briefing/render.ts`,
+    from:
+      "  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · ${axes} · provenance declared${validityLabel}`;",
+    to: "  const labels = `confidence ${entry.rootCauseConfidence.toFixed(CONFIDENCE_DECIMALS)} · provenance declared${validityLabel}`;",
+    test: `${CORE}/test/briefing-solved.test.ts`,
+    because:
+      "the first thing a session is told is somebody else's root cause at " +
+      "confidence 0.90, with nothing saying whether a single check was ever " +
+      "run behind it",
   },
 ];
 
@@ -7888,7 +7903,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/absence-render.test.ts 1
  * PRINTS: packages/connector-core/test/body-redaction.test.ts 5
  * PRINTS: packages/connector-core/test/briefing-contexts.test.ts 2
- * PRINTS: packages/connector-core/test/briefing-solved.test.ts 4
+ * PRINTS: packages/connector-core/test/briefing-solved.test.ts 5
  * PRINTS: packages/connector-core/test/capture-bookkeeping.test.ts 3
  * PRINTS: packages/connector-core/test/claim-drift.test.ts 4
  * PRINTS: packages/connector-core/test/claim-revalidation-budget.test.ts 1

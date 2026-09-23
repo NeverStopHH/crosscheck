@@ -514,6 +514,15 @@ export const SolvedMatchEntrySchema = z.looseObject({
    */
   rootCauseConfidence: z.number().min(0).max(1).nullable().optional(),
   /**
+   * The evidence labels for that root cause (1.0 spec 08 §3.1).
+   *
+   * The briefing asserts this body UNASKED, with a confidence beside it — the
+   * shape §3.6 names as the failure mode — so the labels travel with it.
+   * Null when no body travels at all; absent when the hub does not report
+   * them, which the renderer says out loud rather than passing over.
+   */
+  rootCauseAxes: EvidenceAxesSchema.nullable().optional(),
+  /**
    * How much the claim `rootCause` quotes is still worth about the CODE
    * (1.0 spec 02 §5, the `briefing solved` row of its table).
    *

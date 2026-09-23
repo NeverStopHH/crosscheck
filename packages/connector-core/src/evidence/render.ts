@@ -33,7 +33,11 @@ import type {
   EvidenceWho,
 } from "@crosscheck/schema";
 
-import { formatAge } from "../briefing/render.ts";
+import {
+  NO_AXES_READABLE,
+  axesLabel,
+  formatAge,
+} from "../briefing/render.ts";
 
 /**
  * How much of a sha is printed. Seven, the length git itself abbreviates to,
@@ -42,43 +46,6 @@ import { formatAge } from "../briefing/render.ts";
 export const SHORT_SHA_CHARS = 7;
 
 const HEX = /^[0-9a-f]+$/;
-
-/**
- * WHO, in the reader's words rather than the enum's.
- *
- * In 1.0 this is always `agent_derived` and the sentence says so plainly
- * instead of dressing it up: a reader who sees "an agent recorded this" knows
- * what weight to give it, and a reader who sees nothing assumes a person did.
- */
-const WHO_SENTENCE: Record<EvidenceWho, string> = {
-  human_declared: "a person declared this",
-  agent_derived: "an agent recorded this",
-};
-
-/**
- * WHY the support rung is what it is — one literal per enum member.
- *
- * `Record` rather than a switch with a default, on purpose: adding a member to
- * `EVIDENCE_SUPPORT_REASONS` without adding a sentence here is a TYPE ERROR.
- * A default arm would instead print a vague fallback for the new reason, which
- * is the failure this project keeps finding — a gap that reads like an answer.
- *
- * Every sentence is written so that the WEAK rungs sound weak. "No check was
- * attached" must not read like a clean bill of health, because that is exactly
- * what a reader in a hurry will take it for.
- */
-const REASON_SENTENCE: Record<EvidenceSupportReason, string> = {
-  no_verification_ref: "no check was attached to it",
-  ref_malformed: "the attached check could not be read",
-  ref_unresolved: "the attached check names nothing this hub holds",
-  observed_failure: "a failure was observed; no fix was shown to land",
-  ci_observed: "CI has seen this test, but no red-then-green pair",
-  red_then_green: "it failed before and passes now",
-  no_binding: "the claim names no commit, so nothing can be checked against it",
-  no_ci_coverage: "this repository reports no CI",
-  pruned_by_retention: "the earlier run has aged out; the pair is gone",
-  no_platform_rung: "nothing here can verify a check of this kind",
-};
 
 /**
  * A hub-sent instant as an AGE, never as its own bytes.
@@ -130,9 +97,12 @@ const shortSha = (value: string | null): string | null => {
  * it is precisely the one a reader must not mistake for a checked one.
  */
 export const axesClause = (axes: EvidenceAxes, now: Date): string => {
-  const who = WHO_SENTENCE[axes.who] as string | undefined;
-  const reason = REASON_SENTENCE[axes.supportReason] as string | undefined;
-  if (who === undefined || reason === undefined) {
+  // The WHO and WHAT sentences come from briefing/render.ts, which owns them
+  // because both unsolicited surfaces need them and this module already
+  // imports that one. What is added HERE is what only a pulled surface may
+  // carry: an age, and a commit hash.
+  const label = axesLabel(axes);
+  if (label.length === 0) {
     return "";
   }
   const when = agedSince(axes.observedAt, now);
@@ -143,5 +113,5 @@ export const axesClause = (axes: EvidenceAxes, now: Date): string => {
       : when !== null
         ? ` (${when})`
         : "";
-  return `${who} — ${reason}${tail}`;
+  return `${label}${tail}`;
 };
