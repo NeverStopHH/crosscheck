@@ -77,6 +77,7 @@ const suspectView = (overrides: Partial<SuspectView> = {}): SuspectView =>
     scope: {
       kind: "pin",
       pinId: "pin_1",
+      pinVersion: 1,
       surface: "the refresh path",
       files: ["src/auth/refresh.ts"],
       missingFiles: [],
@@ -256,6 +257,7 @@ describe("the CI lane has reachable outcomes", () => {
           scope: {
             kind: "paths",
             pinId: null,
+            pinVersion: null,
             surface: null,
             files: [],
             missingFiles: [],

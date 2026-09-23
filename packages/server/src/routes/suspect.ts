@@ -24,6 +24,8 @@ import { developerAuth } from "../middleware/auth.ts";
 import { readCoverage } from "../services/coverage.ts";
 import { resolveSuspectScope, suspectSessions } from "../services/suspect.ts";
 import { readTeamSettings } from "../services/team-settings.ts";
+import { computeVerdict } from "../services/verdict.ts";
+import { readLiveWaiver } from "../services/waivers.ts";
 import type { AppDeps, AppEnv } from "../types.ts";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -96,7 +98,60 @@ export const suspectRoutes = (deps: AppDeps): Hono<AppEnv> => {
         },
       }),
     ]);
-    return ok(c, { ...view, coverage });
+    // THE VERDICT RIDES AS A SIBLING FIELD (04 §5), the shape 03 §3.5 uses for
+    // coverage — never folded into the suspect view, because the five
+    // dimensions are separate on purpose and a nested one invites a renderer
+    // to read the outer answer and skip the rest.
+    const invariant =
+      scope.scope.pinId === null || scope.scope.pinVersion === null
+        ? null
+        : { pinId: scope.scope.pinId, version: scope.scope.pinVersion };
+    const liveWaiver =
+      invariant === null
+        ? null
+        : await readLiveWaiver({
+            db: deps.db,
+            repo: parsed.data.repo,
+            pinId: invariant.pinId,
+            pinVersion: invariant.version,
+            now: deps.now(),
+          });
+    const verdict = computeVerdict({
+      repo: parsed.data.repo,
+      suspect: view,
+      coverage,
+      // THE PIN LANE. This route asks about a SURFACE, not a commit, and 05's
+      // deltas are about a commit's tests — so there is nothing here to read
+      // one from. `deltaLane: "ci"` is reachable from the CI verdict surface,
+      // not from this one.
+      delta: null,
+      deltaLane: "pin",
+      // 06's answer needs a work context, and a surface is not one. The spec
+      // says this degrades to `absent` / `no_intent` rather than guessing, and
+      // timing is carried never weighed, so a missing one changes no other
+      // dimension.
+      timing: "absent",
+      timingReason: "no_intent",
+      // 08's axes resolve a CLAIM's verification ref, and a surface has no
+      // claim. So `unsupported` / `no_verification_ref` is the honest reading,
+      // and it is the one 04 §9 names for a hub without 08.
+      //
+      // REFUSED, deliberately: mapping the pin's own check recipe onto
+      // `tool_observed` would invent a third ref kind, which 08 §8.5 declines
+      // in the same words for profiler traces and benchmarks. A recipe is an
+      // instruction to a human, not a machine-produced observation.
+      evidence: {
+        who: "agent_derived",
+        support: "unsupported",
+        supportReason: "no_verification_ref",
+        observedAt: null,
+        verifiedAtCommit: null,
+      },
+      invariant,
+      liveWaiver,
+      now: deps.now(),
+    });
+    return ok(c, { ...view, coverage, verdict });
   });
 
   return router;

@@ -119,6 +119,16 @@ export interface SuspectView {
   readonly scope: {
     readonly kind: "pin" | "paths";
     readonly pinId: string | null;
+    /**
+     * WHICH VERSION of the pinned invariant this answer is about (04 §3.5),
+     * null where the reader named paths and there is no invariant at all.
+     *
+     * Carried HERE rather than re-read by the verdict layer: the answer below
+     * intersected THIS version's file set, and a second read could see a
+     * sweep that landed in between — the verdict would then be about an
+     * invariant the candidate list was never computed against.
+     */
+    readonly pinVersion: number | null;
     readonly surface: string | null;
     readonly files: readonly string[];
     /**
@@ -155,6 +165,16 @@ export interface SuspectView {
 export interface SuspectScope {
   readonly kind: "pin" | "paths";
   readonly pinId: string | null;
+  /**
+   * WHICH VERSION of the pinned invariant this scope is (04 §3.5), null where
+   * the reader named paths and there is no invariant at all.
+   *
+   * Carried rather than re-read: the answer below intersected THIS version's
+   * file set, and a second read could see a sweep that landed in between —
+   * the verdict would then be about an invariant the candidate list was never
+   * computed against.
+   */
+  readonly pinVersion: number | null;
   readonly surface: string | null;
   readonly files: readonly string[];
   /** Of `files`, the ones the pin registry already marks as gone. */
@@ -187,6 +207,7 @@ export const resolveSuspectScope = async (
       scope: {
         kind: "paths",
         pinId: null,
+        pinVersion: null,
         surface: null,
         files: input.paths,
         // The reader named these by hand; the hub holds no status for them.
@@ -219,6 +240,7 @@ export const resolveSuspectScope = async (
     scope: {
       kind: "pin",
       pinId: pin.id,
+      pinVersion: pin.version,
       surface: pin.surface,
       files: pin.files.map((file) => file.path),
       missingFiles: pin.files
@@ -535,6 +557,7 @@ export const suspectSessions = async (
     scope: {
       kind: input.scope.kind,
       pinId: input.scope.pinId,
+      pinVersion: input.scope.pinVersion,
       surface: input.scope.surface,
       files: input.scope.files,
       missingFiles: input.scope.missingFiles,

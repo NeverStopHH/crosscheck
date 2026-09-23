@@ -72,6 +72,8 @@ export interface PinView {
   readonly verifiedByName: string;
   readonly verifiedAtCommit: string;
   readonly verifiedAt: string;
+  /** Which version of this invariant (04 §3.5) — what a waiver is granted against. */
+  readonly version: number;
   readonly brokeAt: string | null;
   readonly brokeByName: string | null;
   /** Pinned paths a sweep has rewritten — 0 on a pin nobody has moved. */
@@ -302,6 +304,7 @@ const toPinView = (
     readonly verifiedByName: string;
     readonly verifiedAtCommit: string;
     readonly verifiedAt: Date;
+    readonly version: number;
     readonly brokeAt: Date | null;
     readonly renamedPaths: number;
     readonly renamedAt: Date | null;
@@ -320,6 +323,7 @@ const toPinView = (
   verifiedByName: row.verifiedByName,
   verifiedAtCommit: row.verifiedAtCommit,
   verifiedAt: row.verifiedAt.toISOString(),
+  version: row.version,
   brokeAt: iso(row.brokeAt),
   brokeByName,
   renamedPaths: Number(row.renamedPaths),
@@ -356,6 +360,9 @@ export const listPins = async (
       verifiedByName: developers.name,
       verifiedAtCommit: pins.verifiedAtCommit,
       verifiedAt: pins.verifiedAt,
+      // WHICH VERSION of this invariant (04 §3.5). A waiver is granted against
+      // a version, so every reader that could resolve one needs it.
+      version: pins.version,
       brokeAt: pins.brokeAt,
       brokeBy: pins.brokeBy,
       renamedPaths: pins.renamedPaths,
@@ -433,6 +440,7 @@ export const readPin = async (
       verifiedByName: developers.name,
       verifiedAtCommit: pins.verifiedAtCommit,
       verifiedAt: pins.verifiedAt,
+      version: pins.version,
       brokeAt: pins.brokeAt,
       brokeBy: pins.brokeBy,
       renamedPaths: pins.renamedPaths,

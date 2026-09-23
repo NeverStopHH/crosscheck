@@ -6495,8 +6495,13 @@ export const MUTATIONS: readonly Mutation[] = [
     // record on the suspect verdict and gates UNATTRIBUTED on it.
     label: "a ranking names a session with no statement of what was watched",
     file: `${SERVER}/src/routes/suspect.ts`,
-    from: "    return ok(c, { ...view, coverage });",
-    to: "    return ok(c, { ...view });",
+    // TWO ANCHORS SHARE THIS LINE, and that is the point: it carries two
+    // obligations, so each is proven separately. 04 §5 appended `verdict`
+    // beside `coverage`, which moved the line this anchor pointed at — the
+    // registry scan caught the orphan rather than leaving a guard that looks
+    // registered and can never fire.
+    from: "    return ok(c, { ...view, coverage, verdict });",
+    to: "    return ok(c, { ...view, verdict });",
     test: `${SERVER}/test/coverage.test.ts`,
     because:
       "the one surface whose answer is a person carries no coverage block, " +
@@ -7898,6 +7903,22 @@ export const MUTATIONS: readonly Mutation[] = [
       "the waiver outlives the attribution window that would have shown " +
       "anybody the sessions it was granted against",
   },
+  {
+    // §5: the verdict rides as a SIBLING field, the shape coverage already
+    // uses. Dropping it leaves `suspect` answering exactly what it answered
+    // before — an enum about one query's rows, with no dimension saying
+    // whether anybody may be named.
+    label: "the suspect route stops shipping its verdict",
+    file: `${SERVER}/src/routes/suspect.ts`,
+    from: "    return ok(c, { ...view, coverage, verdict });",
+    to: "    return ok(c, { ...view, coverage });",
+    test: `${SERVER}/test/suspect.test.ts`,
+    because:
+      "the route answers with a ranking and no attribution dimension, so " +
+      "every reader is back to reading the outcome enum as a verdict — which " +
+      "is the unqualified naming this spec exists to refuse, and it silently " +
+      "drops the one field that says a human-protected invariant is in play",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -8129,7 +8150,7 @@ interface Outcome {
  * PRINTS: packages/server/test/solved-intent.test.ts 4
  * PRINTS: packages/server/test/solved-probe.test.ts 1
  * PRINTS: packages/server/test/solved-ranking.test.ts 2
- * PRINTS: packages/server/test/suspect.test.ts 2
+ * PRINTS: packages/server/test/suspect.test.ts 3
  * PRINTS: packages/server/test/unstorable-text.test.ts 1
  * PRINTS: packages/server/test/verdict.test.ts 1
  * PRINTS: packages/server/test/waivers.test.ts 2
