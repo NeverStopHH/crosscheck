@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 
 import {
+  bigint,
   bigserial,
   boolean,
   check,
@@ -41,10 +42,15 @@ import {
   MAX_QUESTION_BODY_LENGTH,
   MAX_VERIFICATION_REF_CHARS,
   DELIVERY_CHANNELS,
+  PILOT_END_REASONS,
+  PILOT_MARKS,
+  PILOT_MARK_REF_KINDS,
   PIN_FILE_STATUSES,
   PROVENANCES,
   QUESTION_STATUSES,
   SEQ_KINDS,
+  SUSPECT_FALSIFIER_KINDS,
+  SUSPECT_OUTCOMES,
   SEQ_REASONS,
   SESSION_EVENT_KINDS,
   SESSION_STATUSES,
@@ -725,6 +731,28 @@ export const pins = pgTable(
      * them. The first is a nuisance, the second is the silent widening.
      */
     version: integer("version").notNull().default(1),
+    /**
+     * WHICH BROKEN PIN THIS ONE REPAIRS (1.0 spec 07 §3.4), and at which
+     * version of that invariant.
+     *
+     * A self-FK set by `crosscheck pin add` when a broken pin already exists
+     * for the same `(repo, surface)` — LOOKED UP, never asked. Proof 3 asks
+     * whether the fix touched what the attribution answer named, and without
+     * a link from the repair back to the break there is nothing to compare.
+     *
+     * THE VERSION IS THE SECOND HALF, and it closes an ambiguity neither
+     * spec had noticed on its own. 04 bumps `version` inside `applyPinSweep`,
+     * so a repair recorded AFTER a sweep would point at a pin whose watched
+     * file set had silently become a different one — "the invariant" having
+     * changed in between. Recording which version was repaired is what keeps
+     * a repair-after-rename from being ambiguous by construction.
+     *
+     * Both nullable: nothing is repaired retroactively, so proof 3's
+     * denominator starts at the first repair after this lands, and a pin that
+     * repairs nothing carries two nulls rather than a sentinel.
+     */
+    repairsPinId: text("repairs_pin_id"),
+    repairsPinVersion: integer("repairs_pin_version"),
     createdAt: timestamptz("created_at").notNull(),
   },
   (table) => [
@@ -903,6 +931,195 @@ export const teamSettings = pgTable("team_settings", {
  * nothing about version 4: a sweep that moved the watched paths produced a
  * different invariant, and consent does not travel across that boundary.
  */
+/**
+ * THE ONLY HUMAN INPUT THE PILOT TAKES (1.0 spec 07 §3.2).
+ *
+ * Two gestures, each riding something a person does anyway, and neither is a
+ * question: `crosscheck noise` beside a session that got a bad intervention,
+ * `crosscheck pin ok` beside one whose check was run and passed. No survey
+ * exists and §8.3 refuses to add one — a measurement that interrupts somebody
+ * to ask how it is going has changed the thing it measures.
+ *
+ * `capture_mode` IS HUB-STAMPED and may never be carried by a body — #50's
+ * pin rule, inherited rather than restated. A mark is a HUMAN's word about
+ * whether this product was useful, and a body that could assert `human` would
+ * let an agent grade its own homework.
+ *
+ * ONE MARK PER PERSON PER THING. The unique key is `(ref_kind, ref_id,
+ * marked_by)`, so somebody who types `crosscheck noise` twice has said one
+ * thing twice rather than made two complaints — otherwise the noise figure
+ * would count keystrokes.
+ *
+ * NO FREE TEXT ANYWHERE. Every column is an id, an enum or a timestamp
+ * (non-negotiable 6), which is also why the mark carries no reason: the
+ * gesture is the whole message.
+ */
+export const pilotMarks = pgTable(
+  "pilot_marks",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    refKind: text("ref_kind", { enum: PILOT_MARK_REF_KINDS }).notNull(),
+    refId: text("ref_id").notNull(),
+    mark: text("mark", { enum: PILOT_MARKS }).notNull(),
+    markedBy: text("marked_by")
+      .notNull()
+      .references(() => developers.id),
+    captureMode: text("capture_mode", { enum: CAPTURE_MODES }).notNull(),
+    createdAt: timestamptz("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("pilot_marks_ref_marker_idx").on(
+      table.refKind,
+      table.refId,
+      table.markedBy,
+    ),
+    // The report asks "this repo's marks in this window", newest first.
+    index("pilot_marks_repo_created_idx").on(table.repo, table.createdAt.desc()),
+  ],
+);
+
+/**
+ * THE SUSPECT ANSWER, AS IT WAS GIVEN (1.0 spec 07 §3.3).
+ *
+ * `services/suspect.ts` persists nothing and its window ends NOW, so an
+ * answer cannot be reconstructed later — which makes proof 3 ("was the
+ * attribution right?") unanswerable in principle rather than merely hard.
+ * This table is the answer's residue, written when the route answers.
+ *
+ * APPEND-ONLY. An answer is a thing that happened at a moment; rewriting one
+ * because the world moved would be rewriting the measurement to match the
+ * outcome, which is the one thing a precision statistic may never do.
+ *
+ * `coverage_judgeable` IS THE KEY COLUMN, and it is read at ANSWER time, not
+ * at report time. Principle 1 says an attribution emitted under a coverage
+ * gap should not have been emitted; counting it later as a hit or a miss
+ * would launder that failure into a precision figure. The report excludes
+ * those rows and COUNTS THE EXCLUSION, so the gap stays visible instead of
+ * quietly improving the number.
+ *
+ * The enums are #50's, verbatim, from the shared vocabulary — a parallel set
+ * here would be a second answer to "what outcomes exist".
+ */
+export const pilotAttributions = pgTable(
+  "pilot_attributions",
+  {
+    id: text("id").primaryKey(),
+    repo: text("repo").notNull(),
+    pinId: text("pin_id")
+      .notNull()
+      .references(() => pins.id),
+    outcome: text("outcome", { enum: SUSPECT_OUTCOMES }).notNull(),
+    falsifier: text("falsifier", { enum: SUSPECT_FALSIFIER_KINDS }).notNull(),
+    /** Null on every outcome that names nobody — which is most of them. */
+    topSessionId: text("top_session_id").references(() => agentSessions.id),
+    topLift: doublePrecision("top_lift"),
+    candidates: integer("candidates").notNull(),
+    coverageJudgeable: boolean("coverage_judgeable").notNull(),
+    answeredAt: timestamptz("answered_at").notNull(),
+  },
+  (table) => [
+    index("pilot_attributions_repo_answered_idx").on(
+      table.repo,
+      table.answeredAt.desc(),
+    ),
+    // Proof 3 joins an answer to the repair of the pin it was about.
+    index("pilot_attributions_pin_idx").on(table.pinId),
+  ],
+);
+
+/**
+ * PROOF 5 ONLY, BECAUSE PROOF 5 ALONE CANNOT BE RE-DERIVED (07 §3.5).
+ *
+ * The other four proofs are computed at report time from rows that already
+ * exist. "Did every answer surface carry its coverage qualifier" cannot be:
+ * the answers are rendered and gone, and nothing survives them. So this is
+ * the one counter table, and it is UPSERT-ONLY rather than append.
+ *
+ * BOUNDED BY REPOS × DAYS × SURFACES × COUNTERS, never by traffic — the same
+ * argument `commit_evidence` makes. A table that grew with answers would put
+ * the cost of measuring on the same curve as the thing measured.
+ *
+ * `surface` IS A REGISTERED RENDER-SURFACE NAME, controlled vocabulary, never
+ * author-written. `counter` is machine-derived and never prose — but it is a
+ * PLAIN TEXT COLUMN rather than a drizzle enum, deliberately: twenty of its
+ * values are the cross-product of 03's `COVERAGE_SOURCES × COVERAGE_STATES`,
+ * and those live in `services/coverage.ts`, which imports this file. Making
+ * the column an enum would mean moving another spec's vocabulary into the
+ * schema package for a storage detail. The list is derived and validated at
+ * the write path instead, where the dependency runs the right way.
+ */
+export const pilotCounters = pgTable(
+  "pilot_counters",
+  {
+    repo: text("repo").notNull(),
+    /** The UTC day, as `YYYY-MM-DD` — a date, not an instant. */
+    day: text("day").notNull(),
+    surface: text("surface").notNull(),
+    counter: text("counter").notNull(),
+    value: bigint("value", { mode: "number" }).notNull(),
+    updatedAt: timestamptz("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.repo, table.day, table.surface, table.counter],
+    }),
+  ],
+);
+
+/**
+ * THE 50-SESSION MEASUREMENT, REDUCED TO ITS RESIDUE (07 §3.6).
+ *
+ * The handover asked for six things per session. FIVE are already stored or
+ * recomputable — the initial intent, the diff, the changed surfaces, the CI
+ * delta and the sequence — so copying them would be a second authority for
+ * facts that already have one. Two cannot be recomputed later, and those two
+ * are this whole table.
+ *
+ * `coverage` IS A SNAPSHOT OF WHAT THE HUB SAID AT `observed_at`, never read
+ * back as current coverage. Coverage is a statement about a moment; a
+ * measurement that re-read it at report time would be describing the archive
+ * as it is now and attributing that to a session that ended weeks ago.
+ *
+ * `seq` IS A PAIR, NOT A SCALAR (01 §3.1), and this table stores both halves.
+ * A session whose counter restarted — a SessionStart re-fire, a busy-lock
+ * fallback, two homes on one host key — holds more than one epoch, and
+ * `seq_first .. seq_last` ACROSS two epochs is not a span at all. So
+ * `seq_epochs > 1` makes the report print "sequence restarted" and no span,
+ * which is 01's epoch-split refusal reaching the counting layer rather than
+ * being re-argued here.
+ *
+ * `end_reason` keeps `reported` and `reaped` apart because the trial found
+ * 104 of 127 sessions never closed: a measurement that folded them together
+ * would be counting mostly the second and calling it the first.
+ */
+export const pilotSessions = pgTable(
+  "pilot_sessions",
+  {
+    sessionId: text("session_id")
+      .primaryKey()
+      .references(() => agentSessions.id),
+    repo: text("repo").notNull(),
+    observedAt: timestamptz("observed_at").notNull(),
+    endReason: text("end_reason", { enum: PILOT_END_REASONS }).notNull(),
+    /** FIVE {source,state,reason} triples, enums only — never free text. */
+    coverage: jsonb("coverage").notNull(),
+    seqEpoch: text("seq_epoch"),
+    seqFirst: integer("seq_first"),
+    seqLast: integer("seq_last"),
+    seqGaps: integer("seq_gaps"),
+    seqNullRecords: integer("seq_null_records"),
+    /** > 1 means the counter restarted, and the span is refused. */
+    seqEpochs: integer("seq_epochs"),
+  },
+  (table) => [
+    index("pilot_sessions_repo_observed_idx").on(
+      table.repo,
+      table.observedAt.desc(),
+    ),
+  ],
+);
+
 export const fenceWaivers = pgTable(
   "fence_waivers",
   {

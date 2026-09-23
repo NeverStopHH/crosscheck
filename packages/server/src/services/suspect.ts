@@ -35,6 +35,10 @@
  * "they ignored the notice" is how a trial ends socially rather than
  * technically.
  */
+import type {
+  SuspectFalsifierKind,
+  SuspectOutcome,
+} from "@crosscheck/schema";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
 
 import {
@@ -66,29 +70,19 @@ interface Deps {
 }
 
 /**
- * WHY the surface is believed broken — printed before any row, because a
- * ranking whose premise is unstated is an accusation with the evidence left
- * off.
+ * WHY the surface is believed broken, and WHAT the answer turned out to be —
+ * printed before any row, because a ranking whose premise is unstated is an
+ * accusation with the evidence left off.
+ *
+ * DECLARED IN `@crosscheck/schema`, re-exported here so every existing reader
+ * keeps its import. 07 §3.3 stores both on `pilot_attributions` and requires
+ * them to be these enums VERBATIM rather than a parallel set — and a drizzle
+ * column needs the values as data, which a union type cannot give. The arrays
+ * are the single declaration; these two names are the same thing seen from
+ * the service that produces them. `db/schema.ts` cannot reach a service
+ * without a cycle, which is why the vocabulary moved rather than being copied.
  */
-export type SuspectFalsifierKind =
-  /** A pin whose check recipe was run and recorded failing. */
-  | "recorded_break"
-  /** A live pin: nobody has recorded running its check and failing. */
-  | "not_recorded_broken"
-  /** A briefing-only pin with no recipe — nothing to have run. */
-  | "no_check_recipe"
-  /** No pin at all: the reader named the files, so the reader is the falsifier. */
-  | "reader_named_files";
-
-export type SuspectOutcome =
-  /** A separated top candidate; rows printed with scores. */
-  | "ranked"
-  /** Rows printed with scores, and no clear air between the top two. */
-  | "no_separation"
-  /** Nothing touched these files in the window. */
-  | "no_touch"
-  /** The falsifier gate, or this team's attribution setting, printed no rows. */
-  | "withheld";
+export type { SuspectFalsifierKind, SuspectOutcome };
 
 export interface SuspectCandidate {
   readonly sessionId: string;

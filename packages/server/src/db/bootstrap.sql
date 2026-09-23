@@ -1002,6 +1002,105 @@ ALTER TABLE hint_deliveries ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAU
 -- section depends on had no way to reach an existing hub.
 ALTER TABLE team_settings ADD COLUMN IF NOT EXISTS pilot_enrolled boolean NOT NULL DEFAULT false;
 
+-- ── The pilot instrumentation (1.0 spec 07) ─────────────────────────────────
+
+-- WHICH BROKEN PIN THIS ONE REPAIRS (07 3.4), and at which version of that
+-- invariant. Both nullable: nothing is repaired retroactively, so proof 3's
+-- denominator starts at the first repair after this lands.
+--
+-- The VERSION is the half neither spec had noticed it needed. 04 bumps
+-- pins.version inside applyPinSweep, so a repair recorded after a sweep would
+-- point at a pin whose watched file set had silently become a different one.
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_id text;
+ALTER TABLE pins ADD COLUMN IF NOT EXISTS repairs_pin_version integer;
+
+-- THE ONLY HUMAN INPUT THE PILOT TAKES (07 3.2), and never a question. Two
+-- gestures riding things somebody does anyway; capture_mode is HUB-STAMPED
+-- and may never be carried by a body, because a mark is a human's word about
+-- whether this product was useful.
+--
+-- ONE MARK PER PERSON PER THING, or the noise figure would count keystrokes.
+CREATE TABLE IF NOT EXISTS pilot_marks (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  ref_kind text NOT NULL,
+  ref_id text NOT NULL,
+  mark text NOT NULL,
+  marked_by text NOT NULL REFERENCES developers(id),
+  capture_mode text NOT NULL,
+  created_at timestamptz NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx
+  ON pilot_marks (ref_kind, ref_id, marked_by);
+CREATE INDEX IF NOT EXISTS pilot_marks_repo_created_idx
+  ON pilot_marks (repo, created_at DESC);
+
+-- THE SUSPECT ANSWER, AS IT WAS GIVEN (07 3.3). services/suspect.ts persists
+-- nothing and its window ends NOW, so an answer cannot be reconstructed later
+-- and proof 3 would be unanswerable in principle. Append-only: rewriting an
+-- answer because the world moved is rewriting the measurement to match the
+-- outcome.
+--
+-- coverage_judgeable is read at ANSWER time. An attribution emitted under a
+-- gap should not have been emitted, and counting it later as a hit or a miss
+-- would launder that failure into a precision figure.
+CREATE TABLE IF NOT EXISTS pilot_attributions (
+  id text PRIMARY KEY,
+  repo text NOT NULL,
+  pin_id text NOT NULL REFERENCES pins(id),
+  outcome text NOT NULL,
+  falsifier text NOT NULL,
+  top_session_id text REFERENCES agent_sessions(id),
+  top_lift double precision,
+  candidates integer NOT NULL,
+  coverage_judgeable boolean NOT NULL,
+  answered_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS pilot_attributions_repo_answered_idx
+  ON pilot_attributions (repo, answered_at DESC);
+CREATE INDEX IF NOT EXISTS pilot_attributions_pin_idx
+  ON pilot_attributions (pin_id);
+
+-- PROOF 5 ONLY, because proof 5 alone cannot be re-derived (07 3.5): the
+-- answers are rendered and gone. UPSERT-only, and bounded by repos x days x
+-- surfaces x counters rather than by traffic.
+CREATE TABLE IF NOT EXISTS pilot_counters (
+  repo text NOT NULL,
+  day text NOT NULL,
+  surface text NOT NULL,
+  counter text NOT NULL,
+  value bigint NOT NULL,
+  updated_at timestamptz NOT NULL,
+  PRIMARY KEY (repo, day, surface, counter)
+);
+
+-- THE 50-SESSION MEASUREMENT, REDUCED TO ITS RESIDUE (07 3.6). Five of the
+-- handover's six per-session facts are already stored or recomputable; these
+-- two are not. coverage is a SNAPSHOT of what the hub said at observed_at and
+-- is never read back as current coverage.
+--
+-- seq is a PAIR (01 3.1). seq_epochs > 1 means the counter restarted, and the
+-- report prints no span at all — 01's epoch-split refusal reaching the
+-- counting layer rather than being re-argued here.
+CREATE TABLE IF NOT EXISTS pilot_sessions (
+  session_id text PRIMARY KEY REFERENCES agent_sessions(id),
+  repo text NOT NULL,
+  observed_at timestamptz NOT NULL,
+  end_reason text NOT NULL,
+  coverage jsonb NOT NULL,
+  seq_epoch text,
+  seq_first integer,
+  seq_last integer,
+  seq_gaps integer,
+  seq_null_records integer,
+  seq_epochs integer
+);
+
+CREATE INDEX IF NOT EXISTS pilot_sessions_repo_observed_idx
+  ON pilot_sessions (repo, observed_at DESC);
+
 -- WHO LIFTED A FENCE, WHEN, WHY, AND UNTIL WHEN (§3.6).
 --
 -- Append-only in both directions: a revoke is a new row naming the grant it

@@ -122,6 +122,79 @@ export const TARGET_SOURCES = ["tool_edit", "git_diff"] as const;
  * later would leave every row written before it indistinguishable from
  * `unknown` — the exact trap the two existing writers are already in.
  */
+/**
+ * WHY A SURFACE IS BELIEVED BROKEN, and WHAT the answer turned out to be.
+ *
+ * #50 declared these as union types in `server/services/suspect.ts`, which is
+ * the right shape for a return value and the wrong one for a stored column: a
+ * drizzle enum needs the values as data. 07 §3.3 stores both on
+ * `pilot_attributions` and says they must be *"#50's enums verbatim, not a
+ * parallel set"* — so the arrays live here, the union types are derived from
+ * them, and `services/suspect.ts` re-exports those. One declaration, two
+ * shapes, and no second list that can drift from the first.
+ *
+ * HERE RATHER THAN IN THE SERVICE, because `db/schema.ts` is the other reader
+ * and it cannot import a service without a cycle — the services import the
+ * tables. This package is the one place both sides already reach.
+ */
+/**
+ * THE ONLY HUMAN INPUT THE PILOT TAKES (1.0 spec 07 §3.2), and it is never a
+ * question.
+ *
+ * Two words, each riding a gesture somebody makes anyway. `off_target` is
+ * typed beside a session that got a bad intervention; `surface_ok` is the
+ * missing symmetric half of `crosscheck pin --broke` — whoever ran the recipe
+ * and watched it PASS gets the same one-line gesture as whoever watched it
+ * fail, which is what makes a pin falsifiable in both directions.
+ *
+ * NO SURVEY, NO FREE TEXT, NO PROMPT. §8.3 refuses to add one: a measurement
+ * that interrupts somebody to ask how the measurement is going has changed
+ * the thing it measures, and a free-text field would put a person's prose on
+ * a surface data minimisation keeps to ids, enums and timestamps.
+ *
+ * MARKS ARE VOLUNTARY, so the proactive-precision figure has a FLOOR and not
+ * a value: nobody is obliged to mark anything, so an absence of marks is an
+ * absence of evidence and never evidence of no noise. The report says so on
+ * the line itself.
+ */
+export const PILOT_MARKS = ["off_target", "surface_ok"] as const;
+
+/** What a mark can be ABOUT — a delivery somebody received, or a pin. */
+export const PILOT_MARK_REF_KINDS = ["hint_delivery", "pin"] as const;
+
+/**
+ * HOW A SESSION ENDED, and the distinction is the whole reason the pilot
+ * stores it (07 §3.6).
+ *
+ * `reported` means the connector said so; `reaped` means the hub inferred it
+ * from silence. The trial found 104 of 127 sessions never closed, so a
+ * measurement that counted the two as one would be counting mostly the
+ * second and calling it the first.
+ */
+export const PILOT_END_REASONS = ["reported", "reaped"] as const;
+
+export const SUSPECT_FALSIFIER_KINDS = [
+  /** A pin whose check recipe was run and recorded failing. */
+  "recorded_break",
+  /** A live pin: nobody has recorded running its check and failing. */
+  "not_recorded_broken",
+  /** A briefing-only pin with no recipe — nothing to have run. */
+  "no_check_recipe",
+  /** No pin at all: the reader named the files, so the reader is the falsifier. */
+  "reader_named_files",
+] as const;
+
+export const SUSPECT_OUTCOMES = [
+  /** A separated top candidate; rows printed with scores. */
+  "ranked",
+  /** Rows printed with scores, and no clear air between the top two. */
+  "no_separation",
+  /** Nothing touched these files in the window. */
+  "no_touch",
+  /** The falsifier gate, or this team's attribution setting, printed no rows. */
+  "withheld",
+] as const;
+
 export const DELIVERY_CHANNELS = [
   "unknown",
   "briefing",
@@ -241,3 +314,11 @@ export type StoredTargetSource = (typeof STORED_TARGET_SOURCES)[number];
 export type ArtifactSensitivity = z.infer<typeof ArtifactSensitivitySchema>;
 
 export type DeliveryChannel = (typeof DELIVERY_CHANNELS)[number];
+
+
+export type SuspectFalsifierKind = (typeof SUSPECT_FALSIFIER_KINDS)[number];
+export type SuspectOutcome = (typeof SUSPECT_OUTCOMES)[number];
+
+export type PilotMark = (typeof PILOT_MARKS)[number];
+export type PilotMarkRefKind = (typeof PILOT_MARK_REF_KINDS)[number];
+export type PilotEndReason = (typeof PILOT_END_REASONS)[number];

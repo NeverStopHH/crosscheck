@@ -8001,6 +8001,36 @@ export const MUTATIONS: readonly Mutation[] = [
       "denominator",
   },
   {
+    // 07 §3.2. The unique key is what keeps a noise FIGURE from being a
+    // keystroke count — and the anchor sits on the SQL, not on drizzle:
+    // measured, the harness builds from bootstrap.sql, so weakening the
+    // drizzle declaration leaves every test in this repository green.
+    label: "a second keystroke becomes a second complaint",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE UNIQUE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx",
+    to: "CREATE INDEX IF NOT EXISTS pilot_marks_ref_marker_idx",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "one person typing `crosscheck noise` twice is counted as two people " +
+      "finding this product noisy, so the one figure that measures whether " +
+      "it is worth installing is inflated by the gesture it was designed to " +
+      "make cheap",
+  },
+  {
+    // 07 §3.1-§3.6. A measurement table in one authority and not the other
+    // fails silently TWICE: nothing is stored, and no proof reports that its
+    // inputs are missing.
+    label: "a measurement table exists on one deployment and not the other",
+    file: `${SERVER}/src/db/bootstrap.sql`,
+    from: "CREATE TABLE IF NOT EXISTS pilot_counters (",
+    to: "CREATE TABLE IF NOT EXISTS pilot_counters_disabled (",
+    test: `${SERVER}/test/ddl-sync.test.ts`,
+    because:
+      "proof 5 is the one that cannot be re-derived from anything else, so " +
+      "a hub missing this table loses the coverage-integrity measurement for " +
+      "good — and reports the other four as though nothing were absent",
+  },
+  {
     // 07 §3.6. The one default a shipped change may never flip: a team is
     // measured because it agreed to be, not because a release said so.
     label: "a release enrols every team in the pilot",
@@ -8443,7 +8473,7 @@ interface Outcome {
  * PRINTS: packages/server/test/coverage-judgeable.test.ts 2
  * PRINTS: packages/server/test/coverage-measurement.test.ts 2
  * PRINTS: packages/server/test/coverage.test.ts 12
- * PRINTS: packages/server/test/ddl-sync.test.ts 2
+ * PRINTS: packages/server/test/ddl-sync.test.ts 4
  * PRINTS: packages/server/test/developer-emails.test.ts 2
  * PRINTS: packages/server/test/developer-listing.test.ts 5
  * PRINTS: packages/server/test/evidence-axes.test.ts 2
