@@ -34,6 +34,7 @@ import {
   workContexts,
   workContextTargets,
 } from "../db/schema.ts";
+import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { claimValidity, loadRevalidations } from "./claim-validity.ts";
 import { presenceCutoff } from "./presence.ts";
 import {
@@ -194,6 +195,7 @@ const listClaimsForContext = async (
   now: Date,
   readerDeveloperId: string,
   workContextId: string,
+  repo: string,
 ): Promise<readonly HintClaimCandidate[]> => {
   const rows = await db
     .select({
@@ -236,6 +238,16 @@ const listClaimsForContext = async (
     now,
     rows.map((row) => row.claim.id),
   );
+  // WAS ANYTHING ACTUALLY RUN behind each of these (1.0 spec 08 §3.1), in
+  // ONE read for the context rather than one per claim. A hint is unsolicited
+  // and carries a confidence, and 08 §3.6 names a bare confidence as the
+  // failure mode — so the labels have to travel with the number, on the
+  // surface where a reader never asked for either.
+  const axes = await readEvidenceAxes({
+    db,
+    repo,
+    claims: rows.map((row) => row.claim),
+  });
   return [...rows]
     .sort(
       (a, b) => b.claim.createdAt.getTime() - a.claim.createdAt.getTime(),
@@ -270,6 +282,10 @@ const listClaimsForContext = async (
     // closed.
     body: row.claim.provenance === DECLARED_PROVENANCE ? row.claim.body : "",
     validity: claimValidity(row.claim, revalidations.get(row.claim.id), null),
+    // A claim the derivation did not answer for is shipped at the WEAKEST
+    // rung, never omitted: an absent field reads as "this hub does not report
+    // one", which would send the reader to the wrong remedy.
+    axes: axes.get(row.claim.id) ?? UNRESOLVED_AXES,
     createdAt: row.claim.createdAt.toISOString(),
   }));
 };
@@ -285,10 +301,11 @@ const listContextClaims = async (
   now: Date,
   readerDeveloperId: string,
   workContextIds: readonly string[],
+  repo: string,
 ): Promise<ReadonlyMap<string, readonly HintClaimCandidate[]>> => {
   const lists = await Promise.all(
     workContextIds.map((id) =>
-      listClaimsForContext(db, now, readerDeveloperId, id),
+      listClaimsForContext(db, now, readerDeveloperId, id, repo),
     ),
   );
   return new Map(workContextIds.map((id, index) => [id, lists[index] ?? []]));
@@ -391,7 +408,7 @@ export const listHintCandidates = async (
     .slice(0, HINT_MAX_CONTEXTS);
   const ids = eligible.map((row) => row.id);
   const [claimsByContext, baseCommits, matchedTargets] = await Promise.all([
-    listContextClaims(deps.db, deps.now(), callerDeveloperId, ids),
+    listContextClaims(deps.db, deps.now(), callerDeveloperId, ids, input.repo),
     listBaseCommits(deps.db, ids),
     listMatchedTargets(deps.db, ids, exactTokens(input.query)),
   ]);

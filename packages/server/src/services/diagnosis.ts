@@ -15,30 +15,12 @@ import {
   loadClaimSurfaces,
   loadRevalidations,
 } from "./claim-validity.ts";
-import { readEvidenceAxes } from "./evidence-axes.ts";
+import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
 import { readIntentChain } from "./intent-ledger.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
 import type { ClaimValidity, EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
-
-/**
- * What a claim is shipped as when the derivation returned nothing for it.
- *
- * Unreachable today — `readEvidenceAxes` answers for every row it is handed —
- * and that is exactly why it is written down rather than left to a `!`. If the
- * derivation ever grows an early return, this is what the surfaces get, and it
- * has to be the WEAKEST rung. The alternative, inventing something stronger
- * for a claim nobody resolved, is the inversion the whole ladder exists to
- * stop, arriving through the back door of a fallback.
- */
-const UNRESOLVED_AXES: EvidenceAxes = {
-  who: "agent_derived",
-  support: "unsupported",
-  supportReason: "ref_unresolved",
-  observedAt: null,
-  verifiedAtCommit: null,
-};
 
 /** Same-author revision edge; its TARGET is the retracted claim (DESIGN.md §5). */
 const SUPERSEDES_EDGE_KIND = "supersedes";

@@ -7759,6 +7759,20 @@ export const MUTATIONS: readonly Mutation[] = [
       "and in what order — the moment the invented figure becomes " +
       "load-bearing, and it would read as a ranking somebody earned",
   },
+  {
+    // EV-5 on the surface it matters most. A hint is UNSOLICITED: nobody asked
+    // for it, it lands in an agent's context, and this drops the hedge while
+    // leaving the confidence in place.
+    label: "an unsolicited hint prints a bare confidence again",
+    file: `${CORE}/src/hints/render.ts`,
+    from: "    ...axesFact(claim.axes, now),",
+    to: "    ...[],",
+    test: `${CORE}/test/hint-render.test.ts`,
+    because:
+      "two decimals nobody measured arrive in a teammate's context with " +
+      "nothing beside them saying whether anything was run — and a number " +
+      "without a hedge is read as a measurement",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7901,7 +7915,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
  * PRINTS: packages/connector-core/test/hint-budget.test.ts 2
  * PRINTS: packages/connector-core/test/hint-flow.test.ts 2
- * PRINTS: packages/connector-core/test/hint-render.test.ts 3
+ * PRINTS: packages/connector-core/test/hint-render.test.ts 4
  * PRINTS: packages/connector-core/test/hint-select.test.ts 9
  * PRINTS: packages/connector-core/test/injection-corpus.test.ts 6
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1

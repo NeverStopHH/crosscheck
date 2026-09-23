@@ -35,6 +35,8 @@ import {
   UNSOLICITED_CLAIM_BODY_MAX_CHARS,
 } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
+import type { EvidenceAxes } from "@crosscheck/schema";
+import { axesClause } from "../evidence/render.ts";
 import { coverageNote } from "../coverage/render.ts";
 import { UNKNOWN_COVERAGE } from "../http/coverage.ts";
 import type { CoverageRecord } from "../http/coverage.ts";
@@ -220,6 +222,31 @@ const validityWordFact = (
   return word === null ? [] : [word];
 };
 
+/**
+ * The evidence-axes clause for a hint, or a sentence saying there is none.
+ *
+ * SAME RULE AS THE DIAGNOSIS RENDERER, and the same reason it is never
+ * silence: a missing clause leaves the confidence standing alone, which 08
+ * §3.6 names as the failure mode. The two absences are told apart because the
+ * remedies differ — a hub that does not report one, against a label this
+ * build cannot read.
+ *
+ * Both sentences are renderer-owned literals, so a hint line gains no
+ * untrusted slot from carrying them.
+ */
+const axesFact = (
+  axes: EvidenceAxes | undefined,
+  now: Date,
+): readonly string[] => {
+  if (axes === undefined) {
+    return ["no evidence label (this hub does not report one)"];
+  }
+  const clause = axesClause(axes, now);
+  return clause.length === 0
+    ? ["no evidence label (this crosscheck cannot read the one sent)"]
+    : [clause];
+};
+
 /** Substance: one evidence-backed claim, under every trust label §4 names. */
 export const renderClaimHint = (input: ClaimHintInput): string => {
   const { claim, context, drift, now } = input;
@@ -228,6 +255,12 @@ export const renderClaimHint = (input: ClaimHintInput): string => {
     bare(claim.kind),
     `status ${bare(claim.status)}`,
     `confidence ${claim.confidence.toFixed(CONFIDENCE_DECIMALS)}`,
+    // THE LABELS TRAVEL WITH THE NUMBER (08 §3.6, EV-5), and on this surface
+    // more than any other: a hint is UNSOLICITED. Nobody asked for it, it
+    // lands in an agent's context, and a bare `confidence 0.80` there reads as
+    // a measurement of something. The clause is what lets the reader discount
+    // it, so it goes beside the number rather than anywhere else.
+    ...axesFact(claim.axes, now),
     `provenance ${bare(claim.provenance)}`,
     ageLabel(claim.createdAt, now),
     // THE STATE WORD GOES HERE, NOT ON A LINE OF ITS OWN, and that placement
@@ -350,6 +383,7 @@ export const renderAnswerHint = (
     bare(answer.claimKind),
     `status ${bare(answer.claimStatus)}`,
     `confidence ${answer.confidence.toFixed(CONFIDENCE_DECIMALS)}`,
+    ...axesFact(answer.axes, now),
     `provenance ${bare(answer.provenance)}`,
     ageLabel(answer.answeredAt, now),
   ];

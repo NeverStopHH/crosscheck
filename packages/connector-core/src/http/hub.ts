@@ -1282,6 +1282,22 @@ export const HintClaimCandidateSchema = z.looseObject({
    * reader sees, since `unknown` is injectable anyway, but is worth saying.
    */
   validity: ClaimValiditySchema.optional(),
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this claim (1.0 spec 08 §3.1).
+   *
+   * ON THE HINT WIRE BECAUSE A HINT IS UNSOLICITED. 08 §3.6 names
+   * `confidence 0.80` standing alone as the failure mode — two decimals read
+   * as a measurement — and a hint is the surface where that does the most
+   * damage: nobody asked for it, and it lands directly in an agent's context
+   * beside a number nothing measured. The labels are what let the reader
+   * discount it.
+   *
+   * The REF is deliberately NOT here. It is author-written text, and §5
+   * confines it to `get_diagnosis` — the surface a reader asked for. The
+   * clause carries no author text at all, which is what lets it ride an
+   * unsolicited surface.
+   */
+  axes: EvidenceAxesSchema.optional(),
   createdAt: z.string().min(1),
 });
 
@@ -1375,6 +1391,15 @@ export const AnsweredQuestionSchema = z.looseObject({
   // not a number, and the row is dropped rather than rendered.
   confidence: z.number().min(0).max(1),
   provenance: z.string().min(1),
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this answer (1.0 spec 08 §3.1).
+   *
+   * An answer IS an ordinary declared claim (DESIGN.md §5), it carries a
+   * confidence, and it arrives unsolicited in a briefing — so it needs the
+   * labels for exactly the reason a hint does. Optional: a hub that does not
+   * report them says so on the surface rather than going quiet.
+   */
+  axes: EvidenceAxesSchema.optional(),
   answererDeveloperName: z.string().min(1),
   answeredAt: z.string().min(1),
 });

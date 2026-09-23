@@ -59,6 +59,8 @@ import {
   workContexts,
 } from "../db/schema.ts";
 import { ingestClaimWithin, prepareClaimVector } from "./record-handlers.ts";
+import { UNRESOLVED_AXES, readEvidenceAxes } from "./evidence-axes.ts";
+import type { EvidenceAxes } from "@crosscheck/schema";
 import { notMutedCondition } from "./visibility.ts";
 import type { Db, DbExecutor } from "../db/client.ts";
 import type { Embedder } from "./embedder.ts";
@@ -639,6 +641,7 @@ export interface AnsweredQuestion {
   readonly claimStatus: string;
   readonly confidence: number;
   readonly provenance: string;
+  readonly axes: EvidenceAxes;
   readonly answererDeveloperName: string;
   readonly answeredAt: string;
 }
@@ -872,6 +875,15 @@ export const listUndeliveredAnswers = async (
     )
     .orderBy(desc(questionAnswers.createdAt))
     .limit(MAX_QUESTION_ANSWERS_LISTED);
+  // An answer IS a declared claim, and it arrives unsolicited in a briefing
+  // carrying a confidence — so the evidence labels travel with it for the same
+  // reason they travel with a hint (08 §3.6, EV-5). One batched read for the
+  // whole bounded page.
+  const axes = await readEvidenceAxes({
+    db: deps.db,
+    repo,
+    claims: rows.map((row) => row.claim),
+  });
   return rows.map((row) => ({
     questionId: row.questionId,
     questionBody: row.questionBody,
@@ -882,6 +894,10 @@ export const listUndeliveredAnswers = async (
     claimStatus: row.claim.status,
     confidence: row.claim.confidence,
     provenance: row.claim.provenance,
+    // The weakest rung rather than an omission, for the reason the diagnosis
+    // and hint surfaces use it: an absent field says "this hub does not report
+    // one", which points the reader at the wrong remedy.
+    axes: axes.get(row.claim.id) ?? UNRESOLVED_AXES,
     answererDeveloperName: row.answererDeveloperName,
     answeredAt: row.answeredAt.toISOString(),
   }));
