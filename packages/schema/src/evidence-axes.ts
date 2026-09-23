@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { MAX_CI_TEST_ID_CHARS } from "./ci-run.ts";
 
 /**
@@ -139,6 +141,34 @@ export const MAX_VERIFICATION_REF_KIND_CHARS = 20;
  */
 export const MAX_VERIFICATION_REF_CHARS =
   MAX_CI_TEST_ID_CHARS + MAX_VERIFICATION_REF_KIND_CHARS + 1;
+
+/**
+ * THE HUB'S ANSWER IS UNTRUSTED, so it is PARSED rather than cast.
+ *
+ * Strict enums on all three labels, and that is the fail-closed choice: a hub
+ * sending a reason this build has never heard of fails the parse, the reader
+ * gets NO axes, and the renderer prints no clause — rather than a connector
+ * carrying an unknown label onto surfaces that would print its bytes. It
+ * matches `axesClause`, which returns the empty string for a member it cannot
+ * name; both say the same thing, that an unnamed trust label is worse than
+ * none.
+ *
+ * `looseObject` for the usual forward-compatibility reason: a newer hub may
+ * add a field beside these, and dropping it is right. What may not be dropped
+ * is a WRONG value in a field that exists.
+ */
+export const EvidenceWhoSchema = z.enum(EVIDENCE_WHO);
+export const EvidenceSupportSchema = z.enum(EVIDENCE_SUPPORT);
+export const EvidenceSupportReasonSchema = z.enum(EVIDENCE_SUPPORT_REASONS);
+
+export const EvidenceAxesSchema = z.looseObject({
+  who: EvidenceWhoSchema,
+  support: EvidenceSupportSchema,
+  supportReason: EvidenceSupportReasonSchema,
+  /** Null = age unknown, NOT unobserved. */
+  observedAt: z.string().nullable(),
+  verifiedAtCommit: z.string().nullable(),
+});
 
 export type EvidenceWho = (typeof EVIDENCE_WHO)[number];
 export type EvidenceSupport = (typeof EVIDENCE_SUPPORT)[number];

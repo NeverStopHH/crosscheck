@@ -15,11 +15,30 @@ import {
   loadClaimSurfaces,
   loadRevalidations,
 } from "./claim-validity.ts";
+import { readEvidenceAxes } from "./evidence-axes.ts";
 import { readIntentChain } from "./intent-ledger.ts";
 import { notMutedCondition } from "./visibility.ts";
 import type { ClaimRevalidationReading } from "./claim-validity.ts";
-import type { ClaimValidity } from "@crosscheck/schema";
+import type { ClaimValidity, EvidenceAxes } from "@crosscheck/schema";
 import type { Db } from "../db/client.ts";
+
+/**
+ * What a claim is shipped as when the derivation returned nothing for it.
+ *
+ * Unreachable today — `readEvidenceAxes` answers for every row it is handed —
+ * and that is exactly why it is written down rather than left to a `!`. If the
+ * derivation ever grows an early return, this is what the surfaces get, and it
+ * has to be the WEAKEST rung. The alternative, inventing something stronger
+ * for a claim nobody resolved, is the inversion the whole ladder exists to
+ * stop, arriving through the back door of a fallback.
+ */
+const UNRESOLVED_AXES: EvidenceAxes = {
+  who: "agent_derived",
+  support: "unsupported",
+  supportReason: "ref_unresolved",
+  observedAt: null,
+  verifiedAtCommit: null,
+};
 
 /** Same-author revision edge; its TARGET is the retracted claim (DESIGN.md §5). */
 const SUPERSEDES_EDGE_KIND = "supersedes";
@@ -148,6 +167,29 @@ export interface ClaimView {
    * against the tree's own `file` targets and labels the basis accordingly.
    */
   readonly affectedPaths: readonly string[];
+  /**
+   * The pointer at a machine-produced observation, VERBATIM (1.0 spec 08
+   * §3.4), or null when the author attached none.
+   *
+   * Shipped alongside the derived axes rather than instead of them, because
+   * they answer different questions: `axes` says what this hub could make of
+   * the pointer, and the ref says what the author actually named — which a
+   * reader with the repository can go and re-run. §5 confines the REF's text
+   * to `get_diagnosis` and nowhere else: a `ci_test` id is author-written and
+   * up to 300 characters, and spending an unsolicited hint's budget on
+   * somebody's test name anchors a session on a file path it never chose.
+   */
+  readonly verificationRef: string | null;
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this claim (1.0 spec 08 §3.1).
+   *
+   * Derived on read by services/evidence-axes.ts — the one authority — and
+   * shipped rather than left for a connector to recompute, exactly as
+   * `validity` is. Five connectors recomputing a ten-reason ladder from four
+   * tables is five chances to disagree about the same claim, and the ladder
+   * needs rows (CI runs, revalidations) no connector holds.
+   */
+  readonly axes: EvidenceAxes;
   readonly createdAt: string;
 }
 
@@ -257,6 +299,7 @@ const toClaimView = (
   revalidation: ClaimRevalidationReading | undefined,
   supersededByClaimId: string | null,
   affectedPaths: readonly string[],
+  axes: EvidenceAxes,
 ): ClaimView => ({
   id: row.id,
   workContextId: row.workContextId,
@@ -274,6 +317,8 @@ const toClaimView = (
   lastSeenAt: toIsoOrNull(row.lastSeenAt),
   validity: claimValidity(row, revalidation, supersededByClaimId),
   affectedPaths,
+  verificationRef: row.verificationRef,
+  axes,
   createdAt: row.createdAt.toISOString(),
 });
 
@@ -533,9 +578,18 @@ export const getDiagnosis = async (
       )
       .map((edge) => [edge.toClaimId, edge.fromClaimId] as const),
   );
-  const [revalidations, surfaces] = await Promise.all([
+  const [revalidations, surfaces, axes] = await Promise.all([
     loadRevalidations(db, now, [...localClaimIds]),
     loadClaimSurfaces(db, [...localClaimIds]),
+    // ONE read for the whole page, not one per claim: the ladder resolves a
+    // batch of pointers set-wise and only descends per-claim where a ci_test
+    // ref actually resolved. The page is already bounded by
+    // DIAGNOSIS_MAX_CLAIMS, so that descent is bounded with it.
+    readEvidenceAxes({
+      db,
+      repo: contextRow.repo,
+      claims: claimRows.map(({ claim }) => claim),
+    }),
   ]);
 
   return {
@@ -547,6 +601,10 @@ export const getDiagnosis = async (
         revalidations.get(row.claim.id),
         supersededBy.get(row.claim.id) ?? null,
         surfaces.get(row.claim.id) ?? [],
+        // A claim the derivation did not answer for cannot be shipped without
+        // an answer: the weakest rung is the honest default, and inventing a
+        // stronger one here would be the inversion the ladder exists to stop.
+        axes.get(row.claim.id) ?? UNRESOLVED_AXES,
       ),
     ),
     edges: edgeRows.map(toClaimEdgeView),

@@ -7716,6 +7716,19 @@ export const MUTATIONS: readonly Mutation[] = [
       "that puts text where a sha belongs gets seven characters of its own " +
       "choosing onto every answer surface, including an agent's context",
   },
+  {
+    // The axes reach a reader through exactly one line of this renderer. This
+    // drops them while leaving every other fact in place, so the claim still
+    // prints a confidence — with nothing beside it saying whether anything ran.
+    label: "the diagnosis tree stops printing the evidence axes",
+    file: `${CORE}/src/mcp/render.ts`,
+    from: "    ...axesFacts(claim, now),",
+    to: "    ...[],",
+    test: `${CORE}/test/mcp-render.test.ts`,
+    because:
+      "a reader gets `confidence 0.80` and no evidence label at all, which is " +
+      "the state 08 exists to end — and they fill the gap themselves, upward",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -7867,7 +7880,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-hostile-hub.test.ts 1
  * PRINTS: packages/connector-core/test/mcp-injection.test.ts 4
  * PRINTS: packages/connector-core/test/mcp-referee-render.test.ts 3
- * PRINTS: packages/connector-core/test/mcp-render.test.ts 12
+ * PRINTS: packages/connector-core/test/mcp-render.test.ts 13
  * PRINTS: packages/connector-core/test/mcp-seq-e2e.test.ts 2
  * PRINTS: packages/connector-core/test/mcp-seq.test.ts 8
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2

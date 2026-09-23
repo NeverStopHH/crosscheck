@@ -37,6 +37,7 @@ import {
   MAX_WORK_CONTEXT_TITLE_CHARS,
 } from "../constants.ts";
 import { renderIntent } from "../briefing/intent.ts";
+import { axesClause } from "../evidence/render.ts";
 import { renderIntentChain } from "./render-intent-chain.ts";
 import {
   coverageClause,
@@ -511,8 +512,37 @@ const claimLine = (
     // qualifies — which is the only arrangement where "stays readable but is
     // no longer presented as a current cause" is one sentence.
     ...validityFacts(claim),
+    // 08 §5: the two evidence axes, beside the confidence they qualify.
+    //
+    // UNFRAMED, and that is a property rather than a shortcut: `axesClause`
+    // is built from enums, renderer-owned literals, an age derived from a
+    // parsed instant and a hex-checked sha — no author-written string reaches
+    // it (registered as `evidence-axes-clause`, attacked in
+    // test/evidence-axes-render.test.ts). The REF, which IS author text, is
+    // deliberately not here: this line already opens one « » pair for the
+    // body, and "a line opens the frame at most once" is what makes the
+    // guillemets the renderer's.
+    ...axesFacts(claim, now),
   ];
   return `${facts.join(" · ")}${evidence}${seen}: ${quotedBody(claim.body, MAX_CLAIM_BODY_LENGTH)}`;
+};
+
+/**
+ * The evidence-axes clause for one claim, or nothing at all.
+ *
+ * NOTHING when the hub sent no axes — the absence means "this hub did not
+ * answer", not "unknown", the same distinction `validityFacts` draws one
+ * field up. A hub too old to know about the axes omits them and a reader sees
+ * no clause, rather than a rung nobody measured. It is also nothing when the
+ * clause itself comes back empty, which happens only for an enum member this
+ * build cannot name: an unnamed trust label is worse than none.
+ */
+const axesFacts = (claim: DiagnosisClaim, now: Date): readonly string[] => {
+  if (claim.axes === undefined) {
+    return [];
+  }
+  const clause = axesClause(claim.axes, now);
+  return clause.length === 0 ? [] : [clause];
 };
 
 const edgeLine = (

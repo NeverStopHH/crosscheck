@@ -3,11 +3,12 @@ import { ClaimValiditySchema } from "@crosscheck/schema";
 import type { ClaimRevalidationEntry } from "@crosscheck/schema";
 import type { ClaimValidity } from "@crosscheck/schema";
 import {
-  MAX_CI_LANE_FIELD_CHARS,
+  EvidenceAxesSchema,
   MAX_CI_TEST_ID_CHARS,
   MAX_PIN_SWEEP_UPDATES,
   PIN_PRESENCE_TERMINAL,
   SESSION_EVENT_RETENTION_MODES,
+  MAX_CI_LANE_FIELD_CHARS,
 } from "@crosscheck/schema";
 import type { SeqField, SessionEventRetentionMode } from "@crosscheck/schema";
 
@@ -832,6 +833,32 @@ export const DiagnosisClaimSchema = z.looseObject({
    * work context's own file targets, which over-fires by construction.
    */
   affectedPaths: z.array(z.string().min(1)).optional(),
+  /**
+   * The pointer the author attached at a machine-produced observation
+   * (1.0 spec 08 §3.4), or null/absent when they attached none.
+   *
+   * AUTHOR-WRITTEN TEXT, and the only field 08 adds that is. A `ci_test` id is
+   * up to 300 characters of somebody's test name, so §5 confines it to
+   * `get_diagnosis` — the surface a reader ASKED for — and it is framed as
+   * quoted data there like every other untrusted slot. It never reaches the
+   * axes clause, which is why that clause can land unframed on unsolicited
+   * surfaces.
+   */
+  verificationRef: z.string().nullable().optional(),
+  /**
+   * WAS ANYTHING ACTUALLY RUN behind this claim (1.0 spec 08 §3.1).
+   *
+   * OPTIONAL for the reason `validity` is, one field up: the absence means
+   * "this hub did not answer", not "unknown". A hub too old to know about the
+   * axes omits it and the renderer prints no clause at all, rather than a rung
+   * nobody measured.
+   *
+   * PARSED, NOT CAST — `EvidenceAxesSchema` holds strict enums on all three
+   * labels. A hub sending a reason this build has never heard of fails the
+   * parse and the reader gets no axes, which is the fail-closed direction: an
+   * unnamed trust label on a claim is worse than no label.
+   */
+  axes: EvidenceAxesSchema.optional(),
 });
 
 export type DiagnosisClaim = z.infer<typeof DiagnosisClaimSchema>;
