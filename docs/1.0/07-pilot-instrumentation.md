@@ -521,8 +521,8 @@ the flag `--broke`). `crosscheck noise <id>` takes a delivery id **or the work-c
 printed**, which is the only id a person ever sees; with no id it asks the hub for the caller's own unasked
 deliveries to the sessions live on this machine within the hour (`GET /api/pilot-marks/candidates`, bounded
 at five with one row read past the bound so the cut is said). The mark route refuses four things the text
-did not name: a delivery somebody **else** received (`not_yours` — proof 4 counts people interrupted, and
-only the recipient was), a **crossed pair** such as `off_target` about a pin (each ref kind takes exactly one
+did not name: a delivery somebody **else** received (proof 4 counts people interrupted, and only the
+recipient was — answered exactly like a nonexistent id, §11.9), a **crossed pair** such as `off_target` about a pin (each ref kind takes exactly one
 word, `PILOT_MARK_BY_REF_KIND`, because the report counts marks by their word), "ok" about a pin recorded
 **broken** (`pin_broken` — a repair needs the commit and files only a re-pin records), and a mark on a
 **pulled** answer (`not_unsolicited` — a disliked `suspect` answer is a verdict on the answer, and counting it
@@ -540,10 +540,12 @@ the reason and the CLI writes its sentence.
 report says surfaced / opened / converged and "opened per 100". An opened count whose prior work cannot be
 listed is **withheld**, not printed bare (PIL-2 applied to the edge the text did not cover). Proof 2's ghost
 figure is `unavailable (ghost_lines_not_recorded)`: a ghost line repeats for as long as the overlap lasts and
-is never booked as a delivery, so the mockup's `ghost 33` had no writer. The fix diff (§3.4) has **five**
-outcomes, not two — `hit`, `miss`, and three that are not verdicts and are never folded into a miss: `empty`
-(nothing changed between the two verifications), `too_broad` (past the bound a fix touches the named file by
-accident) and `unresolvable` (a range this clone never fetched, an id that is not a commit id). It runs with
+is never booked as a delivery, so the mockup's `ghost 33` had no writer. The fix diff (§3.4) has **six**
+outcomes, not two — `hit`, `miss`, and four that are not verdicts and are never folded into a miss:
+`not_discriminating` (the fix touched only pinned files, which every candidate touched), `empty` (nothing
+changed in the fix range), `too_broad` (past the bound a fix touches the named file by accident) and
+`unresolvable` (a range this clone never fetched, an id that is not a commit id). The range runs from the
+commit the break was **recorded** at to the repair's commit (§11.9). It runs with
 renames off, so a fix that moved the named file is still a hit, and NUL-separated, so a named file with a
 non-ASCII name is matched as written. The client parse is **strict** — a count that did not arrive must not
 read as zero. `--json` is not the raw wire: every string is cleaned, `"` becomes `'` so the output needs no
@@ -552,14 +554,16 @@ backslash escape, and it is its own corpus surface. The registry therefore gains
 channel words, ages and the hub's sentence, so a corpus surface replaced the composite this spec named).
 
 **11.5 — `doctor`.** `checkPilot` follows the ladder every other hub-read line uses: 404, unreachable and
-unparseable are "not measured"; only a hub that answered with an error is a WARN. The one WARN divides
-answers by answers (PIL-3). The rungs that cannot exist are the two reasons in `PILOT_RUNG_REFUSALS`; an
+unparseable are "not measured"; only a hub that answered with an error is a WARN. The qualifier line prints "not counted
+on the hub" with its reason — the WARN it once carried read a tautology (§11.9), so `checkPilot` has no
+ratio WARN and PIL-3 holds because none exists. The rungs that cannot exist are the two reasons in `PILOT_RUNG_REFUSALS`; an
 empty day (`nothing_flagged`, `no_sessions`) gets no line.
 
 **11.6 — Retention (§4).** Counters and attributions prune from the reaper, before its early return, and
 keep the boundary day the report's widest window still reads. It is not the withdrawn `session_events`
-sweep: these rows are tallies and ranked guesses, not the causal skeleton. There is no future-dated clamp —
-both timestamps are the hub's own clock, unlike `commit_evidence`'s. Two indexes (`pilot_counters_day_idx`,
+sweep: these rows are tallies and ranked guesses, not the causal skeleton. There is no future-dated clamp on
+these two — both timestamps are the hub's own clock. `hint_deliveries.delivered_at` IS sender-controlled,
+and is clamped at ingest (§11.9). Two indexes (`pilot_counters_day_idx`,
 `pilot_attributions_answered_idx`) keep both deletes index ranges across every repo.
 
 **11.7 — What is still not measured.** The `suspect` channel has no writer; it is reserved. The ghost half
@@ -590,4 +594,30 @@ and the pilot sessions for ever — retention the pilot never reads, bought with
 with liveness "while the row exists", which is safe and wasteful — nothing breaks, the sweep simply keeps
 more than anything reads. The kept / swept / by-root counters 01a §9 assigns to 07 are that sweep's own
 output and land with it.
+
+**11.9 — What two adversarial reviews changed.** Both ran after the build, read-only, with probes; every
+finding below was reproduced before it was fixed, and each fix carries a mutation anchor.
+
+- **Proof 3 scored a hit whoever was named** (CRITICAL). The range started at the last-working commit, so it
+  held the break itself; "named files" were the pinned files every candidate touched; and every answer was
+  scored. Now: `pins.broke_at_commit` (sent by `pin --broke`) starts the range; only files the named session
+  touched OUTSIDE the pin can make a hit; one verdict per repaired break (the last answer before the repair).
+- **One read made every session's pointer "opened"** (HIGH). `markHintsPulled` stamped all of a developer's
+  sessions. The MCP tool now names its session (or reads without stamping when the pick is ambiguous), the
+  hub stamps only that session, and the report counts a pull as an open only between delivery and the
+  receiving session's end. Proof 4 is sessions over sessions.
+- **A delivery id could be squatted** (HIGH). Ingest now requires the id to be derived from its own session,
+  ref and channel (`deliveryIdFor`, shared in the schema).
+- **"Qualifier emitted" was a tautology** (HIGH) — written whenever "required" was. Not counted any more;
+  whether a qualifier reached its reader is the render registry's fact.
+- **MEDIUM:** refusal codes revealed a colleague's deliveries (merged into `unknown_ref`); another repo's
+  titles reached the prior-work list (scoped to the repo, bounded in SQL); a future `deliveredAt` pinned
+  itself atop the noise candidates (clamped); a Cursor-only repo read `tripwire 0` (now `unavailable
+  (no_asking_host)`); the refusal count aged out while the set stood (kept); the TTY gate was documented as
+  a wall (it is evidence; a pty or the raw key pass it, and every mark is attributable).
+- **LOW:** a revived session in a full set counted as refused; a lone surrogate and colliding keys in
+  `--json`; the CLI now bounds the repairs it diffs itself.
+- **Still open, named:** a client chooses its own delivery channel, so a connector could inflate the
+  tripwire bucket with its own rows; deliveries from before a repo enrolled are counted in proofs 1–2 (no
+  `enrolled_at` exists); every `suspect` answer appends an attribution row, bounded only by retention.
 
