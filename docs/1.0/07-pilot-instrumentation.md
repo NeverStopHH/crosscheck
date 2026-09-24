@@ -565,3 +565,29 @@ both timestamps are the hub's own clock, unlike `commit_evidence`'s. Two indexes
 **11.7 — What is still not measured.** The `suspect` channel has no writer; it is reserved. The ghost half
 of proof 2 has none by design. `ci regressed` waits for 05's reporter. None of these reads as a zero.
 
+**11.8 — What 07 owes 01a's retention registry, declared.** 01a §3.3b lists "07's `pilot_sessions` and
+`pilot_attributions`" as `root`, with liveness `undefined_pending_spec (07)`, and keeps the skeleton sweep
+off until 07 declares. **07 declares both as `non_retaining_edge`, not `root` — a correction to 01a's
+provisional row, for Nick to confirm (below).**
+
+- `pilot_attributions.top_session_id` — `non_retaining_edge`. **Reason:** proof 3 scores an attribution
+  against the fix diff and the named session's `work_context_targets`; it never compares that session's
+  order, so nothing it needs is in the skeleton. Its own lifetime is `PILOT_RETENTION_DAYS` (§11.6).
+- `pilot_sessions.session_id` — `non_retaining_edge`. **Reason:** the row stores the sequence residue it
+  needs (`seq_epoch`, first / last, gaps, epochs) at the moment the session ends or is reaped, precisely so
+  the report never re-reads the skeleton. Its lifetime is the fifty-row cap.
+
+**The positive proof to delete** (01a's sixth principle: retention requires positive proof to delete) is
+machine-checked rather than asserted: the report reads `session_events` zero times, and the only pilot
+reader of that table is `readSeqResidue`, run once at session end or reap — two `VERIFY:` directives in
+`services/pilot-report.ts` pin both counts, so a later report path that starts reading the skeleton turns
+CI red before it can depend on rows the sweep may retire.
+
+**Why not `root`, which 01a assumed.** A root keeps its session's whole skeleton alive while the root is
+live. Declared as roots, fifty measured sessions per enrolled repo would keep every event for ninety days
+and the pilot sessions for ever — retention the pilot never reads, bought with the data-minimisation cost
+01a exists to stop paying. **D-E for Nick:** confirm `non_retaining_edge` for both. *Alternative:* `root`
+with liveness "while the row exists", which is safe and wasteful — nothing breaks, the sweep simply keeps
+more than anything reads. The kept / swept / by-root counters 01a §9 assigns to 07 are that sweep's own
+output and land with it.
+
