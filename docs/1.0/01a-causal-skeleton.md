@@ -7,7 +7,10 @@ whether two events may be compared, 06 supplies what is compared, and this spec 
 **Written against** `main@390849d` with **#53 (`feat/session-event-order`) assumed merged**. A position on that branch carries
 the `event-order:` prefix and one on #52 the `coverage:` prefix, following the convention 00 §9.4a set for #50.
 `main@390849d` already contains #50 and #49, so a bare line number here is post-#50 main — not the pre-#50 main the rest of
-the set binds to. **Built after 06** (§9): the sweep, the attestation and three tests need 06's ledger. Nothing here is built.
+the set binds to. **Built after 06** (§9): the sweep, the attestation and three tests need 06's ledger. **First build 2026-09-24**
+(PR #62): the pin door, the skeleton's identity columns with the pin history, and the registry with the generated
+sweep, shipped in the `interim` mode. The attestation (§3.5), the declared guarantees (§3.6, §3.7) and the redaction
+mechanism (§3.4) are not built; §12 records what the build decided and why `full` is not sound yet.
 
 **Revisions 3 and 4, 2026-09-17.** Two adversarial reviews, 47 findings then 36. Revision 3 moved the unit of retention from
 the row to the session, after the review showed that deleting part of a session can turn a `broken` causal order into
