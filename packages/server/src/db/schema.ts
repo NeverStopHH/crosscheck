@@ -45,6 +45,7 @@ import {
   PILOT_END_REASONS,
   PILOT_MARKS,
   PILOT_MARK_REF_KINDS,
+  PIN_FILE_REF_UNRESOLVED_REASONS,
   PIN_FILE_STATUSES,
   PROVENANCES,
   QUESTION_STATUSES,
@@ -870,6 +871,26 @@ export const sessionEvents = pgTable(
     refKind: text("ref_kind", { enum: EVENT_REF_KINDS }).notNull(),
     refId: text("ref_id").notNull(),
     observedAt: timestamptz("observed_at").notNull(),
+    /**
+     * WHICH VENDOR (01a §3.2), copied from `agent_sessions.agent_kind` at
+     * write. One value per session, so the copy is exact — and the skeleton
+     * answers the question without a join through the session row.
+     */
+    provider: text("provider"),
+    /**
+     * THE WORK CONTEXT OF THE RECORD THIS ROW PROJECTS (01a §3.2) — never
+     * derived from the session, because a session has no one work context:
+     * `work_contexts.session_id` is not unique, and `extend_diagnosis` files a
+     * claim into another session's context. NULL on the session-level kinds.
+     */
+    workContextId: text("work_context_id"),
+    /**
+     * THE FILE (01a §3.3d): `fileRef(session repo, canonical path)`, on
+     * `file.modified` rows only — the one value a pin's history
+     * (`pin_file_refs`) is joined to. NULL on a `file.modified` row means
+     * UNRESOLVED (§3.3e), and the retention sweep keeps its whole session.
+     */
+    fileRef: text("file_ref"),
   },
   (table) => [
     // A POSITION IS TAKEN ONCE. A second event claiming a position this
@@ -889,6 +910,44 @@ export const sessionEvents = pgTable(
     // revisits its key — and without this index that sweep would scan every
     // event on the hub every pass.
     index("session_events_observed_at_idx").on(table.observedAt),
+    // The pin root's join (01a §3.3g): a pinned file's history against the
+    // touches that carry the same identity.
+    index("session_events_file_ref_idx").on(table.fileRef),
+  ],
+);
+
+/**
+ * EVERY FILE IDENTITY A PIN HAS EVER WATCHED (01a §3.3d) — append-only, and
+ * the reason a pin means the LOGICAL file. The pin sweep follows a rename by
+ * inserting the new `pin_files` row and deleting the old one, so a retention
+ * graph that read `pin_files` alone would sever the pin from every session
+ * that touched the file under its old name: the history of the very change
+ * that renamed it. So each write to `pin_files` also writes here, and nothing
+ * removes a row here while its pin exists.
+ *
+ * A NULL `file_ref` is UNRESOLVED (§3.3e), with its reason: it never matches
+ * a touch, so the sweep reads its presence as "cannot tell" for the whole
+ * repo rather than as "no pin references this". At most one per pin.
+ */
+export const pinFileRefs = pgTable(
+  "pin_file_refs",
+  {
+    pinId: text("pin_id")
+      .notNull()
+      .references(() => pins.id),
+    fileRef: text("file_ref"),
+    unresolvedReason: text("unresolved_reason", {
+      enum: PIN_FILE_REF_UNRESOLVED_REASONS,
+    }),
+    /** Hub clock; display only — it orders nothing. */
+    firstSeen: timestamptz("first_seen").notNull(),
+  },
+  (table) => [
+    uniqueIndex("pin_file_refs_pin_ref_idx").on(table.pinId, table.fileRef),
+    uniqueIndex("pin_file_refs_unresolved_idx")
+      .on(table.pinId)
+      .where(sql`${table.fileRef} IS NULL`),
+    index("pin_file_refs_file_ref_idx").on(table.fileRef),
   ],
 );
 

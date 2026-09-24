@@ -37,6 +37,7 @@ import {
   workContextTargets,
   workContexts,
 } from "../db/schema.ts";
+import { pinFileRefRow, recordPinFileRefs } from "./skeleton-identity.ts";
 import { readTeamSettings } from "./team-settings.ts";
 import { readLiveWaiver, readLiveWaivers } from "./waivers.ts";
 import type { LiveWaiver } from "./waivers.ts";
@@ -271,6 +272,14 @@ export const createPin = async (
         path,
         status: "present" as const,
       })),
+    );
+    // THE PIN'S IDENTITY HISTORY STARTS IN THE SAME TRANSACTION (01a §3.3d),
+    // so no committed pin is ever without one — which is what lets the
+    // start-up seed treat "no history" as "a pin from before the table".
+    await recordPinFileRefs(
+      tx,
+      distinctPaths.map((path) => pinFileRefRow(input.id, input.repo, path)),
+      now,
     );
     return { outcome: "created", id: input.id } as const;
   });
@@ -737,6 +746,14 @@ export const applyPinSweep = async (
         set: { status: "present" },
       })
       .returning({ path: pinFiles.path });
+    // BEFORE the old row goes, and never removed after (01a §3.3d): the pin
+    // keeps every name it has watched, so a rename cannot shorten the
+    // retention of the sessions that touched the file under its old name.
+    await recordPinFileRefs(
+      deps.db,
+      [pinFileRefRow(update.pinId, repo, update.newPath)],
+      deps.now(),
+    );
     if (update.newPath !== update.path) {
       await deps.db
         .delete(pinFiles)

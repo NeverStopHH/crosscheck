@@ -6,6 +6,7 @@ import { DEFAULT_PORT, SESSION_REAP_INTERVAL_MS } from "./constants.ts";
 import { createDb } from "./db/client.ts";
 import { createEmbedderFromEnv } from "./services/embedder.ts";
 import { reapStaleSessions } from "./services/sessions.ts";
+import { backfillSkeletonIdentity } from "./services/skeleton-identity.ts";
 import type { Db } from "./db/client.ts";
 import type { Embedder } from "./services/embedder.ts";
 import type { AppEnv, Clock } from "./types.ts";
@@ -235,6 +236,23 @@ export const startServer = async (): Promise<void> => {
     ...(uiSessionSecret === undefined ? {} : { uiSessionSecret }),
   });
   Bun.serve({ port, fetch: app.fetch });
+  // THE SKELETON'S IDENTITY FOR ROWS THAT PREDATE ITS COLUMNS (01a §4.1).
+  // After serving, not before: until it has run, a missing identity reads as
+  // UNRESOLVED and the retention sweep keeps what it cannot resolve, so
+  // nothing depends on it finishing first — and a large hub is not held
+  // offline while it does. Idempotent; each start finishes what the last left.
+  void backfillSkeletonIdentity({ db, now: () => new Date() }).then(
+    (report) => {
+      console.log(
+        `[crosscheck] skeleton identity: ${String(report.pinsSeeded)} pin(s) seeded, ` +
+          `${String(report.fileRefs)} file identities filled, ` +
+          `${String(report.unresolvedFileRefs)} unresolved (kept)`,
+      );
+    },
+    (error: unknown) => {
+      console.error("[crosscheck] skeleton identity backfill failed; unresolved rows are kept", error);
+    },
+  );
   // The hub's own reaper (trial finding M6). HERE and not in `createApp`:
   // every test that builds an app would otherwise leak a timer, and the
   // registration path already reaps the registering developer's own sessions

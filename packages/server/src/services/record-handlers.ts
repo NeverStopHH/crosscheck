@@ -30,6 +30,7 @@ import {
 import { appendEvent } from "./events.ts";
 import { appendIntentVersion } from "./intent-ledger.ts";
 import { refreshNormalizedDoc } from "./normalized-doc.ts";
+import { touchFileRef } from "./skeleton-identity.ts";
 import {
   recordSessionEvent,
   targetDigest,
@@ -178,12 +179,14 @@ const resolveWorkContextOwner = async (
   db: DbExecutor,
   workContextId: string,
 ): Promise<
-  { readonly developerId: string; readonly sessionId: string } | undefined
+  | { readonly developerId: string; readonly sessionId: string; readonly repo: string }
+  | undefined
 > => {
   const rows = await db
     .select({
       developerId: agentSessions.developerId,
       sessionId: workContexts.sessionId,
+      repo: agentSessions.repo,
     })
     .from(workContexts)
     .innerJoin(agentSessions, eq(workContexts.sessionId, agentSessions.id))
@@ -639,6 +642,11 @@ export const ingestTarget = async (
       seqKind: seqKindFor(source, seq),
       refKind: "target_digest",
       refId: targetDigest(body.workContextId, body.kind, value),
+      workContextId: body.workContextId,
+      // THE FILE, in the identity a pin's history is written in (01a §3.3d):
+      // the SESSION's repo and the canonical path, computed here on the hub
+      // so two developers' connectors cannot disagree about it.
+      ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),
     });
   };
   const inserted = await deps.db
@@ -988,6 +996,7 @@ export const ingestClaimWithin = async (
     seqKind: body.provenance === "derived" ? "observed" : "emitted",
     refKind: "claim",
     refId: body.id,
+    workContextId: body.workContextId,
   });
   return accepted(body.id);
 };
@@ -1081,7 +1090,11 @@ export const ingestClaimEdge = async (
   }
   const endpointIds = [body.fromClaimId, body.toClaimId];
   const found = await deps.db
-    .select({ id: claims.id, ownerId: agentSessions.developerId })
+    .select({
+      id: claims.id,
+      ownerId: agentSessions.developerId,
+      workContextId: claims.workContextId,
+    })
     .from(claims)
     .innerJoin(agentSessions, eq(claims.authorSessionId, agentSessions.id))
     .where(inArray(claims.id, endpointIds));
@@ -1126,6 +1139,7 @@ export const ingestClaimEdge = async (
     developerId,
   });
   if (INVALIDATING_EDGE_KINDS.has(body.kind)) {
+    const invalidatingContext = found.find((row) => row.id === body.fromClaimId)?.workContextId;
     await recordSessionEvent(deps, {
       sessionId: body.authorSessionId,
       kind: "claim.invalidated",
@@ -1133,6 +1147,10 @@ export const ingestClaimEdge = async (
       seqKind: "emitted",
       refKind: "claim_edge",
       refId: body.id,
+      // An edge has no work context of its own; the row takes the
+      // INVALIDATING claim's — the `from` side, the assertion this session
+      // made (01a §3.2). services/skeleton-identity.ts backfills the same way.
+      ...(invalidatingContext === undefined ? {} : { workContextId: invalidatingContext }),
     });
   }
   return accepted(body.id);

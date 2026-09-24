@@ -285,10 +285,15 @@ export type {
 export {
   CANONICAL_PATH_REFUSALS,
   FILE_REF_DOMAIN,
+  PIN_FILE_REF_UNRESOLVED_REASONS,
   canonicalRepoPath,
   fileRef,
 } from "./file-ref.ts";
-export type { CanonicalPath, CanonicalPathRefusal } from "./file-ref.ts";
+export type {
+  CanonicalPath,
+  CanonicalPathRefusal,
+  PinFileRefUnresolvedReason,
+} from "./file-ref.ts";
 export {
   deliveryIdFor,
   hintDeliveryId,

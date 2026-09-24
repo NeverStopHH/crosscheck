@@ -124,6 +124,14 @@ export const COMMIT_EVIDENCE_RETENTION_DAYS = 30;
 export const SESSION_EVENT_RETENTION_DAYS = 30;
 
 /**
+ * Rows per page of the start-up identity backfill (01a §4.1,
+ * services/skeleton-identity.ts). Each page recomputes the target digests of
+ * its own sessions' work contexts only, so the cost of a page is bounded by
+ * the page, never by the hub; the number bounds one UPDATE's VALUES list.
+ */
+export const SKELETON_BACKFILL_BATCH = 500;
+
+/**
  * THE RETENTION THIS HUB APPLIES TO `session_events`, declared on
  * `GET /api/sessions/order` so that `doctor` prints the hub's own statement
  * rather than a connector's assumption about it (schema session-event.ts says

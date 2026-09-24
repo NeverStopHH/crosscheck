@@ -553,6 +553,39 @@ CREATE INDEX IF NOT EXISTS session_events_session_kind_idx
 CREATE INDEX IF NOT EXISTS session_events_observed_at_idx
   ON session_events (observed_at);
 
+-- THE SKELETON'S OWN IDENTITY (1.0 spec 01a §3.2, §3.3d): which vendor, which
+-- work context, and — on file.modified rows only — which FILE, so that the
+-- retention graph can join a human's pin to a session's touch without reading
+-- a content row. Added by ALTER, never only in the CREATE above, because every
+-- existing hub already has the table. New rows arrive complete; the rows that
+-- predate the columns are filled at start by services/skeleton-identity.ts,
+-- and what it cannot reach stays NULL — for file_ref that is UNRESOLVED
+-- (§3.3e), and the sweep keeps its whole session.
+ALTER TABLE session_events ADD COLUMN IF NOT EXISTS provider text;
+ALTER TABLE session_events ADD COLUMN IF NOT EXISTS work_context_id text;
+ALTER TABLE session_events ADD COLUMN IF NOT EXISTS file_ref text;
+CREATE INDEX IF NOT EXISTS session_events_file_ref_idx
+  ON session_events (file_ref);
+
+-- EVERY FILE IDENTITY A PIN HAS EVER WATCHED (01a §3.3d), append-only: the
+-- pin sweep follows a rename by replacing the pin_files row, and a retention
+-- graph that read pin_files alone would sever the pin from every session that
+-- touched the old name. A NULL file_ref is UNRESOLVED, with its reason, and
+-- at most one per pin; the sweep reads it as "cannot tell" for the repo.
+CREATE TABLE IF NOT EXISTS pin_file_refs (
+  pin_id text NOT NULL REFERENCES pins(id),
+  file_ref text,
+  unresolved_reason text,
+  first_seen timestamptz NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS pin_file_refs_pin_ref_idx
+  ON pin_file_refs (pin_id, file_ref);
+CREATE UNIQUE INDEX IF NOT EXISTS pin_file_refs_unresolved_idx
+  ON pin_file_refs (pin_id)
+  WHERE file_ref IS NULL;
+CREATE INDEX IF NOT EXISTS pin_file_refs_file_ref_idx
+  ON pin_file_refs (file_ref);
+
 -- TEAM-level settings for the regression guard, one row per repo. ABSENT
 -- MEANS DEFAULTS ("anyone" may pin; `suspect` names sessions) — nothing
 -- bootstraps rows here, so a hub that was never configured behaves exactly

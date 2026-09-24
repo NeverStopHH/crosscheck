@@ -1,0 +1,344 @@
+/**
+ * THE SKELETON KNOWS WHICH FILE, WHICH VENDOR AND WHICH CONTEXT
+ * (1.0 spec 01a §3.2, §3.3d, §4.1, §4.3 — CSK-15 (a), CSK-20 (a)).
+ *
+ * The retention graph joins a human's pin to a session's touch through ONE
+ * value, `file_ref`, and it is only as good as the two writers agreeing. So
+ * each case here asks both sides — the pin's history and the touch's row —
+ * and compares the stored bytes, never a recomputation in the test.
+ *
+ * And the rows that predate the columns: the backfill fills what it can
+ * reach from what the hub holds, and leaves NULL — unresolved, which the
+ * sweep keeps — what it cannot. A backfill that reported zero unresolved rows
+ * while one was unreachable would be the confident wrong answer.
+ */
+import { describe, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+
+import { PIN_PRESENCE_TERMINAL, fileRef } from "@crosscheck/schema";
+
+import { backfillSkeletonIdentity } from "../src/services/skeleton-identity.ts";
+import {
+  createTestDeveloper,
+  createTestHarness,
+  jsonRequest,
+  postRecords,
+  recordEnvelope,
+  registerTestSession,
+  TEST_START_ISO,
+  validClaimBody,
+  validClaimEdgeBody,
+  validWorkContextBody,
+  VALID_SESSION_BODY,
+} from "./helpers.ts";
+import type { TestDeveloper, TestHarness } from "./helpers.ts";
+
+const REPO = VALID_SESSION_BODY.repo;
+const OTHER_REPO = "github.com/acme/web";
+const FILE = "src/x.ts";
+
+interface World {
+  readonly harness: TestHarness;
+  readonly nick: TestDeveloper;
+}
+
+const world = async (): Promise<World> => {
+  const harness = await createTestHarness();
+  const nick = await createTestDeveloper(harness, "Nick", "nick-identity@example.com");
+  expect((await registerTestSession(harness, nick.apiKey, { id: "ses_a" })).status).toBe(200);
+  return { harness, nick };
+};
+
+const touch = async (
+  { harness, nick }: World,
+  contextId: string,
+  files: readonly string[],
+): Promise<void> => {
+  const result = await postRecords(harness, nick, {
+    records: [
+      recordEnvelope(
+        "work_context",
+        validWorkContextBody({
+          id: contextId,
+          sessionId: "ses_a",
+          title: "Playback",
+          description: undefined,
+          createdAt: TEST_START_ISO,
+        }),
+        { sessionId: "ses_a" },
+      ),
+      ...files.map((value) =>
+        recordEnvelope(
+          "target",
+          { workContextId: contextId, kind: "file", value },
+          { sessionId: "ses_a" },
+        ),
+      ),
+    ],
+  });
+  expect(result.data?.rejected ?? -1).toBe(0);
+};
+
+/**
+ * Two work contexts of one session, a claim in each, and the second claim
+ * superseding the first — so the invalidation's row has two candidate
+ * contexts and must take the invalidating one.
+ */
+const claimAndSupersede = async (w: World): Promise<void> => {
+  await touch(w, "wc_old", []);
+  await touch(w, "wc_new", []);
+  const result = await postRecords(w.harness, w.nick, {
+    records: [
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id: "clm_old", workContextId: "wc_old", authorSessionId: "ses_a" }),
+        { sessionId: "ses_a" },
+      ),
+      recordEnvelope(
+        "claim",
+        validClaimBody({ id: "clm_new", workContextId: "wc_new", authorSessionId: "ses_a" }),
+        { sessionId: "ses_a" },
+      ),
+      recordEnvelope(
+        "claim_edge",
+        validClaimEdgeBody({
+          id: "edge_sup",
+          fromClaimId: "clm_new",
+          toClaimId: "clm_old",
+          kind: "supersedes",
+          authorSessionId: "ses_a",
+        }),
+        { sessionId: "ses_a" },
+      ),
+    ],
+  });
+  expect(result.data?.rejected ?? -1).toBe(0);
+};
+
+const pin = async (
+  { harness, nick }: World,
+  id: string,
+  files: readonly string[],
+  repo: string = REPO,
+): Promise<void> => {
+  const response = await harness.app.request(
+    "/api/pins",
+    jsonRequest("POST", nick.apiKey, {
+      id,
+      repo,
+      surface: "Play button plays/pauses",
+      files,
+      check: "open /workbench, press Play",
+      presence: PIN_PRESENCE_TERMINAL,
+      verifiedAtCommit: "abc1234",
+    }),
+  );
+  expect(response.status).toBe(200);
+};
+
+const rows = async (
+  harness: TestHarness,
+  query: SQL,
+): Promise<readonly Record<string, unknown>[]> =>
+  (await harness.db.execute(query)).rows as Record<string, unknown>[];
+
+const touchRefs = (harness: TestHarness) =>
+  rows(harness, sql`SELECT file_ref FROM session_events WHERE kind = 'file.modified' ORDER BY file_ref`);
+
+const pinRefs = (harness: TestHarness, pinId: string) =>
+  rows(
+    harness,
+    sql`SELECT file_ref, unresolved_reason FROM pin_file_refs WHERE pin_id = ${pinId} ORDER BY file_ref NULLS FIRST`,
+  );
+
+const deps = (harness: TestHarness) => ({ db: harness.db, now: harness.clock.now });
+
+describe("the skeleton row carries its own identity", () => {
+  test("a touch's row names its vendor, its work context and its file", async () => {
+    // Arrange
+    const w = await world();
+
+    // Act — spelled the way a connector that is not ours might send it
+    await touch(w, "wc_a", [`./${FILE}`]);
+
+    // Assert
+    expect(
+      await rows(
+        w.harness,
+        sql`SELECT kind, provider, work_context_id, file_ref FROM session_events ORDER BY kind`,
+      ),
+    ).toEqual([
+      { kind: "file.modified", provider: "claude-code", work_context_id: "wc_a", file_ref: fileRef(REPO, FILE) },
+      { kind: "session.started", provider: "claude-code", work_context_id: null, file_ref: null },
+    ]);
+  });
+
+  test("a claim's row names its claim's context; an invalidation names the invalidating claim's", async () => {
+    // Arrange & Act
+    const w = await world();
+    await claimAndSupersede(w);
+
+    // Assert
+    expect(
+      await rows(
+        w.harness,
+        sql`SELECT kind, ref_id, work_context_id FROM session_events WHERE kind LIKE 'claim.%' ORDER BY kind, ref_id`,
+      ),
+    ).toEqual([
+      { kind: "claim.created", ref_id: "clm_new", work_context_id: "wc_new" },
+      { kind: "claim.created", ref_id: "clm_old", work_context_id: "wc_old" },
+      { kind: "claim.invalidated", ref_id: "edge_sup", work_context_id: "wc_new" },
+    ]);
+  });
+
+  test("a pin typed ./src/x.ts and a session that edited src/x.ts hold one identity", async () => {
+    // Arrange
+    const w = await world();
+    await touch(w, "wc_a", [FILE]);
+
+    // Act
+    await pin(w, "pin_a", [`./${FILE}`]);
+
+    // Assert — the bytes both writers stored, compared to each other
+    const [touched] = await touchRefs(w.harness);
+    expect(await pinRefs(w.harness, "pin_a")).toEqual([
+      { file_ref: touched?.["file_ref"], unresolved_reason: null },
+    ]);
+  });
+
+  test("the same path in another repo is another file", async () => {
+    // Arrange
+    const w = await world();
+    await touch(w, "wc_a", [FILE]);
+
+    // Act
+    await pin(w, "pin_web", [FILE], OTHER_REPO);
+
+    // Assert
+    const [touched] = await touchRefs(w.harness);
+    const [pinned] = await pinRefs(w.harness, "pin_web");
+    expect(pinned?.["file_ref"]).toBe(fileRef(OTHER_REPO, FILE));
+    expect(pinned?.["file_ref"]).not.toBe(touched?.["file_ref"]);
+  });
+
+  test("a rename adds the new identity and keeps the old one", async () => {
+    // Arrange
+    const w = await world();
+    await pin(w, "pin_a", [FILE]);
+
+    // Act — the sweep records the weekly rename
+    const swept = await w.harness.app.request(
+      "/api/pins/sweep",
+      jsonRequest("POST", w.nick.apiKey, {
+        repo: REPO,
+        updates: [{ pinId: "pin_a", path: FILE, newPath: "src/y.ts" }],
+      }),
+    );
+
+    // Assert — pin_files holds the current name, the history holds both
+    expect(swept.status).toBe(200);
+    expect(
+      await rows(w.harness, sql`SELECT path FROM pin_files WHERE pin_id = 'pin_a'`),
+    ).toEqual([{ path: "src/y.ts" }]);
+    expect((await pinRefs(w.harness, "pin_a")).map((row) => row["file_ref"]).sort()).toEqual(
+      [fileRef(REPO, FILE), fileRef(REPO, "src/y.ts")].sort(),
+    );
+  });
+});
+
+describe("the backfill of rows that predate the columns", () => {
+  const forgetIdentity = async (harness: TestHarness): Promise<void> => {
+    await harness.db.execute(
+      sql`UPDATE session_events SET provider = NULL, work_context_id = NULL, file_ref = NULL`,
+    );
+    await harness.db.execute(sql`DELETE FROM pin_file_refs`);
+  };
+
+  const identities = (harness: TestHarness) =>
+    rows(harness, sql`SELECT id, provider, work_context_id, file_ref FROM session_events ORDER BY id`);
+
+  test("fills every identity the hub can reach, as the live writers would have", async () => {
+    // Arrange — written complete, captured, then forgotten
+    const w = await world();
+    await touch(w, "wc_a", [FILE, "src/z.ts"]);
+    await claimAndSupersede(w);
+    await pin(w, "pin_a", [FILE]);
+    const complete = await identities(w.harness);
+    const history = await pinRefs(w.harness, "pin_a");
+    await forgetIdentity(w.harness);
+
+    // Act
+    const report = await backfillSkeletonIdentity(deps(w.harness));
+
+    // Assert — byte for byte what the live path wrote
+    expect(await identities(w.harness)).toEqual(complete);
+    expect(await pinRefs(w.harness, "pin_a")).toEqual(history);
+    expect(report).toEqual({
+      pinsSeeded: 1,
+      // session.started, two file.modified, two claim.created, one claim.invalidated
+      providers: 6,
+      workContexts: 5,
+      fileRefs: 2,
+      unresolvedFileRefs: 0,
+    });
+  });
+
+  test("a row it cannot resolve stays NULL and is counted, never guessed", async () => {
+    // Arrange — a file.modified row whose target this hub does not hold
+    const w = await world();
+    await touch(w, "wc_a", [FILE]);
+    await w.harness.db.execute(sql`
+      INSERT INTO session_events (id, session_id, kind, seq_kind, seq_reason, ref_kind, ref_id, observed_at)
+      VALUES ('se_orphan', 'ses_a', 'file.modified', 'observed', 'pre_seq_connector',
+              'target_digest', ${"f".repeat(64)}, now())`);
+    await forgetIdentity(w.harness);
+
+    // Act
+    const report = await backfillSkeletonIdentity(deps(w.harness));
+
+    // Assert
+    expect(report.unresolvedFileRefs).toBe(1);
+    expect(
+      await rows(w.harness, sql`SELECT file_ref FROM session_events WHERE id = 'se_orphan'`),
+    ).toEqual([{ file_ref: null }]);
+  });
+
+  test("a legacy pin that was renamed carries the unresolved marker", async () => {
+    // Arrange — the names it watched before the rename are gone from pin_files
+    const w = await world();
+    await pin(w, "pin_a", [FILE]);
+    await forgetIdentity(w.harness);
+    await w.harness.db.execute(sql`UPDATE pins SET renamed_paths = 1 WHERE id = 'pin_a'`);
+
+    // Act
+    await backfillSkeletonIdentity(deps(w.harness));
+
+    // Assert
+    expect(await pinRefs(w.harness, "pin_a")).toEqual([
+      { file_ref: null, unresolved_reason: "rename_history_unrecorded" },
+      { file_ref: fileRef(REPO, FILE), unresolved_reason: null },
+    ]);
+  });
+
+  test("a second run finds nothing to do", async () => {
+    // Arrange
+    const w = await world();
+    await touch(w, "wc_a", [FILE]);
+    await pin(w, "pin_a", [FILE]);
+    await forgetIdentity(w.harness);
+    await backfillSkeletonIdentity(deps(w.harness));
+
+    // Act
+    const again = await backfillSkeletonIdentity(deps(w.harness));
+
+    // Assert
+    expect(again).toEqual({
+      pinsSeeded: 0,
+      providers: 0,
+      workContexts: 0,
+      fileRefs: 0,
+      unresolvedFileRefs: 0,
+    });
+  });
+});

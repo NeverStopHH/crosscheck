@@ -27,7 +27,7 @@ import type {
 } from "@crosscheck/schema";
 
 import { SESSION_EVENT_RETENTION_DAYS } from "../constants.ts";
-import { sessionEvents } from "../db/schema.ts";
+import { agentSessions, sessionEvents } from "../db/schema.ts";
 import type { DbExecutor } from "../db/client.ts";
 import type { OrderedEvent } from "./session-order.ts";
 import type { Clock } from "../types.ts";
@@ -115,6 +115,16 @@ export interface RecordSessionEventInput {
   readonly refId: string;
   /** Overrides the reason an absent `seq` would otherwise carry (a reap). */
   readonly absentReason?: SeqReason;
+  /**
+   * The work context of the RECORD this row projects (01a §3.2). Omitted for
+   * the session-level kinds, which belong to no one work context.
+   */
+  readonly workContextId?: string;
+  /**
+   * `file.modified` only (01a §3.3d): the touched file's identity, or null
+   * when its path has no canonical spelling — UNRESOLVED, and kept (§3.3e).
+   */
+  readonly fileRef?: string | null;
 }
 
 /**
@@ -202,6 +212,11 @@ export const recordSessionEvent = async (
         refKind: input.refKind,
         refId: input.refId,
         observedAt: deps.now(),
+        // Read from the session row IN the insert: exact, since a session has
+        // one agent kind, and no caller can pass a vendor that is not it.
+        provider: sql`(SELECT ${agentSessions.agentKind} FROM ${agentSessions} WHERE ${agentSessions.id} = ${input.sessionId})`,
+        workContextId: input.workContextId ?? null,
+        fileRef: input.fileRef ?? null,
       })
       .onConflictDoNothing();
     return id;

@@ -9681,6 +9681,127 @@ export const MUTATIONS: readonly Mutation[] = [
       "the refusal never offers the repo-relative spelling, so a person in a " +
       "subdirectory is told their file is not in git and nothing else",
   },
+  {
+    // 01a §3.3d, CSK-15 (a). A pin's identity history starts with the pin.
+    label: "a new pin is stored with no identity history",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "      distinctPaths.map((path) => pinFileRefRow(input.id, input.repo, path)),",
+    to: "      [],",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "the retention graph finds no pin behind any session, so a pinned file's " +
+      "history reads as referenced by nothing and the sweep deletes it",
+  },
+  {
+    // 01a §3.3d, CSK-20 (a). A rename keeps the old name reachable.
+    label: "a rename records no identity for the new name",
+    file: `${SERVER}/src/services/pins.ts`,
+    from: "      [pinFileRefRow(update.pinId, repo, update.newPath)],",
+    to: "      [],",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "after the weekly rename the pin watches a file no identity names, and " +
+      "every session that touches it afterwards is unprotected",
+  },
+  {
+    // 01a §3.3d. The touch's identity is computed from the SESSION's repo.
+    label: "a touch's identity drops the repo it happened in",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '      ...(body.kind === "file" ? { fileRef: touchFileRef(owner.repo, value) } : {}),',
+    to: '      ...(body.kind === "file" ? { fileRef: touchFileRef("", value) } : {}),',
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "no touch ever equals a pin's identity, so every pin protects nothing, " +
+      "and two repos with the same path would share one if it did",
+  },
+  {
+    // 01a §3.2. The vendor is copied from the session row, exactly.
+    label: "the skeleton row stops recording its vendor",
+    file: `${SERVER}/src/services/session-events.ts`,
+    from: "        provider: sql`(SELECT ${agentSessions.agentKind} FROM ${agentSessions} WHERE ${agentSessions.id} = ${input.sessionId})`,",
+    to: "        provider: null,",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "which vendor produced an order becomes a join through the session row, " +
+      "and a guarantee table keyed by provider has nothing to key on",
+  },
+  {
+    // 01a §3.2. A touch's row carries the context of the record it projects.
+    label: "a touch's row forgets its work context",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "      workContextId: body.workContextId,\n      // THE FILE",
+    to: "      workContextId: `${body.workContextId}_other`,\n      // THE FILE",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "the skeleton cannot say which context an edit belonged to without a " +
+      "join through content, which is what redaction will remove",
+  },
+  {
+    // 01a §3.2. A claim row carries its claim's context.
+    label: "a claim's row forgets its work context",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: '    refId: body.id,\n    workContextId: body.workContextId,\n  });',
+    to: '    refId: body.id,\n  });',
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "a claim's position cannot be placed in its context once the claim " +
+      "body is redacted, and the order answer needs the context, not the body",
+  },
+  {
+    // 01a §3.2. An invalidation takes the invalidating claim's context.
+    label: "an invalidation takes the invalidated claim's context",
+    file: `${SERVER}/src/services/record-handlers.ts`,
+    from: "    const invalidatingContext = found.find((row) => row.id === body.fromClaimId)?.workContextId;",
+    to: "    const invalidatingContext = found.find((row) => row.id === body.toClaimId)?.workContextId;",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "a supersession is filed under the context of the claim it retired, so " +
+      "the context that made the assertion shows no invalidation at all",
+  },
+  {
+    // 01a §4.1, §3.3e. The backfill never guesses a file.
+    label: "the backfill guesses a file for a touch it cannot find",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "        match.kind === \"file.modified\" && match.value !== null\n          ? touchFileRef(match.repo, match.value)\n          : null,",
+    to: "        match.kind === \"file.modified\"\n          ? touchFileRef(match.repo, match.value ?? \"src/index.ts\")\n          : null,",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "an unreachable row gets a plausible identity, reads as resolved, and " +
+      "the sweep deletes a session it was never able to judge",
+  },
+  {
+    // 01a §4.1. The digest is recomputed in targetDigest's own field order.
+    label: "the backfill recomputes the target digest in another order",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "               t.work_context_id || E'\\\\n' || t.kind || E'\\\\n' || t.value, 'UTF8')), 'hex') AS digest",
+    to: "               t.work_context_id || E'\\\\n' || t.value || E'\\\\n' || t.kind, 'UTF8')), 'hex') AS digest",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "no existing row matches its target, every pre-deploy edit stays " +
+      "unresolved, and the repo's file-bearing sessions are kept for ever",
+  },
+  {
+    // 01a §3.3e. A legacy renamed pin's lost names are unresolved, not absent.
+    label: "a legacy renamed pin is seeded as if its history were complete",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "    if (rows.length === 0 && Number(row.renamed) > 0) {",
+    to: "    if (rows.length === 0 && Number(row.renamed) > 99) {",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "the sessions that touched the names the pin watched before the rename " +
+      "are referenced by nothing the hub holds, and the sweep deletes them",
+  },
+  {
+    // 01a §4.3. The seed runs once per legacy pin.
+    label: "the seed re-seeds pins that already have a history",
+    file: `${SERVER}/src/services/skeleton-identity.ts`,
+    from: "     WHERE NOT EXISTS (SELECT 1 FROM pin_file_refs pr WHERE pr.pin_id = p.id)\n     ORDER BY p.id`);",
+    to: "     ORDER BY p.id`);",
+    test: `${SERVER}/test/skeleton-identity.test.ts`,
+    because:
+      "every start walks every pin on the hub, and a renamed pin's current " +
+      "name is re-derived as if it were the only one it ever had",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -9932,6 +10053,7 @@ interface Outcome {
  * PRINTS: packages/server/test/session-reap-liveness.test.ts 1
  * PRINTS: packages/server/test/session-reaper.test.ts 2
  * PRINTS: packages/server/test/sessions.test.ts 1
+ * PRINTS: packages/server/test/skeleton-identity.test.ts 11
  * PRINTS: packages/server/test/solved-counts.test.ts 1
  * PRINTS: packages/server/test/solved-cross-repo.test.ts 4
  * PRINTS: packages/server/test/solved-fanout.test.ts 2

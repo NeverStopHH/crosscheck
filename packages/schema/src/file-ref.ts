@@ -102,3 +102,24 @@ export const fileRef = (repoIdentity: string, canonicalPath: string): string => 
     .update([FILE_REF_DOMAIN, repoIdentity, canonicalPath].join("\n"))
     .digest("hex");
 };
+
+/**
+ * WHY A PIN'S IDENTITY HISTORY HOLDS A NULL (§3.3e) — enum, never prose. A
+ * NULL row never matches a touch, so an equality join would read it as "no
+ * pin references this"; the retention sweep reads it as UNRESOLVED instead
+ * and keeps every file-bearing session of the pin's repo, and `doctor` names
+ * the pin so a person can repair or retire it.
+ */
+export const PIN_FILE_REF_UNRESOLVED_REASONS = [
+  /** The stored path has no canonical spelling — a legacy row from before the door. */
+  "path_not_canonical",
+  /**
+   * The pin was renamed before its hub kept rename history, so the names it
+   * watched before are gone and the sessions that touched them cannot be
+   * found from anything the hub still holds.
+   */
+  "rename_history_unrecorded",
+] as const;
+
+export type PinFileRefUnresolvedReason =
+  (typeof PIN_FILE_REF_UNRESOLVED_REASONS)[number];

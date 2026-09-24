@@ -660,4 +660,44 @@ describe("bootstrap.sql DDL sync", () => {
     // assert a failure belonging to a run nobody can look up.
     expect(bootstrapSql).toContain("REFERENCES ci_runs(id) ON DELETE CASCADE");
   });
+
+  test("01a's identity columns reach an EXISTING hub, by ALTER", async () => {
+    // A column only in a CREATE TABLE IF NOT EXISTS is a column no hub that
+    // already has session_events will ever get, and no fresh-harness test
+    // can see the difference — so the SQL is read as text.
+    const bootstrapSql = await Bun.file(BOOTSTRAP_SQL_URL).text();
+
+    // Assert
+    for (const fragment of [
+      "ALTER TABLE session_events ADD COLUMN IF NOT EXISTS provider text;",
+      "ALTER TABLE session_events ADD COLUMN IF NOT EXISTS work_context_id text;",
+      "ALTER TABLE session_events ADD COLUMN IF NOT EXISTS file_ref text;",
+      "CREATE TABLE IF NOT EXISTS pin_file_refs",
+      "pin_id text NOT NULL REFERENCES pins(id)",
+    ]) {
+      expect(bootstrapSql, fragment).toContain(fragment);
+    }
+  });
+
+  test("01a's identity indexes really exist after a bootstrap", async () => {
+    // Arrange — the pin root's join and the one-NULL-per-pin rule both live
+    // in indexes; asked of the database, which only ever saw the SQL.
+    const harness = await createTestHarness();
+
+    // Act
+    const rows = await harness.db.execute(
+      sql`SELECT indexname AS i, indexdef AS d FROM pg_indexes WHERE indexname IN ('session_events_file_ref_idx', 'pin_file_refs_pin_ref_idx', 'pin_file_refs_unresolved_idx', 'pin_file_refs_file_ref_idx') ORDER BY indexname`,
+    );
+
+    // Assert
+    expect(rows.rows.map((row) => String(row["i"]))).toEqual([
+      "pin_file_refs_file_ref_idx",
+      "pin_file_refs_pin_ref_idx",
+      "pin_file_refs_unresolved_idx",
+      "session_events_file_ref_idx",
+    ]);
+    const unresolved = rows.rows.find((row) => row["i"] === "pin_file_refs_unresolved_idx");
+    expect(String(unresolved?.["d"])).toContain("UNIQUE");
+    expect(String(unresolved?.["d"])).toContain("WHERE (file_ref IS NULL)");
+  });
 });
