@@ -30,7 +30,10 @@
  */
 import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { DELIVERY_CHANNELS } from "@crosscheck/schema";
-import type { DeliveryChannel } from "@crosscheck/schema";
+import type {
+  DeliveryChannel,
+  PilotUnavailableReason,
+} from "@crosscheck/schema";
 
 import {
   GHOST_MIN_SHARED_TARGETS,
@@ -65,25 +68,6 @@ interface Deps {
 
 const MS_PER_DAY = 86_400_000;
 const PER_HUNDRED = 100;
-
-/**
- * WHY A FIGURE COULD NOT BE MEASURED — an enum, so a renderer never invents
- * the reason and a reader always learns which of several absences it was.
- */
-export const PILOT_UNAVAILABLE_REASONS = [
-  /** The repo is not enrolled, or the surface counted nothing — never "missed 0". */
-  "not_instrumented",
-  /** A ghost line repeats for as long as the overlap lasts and is never recorded as a delivery. */
-  "ghost_lines_not_recorded",
-  /** No CI reporter writes to this hub, so no regression can be observed. */
-  "no_ci_reporter",
-  /** A per-100 rate over zero sessions. */
-  "no_sessions",
-  /** Nothing was flagged, so nothing can have landed. */
-  "nothing_flagged",
-] as const;
-
-export type PilotUnavailableReason = (typeof PILOT_UNAVAILABLE_REASONS)[number];
 
 export type Figure =
   | { readonly kind: "measured"; readonly value: number }

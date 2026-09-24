@@ -219,6 +219,30 @@ export const DELIVERY_CHANNELS = [
 ] as const;
 
 /**
+ * WHY A PILOT FIGURE COULD NOT BE MEASURED (1.0 spec 07 §5) — an enum, so a
+ * renderer never invents the reason and a reader always learns which of
+ * several absences it was.
+ *
+ * HERE, not in the hub's report service, because both halves need the same
+ * words: the hub decides which reason applies, the CLI turns each into the
+ * sentence a person reads. A second copy in the connector would be a second
+ * list to fall out of step, and a reason one side knows and the other does not
+ * is exactly the unexplained gap this vocabulary exists to prevent.
+ */
+export const PILOT_UNAVAILABLE_REASONS = [
+  /** The repo is not enrolled, or the surface counted nothing — never "missed 0". */
+  "not_instrumented",
+  /** A ghost line repeats for as long as the overlap lasts and is never recorded as a delivery. */
+  "ghost_lines_not_recorded",
+  /** No CI reporter writes to this hub, so no regression can be observed. */
+  "no_ci_reporter",
+  /** A per-100 rate over zero sessions. */
+  "no_sessions",
+  /** Nothing was flagged, so nothing can have landed. */
+  "nothing_flagged",
+] as const;
+
+/**
  * What the HUB may hold. "both" is derived on ingest — never sent — when the
  * same (context, kind, value) arrives from the other lane: the primary key
  * collapses the two rows into one, and without this third value whichever
@@ -337,3 +361,5 @@ export type SuspectOutcome = (typeof SUSPECT_OUTCOMES)[number];
 export type PilotMark = (typeof PILOT_MARKS)[number];
 export type PilotMarkRefKind = (typeof PILOT_MARK_REF_KINDS)[number];
 export type PilotEndReason = (typeof PILOT_END_REASONS)[number];
+export type PilotUnavailableReason =
+  (typeof PILOT_UNAVAILABLE_REASONS)[number];

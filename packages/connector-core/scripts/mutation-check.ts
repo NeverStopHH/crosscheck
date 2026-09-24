@@ -8372,6 +8372,232 @@ export const MUTATIONS: readonly Mutation[] = [
       "getting worse",
   },
   {
+    // 07 §3.4. Rename detection prints only the new name, so the named path vanishes from the diff.
+    label: "a fix that renamed the named file is scored a miss",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "      \"--no-renames\",",
+    to: "      \"--find-renames\",",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "proof 3 marks a right attribution wrong whenever the fix moved the file " +
+      "it named, and the accuracy figure falls for the teams that refactor as " +
+      "they repair",
+  },
+  {
+    // 07 §3.4. git quotes a non-ASCII path in newline output; the quoted spelling never matches.
+    label: "a named file with a non-ASCII name never matches its fix",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "      \"-z\",",
+    to: "      \"--no-color\",",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "every attribution naming a file with an umlaut, a CJK name or an accent " +
+      "scores as a miss, so proof 3 is wrong in a direction nobody would think " +
+      "to look for",
+  },
+  {
+    // 07 §3.4. Past the bound a fix touches the named file by accident.
+    label: "a sweeping clean-up scores as a hit",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "  if (changed.length > PILOT_FIX_DIFF_MAX_FILES) {",
+    to: "  if (changed.length > PILOT_FIX_DIFF_MAX_FILES * 10) {",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "a vendored drop or a formatter run that also fixed the bug counts as the " +
+      "attribution being right, rewarding the answer for the size of the fix",
+  },
+  {
+    // 07 §3.4. The ids come off the wire; `--output=<file>` is a real git diff option.
+    label: "a hub-chosen string reaches this machine's git command line",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "    !COMMIT_SHA_PATTERN.test(range.brokenCommit) ||",
+    to: "    range.brokenCommit.length === 0 ||",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "a hub answer shaped like a flag makes `crosscheck pilot` write a file on " +
+      "the reader's machine and score the empty stdout as an empty range",
+  },
+  {
+    // 07 §3.4. Nothing changed between the verifications: the break was not in the searched code.
+    label: "an empty fix range is scored",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "  if (changed.length === 0) {\n    return \"empty\";",
+    to: "  if (changed.length === -1) {\n    return \"empty\";",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "an environmental break — a flag, a deploy, data — counts as a miss " +
+      "against the answer, which blames the attribution for something no code " +
+      "change could have fixed",
+  },
+  {
+    // 07 §3.4. An answer that named no file has nothing to be right or wrong about.
+    label: "an answer that named no file is scored a miss",
+    file: `${CORE}/src/git/fix-diff.ts`,
+    from: "    range.namedFiles.length === 0",
+    to: "    range.namedFiles.length === -1",
+    test: `${CORE}/test/fix-diff.test.ts`,
+    because:
+      "hub-side data gaps become misses, so proof 3 punishes the product for " +
+      "evidence it never had",
+  },
+  {
+    // 07 §5. The pilot parse is STRICT: a count that did not arrive must not read as zero.
+    label: "a missing pilot count is read as zero",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "    surfaced: CountSchema,",
+    to: "    surfaced: CountSchema.default(0),",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because:
+      "a hub that dropped a field prints `surfaced 0` beside a real `opened 74`, " +
+      "an unmeasured figure looking like a measured one on the report that " +
+      "decides whether the product works",
+  },
+  {
+    // 07 PIL-4 at the client: `{}` is a surface that answered nothing, `null` one nobody counted.
+    label: "an uninstrumented surface arrives as an empty record",
+    file: `${CORE}/src/http/pilot.ts`,
+    from: "      counters: z.record(z.string(), CountSchema).nullable(),",
+    to: "      counters: z.record(z.string(), CountSchema).nullable().transform((value) => value ?? {}),",
+    test: `${CORE}/test/pilot-client.test.ts`,
+    because:
+      "every surface nobody counted prints `missed 0`, which is AT-9's exact " +
+      "confusion — an uninstrumented surface looking like a perfect one",
+  },
+  {
+    // 07 PIL-1. A bucket that reads zero really had none; dropping it hides a channel.
+    label: "an empty channel bucket is left off the report",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  return `${INDENT}by channel: ${[...known, ...extra].map(cell).join(\" · \")}`;",
+    to: "  return `${INDENT}by channel: ${[...known, ...extra].filter((channel) => byChannel[channel] !== 0).map(cell).join(\" · \")}`;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "a channel that delivered nothing disappears instead of reading zero, so " +
+      "a reader cannot tell a quiet tripwire from one that was never counted",
+  },
+  {
+    // 07 PIL-1. A known channel the hub did not send is not a zero.
+    label: "a channel the hub did not report reads as zero",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "      ? `${bareUntrusted(channel)} not reported`",
+    to: "      ? `${bareUntrusted(channel)} 0`",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "version skew between hub and client prints a measured-looking zero for " +
+      "a channel nobody counted",
+  },
+  {
+    // 07 PIL-2. A bare opened count is the counterfactual claim without the counterfactual.
+    label: "an opened count prints with no prior work named",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  const unnamed = work.opened > 0 && work.priorWork.length === 0;",
+    to: "  const unnamed = work.opened < 0;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "proof 1 claims duplicate work was surfaced and opened without naming a " +
+      "single piece of the work it says was duplicated",
+  },
+  {
+    // 07 PIL-4. `value ?? 0` at the render.
+    label: "a surface nobody counted prints `missed 0`",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    return [`${INDENT}${name}: not instrumented — it counted nothing in this window`];",
+    to: "    return [`${INDENT}${name}: answers 0 · qualifier required 0 · emitted 0 · missed 0`];",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "an uninstrumented answer surface reads as one that never missed a " +
+      "qualifier, which is the product grading itself perfect on what it did " +
+      "not measure",
+  },
+  {
+    // 07 §5. An unavailable figure prints its reason, never a digit.
+    label: "an unavailable figure prints as zero",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    ? `${label} unavailable — ${REASON_SENTENCE[value.reason]}`",
+    to: "    ? `${label} 0`",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "`ghost 0` and `ci regressed 0` print where nothing was recorded, and a " +
+      "reader concludes there were no ghost collisions and no regressions",
+  },
+  {
+    // 07 §5. A reason a newer hub knows is printed as the word.
+    label: "a reason this client has no sentence for is hidden",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    : `${label} unavailable (${bareUntrusted(value.reason)})`;",
+    to: "    : `${label} unavailable`;",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "the reader learns that a figure is missing but never which absence it " +
+      "was, which is the one thing the reason vocabulary exists to say",
+  },
+  {
+    // 07 §3.4. Empty, too-broad and unresolvable fixes are statements that no verdict exists.
+    label: "an unscorable fix is counted as a miss",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    `${INDENT}hit ${count(tally(view.fixes, \"hit\"))} · miss ${count(tally(view.fixes, \"miss\"))} ·",
+    to: "    `${INDENT}hit ${count(tally(view.fixes, \"hit\"))} · miss ${count(view.fixes.length - tally(view.fixes, \"hit\"))} ·",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "a fix range this clone never fetched counts against the attribution, so " +
+      "proof 3 falls on any machine that is behind the default branch",
+  },
+  {
+    // 07 §3.6, D2. Figures over a repo nobody enrolled are measuring it anyway.
+    label: "a repo nobody enrolled is shown figures",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  if (!report.enrolled) {",
+    to: "  if (report.days < 0) {",
+    test: `${CLI}/test/pilot-render.test.ts`,
+    because:
+      "an un-enrolled repo prints a page of zeros that reads as a measurement, " +
+      "on a team that never agreed to be measured",
+  },
+  {
+    // 07 §5. `--json` reaches an agent through Bash exactly as the text form does.
+    label: "--json hands a teammate's text over raw",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    return jsonSafe(value);",
+    to: "    return value;",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "a title carrying a bidi override or an instruction reaches whatever agent " +
+      "ran `crosscheck pilot --json`, uncleaned and unframed — the injection path " +
+      "the corpus closes, reopened by a flag",
+  },
+  {
+    // 07 §5. A `"` serializes as `\"`, and a backslash is how text smuggles an escape.
+    label: "--json output contains a backslash escape",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "    .replaceAll('\"', \"'\")",
+    to: "    .replaceAll('\"', '\"')",
+    test: `${CORE}/test/render-surface-registry.test.ts`,
+    because:
+      "a title with a quote in it puts an escape sequence into an agent's " +
+      "context, the character class no renderer here is allowed to emit",
+  },
+  {
+    // 07 §8.4. Refused by name: a silent absence would invite someone to build it.
+    label: "a per-developer breakdown is silently accepted",
+    file: `${CLI}/src/cli/pilot.ts`,
+    from: "  if (argv.includes(PILOT_FLAG_BY_DEVELOPER)) {",
+    to: "  if (argv.includes(\"--by-person\")) {",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "`--by-developer` quietly prints the repo report, so the refusal of " +
+      "employee measurement looks like a missing feature somebody should add",
+  },
+  {
+    // 07 §5. The window is whole days; anything else is a usage error before the hub is asked.
+    label: "a malformed window reaches the hub",
+    file: `${CLI}/src/cli/pilot.ts`,
+    from: "const WHOLE_DAYS = /^[1-9]\\d*$/;",
+    to: "const WHOLE_DAYS = /^.+$/;",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "`--days two` asks the hub for NaN days and prints its validation error " +
+      "instead of the usage line that says what the flag takes",
+  },
+  {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
     // delivery reached was interrupted by it.
     label: "anybody may call somebody else's delivery noise",
@@ -8744,6 +8970,8 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
+ * PRINTS: packages/cli/test/pilot-cli.test.ts 3
+ * PRINTS: packages/cli/test/pilot-render.test.ts 8
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
  * PRINTS: packages/cli/test/pins-cli.test.ts 3
  * PRINTS: packages/cli/test/revalidate-cli.test.ts 1
@@ -8822,6 +9050,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/derive-capability-registry.test.ts 1
  * PRINTS: packages/connector-core/test/end-session-seq.test.ts 2
  * PRINTS: packages/connector-core/test/evidence-axes-render.test.ts 1
+ * PRINTS: packages/connector-core/test/fix-diff.test.ts 6
  * PRINTS: packages/connector-core/test/ghost-declare.test.ts 1
  * PRINTS: packages/connector-core/test/ghost-render.test.ts 2
  * PRINTS: packages/connector-core/test/git-lane-cost.test.ts 1
@@ -8843,12 +9072,13 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/mcp-tools.test.ts 2
  * PRINTS: packages/connector-core/test/model-answer.test.ts 2
  * PRINTS: packages/connector-core/test/model-seam.test.ts 4
+ * PRINTS: packages/connector-core/test/pilot-client.test.ts 2
  * PRINTS: packages/connector-core/test/pin-sweep.test.ts 2
  * PRINTS: packages/connector-core/test/precision-corpus.test.ts 1
  * PRINTS: packages/connector-core/test/question-delivery.test.ts 1
  * PRINTS: packages/connector-core/test/question-tools.test.ts 3
  * PRINTS: packages/connector-core/test/register-seq.test.ts 3
- * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 4
+ * PRINTS: packages/connector-core/test/render-surface-registry.test.ts 5
  * PRINTS: packages/connector-core/test/repo-ssh-determinism.test.ts 2
  * PRINTS: packages/connector-core/test/search-who-when.test.ts 1
  * PRINTS: packages/connector-core/test/secret-scan.test.ts 1

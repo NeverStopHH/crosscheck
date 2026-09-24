@@ -840,22 +840,6 @@ export const PILOT_TARGET_HELPFUL_PER_100_SESSIONS = 8;
 export const PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100 = 20;
 
 /**
- * How many files one repair's diff may name.
- *
- * MATCHED TO `PIN_SWEEP_MAX_PATHS` by name: both bound "how much of a
- * repository one answer may walk", and the sweep already settled what that
- * costs. The diff runs in the CLI — the hub holds no repository and never
- * runs git.
- *
- * The match is CHECKED, not asserted in prose. The two constants live in
- * different packages, so nothing but this notices the day one of them moves:
- *
- * VERIFY: bun -e 'const s=await import("./packages/server/src/constants.ts");const c=await import("./packages/connector-core/src/constants.ts");console.log(s.PILOT_FIX_DIFF_MAX_FILES === c.PIN_SWEEP_MAX_PATHS)'
- * PRINTS: true
- */
-export const PILOT_FIX_DIFF_MAX_FILES = 200;
-
-/**
  * How many opened pointers proof 1 NAMES (07 §5, PIL-2).
  *
  * Every opened count is printed beside the prior work it named, because a

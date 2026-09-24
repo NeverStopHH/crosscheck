@@ -117,7 +117,7 @@ jobs:
     # written by hand after that.
     #
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");console.log(MUTATIONS.length)'
-    # PRINTS: 584
+    # PRINTS: 604
     #
     # Both renderers are covered, and the split is not even — the newer surface
     # prints far more author-written text than the briefing does. Grouping by
@@ -127,6 +127,8 @@ jobs:
     # VERIFY: bun -e 'const {MUTATIONS}=await import("./packages/connector-core/scripts/mutation-check.ts");const m=new Map();for(const x of MUTATIONS)m.set(x.file,(m.get(x.file)??0)+1);for(const [k,v] of [...m].sort())console.log(k.replace("packages/connector-core/src/","").replace("packages/connector-claude/src/",""),v)'
     # PRINTS: packages/cli/src/cli/conference.ts 10
     # PRINTS: packages/cli/src/cli/doctor.ts 33
+    # PRINTS: packages/cli/src/cli/pilot-render.ts 10
+    # PRINTS: packages/cli/src/cli/pilot.ts 2
     # PRINTS: packages/cli/src/cli/pin-observability.ts 1
     # PRINTS: packages/cli/src/cli/pin-render.ts 3
     # PRINTS: packages/cli/src/cli/revalidate.ts 2
@@ -190,6 +192,7 @@ jobs:
     # PRINTS: flows/register-session.ts 2
     # PRINTS: flows/solved-hint.ts 4
     # PRINTS: git/claim-drift.ts 5
+    # PRINTS: git/fix-diff.ts 6
     # PRINTS: git/pin-sweep.ts 2
     # PRINTS: git/ssh-hostname.ts 2
     # PRINTS: hints/delivery.ts 1
@@ -200,6 +203,7 @@ jobs:
     # PRINTS: http/coverage.ts 1
     # PRINTS: http/hub.ts 5
     # PRINTS: http/latency.ts 1
+    # PRINTS: http/pilot.ts 2
     # PRINTS: http/verdict.ts 1
     # PRINTS: kit.ts 1
     # PRINTS: mcp/render-intent-chain.ts 1
@@ -345,6 +349,7 @@ jobs:
     # PRINTS: exempt-surfaces.ts 2
     # PRINTS: fd-io.ts 1
     # PRINTS: file-edit.ts 3
+    # PRINTS: fix-diff.ts 6
     # PRINTS: gate.ts 7
     # PRINTS: gates.ts 1
     # PRINTS: ghost-overlap.ts 4
@@ -368,8 +373,9 @@ jobs:
     # PRINTS: parse.ts 2
     # PRINTS: payload.ts 1
     # PRINTS: pilot-mark.ts 1
+    # PRINTS: pilot-render.ts 10
     # PRINTS: pilot-report.ts 10
-    # PRINTS: pilot.ts 16
+    # PRINTS: pilot.ts 20
     # PRINTS: pin-observability.ts 1
     # PRINTS: pin-render.ts 3
     # PRINTS: pin-sweep.ts 2

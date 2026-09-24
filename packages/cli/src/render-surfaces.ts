@@ -20,6 +20,8 @@ import { pinStatusLines } from "./cli/pin-observability.ts";
 import { renderSuspect } from "./cli/suspect-render.ts";
 import { verdictLines } from "./cli/verdict-render.ts";
 import { hubFailureLine } from "./cli/revalidate.ts";
+import { pilotFailureLine, pilotJson, renderPilot } from "./cli/pilot-render.ts";
+import type { PilotView } from "./cli/pilot-render.ts";
 import { quotingText } from "@crosscheck/connector-core/mcp/render.ts";
 import type { VerdictView } from "@crosscheck/connector-core/http/verdict.ts";
 
@@ -204,6 +206,72 @@ const suspectWith = (payload: string): SuspectView => ({
   verdict: verdictWith(payload),
 });
 
+/**
+ * A pilot report with the payload in EVERY slot the wire can fill: the title
+ * (the one author-written span), and also the repo, a channel key, every
+ * reason word, a surface name, a counter key and the ids. Every figure is
+ * `unavailable` with the payload as its reason, so the "printed as the word"
+ * branch — the one a newer hub reaches — is in the corpus rather than only
+ * written.
+ */
+const pilotWith = (payload: string): PilotView => {
+  const unavailable = { kind: "unavailable" as const, reason: payload };
+  const repair = {
+    pinId: payload,
+    repairPinId: payload,
+    brokenCommit: payload,
+    repairCommit: payload,
+    namedFiles: [payload],
+  };
+  return {
+    report: {
+      repo: payload,
+      enrolled: true,
+      sinceIso: payload,
+      untilIso: payload,
+      days: 56,
+      sessionSet: { used: 1, cap: 50, refused: 1, spanned: 1, restarted: 1, notRecorded: 1 },
+      duplicateWork: {
+        surfaced: 3,
+        opened: 1,
+        converged: 1,
+        byChannel: { briefing: 1, [payload]: 1 },
+        priorWork: [{ workContextId: payload, title: payload, openedBySessions: 1 }],
+        priorWorkBeyondList: 1,
+        openedAnyway: 1,
+      },
+      collisions: {
+        tripwireFlagged: unavailable,
+        ghostFlagged: unavailable,
+        bothLanded: unavailable,
+        ciRegressed: unavailable,
+      },
+      attribution: {
+        answers: 1,
+        attributions: 1,
+        excluded: 1,
+        repaired: [repair],
+        repairedBeyondBound: 1,
+        noRepairYet: 1,
+      },
+      precision: {
+        sessions: 1,
+        openedPer100: unavailable,
+        openedTargetPer100: 8,
+        offTargetMarks: 1,
+        offTargetPer100: unavailable,
+        offTargetCeilingPer100: 20,
+        surfaceOkMarks: 1,
+      },
+      integrity: [
+        { surface: payload, counters: { answers_emitted: 1, [payload]: 1 } },
+        { surface: payload, counters: null },
+      ],
+    },
+    fixes: [{ repair, outcome: "unresolvable" }],
+  };
+};
+
 export const RENDER_SURFACES: readonly RenderSurface[] = [
   {
     kind: "corpus",
@@ -331,6 +399,43 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     // the single span on the surface that a teammate wrote.
     render: (payload) =>
       quotingText(...verdictLines(verdictWith(payload), NOW)),
+  },
+  {
+    kind: "corpus",
+    name: "cli-pilot",
+    delivery: "pulled",
+    module: "src/cli/pilot-render.ts",
+    framing: "framed",
+    // 07 §5, THE ARRAY TAIL after `cli-verdict`, last of the eight specs. A
+    // person typed it and is waiting, so `pulled`. FRAMED because proof 1
+    // names the prior work each opened pointer pointed at, and that is a
+    // teammate's title — planted here in the title slot, the most exposed
+    // one, and in every other slot the wire can fill: repo, channel key,
+    // reason word, surface name, counter key and ids. The document carries
+    // the not-enrolled form and all three failure lines too, so no sentence
+    // this module writes goes unattacked.
+    render: (payload) => {
+      const view = pilotWith(payload);
+      return [
+        renderPilot(view),
+        renderPilot({ ...view, report: { ...view.report, enrolled: false } }),
+        pilotFailureLine("network", payload),
+        pilotFailureLine("malformed", payload),
+        pilotFailureLine("http", payload),
+      ].join("\n");
+    },
+  },
+  {
+    kind: "corpus",
+    name: "cli-pilot-json",
+    delivery: "pulled",
+    module: "src/cli/pilot-render.ts",
+    // `--json` reaches an agent that ran the command through Bash exactly as
+    // the text form does, so it is attacked too. SANITIZED, not framed: JSON
+    // has no frame, so the class is the character invariants and no « » at
+    // all — every string, keys included, cleaned before it is serialized.
+    framing: "sanitized",
+    render: (payload) => pilotJson(pilotWith(payload)),
   },
 ];
 
