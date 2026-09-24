@@ -42,7 +42,7 @@
  * PRINTS: 1
  */
 import { and, asc, eq, gte, inArray, lt, notInArray, sql } from "drizzle-orm";
-import { DELIVERY_CHANNELS } from "@crosscheck/schema";
+import { DELIVERY_CHANNELS, TRIPWIRE_ASKING_HOSTS } from "@crosscheck/schema";
 import type {
   DeliveryChannel,
   PilotUnavailableReason,
@@ -416,8 +416,22 @@ const readCollisions = async (
       AND hd.delivered_at >= ${since.toISOString()}::timestamptz
       AND hd.delivered_at < ${until.toISOString()}::timestamptz`);
   const flagged = rows.rows[0]?.flagged ?? 0;
+  // WAS ANY SESSION ABLE TO ASK? A repo whose window held only Cursor or ACP
+  // sessions has a tripwire count of zero by construction; printed as a
+  // measured 0 it read as "no collisions", which §8.6 and PIL-8 refuse.
+  const askers = await deps.db.execute<{ n: number }>(sql`
+    SELECT count(*)::int AS n FROM agent_sessions s
+    WHERE s.repo = ${repo}
+      AND s.agent_kind IN (${sql.join(
+        TRIPWIRE_ASKING_HOSTS.map((host) => sql`${host}`),
+        sql`, `,
+      )})
+      AND s.started_at < ${until.toISOString()}::timestamptz
+      AND COALESCE(s.ended_at, s.reaped_at, 'infinity'::timestamptz)
+          >= ${since.toISOString()}::timestamptz`);
+  const couldAsk = (askers.rows[0]?.n ?? 0) > 0;
   return {
-    tripwireFlagged: measured(flagged),
+    tripwireFlagged: couldAsk ? measured(flagged) : unavailable("no_asking_host"),
     ghostFlagged: unavailable("ghost_lines_not_recorded"),
     bothLanded:
       flagged === 0

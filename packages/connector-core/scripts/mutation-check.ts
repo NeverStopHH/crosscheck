@@ -9174,6 +9174,18 @@ export const MUTATIONS: readonly Mutation[] = [
       "whether that ref was shown to them — a per-person history",
   },
   {
+    // 07 §8.6, PIL-8, corrected by adversarial review. Zero asks from sessions
+    // that could not ask is not a measurement of collisions.
+    label: "a repo with no asking host reads a measured tripwire zero",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    tripwireFlagged: couldAsk ? measured(flagged) : unavailable(\"no_asking_host\"),",
+    to: "    tripwireFlagged: measured(flagged),",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a team working only in Cursor or through ACP reads \"tripwire 0\" as no " +
+      "collisions, when no session in the window could have asked at all",
+  },
+  {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
     // delivery reached was interrupted by it.
     label: "anybody may call somebody else's delivery noise",
@@ -9710,7 +9722,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7
  * PRINTS: packages/server/test/pilot-marks.test.ts 8
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
- * PRINTS: packages/server/test/pilot-report.test.ts 18
+ * PRINTS: packages/server/test/pilot-report.test.ts 19
  * PRINTS: packages/server/test/pilot-retention.test.ts 4
  * PRINTS: packages/server/test/pilot-sessions.test.ts 5
  * PRINTS: packages/server/test/pins.test.ts 4

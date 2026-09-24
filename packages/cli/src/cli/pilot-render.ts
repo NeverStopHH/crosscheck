@@ -70,6 +70,7 @@ const REASON_SENTENCE: Readonly<Record<PilotUnavailableReason, string>> = {
   no_ci_reporter: "no CI reporter writes to this hub",
   no_sessions: "no sessions in this window",
   nothing_flagged: "nothing was flagged",
+  no_asking_host: "no session in this window ran on a host that can ask before an edit",
 };
 
 const isKnownReason = (reason: string): reason is PilotUnavailableReason =>

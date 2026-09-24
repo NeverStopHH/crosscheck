@@ -322,6 +322,44 @@ describe("proof 2 — collisions", () => {
     });
   });
 
+  test("a repo whose window held no session able to ask reads unavailable, not zero", async () => {
+    // Arrange — only a Cursor session (found by adversarial review: this was
+    // a measured 0, which reads as "no collisions")
+    const world = await setup();
+    await world.harness.db.insert(agentSessions).values({
+      id: "s_cursor",
+      developerId: world.developer.developerId,
+      agentKind: "cursor-ide",
+      repo: REPO,
+      branch: "main",
+      baseCommit: "abc1234",
+      status: "implementing",
+      startedAt: at(10),
+      lastHeartbeatAt: at(10),
+    });
+
+    // Act
+    const out = await report(world);
+
+    // Assert
+    expect(out.collisions.tripwireFlagged).toEqual({
+      kind: "unavailable",
+      reason: "no_asking_host",
+    });
+  });
+
+  test("a session that could ask and was never flagged is a measured zero", async () => {
+    // Arrange
+    const world = await setup();
+    await session(world, "s_claude", 10);
+
+    // Act & Assert — here zero means zero
+    expect((await report(world)).collisions.tripwireFlagged).toEqual({
+      kind: "measured",
+      value: 0,
+    });
+  });
+
   test("a tripwire flag whose two sides both landed is counted", async () => {
     // Arrange — the receiving session's work and the flagged work both
     // reached the default branch: the collision really happened.
