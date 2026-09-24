@@ -242,6 +242,34 @@ describe("crosscheck pilot", () => {
     expect(parsed.fixes).toHaveLength(25);
   });
 
+  test("--json never needs a backslash, and keys that clean alike keep both values", async () => {
+    // Arrange — a hostile hub: a lone surrogate in a title, and two channel
+    // keys that differ only by an invisible character (adversarial review)
+    answer = () => {
+      const base = report();
+      const work = base.duplicateWork as Record<string, unknown>;
+      return {
+        ...base,
+        duplicateWork: {
+          ...work,
+          byChannel: { ...(work.byChannel as Record<string, number>), briefing: 3, "briefing\u200b": 7 },
+          priorWork: [{ workContextId: "wc_1", title: "Fix \ud800 playback", openedBySessions: 1 }],
+        },
+      };
+    };
+
+    // Act
+    const result = await run(["--json"]);
+    const parsed = JSON.parse(result.stdout) as {
+      report: { duplicateWork: { byChannel: Record<string, number> } };
+    };
+
+    // Assert
+    expect(result.stdout).not.toContain("\\");
+    expect(Object.values(parsed.report.duplicateWork.byChannel)).toContain(7);
+    expect(Object.values(parsed.report.duplicateWork.byChannel)).toContain(3);
+  });
+
   test("--by-developer is refused by name, and nothing is asked", async () => {
     // Arrange — §8.4: a silent absence would invite someone to build one.
     requested = [];

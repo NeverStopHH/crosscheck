@@ -18,8 +18,10 @@
  * A PERSON AT A TERMINAL, never an agent (D3). An agent calling the product's
  * own interventions off-target would be the product grading itself, and the
  * number would measure the model's taste. The gate is the same TTY evidence
- * `crosscheck pin` uses, with the same stated limit; the hub stamps what it
- * is worth.
+ * `crosscheck pin` uses, with the same stated limit: it is EVIDENCE, not
+ * proof — a pty wrapper passes it, and the raw key can post the route — so
+ * what it buys is that an agent cannot do this by accident or by default, and
+ * that every mark that does arrive names the person whose key sent it.
  */
 import {
   EXIT_FAIL,

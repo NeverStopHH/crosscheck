@@ -267,8 +267,15 @@ const sessionSetLines = (report: PilotReport): readonly string[] => {
  * So the one printable character JSON escapes becomes `'` before it gets the
  * chance, and the output never needs a backslash at all.
  */
+/**
+ * A lone surrogate is replaced too: `JSON.stringify` writes one as `\ud800`,
+ * which is the backslash escape this output promises never to contain
+ * (found by adversarial review).
+ */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 const jsonSafe = (raw: string): string =>
-  sanitizeUntrusted(raw, MAX_PIN_PATH_CHARS)
+  sanitizeUntrusted(raw.replace(LONE_SURROGATE, "\uFFFD"), MAX_PIN_PATH_CHARS)
     .replaceAll('"', "'")
     .replaceAll("\\", "");
 
@@ -280,11 +287,20 @@ const cleanDeep =(value: unknown): unknown => {
     return value.map(cleanDeep);
   }
   if (value !== null && typeof value === "object") {
+    // TWO KEYS THAT CLEAN TO ONE must not overwrite each other: a count that
+    // arrived would read as the other key's zero (found by adversarial
+    // review). The later one keeps its value under a numbered name.
+    const seen = new Set<string>();
     return Object.fromEntries(
-      Object.entries(value).map(([key, inner]) => [
-        jsonSafe(key),
-        cleanDeep(inner),
-      ]),
+      Object.entries(value).map(([key, inner]) => {
+        const base = jsonSafe(key);
+        let name = base;
+        for (let copy = 2; seen.has(name); copy += 1) {
+          name = `${base} #${String(copy)}`;
+        }
+        seen.add(name);
+        return [name, cleanDeep(inner)];
+      }),
     );
   }
   return value;

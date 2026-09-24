@@ -9186,6 +9186,28 @@ export const MUTATIONS: readonly Mutation[] = [
       "collisions, when no session in the window could have asked at all",
   },
   {
+    // 07 §5, corrected. `--json` promises no backslash escape, lone surrogates included.
+    label: "a lone surrogate reaches --json as an escape",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "  sanitizeUntrusted(raw.replace(LONE_SURROGATE, \"\\uFFFD\"), MAX_PIN_PATH_CHARS)",
+    to: "  sanitizeUntrusted(raw, MAX_PIN_PATH_CHARS)",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "`JSON.stringify` writes an unpaired surrogate as `\\\\ud800`, the escape class " +
+      "no renderer here may hand an agent",
+  },
+  {
+    // 07 §5, corrected. Two keys that clean alike keep both values.
+    label: "a cleaned key overwrites a count that arrived",
+    file: `${CLI}/src/cli/pilot-render.ts`,
+    from: "        for (let copy = 2; seen.has(name); copy += 1) {",
+    to: "        for (let copy = 2; seen.has(name) && copy < 0; copy += 1) {",
+    test: `${CLI}/test/pilot-cli.test.ts`,
+    because:
+      "a count the hub sent reads as another key's zero in --json, which is the " +
+      "strict parse's own rule broken one step later",
+  },
+  {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
     // delivery reached was interrupted by it.
     label: "anybody may call somebody else's delivery noise",
@@ -9559,7 +9581,7 @@ interface Outcome {
  * PRINTS: packages/cli/test/doctor.test.ts 1
  * PRINTS: packages/cli/test/e2e/remote-login.e2e.test.ts 1
  * PRINTS: packages/cli/test/ghost-cost.test.ts 1
- * PRINTS: packages/cli/test/pilot-cli.test.ts 4
+ * PRINTS: packages/cli/test/pilot-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-mark-cli.test.ts 6
  * PRINTS: packages/cli/test/pilot-render.test.ts 8
  * PRINTS: packages/cli/test/pin-observability.test.ts 1
