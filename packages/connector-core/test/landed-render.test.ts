@@ -47,7 +47,7 @@ const missingOnly = (commits: readonly LandedCommit[], moreMissing = false): Lan
   recent: [],
   moreMissing,
   unchecked: [],
-  key: null,
+  cleanKey: null,
 });
 
 describe("a landed change the checkout is missing", () => {
@@ -137,7 +137,7 @@ describe("a recent landed change the checkout already has", () => {
       recent: [commit({ landedAt: new Date("2026-09-23T12:00:00Z") })],
       moreMissing: false,
       unchecked: [],
-      key: null,
+      cleanKey: null,
     };
 
     // Act

@@ -203,23 +203,36 @@ export interface MissingAnswer {
   readonly isCapped: boolean;
 }
 
+export interface MissingQuery {
+  readonly cherryPick: boolean;
+  readonly headSha: string;
+  /** Commits whose whole ancestry is excluded inside git — a merge's heads. */
+  readonly exclude?: readonly string[];
+  /** Commits git returns at most; "possibly more" is measured against it. */
+  readonly limit?: number;
+}
+
 /**
  * Commits on `ref` touching the file that HEAD neither has nor (unless the
- * clone is partial) has an equal of.
+ * clone is partial) has an equal of — and, with `exclude`, that no excluded
+ * commit reaches either, so the limit is spent only on what can still be
+ * missing.
  */
 export const missingOn = async (
   context: GitContext,
   ref: LandingRef,
-  options: { readonly cherryPick: boolean; readonly headSha: string },
+  query: MissingQuery,
 ): Promise<MissingAnswer | null> => {
+  const limit = query.limit ?? MAX_LANDED_COMMITS_SCANNED;
   const stdout = await gitStdout(context, [
     ...LOG,
     "--no-merges",
-    ...(options.cherryPick ? ["--cherry-pick"] : []),
+    ...(query.cherryPick ? ["--cherry-pick"] : []),
     "--left-only",
     `--format=${COMMIT_FORMAT}`,
-    SCANNED,
-    `${ref.tip}...${options.headSha}`,
+    `--max-count=${String(limit)}`,
+    `${ref.tip}...${query.headSha}`,
+    ...(query.exclude ?? []).map((sha) => `^${sha}`),
     "--",
     literalPath(context.file),
   ]);
@@ -227,7 +240,7 @@ export const missingOn = async (
     return null;
   }
   const commits = parseCommits(stdout);
-  return { commits, isCapped: commits.length >= MAX_LANDED_COMMITS_SCANNED };
+  return { commits, isCapped: commits.length >= limit };
 };
 
 /**

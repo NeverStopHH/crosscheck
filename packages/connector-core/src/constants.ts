@@ -731,13 +731,6 @@ export const MAX_LANDED_ANCESTRY_CHECKS = 10;
  */
 export const LANDED_RECENT_WORKING_DAYS = 2;
 /**
- * Calendar days the recent probe asks git for. Two working days never span
- * more than four calendar days (Monday back to Thursday); seven leaves room
- * for any timezone, and the exact window is applied afterwards, in code, on
- * the reader's own calendar (landed-changes/working-days.ts).
- */
-export const LANDED_RECENT_SCAN_DAYS = 7;
-/**
  * Commits one landing-branch question reads. Generous on purpose: the
  * reader's own commits are filtered AFTER git answers, so a small limit would
  * let them use up the reach and hide a teammate's change behind them. The

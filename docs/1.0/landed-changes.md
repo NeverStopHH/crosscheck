@@ -64,6 +64,9 @@ answers them without trusting anyone (`connector-core/src/landed-changes/`).
     touched it on your side — without that second condition, a branch
     carrying a teammate's work that the landing branch has since reverted
     would bring the reverted work back, silently;
+  - when git's limit was spent partly on arriving work (a merge that brings
+    many commits to the file), git is asked again with that work excluded,
+    so what is certainly missing is never thrown away with it;
   - a landing branch git cannot answer for in time is named in the stop
     ("not checked in time"); what the other branches know is still said. While
     the missing half is incomplete, a stop about recent work alone waits, so
@@ -91,13 +94,13 @@ answers them without trusting anyone (`connector-core/src/landed-changes/`).
 - Every git call is bounded, non-interactive and never fetches, at most
   eight at once; the whole probe has a deadline no longer than one hub call.
   A slow or broken probe means no warning, never a blocked edit.
-- Only a COMPLETE answer of "nothing" is cached — keyed on the file, HEAD,
+- Only an answer that is COMPLETE and found NOTHING is cached — keyed on the file, HEAD,
   the merge or cherry-pick in progress (by its commits), every landing
   branch's tip, your identity and `.mailmap`, and your calendar day — so a
   file is walked once per state of the repo, not once per edit, and a cache
   hit costs the five git calls that compute the key. An answer with an
-  unchecked branch, a failed or timed-out recent half, or a limit reached
-  with nothing shown is asked again next time.
+  unchecked branch, a failed, capped or timed-out half, or a limit reached
+  with nothing shown carries no key and is asked again next time.
 
 The hub's part (a later step) is the reason: the teammate's work context for
 that file — intent, decisions, rejected approaches — matched to the commit
@@ -137,5 +140,10 @@ Each step is one PR into `feat/landed-changes-flow`, then one PR to `main`.
 - A stacked branch on which you ALSO edited the file is warned about the
   landed squash of the work it already contains (the content differs, and
   patch identity cannot see through a squash).
-- A recent change that sets a file back to content a landing branch already
-  had reads as a re-landing and is not mentioned. Recent half only.
+- A recent change that sets a file back to content a SIBLING landing branch
+  already had (a revert or deletion of work that branch never got) reads as
+  a re-landing and is not mentioned. Recent half only; a return to the
+  change's own ancestry is recognised as a revert and is mentioned.
+- In a merge that fills git's limit, the second question excludes the
+  merge's history inside git; a teammate commit whose cherry-picked copy
+  lives only on the side being merged in can then read as missing.

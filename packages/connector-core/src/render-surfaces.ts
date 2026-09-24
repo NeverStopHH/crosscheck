@@ -496,7 +496,7 @@ const landedChangesWith = (payload: string): LandedChanges => {
     branches: ["staging"],
     landedAt: new Date(ISO),
   };
-  return { missing: [commit], recent: [commit], moreMissing: true, unchecked: ["develop"], key: null };
+  return { missing: [commit], recent: [commit], moreMissing: true, unchecked: ["develop"], cleanKey: null };
 };
 
 const diagnosisWith = (payload: string): Diagnosis => ({

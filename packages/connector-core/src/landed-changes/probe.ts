@@ -22,14 +22,14 @@
  * UNREADABLE MEANS UNKNOWN. A shallow clone's boundary commit "touches" every
  * path, so it answers null rather than "every file changed yesterday".
  *
- * ONLY A COMPLETE ANSWER IS CACHED. Every answer is computed under a key over
- * what it depends on — the file, HEAD, the merge or pick in progress (by its
- * commits), every landing branch's tip, the reader's identity and `.mailmap`,
- * and the reader's calendar day. A COMPLETE answer carries that key, and a
- * caller that saw it answer "nothing" before gets "nothing" back after the
- * five git calls that compute the key, instead of the whole walk. An answer
- * with an unchecked branch, a failed or timed-out recent half, or a limit hit
- * with nothing shown carries no key, so it is asked again next time.
+ * ONLY A COMPLETE "NOTHING" IS CACHED. Every answer is computed under a key
+ * over what it depends on — the file, HEAD, the merge or pick in progress (by
+ * its commits), every landing branch's tip, the reader's identity and
+ * `.mailmap`, and the reader's calendar day. Only an answer that is COMPLETE
+ * and found NOTHING carries it (`cleanKey`), and a caller that saw it before
+ * gets "nothing" back after the five git calls that compute the key, instead
+ * of the whole walk. An answer with an unchecked branch, a failed, capped or
+ * timed-out half, or anything to say carries no key.
  *
  * The reader's own commits never warn the reader, and they are filtered only
  * AFTER git has been asked for a generous number, so they cannot use up the
@@ -44,7 +44,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
-import { LANDED_GIT_TIMEOUT_MS, LANDED_PROBE_BUDGET_MS } from "../constants.ts";
+import { LANDED_GIT_TIMEOUT_MS, LANDED_PROBE_BUDGET_MS, MAX_LANDED_COMMITS_SCANNED } from "../constants.ts";
 import { readLandingBranches, resolveLandingRefs } from "./landing-branches.ts";
 import type { LandingRef } from "./landing-branches.ts";
 import {
@@ -81,8 +81,11 @@ export interface LandedChanges {
   readonly moreMissing: boolean;
   /** Landing branches git could not answer for: changes there may be missing too. */
   readonly unchecked: readonly string[];
-  /** Set on a COMPLETE answer only — the only kind a caller may cache. */
-  readonly key: string | null;
+  /**
+   * Set only on a COMPLETE answer that found NOTHING — the only kind a caller
+   * may cache, and so the only kind that carries a key at all.
+   */
+  readonly cleanKey: string | null;
 }
 
 /** Git processes one probe runs at once: a hot file must not fork a storm. */
@@ -90,13 +93,32 @@ const MAX_PARALLEL_GIT = 8;
 const KEY_CHARS = 32;
 const MAILMAP_FILE = ".mailmap";
 
-const nothing = (key: string | null): LandedChanges => ({
+const nothing = (cleanKey: string | null): LandedChanges => ({
   missing: [],
   recent: [],
   moreMissing: false,
   unchecked: [],
-  key,
+  cleanKey,
 });
+
+/**
+ * Whether an answer is worth stopping an edit for: something missing, at any
+ * age — or recent work alone, but only once the missing half is COMPLETE. A
+ * landing branch git could not answer for, or a limit reached with nothing
+ * shown, means the half that matters may be incomplete, and a stop about
+ * recent work alone would spend the once-per-file marker on the half that
+ * matters least; it waits, and the next edit asks again.
+ */
+export const worthStopping = (landed: LandedChanges | null): LandedChanges | null => {
+  if (landed === null) {
+    return null;
+  }
+  if (landed.missing.length > 0) {
+    return landed;
+  }
+  const isMissingIncomplete = landed.unchecked.length > 0 || landed.moreMissing;
+  return !isMissingIncomplete && landed.recent.length > 0 ? landed : null;
+};
 
 /** At most `size` tasks at once; the rest wait their turn, in order. */
 const semaphore = (size: number): (<T>(task: () => Promise<T>) => Promise<T>) => {
@@ -181,15 +203,40 @@ const missingFor = async (
   const notArriving = answer.commits.filter(
     (commit) => commit.sha !== state.pickedSha && (stillMissing === null || stillMissing.has(commit.sha)),
   );
-  // The limit was spent BEFORE the arriving work was taken out: what lies
-  // beyond it may still be missing, and nothing here can say.
-  if (answer.isCapped && notArriving.length < answer.commits.length) {
-    return unknown;
-  }
+  const settled =
+    answer.isCapped && notArriving.length < answer.commits.length
+      ? await askPastArriving(probe, ref, notArriving)
+      : { commits: notArriving, isCapped: answer.isCapped };
   const isMoot =
-    notArriving.length > 0 &&
+    settled.commits.length > 0 &&
     (await hasNothingNetToUndo(context, ref, { headSha: state.headSha, selfEmail: probe.selfEmail }));
-  return { branch: ref.branch, answer: { commits: isMoot ? [] : notArriving, isCapped: answer.isCapped } };
+  // "Nothing to undo" is certain whatever the limit: nothing past it can be
+  // undone either, so it is not "possibly more".
+  return { branch: ref.branch, answer: isMoot ? { commits: [], isCapped: false } : settled };
+};
+
+/**
+ * The limit was spent partly on work that is ARRIVING — a merge's commits, or
+ * the one being picked — so what lies past it was never looked at. Ask again
+ * with the merge's heads excluded inside git and room for the picked commit,
+ * so the limit counts only what can still be missing. If that fails, what is
+ * CERTAINLY missing is still said, as a floor: it is never thrown away.
+ */
+const askPastArriving = async (
+  probe: Probe,
+  ref: LandingRef,
+  certain: readonly ParsedCommit[],
+): Promise<MissingAnswer> => {
+  const { state } = probe;
+  const again = await missingOn(probe.context, ref, {
+    cherryPick: probe.cherryPick,
+    headSha: state.headSha,
+    exclude: state.mergeHeads,
+    limit: MAX_LANDED_COMMITS_SCANNED + (state.pickedSha === null ? 0 : 1),
+  });
+  return again === null
+    ? { commits: certain, isCapped: true }
+    : { commits: again.commits.filter((commit) => commit.sha !== state.pickedSha), isCapped: again.isCapped };
 };
 
 /**
@@ -249,9 +296,12 @@ const recentFor = async (
       return { commit: isNew && !relands ? commit : null, isKnown: true };
     }),
   );
+  // A query that reached its limit may have more past it: that is not "complete".
+  const isUnderLimit = (items: readonly unknown[] | null): boolean =>
+    items !== null && items.length < MAX_LANDED_COMMITS_SCANNED;
   const isComplete =
-    perRef.every(({ landings, old }) => landings !== null && old.isAnswered) &&
-    landed.every(({ changes }) => changes !== null) &&
+    perRef.every(({ landings, old }) => isUnderLimit(landings) && old.isAnswered) &&
+    landed.every(({ changes }) => isUnderLimit(changes)) &&
     judged.every(({ isKnown }) => isKnown);
   return {
     commits: judged.map(({ commit }) => commit).filter((commit): commit is LandedCommit => commit !== null),
@@ -322,7 +372,9 @@ const run = async (
   const context: GitContext = {
     root: input.root,
     file: input.file,
-    run: (args) => limit(() => runGit(args)),
+    // Checked again when the slot is granted: a call that waited past the
+    // deadline must not start at all.
+    run: (args) => limit(() => (isCancelled() ? Promise.resolve(null) : runGit(args))),
     isCancelled,
   };
   const setting = await readLandingBranches(input.root);
@@ -357,7 +409,7 @@ const run = async (
     recent: [],
     moreMissing: perRef.some(({ answer }) => answer?.isCapped === true),
     unchecked: perRef.filter(({ answer }) => answer === null).map(({ branch }) => branch),
-    key: null,
+    cleanKey: null,
   };
   progress.value = missingHalf;
   const recent = await recentFor(probe);
@@ -366,7 +418,8 @@ const run = async (
     !(missingHalf.moreMissing && missing.length === 0) &&
     recent.isComplete &&
     !isCancelled();
-  return { ...missingHalf, recent: recent.commits, key: isComplete ? key : null };
+  const isNothing = missing.length === 0 && recent.commits.length === 0;
+  return { ...missingHalf, recent: recent.commits, cleanKey: isComplete && isNothing ? key : null };
 };
 
 /**

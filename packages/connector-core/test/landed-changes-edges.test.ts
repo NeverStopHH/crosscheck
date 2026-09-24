@@ -423,20 +423,34 @@ describe("reverts the reader would bring back — the dangerous direction", () =
 });
 
 describe("what the probe reports", () => {
-  test("an answer carries a cache key that moves when a landing branch does", async () => {
+  test("a clean answer's key moves when a landing branch does", async () => {
     // Arrange
     const r = await repos("cache-key");
     const before = await find(r.reader);
 
-    // Act — a teammate lands, and Nick fetches it
-    await landWithMergeCommit(r, JUNE_LANDING);
+    // Act — staging moves with work on ANOTHER file, and Nick fetches it
+    await landWithMergeCommit(r, { ...JUNE_LANDING, file: "src/other.ts", subject: "Other work" });
     await readerFetches(r);
     const after = await find(r.reader);
 
+    // Assert — both still say nothing about this file, under different keys
+    expect(before?.cleanKey).toMatch(/\S/);
+    expect(after?.cleanKey).toMatch(/\S/);
+    expect(after?.cleanKey).not.toBe(before?.cleanKey);
+  });
+
+  test("an answer with something to say carries no key", async () => {
+    // Arrange
+    const r = await repos("key-only-clean");
+    await landWithMergeCommit(r, JUNE_LANDING);
+    await readerFetches(r);
+
+    // Act
+    const changes = await find(r.reader);
+
     // Assert
-    expect(before?.key).toMatch(/\S/);
-    expect(after?.key).not.toBe(before?.key);
-    expect(after?.missing).toHaveLength(1);
+    expect(changes?.missing).toHaveLength(1);
+    expect(changes?.cleanKey).toBeNull();
   });
 
   test("a key the caller already knows as clean is answered as nothing, with that key", async () => {
@@ -451,7 +465,7 @@ describe("what the probe reports", () => {
       now: NOW,
       timeZone: BERLIN,
       budgetMs: SEMANTICS_BUDGET_MS,
-      knownCleanKeys: [first?.key ?? "none"],
+      knownCleanKeys: [first?.cleanKey ?? "none"],
     });
 
     // Assert

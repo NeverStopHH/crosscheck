@@ -82,7 +82,7 @@ import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.
 import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
 import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
 import { resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
-import { findLandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
+import { findLandedChanges, worthStopping } from "@crosscheck/connector-core/landed-changes/probe.ts";
 import type { LandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
 import { resolveTimeZone } from "@crosscheck/connector-core/landed-changes/working-days.ts";
 import { LANDED_PROBE_BUDGET_MS, TRIPWIRE_MODE_NOTICE } from "@crosscheck/connector-core/constants.ts";
@@ -141,24 +141,6 @@ const resolveEditedFile = async (
   const root = resolution.rootByPath.get(first);
   const file = root === undefined ? null : await toRepoRelative(root, ctx.payload.cwd, first);
   return root === undefined || file === null ? null : { file, root };
-};
-
-/**
- * Something landed worth a word: missing at any age, or present and recent.
- * While the missing half is INCOMPLETE — a landing branch git could not
- * answer for, or a limit reached with nothing shown — a stop about recent
- * work alone would spend the once-per-file marker on the half that matters
- * least; it waits, and the next edit asks again.
- */
-const landedWorthSaying = (landed: LandedChanges | null): LandedChanges | null => {
-  if (landed === null) {
-    return null;
-  }
-  if (landed.missing.length > 0) {
-    return landed;
-  }
-  const isMissingIncomplete = landed.unchecked.length > 0 || landed.moreMissing;
-  return !isMissingIncomplete && landed.recent.length > 0 ? landed : null;
 };
 
 export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
@@ -289,11 +271,10 @@ const findReasons = async (
         }),
   ]);
   const hub = result?.ok === true ? result.data : null;
-  const landed = landedWorthSaying(probed);
   return {
     teammate: hub?.sessions[0] ?? null,
-    landed,
-    cleanKey: probed !== null && landed === null ? probed.key : null,
+    landed: worthStopping(probed),
+    cleanKey: probed?.cleanKey ?? null,
     ...(hub === null ? {} : { coverage: hub.coverage }),
   };
 };
