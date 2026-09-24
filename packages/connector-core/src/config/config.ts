@@ -256,7 +256,14 @@ export const rememberDeveloper = async (
   developerId: string,
   developerName: string | null,
 ): Promise<void> => {
-  const base = config.stored;
+  if (config.stored === null) {
+    return;
+  }
+  // Merged onto the config AS IT IS NOW, read right before the write: the
+  // snapshot this hook started with can be seconds old, and a `crosscheck
+  // key rotate` saved in between must not be overwritten by the key it
+  // killed.
+  const base = await readStoredConfig(config.home);
   if (base === null) {
     return;
   }

@@ -73,7 +73,7 @@ import {
 import { extractFailureText } from "@crosscheck/connector-core/capture/failure-text.ts";
 import type { Producer } from "@crosscheck/connector-core/capture/records.ts";
 import { UNKNOWN_DEVELOPER_ID } from "@crosscheck/connector-core/capture/records.ts";
-import { isDisabled, loadReportableConfig } from "@crosscheck/connector-core/config/config.ts";
+import { hubOrigin, isDisabled, loadReportableConfig } from "@crosscheck/connector-core/config/config.ts";
 import type { ResolvedConfig } from "@crosscheck/connector-core/config/config.ts";
 import { repoKey } from "@crosscheck/connector-core/config/paths.ts";
 import type { Env } from "@crosscheck/connector-core/config/paths.ts";
@@ -435,13 +435,40 @@ export const createAcpCapture = (options: AcpCaptureOptions): AcpCapture => {
     }
     const hostSessionKey = acpHostSessionKey(agentName ?? "", acpSessionId);
     const key = repoKey(config.hubUrl, identity.repoId);
+    // ONE CONTEXT FOR THE WHOLE AGENT SESSION, so it must survive a key
+    // rotation (`crosscheck key rotate`): the old key is dead at once, and a
+    // context holding it would send every capture into a 401 until the agent
+    // restarted. On a 401 the client asks for the stored key again
+    // (http/client.ts freshApiKey); a changed one is kept for every later
+    // request of this session.
+    let apiKey = config.apiKey;
     const hub: HubContext = {
       hubUrl: config.hubUrl,
-      apiKey: config.apiKey,
+      get apiKey() {
+        return apiKey;
+      },
       timeoutMs: config.timeoutMs,
       home: config.home,
       repoKey: key,
       now,
+      freshApiKey: async () => {
+        const fresh = await loadReportableConfig({
+          env: options.env,
+          repoRoot: identity.root,
+        });
+        // Only a key filed under THIS session's hub. A login to another hub
+        // mid-session rewrites the stored config, and a 401 from this hub
+        // (which any hub can send at will) must never hand it that key.
+        if (
+          fresh === null ||
+          fresh.stored === null ||
+          hubOrigin(fresh.stored.hubUrl) !== hubOrigin(config.hubUrl)
+        ) {
+          return null;
+        }
+        apiKey = fresh.apiKey;
+        return fresh.apiKey;
+      },
     };
     const at = now();
     const registered = await registerSessionFlow({
