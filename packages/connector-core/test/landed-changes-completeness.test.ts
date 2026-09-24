@@ -47,6 +47,14 @@ const FILE = "src/lines.ts";
 const ORIGINAL_CONTENT = "export const offset = 1;\n";
 const SEMANTICS_BUDGET_MS = 10_000;
 
+/**
+ * For the cases that build dozens of real commits or a dozen merges before
+ * they ask anything: seconds of honest git, which a loaded suite can stretch
+ * past bun's five-second default. The probe's own deadline is what these
+ * tests measure where timing matters; this only bounds the setup.
+ */
+const HEAVY_SETUP_MS = 60_000;
+
 const cleanups: string[] = [];
 
 afterAll(async () => {
@@ -215,7 +223,7 @@ describe("every recent-half failure keeps the answer uncacheable", () => {
     expect(changes?.missing).toEqual([]);
     expect(changes?.moreMissing).toBe(true);
     expect(changes?.cleanKey).toBeNull();
-  });
+  }, HEAVY_SETUP_MS);
 });
 
 /** A dozen merge landings on the file yesterday, all in Nick's checkout. */
@@ -258,7 +266,7 @@ describe("certainty and limits", () => {
     expect(changes?.missing).toEqual([]);
     expect(changes?.moreMissing).toBe(false);
     expect(changes?.cleanKey).toMatch(/\S/);
-  });
+  }, HEAVY_SETUP_MS);
 
   test("a recent walk that reached its limit is not complete, even with nothing to say", async () => {
     // Arrange — Nick's own 51 commits landed by merge yesterday, and he has them
@@ -287,30 +295,59 @@ describe("certainty and limits", () => {
     // Assert — the reader's own work is never news; a capped walk is never "clean"
     expect(changes?.recent).toEqual([]);
     expect(changes?.cleanKey).toBeNull();
-  });
+  }, HEAVY_SETUP_MS);
 
   test("no git call starts once the deadline has passed, not even one already queued", async () => {
-    // Arrange — a dozen merge landings: their merge sides are asked at once,
-    // eight run, four wait in the queue; each takes 600 ms, the budget is 400
+    // Arrange — a dozen merge landings: their merge sides are asked at once.
+    // Each waits at a gate that opens only after the probe has given up, so
+    // exactly eight hold the slots and four wait in the queue at the deadline.
     const r = await dozenLandings("deadline-queue");
-    const started: number[] = [];
-    const t0 = { value: 0 };
+    const gate = Promise.withResolvers<void>();
+    const mergeSidesStarted = { count: 0 };
     const isMergeSide = (args: readonly string[]): boolean =>
       args[0] === "log" && args.includes("--no-merges") && !args.includes("--left-only") && !args.includes("--format=%aE");
-    const slowSides = runnerFor(r.reader, (args) => {
-      started.push(performance.now() - t0.value);
-      return isMergeSide(args) ? 600 : "pass";
-    });
+    const real = quietGitRunner(r.reader, LANDED_GIT_TIMEOUT_MS);
+    const gated: GitRunner = async (args) => {
+      if (isMergeSide(args)) {
+        mergeSidesStarted.count += 1;
+        await gate.promise;
+      }
+      return real(args);
+    };
+
+    // Act — the probe gives up at its deadline; then the gate opens
+    await probe(r.reader, { runGit: gated, budgetMs: 1_500 });
+    gate.resolve();
+    await Bun.sleep(500);
+
+    // Assert — the queue was reached, and nothing queued started past the deadline
+    expect(mergeSidesStarted.count).toBe(8);
+  }, HEAVY_SETUP_MS);
+});
+
+describe("a recent walk at git's limit", () => {
+  test("fifty-one landings on the first-parent line in the window: not complete, never clean", async () => {
+    // Arrange — Nick's own 51 commits pushed straight onto staging yesterday;
+    // own work is never news, but the walk that saw it hit its limit
+    const r = await repos("landings-at-limit");
+    await gitIn(r.reader, ["checkout", "-q", "-b", "nick/straight", "origin/staging"]);
+    for (const n of Array.from({ length: MAX_LANDED_COMMITS_SCANNED + 1 }, (_, index) => index + 1)) {
+      await commitFile(r.reader, FILE, `export const offset = ${String(300 + n)};\n`, `Own ${String(n)}`, {
+        as: NICK,
+        date: minute("2026-09-23", n),
+      });
+    }
+    await gitIn(r.reader, ["push", "-q", "origin", "HEAD:staging"]);
+    await readerFetches(r);
 
     // Act
-    t0.value = performance.now();
-    await probe(r.reader, { runGit: slowSides, budgetMs: 400 });
-    await Bun.sleep(1_000);
+    const changes = await probe(r.reader);
 
-    // Assert — calls in flight may finish; none may BEGIN after the deadline
-    expect(started.length).toBeGreaterThan(8);
-    expect(Math.max(...started)).toBeLessThan(400 + 30);
-  });
+    // Assert
+    expect(changes?.recent).toEqual([]);
+    expect(changes?.missing).toEqual([]);
+    expect(changes?.cleanKey).toBeNull();
+  }, HEAVY_SETUP_MS);
 });
 
 describe("the git processes one probe runs", () => {
@@ -337,7 +374,7 @@ describe("the git processes one probe runs", () => {
     expect(changes?.recent.length).toBeGreaterThan(0);
     expect(concurrency.peak).toBeLessThanOrEqual(8);
     expect(concurrency.peak).toBeGreaterThan(1);
-  });
+  }, HEAVY_SETUP_MS);
 });
 
 describe("the cache key", () => {
@@ -453,7 +490,7 @@ describe("the limit, while a merge is arriving", () => {
     expect(changes?.missing).toEqual([]);
     expect(changes?.unchecked).toEqual([]);
     expect(changes?.cleanKey).toMatch(/\S/);
-  });
+  }, HEAVY_SETUP_MS);
 });
 
 /** Two lines far enough apart that changes to each merge without conflict. */
@@ -462,32 +499,66 @@ const twoLines = (top: number, bottom: number): string =>
 
 const minute = (base: string, n: number): string => `${base}T10:${String(n).padStart(2, "0")}:00Z`;
 
+/**
+ * Nick merging Mike's branch, which brings 51 commits to the file and fills
+ * the limit, while Ken's 40 older commits stay missing. The merge is left in
+ * progress; the caller aborts it.
+ */
+const mergeThatFillsTheLimit = async (label: string): Promise<LandingRepos> => {
+  const r = await repos(label);
+  // Both lines exist on main and staging before anyone branches
+  await landWithSquash(r, { file: FILE, content: twoLines(0, 0), subject: "Two lines", landing: "main", landedAt: "2026-05-01T10:00:00Z" });
+  await gitIn(r.teammate, ["push", "-q", "origin", "main:staging"]);
+  await readerFetches(r);
+  await gitIn(r.reader, ["checkout", "-q", "-B", "nick/work", "origin/main"]);
+  // Ken changes the top line forty times on staging, in June
+  await gitIn(r.teammate, ["checkout", "-q", "-B", "staging", "origin/staging"]);
+  for (const n of Array.from({ length: 40 }, (_, index) => index + 1)) {
+    await commitFile(r.teammate, FILE, twoLines(n, 0), `Ken ${String(n)}`, { as: KEN, date: minute("2026-06-01", n) });
+  }
+  await gitIn(r.teammate, ["push", "-q", "origin", "staging"]);
+  // Mike changes the bottom line fifty-one times, in July, and it lands too
+  await gitIn(r.teammate, ["checkout", "-q", "-B", "mike/many", "origin/main"]);
+  for (const n of Array.from({ length: MAX_LANDED_COMMITS_SCANNED + 1 }, (_, index) => index + 1)) {
+    await commitFile(r.teammate, FILE, twoLines(0, n), `Mike ${String(n)}`, { as: MIKE, date: minute("2026-07-01", n) });
+  }
+  await gitIn(r.teammate, ["push", "-q", "origin", "mike/many"]);
+  await gitIn(r.teammate, ["checkout", "-q", "-B", "staging", "origin/staging"]);
+  await gitIn(r.teammate, ["merge", "-q", "--no-ff", "-m", "Merge mike/many", "mike/many"], { as: MIKE, date: "2026-07-02T10:00:00Z" });
+  await gitIn(r.teammate, ["push", "-q", "origin", "staging"]);
+  await readerFetches(r);
+  // Nick merges Mike's branch: Mike's commits arrive, Ken's do not
+  await gitIn(r.reader, ["merge", "--no-commit", "--no-ff", "origin/mike/many"], { as: NICK });
+  return r;
+};
+
+/** Fifty-five of Ken's commits missing; Nick is picking the newest, in conflict. */
+const pickAmongMany = async (label: string): Promise<{ readonly r: LandingRepos; readonly newest: string }> => {
+  const r = await repos(label);
+  await commitFile(r.reader, FILE, "export const offset = 5;\n", "Nick's offset", { as: NICK });
+  await gitIn(r.teammate, ["checkout", "-q", "-B", "staging", "origin/staging"]);
+  for (const n of Array.from({ length: 55 }, (_, index) => index + 1)) {
+    await commitFile(r.teammate, FILE, `export const offset = ${String(100 + n)};\n`, `Ken ${String(n)}`, {
+      as: KEN,
+      date: minute("2026-06-01", n),
+    });
+  }
+  await gitIn(r.teammate, ["push", "-q", "origin", "staging"]);
+  await readerFetches(r);
+  const newest = await gitIn(r.reader, ["rev-parse", "refs/remotes/origin/staging"]);
+  await gitIn(r.reader, ["cherry-pick", newest], { as: NICK }).catch(() => undefined);
+  return { r, newest };
+};
+
+/** The second, narrower missing question askPastArriving puts to git. */
+const isSecondMissingQuery = (args: readonly string[]): boolean =>
+  args.includes("--left-only") &&
+  (args.some((arg) => arg.startsWith("^")) || args.includes(`--max-count=${String(MAX_LANDED_COMMITS_SCANNED + 1)}`));
+
 describe("the limit, never at the cost of what is certainly missing", () => {
   test("a merge that fills the limit still leaves Ken's missing commits reported", async () => {
-    // Arrange — both lines exist on main and staging before anyone branches
-    const r = await repos("cap-merge-keeps");
-    await landWithSquash(r, { file: FILE, content: twoLines(0, 0), subject: "Two lines", landing: "main", landedAt: "2026-05-01T10:00:00Z" });
-    await gitIn(r.teammate, ["push", "-q", "origin", "main:staging"]);
-    await readerFetches(r);
-    await gitIn(r.reader, ["checkout", "-q", "-B", "nick/work", "origin/main"]);
-    // Ken changes the top line forty times on staging, in June
-    await gitIn(r.teammate, ["checkout", "-q", "-B", "staging", "origin/staging"]);
-    for (const n of Array.from({ length: 40 }, (_, index) => index + 1)) {
-      await commitFile(r.teammate, FILE, twoLines(n, 0), `Ken ${String(n)}`, { as: KEN, date: minute("2026-06-01", n) });
-    }
-    await gitIn(r.teammate, ["push", "-q", "origin", "staging"]);
-    // Mike changes the bottom line fifty-one times, in July, and it lands too
-    await gitIn(r.teammate, ["checkout", "-q", "-B", "mike/many", "origin/main"]);
-    for (const n of Array.from({ length: MAX_LANDED_COMMITS_SCANNED + 1 }, (_, index) => index + 1)) {
-      await commitFile(r.teammate, FILE, twoLines(0, n), `Mike ${String(n)}`, { as: MIKE, date: minute("2026-07-01", n) });
-    }
-    await gitIn(r.teammate, ["push", "-q", "origin", "mike/many"]);
-    await gitIn(r.teammate, ["checkout", "-q", "-B", "staging", "origin/staging"]);
-    await gitIn(r.teammate, ["merge", "-q", "--no-ff", "-m", "Merge mike/many", "mike/many"], { as: MIKE });
-    await gitIn(r.teammate, ["push", "-q", "origin", "staging"]);
-    await readerFetches(r);
-    // Nick merges Mike's branch: Mike's commits arrive, Ken's do not
-    await gitIn(r.reader, ["merge", "--no-commit", "--no-ff", "origin/mike/many"], { as: NICK });
+    // Arrange
+    const r = await mergeThatFillsTheLimit("cap-merge-keeps");
 
     // Act
     const changes = await probe(r.reader);
@@ -497,23 +568,11 @@ describe("the limit, never at the cost of what is certainly missing", () => {
     expect(changes?.missing.filter((c) => c.subject.startsWith("Ken"))).toHaveLength(40);
     expect(changes?.missing.filter((c) => c.subject.startsWith("Mike"))).toEqual([]);
     expect(changes?.unchecked).toEqual([]);
-  });
+  }, HEAVY_SETUP_MS);
 
   test("a cherry-pick of one of many missing commits still reports the rest", async () => {
-    // Arrange — fifty-five of Ken's commits; Nick picks the newest and conflicts
-    const r = await repos("cap-pick-keeps");
-    await commitFile(r.reader, FILE, "export const offset = 5;\n", "Nick's offset", { as: NICK });
-    await gitIn(r.teammate, ["checkout", "-q", "-B", "staging", "origin/staging"]);
-    for (const n of Array.from({ length: 55 }, (_, index) => index + 1)) {
-      await commitFile(r.teammate, FILE, `export const offset = ${String(100 + n)};\n`, `Ken ${String(n)}`, {
-        as: KEN,
-        date: minute("2026-06-01", n),
-      });
-    }
-    await gitIn(r.teammate, ["push", "-q", "origin", "staging"]);
-    await readerFetches(r);
-    const newest = await gitIn(r.reader, ["rev-parse", "refs/remotes/origin/staging"]);
-    await gitIn(r.reader, ["cherry-pick", newest], { as: NICK }).catch(() => undefined);
+    // Arrange
+    const { r, newest } = await pickAmongMany("cap-pick-keeps");
 
     // Act
     const changes = await probe(r.reader);
@@ -523,6 +582,80 @@ describe("the limit, never at the cost of what is certainly missing", () => {
     expect(changes?.missing.map((c) => c.sha)).not.toContain(newest);
     expect(changes?.moreMissing).toBe(true);
     expect(changes?.unchecked).toEqual([]);
+  }, HEAVY_SETUP_MS);
+
+  test("when the second question fails, what is certainly missing is still said, as a floor", async () => {
+    // Arrange — the first question saw 49 of Ken's commits besides the picked one
+    const { r, newest } = await pickAmongMany("second-fails-floor");
+    const failSecond = runnerFor(r.reader, (args) => (isSecondMissingQuery(args) ? "fail" : "pass"));
+
+    // Act
+    const changes = await probe(r.reader, { runGit: failSecond });
+
+    // Assert
+    expect(changes?.missing).toHaveLength(MAX_LANDED_COMMITS_SCANNED - 1);
+    expect(changes?.missing.map((c) => c.sha)).not.toContain(newest);
+    expect(changes?.moreMissing).toBe(true);
+    expect(changes?.unchecked).toEqual([]);
+    expect(changes?.cleanKey).toBeNull();
+  }, HEAVY_SETUP_MS);
+
+  test("when the second question fails and nothing was certain, the branch is named unchecked", async () => {
+    // Arrange — every commit the first question saw is arriving with the merge
+    const r = await mergeThatFillsTheLimit("second-fails-empty");
+    const failSecond = runnerFor(r.reader, (args) => (isSecondMissingQuery(args) ? "fail" : "pass"));
+
+    // Act
+    const changes = await probe(r.reader, { runGit: failSecond });
+    await gitIn(r.reader, ["merge", "--abort"]);
+
+    // Assert — never a silent "possibly more" under nobody's name
+    expect(changes?.unchecked).toEqual(["staging"]);
+    expect(changes?.cleanKey).toBeNull();
+  }, HEAVY_SETUP_MS);
+});
+
+describe("the team's branch order", () => {
+  test("a change on two branches is listed in the team's order, whichever answers first", async () => {
+    // Arrange — landed on staging, promoted to main; main's question is slowed
+    // so staging always answers first
+    const r = await repos("branch-order");
+    await landWithMergeCommit(r, JUNE_LANDING);
+    await gitIn(r.teammate, ["push", "-q", "origin", "staging:main"]);
+    // staging moves on (another file), so the two tips — and questions — differ
+    await landWithSquash(r, { ...JUNE_LANDING, file: "src/other.ts", subject: "Other work", landedAt: "2026-06-05T10:00:00Z" });
+    await readerFetches(r);
+    const mainTip = await gitIn(r.reader, ["rev-parse", "refs/remotes/origin/main"]);
+    const slowMain = runnerFor(r.reader, (args) =>
+      args.includes("--left-only") && args.some((arg) => arg.startsWith(`${mainTip}...`)) ? 300 : "pass",
+    );
+
+    // Act
+    const changes = await probe(r.reader, { runGit: slowMain });
+
+    // Assert
+    expect(changes?.missing.map((c) => c.branches)).toEqual([["main", "staging"]]);
+  });
+});
+
+describe("a slow landing branch", () => {
+  test("past the deadline, it is named unchecked and the others still say what they know", async () => {
+    // Arrange — Ken's change is missing via main; staging's question is slow
+    const r = await repos("slow-branch");
+    await landWithSquash(r, { ...JUNE_LANDING, landing: "main", author: KEN, subject: "Ken on main" });
+    await readerFetches(r);
+    const stagingTip = await gitIn(r.reader, ["rev-parse", "refs/remotes/origin/staging"]);
+    const slowStaging = runnerFor(r.reader, (args) =>
+      args.includes("--left-only") && args.some((arg) => arg.startsWith(`${stagingTip}...`)) ? 2_000 : "pass",
+    );
+
+    // Act
+    const changes = await probe(r.reader, { runGit: slowStaging, budgetMs: 800 });
+
+    // Assert
+    expect(changes?.missing.map((c) => c.subject)).toEqual(["Ken on main"]);
+    expect(changes?.unchecked).toEqual(["staging"]);
+    expect(changes?.cleanKey).toBeNull();
   });
 });
 

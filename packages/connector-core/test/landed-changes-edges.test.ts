@@ -53,6 +53,14 @@ const expectNothing = (changes: LandedChanges | null): void => {
   expect(changes?.recent).toEqual([]);
 };
 
+/**
+ * For the cases that build dozens of real commits or a dozen merges before
+ * they ask anything: seconds of honest git, which a loaded suite can stretch
+ * past bun's five-second default. The probe's own deadline is what these
+ * tests measure where timing matters; this only bounds the setup.
+ */
+const HEAVY_SETUP_MS = 60_000;
+
 const cleanups: string[] = [];
 
 afterAll(async () => {
@@ -516,5 +524,5 @@ describe("what the probe reports", () => {
     // Assert
     expect(changes?.missing).toHaveLength(MAX_LANDED_COMMITS_SCANNED);
     expect(changes?.moreMissing).toBe(true);
-  });
+  }, HEAVY_SETUP_MS);
 });

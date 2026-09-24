@@ -67,7 +67,8 @@ answers them without trusting anyone (`connector-core/src/landed-changes/`).
   - when git's limit was spent partly on arriving work (a merge that brings
     many commits to the file), git is asked again with that work excluded,
     so what is certainly missing is never thrown away with it;
-  - a landing branch git cannot answer for in time is named in the stop
+  - a landing branch git cannot answer for in time — or that is still
+    answering when the deadline comes — is named in the stop
     ("not checked in time"); what the other branches know is still said. While
     the missing half is incomplete, a stop about recent work alone waits, so
     it cannot spend the once-per-file marker on the half that matters least.
@@ -145,5 +146,6 @@ Each step is one PR into `feat/landed-changes-flow`, then one PR to `main`.
   a re-landing and is not mentioned. Recent half only; a return to the
   change's own ancestry is recognised as a revert and is mentioned.
 - In a merge that fills git's limit, the second question excludes the
-  merge's history inside git; a teammate commit whose cherry-picked copy
-  lives only on the side being merged in can then read as missing.
+  merge's history inside git — on your side too. A teammate commit you
+  already have as a cherry-picked copy that is ALSO in the history being
+  merged in can then read as missing, until the merge is committed.

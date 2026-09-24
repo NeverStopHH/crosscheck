@@ -282,7 +282,8 @@ const findReasons = async (
 /**
  * A probe key that answered "nothing" is remembered, so the next edit of the
  * same file in the same state of the repo costs the five git calls that
- * compute the key, not the walk. Only a COMPLETE answer carries a key.
+ * compute the key, not the walk. Only a complete answer that found nothing
+ * carries one.
  * Best effort: a busy lock only means the next edit asks again.
  */
 const rememberClean = async (ctx: HookContext, key: string): Promise<void> => {

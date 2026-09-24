@@ -10688,8 +10688,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // Landed changes. A branch git cannot answer for is named; the others still speak.
     label: "a branch git could not answer for goes unnamed",
     file: `${CORE}/src/landed-changes/probe.ts`,
-    from: "    unchecked: perRef.filter(({ answer }) => answer === null).map(({ branch }) => branch),",
-    to: "    unchecked: [],",
+    from: "  unchecked: refs\n    .map((ref) => ref.branch)\n    .filter((branch) => !results.some((result) => result.branch === branch && result.answer !== null)),",
+    to: "  unchecked: [],",
     test: `${CORE}/test/landed-changes-completeness.test.ts`,
     because:
       "a slow landing branch reads as one with nothing missing, and its answer is cached as clean",
@@ -10708,8 +10708,8 @@ export const MUTATIONS: readonly Mutation[] = [
     // Landed changes. An answer cut short by the deadline carries no key.
     label: "an answer cut short by the deadline is cacheable",
     file: `${CORE}/src/landed-changes/probe.ts`,
-    from: "    cleanKey: null,",
-    to: "    cleanKey: key,",
+    from: "  progress.snapshot = () => missingHalfOf(refs, answered, selfEmail);",
+    to: "  progress.snapshot = () => ({ ...missingHalfOf(refs, answered, selfEmail), cleanKey: key });",
     test: `${CORE}/test/landed-changes-completeness.test.ts`,
     because:
       "a slow hook caches half an answer as the whole one, and the recent half never comes back that day",
@@ -10904,6 +10904,56 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "one failed git call turns a recent revert into a silent 're-landing'",
   },
+  {
+    // Landed changes. A slow landing branch never silences what the others know.
+    label: "a slow landing branch silences what the others know",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  progress.snapshot = () => missingHalfOf(refs, answered, selfEmail);",
+    to: "  progress.snapshot = null;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "one branch still answering at the deadline throws away the missing changes every other branch already found",
+  },
+  {
+    // Landed changes. A failed second question with nothing certain names its branch.
+    label: "a failed second question hides its branch",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    return certain.length > 0 ? { commits: certain, isCapped: true } : null;",
+    to: "    return { commits: certain, isCapped: true };",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a branch that could not be checked reads as 'possibly more' under nobody's name, or as nothing at all",
+  },
+  {
+    // Landed changes. A failed second question keeps what is certainly missing.
+    label: "a failed second question throws away what is certainly missing",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    return certain.length > 0 ? { commits: certain, isCapped: true } : null;",
+    to: "    return certain.length > 0 ? { commits: [], isCapped: true } : null;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "commits git already named as missing vanish because a second, narrower question failed",
+  },
+  {
+    // Landed changes. A first-parent walk at its limit is not complete.
+    label: "a first-parent walk at its limit counts as complete",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "    perRef.every(({ landings, old }) => isUnderLimit(landings) && old.isAnswered) &&",
+    to: "    perRef.every(({ landings, old }) => landings !== null && old.isAnswered) &&",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "a teammate's landing past fifty busy ones is cached away as 'nothing' for the day",
+  },
+  {
+    // Landed changes. Branches are listed in the team's order.
+    label: "landing branches are listed in the order git answered",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  const results = refs\n    .map((ref) => answeredInAnyOrder.find((result) => result.branch === ref.branch))\n    .filter((result): result is RefResult => result !== undefined);",
+    to: "  const results = answeredInAnyOrder;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "the same change reads 'on staging and main' on one edit and 'on main and staging' on the next, and a test that pins the team's order flakes",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -11065,7 +11115,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
- * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 19
+ * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 24
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 16
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4

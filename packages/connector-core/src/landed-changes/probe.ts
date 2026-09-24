@@ -194,9 +194,11 @@ const missingFor = async (
 ): Promise<{ readonly branch: string; readonly answer: MissingAnswer | null }> => {
   const { context, state } = probe;
   const unknown = { branch: ref.branch, answer: null };
-  const answer = await missingOn(context, ref, { cherryPick: probe.cherryPick, headSha: state.headSha });
   const isMerging = state.mergeHeads.length > 0;
-  const stillMissing = isMerging ? await stillMissingAfterMerge(context, ref, state) : null;
+  const [answer, stillMissing] = await Promise.all([
+    missingOn(context, ref, { cherryPick: probe.cherryPick, headSha: state.headSha }),
+    isMerging ? stillMissingAfterMerge(context, ref, state) : Promise.resolve(null),
+  ]);
   if (answer === null || (isMerging && stillMissing === null)) {
     return unknown;
   }
@@ -207,6 +209,9 @@ const missingFor = async (
     answer.isCapped && notArriving.length < answer.commits.length
       ? await askPastArriving(probe, ref, notArriving)
       : { commits: notArriving, isCapped: answer.isCapped };
+  if (settled === null) {
+    return unknown;
+  }
   const isMoot =
     settled.commits.length > 0 &&
     (await hasNothingNetToUndo(context, ref, { headSha: state.headSha, selfEmail: probe.selfEmail }));
@@ -220,13 +225,14 @@ const missingFor = async (
  * the one being picked — so what lies past it was never looked at. Ask again
  * with the merge's heads excluded inside git and room for the picked commit,
  * so the limit counts only what can still be missing. If that fails, what is
- * CERTAINLY missing is still said, as a floor: it is never thrown away.
+ * CERTAINLY missing is still said, as a floor: it is never thrown away. With
+ * nothing certain, the branch cannot say — null, and it is named unchecked.
  */
 const askPastArriving = async (
   probe: Probe,
   ref: LandingRef,
   certain: readonly ParsedCommit[],
-): Promise<MissingAnswer> => {
+): Promise<MissingAnswer | null> => {
   const { state } = probe;
   const again = await missingOn(probe.context, ref, {
     cherryPick: probe.cherryPick,
@@ -234,9 +240,10 @@ const askPastArriving = async (
     exclude: state.mergeHeads,
     limit: MAX_LANDED_COMMITS_SCANNED + (state.pickedSha === null ? 0 : 1),
   });
-  return again === null
-    ? { commits: certain, isCapped: true }
-    : { commits: again.commits.filter((commit) => commit.sha !== state.pickedSha), isCapped: again.isCapped };
+  if (again === null) {
+    return certain.length > 0 ? { commits: certain, isCapped: true } : null;
+  }
+  return { commits: again.commits.filter((commit) => commit.sha !== state.pickedSha), isCapped: again.isCapped };
 };
 
 /**
@@ -350,7 +357,7 @@ export interface LandedProbeInput {
   readonly timeoutMs?: number;
   /** The whole probe's deadline; past it the answer is what is known by then. */
   readonly budgetMs?: number;
-  /** Keys this caller already saw answer "nothing" (LandedChanges.key). */
+  /** Keys this caller already saw answer "nothing" (LandedChanges.cleanKey). */
   readonly knownCleanKeys?: readonly string[];
   /**
    * How one git command runs. Injectable like repo identity's `resolveHost`:
@@ -360,11 +367,57 @@ export interface LandedProbeInput {
   readonly runGit?: GitRunner;
 }
 
-/** Answers null for unknown; `progress` holds the missing half as soon as it is known. */
+interface RefResult {
+  readonly branch: string;
+  readonly answer: MissingAnswer | null;
+}
+
+/**
+ * The missing half from the landing branches that have answered so far; a
+ * branch that has not answered, or could not, is named unchecked.
+ */
+const missingHalfOf = (
+  refs: readonly LandingRef[],
+  answeredInAnyOrder: readonly RefResult[],
+  selfEmail: string | null,
+): LandedChanges => {
+  // In the TEAM's branch order, never the order git happened to answer in.
+  const results = refs
+    .map((ref) => answeredInAnyOrder.find((result) => result.branch === ref.branch))
+    .filter((result): result is RefResult => result !== undefined);
+  return missingHalfIn(refs, results, selfEmail);
+};
+
+const missingHalfIn = (
+  refs: readonly LandingRef[],
+  results: readonly RefResult[],
+  selfEmail: string | null,
+): LandedChanges => ({
+  missing: grouped(
+    results.flatMap(({ branch, answer }) =>
+      (answer?.commits ?? []).map((change) => ({ branch, change, landedAt: null })),
+    ),
+    selfEmail,
+    (commit) => commit.committedAt.getTime(),
+  ),
+  recent: [],
+  moreMissing: results.some(({ answer }) => answer?.isCapped === true),
+  unchecked: refs
+    .map((ref) => ref.branch)
+    .filter((branch) => !results.some((result) => result.branch === branch && result.answer !== null)),
+  cleanKey: null,
+});
+
+/** Where the deadline finds what is known: the missing half, branch by branch. */
+interface Progress {
+  snapshot: (() => LandedChanges) | null;
+}
+
+/** Answers null for unknown; `progress` can say the missing half at any moment. */
 const run = async (
   input: LandedProbeInput,
   isCancelled: () => boolean,
-  progress: { value: LandedChanges | null },
+  progress: Progress,
 ): Promise<LandedChanges | null> => {
   const timeoutMs = input.timeoutMs ?? LANDED_GIT_TIMEOUT_MS;
   const limit = semaphore(MAX_PARALLEL_GIT);
@@ -396,22 +449,17 @@ const run = async (
     return nothing(key);
   }
   const probe: Probe = { context, state, refs, selfEmail, cherryPick: !isPartial, now: input.now, timeZone: input.timeZone };
-  const perRef = await Promise.all(refs.map((ref) => missingFor(probe, ref)));
-  const missing = grouped(
-    perRef.flatMap(({ branch, answer }) =>
-      (answer?.commits ?? []).map((change) => ({ branch, change, landedAt: null })),
-    ),
-    selfEmail,
-    (commit) => commit.committedAt.getTime(),
+  // Branch by branch, as each answers: a slow one past the deadline is named
+  // unchecked, and never silences what the others already know.
+  const answered: RefResult[] = [];
+  progress.snapshot = () => missingHalfOf(refs, answered, selfEmail);
+  await Promise.all(
+    refs.map(async (ref) => {
+      answered.push(await missingFor(probe, ref));
+    }),
   );
-  const missingHalf: LandedChanges = {
-    missing,
-    recent: [],
-    moreMissing: perRef.some(({ answer }) => answer?.isCapped === true),
-    unchecked: perRef.filter(({ answer }) => answer === null).map(({ branch }) => branch),
-    cleanKey: null,
-  };
-  progress.value = missingHalf;
+  const missingHalf = missingHalfOf(refs, answered, selfEmail);
+  const { missing } = missingHalf;
   const recent = await recentFor(probe);
   const isComplete =
     missingHalf.unchecked.length === 0 &&
@@ -424,13 +472,14 @@ const run = async (
 
 /**
  * The landed changes to `file` this checkout is missing, and the recent ones
- * it has. Past the deadline: the missing half when it is known (with no
- * key: an answer cut short is never cached), else null.
+ * it has. Past the deadline: the missing half from every landing branch that
+ * answered in time, the rest named unchecked, and no key (an answer cut short
+ * is never cached) — or null when not even the landing branches were known.
  */
 export const findLandedChanges = async (input: LandedProbeInput): Promise<LandedChanges | null> => {
   let isPastDeadline = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const progress: { value: LandedChanges | null } = { value: null };
+  const progress: Progress = { snapshot: null };
   const deadline = new Promise<"deadline">((resolve) => {
     timer = setTimeout(() => {
       isPastDeadline = true;
@@ -439,7 +488,7 @@ export const findLandedChanges = async (input: LandedProbeInput): Promise<Landed
   });
   try {
     const outcome = await Promise.race([run(input, () => isPastDeadline, progress).catch(() => null), deadline]);
-    return outcome === "deadline" ? progress.value : outcome;
+    return outcome === "deadline" ? (progress.snapshot?.() ?? null) : outcome;
   } finally {
     clearTimeout(timer);
   }
