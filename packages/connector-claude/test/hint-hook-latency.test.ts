@@ -93,6 +93,7 @@ const fixture = async (
     deliveredHintRefs: [],
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
+    landedAskedFiles: [],
     ...stateOverrides,
   });
   return {

@@ -722,6 +722,49 @@ export const STATUS_MAX_ABSENCE_LINES = 20;
 export const LANDED_GIT_TIMEOUT_MS = 250;
 /** Most base commits one SessionStart checks for ancestry — one git each. */
 export const MAX_LANDED_ANCESTRY_CHECKS = 10;
+
+// ── Landed changes (docs/1.0/landed-changes.md) ─────────────────────────────
+
+/**
+ * Working days a landed change the reader ALREADY HAS stays worth a word
+ * (decision 2). A change the reader is missing has no such limit.
+ */
+export const LANDED_RECENT_WORKING_DAYS = 2;
+/**
+ * Calendar days the recent probe asks git for. Two working days never span
+ * more than four calendar days (Monday back to Thursday); seven leaves room
+ * for any timezone, and the exact window is applied afterwards, in code, on
+ * the reader's own calendar (landed-changes/working-days.ts).
+ */
+export const LANDED_RECENT_SCAN_DAYS = 7;
+/**
+ * Commits one landing-branch question reads. Generous on purpose: the
+ * reader's own commits are filtered AFTER git answers, so a small limit would
+ * let them use up the reach and hide a teammate's change behind them. The
+ * render names far fewer (MAX_LANDED_COMMITS_SHOWN).
+ */
+export const MAX_LANDED_COMMITS_SCANNED = 50;
+/** Landed commits one warning names; the rest are counted, not listed. */
+export const MAX_LANDED_COMMITS_SHOWN = 3;
+/** Branches a `.crosscheck.json` may name as landing branches. */
+export const MAX_LANDING_BRANCHES = 8;
+/**
+ * Found by auto-detection besides the default branch, when origin has them
+ * (decision 4). A team that lands elsewhere names its branches instead.
+ */
+export const WELL_KNOWN_LANDING_BRANCHES: readonly string[] = ["staging", "develop"];
+/**
+ * The whole landed-change probe's deadline inside PreToolUse, and never more
+ * than one hub call: the hook also clamps it to the configured hub timeout.
+ * It runs beside the live tripwire's hub call, and the state-lock allowance
+ * (TRIPWIRE lock retries) assumes the longest step before the marker claim
+ * is ONE request — so a slow repo costs the landed warning, never the live
+ * one and never the edit. Measured at 40–60 ms on a 10k-commit monorepo.
+ *
+ * VERIFY: bun -e 'const c=await import("./packages/connector-core/src/constants.ts");console.log(c.LANDED_PROBE_BUDGET_MS <= c.HTTP_TIMEOUT_MS)'
+ * PRINTS: true
+ */
+export const LANDED_PROBE_BUDGET_MS = 300;
 /** The solved staleness probe is one git call at MCP pull time, bounded. */
 export const STALENESS_GIT_TIMEOUT_MS = 250;
 /** Most referenced files one staleness probe hands git as pathspecs. */

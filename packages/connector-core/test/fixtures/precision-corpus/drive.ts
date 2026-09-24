@@ -472,6 +472,7 @@ const probeSessionState = (
   ],
   deliveredHintHashes: [],
   tripwireAskedFiles: [],
+  landedAskedFiles: [],
   briefingSolvedRefs: [],
   probedFingerprints: [],
   foreignRepoDrops: 0,

@@ -1,7 +1,17 @@
 /**
  * PreToolUse tripwire (DESIGN.md §4, ask-mode): an Edit/Write to a file that
- * an ACTIVE teammate session has targeted gets a permission "ask" with a
+ * an ACTIVE teammate session has targeted, or that a teammate's LANDED change
+ * touched (docs/1.0/landed-changes.md), gets a permission "ask" with a
  * factual reason — never more.
+ *
+ * TWO QUESTIONS, ONE STOP. The live half asks the hub who is working on the
+ * file right now. The landed half asks the reader's own clone which
+ * teammate commits to the file have landed on a landing branch — missing
+ * from this checkout at any age, or already in it and recent — and needs no
+ * hub at all: a clone is the authority on what it contains, so a dead hub
+ * costs the live half and never the landed one. Both run in parallel, both
+ * fail open, and they share the once-per-file marker, so a file stops a
+ * session at most once whichever of the two found something.
  *
  * THE LADDER STOPS AT "ask" STRUCTURALLY: this module contains exactly one
  * permission decision literal, `ASK_DECISION`, and every other branch returns
@@ -48,17 +58,20 @@
 import { isDenied, resolveDenylist } from "@crosscheck/connector-core/capture/denylist.ts";
 import { extractFilePaths, isEditTool } from "../capture/tool-events.ts";
 import { getTripwireSessions } from "@crosscheck/connector-core/http/hub.ts";
+import type { TripwireSession } from "@crosscheck/connector-core/http/hub.ts";
+import type { CoverageRecord } from "@crosscheck/connector-core/http/coverage.ts";
 import {
   UNKNOWN_DEVELOPER_ID,
   hintDeliveryRecord,
 } from "@crosscheck/connector-core/capture/records.ts";
 import { appendRecords } from "@crosscheck/connector-core/spool/append.ts";
-import { renderTripwireReason } from "@crosscheck/connector-core/hints/render.ts";
+import { renderEditWarning } from "@crosscheck/connector-core/hints/render.ts";
 import {
   openToolWindow,
   readSessionState,
   updateSessionState,
   withKnownWorktreeRoot,
+  withLandedAsked,
   withTripwireAsked,
 } from "@crosscheck/connector-core/state/session-state.ts";
 import type { SessionState } from "@crosscheck/connector-core/state/session-state.ts";
@@ -66,7 +79,10 @@ import { toolWindowKey } from "@crosscheck/connector-core/state/tool-window-key.
 import { resolveTouchedRoots } from "@crosscheck/connector-core/capture/touched-root.ts";
 import { toRepoRelative } from "@crosscheck/connector-core/capture/target-paths.ts";
 import { resolveTripwireMode } from "@crosscheck/connector-core/config/tripwire.ts";
-import { TRIPWIRE_MODE_NOTICE } from "@crosscheck/connector-core/constants.ts";
+import { findLandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
+import type { LandedChanges } from "@crosscheck/connector-core/landed-changes/probe.ts";
+import { resolveTimeZone } from "@crosscheck/connector-core/landed-changes/working-days.ts";
+import { LANDED_PROBE_BUDGET_MS, TRIPWIRE_MODE_NOTICE } from "@crosscheck/connector-core/constants.ts";
 import type { HookContext } from "./runner.ts";
 
 /** The ONLY decision this connector can emit — the ladder's ceiling (§4). */
@@ -80,10 +96,17 @@ const ASK_DECISION = "ask";
  * to the session-state cache so pre- and post-tool-use never pay git twice for
  * it (hook budgets are binding).
  */
+interface EditedFile {
+  /** Repo-relative, as git and the hub name it. */
+  readonly file: string;
+  /** The root of the worktree the file lives in — where git is asked. */
+  readonly root: string;
+}
+
 const resolveEditedFile = async (
   ctx: HookContext,
   state: SessionState,
-): Promise<string | null> => {
+): Promise<EditedFile | null> => {
   const [first] = extractFilePaths(ctx.payload.tool_input);
   if (first === undefined) {
     return null;
@@ -113,10 +136,13 @@ const resolveEditedFile = async (
     );
   }
   const root = resolution.rootByPath.get(first);
-  return root === undefined
-    ? null
-    : toRepoRelative(root, ctx.payload.cwd, first);
+  const file = root === undefined ? null : await toRepoRelative(root, ctx.payload.cwd, first);
+  return root === undefined || file === null ? null : { file, root };
 };
+
+/** Something landed worth a word: missing at any age, or present and recent. */
+const landedWorthSaying = (landed: LandedChanges | null): LandedChanges | null =>
+  landed !== null && (landed.missing.length > 0 || landed.recent.length > 0) ? landed : null;
 
 export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   if (!isEditTool(ctx.payload.tool_name)) {
@@ -157,67 +183,142 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
   if (windowKey !== null) {
     await openToolWindow(ctx.config.home, ctx.payload.session_id, windowKey);
   }
-  const file = await resolveEditedFile(ctx, state);
-  if (file === null) {
+  const edited = await resolveEditedFile(ctx, state);
+  if (edited === null) {
     return "";
   }
+  const { file } = edited;
   // Hot files drown real overlap signal — the same denylist capture applies.
   const patterns = resolveDenylist(ctx.config.denylist ?? undefined);
   if (isDenied(file, patterns)) {
     return "";
   }
-  // One ask per file per session: noise budget (§10 risk 1), and the answer
-  // would not change within a session anyway.
-  if (state.tripwireAskedFiles.includes(file)) {
+  // One stop per file per session FOR EACH REASON: noise budget (§10 risk
+  // 1), and neither answer changes within a session. A file already stopped
+  // for both reasons costs nothing; one stopped for one reason only asks the
+  // other question.
+  const asked = {
+    live: state.tripwireAskedFiles.includes(file),
+    landed: state.landedAskedFiles.includes(file),
+  };
+  if (asked.live && asked.landed) {
     return "";
   }
-  const result = await getTripwireSessions(ctx.hub, ctx.identity.repoId, file);
-  if (!result.ok) {
+  const found = await findReasons(ctx, edited, asked);
+  if (found.teammate === null && found.landed === null) {
     return "";
   }
-  const [teammate] = result.data.sessions;
-  if (teammate === undefined) {
+  const won = await claimReasons(ctx, file, found);
+  if (won.teammate === null && won.landed === null) {
     return "";
   }
-  // The ask reason states what a teammate is doing; the record states how far
-  // the archive that claim came from reaches (03 §5.1). It annotates only on
-  // a positively observed gap, so an un-upgraded hub leaves this line
-  // byte-identical to what it was.
-  const reason = renderTripwireReason(
-    teammate,
+  // The ask reason states what a teammate is doing and what landed; the
+  // record states how far the archive the live claim came from reaches
+  // (03 §5.1). It annotates only on a positively observed gap, so an
+  // un-upgraded hub leaves the live lines byte-identical to what they were.
+  const reason = renderEditWarning({
+    live: won.teammate,
+    landed: won.landed,
     file,
-    ctx.now(),
-    result.data.coverage,
-  );
-  const mode = resolveTripwireMode(ctx.env);
-  // The marker is CLAIMED atomically — check-and-set under the state lock, on
-  // the freshest state: a sibling PreToolUse racing this one finds the marker
-  // already present and stays silent, and a slower PostToolUse writing after
-  // us can no longer erase it (test/state-race.test.ts). Claimed BEFORE
-  // emitting, same honest direction as the hint delivery: a crash between the
-  // two costs one ask, never a nag loop.
-  const claimed = await updateSessionState(
-    ctx.config.home,
-    ctx.payload.session_id,
-    (fresh) =>
-      fresh.tripwireAskedFiles.includes(file)
-        ? null
-        : withTripwireAsked(fresh, file),
-  );
-  if (!claimed) {
-    return "";
+    now: ctx.now(),
+    ...(found.coverage === undefined ? {} : { coverage: found.coverage }),
+  });
+  if (won.teammate !== null) {
+    await recordTripwireAsk(ctx, state, won.teammate);
   }
-  // THE ASK IS COUNTED (07 §3.1), and HERE — not by a later hook. Proof 2
-  // reads the `tripwire` channel, and the ask used to live only in this
-  // session's state file, which never reaches the hub. Deferring the record
-  // to the next hook that appends would lose exactly the asks that mattered:
-  // a denied edit fires no PostToolUse, and a session that is simply closed
-  // fires nothing at all (the trial: 104 of 127 never closed). A spool append
-  // takes no lock and costs microseconds beside the hub call this hook has
-  // already made, and a failed one is booked in `.drops`, never dropped
-  // silently. Appended AFTER the claim, so a racing sibling that lost the
-  // claim records nothing — and the id is deterministic per (session,
-  // context), so a replay is the hub's `duplicate`, not a second collision.
+  return askOutput(ctx, reason);
+};
+
+interface Reasons {
+  readonly teammate: TripwireSession | null;
+  readonly landed: LandedChanges | null;
+}
+
+interface FoundReasons extends Reasons {
+  readonly coverage?: CoverageRecord;
+}
+
+const NO_REASONS: Reasons = { teammate: null, landed: null };
+
+/**
+ * Asks only the questions this session has not been stopped for yet, in
+ * parallel, and neither waits on the other: the hub call is bounded by its
+ * own timeout, the landed probe by its own deadline — never longer than one
+ * hub call, so the live ask keeps the budget it always had — and a failure
+ * of either is silence for that half only.
+ */
+const findReasons = async (
+  ctx: HookContext,
+  edited: EditedFile,
+  asked: { readonly live: boolean; readonly landed: boolean },
+): Promise<FoundReasons> => {
+  const [result, probed] = await Promise.all([
+    asked.live ? null : getTripwireSessions(ctx.hub, ctx.identity.repoId, edited.file),
+    asked.landed
+      ? null
+      : findLandedChanges({
+          root: edited.root,
+          file: edited.file,
+          now: ctx.now(),
+          timeZone: resolveTimeZone(ctx.env),
+          budgetMs: Math.min(LANDED_PROBE_BUDGET_MS, ctx.config.timeoutMs),
+        }),
+  ]);
+  const hub = result?.ok === true ? result.data : null;
+  return {
+    teammate: hub?.sessions[0] ?? null,
+    landed: landedWorthSaying(probed),
+    ...(hub === null ? {} : { coverage: hub.coverage }),
+  };
+};
+
+/**
+ * The markers are CLAIMED atomically — check-and-set under the state lock,
+ * on the freshest state: a sibling PreToolUse racing this one finds a marker
+ * already present and drops that reason, and a slower PostToolUse writing
+ * after us can no longer erase it (test/state-race.test.ts). Claimed BEFORE
+ * emitting, same honest direction as the hint delivery: a crash between the
+ * two costs one ask, never a nag loop. Returns only the reasons THIS call
+ * won — the only ones it may state.
+ */
+const claimReasons = async (ctx: HookContext, file: string, found: Reasons): Promise<Reasons> => {
+  // A holder rather than a plain `let`, so the assignment inside the
+  // callback is visible after it.
+  const won: { value: Reasons } = { value: NO_REASONS };
+  const isWritten = await updateSessionState(ctx.config.home, ctx.payload.session_id, (fresh) => {
+    const teammate =
+      found.teammate !== null && !fresh.tripwireAskedFiles.includes(file) ? found.teammate : null;
+    const landed = found.landed !== null && !fresh.landedAskedFiles.includes(file) ? found.landed : null;
+    won.value = { teammate, landed };
+    if (teammate === null && landed === null) {
+      return null;
+    }
+    const withLive = teammate === null ? fresh : withTripwireAsked(fresh, file);
+    return landed === null ? withLive : withLandedAsked(withLive, file);
+  });
+  return isWritten ? won.value : NO_REASONS;
+};
+
+/**
+ * THE ASK IS COUNTED (07 §3.1), and HERE — not by a later hook. Proof 2
+ * reads the `tripwire` channel, and the ask used to live only in this
+ * session's state file, which never reaches the hub. Deferring the record
+ * to the next hook that appends would lose exactly the asks that mattered:
+ * a denied edit fires no PostToolUse, and a session that is simply closed
+ * fires nothing at all (the trial: 104 of 127 never closed). A spool append
+ * takes no lock and costs microseconds beside the hub call this hook has
+ * already made, and a failed one is booked in `.drops`, never dropped
+ * silently. Appended AFTER the claim, so a racing sibling that lost the
+ * claim records nothing — and the id is deterministic per (session,
+ * context), so a replay is the hub's `duplicate`, not a second collision.
+ * Only the LIVE half has a teammate context to record against; a stop for
+ * a landed change alone records nothing here yet.
+ */
+const recordTripwireAsk = async (
+  ctx: HookContext,
+  state: SessionState,
+  teammate: TripwireSession,
+): Promise<void> => {
   await appendRecords(
     ctx.config.home,
     ctx.repoKey,
@@ -238,16 +339,21 @@ export const handlePreToolUse = async (ctx: HookContext): Promise<string> => {
     ],
     ctx.now(),
   );
-  // #25: additionalContext carries the SAME factual reason (incl. the
-  // get_diagnosis id) to the MODEL — permissionDecisionReason for an "ask"
-  // reaches the human only (hooks.md), so before this the model learned
-  // nothing. It is emitted in BOTH modes. In `notice` mode (Q2: headless
-  // orchestration/CI) the decision fields are omitted entirely, so the tool is
-  // briefed but never blocked — the only honest fallback, since headless
-  // cannot be auto-detected. The ladder still stops at "ask": ASK_DECISION is
-  // this module's one decision literal and `notice` emits no decision at all.
+};
+
+/**
+ * #25: additionalContext carries the SAME factual reason (incl. the
+ * get_diagnosis id) to the MODEL — permissionDecisionReason for an "ask"
+ * reaches the human only (hooks.md), so before this the model learned
+ * nothing. It is emitted in BOTH modes. In `notice` mode (Q2: headless
+ * orchestration/CI) the decision fields are omitted entirely, so the tool is
+ * briefed but never blocked — the only honest fallback, since headless
+ * cannot be auto-detected. The ladder still stops at "ask": ASK_DECISION is
+ * this module's one decision literal and `notice` emits no decision at all.
+ */
+const askOutput = (ctx: HookContext, reason: string): string => {
   const hookSpecificOutput =
-    mode === TRIPWIRE_MODE_NOTICE
+    resolveTripwireMode(ctx.env) === TRIPWIRE_MODE_NOTICE
       ? { hookEventName: "PreToolUse", additionalContext: reason }
       : {
           hookEventName: "PreToolUse",

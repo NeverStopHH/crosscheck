@@ -224,6 +224,7 @@ export const registerSessionFlow = async (
     deliveredHintRefs: [],
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
+    landedAskedFiles: [],
     // The intent writers (derived-intent worker, set_intent) re-send the
     // title and status on their update record — kept here so they never
     // fabricate one (trial finding #16).

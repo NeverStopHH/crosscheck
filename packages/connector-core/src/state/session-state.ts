@@ -139,6 +139,14 @@ const SessionStateObjectSchema = z.looseObject({
   deliveredHintHashes: z.array(z.string().min(1)).default([]),
   tripwireAskedFiles: z.array(z.string().min(1)).default([]),
   /**
+   * Files this session was already stopped on for a teammate's LANDED change
+   * (docs/1.0/landed-changes.md). A separate list from tripwireAskedFiles on
+   * purpose: one stop per file per REASON, so a landed-change stop does not
+   * use up the live one — a teammate who starts on the same file later in
+   * the session is still named, once.
+   */
+  landedAskedFiles: z.array(z.string().min(1)).default([]),
+  /**
    * Work contexts the SessionStart briefing already pointed at as "solved
    * before" (VISION.md §1). A SEPARATE list from deliveredHintRefs on
    * purpose: the prompt path folds these into its seen-set so the same tree
@@ -1198,6 +1206,21 @@ export const withKnownWorktreeRoot = (
 };
 
 /** FIFO cap, same shape as withSeenTargets: asks are once per file. */
+/** Remembers a landed-change stop on `file`, same FIFO cap as the live one. */
+export const withLandedAsked = (
+  state: SessionState,
+  file: string,
+): SessionState => {
+  const merged = [...state.landedAskedFiles, file];
+  return {
+    ...state,
+    landedAskedFiles:
+      merged.length <= MAX_TRIPWIRE_ASKED_FILES
+        ? merged
+        : merged.slice(merged.length - MAX_TRIPWIRE_ASKED_FILES),
+  };
+};
+
 export const withTripwireAsked = (
   state: SessionState,
   file: string,
@@ -1365,6 +1388,7 @@ export const deriveSessionState = (
     deliveredHintRefs: [],
     deliveredHintHashes: [],
     tripwireAskedFiles: [],
+    landedAskedFiles: [],
     briefingSolvedRefs: [],
     probedFingerprints: [],
     foreignRepoDrops: 0,

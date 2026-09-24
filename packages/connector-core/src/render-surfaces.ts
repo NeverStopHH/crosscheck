@@ -18,6 +18,7 @@
  * package trees, not the workspace root.
  */
 import type { CommitDrift } from "./git/commit-drift.ts";
+import type { LandedChanges, LandedCommit } from "./landed-changes/probe.ts";
 import type { CoverageRecord } from "./http/coverage.ts";
 import { renderBriefing } from "./briefing/render.ts";
 import { renderConferenceReport } from "./conference/report.ts";
@@ -28,6 +29,7 @@ import {
   renderClaimHint,
   renderPointerHint,
   renderSolvedHint,
+  renderEditWarning,
   renderTripwireReason,
 } from "./hints/render.ts";
 import { renderOpenQuestions } from "./mcp/tools/list-open-questions.ts";
@@ -479,6 +481,24 @@ const tripwireSessionWith = (payload: string): TripwireSession => ({
   workContextIntent: intentWith(payload),
 });
 
+/**
+ * A landed commit with the payload in the two strings another developer
+ * wrote — the subject and the author name — once missing, once recent.
+ */
+const landedChangesWith = (payload: string): LandedChanges => {
+  const commit: LandedCommit = {
+    sha: "0dcfc4e41e1f309f8a6d3056726744bb8ddd6133",
+    shortSha: "0dcfc4e",
+    authorName: payload,
+    authorEmail: "mike@example.com",
+    subject: payload,
+    committedAt: new Date(ISO),
+    branches: ["staging"],
+    landedAt: new Date(ISO),
+  };
+  return { missing: [commit], recent: [commit], moreMissing: true };
+};
+
 const diagnosisWith = (payload: string): Diagnosis => ({
   workContext: {
     id: "wc_cc_11111111-2222-4333-8444-555555555555",
@@ -858,6 +878,17 @@ export const RENDER_SURFACES: readonly RenderSurface[] = [
     framing: "framed",
     render: (payload) =>
       renderTripwireReason(tripwireSessionWith(payload), "src/app.ts", NOW),
+  },
+  {
+    // The landed-change half of the same ask (docs/1.0/landed-changes.md):
+    // commit subjects and author names are written by other developers.
+    kind: "corpus",
+    name: "landed-change-reason",
+    delivery: "unsolicited",
+    module: "src/hints/render.ts",
+    framing: "framed",
+    render: (payload) =>
+      renderEditWarning({ live: null, landed: landedChangesWith(payload), file: "src/app.ts", now: NOW }),
   },
   {
     kind: "corpus",

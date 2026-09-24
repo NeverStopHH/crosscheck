@@ -55,9 +55,20 @@ const CLOCK_FLAGS = ["--since", "--until", "--before", "--after"] as const;
  * Adding a second entry is a decision about the architecture. It is a visible
  * list rather than a pattern for exactly that reason: a regex with an escape
  * hatch widens quietly, a list does not.
+ *
+ * THE SECOND ENTRY, and the decision it records. `landed-changes/git-queries.ts`
+ * asks "which changes ARRIVED on a landing branch in the last two working
+ * days" — a notification window a person chose (docs/1.0/landed-changes.md,
+ * decision 2), not a claim's currency. It avoids the defect above by
+ * construction: it asks on the landing branch's `--first-parent` line, where
+ * a merge or squash commit carries the time the change LANDED rather than
+ * the feature branch's original dates, and it only ever windows changes the
+ * reader already HAS. Whether the reader is MISSING a change is answered by
+ * ancestry alone, in the same module, with no clock.
  */
 const ALLOWED: readonly string[] = [
   "packages/connector-core/src/capture/commit-evidence.ts",
+  "packages/connector-core/src/landed-changes/git-queries.ts",
 ];
 
 const withoutComments = (source: string): string =>
