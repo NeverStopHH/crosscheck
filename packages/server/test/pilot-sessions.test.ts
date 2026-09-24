@@ -263,4 +263,46 @@ describe("one session's residue", () => {
     expect(stored).toHaveLength(1);
     expect(stored[0]?.endReason).toBe("reported");
   });
+
+  test("a revived session in a FULL set keeps its own slot — its second end is not a refusal", async () => {
+    // Arrange — 49 other sessions plus this one, reaped: the set is full, and
+    // this session already holds a slot (found by adversarial review)
+    const { harness, developer } = await setup();
+    const filler = Array.from({ length: PILOT_MAX_SESSIONS - 1 }, (_unused, i) => ({
+      id: `cc_fill_${String(i)}`,
+      developerId: developer.developerId,
+      agentKind: "claude-code",
+      repo: REPO,
+      branch: "main",
+      baseCommit: "abc1234",
+      status: "done" as const,
+      startedAt: NOW,
+      lastHeartbeatAt: NOW,
+    }));
+    await harness.db.insert(agentSessions).values(filler);
+    await harness.db.insert(pilotSessions).values(
+      filler.map((row) => ({
+        sessionId: row.id,
+        repo: REPO,
+        observedAt: NOW,
+        endReason: "reported" as const,
+        coverage: [],
+        seqNullRecords: 0,
+        seqEpochs: 0,
+      })),
+    );
+    await store(harness, developer, "reaped");
+
+    // Act — revived, then ended for real
+    await store(harness, developer, "reported");
+
+    // Assert
+    const own = (await rows(harness)).find((row) => row.sessionId === SESSION);
+    expect(own?.endReason).toBe("reported");
+    const refused = (await harness.db.select().from(pilotCounters)).find(
+      (row) => row.counter === "pilot_sessions_refused",
+    );
+    expect(refused).toBeUndefined();
+  });
 });
+

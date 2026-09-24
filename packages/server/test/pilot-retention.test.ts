@@ -125,4 +125,26 @@ describe("pilot retention", () => {
       .map((row) => row.id);
     expect(ids).toEqual(["pa_new"]);
   });
+
+  test("the refusal count outlives the window while the set it describes stands", async () => {
+    // Arrange — the fifty sessions are never pruned; aging their refusal
+    // count out made a full set read as the whole population again
+    const harness = await setup();
+    await harness.db.insert(pilotCounters).values({
+      repo: REPO,
+      day: utcDay(daysAgo(PILOT_RETENTION_DAYS + 30)),
+      surface: "pilot-sessions",
+      counter: "pilot_sessions_refused",
+      value: 3,
+      updatedAt: now,
+    });
+
+    // Act
+    await reap(harness);
+
+    // Assert
+    const refused = await harness.db.select().from(pilotCounters);
+    expect(refused.map((row) => row.counter)).toEqual(["pilot_sessions_refused"]);
+  });
 });
+

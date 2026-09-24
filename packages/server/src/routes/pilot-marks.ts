@@ -71,12 +71,12 @@ const CandidatesQuerySchema = z.object({
 const REFUSAL_SENTENCE: Record<MarkRefusal, string> = {
   not_enrolled:
     "this repo is not in the pilot, so nothing is being measured — ask whoever runs the hub to enrol it, or leave it as it is",
+  // ALSO the answer for a delivery that exists but reached somebody else:
+  // a separate sentence would tell the asker what a colleague was shown.
   unknown_ref:
-    "nothing with that id exists on this repo — `crosscheck noise` with no argument finds the most recent one for you",
+    "nothing with that id reached you on this repo — `crosscheck noise` with no argument finds the most recent one for you",
   wrong_repo:
     "that id belongs to another repo; marks are repo-scoped, because one team's noise is not another's",
-  not_yours:
-    "that delivery went to somebody else's session; a noise mark is the word of whoever received it, so they are the one to make it",
   not_unsolicited:
     "that was an answer somebody asked for; a noise mark is for what arrived without being asked",
   pin_broken:

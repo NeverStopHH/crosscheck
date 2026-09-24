@@ -9141,6 +9141,39 @@ export const MUTATIONS: readonly Mutation[] = [
       "proof 5's headline says 03's rule held in the wild when nothing measured it",
   },
   {
+    // 07 §3.6, corrected. A session that already holds a slot is not counted against itself.
+    label: "a revived session's true end is refused at the cap",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "        ne(pilotSessions.sessionId, input.sessionId),",
+    to: "        ne(pilotSessions.sessionId, \"never\"),",
+    test: `${SERVER}/test/pilot-sessions.test.ts`,
+    because:
+      "in a full set the second, true end of a revived session is booked as a " +
+      "refusal and its row keeps saying `reaped`",
+  },
+  {
+    // 07 §4, corrected. The refusal count lives as long as the set it describes.
+    label: "the session set's refusal count ages out",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "        ne(pilotCounters.counter, PILOT_SESSIONS_REFUSED),",
+    to: "        ne(pilotCounters.counter, \"never\"),",
+    test: `${SERVER}/test/pilot-retention.test.ts`,
+    because:
+      "after ninety days a full set reads `0 refused` while its fifty rows stay, " +
+      "and the measurement looks like the whole population",
+  },
+  {
+    // 07 §8.4, corrected. Another person's delivery gets the same answer as none.
+    label: "a refusal code reveals what a colleague was shown",
+    file: `${SERVER}/src/services/pilot.ts`,
+    from: "    return \"unknown_ref\";\n  }\n  if (!target.unsolicited) {",
+    to: "    return \"wrong_repo\";\n  }\n  if (!target.unsolicited) {",
+    test: `${SERVER}/test/pilot-marks.test.ts`,
+    because:
+      "anybody who computes a colleague's delivery id learns from the refusal " +
+      "whether that ref was shown to them — a per-person history",
+  },
+  {
     // 07 §3.2. Proof 4 counts people interrupted, and only the person a
     // delivery reached was interrupted by it.
     label: "anybody may call somebody else's delivery noise",
@@ -9675,11 +9708,11 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-attributions.test.ts 3
  * PRINTS: packages/server/test/pilot-counters.test.ts 6
  * PRINTS: packages/server/test/pilot-mark-candidates.test.ts 7
- * PRINTS: packages/server/test/pilot-marks.test.ts 7
+ * PRINTS: packages/server/test/pilot-marks.test.ts 8
  * PRINTS: packages/server/test/pilot-repairs.test.ts 5
  * PRINTS: packages/server/test/pilot-report.test.ts 18
- * PRINTS: packages/server/test/pilot-retention.test.ts 3
- * PRINTS: packages/server/test/pilot-sessions.test.ts 4
+ * PRINTS: packages/server/test/pilot-retention.test.ts 4
+ * PRINTS: packages/server/test/pilot-sessions.test.ts 5
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1
  * PRINTS: packages/server/test/questions.test.ts 8
