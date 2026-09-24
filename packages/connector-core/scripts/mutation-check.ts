@@ -8075,6 +8075,106 @@ export const MUTATIONS: readonly Mutation[] = [
       "answer becomes decoration",
   },
   {
+    // 07 §7. PIL-1. `unknown` is the honest bucket for rows older than the column.
+    label: "the channel nobody can attribute is folded away",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "Object.fromEntries(DELIVERY_CHANNELS.map((channel) => [channel, 0]))",
+    to: "Object.fromEntries(DELIVERY_CHANNELS.filter((c) => c !== \"unknown\").map((channel) => [channel, 0]))",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "every delivery written before the channel column existed disappears from the split, so the channel buckets stop adding up to the total and the history worth counting reads as though it never happened",
+  },
+  {
+    // 07 §7. PIL-2. A count is printed beside the prior work it counted.
+    label: "an opened count is printed without the work it named",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    title: row.title,",
+    to: "    title: \"\",",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "proof 1 prints \"opened 74\" with nothing a reader can check it against — the counterfactual claim without the counterfactual, which is the one thing the spec forbids this line to be",
+  },
+  {
+    // 07 §7. PIL-4. A surface that counted nothing is not a perfect surface.
+    label: "an uninstrumented surface reads as one that never missed",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "        mine.length === 0\n          ? null",
+    to: "        false\n          ? null",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a surface nobody wired prints as an empty row of counters that renders as \"missed 0\", so the proof about honest qualification certifies a surface it never observed",
+  },
+  {
+    // 07 §7. PIL-5. An attribution made where a lane was blind should not have been made.
+    label: "an answer given under a coverage gap is scored as a hit or a miss",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "  const scorable = [...byAttribution.values()].filter((row) => row.judgeable);",
+    to: "  const scorable = [...byAttribution.values()];",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "the accuracy figure absorbs exactly the answers principle 1 says must not be given, so a product that names people out of blind spots can report a high accuracy BECAUSE it does",
+  },
+  {
+    // 07 §7. PIL-7. One epoch or the span is refused.
+    label: "a restarted counter is reported as a readable sequence",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    spanned: rows.filter((row) => row.epochs === 1).length,",
+    to: "    spanned: rows.filter((row) => (row.epochs ?? 0) >= 1).length,",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "sessions whose order is broken are counted among those whose order can be read, so the set looks more instrumented than it is on exactly the sessions 01 says cannot be ordered",
+  },
+  {
+    // 07 §7. Convergence is credited only inside the window after opening.
+    label: "work done days later is credited to a pointer somebody opened",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "               AND mine.created_at < d.pulled_at\n                   + make_interval(hours => ${PILOT_CONVERGENCE_WINDOW_HOURS})",
+    to: "",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "any later work on the same files counts as having built on the prior work, so convergence rises with how long a team keeps editing a module rather than with what the pointer did",
+  },
+  {
+    // 07 §7. Overlap from before the pointer was shown belongs to neither figure.
+    label: "work done before the pointer arrived is credited to it",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "       AND mine.created_at >= d.delivered_at",
+    to: "",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a session that had already done the work before being told is counted as converging or as duplicating anyway, so the pointer is credited or blamed for something it could not have caused",
+  },
+  {
+    // 07 §7. A ghost line never reaches the hub, and a zero would say there were none.
+    label: "ghost collisions nobody recorded are reported as none",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    ghostFlagged: unavailable(\"ghost_lines_not_recorded\"),",
+    to: "    ghostFlagged: measured(0),",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "proof 2 states that the briefing flagged no ghost collisions, when the truth is that the hub was never told about any — an absence of evidence printed as evidence of absence",
+  },
+  {
+    // 07 §7. Proof 4 is about what arrived UNASKED.
+    label: "a pulled answer is counted as proactive precision",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "        AND hd.channel <> 'suspect'",
+    to: "",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "a reader who ASKED `suspect` and opened the answer is counted as a proactive intervention that helped, so proof 4 grows with how often people ask rather than with what the product volunteered",
+  },
+  {
+    // 07 §7. One attribution per (pin, named session), however often it was asked.
+    label: "each re-run of the same question is scored as a separate attribution",
+    file: `${SERVER}/src/services/pilot-report.ts`,
+    from: "    const key = JSON.stringify([row.pinId, row.topSessionId]);",
+    to: "    const key = JSON.stringify([row.pinId, row.topSessionId, answers.indexOf(row)]);",
+    test: `${SERVER}/test/pilot-report.test.ts`,
+    because:
+      "proof 3's accuracy is weighted by how many times somebody re-ran `suspect`, so one correct answer asked five times outweighs four different wrong ones",
+  },
+  {
     // 07 §3.4. The invisible direction of error: one fix counted against
     // two breaks hands proof 3 a hit it never earned.
     label: "one fix is counted against a break that already has one",
@@ -8759,6 +8859,7 @@ interface Outcome {
  * PRINTS: packages/server/test/pilot-counters.test.ts 5
  * PRINTS: packages/server/test/pilot-marks.test.ts 3
  * PRINTS: packages/server/test/pilot-repairs.test.ts 3
+ * PRINTS: packages/server/test/pilot-report.test.ts 10
  * PRINTS: packages/server/test/pilot-sessions.test.ts 4
  * PRINTS: packages/server/test/pins.test.ts 4
  * PRINTS: packages/server/test/presence.test.ts 1

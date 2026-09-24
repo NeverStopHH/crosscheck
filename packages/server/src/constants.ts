@@ -854,3 +854,24 @@ export const PILOT_TARGET_FALSE_PROACTIVE_MAX_PER_100 = 20;
  * PRINTS: true
  */
 export const PILOT_FIX_DIFF_MAX_FILES = 200;
+
+/**
+ * How many opened pointers proof 1 NAMES (07 §5, PIL-2).
+ *
+ * Every opened count is printed beside the prior work it named, because a
+ * bare number is the counterfactual claim without the counterfactual. Ten is
+ * a list a person reads on one screen; the rest are counted and the cut is
+ * printed, so the list never reads as the whole.
+ */
+export const PILOT_REPORT_MAX_PRIOR_WORK = 10;
+
+/**
+ * How many repaired attributions one report hands the CLI to diff (07 §3.4).
+ *
+ * Each costs one bounded `git diff --name-only` on the reader's machine, and
+ * a report is a command somebody is waiting on. Twenty-five is well past what
+ * a pilot produces in eight weeks; a report that hits it says so rather than
+ * scoring a sample as though it were the population.
+ */
+export const PILOT_REPORT_MAX_REPAIRS = 25;
+

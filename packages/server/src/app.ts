@@ -18,6 +18,7 @@ import { presenceRoutes } from "./routes/presence.ts";
 import { questionsRoutes } from "./routes/questions.ts";
 import { recordsRoutes } from "./routes/records.ts";
 import { pilotMarkRoutes } from "./routes/pilot-marks.ts";
+import { pilotRoutes } from "./routes/pilot.ts";
 import { searchRoutes } from "./routes/search.ts";
 import { sessionsRoutes } from "./routes/sessions.ts";
 import { settingsRoutes } from "./routes/settings.ts";
@@ -42,6 +43,7 @@ export const createApp = (deps: AppDeps): Hono<AppEnv> => {
   app.route("/api/contradictions", contradictionsRoutes(deps));
   app.route("/api/absences", absencesRoutes(deps));
   app.route("/api/pilot-marks", pilotMarkRoutes(deps));
+  app.route("/api/pilot", pilotRoutes(deps));
   app.route("/api/solved-matches", solvedMatchesRoutes(deps));
   app.route("/api/ghost-checks", ghostChecksRoutes(deps));
   // The conference corpus (VISION.md §2). Never a hook and never automatic:
