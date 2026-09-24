@@ -61,8 +61,8 @@ afterAll(async () => {
   await Promise.all(cleanups.map((path) => rm(path, { recursive: true, force: true })));
 });
 
-const repos = async (label: string): Promise<LandingRepos> => {
-  const made = await makeLandingRepos(label);
+const repos = async (label: string, landing: readonly string[] = ["staging"]): Promise<LandingRepos> => {
+  const made = await makeLandingRepos(label, landing);
   cleanups.push(made.base);
   return made;
 };
@@ -615,6 +615,55 @@ describe("the limit, never at the cost of what is certainly missing", () => {
   }, HEAVY_SETUP_MS);
 });
 
+/** Ken's June change stays missing while Nick merges a branch that lacks it. */
+const mergeWithoutKen = async (label: string): Promise<LandingRepos> => {
+  const r = await repos(label);
+  await landWithSquash(r, { ...JUNE_LANDING, author: KEN, subject: "Ken change" });
+  await readerFetches(r);
+  await gitIn(r.reader, ["checkout", "-q", "-b", "other", "origin/main"]);
+  await commitFile(r.reader, "src/other.ts", "export const other = 1;\n", "Other work", { as: NICK });
+  await gitIn(r.reader, ["checkout", "-q", "nick/work"]);
+  await gitIn(r.reader, ["merge", "--no-commit", "--no-ff", "other"], { as: NICK });
+  return r;
+};
+
+/** stillMissingAfterMerge: `rev-list <tip> ^<head> ^<merge heads> -- <file>`. */
+const isMergeFilter = (args: readonly string[]): boolean =>
+  args[0] === "rev-list" && args[1] !== "--count" && args[1] !== "-1" && args.includes("--");
+
+describe("during a merge", () => {
+  test("the missing question and the merge filter are asked side by side, not one after the other", async () => {
+    // Arrange — each takes 400 ms; one after the other would not fit in 700
+    const r = await mergeWithoutKen("merge-parallel");
+    const slowBoth = runnerFor(r.reader, (args) => (args.includes("--left-only") || isMergeFilter(args) ? 400 : "pass"));
+
+    // Act
+    const changes = await probe(r.reader, { runGit: slowBoth, budgetMs: 700 });
+    await gitIn(r.reader, ["merge", "--abort"]);
+
+    // Assert
+    expect(changes?.missing.map((c) => c.subject)).toEqual(["Ken change"]);
+    expect(changes?.unchecked).toEqual([]);
+  });
+
+  test("a merge filter that cannot answer names the branch unchecked, never reads arriving work as missing", async () => {
+    // Arrange — Nick merges the carrier of Mike's commit; the filter fails
+    const r = await repos("merge-filter-fails");
+    await landWithMergeCommit(r, JUNE_LANDING);
+    await readerFetches(r);
+    await gitIn(r.reader, ["merge", "--no-commit", "--no-ff", "origin/staging"], { as: NICK });
+    const failFilter = runnerFor(r.reader, (args) => (isMergeFilter(args) ? "fail" : "pass"));
+
+    // Act
+    const changes = await probe(r.reader, { runGit: failFilter });
+    await gitIn(r.reader, ["merge", "--abort"]);
+
+    // Assert — the filter failed for every landing branch, so every one is named
+    expect(changes?.missing).toEqual([]);
+    expect(changes?.unchecked).toEqual(["main", "staging"]);
+  });
+});
+
 describe("the team's branch order", () => {
   test("a change on two branches is listed in the team's order, whichever answers first", async () => {
     // Arrange — landed on staging, promoted to main; main's question is slowed
@@ -639,6 +688,26 @@ describe("the team's branch order", () => {
 });
 
 describe("a slow landing branch", () => {
+  test("at the deadline, the branches that answered keep the team's order", async () => {
+    // Arrange — a change on main and staging; develop is slow and unanswered
+    const r = await repos("deadline-order", ["staging", "develop"]);
+    await landWithMergeCommit(r, JUNE_LANDING);
+    await gitIn(r.teammate, ["push", "-q", "origin", "staging:main"]);
+    await readerFetches(r);
+    const developTip = await gitIn(r.reader, ["rev-parse", "refs/remotes/origin/develop"]);
+    const slowDevelop = runnerFor(r.reader, (args) =>
+      args.includes("--left-only") && args.some((arg) => arg.startsWith(`${developTip}...`)) ? 5_000 : "pass",
+    );
+
+    // Act
+    const changes = await probe(r.reader, { runGit: slowDevelop, budgetMs: 1_500 });
+
+    // Assert
+    expect(changes?.missing.map((c) => c.branches)).toEqual([["main", "staging"]]);
+    expect(changes?.unchecked).toEqual(["develop"]);
+  });
+
+
   test("past the deadline, it is named unchecked and the others still say what they know", async () => {
     // Arrange — Ken's change is missing via main; staging's question is slow
     const r = await repos("slow-branch");
@@ -646,11 +715,11 @@ describe("a slow landing branch", () => {
     await readerFetches(r);
     const stagingTip = await gitIn(r.reader, ["rev-parse", "refs/remotes/origin/staging"]);
     const slowStaging = runnerFor(r.reader, (args) =>
-      args.includes("--left-only") && args.some((arg) => arg.startsWith(`${stagingTip}...`)) ? 2_000 : "pass",
+      args.includes("--left-only") && args.some((arg) => arg.startsWith(`${stagingTip}...`)) ? 5_000 : "pass",
     );
 
-    // Act
-    const changes = await probe(r.reader, { runGit: slowStaging, budgetMs: 800 });
+    // Act — a budget wide enough for a slow runner's other calls
+    const changes = await probe(r.reader, { runGit: slowStaging, budgetMs: 1_500 });
 
     // Assert
     expect(changes?.missing.map((c) => c.subject)).toEqual(["Ken on main"]);

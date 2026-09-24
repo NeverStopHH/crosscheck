@@ -10954,6 +10954,26 @@ export const MUTATIONS: readonly Mutation[] = [
     because:
       "the same change reads 'on staging and main' on one edit and 'on main and staging' on the next, and a test that pins the team's order flakes",
   },
+  {
+    // Landed changes. The missing question and the merge filter are asked side by side.
+    label: "the merge filter waits for the missing question",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  const [answer, stillMissing] = await Promise.all([\n    missingOn(context, ref, { cherryPick: probe.cherryPick, headSha: state.headSha }),\n    isMerging ? stillMissingAfterMerge(context, ref, state) : Promise.resolve(null),\n  ]);",
+    to: "  const answer = await missingOn(context, ref, { cherryPick: probe.cherryPick, headSha: state.headSha });\n  const stillMissing = isMerging ? await stillMissingAfterMerge(context, ref, state) : null;",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "during a merge, one branch pays two walks in a row and runs out of time with a missing change it could have named",
+  },
+  {
+    // Landed changes. A merge filter that cannot answer leaves the branch unchecked.
+    label: "a failed merge filter reads arriving work as missing",
+    file: `${CORE}/src/landed-changes/probe.ts`,
+    from: "  if (answer === null || (isMerging && stillMissing === null)) {",
+    to: "  if (answer === null) {",
+    test: `${CORE}/test/landed-changes-completeness.test.ts`,
+    because:
+      "while the reader resolves a merge, the very commits being merged are announced as missing",
+  },
 ];
 
 const readOriginal = async (mutation: Mutation): Promise<string> => {
@@ -11115,7 +11135,7 @@ interface Outcome {
  * PRINTS: packages/connector-core/test/intent-budget.test.ts 1
  * PRINTS: packages/connector-core/test/intent-chain-render.test.ts 1
  * PRINTS: packages/connector-core/test/kit.test.ts 1
- * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 24
+ * PRINTS: packages/connector-core/test/landed-changes-completeness.test.ts 26
  * PRINTS: packages/connector-core/test/landed-changes-edges.test.ts 16
  * PRINTS: packages/connector-core/test/landed-changes.test.ts 7
  * PRINTS: packages/connector-core/test/landed-render.test.ts 4
